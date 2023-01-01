@@ -1,3 +1,11 @@
 pandas
 numpy
 datetime
+scipy
+sklearn
+sqlalchemy
+ta
+pandas_ta
+tqdm
+ccxt
+plotly
