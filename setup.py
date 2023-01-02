@@ -1,10 +1,15 @@
+import os
 from setuptools import setup, find_packages
+from setuptools import setup
+
+with open('requirements.txt') as f:
+    required = f.read().splitlines()
 
 setup(
     name = 'IntelliTrade',
     version = '0.1.0',
-    url = '',
+    url = 'https://github.com/tiziaco/IntelliTrade.com',
     description = '',
     packages = find_packages(),
-    install_requires = -r'requirements.txt'
+    install_requires = required
 )
