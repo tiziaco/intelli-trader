@@ -9,3 +9,4 @@ pandas_ta
 tqdm
 ccxt
 plotly
+multipledispatch
