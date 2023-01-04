@@ -11,3 +11,5 @@ ccxt
 plotly
 multipledispatch
 munch
+sqlalchemy_utils
+psycopg2
