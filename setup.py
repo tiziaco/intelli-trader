@@ -6,7 +6,7 @@ with open('requirements.txt') as f:
     required = f.read().splitlines()
 
 setup(
-    name = 'itrade',
+    name = 'itrader',
     version = '0.1.0',
     url = 'https://github.com/tiziaco/IntelliTrade.com',
     description = '',
