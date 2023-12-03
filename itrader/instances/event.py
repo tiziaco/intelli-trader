@@ -5,7 +5,7 @@ from enum import Enum
 import logging
 logger = logging.getLogger()
 
-EventType = Enum("EventType", "TICK BAR SIGNAL ORDER FILL SENTIMENT")
+EventType = Enum("EventType", "PING TICK BAR SIGNAL ORDER FILL SENTIMENT")
 
 
 class Event(object):
@@ -18,6 +18,29 @@ class Event(object):
     def typename(self):
         return self.type.name
 
+class PingEvent(Event):
+    """
+    Handles the event of receiving a new market update tick,
+    which is defined as a ticker symbol and associated best
+    bid and ask from the top of the order book.
+    """
+    def __init__(self, time):
+        """
+        Initialises the TickEvent.
+
+        Parameters:
+        time - The timestamp of the ping
+        """
+        self.type = EventType.PING
+        self.time = time
+
+    def __str__(self):
+        return "Type: %s, Time: %s" % (
+            str(self.type), str(self.time)
+        )
+
+    def __repr__(self):
+        return str(self)
 
 class TickEvent(Event):
     """
@@ -57,86 +80,24 @@ class BarEvent(Event):
     open-high-low-close-volume bar, as would be generated
     via common data providers such as Yahoo Finance.
     """
-    def __init__(
-        self, ticker, time, period,
-        open_price, high_price, low_price,
-        close_price, volume, adj_close_price=None
-    ):
+    def __init__(self, time):
         """
         Initialises the BarEvent.
 
         Parameters:
-        ticker - The ticker symbol, e.g. 'GOOG'.
         time - The timestamp of the bar
-        period - The time period covered by the bar in seconds
-        open_price - The unadjusted opening price of the bar
-        high_price - The unadjusted high price of the bar
-        low_price - The unadjusted low price of the bar
-        close_price - The unadjusted close price of the bar
-        volume - The volume of trading within the bar
-        adj_close_price - The vendor adjusted closing price
-            (e.g. back-adjustment) of the bar
         """
         self.type = EventType.BAR
-        self.ticker = ticker
         self.time = time
-        self.period = period
-        self.open_price = open_price
-        self.high_price = high_price
-        self.low_price = low_price
-        self.close_price = close_price
-        self.volume = volume
-        self.adj_close_price = adj_close_price
-        self.period_readable = self._readable_period()
+        self.bars = {}
     
-        logger.debug('BAR Event: %s - %s', self.ticker, self.time)
-
-    def _readable_period(self):
-        """
-        Creates a human-readable period from the number
-        of seconds specified for 'period'.
-
-        For instance, converts:
-        * 1 -> '1sec'
-        * 5 -> '5secs'
-        * 60 -> '1min'
-        * 300 -> '5min'
-
-        If no period is found in the lookup table, the human
-        readable period is simply passed through from period,
-        in seconds.
-        """
-        lut = {
-            1: "1sec",
-            5: "5sec",
-            10: "10sec",
-            15: "15sec",
-            30: "30sec",
-            60: "1min",
-            300: "5min",
-            600: "10min",
-            900: "15min",
-            1800: "30min",
-            3600: "1hr",
-            86400: "1day",
-            604800: "1wk"
-        }
-        if self.period in lut:
-            return lut[self.period]
-        else:
-            return "%ssec" % str(self.period)
+        #logger.debug('PING Event: %s', self.time)
 
     def __str__(self):
-        format_str = "Type: %s, Ticker: %s, Time: %s, Period: %s, " \
-            "Open: %s, High: %s, Low: %s, Close: %s, " \
-            "Adj Close: %s, Volume: %s" % (
-                str(self.type), str(self.ticker), str(self.time),
-                str(self.period_readable), str(self.open_price),
-                str(self.high_price), str(self.low_price),
-                str(self.close_price), str(self.adj_close_price),
-                str(self.volume)
-            )
-        return format_str
+        return "Type: %s, Time: %s" % (
+            str(self.type),
+            str(self.time)
+        )
 
     def __repr__(self):
         return str(self)
@@ -148,7 +109,7 @@ class SignalEvent(Event):
     This is received by the Order handler object that validate and
     send the order to the Execution handler object.
     """
-    def __init__(self, time, ticker, action, price):
+    def __init__(self, time, ticker, direction, action, price, strategy_id):
         """
         Initialises the SignalEvent.
 
@@ -158,19 +119,33 @@ class SignalEvent(Event):
             Event time
         ticker: `str`
             The ticker symbol, e.g. 'BTCUSD'.
-        action: `str`
+        direction: `str`
+            Direction of the position.
             'BOT' (for long) or 'SLD' (for short)
+        action: `str`
+            'ENTRY' (for long) or 'EXIT' (for short)
         price: `float`
             Last close price for the instrument
+        strategy_id: `str`
+            The ID of the strategy who generated the signal
         """
         self.type = EventType.SIGNAL
         self.time = time
         self.ticker = ticker
+        self.direction = direction
         self.action = action
         self.price = price
+        self.strategy_id = strategy_id
+        self.portfolio_id = None # TODO: da implementare
+    
+    def __str__(self):
+        return "Type: %s, Ticker: %s, Time: %s, Action: %s %s, Price: %s" % (
+            str(self.type), str(self.ticker),
+            str(self.time), str(self.direction), str(self.action), str(self.price)
+        )
 
-        # logger.debug('  Signal Event: %s, %s, Suggested qnt: %s', 
-        #             self.ticker, self.action, PriceParser.display(self.suggested_quantity))
+    def __repr__(self):
+        return str(self)
 
 
 
@@ -180,7 +155,7 @@ class OrderEvent(Event):
     The order contains a ticker (e.g. GOOG), action (BOT or SLD)
     and quantity.
     """
-    def __init__(self, time, order_type, ticker, action, quantity, price, sl=0, tp=0):
+    def __init__(self, time, order_type, ticker, direction, action, quantity, price, portfolio_id, sl=0, tp=0):
         """
         Initialises the OrderEvent.
 
@@ -197,6 +172,8 @@ class OrderEvent(Event):
             Quantity to transact
         price: `float`
             Last close price for the instrument
+        portfolio_id: `str`
+            Portfolio where to execute the transaction
         sl: `float`
             Suggested stop loss price
         tp: `float` 
@@ -206,14 +183,23 @@ class OrderEvent(Event):
         self.time = time
         self.order_type = order_type
         self.ticker = ticker
+        self.direction = direction
         self.action = action
         self.quantity = quantity
         self.price = price
+        self.portfolio_id = portfolio_id
         self.sl = sl
         self.tp = tp
 
-        logger.info('  Order Event: %s, %s, Quantity: %s', 
-                    self.ticker, self.action, PriceParser.display(self.quantity))
+    def __str__(self):
+        return "Type: %s, Ticker: %s, Time: %s, Action: %s %s, Quantity: %s, Price: %s" % (
+            str(self.type), str(self.ticker), str(self.time),
+            str(self.direction), str(self.action), str(self.quantity), str(self.price)
+        )
+
+    def __repr__(self):
+        return str(self)
+
 
 
 
@@ -223,14 +209,10 @@ class FillEvent(Event):
     from a brokerage. Stores the quantity of an instrument
     actually filled and at what price. In addition, stores
     the commission of the trade from the brokerage.
-
-    TODO: Currently does not support filling positions at
-    different prices. This will be simulated by averaging
-    the cost.
     """
 
     def __init__(
-        self, timestamp, ticker,
+        self, time, ticker, direction,
         action, quantity,
         exchange, portfolio_id,
         price, commission 
@@ -244,6 +226,8 @@ class FillEvent(Event):
             Event time
         ticker: `str`
             The ticker symbol, e.g. 'BTCUSD'.
+        direction:
+
         action: `str`
             'BOT' (for long) or 'SLD' (for short)
         quantity: `float`
@@ -258,8 +242,9 @@ class FillEvent(Event):
             Transaction fee
         """
         self.type = EventType.FILL
-        self.timestamp = timestamp
+        self.time = time
         self.ticker = ticker
+        self.direction = direction
         self.action = action
         self.quantity = quantity
         self.exchange = exchange
@@ -267,10 +252,14 @@ class FillEvent(Event):
         self.price = price
         self.commission = commission
 
-        logger.info('  Fill Event: %s, %s, Quantity: %s $%s, Size: %s $', 
-                    self.ticker, self.action, PriceParser.display(self.quantity,4), 
-                    PriceParser.display(self.price), 
-                    (PriceParser.display(self.price*self.quantity)))
+    def __str__(self):
+        return "Type: %s, Ticker: %s, Time: %s, Action: %s %s, Quantity: %s, Price: %s" % (
+            str(self.type), str(self.ticker), str(self.time),
+            str(self.direction), str(self.action), str(self.quantity), str(self.price)
+        )
+
+    def __repr__(self):
+        return str(self)
 
 
 class SentimentEvent(Event):

@@ -1,4 +1,4 @@
-from itrader.broker.fee_model.fee_model import FeeModel
+from .fee_model import FeeModel
 
 
 class PercentFeeModel(FeeModel):
@@ -16,9 +16,10 @@ class PercentFeeModel(FeeModel):
         0-100% is in the range [0.0, 1.0]. Hence, e.g. 0.1% is 0.001
     """
 
-    def __init__(self, commission_pct=0.0, tax_pct=0.0):
-        super().__init__()
+    def __init__(self, commission_pct=0.007, tax_pct=0.0):
+        #super().__init__()
         self.commission_pct = commission_pct
+        self.tax_pct = tax_pct
         self.tax_pct = tax_pct
 
     def _calc_commission(self, quantity, price):

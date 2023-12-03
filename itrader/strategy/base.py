@@ -2,8 +2,12 @@ from abc import ABCMeta, abstractmethod
 import re
 import datetime # DONT DELETE: Used with eval
 
+from itrader.instances.event import SignalEvent
 
-class AbstractStrategy(object):
+import logging
+logger = logging.getLogger('TradingSystem')
+
+class BaseStrategy(object):
     """
     AbstractStrategy is an abstract base class providing an interface for
     all subsequent (inherited) strategy handling objects.
@@ -16,27 +20,61 @@ class AbstractStrategy(object):
     the Strategy object is agnostic to data location.
     """
 
-    __metaclass__ = ABCMeta
+    global_queue = None
+    strategy_setting = None
 
-    @abstractmethod
-    def calculate_signals(self, event):
+    def _send_signal(self, ticker: str, signal: tuple, event, strategy_id: str):
         """
-        Provides the mechanisms to calculate the list of signals.
+        Add the signal generated from the strategy to the global queue of the trading system
         """
-        raise NotImplementedError("Should implement calculate_signals()")
+        if signal is None:
+            return
+        _signal = SignalEvent(
+                        time=event.time,
+                        ticker=ticker, 
+                        direction=signal[0],
+                        action=signal[1],
+                        price=event.bars[ticker]['close'],
+                        strategy_id=strategy_id                 
+                    )
+        self.global_queue.put(_signal)
+        logger.info('STRATEGY - New signal => %s - %s %s, %s, %s $', _signal.strategy_id,
+                     _signal.direction, _signal.action, _signal.ticker, _signal.price)
 
     @staticmethod
-    def cross_up(bar, indicator, lockback):
+    def cross_up(present_val, past_val, limit) -> bool:
+        return ((present_val > limit) & (past_val <= limit))
+        
+    @staticmethod
+    def cross_down(present_val, past_val, limit) -> bool:
+        return ((present_val < limit) & (past_val >= limit))
+
+    @staticmethod
+    def price_cross_up(bar, indicator, lockback)  -> bool:
         # print('Close: %s', bar['Close'].values)
         # print('Ind: %s', indicator[-2])
         return ((bar['Close'].values > indicator[lockback]) & (bar['Open'].values < indicator[lockback]))
 
     @staticmethod
-    def cross_down(bar, indicator, lockback):
+    def price_cross_down(bar, indicator, lockback) -> bool:
         return ((bar['Close'].values < indicator[lockback]) & (bar['Open'].values > indicator[lockback]))
     
     @staticmethod
     def _get_delta(timeframe):
+        """
+        Transform the str timeframe in a `timedelta` object.
+
+        Parameters
+        ----------
+        timeframe: `str`
+            Timeframe of the strategy
+
+        Returns
+        -------
+        delta: `TimeDelta object`
+            The time delta corresponding to the timeframe.
+        """
+        
         # Splitting text and number in string
         temp = re.compile("([0-9]+)([a-zA-Z]+)")
         res = temp.match(timeframe).groups()
@@ -47,17 +85,5 @@ class AbstractStrategy(object):
         elif res[1] == 'm':
             delta = eval(f'datetime.timedelta(minutes={res[0]})')
         else:
-            print('WARNING: timeframe not suppoerted') #TODO implementare log ERROR
+            logger.error('WARNING: timeframe not suppoerted')
         return delta
-
-
-class Strategies(AbstractStrategy):
-    """
-    Strategies is a collection of strategy
-    """
-    def __init__(self, *strategies):
-        self._lst_strategies = strategies
-
-    def calculate_signals(self, event):
-        for strategy in self._lst_strategies:
-            strategy.calculate_signals(event)

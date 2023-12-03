@@ -3,7 +3,7 @@ from ..outils.price_parser import PriceParser
 from itrader.instances.position import Position
 
 import logging
-logger = logging.getLogger()
+logger = logging.getLogger('TradingSystem')
 
 class PositionHandler(object):
     """
@@ -40,8 +40,8 @@ class PositionHandler(object):
         )
         self.positions[ticker] = position
 
-        logger.debug('  PORTFOLIO: New position added: %s %s %s %s',
-            ticker, action, quantity, PriceParser.display(price))
+        logger.info('  New position added: %s %s %s %s$',
+            ticker, action, quantity, price) #PriceParser.display(price)
 
 
     def _modify_position(
@@ -61,17 +61,27 @@ class PositionHandler(object):
             time, ticker, action, quantity, price, commission
         )
 
-        if self.positions[ticker].net_quantity == 0:
+        if round(self.positions[ticker].net_quantity, 3) == 0:
             self.positions[ticker].exit_date = time
-            self.closed_positions.append(self.positions[ticker]) #TODO: da salvare in 'reporting'
-            self.last_close = self.positions[ticker]
+            #self.closed_positions.append(self.positions[ticker]) #ora salvo in reporting
+            #self.last_close = self.positions[ticker]
+            last_close = self.positions[ticker]
+            logger.info('  Position closed: %s %s %s %s$',
+                ticker, action, quantity, price)
             del self.positions[ticker]
+            return last_close
+        else:
+            logger.info('  Position partially closed: %s %s %s %s$',
+                ticker, action, quantity, price)
+            return None
 
 
     def transact_position(self, time, action, ticker,
         quantity, price, commission
     ):
         """
+        WARNING: non utilizzata. da rimuovere in futuro
+
         Handles any new position or modification to
         a current position, by calling the respective
         _add_position and _modify_position methods.
@@ -127,3 +137,23 @@ class PositionHandler(object):
             pos.total_pnl
             for ticker, pos in self.positions.items()
         )
+    
+    def positions_info(self):
+        """
+        Return a dictionary with the main info about every
+        open position in the portfolio.
+
+        Return
+        ------
+        pos_info: `dict`
+        """
+        pos_info = {}
+        for ticker, position in self.positions.items():
+            pos_info[ticker] = {
+                'action' : position.action,
+                'quantity' : abs(round(position.net_quantity, 5)),
+                'unrealised_pnl' : position.unrealised_pnl,
+                'entry_time' : position.entry_date
+                }
+        return pos_info
+

@@ -14,7 +14,7 @@ class SuggestedOrder(object):
     that a suggested order is never transacted unless it has been
     scrutinised by the position sizing and risk management layers.
     """
-    def __init__(self, time, type, ticker, action, price, quantity=0, sl=0, tp=0):
+    def __init__(self, time, type, ticker, direction, action, price, strategy_id, portfolio_id, quantity=0, sl=0, tp=0):
         """
         Initialises the SuggestedOrder. The quantity defaults
         to zero as the PortfolioHandler creates these objects
@@ -46,11 +46,23 @@ class SuggestedOrder(object):
         self.time = time
         self.type = type
         self.ticker = ticker
+        self.direction = direction
         self.action = action
         self.price = price
         self.quantity = quantity
         self.sl = sl
         self.tp = tp
+        self.strategy_id = strategy_id
+        self.portfolio_id = portfolio_id
+    
+    def __str__(self):
+        return "Type: %s, Ticker: %s, Time: %s, Action: %s, Quantity: %s, Price: %s" % (
+            str(self.type), str(self.ticker), str(self.time),
+            str(self.direction), str(self.quantity), str(self.price)
+        )
+
+    def __repr__(self):
+        return str(self)
 
 class MarketOrder(object):
     """
@@ -58,7 +70,7 @@ class MarketOrder(object):
     the suggested order is validated by the RiskManager.
     It is executed later by the ExecutionHandler
     """
-    def __init__(self, id, ticker, status, time, action, price, quantity=0):
+    def __init__(self, id, ticker, status, time, direction, action, price, quantity=0):
         """
         Initialises the MarketOrder.
         The OrderManager object will "fill in" the correct
@@ -80,16 +92,27 @@ class MarketOrder(object):
         self.ticker = ticker
         self.status = status
         self.time = time
+        self.direction = direction
         self.action = action
         self.price = price
         self.quantity = quantity
+    
+    def __str__(self):
+        return "Type: %s, Ticker: %s, Time: %s, Action: %s, Quantity: %s, Price: %s" % (
+            str(self.type), str(self.ticker), str(self.time),
+            str(self.direction), str(self.quantity), str(self.price)
+        )
+
+    def __repr__(self):
+        return str(self)
+    
 
 class StopOrder(object):
     """
     a Stop order is generated when trading with limit orders orders or
     when a stop loss or take profit is defined.
     """
-    def __init__(self, id, ticker, status, time, action, price, quantity=0):
+    def __init__(self, order_id, portfolio_id, ticker, status, time, direction, action, price, quantity=0):
         """
         Initialises the StopOrder.
         The OrderManager object will "fill in" the correct
@@ -107,20 +130,32 @@ class StopOrder(object):
         quantity - The quantity of shares to transact.
         """
         self.type = OrderType.STOP
-        self.id = id
+        self.order_id = order_id
+        self.portfolio_id = portfolio_id
         self.ticker = ticker
         self.status = status
         self.time = time
+        self.direction = direction
         self.action = action
         self.price = price
         self.quantity = quantity
+    
+    def __str__(self):
+        return "Type: %s, Ticker: %s, Time: %s, Action: %s, Quantity: %s, Price: %s" % (
+            str(self.type), str(self.ticker), str(self.time),
+            str(self.direction), str(self.quantity), str(self.price)
+        )
+
+    def __repr__(self):
+        return str(self)
+    
 
 class LimitOrder(object):
     """
     a Limit order is generated when trading with limit orders orders or
     when a stop loss or take profit is defined.
     """
-    def __init__(self, id, ticker, status, time, action, price, quantity=0):
+    def __init__(self, order_id, portfolio_id, ticker, status, time, direction, action, price, quantity=0):
         """
         Initialises the LimitOrder.
         The OrderManager object will "fill in" the correct
@@ -138,10 +173,21 @@ class LimitOrder(object):
         quantity - The quantity of shares to transact.
         """
         self.type = OrderType.LIMIT
-        self.id = id
+        self.order_id = order_id
+        self.portfolio_id = portfolio_id
         self.ticker = ticker
         self.status = status
         self.time = time
+        self.direction = direction
         self.action = action
         self.price = price
         self.quantity = quantity
+    
+    def __str__(self):
+        return "Type: %s, Ticker: %s, Time: %s, Action: %s, Quantity: %s, Price: %s" % (
+            str(self.type), str(self.ticker), str(self.time),
+            str(self.direction), str(self.quantity), str(self.price)
+        )
+
+    def __repr__(self):
+        return str(self)

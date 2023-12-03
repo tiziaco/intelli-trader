@@ -2,7 +2,7 @@ pandas
 numpy
 datetime
 scipy
-sklearn
+scikit-learn
 sqlalchemy
 ta
 pandas_ta
@@ -13,3 +13,8 @@ multipledispatch
 munch
 sqlalchemy_utils
 psycopg2
+plotly
+nbformat
+statsmodels
+hmmlearn
+

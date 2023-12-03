@@ -10,15 +10,39 @@ class OrderBase(object):
         - Portfolio handler
         - Events queue
     """
-
-    __metaclass__ = ABCMeta
-
-    open_positions = [] # Opened positions in the selected portfolio
-    cash = 0            # Cashs available in the selected portfolio
+    open_positions = {}     # Opened positions in each portfolio
+    cash = {}               # Cash available in each portfolio
+    strategies_setting = {}
+    
+    #__metaclass__ = ABCMeta
 
     def __init__(self, events_queue, portfolio_handler):
         self.events_queue = events_queue
         self.portfolio_handler = portfolio_handler
+    
+    def set_strategy_setting(self, strategy_id, tf_delta, strategy_setting):
+        """
+        Add the strategy seting for a defined strategy id in the 
+        global strategies_setting dictionary.
+
+        Parameters
+        ----------
+        strategy_id: `str`
+            Strategy ID of the corresponding setting
+        strategy_setting: `dict`
+            Dictionary with all strategy setting and portfolio id
+            where to execute the transactions of the strategy.
+        """
+        strategy_setting['tf_delta'] = tf_delta
+        OrderBase.strategies_setting[strategy_id] = strategy_setting
+
+    def _update_portfolio_data(self):
+        # Initialize portfolio data
+        OrderBase.open_positions = self.portfolio_handler.get_positions_info()
+        OrderBase.cash = self.portfolio_handler.get_all_cash()
+    
+    def open_pos(self):
+        return self.open_positions
 
 
     @abstractmethod

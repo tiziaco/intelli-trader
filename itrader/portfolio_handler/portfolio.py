@@ -2,7 +2,7 @@ from ..outils.price_parser import PriceParser
 from itrader.portfolio_handler.position_handler import PositionHandler
 
 import logging
-logger = logging.getLogger()
+logger = logging.getLogger('TradingSystem')
 
 class Portfolio(object):
     """
@@ -37,8 +37,8 @@ class Portfolio(object):
 
         self.pos_handler = PositionHandler()
 
-        logger.info('PORTFOLIO: New portfolio added - ID:%s, User: %s, Cash: %s $',
-            self.portfolio_id , self.portfolio_id)
+        logger.info('   PORTFOLIO: New portfolio added - ID: %s, User: %s, Cash: %s $',
+            self.portfolio_id , self.portfolio_id, self.cash)
 
     @property
     def total_market_value(self):
@@ -94,21 +94,18 @@ class Portfolio(object):
         commission : `float`
             The commission spent on transacting the asset
         """
-        if time < self.current_time:
-            raise ValueError(
-                'Transaction datetime (%s) is earlier than '
-                'current portfolio datetime (%s). Cannot '
-                'transact assets.' % (time, self.current_time)
-            )
+        # if time < self.current_time:
+        #     raise ValueError(
+        #         'Transaction datetime (%s) is earlier than '
+        #         'current portfolio datetime (%s). Cannot '
+        #         'transact assets.' % (time, self.current_time)
+        #     )
         self.current_time = time
 
-        txn_share_cost = price * quantity
-        txn_total_cost = txn_share_cost + commission
+        txn_share_cost = round(price * quantity,2)
+        txn_total_cost = round(txn_share_cost + commission,2)
 
-        # self.pos_handler.transact_position(time, action, ticker,
-        #     quantity, price, commission)
-        
-        # self.cash -= txn_total_cost
+        last_close = None
 
         if ticker not in self.portfolio_to_dict().keys():
             self.pos_handler._add_position(
@@ -116,20 +113,30 @@ class Portfolio(object):
                 price, commission)
             self.cash -= txn_total_cost
         else:
-            self.pos_handler._modify_position(
+            last_close = self.pos_handler._modify_position(
                 time, ticker, action, quantity,
                 price, commission)
+            #print(txn_total_cost)
 
-            if ticker not in self.portfolio_to_dict().keys():
+            # Update the cash in the portfolio after a transaction
+            if last_close is not None:
                 # The position has been closed
-                self.cash += txn_total_cost
+                if last_close.action == 'BOT':
+                    self.cash += round(last_close.total_bought + last_close.realised_pnl,2)
+                elif last_close.action == 'SLD':
+                    self.cash += round(last_close.total_sold + last_close.realised_pnl,2)
+                return last_close
             else:
                 # The position is still open
                 pos = self.pos_handler.positions[ticker]
                 if pos.action != action :
-                    self.cash += txn_total_cost
+                    # Partial exit of the position.
+                    # TODO: da verificare
+                    self.cash += pos.realised_pnl 
                 else:
+                    # Increase the position
                     self.cash -= txn_total_cost
+                return None
 
 
     def update_market_value_of_asset(self, ticker, current_price, current_dt):
@@ -139,7 +146,7 @@ class Portfolio(object):
         if ticker not in self.pos_handler.positions:
             return
         else:
-            if current_price < 0.0:
+            if current_price < 0:
                 raise ValueError(
                     'Current trade price of %s is negative for '
                     'asset %s. Cannot update position.' % (

@@ -1,11 +1,15 @@
+import sys
 from ..order_base import OrderBase
+from .sltp_models.sltp_models import FixedPercentage
+from .sltp_models.sltp_models import Proportional
+from .sltp_models.sltp_models import ATRsltp
 
 #from .base import AbstractRiskManager
 from ...outils.price_parser import PriceParser
 
 
 import logging
-logger = logging.getLogger()
+logger = logging.getLogger('TradingSystem')
 
 
 class RiskManager(OrderBase):
@@ -28,98 +32,72 @@ class RiskManager(OrderBase):
         Stop level in % (default: 3%)
     """
 
-    def __init__(self, apply_sl=False, apply_tp=False, stop_level=0.03):
-        self.apply_sl = apply_sl
-        self.apply_tp = apply_tp
-        self.stop_level = stop_level  #Stop loss level: 5%
+    def __init__(self, price_handler):
+        self.price_handler = price_handler
+        self.apply_sl = None
+        self.apply_tp = None
+        self.sltp_models = self._initialise_sltp_models()
         self.order_id = 0
 
-        logger.info('RISK MANAGER: Advanced Risk Manager => OK')
+        logger.info('   RISK MANAGER: Advanced Risk Manager => OK')
 
 
     def refine_orders(self, sized_order):
         """
         Calculate the StopLoss level annd create a OrderEvent.
         """
-        ### Check if the position is already opened
-        self._check_open(sized_order)
         
         ### Check if enough cash in the portfolio
-        self._check_cash(sized_order)
-
-        ### Check if enough cash in the portfolio
-        self._check_max_positions(sized_order)
+        # if self._check_cash(sized_order):
+        #     return None
+        self.apply_sl = self.strategies_setting[sized_order.strategy_id]['apply_sl']
+        self.apply_tp = self.strategies_setting[sized_order.strategy_id]['apply_tp']
+        
 
         ### Calculate SL and TP
-        if self.apply_sl:
-            self._calculate_sl(sized_order)
-        if self.apply_tp:
-            self._calculate_tp(sized_order)
+        if sized_order.action == 'ENTRY':
+            if self.apply_sl:
+                sl_setting = self.strategies_setting[sized_order.strategy_id]['sl_setting']
+                # Get bars prices when the sltp model is ATR or probabilistic
+                bars = None
+                if sl_setting['sl_model'] == 'ATR':
+                    # Load 100 bars
+                    start_dt = (sized_order.time - self.strategies_setting[sized_order.strategy_id]['tf_delta'] * 100)
+                    bars = self.price_handler.get_bars(sized_order.ticker, start_dt, sized_order.time)
+                sized_order = self.sltp_models[sl_setting['sl_model']].calculate_sl(sized_order, sl_setting, bars)
+            if self.apply_tp:
+                tp_setting = self.strategies_setting[sized_order.strategy_id]['tp_setting']
+                bars = None
+                if tp_setting['tp_model'] == 'ATR':
+                    # Load 100 bars
+                    start_dt = (sized_order.time - self.strategies_setting[sized_order.strategy_id]['tf_delta'] * 100)
+                    bars = self.price_handler.get_bars(sized_order.ticker, start_dt, sized_order.time)
+                sized_order = self.sltp_models[tp_setting['tp_model']].calculate_tp(sized_order, tp_setting, bars)
 
-        logger.info('  RISK MANAGER: Order VALIDATED')
+        logger.info('  RISK MANAGER: Order validated')
         return sized_order
 
 
-    def _calculate_sl(self, sized_order):
-        """
-        Define stopLoss level at a % of the last close
-        """
-
-        last_close = sized_order.price
-
-        if sized_order.action == 'BOT':
-            # LONG direction: sl lower
-            stop_loss = last_close * (1-self.stop_level)
-
-        elif sized_order.action == 'SLD':
-            # SHORT direction: sl higher
-            stop_loss = last_close * (1+self.stop_level)
-        return stop_loss
-
-
-    def _calculate_tp(self, sized_order):
-        """
-        Define stopLoss level at a % of the last close
-        """
-        last_close = sized_order.price
-
-        if sized_order.action == 'BOT':
-            # LONG direction: tp higher
-            take_profit = last_close * (1+self.stop_level)
-
-        elif sized_order.action == 'SLD':
-            # SHORT direction: tp lower
-            take_profit = last_close * (1-self.stop_level)
-        return take_profit
-    
-    def _check_open(self, sized_order):
-        """
-        Check if the position is already opened. 
-        In this case validate and return the object.
-        """
-        opened_position = self.portfolio_handler.portfolio[0].positions.keys() #TODO da validare
-        if sized_order.ticker in opened_position:
-            logger.info('  RISK MANAGER: Order VALIDATED')
-            return sized_order
-
-
-    def _check_cash(self):
+    def _check_cash(self, sized_order):
         """
         Check if enough cash in the selected portfolio.
         If not enough cash the order is refused
         """
-        # TODO: mofificare: passa il portfolio_id
-        cash = self.portfolio_handler.portfolio[0].cur_cash
-        if PriceParser.display(cash) < 30:
+        cash = self.cash[sized_order.portfolio_id]
+        if cash < 30:#PriceParser.display
             logger.info('  RISK MANAGER: Order REFUSED: Not enough cash to trade')
-            return
+            return False
 
-    def _check_max_positions(self, portfolio):
+    def _initialise_sltp_models(self):
         """
-        Check if too many positions opened. 
-        If the limit of the max positions is reached the order is refused.
+        Instanciate all the stop loss and take profit models
+        in a dictionary.
         """
-        if (len(portfolio.positions) >= portfolio.max_position) :
-            logger.info('  RISK MANAGER: Order REFUSED: Max positions reached')
-            return
+        sltp_models = {
+            'fixed': FixedPercentage(),
+            'proportional': Proportional(),
+            'ATR': ATRsltp(),
+            'probabilistic': None
+        }
+        return sltp_models
         

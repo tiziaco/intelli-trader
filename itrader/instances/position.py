@@ -1,7 +1,7 @@
 from numpy import sign
 from ..outils.price_parser import PriceParser
-import logging
-logger = logging.getLogger()
+#import logging
+#logger = logging.getLogger()
 
 class Position(object):
     """
@@ -15,7 +15,7 @@ class Position(object):
 
     Parameters
     ----------
-    ticker : `str`
+    ticker: `str`
         The Asset symbol string.
     action : `str`
         The market direction of the position e.g. 'BOT' or 'SLD' .
@@ -85,13 +85,15 @@ class Position(object):
             avg_sold = 0
             buy_commission = commission
             sell_commission = 0.0
-        else:  # action == "SLD"
+        elif action == "SLD":  # action == "SLD"
             buy_quantity = 0
             sell_quantity = quantity
             avg_bought = 0
             avg_sold = price
             buy_commission = 0.0
             sell_commission = commission
+        else:
+            raise ValueError('Value %s not supported', action)
         
         return cls(
             ticker,
@@ -118,7 +120,7 @@ class Position(object):
         `float`
             The current market value of the Position.
         """
-        return self.current_price * self.net_quantity
+        return self.current_price * abs(self.net_quantity)
 
     @property
     def avg_price(self):
@@ -147,7 +149,7 @@ class Position(object):
         `int`
             The net quantity of assets.
         """
-        return self.buy_quantity - self.sell_quantity
+        return abs(self.buy_quantity - self.sell_quantity)
 
     @property
     def total_bought(self):
@@ -279,9 +281,9 @@ class Position(object):
 
         Parameters
         ----------
-        market_price : `float`
+        market_price: `float`
             The current market price.
-        time : `pd.Timestamp`, optional
+        time: `pd.Timestamp`, optional
             The optional timestamp of the current market price.
         """
 
@@ -301,17 +303,17 @@ class Position(object):
 
         Parameters
         ----------
-        time : `pd.Timestamp`
+        time: `pd.Timestamp`
             The transaction time
-        ticker : `str`
+        ticker: `str`
             The ticker of the transacted asset
-        action : `str`
+        action: `str`
             The market direction of the position e.g. 'BOT' or 'SLD'
-        quantity : `float`
+        quantity: `float`
             The amount of the transacted asset
-        price : `float`
+        price: `float`
             The asset price at the moment of the transaction
-        commission : `float`
+        commission: `float`
             The commission spent on transacting the asset
         """
 

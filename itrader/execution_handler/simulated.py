@@ -1,24 +1,31 @@
 from .base import AbstractExecutionHandler
+from .fee_model.zero_fee_model import ZeroFeeModel
 from .fee_model.percent_fee_model import PercentFeeModel
+from ..reporting.engine_logger import EngineLogger
 from ..instances.event import (FillEvent, EventType)
-from ..outils.price_parser import PriceParser
+
+from itrader.telegram_bot.telegram_bot import TelegramBot
 
 import logging
 logger = logging.getLogger()
 
 class ExecutionHandler(AbstractExecutionHandler):
     """
-    The simulated execution handler for Interactive Brokers
-    converts all order objects into their equivalent fill
-    objects automatically without latency, slippage or
-    fill-ratio issues.
+    The simulated execution handler converts all order 
+    objects into their equivalent fill objects automatically
+    without latency, slippage or fill-ratio issues. 
+    
+    It allows to cqlculqte the fees with different models.
 
     This allows a straightforward "first go" test of any strategy,
     before implementation with a more sophisticated execution
     handler.
     """
 
-    def __init__(self, events_queue, commission_pct = 0.007, compliance=None):
+    def __init__(self, events_queue, engine_logger: EngineLogger, 
+        fee_model = 'no_fee', 
+        commission_pct = 0.007, tax_pct = 0.0,
+        telegram_bot: TelegramBot = None):
         """
         Initialises the handler, setting the event queue
         as well as access to local pricing.
@@ -27,10 +34,13 @@ class ExecutionHandler(AbstractExecutionHandler):
         events_queue - The Queue of Event objects.
         """
         self.events_queue = events_queue
-        #self.price_handler = price_handler
-        self.fee_model = PercentFeeModel(commission_pct)
-        self.compliance = compliance
-        logger.info('BROKER: Simulated => OK')
+        self.engine_logger = engine_logger
+        self.fee_model = self._initialize_fee_model(fee_model)
+        self.commission_pct = commission_pct
+        self.tax_pct = tax_pct
+        self.telegram_bot = telegram_bot
+
+        logger.info('EXECUTION HANDLER: Simulated broker => OK')
 
 
     def execute_order(self, event):
@@ -42,38 +52,40 @@ class ExecutionHandler(AbstractExecutionHandler):
         event - An Event object with order information.
         """
         if event.type == EventType.ORDER:
-            # Obtain values from the OrderEvent
-            timestamp = event.time
-            ticker = event.ticker
-            action = event.action
-            quantity = event.quantity
-            fill_price = event.price
 
-            """# Obtain the fill price
-            if self.price_handler.istick():
-                bid, ask = self.price_handler.get_best_bid_ask(ticker)
-                if event.action == "BOT":
-                    fill_price = ask
-                else:
-                    fill_price = bid
-            else:
-                close_price = self.price_handler.get_last_close(ticker)
-                fill_price = close_price"""
+            # Set the exchange and calculate the trade commission
+            exchange = 'Simulated'
+            portfolio_id = event.portfolio_id
+            commission = self.fee_model.calc_total_commission(event.quantity, event.price)
 
-            # Set a dummy exchange and calculate trade commission
-            exchange = "Simulated"
-            portfolio_id = '01' # TODO: da automatizzare
-            commission = self.fee_model.calc_total_commission(quantity, fill_price)
-
-            # Create the FillEvent and place on the events queue
+            # Create the FillEvent and place it in the events queue
             fill_event = FillEvent(
-                timestamp, ticker,
-                action, quantity,
+                event.time, event.ticker,
+                event.direction,
+                event.action, event.quantity,
                 exchange, portfolio_id,
-                fill_price, commission
+                event.price, commission
             )
             self.events_queue.put(fill_event)
 
+            logger.info('EXECUTION HANDLER: Order executed %s %s %s %s %s$', 
+                fill_event.direction, fill_event.action, fill_event.ticker, fill_event.quantity, fill_event.price)
+
             # Record the trade in the SQL database
-            if self.compliance is not None:
-                self.compliance.record_trade(fill_event)
+            self.engine_logger.record_transaction(fill_event)
+
+            # Send telegram message
+            if self.telegram_bot is not None:
+                text = f'-- Order executed --\n'
+                text += f'   {fill_event.ticker} - {fill_event.direction}, {fill_event.action}  \n'
+                text += f'   {fill_event.price}$'
+                self.telegram_bot.send_message(text=text)
+
+    def _initialize_fee_model(self, fee_model):
+        if fee_model == 'percent':
+            return PercentFeeModel(self.commission_pct, self.tax_pct)
+        elif fee_model == 'no_fee':
+            return ZeroFeeModel()
+        else:
+            logger.warning('EXECUTION HANDLER: fee model %s not supported', fee_model)
+            return None
