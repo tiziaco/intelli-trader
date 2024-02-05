@@ -6,8 +6,8 @@ from sqlalchemy import create_engine
 
 import pandas as pd
 
-from .base import PriceHandler
-from ..instances.event import PingEvent
+from ..base import PriceHandler
+from ...instances.event import PingEvent
 
 import logging
 logger = logging.getLogger('TradingSystem')
