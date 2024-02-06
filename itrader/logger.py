@@ -1,16 +1,33 @@
 import logging
+from typing import Union
 
-logger = logging.getLogger('iTrader')
-logger.setLevel(logging.DEBUG)  # Overall minimum logging level
 
-stream_handler = logging.StreamHandler()  # Configure the logging messages displayed in the Terminal
-formatter = logging.Formatter('%(levelname)s | %(message)s') # %(asctime)s 
-stream_handler.setFormatter(formatter)
-stream_handler.setLevel(logging.DEBUG)  # Minimum logging level for the StreamHandler
+LoggingHandler = Union[logging.StreamHandler, logging.FileHandler]
 
-# file_handler = logging.FileHandler('info.log')  # Configure the logging messages written to a file
-# file_handler.setFormatter(formatter)
-# file_handler.setLevel(logging.DEBUG)  # Minimum logging level for the FileHandler
+def init_logger(config):
+	logger = logging.getLogger('iTrader')
+	logger.setLevel(logging.DEBUG) # Overall minimum logging level
+	formatter = logging.Formatter(config.LOGGING_FORMAT)
+	
 
-logger.addHandler(stream_handler)
-#logger.addHandler(file_handler)
+	# Minimum logging level for the StreamHandler
+	if config.PRINT_LOG:
+		stream_handler = logging.StreamHandler()
+		stream_handler = set_level(config, stream_handler)
+		stream_handler.setFormatter(formatter)
+		logger.addHandler(stream_handler)
+	if config.SAVE_LOG:
+		file_handler = logging.FileHandler('info.log')
+		file_handler = set_level(config, stream_handler)
+		file_handler.setFormatter(formatter)
+		logger.addHandler(file_handler)
+	return logger
+
+def set_level(config, handler: LoggingHandler) -> LoggingHandler:
+	# Minimum logging level for the StreamHandler
+	if config.DEBUG:
+		handler.setLevel(logging.DEBUG)
+	else:
+		handler.setLevel(logging.INFO)
+	return handler
+
