@@ -3,15 +3,15 @@ import json
 
 # Set the project base directory
 basedir = os.path.abspath(os.path.dirname(__file__))
+
 # Load API keys from JSON file
-with open('keys.json', 'r') as keys_file:
+with open(f'{basedir}/keys.json', 'r') as keys_file:
 	keys_data = json.load(keys_file)
 
-TIMEZONE = 'Europe/Paris'
+ENVIRONMENT = "dev" #Supported environments: 'dev', 'test', 'backtest', 'live'
+
 SUPPORTED_CURRENCIES = {'USDT', 'BUSD'}
 SUPPORTED_EXCHANGES = {'BINANCE', 'KUCOIN'}
-LOGGING = {'DATE_FORMAT': '%Y-%m-%d %H:%M:%S'}
-
 
 FORBIDDEN_SYMBOLS = {
 	'BUSD': [
@@ -32,54 +32,77 @@ class Config:
 	"""
 	iTrader general configuration variables.
 	"""
-
+	TIMEZONE = 'Europe/Paris'
 	SECRET_KEYS = keys_data.get('SECRET_KEYS', {})
-	PRINT_LOG = True
-	SAVE_LOG = False
+
+	LOGGING_FORMAT = str('%(levelname)s | %(message)s') # %(asctime)s 
+	PRINT_LOG = bool(True)
+	SAVE_LOG = bool(False)
+
+	SUPPORTED_CURRENCIES = {'USDT', 'BUSD'}
+	SUPPORTED_EXCHANGES = {'BINANCE', 'KUCOIN'}
 
 class DevelopmentConfig(Config):
 	DATA_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
 	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
-	DEBUG = True
-	TESTING = False
-	SQLALCHEMY_TRACK_MODIFICATIONS = False
+	DEBUG = bool(True)
+	TESTING = bool(False)
+	SQLALCHEMY_TRACK_MODIFICATIONS = bool(False)
 
 
 class TestingConfig(Config):
 	DATA_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
 	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
-	DEBUG = False
-	TESTING = True
-	PRESERVE_CONTEXT_ON_EXCEPTION = False
-	SQLALCHEMY_TRACK_MODIFICATIONS = False
+	DEBUG = bool(False)
+	TESTING = bool(True)
+	PRESERVE_CONTEXT_ON_EXCEPTION = bool(False)
+	SQLALCHEMY_TRACK_MODIFICATIONS = bool(False)
 
 
 class BacktestConfig(Config):
 	DEBUG = False
 	DATA_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
 	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
-	DEBUG = False
-	TESTING = False
-	PRESERVE_CONTEXT_ON_EXCEPTION = True
-	SQLALCHEMY_TRACK_MODIFICATIONS = True
+	DEBUG = bool(False)
+	TESTING = bool(False)
+	PRESERVE_CONTEXT_ON_EXCEPTION = bool(True)
+	SQLALCHEMY_TRACK_MODIFICATIONS = bool(True)
 
 class LiveConfig(Config):
-	DEBUG = False
+	DEBUG = bool(False)
 	DATA_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
 	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
-	DEBUG = False
-	TESTING = False
-	PRESERVE_CONTEXT_ON_EXCEPTION = True
-	SQLALCHEMY_TRACK_MODIFICATIONS = True
+	DEBUG = bool(False)
+	TESTING = bool(False)
+	PRESERVE_CONTEXT_ON_EXCEPTION = bool(True)
+	SQLALCHEMY_TRACK_MODIFICATIONS = bool(True)
 
 
-set_config = dict(
-	dev = DevelopmentConfig,
-	test = TestingConfig,
-	backtest = BacktestConfig,
-	live = LiveConfig
-)
+def set_config(env) -> Config:
+    """
+    Sets the configuration based on the environment.
 
-def set_print_events(print_events=True):
-	global PRINT_EVENTS
-	PRINT_EVENTS = print_events
+    Parameters
+    ----------
+    env : `str`
+		Environment identifier ('dev', 'test', 'backtest', 'live').
+
+    Returns
+    ----------
+	Config : `Config`
+		Configuration object corresponding to the specified environment.
+
+    Raises
+    ----------
+        ValueError : If the specified environment is not recognized.
+    """
+    configs = {
+        'dev': DevelopmentConfig,
+        'test': TestingConfig,
+        'backtest': BacktestConfig,
+        'live': LiveConfig
+    }
+    config = configs.get(env)
+    if config is None:
+        raise ValueError(f"Unknown environment: {env}. Supported environments are: 'dev', 'test', 'backtest', 'live'.")
+    return config
