@@ -1,24 +1,22 @@
 #from datetime import datetime
-from datetime import datetime, timedelta
 import pytz
-
-from tqdm import tqdm
-
 import numpy as np
 import pandas as pd
+from datetime import datetime, timedelta
+from tqdm import tqdm
 
-from itrader.config import TIMEZONE
 from .base import AbstractPriceHandler
 from .sql_handler import SqlHandler
 from .exchange.CCXT import CCXT_exchange
+
 from itrader.outils.time_parser import to_timedelta
 from itrader.outils.data_outils import resample_ohlcv
 
-import logging
-logger = logging.getLogger('TradingSystem')
+from itrader import config
+from itrader import logger
 
 
-class data_provider(AbstractPriceHandler):
+class PriceHandler(AbstractPriceHandler):
 	"""
 	data_provider class is designed to load the data from the defined
 	exchange. It contains Open-High-Low-Close-Volume (OHLCV) data
@@ -45,17 +43,16 @@ class data_provider(AbstractPriceHandler):
 				start_dt: str, end_dt: str = None,
 				base_currency: str = 'USDT'):
 		
-		self.exchange = self._init_exchange(exchange)
-		self.symbols = self._init_symbols(symbols)
 		self.timeframe = timeframe
 		self.start_date = start_dt
 		self.end_date = end_dt
 		self.base_currency = base_currency
-
 		self.prices = {}
+		self.exchange = self._init_exchange(exchange)
+		self.symbols = self._init_symbols(symbols)
 		self.sql_handler = SqlHandler()
 		
-		#logger.info('PRICE HANDLER: CCXT => OK')
+		logger.info('PRICE HANDLER => OK')
 	@property
 	def available_symbols(self) -> list:
 		return self.prices.keys()
@@ -77,15 +74,19 @@ class data_provider(AbstractPriceHandler):
 				self.prices[symbol.upper()] = self.sql_handler.read_prices(symbol)
 			else:
 				# Symbol not present in the SQL db. Download them with CCXT
-				self._get_data_CCXT(symbol, self.start_date)
-		#logger.info('PRICE HANDLER: Data loaded')
+				self.prices[symbol.upper()] = self.exchange.download_data(symbol, 
+															self.timeframe,
+															self.start_date,
+															self.end_date)
+				self.sql_handler.to_database(symbol, self.prices[symbol.upper()], True)
+		
+		logger.info('PRICE HANDLER: Data loaded')
 	
 	def update_data(self):
 		"""
 		Update the price data
 		"""
-		#logger.info('PRICE HANDLER: Updating data...')
-		timezone = pytz.timezone(TIMEZONE)
+		timezone = pytz.timezone(config.TIMEZONE)
 
 		while True: # repeat until we get all historical bars
 			update_counter = 0
@@ -102,8 +103,8 @@ class data_provider(AbstractPriceHandler):
 
 				if now - last_date > to_timedelta(self.timeframe):
 					update_counter += 1
-					self.exchange.download_data(ticker, last_date, replace=False)
-
+					self.exchange.download_data(ticker, self.timeframe, last_date, replace=False)
+					self.sql_handler.to_database(ticker, self.prices[ticker], True)
 			if update_counter == 0:
 				logger.info('PRICE HANDLER: Price updated')
 				break
@@ -253,14 +254,13 @@ class data_provider(AbstractPriceHandler):
 			return self.exchange.get_tradable_symbols()
 		return symbols
 
-	@staticmethod
-	def _init_exchange(exchange: str):
+	def _init_exchange(self, exchange: str):
 		"""
 		Factory method to initialise the correct exchange
 		"""
 		exchange_name = exchange.lower()
 		if exchange_name == 'binance':
-			return CCXT_exchange(exchange_name)
+			return CCXT_exchange(exchange_name, self.base_currency)
 		# elif exchange_name == 'kraken':
 		# 	return CCXTKrakenExchange()
 		else:

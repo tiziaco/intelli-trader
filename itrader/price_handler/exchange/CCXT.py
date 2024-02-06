@@ -1,11 +1,12 @@
+import ccxt
 import pytz
 import pandas as pd
-import ccxt
 from datetime import datetime
 
-from itrader.config import FORBIDDEN_SYMBOLS, TIMEZONE
-from itrader.outils.time_parser import to_timedelta
 from .base import AbstractExchange
+from itrader.outils.time_parser import to_timedelta
+from itrader.config import FORBIDDEN_SYMBOLS
+from itrader import config
 
 class CCXT_exchange(AbstractExchange):
 	"""
@@ -66,7 +67,7 @@ class CCXT_exchange(AbstractExchange):
 		# Format index
 		data = data.set_index('date') 
 		data.index = pd.to_datetime(data.index, unit='ms', utc=True)
-		data.index = data.index.tz_convert(TIMEZONE)
+		data.index = data.index.tz_convert(config.TIMEZONE)
 
 		# Change data type and deal with NaN values or duplicates
 		data = data.astype(float)
