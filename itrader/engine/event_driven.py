@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 
 from itrader.instances.event import EventType
-from itrader.order_manager.order_handler import OrderHandler
+from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.simulated import ExecutionHandler
 from itrader.reporting.engine_logger import EngineLogger
