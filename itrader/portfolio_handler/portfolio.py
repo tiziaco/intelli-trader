@@ -23,22 +23,18 @@ class Portfolio(object):
         The human-readable name of the portfolio.
     """
 
-    def __init__(self, portfolio_id, start_dt, starting_cash, name = None):
+    def __init__(self, user_id, name, cash):
         """
         Initialise the Portfolio object with a PositionHandler,
         along with cash balance.
         """
-        self.portfolio_id = portfolio_id
-        self.start_dt = start_dt
-        self.current_time = start_dt
-        self.starting_cash = starting_cash
-        self.cash = starting_cash
+        self.user_id = user_id
+        self.portfolio_id = 'xxx' #TODO: da generare automaticamente
         self.name = name
-
+        self.cash = cash
+        self.current_time = '2023-12-05' #TODO: da generare automaticamente
+        self.transactions = {}
         self.pos_handler = PositionHandler()
-
-        logger.info('   PORTFOLIO: New portfolio added - ID: %s, User: %s, Cash: %s $',
-            self.portfolio_id , self.portfolio_id, self.cash)
 
     @property
     def total_market_value(self):
@@ -75,7 +71,7 @@ class Portfolio(object):
         """
         return self.pos_handler.total_pnl()
 
-    def transact_asset(self, time, ticker, action, quantity, price, commission):
+    def process_transaction(self, transaction):
         """
         Adjusts positions to account for a transaction.
 
@@ -94,12 +90,6 @@ class Portfolio(object):
         commission : `float`
             The commission spent on transacting the asset
         """
-        # if time < self.current_time:
-        #     raise ValueError(
-        #         'Transaction datetime (%s) is earlier than '
-        #         'current portfolio datetime (%s). Cannot '
-        #         'transact assets.' % (time, self.current_time)
-        #     )
         self.current_time = time
 
         txn_share_cost = round(price * quantity,2)
@@ -158,7 +148,7 @@ class Portfolio(object):
                 current_price, current_dt
             )
 
-    def portfolio_to_dict(self):
+    def to_dict(self):
         """
         Output the portfolio holdings information as a dictionary
         with Assets as keys and sub-dictionaries as values.
