@@ -1,11 +1,7 @@
-from datetime import datetime, timedelta
-import pytz
-
-from tqdm import tqdm
 import tpqoa
-
-import numpy as np
+import pytz
 import pandas as pd
+from datetime import datetime
 
 from itrader.config import FORBIDDEN_SYMBOLS, TIMEZONE
 from itrader.outils.time_parser import to_timedelta
