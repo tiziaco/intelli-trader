@@ -2,4 +2,5 @@ __pycache__/
 oanda.cfg
 *.json
 *.ipynb
+OLD/*
 .DS_Store
