@@ -1,0 +1,1 @@
+from itrader.price_handler.data_provider import PriceHandler
