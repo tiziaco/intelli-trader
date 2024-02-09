@@ -5,7 +5,7 @@ import threading
 
 import queue
 import pandas as pd
-from itrader.instances.event import EventType
+from itrader.events_handler.event import EventType
 
 from itrader.engine.event_driven import EventEngine
 from itrader.price_handler.CCXT_data_provider import CCXT_data_provider

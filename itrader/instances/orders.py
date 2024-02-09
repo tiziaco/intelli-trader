@@ -1,6 +1,6 @@
 from enum import Enum
 
-from itrader.instances.event import SignalEvent
+from itrader.events_handler.event import SignalEvent
 
 OrderType = Enum("OrderType", "MARKET STOP LIMIT")
 type_mapping = {

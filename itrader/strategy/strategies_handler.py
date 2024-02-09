@@ -3,7 +3,7 @@ import datetime # DONT DELETE: Used with eval
 import pytz
 from datetime import datetime, timedelta
 
-from itrader.instances.event import SignalEvent
+from itrader.events_handler.event import SignalEvent
 
 import logging
 logger = logging.getLogger('TradingSystem')

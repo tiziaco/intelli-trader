@@ -1,5 +1,5 @@
 from itrader.universe.universe import Universe
-from ..instances.event import BarEvent
+from ..events_handler.event import BarEvent
 
 import logging
 logger = logging.getLogger('TradingSystem')

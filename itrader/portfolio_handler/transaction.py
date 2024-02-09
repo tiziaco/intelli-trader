@@ -1,6 +1,6 @@
 from enum import Enum
 
-from itrader.instances.event import FillEvent
+from itrader.events_handler.event import FillEvent
 
 TransactionType = Enum("TransactionType", "BUY SELL")
 type_mapping = {

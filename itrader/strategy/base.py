@@ -2,7 +2,7 @@ from abc import ABCMeta, abstractmethod
 import re
 import datetime # DONT DELETE: Used with eval
 
-from itrader.instances.event import SignalEvent
+from itrader.events_handler.event import SignalEvent
 
 import logging
 logger = logging.getLogger('TradingSystem')

@@ -2,7 +2,7 @@ from .base import AbstractExecutionHandler
 from .fee_model.zero_fee_model import ZeroFeeModel
 from .fee_model.percent_fee_model import PercentFeeModel
 from ..reporting.engine_logger import EngineLogger
-from ..instances.event import (FillEvent, EventType)
+from ..events_handler.event import (FillEvent, EventType)
 
 from itrader.telegram_bot.telegram_bot import TelegramBot
 

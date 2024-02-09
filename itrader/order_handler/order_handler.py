@@ -5,7 +5,7 @@ from .compliance_manager.basic_compliance_manager import BasicComplianceManager
 from .position_sizer.variable_sizer import DynamicSizer
 from .risk_manager.advanced_risk_manager import RiskManager
 
-from ..instances.event import OrderEvent, SignalEvent
+from ..events_handler.event import OrderEvent, SignalEvent
 from ..instances.orders import *
 
 import logging

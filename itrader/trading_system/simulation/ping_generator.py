@@ -3,7 +3,7 @@ import numpy as np
 import re
 
 from itrader.trading_system.simulation.base import SimulationEngine
-from ...instances.event import PingEvent
+from ...events_handler.event import PingEvent
 
 
 

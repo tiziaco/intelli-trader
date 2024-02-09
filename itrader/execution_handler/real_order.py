@@ -1,7 +1,7 @@
 from .base import AbstractExecutionHandler
 from .fee_model.zero_fee_model import ZeroFeeModel
 from .fee_model.percent_fee_model import PercentFeeModel
-from ..instances.event import (FillEvent, EventType)
+from ..events_handler.event import (FillEvent, EventType)
 
 import logging
 logger = logging.getLogger()
