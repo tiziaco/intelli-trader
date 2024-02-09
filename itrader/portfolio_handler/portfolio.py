@@ -13,26 +13,27 @@ class Portfolio(object):
 
     Parameters
     ----------
-    portfolio_id: str, optional
-        An identifier for the portfolio.
-    start_dt : datetime
-        Portfolio creation datetime. 
-    starting_cash : float, optional
-        Starting cash of the portfolio. Defaults to 100,000 USD.
-    name: str, optional
+    user_id: str
+        An identifier for the user owner of the portfolio.
+    name: str
         The human-readable name of the portfolio.
+    cash : float
+        Starting cash of the portfolio.
+    time : datetime
+        Portfolio creation datetime. 
     """
 
-    def __init__(self, user_id, name, cash):
+    def __init__(self, user_id, name, cash, time):
         """
         Initialise the Portfolio object with a PositionHandler,
         along with cash balance.
         """
         self.user_id = user_id
-        self.portfolio_id = 'xxx' #TODO: da generare automaticamente
+        self.portfolio_id = '123' #TODO: da generare automaticamente
         self.name = name
         self.cash = cash
-        self.current_time = '2023-12-05' #TODO: da generare automaticamente
+        self.creation_time = time
+        self.current_time = time
         self.transactions = {}
         self.pos_handler = PositionHandler()
 
