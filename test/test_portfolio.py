@@ -3,7 +3,7 @@ import unittest
 from itrader.portfolio_handler.portfolio import Portfolio
 
 
-class TestAmazonGooglePortfolio(unittest.TestCase):
+class TestPortfolio(unittest.TestCase):
 	"""
 	Test a portfolio object performing the different actions
 	like create a portfolio, process a transaction, update 
@@ -16,7 +16,7 @@ class TestAmazonGooglePortfolio(unittest.TestCase):
 		collection of Position objects, supplying it with
 		$500,000.00 USD in initial cash.
 		"""
-		
+
 		self.portfolio = Portfolio('test_user', 'test_pf', 10000, '2024-02-10')
 
 	def test_calculate_round_trip(self):
