@@ -1,177 +1,255 @@
 from enum import Enum
+from datetime import datetime
+from dataclasses import dataclass
 
 EventType = Enum("EventType", "PING BAR SIGNAL ORDER FILL")
-type_mapping = {
-    "PING": EventType.MARKET,
-    "BAR": EventType.LIMIT,
-    "SIGNAL": EventType.FILLED,
-    "ORDER": EventType.CANCELLED,
-    "FILL": EventType.FILL
+OrderType = Enum("OrderType", "MARKET STOP LIMIT")
+OrderStatus = Enum("OrderStatus", "PENDING FILLED CANCELLED")
+FillStatus = Enum("FillStatus", "EXECUTED REFUSED")
+
+event_mapping = {
+	"PING": EventType.PING,
+	"BAR": EventType.BAR,
+	"SIGNAL": EventType.SIGNAL,
+	"ORDER": EventType.ORDER,
+	"FILL": EventType.FILL
+}
+order_mapping = {
+	"MARKET": OrderType.MARKET,
+	"STOP": OrderType.STOP,
+	"LIMIT": OrderType.LIMIT
+}
+order_status_map = {
+	"PENDING": OrderStatus.PENDING,
+	"FILLED": OrderStatus.FILLED,
+	"CANCELLED": OrderStatus.CANCELLED
+}
+fill_status_map = {
+	"EXECUTED": FillStatus.EXECUTED,
+	"REFUSED": FillStatus.REFUSED,
 }
 
+@dataclass
+class PingEvent:
+	"""
+	Handles the event of receiving a new market update tick,
+	which is defined as a ticker symbol and associated best
+	bid and ask from the top of the order book.
+	"""
 
-class PingEvent(object):
-    """
-    Handles the event of receiving a new market update tick,
-    which is defined as a ticker symbol and associated best
-    bid and ask from the top of the order book.
-    """
-    def __init__(self, time):
-        """
-        Initialises the TickEvent.
+	time: datetime
+	type = EventType.PING
 
-        Parameters:
-        time - The timestamp of the ping
-        """
-        self.type = EventType.PING
-        self.time = time
+	def __str__(self):
+		return f"Type: {self.type}, Time: {self.time}"
 
-    def __str__(self):
-        return "Type: %s, Time: %s" % (
-            str(self.type), str(self.time)
-        )
-
-    def __repr__(self):
-        return str(self)
+	def __repr__(self):
+		return str(self)
 
 
-class BarEvent(object):
-    """
-    Handles the event of receiving a new market
-    open-high-low-close-volume bar, as would be generated
-    via common data providers such as Yahoo Finance.
-    """
-    def __init__(self, time):
-        """
-        Initialises the BarEvent.
+@dataclass
+class BarEvent:
+	"""
+	Handles the event of receiving a new market
+	open-high-low-close-volume bar, as would be generated
+	via common data providers.
+	"""
 
-        Parameters:
-        time - The timestamp of the bar
-        """
-        self.type = EventType.BAR
-        self.time = time
-        self.bars = {}
-    
-        #logger.debug('PING Event: %s', self.time)
+	time: datetime
+	bars: dict
+	type = EventType.BAR
 
-    def __str__(self):
-        return "Type: %s, Time: %s" % (
-            str(self.type),
-            str(self.time)
-        )
+	def __str__(self):
+		return f"Type: {self.type}, Time: {self.time}"
 
-    def __repr__(self):
-        return str(self)
+	def __repr__(self):
+		return str(self)
 
+@dataclass
+class SignalEvent:
+	"""
+	Signal event generated from a Strategy object.
+	This is received by the Order handler object that validate and
+	send the order to the Execution handler object.
 
-class SignalEvent(object):
-    """
-     Signal event generated from a Strategy object.
-    This is received by the Order handler object that validate and
-    send the order to the Execution handler object.
+	Parameters
+	----------
+	time: `timestamp`
+		Event time
+	ticker: `str`
+		The ticker symbol, e.g. 'BTCUSD'.
+	direction: `str`
+		Direction of the position.
+		'BOT' (for long) or 'SLD' (for short)
+	action: `str`
+		'ENTRY' (for long) or 'EXIT' (for short)
+	price: `float`
+		Last close price for the instrument
+	strategy_id: `str`
+		The ID of the strategy who generated the signal
+	"""
 
-    Parameters
-    ----------
-    time: `timestamp`
-        Event time
-    ticker: `str`
-        The ticker symbol, e.g. 'BTCUSD'.
-    direction: `str`
-        Direction of the position.
-        'BOT' (for long) or 'SLD' (for short)
-    action: `str`
-        'ENTRY' (for long) or 'EXIT' (for short)
-    price: `float`
-        Last close price for the instrument
-    strategy_id: `str`
-        The ID of the strategy who generated the signal
-    """
-    def __init__(
-        self, 
-        time: str, 
-        ticker: str, 
-        side: str, 
-        action: str, 
-        price: float,
-        stop_loss: float, 
-        take_profit: float,
-        strategy_id: int,
-        portfolio_id: int
-    ):
-        self.type = EventType.SIGNAL
-        self.time = time
-        self.ticker = ticker
-        self.side = side
-        self.action = action
-        self.price = price
-        self.stop_loss = stop_loss
-        self.take_profit = take_profit
-        self.strategy_id = strategy_id
-        self.portfolio_id = portfolio_id
-    
-    def __str__(self):
-        return f"{self.type.value} ({self.ticker}, {self.side}, {self.action}, \
-            {round(self.price, 4)} $)"
+	time: datetime
+	order_type: str
+	ticker: str
+	side: str
+	action: str
+	price: float
+	quantity: float
+	stop_loss: float
+	take_profit: float
+	strategy_id: int
+	portfolio_id: int
+	verified: bool = False
+	type = EventType.SIGNAL
 
-    def __repr__(self):
-        return str(self)
+	def __str__(self):
+		return f"{self.type.value} ({self.ticker}, {self.side}, {self.action}, \
+			{round(self.price, 4)} $)"
+
+	def __repr__(self):
+		return str(self)
 
 
-class FillEvent(object):
-    """
-    Encapsulates the notion of a filled order, as returned
-    from the ExecutionHandler in response to an executed order. 
-    Stores the price and quantity and commission confirmed by 
-    the exchange.
+@dataclass
+class OrderEvent:
+	"""
+	An Order object is generated by the OrderHandler in respons to
+	a signal event who has been validated by the the PositionSizer 
+	and RiskManager object.
 
-    Parameters
-    ----------
-    time: `timestamp`
-        Event time
-    ticker: `str`
-        The ticker symbol, e.g. 'BTCUSD'.
-    side:
-        'LONG' or 'SHORT'
-    action: `str`
-        'BOT' (for long) or 'SLD' (for short)
-    quantity: `float`
-        Quantity transacted
-    exchange: `str`
-        The exchange where to transact, e.g. 'binance'.
-    portfolio_id: `str`
-        Poertfolio id where transact the position
-    price: `float`
-        Last close price for the instrument
-    commission: `float`
-        Transaction fee
-    """
+	It is then sent to the ExecutionHandler who send the order
+	to the exchange.
+	"""
 
-    def __init__(
-        self, 
-        time, 
-        ticker, 
-        side,
-        action, 
-        quantity,
-        price,
-        commission,
-        exchange, 
-        portfolio_id  
-    ):
-        self.type = EventType.FILL
-        self.time = time
-        self.ticker = ticker
-        self.side = side
-        self.action = action
-        self.quantity = quantity
-        self.price = price
-        self.commission = commission
-        self.exchange = exchange
-        self.portfolio_id = portfolio_id
+	time: datetime
+	order_type: OrderType
+	status: OrderStatus
+	ticker: str
+	side: str
+	action: str
+	price: float
+	quantity: float
+	strategy_id: int
+	portfolio_id: int
+	type = EventType.ORDER
 
-    def __str__(self):
-        return f"{self.type.value} ({self.ticker}, {self.side}, {self.action}, \
-            {round(self.quantity, 4)}, {round(self.price, 4)} $)"
+	def __str__(self):
+		return f"Order-{self.type.value} ({self.ticker}, {self.action}, {self.quantity})"
 
-    def __repr__(self):
-        return str(self)
+	def __repr__(self):
+		return str(self)
+	
+	@classmethod
+	def new_order(cls, signal: SignalEvent):
+		"""
+		Generate a new Order object with the specified type.
+
+		Parameters
+		----------
+		signal : `SignalEvent`
+			The object representing the signal
+		
+		Returns
+		-------
+		Order : `OrderEvent`
+			A new Order object with the specified type.
+		"""
+
+		order_type = order_mapping.get(signal.order_type)
+		if order_type is None:
+			raise ValueError(f'OrderType {type} not supported')
+
+		return cls(
+			signal.time,
+			order_type,
+			OrderStatus.PENDING,
+			signal.ticker,
+			signal.side,
+			signal.action,
+			signal.price,
+			signal.quantity,
+			signal.strategy_id,
+			signal.portfolio_id
+		)
+
+
+@dataclass
+class FillEvent:
+	"""
+	This event is generated by the ExecutionHandler in response to
+	an executed order. 
+	Stores the price and quantity and commission confirmed by 
+	the exchange.
+
+	Parameters
+	----------
+	time: `timestamp`
+		Event time
+	ticker: `str`
+		The ticker symbol, e.g. 'BTCUSD'.
+	side:
+		'LONG' or 'SHORT'
+	action: `str`
+		'BOT' (for long) or 'SLD' (for short)
+	quantity: `float`
+		Quantity transacted
+	price: `float`
+		Last close price for the instrument
+	commission: `float`
+		Transaction fee
+	exchange: `str`
+		The exchange where to transact, e.g. 'binance'.
+	portfolio_id: `str`
+		Portfolio id where transact the position
+	"""
+
+	time: datetime
+	status: FillStatus
+	ticker: str
+	side: str
+	action: str
+	price: float
+	quantity: float
+	commission: float
+	exchange: str
+	portfolio_id: str
+	type = EventType.FILL
+
+	def __str__(self):
+		return f"{self.type.value} ({self.ticker}, {self.side}, {self.action}, \
+			{round(self.quantity, 4)}, {round(self.price, 4)} $)"
+
+	def __repr__(self):
+		return str(self)
+	
+	@classmethod
+	def new_fill(cls, status: str, commission: float, order: OrderEvent):
+		"""
+		Generate a new FillEvent object.
+
+		Parameters
+		----------
+		signal : `SignalEvent`
+			The object representing the signal
+		
+		Returns
+		-------
+		Order : `OrderEvent`
+			A new Order object with the specified type.
+		"""
+
+		fill_status = order_mapping.get(status)
+		if fill_status is None:
+			raise ValueError('Value %s not supported', status)
+		return cls(
+			order.time,
+			fill_status,
+			order.ticker,
+			order.side,
+			order.action,
+			order.price,
+			order.quantity,
+			commission,
+			order.portfolio_id
+		)
