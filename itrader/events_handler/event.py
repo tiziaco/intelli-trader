@@ -7,14 +7,14 @@ OrderType = Enum("OrderType", "MARKET STOP LIMIT")
 OrderStatus = Enum("OrderStatus", "PENDING FILLED CANCELLED")
 FillStatus = Enum("FillStatus", "EXECUTED REFUSED")
 
-event_mapping = {
+event_type_map = {
 	"PING": EventType.PING,
 	"BAR": EventType.BAR,
 	"SIGNAL": EventType.SIGNAL,
 	"ORDER": EventType.ORDER,
 	"FILL": EventType.FILL
 }
-order_mapping = {
+order_type_map = {
 	"MARKET": OrderType.MARKET,
 	"STOP": OrderType.STOP,
 	"LIMIT": OrderType.LIMIT
@@ -156,7 +156,7 @@ class OrderEvent:
 			A new Order object with the specified type.
 		"""
 
-		order_type = order_mapping.get(signal.order_type)
+		order_type = order_type_map.get(signal.order_type)
 		if order_type is None:
 			raise ValueError(f'OrderType {type} not supported')
 
@@ -212,7 +212,6 @@ class FillEvent:
 	price: float
 	quantity: float
 	commission: float
-	exchange: str
 	portfolio_id: str
 	type = EventType.FILL
 
@@ -230,16 +229,18 @@ class FillEvent:
 
 		Parameters
 		----------
-		signal : `SignalEvent`
-			The object representing the signal
+		status : `str`
+			The execution state of the fill order e.g. 'EXECUTED', 'REFUSED'
+		order : `OrderEvent`
+			The instance of the executed order
 		
 		Returns
 		-------
-		Order : `OrderEvent`
-			A new Order object with the specified type.
+		fill : `FillEvent`
+			Instance of the executed order
 		"""
 
-		fill_status = order_mapping.get(status)
+		fill_status = fill_status_map.get(status)
 		if fill_status is None:
 			raise ValueError('Value %s not supported', status)
 		return cls(
