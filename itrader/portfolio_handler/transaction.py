@@ -1,56 +1,32 @@
 from enum import Enum
+from dataclasses import dataclass
 
+from itrader import idgen
 from itrader.events_handler.event import FillEvent
 
 TransactionType = Enum("TransactionType", "BUY SELL")
-type_mapping = {
+transaction_type_map = {
 	"BUY": TransactionType.BUY,
 	"SELL": TransactionType.SELL,
 }
 
+@dataclass
 class Transaction(object):
 	"""
-	Handles the transaction of an asset, as used in the
-	Position class.
-
-	Parameters
-	----------
-	asset : `str`
-		The asset symbol of the transaction
-	quantity : `int`
-		Whole number quantity of shares in the transaction
-	dt : `pd.Timestamp`
-		The date/time of the transaction
-	price : `float`
-		The transaction price carried out
-	order_id : `int`
-		The unique order identifier
-	commission : `float`, optional
-		The trading commission
+	Instance of a Transaction, generated when a FillOrder event
+	is recived from the ExecutionHandler.
 	"""
 
-	def __init__(
-		self,
-		time: str,
-		type: TransactionType,
-		ticker: str,
-		side: str, 
-		action: str, 
-		price: float,
-		quantity: float,
-		commission: float,
-		portfolio_id: int
-	):
-		self.id = None		#TODO da implementare
-		self.time = time
-		self.type = type
-		self.ticker = ticker
-		self.side = side
-		self.action = action
-		self.price = price
-		self.quantity = quantity
-		self.commission = commission
-		self.portfolio_id = portfolio_id
+	time: str
+	type: TransactionType
+	ticker: str
+	side: str
+	action: str
+	price: float
+	quantity: float
+	commission: float
+	portfolio_id: int
+	id = idgen.generate_transaction_id()
 
 	def __repr__(self):
 		"""
@@ -89,20 +65,26 @@ class Transaction(object):
 	@classmethod
 	def new_transaction(cls, filled_order: FillEvent):
 		"""
-		Depending upon whether the action was a buy or sell ("BOT"
-		or "SLD") calculate the average bought cost, the total bought
-		cost, the average price and the cost basis.
+		Generate a new Transaction object from a FillEvent instance.
 
-		Finally, calculate the net total with and without commission.
+		Parameters
+		----------
+		filled_order : `OrderEvent`
+			Instance of the order to be executed
+		
+		Returns
+		-------
+		fill : `FillEvent`
+			Instance of the filled order
 		"""
 
-		transaction_type = type_mapping.get(filled_order.action)
+		transaction_type = transaction_type_map.get(filled_order.action)
 		if transaction_type is None:
 			raise ValueError('Value %s not supported', filled_order.action)
 
 		return cls(
 			filled_order.time,
-			filled_order.type,
+			transaction_type,
 			filled_order.ticker,
 			filled_order.side,
 			filled_order.action,
