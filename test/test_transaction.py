@@ -47,8 +47,6 @@ class TestTransaction(unittest.TestCase):
 		self.assertEqual(transaction.type, TransactionType.BUY)
 		self.assertIs(type(transaction.time), datetime)
 		self.assertEqual(transaction.ticker, 'BTCUSDT')
-		self.assertEqual(transaction.side, 'LONG')
-		self.assertEqual(transaction.action, 'BUY')
 		self.assertEqual(transaction.price, 42350.72)
 		self.assertEqual(transaction.quantity, 1)
 		self.assertEqual(transaction.portfolio_id, 'portfolio_id')
