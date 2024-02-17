@@ -26,7 +26,7 @@ class TestPosition(unittest.TestCase):
 		price = 42000
 		quantity = 1
 		commission = 0
-		buy_transaction = Transaction(time, type, self.ticker, 'side', 
+		buy_transaction = Transaction(time, type, self.ticker, 
 								price, quantity, commission,
 								self.portfolio_id)
 		position = Position.open_position(buy_transaction)
@@ -56,7 +56,7 @@ class TestPosition(unittest.TestCase):
 		price = 42000
 		quantity = 1
 		commission = 0
-		sell_transaction = Transaction(time, type, self.ticker, 'side', 
+		sell_transaction = Transaction(time, type, self.ticker, 
 								price, quantity, commission,
 								self.portfolio_id)
 		position = Position.open_position(sell_transaction)
@@ -85,7 +85,7 @@ class TestPosition(unittest.TestCase):
 		price = 42000
 		quantity = 1
 		commission = 0
-		buy_transaction = Transaction(time, type, self.ticker, 'side', 
+		buy_transaction = Transaction(time, type, self.ticker, 
 								price, quantity, commission,
 								self.portfolio_id)
 		position = Position.open_position(buy_transaction)
@@ -118,7 +118,7 @@ class TestPosition(unittest.TestCase):
 		price = 42000
 		quantity = 1
 		commission = 0
-		sell_transaction = Transaction(time, type, self.ticker, 'side', 
+		sell_transaction = Transaction(time, type, self.ticker, 
 								price, quantity, commission,
 								self.portfolio_id)
 		position = Position.open_position(sell_transaction)

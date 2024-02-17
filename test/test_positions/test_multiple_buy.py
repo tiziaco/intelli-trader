@@ -27,7 +27,7 @@ class TestPositionMultipleBuy(unittest.TestCase):
 		price = 42000
 		quantity = 1
 		commission = 0
-		buy_transaction_1 = Transaction(time, type, self.ticker, 'side', 
+		buy_transaction_1 = Transaction(time, type, self.ticker, 
 								price, quantity, commission,
 								self.portfolio_id)
 		position = Position.open_position(buy_transaction_1)
@@ -37,7 +37,7 @@ class TestPositionMultipleBuy(unittest.TestCase):
 		price = 50000
 		quantity = 2
 		commission = 0
-		buy_transaction_2 = Transaction(time, type, self.ticker, 'side', 
+		buy_transaction_2 = Transaction(time, type, self.ticker, 
 								price, quantity, commission,
 								self.portfolio_id)
 		position.update_position(buy_transaction_2)
