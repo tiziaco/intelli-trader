@@ -1,4 +1,5 @@
 from enum import Enum
+from datetime import datetime
 from dataclasses import dataclass
 
 from itrader import idgen
@@ -17,15 +18,14 @@ class Transaction(object):
 	is recived from the ExecutionHandler.
 	"""
 
-	time: str
+	time: datetime
 	type: TransactionType
 	ticker: str
-	side: str
-	action: str
 	price: float
 	quantity: float
 	commission: float
 	portfolio_id: int
+	position_id: int = None
 	id = idgen.generate_transaction_id()
 
 	def __repr__(self):
@@ -86,8 +86,6 @@ class Transaction(object):
 			filled_order.time,
 			transaction_type,
 			filled_order.ticker,
-			filled_order.side,
-			filled_order.action,
 			filled_order.price,
 			filled_order.quantity,
 			filled_order.commission,

@@ -1,8 +1,12 @@
-from ..outils.price_parser import PriceParser
-from itrader.portfolio_handler.position_handler import PositionHandler
+import numpy as np
+from datetime import datetime
 
-import logging
-logger = logging.getLogger('TradingSystem')
+from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from itrader.portfolio_handler.position import Position, PositionSide
+
+from itrader import logger, idgen
+
+TOLERANCE = 1e-3
 
 class Portfolio(object):
     """
@@ -23,26 +27,31 @@ class Portfolio(object):
         Portfolio creation datetime. 
     """
 
-    def __init__(self, user_id, name, cash, time):
+    def __init__(self, user_id: int, name: str, cash: float, time: datetime):
         """
         Initialise the Portfolio object with a PositionHandler,
         along with cash balance.
         """
         self.user_id = user_id
-        self.portfolio_id = '123' #TODO: da generare automaticamente
+        self.portfolio_id = idgen.generate_portfolio_id()
         self.name = name
         self.cash = cash
         self.creation_time = time
         self.current_time = time
         self.transactions = {}
-        self.pos_handler = PositionHandler()
+        self.positions = {}
+        self.closed_positions = []
+        self.transaction_history = []
 
     @property
     def total_market_value(self):
         """
         Obtain the total market value of the portfolio excluding cash.
         """
-        return self.pos_handler.total_market_value()
+        return sum(
+            pos.market_value
+            for ticker, pos in self.positions.items()
+        )
 
     @property
     def total_equity(self):
@@ -56,96 +65,94 @@ class Portfolio(object):
         """
         Calculate the sum of all the positions' unrealised P&Ls.
         """
-        return self.pos_handler.total_unrealised_pnl()
+        return sum(
+            pos.unrealised_pnl
+            for ticker, pos in self.positions.items()
+        )
 
     @property
     def total_realised_pnl(self):
         """
         Calculate the sum of all the positions' realised P&Ls.
         """
-        return self.pos_handler.total_realised_pnl()
+        return sum(
+            pos.realised_pnl
+            for ticker, pos in self.positions.items()
+        )
 
     @property
     def total_pnl(self):
         """
         Calculate the sum of all the positions' total P&Ls.
         """
-        return self.pos_handler.total_pnl()
+        return sum(
+            pos.total_pnl
+            for ticker, pos in self.positions.items()
+        )
 
-    def process_transaction(self, transaction):
-        """
-        Adjusts positions to account for a transaction.
+    def process_transaction(self, transaction: Transaction):
+        time = transaction.time
+        ticker = transaction.ticker
+        price = transaction.price
 
-        Parameters
-        ----------
-        time : `pd.Timestamp`
-            The transaction time
-        ticker : `str`
-            The ticker of the transacted asset
-        action : `str`
-            The market direction of the position e.g. 'BOT' or 'SLD'
-        quantity : `float`
-            The amount of the transacted asset
-        price : `float`
-            The asset price at the moment of the transaction
-        commission : `float`
-            The commission spent on transacting the asset
-        """
-        self.current_time = time
+        # Retrieve open position for the asset's ticker
+        open_position: Position = self.positions.get(ticker)
 
-        txn_share_cost = round(price * quantity,2)
-        txn_total_cost = round(txn_share_cost + commission,2)
-
-        last_close = None
-
-        if ticker not in self.portfolio_to_dict().keys():
-            self.pos_handler._add_position(
-                time, ticker, action, quantity,
-                price, commission)
-            self.cash -= txn_total_cost
+        if open_position:
+            # Update existing position for buy transaction
+            open_position.update_current_price_time(price, time)
+            transaction_cost = self.calculate_transaction_cost(transaction, open_position)
+            open_position.update_position(transaction)
+            transaction.position_id = open_position.id
+            # Check if position should be closed
+            if np.isclose(open_position.net_quantity, 0, atol=TOLERANCE):
+                open_position.close_position(price, time)
+                self.closed_positions.append(open_position)
+                del self.positions[ticker]
         else:
-            last_close = self.pos_handler._modify_position(
-                time, ticker, action, quantity,
-                price, commission)
-            #print(txn_total_cost)
+            # Create a new long position for the trading pair
+            open_position = Position.open_position(transaction)
+            transaction_cost = self.calculate_transaction_cost(transaction, None)
+            transaction.position_id = open_position.id
+            self.positions[ticker] = open_position
 
-            # Update the cash in the portfolio after a transaction
-            if last_close is not None:
-                # The position has been closed
-                if last_close.action == 'BOT':
-                    self.cash += round(last_close.total_bought + last_close.realised_pnl,2)
-                elif last_close.action == 'SLD':
-                    self.cash += round(last_close.total_sold + last_close.realised_pnl,2)
-                return last_close
+        # Calculate transaction cost
+        # transaction_cost = self.calculate_transaction_cost(transaction, open_position)
+        # Update portfolio cash
+        self.cash += transaction_cost
+
+    @staticmethod
+    def calculate_transaction_cost(transaction: Transaction, open_position: Position) -> float:
+        if not open_position:
+            price = transaction.price
+            quantity = transaction.quantity
+            commission = transaction.commission
+            transaction_cost = -round((price * quantity) + commission, 2)
+        else:
+            if (open_position.side == PositionSide.LONG and transaction.type == TransactionType.BUY) | \
+                (open_position.side == PositionSide.SHORT and transaction.type == TransactionType.SELL):
+                price = transaction.price
+                quantity = transaction.quantity
+                commission = transaction.commission
+                transaction_cost = -round((price * quantity) + commission, 2)
             else:
-                # The position is still open
-                pos = self.pos_handler.positions[ticker]
-                if pos.action != action :
-                    # Partial exit of the position.
-                    # TODO: da verificare
-                    self.cash += pos.realised_pnl 
-                else:
-                    # Increase the position
-                    self.cash -= txn_total_cost
-                return None
-
+                avg_price = open_position.avg_price
+                quantity = transaction.quantity
+                # Calculate the total cost including commissions
+                total_cost_incl_commission = open_position.net_incl_commission
+                # Calculate the realized profit or loss
+                realized_pnl = open_position.realised_pnl
+                # Deduct the realized profit or loss from the total cost
+                transaction_cost = total_cost_incl_commission - realized_pnl + avg_price * quantity
+        return transaction_cost
 
     def update_market_value_of_asset(self, ticker, current_price, current_dt):
         """
         Updates the value of all positions that are currently open.
         """
-        if ticker not in self.pos_handler.positions:
+        if ticker not in self.positions:
             return
-        else:
-            if current_price < 0:
-                raise ValueError(
-                    'Current trade price of %s is negative for '
-                    'asset %s. Cannot update position.' % (
-                        current_price, ticker
-                    )
-                )
-
-        self.pos_handler.positions[ticker].update_current_price(
+        self.positions[ticker].update_current_price_time(
                 current_price, current_dt
             )
 
@@ -161,7 +168,7 @@ class Portfolio(object):
             The portfolio holdings.
         """
         holdings = {}
-        for ticker, pos in self.pos_handler.positions.items():
+        for ticker, pos in self.positions.items():
             holdings[ticker] = {
                 'action': pos.action,
                 "quantity": pos.net_quantity,
@@ -184,7 +191,7 @@ class Portfolio(object):
             The closed positions.
         """
         closed = {}
-        for pos in self.pos_handler.closed_positions:
+        for pos in self.closed_positions:
             closed[pos.ticker] = {
                 'entry_date': pos.entry_date,
                 'exit_date': pos.exit_date,

@@ -1,6 +1,7 @@
 from enum import Enum
 from datetime import datetime
 
+from itrader import idgen
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 
 PositionSide = Enum("PositionSide", "LONG SHORT")
@@ -18,35 +19,12 @@ class Position(object):
 	The approach taken here separates the long and short side
 	for accounting purposes. It also includes an unrealised and
 	realised running profit & loss of the position.
-
-	Parameters
-	----------
-	ticker: `str`
-		The Asset symbol string.
-	action : `str`
-		The market direction of the position e.g. 'BOT' or 'SLD' .
-	current_price : `float`
-		The initial price of the Position.
-	current_time : `pd.Timestamp`
-		The time at which the Position was created.
-	buy_quantity : `int`
-		The amount of the asset bought.
-	sell_quantity : `int`
-		The amount of the asset sold.
-	avg_bought : `float`
-		The initial price paid for buying assets.
-	avg_sold : `float`
-		The initial price paid for selling assets.
-	buy_commission : `float`
-		The commission spent on buying assets for this position.
-	sell_commission : `float`
-		The commission spent on selling assets for this position.
 	"""
 	def __init__(
 		self,
 		entry_date: datetime,
 		ticker: str,
-		side: str,
+		side: PositionSide,
 		price: float,
 		buy_quantity: float,
 		sell_quantity: float,
@@ -57,6 +35,7 @@ class Position(object):
 		is_open: bool,
 		portfolio_id: str
 	):
+		self.id = idgen.generate_position_id()
 		self.ticker = ticker
 		self.side = side
 		self.current_price = price
@@ -73,127 +52,86 @@ class Position(object):
 		self.portfolio_id = portfolio_id
 	
 	def __repr__(self):
-		rep = ('%s, %s, %s'%(self.ticker, self.action, self.net_quantity))
+		rep = ('%s, %s, %s'%(self.ticker, self.side.value, self.net_quantity))
 		return rep
 
 
 	@property
-	def market_value(self):
+	def market_value(self) -> float:
 		"""
 		Return the market value (respecting the direction) of the
 		Position based on the current price available to the Position.
-
-		Returns
-		-------
-		`float`
-			The current market value of the Position.
 		"""
 		return self.current_price * abs(self.net_quantity)
 
 	@property
-	def avg_price(self):
+	def avg_price(self) -> float:
 		"""
 		The average price paid for all assets on the long or short side.
-
-		Returns
-		-------
-		`float`
-			The average price on either the long or short side.
 		"""
-		if self.net_quantity == 0:
-			return 0.0
-		elif self.action =='BOT':
+		# if self.net_quantity == 0:
+		# 	return 0.0
+		if self.side == PositionSide.LONG:
 			return (self.avg_bought * self.buy_quantity + self.buy_commission) / self.buy_quantity
-		else: # action == "SLD"
+		else: # side = 'SHORT'
 			return (self.avg_sold * self.sell_quantity - self.sell_commission) / self.sell_quantity
 
 	@property
-	def net_quantity(self):
+	def net_quantity(self) -> float:
 		"""
 		The difference in the quantity of assets bought and sold to date.
-
-		Returns
-		-------
-		`int`
-			The net quantity of assets.
 		"""
 		return abs(self.buy_quantity - self.sell_quantity)
 
 	@property
-	def total_bought(self):
+	def total_bought(self) -> float:
 		"""
 		Calculates the total average cost of assets bought.
-
-		Returns
-		-------
-		`float`
-			The total average cost of assets bought.
 		"""
 		return self.avg_bought * self.buy_quantity
 
 	@property
-	def total_sold(self):
+	def total_sold(self) -> float:
 		"""
 		Calculates the total average cost of assets sold.
-
-		Returns
-		-------
-		`float`
-			The total average cost of assets solds.
 		"""
 		return self.avg_sold * self.sell_quantity
 
 	@property
-	def net_total(self):
+	def net_total(self) -> float:
 		"""
 		Calculates the net total average cost of assets
 		bought and sold.
-
-		Returns
-		-------
-		`float`
-			The net total average cost of assets bought
-			and sold.
 		"""
-		return self.total_sold - self.total_bought
+		if self.is_open == False:
+			return self.total_sold - self.total_bought
+		else:
+			if self.side == PositionSide.LONG:
+				return self.market_value - self.total_bought
+			else:
+				return self.total_sold - self.market_value
 
 	@property
-	def commission(self):
+	def commission(self) -> float:
 		"""
 		Calculates the total commission from assets bought and sold.
-
-		Returns
-		-------
-		`float`
-			The total commission from assets bought and sold.
 		"""
 		return self.buy_commission + self.sell_commission
 
 	@property
-	def net_incl_commission(self):
+	def net_incl_commission(self) -> float:
 		"""
 		Calculates the net total average cost of assets bought
 		and sold including the commission.
-
-		Returns
-		-------
-		`float`
-			The net total average cost of assets bought and
-			sold including the commission.
 		"""
 		return self.net_total - self.commission
 
 	@property
-	def realised_pnl(self):
+	def realised_pnl(self) -> float:
 		"""
 		Calculates the profit & loss (P&L) that has been realised.
-
-		Returns
-		-------
-		`float`
-			The calculated realised P&L.
 		"""
-		if self.action == 'BOT':
+		if self.side == PositionSide.LONG:
 			if self.sell_quantity == 0:
 				return 0.0
 			else:
@@ -202,7 +140,7 @@ class Position(object):
 					((self.sell_quantity / self.buy_quantity) * self.buy_commission) -
 					self.sell_commission
 				)
-		elif self.action == 'SLD':
+		elif self.side == PositionSide.SHORT:
 			if self.buy_quantity == 0:
 				return 0.0
 			else:
@@ -215,71 +153,69 @@ class Position(object):
 			return self.net_incl_commission
 
 	@property
-	def unrealised_pnl(self):
+	def unrealised_pnl(self) -> float:
 		"""
 		Calculates the profit & loss (P&L) that has yet to be 'realised'
 		in the remaining non-zero quantity of assets, due to the current
 		market price.
-
-		Returns
-		-------
-		`float`
-			The calculated unrealised P&L.
 		"""
-		return (self.current_price - self.avg_price) * self.net_quantity
+		if self.side == PositionSide.LONG:
+			return (self.current_price - self.avg_price) * self.net_quantity
+		elif self.side == PositionSide.SHORT:
+			return (self.avg_price - self.current_price) * self.net_quantity
 
 	@property
-	def total_pnl(self):
+	def total_pnl(self) -> float:
 		"""
 		Calculates the sum of the unrealised and realised profit & loss (P&L).
-
-		Returns
-		-------
-		`float`
-			The sum of the unrealised and realised P&L.
 		"""
 		return self.realised_pnl + self.unrealised_pnl
 
 	@classmethod
 	def open_position(cls, transaction: Transaction):
 		"""
-		Depending upon whether the action was a buy or sell ("BOT"
-		or "SLD") calculate the average bought cost, the total bought
-		cost, the average price and the cost basis.
+		Creates a new position object based on the provided transaction. 
+		It determines the position side based on the transaction type (BUY or SELL) 
+		and maps it to the corresponding PositionSide enum value. 
 
-		Finally, calculate the net total with and without commission.
+		The newly opened position instance is returned.
 		"""
-		position_side = position_side_map.get(transaction.side)
-		if position_side is None:
-			raise ValueError('Value %s not supported', transaction.side)
+		position_side = PositionSide.LONG if transaction.type == TransactionType.BUY else PositionSide.SHORT
+
 		return cls(
 			entry_date = transaction.time,
 			ticker = transaction.ticker,
 			side = position_side,
-			current_price = transaction.price,
-			buy_quantity = transaction.quantity if transaction.side == 'long' else 0,
-			sell_quantity = transaction.quantity if transaction.side == 'short' else 0,
-			avg_bought = transaction.price if transaction.side == 'long' else 0,
-			avg_sold = transaction.price if transaction.side == 'short' else 0,
-			buy_commission = transaction.commission if transaction.side == 'long' else 0,
-			sell_commission = transaction.commission if transaction.side == 'short' else 0,
+			price = transaction.price,
+			buy_quantity = transaction.quantity if position_side == PositionSide.LONG else 0,
+			sell_quantity = transaction.quantity if position_side == PositionSide.SHORT else 0,
+			avg_bought = transaction.price if position_side == PositionSide.LONG else 0,
+			avg_sold = transaction.price if position_side == PositionSide.SHORT else 0,
+			buy_commission = transaction.commission if position_side == PositionSide.LONG else 0,
+			sell_commission = transaction.commission if position_side == PositionSide.SHORT else 0,
 			is_open = True,
 			portfolio_id = transaction.portfolio_id,
 		)
 
 	def update_position(self, transaction: Transaction):
-		if transaction.action == TransactionType.BUY:
+		"""
+		Updates the average bought/sold price, quantity, and commission
+		of the Position based on the transaction details.
+		"""
+		if transaction.type == TransactionType.BUY:
 			self.avg_bought = ((self.avg_bought * self.buy_quantity) + (transaction.quantity * transaction.price)) / (self.buy_quantity + transaction.quantity)
 			self.buy_quantity += transaction.quantity
 			self.buy_commission += transaction.commission
-		elif transaction.action == TransactionType.SELL:
-			self.avg_sold = ((self.avg_sold * self.sell_quantity) + (-transaction.quantity * transaction.price)) / (self.sell_quantity + (-transaction.quantity))
-			self.sell_quantity += -1 * transaction.quantity
+		elif transaction.type == TransactionType.SELL:
+			self.avg_sold = ((self.avg_sold * self.sell_quantity) + (transaction.quantity * transaction.price)) / (self.sell_quantity + (transaction.quantity))
+			self.sell_quantity += transaction.quantity
 			self.sell_commission += transaction.commission
-
-		self.update_current_price_time(transaction.time, transaction.price)
+		self.update_current_price_time(transaction.price, transaction.time)
 
 	def close_position(self, price, time):
+		"""
+		Close the position.
+		"""
 		self.is_open = False
 		self.exit_date = time
 		self.current_price = price
@@ -298,3 +234,26 @@ class Position(object):
 		"""
 		self.current_price = price
 		self.current_time = time
+
+	def to_dict(self):
+			return {
+				'id': self.id,
+				'is_open': self.is_open,
+				'current_price': self.current_price,
+				'entry_date': self.entry_date,
+				'exit_date': self.exit_date,
+				'pair': self.ticker,
+				'side': self.side,
+				'avg_price': self.avg_price,
+				'net_quantity': self.net_quantity,
+				'net_total': self.net_total,
+				'realised_pnl': self.realised_pnl,
+				'unrealised_pnl': self.unrealised_pnl,
+				'avg_bought': self.avg_bought,
+				'avg_sold': self.avg_sold,
+				'buy_quantity': self.buy_quantity,
+				'sell_quantity': self.sell_quantity,
+				'total_bought': self.total_bought,
+				'total_sold': self.total_sold,
+				'market_value': self.market_value
+			}
