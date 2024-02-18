@@ -94,7 +94,7 @@ class TestPortfolio(unittest.TestCase):
 		self.portfolio.process_transaction(sell_txn)
 
 		# Assert the result after processing the transactions
-		self.assertEqual(len(self.portfolio.positions), 0)  # One position (AAPL) remaining
+		self.assertEqual(len(self.portfolio.positions), 0)  # No position remaining
 		self.assertEqual(len(self.portfolio.closed_positions), 1)  # One position (BTCUSDT) closed
 		self.assertEqual(self.portfolio.cash, 169000)  # Cash after transactions
 		self.assertEqual(self.portfolio.total_equity, 169000)  # Total equity after transactions
@@ -115,7 +115,7 @@ class TestPortfolio(unittest.TestCase):
 		self.portfolio.process_transaction(buy_txn2)
 
 		# Assert the result after processing the transactions
-		self.assertEqual(len(self.portfolio.positions), 0)  # Two positions (AAPL and BTCUSDT) remaining
+		self.assertEqual(len(self.portfolio.positions), 0)  # No positions remaining
 		self.assertEqual(len(self.portfolio.closed_positions), 1)  # One position (BTCUSDT) closed
 		self.assertEqual(self.portfolio.cash, 169000)  # Cash after transactions
 		self.assertEqual(self.portfolio.total_equity, 169000)  # Total equity after transactions
