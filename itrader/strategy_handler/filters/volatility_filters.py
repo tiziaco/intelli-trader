@@ -3,7 +3,7 @@ from pandas_ta.volatility import bbands
 from pandas_ta.overlap import ssf
 import numpy as np
 
-from itrader.strategy.custom_indicators.custom_ind import kalman_filter
+from itrader.strategy_handler.custom_indicators.custom_ind import kalman_filter
 
 class ATR_filter():
 	"""

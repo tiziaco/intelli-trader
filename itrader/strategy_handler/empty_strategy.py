@@ -1,7 +1,7 @@
 # import pandas as pd
 # import numpy as np
 
-from itrader.strategy.base import BaseStrategy
+from itrader.strategy_handler.base import BaseStrategy
 
 from ta import trend
 

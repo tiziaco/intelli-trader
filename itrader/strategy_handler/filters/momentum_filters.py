@@ -2,7 +2,7 @@ from pandas_ta import momentum
 import pandas as pd
 import numpy as np
 
-from itrader.strategy.custom_indicators.custom_ind import kalman_filter
+from itrader.strategy_handler.custom_indicators.custom_ind import kalman_filter
 
 
 class momentum_filter():

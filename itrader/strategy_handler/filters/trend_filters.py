@@ -4,7 +4,7 @@ from pandas_ta import overlap
 import numpy as np
 
 from ..custom_indicators.custom_ind import SuperSmoother
-from  itrader.strategy.custom_indicators.custom_ind import PolynomialReg
+from  itrader.strategy_handler.custom_indicators.custom_ind import PolynomialReg
 
 class aroon_filter():
 	"""

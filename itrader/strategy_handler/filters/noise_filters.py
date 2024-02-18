@@ -1,6 +1,6 @@
 import numpy as np
-from itrader.strategy.custom_indicators.custom_ind import pdensity
-from itrader.strategy.custom_indicators.custom_ind import efficiency_ratio
+from itrader.strategy_handler.custom_indicators.custom_ind import pdensity
+from itrader.strategy_handler.custom_indicators.custom_ind import efficiency_ratio
 
 
 class PriceDensity_filter():

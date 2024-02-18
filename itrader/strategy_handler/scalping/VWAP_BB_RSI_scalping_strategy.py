@@ -1,14 +1,14 @@
 # import pandas as pd
 # import numpy as np
 
-from itrader.strategy.base import BaseStrategy
+from itrader.strategy_handler.base import BaseStrategy
 
 import pandas_ta as ta
 
 import logging
 logger = logging.getLogger('TradingSystem')
 
-class RSI_scalping_strategy(BaseStrategy):
+class VWAP_BB_RSI_scalping_strategy(BaseStrategy):
     """
     Requires:
     ticker - The ticker symbol being used for moving averages
@@ -20,28 +20,29 @@ class RSI_scalping_strategy(BaseStrategy):
         timeframe,
         tickers=[],
 
-        EMA_WINDOW=100,
-        RSI_WINDOW=6,
-        LOOKBACK=5,
+        RSI_WINDOW=14,
+        BB_WINDOW = 14,
+        BB_STD = 2,
+        LOOKBACK = 10,
 
         long_only=False,
     ):
+        self.tickers = tickers
         
         # Strategy parameters
-        self.tickers = tickers
-        self.EMA_WINDOW = EMA_WINDOW
         self.RSI_WINDOW = RSI_WINDOW
+        self.BB_WINDOW = BB_WINDOW
+        self.BB_STD = BB_STD
         self.LOOKBACK = LOOKBACK
 
-        self.long_only = long_only 
-        self.last_bars = None
+        self.long_only = long_only #TODO: da spostare in order_handler.compliance
 
         # Define Timedelta object according to the timeframe
         self.timeframe = timeframe
         self.tf_delta = self._get_delta(timeframe)
-        self.max_window = EMA_WINDOW*2
+        self.max_window = 200
 
-        self.strategy_id = "RSI_scalp_%s" % self.timeframe
+        self.strategy_id = "VWAP_BB_RSI_scalp_%s" % self.timeframe
     
     def __str__(self):
         return self.strategy_id
@@ -51,18 +52,22 @@ class RSI_scalping_strategy(BaseStrategy):
 
 
 
-    def calculate_signal(self, bars, event, ticker):
+    def calculate_signal(self, bars, ticker, time):
         #Check if a stop or limit order is already present in the queue
         # TODO: da spostare in order_handler.compliance
         # for ev in self.global_queue.queue:
         #     if ev.type == EventType.ORDER and ev.ticker == event.ticker:
         #         return
-        #self.last_bars = bars[ticker].close
-        time = event.time
+
+
         if len(bars) >= self.max_window:
-            # Calculate the EMA
+
+            # Calculate the VWAP
             start_dt = time - self.tf_delta * self.max_window
-            ema = ta.ema(bars[start_dt:].close, self.EMA_WINDOW).dropna()
+            vwap = ta.vwap(bars.high, bars.low, bars.close, bars.volume) # 30 bars
+
+            # Calculate BB bands
+            bbands = ta.bbands(bars.close, length=self.BB_WINDOW, std=self.BB_STD) # 30 bars
 
             # Calculate the RSI
             rsi = ta.rsi(bars[start_dt:].close, self.RSI_WINDOW).dropna()
@@ -71,22 +76,24 @@ class RSI_scalping_strategy(BaseStrategy):
 
             ### LONG signals
             # Entry
-            if (bars.tail(self.LOOKBACK).close > ema.tail(self.LOOKBACK)).all() == True: # Filter
-                if self.cross_up(rsi[-1], rsi[-2], 10): # Buy trigger
+            if (bars.tail(self.LOOKBACK).close > vwap.tail(self.LOOKBACK)).all() == True: # Filter
+                if (rsi[-1] < 45) and (bars.close[-1] <= bbands.iloc[-1,0]): # Buy trigger
                     return (('BOT','ENTRY'))
                 
             # Exit
                 # Use SL or TP to exit
-                #return (('SLD','EXIT'))
+                if self.cross_up(rsi[-1], rsi[-2], 70): 
+                    return (('SLD','EXIT'))
 
 
             ### SHORT signals
             # Entry
-            if (bars.tail(self.LOOKBACK).close < ema.tail(self.LOOKBACK)).all() and self.long_only:# Filter
-                if self.cross_down(rsi[-1], rsi[-2], 90): # Short trigger
+            if (bars.tail(self.LOOKBACK).close < vwap.tail(self.LOOKBACK)).all() == True:# Filter
+                if (rsi[-1] > 55) and (bars.close[-1] >= bbands.iloc[-1,2]): # Short trigger
                     return (('SLD','ENTRY'))
 
             # Exit
                 # Use SL or TP to exit
-                # return (('BOT','EXIT'))
+                if self.cross_down(rsi[-1], rsi[-2], 30): 
+                    return (('BOT','EXIT'))
 
