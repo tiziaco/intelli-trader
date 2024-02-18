@@ -1,42 +1,27 @@
 # import pandas as pd
 # import numpy as np
+# from ta import trend
 
-from itrader.strategy_handler.base import BaseStrategy
+from itrader.strategy_handler.base import Strategy
 
-from ta import trend
+class Empty_strategy(Strategy):
+	"""
+	Requires:
+	ticker - The ticker symbol being used for moving averages
+	short_window - Lookback period for short moving average
+	long_window - Lookback period for long moving average
+	"""
+	def __init__(self, name, timeframe, tickers, settings):
+		super.__init__(self, name, timeframe, tickers, settings)
 
-import logging
-logger = logging.getLogger('TradingSystem')
+		self.max_window = 1
+	
+	def __str__(self):
+		return "Empty_%s" % self.timeframe
 
-class Empty_strategy(BaseStrategy):
-    """
-    Requires:
-    ticker - The ticker symbol being used for moving averages
-    short_window - Lookback period for short moving average
-    long_window - Lookback period for long moving average
-    """
-    def __init__(
-        self,
-        timeframe,
-        tickers=['BTCBUSD']
-    ):
-        # Strategy parameters
-        self.tickers = tickers
-
-        # Define Timedelta object according to the timeframe
-        self.timeframe = timeframe
-        self.tf_delta = self._get_delta(timeframe)
-        self.max_window = 1
-
-        self.strategy_id = "Empty_%s" % self.timeframe
-    
-    def __str__(self):
-        return "Empty_%s" % self.timeframe
-
-    def __repr__(self):
-        return str(self)
+	def __repr__(self):
+		return str(self)
 
 
-
-    def calculate_signal(self, bars, ticker, time):
-        return
+	def calculate_signal(self, bars, ticker, time):
+		return
