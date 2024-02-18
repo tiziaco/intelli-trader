@@ -3,4 +3,5 @@ oanda.cfg
 *.json
 *.ipynb
 OLD/*
+my_strategies/
 .DS_Store
