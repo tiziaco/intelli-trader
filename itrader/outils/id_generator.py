@@ -8,6 +8,7 @@ class IDGenerator:
 		self.portfolio_counter = 0
 		self.position_counter = 0
 		self.order_counter = 0
+		self.strategy_counter = 0
 
 	def generate_transaction_id(self):
 		self.transaction_counter += 1
@@ -24,3 +25,7 @@ class IDGenerator:
 	def generate_order_id(self):
 		self.order_counter += 1
 		return self.order_counter
+	
+	def generate_strategy_id(self):
+		self.strategy_counter += 1
+		return self.strategy_counter

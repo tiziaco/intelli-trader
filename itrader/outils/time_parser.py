@@ -1,5 +1,6 @@
 import re
-from datetime import timedelta
+import pytz
+from datetime import datetime, timedelta
 
 def to_timedelta(timeframe: str) -> timedelta:
 	"""
@@ -37,3 +38,28 @@ def format_timeframe(timeframe: str) -> str:
 		return (res[0] + 'min')
 	else:
 		return timeframe
+
+def check_timeframe(time: datetime, timeframe: timedelta) -> bool:
+		"""
+		Check if the current time of is a multiple of the
+		strategy's timeframe.
+		In that case return True end go on calculating the signals.
+
+		Parameters
+		----------
+		time: `timestamp`
+			Event time
+		timeframe: `timedelta object`
+			Timeframe of the strategy
+		"""
+		# Calculate the number of seconds in the timestamp
+		time = time.astimezone(pytz.utc)
+		seconds = (time - time.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds()
+
+		# Check if the number of seconds is a multiple of the delta
+		if seconds % timeframe.total_seconds() == 0:
+			# The timestamp IS a multiple of the timeframe
+			return True
+		else:
+			# The timestamp IS NOT a multiple of the timeframe
+			return False
