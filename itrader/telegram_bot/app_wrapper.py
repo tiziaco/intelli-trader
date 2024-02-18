@@ -7,8 +7,8 @@ from itrader.trading_system.backtest_trading_system import TradingSystem
 from itrader.telegram_bot.telegram_bot import TelegramBot
 from itrader.telegram_bot.responses import Responses
 
-from itrader.strategy.empty_strategy import Empty_strategy
-from itrader.strategy.scalping.VWAP_BB_RSI_scalping_strategy import VWAP_BB_RSI_scalping_strategy
+from itrader.strategy_handler.empty_strategy import Empty_strategy
+from itrader.strategy_handler.scalping.VWAP_BB_RSI_scalping_strategy import VWAP_BB_RSI_scalping_strategy
 
 from itrader.screeners_handler.screeners.most_performing import MostPerformingScreener
 from itrader.screeners_handler.screeners.volume_spyke import VolumeSpykeScreener

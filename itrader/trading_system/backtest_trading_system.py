@@ -10,7 +10,7 @@ from itrader.events_handler.event import EventType
 from itrader.engine.event_driven import EventEngine
 from itrader.price_handler.CCXT_data_provider import CCXT_data_provider
 from itrader.universe.dynamic import DynamicUniverse
-from itrader.strategy.strategies_handler import StrategiesHandler
+from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.trading_system.simulation.ping_generator import PingGenerator
 from itrader.reporting.statistics import StatisticsReporting
