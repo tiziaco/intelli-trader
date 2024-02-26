@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from itrader.events_handler.event import SignalEvent, BarEvent
 from itrader.outils.time_parser import to_timedelta
 from itrader import logger, idgen
@@ -67,3 +69,10 @@ class Strategy(object):
 		logger.debug('Strategy signal (%s - %s %s,%s $', signal.strategy_id,
 					signal.ticker, signal.action, signal.price)
 
+	def check_max_duration(self, bar_event: BarEvent, max_duration = timedelta(days=2)):
+		#TODO: da modificare
+		for portfolio_id, positions in self.open_positions.items():
+			for ticker, position in positions.items():
+				duration = bar_event.time - position['entry_time']
+				if duration > max_duration:
+					return True

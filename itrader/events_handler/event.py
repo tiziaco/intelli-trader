@@ -2,9 +2,9 @@ from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass
 
+from itrader.order_handler.order import Order
+
 EventType = Enum("EventType", "PING BAR SIGNAL ORDER FILL")
-OrderType = Enum("OrderType", "MARKET STOP LIMIT")
-OrderStatus = Enum("OrderStatus", "PENDING FILLED CANCELLED")
 FillStatus = Enum("FillStatus", "EXECUTED REFUSED")
 
 event_type_map = {
@@ -14,16 +14,7 @@ event_type_map = {
 	"ORDER": EventType.ORDER,
 	"FILL": EventType.FILL
 }
-order_type_map = {
-	"MARKET": OrderType.MARKET,
-	"STOP": OrderType.STOP,
-	"LIMIT": OrderType.LIMIT
-}
-order_status_map = {
-	"PENDING": OrderStatus.PENDING,
-	"FILLED": OrderStatus.FILLED,
-	"CANCELLED": OrderStatus.CANCELLED
-}
+
 fill_status_map = {
 	"EXECUTED": FillStatus.EXECUTED,
 	"REFUSED": FillStatus.REFUSED,
@@ -92,7 +83,6 @@ class SignalEvent:
 	time: datetime
 	order_type: str
 	ticker: str
-	side: str
 	action: str
 	price: float
 	quantity: float
@@ -104,7 +94,7 @@ class SignalEvent:
 	type = EventType.SIGNAL
 
 	def __str__(self):
-		return f"{self.type.value} ({self.ticker}, {self.side}, {self.action}, \
+		return f"{self.type.value} ({self.ticker}, {self.action}, \
 			{round(self.price, 4)} $)"
 
 	def __repr__(self):
@@ -123,10 +113,7 @@ class OrderEvent:
 	"""
 
 	time: datetime
-	order_type: OrderType
-	status: OrderStatus
 	ticker: str
-	side: str
 	action: str
 	price: float
 	quantity: float
@@ -141,9 +128,9 @@ class OrderEvent:
 		return str(self)
 	
 	@classmethod
-	def new_order(cls, signal: SignalEvent):
+	def new_order_event(cls, order: Order):
 		"""
-		Generate a new Order object with the specified type.
+		Generate a new OrderEvent object when an order is filled.
 
 		Parameters
 		----------
@@ -156,21 +143,14 @@ class OrderEvent:
 			A new Order object with the specified type.
 		"""
 
-		order_type = order_type_map.get(signal.order_type)
-		if order_type is None:
-			raise ValueError(f'OrderType {type} not supported')
-
 		return cls(
-			signal.time,
-			order_type,
-			OrderStatus.PENDING,
-			signal.ticker,
-			signal.side,
-			signal.action,
-			signal.price,
-			signal.quantity,
-			signal.strategy_id,
-			signal.portfolio_id
+			order.time,
+			order.ticker,
+			order.action,
+			order.price,
+			order.quantity,
+			order.strategy_id,
+			order.portfolio_id
 		)
 
 
