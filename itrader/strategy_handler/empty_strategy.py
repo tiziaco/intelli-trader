@@ -1,4 +1,4 @@
-# import pandas as pd
+import pandas as pd
 # import numpy as np
 # from ta import trend
 
@@ -11,8 +11,8 @@ class Empty_strategy(Strategy):
 	short_window - Lookback period for short moving average
 	long_window - Lookback period for long moving average
 	"""
-	def __init__(self, name, timeframe, tickers, settings):
-		super.__init__(self, name, timeframe, tickers, settings)
+	def __init__(self, name, timeframe, tickers):
+		super.__init__(self, name, timeframe, tickers)
 
 		self.max_window = 1
 	
@@ -23,5 +23,5 @@ class Empty_strategy(Strategy):
 		return str(self)
 
 
-	def calculate_signal(self, bars, ticker, time):
+	def calculate_signal(self, ticker: str, bars: pd.DataFrame):
 		return
