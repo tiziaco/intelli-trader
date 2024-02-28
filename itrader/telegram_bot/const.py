@@ -1,4 +1,0 @@
-TOKEN = '6028226104:AAH458BGLuGVTPfpAVCJedBbMNkZJCYfsr0'
-USER_NAME ='IT_test_BadNinobot'
-URL = 'https://058e-82-53-10-158.ngrok-free.app'
-CHAT_ID = '1864956195'
