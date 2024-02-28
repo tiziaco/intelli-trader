@@ -13,27 +13,38 @@ class Strategy(object):
 	objects for particular symbols based on the inputs of ticks
 	generated from a PriceHandler (derived) object.
 	"""
-	def __init__(self, name, timeframe, tickers, settings) -> None:
+	def __init__(self, name, timeframe, tickers, order_type = "market", max_positions = 1) -> None:
 		self.strategy_id = idgen.generate_strategy_id()
 		self.strategy_name = name
+		self.is_active = True
 		self.timeframe = to_timedelta(timeframe)
 		self.tickers = tickers
-		self.settings = settings
+		self.order_type = order_type
+		self.max_positions = max_positions
 		self.open_positions = {}
-		self.subscribed_portfolio = []
-		self.is_active = True
+		self.subscribed_portfolios = []
 		self.last_event: BarEvent = None
 		self.global_queue = None
+	
+	def to_dict(self):
+		return {
+			"strategy_id" : self.strategy_id,
+			"strategy_name": self.strategy_name,
+			"subscribed_portfolios" : self.subscribed_portfolios,
+			"order_type": self.order_type,
+			"max_positions" : self.max_positions,
+			"is_active" : self.is_active
+		}
 
 	def buy(self, ticker: str, sl: float = 0, tp: float = 0):
 		"""
 		Add a buy signal from the strategy to the global queue 
 		of the trading system.
 		"""
-		for portfolio_id in self.subscribed_portfolio:
+		for portfolio_id in self.subscribed_portfolios:
 			signal = SignalEvent(
 							time = self.last_event.time,
-							order_type = self.settings.get("order_type"),
+							order_type = self.order_type,
 							ticker = ticker,
 							action = 'BUY',
 							price = self.last_event.bars[ticker][-1].close,
@@ -52,10 +63,10 @@ class Strategy(object):
 		Add a buy signal from the strategy to the global queue 
 		of the trading system.
 		"""
-		for portfolio_id in self.subscribed_portfolio:
+		for portfolio_id in self.subscribed_portfolios:
 			signal = SignalEvent(
 							time = self.last_event.time,
-							order_type = self.settings.get("order_type"),
+							order_type = self.order_type,
 							ticker = ticker,
 							action = 'SELL',
 							price = self.last_event.bars[ticker][-1].close,
@@ -68,11 +79,9 @@ class Strategy(object):
 			self.global_queue.put(signal)
 		logger.debug('Strategy signal (%s - %s %s,%s $', signal.strategy_id,
 					signal.ticker, signal.action, signal.price)
-
-	def check_max_duration(self, bar_event: BarEvent, max_duration = timedelta(days=2)):
-		#TODO: da modificare
-		for portfolio_id, positions in self.open_positions.items():
-			for ticker, position in positions.items():
-				duration = bar_event.time - position['entry_time']
-				if duration > max_duration:
-					return True
+	
+	def subscribe_portfolio(self, portfolio_id):
+		self.subscribed_portfolios.append(portfolio_id)
+	
+	def unsubscribe_portfolio(self, portfolio_id):
+		self.subscribed_portfolios.remove(portfolio_id)
