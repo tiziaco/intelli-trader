@@ -63,3 +63,6 @@ def check_timeframe(time: datetime, timeframe: timedelta) -> bool:
 		else:
 			# The timestamp IS NOT a multiple of the timeframe
 			return False
+
+def elapsed_time(cure_time: datetime,  past_time: datetime):
+	return cure_time - past_time
