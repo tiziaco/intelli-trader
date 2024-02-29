@@ -2,7 +2,7 @@ from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass
 
-from itrader.order_handler.order import Order
+#from itrader.order_handler.order import Order
 
 EventType = Enum("EventType", "PING BAR SIGNAL ORDER FILL")
 FillStatus = Enum("FillStatus", "EXECUTED REFUSED")
@@ -32,7 +32,7 @@ class PingEvent:
 	type = EventType.PING
 
 	def __str__(self):
-		return f"Type: {self.type}, Time: {self.time}"
+		return f"{self.type}, Time: {self.time}"
 
 	def __repr__(self):
 		return str(self)
@@ -51,7 +51,7 @@ class BarEvent:
 	type = EventType.BAR
 
 	def __str__(self):
-		return f"Type: {self.type}, Time: {self.time}"
+		return f"{self.type}, Time: {self.time}"
 
 	def __repr__(self):
 		return str(self)
@@ -128,7 +128,7 @@ class OrderEvent:
 		return str(self)
 	
 	@classmethod
-	def new_order_event(cls, order: Order):
+	def new_order_event(cls, order):
 		"""
 		Generate a new OrderEvent object when an order is filled.
 
