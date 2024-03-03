@@ -52,7 +52,7 @@ class Position(object):
 		self.portfolio_id = portfolio_id
 	
 	def __repr__(self):
-		rep = ('%s, %s, %s'%(self.ticker, self.side.value, self.net_quantity))
+		rep = ('%s, %s, %s'%(self.ticker, self.side.name, self.net_quantity))
 		return rep
 
 
@@ -243,7 +243,7 @@ class Position(object):
 				'entry_date': self.entry_date,
 				'exit_date': self.exit_date,
 				'pair': self.ticker,
-				'side': self.side,
+				'side': self.side.name,
 				'avg_price': self.avg_price,
 				'net_quantity': self.net_quantity,
 				'net_total': self.net_total,

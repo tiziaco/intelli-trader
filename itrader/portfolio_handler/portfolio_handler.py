@@ -1,7 +1,9 @@
-from itrader import config, logger
+from datetime import datetime
 from .portfolio import Portfolio
+from itrader.portfolio_handler.transaction import Transaction
+from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent
 
-#TODO: import OrderEvent.Executed
+from itrader import config, logger
 
 class PortfolioHandler(object):
 	"""
@@ -15,32 +17,48 @@ class PortfolioHandler(object):
 	the OrderHandler or by a client application.
 	"""
 	def __init__(self):
-		self.portfolios = {}
+		self.current_time = 0
+		self.portfolios: dict[str, Portfolio] = {}
 		
 
-	def on_fill(self, order_event):
+	def on_fill(self, fill_event: FillEvent):
 		"""
 		This is called by the event manager when an order 
 		is executed by the ExecutionHandler.
-		It takes a OrderEvent, generate a transaction and 
+		It takes a FillEvent, generate a transaction and 
 		update the correct Portfolio object.
 		"""
-		#TODO: instead of calling the function generate the transaction here
-		self._convert_fill_to_portfolio_update(order_event) 
-		logger.info('PORTFOLIO HANDLER: Executing transaction for Portfolio %s', 
-			  order_event.portfolio_id)
-
-	def update_portfolio_value(self, bar_event):
+		transaction = Transaction.new_transaction(fill_event)
+		portfolio = self.get_portfolio(fill_event.portfolio_id)
+		portfolio.process_transaction(transaction)
+		#TODO: verify if i need to save the portfolio in the portfolios dict
+	
+	def generate_portfolios_update_event(self):
 		"""
-		Update the portfolio to reflect current market value
+		Generate a PortfolioUpdate event. The data will be used
+		by the order handler and strategy handler to keep track of 
+		the portfolio metrics.
+		"""
+		portfolio_update = PortfolioUpdateEvent(
+			self.current_time, self.portfolios_to_dict
+			)
+		return portfolio_update
+	
+	def get_portfolio(self, portfolio_id: int):
+		"""
+		Get the portfolio instance for the given portfolio ID.
+		"""
+		return self.portfolios.get(portfolio_id)
+
+	def update_portfolios_market_value(self, bar_event: BarEvent):
+		"""
+		Update the portfolios to reflect current market value
 		based on the last bar recived.
 		"""
-		# TODO: not tested. da vedere se serve
-
 		for id, portfolio in self.portfolios.items():
 			portfolio.update_market_value(bar_event)
 
-	def create_portfolio(self, user_id, name, cash):
+	def add_portfolio(self, user_id: str, name: str, cash: float):
 		"""
 		Create a new portfolio instance.
 
@@ -48,13 +66,16 @@ class PortfolioHandler(object):
 		----------
 		user_id : `str`
 			The portfolio ID string.
-		name : `str`, optional
-			The optional name string of the portfolio.
+		name : `str`
+			Name of the portfolio.
+		cash : `float`
+			Initial cash for the portfolio.
 		"""
-		id = 'xxx' #TODO to be generated automatically somehow
-		self.portfolios[id] = Portfolio.create(user_id, name, cash)
+		portfolio = Portfolio(user_id, name, cash, datetime.utcnow())
+		id = portfolio.portfolio_id
+		self.portfolios[id] = portfolio
+
 		logger.info('PORTFOLIO HANDLER: New Portfolio created - ID %s', id)
-		#TODO NOT tested
 	
 	def delete_portfolio(self, id):
 		"""
@@ -72,8 +93,7 @@ class PortfolioHandler(object):
 		logger.info('PORTFOLIO HANDLER: Portfolio deleted - ID %s', id)
 		#TODO NOT tested
 
-
-	def get_portfolio_metrics(self):
+	def portfolios_to_dict(self):
 		"""
 		Retrive all portfolio metrics in a dictionary
 		with portfolio id as keys and metrics as value.
@@ -83,38 +103,7 @@ class PortfolioHandler(object):
 		`dict`
 			The portfolio metrics.
 		"""
-		metrics = {}
+		portfolios = {}
 		for id, portfolio in self.portfolios.items():
-			# TODO: implement a portfolio.to_dict() method
-			metrics[id] = {
-				'opened_positions' : len(portfolio.pos_handler.positions),
-				'total_market_value' : portfolio.total_market_value,
-				'available_cash' : portfolio.cash,
-				'total_equity' : portfolio.total_equity,
-				'total_unrealised_pnl' : portfolio.total_unrealised_pnl,
-				'total_realised_pnl' : portfolio.total_realised_pnl,
-				'total_pnl' : portfolio.total_pnl
-			}
-		return metrics
-
-	def get_open_positions(self, portfolio_id):
-		"""
-		Output the portfolio opened positions for each portfolio as a 
-		dictionary portfolio id as keys and ticker as items.
-
-		Returns
-		-------
-		`dict`
-			All portfolio positions.
-			{'portfolio_id' : 
-				{'ticker' : 
-					{'action' : str,
-					 'quantity' : float,
-					 'unrealised_pnl' : float,
-					 'entry_time' : timestamp
-					}}}
-		"""
-		positions = {}
-		for id, portfolio in self.portfolios.items():
-			positions[id] = portfolio.open_positions()
-		return positions
+			portfolios[id] = portfolio.to_dict()
+		return portfolios
