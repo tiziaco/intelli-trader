@@ -3,7 +3,7 @@ from queue import Queue
 
 from itrader.price_handler.data_provider import PriceHandler
 from itrader.strategy_handler.base import Strategy
-from itrader.events_handler.event import BarEvent
+from itrader.events_handler.event import BarEvent, PortfolioUpdateEvent
 from itrader.outils.time_parser import check_timeframe
 from itrader import logger
 
@@ -23,6 +23,7 @@ class StrategiesHandler(object):
 		self.global_queue: Queue = global_queue
 		self.price_handler: PriceHandler = price_handler
 		self.min_timeframe: timedelta = None
+		self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
 
 		logger.info('STRATEGIES HANDLER: Default => OK')
@@ -43,19 +44,16 @@ class StrategiesHandler(object):
 			# Check if the strategy's timeframe is a multiple of the bar event time
 			if not check_timeframe(event.time, strategy.timeframe):
 				continue
-
 			# Calculate the signal for each ticker or pair traded from the strategy
 			for ticker in strategy.tickers:
-
-				# Get the data checking if i am trading a single ticker or a pair
-				if isinstance(ticker, str):
-					data = self.price_handler.get_resampled_bars(event.time, ticker, strategy.timeframe, strategy.max_window)
-				elif isinstance(ticker, tuple):
-					data = {}
-					for sym in ticker:
-						data[sym] = self.price_handler.get_resampled_bars(event.time, sym, strategy.timeframe, strategy.max_window)
+				data = self.price_handler.get_resampled_bars(event.time, ticker, strategy.timeframe, strategy.max_window)
 				strategy.calculate_signal(data, event, ticker)
 
+	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
+		"""
+		Update the information relative to the active portfolios.
+		"""
+		self.portfolios = update_event.portfolios
 
 	def assign_symbol(self, signals):
 		"""
@@ -88,7 +86,7 @@ class StrategiesHandler(object):
 			logger.info('STRATEGY HANDLER: new symbols for %s : %s', self.strategies[0].__str__(), str(new_traded))
 
 	
-	def get_traded_symbols(self):
+	def get_traded_tickers(self):
 		"""
 		Return a list with all the coins traded from the differents strategies.
 
@@ -108,7 +106,7 @@ class StrategiesHandler(object):
 		return list(set(traded_tickers))
 
 	
-	def add_strategy(self, strategy: Strategy, strategy_setting: dict):
+	def add_strategy(self, strategy: Strategy):
 		"""
 		Add a new strategy in the list of strategies to trade.
 		At the same time, calculate the minimum timeframe among 
@@ -122,7 +120,6 @@ class StrategiesHandler(object):
 			Strategy to be executed by the trading system
 		"""
 		# Add the strategy in the strategies list
-		strategy.settings = strategy_setting
 		self.strategies.append(strategy)
 
 		# Find the minimum timeframe. Used later when loading the bars
@@ -131,4 +128,4 @@ class StrategiesHandler(object):
 		self._get_min_timeframe()
 
 		logger.info('STRATEGY HANDLER: New strategy added')
-		logger.info('   %s', strategy.strategy_id)
+		logger.info('   %s', strategy.name)

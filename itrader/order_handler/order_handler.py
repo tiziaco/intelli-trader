@@ -2,10 +2,10 @@ from datetime import timedelta
 
 from .base import OrderBase
 from .order import Order, OrderType, OrderStatus
-from .compliance_manager.basic_compliance_manager import BasicComplianceManager
+from .compliance_manager.basic_compliance_manager import ComplianceManager
 from .position_sizer.variable_sizer import DynamicSizer
 from .risk_manager.advanced_risk_manager import RiskManager
-from ..events_handler.event import SignalEvent, BarEvent, OrderEvent
+from ..events_handler.event import SignalEvent, BarEvent, OrderEvent, PortfolioUpdateEvent
 
 from itrader import logger
 
@@ -24,23 +24,17 @@ class OrderHandler(OrderBase):
 
 	When an order is filled it is sended to the execution handler
 	"""
-	def __init__(self, events_queue, portfolio_handler, price_handler):
+	def __init__(self, events_queue):
 		"""
 		Parameters
 		----------
 		events_queue: `Queue object`
 			The events queue of the trading system
-		portfolio_handler: `PortfolioHandler object`
-			The portfolio handler queue of the trading system
-		type: `str`
-			Order type ('market' or 'limit')
-		integer_size: `boolean`
-			Calculate the position as an integer value
 		"""
-		super(OrderHandler, self).__init__(events_queue, portfolio_handler)
-		self.compliance = BasicComplianceManager()
-		self.position_sizer = DynamicSizer(False)
-		self.risk_manager = RiskManager(price_handler)
+		super(OrderHandler, self).__init__(events_queue)
+		self.compliance = ComplianceManager(self.portfolios)
+		self.position_sizer = DynamicSizer(self.portfolios)
+		self.risk_manager = RiskManager(self.portfolios)
 		
 		self.pending_orders: dict[str, dict[str, Order]] = {}
 
@@ -52,7 +46,7 @@ class OrderHandler(OrderBase):
 
 		Parameters
 		----------
-		bar_event : `Bar object`
+		bar_event : `BarEvent`
 			The bar event generated from the Universe module
 		"""
 		if bool(self.pending_orders):
@@ -124,6 +118,12 @@ class OrderHandler(OrderBase):
 		self.add_pending_order(new_order)
 		# TODO: maybe send an event order directly if it's a MARKET order??
 		#self.send_order_event(validated_order)
+
+	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
+		"""
+		Update the information relative to the active portfolios.
+		"""
+		self.portfolios = update_event.portfolios
 	
 	def add_pending_order(self, order: Order):
 		"""

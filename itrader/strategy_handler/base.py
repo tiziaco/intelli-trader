@@ -13,7 +13,8 @@ class Strategy(object):
 	objects for particular symbols based on the inputs of ticks
 	generated from a PriceHandler (derived) object.
 	"""
-	def __init__(self, name, timeframe, tickers, order_type = "market", max_positions = 1,
+	def __init__(self, name, timeframe, tickers, order_type = "market",
+			  	max_positions = 1, max_allocation = 0.80,
 				global_queue = None) -> None:
 		self.strategy_id = idgen.generate_strategy_id()
 		self.name = name
@@ -22,7 +23,8 @@ class Strategy(object):
 		self.tickers = tickers
 		self.order_type = order_type
 		self.max_positions = max_positions
-		self.open_positions = {}
+		self.max_allocation = max_allocation
+		self.portfolios = {}
 		self.subscribed_portfolios = []
 		self.last_event: BarEvent = None
 		self.global_queue = global_queue
@@ -30,10 +32,11 @@ class Strategy(object):
 	def to_dict(self):
 		return {
 			"strategy_id" : self.strategy_id,
-			"strategy_name": self.strategy_name,
+			"strategy_name": self.name,
 			"subscribed_portfolios" : self.subscribed_portfolios,
 			"order_type": self.order_type,
 			"max_positions" : self.max_positions,
+			"max_allocation" : self.max_allocation,
 			"is_active" : self.is_active
 		}
 
