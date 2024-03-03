@@ -1,15 +1,15 @@
+import pandas as pd
 from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass
 
-#from itrader.order_handler.order import Order
-
-EventType = Enum("EventType", "PING BAR SIGNAL ORDER FILL")
+EventType = Enum("EventType", "PING BAR UPDATE SIGNAL ORDER FILL")
 FillStatus = Enum("FillStatus", "EXECUTED REFUSED")
 
 event_type_map = {
 	"PING": EventType.PING,
 	"BAR": EventType.BAR,
+	"UPDATE": EventType.UPDATE,
 	"SIGNAL": EventType.SIGNAL,
 	"ORDER": EventType.ORDER,
 	"FILL": EventType.FILL
@@ -47,8 +47,29 @@ class BarEvent:
 	"""
 
 	time: datetime
-	bars: dict
+	bars: dict[str, pd.DataFrame]
 	type = EventType.BAR
+
+	def __str__(self):
+		return f"{self.type}, Time: {self.time}"
+
+	def __repr__(self):
+		return str(self)
+
+	def get_last_close(self, ticker) -> float:
+		return self.bars[ticker]['Close'].iloc[-1]
+
+@dataclass
+class PortfolioUpdateEvent:
+	"""
+	Handles the event of receiving a new market
+	open-high-low-close-volume bar, as would be generated
+	via common data providers.
+	"""
+
+	time: datetime
+	portfolios: dict
+	type = EventType.UPDATE
 
 	def __str__(self):
 		return f"{self.type}, Time: {self.time}"
@@ -94,7 +115,7 @@ class SignalEvent:
 	type = EventType.SIGNAL
 
 	def __str__(self):
-		return f"{self.type.value} ({self.ticker}, {self.action}, \
+		return f"{self.type} ({self.ticker}, {self.action}, \
 			{round(self.price, 4)} $)"
 
 	def __repr__(self):
@@ -122,7 +143,7 @@ class OrderEvent:
 	type = EventType.ORDER
 
 	def __str__(self):
-		return f"Order-{self.type.value} ({self.ticker}, {self.action}, {self.quantity})"
+		return f"{self.type} ({self.ticker}, {self.action}, {self.quantity})"
 
 	def __repr__(self):
 		return str(self)
@@ -168,8 +189,6 @@ class FillEvent:
 		Event time
 	ticker: `str`
 		The ticker symbol, e.g. 'BTCUSD'.
-	side:
-		'LONG' or 'SHORT'
 	action: `str`
 		'BOT' (for long) or 'SLD' (for short)
 	quantity: `float`
@@ -187,7 +206,6 @@ class FillEvent:
 	time: datetime
 	status: FillStatus
 	ticker: str
-	side: str
 	action: str
 	price: float
 	quantity: float
@@ -196,7 +214,7 @@ class FillEvent:
 	type = EventType.FILL
 
 	def __str__(self):
-		return f"{self.type.value} ({self.ticker}, {self.side}, {self.action}, \
+		return f"{self.type} ({self.ticker}, {self.action}, \
 			{round(self.quantity, 4)}, {round(self.price, 4)} $)"
 
 	def __repr__(self):
@@ -227,7 +245,6 @@ class FillEvent:
 			order.time,
 			fill_status,
 			order.ticker,
-			order.side,
 			order.action,
 			order.price,
 			order.quantity,
