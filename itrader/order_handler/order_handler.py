@@ -84,6 +84,16 @@ class OrderHandler(OrderBase):
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
 
+	def execute_market_orders(self):
+		"""
+		Execute the market orders if any among the pending orders.
+		"""
+		if bool(self.pending_orders):
+			for portfolio_id, pending_orders in list(self.pending_orders.items()):
+				for order_id, order in list(pending_orders.items()):
+					if order.type == OrderType.MARKET:
+						self.send_order_event(order)
+						self.remove_orders(order.ticker, order.portfolio_id)
 	
 	def on_signal(self, signal_event: SignalEvent):
 		"""
@@ -116,8 +126,7 @@ class OrderHandler(OrderBase):
 			self.add_take_profit_order(signal_event)
 		new_order = Order.new_order(signal_event)
 		self.add_pending_order(new_order)
-		# TODO: maybe send an event order directly if it's a MARKET order??
-		#self.send_order_event(validated_order)
+		self.execute_market_orders()
 
 	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
 		"""

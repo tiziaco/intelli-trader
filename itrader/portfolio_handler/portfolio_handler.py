@@ -40,7 +40,8 @@ class PortfolioHandler(object):
 		the portfolio metrics.
 		"""
 		portfolio_update = PortfolioUpdateEvent(
-			self.current_time, self.portfolios_to_dict
+			self.current_time, 
+			self.portfolios_to_dict()
 			)
 		return portfolio_update
 	

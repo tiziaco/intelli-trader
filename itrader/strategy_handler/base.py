@@ -22,12 +22,13 @@ class Strategy(object):
 		self.timeframe = to_timedelta(timeframe)
 		self.tickers = tickers
 		self.order_type = order_type
-		self.max_positions = max_positions
-		self.max_allocation = max_allocation
 		self.portfolios = {}
 		self.subscribed_portfolios = []
 		self.last_event: BarEvent = None
 		self.global_queue = global_queue
+		# Risk management settings
+		self.max_positions = max_positions
+		self.max_allocation = max_allocation
 	
 	def to_dict(self):
 		return {

@@ -42,7 +42,7 @@ class DynamicSizer():
 			quantity = self.portfolios[portfolio_id]['open_positions'][ticker]['quantity']
 		else:
 			# New position, assign 80% of the cash
-			cash = self.portfolios[portfolio_id]['cash']
+			cash = self.portfolios[portfolio_id]['available_cash']
 			last_price = signal.price
 
 			available_pos = (max_positions - len(open_tickers))
