@@ -5,3 +5,4 @@ oanda.cfg
 OLD/*
 my_strategies/
 .DS_Store
+test.py
