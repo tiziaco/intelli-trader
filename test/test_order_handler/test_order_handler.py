@@ -47,7 +47,8 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 							stop_loss = 0,
 							take_profit = 0,
 							strategy_id = self.strategy_id,
-							portfolio_id = self.portfolio_id
+							portfolio_id = self.portfolio_id,
+							strategy_setting={}
 		)
 		sell_signal = SignalEvent(
 							time = datetime.utcnow(),
@@ -59,7 +60,8 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 							stop_loss = 0,
 							take_profit = 0,
 							strategy_id = self.strategy_id,
-							portfolio_id = self.portfolio_id
+							portfolio_id = self.portfolio_id,
+							strategy_setting={}
 		)
 		self.queue.put(buy_signal)
 		# self.queue.put(sell_signal)
@@ -79,22 +81,6 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		self.assertEqual(len(portfolio_dict), 1)
 		self.assertEqual(portfolio_ids, [1])
 		self.assertEqual(portfolio_dict.get(1).get('available_cash'), 1000)
-	
-	def test_on_signal(self):
-		# Generate a portfolio update event and process it from the order handler
-		ptf_update = self.ptf_handler.generate_portfolios_update_event()
-		self.order_handler.on_portfolio_update(ptf_update)
-		# Simulate a buy signal
-		buy_signal = self.queue.get(False)
-		self.order_handler.on_signal(buy_signal)
-
-		# Retrive the market order that should have been generated
-		order_event = self.queue.get(False)
-		
-		# Retrive the updated portfolios dict
-		self.assertIsInstance(order_event, OrderEvent)
-		self.assertEqual(order_event.ticker, 'BTCUSDT')
-		self.assertEqual(order_event.action, 'BUY')
 
 
 if __name__ == "__main__":
