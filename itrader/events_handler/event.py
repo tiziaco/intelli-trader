@@ -111,12 +111,12 @@ class SignalEvent:
 	take_profit: float
 	strategy_id: int
 	portfolio_id: int
+	strategy_setting: dict
 	verified: bool = False
 	type = EventType.SIGNAL
 
 	def __str__(self):
-		return f"{self.type} ({self.ticker}, {self.action}, \
-			{round(self.price, 4)} $)"
+		return f"{self.type} ({self.ticker}, {self.action}, {round(self.price, 4)} $)"
 
 	def __repr__(self):
 		return str(self)
@@ -143,7 +143,7 @@ class OrderEvent:
 	type = EventType.ORDER
 
 	def __str__(self):
-		return f"{self.type} ({self.ticker}, {self.action}, {self.quantity})"
+		return f"{self.type} ({self.ticker}, {self.action}, {self.quantity}, {round(self.price, 4)} $)"
 
 	def __repr__(self):
 		return str(self)
@@ -214,8 +214,7 @@ class FillEvent:
 	type = EventType.FILL
 
 	def __str__(self):
-		return f"{self.type} ({self.ticker}, {self.action}, \
-			{round(self.quantity, 4)}, {round(self.price, 4)} $)"
+		return f'{self.type} ({self.ticker}, {self.action}, {round(self.quantity, 4)}, {round(self.price, 4)} $)'
 
 	def __repr__(self):
 		return str(self)

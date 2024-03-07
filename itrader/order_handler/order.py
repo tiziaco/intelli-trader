@@ -39,10 +39,10 @@ class Order:
 	quantity: float
 	strategy_id: int
 	portfolio_id: int
-	id: int = idgen.generate_order_id()
+	id: int
 
 	def __str__(self):
-		return f"Order-{self.type.value} ({self.ticker}, {self.action}, {self.quantity})"
+		return f"Order - {self.id} ({self.type.name}, {self.ticker}, {self.action}, {self.quantity}, {self.price}$)"
 
 	def __repr__(self):
 		return str(self)
@@ -50,7 +50,8 @@ class Order:
 	@classmethod
 	def new_order(cls, signal: SignalEvent):
 		"""
-		Generate a new Order object with the specified type.
+		Generate a new Order object from the signal valited from
+		the risk manager and compliance manager.
 
 		Parameters
 		----------
@@ -62,8 +63,7 @@ class Order:
 		Order : `OrderEvent`
 			A new Order object with the specified type.
 		"""
-
-		order_type = order_type_map.get(signal.order_type)
+		order_type = order_type_map.get(signal.order_type.upper())
 		if order_type is None:
 			raise ValueError(f'OrderType {type} not supported')
 
@@ -76,5 +76,54 @@ class Order:
 			signal.price,
 			signal.quantity,
 			signal.strategy_id,
-			signal.portfolio_id
+			signal.portfolio_id,
+			idgen.generate_order_id()
+		)
+	
+	@classmethod
+	def new_stop_order(cls, time, ticker, action, price, quantity,
+					strategy_id, portfolio_id):
+		"""
+		Generate a new Stop Order object.
+
+		Returns
+		-------
+		Order : `OrderEvent`
+			A new Order object with the specified type.
+		"""
+		return cls(
+			time,
+			OrderType.STOP,
+			OrderStatus.PENDING,
+			ticker,
+			action,
+			price,
+			quantity,
+			strategy_id,
+			portfolio_id,
+			idgen.generate_order_id()
+		)
+	
+	@classmethod
+	def new_limit_order(cls, time, ticker, action, price, quantity,
+					strategy_id, portfolio_id):
+		"""
+		Generate a new Stop Order object.
+
+		Returns
+		-------
+		Order : `OrderEvent`
+			A new Order object with the specified type.
+		"""
+		return cls(
+			time,
+			OrderType.LIMIT,
+			OrderStatus.PENDING,
+			ticker,
+			action,
+			price,
+			quantity,
+			strategy_id,
+			portfolio_id,
+			idgen.generate_order_id()
 		)

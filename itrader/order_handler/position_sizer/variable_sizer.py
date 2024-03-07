@@ -33,24 +33,24 @@ class DynamicSizer():
 
 		ticker = signal.ticker
 		portfolio_id = signal.portfolio_id
-		max_positions = self.portfolios[portfolio_id]['max_positions']
-		max_allocation = self.portfolios[portfolio_id]['max_allocation']
-		open_tickers = self.portfolios[portfolio_id]['open_positions'].keys()
+		strategy_setting = signal.strategy_setting
+		max_positions = strategy_setting.get('max_positions')
+		max_allocation = strategy_setting.get('max_allocation')
+		open_tickers = list(self.portfolios.get(portfolio_id, {}).get('open_positions', {}).keys())
 
 		if ticker in open_tickers:
 			# The position is already open and will be closed, assign 100% of the quantity
-			quantity = self.portfolios[portfolio_id]['open_positions'][ticker]['quantity']
+			quantity = self.portfolios.get(portfolio_id, {}).get('open_positions', {})[ticker]['quantity']
 		else:
 			# New position, assign 80% of the cash
-			cash = self.portfolios[portfolio_id]['available_cash']
+			cash = self.portfolios.get(portfolio_id, {}).get('available_cash', 0)
 			last_price = signal.price
 
 			available_pos = (max_positions - len(open_tickers))
 			quantity = (cash * (max_allocation * (1 / available_pos))) / last_price
 
 		# Define or not an integer value for the position size
-		if signal:
-			quantity = int(quantity)
+		#TODO
 		
 		# Assign the calculated size to the ordr event
 		signal.quantity = round(quantity,5)

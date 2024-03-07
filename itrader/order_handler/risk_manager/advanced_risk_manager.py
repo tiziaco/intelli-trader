@@ -29,19 +29,27 @@ class RiskManager():
 		"""
 		Calculate the StopLoss level annd create a OrderEvent.
 		"""
-
-		if self.check_cash(signal):
-			signal.verified = False
-		return signal
-
+		if not signal.verified:
+			return
+		self.check_cash(signal)
+		if signal.verified == True:
+			logger.debug('  RISK MANAGER: Order validated')
 
 	def check_cash(self, signal: SignalEvent):
 		"""
 		Check if enough cash in the selected portfolio.
-		If not enough cash the order is refused
+		If not enough cash the signal is not verified.
 		"""
-		cash = self.portfolios[signal.portfolio_id]['cash']
-		if cash < 30:
+		# TODO: implement check cash in case of position increase
+		portfolio_id = signal.portfolio_id
+		open_tickers = list(self.portfolios.get(portfolio_id, {}).get('open_positions', {}).keys())
+		cost = signal.quantity * signal.price
+		
+		if signal.ticker not in open_tickers:
+			# New position about to be opened. Check if enough cash
+			cash = self.portfolios.get(portfolio_id, {}).get('available_cash', 0)
+			if cash < 30 or cash <= cost:
+				signal.verified = False
+		if signal.verified == False:
 			logger.info('  RISK MANAGER: Order REFUSED: Not enough cash to trade')
-			return False
 		

@@ -25,18 +25,15 @@ class Transaction(object):
 	quantity: float
 	commission: float
 	portfolio_id: int
+	id: int
 	position_id: int = None
-	id = idgen.generate_transaction_id()
 
 	def __repr__(self):
 		"""
 		Provides a representation of the Transaction
 		to allow full recreation of the object.
 		"""
-		return f"{(self).__name__}(	\
-			{self.type.value}		\
-			{self.ticker}, 			\
-			{self.quantity}"
+		return f"Transaction - {self.id} ({self.type.name}, {self.ticker}, {self.quantity}, {self.price}$)"
 
 	@property
 	def cost(self) -> float:
@@ -89,5 +86,6 @@ class Transaction(object):
 			filled_order.price,
 			filled_order.quantity,
 			filled_order.commission,
-			filled_order.portfolio_id
+			filled_order.portfolio_id,
+			idgen.generate_transaction_id()
 		)
