@@ -59,8 +59,8 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 			'ETHUSDT': pd.DataFrame(
 				{'Open': [20], 'High': [50], 'Low': [10], 'Close': [40], 'Volume': [500]}),
 			}
-		bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
-		self.strategy.last_event = bar_event
+		self.bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
+		self.strategy.last_event = self.bar_event
 	
 	def test_on_signal_buy_with_sl_tp(self):
 		# Send signal from the strategy to the global queue
@@ -99,6 +99,118 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		# Assert pending orders
 		self.assertIsInstance(pending_orders, dict)
 		self.assertEqual(len(pending_orders.get(order_event.portfolio_id)), 2)
+	
+	def test_fill_stop_loss_order_long(self):
+		# Define Bar Event at a lower price than the stop loss
+		bars_dict = {
+			'BTCUSDT': pd.DataFrame(
+				{'Open': [30], 'High': [60], 'Low': [20], 'Close': [20], 'Volume': [1000]})
+			}
+		bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
+		# Send signal from the strategy to the global queue
+		self.strategy.buy('BTCUSDT', sl = 30, tp = 50)
+		# Get the signal from the global queue
+		buy_signal = self.queue.get(False)
+		self.order_handler.on_signal(buy_signal)
+		# Check if stop loss order is reached
+		self.order_handler.check_pending_orders(bar_event)
+
+		# Retrive the market order that should have been generated
+		order_event:OrderEvent = self.queue.get(False)
+		order_event:OrderEvent = self.queue.get(False)
+		pending_orders = self.order_handler.pending_orders
+
+		# Assert Order Event from queue
+		self.assertIsInstance(order_event, OrderEvent)
+		self.assertEqual(order_event.ticker, 'BTCUSDT')
+		self.assertEqual(order_event.action, 'SELL')
+		self.assertEqual(order_event.price, 30)
+		# Assert pending orders
+		self.assertEqual(len(pending_orders.get(order_event.portfolio_id)), 0)
+	
+	def test_fill_stop_loss_order_short(self):
+		# Define Bar Event at a lower price than the stop loss
+		bars_dict = {
+			'BTCUSDT': pd.DataFrame(
+				{'Open': [30], 'High': [60], 'Low': [20], 'Close': [55], 'Volume': [1000]})
+			}
+		bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
+		# Send signal from the strategy to the global queue
+		self.strategy.sell('BTCUSDT', sl = 50, tp = 20)
+		# Get the signal from the global queue
+		buy_signal = self.queue.get(False)
+		self.order_handler.on_signal(buy_signal)
+		# Check if stop loss order is reached
+		self.order_handler.check_pending_orders(bar_event)
+
+		# Retrive the market order that should have been generated
+		order_event:OrderEvent = self.queue.get(False)
+		order_event:OrderEvent = self.queue.get(False)
+		pending_orders = self.order_handler.pending_orders
+
+		# Assert Order Event from queue
+		self.assertIsInstance(order_event, OrderEvent)
+		self.assertEqual(order_event.ticker, 'BTCUSDT')
+		self.assertEqual(order_event.action, 'BUY')
+		self.assertEqual(order_event.price, 50)
+		# Assert pending orders
+		self.assertEqual(len(pending_orders.get(order_event.portfolio_id)), 0)
+	
+	def test_fill_take_profit_order_long(self):
+		# Define Bar Event at a lower price than the stop loss
+		bars_dict = {
+			'BTCUSDT': pd.DataFrame(
+				{'Open': [30], 'High': [60], 'Low': [20], 'Close': [60], 'Volume': [1000]})
+			}
+		bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
+		# Send signal from the strategy to the global queue
+		self.strategy.buy('BTCUSDT', sl = 30, tp = 50)
+		# Get the signal from the global queue
+		buy_signal = self.queue.get(False)
+		self.order_handler.on_signal(buy_signal)
+		# Check if stop loss order is reached
+		self.order_handler.check_pending_orders(bar_event)
+
+		# Retrive the market order that should have been generated
+		order_event:OrderEvent = self.queue.get(False)
+		order_event:OrderEvent = self.queue.get(False)
+		pending_orders = self.order_handler.pending_orders
+
+		# Assert Order Event from queue
+		self.assertIsInstance(order_event, OrderEvent)
+		self.assertEqual(order_event.ticker, 'BTCUSDT')
+		self.assertEqual(order_event.action, 'SELL')
+		self.assertEqual(order_event.price, 50)
+		# Assert pending orders
+		self.assertEqual(len(pending_orders.get(order_event.portfolio_id)), 0)
+	
+	def test_fill_take_profit_order_short(self):
+		# Define Bar Event at a lower price than the stop loss
+		bars_dict = {
+			'BTCUSDT': pd.DataFrame(
+				{'Open': [30], 'High': [60], 'Low': [20], 'Close': [15], 'Volume': [1000]})
+			}
+		bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
+		# Send signal from the strategy to the global queue
+		self.strategy.sell('BTCUSDT', sl = 50, tp = 20)
+		# Get the signal from the global queue
+		buy_signal = self.queue.get(False)
+		self.order_handler.on_signal(buy_signal)
+		# Check if stop loss order is reached
+		self.order_handler.check_pending_orders(bar_event)
+
+		# Retrive the market order that should have been generated
+		order_event:OrderEvent = self.queue.get(False)
+		order_event:OrderEvent = self.queue.get(False)
+		pending_orders = self.order_handler.pending_orders
+
+		# Assert Order Event from queue
+		self.assertIsInstance(order_event, OrderEvent)
+		self.assertEqual(order_event.ticker, 'BTCUSDT')
+		self.assertEqual(order_event.action, 'BUY')
+		self.assertEqual(order_event.price, 20)
+		# Assert pending orders
+		self.assertEqual(len(pending_orders.get(order_event.portfolio_id)), 0)
 
 if __name__ == "__main__":
 	unittest.main()
