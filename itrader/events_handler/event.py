@@ -138,6 +138,7 @@ class OrderEvent:
 	action: str
 	price: float
 	quantity: float
+	exchange: str
 	strategy_id: int
 	portfolio_id: int
 	type = EventType.ORDER
@@ -170,6 +171,7 @@ class OrderEvent:
 			order.action,
 			order.price,
 			order.quantity,
+			order.exchange,
 			order.strategy_id,
 			order.portfolio_id
 		)

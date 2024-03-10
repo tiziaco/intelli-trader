@@ -52,19 +52,19 @@ class OrderHandler(OrderBase):
 		if bool(self.pending_orders):
 			for portfolio_id, pending_orders in list(self.pending_orders.items()):
 				for order_id, order in list(pending_orders.items()):
-					last_close = bar_event.bars[order.ticker]['close']
+					last_close = bar_event.get_last_close(order.ticker)
 
 					if order.type == OrderType.STOP:
 						if order.action == 'SELL':
 							if last_close < order.price: # SL of a long position
-								logger.info('  ORDER MANAGER: Stop Loss order filled: %s',order.ticker)
+								logger.info('  ORDER MANAGER: Stop Loss order filled: %s, %s',order.ticker, order.action)
 								order.time = bar_event.time
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
 
 						elif order.action == 'BUY':
 							if last_close > order.price: # SL of a short position
-								logger.info('  ORDER MANAGER: Stop Loss filled: %s',order.ticker)
+								logger.info('  ORDER MANAGER: Stop Loss filled: %s, %s',order.ticker, order.action)
 								order.time = bar_event.time
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
@@ -72,14 +72,14 @@ class OrderHandler(OrderBase):
 					elif order.type == OrderType.LIMIT:
 						if order.action == 'SELL':
 							if last_close > order.price: # TP of a long position
-								logger.info('  ORDER MANAGER: Limit order filled: %s',order.ticker)
+								logger.info('  ORDER MANAGER: Limit order filled: %s, %s',order.ticker, order.action)
 								order.time = bar_event.time
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
 
 						elif order.action == 'BUY':
 							if last_close < order.price: # TP of a short position
-								logger.info('  ORDER MANAGER: Limit order filled: %s',order.ticker)
+								logger.info('  ORDER MANAGER: Limit order filled: %s, %s',order.ticker, order.action)
 								order.time = bar_event.time
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
@@ -87,12 +87,14 @@ class OrderHandler(OrderBase):
 	def execute_market_orders(self):
 		"""
 		Execute the market orders if any among the pending orders.
+		After execution, delete it from pending orders.
 		"""
 		if bool(self.pending_orders):
 			for portfolio_id, pending_orders in list(self.pending_orders.items()):
 				for order_id, order in list(pending_orders.items()):
 					if order.type == OrderType.MARKET:
 						self.send_order_event(order)
+						del self.pending_orders[portfolio_id][order_id]
 	
 	def on_signal(self, signal_event: SignalEvent):
 		"""
@@ -125,8 +127,7 @@ class OrderHandler(OrderBase):
 		if signal_event.take_profit > 0:
 			self.add_take_profit_order(signal_event)
 		# Generate an order event from the validated signal
-		new_order = Order.new_order(signal_event)
-		self.add_pending_order(new_order)
+		self.new_order(signal_event)
 		#print(f'TEST c:: {self.pending_orders}')
 		self.execute_market_orders()
 
@@ -165,7 +166,7 @@ class OrderHandler(OrderBase):
 		for order_id, order in list(pd_orders.items()):
 			if order.ticker == ticker:
 				logger.debug('  ORDER MANAGER: Pending order %s %s, %s removed',
-					order.type.name, order.action, ticker)
+								order.type.name, order.action, ticker)
 				del self.pending_orders[portfolio_id][order_id]
 	
 	def modify_order(self, ticker):
@@ -190,16 +191,17 @@ class OrderHandler(OrderBase):
 		sized_order: `Order object`
 			The sized order generated from the position sizer module
 		"""
-		#TODO: usare Order.new_order(...) altrimenti l'id non viene generato
-		# e rimane sempre sull'ultimo valore precedente
+		portfolio_id = signal.portfolio_id
+		exchange = self.portfolios.get(portfolio_id, {}).get('exchange', None)
 		sl_order = Order.new_stop_order(
 			time = signal.time,
 			ticker = signal.ticker,
 			action = 'BUY' if signal.action == 'SELL' else 'SELL',
 			price = signal.stop_loss,
 			quantity = signal.quantity,
-			strategy_id= signal.strategy_id,
-			portfolio_id= signal.portfolio_id
+			exchange = exchange,
+			strategy_id = signal.strategy_id,
+			portfolio_id = signal.portfolio_id
 			)
 		self.add_pending_order(sl_order)
 		logger.debug('  ORDER MANAGER: Stop loss order added: %s, %s $', 
@@ -214,18 +216,27 @@ class OrderHandler(OrderBase):
 		sized_order: `Order object`
 			The sized order generated from the position sizer module
 		"""
+		portfolio_id = signal.portfolio_id
+		exchange = self.portfolios.get(portfolio_id, {}).get('exchange', None)
 		tp_order = Order.new_limit_order(
 			time = signal.time,
 			ticker = signal.ticker,
 			action = 'BUY' if signal.action == 'SELL' else 'SELL',
 			price = signal.take_profit,
 			quantity = signal.quantity,
-			strategy_id= signal.strategy_id,
-			portfolio_id= signal.portfolio_id
+			exchange = exchange,
+			strategy_id = signal.strategy_id,
+			portfolio_id = signal.portfolio_id
 			)
 		self.add_pending_order(tp_order)
 		logger.debug('  ORDER MANAGER: Take profit order added: %s, %s $', 
 					tp_order.ticker, tp_order.price)
+	
+	def new_order(self, signal: SignalEvent):
+		portfolio_id = signal.portfolio_id
+		exchange = self.portfolios.get(portfolio_id, {}).get('exchange', None)
+		new_order = Order.new_order(signal, exchange)
+		self.add_pending_order(new_order)
 
 	def send_order_event(self, order: Order):
 		"""
@@ -233,6 +244,6 @@ class OrderHandler(OrderBase):
 		create an order event to be added to the global events que. 
 		This event will be then processed by the execution handler.
 		"""
-		order_event= OrderEvent.new_order_event(order)
+		order_event = OrderEvent.new_order_event(order)
 		self.events_queue.put(order_event)
 		logger.debug('  ORDER MANAGER: Order sent to the execution handler')

@@ -28,7 +28,7 @@ class Portfolio(object):
 		Portfolio creation datetime. 
 	"""
 
-	def __init__(self, user_id: int, name: str, cash: float, time: datetime):
+	def __init__(self, user_id: int, name: str, exchange: str, cash: float, time: datetime):
 		"""
 		Initialise the Portfolio object with a PositionHandler,
 		along with cash balance.
@@ -36,6 +36,7 @@ class Portfolio(object):
 		self.user_id = user_id
 		self.portfolio_id = idgen.generate_portfolio_id()
 		self.name = name
+		self.exchange = exchange
 		self.cash = cash
 		self.creation_time = time
 		self.current_time = time
@@ -122,8 +123,6 @@ class Portfolio(object):
 			transaction.position_id = open_position.id
 			self.positions[ticker] = open_position
 
-		# Calculate transaction cost
-		# transaction_cost = self.calculate_transaction_cost(transaction, open_position)
 		# Update portfolio cash
 		self.cash += transaction_cost
 		self.store_transaction(transaction)
@@ -172,6 +171,7 @@ class Portfolio(object):
 		return {
 				'id' : self.portfolio_id,
 				'name' : self.name,
+				'exchange' : self.exchange,
 				'n_open_positions' : len(self.positions),
 				'open_positions' : self.open_positions_to_dict(),
 				'total_market_value' : self.total_market_value,
@@ -221,7 +221,7 @@ class Portfolio(object):
 			closed[pos.ticker] = {
 				'entry_date': pos.entry_date,
 				'exit_date': pos.exit_date,
-				'action': pos.action,
+				'side': pos.side,
 				"buy_quantity": pos.buy_quantity,
 				"sell_quantity": pos.sell_quantity,
 				"avg_bought": pos.avg_bought,

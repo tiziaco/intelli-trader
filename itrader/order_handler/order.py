@@ -37,6 +37,7 @@ class Order:
 	action: str
 	price: float
 	quantity: float
+	exchange: str
 	strategy_id: int
 	portfolio_id: int
 	id: int
@@ -48,7 +49,7 @@ class Order:
 		return str(self)
 	
 	@classmethod
-	def new_order(cls, signal: SignalEvent):
+	def new_order(cls, signal: SignalEvent, exchange:str):
 		"""
 		Generate a new Order object from the signal valited from
 		the risk manager and compliance manager.
@@ -75,13 +76,14 @@ class Order:
 			signal.action,
 			signal.price,
 			signal.quantity,
+			exchange,
 			signal.strategy_id,
 			signal.portfolio_id,
 			idgen.generate_order_id()
 		)
 	
 	@classmethod
-	def new_stop_order(cls, time, ticker, action, price, quantity,
+	def new_stop_order(cls, time, ticker, action, price, quantity, exchange,
 					strategy_id, portfolio_id):
 		"""
 		Generate a new Stop Order object.
@@ -99,13 +101,14 @@ class Order:
 			action,
 			price,
 			quantity,
+			exchange,
 			strategy_id,
 			portfolio_id,
 			idgen.generate_order_id()
 		)
 	
 	@classmethod
-	def new_limit_order(cls, time, ticker, action, price, quantity,
+	def new_limit_order(cls, time, ticker, action, price, quantity, exchange,
 					strategy_id, portfolio_id):
 		"""
 		Generate a new Stop Order object.
@@ -123,6 +126,7 @@ class Order:
 			action,
 			price,
 			quantity,
+			exchange,
 			strategy_id,
 			portfolio_id,
 			idgen.generate_order_id()
