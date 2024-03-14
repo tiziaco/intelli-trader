@@ -19,16 +19,15 @@ class TestPortfolio(unittest.TestCase):
 		"""
 		cls.user_id = 1
 		cls.portfolio_name = 'test_pf'
+		cls.exchange = 'simulated'
 		cls.cash = 150000
 
 	def setUp(self):
 		"""
-		Set up the Portfolio object that will store the
-		collection of Position objects, supplying it with
-		$500,000.00 USD in initial cash.
+		Initialise a portfolio object.
 		"""
 
-		self.portfolio = Portfolio(self.user_id, self.portfolio_name, self.cash, datetime.now())
+		self.portfolio = Portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash, datetime.now())
 
 	def test_long_position(self):
 		"""

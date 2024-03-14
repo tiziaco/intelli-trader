@@ -21,16 +21,15 @@ class TestPortfolioHandlerUpdates(unittest.TestCase):
 		"""
 		cls.user_id = 1
 		cls.portfolio_name = 'test_ptf'
+		cls.exchange = 'simulated'
 		cls.cash = 1000
 
 	def setUp(self):
 		"""
-		Set up the Portfolio object that will store the
-		collection of Position objects, supplying it with
-		$500,000.00 USD in initial cash.
+		Initialise the Portfolio Handler and add a new portfolio.
 		"""
 		self.ptf_handler = PortfolioHandler()
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
+		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 
 	def test_update_portfolios_market(self):
 		# Open 2 positions, 1 long and 1 short

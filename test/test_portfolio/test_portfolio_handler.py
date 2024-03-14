@@ -20,26 +20,25 @@ class TestPortfolioHandler(unittest.TestCase):
 		"""
 		cls.user_id = 1
 		cls.portfolio_name = 'test_pf'
+		cls.exchange = 'simulated'
 		cls.cash = 150000
 
 	def setUp(self):
 		"""
-		Set up the Portfolio object that will store the
-		collection of Position objects, supplying it with
-		$500,000.00 USD in initial cash.
+		Initialise the portfolio handler.
 		"""
 		self.ptf_handler = PortfolioHandler()
 		#self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
 		#self.portfolio = Portfolio(self.user_id, self.portfolio_name, self.cash, datetime.now())
 
 	def test_add_portfolio(self):
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
+		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 
 		# Assert if the portfolio has been created
 		self.assertEqual(len(self.ptf_handler.portfolios), 1)
 	
 	def test_get_portfolio(self):
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
+		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 		portfolio = self.ptf_handler.get_portfolio(3)
 
 		# Assert if the portfolio has been created
@@ -52,7 +51,7 @@ class TestPortfolioHandler(unittest.TestCase):
 		"""
 		Simulate a FillEvent recived from the execution handler.
 		"""
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
+		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 		# Bought 1 BTC over one filled event from yhe execution handler
 		buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
 							'BTCUSDT', 'BUY', 40000, 1, 0, 2)
@@ -82,7 +81,7 @@ class TestPortfolioHandler(unittest.TestCase):
 		"""
 		Simulate a FillEvent recived from the execution handler.
 		"""
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
+		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 		# Bought 1 BTC over one filled event from yhe execution handler
 		buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
 							'BTCUSDT', 'SELL', 40000, 1, 0, 5)
@@ -112,7 +111,7 @@ class TestPortfolioHandler(unittest.TestCase):
 		"""
 		Simulate a FillEvent recived from the execution handler.
 		"""
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
+		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 		# Bought 1 BTC over one filled event from yhe execution handler
 		buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
 							'BTCUSDT', 'SELL', 40000, 1, 0, 4)
