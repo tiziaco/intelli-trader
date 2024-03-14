@@ -23,19 +23,18 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		"""
 		cls.user_id = 1
 		cls.portfolio_name = 'test_ptf'
+		cls.exchange = 'simulated'
 		cls.strategy_id = 1
 		cls.portfolio_id = 1
 		cls.cash = 1000
 		cls.queue = Queue()
 		cls.ptf_handler = PortfolioHandler()
-		cls.ptf_handler.add_portfolio(cls.user_id, cls.portfolio_name, cls.cash)
+		cls.ptf_handler.add_portfolio(cls.user_id, cls.portfolio_name, cls.exchange, cls.cash)
 		cls.order_handler = OrderHandler(cls.queue)
 
 	def setUp(self):
 		"""
-		Set up the Portfolio object that will store the
-		collection of Position objects, supplying it with
-		$500,000.00 USD in initial cash.
+		Generate a buy and sell signal and add them to the queue.
 		"""
 		buy_signal = SignalEvent(
 							time = datetime.utcnow(),

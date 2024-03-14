@@ -24,6 +24,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		# Init test Portfolio
 		cls.user_id = 1
 		cls.portfolio_name = 'test_ptf'
+		cls.exchange = 'simulated'
 		cls.strategy_id = 1
 		cls.portfolio_id = 1
 		cls.cash = 1000
@@ -37,22 +38,16 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 
 	def setUp(self):
 		"""
-		Set up the Portfolio object that will store the
-		collection of Position objects, supplying it with
-		$500,000.00 USD in initial cash.
+		For each test: create a new portfolio, initialise a strategy
+		and generate a portfolio update event.
 		"""
 		# Add new portfolio
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
+		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 		last_ptf_id = list(self.ptf_handler.portfolios.keys())[-1]
 		print(f'TEST:: {last_ptf_id}')
 		# Init new Strategy
 		self.strategy = Strategy('test_strategy', '1h', ['BTCUSDT'],
 						  		global_queue=self.queue)
-		self.strategy.subscribe_portfolio(last_ptf_id)
-		# Simulate portfolios update event
-		update_event = self.ptf_handler.generate_portfolios_update_event()
-		self.order_handler.on_portfolio_update(update_event)
-		# Create a simulated BarEvent
 		bars_dict = {
 			'BTCUSDT': pd.DataFrame(
 				{'Open': [30], 'High': [60], 'Low': [20], 'Close': [40], 'Volume': [1000]}),
@@ -61,6 +56,11 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 			}
 		self.bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
 		self.strategy.last_event = self.bar_event
+		self.strategy.subscribe_portfolio(last_ptf_id)
+		# Simulate portfolios update event
+		update_event = self.ptf_handler.generate_portfolios_update_event()
+		self.order_handler.on_portfolio_update(update_event)
+		
 	
 	def test_on_signal_buy_with_sl_tp(self):
 		# Send signal from the strategy to the global queue
