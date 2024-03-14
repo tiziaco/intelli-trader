@@ -59,7 +59,7 @@ class PortfolioHandler(object):
 		for id, portfolio in self.portfolios.items():
 			portfolio.update_market_value(bar_event)
 
-	def add_portfolio(self, user_id: str, name: str, cash: float):
+	def add_portfolio(self, user_id: str, name: str, exchange, cash: float):
 		"""
 		Create a new portfolio instance.
 
@@ -72,7 +72,7 @@ class PortfolioHandler(object):
 		cash : `float`
 			Initial cash for the portfolio.
 		"""
-		portfolio = Portfolio(user_id, name, cash, datetime.utcnow())
+		portfolio = Portfolio(user_id, name, exchange, cash, datetime.utcnow())
 		id = portfolio.portfolio_id
 		self.portfolios[id] = portfolio
 

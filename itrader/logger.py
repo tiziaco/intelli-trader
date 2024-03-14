@@ -1,3 +1,4 @@
+import os
 import logging
 from typing import Union
 
@@ -9,7 +10,9 @@ def init_logger(config):
 	logger.setLevel(logging.DEBUG) # Overall minimum logging level
 	formatter = logging.Formatter(config.LOGGING_FORMAT)
 	
-
+	# Remove old log file
+	if os.path.exists('info.log'):
+		os.remove('info.log')
 	# Minimum logging level for the StreamHandler
 	if config.PRINT_LOG:
 		stream_handler = logging.StreamHandler()
