@@ -80,4 +80,5 @@ class SqlHandler(object):
 		list`[str]`
 			The list of all coins.
 		"""
+		self.inspector.clear_cache()
 		return self.inspector.get_table_names()
