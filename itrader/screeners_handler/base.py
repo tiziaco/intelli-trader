@@ -1,64 +1,61 @@
 import re
-import datetime # DONT DELETE: Used with eval
+from abc import ABC, abstractmethod
 
-import logging
-logger = logging.getLogger('TradingSystem')
+from itrader.events_handler.event import SignalEvent, BarEvent
+from itrader.outils.time_parser import to_timedelta
+from itrader import logger, idgen
 
-class BaseScreener(object):
-    """
-    AbstractScreener is an abstract base class providing an interface for
-    all subsequent (inherited) screener handling objects.
+class Screener(object):
+	"""
+	AbstractScreener is an abstract base class providing an interface for
+	all subsequent (inherited) screener handling objects.
 
-    The goal of a (derived) Screener object is to analyse the market and
-    propose the most suitable instument to be traded.
+	The goal of a (derived) Screener object is to analyse the market and
+	propose the most suitable instument to be traded.
 
-    This is designed to work both with historic and live data as
-    the Screener object is agnostic to data location.
-    """
-
-    @staticmethod
-    def cross_up(present_val, past_val, limit):
-        return ((present_val > limit) & (past_val <= limit))
-        
-    @staticmethod
-    def cross_down(present_val, past_val, limit):
-        return ((present_val < limit) & (past_val >= limit))
-
-    @staticmethod
-    def price_cross_up(bar, indicator, lockback):
-        # print('Close: %s', bar['Close'].values)
-        # print('Ind: %s', indicator[-2])
-        return ((bar['Close'].values > indicator[lockback]) & (bar['Open'].values < indicator[lockback]))
-
-    @staticmethod
-    def price_cross_down(bar, indicator, lockback):
-        return ((bar['Close'].values < indicator[lockback]) & (bar['Open'].values > indicator[lockback]))
-    
-    @staticmethod
-    def _get_delta(timeframe):
-        """
-        Transform the str timeframe in a `timedelta` object.
-
-        Parameters
-        ----------
-        timeframe: `str`
-            Timeframe of the strategy
-
-        Returns
-        -------
-        delta: `TimeDelta object`
-            The time delta corresponding to the timeframe.
-        """
-        
-        # Splitting text and number in string
-        temp = re.compile("([0-9]+)([a-zA-Z]+)")
-        res = temp.match(timeframe).groups()
-        if res[1] == 'd':
-            delta = eval(f'datetime.timedelta(days={res[0]})')
-        elif res[1] == 'h':
-            delta = eval(f'datetime.timedelta(hours={res[0]})')
-        elif res[1] == 'm':
-            delta = eval(f'datetime.timedelta(minutes={res[0]})')
-        else:
-            logger.error('WARNING: timeframe not suppoerted')
-        return delta
+	This is designed to work both with historic and live data as
+	the Screener object is agnostic to data location.
+	"""
+	def __init__(self, name, timeframe, universe,
+				global_queue = None) -> None:
+		self.screener_id = idgen.generate_screener_id()
+		self.name = name
+		self.is_active = True
+		self.timeframe = to_timedelta(timeframe)
+		self.frequency = to_timedelta(timeframe) #TODO: da testare
+		self.universe = universe
+		self.subscribed_strategies = []
+		self.last_event: BarEvent = None
+		self.global_queue = global_queue
+	
+	def to_dict(self):
+		return {
+			"screener_id" : self.screener_id,
+			"screener_name": self.name,
+			"is_active" : self.is_active,
+		}
+	
+	def screener_signal(self, tickers: list):
+		"""
+		Add a buy signal from the strategy to the global queue 
+		of the trading system.
+		"""
+		signal = SignalEvent(
+					time = self.last_event.time,
+					screener_id = self.screener_id,
+					screener_name = self.name,
+					subscribed_strategies = self.subscribed_strategies,
+					tickers = tickers
+					)
+		self.global_queue.put(signal)
+		logger.debug('Screener signal (%s - %s)', self.screener_id, self.name)
+	
+	def subscribe_strategy(self, portfolio_id:int):
+		self.subscribed_strategies.append(portfolio_id)
+	
+	def unsubscribe_strategy(self, portfolio_id:int):
+		self.subscribed_strategies.remove(portfolio_id)
+	
+	@abstractmethod
+	def screen_market():
+		logger.warning("SCREENER: please define a screen market method.")
