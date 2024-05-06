@@ -43,7 +43,7 @@ class Config:
 	SUPPORTED_EXCHANGES = {'BINANCE', 'KUCOIN'}
 
 class DevelopmentConfig(Config):
-	DATA_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
+	DATA_DB_URL = 'postgresql+psycopg2://tizianoiacovelli:1234@localhost:5432/trading_system_prices'
 	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
 	DEBUG = bool(True)
 	TESTING = bool(False)

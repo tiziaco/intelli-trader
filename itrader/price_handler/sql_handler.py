@@ -2,15 +2,19 @@ import pandas as pd
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy_utils import database_exists, create_database
 
+from itrader import config
+from itrader import logger
+
 class SqlHandler(object):
 
 	def __init__(self):
 		self.engine = self.init_engine()
 		self.inspector = inspect(self.engine)
 
+		logger.info('SQL: Database connected')
+
 	def init_engine(self):
-		url = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
-		engine = create_engine('postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices')
+		engine = create_engine('postgresql+psycopg2://tizianoiacovelli:1234@localhost:5432/trading_system_prices')
 		if not database_exists(engine.url):
 			create_database(engine.url)
 		return engine
@@ -28,11 +32,11 @@ class SqlHandler(object):
 		symbols = self.get_symbols_SQL()
 		connection = self.engine.connect()
 		for sym in symbols:
-			qry_str = text(f'DROP TABLE IF EXISTS "%s";'%sym)
+			qry_str = text(f'DROP TABLE IF EXISTS {"%s"};'%sym)
 			connection.execute(qry_str)
+		connection.commit()
 		connection.close()
-		# TODO: da sostituire con logger
-		print('all price tables deleted')
+		logger.info('SQL: All tables deleted.')
 
 	def to_database(self, symbol: str, prices: pd.DataFrame, replace: bool):
 		"""
