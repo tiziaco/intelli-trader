@@ -22,7 +22,7 @@ class StrategiesHandler(object):
 		"""
 		self.global_queue: Queue = global_queue
 		self.price_handler: PriceHandler = price_handler
-		self.min_timeframe: timedelta = None
+		self.min_timeframe: timedelta = timedelta(weeks=100)
 		self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
 
@@ -86,7 +86,7 @@ class StrategiesHandler(object):
 			logger.info('STRATEGY HANDLER: new symbols for %s : %s', self.strategies[0].__str__(), str(new_traded))
 
 	
-	def get_traded_tickers(self):
+	def get_strategies_universe(self):
 		"""
 		Return a list with all the coins traded from the differents strategies.
 
@@ -122,10 +122,7 @@ class StrategiesHandler(object):
 		# Add the strategy in the strategies list
 		self.strategies.append(strategy)
 
-		# Find the minimum timeframe. Used later when loading the bars
-		# TODO: simply compare if the actual min_timeframe is smaller
-		# then the one of the strategy i am adding
-		self._get_min_timeframe()
+		# Find the minimum timeframe
+		self.min_timeframe = min([self.min_timeframe, strategy.timeframe])
 
-		logger.info('STRATEGY HANDLER: New strategy added')
-		logger.info('   %s', strategy.name)
+		logger.info(f'STRATEGY HANDLER: New strategy added: {strategy.name}')
