@@ -2,6 +2,7 @@ __pycache__/
 oanda.cfg
 *.json
 *.ipynb
+.env
 OLD/*
 my_strategies/
 .DS_Store
