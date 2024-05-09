@@ -1,11 +1,19 @@
 import os
 import json
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Set the project base directory
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 # Load API keys from JSON file
-with open(f'{basedir}/keys.json', 'r') as keys_file:
+keys_file_path = os.getenv("KEYS_FILE_PATH")
+if not keys_file_path:
+	keys_file_path = f'{basedir}/../keys.json'
+	#raise ValueError("Error: KEYS_FILE_PATH environment variable not set.")
+with open(keys_file_path, 'r') as keys_file:
 	keys_data = json.load(keys_file)
 
 ENVIRONMENT = "dev" #Supported environments: 'dev', 'test', 'backtest', 'live'
