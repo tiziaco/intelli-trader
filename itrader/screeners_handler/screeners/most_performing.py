@@ -1,16 +1,13 @@
 import pandas as pd
 import numpy as np
 
-from pandas_ta import overlap
+from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 
-from itrader.screeners_handler.base import BaseScreener
+from itrader.screeners_handler.screeners.base import Screener
 
-class MostPerformingScreener(BaseScreener):
-    def __init__(self, tickers = 'all', frequency = '1h', window = 26,timeframe = '1h'):
-        self.tickers = tickers
-        self.timeframe = timeframe
-        self.tf_delta = self._get_delta(timeframe)
-        self.frequency = self._get_delta(frequency)
+class MostPerformingScreener(Screener):
+    def __init__(self, tickers = ['all'], frequency = '1h', window = 26,timeframe = '1h'):
+        super().__init__("MostPerforming", timeframe, frequency, tickers)
         self.window = window
         self.max_window = window
         self.last_proposed = []
@@ -24,7 +21,8 @@ class MostPerformingScreener(BaseScreener):
         return str(self)
 
 
-    def apply_screener(self, prices, time):
+    def screen_market(self, prices, event):
+        self.last_event = event
 
         if len(prices) >= self.max_window:
 
@@ -55,4 +53,6 @@ class MostPerformingScreener(BaseScreener):
             # Filter only tickers that are overperforming in every timefrime
             proposed = list(set(best_1h).intersection( best_12h, best_1h))#best_24h,
             self.last_proposed = proposed
+            if (proposed):
+                self.screener_signal(proposed)
             return proposed #['gainers']
