@@ -17,4 +17,4 @@ plotly
 nbformat
 statsmodels
 hmmlearn
-
+python-dotenv
