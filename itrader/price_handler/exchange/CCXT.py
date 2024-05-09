@@ -46,7 +46,8 @@ class CCXT_exchange(AbstractExchange):
 			for symbol in tradable_symbols
 			if symbol.endswith(self.currency) and  # Exclude tickers not in the base currency
 			symbol not in exclude and  # Exclude symbols in the 'exclude' list
-			not any(substring in symbol for substring in contains)  # Exclude futures symbols
+			not any(substring in symbol for substring in contains) and  # Exclude futures symbols
+        	self.markets[symbol]['active']  # Check if the symbol is active
 		]
 		return symbols
 
