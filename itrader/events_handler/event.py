@@ -3,7 +3,7 @@ from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass
 
-EventType = Enum("EventType", "PING BAR UPDATE SIGNAL ORDER FILL")
+EventType = Enum("EventType", "PING BAR UPDATE SIGNAL ORDER FILL SCREENER")
 FillStatus = Enum("FillStatus", "EXECUTED REFUSED")
 
 event_type_map = {
@@ -121,6 +121,43 @@ class SignalEvent:
 	def __repr__(self):
 		return str(self)
 
+@dataclass
+class ScreenerEvent:
+	"""
+	Screener event generated from a Screener object.
+	This is received by the Strategy handler object
+	that update the symbol to trade of the subscribed
+	strategies.
+
+	Parameters
+	----------
+	time: `timestamp`
+		Event time
+	ticker: `str`
+		The ticker symbol, e.g. 'BTCUSD'.
+	direction: `str`
+		Direction of the position.
+		'BOT' (for long) or 'SLD' (for short)
+	action: `str`
+		'ENTRY' (for long) or 'EXIT' (for short)
+	price: `float`
+		Last close price for the instrument
+	strategy_id: `str`
+		The ID of the strategy who generated the signal
+	"""
+
+	time: datetime
+	screener_id: str
+	screener_name: str
+	subscribed_strategies: list[str]
+	tickers : list[str]
+	type = EventType.SCREENER
+
+	def __str__(self):
+		return f"{self.type} ({self.screener_name})"
+
+	def __repr__(self):
+		return str(self)
 
 @dataclass
 class OrderEvent:
