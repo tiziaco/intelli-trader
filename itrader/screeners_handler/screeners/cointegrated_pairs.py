@@ -7,11 +7,11 @@ from statsmodels.api import OLS
 
 from tqdm import tqdm
 
-from itrader.screeners_handler.base import BaseScreener
+from itrader.screeners_handler.screeners.base import Screener
 
 
 
-class CointegratedPairsScreener(BaseScreener):
+class CointegratedPairsScreener(Screener):
     def __init__(self, tickers = 'all', frequency = '1h', timeframe = '1h', WINDOW = 200):
         self.tickers = tickers
         self.timeframe = timeframe

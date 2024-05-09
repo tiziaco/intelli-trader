@@ -3,9 +3,9 @@ import numpy as np
 
 from pandas_ta import overlap
 
-from itrader.screeners_handler.base import BaseScreener
+from itrader.screeners_handler.screeners.base import Screener
 
-class VolumeSpykeScreener(BaseScreener):
+class VolumeSpykeScreener(Screener):
     def __init__(self, tickers = 'all', frequency = '15m', timeframe = '15m', window = 20):
         self.tickers = tickers
         self.timeframe = timeframe

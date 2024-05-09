@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
 
-from itrader.screeners_handler.base import BaseScreener
+from itrader.screeners_handler.screeners.base import Screener
 
-class MostPerformingScreener(BaseScreener):
+class MostPerformingScreener(Screener):
     def __init__(self, timeframe = '5m', frequency = '24h'):
         self.timeframe = timeframe
         self.frequency = frequency
