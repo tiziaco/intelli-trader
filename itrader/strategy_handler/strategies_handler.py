@@ -120,6 +120,7 @@ class StrategiesHandler(object):
 			Strategy to be executed by the trading system
 		"""
 		# Add the strategy in the strategies list
+		strategy.global_queue = self.global_queue
 		self.strategies.append(strategy)
 
 		# Find the minimum timeframe

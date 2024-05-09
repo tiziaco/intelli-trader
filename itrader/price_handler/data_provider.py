@@ -10,7 +10,7 @@ from .base import AbstractPriceHandler
 from .sql_handler import SqlHandler
 from .exchange.CCXT import CCXT_exchange
 
-from itrader.outils.time_parser import to_timedelta
+from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader.outils.data_outils import resample_ohlcv
 
 from itrader import config
@@ -240,7 +240,7 @@ class PriceHandler(AbstractPriceHandler):
 		"""
 		df_list=[]
 		for symbol in self.available_symbols:
-			df = self.get_and_resample_bars(time, symbol, tf_delta, window)
+			df = self.get_resampled_bars(time, symbol, tf_delta, window)
 			df.name = symbol
 
 			if df.index.tz is not None:
@@ -249,6 +249,19 @@ class PriceHandler(AbstractPriceHandler):
 		megaframe = pd.concat(df_list, axis=1, keys=self.prices.keys())
 		return megaframe
 
+	## Setters
+
+	def set_symbols(self, tickers: list[str]):
+		if 'all' in tickers:
+			self.symbols = self.exchange.get_tradable_symbols()
+		else:
+			self.symbols = tickers
+	
+	def set_timeframe(self, timeframe_strat: timedelta, timeframe_scr: timedelta):
+		min_timeframe = min([timeframe_strat, timeframe_scr])
+		self.timeframe = timedelta_to_str(min_timeframe)
+
+	## Init methods
 	def _init_symbols(self, symbols: list):
 		"""
 		Initialise the symbols

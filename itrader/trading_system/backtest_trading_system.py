@@ -45,13 +45,14 @@ class TradingSystem(object):
 		self.order_handler = OrderHandler(self.global_queue)
 		self.execution_handler = ExecutionHandler(self.global_queue)
 		self.ping = PingGenerator()
-		self.reporting = StatisticsReporting()
+		#self.reporting = StatisticsReporting()
 		self.event_handler = EventHandler(
 			self.strategies_handler,
 			self.screeners_handler,
 			self.portfolio_handler,
 			self.order_handler,
 			self.execution_handler,
+			self.universe,
 			self.global_queue
 		)
 
@@ -67,10 +68,11 @@ class TradingSystem(object):
 			self.strategies_handler.get_strategies_universe(), 
 			self.screeners_handler.get_screeners_universe())
 		self.price_handler.set_symbols(self.universe.get_full_universe())
-		self.price_handler.set_timeframe(self.strategies_handler.min_timeframe)
-		self.price_handler.download_data()
+		self.price_handler.set_timeframe(self.strategies_handler.min_timeframe,
+										self.screeners_handler.min_timeframe)
+		self.price_handler.load_data()
 		self.ping.set_dates(next(iter(self.price_handler.prices.items()))[1].index)
-		self.reporting.prices = self.price_handler.prices
+		#self.reporting.prices = self.price_handler.prices
 
 	def _run_backtest(self):
 		"""
@@ -81,13 +83,16 @@ class TradingSystem(object):
 		"""
 
 		logger.info('    RUNNING BACKTEST   ')
+		start_time = datetime.now()  # Capture start time
 
 		for ping_event in self.ping:
 			self.global_queue.put(ping_event)
 			self.event_handler.process_events()
-			self.portfolio_handler.record_portfolios_metrics(ping_event.time)
-			
+			#self.portfolio_handler.record_portfolios_metrics(ping_event.time)
 		logger.info('    BACKTEST COMPLETED   ')
+		end_time = datetime.now()  # Capture end time
+		duration = end_time - start_time
+		print("Backtest duration:", duration)
 
 	def run(self, print_summary=False):
 		"""

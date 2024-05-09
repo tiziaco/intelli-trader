@@ -31,6 +31,9 @@ class DynamicUniverse(Universe):
 	
 	@property
 	def universe(self):
+		"""
+		Return the universe coming from both screeners and strategies.
+		"""
 		return list(set(self.strategies_universe + self.screeners_universe))
 	
 	def init_universe(self, strategies_universe:list, screeners_universe:list):
@@ -39,9 +42,8 @@ class DynamicUniverse(Universe):
 
 	def get_full_universe(self):
 		"""
-		Obtain the list of assets in the Universe at a particular
-		point in time. This will always return a static list
-		independent of the timestamp provided.
+		Obtain the list of assets in the Universe. 
+		This will always return a static list.
 
 		Returns
 		-------
@@ -60,21 +62,18 @@ class DynamicUniverse(Universe):
 		ping_event: `Ping event object`
 			Ping object with the last closed bar time.
 		"""
-		bar_event = BarEvent(ping_event.time)
+		bars = {}
 
-		for ticker in self.assets:
+		for ticker in self.strategies_universe:
 			if ticker in self.price_handler.prices.keys():
 				bar = self.price_handler.get_bar(ticker, ping_event.time)
-				bar_event.bars[ticker] = {
-					'open' : bar.open,
-					'high' : bar.high,
-					'low' : bar.low,
-					'close' : bar.close,
-					'volume' : bar.volume
-				}
-				self.last_bar = bar_event
+				bars[ticker] = bar
 			else:
 				logger.warning('UNIVERSE: ticker %s not present in the price handler', ticker)
+		
+		bar_event = BarEvent(ping_event.time, bars)
+		self.last_bar = bar_event
+
 		if self.global_queue is not None:
 			self.global_queue.put(bar_event)
 		else:

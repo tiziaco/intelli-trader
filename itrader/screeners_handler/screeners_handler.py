@@ -3,7 +3,7 @@ from queue import Queue
 import pytz
 
 from itrader.price_handler.data_provider import PriceHandler
-from itrader.screeners_handler.base import Screener
+from itrader.screeners_handler.screeners.base import Screener
 from itrader.events_handler.event import BarEvent
 from itrader.outils.time_parser import check_timeframe
 
@@ -27,7 +27,7 @@ class ScreenersHandler(object):
 		self.min_timeframe: timedelta = timedelta(weeks=100)
 		self.screeners: list[Screener]= []
 
-		logger.info('STRATEGIES HANDLER: Default => OK')
+		logger.info('SCREENER HANDLER: Default => OK')
 
 	def screen_markets(self, event: BarEvent):
 		"""
@@ -53,7 +53,7 @@ class ScreenersHandler(object):
 			# Screen the market with all active screeners
 			proposed = screener.screen_market(
 				self.price_handler.to_megaframe(event.time, screener.timeframe, screener.max_window),
-				event.time
+				event
 			)
 			self.last_results = {event.time : proposed}
 
@@ -76,6 +76,7 @@ class ScreenersHandler(object):
 			Screener to be applied to the system's assets
 		"""
 		# Add the strategy in the strategies list
+		screener.global_queue = self.global_queue
 		self.screeners.append(screener)
 
 		# Find the minimum timeframe
