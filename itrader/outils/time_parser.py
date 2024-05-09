@@ -1,5 +1,6 @@
 import re
 import pytz
+from typing import Union
 from datetime import datetime, timedelta
 
 def to_timedelta(timeframe: str) -> timedelta:
@@ -26,6 +27,38 @@ def to_timedelta(timeframe: str) -> timedelta:
 		if unit in attributes:
 			return timedelta(**{attributes[unit]: int(quantity)})
 	return None
+
+def timedelta_to_str(delta: timedelta) -> Union[str, None]:
+	"""
+	Convert a timedelta object into a string representation of the equivalent timeframe.
+
+	Parameters
+	----------
+	delta: `timedelta`
+		The timedelta object to be converted.
+
+	Returns
+	-------
+	timeframe: `str` or `None`
+		The string representation of the equivalent timeframe if successful, otherwise None.
+	"""
+	total_seconds = delta.total_seconds()
+
+	days, remainder = divmod(total_seconds, 86400)
+	hours, remainder = divmod(remainder, 3600)
+	minutes, seconds = divmod(remainder, 60)
+
+	parts = []
+	if days:
+		parts.append(f"{int(days)}d")
+	if hours:
+		parts.append(f"{int(hours)}h")
+	if minutes:
+		parts.append(f"{int(minutes)}m")
+	if seconds:
+		parts.append(f"{int(seconds)}s")
+
+	return ' '.join(parts) if parts else None
 
 def format_timeframe(timeframe: str) -> str:
 	"""
