@@ -2,7 +2,8 @@
 import pytz
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
+
+from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
 from .base import AbstractPriceHandler
@@ -74,11 +75,15 @@ class PriceHandler(AbstractPriceHandler):
 				self.prices[symbol.upper()] = self.sql_handler.read_prices(symbol)
 			else:
 				# Symbol not present in the SQL db. Download them with CCXT
-				self.prices[symbol.upper()] = self.exchange.download_data(symbol, 
+				price = self.exchange.download_data(symbol, 
 															self.timeframe,
 															self.start_date,
 															self.end_date)
-				self.sql_handler.to_database(symbol, self.prices[symbol.upper()], True)
+				# Check if the data have been correctly downloaded
+				if price is None:
+					continue
+				self.prices[symbol.upper()] = price
+				self.sql_handler.to_database(symbol, price, True)
 		
 		logger.info('PRICE HANDLER: Data loaded')
 	
@@ -86,16 +91,16 @@ class PriceHandler(AbstractPriceHandler):
 		"""
 		Update the price data
 		"""
-		timezone = pytz.timezone(config.TIMEZONE)
+		time_zone = pytz.timezone(config.TIMEZONE)
 
 		while True: # repeat until we get all historical bars
 			update_counter = 0
 			for ticker in tqdm(self.prices.keys()):
 				# Get the current UTC time
-				now = pd.to_datetime(datetime.utcnow())
+				now = pd.to_datetime(datetime.now(tz=timezone.utc))
 
 				# Make it timezone aware
-				now = now.replace(tzinfo=pytz.utc).astimezone(timezone)
+				now = now.replace(tzinfo=pytz.utc).astimezone(time_zone)
 
 				# Calculate the bar expiration time
 				now = now - timedelta(microseconds = now.microsecond)
@@ -103,8 +108,14 @@ class PriceHandler(AbstractPriceHandler):
 
 				if now - last_date > to_timedelta(self.timeframe):
 					update_counter += 1
-					self.exchange.download_data(ticker, self.timeframe, last_date, replace=False)
-					self.sql_handler.to_database(ticker, self.prices[ticker], True)
+					remaining_prices = self.exchange.download_data(ticker, self.timeframe, last_date)
+					# Concatenate remaining_prices with existing DataFrame
+					self.prices[ticker] = pd.concat([self.prices[ticker], remaining_prices])
+					# Remove duplicate index values, keeping only the last value
+					self.prices[ticker] = self.prices[ticker][~self.prices[ticker].index.duplicated(keep='last')]
+					#TODO: delete last db row befor adding remaining data
+					# Update SQL database with remaining_prices
+					self.sql_handler.to_database(ticker, remaining_prices, False)
 			if update_counter == 0:
 				logger.info('PRICE HANDLER: Price updated')
 				break
