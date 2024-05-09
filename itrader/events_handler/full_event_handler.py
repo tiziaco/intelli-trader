@@ -7,7 +7,7 @@ from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
-
+from itrader.universe.universe import Universe
 from itrader.events_handler.event import EventType
 from itrader import logger
 
@@ -36,6 +36,7 @@ class EventHandler(object):
 		portfolio_handler: PortfolioHandler,
 		order_handler: OrderHandler,
 		execution_handler: ExecutionHandler,
+		universe: Universe,
 		global_queue: queue.Queue,
 	):
 		self.strategies_handler = strategies_handler
@@ -43,6 +44,7 @@ class EventHandler(object):
 		self.portfolio_handler = portfolio_handler
 		self.order_handler = order_handler
 		self.execution_handler = execution_handler
+		self.universe = universe
 		self.global_queue = global_queue
 
 		logger.info('EVENT HANDLER: Full Event Handler => OK')
@@ -60,7 +62,9 @@ class EventHandler(object):
 			except queue.Empty:
 				event = None
 			if event.type == EventType.PING:
-				self.universe.generate_bars(event)
+				logger.info(f"PING EVENT: {event.time}")
+				self.screeners_handler.screen_markets(event)
+				self.universe.generate_bar_event(event)
 			elif event.type == EventType.BAR:
 				self.portfolio_handler.update_portfolios_market_value(event)
 				self.order_handler.check_pending_orders(event)
@@ -75,5 +79,7 @@ class EventHandler(object):
 			elif event.type == EventType.FILL:
 				self.portfolio_handler.on_fill(event)
 				self.order_handler._delete_pending_orders(event)
+			elif event.type == EventType.SCREENER:
+				continue
 			else:
 				raise NotImplemented('EVENT HANDLER: Unsupported event type %s' % event.type)
