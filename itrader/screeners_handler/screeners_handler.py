@@ -32,7 +32,18 @@ class ScreenersHandler(object):
 	def init_screeners(self):
 		logger.info('SCREENER HANDLER: Initialise screeners')
 		event = BarEvent(get_timenow_awere(), {})
-		self.screen_markets(event)
+		for screener in self.screeners:
+			# Screen the market with all active screeners
+			proposed = screener.screen_market(
+				self.price_handler.to_megaframe(event.time, screener.timeframe, screener.max_window),
+				event
+			)
+			self.last_results = {event.time : proposed}
+
+			logger.info('SCREENER HANDLER: Screener updated - %s', screener.name)
+			# Print the new proposed symbols
+			if proposed:
+				logger.info('   Proposed symbols: ' + str(proposed))
 	
 	def screen_markets(self, event: BarEvent):
 		"""
