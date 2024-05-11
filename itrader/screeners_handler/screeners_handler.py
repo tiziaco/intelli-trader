@@ -5,7 +5,7 @@ import pytz
 from itrader.price_handler.data_provider import PriceHandler
 from itrader.screeners_handler.screeners.base import Screener
 from itrader.events_handler.event import BarEvent
-from itrader.outils.time_parser import check_timeframe
+from itrader.outils.time_parser import check_timeframe, get_timenow_awere
 
 from itrader import logger
 
@@ -28,7 +28,12 @@ class ScreenersHandler(object):
 		self.screeners: list[Screener]= []
 
 		logger.info('SCREENER HANDLER: Default => OK')
-
+	
+	def init_screeners(self):
+		logger.info('SCREENER HANDLER: Initialise screeners')
+		event = BarEvent(get_timenow_awere(), {})
+		self.screen_markets(event)
+	
 	def screen_markets(self, event: BarEvent):
 		"""
 		Calculate the signal for every strategy to be traded.
