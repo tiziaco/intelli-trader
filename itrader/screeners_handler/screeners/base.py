@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
 from itrader.events_handler.event import ScreenerEvent, BarEvent
-from itrader.outils.time_parser import to_timedelta
+from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader import logger, idgen
 
 class Screener(object):
@@ -17,7 +17,7 @@ class Screener(object):
 	"""
 	def __init__(self, name, timeframe, frequency, universe,
 				global_queue = None) -> None:
-		self.screener_id = idgen.generate_screener_id()
+		self.id = idgen.generate_screener_id()
 		self.name = name
 		self.is_active = True
 		self.timeframe = to_timedelta(timeframe)
@@ -29,9 +29,12 @@ class Screener(object):
 
 	def to_dict(self):
 		return {
-			"screener_id" : self.screener_id,
+			"screener_id" : self.id,
 			"screener_name": self.name,
 			"is_active" : self.is_active,
+			"timeframe" : timedelta_to_str(self.timeframe),
+			"frequency" : timedelta_to_str(self.frequency),
+			"tickers_nbr" : len(self.universe)
 		}
 	
 	def screener_signal(self, tickers: list):
@@ -41,7 +44,7 @@ class Screener(object):
 		"""
 		signal = ScreenerEvent(
 					time = self.last_event.time,
-					screener_id = self.screener_id,
+					screener_id = self.id,
 					screener_name = self.name,
 					subscribed_strategies = self.subscribed_strategies,
 					tickers = tickers

@@ -84,6 +84,27 @@ class ScreenersHandler(object):
 
 		logger.info(f'SCREENER HANDLER: New screener added: {screener.name}')
 
+	def activate_screener(self, screener_index: int):
+		"""
+		Activate a screener by index
+		"""
+		if 0 <= screener_index <= len(self.screeners):
+			self.screeners[screener_index-1].is_active = True
+			logger.info(f"SCREENER HANDLER: Screener {screener_index} activated.")
+		else:
+			logger.warning("SCREENER HANDLER:Invalid screener index.")
+
+	def deactivate_screener(self, screener_index: int):
+		"""
+		Deactivate a screener by index
+		"""
+		length = len(self.screeners)
+		if 0 <= screener_index <= len(self.screeners):
+			self.screeners[screener_index-1].is_active = False
+			logger.info(f"SCREENER HANDLER: Screener {screener_index} deactivated.")
+		else:
+			logger.warning("SCREENER HANDLER: Invalid screener index.")
+
 	def get_screeners_universe(self):
 		"""
 		Return the list with the universe to be screened
@@ -94,3 +115,17 @@ class ScreenersHandler(object):
 		unique_assetts = list(set(screener_universe))
 		return unique_assetts
 	
+	def to_dict(self):
+		"""
+		Retrive all portfolio metrics in a dictionary
+		with portfolio id as keys and metrics as value.
+
+		Returns
+		-------
+		`dict`
+			The portfolio metrics.
+		"""
+		screeners = {}
+		for screener in self.screeners:
+			screeners[screener.id] = screener.to_dict()
+		return screeners
