@@ -91,8 +91,10 @@ class ScreenersHandler(object):
 		if 0 <= screener_index <= len(self.screeners):
 			self.screeners[screener_index-1].is_active = True
 			logger.info(f"SCREENER HANDLER: Screener {screener_index} activated.")
+			return True
 		else:
 			logger.warning("SCREENER HANDLER:Invalid screener index.")
+			return False
 
 	def deactivate_screener(self, screener_index: int):
 		"""
@@ -102,8 +104,10 @@ class ScreenersHandler(object):
 		if 0 <= screener_index <= len(self.screeners):
 			self.screeners[screener_index-1].is_active = False
 			logger.info(f"SCREENER HANDLER: Screener {screener_index} deactivated.")
+			return True
 		else:
 			logger.warning("SCREENER HANDLER: Invalid screener index.")
+			return False
 
 	def get_screeners_universe(self):
 		"""
