@@ -5,7 +5,7 @@ import pytz
 from itrader.price_handler.data_provider import PriceHandler
 from itrader.screeners_handler.screeners.base import Screener
 from itrader.events_handler.event import BarEvent
-from itrader.outils.time_parser import check_timeframe, get_timenow_awere
+from itrader.outils.time_parser import check_timeframe, get_timenow_awere, get_last_available_timestamp
 
 from itrader import logger
 
@@ -31,11 +31,14 @@ class ScreenersHandler(object):
 	
 	def init_screeners(self):
 		logger.info('SCREENER HANDLER: Initialise screeners')
-		event = BarEvent(get_timenow_awere(), {})
+		time_now = get_timenow_awere()
+		event = BarEvent(time_now, {})
+
 		for screener in self.screeners:
+			last_timestamp = get_last_available_timestamp(time_now, screener.frequency)
 			# Screen the market with all active screeners
 			proposed = screener.screen_market(
-				self.price_handler.to_megaframe(event.time, screener.timeframe, screener.max_window),
+				self.price_handler.to_megaframe(last_timestamp, screener.timeframe, screener.max_window),
 				event
 			)
 			self.last_results = {event.time : proposed}
