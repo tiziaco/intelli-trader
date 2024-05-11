@@ -14,6 +14,34 @@ def get_timenow_awere():
 
 	return now
 
+# Getting the frequency hours and minutes
+def get_last_available_timestamp(current_time: datetime, frequency: timedelta):
+	"""
+	Calculate the last available timestamp based on the current time 
+	and the specified frequency.
+
+	Parameters:
+	- current_time (datetime): The current time as a datetime object.
+	- frequency (timedelta): The frequency or timeframe for the last available timestamp.
+
+	Returns:
+	- last_available_time (datetime): The last available timestamp.
+	"""
+	# Calculate the number of minutes in the frequency
+	frequency_minutes = frequency.total_seconds() // 60
+
+	# Calculate the number of minutes elapsed since midnight
+	current_minutes = current_time.hour * 60 + current_time.minute
+
+	# Calculate the number of minutes since the last available timestamp
+	minutes_since_last_timestamp = current_minutes % frequency_minutes
+
+	# Subtract the minutes since the last timestamp from the current time
+	last_available_time = current_time - timedelta(minutes=minutes_since_last_timestamp,
+												seconds=current_time.second,
+												microseconds=current_time.microsecond)
+	return last_available_time
+
 def to_timedelta(timeframe: str) -> timedelta:
 	"""
 	Transform the timeframe string in a `timedelta` object.
