@@ -73,7 +73,7 @@ class CCXT_exchange(AbstractExchange):
 		# Change data type and deal with NaN values or duplicates
 		data = data.astype(float)
 		data = data.drop_duplicates()
-		data.fillna(method='ffill', inplace=True)
+		data.ffill(inplace=True)
 
 		# Resample index for missing data
 		df_resampled = data.iloc[:, :5].resample(to_timedelta(timeframe)).ffill()
