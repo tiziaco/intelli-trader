@@ -125,7 +125,7 @@ def check_timeframe(time: datetime, timeframe: timedelta) -> bool:
 			Timeframe of the strategy
 		"""
 		# Calculate the number of seconds in the timestamp
-		time = time.astimezone(pytz.utc)
+		time = time.astimezone(pytz.utc).replace(second=0, microsecond=0)
 		seconds = (time - time.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds()
 
 		# Check if the number of seconds is a multiple of the delta
