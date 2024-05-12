@@ -3,6 +3,7 @@ import pytz
 import numpy as np
 import pandas as pd
 
+from typing import Dict
 from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
@@ -48,7 +49,7 @@ class PriceHandler(AbstractPriceHandler):
 		self.start_date = start_dt
 		self.end_date = end_dt
 		self.base_currency = base_currency
-		self.prices = {}
+		self.prices: Dict[str, pd.DataFrame] = {}
 		self.exchange = self._init_exchange(exchange)
 		self.symbols = self._init_symbols(symbols)
 		self.sql_handler = SqlHandler()
@@ -121,6 +122,29 @@ class PriceHandler(AbstractPriceHandler):
 				break
 
 	#******* Data Manipulation ***************
+	def get_last_close(self, ticker: str):
+		"""
+		Get the last close price for a ticker.
+
+		Parameters
+		----------
+		ticker: `str`
+			The ticker symbol, e.g. 'BTCUSD'.
+
+		Returns
+		-------
+		price: `float`
+			The last price for the symbol
+		"""
+		if ticker in self.available_symbols:
+			try:
+				last_prices = self.prices[ticker].iloc[-1]['close']
+				return last_prices
+			except:
+				logger.error('PRICE HANDLER: data for %s at not found', ticker)
+				return None
+		else:
+			logger.error('PRICE HANDLER: data for %s not found', ticker)
 	
 	def get_bar(self, ticker: str, time: pd.Timestamp):
 		"""
