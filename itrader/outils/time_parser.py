@@ -162,4 +162,7 @@ def round_timestamp_to_frequency(timestamp : datetime, frequency: timedelta):
     # Convert rounded Unix timestamp back to datetime object
     rounded_timestamp = datetime.fromtimestamp(rounded_timestamp_unix)
 
+	# Make the rounded timestamp timezone aware
+    my_timezone = pytz.timezone(config.TIMEZONE)
+    rounded_timestamp = my_timezone.localize(rounded_timestamp)
     return rounded_timestamp
