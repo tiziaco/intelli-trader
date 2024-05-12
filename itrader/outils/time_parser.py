@@ -138,3 +138,28 @@ def check_timeframe(time: datetime, timeframe: timedelta) -> bool:
 
 def elapsed_time(cure_time: datetime,  past_time: datetime):
 	return cure_time - past_time
+
+def round_timestamp_to_frequency(timestamp : datetime, frequency: timedelta):
+    """
+    Round a timestamp to the closest frequency.
+
+    Parameters:
+    - timestamp: datetime object representing the timestamp
+    - frequency: timedelta object representing the frequency
+
+    Returns:
+    - rounded_timestamp: datetime object representing the rounded timestamp
+    """
+    # Convert timestamp to Unix timestamp (seconds since epoch)
+    timestamp_unix = int(timestamp.timestamp())
+
+    # Convert frequency to seconds
+    frequency_seconds = int(frequency.total_seconds())
+
+    # Round the Unix timestamp to the closest multiple of frequency
+    rounded_timestamp_unix = round(timestamp_unix / frequency_seconds) * frequency_seconds
+
+    # Convert rounded Unix timestamp back to datetime object
+    rounded_timestamp = datetime.fromtimestamp(rounded_timestamp_unix)
+
+    return rounded_timestamp
