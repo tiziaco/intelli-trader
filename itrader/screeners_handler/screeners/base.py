@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
 
+from typing import Dict
+from datetime import datetime
+from queue import Queue
 from itrader.events_handler.event import ScreenerEvent, BarEvent
 from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader import logger, idgen
@@ -18,14 +21,15 @@ class Screener(object):
 	def __init__(self, name, timeframe, frequency, universe,
 				global_queue = None) -> None:
 		self.id = idgen.generate_screener_id()
-		self.name = name
+		self.name: str = name
 		self.is_active = True
 		self.timeframe = to_timedelta(timeframe)
 		self.frequency = to_timedelta(frequency) #TODO: da testare
-		self.universe = universe
+		self.universe: list[str] = universe
 		self.subscribed_strategies = []
 		self.last_event: BarEvent = None
-		self.global_queue = global_queue
+		self.last_signal: Dict[datetime, list[str]] = {}
+		self.global_queue: Queue = global_queue
 
 	def to_dict(self):
 		return {
@@ -34,7 +38,8 @@ class Screener(object):
 			"is_active" : self.is_active,
 			"timeframe" : timedelta_to_str(self.timeframe),
 			"frequency" : timedelta_to_str(self.frequency),
-			"tickers_nbr" : len(self.universe)
+			"tickers_nbr" : len(self.universe),
+			"last_signal" : self.last_signal
 		}
 	
 	def screener_signal(self, tickers: list):
