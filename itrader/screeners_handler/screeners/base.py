@@ -1,3 +1,4 @@
+import pandas as pd
 from abc import ABC, abstractmethod
 
 from typing import Dict
@@ -64,5 +65,5 @@ class Screener(object):
 		self.subscribed_strategies.remove(strategy_id)
 	
 	@abstractmethod
-	def screen_market():
+	def screen_market(prices: pd.DataFrame, event: BarEvent):
 		logger.warning("SCREENER: please define a screen market method.")

@@ -26,6 +26,7 @@ class ScreenersHandler(object):
 		self.price_handler: PriceHandler = price_handler
 		self.min_timeframe: timedelta = timedelta(weeks=100)
 		self.screeners: list[Screener]= []
+		self.last_results: dict = {}
 
 		logger.info('SCREENER HANDLER: Default => OK')
 	
@@ -44,7 +45,6 @@ class ScreenersHandler(object):
 			self.last_results = {event.time : proposed}
 
 			logger.info('SCREENER HANDLER: Screener updated - %s', screener.name)
-			# Print the new proposed symbols
 			if proposed:
 				logger.info('   Proposed symbols: ' + str(proposed))
 	
@@ -63,6 +63,8 @@ class ScreenersHandler(object):
 		event: `BarEvent object`
 			The bar event of the trading system
 		"""
+		current_res = {}
+		self.last_results.clear()
 		for screener in self.screeners:
 			
 			# Check if the screener's timeframe is a multiple of the bar event time
@@ -74,12 +76,17 @@ class ScreenersHandler(object):
 				self.price_handler.to_megaframe(event.time, screener.timeframe, screener.max_window),
 				event
 			)
-			self.last_results = {event.time : proposed}
+			 # Initialize the dictionary for the current event time if not already present
+			if event.time not in self.last_results:
+				self.last_results[event.time] = {}
 
+			# Save the results for each screener under the same timestamp
+			current_res[screener.name] = proposed
 			logger.info('SCREENER HANDLER: Screener updated - %s', screener.name)
-			# Print the new proposed symbols
 			if proposed:
 				logger.info('   Proposed symbols: ' + str(proposed))
+		self.last_results = {event.time: current_res}
+		
 
 	def add_screener(self, screener: Screener):
 		"""

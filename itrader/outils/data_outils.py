@@ -19,7 +19,8 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 		prices: `DataFrame`
 			DataFrame with Date-OHLCV bars.
 		"""
-		return df.resample(to_timedelta(timeframe), label='right').agg(
+		#return df.resample(to_timedelta(timeframe), label='right').agg(
+		return df.resample(timeframe, label='right').agg(
 			{'open':'first',
 			'high':'max',
 			'low':'min',
