@@ -80,12 +80,19 @@ class Portfolio(object):
 	@property
 	def total_realised_pnl(self):
 		"""
-		Calculate the sum of all the positions' realised P&Ls.
+		Calculate the sum of all the positions' realised P&Ls,
+		including both open and closed positions.
 		"""
-		return sum(
+		open_positions_realised_pnl = sum(
 			pos.realised_pnl
 			for ticker, pos in self.positions.items()
 		)
+		closed_positions_realised_pnl = sum(
+			pos.realised_pnl
+			for pos in self.closed_positions
+		)
+		return open_positions_realised_pnl + closed_positions_realised_pnl
+
 
 	@property
 	def total_pnl(self):
@@ -129,27 +136,21 @@ class Portfolio(object):
 
 	@staticmethod
 	def calculate_transaction_cost(transaction: Transaction, open_position: Position) -> float:
+		price = transaction.price
+		quantity = transaction.quantity
+		commission = transaction.commission
+
 		if not open_position:
-			price = transaction.price
-			quantity = transaction.quantity
-			commission = transaction.commission
 			transaction_cost = -round((price * quantity) + commission, 2)
 		else:
-			if (open_position.side == PositionSide.LONG and transaction.type == TransactionType.BUY) | \
+			if (open_position.side == PositionSide.LONG and transaction.type == TransactionType.BUY) or \
 				(open_position.side == PositionSide.SHORT and transaction.type == TransactionType.SELL):
-				price = transaction.price
-				quantity = transaction.quantity
-				commission = transaction.commission
 				transaction_cost = -round((price * quantity) + commission, 2)
 			else:
 				avg_price = open_position.avg_price
-				quantity = transaction.quantity
-				# Calculate the total cost including commissions
-				total_cost_incl_commission = open_position.net_incl_commission
 				# Calculate the realized profit or loss
-				realized_pnl = open_position.realised_pnl
-				# Deduct the realized profit or loss from the total cost
-				transaction_cost = total_cost_incl_commission - realized_pnl + avg_price * quantity
+				transaction_pnl = (avg_price - price) * quantity if open_position.side == PositionSide.SHORT else (price - avg_price) * quantity
+				transaction_cost = avg_price * quantity + transaction_pnl - commission
 		return transaction_cost
 
 	def update_market_value(self, bar_event: BarEvent):
