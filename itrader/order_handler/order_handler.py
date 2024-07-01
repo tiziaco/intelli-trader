@@ -1,5 +1,7 @@
 from datetime import timedelta
+from queue import Queue
 
+from ..portfolio_handler.portfolio_handler import PortfolioHandler
 from .base import OrderBase
 from .order import Order, OrderType, OrderStatus
 from .compliance_manager.basic_compliance_manager import ComplianceManager
@@ -24,17 +26,18 @@ class OrderHandler(OrderBase):
 
 	When an order is filled it is sended to the execution handler
 	"""
-	def __init__(self, events_queue):
+	def __init__(self, events_queue: Queue, portfolio_handler: PortfolioHandler):
 		"""
 		Parameters
 		----------
 		events_queue: `Queue object`
 			The events queue of the trading system
 		"""
-		super(OrderHandler, self).__init__(events_queue)
-		self.compliance = ComplianceManager(self.portfolios)
-		self.position_sizer = DynamicSizer(self.portfolios)
-		self.risk_manager = RiskManager(self.portfolios)
+		#super(OrderHandler, self).__init__(events_queue)
+		self.events_queue = events_queue
+		self.compliance = ComplianceManager(portfolio_handler)
+		self.position_sizer = DynamicSizer(portfolio_handler)
+		self.risk_manager = RiskManager(portfolio_handler)
 		
 		self.pending_orders: dict[str, dict[str, Order]] = {}
 
@@ -128,17 +131,16 @@ class OrderHandler(OrderBase):
 			self.add_take_profit_order(signal_event)
 		# Generate an order event from the validated signal
 		self.new_order(signal_event)
-		#print(f'TEST c:: {self.pending_orders}')
 		self.execute_market_orders()
 
-	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
-		"""
-		Update the information relative to the active portfolios.
-		"""
-		self.portfolios = update_event.portfolios
-		self.compliance.portfolios = update_event.portfolios
-		self.position_sizer.portfolios = update_event.portfolios
-		self.risk_manager.portfolios = update_event.portfolios
+	# def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
+	# 	"""
+	# 	Update the information relative to the active portfolios.
+	# 	"""
+	# 	self.portfolios = update_event.portfolios
+	# 	self.compliance.portfolios = update_event.portfolios
+	# 	self.position_sizer.portfolios = update_event.portfolios
+	# 	self.risk_manager.portfolios = update_event.portfolios
 	
 	def add_pending_order(self, order: Order):
 		"""

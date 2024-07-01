@@ -51,6 +51,13 @@ class Portfolio(object):
 		return str(self)
 
 	@property
+	def n_open_positions(self):
+		"""
+		Obtain the number of open positions present in the portfolio
+		"""
+		return len(self.positions)
+
+	@property
 	def total_market_value(self):
 		"""
 		Obtain the total market value of the portfolio excluding cash.
@@ -182,6 +189,11 @@ class Portfolio(object):
 				'total_realised_pnl' : self.total_realised_pnl,
 				'total_pnl' : self.total_pnl
 			}
+
+	def get_open_position(self, ticker):
+		if ticker in self.positions:
+			return self.positions[ticker]
+		return None
 
 	def open_positions_to_dict(self):
 		"""

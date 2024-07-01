@@ -33,7 +33,6 @@ class PortfolioHandler(object):
 		transaction = Transaction.new_transaction(fill_event)
 		portfolio = self.get_portfolio(fill_event.portfolio_id)
 		portfolio.process_transaction(transaction)
-		#TODO: verify if i need to save the portfolio in the portfolios dict
 	
 	def generate_portfolios_update_event(self):
 		"""

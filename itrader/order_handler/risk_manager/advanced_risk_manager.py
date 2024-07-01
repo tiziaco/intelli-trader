@@ -1,4 +1,5 @@
 from itrader.events_handler.event import SignalEvent
+from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
 from itrader import logger
 
@@ -19,8 +20,8 @@ class RiskManager():
 		Portfolio metrics and open positions data
 	"""
 
-	def __init__(self, portfolios = {}):
-		self.portfolios = portfolios
+	def __init__(self, portfolio_handler: PortfolioHandler):
+		self.portfolio_handler = portfolio_handler
 
 		logger.info('   RISK MANAGER: Risk Manager => OK')
 
@@ -42,12 +43,12 @@ class RiskManager():
 		"""
 		# TODO: implement check cash in case of position increase
 		portfolio_id = signal.portfolio_id
-		open_tickers = list(self.portfolios.get(portfolio_id, {}).get('open_positions', {}).keys())
+		open_tickers = list(self.portfolio_handler.get_portfolio(portfolio_id).positions.keys())
 		cost = signal.quantity * signal.price
 		
 		if signal.ticker not in open_tickers:
 			# New position about to be opened. Check if enough cash
-			cash = self.portfolios.get(portfolio_id, {}).get('available_cash', 0)
+			cash = self.portfolio_handler.get_portfolio(portfolio_id).cash
 			if cash < 30 or cash <= cost:
 				signal.verified = False
 		if signal.verified == False:

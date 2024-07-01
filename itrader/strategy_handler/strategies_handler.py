@@ -23,7 +23,7 @@ class StrategiesHandler(object):
 		self.global_queue: Queue = global_queue
 		self.price_handler: PriceHandler = price_handler
 		self.min_timeframe: timedelta = timedelta(weeks=100)
-		self.portfolios: dict = {}
+		#self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
 
 		logger.info('STRATEGIES HANDLER: Default => OK')
@@ -49,11 +49,11 @@ class StrategiesHandler(object):
 				data = self.price_handler.get_resampled_bars(event.time, ticker, strategy.timeframe, strategy.max_window)
 				strategy.calculate_signal(data, event, ticker)
 
-	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
-		"""
-		Update the information relative to the active portfolios.
-		"""
-		self.portfolios = update_event.portfolios
+	# def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
+	# 	"""
+	# 	Update the information relative to the active portfolios.
+	# 	"""
+	# 	self.portfolios = update_event.portfolios
 
 	def assign_symbol(self, signals):
 		"""

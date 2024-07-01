@@ -22,7 +22,7 @@ class Strategy(object):
 		self.timeframe = to_timedelta(timeframe)
 		self.tickers = tickers
 		self.order_type = order_type
-		self.portfolios = {}
+		#self.portfolios = {}
 		self.subscribed_portfolios = []
 		self.last_event: BarEvent = None
 		self.global_queue = global_queue
@@ -48,53 +48,42 @@ class Strategy(object):
 			'strategy_setting' : self.setting_to_dict()
 		}
 
+	def _generate_signal(self, ticker: str, action: str, sl: float = 0, tp: float = 0):
+		"""
+		Generate a signal for the given `ticker`, `action`, `stop_loss`, and `take_profit`.
+		"""
+		last_close = self.last_event.bars[ticker]['Close'].iloc[-1]
+		for portfolio_id in self.subscribed_portfolios:
+			signal = SignalEvent(
+							time = self.last_event.time,
+							order_type = self.order_type,
+							ticker = ticker,
+							action = action,
+							price = last_close,
+							quantity = 0,
+							stop_loss = sl,
+							take_profit = tp,
+							strategy_id = self.strategy_id,
+							portfolio_id = portfolio_id,
+							strategy_setting=self.setting_to_dict()
+						)
+			self.global_queue.put(signal)
+		logger.debug('Strategy signal (%s - %s %s, %s $)', self.strategy_id,
+					ticker, action, round(last_close, 4))
+
 	def buy(self, ticker: str, sl: float = 0, tp: float = 0):
 		"""
 		Add a buy signal from the strategy to the global queue 
 		of the trading system.
 		"""
-		last_close = self.last_event.bars[ticker]['Close'].iloc[-1]
-		for portfolio_id in self.subscribed_portfolios:
-			signal = SignalEvent(
-							time = self.last_event.time,
-							order_type = self.order_type,
-							ticker = ticker,
-							action = 'BUY',
-							price = last_close,
-							quantity = 0,
-							stop_loss = sl,
-							take_profit = tp,
-							strategy_id = self.strategy_id,
-							portfolio_id = portfolio_id,
-							strategy_setting=self.setting_to_dict()
-						)
-			self.global_queue.put(signal)
-		logger.debug('Strategy signal (%s - %s %s, %s $)', self.strategy_id,
-					ticker, 'BUY', round(last_close, 4))
+		self._generate_signal(ticker, 'BUY', sl, tp)
 
 	def sell(self, ticker: str, sl: float = 0, tp: float = 0):
 		"""
-		Add a buy signal from the strategy to the global queue 
+		Add a sell signal from the strategy to the global queue 
 		of the trading system.
 		"""
-		last_close = self.last_event.bars[ticker]['Close'].iloc[-1]
-		for portfolio_id in self.subscribed_portfolios:
-			signal = SignalEvent(
-							time = self.last_event.time,
-							order_type = self.order_type,
-							ticker = ticker,
-							action = 'SELL',
-							price = last_close,
-							quantity = 0,
-							stop_loss = sl,
-							take_profit = tp,
-							strategy_id = self.strategy_id,
-							portfolio_id = portfolio_id,
-							strategy_setting=self.setting_to_dict()
-						)
-			self.global_queue.put(signal)
-		logger.debug('Strategy signal (%s - %s %s, %s $)', self.strategy_id,
-					ticker, 'SELL', round(last_close, 4))
+		self._generate_signal(ticker, 'SELL', sl, tp)
 	
 	def subscribe_portfolio(self, portfolio_id:int):
 		self.subscribed_portfolios.append(portfolio_id)

@@ -1,5 +1,6 @@
 from ..base import OrderBase
 from itrader.events_handler.event import SignalEvent
+from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
 from itrader import logger
 
@@ -13,8 +14,8 @@ class ComplianceManager():
 	and if the number of opened positions in a portfolio reached 
 	the defined limit
 	"""
-	def __init__(self, portfolios = {}):
-		self.portfolios = portfolios
+	def __init__(self, portfolio_handler: PortfolioHandler):
+		self.portfolio_handler = portfolio_handler
 		logger.info('   COMPLIANCE MANAGER: Default => OK')
 
 	
@@ -39,7 +40,7 @@ class ComplianceManager():
 
 	def check_max_open_positions(self, signal: SignalEvent):
 		portfolio_id = signal.portfolio_id
-		n_open_positions = self.portfolios.get(portfolio_id, {}).get('n_open_positions', 0)
+		n_open_positions = self.portfolio_handler.get_portfolio(portfolio_id).n_open_positions
 		max_position = signal.strategy_setting.get('max_positions')
 
 		if (n_open_positions >= max_position):
@@ -50,7 +51,7 @@ class ComplianceManager():
 	def check_position_increase(self, signal: SignalEvent):
 		portfolio_id = signal.portfolio_id
 		ticker = signal.ticker
-		open_positions = self.portfolios.get(portfolio_id, {}).get('open_positions', {})
+		open_positions = self.portfolio_handler.get_portfolio(portfolio_id).positions
 		position_side = open_positions.get(ticker, {}).get('side', None)
 		if (position_side == 'LONG' and signal.action == 'BUY'):
 			signal.verified = False

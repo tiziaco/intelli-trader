@@ -8,5 +8,4 @@ class OrderBase(object):
 	"""
 
 	def __init__(self, events_queue, portfolios = {}):
-		self.events_queue = events_queue
 		self.portfolios = portfolios

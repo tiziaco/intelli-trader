@@ -69,16 +69,16 @@ class EventHandler(object):
 				self.portfolio_handler.update_portfolios_market_value(event)
 				self.order_handler.check_pending_orders(event)
 				self.strategies_handler.calculate_signals(event)
-			elif event.type == EventType.UPDATE:
-				self.strategies_handler.on_portfolio_update(event)
-				self.order_handler.on_portfolio_update(event)
+			# elif event.type == EventType.UPDATE:
+			# 	self.strategies_handler.on_portfolio_update(event)
+			# 	self.order_handler.on_portfolio_update(event)
 			elif event.type == EventType.SIGNAL:
 				self.order_handler.on_signal(event)
 			elif event.type == EventType.ORDER:
 				self.execution_handler.execute_order(event)
 			elif event.type == EventType.FILL:
 				self.portfolio_handler.on_fill(event)
-				self.order_handler._delete_pending_orders(event)
+				#self.order_handler._delete_pending_orders(event)
 			elif event.type == EventType.SCREENER:
 				continue
 			else:

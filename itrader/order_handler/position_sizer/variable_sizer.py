@@ -1,4 +1,5 @@
 from itrader.events_handler.event import SignalEvent
+from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
 from itrader import logger
 
@@ -17,8 +18,8 @@ class DynamicSizer():
 	max_allocation : `float`
 		Allocation percentage (default: 80%)
 	"""
-	def __init__(self, portfolios = {}):
-		self.portfolios = portfolios
+	def __init__(self, portfolio_handler: PortfolioHandler):
+		self.portfolio_handler = portfolio_handler
 
 		logger.info('   POSITION SIZER: Dynamic Sizer => OK')
 	
@@ -36,14 +37,14 @@ class DynamicSizer():
 		strategy_setting = signal.strategy_setting
 		max_positions = strategy_setting.get('max_positions')
 		max_allocation = strategy_setting.get('max_allocation')
-		open_tickers = list(self.portfolios.get(portfolio_id, {}).get('open_positions', {}).keys())
+		open_tickers = list(self.portfolio_handler.get_portfolio(portfolio_id).positions.keys())
 
 		if ticker in open_tickers:
 			# The position is already open and will be closed, assign 100% of the quantity
-			quantity = self.portfolios.get(portfolio_id, {}).get('open_positions', {})[ticker]['quantity']
+			quantity = self.portfolio_handler.get_portfolio(portfolio_id).get_open_position(ticker).net_quantity
 		else:
 			# New position, assign 80% of the cash
-			cash = self.portfolios.get(portfolio_id, {}).get('available_cash', 0)
+			cash = self.portfolio_handler.get_portfolio(portfolio_id).cash
 			last_price = signal.price
 
 			available_pos = (max_positions - len(open_tickers))
