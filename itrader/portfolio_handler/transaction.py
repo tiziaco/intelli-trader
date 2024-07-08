@@ -89,3 +89,13 @@ class Transaction(object):
 			filled_order.portfolio_id,
 			idgen.generate_transaction_id()
 		)
+
+	def to_dict(self):
+			return {
+				'id': self.id,
+				'time': self.time,
+				'ticker': self.ticker,
+				'price': self.price,
+				'quantity': self.quantity,
+				'commission': self.commission,
+			}
