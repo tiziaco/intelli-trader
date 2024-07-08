@@ -34,7 +34,7 @@ class SimulatedExchange(AbstractExchange):
 		self.commission_pct = commission_pct
 		self.slippage_pct = slippage_pct
 
-		logger.info('EXECUTION HANDLER => OK')
+		logger.info('EXECUTION HANDLER: Simulated exchange => OK')
 
 
 	def execute_order(self, event: OrderEvent):
