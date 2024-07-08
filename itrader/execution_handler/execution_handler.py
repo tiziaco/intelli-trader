@@ -35,7 +35,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		self.slippage_pct = slippage_pct
 		self.exchanges: dict[str, AbstractExchange] = self.init_exchanges()
 
-		logger.info('EXECUTION HANDLER: Simulated broker => OK')
+		logger.info('EXECUTION HANDLER => OK')
 
 
 	def on_order(self, event: OrderEvent):

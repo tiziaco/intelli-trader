@@ -57,7 +57,7 @@ class BarEvent:
 		return str(self)
 
 	def get_last_close(self, ticker) -> float:
-		return self.bars[ticker]['Close'].iloc[-1]
+		return self.bars[ticker]['close']
 
 @dataclass
 class PortfolioUpdateEvent:

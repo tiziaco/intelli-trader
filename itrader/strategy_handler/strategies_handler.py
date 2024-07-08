@@ -45,9 +45,10 @@ class StrategiesHandler(object):
 			if not check_timeframe(event.time, strategy.timeframe):
 				continue
 			# Calculate the signal for each ticker or pair traded from the strategy
+			strategy.last_event = event
 			for ticker in strategy.tickers:
 				data = self.price_handler.get_resampled_bars(event.time, ticker, strategy.timeframe, strategy.max_window)
-				strategy.calculate_signal(data, event, ticker)
+				strategy.calculate_signal(ticker, data)
 
 	# def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
 	# 	"""

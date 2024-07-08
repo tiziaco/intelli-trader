@@ -52,7 +52,7 @@ class Strategy(object):
 		"""
 		Generate a signal for the given `ticker`, `action`, `stop_loss`, and `take_profit`.
 		"""
-		last_close = self.last_event.bars[ticker]['Close'].iloc[-1]
+		last_close = self.last_event.bars[ticker]['close']
 		for portfolio_id in self.subscribed_portfolios:
 			signal = SignalEvent(
 							time = self.last_event.time,
@@ -85,8 +85,18 @@ class Strategy(object):
 		"""
 		self._generate_signal(ticker, 'SELL', sl, tp)
 	
+	def last_time(self):
+		if self.last_event is not None:
+			return self.last_event.time
+
 	def subscribe_portfolio(self, portfolio_id:int):
 		self.subscribed_portfolios.append(portfolio_id)
 	
 	def unsubscribe_portfolio(self, portfolio_id:int):
 		self.subscribed_portfolios.remove(portfolio_id)
+	
+	def activate_strategy(self):
+		self.is_active = True
+
+	def deactivate_strategy(self):
+		self.is_active = False

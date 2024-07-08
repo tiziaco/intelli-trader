@@ -75,7 +75,7 @@ class EventHandler(object):
 			elif event.type == EventType.SIGNAL:
 				self.order_handler.on_signal(event)
 			elif event.type == EventType.ORDER:
-				self.execution_handler.execute_order(event)
+				self.execution_handler.on_order(event)
 			elif event.type == EventType.FILL:
 				self.portfolio_handler.on_fill(event)
 				#self.order_handler._delete_pending_orders(event)

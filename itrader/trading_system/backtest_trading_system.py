@@ -22,8 +22,9 @@ class TradingSystem(object):
 	carrying out either a backtest session.
 	"""
 	def __init__(
-		self, exchange='binance', universe = 'static',
-		start_date = None, end_date = '',
+		self, exchange='binance',
+		start_date = None,
+		end_date = '',
 		to_sql = False,
 	):
 		"""
