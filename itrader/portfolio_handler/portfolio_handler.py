@@ -109,3 +109,10 @@ class PortfolioHandler(object):
 		for id, portfolio in self.portfolios.items():
 			portfolios[id] = portfolio.to_dict()
 		return portfolios
+	
+	def record_metrics(self, time: datetime):
+		"""
+		Store the portfolio metrics for each portfolio
+		"""
+		for id, portfolio in self.portfolios.items():
+			portfolio.record_metrics(time)

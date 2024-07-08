@@ -89,7 +89,7 @@ class TradingSystem(object):
 		for ping_event in self.ping:
 			self.global_queue.put(ping_event)
 			self.event_handler.process_events()
-			#self.portfolio_handler.record_portfolios_metrics(ping_event.time)
+			self.portfolio_handler.record_metrics(ping_event.time)
 		logger.info('    BACKTEST COMPLETED   ')
 		end_time = datetime.now()  # Capture end time
 		duration = end_time - start_time

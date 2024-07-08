@@ -43,6 +43,7 @@ class Portfolio(object):
 		self.transactions: list[Transaction] = []
 		self.positions: dict[str, Position] = {}
 		self.closed_positions: list[Position] = []
+		self.metrics: dict[datetime, dict] = {}
 	
 	def __str__(self):
 		return f"Portfolio-{self.portfolio_id}"
@@ -181,7 +182,7 @@ class Portfolio(object):
 				'name' : self.name,
 				'exchange' : self.exchange,
 				'n_open_positions' : len(self.positions),
-				'open_positions' : self.open_positions_to_dict(),
+				#'open_positions' : self.open_positions_to_dict(),
 				'total_market_value' : self.total_market_value,
 				'available_cash' : self.cash,
 				'total_equity' : self.total_equity,
@@ -189,6 +190,9 @@ class Portfolio(object):
 				'total_realised_pnl' : self.total_realised_pnl,
 				'total_pnl' : self.total_pnl
 			}
+
+	def record_metrics(self, time: datetime):
+		self.metrics[time] = self.to_dict()
 
 	def get_open_position(self, ticker):
 		if ticker in self.positions:
