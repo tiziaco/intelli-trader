@@ -35,6 +35,7 @@ class OrderHandler(OrderBase):
 		"""
 		#super(OrderHandler, self).__init__(events_queue)
 		self.events_queue = events_queue
+		self.portfolio_handler = portfolio_handler
 		self.compliance = ComplianceManager(portfolio_handler)
 		self.position_sizer = DynamicSizer(portfolio_handler)
 		self.risk_manager = RiskManager(portfolio_handler)
@@ -219,7 +220,7 @@ class OrderHandler(OrderBase):
 			The sized order generated from the position sizer module
 		"""
 		portfolio_id = signal.portfolio_id
-		exchange = self.portfolios.get(portfolio_id, {}).get('exchange', None)
+		exchange = self.portfolio_handler.get_portfolio(portfolio_id).exchange
 		tp_order = Order.new_limit_order(
 			time = signal.time,
 			ticker = signal.ticker,
@@ -236,7 +237,7 @@ class OrderHandler(OrderBase):
 	
 	def new_order(self, signal: SignalEvent):
 		portfolio_id = signal.portfolio_id
-		exchange = self.portfolios.get(portfolio_id, {}).get('exchange', None)
+		exchange = self.portfolio_handler.get_portfolio(portfolio_id).exchange
 		new_order = Order.new_order(signal, exchange)
 		self.add_pending_order(new_order)
 
