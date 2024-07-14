@@ -8,6 +8,9 @@ import numpy as np
 
 import itrader.reporting.performance as perf
 import itrader.reporting.plots as plots
+from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from itrader.portfolio_handler.portfolio import Portfolio
+from itrader.price_handler.data_provider import PriceHandler
 
 
 import sqlalchemy 
@@ -27,52 +30,53 @@ class StatisticsReporting(AbstractStatistics):
 	Also includes an optional annualised rolling Sharpe
 	ratio chart.
 	"""
-	def __init__(
-		self, engine_logger, sql_engine=None, 
-		periods=355, to_sql=False
+	def __init__(self,
+			portfolio_handler: PortfolioHandler, 
+			price_handler: PriceHandler, 
+			periods=355, to_sql=False
 	):
 		"""
 		Takes in a portfolio handler.
 		"""
-		#self.sql_engine = sql_engine
-		#self.meta = sqlalchemy.MetaData(self.engine)
-		self.engine_logger = engine_logger
+		self.portfolio_handler = portfolio_handler
+		self.price_handler = price_handler
 		self.periods = periods
-		self.prices = None
-		self.transaction = None
-		self.positions = None
-		self.portfolio_metrics = None
+		# self.transaction = None
+		# self.positions = None
+		# self.portfolio_metrics = None
 		self.statistics={}
 		self.log_scale = False
-		self.to_sql = to_sql #TODO da finire
 
 
 
-	def _prepare_data(self):
+	def _prepare_data(self, portfolio: Portfolio):
 		"""
 		Convert and format the data for the statistic calculations.
 		Not used in Live trading
 		"""
 		# Create transactions DataFrame
-		self.transaction = pd.DataFrame(self.engine_logger.transactions).set_index('transaction_id')
+		transactions_list = [t.to_dict() for t in portfolio.transactions]
+		transactions = pd.DataFrame(transactions_list).set_index('transaction_id')
 
 		# Create positions DataFrame
-		self.positions = pd.DataFrame(self.engine_logger.closed_positions).set_index('position_id')
+		positions_list = [t.to_dict() for t in portfolio.closed_positions]
+		positions = pd.DataFrame(positions_list) #.set_index('position_id')
 		# Calculate the return and duration for each position
-		self.positions['trade_return'] = (self.positions.total_sold / self.positions.total_bought)-1
-		self.positions['duration'] = self.positions['exit_date'] - self.positions['entry_date']
+		positions['trade_return'] = (positions.total_sold / positions.total_bought) - 1
+		positions['duration'] = positions['exit_date'] - positions['entry_date']
 
 		# Create portfolio metrics dictionary
-		port_metrics = self.engine_logger.portfolio_metrics
-		self.portfolio_metrics = pd.concat({k: pd.DataFrame(v) for k, v in port_metrics.items()}, axis=1).T
-		self.portfolio_metrics.index.set_names(['date','portfolio_id'], inplace=True)
+		# equity_metrics = portfolio.metrics
+		equity_metrics = pd.DataFrame.from_dict(portfolio.metrics, orient='index')
+		# equity_metrics.index.set_names(['date','portfolio_id'], inplace=True)
+
+		return transactions, positions, equity_metrics
 
 	
-	def _equity_statistics(self, portfolio_id):
+	def _equity_statistics(self, equity_metrics: pd.DataFrame):
 		### Equity statistics
 
-		# Slice the portfolio_metrics DataFrame according to the portfolio_id
-		df = self.portfolio_metrics.loc[:,portfolio_id,:]
+		df = equity_metrics
 
 		# Preprocess the equity line adding returns, cum_returns and drawdown
 		df['returns'] = df['total_equity'].pct_change().fillna(0.0)
@@ -92,11 +96,10 @@ class StatisticsReporting(AbstractStatistics):
 		#TODO aggiungere volatility
 		return statistics
 
-	def _trade_statistics(self, portfolio_id):
+	def _trade_statistics(self, positions: pd.DataFrame):
 		### Trades statistics
 
-		# Slice the portfolio_metrics DataFrame according to the portfolio_id
-		df = self.positions[self.positions.portfolio_id == portfolio_id]
+		df = positions
 
 		# Calculate the return for each trade
 		# df['trade_return'] = (df.total_sold / df.total_bought)-1
@@ -106,9 +109,9 @@ class StatisticsReporting(AbstractStatistics):
 			trade_statistics={
 				'trades' : df.shape[0],
 				'win_pct' : df[df["trade_return"] > 0].shape[0] / float(df.shape[0]),
-				'long_trades' : len(df[(df['action'] == 'BOT')]),
+				'long_trades' : len(df[(df['side'] == 'LONG')]),
 				'long_win_pct' : perf.long_trades_win_pct(df),
-				'short_trades' : len(df[(df['action'] == 'SLD')]),
+				'short_trades' : len(df[(df['side'] == 'SHORT')]),
 				'short_win_pct': perf.short_trades_win_pct(df),
 				'profict_factor': perf.calculate_profict_factor(df),
 				'avg_trd_pct' : np.mean(df["trade_return"]),
@@ -119,11 +122,11 @@ class StatisticsReporting(AbstractStatistics):
 		#TODO aggiungere stats separate per long e short
 		return trade_statistics
 	
-	def _temporal_statistics(self, portfolio_id):
+	def _temporal_statistics(self, equity_metrics: pd.DataFrame):
 		### Temporal statistics
 
 		# Slice the portfolio_metrics DataFrame according to the portfolio_id
-		df = self.portfolio_metrics.loc[:,portfolio_id,:]
+		df = equity_metrics
 
 		# Preprocess the equity line adding returns
 		df['returns'] = df['total_equity'].pct_change().fillna(0.0)
@@ -144,24 +147,22 @@ class StatisticsReporting(AbstractStatistics):
 		return temporal_statistics
 
 
-	def calculate_statistics(self):
+	def calculate_statistics(self, positions, equity_metrics):
 		"""
 		Return a dict with all important statistics. Runned at the
 		end of the backtest in 'trading_session.py'
 		"""
-		self._prepare_data()
-
-		for portfolio_id in self.positions.portfolio_id.unique():
-
-			### Equity statistics
-			self.statistics.setdefault(portfolio_id,{})['equity_stats'] = self._equity_statistics(portfolio_id)
-
-			### Trades statistics
-			self.statistics[portfolio_id]['trade_stats'] = self._trade_statistics(portfolio_id)
-			
-			### Temporal statistics
-			self.statistics[portfolio_id]['temporal_stats'] = self._temporal_statistics(portfolio_id)
 		
+
+		statistics={}
+		### Equity statistics
+		statistics['equity_stats'] = self._equity_statistics(equity_metrics)
+
+		### Trades statistics
+		statistics['trade_stats'] = self._trade_statistics(positions)
+		
+		### Temporal statistics
+		statistics['temporal_stats'] = self._temporal_statistics(equity_metrics)
 		
 		 ### Rolling statistics
 		 #TODO da finire
@@ -173,25 +174,25 @@ class StatisticsReporting(AbstractStatistics):
 		)
 		"""
 
-		### Export the data
-		#self._to_sql(strategy)
+		return statistics
 	
-	def print_summary(self, portfolio_id = '01'):
+	def print_summary(self, portfolio_id: int = 1):
 		"""
 		Print a summury with the main statistics of the backtest.
 		"""
-		self.calculate_statistics()
-		statistics = self.statistics[portfolio_id]
-		positions = self.positions[self.positions.portfolio_id == portfolio_id]
-		start_dt = list(self.prices.values())[0].index[0].strftime('%Y/%m/%d, %H:%M')
-		end_dt = list(self.prices.values())[0].index[-1].strftime('%Y/%m/%d, %H:%M')
+		portfolio = self.portfolio_handler.get_portfolio(portfolio_id)
+		transactions, positions, equity_metrics = self._prepare_data(portfolio)
+		statistics = self.calculate_statistics(positions, equity_metrics)
+
+		start_dt = list(self.price_handler.prices.values())[0].index[0].strftime('%Y/%m/%d, %H:%M')
+		end_dt = list(self.price_handler.prices.values())[0].index[-1].strftime('%Y/%m/%d, %H:%M')
 		
 		print("---------------------------------------------------------")
 		print("                 STRATEGY STATISTICS")
 		print("---------------------------------------------------------")
 		print('Start date: %s', start_dt)
 		print('End date: %s', (end_dt))
-		print("Bars: %s",(len(list(self.prices.values())[0])))
+		print("Bars: %s",(len(list(self.price_handler.prices.values())[0])))
 		print('')
 		print("Return: %0.2f%%" % (statistics['equity_stats']['tot_ret']*100))
 		print("Sharpe Ratio: %0.2f" % statistics['equity_stats']['sharpe'])
@@ -212,25 +213,26 @@ class StatisticsReporting(AbstractStatistics):
 		print("Avg. duration: %s" % np.mean(positions.duration))
 		print("Max. duration: %s" % max(positions.duration))
 		
-	def plot_charts(self, portfolio_id = '01'):
-		# Filter data
-		df = self.portfolio_metrics.loc[:,portfolio_id,:]
-		positions = self.positions[self.positions.portfolio_id == portfolio_id]
-		# Preprocess the equity line adding returns, cum_returns and drawdown
-		df['returns'] = df['total_equity'].pct_change().fillna(0.0)
-		df['cum_returns'] = np.exp(np.log(1 + df['returns']).cumsum())
-		df['drawdowns'] = perf.calculate_drawdowns(df['cum_returns'])
+	def plot_charts(self, portfolio_id = 1):
+		portfolio = self.portfolio_handler.get_portfolio(portfolio_id)
+		transactions, positions, equity_metrics = self._prepare_data(portfolio)
 
-		eq_line = plots.line_equity(df['cum_returns'])
-		dd_line = plots.line_drwdwn(df['drawdowns'])
-		profit_loss = plots.profit_loss_scatter(positions, list(self.prices.values())[0].index)
+		# Preprocess the equity line adding returns, cum_returns and drawdown
+		equity_metrics['returns'] = equity_metrics['total_equity'].pct_change().fillna(0.0)
+		equity_metrics['cum_returns'] = np.exp(np.log(1 + equity_metrics['returns']).cumsum())
+		equity_metrics['drawdowns'] = perf.calculate_drawdowns(equity_metrics['cum_returns'])
+
+		eq_line = plots.line_equity(equity_metrics['cum_returns'])
+		dd_line = plots.line_drwdwn(equity_metrics['drawdowns'])
+		profit_loss = plots.profit_loss_scatter(positions, list(self.price_handler.prices.values())[0].index)
 
 		return plots.sub_plots3(eq_line, dd_line, profit_loss)
 	
-	def plot_signals(self, ticker, portfolio_id = '01'):
-		transactions = self.transaction[(self.transaction.portfolio_id == portfolio_id) &
-										 (self.transaction.ticker == ticker)]
-		return plots.signals_plot(self.prices[ticker], transactions)
+	def plot_signals(self, ticker, portfolio_id = 1):
+		portfolio = self.portfolio_handler.get_portfolio(portfolio_id)
+		transactions, positions, equity_metrics = self._prepare_data(portfolio)
+		transactions = transactions[transactions.ticker == ticker]
+		return plots.signals_plot(self.price_handler.get_bars(ticker), transactions)
 	
 	def _to_sql(self, strategy, bck):
 

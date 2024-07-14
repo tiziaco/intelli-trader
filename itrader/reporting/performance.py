@@ -163,8 +163,8 @@ def long_trades_win_pct(positions):
     """
     Calculate the number of winning long trades
     """
-    long_trades = len(positions[(positions['action'] == 'BOT')])
-    win_long = positions[(positions['action'] == 'BOT') & (positions["realised_pnl"] > 0)].shape[0]
+    long_trades = len(positions[(positions['side'] == 'LONG')])
+    win_long = positions[(positions['side'] == 'LONG') & (positions["realised_pnl"] > 0)].shape[0]
     if long_trades == 0:
         return 0
     else:
@@ -174,8 +174,8 @@ def short_trades_win_pct(positions):
     """
     Calculate the number of winning short trades
     """
-    short_trades = len(positions[(positions['action'] == 'SLD')])
-    win_short = positions[(positions['action'] == 'SLD') & (positions["realised_pnl"] > 0)].shape[0]
+    short_trades = len(positions[(positions['side'] == 'SHORT')])
+    win_short = positions[(positions['side'] == 'SHORT') & (positions["realised_pnl"] > 0)].shape[0]
     if short_trades == 0:
         return 0
     else:
