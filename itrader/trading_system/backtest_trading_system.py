@@ -46,7 +46,9 @@ class TradingSystem(object):
 		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler)
 		self.execution_handler = ExecutionHandler(self.global_queue)
 		self.ping = PingGenerator()
-		#self.reporting = StatisticsReporting()
+		self.reporting = StatisticsReporting(
+			self.portfolio_handler,
+			self.price_handler)
 		self.event_handler = EventHandler(
 			self.strategies_handler,
 			self.screeners_handler,

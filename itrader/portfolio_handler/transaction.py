@@ -92,9 +92,12 @@ class Transaction(object):
 
 	def to_dict(self):
 			return {
-				'id': self.id,
+				'transaction_id': self.id,
+				'portfolio_id' : self.portfolio_id,
+				'position_id' : self.position_id,
 				'time': self.time,
 				'ticker': self.ticker,
+				'action' : self.type.name,
 				'price': self.price,
 				'quantity': self.quantity,
 				'commission': self.commission,

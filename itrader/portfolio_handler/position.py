@@ -33,7 +33,7 @@ class Position(object):
 		buy_commission: float,
 		sell_commission: float,
 		is_open: bool,
-		portfolio_id: str
+		portfolio_id: int
 	):
 		self.id = idgen.generate_position_id()
 		self.ticker = ticker
@@ -237,7 +237,8 @@ class Position(object):
 
 	def to_dict(self):
 			return {
-				'id': self.id,
+				'position_id': self.id,
+				'portfolio_id': self.portfolio_id,
 				'is_open': self.is_open,
 				'current_price': self.current_price,
 				'entry_date': self.entry_date,
