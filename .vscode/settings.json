@@ -1,0 +1,27 @@
+{
+	// Performance improvements
+	"files.watcherExclude": {
+		"**/.git/objects/**": true,
+		"**/.git/subtree-cache/**": true,
+		"**/.venv/**": true,
+		"**/__pycache__/**": true,
+		"**/.pytest_cache/**": true,
+		"**/.ruff_cache/**": true
+	},
+	"files.exclude": {
+		"**/__pycache__": true,
+		"**/.pytest_cache": true,
+		"**/.ruff_cache": true,
+		"**/.mypy_cache": true,
+		"**/*.pyc": true,
+	},
+	"search.exclude": {
+		"**/.venv": true,
+		"**/poetry.lock": true,
+		"**/.git": true
+	},
+
+	// Python-specific settings
+    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.analysis.extraPaths": ["./itrader"],
+}
