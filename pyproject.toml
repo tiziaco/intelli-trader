@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "itrader"
+version = "1.0.0"
+description = "Event-driven trading system"
+authors = ["tiziaco <tiziano.iaco@gmail.com>"]
+readme = "README.md"
+repository = "https://github.com/tiziaco/IntelliTrade.com"
+packages = [{include = "itrader"}]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+pandas = "^2.2.3"
+numpy = "^2.2.3"
+scipy = "^1.15.2"
+scikit-learn = "^1.6.1"
+sqlalchemy = "^2.0.38"
+ta = "^0.11.0"
+pandas-ta = "^0.3.14b0"
+tqdm = "^4.67.1"
+ccxt = "^4.4.65"
+plotly = "^6.0.0"
+sqlalchemy-utils = "^0.41.2"
+statsmodels = "^0.14.4"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+ipython = "^9.0.1"
+ipykernel = "^6.29.5"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
