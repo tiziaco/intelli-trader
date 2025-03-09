@@ -1,8 +1,0 @@
-__author__ = "IntelliTrader"
-__copyright__ = "Copyright 2023"
-__license__ = "MIT"
-__version__ = "1.1.0"
-__maintainer__ = "I.Tiziano"
-__email__ = ""
-__status__ = "Development"
-__url__ = "COMING SOON"
