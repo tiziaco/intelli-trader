@@ -75,11 +75,11 @@ class SMA_MACD_strategy(Strategy):
 
 		### SHORT signals
 		# Entry
-		if short_sma[-1] <= long_sma[-1]: # Filter
-			if ((MACDhist[-1] <= 0) and (MACDhist[-2] > 0)): # Short trigger
-				self.sell(ticker)
+		# if short_sma[-1] <= long_sma[-1]: # Filter
+		# 	if ((MACDhist[-1] <= 0) and (MACDhist[-2] > 0)): # Short trigger
+		# 		self.sell(ticker)
 
-		# Exit
-			elif ((MACDhist.iloc[-1] >= 0) and (MACDhist.iloc[-2] < 0)):
-				self.buy(ticker)
+		# # Exit
+		# 	elif ((MACDhist.iloc[-1] >= 0) and (MACDhist.iloc[-2] < 0)):
+		# 		self.buy(ticker)
 
