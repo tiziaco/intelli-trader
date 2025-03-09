@@ -1,9 +1,44 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
-oanda.cfg
-*.json
-*.ipynb
+*.py[cod]
+*$py.class
+*.pyc
+.python*
+
+# C extensions
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
 .env
-OLD/*
-my_strategies/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+
+# Cython debug symbols
+cython_debug/
+
+# credentials
+credentials*
+
+#mac stuff
 .DS_Store
+
+# cache
+**cache**
+
+#UserData
+output
+my_strategies/
 test.py
+keys.json
+*.ipynb
+*.png
+
+#coverage report
+.coverage
+
