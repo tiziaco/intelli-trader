@@ -1,4 +1,6 @@
 {
+	"python.envFile": "${workspaceFolder}/.env",
+	
 	// Performance improvements
 	"files.watcherExclude": {
 		"**/.git/objects/**": true,
