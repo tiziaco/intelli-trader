@@ -1,22 +1,31 @@
 import os
-import json
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load API keys from environment variables instead of JSON file
+def load_secret_keys():
+    """Load secret keys from environment variables."""
+    return {
+        'binance_main': {
+            'API_KEY': os.getenv('BINANCE_MAIN_API_KEY'),
+            'API_SECRET': os.getenv('BINANCE_MAIN_API_SECRET')
+        },
+        'binance_spot_testnet': {
+            'API_KEY': os.getenv('BINANCE_SPOT_TESTNET_API_KEY'),
+            'API_SECRET': os.getenv('BINANCE_SPOT_TESTNET_API_SECRET')
+        },
+        'binance_future_testnet': {
+            'API_KEY': os.getenv('BINANCE_FUTURE_TESTNET_API_KEY'),
+            'API_SECRET': os.getenv('BINANCE_FUTURE_TESTNET_API_SECRET')
+        },
+        'oanda_testnet': {
+            'ACCOUNT_ID': os.getenv('OANDA_TESTNET_ACCOUNT_ID'),
+            'API_KEY': os.getenv('OANDA_TESTNET_API_KEY'),
+            'API_SECRET': os.getenv('OANDA_TESTNET_API_SECRET')
+        }
+    }
 
-# Set the project base directory
-basedir = os.path.abspath(os.path.dirname(__file__))
+keys_data = {'SECRET_KEYS': load_secret_keys()}
 
-# Load API keys from JSON file
-keys_file_path = os.getenv("KEYS_FILE_PATH")
-if not keys_file_path:
-	keys_file_path = f'{basedir}/../keys.json'
-	#raise ValueError("Error: KEYS_FILE_PATH environment variable not set.")
-with open(keys_file_path, 'r') as keys_file:
-	keys_data = json.load(keys_file)
-
-ENVIRONMENT = "dev" #Supported environments: 'dev', 'test', 'backtest', 'live'
+ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")  # Get from env or default to "dev"
 
 SUPPORTED_CURRENCIES = {'USDT', 'BUSD'}
 SUPPORTED_EXCHANGES = {'BINANCE', 'KUCOIN'}
