@@ -21,6 +21,7 @@ ccxt = "^4.4.65"
 plotly = "^6.0.0"
 sqlalchemy-utils = "^0.41.2"
 statsmodels = "^0.14.4"
+psycopg2-binary = "^2.9.10"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
