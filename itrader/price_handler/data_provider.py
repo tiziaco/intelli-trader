@@ -15,7 +15,7 @@ from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader.outils.data_outils import resample_ohlcv
 
 from itrader import config
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 
 class PriceHandler(AbstractPriceHandler):
@@ -53,8 +53,10 @@ class PriceHandler(AbstractPriceHandler):
 		self.exchange = self._init_exchange(exchange)
 		self.symbols = self._init_symbols(symbols)
 		self.sql_handler = SqlHandler()
-		
-		logger.info('PRICE HANDLER => OK')
+
+		self.logger = get_itrader_logger().bind(component="PriceHandler")
+		self.logger.info('Price Handler initialized')
+
 	@property
 	def available_symbols(self) -> list:
 		return self.prices.keys()
@@ -86,7 +88,7 @@ class PriceHandler(AbstractPriceHandler):
 				self.prices[symbol.upper()] = price
 				self.sql_handler.to_database(symbol, price, True)
 		
-		logger.info('PRICE HANDLER: Data loaded')
+		self.logger.info('Price data loaded')
 	
 	def update_data(self):
 		"""
@@ -118,7 +120,7 @@ class PriceHandler(AbstractPriceHandler):
 					# Update SQL database with remaining_prices
 					self.sql_handler.to_database(ticker, remaining_prices, False)
 			if update_counter == 0:
-				logger.info('PRICE HANDLER: Price updated')
+				self.logger.info('Price updated')
 				break
 
 	#******* Data Manipulation ***************
@@ -141,11 +143,11 @@ class PriceHandler(AbstractPriceHandler):
 				last_prices = self.prices[ticker].iloc[-1]['close']
 				return last_prices
 			except:
-				logger.error('PRICE HANDLER: data for %s at not found', ticker)
+				self.logger.error('Price data for %s at not found', ticker)
 				return None
 		else:
-			logger.error('PRICE HANDLER: data for %s not found', ticker)
-	
+			self.logger.error('Price data for %s not found', ticker)
+
 	def get_bar(self, ticker: str, time: pd.Timestamp):
 		"""
 		Get a specific bar at a specified time in the time series.
@@ -167,11 +169,11 @@ class PriceHandler(AbstractPriceHandler):
 				last_prices = self.prices[ticker].loc[time]
 				return last_prices
 			except:
-				logger.error('PRICE HANDLER: data for %s at time %s not found', ticker, str(time))
+				self.logger.error('Price data for %s at time %s not found', ticker, str(time))
 				return None
 		else:
-			logger.error('PRICE HANDLER: data for %s not found', ticker)
-	
+			self.logger.error('Price data for %s not found', ticker)
+
 	def get_bars(self, ticker: str, 
 			start_dt: pd.Timestamp = None,
 			end_dt: pd.Timestamp = None) -> pd.DataFrame:
@@ -194,7 +196,7 @@ class PriceHandler(AbstractPriceHandler):
 			DataFrame with  Date-OHLCV for the requested symbol
 		"""
 		if ticker not in self.available_symbols:
-			logger.error('PRICE HANDLER: data for %s not found', ticker)
+			self.logger.error('Price data for %s not found', ticker)
 			return
 		if start_dt is not None and end_dt is not None:
 			return self.prices[ticker].loc[start_dt : end_dt]

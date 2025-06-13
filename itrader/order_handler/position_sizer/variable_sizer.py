@@ -1,7 +1,7 @@
 from itrader.events_handler.event import SignalEvent
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 class DynamicSizer():
 	"""
@@ -21,8 +21,9 @@ class DynamicSizer():
 	def __init__(self, portfolio_handler: PortfolioHandler):
 		self.portfolio_handler = portfolio_handler
 
-		logger.info('   POSITION SIZER: Dynamic Sizer => OK')
-	
+		self.logger = get_itrader_logger().bind(component="DynamicSizer")
+		self.logger.info('   POSITION SIZER: Dynamic Sizer => OK')
+
 
 	def size_order(self, signal: SignalEvent):
 		"""
@@ -53,6 +54,6 @@ class DynamicSizer():
 		# Define or not an integer value for the position size
 		#TODO
 		
-		# Assign the calculated size to the ordr event
+		# Assign the calculated size to the order event
 		signal.quantity = round(quantity,5)
-		logger.debug('  POSITION SIZER: Order sized %s %s', signal.quantity, signal.ticker)
+		self.logger.debug('Order sized %s %s', signal.quantity, signal.ticker)

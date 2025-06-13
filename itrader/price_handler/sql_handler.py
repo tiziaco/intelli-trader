@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy_utils import database_exists, create_database
 
 from itrader import config
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 class SqlHandler(object):
 
@@ -11,7 +11,8 @@ class SqlHandler(object):
 		self.engine = self.init_engine()
 		self.inspector = inspect(self.engine)
 
-		logger.info('SQL: Database connected')
+		self.logger = get_itrader_logger().bind(component="SQLHandler")
+		self.logger.info('Price Database connected')
 
 	def init_engine(self):
 		engine = create_engine('postgresql+psycopg2://tizianoiacovelli:1234@localhost:5432/trading_system_prices')
@@ -36,7 +37,7 @@ class SqlHandler(object):
 			connection.execute(qry_str)
 		connection.commit()
 		connection.close()
-		logger.info('SQL: All tables deleted.')
+		self.logger.info('All tables deleted.')
 
 	def to_database(self, symbol: str, prices: pd.DataFrame, replace: bool):
 		"""

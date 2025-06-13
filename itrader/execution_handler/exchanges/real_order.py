@@ -1,7 +1,7 @@
 from .base import AbstractExchange
 from itrader.events_handler.event import FillEvent, OrderEvent
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 class CcxtExchange(AbstractExchange):
 	"""
@@ -20,6 +20,9 @@ class CcxtExchange(AbstractExchange):
 			The events queue of the trading system
 		"""
 		self.global_queue = global_queue
+
+		self.logger = get_itrader_logger().bind(component="CcxtExchange")
+		self.logger.info('CCXT Exchange initialized')
 
 
 	def execute_order(self, event: OrderEvent):

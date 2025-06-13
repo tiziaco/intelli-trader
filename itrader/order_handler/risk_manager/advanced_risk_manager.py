@@ -1,7 +1,7 @@
 from itrader.events_handler.event import SignalEvent
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 
 class RiskManager():
@@ -23,7 +23,8 @@ class RiskManager():
 	def __init__(self, portfolio_handler: PortfolioHandler):
 		self.portfolio_handler = portfolio_handler
 
-		logger.info('   RISK MANAGER: Risk Manager => OK')
+		self.logger = get_itrader_logger().bind(component="RiskManager")
+		self.logger.info('Risk Manager initialized')
 
 
 	def refine_orders(self, signal: SignalEvent):
@@ -34,7 +35,7 @@ class RiskManager():
 			return
 		self.check_cash(signal)
 		if signal.verified == True:
-			logger.debug('  RISK MANAGER: Order validated')
+			self.logger.debug('Order validated')
 
 	def check_cash(self, signal: SignalEvent):
 		"""
@@ -52,5 +53,5 @@ class RiskManager():
 			if cash < 30 or cash <= cost:
 				signal.verified = False
 		if signal.verified == False:
-			logger.info('  RISK MANAGER: Order REFUSED: Not enough cash to trade')
-		
+			self.logger.info('RISK MANAGER: Order REFUSED: Not enough cash to trade')
+

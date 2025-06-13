@@ -5,7 +5,7 @@ from itrader.price_handler.data_provider import PriceHandler
 from itrader.strategy_handler.base import Strategy
 from itrader.events_handler.event import BarEvent, PortfolioUpdateEvent
 from itrader.outils.time_parser import check_timeframe
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 
 class StrategiesHandler(object):
@@ -26,7 +26,8 @@ class StrategiesHandler(object):
 		#self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
 
-		logger.info('STRATEGIES HANDLER: Default => OK')
+		self.logger = get_itrader_logger().bind(component="StrategiesHandler")
+		self.logger.info('Strategies Handler initialized')
 
 	def calculate_signals(self, event: BarEvent):
 		"""
@@ -84,7 +85,7 @@ class StrategiesHandler(object):
 		self.strategies[0].tickers = new_traded
 
 		if new_traded:
-			logger.info('STRATEGY HANDLER: new symbols for %s : %s', self.strategies[0].__str__(), str(new_traded))
+			self.logger.info('Strategies Handler: new symbols for %s : %s', self.strategies[0].__str__(), str(new_traded))
 
 	
 	def get_strategies_universe(self):
@@ -127,4 +128,4 @@ class StrategiesHandler(object):
 		# Find the minimum timeframe
 		self.min_timeframe = min([self.min_timeframe, strategy.timeframe])
 
-		logger.info(f'STRATEGY HANDLER: New strategy added: {strategy.name}')
+		self.logger.info(f'New strategy added: {strategy.name}')

@@ -4,7 +4,7 @@ from ..fee_model.zero_fee_model import ZeroFeeModel
 from ..fee_model.percent_fee_model import PercentFeeModel
 from itrader.events_handler.event import FillEvent, OrderEvent
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 class SimulatedExchange(AbstractExchange):
 	"""
@@ -34,8 +34,12 @@ class SimulatedExchange(AbstractExchange):
 		self.commission_pct = commission_pct
 		self.slippage_pct = slippage_pct
 
-		logger.info('EXECUTION HANDLER: Simulated exchange => OK')
-
+		self.logger = get_itrader_logger().bind(component="SimulatedExchange")
+		self.logger.info('Simulated Exchange initialized with fee model: %s, commission: %.4f%%, slippage: %.4f%%',
+			self.fee_model,
+			self.commission_pct * 100,
+			self.slippage_pct * 100
+		)
 
 	def execute_order(self, event: OrderEvent):
 		"""
@@ -53,7 +57,7 @@ class SimulatedExchange(AbstractExchange):
 		fill_event = FillEvent.new_fill('EXECUTED', commission, event)
 		self.global_queue.put(fill_event)
 
-		logger.info('EXECUTION HANDLER: Order executed: %s %s %s %s$', 
+		self.logger.info('Order executed: %s %s %s %s$', 
 			fill_event.action, fill_event.ticker, fill_event.quantity, fill_event.price)
 
 	def _initialize_fee_model(self, fee_model: str):
@@ -62,5 +66,5 @@ class SimulatedExchange(AbstractExchange):
 		elif fee_model == 'no_fee':
 			return ZeroFeeModel()
 		else:
-			logger.warning('EXECUTION HANDLER: fee model %s not supported', fee_model)
+			self.logger.warning('fee model %s not supported', fee_model)
 			return

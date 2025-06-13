@@ -1,8 +1,7 @@
 from itrader.universe.universe import Universe
 from ..events_handler.event import BarEvent
 
-import logging
-logger = logging.getLogger('TradingSystem')
+from itrader.logger import get_itrader_logger
 
 class DynamicUniverse(Universe):
 	"""
@@ -27,8 +26,9 @@ class DynamicUniverse(Universe):
 		self.assets = []
 		self.last_bar = None
 
-		logger.info('UNIVERSE: %s => OK', self.uni_type)
-	
+		self.logger = get_itrader_logger().bind(component="DynamicUniverse")
+		self.logger.info('Dynamic Universe initialized')
+
 	@property
 	def universe(self):
 		"""
@@ -69,8 +69,8 @@ class DynamicUniverse(Universe):
 				bar = self.price_handler.get_bar(ticker, ping_event.time)
 				bars[ticker] = bar
 			else:
-				logger.warning('UNIVERSE: ticker %s not present in the price handler', ticker)
-		
+				self.logger.warning('Dynamic Universe: ticker %s not present in the price handler', ticker)
+
 		bar_event = BarEvent(ping_event.time, bars)
 		self.last_bar = bar_event
 

@@ -9,7 +9,8 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.universe.universe import Universe
 from itrader.events_handler.event import EventType
-from itrader import logger
+
+from itrader.logger import get_itrader_logger
 
 
 class EventHandler(object):
@@ -47,7 +48,8 @@ class EventHandler(object):
 		self.universe = universe
 		self.global_queue = global_queue
 
-		logger.info('EVENT HANDLER: Full Event Handler => OK')
+		self.logger = get_itrader_logger().bind(component="FullEventHandler")
+		self.logger.info('Event Handler initialized')
 
 	def process_events(self):
 		"""
@@ -62,7 +64,7 @@ class EventHandler(object):
 			except queue.Empty:
 				event = None
 			if event.type == EventType.PING:
-				logger.info(f"PING EVENT: {event.time}")
+				self.logger.info(f"PING EVENT: {event.time}")
 				self.screeners_handler.screen_markets(event)
 				self.universe.generate_bar_event(event)
 			elif event.type == EventType.BAR:

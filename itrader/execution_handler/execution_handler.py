@@ -4,7 +4,7 @@ from .exchanges.base import AbstractExchange
 from itrader.events_handler.event import FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 class ExecutionHandler(AbstractExecutionHandler):
 	"""
@@ -35,7 +35,12 @@ class ExecutionHandler(AbstractExecutionHandler):
 		self.slippage_pct = slippage_pct
 		self.exchanges: dict[str, AbstractExchange] = self.init_exchanges()
 
-		logger.info('EXECUTION HANDLER => OK')
+		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
+		self.logger.info('Execution Handler initialized with fee model: %s, commission: %.4f%%, slippage: %.4f%%',
+			self.fee_model,
+			self.commission_pct * 100,
+			self.slippage_pct * 100
+		)
 
 
 	def on_order(self, event: OrderEvent):

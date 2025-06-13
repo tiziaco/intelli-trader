@@ -9,7 +9,7 @@ from .position_sizer.variable_sizer import DynamicSizer
 from .risk_manager.advanced_risk_manager import RiskManager
 from ..events_handler.event import SignalEvent, BarEvent, OrderEvent, PortfolioUpdateEvent
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 
 class OrderHandler(OrderBase):
@@ -42,6 +42,9 @@ class OrderHandler(OrderBase):
 		
 		self.pending_orders: dict[str, dict[str, Order]] = {}
 
+		self.logger = get_itrader_logger().bind(component="OrderHandler")
+		self.logger.info('Order Handler initialized')
+
 
 	def check_pending_orders(self, bar_event: BarEvent):
 		"""
@@ -61,14 +64,14 @@ class OrderHandler(OrderBase):
 					if order.type == OrderType.STOP:
 						if order.action == 'SELL':
 							if last_close < order.price: # SL of a long position
-								logger.info('  ORDER MANAGER: Stop Loss order filled: %s, %s',order.ticker, order.action)
+								self.logger.info('Stop Loss order filled: %s, %s',order.ticker, order.action)
 								order.time = bar_event.time
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
 
 						elif order.action == 'BUY':
 							if last_close > order.price: # SL of a short position
-								logger.info('  ORDER MANAGER: Stop Loss filled: %s, %s',order.ticker, order.action)
+								self.logger.info('Stop Loss filled: %s, %s',order.ticker, order.action)
 								order.time = bar_event.time
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
@@ -76,14 +79,14 @@ class OrderHandler(OrderBase):
 					elif order.type == OrderType.LIMIT:
 						if order.action == 'SELL':
 							if last_close > order.price: # TP of a long position
-								logger.info('  ORDER MANAGER: Limit order filled: %s, %s',order.ticker, order.action)
+								self.logger.info('Limit order filled: %s, %s',order.ticker, order.action)
 								order.time = bar_event.time
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
 
 						elif order.action == 'BUY':
 							if last_close < order.price: # TP of a short position
-								logger.info('  ORDER MANAGER: Limit order filled: %s, %s',order.ticker, order.action)
+								self.logger.info('Limit order filled: %s, %s',order.ticker, order.action)
 								order.time = bar_event.time
 								self.send_order_event(order)
 								self.remove_orders(order.ticker, order.portfolio_id)
@@ -116,7 +119,7 @@ class OrderHandler(OrderBase):
 		signal_event : `SignalEvent`
 			The signal event generated from the strategy module
 		"""
-		logger.debug('ORDER HANDLER: processing signal %s => %s, %s$', 
+		self.logger.debug('Processing signal %s => %s, %s $', 
 					signal_event.ticker, signal_event.action, round(signal_event.price,4))
 
 		self.compliance.check_compliance(signal_event)
@@ -168,7 +171,7 @@ class OrderHandler(OrderBase):
 		pd_orders = self.pending_orders[portfolio_id]
 		for order_id, order in list(pd_orders.items()):
 			if order.ticker == ticker:
-				logger.debug('  ORDER MANAGER: Pending order %s %s, %s removed',
+				self.logger.debug('Pending order %s %s, %s removed',
 								order.type.name, order.action, ticker)
 				del self.pending_orders[portfolio_id][order_id]
 	
@@ -207,7 +210,7 @@ class OrderHandler(OrderBase):
 			portfolio_id = signal.portfolio_id
 			)
 		self.add_pending_order(sl_order)
-		logger.debug('  ORDER MANAGER: Stop loss order added: %s, %s $', 
+		self.logger.debug('Stop loss order added: %s, %s $', 
 					sl_order.ticker, sl_order.price)
 
 	def add_take_profit_order(self, signal: SignalEvent):
@@ -232,7 +235,7 @@ class OrderHandler(OrderBase):
 			portfolio_id = signal.portfolio_id
 			)
 		self.add_pending_order(tp_order)
-		logger.debug('  ORDER MANAGER: Take profit order added: %s, %s $', 
+		self.logger.debug('Take profit order added: %s, %s $', 
 					tp_order.ticker, tp_order.price)
 	
 	def new_order(self, signal: SignalEvent):
@@ -249,4 +252,4 @@ class OrderHandler(OrderBase):
 		"""
 		order_event = OrderEvent.new_order_event(order)
 		self.events_queue.put(order_event)
-		logger.debug('  ORDER MANAGER: Order sent to the execution handler')
+		self.logger.debug('Order sent to the execution handler')

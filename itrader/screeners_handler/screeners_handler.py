@@ -7,7 +7,7 @@ from itrader.screeners_handler.screeners.base import Screener
 from itrader.events_handler.event import BarEvent
 from itrader.outils.time_parser import check_timeframe, get_timenow_awere, get_last_available_timestamp
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 
 class ScreenersHandler(object):
@@ -28,10 +28,11 @@ class ScreenersHandler(object):
 		self.screeners: list[Screener]= []
 		self.last_results: dict = {}
 
-		logger.info('SCREENER HANDLER: Default => OK')
-	
+		self.logger = get_itrader_logger().bind(component="ScreenersHandler")
+		self.logger.info('Screeners Handler initialized')
+
 	def init_screeners(self):
-		logger.info('SCREENER HANDLER: Initialise screeners')
+		self.logger.info('SCREENER HANDLER: Initialise screeners')
 		time_now = get_timenow_awere()
 		event = BarEvent(time_now, {})
 
@@ -44,10 +45,10 @@ class ScreenersHandler(object):
 			)
 			self.last_results = {event.time : proposed}
 
-			logger.info('SCREENER HANDLER: Screener updated - %s', screener.name)
+			self.logger.info('Screener updated - %s', screener.name)
 			if proposed:
-				logger.info('   Proposed symbols: ' + str(proposed))
-	
+				self.logger.info('Proposed symbols: ' + str(proposed))
+
 	def screen_markets(self, event: BarEvent):
 		"""
 		Calculate the signal for every strategy to be traded.
@@ -82,9 +83,9 @@ class ScreenersHandler(object):
 
 			# Save the results for each screener under the same timestamp
 			current_res[screener.name] = proposed
-			logger.info('SCREENER HANDLER: Screener updated - %s', screener.name)
+			self.logger.info('Screener updated - %s', screener.name)
 			if proposed:
-				logger.info('   Proposed symbols: ' + str(proposed))
+				self.logger.info('Proposed symbols: ' + str(proposed))
 		self.last_results = {event.time: current_res}
 		
 
@@ -108,7 +109,7 @@ class ScreenersHandler(object):
 		# Find the minimum timeframe
 		self.min_timeframe = min([self.min_timeframe, screener.timeframe])
 
-		logger.info(f'SCREENER HANDLER: New screener added: {screener.name}')
+		self.logger.info(f'New screener added: {screener.name}')
 
 	def activate_screener(self, screener_index: int):
 		"""
@@ -116,10 +117,10 @@ class ScreenersHandler(object):
 		"""
 		if 0 <= screener_index <= len(self.screeners):
 			self.screeners[screener_index-1].is_active = True
-			logger.info(f"SCREENER HANDLER: Screener {screener_index} activated.")
+			self.logger.info(f"Screener {screener_index} activated.")
 			return True
 		else:
-			logger.warning("SCREENER HANDLER:Invalid screener index.")
+			self.logger.warning("Invalid screener index.")
 			return False
 
 	def deactivate_screener(self, screener_index: int):
@@ -129,10 +130,10 @@ class ScreenersHandler(object):
 		length = len(self.screeners)
 		if 0 <= screener_index <= len(self.screeners):
 			self.screeners[screener_index-1].is_active = False
-			logger.info(f"SCREENER HANDLER: Screener {screener_index} deactivated.")
+			self.logger.info(f"Screener {screener_index} deactivated.")
 			return True
 		else:
-			logger.warning("SCREENER HANDLER: Invalid screener index.")
+			self.logger.warning("Invalid screener index.")
 			return False
 
 	def get_screeners_universe(self):

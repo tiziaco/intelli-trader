@@ -2,7 +2,7 @@ from ..base import OrderBase
 from itrader.events_handler.event import SignalEvent
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 
 class ComplianceManager():
 	"""
@@ -16,7 +16,8 @@ class ComplianceManager():
 	"""
 	def __init__(self, portfolio_handler: PortfolioHandler):
 		self.portfolio_handler = portfolio_handler
-		logger.info('   COMPLIANCE MANAGER: Default => OK')
+		self.logger = get_itrader_logger().bind(component="ComplianceManager")
+		self.logger.info('Compliance Manager initialized')
 
 	
 	def check_compliance(self, signal: SignalEvent):
@@ -36,7 +37,7 @@ class ComplianceManager():
 		if signal.verified:
 			self.check_max_open_positions(signal)
 		if signal.verified == True:
-			logger.debug('  COMPLIANCE: Order validated')
+			self.logger.debug('Order validated')
 
 	def check_max_open_positions(self, signal: SignalEvent):
 		portfolio_id = signal.portfolio_id
@@ -51,7 +52,7 @@ class ComplianceManager():
 			(position.side == 'SHORT' and signal.action == 'BUY'):
 			signal.verified = True
 		if signal.verified == False:
-			logger.warning('  COMPLIANCE: Order refused. Max positions reached.')
+			self.logger.warning('Order refused. Max positions reached.')
 
 	def check_position_increase(self, signal: SignalEvent):
 		"""
@@ -84,4 +85,4 @@ class ComplianceManager():
 			signal.verified = True
 		
 		if signal.verified == False:
-			logger.warning('  COMPLIANCE: Order refused. Position increase not allowed.')
+			self.logger.warning('Order refused. Position increase not allowed.')
