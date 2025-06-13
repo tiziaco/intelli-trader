@@ -52,10 +52,6 @@ class Config:
 	TIMEZONE = 'Europe/Paris'
 	SECRET_KEYS = keys_data.get('SECRET_KEYS', {})
 
-	LOGGING_FORMAT = str('%(levelname)s | %(message)s') # %(asctime)s 
-	PRINT_LOG = bool(True)
-	SAVE_LOG = bool(False)
-
 	SUPPORTED_CURRENCIES = {'USDT', 'BUSD'}
 	SUPPORTED_EXCHANGES = {'BINANCE', 'KUCOIN'}
 
