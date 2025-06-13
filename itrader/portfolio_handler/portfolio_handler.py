@@ -4,7 +4,8 @@ from .portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent
 
-from itrader import config, logger
+from itrader import config
+from itrader.logger import get_itrader_logger
 
 class PortfolioHandler(object):
 	"""
@@ -22,6 +23,9 @@ class PortfolioHandler(object):
 		self.current_time = 0
 		self.portfolios: dict[str, Portfolio] = {}
 		
+		# Simple approach: get global logger and bind component name
+		self.logger = get_itrader_logger().bind(component="PortfolioHandler")
+		
 
 	def on_fill(self, fill_event: FillEvent):
 		"""
@@ -33,6 +37,13 @@ class PortfolioHandler(object):
 		transaction = Transaction.new_transaction(fill_event)
 		portfolio = self.get_portfolio(fill_event.portfolio_id)
 		portfolio.process_transaction(transaction)
+		
+		self.logger.debug("Fill event processed", 
+			portfolio_id=fill_event.portfolio_id,
+			symbol=fill_event.symbol,
+			quantity=fill_event.quantity,
+			price=fill_event.price
+		)
 	
 	def generate_portfolios_update_event(self):
 		"""
@@ -77,7 +88,7 @@ class PortfolioHandler(object):
 		id = portfolio.portfolio_id
 		self.portfolios[id] = portfolio
 
-		logger.info('PORTFOLIO HANDLER: New Portfolio created - ID %s', id)
+		self.logger.info("New Portfolio created", portfolio_id=id, user_id=user_id, name=name, initial_cash=cash)
 	
 	def delete_portfolio(self, id):
 		"""
@@ -92,7 +103,7 @@ class PortfolioHandler(object):
 		"""
 
 		self.portfolios.pop(id)
-		logger.info('PORTFOLIO HANDLER: Portfolio deleted - ID %s', id)
+		self.logger.info("Portfolio deleted", portfolio_id=id)
 		#TODO NOT tested
 
 	def portfolios_to_dict(self):

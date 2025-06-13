@@ -12,7 +12,7 @@ from itrader.trading_system.simulation.ping_generator import PingGenerator
 from itrader.universe.dynamic import DynamicUniverse
 from itrader.reporting.statistics import StatisticsReporting
 
-from itrader import logger
+from itrader.logger import get_itrader_logger
 from itrader.events_handler.event import EventType
 
 
@@ -31,6 +31,7 @@ class TradingSystem(object):
 		Set up the backtest variables according to
 		what has been passed in.
 		"""
+		self.logger = get_itrader_logger().bind(component="Engine")
 		self.exchange = exchange
 
 		self.start_date = start_date
@@ -59,13 +60,15 @@ class TradingSystem(object):
 			self.global_queue
 		)
 
+		self.logger.info('Trading system initialised')
+
 
 	def _initialise_backtest_session(self):
 		"""
 		Load the data in the price handler and define the pings vector
 		for the for-loop iteration.
 		"""
-		logger.info('TRADING SYSTEM: Initialising backtest session')
+		self.logger.info('Initialising backtest session')
 
 		self.universe.init_universe(
 			self.strategies_handler.get_strategies_universe(), 
@@ -85,14 +88,14 @@ class TradingSystem(object):
 		loop continue until the ping series is completed
 		"""
 
-		logger.info('    RUNNING BACKTEST   ')
+		self.logger.info('    RUNNING BACKTEST   ')
 		start_time = datetime.now()  # Capture start time
 
 		for ping_event in self.ping:
 			self.global_queue.put(ping_event)
 			self.event_handler.process_events()
 			self.portfolio_handler.record_metrics(ping_event.time)
-		logger.info('    BACKTEST COMPLETED   ')
+		self.logger.info('    BACKTEST COMPLETED   ')
 		end_time = datetime.now()  # Capture end time
 		duration = end_time - start_time
 		print("Backtest duration:", duration)
