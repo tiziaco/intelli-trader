@@ -48,74 +48,49 @@ FORBIDDEN_SYMBOLS = {
 class Config:
 	"""
 	iTrader general configuration variables.
+	All settings can be overridden via environment variables.
+	
+	Environment Variables:
+	----------------------
+	LOG_LEVEL: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL). Default: INFO
+	DATA_DB_URL: Database URL for price data. Default: postgres://postgres:1234@localhost:5432/trading_system_prices
+	SYSTEM_DB_URL: Database URL for system data. Default: postgres://postgres:1234@localhost:5432/.......
 	"""
 	TIMEZONE = 'Europe/Paris'
 	SECRET_KEYS = keys_data.get('SECRET_KEYS', {})
+	LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()  # Default to INFO if not set
+
+	# Database URLs - can be overridden via environment variables
+	DATA_DB_URL = os.getenv('DATA_DB_URL', 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices')
+	SYSTEM_DB_URL = os.getenv('SYSTEM_DB_URL', 'postgresql+psycopg2://postgres:1234@localhost:5432/.......')
 
 	SUPPORTED_CURRENCIES = {'USDT', 'BUSD'}
 	SUPPORTED_EXCHANGES = {'BINANCE', 'KUCOIN'}
-
-class DevelopmentConfig(Config):
-	DATA_DB_URL = 'postgresql+psycopg2://tizianoiacovelli:1234@localhost:5432/trading_system_prices'
-	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
-	DEBUG = bool(True)
-	TESTING = bool(False)
-	SQLALCHEMY_TRACK_MODIFICATIONS = bool(False)
-
-
-class TestingConfig(Config):
-	DATA_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
-	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
-	DEBUG = bool(False)
-	TESTING = bool(True)
-	PRESERVE_CONTEXT_ON_EXCEPTION = bool(False)
-	SQLALCHEMY_TRACK_MODIFICATIONS = bool(False)
-
-
-class BacktestConfig(Config):
-	DEBUG = False
-	DATA_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
-	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
-	DEBUG = bool(False)
-	TESTING = bool(False)
-	PRESERVE_CONTEXT_ON_EXCEPTION = bool(True)
-	SQLALCHEMY_TRACK_MODIFICATIONS = bool(True)
-
-class LiveConfig(Config):
-	DEBUG = bool(False)
-	DATA_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/trading_system_prices'
-	SYSTEM_DB_URL = 'postgresql+psycopg2://postgres:1234@localhost:5432/.......'
-	DEBUG = bool(False)
-	TESTING = bool(False)
-	PRESERVE_CONTEXT_ON_EXCEPTION = bool(True)
-	SQLALCHEMY_TRACK_MODIFICATIONS = bool(True)
 
 
 def set_config(env) -> Config:
     """
     Sets the configuration based on the environment.
+    
+    This function now mainly validates the environment and returns the Config class.
+    All environment-specific behavior is controlled via environment variables.
 
     Parameters
     ----------
     env : `str`
-		Environment identifier ('dev', 'test', 'backtest', 'live').
+        Environment identifier ('dev', 'test', 'backtest', 'live').
 
     Returns
     ----------
-	Config : `Config`
-		Configuration object corresponding to the specified environment.
+    Config : `Config`
+        Configuration object with settings loaded from environment variables.
 
     Raises
     ----------
         ValueError : If the specified environment is not recognized.
     """
-    configs = {
-        'dev': DevelopmentConfig,
-        'test': TestingConfig,
-        'backtest': BacktestConfig,
-        'live': LiveConfig
-    }
-    config = configs.get(env)
-    if config is None:
-        raise ValueError(f"Unknown environment: {env}. Supported environments are: 'dev', 'test', 'backtest', 'live'.")
-    return config
+    valid_environments = {'dev', 'test', 'backtest', 'live'}
+    if env not in valid_environments:
+        raise ValueError(f"Unknown environment: {env}. Supported environments are: {valid_environments}.")
+    
+    return Config

@@ -4,7 +4,7 @@ import sys
 from typing import Any
 
 import structlog
-from structlog.types import EventDict, Processor
+from structlog.types import EventDict
 
 
 def drop_color_message_key(_, __, event_dict: EventDict) -> EventDict:
@@ -15,75 +15,85 @@ def drop_color_message_key(_, __, event_dict: EventDict) -> EventDict:
     event_dict.pop("color_message", None)
     return event_dict
 
-
+    
 def setup_logging(json_logs: bool = False, log_level: str = "INFO"):
     """Configure structlog for the itrader package"""
     
-    # Check if structlog is already configured by looking at the current configuration
-    try:
-        # Try to get the current structlog configuration
-        current_config = structlog.get_config()
-        if current_config and current_config.get('processors'):
-            # structlog is already configured, don't reconfigure
-            return
-    except (AttributeError, RuntimeError):
-        # structlog is not configured yet, proceed with setup
-        pass
-    
-    # Check if the root logger already has StreamHandlers with structlog formatters
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers:
-        if (isinstance(handler, logging.StreamHandler) and 
-            isinstance(handler.formatter, structlog.stdlib.ProcessorFormatter)):
-            # structlog is already set up, don't interfere
-            return
-    
-    timestamper = structlog.processors.TimeStamper(fmt="iso")
-
-    shared_processors: list[Processor] = [
+    # Simple, working configuration that displays logger names
+    processors = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.stdlib.ExtraAdder(),
         drop_color_message_key,
-        timestamper,
+        structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
     ]
 
     if json_logs:
-        # Format the exception only for JSON logs, as we want to pretty-print them when
-        # using the ConsoleRenderer
-        shared_processors.append(structlog.processors.format_exc_info)
+        processors.append(structlog.processors.format_exc_info)
+    
+    processors.append(structlog.stdlib.ProcessorFormatter.wrap_for_formatter)
 
     structlog.configure(
-        processors=shared_processors
-        + [
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ],
+        processors=processors,
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
 
-    log_renderer: structlog.types.Processor
+    # Set up the formatter - this is the key part that makes logger names work
     if json_logs:
         log_renderer = structlog.processors.JSONRenderer()
     else:
         log_renderer = structlog.dev.ConsoleRenderer()
 
     formatter = structlog.stdlib.ProcessorFormatter(
-        # These run ONLY on `logging` entries that do NOT originate within
-        # structlog.
-        foreign_pre_chain=shared_processors,
-        # These run on ALL entries after the pre_chain is done.
-        processors=[
-            # Remove _record & _from_structlog.
-            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            log_renderer,
-        ],
+        processor=log_renderer,
     )
 
-    # Only configure the root logger if it hasn't been configured yet
+    # Configure root logger
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    
+    # Clear any existing handlers and add our structured logging handler
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(log_level.upper())
+    processors = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.stdlib.ExtraAdder(),
+        drop_color_message_key,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+    ]
+
+    if json_logs:
+        processors.append(structlog.processors.format_exc_info)
+    
+    processors.append(structlog.stdlib.ProcessorFormatter.wrap_for_formatter)
+
+    structlog.configure(
+        processors=processors,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    # Set up the formatter - this is the key part that makes logger names work
+    if json_logs:
+        log_renderer = structlog.processors.JSONRenderer()
+    else:
+        log_renderer = structlog.dev.ConsoleRenderer()
+
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processor=log_renderer,
+    )
+
+    # Configure root logger
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
     
@@ -91,6 +101,8 @@ def setup_logging(json_logs: bool = False, log_level: str = "INFO"):
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
     root_logger.setLevel(log_level.upper())
+
+
 
 
 class ITraderStructLogger:
@@ -164,8 +176,8 @@ def init_logger(config):
     Returns:
         ITraderStructLogger: Configured structured logger instance
     """
-    # Determine log level based on config
-    log_level = "DEBUG" if config.DEBUG else "INFO"
+    # Determine log level from config
+    log_level = getattr(config, 'LOG_LEVEL', 'INFO')
     
     # Setup structured logging
     setup_logging(json_logs=False, log_level=log_level)
