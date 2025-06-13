@@ -1,10 +1,18 @@
 import logging
-import re
 import sys
 from typing import Any
 
 import structlog
 from structlog.types import EventDict
+
+
+# Export only what's needed for the simple approach
+__all__ = [
+    'ITraderStructLogger',
+    'get_itrader_logger',
+    'init_logger',
+    'setup_logging'
+]
 
 
 def drop_color_message_key(_, __, event_dict: EventDict) -> EventDict:
@@ -18,16 +26,25 @@ def drop_color_message_key(_, __, event_dict: EventDict) -> EventDict:
 
 def reorder_fields_for_console(logger, method_name, event_dict):
     """
-    Reorder fields to show: timestamp, level, logger_name, message
-    This makes the logger name appear before the main message with blue color.
+    Reorder fields to show: timestamp, level, logger_name.component, message
+    This makes the logger name with component appear before the main message with blue color.
     """
     if "logger" in event_dict:
         # Store the logger name and remove it from the dict temporarily
         logger_name = event_dict.pop("logger")
-        # Create a new event message that includes the logger name with blue color
+        
+        # Check if there's a component field to include in the logger name
+        component = event_dict.pop("component", None)
+        if component:
+            # Show as [itrader.ComponentName] instead of just [itrader]
+            display_name = f"{logger_name}.{component}"
+        else:
+            display_name = logger_name
+            
+        # Create a new event message that includes the enhanced logger name with blue color
         # Using ANSI color codes: \033[34m for blue, \033[0m for reset
         original_event = event_dict.get("event", "")
-        colored_logger_name = f"\033[34m[{logger_name}]\033[0m"
+        colored_logger_name = f"\033[34m[{display_name}]\033[0m"
         event_dict["event"] = f"{colored_logger_name} {original_event}"
 
     return event_dict
@@ -87,43 +104,45 @@ def setup_logging(json_logs: bool = False, log_level: str = "INFO"):
 
 class ITraderStructLogger:
     """
-    Structured logger for the iTrader package.
-    Uses context variables to bind data that will be automatically included in all log messages.
+    Simplified structured logger for the iTrader package.
+    Designed for the simple .bind() approach.
+    
+    Usage:
+        from itrader.logger import get_itrader_logger
+        
+        class YourClass:
+            def __init__(self):
+                self.logger = get_itrader_logger().bind(component="YourClass")
+                
+            def your_method(self):
+                self.logger.info("Operation completed", key=value)
     """
 
     def __init__(self, log_name: str = "itrader"):
         self.logger = structlog.stdlib.get_logger(log_name)
 
-    @staticmethod
-    def _to_snake_case(name):
-        """Convert CamelCase to snake_case"""
-        return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
-
-    def bind(self, *args, **new_values: Any):
+    def bind(self, **new_values: Any):
         """
-        Bind values to the logger context.
+        Bind values to create a new logger with bound context.
+        This is the core method for the simple approach.
 
         Args:
-            *args: Objects that have an 'id' attribute (will be converted to snake_case)
             **new_values: Key-value pairs to bind to the context
+            
+        Returns:
+            ITraderStructLogger: New logger instance with bound context
+            
+        Example:
+            self.logger = get_itrader_logger().bind(component="PortfolioHandler")
         """
-        for arg in args:
-            # Check if the object has an id attribute
-            if hasattr(arg, "id"):
-                key = self._to_snake_case(type(arg).__name__)
-                structlog.contextvars.bind_contextvars(**{key: arg.id})
-            else:
-                self.logger.error(
-                    "Unsupported argument when trying to log.",
-                    f"Unnamed argument must have an 'id' attribute. Invalid argument: {type(arg).__name__}",
-                )
-
-        structlog.contextvars.bind_contextvars(**new_values)
-
-    @staticmethod
-    def unbind(*keys: str):
-        """Unbind keys from the logger context"""
-        structlog.contextvars.unbind_contextvars(*keys)
+        # Create a new bound logger using structlog's bind method
+        bound_structlog = self.logger.bind(**new_values)
+        
+        # Create a new ITraderStructLogger instance with the bound logger
+        new_logger = ITraderStructLogger.__new__(ITraderStructLogger)
+        new_logger.logger = bound_structlog
+        
+        return new_logger
 
     def debug(self, event: str | None = None, *args: Any, **kw: Any):
         self.logger.debug(event, *args, **kw)
@@ -165,3 +184,30 @@ def init_logger(config):
     # Create and return the structured logger
     return ITraderStructLogger("itrader")
 
+
+# Global logger instance for simple usage
+_global_logger = None
+
+
+def get_itrader_logger():
+    """
+    Get the global itrader logger instance.
+    This is the RECOMMENDED approach for simple, efficient logging.
+    
+    Usage:
+        from itrader.logger import get_itrader_logger
+        
+        class MyClass:
+            def __init__(self):
+                self.logger = get_itrader_logger().bind(component="MyClass")
+                
+            def my_method(self):
+                self.logger.info("Operation completed", result="success")
+    
+    Returns:
+        ITraderStructLogger: Global itrader logger instance
+    """
+    global _global_logger
+    if _global_logger is None:
+        _global_logger = ITraderStructLogger("itrader")
+    return _global_logger
