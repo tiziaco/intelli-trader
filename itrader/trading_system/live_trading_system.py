@@ -11,6 +11,7 @@ from itrader.price_handler.data_provider import PriceHandler
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
+from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.universe.dynamic import DynamicUniverse
@@ -18,6 +19,7 @@ from itrader.reporting.statistics import StatisticsReporting
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.event import EventType, PingEvent, OrderEvent
+from itrader.config import Config
 
 
 class SystemStatus(Enum):
@@ -95,7 +97,17 @@ class LiveTradingSystem:
         self.strategies_handler = StrategiesHandler(self.global_queue, self.price_handler)
         self.screeners_handler = ScreenersHandler(self.global_queue, self.price_handler)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
-        self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler)
+        
+        # Create order storage for live trading (PostgreSQL)
+        # Note: For now using in-memory until Phase 2 is complete
+        try:
+            order_storage = OrderStorageFactory.create('live', Config.SYSTEM_DB_URL)
+        except NotImplementedError:
+            # Fallback to in-memory during Phase 1
+            self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")
+            order_storage = OrderStorageFactory.create('backtest')
+        
+        self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage)
         self.execution_handler = ExecutionHandler(self.global_queue)
         self.reporting = StatisticsReporting(
             self.portfolio_handler,

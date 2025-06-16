@@ -6,6 +6,7 @@ from itrader.price_handler.data_provider import PriceHandler
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
+from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.trading_system.simulation.ping_generator import PingGenerator
@@ -44,7 +45,11 @@ class TradingSystem(object):
 		self.strategies_handler = StrategiesHandler(self.global_queue, self.price_handler)
 		self.screeners_handler = ScreenersHandler(self.global_queue, self.price_handler)
 		self.portfolio_handler = PortfolioHandler(self.global_queue)
-		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler)
+		
+		# Create order storage for backtesting (in-memory)
+		order_storage = OrderStorageFactory.create('backtest')
+		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage)
+		
 		self.execution_handler = ExecutionHandler(self.global_queue)
 		self.ping = PingGenerator()
 		self.reporting = StatisticsReporting(
