@@ -1,5 +1,5 @@
 from queue import Queue
-from datetime import datetime
+from datetime import datetime, UTC
 from .portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent
@@ -84,7 +84,7 @@ class PortfolioHandler(object):
 		cash : `float`
 			Initial cash for the portfolio.
 		"""
-		portfolio = Portfolio(user_id, name, exchange, cash, datetime.utcnow())
+		portfolio = Portfolio(user_id, name, exchange, cash, datetime.now(UTC))
 		id = portfolio.portfolio_id
 		self.portfolios[id] = portfolio
 
