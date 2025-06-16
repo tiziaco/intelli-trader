@@ -380,48 +380,7 @@ class LiveTradingSystem:
             self.logger.error(f'Failed to add event to queue: {e}')
             return False
     
-    def create_market_order(self, symbol: str, side: str, quantity: float, order_type: str = "MARKET") -> bool:
-        """
-        Create a market order and add it to the processing queue.
-        
-        Parameters
-        ----------
-        symbol : str
-            Trading symbol (e.g., 'BTCUSDT')
-        side : str
-            Order side ('BUY' or 'SELL')
-        quantity : float
-            Order quantity
-        order_type : str
-            Order type (default: 'MARKET')
-            
-        Returns
-        -------
-        bool
-            True if order was created successfully, False otherwise
-        """
-        if not self._running:
-            self.logger.warning('Cannot create order: Live trading system is not running')
-            return False
-        
-        try:
-            # Create order event with the correct parameters
-            order_event = OrderEvent(
-                time=datetime.now(),
-                ticker=symbol,
-                action=side,  # 'BUY' or 'SELL'
-                price=0.0,    # Market order - price will be determined by execution
-                quantity=quantity,
-                exchange=self.exchange,
-                strategy_id=0,  # Default strategy ID
-                portfolio_id=0  # Default portfolio ID
-            )
-            
-            return self.add_event(order_event)
-            
-        except Exception as e:
-            self.logger.error(f'Failed to create market order: {e}')
-            return False
+
     
     def get_statistics(self):
         """
