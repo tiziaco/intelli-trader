@@ -2,12 +2,13 @@ from datetime import timedelta
 from queue import Queue
 
 from ..portfolio_handler.portfolio_handler import PortfolioHandler
-from .base import OrderBase
+from .base import OrderBase, OrderStorage
 from .order import Order, OrderType, OrderStatus
 from .compliance_manager.basic_compliance_manager import ComplianceManager
 from .position_sizer.variable_sizer import DynamicSizer
 from .risk_manager.advanced_risk_manager import RiskManager
 from ..events_handler.event import SignalEvent, BarEvent, OrderEvent, PortfolioUpdateEvent
+from .storage import OrderStorageFactory
 
 from itrader.logger import get_itrader_logger
 
@@ -26,12 +27,17 @@ class OrderHandler(OrderBase):
 
 	When an order is filled it is sended to the execution handler
 	"""
-	def __init__(self, events_queue: Queue, portfolio_handler: PortfolioHandler):
+	def __init__(self, events_queue: Queue, portfolio_handler: PortfolioHandler, 
+	             order_storage: OrderStorage = None):
 		"""
 		Parameters
 		----------
 		events_queue: `Queue object`
 			The events queue of the trading system
+		portfolio_handler: `PortfolioHandler`
+			The portfolio handler instance
+		order_storage: `OrderStorage`, optional
+			The order storage for storage operations. If None, uses InMemoryOrderStorage.
 		"""
 		#super(OrderHandler, self).__init__(events_queue)
 		self.events_queue = events_queue
@@ -40,7 +46,12 @@ class OrderHandler(OrderBase):
 		self.position_sizer = DynamicSizer(portfolio_handler)
 		self.risk_manager = RiskManager(portfolio_handler)
 		
-		self.pending_orders: dict[str, dict[str, Order]] = {}
+		# Use provided storage or default to in-memory for backward compatibility
+		self.order_storage = order_storage or OrderStorageFactory.create_in_memory()
+		
+		# Keep reference to pending_orders for backward compatibility
+		# This will be deprecated once all code is migrated to use the storage
+		self.pending_orders = self.order_storage.pending_orders if hasattr(self.order_storage, 'pending_orders') else {}
 
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
 		self.logger.info('Order Handler initialized')
@@ -56,9 +67,10 @@ class OrderHandler(OrderBase):
 		bar_event : `BarEvent`
 			The bar event generated from the Universe module
 		"""
-		if bool(self.pending_orders):
-			for portfolio_id, pending_orders in list(self.pending_orders.items()):
-				for order_id, order in list(pending_orders.items()):
+		pending_orders = self.order_storage.get_pending_orders()
+		if bool(pending_orders):
+			for portfolio_id, pending_orders_dict in list(pending_orders.items()):
+				for order_id, order in list(pending_orders_dict.items()):
 					last_close = bar_event.get_last_close(order.ticker)
 
 					if order.type == OrderType.STOP:
@@ -96,12 +108,13 @@ class OrderHandler(OrderBase):
 		Execute the market orders if any among the pending orders.
 		After execution, delete it from pending orders.
 		"""
-		if bool(self.pending_orders):
-			for portfolio_id, pending_orders in list(self.pending_orders.items()):
-				for order_id, order in list(pending_orders.items()):
+		pending_orders = self.order_storage.get_pending_orders()
+		if bool(pending_orders):
+			for portfolio_id, pending_orders_dict in list(pending_orders.items()):
+				for order_id, order in list(pending_orders_dict.items()):
 					if order.type == OrderType.MARKET:
 						self.send_order_event(order)
-						del self.pending_orders[portfolio_id][order_id]
+						self.order_storage.remove_order(order_id, portfolio_id)
 	
 	def on_signal(self, signal_event: SignalEvent):
 		"""
@@ -137,14 +150,20 @@ class OrderHandler(OrderBase):
 		self.new_order(signal_event)
 		self.execute_market_orders()
 
-	# def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
-	# 	"""
-	# 	Update the information relative to the active portfolios.
-	# 	"""
-	# 	self.portfolios = update_event.portfolios
-	# 	self.compliance.portfolios = update_event.portfolios
-	# 	self.position_sizer.portfolios = update_event.portfolios
-	# 	self.risk_manager.portfolios = update_event.portfolios
+	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
+		"""
+		Update the information relative to the active portfolios.
+		"""
+		# Note: portfolios are now accessed through portfolio_handler
+		# This method is kept for backward compatibility with existing tests
+		self.portfolios = update_event.portfolios
+		# Update sub-components if they have this attribute
+		if hasattr(self.compliance, 'portfolios'):
+			self.compliance.portfolios = update_event.portfolios
+		if hasattr(self.position_sizer, 'portfolios'):
+			self.position_sizer.portfolios = update_event.portfolios
+		if hasattr(self.risk_manager, 'portfolios'):
+			self.risk_manager.portfolios = update_event.portfolios
 	
 	def add_pending_order(self, order: Order):
 		"""
@@ -153,10 +172,10 @@ class OrderHandler(OrderBase):
 
 		Parameters
 		----------
-		order: `LimitOrder object`
+		order: `Order object`
 			The stop/limit order object for a specific ticker
 		"""
-		self.pending_orders.setdefault(order.portfolio_id, {}).setdefault(order.id, order)
+		self.order_storage.add_order(order)
 	
 	def remove_orders(self, ticker, portfolio_id):
 		"""
@@ -167,13 +186,13 @@ class OrderHandler(OrderBase):
 		----------
 		ticker: `str`
 			The ticker of the order to be removed
+		portfolio_id: `str`
+			The portfolio ID
 		"""
-		pd_orders = self.pending_orders[portfolio_id]
-		for order_id, order in list(pd_orders.items()):
-			if order.ticker == ticker:
-				self.logger.debug('Pending order %s %s, %s removed',
-								order.type.name, order.action, ticker)
-				del self.pending_orders[portfolio_id][order_id]
+		count = self.order_storage.remove_orders_by_ticker(ticker, portfolio_id)
+		if count > 0:
+			self.logger.debug('Removed %d pending orders for ticker %s in portfolio %s',
+							count, ticker, portfolio_id)
 
 	def remove_order(self, order_id: str, portfolio_id: str = None) -> bool:
 		"""
@@ -191,46 +210,13 @@ class OrderHandler(OrderBase):
 		bool
 			True if order was found and removed, False otherwise
 		"""
-		if portfolio_id:
-			# Direct access if portfolio_id is provided
-			if portfolio_id in self.pending_orders and order_id in self.pending_orders[portfolio_id]:
-				order = self.pending_orders[portfolio_id][order_id]
-				del self.pending_orders[portfolio_id][order_id]
-				# Clean up empty portfolio dict if needed
-				if not self.pending_orders[portfolio_id]:
-					del self.pending_orders[portfolio_id]
-				self.logger.debug('Order %s removed from portfolio %s', order_id, portfolio_id)
-				return True
+		removed = self.order_storage.remove_order(order_id, portfolio_id)
+		if removed:
+			self.logger.debug('Order %s removed', order_id)
 		else:
-			# Search all portfolios if portfolio_id not provided
-			return self._remove_order_search_all(order_id)
-		return False
+			self.logger.warning('Order %s not found for removal', order_id)
+		return removed
 
-	def _remove_order_search_all(self, order_id: str) -> bool:
-		"""
-		Helper method to search and remove an order across all portfolios.
-		
-		Parameters
-		----------
-		order_id : str
-			The ID of the order to remove
-			
-		Returns
-		-------
-		bool
-			True if order was found and removed, False otherwise
-		"""
-		for portfolio_id, orders in list(self.pending_orders.items()):
-			if order_id in orders:
-				order = orders[order_id]
-				del self.pending_orders[portfolio_id][order_id]
-				# Clean up empty portfolio dict if needed
-				if not self.pending_orders[portfolio_id]:
-					del self.pending_orders[portfolio_id]
-				self.logger.debug('Order %s removed from portfolio %s', order_id, portfolio_id)
-				return True
-		self.logger.warning('Order %s not found in pending orders', order_id)
-		return False
 	
 	def modify_order(self, ticker):
 		"""
@@ -255,7 +241,7 @@ class OrderHandler(OrderBase):
 			The sized order generated from the position sizer module
 		"""
 		portfolio_id = signal.portfolio_id
-		exchange = self.portfolios.get(portfolio_id, {}).get('exchange', None)
+		exchange = self.portfolio_handler.get_portfolio(portfolio_id).exchange
 		sl_order = Order.new_stop_order(
 			time = signal.time,
 			ticker = signal.ticker,
