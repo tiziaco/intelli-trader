@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, UTC
 from queue import Queue
 
 from itrader.execution_handler.execution_handler import ExecutionHandler
@@ -24,7 +24,7 @@ class TestExecutionHandlerUpdates(unittest.TestCase):
 		execution handler.
 		"""
 		self.order_event = OrderEvent(
-			datetime.utcnow(),
+			datetime.now(UTC),
 			'BTCUSDT',
 			'BUY',
 			100,

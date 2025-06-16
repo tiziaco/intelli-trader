@@ -31,9 +31,9 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		# Init global queue
 		cls.queue = Queue()
 		# Init Portfolio Handler
-		cls.ptf_handler = PortfolioHandler()
+		cls.ptf_handler = PortfolioHandler(cls.queue)
 		# Init Order Handler
-		cls.order_handler = OrderHandler(cls.queue)
+		cls.order_handler = OrderHandler(cls.queue, cls.ptf_handler)
 
 
 	def setUp(self):

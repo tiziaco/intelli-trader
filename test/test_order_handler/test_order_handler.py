@@ -1,6 +1,6 @@
 import unittest
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, UTC
 from queue import Queue
 
 from itrader.portfolio_handler.portfolio import Portfolio, Position, PositionSide
@@ -28,16 +28,16 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		cls.portfolio_id = 1
 		cls.cash = 1000
 		cls.queue = Queue()
-		cls.ptf_handler = PortfolioHandler()
+		cls.ptf_handler = PortfolioHandler(cls.queue)
 		cls.ptf_handler.add_portfolio(cls.user_id, cls.portfolio_name, cls.exchange, cls.cash)
-		cls.order_handler = OrderHandler(cls.queue)
+		cls.order_handler = OrderHandler(cls.queue, cls.ptf_handler)
 
 	def setUp(self):
 		"""
 		Generate a buy and sell signal and add them to the queue.
 		"""
 		buy_signal = SignalEvent(
-							time = datetime.utcnow(),
+							time = datetime.now(UTC),
 							order_type = 'market',
 							ticker = 'BTCUSDT',
 							action = 'BUY',
@@ -50,7 +50,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 							strategy_setting={}
 		)
 		sell_signal = SignalEvent(
-							time = datetime.utcnow(),
+							time = datetime.now(UTC),
 							order_type = 'market',
 							ticker = 'BTCUSDT',
 							action = 'SELL',
