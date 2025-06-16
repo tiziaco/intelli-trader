@@ -174,6 +174,63 @@ class OrderHandler(OrderBase):
 				self.logger.debug('Pending order %s %s, %s removed',
 								order.type.name, order.action, ticker)
 				del self.pending_orders[portfolio_id][order_id]
+
+	def remove_order(self, order_id: str, portfolio_id: str = None) -> bool:
+		"""
+		Remove an order by its ID from pending orders.
+		
+		Parameters
+		----------
+		order_id : str
+			The ID of the order to remove
+		portfolio_id : str, optional
+			The portfolio ID for direct access (more efficient)
+			
+		Returns
+		-------
+		bool
+			True if order was found and removed, False otherwise
+		"""
+		if portfolio_id:
+			# Direct access if portfolio_id is provided
+			if portfolio_id in self.pending_orders and order_id in self.pending_orders[portfolio_id]:
+				order = self.pending_orders[portfolio_id][order_id]
+				del self.pending_orders[portfolio_id][order_id]
+				# Clean up empty portfolio dict if needed
+				if not self.pending_orders[portfolio_id]:
+					del self.pending_orders[portfolio_id]
+				self.logger.debug('Order %s removed from portfolio %s', order_id, portfolio_id)
+				return True
+		else:
+			# Search all portfolios if portfolio_id not provided
+			return self._remove_order_search_all(order_id)
+		return False
+
+	def _remove_order_search_all(self, order_id: str) -> bool:
+		"""
+		Helper method to search and remove an order across all portfolios.
+		
+		Parameters
+		----------
+		order_id : str
+			The ID of the order to remove
+			
+		Returns
+		-------
+		bool
+			True if order was found and removed, False otherwise
+		"""
+		for portfolio_id, orders in list(self.pending_orders.items()):
+			if order_id in orders:
+				order = orders[order_id]
+				del self.pending_orders[portfolio_id][order_id]
+				# Clean up empty portfolio dict if needed
+				if not self.pending_orders[portfolio_id]:
+					del self.pending_orders[portfolio_id]
+				self.logger.debug('Order %s removed from portfolio %s', order_id, portfolio_id)
+				return True
+		self.logger.warning('Order %s not found in pending orders', order_id)
+		return False
 	
 	def modify_order(self, ticker):
 		"""
