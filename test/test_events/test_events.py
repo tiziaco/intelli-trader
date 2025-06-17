@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime
-from itrader.events_handler.event import EventType, OrderType, FillStatus, OrderStatus
+from itrader.events_handler.event import EventType, FillStatus
+from itrader.order_handler.order import OrderType, OrderStatus
 from itrader.events_handler.event import \
 	PingEvent, BarEvent, SignalEvent, OrderEvent, FillEvent
 
