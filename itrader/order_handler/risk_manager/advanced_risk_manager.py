@@ -35,7 +35,7 @@ class RiskManager():
 			return
 		self.check_cash(signal)
 		if signal.verified == True:
-			self.logger.debug('Order validated')
+			self.logger.debug('Order VALIDATED')
 
 	def check_cash(self, signal: SignalEvent):
 		"""
@@ -44,14 +44,21 @@ class RiskManager():
 		"""
 		# TODO: implement check cash in case of position increase
 		portfolio_id = signal.portfolio_id
-		open_tickers = list(self.portfolio_handler.get_portfolio(portfolio_id).positions.keys())
-		cost = signal.quantity * signal.price
+		portfolio = self.portfolio_handler.get_portfolio(portfolio_id)
+		open_tickers = list(portfolio.positions.keys())
+		
+		# Extract scalar values from signal attributes
+		quantity = signal.quantity
+		price = signal.price
+			
+		cost = quantity * price
 		
 		if signal.ticker not in open_tickers:
 			# New position about to be opened. Check if enough cash
-			cash = self.portfolio_handler.get_portfolio(portfolio_id).cash
+			cash = portfolio.cash
+			
 			if cash < 30 or cash <= cost:
 				signal.verified = False
 		if signal.verified == False:
-			self.logger.info('RISK MANAGER: Order REFUSED: Not enough cash to trade')
+			self.logger.info('Order REFUSED: Not enough cash to trade')
 
