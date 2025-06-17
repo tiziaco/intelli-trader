@@ -4,6 +4,7 @@ from datetime import datetime
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.events_handler.event import \
 	SignalEvent, OrderEvent, FillEvent
+from itrader.order_handler.order import Order
 
 class TestTransaction(unittest.TestCase):
 	"""
@@ -29,15 +30,27 @@ class TestTransaction(unittest.TestCase):
 		cls.strategy_id = 'test_strategy'
 		cls.portfolio_id = 'portfolio_id'
 		cls.order_type = 'MARKET'
+		cls.exchange = 'simulated'
 
 	def setUp(self):
 		"""
 		Set up the test data that will be used in each test method.
 		"""
-		self.signal_event = SignalEvent(self.time, self.order_type, self.ticker, self.side, self.action,
-										self.price, self.quantity, self.stop_loss, self.take_profit,
-										self.strategy_id, self.portfolio_id)
-		self.mkt_order_event = OrderEvent.new_order(self.signal_event)
+		self.signal_event = SignalEvent(
+			time=self.time, 
+			order_type=self.order_type, 
+			ticker=self.ticker, 
+			action=self.action,
+			price=self.price, 
+			quantity=self.quantity, 
+			stop_loss=self.stop_loss, 
+			take_profit=self.take_profit,
+			strategy_id=self.strategy_id, 
+			portfolio_id=self.portfolio_id,
+			strategy_setting={}
+		)
+		self.order = Order.new_order(self.signal_event, self.exchange)
+		self.mkt_order_event = OrderEvent.new_order_event(self.order)
 		self.fill_event = FillEvent.new_fill('EXECUTED', self.commission, self.mkt_order_event)
 
 	def test_transaction_initialization(self):
