@@ -42,17 +42,17 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		and generate a portfolio update event.
 		"""
 		# Add new portfolio
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
-		last_ptf_id = list(self.ptf_handler.portfolios.keys())[-1]
+		last_ptf_id = self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
+
 		print(f'TEST:: {last_ptf_id}')
 		# Init new Strategy
 		self.strategy = Strategy('test_strategy', '1h', ['BTCUSDT'],
 						  		global_queue=self.queue)
 		bars_dict = {
 			'BTCUSDT': pd.DataFrame(
-				{'Open': [30], 'High': [60], 'Low': [20], 'Close': [40], 'Volume': [1000]}),
+				{'open': [30], 'high': [60], 'low': [20], 'close': [40], 'volume': [1000]}),
 			'ETHUSDT': pd.DataFrame(
-				{'Open': [20], 'High': [50], 'Low': [10], 'Close': [40], 'Volume': [500]}),
+				{'open': [20], 'high': [50], 'low': [10], 'close': [40], 'volume': [500]}),
 			}
 		bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
 		self.strategy.last_event = bar_event

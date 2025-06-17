@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime
 from itrader.events_handler.event import EventType, FillStatus
-from itrader.order_handler.order import OrderType, OrderStatus
+from itrader.order_handler.order import OrderType, OrderStatus, Order
 from itrader.events_handler.event import \
 	PingEvent, BarEvent, SignalEvent, OrderEvent, FillEvent
 
@@ -35,10 +35,12 @@ class TestEvents(unittest.TestCase):
 		"""
 		self.ping_event = PingEvent(self.time)
 		self.bar_event = BarEvent(self.time, {})
-		self.signal_event = SignalEvent(self.time, self.order_type, self.ticker, self.side, self.action,
+		self.signal_event = SignalEvent(self.time, self.order_type, self.ticker, self.action,
 										self.price, self.quantity, self.stop_loss, self.take_profit,
-										self.strategy_id, self.portfolio_id)
-		self.mkt_order_event = OrderEvent.new_order(self.signal_event)
+										self.strategy_id, self.portfolio_id, {})  # strategy_setting as empty dict
+		# Create Order first, then OrderEvent
+		self.order = Order.new_order(self.signal_event, 'test_exchange')
+		self.mkt_order_event = OrderEvent.new_order_event(self.order)
 		self.fill_event = FillEvent.new_fill('EXECUTED', self.commission, self.mkt_order_event)
 
 	def test_ping_event_initialization(self):
@@ -51,7 +53,6 @@ class TestEvents(unittest.TestCase):
 		self.assertIsInstance(self.signal_event, SignalEvent)
 		self.assertIs(type(self.mkt_order_event.time), datetime)
 		self.assertEqual(self.signal_event.ticker, 'BTCUSDT')
-		self.assertEqual(self.signal_event.side, 'LONG')
 		self.assertEqual(self.signal_event.action, 'BUY')
 		self.assertEqual(self.signal_event.price, 42350.72)
 		self.assertEqual(self.signal_event.quantity, 1)
@@ -64,10 +65,11 @@ class TestEvents(unittest.TestCase):
 	def test_order_event_initialization(self):
 		self.assertIsInstance(self.mkt_order_event, OrderEvent)
 		self.assertIs(type(self.mkt_order_event.time), datetime)
-		self.assertEqual(self.mkt_order_event.order_type, OrderType.MARKET)
-		self.assertEqual(self.mkt_order_event.status, OrderStatus.PENDING)
+		# Test Order object attributes (not OrderEvent)
+		self.assertEqual(self.order.type, OrderType.MARKET)
+		self.assertEqual(self.order.status, OrderStatus.PENDING)
+		# Test OrderEvent attributes
 		self.assertEqual(self.mkt_order_event.ticker, 'BTCUSDT')
-		self.assertEqual(self.mkt_order_event.side, 'LONG')
 		self.assertEqual(self.mkt_order_event.action, 'BUY')
 		self.assertEqual(self.mkt_order_event.price, 42350.72)
 		self.assertEqual(self.mkt_order_event.quantity, 1)
@@ -79,7 +81,6 @@ class TestEvents(unittest.TestCase):
 		self.assertIs(type(self.mkt_order_event.time), datetime)
 		self.assertEqual(self.fill_event.status, FillStatus.EXECUTED)
 		self.assertEqual(self.fill_event.ticker, 'BTCUSDT')
-		self.assertEqual(self.fill_event.side, 'LONG')
 		self.assertEqual(self.fill_event.action, 'BUY')
 		self.assertEqual(self.fill_event.price, 42350.72)
 		self.assertEqual(self.fill_event.quantity, 1)
