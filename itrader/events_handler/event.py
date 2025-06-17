@@ -88,17 +88,27 @@ class SignalEvent:
 	----------
 	time: `timestamp`
 		Event time
+	order_type: `str`
+		Type of order, e.g. 'MARKET', 'LIMIT', 'STOP'
+		'MARKET' is the default order type.
 	ticker: `str`
 		The ticker symbol, e.g. 'BTCUSD'.
-	direction: `str`
-		Direction of the position.
-		'BOT' (for long) or 'SLD' (for short)
 	action: `str`
-		'ENTRY' (for long) or 'EXIT' (for short)
+		'BUY' (for long) or 'SELL' (for short)
 	price: `float`
 		Last close price for the instrument
-	strategy_id: `str`
+	quantity: `float`
+		Quantity to trade
+	stop_loss: `float`
+		Stop loss price for the instrument
+	take_profit: `float`
+		Take profit price for the instrument
+	strategy_id: `int`
 		The ID of the strategy who generated the signal
+	portfolio_id: `int`
+		The ID of the portfolio where to transact the position
+	strategy_setting: `dict`
+		Strategy settings used to generate the signal.
 	"""
 
 	time: datetime
