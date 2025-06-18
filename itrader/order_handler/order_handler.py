@@ -48,10 +48,6 @@ class OrderHandler(OrderBase):
 		
 		# Use provided storage or default to in-memory for backward compatibility
 		self.order_storage = order_storage or OrderStorageFactory.create_in_memory()
-		
-		# Keep reference to pending_orders for backward compatibility
-		# This will be deprecated once all code is migrated to use the storage
-		self.pending_orders = self.order_storage.pending_orders if hasattr(self.order_storage, 'pending_orders') else {}
 
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
 		self.logger.info('Order Handler initialized')
