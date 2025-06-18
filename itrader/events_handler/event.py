@@ -48,6 +48,11 @@ class BarEvent:
 
 	time: datetime
 	bars: dict[str, pd.DataFrame]
+	# TODO:
+	# improvment idea : define a Bar object instead of using a DataFrame
+	# to store the bar data
+	# e.g. Bar(open, high, low, close, volume)
+	# where Bar is a dataclass with the above fields
 	type = EventType.BAR
 
 	def __str__(self):
@@ -57,7 +62,20 @@ class BarEvent:
 		return str(self)
 
 	def get_last_close(self, ticker) -> float:
-		return self.bars[ticker]['close']
+		close_data = self.bars[ticker]['close']
+
+		# TODO: check why the close data is not always a Series (from test).
+		# This shouldn't be the case after the before mentioned improvement is done.
+		
+		# Handle pandas Series or DataFrame column
+		if hasattr(close_data, 'iloc'):
+			return float(close_data.iloc[-1])
+		# Handle numpy arrays
+		elif hasattr(close_data, '__getitem__') and hasattr(close_data, '__len__'):
+			return float(close_data[-1])
+		# Handle scalar values
+		else:
+			return float(close_data)
 
 @dataclass
 class PortfolioUpdateEvent:
