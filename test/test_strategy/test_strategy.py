@@ -58,7 +58,7 @@ class TestStrategy(unittest.TestCase):
 
 		# Assert the event in the queue
 		self.assertIsInstance(event, SignalEvent)
-		self.assertEqual(event.strategy_id, 1)
+		self.assertEqual(event.strategy_id, self.strategy.strategy_id)
 		self.assertEqual(event.action, 'BUY')
 		self.assertEqual(event.ticker, self.ticker)
 		self.assertEqual(event.stop_loss, 40)
@@ -76,7 +76,7 @@ class TestStrategy(unittest.TestCase):
 
 		# Assert the event in the queue
 		self.assertIsInstance(event, SignalEvent)
-		self.assertEqual(event.strategy_id, 1)
+		self.assertEqual(event.strategy_id, self.strategy.strategy_id)
 		self.assertEqual(event.action, 'SELL')
 		self.assertEqual(event.ticker, self.ticker)
 		self.assertEqual(event.stop_loss, 40)
