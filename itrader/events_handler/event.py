@@ -77,6 +77,35 @@ class BarEvent:
 		else:
 			return float(close_data)
 
+	def get_last_open(self, ticker) -> float:
+		"""
+		Get the opening price for the ticker from the current bar.
+		
+		Parameters
+		----------
+		ticker : str
+			The ticker symbol
+			
+		Returns
+		-------
+		float
+			The opening price for the ticker
+		"""
+		if ticker not in self.bars:
+			return None
+			
+		open_data = self.bars[ticker]['open']
+		
+		# Handle pandas Series or DataFrame column
+		if hasattr(open_data, 'iloc'):
+			return float(open_data.iloc[-1])
+		# Handle numpy arrays
+		elif hasattr(open_data, '__getitem__') and hasattr(open_data, '__len__'):
+			return float(open_data[-1])
+		# Handle scalar values
+		else:
+			return float(open_data)
+
 @dataclass
 class PortfolioUpdateEvent:
 	"""
