@@ -52,7 +52,7 @@ class Strategy(object):
 		"""
 		Generate a signal for the given `ticker`, `action`, `stop_loss`, and `take_profit`.
 		"""
-		last_close = self.last_event.bars[ticker]['close']
+		last_close = self.last_event.get_last_close(ticker)
 		for portfolio_id in self.subscribed_portfolios:
 			signal = SignalEvent(
 							time = self.last_event.time,

@@ -26,9 +26,49 @@ structlog = "^24.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
+pytest-cov = "^5.0.0"
+pytest-watch = "^4.2.0"
+pytest-html = "^4.1.1"
 ipython = "^9.0.1"
 ipykernel = "^6.29.5"
 
+[tool.pytest.ini_options]
+# Test discovery
+testpaths = ["test"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Output options
+addopts = [
+    "-ra",                    # Show short test summary info for all except passed
+    "--strict-markers",       # Treat unregistered markers as errors
+    "--strict-config",        # Treat configuration warnings as errors
+    "--disable-warnings",     # Disable warnings in test output
+    "-v",                     # Verbose output
+]
+
+# Test markers
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests", 
+    "slow: Slow running tests",
+    "portfolio: Portfolio related tests",
+    "events: Event handling tests",
+    "orders: Order processing tests",
+    "execution: Trade execution tests",
+    "strategy: Strategy tests",
+]
+
+# Minimum version
+minversion = "8.0"
+
+# Filter warnings
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
 
 [build-system]
 requires = ["poetry-core"]

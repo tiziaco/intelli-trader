@@ -26,23 +26,43 @@ clean:
 # Test commands
 test:
 	@echo "🧪 Running all tests..."
-	poetry run pytest tests/ -v
+	poetry run pytest test/ -v
 
 test-unit:
 	@echo "🔬 Running unit tests..."
-	poetry run pytest tests/ -v -m "unit"
+	poetry run pytest test/ -v -m "unit"
 
 test-integration:
 	@echo "🔗 Running integration tests..."
-	poetry run pytest tests/ -v -m "integration"
+	poetry run pytest test/ -v -m "integration"
 
 test-portfolio:
-	@echo "📊 Running portfolio endpoint tests..."
-	poetry run pytest tests/endpoints/test_api_endpoints.py::TestPortfolioEndpoints -v
+	@echo "📊 Running portfolio tests..."
+	poetry run pytest test/test_portfolio/ -v
+
+test-events:
+	@echo "📡 Running events tests..."
+	poetry run pytest test/test_events/ -v
+
+test-orders:
+	@echo "📝 Running order handler tests..."
+	poetry run pytest test/test_order_handler/ -v
+
+test-execution:
+	@echo "⚡ Running execution handler tests..."
+	poetry run pytest test/test_execution_handler/ -v
+
+test-strategy:
+	@echo "🎯 Running strategy tests..."
+	poetry run pytest test/test_strategy/ -v
 
 test-cov:
 	@echo "📈 Running tests with coverage..."
-	poetry run pytest tests/ --cov=src --cov-report=html --cov-report=term-missing -v
+	poetry run pytest test/ --cov=itrader --cov-report=html --cov-report=term-missing -v
+
+test-watch:
+	@echo "👀 Running tests in watch mode..."
+	poetry run pytest-watch test/ -- -v
 
 # test-report:
 # 	@echo "📋 Generating test report..."

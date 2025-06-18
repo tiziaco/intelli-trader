@@ -26,21 +26,20 @@ class PortfolioHandler(object):
 		# Simple approach: get global logger and bind component name
 		self.logger = get_itrader_logger().bind(component="PortfolioHandler")
 		
-
 	def on_fill(self, fill_event: FillEvent):
 		"""
-		This is called by the event manager when an order 
+		This is called by the event manager when an order
 		is executed by the ExecutionHandler.
-		It takes a FillEvent, generate a transaction and 
+		It takes a FillEvent, generate a transaction and
 		update the correct Portfolio object.
 		"""
 		transaction = Transaction.new_transaction(fill_event)
 		portfolio = self.get_portfolio(fill_event.portfolio_id)
 		portfolio.process_transaction(transaction)
-		
-		self.logger.debug("Fill event processed", 
+
+		self.logger.debug("Fill event processed",
 			portfolio_id=fill_event.portfolio_id,
-			symbol=fill_event.symbol,
+			ticker=fill_event.ticker,
 			quantity=fill_event.quantity,
 			price=fill_event.price
 		)
@@ -83,12 +82,18 @@ class PortfolioHandler(object):
 			Name of the portfolio.
 		cash : `float`
 			Initial cash for the portfolio.
+		
+		Returns
+		-------
+		int
+			The portfolio ID of the created portfolio.
 		"""
 		portfolio = Portfolio(user_id, name, exchange, cash, datetime.now(UTC))
 		id = portfolio.portfolio_id
 		self.portfolios[id] = portfolio
 
 		self.logger.info("New Portfolio created", portfolio_id=id, user_id=user_id, name=name, initial_cash=cash)
+		return id
 	
 	def delete_portfolio(self, id):
 		"""

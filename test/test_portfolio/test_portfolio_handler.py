@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+from queue import Queue
 
 from itrader.portfolio_handler.portfolio import Portfolio, Position, PositionSide
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
@@ -27,7 +28,8 @@ class TestPortfolioHandler(unittest.TestCase):
 		"""
 		Initialise the portfolio handler.
 		"""
-		self.ptf_handler = PortfolioHandler()
+		self.queue = Queue()
+		self.ptf_handler = PortfolioHandler(self.queue)
 		#self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.cash)
 		#self.portfolio = Portfolio(self.user_id, self.portfolio_name, self.cash, datetime.now())
 
@@ -38,12 +40,12 @@ class TestPortfolioHandler(unittest.TestCase):
 		self.assertEqual(len(self.ptf_handler.portfolios), 1)
 	
 	def test_get_portfolio(self):
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
-		portfolio = self.ptf_handler.get_portfolio(3)
+		portfolio_id = self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
+		portfolio = self.ptf_handler.get_portfolio(portfolio_id)
 
 		# Assert if the portfolio has been created
 		self.assertIsInstance(portfolio, Portfolio)
-		self.assertEqual(portfolio.portfolio_id, 3)
+		self.assertEqual(portfolio.portfolio_id, portfolio_id)
 		self.assertEqual(portfolio.name, self.portfolio_name)
 		self.assertEqual(portfolio.cash, self.cash)
 
@@ -51,12 +53,12 @@ class TestPortfolioHandler(unittest.TestCase):
 		"""
 		Simulate a FillEvent recived from the execution handler.
 		"""
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
+		portfolio_id = self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 		# Bought 1 BTC over one filled event from yhe execution handler
 		buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-							'BTCUSDT', 'BUY', 40000, 1, 0, 2)
+							'BTCUSDT', 'BUY', 40000, 1, 0, portfolio_id)
 		self.ptf_handler.on_fill(buy_fill)
-		portfolio = self.ptf_handler.get_portfolio(2)
+		portfolio = self.ptf_handler.get_portfolio(portfolio_id)
 		position = portfolio.positions['BTCUSDT']
 
 		# Assert the portfolio's positions and transactions
@@ -73,7 +75,7 @@ class TestPortfolioHandler(unittest.TestCase):
 		# Assert the open position
 		self.assertIsInstance(position, Position)
 		self.assertEqual(position.ticker, 'BTCUSDT')
-		self.assertEqual(position.portfolio_id, 2)
+		self.assertEqual(position.portfolio_id, portfolio_id)
 		self.assertEqual(position.is_open, True)
 		self.assertEqual(position.side, PositionSide.LONG)
 
@@ -81,12 +83,12 @@ class TestPortfolioHandler(unittest.TestCase):
 		"""
 		Simulate a FillEvent recived from the execution handler.
 		"""
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
+		portfolio_id = self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 		# Bought 1 BTC over one filled event from yhe execution handler
 		buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-							'BTCUSDT', 'SELL', 40000, 1, 0, 5)
+							'BTCUSDT', 'SELL', 40000, 1, 0, portfolio_id)
 		self.ptf_handler.on_fill(buy_fill)
-		portfolio = self.ptf_handler.get_portfolio(5)
+		portfolio = self.ptf_handler.get_portfolio(portfolio_id)
 		position = portfolio.positions['BTCUSDT']
 
 		# Assert the portfolio's positions and transactions
@@ -103,7 +105,7 @@ class TestPortfolioHandler(unittest.TestCase):
 		# Assert the open position
 		self.assertIsInstance(position, Position)
 		self.assertEqual(position.ticker, 'BTCUSDT')
-		self.assertEqual(position.portfolio_id, 5)
+		self.assertEqual(position.portfolio_id, portfolio_id)
 		self.assertEqual(position.is_open, True)
 		self.assertEqual(position.side, PositionSide.SHORT)
 
@@ -111,10 +113,10 @@ class TestPortfolioHandler(unittest.TestCase):
 		"""
 		Simulate a FillEvent recived from the execution handler.
 		"""
-		self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
+		portfolio_id = self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
 		# Bought 1 BTC over one filled event from yhe execution handler
 		buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-							'BTCUSDT', 'SELL', 40000, 1, 0, 4)
+							'BTCUSDT', 'SELL', 40000, 1, 0, portfolio_id)
 		self.ptf_handler.on_fill(buy_fill)
 
 		portfolios_dict = self.ptf_handler.portfolios_to_dict()

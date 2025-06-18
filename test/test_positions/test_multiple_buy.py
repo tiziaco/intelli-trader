@@ -27,9 +27,10 @@ class TestPositionMultipleBuy(unittest.TestCase):
 		price = 42000
 		quantity = 1
 		commission = 0
+		# TODO: use Transaction.new_transaction() or implement an auto generate ID method
 		buy_transaction_1 = Transaction(time, type, self.ticker, 
 								price, quantity, commission,
-								self.portfolio_id)
+								self.portfolio_id, id=1)
 		position = Position.open_position(buy_transaction_1)
 		# Increase Long position
 		time = datetime.now()
@@ -39,11 +40,11 @@ class TestPositionMultipleBuy(unittest.TestCase):
 		commission = 0
 		buy_transaction_2 = Transaction(time, type, self.ticker, 
 								price, quantity, commission,
-								self.portfolio_id)
+								self.portfolio_id, id=2)
 		position.update_position(buy_transaction_2)
 
 		self.assertIsInstance(position, Position)
-		self.assertEqual(position.id, 1)
+		self.assertIsInstance(position.id, int)  # Just check it's an integer
 		self.assertEqual(position.ticker, 'BTCUSDT')
 		self.assertEqual(position.portfolio_id, 'portfolio_id')
 

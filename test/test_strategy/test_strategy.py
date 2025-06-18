@@ -31,7 +31,7 @@ class TestStrategy(unittest.TestCase):
 		Set up the the BaseSTartegy instance and the global queue.
 		"""
 
-		bars_dict = {self.ticker: pd.DataFrame({'Open': [100], 'High': [110], 'Low': [90], 'Close': [105], 'Volume': [1000]})}
+		bars_dict = {self.ticker: pd.DataFrame({'open': [100], 'high': [110], 'low': [90], 'close': [105], 'volume': [1000]})}
 		event = BarEvent(time=datetime.now(), bars=bars_dict)
 		self.strategy.last_event = event
 
@@ -58,7 +58,7 @@ class TestStrategy(unittest.TestCase):
 
 		# Assert the event in the queue
 		self.assertIsInstance(event, SignalEvent)
-		self.assertEqual(event.strategy_id, 1)
+		self.assertEqual(event.strategy_id, self.strategy.strategy_id)
 		self.assertEqual(event.action, 'BUY')
 		self.assertEqual(event.ticker, self.ticker)
 		self.assertEqual(event.stop_loss, 40)
@@ -76,7 +76,7 @@ class TestStrategy(unittest.TestCase):
 
 		# Assert the event in the queue
 		self.assertIsInstance(event, SignalEvent)
-		self.assertEqual(event.strategy_id, 1)
+		self.assertEqual(event.strategy_id, self.strategy.strategy_id)
 		self.assertEqual(event.action, 'SELL')
 		self.assertEqual(event.ticker, self.ticker)
 		self.assertEqual(event.stop_loss, 40)

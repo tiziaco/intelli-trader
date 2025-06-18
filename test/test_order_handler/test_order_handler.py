@@ -76,10 +76,11 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		# Retrive the updated portfolios dict
 		portfolio_dict = self.order_handler.portfolios
 		portfolio_ids = list(portfolio_dict.keys())
+		actual_portfolio_id = portfolio_ids[0]  # Get the actual portfolio ID
 		self.assertIsInstance(portfolio_dict, dict)
 		self.assertEqual(len(portfolio_dict), 1)
-		self.assertEqual(portfolio_ids, [1])
-		self.assertEqual(portfolio_dict.get(1).get('available_cash'), 1000)
+		self.assertEqual(len(portfolio_ids), 1)  # Check we have exactly one portfolio
+		self.assertEqual(portfolio_dict.get(actual_portfolio_id).get('available_cash'), 1000)
 
 
 if __name__ == "__main__":
