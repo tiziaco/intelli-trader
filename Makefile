@@ -59,6 +59,7 @@ test-strategy:
 test-cov:
 	@echo "📈 Running tests with coverage..."
 	poetry run pytest test/ --cov=itrader --cov-report=html --cov-report=term-missing -v
+	open htmlcov/index.html
 
 test-watch:
 	@echo "👀 Running tests in watch mode..."
