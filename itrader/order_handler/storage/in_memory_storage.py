@@ -40,6 +40,51 @@ class InMemoryOrderStorage(OrderStorage):
         if order.is_active:
             self.active_orders.setdefault(portfolio_key, {})[order_key] = order
     
+    def deactivate_order(self, order_id: Union[str, int], portfolio_id: Union[str, int] = None) -> bool:
+        """
+        Deactivate an order (remove from active but keep in all_orders for audit trail).
+        
+        This mimics professional SQL behavior where filled orders remain in the main table
+        but are filtered out of active queries.
+        
+        Parameters
+        ----------
+        order_id : Union[str, int]  
+            The ID of the order to deactivate
+        portfolio_id : Union[str, int], optional
+            The portfolio ID containing the order
+            
+        Returns
+        -------
+        bool
+            True if order was successfully deactivated
+        """
+        order_key = str(order_id)
+        deactivated = False
+        
+        if portfolio_id:
+            # Direct access if portfolio_id is provided
+            portfolio_key = str(portfolio_id)
+            
+            # Remove from active orders only
+            if (portfolio_key in self.active_orders and 
+                order_key in self.active_orders[portfolio_key]):
+                del self.active_orders[portfolio_key][order_key]
+                if not self.active_orders[portfolio_key]:
+                    del self.active_orders[portfolio_key]
+                deactivated = True
+        else:
+            # Search all portfolios if portfolio_id not provided
+            for portfolio_key, orders in list(self.active_orders.items()):
+                if order_key in orders:
+                    del self.active_orders[portfolio_key][order_key]
+                    if not self.active_orders[portfolio_key]:
+                        del self.active_orders[portfolio_key]
+                    deactivated = True
+                    break
+        
+        return deactivated
+
     def remove_order(self, order_id: Union[str, int], portfolio_id: Union[str, int] = None) -> bool:
         """Remove an order from in-memory storage."""
         order_key = str(order_id)

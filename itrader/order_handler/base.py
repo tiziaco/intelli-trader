@@ -295,3 +295,25 @@ class OrderStorage(ABC):
             Dictionary with status names as keys and counts as values
         """
         pass
+    
+    @abstractmethod
+    def deactivate_order(self, order_id: Union[str, int], portfolio_id: Union[str, int] = None) -> bool:
+        """
+        Deactivate an order (remove from active but keep in all_orders for audit trail).
+        
+        Professional trading behavior: filled orders remain in historical records
+        but are removed from active order queries.
+        
+        Parameters
+        ----------
+        order_id : Union[str, int]
+            The ID of the order to deactivate
+        portfolio_id : Union[str, int], optional
+            The portfolio ID for direct access (more efficient)
+            
+        Returns
+        -------
+        bool
+            True if order was found and deactivated, False otherwise
+        """
+        pass

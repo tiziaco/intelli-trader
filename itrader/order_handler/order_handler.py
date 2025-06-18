@@ -6,6 +6,7 @@ from ..portfolio_handler.portfolio_handler import PortfolioHandler
 from .base import OrderBase, OrderStorage
 from .order import Order, OrderType, OrderStatus
 from .order_validator import OrderValidator, ValidationResult
+from .order_manager import OrderManager
 from .compliance_manager.basic_compliance_manager import ComplianceManager
 from .position_sizer.variable_sizer import DynamicSizer
 from .risk_manager.advanced_risk_manager import RiskManager
@@ -33,7 +34,7 @@ class OrderHandler(OrderBase):
 	and validation capabilities.
 	"""
 	def __init__(self, events_queue: Queue, portfolio_handler: PortfolioHandler, 
-	             order_storage: OrderStorage = None):
+	             order_storage: OrderStorage = None, market_execution: str = "immediate"):
 		"""
 		Parameters
 		----------
@@ -43,10 +44,15 @@ class OrderHandler(OrderBase):
 			The portfolio handler instance
 		order_storage: `OrderStorage`, optional
 			The order storage for storage operations. If None, uses InMemoryOrderStorage.
+		market_execution: str, optional
+			Market order execution timing. Options:
+			- "immediate": Execute market orders immediately (live trading)
+			- "next_bar": Queue market orders for next bar execution (realistic backtesting)
 		"""
 		#super(OrderHandler, self).__init__(events_queue)
 		self.events_queue = events_queue
 		self.portfolio_handler = portfolio_handler
+		self.market_execution = market_execution
 		self.compliance = ComplianceManager(portfolio_handler)
 		self.position_sizer = DynamicSizer(portfolio_handler)
 		self.risk_manager = RiskManager(portfolio_handler)
@@ -58,82 +64,61 @@ class OrderHandler(OrderBase):
 		self.order_validator = OrderValidator(portfolio_handler)
 
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
-		self.logger.info('Order Handler initialized with enhanced order lifecycle management')
+		
+		# Initialize the centralized OrderManager for coordinated order processing
+		self.order_manager = OrderManager(self.order_storage, self.logger, self, market_execution)
+		
+		self.logger.info(f'Order Handler initialized with enhanced order lifecycle management and centralized OrderManager (market_execution={market_execution})')
 
+	def process_orders_on_market_data(self, bar_event: BarEvent):
+		"""
+		Process all order types when new market data arrives.
+		
+		This is the new centralized entry point for all market-driven order processing,
+		replacing the scattered check_pending_orders() and execute_market_orders() calls.
+		
+		Parameters
+		----------
+		bar_event : BarEvent
+			The bar event containing current market data
+		"""
+		order_events = self.order_manager.process_orders_on_market_data(bar_event)
+		
+		# Send all generated order events to the execution handler
+		for order_event in order_events:
+			self.events_queue.put(order_event)
+		
+		self.logger.debug(f'Processed market data for {len(order_events)} orders')
 
 	def check_pending_orders(self, bar_event: BarEvent):
 		"""
 		Check the activation conditions of the limit orders in 
 		the pending orders list.
 
+		DEPRECATED: This method now delegates to the centralized OrderManager.
+		Use process_orders_on_market_data() directly for new implementations.
+
 		Parameters
 		----------
 		bar_event : `BarEvent`
 			The bar event generated from the Universe module
 		"""
-		# Get active orders instead of pending orders
-		active_orders = self.order_storage.get_active_orders_dict()
-		if bool(active_orders):
-			for portfolio_id, active_orders_dict in list(active_orders.items()):
-				for order_id, order in list(active_orders_dict.items()):
-					last_close = bar_event.get_last_close(order.ticker)
-
-					if order.type == OrderType.STOP:
-						if order.action == 'SELL':
-							if last_close < order.price: # SL of a long position
-								self.logger.info('Stop Loss order filled: %s, %s',order.ticker, order.action)
-								order.time = bar_event.time
-								# Use new state tracking
-								order.add_fill(order.remaining_quantity, last_close, bar_event.time, "stop loss triggered")
-								self.order_storage.update_order(order)
-								self.send_order_event(order)
-								self.remove_orders(order.ticker, order.portfolio_id)
-
-						elif order.action == 'BUY':
-							if last_close > order.price: # SL of a short position
-								self.logger.info('Stop Loss filled: %s, %s',order.ticker, order.action)
-								order.time = bar_event.time
-								# Use new state tracking
-								order.add_fill(order.remaining_quantity, last_close, bar_event.time, "stop loss triggered")
-								self.order_storage.update_order(order)
-								self.send_order_event(order)
-								self.remove_orders(order.ticker, order.portfolio_id)
-
-					elif order.type == OrderType.LIMIT:
-						if order.action == 'SELL':
-							if last_close > order.price: # TP of a long position
-								self.logger.info('Limit order filled: %s, %s',order.ticker, order.action)
-								order.time = bar_event.time
-								# Use new state tracking
-								order.add_fill(order.remaining_quantity, last_close, bar_event.time, "limit order triggered")
-								self.order_storage.update_order(order)
-								self.send_order_event(order)
-								self.remove_orders(order.ticker, order.portfolio_id)
-
-						elif order.action == 'BUY':
-							if last_close < order.price: # TP of a short position
-								self.logger.info('Limit order filled: %s, %s',order.ticker, order.action)
-								order.time = bar_event.time
-								# Use new state tracking
-								order.add_fill(order.remaining_quantity, last_close, bar_event.time, "limit order triggered")
-								self.order_storage.update_order(order)
-								self.send_order_event(order)
-								self.remove_orders(order.ticker, order.portfolio_id)
+		# Delegate to the centralized OrderManager
+		self.process_orders_on_market_data(bar_event)
 
 	def execute_market_orders(self):
 		"""
 		Execute the market orders if any among the active orders.
-		After execution, update their state and remove from active orders.
+		
+		DEPRECATED: This method is now handled automatically by the OrderManager
+		during process_orders_on_market_data(). Market orders are executed as part
+		of the coordinated pipeline.
+		
+		This method is kept for backward compatibility but does nothing.
 		"""
-		active_orders = self.order_storage.get_active_orders_dict()
-		if bool(active_orders):
-			for portfolio_id, active_orders_dict in list(active_orders.items()):
-				for order_id, order in list(active_orders_dict.items()):
-					if order.type == OrderType.MARKET:
-						# Market orders are immediately filled
-						order.add_fill(order.remaining_quantity, order.price, order.time, "market order execution")
-						self.order_storage.update_order(order)
-						self.send_order_event(order)
+		# Market orders are now handled automatically by OrderManager
+		# during process_orders_on_market_data() calls
+		pass
 	
 	def on_signal(self, signal_event: SignalEvent):
 		"""
@@ -202,7 +187,16 @@ class OrderHandler(OrderBase):
 		
 		# Generate an order event from the validated signal
 		self.new_order(signal_event)
-		self.execute_market_orders()
+		
+		# Handle market order execution based on configured mode
+		if self.market_execution == "immediate":
+			# Execute market orders immediately
+			order_events = self.order_manager.process_market_orders_immediately()
+			for order_event in order_events:
+				self.events_queue.put(order_event)
+		elif self.market_execution == "next_bar":
+			# Queue market orders for next bar execution
+			self.order_manager.queue_market_orders_for_next_bar()
 
 	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
 		"""
@@ -480,29 +474,6 @@ class OrderHandler(OrderBase):
 		"""
 		return self.order_storage.get_orders_count_by_status(portfolio_id)
 	
-	def archive_old_orders(self, days_old: int = 30, portfolio_id: int = None) -> int:
-		"""
-		Archive orders older than specified days.
-
-		Parameters
-		----------
-		days_old : int, optional
-			Orders older than this many days will be archived (default: 30)
-		portfolio_id : int, optional
-			Portfolio ID to filter by
-
-		Returns
-		-------
-		int
-			Number of orders archived
-		"""
-		from datetime import datetime, timedelta
-		cutoff_date = datetime.now() - timedelta(days=days_old)
-		
-		archived_count = self.order_storage.archive_orders(cutoff_date, portfolio_id)
-		if archived_count > 0:
-			self.logger.info('Archived %d orders older than %d days', archived_count, days_old)
-		
 		return archived_count
 
 	def add_stop_loss_order(self, signal: SignalEvent):

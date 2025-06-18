@@ -284,6 +284,8 @@ class Order:
 		old_status = self.status
 		self.status = new_status
 		self.updated_at = datetime.now()
+		# TODO: check if i have to store the state changes permanently in sql
+		# when in live trading / production
 		self.state_changes.append(state_change)
 		
 		# Update specific timestamp fields
