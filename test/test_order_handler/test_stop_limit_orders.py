@@ -74,7 +74,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		# Retrive the market order that should have been generated
 		order_event:OrderEvent = self.queue.get(False)
 		pending_orders = self.order_handler.order_storage.get_pending_orders()
-		portfolio_orders = pending_orders.get(order_event.portfolio_id, {})
+		portfolio_orders = pending_orders.get(str(order_event.portfolio_id), {})
 
 		# Assert Order Event from queue
 		self.assertIsInstance(order_event, OrderEvent)
