@@ -1,6 +1,6 @@
 from enum import Enum
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from itrader.events_handler.event import SignalEvent
 from itrader import idgen
@@ -40,7 +40,7 @@ class Order:
 	exchange: str
 	strategy_id: int
 	portfolio_id: int
-	id: int
+	id: int = field(default_factory=lambda: idgen.generate_order_id())
 
 	def __str__(self):
 		return f"Order - {self.id} ({self.type.name}, {self.ticker}, {self.action}, {self.quantity}, {self.price}$)"
@@ -78,8 +78,7 @@ class Order:
 			signal.quantity,
 			exchange,
 			signal.strategy_id,
-			signal.portfolio_id,
-			idgen.generate_order_id()
+			signal.portfolio_id
 		)
 	
 	@classmethod
@@ -103,15 +102,14 @@ class Order:
 			quantity,
 			exchange,
 			strategy_id,
-			portfolio_id,
-			idgen.generate_order_id()
+			portfolio_id
 		)
 	
 	@classmethod
 	def new_limit_order(cls, time, ticker, action, price, quantity, exchange,
 					strategy_id, portfolio_id):
 		"""
-		Generate a new Stop Order object.
+		Generate a new Limit Order object.
 
 		Returns
 		-------
@@ -128,6 +126,5 @@ class Order:
 			quantity,
 			exchange,
 			strategy_id,
-			portfolio_id,
-			idgen.generate_order_id()
+			portfolio_id
 		)
