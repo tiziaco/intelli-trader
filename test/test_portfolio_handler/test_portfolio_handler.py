@@ -96,9 +96,9 @@ class TestPortfolioHandler(unittest.TestCase):
 		self.assertEqual(len(portfolio.closed_positions), 0)
 		self.assertEqual(len(portfolio.transactions), 1)
 		# Assert the portfolio's metrics
-		self.assertEqual(portfolio.cash, 110000)
-		self.assertEqual(portfolio.total_equity, 150000)
-		self.assertEqual(portfolio.total_market_value, 40000)
+		self.assertEqual(portfolio.cash, 190000)  # Started with 150k, sold short for 40k = 190k
+		self.assertEqual(portfolio.total_equity, 150000)  # Still 150k because short position offsets cash increase
+		self.assertEqual(portfolio.total_market_value, -40000)  # Negative because short position is a liability
 		self.assertEqual(portfolio.total_pnl, 0)
 		self.assertEqual(portfolio.total_realised_pnl, 0)
 		self.assertEqual(portfolio.total_unrealised_pnl, 0)

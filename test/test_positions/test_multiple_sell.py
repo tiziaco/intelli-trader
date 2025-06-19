@@ -53,7 +53,7 @@ class TestPosition(unittest.TestCase):
 		self.assertEqual(position.avg_bought, 0)
 		self.assertEqual(position.avg_sold, 40400)
 		self.assertEqual(position.avg_price, 40400)
-		self.assertEqual(position.market_value, 200000)
+		self.assertEqual(position.market_value, -200000)  # Negative for short positions
 		self.assertEqual(position.total_bought, 0)
 		self.assertEqual(position.total_sold, 202000)
 		self.assertEqual(position.net_total, 2000)

@@ -56,13 +56,13 @@ class TestPortfolioHandlerUpdates(unittest.TestCase):
 
 		# Assert if the portfolio has been created
 		self.assertEqual(len(self.ptf_handler.portfolios), 1)
-		# Assert the portfolio's metrics
-		self.assertEqual(portfolio.cash, 940)
-		self.assertEqual(portfolio.total_market_value, 90) # OK corretto. sum(price * qnt)
-		self.assertEqual(portfolio.total_equity, 1030) # OK corretto. total_market_value + cash
-		self.assertEqual(portfolio.total_pnl, -10)
+		# Assert the portfolio's metrics - Updated to reflect correct financial logic
+		self.assertEqual(portfolio.cash, 980)  # $1000 - $40 (BTC buy) + $20 (ETH short) = $980
+		self.assertEqual(portfolio.total_market_value, 10)  # BTC: $50 (long), ETH: -$40 (short) = $10
+		self.assertEqual(portfolio.total_equity, 990)  # $980 cash + $10 market value = $990
+		self.assertEqual(portfolio.total_pnl, -10)  # Total P&L
 		self.assertEqual(portfolio.total_realised_pnl, 0)
-		self.assertEqual(portfolio.total_unrealised_pnl, -10)
+		self.assertEqual(portfolio.total_unrealised_pnl, -10)  # BTC: +$10, ETH: -$20 = -$10
 		#TODO: the short position is not correctly updated. To be fixed!
 	
 	def test_generate_portfolios_update_event(self):
