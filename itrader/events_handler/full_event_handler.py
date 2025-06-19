@@ -69,11 +69,8 @@ class EventHandler(object):
 				self.universe.generate_bar_event(event)
 			elif event.type == EventType.BAR:
 				self.portfolio_handler.update_portfolios_market_value(event)
-				self.order_handler.check_pending_orders(event)
+				self.order_handler.process_orders_on_market_data(event)
 				self.strategies_handler.calculate_signals(event)
-			# elif event.type == EventType.UPDATE:
-			# 	self.strategies_handler.on_portfolio_update(event)
-			# 	self.order_handler.on_portfolio_update(event)
 			elif event.type == EventType.SIGNAL:
 				self.order_handler.on_signal(event)
 			elif event.type == EventType.ORDER:

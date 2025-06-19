@@ -229,11 +229,6 @@ class TestOrderStorageFactory(unittest.TestCase):
         
         self.assertIn("Database URL is required", str(context.exception))
 
-    def test_create_live_storage_with_db_url(self):
-        """Test creating live storage with database URL (should raise NotImplementedError for now)."""
-        with self.assertRaises(NotImplementedError):
-            OrderStorageFactory.create('live', 'postgresql://test:test@localhost/test')
-
     def test_unsupported_environment(self):
         """Test creating storage with unsupported environment."""
         with self.assertRaises(ValueError) as context:

@@ -36,3 +36,28 @@ class PostgreSQLOrderStorage(OrderStorage):
     
     def clear_portfolio_orders(self, portfolio_id):
         raise NotImplementedError("To be implemented in Phase 2")
+    
+    # Enhanced storage methods - placeholder implementations
+    def get_active_orders(self, portfolio_id=None):
+        raise NotImplementedError("To be implemented in Phase 2")
+    
+    def get_order_history(self, order_id, portfolio_id=None):
+        raise NotImplementedError("To be implemented in Phase 2")
+    
+    def get_orders_by_status(self, statuses, portfolio_id=None):
+        raise NotImplementedError("To be implemented in Phase 2")
+    
+    def get_orders_by_time_range(self, start_time, end_time, portfolio_id=None):
+        raise NotImplementedError("To be implemented in Phase 2")
+    
+    def get_orders_count_by_status(self, portfolio_id=None):
+        raise NotImplementedError("To be implemented in Phase 2")
+    
+    def search_orders(self, criteria, portfolio_id=None):
+        raise NotImplementedError("To be implemented in Phase 2")
+    
+    def archive_orders(self, cutoff_date, portfolio_id=None):
+        raise NotImplementedError("To be implemented in Phase 2")
+    
+    def deactivate_order(self, order_id, portfolio_id=None):
+        raise NotImplementedError("To be implemented in Phase 2")

@@ -1,12 +1,13 @@
 from enum import Enum
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 from itrader.events_handler.event import SignalEvent
 from itrader import idgen
 
 OrderType = Enum("OrderType", "MARKET STOP LIMIT")
-OrderStatus = Enum("OrderStatus", "PENDING FILLED CANCELLED")
+OrderStatus = Enum("OrderStatus", "PENDING PARTIALLY_FILLED FILLED CANCELLED REJECTED EXPIRED")
 
 order_type_map = {
 	"MARKET": OrderType.MARKET,
@@ -15,8 +16,38 @@ order_type_map = {
 }
 order_status_map = {
 	"PENDING": OrderStatus.PENDING,
+	"PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED,
 	"FILLED": OrderStatus.FILLED,
-	"CANCELLED": OrderStatus.CANCELLED
+	"CANCELLED": OrderStatus.CANCELLED,
+	"REJECTED": OrderStatus.REJECTED,
+	"EXPIRED": OrderStatus.EXPIRED
+}
+
+@dataclass
+class OrderStateChange:
+	"""
+	Tracks a single state change in an order's lifecycle.
+	Provides complete audit trail for order state transitions.
+	"""
+	from_status: Optional[OrderStatus]
+	to_status: OrderStatus
+	timestamp: datetime
+	reason: str
+	triggered_by: str = "system"  # system, user, exchange, etc.
+	additional_data: Optional[dict] = None
+	
+	def __str__(self):
+		return f"{self.from_status} → {self.to_status} at {self.timestamp} ({self.reason})"
+
+# Valid state transitions for order lifecycle
+VALID_ORDER_TRANSITIONS = {
+	None: [OrderStatus.PENDING],  # Initial creation
+	OrderStatus.PENDING: [OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED],
+	OrderStatus.PARTIALLY_FILLED: [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.EXPIRED],
+	OrderStatus.FILLED: [],  # Terminal state
+	OrderStatus.CANCELLED: [],  # Terminal state
+	OrderStatus.REJECTED: [],  # Terminal state
+	OrderStatus.EXPIRED: []   # Terminal state
 }
 
 @dataclass
@@ -40,35 +71,93 @@ class Order:
 	exchange: str
 	strategy_id: int
 	portfolio_id: int
-	id: int
+	id: int = field(default_factory=lambda: idgen.generate_order_id())
+	
+	# Enhanced lifecycle tracking fields
+	filled_quantity: float = 0.0
+	created_at: datetime = field(default_factory=datetime.now)
+	updated_at: datetime = field(default_factory=datetime.now)
+	filled_at: Optional[datetime] = None
+	cancelled_at: Optional[datetime] = None
+	expired_at: Optional[datetime] = None
+	expiry_time: Optional[datetime] = None
+	
+	# State change tracking
+	state_changes: List[OrderStateChange] = field(default_factory=list)
+	
+	# Order relationships
+	parent_order_id: Optional[int] = None
+	child_order_ids: List[int] = field(default_factory=list)
+	
+	# Additional metadata
+	rejection_reason: Optional[str] = None
+	modification_count: int = 0
+	last_modification_time: Optional[datetime] = None
+
+	@property
+	def remaining_quantity(self) -> float:
+		"""Calculate remaining quantity to be filled."""
+		return max(0.0, self.quantity - self.filled_quantity)
+	
+	@property
+	def is_fully_filled(self) -> bool:
+		"""Check if order is completely filled."""
+		return self.filled_quantity >= self.quantity
+	
+	@property
+	def is_partially_filled(self) -> bool:
+		"""Check if order is partially filled."""
+		return 0 < self.filled_quantity < self.quantity
+	
+	@property
+	def is_active(self) -> bool:
+		"""Check if order is in an active state (can still be filled)."""
+		return self.status in [OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED]
+	
+	@property
+	def is_terminal(self) -> bool:
+		"""Check if order is in a terminal state (cannot change further)."""
+		return self.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED]
+	
+	@property
+	def fill_percentage(self) -> float:
+		"""Get the percentage of the order that has been filled."""
+		if self.quantity == 0:
+			return 0.0
+		return (self.filled_quantity / self.quantity) * 100.0
 
 	def __str__(self):
-		return f"Order - {self.id} ({self.type.name}, {self.ticker}, {self.action}, {self.quantity}, {self.price}$)"
+		status_str = f"{self.status.name}"
+		if self.is_partially_filled:
+			status_str += f" ({self.filled_quantity}/{self.quantity})"
+		return f"Order - {self.id} ({self.type.name}, {self.ticker}, {self.action}, {status_str}, {self.price}$)"
 
 	def __repr__(self):
 		return str(self)
 	
 	@classmethod
-	def new_order(cls, signal: SignalEvent, exchange:str):
+	def new_order(cls, signal: SignalEvent, exchange: str):
 		"""
-		Generate a new Order object from the signal valited from
+		Generate a new Order object from the signal validated from
 		the risk manager and compliance manager.
 
 		Parameters
 		----------
 		signal : `SignalEvent`
 			The object representing the signal
+		exchange : str
+			The exchange for the order
 		
 		Returns
 		-------
-		Order : `OrderEvent`
+		Order : `Order`
 			A new Order object with the specified type.
 		"""
 		order_type = order_type_map.get(signal.order_type.upper())
 		if order_type is None:
-			raise ValueError(f'OrderType {type} not supported')
+			raise ValueError(f'OrderType {signal.order_type} not supported')
 
-		return cls(
+		order = cls(
 			signal.time,
 			order_type,
 			OrderStatus.PENDING,
@@ -78,9 +167,17 @@ class Order:
 			signal.quantity,
 			exchange,
 			signal.strategy_id,
-			signal.portfolio_id,
-			idgen.generate_order_id()
+			signal.portfolio_id
 		)
+		
+		# Add initial state change
+		order.add_state_change(
+			OrderStatus.PENDING, 
+			f"Order created from strategy {signal.strategy_id}", 
+			"strategy"
+		)
+		
+		return order
 	
 	@classmethod
 	def new_stop_order(cls, time, ticker, action, price, quantity, exchange,
@@ -90,10 +187,10 @@ class Order:
 
 		Returns
 		-------
-		Order : `OrderEvent`
+		Order : `Order`
 			A new Order object with the specified type.
 		"""
-		return cls(
+		order = cls(
 			time,
 			OrderType.STOP,
 			OrderStatus.PENDING,
@@ -103,22 +200,30 @@ class Order:
 			quantity,
 			exchange,
 			strategy_id,
-			portfolio_id,
-			idgen.generate_order_id()
+			portfolio_id
 		)
+		
+		# Add initial state change
+		order.add_state_change(
+			OrderStatus.PENDING,
+			f"Stop order created for {ticker}",
+			"system"
+		)
+		
+		return order
 	
 	@classmethod
 	def new_limit_order(cls, time, ticker, action, price, quantity, exchange,
 					strategy_id, portfolio_id):
 		"""
-		Generate a new Stop Order object.
+		Generate a new Limit Order object.
 
 		Returns
 		-------
-		Order : `OrderEvent`
+		Order : `Order`
 			A new Order object with the specified type.
 		"""
-		return cls(
+		order = cls(
 			time,
 			OrderType.LIMIT,
 			OrderStatus.PENDING,
@@ -128,6 +233,231 @@ class Order:
 			quantity,
 			exchange,
 			strategy_id,
-			portfolio_id,
-			idgen.generate_order_id()
+			portfolio_id
 		)
+		
+		# Add initial state change
+		order.add_state_change(
+			OrderStatus.PENDING,
+			f"Limit order created for {ticker}",
+			"system"
+		)
+		
+		return order
+	
+	def add_state_change(self, new_status: OrderStatus, reason: str, 
+	                    triggered_by: str = "system", additional_data: Optional[dict] = None) -> bool:
+		"""
+		Add a state change to the order with validation.
+		
+		Parameters
+		----------
+		new_status : OrderStatus
+			The new status to transition to
+		reason : str
+			Reason for the state change
+		triggered_by : str, optional
+			Who/what triggered the change
+		additional_data : dict, optional
+			Additional data about the state change
+			
+		Returns
+		-------
+		bool
+			True if state change was valid and applied, False otherwise
+		"""
+		# Validate state transition
+		if not self._is_valid_transition(self.status, new_status):
+			return False
+		
+		# Create state change record
+		state_change = OrderStateChange(
+			from_status=self.status,
+			to_status=new_status,
+			timestamp=datetime.now(),
+			reason=reason,
+			triggered_by=triggered_by,
+			additional_data=additional_data
+		)
+		
+		# Update order status and metadata
+		old_status = self.status
+		self.status = new_status
+		self.updated_at = datetime.now()
+		# TODO: check if i have to store the state changes permanently in sql
+		# when in live trading / production
+		self.state_changes.append(state_change)
+		
+		# Update specific timestamp fields
+		if new_status == OrderStatus.FILLED:
+			self.filled_at = datetime.now()
+		elif new_status == OrderStatus.CANCELLED:
+			self.cancelled_at = datetime.now()
+		elif new_status == OrderStatus.EXPIRED:
+			self.expired_at = datetime.now()
+		
+		return True
+	
+	def _is_valid_transition(self, from_status: OrderStatus, to_status: OrderStatus) -> bool:
+		"""Check if a state transition is valid."""
+		valid_transitions = VALID_ORDER_TRANSITIONS.get(from_status, [])
+		return to_status in valid_transitions
+	
+	def add_fill(self, fill_quantity: float, fill_price: float, fill_time: datetime, reason: str = "market fill") -> bool:
+		"""
+		Add a partial or full fill to the order.
+		
+		Parameters
+		----------
+		fill_quantity : float
+			Quantity that was filled
+		fill_price : float
+			Price at which the fill occurred
+		fill_time : datetime
+			Time of the fill
+		reason : str, optional
+			Reason for the fill
+			
+		Returns
+		-------
+		bool
+			True if fill was successfully applied
+		"""
+		if fill_quantity <= 0 or fill_quantity > self.remaining_quantity:
+			return False
+		
+		# Update filled quantity
+		self.filled_quantity += fill_quantity
+		
+		# Determine new status
+		if self.is_fully_filled:
+			new_status = OrderStatus.FILLED
+		else:
+			new_status = OrderStatus.PARTIALLY_FILLED
+		
+		# Add state change with fill details
+		additional_data = {
+			"fill_quantity": fill_quantity,
+			"fill_price": fill_price,
+			"fill_time": fill_time.isoformat(),
+			"total_filled": self.filled_quantity
+		}
+		
+		return self.add_state_change(new_status, reason, "exchange", additional_data)
+	
+	def cancel_order(self, reason: str = "user cancellation") -> bool:
+		"""
+		Cancel the order if it's in a cancellable state.
+		
+		Parameters
+		----------
+		reason : str, optional
+			Reason for cancellation
+			
+		Returns
+		-------
+		bool
+			True if order was successfully cancelled
+		"""
+		if not self.is_active:
+			return False
+		
+		self.rejection_reason = reason
+		return self.add_state_change(OrderStatus.CANCELLED, reason, "user")
+	
+	def reject_order(self, reason: str) -> bool:
+		"""
+		Reject the order with a specific reason.
+		
+		Parameters
+		----------
+		reason : str
+			Reason for rejection
+			
+		Returns
+		-------
+		bool
+			True if order was successfully rejected
+		"""
+		self.rejection_reason = reason
+		return self.add_state_change(OrderStatus.REJECTED, reason, "system")
+	
+	def expire_order(self, reason: str = "order expired") -> bool:
+		"""
+		Expire the order.
+		
+		Parameters
+		----------
+		reason : str, optional
+			Reason for expiration
+			
+		Returns
+		-------
+		bool
+			True if order was successfully expired
+		"""
+		return self.add_state_change(OrderStatus.EXPIRED, reason, "system")
+	
+	def modify_order(self, new_price: Optional[float] = None, new_quantity: Optional[float] = None, reason: str = "order modification") -> bool:
+		"""
+		Modify order parameters if in a modifiable state.
+		
+		Parameters
+		----------
+		new_price : float, optional
+			New order price
+		new_quantity : float, optional
+			New order quantity
+		reason : str, optional
+			Reason for modification
+			
+		Returns
+		-------
+		bool
+			True if order was successfully modified
+		"""
+		if not self.is_active:
+			return False
+		
+		# Validate new quantity against filled quantity
+		if new_quantity is not None and new_quantity < self.filled_quantity:
+			return False
+		
+		changes = {}
+		if new_price is not None and new_price != self.price:
+			changes["old_price"] = self.price
+			changes["new_price"] = new_price
+			self.price = new_price
+		
+		if new_quantity is not None and new_quantity != self.quantity:
+			changes["old_quantity"] = self.quantity
+			changes["new_quantity"] = new_quantity
+			self.quantity = new_quantity
+		
+		if changes:
+			self.modification_count += 1
+			self.last_modification_time = datetime.now()
+			self.updated_at = datetime.now()
+			
+			# Add state change to track modification
+			state_change = OrderStateChange(
+				from_status=self.status,
+				to_status=self.status,  # Status doesn't change, but we track the modification
+				timestamp=datetime.now(),
+				reason=reason,
+				triggered_by="user",
+				additional_data=changes
+			)
+			self.state_changes.append(state_change)
+			
+			return True
+		
+		return False
+	
+	def get_state_history(self) -> List[OrderStateChange]:
+		"""Get the complete state change history for this order."""
+		return self.state_changes.copy()
+	
+	def get_latest_state_change(self) -> Optional[OrderStateChange]:
+		"""Get the most recent state change."""
+		return self.state_changes[-1] if self.state_changes else None

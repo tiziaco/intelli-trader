@@ -1,12 +1,11 @@
-from datetime import timedelta
 from queue import Queue
+from typing import List, Dict
 
 from ..portfolio_handler.portfolio_handler import PortfolioHandler
 from .base import OrderBase, OrderStorage
-from .order import Order, OrderType, OrderStatus
-from .compliance_manager.basic_compliance_manager import ComplianceManager
-from .position_sizer.variable_sizer import DynamicSizer
-from .risk_manager.advanced_risk_manager import RiskManager
+from .order import Order, OrderStatus
+from .order_validator import EnhancedOrderValidator
+from .order_manager import OrderManager
 from ..events_handler.event import SignalEvent, BarEvent, OrderEvent, PortfolioUpdateEvent
 from .storage import OrderStorageFactory
 
@@ -26,9 +25,12 @@ class OrderHandler(OrderBase):
 	order queue for active and inactive orders.
 
 	When an order is filled it is sended to the execution handler
+	
+	Enhanced with comprehensive order lifecycle management, state tracking,
+	and validation capabilities.
 	"""
 	def __init__(self, events_queue: Queue, portfolio_handler: PortfolioHandler, 
-	             order_storage: OrderStorage = None):
+	             order_storage: OrderStorage = None, market_execution: str = "immediate"):
 		"""
 		Parameters
 		----------
@@ -38,132 +40,91 @@ class OrderHandler(OrderBase):
 			The portfolio handler instance
 		order_storage: `OrderStorage`, optional
 			The order storage for storage operations. If None, uses InMemoryOrderStorage.
+		market_execution: str, optional
+			Market order execution timing. Options:
+			- "immediate": Execute market orders immediately (live trading)
+			- "next_bar": Queue market orders for next bar execution (realistic backtesting)
 		"""
-		#super(OrderHandler, self).__init__(events_queue)
 		self.events_queue = events_queue
 		self.portfolio_handler = portfolio_handler
-		self.compliance = ComplianceManager(portfolio_handler)
-		self.position_sizer = DynamicSizer(portfolio_handler)
-		self.risk_manager = RiskManager(portfolio_handler)
+		self.market_execution = market_execution
 		
-		# Use provided storage or default to in-memory for backward compatibility
-		self.order_storage = order_storage or OrderStorageFactory.create_in_memory()
-		
-		# Keep reference to pending_orders for backward compatibility
-		# This will be deprecated once all code is migrated to use the storage
-		self.pending_orders = self.order_storage.pending_orders if hasattr(self.order_storage, 'pending_orders') else {}
-
+		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
-		self.logger.info('Order Handler initialized')
+		
+		self.order_storage = order_storage or OrderStorageFactory.create_in_memory()
+		self.order_manager = OrderManager(self.order_storage, self.logger, self, market_execution)
+		self.order_validator = EnhancedOrderValidator(portfolio_handler)
+		
+		self.logger.info(f'Order Handler initialized with market_execution={market_execution})')
 
-
-	def check_pending_orders(self, bar_event: BarEvent):
+	def process_orders_on_market_data(self, bar_event: BarEvent):
 		"""
-		Check the activation conditions of the limit orders in 
-		the pending orders list.
-
+		Process all order types when new market data arrives.
+		
+		This is the centralized entry point for all market-driven order processing.
+		
 		Parameters
 		----------
-		bar_event : `BarEvent`
-			The bar event generated from the Universe module
+		bar_event : BarEvent
+			The bar event containing current market data
 		"""
-		pending_orders = self.order_storage.get_pending_orders()
-		if bool(pending_orders):
-			for portfolio_id, pending_orders_dict in list(pending_orders.items()):
-				for order_id, order in list(pending_orders_dict.items()):
-					last_close = bar_event.get_last_close(order.ticker)
-
-					if order.type == OrderType.STOP:
-						if order.action == 'SELL':
-							if last_close < order.price: # SL of a long position
-								self.logger.info('Stop Loss order filled: %s, %s',order.ticker, order.action)
-								order.time = bar_event.time
-								self.send_order_event(order)
-								self.remove_orders(order.ticker, order.portfolio_id)
-
-						elif order.action == 'BUY':
-							if last_close > order.price: # SL of a short position
-								self.logger.info('Stop Loss filled: %s, %s',order.ticker, order.action)
-								order.time = bar_event.time
-								self.send_order_event(order)
-								self.remove_orders(order.ticker, order.portfolio_id)
-
-					elif order.type == OrderType.LIMIT:
-						if order.action == 'SELL':
-							if last_close > order.price: # TP of a long position
-								self.logger.info('Limit order filled: %s, %s',order.ticker, order.action)
-								order.time = bar_event.time
-								self.send_order_event(order)
-								self.remove_orders(order.ticker, order.portfolio_id)
-
-						elif order.action == 'BUY':
-							if last_close < order.price: # TP of a short position
-								self.logger.info('Limit order filled: %s, %s',order.ticker, order.action)
-								order.time = bar_event.time
-								self.send_order_event(order)
-								self.remove_orders(order.ticker, order.portfolio_id)
-
-	def execute_market_orders(self):
-		"""
-		Execute the market orders if any among the pending orders.
-		After execution, delete it from pending orders.
-		"""
-		pending_orders = self.order_storage.get_pending_orders()
-		if bool(pending_orders):
-			for portfolio_id, pending_orders_dict in list(pending_orders.items()):
-				for order_id, order in list(pending_orders_dict.items()):
-					if order.type == OrderType.MARKET:
-						self.send_order_event(order)
-						self.order_storage.remove_order(order_id, portfolio_id)
+		order_events = self.order_manager.process_orders_on_market_data(bar_event)
+		
+		# Send all generated order events to the execution handler
+		for order_event in order_events:
+			self.events_queue.put(order_event)
+		
+		self.logger.debug(f'Processed market data for {len(order_events)} orders')
 	
 	def on_signal(self, signal_event: SignalEvent):
 		"""
-		This is called by the events handler to process the signal
-		generated by a strategy.
-
-		These orders are sized by the PositionSizer object and then
-		sent to the RiskManager to verify, modify or eliminate it.
-
-		Once received from the RiskManager they are converted into
-		full OrderEvent objects and sent back to the events queue.
-
+		Simplified signal processing with unified validation pipeline.
+		
+		NOTE: Signal now comes pre-sized from strategy (when strategy refactoring is complete).
+		
 		Parameters
 		----------
 		signal_event : `SignalEvent`
 			The signal event generated from the strategy module
 		"""
-		self.logger.debug('Processing signal %s => %s, %s $', 
-					signal_event.ticker, signal_event.action, round(signal_event.price,4))
+		self.logger.debug('Processing signal %s => %s, %s $ (qty: %s)', 
+						signal_event.ticker, signal_event.action, 
+						round(signal_event.price, 4), signal_event.quantity)
 
-		self.compliance.check_compliance(signal_event)
-		self.position_sizer.size_order(signal_event)
-		self.risk_manager.refine_orders(signal_event)
-		# Exit if the signal is not validated
-		if not signal_event.verified:
+		# Single unified validation pipeline
+		validation_result = self.order_validator.validate_signal_pipeline(signal_event)
+		
+		if not validation_result.success:
+			self.logger.error('Signal validation failed: %s - %s', 
+							validation_result.summary,
+							[msg.message for msg in validation_result.errors])
 			return
-		# The signal is valid, place stop loss and take profit orders
+		
+		# Log warnings if any
+		if validation_result.has_warnings:
+			self.logger.warning('Signal validation warnings: %s',
+							   [msg.message for msg in validation_result.warnings])
+
+		# Signal is valid - create orders
 		if signal_event.stop_loss > 0:
 			self.add_stop_loss_order(signal_event)
 		if signal_event.take_profit > 0:
 			self.add_take_profit_order(signal_event)
-		# Generate an order event from the validated signal
+		
+		# Generate market order
 		self.new_order(signal_event)
-		self.execute_market_orders()
+		
+		# Handle market order execution based on configured mode
+		if self.market_execution == "immediate":
+			# Execute market orders immediately
+			order_events = self.order_manager.process_market_orders_immediately()
+			for order_event in order_events:
+				self.events_queue.put(order_event)
+		elif self.market_execution == "next_bar":
+			# Queue market orders for next bar execution
+			self.order_manager.queue_market_orders_for_next_bar()
 
-	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
-		"""
-		Update the information relative to the active portfolios.
-		"""
-		# Note: portfolios are now accessed through portfolio_handler
-		# This method is kept for backward compatibility with existing tests
-		self.portfolios = update_event.portfolios
-		# Update sub-components if they have this attribute
-		if hasattr(self.compliance, 'portfolios'):
-			self.compliance.portfolios = update_event.portfolios
-		if hasattr(self.position_sizer, 'portfolios'):
-			self.position_sizer.portfolios = update_event.portfolios
-		if hasattr(self.risk_manager, 'portfolios'):
-			self.risk_manager.portfolios = update_event.portfolios
 	
 	def add_pending_order(self, order: Order):
 		"""
@@ -218,18 +179,215 @@ class OrderHandler(OrderBase):
 		return removed
 
 	
-	def modify_order(self, ticker):
+	def modify_order(self, order_id: int, new_price: float = None, new_quantity: float = None, 
+	                portfolio_id: int = None, reason: str = "user modification") -> bool:
 		"""
-		Modify the filling price of an opened Stop or Limit order
-		Usefull for trailing stops.
+		Modify the filling price and/or quantity of an active order.
+		Useful for trailing stops and order adjustments.
 
 		Parameters
 		----------
-		ticker: `str`
-			The ticker of the order to be modified
+		order_id : int
+			The ID of the order to modify
+		new_price : float, optional
+			New price for the order
+		new_quantity : float, optional
+			New quantity for the order
+		portfolio_id : int, optional
+			Portfolio ID for faster lookup
+		reason : str, optional
+			Reason for the modification
+
+		Returns
+		-------
+		bool
+			True if order was successfully modified, False otherwise
 		"""
-		# TODO: da implementare
-		return
+		# Get the order
+		order = self.order_storage.get_order_by_id(order_id, portfolio_id)
+		if not order:
+			self.logger.warning('Order %s not found for modification', order_id)
+			return False
+		
+		# Validate the modification
+		validation_messages = self.order_validator.validate_order_modification(
+			order, new_price, new_quantity
+		)
+		
+		if not self.order_validator.is_valid(validation_messages):
+			error_messages = self.order_validator.get_errors(validation_messages)
+			self.logger.error('Order modification validation failed: %s',
+							[msg.message for msg in error_messages])
+			return False
+		
+		# Apply the modification
+		success = order.modify_order(new_price, new_quantity, reason)
+		if success:
+			# Update in storage
+			self.order_storage.update_order(order)
+			self.logger.info('Order %s modified successfully', order_id)
+		else:
+			self.logger.warning('Failed to modify order %s', order_id)
+		
+		return success
+	
+	def cancel_order(self, order_id: int, portfolio_id: int = None, reason: str = "user cancellation") -> bool:
+		"""
+		Cancel an active order.
+
+		Parameters
+		----------
+		order_id : int
+			The ID of the order to cancel
+		portfolio_id : int, optional
+			Portfolio ID for faster lookup
+		reason : str, optional
+			Reason for cancellation
+
+		Returns
+		-------
+		bool
+			True if order was successfully cancelled, False otherwise
+		"""
+		# Get the order
+		order = self.order_storage.get_order_by_id(order_id, portfolio_id)
+		if not order:
+			self.logger.warning('Order %s not found for cancellation', order_id)
+			return False
+		
+		# Cancel the order
+		success = order.cancel_order(reason)
+		if success:
+			# Update in storage
+			self.order_storage.update_order(order)
+			self.logger.info('Order %s cancelled: %s', order_id, reason)
+		else:
+			self.logger.warning('Failed to cancel order %s (status: %s)', 
+							   order_id, order.status.name)
+		
+		return success
+	
+	def get_order_by_id(self, order_id: int, portfolio_id: int = None) -> Order:
+		"""
+		Get an order by its ID.
+
+		Parameters
+		----------
+		order_id : int
+			The order ID
+		portfolio_id : int, optional
+			Portfolio ID for faster lookup
+
+		Returns
+		-------
+		Order
+			The order object if found, None otherwise
+		"""
+		return self.order_storage.get_order_by_id(order_id, portfolio_id)
+	
+	def get_orders_by_status(self, status: OrderStatus, portfolio_id: int = None) -> List[Order]:
+		"""
+		Get orders by their status.
+
+		Parameters
+		----------
+		status : OrderStatus
+			The status to filter by
+		portfolio_id : int, optional
+			Portfolio ID to filter by
+
+		Returns
+		-------
+		List[Order]
+			List of orders with the specified status
+		"""
+		return self.order_storage.get_orders_by_status(status, portfolio_id)
+	
+	def get_active_orders(self, portfolio_id: int = None) -> List[Order]:
+		"""
+		Get all active orders (PENDING and PARTIALLY_FILLED).
+
+		Parameters
+		----------
+		portfolio_id : int, optional
+			Portfolio ID to filter by
+
+		Returns
+		-------
+		List[Order]
+			List of active orders
+		"""
+		return self.order_storage.get_active_orders(portfolio_id)
+	
+	def get_order_history(self, order_id: int) -> List[Dict]:
+		"""
+		Get the state change history for an order.
+
+		Parameters
+		----------
+		order_id : int
+			The order ID
+
+		Returns
+		-------
+		List[Dict]
+			List of state changes for the order
+		"""
+		return self.order_storage.get_order_history(order_id)
+	
+	def get_orders_by_ticker(self, ticker: str, portfolio_id: int = None) -> List[Order]:
+		"""
+		Get all orders for a specific ticker.
+
+		Parameters
+		----------
+		ticker : str
+			The ticker symbol
+		portfolio_id : int, optional
+			Portfolio ID to filter by
+
+		Returns
+		-------
+		List[Order]
+			List of orders for the ticker
+		"""
+		return self.order_storage.get_orders_by_ticker(ticker, portfolio_id)
+	
+	def search_orders(self, criteria: Dict, portfolio_id: int = None) -> List[Order]:
+		"""
+		Search orders based on criteria.
+
+		Parameters
+		----------
+		criteria : Dict
+			Search criteria (e.g., {'ticker': 'AAPL', 'action': 'BUY'})
+		portfolio_id : int, optional
+			Portfolio ID to filter by
+
+		Returns
+		-------
+		List[Order]
+			List of orders matching the criteria
+		"""
+		return self.order_storage.search_orders(criteria, portfolio_id)
+	
+	def get_orders_summary(self, portfolio_id: int = None) -> Dict[str, int]:
+		"""
+		Get a summary of orders by status.
+
+		Parameters
+		----------
+		portfolio_id : int, optional
+			Portfolio ID to filter by
+
+		Returns
+		-------
+		Dict[str, int]
+			Dictionary with status names as keys and counts as values
+		"""
+		return self.order_storage.get_orders_count_by_status(portfolio_id)
+	
+		return archived_count
 
 	def add_stop_loss_order(self, signal: SignalEvent):
 		"""
