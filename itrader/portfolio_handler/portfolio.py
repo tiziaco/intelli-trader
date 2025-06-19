@@ -1,9 +1,17 @@
 import numpy as np
 from datetime import datetime
+from typing import Optional, Dict, List, Any
+from decimal import Decimal
 
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.portfolio_handler.position import Position, PositionSide
 from itrader.events_handler.event import BarEvent
+
+# Import the new managers
+from itrader.portfolio_handler.transaction_manager import TransactionManager
+from itrader.portfolio_handler.position_manager import PositionManager
+from itrader.portfolio_handler.cash_manager import CashManager
+from itrader.portfolio_handler.metrics_manager import MetricsManager
 
 from itrader import logger, idgen
 
@@ -37,13 +45,14 @@ class Portfolio(object):
 		self.portfolio_id = idgen.generate_portfolio_id()
 		self.name = name
 		self.exchange = exchange
-		self.cash = cash
 		self.creation_time = time
 		self.current_time = time
-		self.transactions: list[Transaction] = []
-		self.positions: dict[str, Position] = {}
-		self.closed_positions: list[Position] = []
-		self.metrics: dict[datetime, dict] = {}
+		
+		# Initialize managers with production-ready architecture
+		self.cash_manager = CashManager(self, initial_cash=cash)
+		self.transaction_manager = TransactionManager(self)
+		self.position_manager = PositionManager(self)
+		self.metrics_manager = MetricsManager(self)
 	
 	def __str__(self):
 		return f"Portfolio-{self.portfolio_id}"
@@ -51,22 +60,35 @@ class Portfolio(object):
 	def __repr__(self):
 		return str(self)
 
+	# Properties that delegate to managers
+	@property
+	def cash(self) -> float:
+		"""Get current cash balance."""
+		return float(self.cash_manager.balance)
+	
+	@cash.setter
+	def cash(self, value: float):
+		"""Set cash balance."""
+		current_balance = self.cash_manager.balance
+		difference = Decimal(str(value)) - current_balance
+		if difference > 0:
+			self.cash_manager.deposit(difference, "Cash balance adjustment")
+		elif difference < 0:
+			self.cash_manager.withdraw(abs(difference), "Cash balance adjustment")
+
 	@property
 	def n_open_positions(self):
 		"""
 		Obtain the number of open positions present in the portfolio
 		"""
-		return len(self.positions)
+		return len(self.position_manager.get_all_positions())
 
 	@property
 	def total_market_value(self):
 		"""
 		Obtain the total market value of the portfolio excluding cash.
 		"""
-		return sum(
-			pos.market_value
-			for ticker, pos in self.positions.items()
-		)
+		return float(self.position_manager.get_total_market_value())
 
 	@property
 	def total_equity(self):
@@ -80,10 +102,7 @@ class Portfolio(object):
 		"""
 		Calculate the sum of all the positions' unrealised P&Ls.
 		"""
-		return sum(
-			pos.unrealised_pnl
-			for ticker, pos in self.positions.items()
-		)
+		return float(self.position_manager.get_total_unrealized_pnl())
 
 	@property
 	def total_realised_pnl(self):
@@ -91,90 +110,64 @@ class Portfolio(object):
 		Calculate the sum of all the positions' realised P&Ls,
 		including both open and closed positions.
 		"""
-		open_positions_realised_pnl = sum(
-			pos.realised_pnl
-			for ticker, pos in self.positions.items()
-		)
-		closed_positions_realised_pnl = sum(
-			pos.realised_pnl
-			for pos in self.closed_positions
-		)
-		return open_positions_realised_pnl + closed_positions_realised_pnl
-
+		return float(self.position_manager.get_total_realized_pnl())
 
 	@property
 	def total_pnl(self):
 		"""
 		Calculate the sum of all the positions' total P&Ls.
 		"""
-		return sum(
-			pos.total_pnl
-			for ticker, pos in self.positions.items()
-		)
+		return self.total_unrealised_pnl + self.total_realised_pnl
+	
+	@property
+	def positions(self) -> dict[str, Position]:
+		"""Get open positions as a dictionary."""
+		return self.position_manager.get_all_positions()
+	
+	@property
+	def closed_positions(self) -> list[Position]:
+		"""Get closed positions as a list."""
+		return self.position_manager.get_closed_positions()
+	
+	@property
+	def transactions(self) -> list[Transaction]:
+		"""Get all transactions as a list."""
+		return self.transaction_manager.get_transaction_history()
 
 	def process_transaction(self, transaction: Transaction):
-		time = transaction.time
-		ticker = transaction.ticker
-		price = transaction.price
-
-		# Retrieve open position for the asset's ticker
-		open_position: Position = self.positions.get(ticker)
-
-		if open_position:
-			# Update existing position for buy transaction
-			open_position.update_current_price_time(price, time)
-			transaction_cost = self.calculate_transaction_cost(transaction, open_position)
-			open_position.update_position(transaction)
-			transaction.position_id = open_position.id
-			# Check if position should be closed
-			if np.isclose(open_position.net_quantity, 0, atol=TOLERANCE):
-				open_position.close_position(price, time)
-				self.closed_positions.append(open_position)
-				del self.positions[ticker]
-		else:
-			# Create a new long position for the trading pair
-			open_position = Position.open_position(transaction)
-			transaction_cost = self.calculate_transaction_cost(transaction, None)
-			transaction.position_id = open_position.id
-			self.positions[ticker] = open_position
-
-		# Update portfolio cash
-		self.cash += transaction_cost
-		self.store_transaction(transaction)
-
-	@staticmethod
-	def calculate_transaction_cost(transaction: Transaction, open_position: Position) -> float:
-		price = transaction.price
-		quantity = transaction.quantity
-		commission = transaction.commission
-
-		if not open_position:
-			transaction_cost = -round((price * quantity) + commission, 2)
-		else:
-			if (open_position.side == PositionSide.LONG and transaction.type == TransactionType.BUY) or \
-				(open_position.side == PositionSide.SHORT and transaction.type == TransactionType.SELL):
-				transaction_cost = -round((price * quantity) + commission, 2)
-			else:
-				avg_price = open_position.avg_price
-				# Calculate the realized profit or loss
-				transaction_pnl = (avg_price - price) * quantity if open_position.side == PositionSide.SHORT else (price - avg_price) * quantity
-				transaction_cost = avg_price * quantity + transaction_pnl - commission
-		return transaction_cost
+		"""
+		Process a transaction using the new manager architecture while 
+		preserving existing short position logic and behavior.
+		"""
+		# Update transaction with portfolio information
+		transaction.portfolio_id = self.portfolio_id
+		
+		# Process transaction through the managers in the correct order
+		try:
+			# Process position changes first (this handles short positions properly)
+			position = self.position_manager.process_position_update(transaction)
+			transaction.position_id = position.id
+			
+			# Process the transaction financially (cash flow) - this includes funds validation
+			self.transaction_manager.process_transaction(transaction)
+			
+		except Exception as e:
+			logger.error(f"Transaction processing failed: {e}")
+			raise
 
 	def update_market_value(self, bar_event: BarEvent):
 		"""
 		Updates the value of all positions that are currently open.
 		"""
 		tickers = bar_event.bars.keys()
-		for ticker in tickers:
-			if ticker not in self.positions:
-				continue
-			current_price = bar_event.get_last_close(ticker)
-			self.positions[ticker].update_current_price_time(
-					current_price, bar_event.time)
+		current_prices = {}
 		
-	def store_transaction(self, transaction: Transaction):
-		self.transactions.append(transaction)
+		for ticker in tickers:
+			current_price = bar_event.get_last_close(ticker)
+			current_prices[ticker] = current_price
+		
+		# Update all positions with new prices
+		self.position_manager.update_position_market_values(current_prices, bar_event.time)
 
 	def to_dict(self):
 		return {
@@ -182,7 +175,6 @@ class Portfolio(object):
 				'name' : self.name,
 				'exchange' : self.exchange,
 				'n_open_positions' : len(self.positions),
-				#'open_positions' : self.open_positions_to_dict(),
 				'total_market_value' : self.total_market_value,
 				'available_cash' : self.cash,
 				'total_equity' : self.total_equity,
@@ -192,59 +184,9 @@ class Portfolio(object):
 			}
 
 	def record_metrics(self, time: datetime):
-		self.metrics[time] = self.to_dict()
+		"""Record portfolio metrics using the metrics manager."""
+		self.metrics_manager.record_snapshot(time)
 
 	def get_open_position(self, ticker):
-		if ticker in self.positions:
-			return self.positions[ticker]
-		return None
-
-	def open_positions_to_dict(self):
-		"""
-		Output the portfolio holdings information as a dictionary
-		with Assets as keys and sub-dictionaries as values.
-		This excludes cash.
-
-		Returns
-		-------
-		`dict`
-			The portfolio holdings.
-		"""
-		holdings = {}
-		for ticker, pos in self.positions.items():
-			holdings[ticker] = {
-				'side': str(pos.side.name),
-				"quantity": pos.net_quantity,
-				'avg_price': pos.avg_price,
-				"market_value": pos.market_value,
-				"unrealised_pnl": pos.unrealised_pnl,
-				"realised_pnl": pos.realised_pnl,
-				"total_pnl": pos.total_pnl
-			}
-		return holdings
-	
-	def closed_position_to_dict(self):
-		"""
-		Output the clodsed positions of the portfolio as a dictionary
-		with Assets as keys and position informations as values.
-
-		Returns
-		-------
-		`dict`
-			The closed positions.
-		"""
-		closed = {}
-		for pos in self.closed_positions:
-			closed[pos.ticker] = {
-				'entry_date': pos.entry_date,
-				'exit_date': pos.exit_date,
-				'side': pos.side,
-				"buy_quantity": pos.buy_quantity,
-				"sell_quantity": pos.sell_quantity,
-				"avg_bought": pos.avg_bought,
-				"avg_sold": pos.avg_sold,
-				"unrealised_pnl": pos.unrealised_pnl,
-				"realised_pnl": pos.realised_pnl,
-				"total_pnl": pos.total_pnl
-			}
-		return closed
+		"""Get an open position by ticker."""
+		return self.position_manager.get_position(ticker)
