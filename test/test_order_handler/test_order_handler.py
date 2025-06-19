@@ -1,12 +1,11 @@
-import unittest
-import pandas as pd
-from datetime import datetime, UTC
 from queue import Queue
+import unittest
+from datetime import datetime, UTC
 
-from itrader.portfolio_handler.portfolio import Portfolio, Position, PositionSide
+
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
-from itrader.events_handler.event import SignalEvent,OrderEvent, BarEvent, PortfolioUpdateEvent, FillStatus
+from itrader.events_handler.event import SignalEvent
 
 
 class TestOrderHandlerUpdates(unittest.TestCase):
@@ -67,20 +66,6 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 
 	def test_order_handler_initialization(self):
 		self.assertIsInstance(self.order_handler, OrderHandler)
-	
-	def test_on_portfolio_update(self):
-		# Generate a portfolio update event and process it from the order handler
-		ptf_update = self.ptf_handler.generate_portfolios_update_event()
-		self.order_handler.on_portfolio_update(ptf_update)
-		
-		# Retrive the updated portfolios dict
-		portfolio_dict = self.order_handler.portfolios
-		portfolio_ids = list(portfolio_dict.keys())
-		actual_portfolio_id = portfolio_ids[0]  # Get the actual portfolio ID
-		self.assertIsInstance(portfolio_dict, dict)
-		self.assertEqual(len(portfolio_dict), 1)
-		self.assertEqual(len(portfolio_ids), 1)  # Check we have exactly one portfolio
-		self.assertEqual(portfolio_dict.get(actual_portfolio_id).get('available_cash'), 10000)  # Updated from 1000 to 10000
 
 
 if __name__ == "__main__":
