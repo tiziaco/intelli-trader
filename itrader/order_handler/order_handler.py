@@ -62,8 +62,7 @@ class OrderHandler(OrderBase):
 		"""
 		Process all order types when new market data arrives.
 		
-		This is the new centralized entry point for all market-driven order processing,
-		replacing the scattered check_pending_orders() and execute_market_orders() calls.
+		This is the centralized entry point for all market-driven order processing.
 		
 		Parameters
 		----------
@@ -77,36 +76,6 @@ class OrderHandler(OrderBase):
 			self.events_queue.put(order_event)
 		
 		self.logger.debug(f'Processed market data for {len(order_events)} orders')
-
-	def check_pending_orders(self, bar_event: BarEvent):
-		"""
-		Check the activation conditions of the limit orders in 
-		the pending orders list.
-
-		DEPRECATED: This method now delegates to the centralized OrderManager.
-		Use process_orders_on_market_data() directly for new implementations.
-
-		Parameters
-		----------
-		bar_event : `BarEvent`
-			The bar event generated from the Universe module
-		"""
-		# Delegate to the centralized OrderManager
-		self.process_orders_on_market_data(bar_event)
-
-	def execute_market_orders(self):
-		"""
-		Execute the market orders if any among the active orders.
-		
-		DEPRECATED: This method is now handled automatically by the OrderManager
-		during process_orders_on_market_data(). Market orders are executed as part
-		of the coordinated pipeline.
-		
-		This method is kept for backward compatibility but does nothing.
-		"""
-		# Market orders are now handled automatically by OrderManager
-		# during process_orders_on_market_data() calls
-		pass
 	
 	def on_signal(self, signal_event: SignalEvent):
 		"""
@@ -137,11 +106,6 @@ class OrderHandler(OrderBase):
 			self.logger.warning('Signal validation warnings: %s',
 							   [msg.message for msg in validation_result.warnings])
 
-		# TEMPORARY: Handle position sizing during transition period
-		# Once position sizer is moved to strategy, this can be removed
-		if signal_event.quantity == 0:
-			self._apply_temporary_position_sizing(signal_event)
-
 		# Signal is valid - create orders
 		if signal_event.stop_loss > 0:
 			self.add_stop_loss_order(signal_event)
@@ -161,13 +125,6 @@ class OrderHandler(OrderBase):
 			# Queue market orders for next bar execution
 			self.order_manager.queue_market_orders_for_next_bar()
 
-	def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
-		"""
-		Update the information relative to the active portfolios.
-		"""
-		# Note: portfolios are now accessed through portfolio_handler
-		# This method is kept for backward compatibility with existing tests
-		self.portfolios = update_event.portfolios
 	
 	def add_pending_order(self, order: Order):
 		"""
