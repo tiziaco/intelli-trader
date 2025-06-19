@@ -52,10 +52,6 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 				{'open': [30], 'high': [60], 'low': [20], 'close': [40], 'volume': [1000]}),
 		}
 		self.bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
-		
-		# Simulate portfolios update event
-		update_event = self.ptf_handler.generate_portfolios_update_event()
-		self.order_handler.on_portfolio_update(update_event)
 	
 	def create_mock_signal(self, action, ticker='BTCUSDT', quantity=100.0, price=40.0, 
 	                      order_type='MARKET', stop_loss=0.0, take_profit=0.0):
@@ -134,7 +130,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		self.order_handler.on_signal(buy_signal)
 		
 		# Check if stop loss order is reached
-		self.order_handler.check_pending_orders(bar_event)
+		self.order_handler.process_orders_on_market_data(bar_event)
 
 		# Retrieve the market orders that should have been generated
 		order_event1: OrderEvent = self.queue.get(False)  # Initial buy order
@@ -165,7 +161,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		self.order_handler.on_signal(sell_signal)
 		
 		# Check if stop loss order is reached
-		self.order_handler.check_pending_orders(bar_event)
+		self.order_handler.process_orders_on_market_data(bar_event)
 
 		# Retrieve the market orders that should have been generated
 		order_event1: OrderEvent = self.queue.get(False)  # Initial sell order
@@ -196,7 +192,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		self.order_handler.on_signal(buy_signal)
 		
 		# Check if take profit order is reached
-		self.order_handler.check_pending_orders(bar_event)
+		self.order_handler.process_orders_on_market_data(bar_event)
 
 		# Retrieve the market orders that should have been generated
 		order_event1: OrderEvent = self.queue.get(False)  # Initial buy order
@@ -227,7 +223,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		self.order_handler.on_signal(sell_signal)
 		
 		# Check if take profit order is reached
-		self.order_handler.check_pending_orders(bar_event)
+		self.order_handler.process_orders_on_market_data(bar_event)
 
 		# Retrieve the market orders that should have been generated
 		order_event1: OrderEvent = self.queue.get(False)  # Initial sell order

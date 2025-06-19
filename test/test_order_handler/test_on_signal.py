@@ -44,11 +44,6 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		"""
 		# Add new portfolio
 		self.last_ptf_id = self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
-		print(f'TEST:: {self.last_ptf_id}')
-		
-		# Simulate portfolios update event
-		update_event = self.ptf_handler.generate_portfolios_update_event()
-		self.order_handler.on_portfolio_update(update_event)
 	
 	def create_mock_signal(self, action, ticker='BTCUSDT', quantity=100.0, price=40.0, 
 	                      order_type='MARKET', stop_loss=0.0, take_profit=0.0):
