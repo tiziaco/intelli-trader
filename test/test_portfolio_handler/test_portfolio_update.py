@@ -55,7 +55,7 @@ class TestPortfolioHandlerUpdates(unittest.TestCase):
 		portfolio = self.ptf_handler.get_portfolio(self.portfolio_id)
 
 		# Assert if the portfolio has been created
-		self.assertEqual(len(self.ptf_handler.portfolios), 1)
+		self.assertEqual(self.ptf_handler.get_portfolio_count(), 1)
 		# Assert the portfolio's metrics - Updated to reflect correct financial logic
 		self.assertEqual(portfolio.cash, 980)  # $1000 - $40 (BTC buy) + $20 (ETH short) = $980
 		self.assertEqual(portfolio.total_market_value, 10)  # BTC: $50 (long), ETH: -$40 (short) = $10
@@ -78,9 +78,9 @@ class TestPortfolioHandlerUpdates(unittest.TestCase):
 		self.assertIsInstance(update_event, PortfolioUpdateEvent)
 		self.assertIsInstance(portfolios, dict)
 		self.assertEqual(len(portfolios), 1)
-		self.assertEqual(portfolios_id, [self.portfolio_id])
+		self.assertEqual(portfolios_id, [str(self.portfolio_id)])
 		# Assert the portfolio's metrics
-		self.assertEqual(portfolios.get(self.portfolio_id).get('available_cash'), 960)
+		self.assertEqual(portfolios.get(str(self.portfolio_id)).get('available_cash'), 960)
 
 if __name__ == "__main__":
 	unittest.main()
