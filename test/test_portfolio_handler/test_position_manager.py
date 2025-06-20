@@ -15,9 +15,10 @@ from itrader.portfolio_handler.position_manager import (
     PositionEvent,
     PositionMetrics
 )
-from itrader.portfolio_handler.position import Position, PositionSide
-from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.portfolio_handler.exceptions import (
+from itrader.portfolio_handler.position import Position
+from itrader.portfolio_handler.transaction import Transaction
+from itrader.core.enums import PositionSide, TransactionType
+from itrader.core.exceptions import (
     InvalidTransactionError,
     PositionCalculationError
 )

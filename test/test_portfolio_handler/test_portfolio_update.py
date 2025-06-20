@@ -3,7 +3,8 @@ import pandas as pd
 from datetime import datetime
 from queue import Queue
 
-from itrader.portfolio_handler.portfolio import Portfolio, Position, PositionSide
+from itrader.portfolio_handler.portfolio import Portfolio, Position
+from itrader.core.enums import PositionSide
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.event import FillEvent, BarEvent, PortfolioUpdateEvent, FillStatus
 

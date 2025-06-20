@@ -15,7 +15,7 @@ from itrader.portfolio_handler.cash_manager import (
     CashOperationType, 
     CashOperation
 )
-from itrader.portfolio_handler.exceptions import (
+from itrader.core.exceptions import (
     InvalidTransactionError,
     InsufficientFundsError
 )

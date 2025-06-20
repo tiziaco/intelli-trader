@@ -15,8 +15,9 @@ from itrader.portfolio_handler.transaction_manager import (
     TransactionState, 
     TransactionContext
 )
-from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.portfolio_handler.exceptions import (
+from itrader.portfolio_handler.transaction import Transaction
+from itrader.core.enums import TransactionType
+from itrader.core.exceptions import (
     InvalidTransactionError,
     InsufficientFundsError,
     ConcurrencyError

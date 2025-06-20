@@ -12,10 +12,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import the portfolio classes
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.portfolio_handler.portfolio import Portfolio, Position, PositionSide
-from itrader.config import PortfolioState
+from itrader.portfolio_handler.portfolio import Portfolio, Position
+from itrader.core.enums import PortfolioState, PositionSide
 from itrader.config import PortfolioConfig, PortfolioHandlerConfig
-from itrader.portfolio_handler.exceptions import (
+from itrader.core.exceptions import (
     PortfolioNotFoundError, PortfolioValidationError, PortfolioConfigurationError,
     InvalidPortfolioOperationError
 )
@@ -32,7 +32,7 @@ class TestPortfolioHandler(unittest.TestCase):
         # The new PortfolioHandler uses ConfigRegistry instead of global_config parameter
         self.handler = PortfolioHandler(
             global_queue=self.global_queue,
-            config_dir="config",
+            config_dir="settings",
             environment="test"
         )
         
