@@ -10,8 +10,9 @@ from typing import Optional, List, Dict
 from dataclasses import dataclass
 from enum import Enum
 
-from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.portfolio_handler.exceptions import (
+from itrader.portfolio_handler.transaction import Transaction
+from itrader.core.enums import TransactionType
+from itrader.core.exceptions import (
     InvalidTransactionError, 
     InsufficientFundsError,
     ConcurrencyError

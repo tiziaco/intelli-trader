@@ -12,7 +12,7 @@ from enum import Enum
 import statistics
 import math
 
-from itrader.portfolio_handler.exceptions import InvalidTransactionError
+from itrader.core.exceptions import InvalidTransactionError
 from itrader.logger import get_itrader_logger
 
 

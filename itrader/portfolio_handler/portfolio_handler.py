@@ -12,11 +12,12 @@ from contextlib import contextmanager
 
 from readerwriterlock import rwlock
 
-from .portfolio import Portfolio, PortfolioConfig, PortfolioState
-from .exceptions import (
+from .portfolio import Portfolio, PortfolioConfig
+from itrader.core.exceptions import (
     PortfolioHandlerError, PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
+from itrader.core.enums import PortfolioState
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import (
@@ -46,7 +47,7 @@ class PortfolioHandler:
     - Health monitoring
     """
     
-    def __init__(self, global_queue: Queue, config_dir: str = "config", environment: str = "default"):
+    def __init__(self, global_queue: Queue, config_dir: str = "settings", environment: str = "default"):
         self.global_queue: Queue = global_queue
         self.current_time = 0
         

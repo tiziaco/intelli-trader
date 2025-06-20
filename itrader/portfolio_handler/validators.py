@@ -6,7 +6,7 @@ import decimal
 from typing import Union, Optional
 from datetime import datetime
 
-from .exceptions import InvalidTransactionError, PortfolioError
+from itrader.core.exceptions import InvalidTransactionError, PortfolioError
 
 # Use Decimal for financial calculations to avoid floating point precision issues
 DECIMAL_PRECISION = decimal.Decimal('0.00000001')  # 8 decimal places for crypto
@@ -88,7 +88,7 @@ class PortfolioValidator:
         Raises:
             InsufficientFundsError: If insufficient funds
         """
-        from .exceptions import InsufficientFundsError
+        from itrader.core.exceptions import InsufficientFundsError
         
         if available_cash < required_cash:
             raise InsufficientFundsError(
@@ -134,7 +134,7 @@ class PositionValidator:
         Raises:
             PositionCalculationError: If position data is inconsistent
         """
-        from .exceptions import PositionCalculationError
+        from itrader.core.exceptions import PositionCalculationError
         
         if buy_quantity > 0 and avg_bought <= 0:
             raise PositionCalculationError(

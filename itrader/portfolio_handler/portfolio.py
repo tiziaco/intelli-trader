@@ -7,7 +7,8 @@ from decimal import Decimal
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.portfolio_handler.position import Position, PositionSide
 from itrader.events_handler.event import BarEvent
-from itrader.config import get_portfolio_config, PortfolioConfig, PortfolioState
+from itrader.config import get_portfolio_config, PortfolioConfig
+from itrader.core.enums import PortfolioState
 
 # Import the new managers
 from itrader.portfolio_handler.transaction_manager import TransactionManager

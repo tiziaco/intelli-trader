@@ -3,8 +3,8 @@ from datetime import datetime
 
 from itrader import idgen
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from itrader.core.enums import PositionSide
 
-PositionSide = Enum("PositionSide", "LONG SHORT")
 position_side_map = {
 	"LONG": PositionSide.LONG,
 	"SHORT": PositionSide.SHORT,
