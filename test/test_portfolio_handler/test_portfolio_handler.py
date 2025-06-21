@@ -4,7 +4,6 @@ Consolidated PortfolioHandler tests combining legacy and enhanced functionality.
 
 import unittest
 import threading
-import time
 from queue import Queue
 from datetime import datetime, UTC
 from decimal import Decimal
@@ -14,12 +13,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.portfolio import Portfolio, Position
 from itrader.core.enums import PortfolioState, PositionSide
-from itrader.config import PortfolioConfig, PortfolioHandlerConfig
+from itrader.config import PortfolioConfig
 from itrader.core.exceptions import (
-    PortfolioNotFoundError, PortfolioValidationError, PortfolioConfigurationError,
-    InvalidPortfolioOperationError
+    PortfolioNotFoundError, PortfolioValidationError,
 )
-from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.event import FillEvent, PortfolioErrorEvent, FillStatus
 
 
@@ -94,10 +91,17 @@ class TestPortfolioHandler(unittest.TestCase):
     
     def test_portfolio_creation_with_custom_config(self):
         """Test portfolio creation with custom configuration."""
+        from itrader.config.portfolio import PortfolioLimits, ValidationSettings
+        
         custom_config = PortfolioConfig(
-            max_positions=50,
-            max_position_value=Decimal('500000'),
-            validate_transactions=True
+            name="Custom Config Portfolio",
+            limits=PortfolioLimits(
+                max_positions=50,
+                max_position_value=Decimal('500000')
+            ),
+            validation=ValidationSettings(
+                validate_transactions=True
+            )
         )
         
         portfolio_id = self.handler.add_portfolio(
@@ -109,9 +113,9 @@ class TestPortfolioHandler(unittest.TestCase):
         )
         
         portfolio = self.handler.get_portfolio(portfolio_id)
-        self.assertEqual(portfolio.config.max_positions, 50)
-        self.assertEqual(portfolio.config.max_position_value, Decimal('500000'))
-        self.assertTrue(portfolio.config.validate_transactions)
+        self.assertEqual(portfolio.config.limits.max_positions, 50)
+        self.assertEqual(portfolio.config.limits.max_position_value, Decimal('500000'))
+        self.assertTrue(portfolio.config.validation.validate_transactions)
     
     def test_portfolio_creation_invalid_cash(self):
         """Test portfolio creation with invalid cash amount."""
@@ -519,15 +523,15 @@ class TestPortfolioEnhancements(unittest.TestCase):
     def test_portfolio_configuration_management(self):
         """Test portfolio configuration management."""
         # Test default configuration (check actual default from config)
-        self.assertEqual(self.portfolio.config.max_positions, 50)  # This matches the test environment config
-        self.assertEqual(self.portfolio.config.max_position_value, Decimal('1000000'))
+        self.assertEqual(self.portfolio.config.limits.max_positions, 50)  # This matches the test environment config
+        self.assertEqual(self.portfolio.config.limits.max_position_value, Decimal('1000000'))
         
         # Test configuration update
         self.portfolio.update_config(max_positions=75, max_position_value=Decimal('500000'))
-        self.assertEqual(self.portfolio.config.max_positions, 75)
-        self.assertEqual(self.portfolio.config.max_position_value, Decimal('500000'))
+        self.assertEqual(self.portfolio.config.limits.max_positions, 75)
+        self.assertEqual(self.portfolio.config.limits.max_position_value, Decimal('500000'))
         
-        # Test configuration dictionary
+        # Test configuration dictionary (this should maintain backward compatibility)
         config_dict = self.portfolio.get_config_dict()
         self.assertEqual(config_dict['max_positions'], 75)
         self.assertEqual(config_dict['max_position_value'], 500000.0)

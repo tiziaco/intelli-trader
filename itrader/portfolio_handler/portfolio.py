@@ -144,8 +144,27 @@ class Portfolio(object):
 	def update_config(self, **kwargs) -> None:
 		"""Update portfolio configuration."""
 		with self._lock:
+			# Mapping for backward compatibility - maps old flat keys to new nested structure
+			config_mapping = {
+				'max_positions': ('limits', 'max_positions'),
+				'max_position_value': ('limits', 'max_position_value'),
+				'max_concentration_pct': ('risk_management', 'max_concentration_pct'),
+				'max_daily_loss_pct': ('risk_management', 'max_daily_loss_pct'),
+				'max_drawdown_pct': ('risk_management', 'max_drawdown_pct'),
+				'max_transactions_per_day': ('trading_rules', 'max_transactions_per_day'),
+				'max_cash_withdrawal_pct': ('trading_rules', 'max_cash_withdrawal_pct'),
+				'validate_transactions': ('validation', 'validate_transactions'),
+				'require_sufficient_funds': ('validation', 'require_sufficient_funds'),
+				'publish_update_events': ('events', 'publish_update_events'),
+				'publish_error_events': ('events', 'publish_error_events'),
+			}
+			
 			for key, value in kwargs.items():
-				if hasattr(self.config, key):
+				if key in config_mapping:
+					section_name, attr_name = config_mapping[key]
+					section = getattr(self.config, section_name)
+					setattr(section, attr_name, value)
+				elif hasattr(self.config, key):
 					setattr(self.config, key, value)
 				else:
 					raise ValueError(f"Unknown configuration key: {key}")
@@ -154,17 +173,17 @@ class Portfolio(object):
 		"""Get configuration as dictionary."""
 		with self._lock:
 			return {
-				'max_positions': self.config.max_positions,
-				'max_position_value': float(self.config.max_position_value),
-				'max_concentration_pct': self.config.max_concentration_pct,
-				'max_daily_loss_pct': self.config.max_daily_loss_pct,
-				'max_drawdown_pct': self.config.max_drawdown_pct,
-				'max_transactions_per_day': self.config.max_transactions_per_day,
-				'max_cash_withdrawal_pct': self.config.max_cash_withdrawal_pct,
-				'publish_update_events': self.config.publish_update_events,
-				'publish_error_events': self.config.publish_error_events,
-				'validate_transactions': self.config.validate_transactions,
-				'require_sufficient_funds': self.config.require_sufficient_funds
+				'max_positions': self.config.limits.max_positions,
+				'max_position_value': float(self.config.limits.max_position_value),
+				'max_concentration_pct': self.config.risk_management.max_concentration_pct,
+				'max_daily_loss_pct': self.config.risk_management.max_daily_loss_pct,
+				'max_drawdown_pct': self.config.risk_management.max_drawdown_pct,
+				'max_transactions_per_day': self.config.trading_rules.max_transactions_per_day,
+				'max_cash_withdrawal_pct': self.config.trading_rules.max_cash_withdrawal_pct,
+				'publish_update_events': self.config.events.publish_update_events,
+				'publish_error_events': self.config.events.publish_error_events,
+				'validate_transactions': self.config.validation.validate_transactions,
+				'require_sufficient_funds': self.config.validation.require_sufficient_funds
 			}
 
 	# Thread-safe Properties (backward compatible)
@@ -299,16 +318,16 @@ class Portfolio(object):
 				health_report['issues'].append('Negative cash balance')
 			
 			# Check position limits
-			if self.n_open_positions > self.config.max_positions:
+			if self.n_open_positions > self.config.limits.max_positions:
 				health_report['is_healthy'] = False
-				health_report['issues'].append(f'Too many positions: {self.n_open_positions} > {self.config.max_positions}')
+				health_report['issues'].append(f'Too many positions: {self.n_open_positions} > {self.config.limits.max_positions}')
 			
 			# Check concentration limits
 			if self.total_equity > 0:
 				max_position_pct = self._get_max_position_percentage()
-				if max_position_pct > self.config.max_concentration_pct:
+				if max_position_pct > self.config.risk_management.max_concentration_pct:
 					health_report['is_healthy'] = False
-					health_report['issues'].append(f'Position concentration too high: {max_position_pct:.2%} > {self.config.max_concentration_pct:.2%}')
+					health_report['issues'].append(f'Position concentration too high: {max_position_pct:.2%} > {self.config.risk_management.max_concentration_pct:.2%}')
 			
 			# Update health check timestamp
 			self._health_metrics['last_health_check'] = datetime.now(UTC)
@@ -336,7 +355,7 @@ class Portfolio(object):
 				raise ValueError(f"Portfolio {self.portfolio_id} cannot trade in state {self.state}")
 			
 			# Validate against configuration
-			if self.config.validate_transactions:
+			if self.config.validation.validate_transactions:
 				self._validate_transaction(transaction)
 			
 			# Update activity timestamp
@@ -354,13 +373,13 @@ class Portfolio(object):
 		"""Validate transaction against portfolio configuration."""
 		# Check position limits
 		if transaction.quantity > 0:  # Buy transaction
-			if self.n_open_positions >= self.config.max_positions:
-				raise ValueError(f"Maximum positions limit reached: {self.config.max_positions}")
+			if self.n_open_positions >= self.config.limits.max_positions:
+				raise ValueError(f"Maximum positions limit reached: {self.config.limits.max_positions}")
 			
 			# Check position value limits
 			transaction_value = abs(transaction.quantity * transaction.price)
-			if transaction_value > self.config.max_position_value:
-				raise ValueError(f"Transaction value {transaction_value} exceeds limit {self.config.max_position_value}")
+			if transaction_value > self.config.limits.max_position_value:
+				raise ValueError(f"Transaction value {transaction_value} exceeds limit {self.config.limits.max_position_value}")
 	
 	# Enhanced Market Value Update
 	def update_market_value_of_portfolio(self, prices: Dict[str, float]):

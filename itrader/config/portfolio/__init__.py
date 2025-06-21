@@ -7,7 +7,8 @@ including configuration classes, validation schemas, and default presets.
 
 from .config import (
     PortfolioConfig, PortfolioType, RiskLevel,
-    PortfolioLimits, RiskManagement, TradingRules
+    PortfolioLimits, RiskManagement, TradingRules,
+    ValidationSettings, EventSettings
 )
 from .schema import validate_portfolio_config, get_portfolio_schema, PORTFOLIO_SCHEMA
 from .defaults import (
@@ -25,6 +26,8 @@ __all__ = [
     'PortfolioLimits',
     'RiskManagement',
     'TradingRules',
+    'ValidationSettings',
+    'EventSettings',
     
     # Schema and validation
     'validate_portfolio_config',

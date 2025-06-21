@@ -47,6 +47,9 @@ class RiskManagement:
     default_take_profit_pct: float = 0.10
     risk_level: RiskLevel = RiskLevel.MODERATE
     max_risk_per_trade: float = 0.02
+    max_daily_loss_pct: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
+    max_concentration_pct: float = 0.25
 
 
 @dataclass
@@ -58,6 +61,26 @@ class TradingRules:
     enable_futures: bool = False
     min_trade_amount: Decimal = field(default_factory=lambda: Decimal('100.0'))
     max_trade_amount: Optional[Decimal] = None
+    max_transactions_per_day: Optional[int] = None
+    max_cash_withdrawal_pct: float = 0.50
+
+
+@dataclass
+class ValidationSettings:
+    """Validation and business logic settings."""
+    validate_transactions: bool = True
+    require_sufficient_funds: bool = True
+    enable_position_limits: bool = True
+    enable_risk_checks: bool = True
+
+
+@dataclass
+class EventSettings:
+    """Event publishing configuration."""
+    publish_update_events: bool = True
+    publish_error_events: bool = True
+    publish_transaction_events: bool = True
+    publish_position_events: bool = True
 
 
 @dataclass
@@ -81,6 +104,8 @@ class PortfolioConfig:
     limits: PortfolioLimits = field(default_factory=PortfolioLimits)
     risk_management: RiskManagement = field(default_factory=RiskManagement)
     trading_rules: TradingRules = field(default_factory=TradingRules)
+    validation: ValidationSettings = field(default_factory=ValidationSettings)
+    events: EventSettings = field(default_factory=EventSettings)
     
     # Operational settings
     enable_analytics: bool = True
@@ -116,7 +141,10 @@ class PortfolioConfig:
             'default_stop_loss_pct': self.risk_management.default_stop_loss_pct,
             'default_take_profit_pct': self.risk_management.default_take_profit_pct,
             'risk_level': self.risk_management.risk_level.value,
-            'max_risk_per_trade': self.risk_management.max_risk_per_trade
+            'max_risk_per_trade': self.risk_management.max_risk_per_trade,
+            'max_daily_loss_pct': self.risk_management.max_daily_loss_pct,
+            'max_drawdown_pct': self.risk_management.max_drawdown_pct,
+            'max_concentration_pct': self.risk_management.max_concentration_pct
         }
         
         result['trading_rules'] = {
@@ -125,7 +153,23 @@ class PortfolioConfig:
             'enable_options': self.trading_rules.enable_options,
             'enable_futures': self.trading_rules.enable_futures,
             'min_trade_amount': str(self.trading_rules.min_trade_amount),
-            'max_trade_amount': str(self.trading_rules.max_trade_amount) if self.trading_rules.max_trade_amount else None
+            'max_trade_amount': str(self.trading_rules.max_trade_amount) if self.trading_rules.max_trade_amount else None,
+            'max_transactions_per_day': self.trading_rules.max_transactions_per_day,
+            'max_cash_withdrawal_pct': self.trading_rules.max_cash_withdrawal_pct
+        }
+        
+        result['validation'] = {
+            'validate_transactions': self.validation.validate_transactions,
+            'require_sufficient_funds': self.validation.require_sufficient_funds,
+            'enable_position_limits': self.validation.enable_position_limits,
+            'enable_risk_checks': self.validation.enable_risk_checks
+        }
+        
+        result['events'] = {
+            'publish_update_events': self.events.publish_update_events,
+            'publish_error_events': self.events.publish_error_events,
+            'publish_transaction_events': self.events.publish_transaction_events,
+            'publish_position_events': self.events.publish_position_events
         }
         
         # Operational settings
@@ -175,7 +219,10 @@ class PortfolioConfig:
                 default_stop_loss_pct=risk_data.get('default_stop_loss_pct', config.risk_management.default_stop_loss_pct),
                 default_take_profit_pct=risk_data.get('default_take_profit_pct', config.risk_management.default_take_profit_pct),
                 risk_level=RiskLevel(risk_data.get('risk_level', config.risk_management.risk_level.value)),
-                max_risk_per_trade=risk_data.get('max_risk_per_trade', config.risk_management.max_risk_per_trade)
+                max_risk_per_trade=risk_data.get('max_risk_per_trade', config.risk_management.max_risk_per_trade),
+                max_daily_loss_pct=risk_data.get('max_daily_loss_pct'),
+                max_drawdown_pct=risk_data.get('max_drawdown_pct'),
+                max_concentration_pct=risk_data.get('max_concentration_pct', config.risk_management.max_concentration_pct)
             )
         
         # Trading rules
@@ -187,7 +234,29 @@ class PortfolioConfig:
                 enable_options=trading_data.get('enable_options', config.trading_rules.enable_options),
                 enable_futures=trading_data.get('enable_futures', config.trading_rules.enable_futures),
                 min_trade_amount=Decimal(str(trading_data.get('min_trade_amount', config.trading_rules.min_trade_amount))),
-                max_trade_amount=Decimal(str(trading_data['max_trade_amount'])) if trading_data.get('max_trade_amount') else None
+                max_trade_amount=Decimal(str(trading_data['max_trade_amount'])) if trading_data.get('max_trade_amount') else None,
+                max_transactions_per_day=trading_data.get('max_transactions_per_day'),
+                max_cash_withdrawal_pct=trading_data.get('max_cash_withdrawal_pct', config.trading_rules.max_cash_withdrawal_pct)
+            )
+        
+        # Validation settings
+        if 'validation' in data:
+            validation_data = data['validation']
+            config.validation = ValidationSettings(
+                validate_transactions=validation_data.get('validate_transactions', config.validation.validate_transactions),
+                require_sufficient_funds=validation_data.get('require_sufficient_funds', config.validation.require_sufficient_funds),
+                enable_position_limits=validation_data.get('enable_position_limits', config.validation.enable_position_limits),
+                enable_risk_checks=validation_data.get('enable_risk_checks', config.validation.enable_risk_checks)
+            )
+        
+        # Event settings
+        if 'events' in data:
+            events_data = data['events']
+            config.events = EventSettings(
+                publish_update_events=events_data.get('publish_update_events', config.events.publish_update_events),
+                publish_error_events=events_data.get('publish_error_events', config.events.publish_error_events),
+                publish_transaction_events=events_data.get('publish_transaction_events', config.events.publish_transaction_events),
+                publish_position_events=events_data.get('publish_position_events', config.events.publish_position_events)
             )
         
         # Operational settings

@@ -80,6 +80,19 @@ class PortfolioHandler:
             max_concurrent_ops=self.max_concurrent_operations
         )
     
+    @property
+    def config(self):
+        """Get config structure for test compatibility."""
+        class Limits:
+            def __init__(self, max_concurrent_operations):
+                self.max_concurrent_operations = max_concurrent_operations
+        
+        class Config:
+            def __init__(self, limits):
+                self.limits = limits
+        
+        return Config(Limits(self.max_concurrent_operations))
+    
     def _generate_correlation_id(self) -> str:
         """Generate unique correlation ID for operation tracking."""
         return f"ph_{uuid.uuid4().hex[:12]}"
