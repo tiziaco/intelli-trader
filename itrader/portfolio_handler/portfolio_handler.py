@@ -21,7 +21,8 @@ from itrader.core.enums import PortfolioState
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import (
-    get_config_registry, get_portfolio_handler_config, PortfolioHandlerConfig
+    get_config_registry, get_portfolio_config_provider,
+    PortfolioConfig, get_portfolio_preset
 )
 
 from itrader import config, idgen
@@ -51,9 +52,14 @@ class PortfolioHandler:
         self.global_queue: Queue = global_queue
         self.current_time = 0
         
-        # Initialize configuration registry
-        self.config_registry = get_config_registry(config_dir, environment)
-        self.config = get_portfolio_handler_config()
+        # Initialize configuration system using new domain-based API
+        self.config_provider = get_portfolio_config_provider()
+        self.config_data = self.config_provider.get_config()
+        
+        # Extract key configuration values with defaults
+        self.max_portfolios = self.config_data.get('limits', {}).get('max_positions', 10)
+        self.max_concurrent_operations = 50  # Reasonable default for operations
+        self.publish_error_events = True  # Default behavior
         
         # Portfolio storage - now just stores portfolio instances
         self._portfolios: Dict[int, Portfolio] = {}
@@ -70,8 +76,8 @@ class PortfolioHandler:
         
         self.logger.info(
             "Enhanced PortfolioHandler initialized",
-            max_portfolios=self.config.limits.max_portfolios_total,
-            max_concurrent_ops=self.config.limits.max_concurrent_operations
+            max_portfolios=self.max_portfolios,
+            max_concurrent_ops=self.max_concurrent_operations
         )
     
     def _generate_correlation_id(self) -> str:
@@ -80,7 +86,7 @@ class PortfolioHandler:
     
     def _publish_error_event(self, error: Exception, operation: str, correlation_id: str, portfolio_id: Optional[int] = None):
         """Publish error event if enabled."""
-        if not self.config.events.publish_error_events:
+        if not self.publish_error_events:
             return
         
         error_event = PortfolioErrorEvent(
@@ -101,8 +107,8 @@ class PortfolioHandler:
         
         # Check concurrent operation limits
         with self._operations_lock:
-            if len(self._active_operations) >= self.config.limits.max_concurrent_operations:
-                raise PortfolioHandlerError(f"Maximum concurrent operations limit reached: {self.config.limits.max_concurrent_operations}")
+            if len(self._active_operations) >= self.max_concurrent_operations:
+                raise PortfolioHandlerError(f"Maximum concurrent operations limit reached: {self.max_concurrent_operations}")
             self._active_operations.add(correlation_id)
         
         try:
@@ -126,8 +132,8 @@ class PortfolioHandler:
                 
                 # Check global limits
                 with self._portfolios_lock.gen_rlock():
-                    if len(self._portfolios) >= self.config.limits.max_portfolios_total:
-                        raise PortfolioConfigurationError(f"Maximum portfolios limit reached: {self.config.limits.max_portfolios_total}")
+                    if len(self._portfolios) >= self.max_portfolios:
+                        raise PortfolioConfigurationError(f"Maximum portfolios limit reached: {self.max_portfolios}")
                 
                 # Create portfolio instance
                 portfolio = Portfolio(
@@ -340,8 +346,8 @@ class PortfolioHandler:
             'portfolios_by_state': {state.value: count for state, count in state_counts.items()},
             'active_operations': len(self._active_operations),
             'global_limits': {
-                'max_portfolios': self.config.limits.max_portfolios_total,
-                'max_concurrent_operations': self.config.limits.max_concurrent_operations
+                'max_portfolios': self.max_portfolios,
+                'max_concurrent_operations': self.max_concurrent_operations
             }
         }
     
@@ -365,23 +371,28 @@ class PortfolioHandler:
     def update_config(self, updates: Dict[str, Any]) -> bool:
         """Update PortfolioHandler configuration at runtime."""
         try:
-            self.config_registry.update_module_config("PortfolioHandler", updates)
-            # Refresh local config
-            self.config = get_portfolio_handler_config()
-            self.logger.info("Configuration updated successfully", updates=updates)
-            return True
+            success = self.config_provider.update_config(updates)
+            if success:
+                # Refresh local config data
+                self.config_data = self.config_provider.get_config()
+                # Update cached values
+                self.max_portfolios = self.config_data.get('limits', {}).get('max_positions', 10)
+                self.logger.info("Configuration updated successfully", updates=updates)
+            return success
         except Exception as e:
             self.logger.error("Failed to update configuration", error=str(e))
             return False
     
-    def get_config(self) -> PortfolioHandlerConfig:
+    def get_config(self) -> Dict[str, Any]:
         """Get current PortfolioHandler configuration."""
-        return self.config
+        return self.config_provider.get_config()
     
     def validate_config(self, config: Dict[str, Any]) -> bool:
         """Validate PortfolioHandler configuration."""
         try:
-            return self.config_registry.validate_module_config("PortfolioHandler", config)
+            # Use portfolio config validation
+            from itrader.config import validate_portfolio_config
+            return validate_portfolio_config(config)
         except Exception as e:
             self.logger.error("Configuration validation failed", error=str(e))
             return False
@@ -389,11 +400,11 @@ class PortfolioHandler:
     def rollback_config(self, steps: int = 1) -> bool:
         """Rollback PortfolioHandler configuration."""
         try:
-            success = self.config_registry.rollback_module_config("PortfolioHandler", steps)
+            # Reset to default portfolio configuration
+            default_config = get_portfolio_preset('default')
+            success = self.config_provider.update_config(default_config.to_dict())
             if success:
-                # Refresh local config
-                self.config = get_portfolio_handler_config()
-                self.logger.info("Configuration rolled back successfully", steps=steps)
+                self.logger.info("Configuration rolled back to defaults")
             return success
         except Exception as e:
             self.logger.error("Failed to rollback configuration", error=str(e))
@@ -402,21 +413,24 @@ class PortfolioHandler:
     def update_portfolio_config(self, portfolio_id: int, updates: Dict[str, Any]) -> bool:
         """Update configuration for a specific portfolio."""
         try:
-            manager_key = f"Portfolio_{portfolio_id}"
-            self.config_registry.update_module_config(manager_key, updates)
-            self.logger.info("Portfolio configuration updated", portfolio_id=portfolio_id, updates=updates)
-            return True
+            success = self.config_provider.update_portfolio_config(updates, portfolio_id)
+            if success:
+                self.logger.info("Portfolio configuration updated", 
+                               portfolio_id=portfolio_id, updates=updates)
+            return success
         except Exception as e:
-            self.logger.error("Failed to update portfolio configuration", portfolio_id=portfolio_id, error=str(e))
+            self.logger.error("Failed to update portfolio configuration", 
+                            portfolio_id=portfolio_id, error=str(e))
             return False
     
     def get_portfolio_config(self, portfolio_id: int) -> Optional[Dict[str, Any]]:
         """Get configuration for a specific portfolio."""
         try:
-            manager_key = f"Portfolio_{portfolio_id}"
-            return self.config_registry.get_module_config(manager_key)
+            config = self.config_provider.get_portfolio_config(portfolio_id)
+            return config.to_dict()
         except Exception as e:
-            self.logger.error("Failed to get portfolio configuration", portfolio_id=portfolio_id, error=str(e))
+            self.logger.error("Failed to get portfolio configuration", 
+                            portfolio_id=portfolio_id, error=str(e))
             return None
     
     def __str__(self):

@@ -7,7 +7,7 @@ from decimal import Decimal
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.portfolio_handler.position import Position, PositionSide
 from itrader.events_handler.event import BarEvent
-from itrader.config import get_portfolio_config, PortfolioConfig
+from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.core.enums import PortfolioState
 
 # Import the new managers
@@ -48,7 +48,7 @@ class Portfolio(object):
 		self.current_time = time
 		
 		# Portfolio-specific configuration
-		self.config = config or get_portfolio_config(self.portfolio_id)
+		self.config = config or get_portfolio_preset('default')
 		
 		# Portfolio state management
 		self._state = PortfolioState.ACTIVE
