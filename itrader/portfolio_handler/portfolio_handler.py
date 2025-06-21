@@ -6,8 +6,6 @@ import uuid
 from queue import Queue
 from datetime import datetime, UTC
 from typing import Dict, Optional, Set, Any, List, Generator, Union
-from decimal import Decimal
-from dataclasses import dataclass
 from contextlib import contextmanager
 
 from readerwriterlock import rwlock
