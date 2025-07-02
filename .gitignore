@@ -34,6 +34,7 @@ credentials*
 #UserData
 output
 my_strategies/
+settings/
 test.py
 keys.json
 *.ipynb

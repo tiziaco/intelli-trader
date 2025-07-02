@@ -194,7 +194,7 @@ class ScreenerEvent:
 		The ticker symbol, e.g. 'BTCUSD'.
 	direction: `str`
 		Direction of the position.
-		'BOT' (for long) or 'SLD' (for short)
+		'BUY' (for long) or 'SELL' (for short)
 	action: `str`
 		'ENTRY' (for long) or 'EXIT' (for short)
 	price: `float`
@@ -286,7 +286,7 @@ class FillEvent:
 	ticker: `str`
 		The ticker symbol, e.g. 'BTCUSD'.
 	action: `str`
-		'BOT' (for long) or 'SLD' (for short)
+		'BUY' (for long) or 'SELL' (for short)
 	quantity: `float`
 		Quantity transacted
 	price: `float`
@@ -346,3 +346,46 @@ class FillEvent:
 			commission,
 			order.portfolio_id
 		)
+
+
+@dataclass
+@dataclass
+class PortfolioErrorEvent:
+	"""
+	Handles portfolio error events for monitoring and alerting.
+	"""
+	
+	time: datetime
+	error_type: str
+	error_message: str
+	portfolio_id: int = None
+	operation: str = None
+	correlation_id: str = None
+	severity: str = "ERROR"  # ERROR, CRITICAL, WARNING
+	details: dict = None
+	
+	type = EventType.UPDATE  # Reuse UPDATE type for now
+	
+	def __str__(self):
+		base = f"PortfolioError: {self.error_type} - {self.error_message}"
+		if self.portfolio_id:
+			base += f" (Portfolio: {self.portfolio_id})"
+		if self.operation:
+			base += f" (Operation: {self.operation})"
+		return base
+	
+	def __repr__(self):
+		return str(self)
+	
+	def to_dict(self):
+		"""Convert event to dictionary for logging/serialization."""
+		return {
+			"time": self.time.isoformat(),
+			"error_type": self.error_type,
+			"error_message": self.error_message,
+			"portfolio_id": self.portfolio_id,
+			"operation": self.operation,
+			"correlation_id": self.correlation_id,
+			"severity": self.severity,
+			"details": self.details or {}
+		}

@@ -3,8 +3,8 @@ from datetime import datetime
 
 from itrader import idgen
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from itrader.core.enums import PositionSide
 
-PositionSide = Enum("PositionSide", "LONG SHORT")
 position_side_map = {
 	"LONG": PositionSide.LONG,
 	"SHORT": PositionSide.SHORT,
@@ -61,8 +61,12 @@ class Position(object):
 		"""
 		Return the market value (respecting the direction) of the
 		Position based on the current price available to the Position.
+		For short positions, this returns a negative value representing the liability.
 		"""
-		return self.current_price * abs(self.net_quantity)
+		if self.side == PositionSide.SHORT:
+			return -self.current_price * abs(self.net_quantity)
+		else:
+			return self.current_price * abs(self.net_quantity)
 
 	@property
 	def avg_price(self) -> float:
@@ -109,7 +113,9 @@ class Position(object):
 			if self.side == PositionSide.LONG:
 				return self.market_value - self.total_bought
 			else:
-				return self.total_sold - self.market_value
+				# For short positions, use absolute value of market_value 
+				# since market_value is now negative (representing liability)
+				return self.total_sold - abs(self.market_value)
 
 	@property
 	def commission(self) -> float:

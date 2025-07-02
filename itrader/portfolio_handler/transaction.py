@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 from itrader import idgen
 from itrader.events_handler.event import FillEvent
+from itrader.core.enums import TransactionType
 
-TransactionType = Enum("TransactionType", "BUY SELL")
 transaction_type_map = {
 	"BUY": TransactionType.BUY,
 	"SELL": TransactionType.SELL,

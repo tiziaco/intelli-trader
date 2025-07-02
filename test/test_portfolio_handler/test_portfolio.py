@@ -139,19 +139,19 @@ class TestPortfolio(unittest.TestCase):
 
 	def test_partial_closure(self):
 	
-		# Buy 5 units of BTC at $40000
-		buy_txn = Transaction(datetime.now(), TransactionType.BUY, 'BTCUSDT', 40000, 5, 0, None, idgen.generate_transaction_id())
+		# Buy 3 units of BTC at $40000 (total: $120,000 - within $150,000 budget)
+		buy_txn = Transaction(datetime.now(), TransactionType.BUY, 'BTCUSDT', 40000, 3, 0, None, idgen.generate_transaction_id())
 		self.portfolio.process_transaction(buy_txn)
 
-		# Sell 3 units of BTC at $45000
-		sell_txn = Transaction(datetime.now(), TransactionType.SELL, 'BTCUSDT', 45000, 3, 0, None, idgen.generate_transaction_id())
+		# Sell 2 units of BTC at $45000 (partial closure)
+		sell_txn = Transaction(datetime.now(), TransactionType.SELL, 'BTCUSDT', 45000, 2, 0, None, idgen.generate_transaction_id())
 		self.portfolio.process_transaction(sell_txn)
 
 		# Assert the result after processing the transactions
 		self.assertEqual(len(self.portfolio.positions), 1)  # One position remaining
-		self.assertEqual(self.portfolio.positions['BTCUSDT'].net_quantity, 2)  # 2 units remaining
-		self.assertEqual(self.portfolio.cash, 150000 - (40000 * 5) + (45000 * 3))  # Cash after transactions
-		self.assertEqual(self.portfolio.total_realised_pnl, 15000)  # Realized P&L for the closed portion
+		self.assertEqual(self.portfolio.positions['BTCUSDT'].net_quantity, 1)  # 1 unit remaining
+		self.assertEqual(self.portfolio.cash, 150000 - (40000 * 3) + (45000 * 2))  # Cash after transactions
+		self.assertEqual(self.portfolio.total_realised_pnl, 10000)  # Realized P&L for the closed portion (2 * $5000)
 
 	def test_multiple_assets(self):
     
