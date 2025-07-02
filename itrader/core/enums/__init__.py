@@ -13,10 +13,24 @@ from .portfolio import (
     PortfolioEventType
 )
 
+# Execution enums
+from .execution import (
+    ExecutionStatus,
+    ExecutionErrorCode,
+    ExchangeConnectionStatus,
+    ExchangeType
+)
+
 __all__ = [
     # Portfolio enums
     'PortfolioState',
     'PositionSide', 
     'TransactionType',
-    'PortfolioEventType'
+    'PortfolioEventType',
+    
+    # Execution enums
+    'ExecutionStatus',
+    'ExecutionErrorCode',
+    'ExchangeConnectionStatus',
+    'ExchangeType'
 ]

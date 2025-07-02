@@ -30,6 +30,22 @@ from .portfolio import (
     PortfolioValidationError
 )
 
+# Execution exceptions
+from .execution import (
+    ExecutionError,
+    ExchangeConnectionError,
+    OrderExecutionError,
+    InsufficientFundsExecutionError,
+    InvalidSymbolExecutionError,
+    RateLimitExecutionError,
+    OrderValidationExecutionError,
+    ExchangeConfigurationError,
+    ExchangeStateError,
+    ExchangeNotFoundError,
+    ExecutionTimeoutError,
+    MarketClosedExecutionError
+)
+
 __all__ = [
     # Base exceptions
     'ITradingSystemError',
@@ -50,5 +66,19 @@ __all__ = [
     'InvalidPortfolioOperationError',
     'PortfolioStateError',
     'PortfolioConfigurationError',
-    'PortfolioValidationError'
+    'PortfolioValidationError',
+    
+    # Execution exceptions
+    'ExecutionError',
+    'ExchangeConnectionError',
+    'OrderExecutionError',
+    'InsufficientFundsExecutionError',
+    'InvalidSymbolExecutionError',
+    'RateLimitExecutionError',
+    'OrderValidationExecutionError',
+    'ExchangeConfigurationError',
+    'ExchangeStateError',
+    'ExchangeNotFoundError',
+    'ExecutionTimeoutError',
+    'MarketClosedExecutionError'
 ]
