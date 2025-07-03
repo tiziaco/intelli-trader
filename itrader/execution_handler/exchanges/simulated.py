@@ -1,6 +1,6 @@
 from queue import Queue
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import random
 import time
 
@@ -9,6 +9,9 @@ from ..fee_model.zero_fee_model import ZeroFeeModel
 from ..fee_model.percent_fee_model import PercentFeeModel
 from ..fee_model.maker_taker_fee_model import MakerTakerFeeModel
 from ..fee_model.tiered_fee_model import TieredFeeModel
+from ..slippage_model.zero_slippage_model import ZeroSlippageModel
+from ..slippage_model.linear_slippage_model import LinearSlippageModel
+from ..slippage_model.fixed_slippage_model import FixedSlippageModel
 from ..result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
 from itrader.core.enums.execution import ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
 from itrader.core.exceptions.execution import (
@@ -35,10 +38,10 @@ class SimulatedExchange(AbstractExchange):
 
 	def __init__(self, global_queue: Queue, 
 		fee_model='no_fee', 
-		slippage_pct=0.0,
+		slippage_model='none',
 		simulate_failures=False,
 		failure_rate=0.01,
-		**fee_model_kwargs):
+		**kwargs):
 		"""
 		Initialize the enhanced simulated exchange.
 		
@@ -48,18 +51,23 @@ class SimulatedExchange(AbstractExchange):
 			Event queue for the trading system
 		fee_model : str
 			Fee model to use ('no_fee', 'percent', 'maker_taker', 'tiered')
-		slippage_pct : float
-			Maximum slippage percentage to simulate
+		slippage_model : str
+			Slippage model to use ('none', 'linear', 'fixed')
 		simulate_failures : bool
 			Whether to simulate random execution failures
 		failure_rate : float
 			Rate of simulated failures (0.0 to 1.0)
-		**fee_model_kwargs
-			Additional parameters for fee model initialization
+		**kwargs
+			Additional parameters for fee and slippage model initialization
 		"""
 		self.global_queue = global_queue
-		self.slippage_pct = slippage_pct
-		self.fee_model = self._initialize_fee_model(fee_model, **fee_model_kwargs)
+		
+		# Separate kwargs for fee and slippage models
+		fee_kwargs = {k: v for k, v in kwargs.items() if k.startswith('fee_')}
+		slippage_kwargs = {k: v for k, v in kwargs.items() if k.startswith('slippage_')}
+		
+		self.fee_model = self._initialize_fee_model(fee_model, **fee_kwargs)
+		self.slippage_model = self._initialize_slippage_model(slippage_model, **slippage_kwargs)
 		self.simulate_failures = simulate_failures
 		self.failure_rate = failure_rate
 		
@@ -148,7 +156,7 @@ class SimulatedExchange(AbstractExchange):
 					execution_time=execution_time
 				)
 			
-			# Calculate execution details
+			# Calculate execution fee
 			commission = self.fee_model.calculate_fee(
 				quantity=event.quantity,
 				price=event.price,
@@ -156,13 +164,13 @@ class SimulatedExchange(AbstractExchange):
 				order_type="market"  # Simulated exchange assumes market orders
 			)
 			
-			# Apply realistic slippage
-			slippage_factor = 1.0
-			if self.slippage_pct > 0:
-				# Simulate market impact - larger orders get more slippage
-				base_slippage = random.uniform(-self.slippage_pct, self.slippage_pct) / 100.0
-				size_impact = min(0.001, event.quantity * event.price / 100000.0)  # 0.1% max impact
-				slippage_factor = 1.0 + base_slippage + size_impact
+			# calculate slippage factor
+			slippage_factor = self.slippage_model.calculate_slippage_factor(
+				quantity=event.quantity,
+				price=event.price,
+				side=event.action.lower(),
+				order_type="market"
+			)
 			
 			executed_price = event.price * slippage_factor
 			executed_quantity = event.quantity
@@ -321,10 +329,6 @@ class SimulatedExchange(AbstractExchange):
 			if 'max_order_size' in config:
 				self._max_order_size = float(config['max_order_size'])
 			
-			if 'slippage_pct' in config:
-				self.slippage_pct = float(config['slippage_pct'])
-				self.logger.info('Slippage percentage set to: %.4f%%', self.slippage_pct)
-			
 			self.logger.info('Exchange configuration updated successfully')
 			return True
 			
@@ -418,8 +422,11 @@ class SimulatedExchange(AbstractExchange):
 			],
 			'limits': {
 				'min_order_size': self._min_order_size,
-				'max_order_size': self._max_order_size,
-				'max_slippage_pct': self.slippage_pct
+				'max_order_size': self._max_order_size
+			},
+			'models': {
+				'fee_model': self.fee_model.get_fee_info(),
+				'slippage_model': self.slippage_model.get_slippage_info()
 			},
 			'statistics': {
 				'orders_executed': self._orders_executed,
@@ -455,3 +462,26 @@ class SimulatedExchange(AbstractExchange):
 		else:
 			self.logger.warning('Fee model %s not supported, defaulting to no_fee', fee_model)
 			return ZeroFeeModel()
+
+	def _initialize_slippage_model(self, slippage_model: str, **kwargs):
+		"""Initialize slippage model using dictionary-based factory pattern."""
+		slippage_models = {
+			'none': lambda: ZeroSlippageModel(),
+			'zero': lambda: ZeroSlippageModel(),
+			'linear': lambda: LinearSlippageModel(
+				base_slippage_pct=kwargs.get('slippage_base_slippage_pct', 0.01),
+				size_impact_factor=kwargs.get('slippage_size_impact_factor', 0.00001),
+				max_slippage_pct=kwargs.get('slippage_max_slippage_pct', 0.1)
+			),
+			'fixed': lambda: FixedSlippageModel(
+				slippage_pct=kwargs.get('slippage_slippage_pct', 0.01),
+				random_variation=kwargs.get('slippage_random_variation', True)
+			)
+		}
+		
+		factory = slippage_models.get(slippage_model.lower())
+		if factory:
+			return factory()
+		else:
+			self.logger.warning('Slippage model %s not supported, defaulting to none', slippage_model)
+			return ZeroSlippageModel()
