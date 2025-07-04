@@ -1,8 +1,9 @@
 from queue import Queue
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import random
 import time
+import threading
 
 from .base import AbstractExchange
 from ..fee_model.zero_fee_model import ZeroFeeModel
@@ -22,78 +23,71 @@ from itrader.core.exceptions.execution import (
 )
 from itrader.events_handler.event import FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
+from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation
 
 class SimulatedExchange(AbstractExchange):
 	"""
-	Enhanced simulated exchange with comprehensive error handling,
-	validation, monitoring capabilities, and production-ready features.
+	Modern simulated exchange with config-driven architecture.
 	
-	Provides realistic simulation of exchange behavior including:
-	- Order validation and rejection
-	- Slippage simulation
-	- Connection management
-	- Health monitoring
-	- Configurable failure simulation
+	Features:
+	- Minimal initialization
+	- Configuration-driven behavior
+	- Thread-safe configuration updates
+	- Production-ready design
 	"""
 
-	def __init__(self, global_queue: Queue, 
-		fee_model='no_fee', 
-		slippage_model='none',
-		simulate_failures=False,
-		failure_rate=0.01,
-		**kwargs):
+	def __init__(self, global_queue: Queue, config: Optional[ExchangeConfig] = None):
 		"""
-		Initialize the enhanced simulated exchange.
+		Initialize the simulated exchange with minimal setup.
 		
 		Parameters
 		-----------
 		global_queue : Queue
 			Event queue for the trading system
-		fee_model : str
-			Fee model to use ('no_fee', 'percent', 'maker_taker', 'tiered')
-		slippage_model : str
-			Slippage model to use ('none', 'linear', 'fixed')
-		simulate_failures : bool
-			Whether to simulate random execution failures
-		failure_rate : float
-			Rate of simulated failures (0.0 to 1.0)
-		**kwargs
-			Additional parameters for fee and slippage model initialization
+		config : ExchangeConfig, optional
+			Complete exchange configuration object. If not provided, defaults to 'default' preset
 		"""
+		# Initialize logger early
+		self.logger = get_itrader_logger().bind(component="SimulatedExchange")
+
+		# Core exchange identity
 		self.global_queue = global_queue
 		
-		# Separate kwargs for fee and slippage models
-		fee_kwargs = {k: v for k, v in kwargs.items() if k.startswith('fee_')}
-		slippage_kwargs = {k: v for k, v in kwargs.items() if k.startswith('slippage_')}
+		# Exchange configuration
+		self.config = config or get_exchange_preset('default')
 		
-		self.fee_model = self._initialize_fee_model(fee_model, **fee_kwargs)
-		self.slippage_model = self._initialize_slippage_model(slippage_model, **slippage_kwargs)
-		self.simulate_failures = simulate_failures
-		self.failure_rate = failure_rate
+		# Initialize models
+		self.fee_model = self._init_fee_model()
+		self.slippage_model = self._init_slippage_model()
 		
-		# Connection state management
+		# Operational parameters
+		self.simulate_failures = self.config.failure_simulation.simulate_failures
+		self.failure_rate = float(self.config.failure_simulation.failure_rate)
+		
+		# Thread safety
+		self._lock = threading.RLock()
+		
+		# Connection state
 		self._connected = False
 		self._connection_time = None
 		self._connection_status = ExchangeConnectionStatus.DISCONNECTED
 		
-		# Health and performance monitoring
-		self._last_ping = None
+		# Performance tracking
 		self._orders_executed = 0
 		self._orders_failed = 0
 		self._last_error = None
 		self._last_error_time = None
 		self._total_volume = 0.0
 		self._startup_time = datetime.now()
+		self._last_ping = None
 		
-		# Exchange configuration
-		self._supported_symbols = {'BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'DOTUSDT', 'SOLUSDT'}
-		self._min_order_size = 0.001
-		self._max_order_size = 1000000.0
-		self._exchange_name = "SimulatedExchange"
+		# Exchange limits and settings
+		self._supported_symbols = self.config.limits.supported_symbols
+		self._min_order_size = float(self.config.limits.min_order_size)
+		self._max_order_size = float(self.config.limits.max_order_size)
+		self._exchange_name = self.config.exchange_name
 		
-		self.logger = get_itrader_logger().bind(component="SimulatedExchange")
-		self.logger.info('Enhanced Simulated Exchange initialized with %d supported symbols', 
-						len(self._supported_symbols))
+		self.logger.info('Simulated Exchange initialized: %s', self.config.exchange_name)
 
 	def execute_order(self, event: OrderEvent) -> ExecutionResult:
 		"""
@@ -142,7 +136,7 @@ class SimulatedExchange(AbstractExchange):
 					(ExecutionErrorCode.NETWORK_ERROR, "Simulated network timeout"),
 					(ExecutionErrorCode.EXCHANGE_ERROR, "Simulated exchange maintenance"),
 					(ExecutionErrorCode.RATE_LIMIT_EXCEEDED, "Simulated rate limit"),
-					(ExecutionErrorCode.TIMEOUT, "Simulated execution timeout")
+					(ExecutionErrorCode.EXCHANGE_MAINTENANCE, "Simulated execution timeout")
 				]
 				error_code, error_msg = random.choice(error_scenarios)
 				self._last_error = error_msg
@@ -308,34 +302,6 @@ class SimulatedExchange(AbstractExchange):
 			last_heartbeat=current_time
 		)
 
-	def configure(self, config: Dict[str, Any]) -> bool:
-		"""Configure exchange settings."""
-		try:
-			if 'supported_symbols' in config:
-				self._supported_symbols = set(config['supported_symbols'])
-				self.logger.info('Updated supported symbols: %s', self._supported_symbols)
-			
-			if 'simulate_failures' in config:
-				self.simulate_failures = bool(config['simulate_failures'])
-				self.logger.info('Failure simulation: %s', self.simulate_failures)
-			
-			if 'failure_rate' in config:
-				self.failure_rate = max(0.0, min(1.0, float(config['failure_rate'])))
-				self.logger.info('Failure rate set to: %.2f%%', self.failure_rate * 100)
-			
-			if 'min_order_size' in config:
-				self._min_order_size = float(config['min_order_size'])
-			
-			if 'max_order_size' in config:
-				self._max_order_size = float(config['max_order_size'])
-			
-			self.logger.info('Exchange configuration updated successfully')
-			return True
-			
-		except Exception as e:
-			self.logger.error('Failed to configure exchange: %s', str(e))
-			return False
-
 	def validate_order(self, event: OrderEvent) -> ValidationResult:
 		"""Comprehensive order validation with detailed feedback."""
 		validation_time = datetime.now()
@@ -428,6 +394,13 @@ class SimulatedExchange(AbstractExchange):
 				'fee_model': self.fee_model.get_fee_info(),
 				'slippage_model': self.slippage_model.get_slippage_info()
 			},
+			'configuration': {
+				'exchange_type': self.config.exchange_type.value,
+				'fee_model_type': self.config.fee_model.model_type.value,
+				'slippage_model_type': self.config.slippage_model.model_type.value,
+				'simulate_failures': self.config.failure_simulation.simulate_failures,
+				'failure_rate': float(self.config.failure_simulation.failure_rate)
+			},
 			'statistics': {
 				'orders_executed': self._orders_executed,
 				'orders_failed': self._orders_failed,
@@ -436,52 +409,119 @@ class SimulatedExchange(AbstractExchange):
 			}
 		}
 
-	def _initialize_fee_model(self, fee_model: str, **kwargs):
-		"""Initialize fee model using dictionary-based factory pattern."""
-		fee_models = {
-			'no_fee': lambda: ZeroFeeModel(),
-			'zero': lambda: ZeroFeeModel(),
-			'percent': lambda: PercentFeeModel(
-				fee_rate=kwargs.get('fee_rate', 0.001)
-			),
-			'maker_taker': lambda: MakerTakerFeeModel(
-				maker_rate=kwargs.get('maker_rate', 0.001),
-				taker_rate=kwargs.get('taker_rate', 0.001)
-			),
-			'tiered': lambda: TieredFeeModel(
-				tiers=kwargs.get('tiers', [
-					{'min_volume': 0, 'max_volume': 100000, 'fee_rate': 0.001},
-					{'min_volume': 100000, 'max_volume': float('inf'), 'fee_rate': 0.0008}
-				])
-			)
-		}
+	def _init_fee_model(self):
+		"""Create fee model from configuration."""
+		config = self.config.fee_model
 		
-		factory = fee_models.get(fee_model.lower())
-		if factory:
-			return factory()
+		if config.model_type.value in ['no_fee', 'zero']:
+			return ZeroFeeModel()
+		elif config.model_type.value == 'percent':
+			return PercentFeeModel(fee_rate=config.fee_rate or 0.001)
+		elif config.model_type.value == 'maker_taker':
+			return MakerTakerFeeModel(
+				maker_rate=config.maker_rate or 0.001,
+				taker_rate=config.taker_rate or 0.001
+			)
+		elif config.model_type.value == 'tiered':
+			default_tiers = [
+				{'min_volume': 0, 'max_volume': 100000, 'fee_rate': 0.001},
+				{'min_volume': 100000, 'max_volume': float('inf'), 'fee_rate': 0.0008}
+			]
+			return TieredFeeModel(tiers=config.tiers or default_tiers)
 		else:
-			self.logger.warning('Fee model %s not supported, defaulting to no_fee', fee_model)
+			self.logger.warning('Unknown fee model %s, defaulting to no_fee', config.model_type.value)
 			return ZeroFeeModel()
 
-	def _initialize_slippage_model(self, slippage_model: str, **kwargs):
-		"""Initialize slippage model using dictionary-based factory pattern."""
-		slippage_models = {
-			'none': lambda: ZeroSlippageModel(),
-			'zero': lambda: ZeroSlippageModel(),
-			'linear': lambda: LinearSlippageModel(
-				base_slippage_pct=kwargs.get('slippage_base_slippage_pct', 0.01),
-				size_impact_factor=kwargs.get('slippage_size_impact_factor', 0.00001),
-				max_slippage_pct=kwargs.get('slippage_max_slippage_pct', 0.1)
-			),
-			'fixed': lambda: FixedSlippageModel(
-				slippage_pct=kwargs.get('slippage_slippage_pct', 0.01),
-				random_variation=kwargs.get('slippage_random_variation', True)
-			)
-		}
+	def _init_slippage_model(self):
+		"""Create slippage model from configuration."""
+		config = self.config.slippage_model
 		
-		factory = slippage_models.get(slippage_model.lower())
-		if factory:
-			return factory()
-		else:
-			self.logger.warning('Slippage model %s not supported, defaulting to none', slippage_model)
+		if config.model_type.value in ['none', 'zero']:
 			return ZeroSlippageModel()
+		elif config.model_type.value == 'linear':
+			return LinearSlippageModel(
+				base_slippage_pct=config.base_slippage_pct or 0.01,
+				size_impact_factor=config.size_impact_factor or 0.00001,
+				max_slippage_pct=config.max_slippage_pct or 0.1
+			)
+		elif config.model_type.value == 'fixed':
+			return FixedSlippageModel(
+				slippage_pct=config.slippage_pct or 0.01,
+				random_variation=config.random_variation if config.random_variation is not None else True
+			)
+		else:
+			self.logger.warning('Unknown slippage model %s, defaulting to none', config.model_type.value)
+			return ZeroSlippageModel()
+
+	# Configuration Management (following Portfolio pattern)
+	def update_config(self, **kwargs) -> None:
+		"""Update exchange configuration."""
+		with self._lock:
+			# Direct config attribute updates
+			config_mapping = {
+				'exchange_name': 'exchange_name',
+				'exchange_type': 'exchange_type',
+				'simulate_failures': ('failure_simulation', 'simulate_failures'),
+				'failure_rate': ('failure_simulation', 'failure_rate'),
+				'supported_symbols': ('limits', 'supported_symbols'),
+				'min_order_size': ('limits', 'min_order_size'),
+				'max_order_size': ('limits', 'max_order_size'),
+				'fee_model_type': ('fee_model', 'model_type'),
+				'fee_rate': ('fee_model', 'fee_rate'),
+				'maker_rate': ('fee_model', 'maker_rate'),
+				'taker_rate': ('fee_model', 'taker_rate'),
+				'slippage_model_type': ('slippage_model', 'model_type'),
+				'base_slippage_pct': ('slippage_model', 'base_slippage_pct'),
+				'slippage_pct': ('slippage_model', 'slippage_pct'),
+			}
+			
+			for key, value in kwargs.items():
+				if isinstance(config_mapping.get(key), tuple):
+					section_name, attr_name = config_mapping[key]
+					section = getattr(self.config, section_name)
+					setattr(section, attr_name, value)
+				elif key in config_mapping:
+					setattr(self.config, config_mapping[key], value)
+				elif hasattr(self.config, key):
+					setattr(self.config, key, value)
+				else:
+					raise ValueError(f"Unknown configuration key: {key}")
+			
+			# Re-initialize components affected by config changes
+			if any(k.startswith('fee_') for k in kwargs) or 'fee_model_type' in kwargs:
+				self.fee_model = self._init_fee_model()
+			if any(k.startswith('slippage_') for k in kwargs) or 'slippage_model_type' in kwargs:
+				self.slippage_model = self._init_slippage_model()
+			if 'simulate_failures' in kwargs or 'failure_rate' in kwargs:
+				self.simulate_failures = self.config.failure_simulation.simulate_failures
+				self.failure_rate = float(self.config.failure_simulation.failure_rate)
+			
+			# Update internal state for limits
+			if any(k in ['supported_symbols', 'min_order_size', 'max_order_size'] for k in kwargs):
+				self._supported_symbols = self.config.limits.supported_symbols
+				self._min_order_size = float(self.config.limits.min_order_size)
+				self._max_order_size = float(self.config.limits.max_order_size)
+			
+			# Update exchange name if changed
+			if 'exchange_name' in kwargs:
+				self._exchange_name = self.config.exchange_name
+
+	def get_config_dict(self) -> Dict[str, Any]:
+		"""Get configuration as dictionary."""
+		with self._lock:
+			return {
+				'exchange_name': self.config.exchange_name,
+				'exchange_type': self.config.exchange_type.value if hasattr(self.config.exchange_type, 'value') else str(self.config.exchange_type),
+				'simulate_failures': self.config.failure_simulation.simulate_failures,
+				'failure_rate': float(self.config.failure_simulation.failure_rate),
+				'supported_symbols': list(self.config.limits.supported_symbols),
+				'min_order_size': float(self.config.limits.min_order_size),
+				'max_order_size': float(self.config.limits.max_order_size),
+				'fee_model_type': self.config.fee_model.model_type.value,
+				'fee_rate': self.config.fee_model.fee_rate,
+				'maker_rate': self.config.fee_model.maker_rate,
+				'taker_rate': self.config.fee_model.taker_rate,
+				'slippage_model_type': self.config.slippage_model.model_type.value,
+				'base_slippage_pct': self.config.slippage_model.base_slippage_pct,
+				'slippage_pct': self.config.slippage_model.slippage_pct,
+			}
