@@ -349,7 +349,6 @@ class FillEvent:
 
 
 @dataclass
-@dataclass
 class PortfolioErrorEvent:
 	"""
 	Handles portfolio error events for monitoring and alerting.
