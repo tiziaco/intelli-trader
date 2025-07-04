@@ -21,36 +21,22 @@ class ExecutionHandler(AbstractExecutionHandler):
 	while maintaining backward compatibility with existing systems.
 	"""
 
-	def __init__(self,
-		global_queue: Queue, 
-		fee_model='no_fee', 
-		slippage_model='none',
-		**model_kwargs):
+	def __init__(self, global_queue: Queue):
 		"""
 		Parameters
 		----------
 		global_queue: `Queue object`
 			The events queue of the trading system
-		fee_model: str
-			Fee model to use ('no_fee', 'percent', 'maker_taker', 'tiered')
-		slippage_model: str
-			Slippage model to use ('none', 'linear', 'fixed')
-		**model_kwargs
-			Additional parameters for fee and slippage model initialization
 		"""
-		self.global_queue = global_queue
-		self.fee_model = fee_model
-		self.slippage_model = slippage_model
-		self.model_kwargs = model_kwargs
-		
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
+
+		self.global_queue = global_queue
 		
 		# Initialize exchanges (requires logger)
 		self.exchanges: dict[str, AbstractExchange] = self.init_exchanges()
 
-		self.logger.info('Execution Handler initialized with fee model: %s, slippage model: %s',
-			self.fee_model, self.slippage_model)
+		self.logger.info('Execution Handler initialized')
 
 
 	def on_order(self, event: OrderEvent):
@@ -105,20 +91,13 @@ class ExecutionHandler(AbstractExecutionHandler):
 	
 	def init_exchanges(self):
 		"""
-		Initialize configured exchanges with enhanced parameters.
+		Initialize configured exchanges.
 		
-		Creates exchange instances with proper configuration including
-		fee models, slippage simulation, and failure testing capabilities.
+		Creates exchange instances using their default configurations.
+		Each exchange manages its own fee models, slippage simulation, etc.
 		"""
 		exchanges = {
-			'simulated': SimulatedExchange(
-				self.global_queue, 
-				fee_model=self.fee_model,
-				slippage_model=self.slippage_model,
-				simulate_failures=False,  # Can be configured via environment
-				failure_rate=0.01,
-				**self.model_kwargs
-			),
+			'simulated': SimulatedExchange(self.global_queue),
 			'ccxt': None  # Placeholder for live exchange implementation
 		}
 		

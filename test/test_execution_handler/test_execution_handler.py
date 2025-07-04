@@ -27,8 +27,8 @@ class TestExecutionHandlerUpdates(unittest.TestCase):
 			datetime.now(UTC),
 			'BTCUSDT',
 			'BUY',
-			100,
-			1,
+			100.0,  # price
+			1.0,    # quantity
 			'simulated',
 			1, 1
 		)
