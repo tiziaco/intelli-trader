@@ -239,15 +239,10 @@ class OrderEvent:
 	exchange: str
 	strategy_id: int
 	portfolio_id: int
-	order_type: OrderType = OrderType.MARKET
+	order_type: OrderType
 	stop_price: Optional[float] = None
 	order_id: str = None
 	type = EventType.ORDER
-	
-	def __post_init__(self):
-		"""Generate order_id if not provided."""
-		if self.order_id is None:
-			self.order_id = f"ORD_{int(self.time.timestamp())}_{str(uuid4())[:8]}"
 
 	def __str__(self):
 		base = f"{self.type} ({self.ticker}, {self.action}, {self.order_type.name}, {self.quantity}, {round(self.price, 4)} $"
