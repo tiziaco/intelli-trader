@@ -3,7 +3,8 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
-from .order import Order, OrderType, OrderStatus
+from .order import Order
+from ..core.enums import OrderType, OrderStatus
 from ..events_handler.event import SignalEvent
 
 

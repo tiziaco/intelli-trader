@@ -3,7 +3,8 @@ from typing import List, Dict
 
 from ..portfolio_handler.portfolio_handler import PortfolioHandler
 from .base import OrderBase, OrderStorage
-from .order import Order, OrderStatus
+from .order import Order
+from ..core.enums import OrderStatus
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
 from ..events_handler.event import SignalEvent, BarEvent, OrderEvent, PortfolioUpdateEvent
@@ -386,8 +387,6 @@ class OrderHandler(OrderBase):
 			Dictionary with status names as keys and counts as values
 		"""
 		return self.order_storage.get_orders_count_by_status(portfolio_id)
-	
-		return archived_count
 
 	def add_stop_loss_order(self, signal: SignalEvent):
 		"""

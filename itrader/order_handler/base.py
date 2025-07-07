@@ -3,7 +3,8 @@ from typing import Dict, List, Optional, Union, TYPE_CHECKING
 from datetime import datetime
 
 if TYPE_CHECKING:
-    from .order import Order, OrderStatus
+    from .order import Order
+    from ..core.enums import OrderStatus
 
 
 class OrderBase(object):

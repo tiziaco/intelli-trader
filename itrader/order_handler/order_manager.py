@@ -12,7 +12,8 @@ a single, coordinated pipeline for all order operations.
 """
 
 from typing import List, Dict, Optional
-from .order import Order, OrderType, OrderStatus
+from .order import Order
+from ..core.enums import OrderType, OrderStatus
 from .base import OrderStorage
 from ..events_handler.event import BarEvent, OrderEvent
 

@@ -15,7 +15,8 @@ from unittest.mock import Mock, MagicMock
 import pandas as pd
 
 from itrader.order_handler.order_manager import OrderManager
-from itrader.order_handler.order import Order, OrderType, OrderStatus
+from itrader.order_handler.order import Order
+from itrader.core.enums import OrderType, OrderStatus
 from itrader.order_handler.storage.in_memory_storage import InMemoryOrderStorage
 from itrader.events_handler.event import BarEvent, OrderEvent
 
