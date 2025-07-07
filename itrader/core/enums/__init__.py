@@ -21,6 +21,15 @@ from .execution import (
     ExchangeType
 )
 
+# Order enums
+from .order import (
+    OrderType,
+    OrderStatus,
+    order_type_map,
+    order_status_map,
+    VALID_ORDER_TRANSITIONS
+)
+
 __all__ = [
     # Portfolio enums
     'PortfolioState',
@@ -32,5 +41,12 @@ __all__ = [
     'ExecutionStatus',
     'ExecutionErrorCode',
     'ExchangeConnectionStatus',
-    'ExchangeType'
+    'ExchangeType',
+    
+    # Order enums
+    'OrderType',
+    'OrderStatus',
+    'order_type_map',
+    'order_status_map',
+    'VALID_ORDER_TRANSITIONS'
 ]
