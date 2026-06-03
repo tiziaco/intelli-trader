@@ -392,7 +392,7 @@ class FillEvent:
 		Parameters
 		----------
 		status : `str`
-			The execution state of the fill order e.g. 'EXECUTED', 'REFUSED'
+			The execution state of the fill order e.g. 'EXECUTED', 'REFUSED', 'CANCELLED'
 		order : `OrderEvent`
 			The instance of the executed order
 		
