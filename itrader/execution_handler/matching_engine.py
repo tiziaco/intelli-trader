@@ -160,6 +160,9 @@ class MatchingEngine:
             ))
             bracket = order.parent_order_id
             if bracket is not None:
+                # O(n) sibling scan per filled bracket; negligible at backtest
+                # scale (< ~100 resting orders per symbol). Pre-index by
+                # parent_order_id if the book ever grows to thousands.
                 for sibling in list(self._resting.values()):
                     if (sibling.parent_order_id == bracket
                             and sibling.order_id != order_id

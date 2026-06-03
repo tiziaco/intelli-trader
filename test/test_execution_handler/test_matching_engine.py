@@ -147,6 +147,7 @@ class TestMatchingEngineOCO(unittest.TestCase):
 		fills, cancels = self.engine.on_bar(make_bar(open_=45, high=60, low=20, close=40))
 		self.assertEqual(len(fills), 1)
 		self.assertEqual(fills[0].order_event.order_id, 11)      # pessimistic: STOP fills
+		self.assertEqual(len(cancels), 1)
 		self.assertEqual(cancels[0].order_event.order_id, 12)    # TP cancelled
 
 	def test_non_triggered_sibling_still_cancelled(self):
@@ -156,3 +157,19 @@ class TestMatchingEngineOCO(unittest.TestCase):
 		fills, cancels = self.engine.on_bar(make_bar(open_=50, high=56, low=45, close=55))
 		self.assertEqual(fills[0].order_event.order_id, 12)
 		self.assertEqual([c.order_event.order_id for c in cancels], [11])
+
+	def test_two_independent_brackets_both_resolve(self):
+		# Two distinct brackets resolve on the same bar without cross-contamination.
+		# Bracket A: SL at 20 (no trigger, low 25 > 20), TP at 55 (fills, high 70 >= 55) -> TP wins.
+		sl_a = make_order_event(OrderType.STOP,  'SELL', 20.0, order_id=21, parent_order_id=200)
+		tp_a = make_order_event(OrderType.LIMIT, 'SELL', 55.0, order_id=22, parent_order_id=200)
+		# Bracket B: SL at 30 (fills, low 25 <= 30), TP at 80 (no trigger, high 70 < 80) -> SL wins.
+		sl_b = make_order_event(OrderType.STOP,  'SELL', 30.0, order_id=31, parent_order_id=300)
+		tp_b = make_order_event(OrderType.LIMIT, 'SELL', 80.0, order_id=32, parent_order_id=300)
+		for o in (sl_a, tp_a, sl_b, tp_b):
+			self.engine.submit(o)
+		fills, cancels = self.engine.on_bar(make_bar(open_=40, high=70, low=25, close=45))
+		self.assertEqual(len(fills), 2)
+		self.assertEqual(len(cancels), 2)
+		self.assertEqual({f.order_event.order_id for f in fills}, {22, 31})    # A's TP, B's SL
+		self.assertEqual({c.order_event.order_id for c in cancels}, {21, 32})  # A's SL, B's TP
