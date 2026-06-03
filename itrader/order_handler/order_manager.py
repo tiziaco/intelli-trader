@@ -670,6 +670,23 @@ class OrderManager:
 	
 	def _create_stop_loss_order(self, signal_event: SignalEvent, exchange: str,
 	                            parent_id: int = None) -> OperationResult:
+		"""
+		Create a stop-loss order from a signal and emit its OrderEvent.
+
+		Parameters
+		----------
+		signal_event : SignalEvent
+			The originating signal (stop price taken from signal.stop_loss).
+		exchange : str
+			Exchange for the order.
+		parent_id : int, optional
+			Id of the primary order this stop-loss brackets (OCO linkage).
+
+		Returns
+		-------
+		OperationResult
+			Success result carrying the stop-loss OrderEvent, or a failure result.
+		"""
 		try:
 			sl_order = Order.new_stop_order(
 				time=signal_event.time,
@@ -698,6 +715,23 @@ class OrderManager:
 	
 	def _create_take_profit_order(self, signal_event: SignalEvent, exchange: str,
 	                              parent_id: int = None) -> OperationResult:
+		"""
+		Create a take-profit order from a signal and emit its OrderEvent.
+
+		Parameters
+		----------
+		signal_event : SignalEvent
+			The originating signal (limit price taken from signal.take_profit).
+		exchange : str
+			Exchange for the order.
+		parent_id : int, optional
+			Id of the primary order this take-profit brackets (OCO linkage).
+
+		Returns
+		-------
+		OperationResult
+			Success result carrying the take-profit OrderEvent, or a failure result.
+		"""
 		try:
 			tp_order = Order.new_limit_order(
 				time=signal_event.time,
