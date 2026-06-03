@@ -126,9 +126,9 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		self.assertEqual(primary_event.quantity, 100.0)
 		# All 3 legs emitted
 		self.assertEqual(len(order_events), 3)
-		# Assert pending orders (SL and TP remain active)
+		# All 3 orders remain pending (market order is filled by execution handler, not self-filled)
 		self.assertIsInstance(pending_orders, dict)
-		self.assertEqual(len(portfolio_orders), 2)  # SL and TP orders
+		self.assertEqual(len(portfolio_orders), 3)  # MARKET, SL and TP orders all pending
 
 	def test_on_signal_sell_with_sl_tp(self):
 		# Create a mock sell signal with stop loss and take profit
@@ -153,9 +153,9 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		self.assertEqual(primary_event.quantity, 50.0)
 		# All 3 legs emitted
 		self.assertEqual(len(order_events), 3)
-		# Assert pending orders (SL and TP remain active)
+		# All 3 orders remain pending (market order is filled by execution handler, not self-filled)
 		self.assertIsInstance(pending_orders, dict)
-		self.assertEqual(len(portfolio_orders), 2)  # SL and TP orders
+		self.assertEqual(len(portfolio_orders), 3)  # MARKET, SL and TP orders all pending
 
 
 if __name__ == "__main__":

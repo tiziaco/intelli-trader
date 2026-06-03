@@ -7,7 +7,7 @@ from .order import Order
 from ..core.enums import OrderStatus
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
-from ..events_handler.event import SignalEvent, BarEvent, OrderEvent, PortfolioUpdateEvent
+from ..events_handler.event import SignalEvent, OrderEvent, PortfolioUpdateEvent
 from .storage import OrderStorageFactory
 
 from itrader.logger import get_itrader_logger
@@ -24,7 +24,7 @@ class OrderHandler(OrderBase):
 	- Provides API endpoints for external order management operations
 	
 	**Key Responsibilities:**
-	- Event processing interface (on_signal, process_orders_on_market_data)
+	- Event processing interface (on_signal, on_fill)
 	- API interface for order operations (create_order, modify_order, cancel_order)
 	- OrderEvent generation and queue management
 	- Minimal business logic - delegates to OrderManager
@@ -70,25 +70,6 @@ class OrderHandler(OrderBase):
 		
 		self.logger.info(f'Order Handler initialized with market_execution={market_execution})')
 
-	def process_orders_on_market_data(self, bar_event: BarEvent):
-		"""
-		Process all order types when new market data arrives.
-		
-		This is the centralized entry point for all market-driven order processing.
-		
-		Parameters
-		----------
-		bar_event : BarEvent
-			The bar event containing current market data
-		"""
-		order_events = self.order_manager.process_orders_on_market_data(bar_event)
-		
-		# Send all generated order events to the execution handler
-		for order_event in order_events:
-			self.events_queue.put(order_event)
-		
-		self.logger.debug(f'Processed market data for {len(order_events)} orders')
-	
 	def on_signal(self, signal_event: SignalEvent):
 		"""
 		Process signal event through OrderManager and generate OrderEvents.
