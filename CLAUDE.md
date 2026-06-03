@@ -46,12 +46,18 @@ Everything flows through a single `global_queue` (`queue.Queue`). `events_handle
 ```
 PING   -> screeners_handler.screen_markets + universe.generate_bar_event
 BAR    -> portfolio_handler.update_portfolios_market_value
-        + order_handler.process_orders_on_market_data   (stop/limit triggers)
+        + execution_handler.on_market_data              (exchange matches resting stop/limit -> FillEvent)
         + strategies_handler.calculate_signals
 SIGNAL -> order_handler.on_signal                       (validate + size -> OrderEvent)
-ORDER  -> execution_handler.on_order                    (-> FillEvent)
-FILL   -> portfolio_handler.on_fill                     (update positions/cash)
+ORDER  -> execution_handler.on_order                    (exchange fills/rests -> FillEvent)
+FILL   -> portfolio_handler.on_fill                     (EXECUTED only: update positions/cash)
+        + order_handler.on_fill                         (reconcile order mirror: FILLED/CANCELLED/REJECTED)
 ```
+
+Matching lives in the **execution layer**, not the order handler: the exchange holds
+the resting-order book and is the source of truth for fills. The order handler
+translates signals into orders, declares brackets, and reconciles its mirror from
+`FillEvent`s — it never matches orders itself.
 
 Adding a new event type means: define the dataclass in `event.py`, add it to the `EventType` enum, and add a branch in `process_events()`.
 
@@ -63,9 +69,9 @@ Both wire up the identical component graph around one shared queue in their `__i
 
 ### Handlers (each owns a domain, talks via the queue)
 
-- **order_handler/** — `OrderHandler` is a thin interface layer; all business logic (signal-to-order, lifecycle, modify/cancel, OCO) lives in `OrderManager`. Validation via `EnhancedOrderValidator`. Persistence is pluggable through `OrderStorageFactory` (`in_memory` for backtest, `postgresql` for live) under `order_handler/storage/`.
+- **order_handler/** — `OrderHandler` is a thin interface layer; order *management* logic (signal-to-order, lifecycle, modify/cancel, bracket declaration) lives in `OrderManager`. It does **not** match orders: it declares brackets via `parent_order_id`/`child_order_ids` (the exchange enforces OCO) and reconciles the stored order mirror against exchange truth in `on_fill` (EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED). Validation via `EnhancedOrderValidator`. Persistence is pluggable through `OrderStorageFactory` (`in_memory` for backtest, `postgresql` for live) under `order_handler/storage/`.
 - **portfolio_handler/** — `PortfolioHandler` manages portfolio lifecycle; each `Portfolio` delegates to four managers: `CashManager`, `PositionManager`, `TransactionManager`, `MetricsManager`. Thread-safe via `readerwriterlock`.
-- **execution_handler/** — `ExecutionHandler` with pluggable `fee_model/`, `slippage_model/`, and `exchanges/` (e.g. `simulated`). Turns `OrderEvent` into `FillEvent`.
+- **execution_handler/** — `ExecutionHandler` with pluggable `fee_model/`, `slippage_model/`, and `exchanges/` (e.g. `simulated`). Routes `on_order` and `on_market_data` to the exchange, turning `OrderEvent`/`BarEvent` into `FillEvent`s. The `SimulatedExchange` composes a pure `MatchingEngine` (`matching_engine.py`) that holds the resting-order book and evaluates stop/limit triggers against intrabar high/low with gap-aware fills and same-bar OCO priority; the exchange then applies fee/slippage and emits the fill.
 - **strategy_handler/** — `StrategiesHandler` runs strategies; each combines a `position_sizer/`, `risk_manager/`, and `sltp_models/`. Concrete strategies live in `strategy_handler/my_strategies/` (gitignored at the top level but present in-tree).
 - **screeners_handler/** & **universe/** — dynamic market screening and the tradable symbol universe.
 - **price_handler/** — data download/storage (CCXT, OANDA exchanges; Binance live streaming; SQL via SQLAlchemy).

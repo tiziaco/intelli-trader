@@ -16,9 +16,9 @@ iTrader is a powerful algorithmic trading framework designed for both backtestin
 - **Order Handler:** 
   - Centralized order orchestration with OrderManager for streamlined processing
   - Support for Market, Stop-Loss, and Take-Profit orders with configurable execution modes
-  - True One-Cancels-Other (OCO) functionality for professional risk management
+  - One-Cancels-Other (OCO) bracket declaration, enforced atomically by the matching venue
   - Complete audit trail with SQL-like order storage for regulatory compliance
-  - Real-time order validation and risk management controls
+  - Real-time order validation and a stored order mirror reconciled against exchange fills
 
 - **Portfolio Handler:**
   - Modern four-manager architecture: CashManager, PositionManager, TransactionManager, and MetricsManager
@@ -30,9 +30,9 @@ iTrader is a powerful algorithmic trading framework designed for both backtestin
 - **Execution Handler:**
   - Multi-exchange execution support with health monitoring and error handling
   - Configurable execution modes for both live trading and backtesting scenarios
+  - Simulated order-book matching with realistic intrabar (high/low) stop/limit triggers and gap-aware fills
   - Comprehensive slippage modeling and transaction cost analysis
   - Detailed execution result tracking with metadata for performance analysis
-  - Robust error recovery and retry mechanisms for production environments
 
 <img width="1070" alt="itrader_architecture_1" src="https://github.com/tiziaco/intelli-trader/assets/112805643/28dd5057-a8a1-48ed-8acd-885e2cb16af1">
 
