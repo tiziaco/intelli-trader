@@ -510,3 +510,18 @@ class TestOrderManagerReconciliation(unittest.TestCase):
 		fake = self._fill(order, 'EXECUTED')
 		fake.order_id = 999999
 		self.handler.on_fill(fake)  # should be a no-op, no exception
+		self.assertIsNone(self.storage.get_order_by_id(999999, self.portfolio_id))
+		# The real order remains untouched (still active/PENDING).
+		from itrader.core.enums import OrderStatus
+		self.assertEqual(self.storage.get_order_by_id(order.id, self.portfolio_id).status,
+		                 OrderStatus.PENDING)
+
+	def test_refused_fill_leaves_order_active(self):
+		# A REFUSED fill must NOT deactivate or change the order — it stays pending.
+		from itrader.core.enums import OrderStatus
+		order = self._rest_a_stop()
+		self.handler.on_fill(self._fill(order, 'REFUSED'))
+		stored = self.storage.get_order_by_id(order.id, self.portfolio_id)
+		self.assertEqual(stored.status, OrderStatus.PENDING)
+		active_ids = [o.id for o in self.storage.get_active_orders(self.portfolio_id)]
+		self.assertIn(order.id, active_ids)

@@ -480,10 +480,18 @@ class OrderManager:
 			return
 		try:
 			if fill_event.status == FillStatus.EXECUTED:
-				order.add_fill(order.remaining_quantity, fill_event.price,
-				               fill_event.time, "exchange fill")
+				if not order.add_fill(order.remaining_quantity, fill_event.price,
+				                      fill_event.time, "exchange fill"):
+					self.logger.warning('add_fill rejected for order %s; mirror left unchanged', order_id)
+					return
 			elif fill_event.status == FillStatus.CANCELLED:
-				order.cancel_order("OCO / cancellation")
+				order.cancel_order("exchange cancellation")
+			else:
+				# REFUSED or any other status: leave the order active for retry/alerting.
+				self.logger.warning('Unhandled fill status %s for order %s; order left active',
+				                    fill_event.status, order_id)
+				return
+			# Only reached for an applied EXECUTED or CANCELLED reconciliation.
 			self.order_storage.update_order(order)
 			self.order_storage.deactivate_order(order.id, order.portfolio_id)
 		except Exception as e:
