@@ -4,7 +4,6 @@ from queue import Queue
 
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.event import FillEvent, FillStatus
-from itrader.core.enums import OrderType
 
 
 class TestOnFillStatusGuard(unittest.TestCase):
@@ -27,6 +26,13 @@ class TestOnFillStatusGuard(unittest.TestCase):
 
     def test_cancelled_fill_creates_no_transaction(self):
         result = self.ptf.on_fill(self._fill('CANCELLED'))
+        self.assertFalse(result)  # ignored, no transaction
+        portfolio = self.ptf.get_portfolio(self.pid)
+        self.assertEqual(len(portfolio.positions), 0)
+        self.assertEqual(len(portfolio.transactions), 0)
+
+    def test_refused_fill_creates_no_transaction(self):
+        result = self.ptf.on_fill(self._fill('REFUSED'))
         self.assertFalse(result)  # ignored, no transaction
         portfolio = self.ptf.get_portfolio(self.pid)
         self.assertEqual(len(portfolio.positions), 0)
