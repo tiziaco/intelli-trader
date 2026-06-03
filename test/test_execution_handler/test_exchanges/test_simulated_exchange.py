@@ -21,6 +21,7 @@ from itrader.core.enums.execution import (
     ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus
 )
 from itrader.execution_handler.result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
+from itrader.core.enums import OrderType
 
 
 class TestSimulatedExchangeInitialization:
@@ -203,7 +204,8 @@ class TestSimulatedExchangeOrderExecution:
             'price': 150.0,
             'exchange': 'simulated',
             'strategy_id': 1,
-            'portfolio_id': 1
+            'portfolio_id': 1,
+            'order_type': OrderType.MARKET,
         }
         defaults.update(kwargs)
         return OrderEvent(**defaults)
@@ -360,10 +362,10 @@ class TestSimulatedExchangeConnectionManagement:
         assert not self.exchange.is_connected()
         
         order = OrderEvent(
-            datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1
+            datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET
         )
         result = self.exchange.execute_order(order)
-        
+
         assert result.success is False
         assert result.error_code == ExecutionErrorCode.NETWORK_ERROR
         assert "not connected" in result.error_message.lower()
@@ -381,7 +383,7 @@ class TestSimulatedExchangeOrderValidation:
     def test_valid_order_validation(self):
         """Test validation of valid order."""
         order = OrderEvent(
-            datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1
+            datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET
         )
         result = self.exchange.validate_order(order)
         
@@ -392,7 +394,7 @@ class TestSimulatedExchangeOrderValidation:
     def test_invalid_symbol_validation(self):
         """Test validation of order with invalid symbol."""
         order = OrderEvent(
-            datetime.now(), 'INVALID', 'BUY', 150.0, 100.0, 'simulated', 1, 1
+            datetime.now(), 'INVALID', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET
         )
         result = self.exchange.validate_order(order)
         
@@ -404,14 +406,15 @@ class TestSimulatedExchangeOrderValidation:
         """Test validation of order with invalid quantity."""
         # Test negative quantity with positive price to isolate the quantity issue
         order = OrderEvent(
-            time=datetime.now(), 
-            ticker='BTCUSDT', 
-            action='BUY', 
+            time=datetime.now(),
+            ticker='BTCUSDT',
+            action='BUY',
             price=150.0,
             quantity=-100.0,  # This is the negative quantity
-            exchange='simulated', 
-            strategy_id=1, 
-            portfolio_id=1
+            exchange='simulated',
+            strategy_id=1,
+            portfolio_id=1,
+            order_type=OrderType.MARKET,
         )
         result = self.exchange.validate_order(order)
         
@@ -426,15 +429,15 @@ class TestSimulatedExchangeOrderValidation:
         
         # Test below minimum (use 0.0001 which is below 50.0)
         order_small = OrderEvent(
-            datetime.now(), 'BTCUSDT', 'BUY', 150.0, 0.0001, 'simulated', 1, 1
+            datetime.now(), 'BTCUSDT', 'BUY', 150.0, 0.0001, 'simulated', 1, 1, OrderType.MARKET
         )
         result = self.exchange.validate_order(order_small)
         assert result.is_valid is False
         assert "below minimum" in result.error_message
-        
+
         # Test above maximum
         order_large = OrderEvent(
-            datetime.now(), 'BTCUSDT', 'BUY', 150.0, 1000.0, 'simulated', 1, 1
+            datetime.now(), 'BTCUSDT', 'BUY', 150.0, 1000.0, 'simulated', 1, 1, OrderType.MARKET
         )
         result = self.exchange.validate_order(order_large)
         assert result.is_valid is False
@@ -444,14 +447,15 @@ class TestSimulatedExchangeOrderValidation:
         """Test validation of order with invalid price."""
         # Use positive quantity to isolate the price validation issue
         order = OrderEvent(
-            time=datetime.now(), 
-            ticker='BTCUSDT', 
-            action='BUY', 
+            time=datetime.now(),
+            ticker='BTCUSDT',
+            action='BUY',
             price=-150.0,  # This is the negative price
             quantity=100.0,
-            exchange='simulated', 
-            strategy_id=1, 
-            portfolio_id=1
+            exchange='simulated',
+            strategy_id=1,
+            portfolio_id=1,
+            order_type=OrderType.MARKET,
         )
         result = self.exchange.validate_order(order)
         
@@ -463,7 +467,7 @@ class TestSimulatedExchangeOrderValidation:
         """Test validation warnings for edge cases."""
         # Test high price warning (use smaller quantity within limits but very high price)
         order = OrderEvent(
-            datetime.now(), 'BTCUSDT', 'BUY', 1500000.0, 0.1, 'simulated', 1, 1
+            datetime.now(), 'BTCUSDT', 'BUY', 1500000.0, 0.1, 'simulated', 1, 1, OrderType.MARKET
         )
         result = self.exchange.validate_order(order)
         
@@ -496,8 +500,8 @@ class TestSimulatedExchangeHealthMonitoring:
         # Connect and execute some orders
         self.exchange.connect()
         
-        order1 = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1)
-        order2 = OrderEvent(datetime.now(), 'INVALID', 'BUY', 150.0, 100.0, 'simulated', 1, 1)
+        order1 = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
+        order2 = OrderEvent(datetime.now(), 'INVALID', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
         
         self.exchange.execute_order(order1)  # Should succeed
         self.exchange.execute_order(order2)  # Should fail (invalid symbol)
@@ -584,13 +588,13 @@ class TestSimulatedExchangeEdgeCases:
         
         # Test failure (random returns 0.3, which is < 0.5)
         mock_random.return_value = 0.3
-        order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1)
+        order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
         result = self.exchange.execute_order(order)
         assert result.success is False
-        
+
         # Test success (random returns 0.7, which is >= 0.5)
         mock_random.return_value = 0.7
-        order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1)
+        order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
         result = self.exchange.execute_order(order)
         assert result.success is True
 
