@@ -300,7 +300,7 @@ class OrderEvent:
 	portfolio_id: int
 	order_type: OrderType
 	stop_price: Optional[float] = None
-	order_id: str = None
+	order_id: Optional[int] = None
 	parent_order_id: Optional[int] = None
 	command: 'OrderCommand' = OrderCommand.NEW
 	type = EventType.ORDER
