@@ -84,7 +84,7 @@ class EnhancedOrderValidator:
         }
         
         # Supported exchanges
-        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default"}
+        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "simulated"}
     
     def validate_signal_pipeline(self, signal: SignalEvent) -> ValidationResult:
         """
