@@ -673,6 +673,25 @@ class TestSimulatedExchangeRouting(unittest.TestCase):
 		self.assertIs(statuses[7], self.FillStatus.EXECUTED)
 		self.assertIs(statuses[6], self.FillStatus.CANCELLED)
 
+	def test_rejected_market_order_emits_refused_fill(self):
+		# 'ETHUSDT' is not in supported_symbols (setUp only allows BTCUSDT) -> validation reject.
+		self.exchange.on_order(self._oe(self.OrderType.MARKET, order_id=99,
+		                                command=self.OrderCommand.NEW))
+		# sanity: BTCUSDT market fills; now send an unsupported-symbol order directly.
+		bad = self.OrderEvent(
+			time=__import__('datetime').datetime(2024, 1, 1), ticker='ETHUSDT',
+			action='BUY', price=40.0, quantity=1.0, exchange='default', strategy_id=1,
+			portfolio_id=1, order_type=self.OrderType.MARKET, order_id=100,
+			command=self.OrderCommand.NEW)
+		# drain the first (successful) fill, then exercise the rejection
+		while not self.queue.empty():
+			self.queue.get()
+		self.exchange.on_order(bad)
+		fills = [self.queue.get() for _ in range(self.queue.qsize())]
+		self.assertEqual(len(fills), 1)
+		self.assertIs(fills[0].status, self.FillStatus.REFUSED)
+		self.assertEqual(fills[0].order_id, 100)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

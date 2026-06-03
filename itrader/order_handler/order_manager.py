@@ -86,8 +86,10 @@ class OrderManager:
 					return
 			elif fill_event.status == FillStatus.CANCELLED:
 				order.cancel_order("exchange cancellation")
+			elif fill_event.status == FillStatus.REFUSED:
+				order.reject_order("exchange rejection")
 			else:
-				# REFUSED or any other status: leave the order active for retry/alerting.
+				# Truly unknown status: leave the order active and alert.
 				self.logger.warning('Unhandled fill status %s for order %s; order left active',
 				                    fill_event.status, order_id)
 				return

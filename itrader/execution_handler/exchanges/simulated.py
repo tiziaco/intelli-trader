@@ -112,7 +112,8 @@ class SimulatedExchange(AbstractExchange):
 				self._orders_failed += 1
 				self._last_error = validation_result.error_message
 				self._last_error_time = execution_time
-				
+
+				self._emit_rejection(event, validation_result.error_message or "validation failed")
 				return ExecutionResult(
 					success=False,
 					status=ExecutionStatus.REJECTED,
@@ -127,7 +128,8 @@ class SimulatedExchange(AbstractExchange):
 				error_msg = "Exchange not connected"
 				self._last_error = error_msg
 				self._last_error_time = execution_time
-				
+
+				self._emit_rejection(event, "exchange not connected")
 				return ExecutionResult(
 					success=False,
 					status=ExecutionStatus.FAILED,
@@ -148,7 +150,8 @@ class SimulatedExchange(AbstractExchange):
 				error_code, error_msg = random.choice(error_scenarios)
 				self._last_error = error_msg
 				self._last_error_time = execution_time
-				
+
+				self._emit_rejection(event, error_msg)
 				return ExecutionResult(
 					success=False,
 					status=ExecutionStatus.FAILED,
@@ -193,6 +196,11 @@ class SimulatedExchange(AbstractExchange):
 				error_message=f"Unexpected error: {str(e)}",
 				execution_time=execution_time
 			)
+
+	def _emit_rejection(self, event: OrderEvent, reason: str) -> None:
+		"""Enqueue a FillEvent(REFUSED) so the order mirror can reconcile a rejected order."""
+		self.logger.debug('Emitting REFUSED fill for %s %s: %s', event.action, event.ticker, reason)
+		self.global_queue.put(FillEvent.new_fill('REFUSED', 0.0, event))
 
 	def _emit_fill(self, event: OrderEvent, fill_price: float,
 	               fill_quantity: float) -> tuple[float, float, float]:
