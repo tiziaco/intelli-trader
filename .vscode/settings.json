@@ -25,5 +25,9 @@
 
 	// Python-specific settings
     "python.defaultInterpreterPath": ".venv/bin/python",
-    "python.analysis.extraPaths": ["./itrader"],
+	"python.analysis.extraPaths": [
+		"./itrader"
+	],
+	"python-envs.defaultEnvManager": "ms-python.python:poetry",
+	"python-envs.defaultPackageManager": "ms-python.python:poetry",
 }
