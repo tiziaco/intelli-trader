@@ -648,6 +648,31 @@ class TestSimulatedExchangeRouting(unittest.TestCase):
 		self.assertIs(fills[0].status, self.FillStatus.CANCELLED)
 		self.assertEqual(fills[0].order_id, 3)
 
+	def _bar(self, open_, high, low, close):
+		import pandas as pd
+		import datetime as _dt
+		from itrader.events_handler.event import BarEvent
+		bars = {'BTCUSDT': pd.DataFrame(
+			{'open': [open_], 'high': [high], 'low': [low], 'close': [close], 'volume': [1]})}
+		return BarEvent(time=_dt.datetime(2024, 1, 1), bars=bars)
+
+	def test_on_market_data_fills_resting_stop(self):
+		self.exchange.on_order(self._oe(self.OrderType.STOP, action='SELL', price=30.0, order_id=5))
+		self.exchange.on_market_data(self._bar(open_=35, high=36, low=20, close=25))
+		fills = [self.queue.get() for _ in range(self.queue.qsize())]
+		self.assertEqual(len(fills), 1)
+		self.assertIs(fills[0].status, self.FillStatus.EXECUTED)
+		self.assertEqual(fills[0].order_id, 5)
+
+	def test_on_market_data_emits_oco_cancel(self):
+		self.exchange.on_order(self._oe(self.OrderType.STOP, 'SELL', 30.0, order_id=6, parent_order_id=100))
+		self.exchange.on_order(self._oe(self.OrderType.LIMIT, 'SELL', 55.0, order_id=7, parent_order_id=100))
+		self.exchange.on_market_data(self._bar(open_=50, high=60, low=40, close=58))  # TP fills
+		events = [self.queue.get() for _ in range(self.queue.qsize())]
+		statuses = {e.order_id: e.status for e in events}
+		self.assertIs(statuses[7], self.FillStatus.EXECUTED)
+		self.assertIs(statuses[6], self.FillStatus.CANCELLED)
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

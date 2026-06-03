@@ -219,6 +219,14 @@ class SimulatedExchange(AbstractExchange):
 						(slippage_factor - 1.0) * 100)
 		return executed_price, commission, slippage_factor
 
+	def on_market_data(self, bar) -> None:
+		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels."""
+		fills, cancels = self.matching_engine.on_bar(bar)
+		for decision in fills:
+			self._emit_fill(decision.order_event, decision.fill_price, decision.fill_quantity)
+		for cancel in cancels:
+			self.global_queue.put(FillEvent.new_fill('CANCELLED', 0.0, cancel.order_event))
+
 	def on_order(self, event: OrderEvent) -> None:
 		"""
 		Route an order event by command and type.
