@@ -411,3 +411,46 @@ class TestOrderManagerBracketEmission(unittest.TestCase):
 		children = [e for e in order_events if e.order_type != self.OrderType.MARKET]
 		for child in children:
 			self.assertEqual(child.parent_order_id, primary.order_id)
+
+
+class TestOrderManagerCommands(unittest.TestCase):
+	def setUp(self):
+		from queue import Queue
+		from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+		from itrader.order_handler.order_handler import OrderHandler
+		from itrader.order_handler.storage import OrderStorageFactory
+		self.queue = Queue()
+		self.ptf_handler = PortfolioHandler(self.queue)
+		self.storage = OrderStorageFactory.create('test')
+		self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
+		self.portfolio_id = self.ptf_handler.add_portfolio(1, 'p', 'default', 100000)
+
+	def _rest_a_stop(self):
+		import datetime as _dt
+		from itrader.order_handler.order import Order
+		order = Order.new_stop_order(
+			time=_dt.datetime(2024, 1, 1), ticker='BTCUSDT',
+			action='SELL', price=30.0, quantity=1.0, exchange='default',
+			strategy_id=1, portfolio_id=self.portfolio_id)
+		self.storage.add_order(order)
+		return order
+
+	def test_cancel_emits_cancel_command(self):
+		from itrader.core.enums import OrderCommand
+		order = self._rest_a_stop()
+		ok = self.handler.cancel_order(order.id, self.portfolio_id)
+		self.assertTrue(ok)
+		events = [self.queue.get() for _ in range(self.queue.qsize())]
+		order_events = [e for e in events if e.type.name == 'ORDER']
+		self.assertEqual(len(order_events), 1)
+		self.assertIs(order_events[0].command, OrderCommand.CANCEL)
+		self.assertEqual(order_events[0].order_id, order.id)
+
+	def test_modify_emits_modify_command(self):
+		from itrader.core.enums import OrderCommand
+		order = self._rest_a_stop()
+		ok = self.handler.modify_order(order.id, new_price=28.0, portfolio_id=self.portfolio_id)
+		self.assertTrue(ok)
+		events = [self.queue.get() for _ in range(self.queue.qsize())]
+		order_events = [e for e in events if e.type.name == 'ORDER']
+		self.assertIs(order_events[0].command, OrderCommand.MODIFY)

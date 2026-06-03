@@ -15,7 +15,7 @@ and order storage/execution systems.
 from typing import List, Dict, Optional
 from .order import Order
 from .operation_result import OperationResult
-from ..core.enums import OrderType, OrderStatus
+from ..core.enums import OrderType, OrderStatus, OrderCommand
 from .base import OrderStorage
 from ..events_handler.event import BarEvent, OrderEvent, SignalEvent
 from .order_validator import EnhancedOrderValidator
@@ -793,7 +793,7 @@ class OrderManager:
 			# Validate the modification
 			if self.order_validator:
 				validation_messages = self.order_validator.validate_order_modification(
-					order, new_price, new_quantity
+					order, new_price=new_price, new_quantity=new_quantity
 				)
 				
 				if not self.order_validator.is_valid(validation_messages):
@@ -809,9 +809,9 @@ class OrderManager:
 			if success:
 				# Update in storage
 				self.order_storage.update_order(order)
-				
+
 				# Generate OrderEvent
-				order_event = OrderEvent.new_order_event(order)
+				order_event = OrderEvent.new_order_event(order, command=OrderCommand.MODIFY)
 				
 				self.logger.info('Order %s modified successfully: %s', order_id, reason)
 				return OperationResult.success_result(
@@ -865,9 +865,9 @@ class OrderManager:
 			if success:
 				# Update in storage
 				self.order_storage.update_order(order)
-				
+
 				# Generate OrderEvent for cancelled order
-				order_event = OrderEvent.new_order_event(order)
+				order_event = OrderEvent.new_order_event(order, command=OrderCommand.CANCEL)
 				
 				self.logger.info('Order %s cancelled: %s', order_id, reason)
 				return OperationResult.success_result(
