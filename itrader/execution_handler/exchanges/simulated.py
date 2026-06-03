@@ -194,7 +194,8 @@ class SimulatedExchange(AbstractExchange):
 				execution_time=execution_time
 			)
 
-	def _emit_fill(self, event: OrderEvent, fill_price: float, fill_quantity: float):
+	def _emit_fill(self, event: OrderEvent, fill_price: float,
+	               fill_quantity: float) -> tuple[float, float, float]:
 		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED)."""
 		commission = self.fee_model.calculate_fee(
 			quantity=fill_quantity, price=fill_price,
@@ -206,6 +207,8 @@ class SimulatedExchange(AbstractExchange):
 
 		fill_event = FillEvent.new_fill('EXECUTED', commission, event)
 		fill_event.price = executed_price
+		# Override the matched fill quantity (may differ from event.quantity for
+		# partial fills driven by the matching engine in on_market_data).
 		fill_event.quantity = fill_quantity
 		self.global_queue.put(fill_event)
 
@@ -216,7 +219,7 @@ class SimulatedExchange(AbstractExchange):
 						(slippage_factor - 1.0) * 100)
 		return executed_price, commission, slippage_factor
 
-	def on_order(self, event: OrderEvent):
+	def on_order(self, event: OrderEvent) -> None:
 		"""
 		Route an order event by command and type.
 
@@ -226,8 +229,10 @@ class SimulatedExchange(AbstractExchange):
 		- NEW STOP/LIMIT, or NEW MARKET (next_bar): rest in the matching engine.
 		"""
 		if event.command == OrderCommand.CANCEL:
-			self.matching_engine.cancel(event.order_id)
-			self.global_queue.put(FillEvent.new_fill('CANCELLED', 0.0, event))
+			# Only acknowledge a cancel for an order that was actually resting;
+			# a cancel for an unknown/already-filled order emits no spurious fill.
+			if self.matching_engine.cancel(event.order_id):
+				self.global_queue.put(FillEvent.new_fill('CANCELLED', 0.0, event))
 			return
 
 		if event.command == OrderCommand.MODIFY:
