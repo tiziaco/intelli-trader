@@ -40,53 +40,28 @@ class ExecutionHandler(AbstractExecutionHandler):
 
 
 	def on_order(self, event: OrderEvent):
-		"""
-		Enhanced order execution with comprehensive error handling and monitoring.
-		
-		Executes orders through configured exchanges and handles results properly,
-		including error logging and potential retry logic.
-
-		Parameters
-		----------
-		event : OrderEvent
-			Order event containing order details to execute
-		"""
+		"""Route an order event to the configured exchange's order router."""
 		try:
-			# Get the configured exchange
 			exchange = self.exchanges.get(event.exchange)
 			if not exchange:
-				self.logger.error('Unknown exchange specified: %s for order %s %s', 
+				self.logger.error('Unknown exchange specified: %s for order %s %s',
 								event.exchange, event.ticker, event.action)
 				return
-			
-			# Execute order and get detailed result
-			execution_result = exchange.execute_order(event)
-			
-			# Log execution outcome
-			if execution_result.success:
-				self.logger.info('Order executed successfully: %s %s %.4f @ $%.4f (ID: %s)',
-								event.action, event.ticker, 
-								execution_result.executed_quantity or event.quantity,
-								execution_result.executed_price or event.price,
-								execution_result.order_id or 'N/A')
-				
-				# Log additional execution details if available
-				if execution_result.metadata:
-					slippage = execution_result.metadata.get('slippage_applied', 0)
-					if abs(slippage) > 0.01:  # Log significant slippage
-						self.logger.info('Slippage applied: %.4f%% for %s', slippage, event.ticker)
-			else:
-				self.logger.warning('Order execution failed: %s %s - %s (%s)', 
-								   event.ticker, event.action,
-								   execution_result.error_message or 'Unknown error',
-								   execution_result.error_code.value if execution_result.error_code else 'UNKNOWN')
-				
-				# Could implement retry logic here for certain error types
-				# Could send error notifications or events to other system components
-				
+			exchange.on_order(event)
 		except Exception as e:
-			self.logger.error('Unexpected error in order execution for %s %s: %s', 
+			self.logger.error('Unexpected error routing order for %s %s: %s',
 							 event.ticker, event.action, str(e), exc_info=True)
+
+	def on_market_data(self, bar):
+		"""Drive resting-order matching on each exchange with a new bar."""
+		for name, exchange in self.exchanges.items():
+			if exchange is None:
+				continue
+			try:
+				exchange.on_market_data(bar)
+			except Exception as e:
+				self.logger.error('Error matching resting orders on %s: %s',
+								 name, str(e), exc_info=True)
 
 	
 	def init_exchanges(self):

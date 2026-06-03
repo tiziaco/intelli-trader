@@ -17,6 +17,22 @@ class AbstractExchange(object):
 	__metaclass__ = ABCMeta
 
 	# Core execution methods
+	def on_order(self, event: OrderEvent):
+		"""
+		Route an order event (NEW/CANCEL/MODIFY) for execution or resting.
+
+		Concrete exchanges decide immediate execution vs. resting in an order book.
+		"""
+		raise NotImplementedError("Should implement on_order()")
+
+	def on_market_data(self, bar):
+		"""
+		Drive resting-order matching against a new market-data bar.
+
+		Concrete exchanges evaluate resting orders and emit fills/cancellations.
+		"""
+		raise NotImplementedError("Should implement on_market_data()")
+
 	@abstractmethod
 	def execute_order(self, event: OrderEvent) -> ExecutionResult:
 		"""
