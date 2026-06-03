@@ -453,4 +453,5 @@ class TestOrderManagerCommands(unittest.TestCase):
 		self.assertTrue(ok)
 		events = [self.queue.get() for _ in range(self.queue.qsize())]
 		order_events = [e for e in events if e.type.name == 'ORDER']
+		self.assertEqual(len(order_events), 1)
 		self.assertIs(order_events[0].command, OrderCommand.MODIFY)
