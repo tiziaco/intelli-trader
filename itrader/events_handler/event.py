@@ -84,12 +84,12 @@ class BarEvent:
 	def get_last_open(self, ticker) -> float:
 		"""
 		Get the opening price for the ticker from the current bar.
-		
+
 		Parameters
 		----------
 		ticker : str
 			The ticker symbol
-			
+
 		Returns
 		-------
 		float
@@ -97,9 +97,9 @@ class BarEvent:
 		"""
 		if ticker not in self.bars:
 			return None
-			
+
 		open_data = self.bars[ticker]['open']
-		
+
 		# Handle pandas Series or DataFrame column
 		if hasattr(open_data, 'iloc'):
 			return float(open_data.iloc[-1])
@@ -109,6 +109,64 @@ class BarEvent:
 		# Handle scalar values
 		else:
 			return float(open_data)
+
+	def get_last_high(self, ticker) -> float:
+		"""
+		Get the high price for the ticker from the current bar.
+
+		Parameters
+		----------
+		ticker : str
+			The ticker symbol
+
+		Returns
+		-------
+		float
+			The high price for the ticker
+		"""
+		if ticker not in self.bars:
+			return None
+
+		high_data = self.bars[ticker]['high']
+
+		# Handle pandas Series or DataFrame column
+		if hasattr(high_data, 'iloc'):
+			return float(high_data.iloc[-1])
+		# Handle numpy arrays
+		elif hasattr(high_data, '__getitem__') and hasattr(high_data, '__len__'):
+			return float(high_data[-1])
+		# Handle scalar values
+		else:
+			return float(high_data)
+
+	def get_last_low(self, ticker) -> float:
+		"""
+		Get the low price for the ticker from the current bar.
+
+		Parameters
+		----------
+		ticker : str
+			The ticker symbol
+
+		Returns
+		-------
+		float
+			The low price for the ticker
+		"""
+		if ticker not in self.bars:
+			return None
+
+		low_data = self.bars[ticker]['low']
+
+		# Handle pandas Series or DataFrame column
+		if hasattr(low_data, 'iloc'):
+			return float(low_data.iloc[-1])
+		# Handle numpy arrays
+		elif hasattr(low_data, '__getitem__') and hasattr(low_data, '__len__'):
+			return float(low_data[-1])
+		# Handle scalar values
+		else:
+			return float(low_data)
 
 @dataclass
 class PortfolioUpdateEvent:
