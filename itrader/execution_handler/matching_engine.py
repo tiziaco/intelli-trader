@@ -91,6 +91,9 @@ class MatchingEngine:
                     return max(open_, order.price)  # pessimistic gap-up
 
         elif order.order_type == OrderType.LIMIT:
+            # Limits fill at the limit price even on a favorable gap (we never
+            # credit a better-than-limit fill to the strategy) — intentionally
+            # asymmetric with the pessimistic open-based gap fill used for stops.
             if order.action == 'SELL':              # take-profit on a long
                 if high >= order.price:
                     return order.price
@@ -108,8 +111,10 @@ class MatchingEngine:
         for order in list(self._resting.values()):
             try:
                 price = self._evaluate(order, bar)
-            except Exception:
-                # A single malformed resting order must not drop the whole bar.
+            except (TypeError, ValueError, KeyError):
+                # A single malformed resting order (e.g. price=None, missing bar
+                # field) must not drop the whole bar. Programming errors
+                # (AttributeError, etc.) are NOT swallowed — they propagate.
                 continue
             if price is None:
                 continue
