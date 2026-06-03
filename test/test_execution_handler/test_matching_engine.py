@@ -84,3 +84,38 @@ class TestMatchingEngineStopTriggers(unittest.TestCase):
 		self.engine.submit(make_order_event(OrderType.STOP, 'BUY', 50.0, order_id=2))
 		fills, cancels = self.engine.on_bar(make_bar(open_=55, high=62, low=54, close=60))
 		self.assertEqual(fills[0].fill_price, 55.0)   # max(open, stop)
+
+
+class TestMatchingEngineLimitTriggers(unittest.TestCase):
+	def setUp(self):
+		self.engine = MatchingEngine()
+
+	def test_sell_limit_triggers_when_high_pierces(self):
+		# take-profit on a long: SELL limit at 50, bar high 60 -> fills at limit
+		self.engine.submit(make_order_event(OrderType.LIMIT, 'SELL', 50.0, order_id=1))
+		fills, _ = self.engine.on_bar(make_bar(open_=45, high=60, low=44, close=58))
+		self.assertEqual(fills[0].fill_price, 50.0)
+
+	def test_sell_limit_does_not_trigger_when_high_below(self):
+		self.engine.submit(make_order_event(OrderType.LIMIT, 'SELL', 50.0, order_id=1))
+		fills, _ = self.engine.on_bar(make_bar(open_=40, high=48, low=39, close=47))
+		self.assertEqual(fills, [])
+
+	def test_buy_limit_triggers_when_low_pierces(self):
+		self.engine.submit(make_order_event(OrderType.LIMIT, 'BUY', 30.0, order_id=2))
+		fills, _ = self.engine.on_bar(make_bar(open_=35, high=36, low=25, close=28))
+		self.assertEqual(fills[0].fill_price, 30.0)
+
+	def test_independent_orders_on_same_bar_both_fill(self):
+		# two unrelated orders (no bracket link) both trigger -> both fill
+		self.engine.submit(make_order_event(OrderType.STOP, 'SELL', 30.0, order_id=1))
+		self.engine.submit(make_order_event(OrderType.LIMIT, 'SELL', 55.0, order_id=2))
+		fills, cancels = self.engine.on_bar(make_bar(open_=40, high=60, low=20, close=50))
+		self.assertEqual(len(fills), 2)
+		self.assertEqual(cancels, [])
+
+	def test_ignores_ticker_not_in_bar(self):
+		self.engine.submit(make_order_event(OrderType.STOP, 'SELL', 30.0, order_id=1, ticker='ETHUSDT'))
+		fills, _ = self.engine.on_bar(make_bar(open_=40, high=60, low=20, close=50))  # BTCUSDT only
+		self.assertEqual(fills, [])
+		self.assertTrue(self.engine.has_order(1))
