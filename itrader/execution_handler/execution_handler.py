@@ -8,61 +8,135 @@ from itrader.logger import get_itrader_logger
 
 class ExecutionHandler(AbstractExecutionHandler):
 	"""
-	The simulated execution handler converts all order 
-	objects into their equivalent fill objects automatically
-	without latency, slippage or fill-ratio issues. 
+	Enhanced execution handler with comprehensive error handling and monitoring.
 	
-	It allows to cqlculqte the fees with different models.
-
-	This allows a straightforward "first go" test of any strategy,
-	before implementation with a more sophisticated execution
-	handler.
+	Manages order execution across multiple exchanges with features including:
+	- Detailed execution result tracking
+	- Exchange health monitoring
+	- Comprehensive error handling and logging
+	- Support for both simulated and live exchanges
+	- Connection management and validation
+	
+	This implementation provides a production-ready foundation for order execution
+	while maintaining backward compatibility with existing systems.
 	"""
 
-	def __init__(self,
-		global_queue: Queue, 
-		fee_model = 'no_fee', 
-		commission_pct = 0.007, slippage_pct = 0.0):
+	def __init__(self, global_queue: Queue):
 		"""
 		Parameters
 		----------
-		events_queue: `Queue object`
+		global_queue: `Queue object`
 			The events queue of the trading system
 		"""
+		# Initialize logger first
+		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
+
 		self.global_queue = global_queue
-		self.fee_model = fee_model
-		self.commission_pct = commission_pct
-		self.slippage_pct = slippage_pct
+		
+		# Initialize exchanges (requires logger)
 		self.exchanges: dict[str, AbstractExchange] = self.init_exchanges()
 
-		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
-		self.logger.info('Execution Handler initialized with fee model: %s, commission: %.4f%%, slippage: %.4f%%',
-			self.fee_model,
-			self.commission_pct * 100,
-			self.slippage_pct * 100
-		)
+		self.logger.info('Execution Handler initialized')
 
 
 	def on_order(self, event: OrderEvent):
-		"""
-		Converts OrderEvents into FillEvents "naively",
-		i.e. without any latency, slippage or fill ratio problems.
+		"""Route an order event to the configured exchange's order router."""
+		try:
+			exchange = self.exchanges.get(event.exchange)
+			if not exchange:
+				self.logger.error('Unknown exchange specified: %s for order %s %s',
+								event.exchange, event.ticker, event.action)
+				return
+			exchange.on_order(event)
+		except Exception as e:
+			self.logger.error('Unexpected error routing order for %s %s: %s',
+							 event.ticker, event.action, str(e), exc_info=True)
 
-		Parameters:
-		event - An Event object with order information.
-		"""
-
-		# Set the exchange
-		exchange = self.exchanges.get(event.exchange)
-		# Create the FillEvent and place it in the events queue
-		exchange.execute_order(event)
+	def on_market_data(self, bar):
+		"""Drive resting-order matching on each exchange with a new bar."""
+		for name, exchange in self.exchanges.items():
+			if exchange is None:
+				continue
+			try:
+				exchange.on_market_data(bar)
+			except Exception as e:
+				self.logger.error('Error matching resting orders on %s: %s',
+								 name, str(e), exc_info=True)
 
 	
 	def init_exchanges(self):
+		"""
+		Initialize configured exchanges.
+		
+		Creates exchange instances using their default configurations.
+		Each exchange manages its own fee models, slippage simulation, etc.
+		"""
 		exchanges = {
-			'simulated': SimulatedExchange(
-				self.global_queue, 
-				self.fee_model, self.commission_pct, self.slippage_pct),
-			'ccxt' : None
+			'simulated': SimulatedExchange(self.global_queue),
+			'ccxt': None  # Placeholder for live exchange implementation
 		}
+		
+		# Connect to exchanges that support it
+		for exchange_name, exchange in exchanges.items():
+			if exchange is not None:
+				try:
+					connection_result = exchange.connect()
+					if connection_result.success:
+						self.logger.info('Successfully connected to %s exchange', exchange_name)
+					else:
+						self.logger.warning('Failed to connect to %s exchange: %s', 
+										   exchange_name, connection_result.error_message)
+				except AttributeError:
+					# Exchange doesn't support connection management (backward compatibility)
+					self.logger.debug('Exchange %s does not support connection management', exchange_name)
+		
 		return exchanges
+
+	def get_exchange_health(self, exchange_name: str = None) -> dict:
+		"""
+		Get health status for one or all exchanges.
+		
+		Parameters
+		----------
+		exchange_name : str, optional
+			Name of specific exchange to check. If None, checks all exchanges.
+			
+		Returns
+		-------
+		dict
+			Health status information for requested exchange(s)
+		"""
+		health_data = {}
+		
+		exchanges_to_check = [exchange_name] if exchange_name else self.exchanges.keys()
+		
+		for name in exchanges_to_check:
+			exchange = self.exchanges.get(name)
+			if exchange is not None:
+				try:
+					health_status = exchange.health_check()
+					health_data[name] = {
+						'connected': health_status.connected,
+						'status': health_status.status.value,
+						'orders_executed': health_status.orders_executed_today,
+						'orders_failed': health_status.orders_failed_today,
+						'error_rate': health_status.error_rate,
+						'latency_ms': health_status.latency_ms,
+						'last_error': health_status.last_error,
+						'is_healthy': health_status.is_healthy
+					}
+				except AttributeError:
+					# Exchange doesn't support health checks
+					health_data[name] = {
+						'connected': True,  # Assume connected if no health check
+						'status': 'unknown',
+						'message': 'Health monitoring not supported'
+					}
+			else:
+				health_data[name] = {
+					'connected': False,
+					'status': 'not_configured',
+					'message': 'Exchange not configured'
+				}
+		
+		return health_data

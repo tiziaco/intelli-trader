@@ -1,66 +1,57 @@
-from itrader.execution_handler.fee_model.fee_model import FeeModel
+from decimal import Decimal
+from typing import Union, Dict, Any, Optional
+from .base import FeeModel
 
 
 class ZeroFeeModel(FeeModel):
     """
-    A FeeModel subclass that produces no commission, fees
-    or taxes. This is the default fee model for simulated
-    brokerages within iTrader.
+    Fee model that applies no fees to any trading operations.
+    
+    Perfect for backtesting scenarios where you want to test strategy
+    performance without fee considerations, or for simulated trading
+    environments where fees are not relevant.
     """
 
-    def _calc_commission(self, quantity, price):
+    def calculate_fee(
+        self, 
+        quantity: Union[int, float, Decimal], 
+        price: Union[float, Decimal], 
+        side: str = "buy",
+        order_type: str = "market",
+        **kwargs
+    ) -> Decimal:
         """
-        Returns zero commission.
-
+        Calculate fee for an order (always returns Decimal('0')).
+        
         Parameters
         ----------
-        quantity : `int`
-            The quantity of assets 
-        price : `float`
-            Price times quantity of the order.
-
+        quantity : Union[int, float, Decimal]
+            Number of units to trade
+        price : Union[float, Decimal]
+            Price per unit
+        side : str, optional
+            Order side ("buy" or "sell")
+        order_type : str, optional
+            Order type
+        **kwargs
+            Additional parameters (ignored)
+            
         Returns
         -------
-        `float`
-            The zero-cost commission.
+        Decimal
+            Always returns Decimal('0') (no fees)
         """
-        return 0.0
-
-    def _calc_tax(self, quantity, price):
-        """
-        Returns zero tax.
-
-        Parameters
-        ----------
-        quantity : `int`
-            The quantity of assets 
-        price : `float`
-            Price times quantity of the order.
-
-        Returns
-        -------
-        `float`
-            The zero-cost tax.
-        """
-        return 0.0
-
-    def calc_total_commission(self, quantity, price):
-        """
-        Calculate the total of any commission and/or tax
-        for the trade of size 'consideration'.
-
-        Parameters
-        ----------
-        quantity : `int`
-            The quantity of assets 
-        price : `float`
-            Price times quantity of the order.
-
-        Returns
-        -------
-        `float`
-            The zero-cost total commission and tax.
-        """
-        commission = self._calc_commission(quantity, price)
-        tax = self._calc_tax(quantity, price)
-        return commission + tax
+        # Validate inputs for consistency
+        self.validate_inputs(quantity, price, side, order_type)
+        
+        return Decimal('0')
+    
+    def get_fee_info(self) -> Dict[str, Any]:
+        """Get information about this zero fee model."""
+        base_info = super().get_fee_info()
+        base_info.update({
+            "description": "No fees applied to any trades",
+            "fee_rate": 0.0,
+            "currency": "N/A"
+        })
+        return base_info

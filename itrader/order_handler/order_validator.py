@@ -3,7 +3,8 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
-from .order import Order, OrderType, OrderStatus
+from .order import Order
+from ..core.enums import OrderType, OrderStatus
 from ..events_handler.event import SignalEvent
 
 
@@ -83,7 +84,7 @@ class EnhancedOrderValidator:
         }
         
         # Supported exchanges
-        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default"}
+        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "simulated"}
     
     def validate_signal_pipeline(self, signal: SignalEvent) -> ValidationResult:
         """

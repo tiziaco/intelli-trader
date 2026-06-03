@@ -3,7 +3,8 @@ from datetime import datetime
 from ..base import OrderStorage
 
 if TYPE_CHECKING:
-    from ..order import Order, OrderStatus
+    from ..order import Order
+    from ...core.enums import OrderStatus
 
 
 class InMemoryOrderStorage(OrderStorage):

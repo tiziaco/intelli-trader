@@ -4,6 +4,7 @@ from queue import Queue
 
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.events_handler.event import FillEvent, OrderEvent
+from itrader.core.enums import OrderType
 
 class TestExecutionHandlerUpdates(unittest.TestCase):
 	"""
@@ -27,10 +28,11 @@ class TestExecutionHandlerUpdates(unittest.TestCase):
 			datetime.now(UTC),
 			'BTCUSDT',
 			'BUY',
-			100,
-			1,
+			100.0,  # price
+			1.0,    # quantity
 			'simulated',
-			1, 1
+			1, 1,
+			OrderType.MARKET,
 		)
 
 	def test_execution_handler_initialization(self):

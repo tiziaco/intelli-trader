@@ -38,6 +38,13 @@ from .system import (
     LoggingConfig, get_default_logging_config
 )
 
+from .exchange import (
+    ExchangeConfig, ExchangeType, FeeModelType, SlippageModelType,
+    FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation,
+    ConnectionSettings, validate_exchange_config, get_exchange_preset,
+    list_available_exchange_presets
+)
+
 # Convenience functions
 def get_config_registry(config_dir: str = "settings") -> ConfigRegistry:
     """Get or create global configuration registry."""

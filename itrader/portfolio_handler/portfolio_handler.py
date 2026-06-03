@@ -17,7 +17,7 @@ from itrader.core.exceptions import (
 )
 from itrader.core.enums import PortfolioState
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
+from itrader.events_handler.event import BarEvent, FillEvent, FillStatus, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import (
     get_config_registry, get_portfolio_config_provider,
     PortfolioConfig, get_portfolio_preset
@@ -240,7 +240,16 @@ class PortfolioHandler:
             try:
                 portfolio_id = int(fill_event.portfolio_id)  # Convert string to int
                 portfolio = self.get_portfolio(portfolio_id)
-                
+
+                if fill_event.status != FillStatus.EXECUTED:
+                    self.logger.debug(
+                        "Ignoring non-executed fill",
+                        status=str(fill_event.status),
+                        ticker=fill_event.ticker,
+                        correlation_id=correlation_id,
+                    )
+                    return False
+
                 # Portfolio handles its own validation and processing
                 transaction_type = TransactionType.BUY if fill_event.action == "BUY" else TransactionType.SELL
                 transaction = Transaction(

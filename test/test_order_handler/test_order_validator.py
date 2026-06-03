@@ -5,7 +5,8 @@ from unittest.mock import Mock
 from itrader.order_handler.order_validator import (
     EnhancedOrderValidator, ValidationResult, ValidationMessage, ValidationLevel
 )
-from itrader.order_handler.order import Order, OrderType, OrderStatus
+from itrader.order_handler.order import Order
+from itrader.core.enums import OrderType, OrderStatus
 from itrader.events_handler.event import SignalEvent
 
 

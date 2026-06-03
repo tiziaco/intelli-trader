@@ -5,23 +5,10 @@ from typing import List, Optional
 
 from itrader.events_handler.event import SignalEvent
 from itrader import idgen
-
-OrderType = Enum("OrderType", "MARKET STOP LIMIT")
-OrderStatus = Enum("OrderStatus", "PENDING PARTIALLY_FILLED FILLED CANCELLED REJECTED EXPIRED")
-
-order_type_map = {
-	"MARKET": OrderType.MARKET,
-	"STOP": OrderType.STOP,
-	"LIMIT": OrderType.LIMIT
-}
-order_status_map = {
-	"PENDING": OrderStatus.PENDING,
-	"PARTIALLY_FILLED": OrderStatus.PARTIALLY_FILLED,
-	"FILLED": OrderStatus.FILLED,
-	"CANCELLED": OrderStatus.CANCELLED,
-	"REJECTED": OrderStatus.REJECTED,
-	"EXPIRED": OrderStatus.EXPIRED
-}
+from ..core.enums import (
+    OrderType, OrderStatus, order_type_map, order_status_map, 
+    VALID_ORDER_TRANSITIONS
+)
 
 @dataclass
 class OrderStateChange:
@@ -38,17 +25,6 @@ class OrderStateChange:
 	
 	def __str__(self):
 		return f"{self.from_status} → {self.to_status} at {self.timestamp} ({self.reason})"
-
-# Valid state transitions for order lifecycle
-VALID_ORDER_TRANSITIONS = {
-	None: [OrderStatus.PENDING],  # Initial creation
-	OrderStatus.PENDING: [OrderStatus.PARTIALLY_FILLED, OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED],
-	OrderStatus.PARTIALLY_FILLED: [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.EXPIRED],
-	OrderStatus.FILLED: [],  # Terminal state
-	OrderStatus.CANCELLED: [],  # Terminal state
-	OrderStatus.REJECTED: [],  # Terminal state
-	OrderStatus.EXPIRED: []   # Terminal state
-}
 
 @dataclass
 class Order:

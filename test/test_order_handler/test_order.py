@@ -10,8 +10,11 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock
 
 from itrader.order_handler.order import (
-    Order, OrderStatus, OrderType, OrderStateChange, 
-    VALID_ORDER_TRANSITIONS, order_status_map, order_type_map
+    Order, OrderStateChange
+)
+from itrader.core.enums import (
+    OrderStatus, OrderType, VALID_ORDER_TRANSITIONS, 
+    order_status_map, order_type_map
 )
 
 

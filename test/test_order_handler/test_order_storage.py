@@ -4,7 +4,8 @@ from queue import Queue
 
 from itrader.order_handler.base import OrderStorage
 from itrader.order_handler.storage import InMemoryOrderStorage, OrderStorageFactory
-from itrader.order_handler.order import Order, OrderType, OrderStatus
+from itrader.order_handler.order import Order
+from itrader.core.enums import OrderType, OrderStatus
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.event import SignalEvent

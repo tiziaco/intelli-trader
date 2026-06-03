@@ -69,7 +69,7 @@ class EventHandler(object):
 				self.universe.generate_bar_event(event)
 			elif event.type == EventType.BAR:
 				self.portfolio_handler.update_portfolios_market_value(event)
-				self.order_handler.process_orders_on_market_data(event)
+				self.execution_handler.on_market_data(event)
 				self.strategies_handler.calculate_signals(event)
 			elif event.type == EventType.SIGNAL:
 				self.order_handler.on_signal(event)
@@ -77,7 +77,7 @@ class EventHandler(object):
 				self.execution_handler.on_order(event)
 			elif event.type == EventType.FILL:
 				self.portfolio_handler.on_fill(event)
-				#self.order_handler._delete_pending_orders(event)
+				self.order_handler.on_fill(event)
 			elif event.type == EventType.SCREENER:
 				continue
 			else:

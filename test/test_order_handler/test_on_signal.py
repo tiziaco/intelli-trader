@@ -44,6 +44,14 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		"""
 		# Add new portfolio
 		self.last_ptf_id = self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
+
+	def tearDown(self):
+		"""Drain the queue after each test to prevent cross-test bleed."""
+		while not self.queue.empty():
+			try:
+				self.queue.get_nowait()
+			except Exception:
+				break
 	
 	def create_mock_signal(self, action, ticker='BTCUSDT', quantity=100.0, price=40.0, 
 	                      order_type='MARKET', stop_loss=0.0, take_profit=0.0):
@@ -98,44 +106,56 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 	def test_on_signal_buy_with_sl_tp(self):
 		# Create a mock buy signal with stop loss and take profit
 		buy_signal = self.create_mock_signal('BUY', quantity=100.0, price=40.0, stop_loss=30.0, take_profit=50.0)
-		
+
 		# Process the signal through the order handler
 		self.order_handler.on_signal(buy_signal)
 
-		# Retrieve the market order that should have been generated
-		order_event: OrderEvent = self.queue.get(False)
+		# Drain all 3 order events: MARKET (primary) + STOP (SL) + LIMIT (TP)
+		emitted = [self.queue.get(False) for _ in range(self.queue.qsize())]
+		order_events = [e for e in emitted
+		                if isinstance(e, OrderEvent) and e.type.name == 'ORDER']
+		# Find the primary MARKET order event
+		from itrader.core.enums import OrderType as OT
+		primary_event = next(e for e in order_events if e.order_type == OT.MARKET)
 		pending_orders = self.order_handler.order_storage.get_pending_orders()
-		portfolio_orders = pending_orders.get(str(order_event.portfolio_id), {})
+		portfolio_orders = pending_orders.get(str(primary_event.portfolio_id), {})
 
-		# Assert Order Event from queue
-		self.assertIsInstance(order_event, OrderEvent)
-		self.assertEqual(order_event.ticker, 'BTCUSDT')
-		self.assertEqual(order_event.action, 'BUY')
-		self.assertEqual(order_event.quantity, 100.0)
-		# Assert pending orders (should have SL and TP orders)
+		# Assert primary Order Event
+		self.assertEqual(primary_event.ticker, 'BTCUSDT')
+		self.assertEqual(primary_event.action, 'BUY')
+		self.assertEqual(primary_event.quantity, 100.0)
+		# All 3 legs emitted
+		self.assertEqual(len(order_events), 3)
+		# All 3 orders remain pending (market order is filled by execution handler, not self-filled)
 		self.assertIsInstance(pending_orders, dict)
-		self.assertEqual(len(portfolio_orders), 2)  # SL and TP orders
-		
+		self.assertEqual(len(portfolio_orders), 3)  # MARKET, SL and TP orders all pending
+
 	def test_on_signal_sell_with_sl_tp(self):
 		# Create a mock sell signal with stop loss and take profit
 		sell_signal = self.create_mock_signal('SELL', quantity=50.0, price=40.0, stop_loss=30.0, take_profit=50.0)
-		
+
 		# Process the signal through the order handler
 		self.order_handler.on_signal(sell_signal)
 
-		# Retrieve the market order that should have been generated
-		order_event: OrderEvent = self.queue.get(False)
+		# Drain all 3 order events: MARKET (primary) + STOP (SL) + LIMIT (TP)
+		emitted = [self.queue.get(False) for _ in range(self.queue.qsize())]
+		order_events = [e for e in emitted
+		                if isinstance(e, OrderEvent) and e.type.name == 'ORDER']
+		# Find the primary MARKET order event
+		from itrader.core.enums import OrderType as OT
+		primary_event = next(e for e in order_events if e.order_type == OT.MARKET)
 		pending_orders = self.order_handler.order_storage.get_pending_orders()
-		portfolio_orders = pending_orders.get(str(order_event.portfolio_id), {})
+		portfolio_orders = pending_orders.get(str(primary_event.portfolio_id), {})
 
-		# Assert Order Event from queue
-		self.assertIsInstance(order_event, OrderEvent)
-		self.assertEqual(order_event.ticker, 'BTCUSDT')
-		self.assertEqual(order_event.action, 'SELL')
-		self.assertEqual(order_event.quantity, 50.0)
-		# Assert pending orders (should have SL and TP orders)
+		# Assert primary Order Event
+		self.assertEqual(primary_event.ticker, 'BTCUSDT')
+		self.assertEqual(primary_event.action, 'SELL')
+		self.assertEqual(primary_event.quantity, 50.0)
+		# All 3 legs emitted
+		self.assertEqual(len(order_events), 3)
+		# All 3 orders remain pending (market order is filled by execution handler, not self-filled)
 		self.assertIsInstance(pending_orders, dict)
-		self.assertEqual(len(portfolio_orders), 2)  # SL and TP orders
+		self.assertEqual(len(portfolio_orders), 3)  # MARKET, SL and TP orders all pending
 
 
 if __name__ == "__main__":
