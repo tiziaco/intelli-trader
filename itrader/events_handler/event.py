@@ -8,7 +8,7 @@ from uuid import uuid4
 from ..core.enums import OrderType, OrderCommand
 
 EventType = Enum("EventType", "PING BAR UPDATE SIGNAL ORDER FILL SCREENER")
-FillStatus = Enum("FillStatus", "EXECUTED REFUSED")
+FillStatus = Enum("FillStatus", "EXECUTED REFUSED CANCELLED")
 
 event_type_map = {
 	"PING": EventType.PING,
@@ -22,6 +22,7 @@ event_type_map = {
 fill_status_map = {
 	"EXECUTED": FillStatus.EXECUTED,
 	"REFUSED": FillStatus.REFUSED,
+	"CANCELLED": FillStatus.CANCELLED,
 }
 
 @dataclass
@@ -374,6 +375,7 @@ class FillEvent:
 	quantity: float
 	commission: float
 	portfolio_id: str
+	order_id: Optional[int] = None
 	type = EventType.FILL
 
 	def __str__(self):
@@ -411,7 +413,8 @@ class FillEvent:
 			order.price,
 			order.quantity,
 			commission,
-			order.portfolio_id
+			order.portfolio_id,
+			order_id=getattr(order, 'order_id', None),
 		)
 
 
