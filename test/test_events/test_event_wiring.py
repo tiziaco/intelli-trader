@@ -1,23 +1,35 @@
 import sys
-import unittest
-from unittest.mock import MagicMock
 import queue
+import unittest
+from unittest.mock import MagicMock, patch
 
-# Patch heavy handler modules before importing EventHandler to avoid
-# transitive import errors (e.g. CCXT / FORBIDDEN_SYMBOLS chain).
-_mock_modules = [
-	'itrader.strategy_handler.strategies_handler',
-	'itrader.screeners_handler.screeners_handler',
-	'itrader.order_handler.order_handler',
-	'itrader.portfolio_handler.portfolio_handler',
-	'itrader.execution_handler.execution_handler',
-	'itrader.universe.universe',
-]
-for _mod in _mock_modules:
-	sys.modules.setdefault(_mod, MagicMock())
+# Pre-import the real event module BEFORE the stubbed import below. Stubbing
+# submodules disrupts the import machinery enough to otherwise re-import
+# `itrader.events_handler.event` a second time, producing a distinct EventType
+# enum whose members fail identity-based `==` against the test's EventType.
+# Caching it first guarantees full_event_handler reuses the same EventType.
+from itrader.events_handler.event import EventType  # noqa: E402  (must precede stub import)
 
-from itrader.events_handler.full_event_handler import EventHandler
-from itrader.events_handler.event import EventType
+# `full_event_handler` imports the full handler chain at module load, which
+# currently fails on an unrelated pre-existing bug (price_handler -> CCXT ->
+# `from itrader.config import FORBIDDEN_SYMBOLS`, shadowed by the config package).
+# We stub the heavy handler modules ONLY for the duration of the EventHandler
+# import, using patch.dict so sys.modules is restored immediately afterwards —
+# this avoids polluting the rest of the pytest session (other suites must still
+# import the real modules).
+_STUB_MODULES = {
+	name: MagicMock()
+	for name in [
+		'itrader.strategy_handler.strategies_handler',
+		'itrader.screeners_handler.screeners_handler',
+		'itrader.order_handler.order_handler',
+		'itrader.portfolio_handler.portfolio_handler',
+		'itrader.execution_handler.execution_handler',
+		'itrader.universe.universe',
+	]
+}
+with patch.dict(sys.modules, _STUB_MODULES):
+	from itrader.events_handler.full_event_handler import EventHandler
 
 
 class TestEventWiring(unittest.TestCase):
