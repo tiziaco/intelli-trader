@@ -7,6 +7,7 @@ update_config, and get_config_dict methods.
 """
 
 import pytest
+import unittest
 from datetime import datetime
 from queue import Queue
 from unittest.mock import Mock, patch
@@ -597,6 +598,55 @@ class TestSimulatedExchangeEdgeCases:
         order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
         result = self.exchange.execute_order(order)
         assert result.success is True
+
+
+class TestSimulatedExchangeRouting(unittest.TestCase):
+	def setUp(self):
+		from queue import Queue
+		from itrader.execution_handler.exchanges.simulated import SimulatedExchange
+		from itrader.core.enums import OrderType, OrderCommand
+		from itrader.events_handler.event import OrderEvent, FillStatus
+		self.Queue = Queue
+		self.OrderType = OrderType
+		self.OrderCommand = OrderCommand
+		self.OrderEvent = OrderEvent
+		self.FillStatus = FillStatus
+		self.queue = Queue()
+		self.exchange = SimulatedExchange(self.queue)
+		self.exchange.connect()
+		# Ensure the symbol validates on the default preset used by tests.
+		self.exchange.update_config(supported_symbols={'BTCUSDT'})
+
+	def _oe(self, order_type, action='BUY', price=40.0, order_id=1, command=None, parent_order_id=None):
+		import datetime as _dt
+		return self.OrderEvent(
+			time=_dt.datetime(2024, 1, 1), ticker='BTCUSDT',
+			action=action, price=price, quantity=1.0, exchange='default',
+			strategy_id=1, portfolio_id=1, order_type=order_type, order_id=order_id,
+			parent_order_id=parent_order_id,
+			command=command or self.OrderCommand.NEW,
+		)
+
+	def test_new_market_order_fills_immediately(self):
+		self.exchange.on_order(self._oe(self.OrderType.MARKET))
+		fills = [self.queue.get() for _ in range(self.queue.qsize())]
+		self.assertEqual(len(fills), 1)
+		self.assertIs(fills[0].status, self.FillStatus.EXECUTED)
+
+	def test_new_stop_order_rests_no_fill(self):
+		self.exchange.on_order(self._oe(self.OrderType.STOP, action='SELL', price=30.0, order_id=2))
+		self.assertEqual(self.queue.qsize(), 0)
+		self.assertTrue(self.exchange.matching_engine.has_order(2))
+
+	def test_cancel_command_removes_and_emits_cancelled(self):
+		self.exchange.on_order(self._oe(self.OrderType.STOP, action='SELL', price=30.0, order_id=3))
+		self.exchange.on_order(self._oe(self.OrderType.STOP, action='SELL', price=30.0, order_id=3,
+		                                command=self.OrderCommand.CANCEL))
+		self.assertFalse(self.exchange.matching_engine.has_order(3))
+		fills = [self.queue.get() for _ in range(self.queue.qsize())]
+		self.assertEqual(len(fills), 1)
+		self.assertIs(fills[0].status, self.FillStatus.CANCELLED)
+		self.assertEqual(fills[0].order_id, 3)
 
 
 if __name__ == "__main__":

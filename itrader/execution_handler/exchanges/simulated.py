@@ -14,10 +14,12 @@ from ..slippage_model.zero_slippage_model import ZeroSlippageModel
 from ..slippage_model.linear_slippage_model import LinearSlippageModel
 from ..slippage_model.fixed_slippage_model import FixedSlippageModel
 from ..result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
+from ..matching_engine import MatchingEngine
 from itrader.core.enums.execution import ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
+from itrader.core.enums import OrderType, OrderCommand
 from itrader.core.exceptions.execution import (
-    ExecutionError, 
-    InvalidSymbolExecutionError, 
+    ExecutionError,
+    InvalidSymbolExecutionError,
     InsufficientFundsExecutionError,
     ExchangeStateError
 )
@@ -52,7 +54,12 @@ class SimulatedExchange(AbstractExchange):
 
 		# Core exchange identity
 		self.global_queue = global_queue
-		
+
+		# Resting-order book / matching engine
+		self.matching_engine = MatchingEngine()
+		# Execution timing for market orders: "immediate" or "next_bar"
+		self.execution_timing = "immediate"
+
 		# Exchange configuration
 		self.config = config or get_exchange_preset('default')
 		
@@ -150,39 +157,10 @@ class SimulatedExchange(AbstractExchange):
 					execution_time=execution_time
 				)
 			
-			# Calculate execution fee
-			commission = self.fee_model.calculate_fee(
-				quantity=event.quantity,
-				price=event.price,
-				side=event.action.lower(),  # Convert action to side
-				order_type="market"  # Simulated exchange assumes market orders
-			)
-			
-			# calculate slippage factor
-			slippage_factor = self.slippage_model.calculate_slippage_factor(
-				quantity=event.quantity,
-				price=event.price,
-				side=event.action.lower(),
-				order_type="market"
-			)
-			
-			executed_price = event.price * slippage_factor
+			executed_price, commission, slippage_factor = self._emit_fill(
+				event, event.price, event.quantity)
 			executed_quantity = event.quantity
-			
-			# Create and queue fill event (maintaining backward compatibility)
-			fill_event = FillEvent.new_fill('EXECUTED', commission, event)
-			fill_event.price = executed_price  # Update with slippage-adjusted price
-			self.global_queue.put(fill_event)
-			
-			# Update metrics
-			self._orders_executed += 1
-			self._total_volume += executed_price * executed_quantity
-			
-			# Log successful execution
-			self.logger.info('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
-							event.action, event.ticker, executed_quantity, executed_price,
-							(slippage_factor - 1.0) * 100)
-			
+
 			return ExecutionResult(
 				success=True,
 				status=ExecutionStatus.SUCCESS,
@@ -197,7 +175,7 @@ class SimulatedExchange(AbstractExchange):
 				metadata={
 					'slippage_applied': (slippage_factor - 1.0) * 100,
 					'original_price': event.price,
-					'execution_latency_ms': random.uniform(5, 25),  # Simulate execution latency
+					'execution_latency_ms': random.uniform(5, 25),
 					'exchange_name': self._exchange_name
 				}
 			)
@@ -215,6 +193,52 @@ class SimulatedExchange(AbstractExchange):
 				error_message=f"Unexpected error: {str(e)}",
 				execution_time=execution_time
 			)
+
+	def _emit_fill(self, event: OrderEvent, fill_price: float, fill_quantity: float):
+		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED)."""
+		commission = self.fee_model.calculate_fee(
+			quantity=fill_quantity, price=fill_price,
+			side=event.action.lower(), order_type="market")
+		slippage_factor = self.slippage_model.calculate_slippage_factor(
+			quantity=fill_quantity, price=fill_price,
+			side=event.action.lower(), order_type="market")
+		executed_price = fill_price * slippage_factor
+
+		fill_event = FillEvent.new_fill('EXECUTED', commission, event)
+		fill_event.price = executed_price
+		fill_event.quantity = fill_quantity
+		self.global_queue.put(fill_event)
+
+		self._orders_executed += 1
+		self._total_volume += executed_price * fill_quantity
+		self.logger.info('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
+						event.action, event.ticker, fill_quantity, executed_price,
+						(slippage_factor - 1.0) * 100)
+		return executed_price, commission, slippage_factor
+
+	def on_order(self, event: OrderEvent):
+		"""
+		Route an order event by command and type.
+
+		- CANCEL: remove the resting order, emit FILL(CANCELLED).
+		- MODIFY: mutate the resting order.
+		- NEW MARKET (immediate): fill now via execute_order.
+		- NEW STOP/LIMIT, or NEW MARKET (next_bar): rest in the matching engine.
+		"""
+		if event.command == OrderCommand.CANCEL:
+			self.matching_engine.cancel(event.order_id)
+			self.global_queue.put(FillEvent.new_fill('CANCELLED', 0.0, event))
+			return
+
+		if event.command == OrderCommand.MODIFY:
+			self.matching_engine.modify(event.order_id, event.price, event.quantity)
+			return
+
+		# NEW
+		if event.order_type == OrderType.MARKET and self.execution_timing == "immediate":
+			self.execute_order(event)
+		else:
+			self.matching_engine.submit(event)
 
 	def connect(self) -> ConnectionResult:
 		"""Simulate connection to exchange with realistic behavior."""
