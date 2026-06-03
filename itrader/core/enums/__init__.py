@@ -25,8 +25,10 @@ from .execution import (
 from .order import (
     OrderType,
     OrderStatus,
+    OrderCommand,
     order_type_map,
     order_status_map,
+    order_command_map,
     VALID_ORDER_TRANSITIONS
 )
 
@@ -46,7 +48,9 @@ __all__ = [
     # Order enums
     'OrderType',
     'OrderStatus',
+    'OrderCommand',
     'order_type_map',
     'order_status_map',
+    'order_command_map',
     'VALID_ORDER_TRANSITIONS'
 ]

@@ -40,3 +40,13 @@ VALID_ORDER_TRANSITIONS = {
 	OrderStatus.REJECTED: [],  # Terminal state
 	OrderStatus.EXPIRED: []   # Terminal state
 }
+
+# Order Command Enum (NEW order, CANCEL resting order, MODIFY resting order)
+OrderCommand = Enum("OrderCommand", "NEW CANCEL MODIFY")
+
+# Order Command Mapping
+order_command_map = {
+	"NEW": OrderCommand.NEW,
+	"CANCEL": OrderCommand.CANCEL,
+	"MODIFY": OrderCommand.MODIFY
+}
