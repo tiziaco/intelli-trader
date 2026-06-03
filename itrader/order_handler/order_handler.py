@@ -15,20 +15,25 @@ from itrader.logger import get_itrader_logger
 
 class OrderHandler(OrderBase):
 	"""
-	The OrderHandler class manage the signal event coming from the 
-	strategy class.
-
-	It transforms the Signal event in a Suggested order, then send it
-	to te Risk Manager (cash check, calculate sl and tp) and finally
-	calculate the position size with the Position Sizer
-
-	It is able to manage stop and limit order and it has a pending 
-	order queue for active and inactive orders.
-
-	When an order is filled it is sended to the execution handler
+	The OrderHandler serves as the interface layer for order management operations.
 	
-	Enhanced with comprehensive order lifecycle management, state tracking,
-	and validation capabilities.
+	**NEW ARCHITECTURE (Post-Refactor):**
+	- Acts as the interface between the event system and OrderManager
+	- Receives events (SignalEvent, BarEvent) and delegates business logic to OrderManager
+	- Ensures all order operations generate proper OrderEvents for the execution handler
+	- Provides API endpoints for external order management operations
+	
+	**Key Responsibilities:**
+	- Event processing interface (on_signal, process_orders_on_market_data)
+	- API interface for order operations (create_order, modify_order, cancel_order)
+	- OrderEvent generation and queue management
+	- Minimal business logic - delegates to OrderManager
+	
+	**OrderManager handles all business logic:**
+	- Signal processing with smart order creation/modification
+	- Order lifecycle management
+	- Position-aware operations (when portfolio_handler is available)
+	- Validation and state management
 	"""
 	def __init__(self, events_queue: Queue, portfolio_handler: PortfolioHandler, 
 	             order_storage: OrderStorage = None, market_execution: str = "immediate"):
@@ -54,7 +59,13 @@ class OrderHandler(OrderBase):
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
 		
 		self.order_storage = order_storage or OrderStorageFactory.create_in_memory()
-		self.order_manager = OrderManager(self.order_storage, self.logger, self, market_execution)
+		self.order_manager = OrderManager(
+			self.order_storage, 
+			self.logger, 
+			self, 
+			market_execution,
+			portfolio_handler  # Pass portfolio_handler for position-aware logic
+		)
 		self.order_validator = EnhancedOrderValidator(portfolio_handler)
 		
 		self.logger.info(f'Order Handler initialized with market_execution={market_execution})')
@@ -80,9 +91,10 @@ class OrderHandler(OrderBase):
 	
 	def on_signal(self, signal_event: SignalEvent):
 		"""
-		Simplified signal processing with unified validation pipeline.
+		Process signal event through OrderManager and generate OrderEvents.
 		
-		NOTE: Signal now comes pre-sized from strategy (when strategy refactoring is complete).
+		This is the interface method that delegates all business logic to OrderManager
+		and ensures proper OrderEvent generation for the execution handler.
 		
 		Parameters
 		----------
@@ -93,64 +105,31 @@ class OrderHandler(OrderBase):
 						signal_event.ticker, signal_event.action, 
 						round(signal_event.price, 4), signal_event.quantity)
 
-		# Single unified validation pipeline
-		validation_result = self.order_validator.validate_signal_pipeline(signal_event)
+		# Delegate signal processing to OrderManager
+		operation_results = self.order_manager.process_signal(signal_event)
 		
-		if not validation_result.success:
-			self.logger.error('Signal validation failed: %s - %s', 
-							validation_result.summary,
-							[msg.message for msg in validation_result.errors])
-			return
-		
-		# Log warnings if any
-		if validation_result.has_warnings:
-			self.logger.warning('Signal validation warnings: %s',
-							   [msg.message for msg in validation_result.warnings])
-
-		# Signal is valid - create orders
-		if signal_event.stop_loss > 0:
-			self.add_stop_loss_order(signal_event)
-		if signal_event.take_profit > 0:
-			self.add_take_profit_order(signal_event)
-		
-		# Generate market order
-		self.new_order(signal_event)
-		
-		# Handle market order execution based on configured mode
-		if self.market_execution == "immediate":
-			# Execute market orders immediately
-			order_events = self.order_manager.process_market_orders_immediately()
-			for order_event in order_events:
-				self.events_queue.put(order_event)
-		elif self.market_execution == "next_bar":
-			# Queue market orders for next bar execution
-			self.order_manager.queue_market_orders_for_next_bar()
+		# Generate OrderEvents for ALL operations (create, modify, cancel)
+		for result in operation_results:
+			if result.order_events:
+				for order_event in result.order_events:
+					self.events_queue.put(order_event)
+					self.logger.debug('OrderEvent sent to execution handler: %s', order_event)
 
 	
 	def add_pending_order(self, order: Order):
 		"""
-		Add new stop or limit order after the suggested order has been 
-		refined by the risk manager.
-
-		Parameters
-		----------
-		order: `Order object`
-			The stop/limit order object for a specific ticker
+		Legacy method - kept for backward compatibility.
+		Consider using OrderManager.create_orders_from_signal() instead.
 		"""
+		self.logger.warning("add_pending_order is deprecated - use OrderManager.create_orders_from_signal() instead")
 		self.order_storage.add_order(order)
 	
 	def remove_orders(self, ticker, portfolio_id):
 		"""
-		Remove all the pending orders with the same ticker of the
-		order who has been filled
-
-		Parameters
-		----------
-		ticker: `str`
-			The ticker of the order to be removed
-		portfolio_id: `str`
-			The portfolio ID
+		Legacy method - kept for backward compatibility.
+		Consider using OrderManager.cancel_order() instead.
 		"""
+		self.logger.warning("remove_orders is deprecated - use OrderManager.cancel_order() instead")
 		count = self.order_storage.remove_orders_by_ticker(ticker, portfolio_id)
 		if count > 0:
 			self.logger.debug('Removed %d pending orders for ticker %s in portfolio %s',
@@ -158,20 +137,10 @@ class OrderHandler(OrderBase):
 
 	def remove_order(self, order_id: str, portfolio_id: str = None) -> bool:
 		"""
-		Remove an order by its ID from pending orders.
-		
-		Parameters
-		----------
-		order_id : str
-			The ID of the order to remove
-		portfolio_id : str, optional
-			The portfolio ID for direct access (more efficient)
-			
-		Returns
-		-------
-		bool
-			True if order was found and removed, False otherwise
+		Legacy method - now handled by OrderManager.
+		Kept for temporary compatibility.
 		"""
+		self.logger.warning("remove_order is deprecated - use cancel_order instead")
 		removed = self.order_storage.remove_order(order_id, portfolio_id)
 		if removed:
 			self.logger.debug('Order %s removed', order_id)
@@ -183,8 +152,10 @@ class OrderHandler(OrderBase):
 	def modify_order(self, order_id: int, new_price: float = None, new_quantity: float = None, 
 	                portfolio_id: int = None, reason: str = "user modification") -> bool:
 		"""
-		Modify the filling price and/or quantity of an active order.
-		Useful for trailing stops and order adjustments.
+		Modify an active order through OrderManager and generate OrderEvent.
+		
+		This is an API interface method that delegates to OrderManager
+		and ensures proper OrderEvent generation.
 
 		Parameters
 		----------
@@ -204,37 +175,23 @@ class OrderHandler(OrderBase):
 		bool
 			True if order was successfully modified, False otherwise
 		"""
-		# Get the order
-		order = self.order_storage.get_order_by_id(order_id, portfolio_id)
-		if not order:
-			self.logger.warning('Order %s not found for modification', order_id)
-			return False
+		# Delegate to OrderManager
+		result = self.order_manager.modify_order(order_id, new_price, new_quantity, portfolio_id, reason)
 		
-		# Validate the modification
-		validation_messages = self.order_validator.validate_order_modification(
-			order, new_price, new_quantity
-		)
+		# Generate OrderEvent if modification was successful
+		if result.success and result.order_events:
+			for order_event in result.order_events:
+				self.events_queue.put(order_event)
+				self.logger.debug('Order modification event sent to execution handler: %s', order_event)
 		
-		if not self.order_validator.is_valid(validation_messages):
-			error_messages = self.order_validator.get_errors(validation_messages)
-			self.logger.error('Order modification validation failed: %s',
-							[msg.message for msg in error_messages])
-			return False
-		
-		# Apply the modification
-		success = order.modify_order(new_price, new_quantity, reason)
-		if success:
-			# Update in storage
-			self.order_storage.update_order(order)
-			self.logger.info('Order %s modified successfully', order_id)
-		else:
-			self.logger.warning('Failed to modify order %s', order_id)
-		
-		return success
+		return result.success
 	
 	def cancel_order(self, order_id: int, portfolio_id: int = None, reason: str = "user cancellation") -> bool:
 		"""
-		Cancel an active order.
+		Cancel an active order through OrderManager and generate OrderEvent.
+		
+		This is an API interface method that delegates to OrderManager
+		and ensures proper OrderEvent generation.
 
 		Parameters
 		----------
@@ -250,21 +207,46 @@ class OrderHandler(OrderBase):
 		bool
 			True if order was successfully cancelled, False otherwise
 		"""
-		# Get the order
-		order = self.order_storage.get_order_by_id(order_id, portfolio_id)
-		if not order:
-			self.logger.warning('Order %s not found for cancellation', order_id)
-			return False
+		# Delegate to OrderManager
+		result = self.order_manager.cancel_order(order_id, portfolio_id, reason)
 		
-		# Cancel the order
-		success = order.cancel_order(reason)
-		if success:
-			# Update in storage
-			self.order_storage.update_order(order)
-			self.logger.info('Order %s cancelled: %s', order_id, reason)
-		else:
-			self.logger.warning('Failed to cancel order %s (status: %s)', 
-							   order_id, order.status.name)
+		# Generate OrderEvent if cancellation was successful
+		if result.success and result.order_events:
+			for order_event in result.order_events:
+				self.events_queue.put(order_event)
+				self.logger.debug('Order cancellation event sent to execution handler: %s', order_event)
+		
+		return result.success
+	
+	def create_order(self, signal_event: SignalEvent) -> bool:
+		"""
+		Create orders from signal through OrderManager and generate OrderEvents.
+		
+		This is an API interface method for programmatic order creation
+		that delegates to OrderManager and ensures proper OrderEvent generation.
+
+		Parameters
+		----------
+		signal_event : SignalEvent
+			The signal event containing order details
+
+		Returns
+		-------
+		bool
+			True if orders were successfully created, False otherwise
+		"""
+		# Delegate to OrderManager
+		operation_results = self.order_manager.create_orders_from_signal(signal_event)
+		
+		# Generate OrderEvents for all created orders
+		success = False
+		for result in operation_results:
+			if result.success:
+				success = True
+			if result.order_events:
+				for order_event in result.order_events:
+					self.events_queue.put(order_event)
+					self.logger.debug('Order creation event sent to execution handler: %s', order_event)
 		
 		return success
 	
@@ -387,69 +369,3 @@ class OrderHandler(OrderBase):
 			Dictionary with status names as keys and counts as values
 		"""
 		return self.order_storage.get_orders_count_by_status(portfolio_id)
-
-	def add_stop_loss_order(self, signal: SignalEvent):
-		"""
-		Add a stop order in the pending order queue
-
-		Parameters
-		----------
-		sized_order: `Order object`
-			The sized order generated from the position sizer module
-		"""
-		portfolio_id = signal.portfolio_id
-		exchange = self.portfolio_handler.get_portfolio(portfolio_id).exchange
-		sl_order = Order.new_stop_order(
-			time = signal.time,
-			ticker = signal.ticker,
-			action = 'BUY' if signal.action == 'SELL' else 'SELL',
-			price = signal.stop_loss,
-			quantity = signal.quantity,
-			exchange = exchange,
-			strategy_id = signal.strategy_id,
-			portfolio_id = signal.portfolio_id
-			)
-		self.add_pending_order(sl_order)
-		self.logger.debug('Stop loss order added: %s, %s $', 
-					sl_order.ticker, sl_order.price)
-
-	def add_take_profit_order(self, signal: SignalEvent):
-		"""
-		Add a limit order in the pending order queue
-
-		Parameters
-		----------
-		sized_order: `Order object`
-			The sized order generated from the position sizer module
-		"""
-		portfolio_id = signal.portfolio_id
-		exchange = self.portfolio_handler.get_portfolio(portfolio_id).exchange
-		tp_order = Order.new_limit_order(
-			time = signal.time,
-			ticker = signal.ticker,
-			action = 'BUY' if signal.action == 'SELL' else 'SELL',
-			price = signal.take_profit,
-			quantity = signal.quantity,
-			exchange = exchange,
-			strategy_id = signal.strategy_id,
-			portfolio_id = signal.portfolio_id
-			)
-		self.add_pending_order(tp_order)
-		self.logger.debug('Take profit order added: %s, %s $', 
-					tp_order.ticker, tp_order.price)
-	
-	def new_order(self, signal: SignalEvent):
-		portfolio_id = signal.portfolio_id
-		exchange = self.portfolio_handler.get_portfolio(portfolio_id).exchange
-		new_order = Order.new_order(signal, exchange)
-		self.add_pending_order(new_order)
-
-	def send_order_event(self, order: Order):
-		"""
-		When a stop/limit order is filled or when a market order is set,
-		create an order event to be added to the global events que. 
-		This event will be then processed by the execution handler.
-		"""
-		order_event = OrderEvent.new_order_event(order)
-		self.events_queue.put(order_event)
-		self.logger.debug('Order sent to the execution handler')
