@@ -19,7 +19,7 @@ class OrderHandler(OrderBase):
 	
 	**NEW ARCHITECTURE (Post-Refactor):**
 	- Acts as the interface between the event system and OrderManager
-	- Receives events (SignalEvent, BarEvent) and delegates business logic to OrderManager
+	- Receives events (SignalEvent, FillEvent) and delegates business logic to OrderManager
 	- Ensures all order operations generate proper OrderEvents for the execution handler
 	- Provides API endpoints for external order management operations
 	

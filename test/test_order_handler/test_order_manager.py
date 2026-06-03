@@ -9,16 +9,12 @@ Tests the OrderManager's functionality including:
 - State management and event generation
 """
 
-import pytest
+import unittest
 from datetime import datetime
 from unittest.mock import Mock
-import pandas as pd
 
 from itrader.order_handler.order_manager import OrderManager
-from itrader.order_handler.order import Order
-from itrader.core.enums import OrderType, OrderStatus
 from itrader.order_handler.storage.in_memory_storage import InMemoryOrderStorage
-from itrader.events_handler.event import BarEvent, OrderEvent
 
 
 class TestOrderManager:
@@ -47,44 +43,6 @@ class TestOrderManager:
         
         self.base_time = datetime.now()
 
-    def create_test_order(self, **kwargs) -> Order:
-        """Create a test order with default values."""
-        defaults = {
-            'time': self.base_time,
-            'type': OrderType.MARKET,
-            'status': OrderStatus.PENDING,
-            'ticker': 'AAPL',
-            'action': 'BUY',
-            'price': 150.0,
-            'quantity': 100.0,
-            'exchange': 'NYSE',
-            'strategy_id': 1,
-            'portfolio_id': 1
-        }
-        defaults.update(kwargs)
-        return Order(**defaults)
-
-    def create_test_bar_event(self, ticker='AAPL', **kwargs) -> BarEvent:
-        """Create a test bar event."""
-        defaults = {
-            'open': 150.0,
-            'high': 155.0,
-            'low': 145.0,
-            'close': 152.0,
-            'volume': 1000000
-        }
-        defaults.update(kwargs)
-        
-        # Create DataFrame-like structure for bar data
-        bar_data = {
-            ticker: pd.DataFrame([defaults])
-        }
-        
-        return BarEvent(
-            time=self.base_time,
-            bars=bar_data
-        )
-
     def test_order_manager_initialization(self):
         """Test OrderManager initialization."""
         assert self.order_manager_immediate.market_execution == "immediate"
@@ -92,12 +50,6 @@ class TestOrderManager:
         assert self.order_manager_immediate.order_storage == self.order_storage
         assert self.order_manager_immediate.logger == self.logger
 
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
-import unittest
 
 class TestOrderManagerBracketEmission(unittest.TestCase):
 	def setUp(self):
