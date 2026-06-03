@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 from uuid import uuid4
 
-from ..core.enums import OrderType
+from ..core.enums import OrderType, OrderCommand
 
 EventType = Enum("EventType", "PING BAR UPDATE SIGNAL ORDER FILL SCREENER")
 FillStatus = Enum("FillStatus", "EXECUTED REFUSED")
@@ -300,6 +300,8 @@ class OrderEvent:
 	order_type: OrderType
 	stop_price: Optional[float] = None
 	order_id: str = None
+	parent_order_id: Optional[int] = None
+	command: 'OrderCommand' = OrderCommand.NEW
 	type = EventType.ORDER
 
 	def __str__(self):
@@ -312,21 +314,13 @@ class OrderEvent:
 		return str(self)
 	
 	@classmethod
-	def new_order_event(cls, order):
+	def new_order_event(cls, order, command: 'OrderCommand' = OrderCommand.NEW):
 		"""
-		Generate a new OrderEvent object when an order is filled.
+		Generate a new OrderEvent from an Order.
 
-		Parameters
-		----------
-		order : Order or SignalEvent
-			The object representing the order or signal
-		
-		Returns
-		-------
-		Order : `OrderEvent`
-			A new Order object with the specified type.
+		Reads the order's real type (`order.type`) and id (`order.id`),
+		and optional bracket linkage / command intent.
 		"""
-
 		return cls(
 			order.time,
 			order.ticker,
@@ -336,9 +330,11 @@ class OrderEvent:
 			order.exchange,
 			order.strategy_id,
 			order.portfolio_id,
-			order_type=getattr(order, 'order_type', OrderType.MARKET),
+			order_type=getattr(order, 'type', OrderType.MARKET),
 			stop_price=getattr(order, 'stop_price', None),
-			order_id=getattr(order, 'order_id', None)
+			order_id=getattr(order, 'id', None),
+			parent_order_id=getattr(order, 'parent_order_id', None),
+			command=command,
 		)
 
 
