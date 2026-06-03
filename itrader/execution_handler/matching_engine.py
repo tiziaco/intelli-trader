@@ -66,3 +66,69 @@ class MatchingEngine:
 
     def get_order(self, order_id: int) -> Optional[OrderEvent]:
         return self._resting.get(order_id)
+
+    # --- matching ---
+
+    def _evaluate(self, order: OrderEvent, bar: BarEvent) -> Optional[float]:
+        """Return the fill price if `order` triggers on `bar`, else None."""
+        ticker = order.ticker
+        if ticker not in bar.bars:
+            return None
+        open_ = bar.get_last_open(ticker)
+        high = bar.get_last_high(ticker)
+        low = bar.get_last_low(ticker)
+
+        if order.order_type == OrderType.MARKET:
+            # next-bar market order: unconditional fill at the open
+            return open_
+
+        if order.order_type == OrderType.STOP:
+            if order.action == 'SELL':              # stop-loss on a long
+                if low <= order.price:
+                    return min(open_, order.price)  # pessimistic gap-down
+            else:                                   # BUY stop (cover short)
+                if high >= order.price:
+                    return max(open_, order.price)  # pessimistic gap-up
+
+        elif order.order_type == OrderType.LIMIT:
+            if order.action == 'SELL':              # take-profit on a long
+                if high >= order.price:
+                    return order.price
+            else:                                   # BUY limit (cover short)
+                if low <= order.price:
+                    return order.price
+
+        return None
+
+    def on_bar(self, bar: BarEvent) -> Tuple[List[FillDecision], List[CancelDecision]]:
+        """Evaluate all resting orders against `bar`; return (fills, cancels)."""
+        fills: List[FillDecision] = []
+        cancels: List[CancelDecision] = []
+
+        for order in list(self._resting.values()):
+            try:
+                price = self._evaluate(order, bar)
+            except Exception:
+                # A single malformed resting order must not drop the whole bar.
+                continue
+            if price is None:
+                continue
+            fills.append(FillDecision(
+                order_event=order,
+                fill_quantity=order.quantity,
+                fill_price=price,
+                reason=self._fill_reason(order),
+            ))
+
+        for fill in fills:
+            self._resting.pop(fill.order_event.order_id, None)
+
+        return fills, cancels
+
+    @staticmethod
+    def _fill_reason(order: OrderEvent) -> str:
+        if order.order_type == OrderType.STOP:
+            return "stop triggered"
+        if order.order_type == OrderType.LIMIT:
+            return "limit triggered"
+        return "market fill"
