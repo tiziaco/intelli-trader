@@ -119,3 +119,40 @@ class TestMatchingEngineLimitTriggers(unittest.TestCase):
 		fills, _ = self.engine.on_bar(make_bar(open_=40, high=60, low=20, close=50))  # BTCUSDT only
 		self.assertEqual(fills, [])
 		self.assertTrue(self.engine.has_order(1))
+
+
+class TestMatchingEngineOCO(unittest.TestCase):
+	def setUp(self):
+		self.engine = MatchingEngine()
+		# A bracket: entry id 100; SL and TP are children (parent_order_id=100).
+		self.sl = make_order_event(OrderType.STOP, 'SELL', 30.0, order_id=11, parent_order_id=100)
+		self.tp = make_order_event(OrderType.LIMIT, 'SELL', 55.0, order_id=12, parent_order_id=100)
+
+	def test_tp_fill_cancels_sl_sibling(self):
+		self.engine.submit(self.sl)
+		self.engine.submit(self.tp)
+		# TP triggers (high 60 >= 55), SL does not (low 40 > 30)
+		fills, cancels = self.engine.on_bar(make_bar(open_=50, high=60, low=40, close=58))
+		self.assertEqual(len(fills), 1)
+		self.assertEqual(fills[0].order_event.order_id, 12)
+		self.assertEqual(len(cancels), 1)
+		self.assertEqual(cancels[0].order_event.order_id, 11)
+		self.assertFalse(self.engine.has_order(11))
+		self.assertFalse(self.engine.has_order(12))
+
+	def test_same_bar_both_pierced_prefers_stop(self):
+		self.engine.submit(self.sl)
+		self.engine.submit(self.tp)
+		# wide bar pierces BOTH: low 20 <= 30 (SL) and high 60 >= 55 (TP)
+		fills, cancels = self.engine.on_bar(make_bar(open_=45, high=60, low=20, close=40))
+		self.assertEqual(len(fills), 1)
+		self.assertEqual(fills[0].order_event.order_id, 11)      # pessimistic: STOP fills
+		self.assertEqual(cancels[0].order_event.order_id, 12)    # TP cancelled
+
+	def test_non_triggered_sibling_still_cancelled(self):
+		# Only TP triggers; SL does not, but must be cancelled because its bracket leg filled.
+		self.engine.submit(self.sl)
+		self.engine.submit(self.tp)
+		fills, cancels = self.engine.on_bar(make_bar(open_=50, high=56, low=45, close=55))
+		self.assertEqual(fills[0].order_event.order_id, 12)
+		self.assertEqual([c.order_event.order_id for c in cancels], [11])

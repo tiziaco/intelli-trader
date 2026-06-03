@@ -104,10 +104,18 @@ class MatchingEngine:
         return None
 
     def on_bar(self, bar: BarEvent) -> Tuple[List[FillDecision], List[CancelDecision]]:
-        """Evaluate all resting orders against `bar`; return (fills, cancels)."""
-        fills: List[FillDecision] = []
-        cancels: List[CancelDecision] = []
+        """
+        Evaluate all resting orders against `bar`.
 
+        - Candidates are orders whose trigger price is reached this bar.
+        - For bracket siblings (same non-None parent_order_id), at most one
+          fills per bar; if both a STOP and a LIMIT are candidates, the STOP
+          wins (pessimistic same-bar priority).
+        - When a bracket leg fills, all other resting orders in that bracket
+          are cancelled (OCO), even if they did not trigger this bar.
+        """
+        # 1. Collect candidate fills (price reached).
+        candidates: Dict[int, float] = {}
         for order in list(self._resting.values()):
             try:
                 price = self._evaluate(order, bar)
@@ -116,19 +124,65 @@ class MatchingEngine:
                 # field) must not drop the whole bar. Programming errors
                 # (AttributeError, etc.) are NOT swallowed — they propagate.
                 continue
-            if price is None:
+            if price is not None:
+                candidates[order.order_id] = price
+
+        if not candidates:
+            return [], []
+
+        # 2. Resolve, per bracket, which single order fills.
+        chosen: Dict[int, float] = {}   # order_id -> fill_price
+        seen_brackets = set()
+        for order_id, price in candidates.items():
+            order = self._resting[order_id]
+            bracket = order.parent_order_id
+            if bracket is None:
+                chosen[order_id] = price            # standalone, fills independently
                 continue
+            if bracket in seen_brackets:
+                continue                            # already chose a leg for this bracket
+            seen_brackets.add(bracket)
+            winner_id = self._pick_bracket_winner(bracket, candidates)
+            chosen[winner_id] = candidates[winner_id]
+
+        # 3. Build fills and OCO cancels.
+        fills: List[FillDecision] = []
+        cancels: List[CancelDecision] = []
+        cancelled_ids = set()
+
+        for order_id, price in chosen.items():
+            order = self._resting[order_id]
             fills.append(FillDecision(
                 order_event=order,
                 fill_quantity=order.quantity,
                 fill_price=price,
                 reason=self._fill_reason(order),
             ))
+            bracket = order.parent_order_id
+            if bracket is not None:
+                for sibling in list(self._resting.values()):
+                    if (sibling.parent_order_id == bracket
+                            and sibling.order_id != order_id
+                            and sibling.order_id not in cancelled_ids):
+                        cancels.append(CancelDecision(sibling, "OCO - sibling filled"))
+                        cancelled_ids.add(sibling.order_id)
 
+        # 4. Remove filled + cancelled orders from the book.
         for fill in fills:
             self._resting.pop(fill.order_event.order_id, None)
+        for cancel in cancels:
+            self._resting.pop(cancel.order_event.order_id, None)
 
         return fills, cancels
+
+    def _pick_bracket_winner(self, bracket: int, candidates: Dict[int, float]) -> int:
+        """Among candidate legs of a bracket, prefer a STOP (pessimistic)."""
+        leg_ids = [oid for oid in candidates
+                   if self._resting[oid].parent_order_id == bracket]
+        for oid in leg_ids:
+            if self._resting[oid].order_type == OrderType.STOP:
+                return oid
+        return leg_ids[0]
 
     @staticmethod
     def _fill_reason(order: OrderEvent) -> str:
