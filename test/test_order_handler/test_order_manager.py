@@ -372,3 +372,42 @@ class TestOrderManager:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+import unittest
+
+class TestOrderManagerBracketEmission(unittest.TestCase):
+	def setUp(self):
+		from queue import Queue
+		from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+		from itrader.order_handler.order_handler import OrderHandler
+		from itrader.order_handler.storage import OrderStorageFactory
+		from itrader.events_handler.event import SignalEvent
+		from itrader.core.enums import OrderType
+		self.SignalEvent = SignalEvent
+		self.OrderType = OrderType
+		self.queue = Queue()
+		self.ptf_handler = PortfolioHandler(self.queue)
+		self.storage = OrderStorageFactory.create('test')
+		self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
+		self.portfolio_id = self.ptf_handler.add_portfolio(1, 'p', 'default', 100000)
+
+	def _signal(self, stop_loss=0.0, take_profit=0.0):
+		import datetime as _dt
+		return self.SignalEvent(
+			time=_dt.datetime(2024, 1, 1), order_type='MARKET',
+			ticker='BTCUSDT', action='BUY', price=40.0, quantity=1.0,
+			stop_loss=stop_loss, take_profit=take_profit, strategy_id=1,
+			portfolio_id=self.portfolio_id, strategy_setting={})
+
+	def test_bracket_legs_emitted_and_linked(self):
+		self.handler.on_signal(self._signal(stop_loss=30.0, take_profit=55.0))
+		events = [self.queue.get() for _ in range(self.queue.qsize())]
+		order_events = [e for e in events if getattr(e, 'order_type', None) is not None
+		                and e.type.name == 'ORDER']
+		types = sorted(e.order_type.name for e in order_events)
+		self.assertEqual(types, ['LIMIT', 'MARKET', 'STOP'])
+		primary = next(e for e in order_events if e.order_type == self.OrderType.MARKET)
+		children = [e for e in order_events if e.order_type != self.OrderType.MARKET]
+		for child in children:
+			self.assertEqual(child.parent_order_id, primary.order_id)

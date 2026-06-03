@@ -554,14 +554,18 @@ class OrderManager:
 			primary_order_result = self._create_primary_order(signal_event, exchange)
 			results.append(primary_order_result)
 			
+			# Primary order id for bracket linkage
+			primary_order_ids = primary_order_result.affected_order_ids
+			parent_id = primary_order_ids[0] if primary_order_ids else None
+
 			# 2. Create stop-loss order if specified
 			if signal_event.stop_loss > 0:
-				sl_result = self._create_stop_loss_order(signal_event, exchange)
+				sl_result = self._create_stop_loss_order(signal_event, exchange, parent_id)
 				results.append(sl_result)
-			
-			# 3. Create take-profit order if specified  
+
+			# 3. Create take-profit order if specified
 			if signal_event.take_profit > 0:
-				tp_result = self._create_take_profit_order(signal_event, exchange)
+				tp_result = self._create_take_profit_order(signal_event, exchange, parent_id)
 				results.append(tp_result)
 			
 			# 4. Handle market order execution based on configured mode
@@ -664,97 +668,61 @@ class OrderManager:
 				operation_type="create_primary_order"
 			)
 	
-	def _create_stop_loss_order(self, signal_event: SignalEvent, exchange: str) -> OperationResult:
-		"""
-		Create stop-loss order from signal.
-		
-		Parameters
-		----------
-		signal_event : SignalEvent
-			The signal event
-		exchange : str
-			Exchange for the order
-			
-		Returns
-		-------
-		OperationResult
-			Result of stop-loss order creation
-		"""
+	def _create_stop_loss_order(self, signal_event: SignalEvent, exchange: str,
+	                            parent_id: int = None) -> OperationResult:
 		try:
 			sl_order = Order.new_stop_order(
 				time=signal_event.time,
 				ticker=signal_event.ticker,
-				action='BUY' if signal_event.action == 'SELL' else 'SELL',  # Opposite action
+				action='BUY' if signal_event.action == 'SELL' else 'SELL',
 				price=signal_event.stop_loss,
 				quantity=signal_event.quantity,
 				exchange=exchange,
 				strategy_id=signal_event.strategy_id,
 				portfolio_id=signal_event.portfolio_id
 			)
-			
-			# Add to storage
+			sl_order.parent_order_id = parent_id
 			self.order_storage.add_order(sl_order)
-			
+			order_event = OrderEvent.new_order_event(sl_order)
 			self.logger.debug(f'Stop-loss order created: {sl_order.ticker} at {sl_order.price}')
-			
 			return OperationResult.success_result(
 				f"Stop-loss order created: {sl_order.ticker} at {sl_order.price}",
+				order_events=[order_event],
 				operation_type="create_stop_loss",
 				affected_order_ids=[sl_order.id]
 			)
-			
 		except Exception as e:
 			return OperationResult.failure_result(
 				f"Error creating stop-loss order: {e}",
-				error_details=str(e),
-				operation_type="create_stop_loss"
-			)
+				error_details=str(e), operation_type="create_stop_loss")
 	
-	def _create_take_profit_order(self, signal_event: SignalEvent, exchange: str) -> OperationResult:
-		"""
-		Create take-profit order from signal.
-		
-		Parameters
-		----------
-		signal_event : SignalEvent
-			The signal event
-		exchange : str
-			Exchange for the order
-			
-		Returns
-		-------
-		OperationResult
-			Result of take-profit order creation
-		"""
+	def _create_take_profit_order(self, signal_event: SignalEvent, exchange: str,
+	                              parent_id: int = None) -> OperationResult:
 		try:
 			tp_order = Order.new_limit_order(
 				time=signal_event.time,
 				ticker=signal_event.ticker,
-				action='BUY' if signal_event.action == 'SELL' else 'SELL',  # Opposite action
+				action='BUY' if signal_event.action == 'SELL' else 'SELL',
 				price=signal_event.take_profit,
 				quantity=signal_event.quantity,
 				exchange=exchange,
 				strategy_id=signal_event.strategy_id,
 				portfolio_id=signal_event.portfolio_id
 			)
-			
-			# Add to storage
+			tp_order.parent_order_id = parent_id
 			self.order_storage.add_order(tp_order)
-			
+			order_event = OrderEvent.new_order_event(tp_order)
 			self.logger.debug(f'Take-profit order created: {tp_order.ticker} at {tp_order.price}')
-			
 			return OperationResult.success_result(
 				f"Take-profit order created: {tp_order.ticker} at {tp_order.price}",
+				order_events=[order_event],
 				operation_type="create_take_profit",
 				affected_order_ids=[tp_order.id]
 			)
-			
 		except Exception as e:
 			return OperationResult.failure_result(
 				f"Error creating take-profit order: {e}",
-				error_details=str(e),
-				operation_type="create_take_profit"
-			)
+				error_details=str(e), operation_type="create_take_profit")
 	
 	def modify_order(self, order_id: int, new_price: float = None, new_quantity: float = None, 
 	                portfolio_id: int = None, reason: str = "user modification") -> OperationResult:
