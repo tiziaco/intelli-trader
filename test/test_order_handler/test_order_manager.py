@@ -455,3 +455,58 @@ class TestOrderManagerCommands(unittest.TestCase):
 		order_events = [e for e in events if e.type.name == 'ORDER']
 		self.assertEqual(len(order_events), 1)
 		self.assertIs(order_events[0].command, OrderCommand.MODIFY)
+
+
+class TestOrderManagerReconciliation(unittest.TestCase):
+	def setUp(self):
+		from queue import Queue
+		from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+		from itrader.order_handler.order_handler import OrderHandler
+		from itrader.order_handler.storage import OrderStorageFactory
+		self.queue = Queue()
+		self.ptf_handler = PortfolioHandler(self.queue)
+		self.storage = OrderStorageFactory.create('test')
+		self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
+		self.portfolio_id = self.ptf_handler.add_portfolio(1, 'p', 'default', 100000)
+
+	def _rest_a_stop(self):
+		import datetime as _dt
+		from itrader.order_handler.order import Order
+		order = Order.new_stop_order(
+			time=_dt.datetime(2024, 1, 1), ticker='BTCUSDT',
+			action='SELL', price=30.0, quantity=1.0, exchange='default',
+			strategy_id=1, portfolio_id=self.portfolio_id)
+		self.storage.add_order(order)
+		return order
+
+	def _fill(self, order, status):
+		import datetime as _dt
+		from itrader.events_handler.event import OrderEvent, FillEvent
+		from itrader.core.enums import OrderType
+		oe = OrderEvent(
+			time=_dt.datetime(2024, 1, 1), ticker=order.ticker, action=order.action,
+			price=order.price, quantity=order.quantity, exchange=order.exchange,
+			strategy_id=order.strategy_id, portfolio_id=order.portfolio_id,
+			order_type=OrderType.STOP, order_id=order.id)
+		return FillEvent.new_fill(status, 0.0, oe)
+
+	def test_executed_fill_marks_order_filled(self):
+		from itrader.core.enums import OrderStatus
+		order = self._rest_a_stop()
+		self.handler.on_fill(self._fill(order, 'EXECUTED'))
+		stored = self.storage.get_order_by_id(order.id, self.portfolio_id)
+		self.assertEqual(stored.status, OrderStatus.FILLED)
+
+	def test_cancelled_fill_marks_order_cancelled(self):
+		from itrader.core.enums import OrderStatus
+		order = self._rest_a_stop()
+		self.handler.on_fill(self._fill(order, 'CANCELLED'))
+		stored = self.storage.get_order_by_id(order.id, self.portfolio_id)
+		self.assertEqual(stored.status, OrderStatus.CANCELLED)
+
+	def test_unknown_order_id_is_safe(self):
+		# A fill for an order not in storage must not raise.
+		order = self._rest_a_stop()
+		fake = self._fill(order, 'EXECUTED')
+		fake.order_id = 999999
+		self.handler.on_fill(fake)  # should be a no-op, no exception

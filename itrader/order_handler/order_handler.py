@@ -116,6 +116,10 @@ class OrderHandler(OrderBase):
 					self.logger.debug('OrderEvent sent to execution handler: %s', order_event)
 
 	
+	def on_fill(self, fill_event):
+		"""Reconcile the order mirror from an exchange fill event."""
+		self.order_manager.on_fill(fill_event)
+
 	def add_pending_order(self, order: Order):
 		"""
 		Legacy method - kept for backward compatibility.

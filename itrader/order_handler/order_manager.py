@@ -17,7 +17,7 @@ from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderType, OrderStatus, OrderCommand
 from .base import OrderStorage
-from ..events_handler.event import BarEvent, OrderEvent, SignalEvent
+from ..events_handler.event import BarEvent, OrderEvent, SignalEvent, FillEvent, FillStatus
 from .order_validator import EnhancedOrderValidator
 
 
@@ -465,6 +465,30 @@ class OrderManager:
 			# Fallback to simple deactivation
 			self.order_storage.deactivate_order(filled_order.id, filled_order.portfolio_id)
 	
+	def on_fill(self, fill_event: FillEvent) -> None:
+		"""
+		Reconcile the order mirror against an exchange fill.
+
+		EXECUTED -> mark the order FILLED; CANCELLED -> mark CANCELLED.
+		Then deactivate it from the active book (kept in all_orders for audit).
+		"""
+		order_id = getattr(fill_event, 'order_id', None)
+		if order_id is None:
+			return
+		order = self.order_storage.get_order_by_id(order_id, fill_event.portfolio_id)
+		if order is None:
+			return
+		try:
+			if fill_event.status == FillStatus.EXECUTED:
+				order.add_fill(order.remaining_quantity, fill_event.price,
+				               fill_event.time, "exchange fill")
+			elif fill_event.status == FillStatus.CANCELLED:
+				order.cancel_order("OCO / cancellation")
+			self.order_storage.update_order(order)
+			self.order_storage.deactivate_order(order.id, order.portfolio_id)
+		except Exception as e:
+			self.logger.error('Error reconciling fill for order %s: %s', order_id, e)
+
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""
 		Process signal event with smart order creation logic.
