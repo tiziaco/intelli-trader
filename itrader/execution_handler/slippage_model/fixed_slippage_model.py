@@ -15,21 +15,27 @@ class FixedSlippageModel(SlippageModel):
     regardless of size, with optional random variation.
     """
     
-    def __init__(self, slippage_pct: float = 0.01, 
-                 random_variation: bool = True):
+    def __init__(self, slippage_pct: float = 0.01,
+                 random_variation: bool = True,
+                 rng: random.Random | None = None):
         """
         Initialize the fixed slippage model.
-        
+
         Parameters
         ----------
         slippage_pct : float
             Fixed slippage percentage to apply
         random_variation : bool
             Whether to apply random variation around the fixed rate
+        rng : random.Random | None
+            Injected seeded RNG for deterministic slippage jitter (D-11). When
+            None, a fresh ``random.Random()`` is used; the engine wiring passes a
+            seeded instance so backtests are reproducible.
         """
         super().__init__()
         self.slippage_pct = slippage_pct
         self.random_variation = random_variation
+        self._rng: random.Random = rng or random.Random()
     
     def calculate_slippage_factor(self, quantity: float, price: float, 
                                 side: str, order_type: str = "market") -> float:
@@ -58,7 +64,7 @@ class FixedSlippageModel(SlippageModel):
         # Calculate slippage
         if self.random_variation:
             # Apply random variation around the fixed rate
-            slippage = random.uniform(-self.slippage_pct, self.slippage_pct) / 100.0
+            slippage = self._rng.uniform(-self.slippage_pct, self.slippage_pct) / 100.0
         else:
             # Use fixed rate with direction based on order side
             if side.lower() == 'buy':

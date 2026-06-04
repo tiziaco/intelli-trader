@@ -38,6 +38,14 @@ class PerformanceSettings:
     timeout_seconds: int = 30
     enable_caching: bool = True
     cache_size_mb: int = 512
+    # Determinism seed for the engine's stochastic components (D-11). A fixed,
+    # documented default makes backtests reproducible (#5/PERF2): the engine
+    # wiring constructs a single ``random.Random(rng_seed)`` and injects it into
+    # the slippage models + SimulatedExchange so no module-level ``random.*``
+    # global state can leak nondeterminism into a run. This is intentionally a
+    # constant default — it drives only failure-simulation + slippage jitter,
+    # never any security-sensitive value.
+    rng_seed: int = 42
 
 
 @dataclass
@@ -149,7 +157,8 @@ class SystemConfig:
                 'connection_pool_size': self.performance.connection_pool_size,
                 'timeout_seconds': self.performance.timeout_seconds,
                 'enable_caching': self.performance.enable_caching,
-                'cache_size_mb': self.performance.cache_size_mb
+                'cache_size_mb': self.performance.cache_size_mb,
+                'rng_seed': self.performance.rng_seed
             },
             
             # Security settings
@@ -237,7 +246,8 @@ class SystemConfig:
                 connection_pool_size=perf_data.get('connection_pool_size', config.performance.connection_pool_size),
                 timeout_seconds=perf_data.get('timeout_seconds', config.performance.timeout_seconds),
                 enable_caching=perf_data.get('enable_caching', config.performance.enable_caching),
-                cache_size_mb=perf_data.get('cache_size_mb', config.performance.cache_size_mb)
+                cache_size_mb=perf_data.get('cache_size_mb', config.performance.cache_size_mb),
+                rng_seed=perf_data.get('rng_seed', config.performance.rng_seed)
             )
         
         # Security settings

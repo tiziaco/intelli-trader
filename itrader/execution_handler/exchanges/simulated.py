@@ -38,22 +38,31 @@ class SimulatedExchange(AbstractExchange):
 	- Production-ready design
 	"""
 
-	def __init__(self, global_queue: Queue, config: Optional[ExchangeConfig] = None):
+	def __init__(self, global_queue: Queue, config: Optional[ExchangeConfig] = None,
+				rng: Optional[random.Random] = None):
 		"""
 		Initialize the simulated exchange with minimal setup.
-		
+
 		Parameters
 		-----------
 		global_queue : Queue
 			Event queue for the trading system
 		config : ExchangeConfig, optional
 			Complete exchange configuration object. If not provided, defaults to 'default' preset
+		rng : random.Random, optional
+			Injected seeded RNG for deterministic failure-simulation + latency/slippage
+			jitter (D-11). When None a fresh ``random.Random()`` is used; the engine
+			wiring (ExecutionHandler) passes one seeded instance shared across the
+			exchange and its slippage model so backtests are reproducible (#5/PERF2).
 		"""
 		# Initialize logger early
 		self.logger = get_itrader_logger().bind(component="SimulatedExchange")
 
 		# Core exchange identity
 		self.global_queue = global_queue
+
+		# Seeded RNG seam (D-11): shared with the slippage model constructed below.
+		self._rng: random.Random = rng or random.Random()
 
 		# Resting-order book / matching engine
 		self.matching_engine = MatchingEngine()
@@ -62,7 +71,7 @@ class SimulatedExchange(AbstractExchange):
 
 		# Exchange configuration
 		self.config = config or get_exchange_preset('default')
-		
+
 		# Initialize models
 		self.fee_model = self._init_fee_model()
 		self.slippage_model = self._init_slippage_model()
@@ -139,7 +148,7 @@ class SimulatedExchange(AbstractExchange):
 				)
 			
 			# Simulate random failures if enabled
-			if self.simulate_failures and random.random() < self.failure_rate:
+			if self.simulate_failures and self._rng.random() < self.failure_rate:
 				self._orders_failed += 1
 				error_scenarios = [
 					(ExecutionErrorCode.NETWORK_ERROR, "Simulated network timeout"),
@@ -147,7 +156,7 @@ class SimulatedExchange(AbstractExchange):
 					(ExecutionErrorCode.RATE_LIMIT_EXCEEDED, "Simulated rate limit"),
 					(ExecutionErrorCode.EXCHANGE_MAINTENANCE, "Simulated execution timeout")
 				]
-				error_code, error_msg = random.choice(error_scenarios)
+				error_code, error_msg = self._rng.choice(error_scenarios)
 				self._last_error = error_msg
 				self._last_error_time = execution_time
 
@@ -178,7 +187,7 @@ class SimulatedExchange(AbstractExchange):
 				metadata={
 					'slippage_applied': (slippage_factor - 1.0) * 100,
 					'original_price': event.price,
-					'execution_latency_ms': random.uniform(5, 25),
+					'execution_latency_ms': self._rng.uniform(5, 25),
 					'exchange_name': self._exchange_name
 				}
 			)
@@ -335,7 +344,7 @@ class SimulatedExchange(AbstractExchange):
 			connected=self._connected,
 			status=self._connection_status,
 			last_ping_time=self._last_ping,
-			latency_ms=random.uniform(10, 50),  # Simulate realistic latency
+			latency_ms=self._rng.uniform(10, 50),  # Simulate realistic latency
 			uptime_seconds=uptime,
 			error_rate=error_rate,
 			last_error=self._last_error,
@@ -487,12 +496,14 @@ class SimulatedExchange(AbstractExchange):
 			return LinearSlippageModel(
 				base_slippage_pct=config.base_slippage_pct or 0.01,
 				size_impact_factor=config.size_impact_factor or 0.00001,
-				max_slippage_pct=config.max_slippage_pct or 0.1
+				max_slippage_pct=config.max_slippage_pct or 0.1,
+				rng=self._rng
 			)
 		elif config.model_type.value == 'fixed':
 			return FixedSlippageModel(
 				slippage_pct=config.slippage_pct or 0.01,
-				random_variation=config.random_variation if config.random_variation is not None else True
+				random_variation=config.random_variation if config.random_variation is not None else True,
+				rng=self._rng
 			)
 		else:
 			self.logger.warning('Unknown slippage model %s, defaulting to none', config.model_type.value)

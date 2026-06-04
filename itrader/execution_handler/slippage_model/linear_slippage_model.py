@@ -15,12 +15,13 @@ class LinearSlippageModel(SlippageModel):
     that increases linearly with order value.
     """
     
-    def __init__(self, base_slippage_pct: float = 0.01, 
-                 size_impact_factor: float = 0.00001, 
-                 max_slippage_pct: float = 0.1):
+    def __init__(self, base_slippage_pct: float = 0.01,
+                 size_impact_factor: float = 0.00001,
+                 max_slippage_pct: float = 0.1,
+                 rng: random.Random | None = None):
         """
         Initialize the linear slippage model.
-        
+
         Parameters
         ----------
         base_slippage_pct : float
@@ -29,11 +30,16 @@ class LinearSlippageModel(SlippageModel):
             Factor for size impact calculation
         max_slippage_pct : float
             Maximum slippage percentage cap
+        rng : random.Random | None
+            Injected seeded RNG for deterministic slippage jitter (D-11). When
+            None, a fresh ``random.Random()`` is used; the engine wiring passes a
+            seeded instance so backtests are reproducible.
         """
         super().__init__()
         self.base_slippage_pct = base_slippage_pct
         self.size_impact_factor = size_impact_factor
         self.max_slippage_pct = max_slippage_pct
+        self._rng: random.Random = rng or random.Random()
     
     def calculate_slippage_factor(self, quantity: float, price: float, 
                                 side: str, order_type: str = "market") -> float:
@@ -60,7 +66,7 @@ class LinearSlippageModel(SlippageModel):
             return 1.0
         
         # Base slippage - random market noise
-        base_slippage = random.uniform(-self.base_slippage_pct, self.base_slippage_pct) / 100.0
+        base_slippage = self._rng.uniform(-self.base_slippage_pct, self.base_slippage_pct) / 100.0
         
         # Size impact - proportional to order value
         order_value = quantity * price
