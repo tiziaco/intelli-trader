@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready_to_plan
-stopped_at: Phase 01 complete (5/5) — ready to discuss Phase 2
-last_updated: 2026-06-04T14:53:58.271Z
+status: planning
+stopped_at: Phase 2 context gathered
+last_updated: "2026-06-04T16:15:04.408Z"
 last_activity: 2026-06-04
 progress:
   total_phases: 8
@@ -100,6 +100,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-04T14:40:26.446Z
-Stopped at: Completed 01-05-PLAN.md — Phase 01 complete (oracle frozen + regression-locked)
-Resume file: None
+Last session: 2026-06-04T16:15:04.399Z
+Stopped at: Phase 2 context gathered
+Resume file: .planning/phases/02-m2a-identity-money-determinism/02-CONTEXT.md
