@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-06-04T17:10:47.564Z"
-last_activity: 2026-06-04 -- Phase 02 planning complete
+last_updated: "2026-06-04T17:27:44.778Z"
+last_activity: 2026-06-04
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 12
-  completed_plans: 5
+  completed_plans: 6
   percent: 13
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 2 — m2a — identity, money & determinism
+**Current focus:** Phase 02 — m2a-identity-money-determinism
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (m2a-identity-money-determinism) — EXECUTING
+Plan: 2 of 7
 Status: Ready to execute
-Last activity: 2026-06-04 -- Phase 02 planning complete
+Last activity: 2026-06-04
 
-Progress: [██████████] 100%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [██████████] 100%
 | Phase 01 P03 | 13 | 3 tasks | 3 files |
 | Phase 01 P04 | 22 | 3 tasks | 8 files |
 | Phase 01 P05 | 18 | 3 tasks | 4 files |
+| Phase 02 P01 | 6 | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Plan 01-04: DEF-01-A resolved with minimal float-coercion at the fill->transaction commission boundary (overlaps M4 #22 — reconcile at M4)
 - [Phase ?]: Plan 01-05: blessed BTCUSD SMA_MACD oracle frozen into committed test/golden/ and regression-locked by an exact (no-tolerance, D-13) run-path integration test; Phase 01 complete
 - [Phase ?]: Plan 01-05: DEF-01-C (no margin/liquidation model — un-liquidated short liability drives total_equity negative) BLESSED into the M1 oracle as current-behavior-to-preserve, deferred to M5
+- [Phase ?]: Plan 02-01: mypy --strict gate (make typecheck) stood up with deferral overrides for 7 D-live/D-sql/D-oanda/D-screener modules (D-05/D-06); gate runs but errors deferred to Plan 07
+- [Phase ?]: Plan 02-01: UUID Wave 0 scaffold lands red (asserts stdlib uuid.UUID type); money/clock scaffolds co-located with Plan 02 to avoid same-wave scaffold race
 
 ### Pending Todos
 
@@ -100,6 +103,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-04T16:15:04.399Z
+Last session: 2026-06-04T17:27:38.933Z
 Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-m2a-identity-money-determinism/02-CONTEXT.md
+Resume file: None

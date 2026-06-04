@@ -58,7 +58,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `mypy --strict` is clean across the package; hot-path DTOs/events are `frozen=True`/`slots=True` with `NewType` ID aliases; the eight Py2 `__metaclass__` bases are real ABCs/Protocols with non-conforming subclasses fixed
   4. Backtests are deterministic — RNG seeded behind an injected `Random`, clock injected (no local `datetime.now()`), flat global order index by id
 **Plans**: 7 plans
-  - [ ] 02-01-PLAN.md — Install deps (uuid-utils, mypy) + mypy --strict gate + make typecheck + Wave 0 test scaffolds
+  - [x] 02-01-PLAN.md — Install deps (uuid-utils, mypy) + mypy --strict gate + make typecheck + Wave 0 test scaffolds
   - [ ] 02-02-PLAN.md — New core modules: ids.py (NewType aliases), money.py (Decimal quantization), clock.py (injectable Clock)
   - [ ] 02-03-PLAN.md — UUIDv7 identity infra: idgen facade + native-UUID storage/flat index + UUID-typed exceptions
   - [ ] 02-04-PLAN.md — Entity typing: UUID id fields + Decimal money; remove the transaction_manager float cash round-trip
@@ -139,7 +139,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
-| 2. M2a — Identity, Money & Determinism | 0/7 | Planned | - |
+| 2. M2a — Identity, Money & Determinism | 1/7 | In Progress|  |
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 0/TBD | Not started | - |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |

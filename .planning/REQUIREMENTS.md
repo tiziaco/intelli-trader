@@ -48,16 +48,16 @@
 > placement, time_parser finalized. **Numerical oracle re-baselines here** (float→Decimal shift).
 > Behavioral oracle must stay unchanged.
 
-- [ ] **M2-01**: A single ID scheme — UUIDv7 via the Rust-backed `uuid-utils` package — replaces the
+- [x] **M2-01**: A single ID scheme — UUIDv7 via the Rust-backed `uuid-utils` package — replaces the
   overflow-prone integer `id_generator`; IDs stored as native UUID, type not encoded in the value
   *(#10 Critical)*
-- [ ] **M2-02**: Money is `Decimal` end-to-end (prices, quantities, cash, commissions, PnL) with no
+- [x] **M2-02**: Money is `Decimal` end-to-end (prices, quantities, cash, commissions, PnL) with no
   `float` round-trips and a centralized quantization policy *(#17)*
-- [ ] **M2-03**: `mypy --strict` is clean across the package; hot-path DTOs/events are
+- [x] **M2-03**: `mypy --strict` is clean across the package; hot-path DTOs/events are
   `frozen=True`/`slots=True`; `NewType` ID aliases applied *(#8)*
 - [ ] **M2-04**: The eight Py2 `__metaclass__ = ABCMeta` "abstract" bases become real ABCs (or
   `Protocol`s), surfacing and fixing the non-conforming subclasses *(#20)*
-- [ ] **M2-05**: Backtests are deterministic — RNG seeded behind an injected `Random`, clock injected
+- [x] **M2-05**: Backtests are deterministic — RNG seeded behind an injected `Random`, clock injected
   (no local `datetime.now()`), flat global order index by id *(#5, PERF2)*
 - [ ] **M2-06**: The `config/` package collapses to Pydantic v2 models + `pydantic-settings` for
   infra/secrets; one model round-trips backtest-dict and live-JSONB forms; settings layer carries no
