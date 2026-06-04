@@ -1,0 +1,1855 @@
+# Architecture Review
+
+> Companion to `CONCERNS.md`. Where `CONCERNS.md` catalogs **bugs and concrete defects**,
+> this document captures **architectural decisions** — the design-level changes to make
+> before/during the full refactor. Each finding is structured for GSD ingestion:
+> **Severity / Current state / Recommendation / Suggested approach**.
+>
+> Severity scale: **Critical** (blocks production / data-loss risk) ·
+> **High** (significant design flaw, fix during refactor) ·
+> **Medium** (worth doing, not urgent) · **Low** (polish).
+>
+> Source evidence is cited by `file:line` so each item is independently verifiable.
+
+---
+
+## Index
+
+| # | Finding | Severity |
+|---|---------|----------|
+| 1 | Event dispatch loop: empty/get race + fused routing/ordering | High |
+| 2 | Event bus: keep in-house dispatch registry, don't adopt a library | Medium |
+| 3 | Market-data payload: replace pandas Series with a `Bar` struct | High |
+| 4 | Resampling per tick: precompute frames, don't reach for LRU cache | High |
+| 5 | Broader performance: seed RNG, flat order index, accept the event tax | Medium |
+| 6 | Cross-handler coupling: order_handler → portfolio_handler | High |
+| 7 | Error handling: own domain errors in-package, translate at FastAPI edge | High |
+| 8 | Transfer objects & typing: mypy strict + Pydantic at edges + frozen dataclasses | High |
+| 9 | OrderHandler/OrderManager split + interface standardization | Medium |
+| 10 | ID strategy: integer IDs overflow BIGINT — move to UUIDv7 | Critical |
+| 11 | Event schema redesign: required linkage IDs, event_id, immutability, enums | High |
+| 12 | Settings/secrets: replace `config.py` with `pydantic-settings` | High |
+| 13 | Config package over-engineering: collapse `config/` to Pydantic models | High |
+| 14 | Reporting layer: delete dead `EngineLogger`; split computation/presentation/persistence | Medium |
+| 15 | Type placement: centralize shared enums; entities in own modules; drop scattered string→enum maps | Medium |
+| 16 | Transaction processing: `TransactionContext` write-only state machine + control-flow bug | Medium |
+| 17 | Monetary values inconsistently typed (`float` vs `Decimal`) with lossy conversions | High |
+| 18 | Portfolio-handler storage abstraction: pluggable seam for manager state (in-memory now, Postgres later) | High |
+| 19 | Order lifecycle audit (`OrderStateChange`): first-class durable storage + deterministic timestamps | Medium |
+| 20 | Dead ABC enforcement: `__metaclass__ = ABCMeta` (Py2 idiom) leaves every "abstract" base unenforced | High |
+| 21 | Backtest validity: resampling look-ahead, limit fills slipped past limit, no partial fills, undocumented bar-timing | High |
+| 22 | Trade path bypasses `CashManager` (float round-trip via `cash` setter); ledger/reservations/audit dead | Critical |
+| 23 | Transaction non-atomicity: position mutated before funds check, no rollback, broken return contract | High |
+| 24 | Strategy composition layer is fiction: sizer/risk/sltp orphaned; `calculate_signal` contract inconsistent | High |
+| 25 | Data ingestion robustness: no retry/timeout/rate-limit; CCXT pagination dups/truncates; unbounded live memory | High |
+| 26 | SQL persistence: table-name injection + SQLAlchemy-2.0 anti-patterns | High |
+| 27 | Exchange/data adapter abstraction broken; resting-order book has no persistence seam | High |
+| 28 | Fee/slippage models: maker fees dead, `TieredFeeModel` broken, inconsistent validation, slippage on limits | Medium |
+| 29 | Intra-portfolio manager coupling + thread-safety theater (cross-lock composite reads) | Medium |
+| 30 | Price handler is a god-object: split into Provider / Store / Feed seams + offline-vs-runtime lifecycle (umbrella over 25/26/27) | High |
+| 31 | Strategy handler: unenforced `calculate_signal` contract; sizing migration stranded (orders are qty=0); adopt strategy-declared sizing *policy* resolved per-portfolio; dead `assign_symbol` | High |
+| 32 | Screeners handler: output discarded (both paths); orphaned duplicate `EventHandler`; frequency/timeframe muddle; non-ABC `@abstractmethod` | High |
+| 33 | Universe: collapse to a thin symbol-set derivation (keep as documented stub); misfiled feed logic, unimplemented contract, false "dynamic", 4th redundant copy | Medium |
+| 34 | **Config migration half-finished and silently fatal:** backtest system + CCXT unimportable (`from itrader.config import …` fails); `config` is a runtime dict but accessed as `config.TIMEZONE` | Critical |
+| 35 | `trading_system/` orchestration: backtest & live duplicated/drifted; `record_metrics` on wrong object; `TradingInterface` fully broken & bypasses validation; live threading/lifecycle gaps; whole run path untested | High |
+| 36 | `time_parser.py` timing correctness: `check_timeframe` UTC-midnight anchoring (DST/local/week-month mis-gating); `to_timedelta` case-sensitive + silent `None`; dead buggy helpers | High |
+| 37 | Exception hierarchy + logging infra: domain exceptions mis-constructed/raise-only/partly dead; 36 bare builtins; split logging convention; `init_logger` hardcodes non-JSON | Medium |
+| 38 | Reporting `performance/plots/base`: drawdown math broken; pandas-2 `[-1]`/chained-`.iloc` (fatal under `filterwarnings`); dead `plots`; fake ABC | High |
+| 39 | Execution `result_objects`/`base`: float-money mutable DTOs; `ExecutionResult` discarded side-channel lacking `fill_id`; fake ABC + anemic contract | Medium |
+| 40 | Testing strategy: 28 `unittest.TestCase` files to migrate to pytest; no `conftest.py` / fixtures; 8 markers declared but applied to **zero** tests (`make test-unit`/`-integration` select nothing); restructure to `tests/{unit,integration}` with layered conftests; add the missing run-path smoke test | High |
+
+---
+
+## 1. Event dispatch loop: empty/get race + fused routing/ordering
+
+**Severity:** High
+
+**Current state**
+`events_handler/full_event_handler.py:61-84`. The drain loop is:
+
+```python
+while not self.global_queue.empty():
+    try:
+        event = self.global_queue.get(False)
+    except queue.Empty:
+        event = None
+    if event.type == EventType.PING:   # AttributeError if event is None
+        ...
+```
+
+Two problems:
+1. **TOCTOU race.** `empty()` then `get(False)` is not atomic. If the queue drains between
+   the two calls, `event` becomes `None` and the very next line `event.type` raises
+   `AttributeError`. In backtest (single thread) this is latent; in live mode
+   (`get(False)` on a background thread) it is reachable.
+2. **Routing and ordering are fused** into one hardcoded `if/elif` chain. The `BAR` branch
+   ordering is load-bearing — `update_portfolios_market_value` → `on_market_data` →
+   `calculate_signals` must run in that order — but nothing names or enforces that; it is
+   implicit in source order. Adding an event type means editing this method
+   (`raise NotImplemented` — itself a bug, should be `NotImplementedError` — at line 84).
+
+**Recommendation**
+Replace the `empty()/get()` pattern with a single blocking/non-blocking `get` guarded by
+`queue.Empty`, and separate **routing** (which handlers care about an event) from
+**ordering** (the deterministic sequence within one event type).
+
+**Suggested approach**
+- Drain with `try: event = q.get_nowait() except queue.Empty: break` — no `empty()` precheck.
+- Introduce a small **dispatch registry**: `dict[EventType, list[Callable]]` where the list
+  order *is* the documented execution order. The BAR ordering becomes data, not control flow:
+  ```python
+  self._routes = {
+      EventType.BAR: [
+          portfolio_handler.update_portfolios_market_value,
+          execution_handler.on_market_data,
+          strategies_handler.calculate_signals,
+      ],
+      ...
+  }
+  ```
+- Unknown type → `raise NotImplementedError(...)` (correct exception). This also kills the
+  `event is None` deref because the loop only handles successfully-dequeued events.
+- See item 11: type-based dispatch wants a real `Event` base with `type` as a field.
+
+---
+
+## 2. Event bus: keep an in-house dispatch registry, don't adopt a library
+
+**Severity:** Medium
+
+**Current state**
+The "event bus" is a `queue.Queue` drained by a hand-written `if/elif` (item 1). The question
+raised was whether to adopt a third-party event-bus / pub-sub library.
+
+**Recommendation**
+**Don't.** A trading backtest needs **deterministic, synchronous, ordered** dispatch. Most
+event-bus libraries optimize for decoupled async fan-out (the opposite of what you need) and
+would obscure the load-bearing ordering from item 1. The registry in item 1 is ~30 lines and
+gives you everything a library would here, with full control over ordering and determinism.
+
+**Suggested approach**
+- Implement the `dict[EventType, list[Callable]]` registry from item 1.
+- Keep `queue.Queue` as the transport (it is fine).
+- Reserve any async/library consideration for the *live* path only, and even there prefer an
+  explicit thread + queue you control over a framework, given correctness-of-ordering matters.
+
+---
+
+## 3. Market-data payload: replace pandas Series with a `Bar` struct
+
+**Severity:** High
+
+**Current state**
+`events_handler/event.py:55` declares `BarEvent.bars: dict[str, pd.DataFrame]` but the values
+are actually pandas **Series** (the code's own TODO at `event.py:56-60,72-73` admits this).
+Because the runtime type is uncertain, every accessor (`get_last_close/open/high/low`,
+`event.py:69-170`) carries a **three-branch `hasattr` ladder** (Series → ndarray → scalar) —
+the same defensive code copy-pasted four times. This is both a correctness smell (the declared
+type is wrong) and a per-access cost on the hottest path in the system.
+
+**Recommendation**
+Define an explicit immutable `Bar` value object and make `BarEvent.bars: dict[str, Bar]`.
+Keep pandas for **indicator windows** (rolling computations in strategies), but the per-tick
+event payload should be a plain struct, not a DataFrame/Series.
+
+**Suggested approach**
+- `@dataclass(slots=True, frozen=True) class Bar: open: float; high: float; low: float; close: float; volume: float`
+  (optionally `timestamp`). `slots=True` cuts memory + attribute-access cost on millions of bars.
+- `get_last_close(ticker)` collapses to `self.bars[ticker].close` — the four `hasattr` ladders
+  disappear.
+- Strategies that need history keep requesting pandas windows from `price_handler` (item 4);
+  the *event* just carries the current bar.
+
+---
+
+## 4. Resampling per tick: precompute frames, don't reach for LRU cache
+
+**Severity:** High
+
+**Current state**
+`price_handler/data_provider.py` keeps `self.prices: Dict[str, pd.DataFrame]` fully in memory,
+and `get_resampled_bars()` calls `resample_ohlcv(...).head(window)`
+(`outils/data_outils.py`, `df.resample(timeframe).agg({...})`) **on every bar × every ticker ×
+every strategy**. Re-resampling the same base data on each tick is the dominant backtest cost.
+The question raised was whether an LRU cache would help.
+
+**Recommendation**
+**Precompute, don't cache.** An LRU cache is the wrong tool: the access pattern is a sequential
+walk forward through time, so an LRU's recency heuristic buys little, the keys (ticker, timeframe,
+window, asof) are messy, and you still pay the first-miss resample cost inside the hot loop.
+Since the full price history is already in memory and known up front, resample **once per
+(ticker, timeframe)** at load time and then *slice* per tick.
+
+**Suggested approach**
+- At data load, for each required timeframe, compute the resampled OHLCV frame once and store it
+  (`dict[(ticker, timeframe), pd.DataFrame]`).
+- Per tick, `get_resampled_bars` becomes an **index slice / `iloc` window** into the precomputed
+  frame — O(1)-ish, no `resample` in the loop.
+- This composes with item 3: the *current* bar is handed off as a `Bar`; the *window* is a view
+  into the precomputed frame.
+- If memory ever becomes the constraint (very large universes), revisit with a chunked/lazy
+  store — but measure first; precompute is the right default.
+
+---
+
+## 5. Broader performance: seed RNG, flat order index, accept the event tax
+
+**Severity:** Medium
+
+**Current state**
+Beyond items 3–4, several smaller performance/correctness items surfaced during mapping:
+- Unseeded `random` usage → **non-reproducible backtests** (also in `CONCERNS.md`).
+- Order lookups walk per-portfolio structures; there's no flat global index by `order_id`.
+- The framework pays the inherent **event-driven tax** (queue put/get + dispatch per tick) that
+  a vectorized backtester avoids.
+
+**Recommendation**
+Do the cheap high-value wins (seed RNG, flat order index). **Accept** the event-driven tax —
+it is the cost of having one code path for backtest and live, which is a deliberate and correct
+trade-off for this system.
+
+**Suggested approach**
+- Centralize RNG behind a seeded `Random` instance injected from config; forbid module-level
+  `random.*` in the engine. Makes backtests deterministic and testable.
+- Add a flat `dict[order_id, Order]` index in storage for O(1) lookup (pairs with the UUID work
+  in item 10 and the required-`order_id` work in item 11).
+- Don't try to vectorize the engine. If a *research* fast-path is ever needed, build a separate
+  vectorized signal-research tool rather than compromising the event engine's determinism.
+
+---
+
+## 6. Cross-handler coupling: order_handler → portfolio_handler
+
+**Severity:** High
+
+**Current state**
+The documented contract is "components talk via the queue, never call across domains." This is
+**violated for reads**:
+- `order_handler/order_handler.py:4` imports the concrete `PortfolioHandler`; it is passed into
+  `OrderHandler`, `OrderManager`, and `EnhancedOrderValidator` (`order_handler.py:38,62-69`).
+- The validator (6 sites) and `order_manager.py:183` reach through chains like
+  `self.portfolio_handler.get_portfolio(id).cash` /
+  `.get_open_position(t).net_quantity` — a Law-of-Demeter violation against the portfolio's
+  internal structure.
+- Strategy-side code (`variable_sizer.py`, `advanced_risk_manager.py`) reads portfolio state
+  directly too.
+
+**Recommendation**
+The **direction** is correct — order validation/sizing genuinely needs current portfolio state,
+and routing a request/response through the queue for a synchronous read would be awkward. The
+fix is not "remove the dependency" but "**depend on a narrow read-model interface, not the
+concrete class or its internals.**"
+
+**Suggested approach**
+- Define a `typing.Protocol` (e.g. `PortfolioReadModel`) exposing exactly what consumers need:
+  `get_cash(portfolio_id) -> float`, `get_position(portfolio_id, ticker) -> PositionView | None`,
+  etc. Return small read-only view objects, not live internal managers.
+- Inject the Protocol into `OrderManager` / validator / sizers instead of `PortfolioHandler`.
+  Kills the concrete import and the Demeter chains in one move, and makes these units trivially
+  testable with a fake read-model.
+- This is the same standardization as item 9 (boundary contracts via Protocol/ABC).
+
+---
+
+## 7. Error handling: own domain errors in-package, translate at the FastAPI edge
+
+**Severity:** High
+
+**Current state**
+A real exception hierarchy already exists and is **underused**: `core/exceptions/base.py`
+(`ITradingSystemError`, `ValidationError`, `ConfigurationError`, `StateError`,
+`ConcurrencyError`, `NotFoundError`), plus `execution.py` (`ExecutionError` + `ExecutionErrorCode`,
+`InsufficientFundsExecutionError`, `InvalidSymbolExecutionError`, …) and `portfolio.py`. But the
+codebase still: `raise NotImplemented` (not even an exception) in the dispatcher
+(`full_event_handler.py:84`); swallows errors returning `None` (e.g. `get_statistics`); and
+raises bare `ValueError` (`event.py:407`). The design is sound; the *usage* is inconsistent.
+
+**Recommendation**
+Keep error ownership **inside the package** and make it transport-agnostic. The package must not
+know about HTTP. FastAPI becomes the **translation boundary** that maps domain errors → HTTP
+responses. Do not `raise HTTPException` from inside `itrader/`.
+
+**Suggested approach**
+- **Use the existing hierarchy consistently.** Replace bare `ValueError`/`NotImplemented`/`None`-
+  returns with the appropriate `ITradingSystemError` subclass carrying a stable `error_code`.
+- **Separate business outcomes from bugs.** A rejected order / insufficient funds is a *normal*
+  trading outcome — prefer a `Result`/typed-outcome return on hot paths; reserve exceptions for
+  genuinely exceptional states. Don't throw on every rejected order (slow + semantically wrong).
+- **Never swallow.** Remove `try/except → return None`. Log with bound structlog context and
+  re-raise or convert to a typed result.
+- **Live-thread errors need a channel, not a stack.** Exceptions on the live background thread
+  can't propagate to a caller. Formalize the `PortfolioErrorEvent` idea (item 11) into a real
+  **error event type + dead-letter path** so failures during event processing are observable.
+- **At the API layer:** one `@app.exception_handler(ITradingSystemError)` maps `error_code` →
+  HTTP status + a serializable error response model.
+
+---
+
+## 8. Transfer objects & typing: mypy strict + Pydantic at edges + frozen dataclasses
+
+**Severity:** High
+
+**Current state**
+All events/DTOs are plain `@dataclass` (`event.py`). Plain dataclasses do **no runtime type
+enforcement** — `SignalEvent(price="oops")` stores a string silently. The stated goal is to
+"force typing everywhere" given the financial domain.
+
+**Recommendation**
+"Force typing everywhere" = **static checking (mypy/pyright strict in CI)**, not runtime
+validation on every object. Then split DTO strategy by layer rather than picking one library
+for everything.
+
+**Suggested approach**
+
+| Layer | Use | Why |
+|-------|-----|-----|
+| Hot-path internal events (`BarEvent`, per-tick) | `@dataclass(slots=True, frozen=True)` (or `NamedTuple`) | runs millions of times; slots cut memory + attr cost; frozen = immutable fact |
+| Boundary DTOs (API req/resp, external order creation, config) | **Pydantic v2** | untrusted input enters here; native FastAPI integration; JSON schema free |
+| Everywhere | **mypy/pyright `--strict` in CI** | actually enforces typing globally at zero runtime cost |
+
+- Don't Pydantic-ify the hot path — validation per bar is a real tax.
+- **Make events immutable (`frozen=True`).** Today `SignalEvent.verified` is *mutated* after
+  construction (`event.py:235`) — an event is a fact that happened; mutating it is a bug vector.
+  Verification state belongs in a separate object or a follow-on event.
+- Pairs with item 11 (event schema) and item 10 (`NewType` ID aliases for mypy).
+
+---
+
+## 9. OrderHandler/OrderManager split + interface standardization
+
+**Severity:** Medium
+
+**Current state**
+`OrderHandler` is now an explicit **facade** (confirmed: docstring "interface layer… Minimal
+business logic - delegates to OrderManager", `order_handler.py:16-37`). It does event I/O
+(`on_signal`/`on_fill`), API methods (`create/modify/cancel/get_*`), and queue plumbing; all real
+logic lives in `OrderManager`. Three issues: (a) several `deprecated` legacy methods remain
+(`add_pending_order`, `remove_orders`, `remove_order`, `order_handler.py:104-134`); (b) the split
+**leaks** — `OrderManager` receives a back-reference to `OrderHandler` (`self` passed at
+`order_handler.py:65`), a circular reference that undercuts the boundary; (c) **storage has two
+owners** — `OrderStorage` is constructed in the handler (`order_handler.py:61`) and passed into the
+manager (`:63`), and the handler's **read path bypasses the manager entirely**: every query method
+goes straight to `self.order_storage` (`get_order_by_id` `:254`, `get_orders_by_status` `:272`,
+`get_active_orders` `:288`, `get_order_history` `:304`, `get_orders_by_ticker` `:322`,
+`search_orders` `:340`, `get_orders_count_by_status` `:356`). Meanwhile the **write path** correctly
+goes through `OrderManager` (`add_order` for order + SL + TP brackets `:268,318,363`,
+`update_order`/`deactivate_order` `:97,98`, modify/cancel `:427,483`). So writes respect the layering
+and reads violate it — backwards from the stated contract.
+
+**Recommendation**
+**Keep the split** — Facade (knows the queue) + domain service (queue-agnostic) is exactly what
+you want when wrapping in FastAPI (the API calls `OrderManager` semantics without touching the
+event system). But **don't replicate the two-class pattern everywhere** — apply it only where
+there's both an event boundary to isolate *and* enough domain logic to justify a service.
+
+**Suggested approach**
+- Remove the deprecated methods from the facade (thin + consistent is the whole value).
+- Drop the `OrderManager → OrderHandler` back-ref: `OrderManager` returns
+  `OperationResult.order_events` (it mostly already does), and `OrderHandler` owns *all* queue
+  puts. One-directional dependency.
+- **Give `OrderManager` exclusive ownership of `OrderStorage`.** Construct/inject storage in the
+  manager; the handler holds no storage reference. The handler's `get_*`/`search_*` methods delegate
+  to `self.order_manager.get_*(...)` instead of `self.order_storage.*`. This makes the dependency
+  graph one-directional — **handler → manager → storage** — and gives query-time policy
+  (portfolio scoping, authorization, API view-models, caching) a single consistent home alongside
+  the write path. This is the layering the storage abstraction (item 18) should follow for orders.
+- **Standardize the boundary contract, not the internal shape.** You already have
+  `AbstractExchange`, `OrderBase`, `AbstractPriceHandler`. Make it uniform: every handler
+  implements a documented `Protocol`/ABC (small set of `on_<event>` methods, constructed with the
+  queue). `ExecutionHandler → Exchange → MatchingEngine` is already cleanly layered — don't add a
+  "manager" there just for symmetry. Interfaces for all modules: **yes**; identical
+  handler/manager pairs everywhere: **no**.
+- Pairs with item 6 (inject Protocols, not concretes).
+
+---
+
+## 10. ID strategy: integer IDs overflow BIGINT — move to UUIDv7
+
+**Severity:** Critical
+
+**Current state**
+`outils/id_generator.py` builds integer IDs as:
+
+```python
+return type_prefix * 10**19 + current_timestamp * 1000 + counter
+```
+
+`type_prefix * 10**19` alone already exceeds **2⁶³ ≈ 9.22 × 10¹⁸** (max signed 64-bit). Python
+ints are arbitrary-precision so it *works in memory*, but these IDs **do not fit PostgreSQL
+`BIGINT`** — and PostgreSQL storage is the planned live backend. You'd be forced onto `NUMERIC`/
+string keys (slow, not real key types). There's also a subtle collision risk: `_last_timestamp`
+is shared across all types while counters are per-type, so the reset logic isn't airtight.
+Encoding the entity *type* into the numeric value is fragile besides.
+
+**Recommendation**
+Move to **UUIDv7** as the default. It is time-ordered (timestamp in the high bits), so it is
+**index-friendly** in PostgreSQL (B-tree appends) — unlike UUIDv4, whose pure randomness causes
+page splits/fragmentation on append-heavy tables (orders, fills, transactions). Stop encoding
+type into the key; type belongs in a column/field. Store as native `UUID` (16 bytes), not string.
+
+**Suggested approach**
+- On Python 3.13, `uuid.uuid7` is not yet in stdlib — use `uuid-utils` (Rust-backed, fast) or
+  `uuid6`.
+- **More performant option (only if measured):** a Snowflake-style 64-bit ID
+  (timestamp + worker + sequence) fits `BIGINT`, is time-ordered, and is half a UUID's size — it
+  is what the current scheme *wants* to be, done correctly within 64 bits. Cost: needs worker-id
+  coordination; UUIDv7 needs none. Default to UUIDv7 unless ID size/throughput is proven to be a
+  bottleneck.
+- For the "force typing" goal (item 8): alias IDs — `OrderId = NewType("OrderId", UUID)` — so
+  mypy catches passing a portfolio id where an order id is expected.
+- This is a prerequisite for the PostgreSQL storage backend and for item 11's required-ID work.
+
+---
+
+## 11. Event schema redesign: required linkage IDs, event_id, immutability, enums
+
+**Severity:** High
+
+**Current state** (`events_handler/event.py`)
+Per-event audit — the recurring theme is that IDs and types are too loose for a financial system:
+
+- **`OrderEvent` (`:282-339`)** — `order_id` exists but is `Optional = None` (`:303`). An order
+  event can legally exist with no id; reconciliation depends on it. Has `parent_order_id` but
+  **no `child_order_ids`** (bracket linkage is one-directional). `action` is a bare `str`.
+- **`FillEvent` (`:342-418`)** — `order_id` exists but `Optional = None` (`:378`), populated via
+  `getattr(order, 'order_id', None)` (`:417`). If the originating order had no id, the fill
+  **loses its order linkage entirely** → silent reconciliation break. **Missing `strategy_id`**
+  (has `portfolio_id` only), no `fill_id`, no `exchange`, no slippage-vs-price separation.
+- **`SignalEvent` (`:190-242`)** — no `signal_id`/event id; `action`/`order_type` are `str` not
+  enums; `stop_loss`/`take_profit` are required positionals with no default (can't omit when
+  there is no bracket); `verified: bool` is **mutated in place** (the immutability smell, item 8).
+- **`PingEvent` (`:28-43`)** — only `time`; no event id.
+- **`PortfolioUpdateEvent` (`:172-188`)** — `portfolios: dict` is fully untyped.
+- **`PortfolioErrorEvent` (`:421-460`)** — reuses `type = EventType.UPDATE` (`:436`, the item-7
+  hack) — collides with real updates on the dispatch path.
+- **All events** — `type` is a **class attribute**, not a dataclass field, so it can't be used as
+  a real discriminator and blocks generic/type-based dispatch (item 1). `event_type_map`
+  (`:13-20`) is also missing the `SCREENER` key.
+
+**Recommendation**
+Treat events as immutable, fully-typed facts with mandatory linkage. The user's intuition was
+correct: the linkage IDs *exist* but are optional and fragile, so reconciliation silently depends
+on them being populated.
+
+**Suggested approach** (cross-cutting, applies to all events)
+1. **Every event gets a unique `event_id` (UUIDv7, item 10) + `created_at`** distinct from the
+   business `time` — enables tracing, idempotency, dead-lettering (item 7), and ordering audit.
+2. **Shared `Event` base class / `Protocol`** carrying `event_id`, `type`, `time`, with `type` as
+   a real **field** (not class attr) — unlocks type-based dispatch (item 1) and fixes the
+   `event_type_map` gap.
+3. **`frozen=True` everywhere** — events are immutable (kills the `verified` mutation).
+4. **Enums, not strings**, for `action`/`order_type` (the enums already exist in `core/enums`).
+5. **Linkage IDs required, not `Optional = None`:** `order_id` on both `OrderEvent` and
+   `FillEvent`; add `strategy_id` and `fill_id` to `FillEvent`; add `child_order_ids` to
+   `OrderEvent` for full bracket linkage. An order with no id and a fill that can't name its order
+   are nonsensical states the type system should forbid.
+6. **Type untyped `dict` fields** (`PortfolioUpdateEvent.portfolios`, `strategy_setting`).
+7. **Give errors their own `EventType`** — stop reusing `UPDATE` (item 7).
+
+---
+
+## 12. Settings/secrets: replace `config.py` with `pydantic-settings`
+
+**Severity:** High
+
+**Current state**
+`itrader/config.py` is a flat `Config` class with class-attribute defaults read via `os.getenv`
+(`config.py:48-68`), plus `set_config(env)` which is effectively a no-op (validates the env name,
+returns the class — `config.py:71-96`). Concrete problems:
+- **Hardcoded credentials in defaults** — `postgresql+psycopg2://postgres:1234@localhost:...`
+  (`config.py:64-65`). A working default secret is a security hazard; prod should fail loudly when
+  the secret is absent, not silently connect to a default.
+- **Silent secret loading** — `load_secret_keys()` returns a nested dict of `None`s when the env
+  vars are missing (`config.py:4-24`); the failure surfaces later as a `NoneType` error deep in an
+  exchange call instead of at startup.
+- **A literal bug** — `config.py:44`: `'BTG/USDT' 'USDP/USDT'` is Python implicit string
+  concatenation → the single symbol `'BTG/USDTUSDP/USDT'`. Hand-maintained literal lists rot.
+- Overlaps with the `config/` package (both define `SUPPORTED_CURRENCIES`,
+  `SUPPORTED_EXCHANGES`, DB/system settings) — two parallel config systems.
+
+**Recommendation**
+Replace with **`pydantic-settings.BaseSettings`** — the modern standard for process/infra
+settings. It provides, declaratively, what `config.py` hand-rolls: typed env loading (nested via
+`__`), `.env` support, coercion, required-vs-optional, and `SecretStr` for credentials. This is the
+**infrastructure/secrets layer** — env-driven, per-deployment.
+
+**Suggested approach**
+- One `Settings(BaseSettings)`: DB URLs as `PostgresDsn`, API keys as `SecretStr`, `log_level`,
+  `timezone`, `environment`.
+- **No working default for any secret.** Make secrets required in `live`, optional in `backtest`,
+  keyed off the `environment` discriminator. Startup fails loudly on a missing prod secret.
+- Move reference-data literals (`FORBIDDEN_SYMBOLS`, `SUPPORTED_*`) out of settings into a
+  `constants.py` or the data-domain model — they are not deployment configuration.
+- Pairs with item 8 (Pydantic at boundaries) and item 7 (fail loud, don't swallow).
+
+---
+
+## 13. Config package over-engineering: collapse `config/` to Pydantic models
+
+**Severity:** High
+
+**Current state**
+The `config/` package is **3321 lines**: `core/` (Registry + Provider ABC + File/Runtime providers
++ Validator) and 5 domains (portfolio, trading, data, system, exchange), each typically a triplet
+of `config.py` (dataclasses + hand-written `to_dict`/`from_dict`), `schema.py` (a dict type-map +
+a `validate_*` returning `bool`), and `defaults.py`/`presets.py`. Yet the entire runtime bootstrap
+(`itrader/__init__.py:1-8`) only calls `get_config_registry()` →
+`get_system_config_provider(...).get_config()`, which returns a **plain `dict[str, Any]`** out of a
+YAML file (`provider.py:67-71`). The rich typed configs aren't even in the bootstrap path, and
+consumers receive untyped dicts — the typing is discarded at the boundary.
+
+The dual-maintenance is **already broken**: `portfolio/schema.py:26-33` validates
+`risk_management` but omits `max_daily_loss_pct`, `max_drawdown_pct`, `max_concentration_pct` —
+three fields that exist on the `RiskManagement` dataclass (`portfolio/config.py:50-52`). The schema
+has drifted from the model because they are two hand-kept copies of one truth.
+`validate_portfolio_config` also swallows everything and returns `False` with no error detail
+(`portfolio/schema.py:113-114`) — the item-7 anti-pattern. Each domain's `to_dict`/`from_dict` is
+~150 lines of manual field copying and `Decimal(str(...))` round-tripping (`portfolio/config.py:116-268`).
+
+**Recommendation**
+Collapse the whole package to **Pydantic v2 `BaseModel`s** — one model per domain. This directly
+satisfies the stated requirement (*one config for both modes; backtest passes a dict; live stores
+JSONB in Postgres*), because a `BaseModel` round-trips both forms for free:
+
+| Need | Pydantic (one line) | Replaces |
+|------|---------------------|----------|
+| Backtest: build from a dict | `PortfolioConfig.model_validate(d)` | every `from_dict` |
+| Backtest: defaults / overrides | `PortfolioConfig(**overrides)` | `defaults.py` plumbing |
+| Live: load from JSONB | `PortfolioConfig.model_validate(jsonb)` | every `from_dict` |
+| Live: persist to JSONB | `cfg.model_dump(mode="json")` | every `to_dict` |
+| Validation (ranges, enums) | `Field(gt=0, le=1)` / `@field_validator` | every `schema.py` + `validate_*` |
+
+The **same model is the backtest path and the JSONB path** — `model_validate(dict)` in,
+`model_dump(mode="json")` out. One source of truth, validated once, typed end-to-end; the drift bug
+above becomes structurally impossible because validators live on the fields.
+
+**Suggested approach**
+- **Delete:** `core/registry.py`, `core/provider.py`, `core/validator.py`, every `schema.py`, the
+  `to_dict`/`from_dict` in every `config.py`, and the mtime-cache hot-reload logic. Estimated
+  **~3300 → ~600–900 lines**.
+- Keep domain models as pure `BaseModel`s (`PortfolioConfig`, `TradingConfig`, `ExchangeConfig`,
+  `DataConfig`); turn presets into model factory classmethods or validated dicts.
+- **Layering that satisfies both modes:**
+  - `Settings(BaseSettings)` (item 12) = infra/secrets, env-driven.
+  - Domain `BaseModel`s = run/domain configuration that is *passed* (backtest dict) or *persisted*
+    (live JSONB). Pure data.
+- Config is constructed **once per run/portfolio, never per tick**, so the item-8 "don't Pydantic
+  the hot path" caveat does not apply — this is exactly where Pydantic belongs.
+
+---
+
+## 14. Reporting layer: delete dead `EngineLogger`; split computation/presentation/persistence
+
+**Severity:** Medium
+
+**Current state**
+`reporting/engine_logger.py` (`EngineLogger`) is **imported nowhere** in `itrader/` or `test/` — only
+`StatisticsReporting` (`reporting/statistics.py`) is wired into the trading systems
+(`backtest_trading_system.py:14`, `live_trading_system.py:18`). It is also **broken**, not merely
+unused:
+- `MetaData(bind=...)`, `Table(...).insert()` with bind, and `self.meta.reflect()`
+  (`engine_logger.py:59,153,167`) are **SQLAlchemy 1.x APIs removed in 2.0**.
+- `record_transaction` reads `fill.direction` and `fill.exchange` (`:120,118`) — **neither field
+  exists on `FillEvent`** (its fields: `time, status, ticker, action, price, quantity, commission,
+  portfolio_id, order_id`). It would `AttributeError` if ever called.
+- It reimplements `_transaction_id`/`_position_id` counters (`:177-189`) — duplicating `idgen`.
+
+The live code (`StatisticsReporting`, `performance.py`, `plots.py`, `base.py`) is fine to keep, but
+`reporting/` fuses **three responsibilities**: computation (`performance.py`, pure — good),
+presentation (`plots.py`, matplotlib), and persistence (`statistics.py` writes SQL/JSON).
+`StatisticsReporting` also imports concrete `PortfolioHandler`/`Portfolio`/`PriceHandler`
+(`statistics.py:11-13`) — the item-6 coupling — and likely overlaps with
+`portfolio_handler/metrics_manager.py`, which already computes metrics.
+
+**Recommendation**
+Delete `EngineLogger` (dead + broken). Split the rest into **computation** (keep, pure functions) /
+**presentation** (matplotlib — move out or make an optional extra; an API-served package should
+expose data, not render charts) / **persistence** (move to the storage layer, item 18). Reconcile
+with `MetricsManager` so metrics are computed in one place.
+
+**Suggested approach**
+- Remove `reporting/engine_logger.py`.
+- Keep `performance.py` as pure metric functions; have them consume a typed result, not concrete
+  handlers (inject a read-model per item 6).
+- Move chart rendering behind an optional dependency / separate module so the core engine doesn't
+  import matplotlib.
+- Route stats persistence through item 18's storage abstraction instead of inline `to_sql`.
+
+---
+
+## 15. Type placement: centralize shared enums; entities in own modules; drop scattered maps
+
+**Severity:** Medium
+
+**Current state**
+Domain enums and dataclasses are defined inline next to the service classes that use them, instead of
+in a shared home — and the codebase is **inconsistent** about it. `core/enums/` exists and is the
+correct home (e.g. `TransactionType` lives there and is imported correctly), but many cross-cutting
+types are defined inline:
+- `events_handler/event.py:10-11` — `EventType`, `FillStatus` defined inline, though the dispatcher
+  and every handler depend on `EventType`.
+- Every portfolio manager carries an inline lifecycle/category enum **and** an inline dataclass, all
+  single-file:
+
+  | File | Inline enum | Inline dataclass(es) |
+  |------|-------------|----------------------|
+  | `cash_manager.py` | `CashOperationType` (`:21`) | `CashOperation` (`:30`) |
+  | `position_manager.py` | `PositionEvent` (`:25`) | `PositionMetrics` (`:33`) |
+  | `metrics_manager.py` | `MetricsPeriod` (`:19`) | `PortfolioSnapshot` (`:28`), `PerformanceMetrics` (`:43`) |
+  | `transaction_manager.py` | `TransactionState` (`:24`) | `TransactionContext` (`:33`) |
+
+Separately, **scattered string→enum maps** repeat the same idea in multiple files —
+`transaction_type_map` (`transaction.py:9`), `event_type_map`/`fill_status_map` (`event.py:13,22`) —
+each paired with a buggy `raise ValueError('Value %s not supported', x)` (`transaction.py:80`,
+`event.py:407`) that never interpolates (`ValueError` does no `%`-formatting; it stores the tuple).
+
+**Recommendation**
+Placement is about **ownership**, not "never co-locate":
+
+| Type | Where | Why |
+|------|-------|-----|
+| Cross-cutting enum (`OrderType`, `OrderStatus`, `TransactionType`, `EventType`, `FillStatus`, `TransactionState`, …) | `core/enums/` | many modules import it; one home prevents drift |
+| Domain entity (`Transaction`, `Order`, `Position`, event DTOs) | own module in its domain package, separate from its manager | entity ≠ the service that mutates it (`Transaction` in `transaction.py` is the correct pattern) |
+| Truly local helper type (one consumer) | inline is acceptable | but verify single-consumer first — most here are not |
+
+There are also **three overlapping lifecycle vocabularies** — `TransactionState`, `FillStatus`, and
+`OrderStatus` all encode EXECUTED/CANCELLED-style states. Rationalize them into one coherent set in
+`core/enums`.
+
+**Suggested approach**
+- Move `EventType`, `FillStatus`, `TransactionState`, and the manager category enums into
+  `core/enums/`.
+- Replace string→enum map dicts with a method on the enum (`TransactionType.from_string(s)` /
+  `_missing_`), co-located with the enum. Removes the scattered dicts and the buggy `ValueError`s
+  (convert to f-strings / typed errors per item 7).
+- Keep entity dataclasses in their own modules (pairs with item 8's frozen/typed DTOs).
+
+---
+
+## 16. Transaction processing: `TransactionContext` write-only state machine + control-flow bug
+
+**Severity:** Medium
+
+**Current state** (`portfolio_handler/transaction_manager.py`)
+`TransactionContext` (`:33-41`) separates transient processing state from the `Transaction` entity —
+a sound instinct — but the implementation is ceremony, confirmed by usage analysis:
+- **6 states declared (`TransactionState`, `:24-30`), ~3 ever set.** `ROLLED_BACK` is never used (no
+  rollback exists despite the docstring at `:46`); `retry_count` is **never incremented**;
+  `cancel_pending_transaction` sets `CANCELLED` but `process_transaction` never checks it.
+- **Write-only.** The context is `pop`ped in the `finally` (`:135`), so it is gone once the call
+  returns. `get_pending_transactions()` and `cancel_pending_transaction()` are **never called
+  anywhere** in the codebase. The whole state-tracking apparatus is set and discarded.
+- It conflates **two concerns**: a correlation/trace id and a lifecycle state machine.
+
+Three concrete defects in the same file:
+1. **Documented return value is unreachable.** `process_transaction` claims "Returns False
+   otherwise" (`:76`), but the error path calls `_handle_transaction_error`, which **re-raises**
+   (`:284`) — so `return False` (`:131`) never executes; the function always raises on failure.
+2. **Non-deterministic timestamps.** `datetime.now()` is minted locally throughout
+   (`:83,91,92,109,117,...`) → breaks reproducible backtests (item 5).
+3. **Locally-minted correlation id** (`:83`) reinvents an id that should come from the originating
+   event (item 11), ideally UUIDv7 (item 10).
+
+**Recommendation**
+Resolve the middle ground: either **persist** the lifecycle (durable audit trail — see items 18 and
+7's dead-letter) or **drop** `TransactionContext` (backtest hot path; a local `correlation_id`
+variable suffices). Given the package targets live execution, persist it — but **through the storage
+abstraction (item 18)**, so the in-memory backend can discard it for backtest while the Postgres
+backend records it for live. Carry `correlation_id`/`event_id` and time **from the event**, not
+`datetime.now()`.
+
+**Scope note**
+Milestone 1: introduce the storage seam + decide the durable transaction record shape, ship the
+in-memory backend, fix the three defects. **Postgres backend → the persistence milestone** (item 18).
+
+**Suggested approach**
+- Fix the unreachable-return / re-raise contradiction; pick one error contract (raise typed errors
+  per item 7, or return a `Result` — not both).
+- Replace `datetime.now()` with event-derived time; carry the correlation id from the event.
+- Route lifecycle state through `TransactionStorage` (item 18) rather than an in-memory dict popped
+  on completion.
+
+---
+
+## 17. Monetary values inconsistently typed (`float` vs `Decimal`) with lossy conversions
+
+**Severity:** High
+
+**Current state**
+Money is typed inconsistently across the system, and precision is computed then thrown away:
+- `Transaction.price/quantity/commission` are `float` (`transaction.py`).
+- `TransactionManager._calculate_transaction_cost` carefully converts to `Decimal`
+  (`transaction_manager.py:246-255`) — then `_execute_transaction` does
+  `self.portfolio.cash += float(transaction_cost)` (`:229`), casting straight back to `float`.
+- `Portfolio.cash` is `float` (`portfolio.py:37`), while `CashManager._reserved_cash` is `Decimal`
+  (`cash_manager.py:65`).
+
+So the same value is `float` in the entity, `Decimal` mid-calculation, and `float` again at the
+portfolio boundary. For a trading system this is a classic correctness defect — rounding error
+accumulates and the careful `Decimal` math is defeated at the float boundaries.
+
+**Recommendation**
+Pick **`Decimal` end-to-end for money** (prices, quantities, cash, commissions, PnL) and stop
+converting back to `float`. Persist as `NUMERIC` in Postgres (item 18) and serialize via Pydantic
+`condecimal`/`Decimal` (items 8, 13). `float` is acceptable only for derived analytics/plots where
+precision is not contractual.
+
+**Suggested approach**
+- Type monetary fields as `Decimal` on the entities (`Transaction`, `Position`, `Portfolio.cash`,
+  fee/commission) and in the event DTOs (item 11).
+- Remove per-method `Decimal(str(...))` churn — values arrive as `Decimal` already.
+- Centralize a money quantization policy (e.g. `ROUND_HALF_UP` to instrument precision) instead of
+  ad-hoc `round(...)` calls.
+- Mirror as `NUMERIC` columns when the Postgres backends land (item 18).
+
+---
+
+## 18. Portfolio-handler storage abstraction: pluggable seam for manager state
+
+**Severity:** High
+
+**Current state**
+Each portfolio manager holds its domain state in **in-memory Python structures with no storage
+seam**: `TransactionManager._transaction_history`/`_pending_transactions`
+(`transaction_manager.py:58-59`), plus the equivalent position/cash/metrics state in
+`PositionManager`, `CashManager`, and `MetricsManager`. There is no abstraction to swap in durable
+storage for live mode. The codebase **already has the right pattern elsewhere** —
+`OrderStorageFactory` with `in_memory` (backtest) and `postgresql` (live) backends behind an
+`OrderStorage` interface — but the portfolio side doesn't use it (and `PostgreSQLOrderStorage`
+itself is currently all `NotImplementedError`, per `CONCERNS.md`).
+
+**Recommendation**
+Generalize the `OrderStorage` pattern across the portfolio handler: define storage interfaces for
+manager state (transactions, positions, cash operations/ledger, metrics snapshots), ship the
+in-memory implementations now, and add Postgres implementations on top of the same abstraction in the
+persistence milestone. Same seam, two backends — identical to how orders already work.
+
+**Scope note (milestone split)**
+- **Milestone 1 (now):** define the storage interfaces + in-memory backends; route manager state
+  through them; decide the durable record shapes (depends on items 10 IDs, 11 correlation ids,
+  17 `Decimal` money). No database code.
+- **Persistence milestone (next):** implement the Postgres/JSONB/`NUMERIC` backends.
+
+**Suggested approach**
+- Mirror `order_handler/storage/` structure under `portfolio_handler/storage/` with a factory and
+  `in_memory`/`postgresql` backends.
+- Interfaces: `TransactionStorage`, `PositionStorage`, `CashLedgerStorage`, `MetricsStorage`
+  (or a unified `PortfolioStateStorage` if cohesion is high).
+- Keep the in-memory backend the default for backtest; select Postgres via config (items 12/13) in
+  live mode.
+- This is the single seam that unblocks live persistence for transactions (item 16), positions,
+  cash, and metrics at once.
+
+---
+
+## 19. Order lifecycle audit (`OrderStateChange`): first-class durable storage + deterministic timestamps
+
+**Severity:** Medium
+
+**Current state** (`order_handler/order.py`)
+`OrderStateChange` (`:13-27`) is an embedded, in-memory audit trail: `Order.state_changes:
+List[OrderStateChange]` lives on the entity (`:62`), appended on every transition
+(`add_state_change`, `:224-275`). The code's own TODO (`:263-264`) flags the gap: *"check if i have
+to store the state changes permanently in sql when in live trading / production."* The order-storage
+`in_memory` backend reads `order.state_changes` (`in_memory_storage.py:311`), but
+`PostgreSQLOrderStorage` is all `NotImplementedError` (`CONCERNS.md`), so the audit trail is only as
+durable as the in-memory store. This is the **same audit-trail pattern as item 16 (transactions)**.
+
+Concrete defects:
+- **Audit timestamp is wall-clock, not event time.** `add_fill` receives `fill_time` (`:282`) but
+  `add_state_change` ignores it and stamps the transition with `datetime.now()` (`:253,262,269`). So
+  the recorded transition time ≠ the actual fill time — wrong audit data *and* non-deterministic
+  backtests (item 5).
+- `modify_order` appends a `state_change` directly (`:419-427`), bypassing `add_state_change`'s
+  validation — duplicated logic.
+- Prices/quantities are `float` (item 17).
+
+**Recommendation**
+Make the order state-change trail a **first-class, append-only durable record** routed through the
+order-storage seam (item 18 layering, owned by `OrderManager` per item 9) — an `order_state_changes`
+child table (FK to order) for the Postgres backend, not an embedded list a backend must flatten.
+Thread the **real event/fill time** through transitions instead of `datetime.now()`.
+
+**Scope note**
+Milestone 1: fix the timestamp bug + the `modify_order` validation bypass; decide the durable
+state-change record shape; keep the in-memory backend. **Postgres backend → the persistence
+milestone** (item 18 / order storage).
+
+**Suggested approach**
+- Pass `time` into `add_state_change` (default to event time, not `datetime.now()`); route
+  `add_fill`'s `fill_time` through to the recorded timestamp.
+- Route `modify_order` through `add_state_change` (single validated path).
+- Model `OrderStateChange` as a durable child record behind `OrderStorage`; in-memory backend keeps
+  the list, Postgres backend writes rows.
+
+---
+
+## 20. Dead ABC enforcement: `__metaclass__ = ABCMeta` leaves every abstract base unenforced
+
+**Severity:** High
+
+**Current state**
+Multiple "abstract" base classes use the **Python-2 idiom** `class X(object)` + `__metaclass__ =
+ABCMeta`, which is **inert in Python 3** — the metaclass is never applied, so every
+`@abstractmethod` is decorative and incomplete subclasses instantiate silently:
+- `execution_handler/exchanges/base.py:7,17` (`AbstractExchange`) — proof: `SimulatedExchange` never
+  implements `configure()` (`@abstractmethod` at `base.py:107-108`) yet instantiates fine
+  (`execution_handler.py:75`).
+- `execution_handler/base.py:4,21` (`AbstractExecutionHandler`).
+- `price_handler/base.py:3,18` (`AbstractPriceHandler`) — also carries `from __future__ import
+  print_function`, a literal Py2 relic. `PriceHandler` never implements `get_last_date`/`get_last_bar`
+  and changes `load_data`/`update_data` signatures, with no error.
+- `strategy_handler/position_sizer/base.py:4` (`AbstractPositionSizer`).
+- `strategy_handler` base `Strategy` is `class Strategy(object)` with no abstract `calculate_signal`
+  at all (see item 24).
+- `reporting/base.py:6,23` (`AbstractStatistics`) — also has `print_summary` as `@abstractmethod`
+  with a full body (item 38).
+- `universe/universe.py:9` (`Universe`) — and the one used subclass doesn't even implement the declared
+  `get_assets` (item 33).
+- `screeners_handler/screeners/base.py:11,67` (`Screener`) imports `ABC, abstractmethod` but subclasses
+  `object`; `screen_market` also omits `self` (item 32).
+
+That is **eight** unenforced "abstract" bases across the package — a systemic idiom, not isolated.
+
+**Recommendation**
+Make these real ABCs (`class X(ABC):` / `metaclass=ABCMeta`) — or, per item 9, `typing.Protocol`
+for structural seams. This will immediately surface the missing/!=-signature implementations
+(`SimulatedExchange.configure`, the price-handler methods) and force genuine conformance.
+
+**Suggested approach**
+- Convert all five bases; fix the conformance failures they expose.
+- Prefer `Protocol` where the seam is "any object with these methods" (exchanges, storage, sizers);
+  keep `ABC` where shared behavior is inherited.
+- Pairs with items 8/9 (typing + standardized boundary contracts).
+
+---
+
+## 21. Backtest validity: look-ahead, fill realism, and undocumented bar timing
+
+**Severity:** High
+
+**Current state**
+Several issues converge on whether backtest results are trustworthy:
+- **Resampling look-ahead.** `resample_ohlcv` uses `df.resample(timeframe, label='right')` with default
+  `closed='left'` (`outils/data_outils.py:23`), and `get_resampled_bars` slices the upper bound at
+  `time+timeframe` (`data_provider.py:240`) while the same-timeframe branch uses `time`
+  (`data_provider.py:244`). The `label='right'` + `+timeframe` combination can pull the
+  currently-forming bar into a decision made at `time` — a classic future-data leak — and the two
+  branches return windows of inconsistent recency.
+- **Limit fills slip past the limit price.** The matching engine fills a LIMIT at exactly
+  `order.price` (`matching_engine.py:99,102`), then `simulated.py:214` multiplies by a random
+  `slippage_factor`, so a take-profit/limit can fill *through* its own cap — violating the engine's
+  own documented invariant (`matching_engine.py:94-96`).
+- **No partial fills despite claims.** `on_market_data` plumbing implies partials
+  (`simulated.py:218-220`) but the engine always fills full `order.quantity`
+  (`matching_engine.py:157`) — no liquidity/volume model, so any size fills completely.
+- **Undocumented signal/fill timing.** Strategies price signals at the signaling bar's *close*
+  (`strategy_handler/base.py:55`), and market orders' next-bar-open convention isn't documented or
+  asserted — borderline look-ahead unless the engine guarantees next-bar fills.
+
+**Recommendation**
+Treat backtest validity as a first-class correctness concern: fix the resample edges, never apply
+adverse slippage beyond a limit price, decide whether partial fills are in scope, and document +
+unit-test the bar-timing convention (no future timestamp may influence a decision at `time`).
+
+**Suggested approach**
+- Use `label='left', closed='left'` (or `right/right`), drop the trailing partial bar, slice the
+  upper bound exclusively at `time`, and add a look-ahead regression test.
+- Limit fills: bypass slippage (limit price is a hard bound); apply slippage only to market/stop.
+- Either implement volume-based partials or remove the partial-fill scaffolding.
+- Document the "decide on close N, fill on open N+1" rule and assert it in tests.
+
+---
+
+## 22. Trade path bypasses `CashManager`: float round-trip via the `cash` setter
+
+**Severity:** Critical
+
+**Current state**
+The real trade path mutates cash through a lossy float round-trip and **never uses `CashManager`'s
+ledger**. `Portfolio.process_transaction` runs the position update, then
+`TransactionManager._execute_transaction` does
+`self.portfolio.cash += float(transaction_cost)` (`transaction_manager.py:227-229`, with the comment
+"this will be moved to CashManager later"). That hits the `Portfolio.cash` setter
+(`portfolio.py:196-205`), which diffs the balance and calls `cash_manager.deposit()`/`withdraw()`
+with the label `"Cash balance adjustment"`. Consequences:
+- `CashManager.process_transaction_cash_flow`, `reserve_cash`, `release_cash_reservation` are
+  **never called by the trade path** — reservations, `TRANSACTION_DEBIT/CREDIT` audit operations, and
+  overdraft semantics are dead code for real trades.
+- A SELL is recorded as a `DEPOSIT` and a BUY as a `WITHDRAWAL` — the cash audit trail is
+  semantically wrong.
+- The `Decimal` cost is cast to `float` (`:229`) then re-`Decimal(str(...))` in the setter (`:201`):
+  a lossy round-trip on every trade (compounds item 17).
+
+**Recommendation**
+Make `Portfolio.process_transaction` call `cash_manager.process_transaction_cash_flow(...)` directly
+with the `Decimal` cost; delete `_execute_transaction`'s cash mutation and the `cash` setter shim.
+Money stays `Decimal` end-to-end (item 17). This is also where the cash audit trail (item 18 storage)
+must originate.
+
+**Suggested approach**
+- Route all cash flow through `CashManager` with proper `CashOperationType` semantics (debit/credit,
+  not deposit/withdraw).
+- Remove the `Portfolio.cash` setter (or make it raise) so no caller can mutate cash outside the
+  manager.
+- Pairs with items 17 (Decimal), 18 (cash ledger storage), 23 (atomicity).
+
+---
+
+## 23. Transaction non-atomicity: position mutated before funds check, no rollback
+
+**Severity:** High
+
+**Current state**
+`Portfolio.process_transaction` calls `position_manager.process_position_update(transaction)`
+**first** (`portfolio.py:270`), then `transaction_manager.process_transaction` (`:274`), where
+`_check_funds_availability` runs (`transaction_manager.py:200-219`). If funds are insufficient,
+`InsufficientFundsError` is raised **after** the position is already created/updated, with **no
+rollback** — leaving an orphaned position. The `TransactionState`/`ROLLED_BACK` machinery
+(`transaction_manager.py:24-30`) exists but is never used. Compounding this, the error contract is
+broken: `_handle_transaction_error` ends in a bare `raise` (`:284`), so `process_transaction`'s
+`return False` (`:131`) is unreachable and the documented `bool` return is never honored (also noted
+in item 16).
+
+**Recommendation**
+Validate funds (and all preconditions) **before** any position or cash mutation, or wrap the
+position+cash sequence in one transactional unit with rollback. Pick a single error contract (raise
+typed errors per item 7, or return a `Result`) — not both.
+
+**Suggested approach**
+- Reorder: validate → check funds → mutate position → mutate cash, all under one lock (item 29).
+- Implement the `ROLLED_BACK` path or delete the dead state machine (item 16).
+- Remove the unreachable `return False`; standardize on typed exceptions (item 7).
+
+---
+
+## 24. Strategy composition layer is fiction; `calculate_signal` contract is inconsistent
+
+**Severity:** High
+
+**Current state**
+The documented "each strategy combines a `position_sizer`, `risk_manager`, and `sltp_models`"
+(CLAUDE.md) is **false in code**:
+- The entire `strategy_handler/position_sizer/`, `risk_manager/`, and `sltp_models/` tree is
+  **orphaned dead code** — a repo-wide grep finds zero instantiations outside the defining files. The
+  real sizing/SL-TP path lives in `order_handler/order_manager.py:196-202,287-375` (reads
+  `signal.stop_loss`/`take_profit` directly).
+- Base `Strategy` (`strategy_handler/base.py:16-32`) takes no sizer/risk/sltp — there is no DI and no
+  hardcoded composition; the components are simply unused.
+- `calculate_signal` has **no standard signature**: the handler calls
+  `strategy.calculate_signal(ticker, data)` (`strategies_handler.py:52`), but in-tree strategies
+  declare three different signatures (`(ticker, bars)`, `(bars, event, ticker)`,
+  `(bars, ticker, time)`) — most would `TypeError` if run through the handler. The base class doesn't
+  declare the method at all (compounds item 20).
+- `strategy_setting` flows as an untyped `dict` (`event.py:234`), read via `.get()`
+  (`variable_sizer.py:39-40`) — silent `None` on typos.
+
+**Recommendation**
+Decide the single owner of sizing/SL-TP (the order handler appears to have won) and either **delete**
+the orphaned packages or **re-integrate** them as the real composition layer via DI. Make
+`Strategy` an ABC with one abstract `calculate_signal(ticker, bars)` signature, and update CLAUDE.md
+to match reality.
+
+**Suggested approach**
+- Remove (or wire in) `position_sizer`/`risk_manager`/`sltp_models`; don't ship unreferenced
+  abstractions.
+- Define the strategy interface (item 20) with a fixed signature and a required `max_window`.
+- Replace `strategy_setting` dict with a typed/frozen settings object on the signal (items 8/11).
+
+---
+
+## 25. Data ingestion robustness: network resilience, pagination correctness, unbounded memory
+
+**Severity:** High
+
+> Component-level defects in the **Provider** seam of the price handler. The structural
+> home for these fixes is the subsystem refactor in **item 30** (Provider / Store / Feed).
+
+**Current state**
+- **No network resilience.** `CCXT_exchange` is built with `getattr(ccxt, name)()` (`CCXT.py:20`) —
+  no `enableRateLimit=True`, no `timeout`. The pagination loop (`CCXT.py:112-118`) calls
+  `fetch_ohlcv` with no rate-limit sleep, no retry/backoff, no timeout; a single transient
+  `NetworkError` aborts the whole download, and `download_data` itself is unguarded (the try/except
+  at `:32-37` only wraps `get_tradable_symbols`).
+- **Pagination loses/duplicates bars.** Continuation uses `since=last_ts` (the last already-fetched
+  bar, `CCXT.py:116`) — CCXT is inclusive, so the boundary bar is re-fetched; the loop runs only
+  while a page is exactly 1000, truncating history on any short page; the `end_date` parameter is
+  accepted but never used (`CCXT.py:85`).
+- **Unbounded live memory.** `update_data` does `pd.concat` + dedup but never trims
+  `self.prices[ticker]` (`data_provider.py:116-118`), so a long-running live session grows without
+  bound. The only eviction lives in `BINANCE_Live.py` — which is itself unrunnable (see item 27 /
+  concrete defects). `update_data` also busy-loops with `datetime.now()` recomputed per ticker and no
+  sleep (`data_provider.py:99-124`).
+
+**Recommendation**
+Make ingestion production-grade: enable rate limiting + timeouts + bounded retry/backoff; fix
+pagination to advance `since` by one step and loop on non-empty (honoring `end_date`); add an
+eviction/ring-buffer policy to `PriceHandler` itself.
+
+**Suggested approach**
+- `ccxt.<exchange>({'enableRateLimit': True, 'timeout': ...})`; wrap `fetch_ohlcv` in retry/backoff.
+- Advance `since = last_ts + one_timeframe`; loop `while len(page) > 0`; stop at `end_date`.
+- Cap per-ticker history (config-driven window) in `PriceHandler`; compute `now` once per pass with
+  backoff.
+
+---
+
+## 26. SQL persistence: table-name injection + SQLAlchemy-2.0 anti-patterns
+
+**Severity:** High
+
+> Component-level defects in the **Store** seam of the price handler. The structural
+> home for these fixes is the subsystem refactor in **item 30** (Provider / Store / Feed).
+
+**Current state** (`price_handler` SQL layer / `sql_handler.py`)
+- **Identifier injection.** `delete_all_tables` builds `text(f'DROP TABLE IF EXISTS {"%s"};' % sym)`
+  (`sql_handler.py:36`) — the table name (symbol-derived) is interpolated unquoted into DDL.
+  `to_sql(symbol.lower(), ...)` (`:57,59`) and `read_sql(symbol, ...)` (`:70`) likewise interpolate
+  the symbol as a table name with no identifier validation/quoting. A symbol with a space/quote
+  breaks or injects.
+- **2.0 API misuse on a 2.0 engine** (`pyproject.toml` pins SQLAlchemy `^2.0`): legacy
+  `read_sql(table_name, conn)` usage; `df.index.freq = df.index.inferred_freq` (`:72`) raises on a
+  gapped index, turning a read into a hard failure. `SqlHandler` is also a bare `object` hardwired to
+  one Postgres URL (no injection/abstraction — see item 27).
+
+**Recommendation**
+Validate/allowlist identifiers (`^[a-z0-9_]+$`), use `MetaData`/`Table` reflection for DDL instead of
+f-strings, adopt SQLAlchemy-2.0 idioms (explicit `Connection`, `text()` with bound params), and stop
+assigning `.freq` from `inferred_freq` on possibly-gapped data.
+
+**Suggested approach**
+- Route all table access through validated identifiers + parameterized queries.
+- Replace per-symbol-table layout if feasible (a single table keyed by symbol avoids dynamic DDL
+  entirely and the injection surface with it).
+- Pairs with item 27 (storage seam) and items 12/13 (config-driven DSN, no hardcoded creds).
+
+---
+
+## 27. Exchange/data adapter abstraction broken; resting book has no persistence seam
+
+**Severity:** High
+
+> The price-adapter and storage-seam halves of this finding are subsumed by the
+> subsystem refactor in **item 30** (Provider / Store seams). The resting-order-book
+> half belongs to the execution layer and stays here.
+
+**Current state**
+- **Price adapters aren't interchangeable.** `AbstractExchange` requires `get_all_symbols()`
+  (`price_handler/exchange/base.py:16`), but `CCXT_exchange` implements `get_tradable_symbols()`
+  (`CCXT.py:25`) and OANDA implements `get_all_symbols()` (`OANDA.py:39`); `PriceHandler` calls
+  `get_tradable_symbols()` (`data_provider.py:282,304`), so an OANDA exchange would `AttributeError`.
+  `_format_data` is near-duplicated and divergent across the two (`CCXT.py:54` vs `OANDA.py:58`).
+  OANDA is unreachable (factory only handles `'binance'`, `data_provider.py:312-317`) and can't even
+  construct (`OANDA.py:36` calls a non-existent `load_markets()`).
+- **No storage seam for price data.** `PriceHandler` instantiates a concrete `SqlHandler()` directly
+  (`data_provider.py:55`) with no interface — unlike the `OrderStorageFactory` pattern the project
+  already has.
+- **Resting-order book is process-memory only.** `MatchingEngine._resting`
+  (`matching_engine.py:40`) holds all resting brackets/OCO state in a dict; a live restart loses it,
+  and `ExecutionHandler` hardcodes the live exchange slot to `None`
+  (`execution_handler.py:74-77`), so there's no path for a real venue to own matching.
+
+**Recommendation**
+Define **one** exchange contract (`get_tradable_symbols`/`download_data`) with a shared
+`_format_data` base; fix or delete OANDA rather than ship a broken stub. Introduce a `PriceStorage`
+interface (item 18 pattern) injected into `PriceHandler`. Give the resting book a persistence seam so
+live exchanges can delegate matching to the venue and reload state on restart.
+
+**Suggested approach**
+- Unify the adapter Protocol (item 20); collapse duplicated formatting.
+- `PriceStorage` interface with in-memory + SQL backends (item 18 / persistence milestone).
+- Persist the resting book (or delegate to the live venue); never hardcode the live slot to `None`.
+
+---
+
+## 28. Fee/slippage models: dead maker fees, broken tiered model, inconsistent contracts
+
+**Severity:** Medium
+
+**Current state**
+- **Maker fees are unreachable.** `simulated.py:208-213` calls `calculate_fee(...,
+  order_type="market")` unconditionally, even for resting LIMIT fills from `on_market_data`. So
+  `MakerTakerFeeModel` always charges taker (`maker_taker_fee_model.py:111-113`), and
+  `calculate_maker_fee`/`calculate_taker_fee` are never called (dead).
+- **`TieredFeeModel` is broken.** Its ctor is `fee_tiers: List[Tuple[float,float,float]]`
+  (`tiered_fee_model.py:15`), but `simulated.py:475` calls `TieredFeeModel(tiers=<list of dicts>)` —
+  wrong kwarg name *and* wrong shape → `TypeError`. Selecting `model_type='tiered'` crashes.
+- **Inconsistent validation contracts.** `FeeModel.validate_inputs` *raises* (`fee_model/base.py`)
+  while `SlippageModel.validate_inputs` *returns bool* and models silently `return 1.0` on bad input
+  (`fixed_slippage_model.py:55-56`, `linear_slippage_model.py:59-60`) — masking bad data as
+  "no slippage." The two ABCs also disagree on money type (Decimal vs float) at the same call site.
+- Slippage is applied to limit fills (item 21).
+
+**Recommendation**
+Pass the real `order_type`/maker-flag from `_emit_fill`; fix `TieredFeeModel` construction (kwarg
+name + tuple shape, or adapt the config dicts); unify the fee/slippage validation contract and money
+type; make invalid slippage inputs raise, not neutralize.
+
+---
+
+## 29. Intra-portfolio manager coupling + thread-safety theater
+
+**Severity:** Medium
+
+**Current state**
+- **Managers receive the whole `Portfolio`.** `CashManager`/`PositionManager`/`TransactionManager`
+  are all constructed with the parent `portfolio`, so any manager can reach any sibling concern —
+  e.g. `TransactionManager` reads/writes `self.portfolio.cash` (`transaction_manager.py:205,228-229`,
+  item 22). This is the item-6 coupling pattern *inside* the portfolio.
+- **Composite reads cross independent locks.** `Portfolio.total_equity` (`portfolio.py:219-223`)
+  takes the portfolio lock then reads `total_market_value` (position lock) + `cash` (cash lock) —
+  three locks, so a concurrent trade can change cash mid-computation and yield inconsistent equity.
+  `to_dict` (`portfolio.py:395-419`) has the same gap. The "global thread safety" docstring oversells
+  what the per-manager `RLock`s actually guarantee.
+- **Minor:** `PortfolioHandler.config` fabricates throwaway `Limits`/`Config` classes inside a
+  property for test compatibility (`portfolio_handler.py:81-92`); position limits have three sources
+  of truth (`Portfolio._validate_transaction`, `PositionManager._create_new_position`, and the unused
+  `PositionManager.validate_position_limits`).
+
+**Recommendation**
+Inject narrow read-model Protocols into managers instead of the whole `Portfolio` (item 6); route
+cash through `CashManager` (item 22). For derived/composite values that must be consistent, use a
+single shared portfolio lock (or a defined lock ordering). Don't advertise stronger thread-safety
+than is provided. Consolidate position limits to one source (`PortfolioConfig`).
+
+---
+
+## 30. Price handler is a god-object: split into Provider / Store / Feed + offline-vs-runtime lifecycle
+
+**Severity:** High
+
+*Umbrella finding consolidating items 25, 26, 27 (price-data half) under one target architecture.*
+
+**Current state**
+`PriceHandler` (`data_provider.py`, 318 lines) fuses five distinct responsibilities into one class,
+and the `load_data` method straddles two lifecycles that should never share a code path:
+- **Provider / ingestion** — `_init_exchange` (`:307`), `exchange.download_data`, `update_data`
+  (network fetch via `CCXT_exchange`).
+- **Persistence** — owns a concrete `SqlHandler()` (`:55`), reads/writes SQL directly (no interface).
+- **In-memory cache** — `self.prices` dict (`:52`) is the mutable state every reader depends on.
+- **Query / access** — `get_bar`, `get_bars`, `get_last_close`, `get_resampled_bars`, `to_megaframe`.
+- **Symbol universe** — `_init_symbols`, `set_symbols`, `get_tradable_symbols` (overlaps `universe/`).
+
+The proof of the tangle is `load_data` (`data_provider.py:65-91`): *"if symbol in SQL → read; else →
+download from CCXT and write to SQL."* **Ingestion, caching, and reading are interleaved inside the
+trading run path** — a backtest can silently hit the network mid-run, and there is no way to force a
+run to be reproducible/offline.
+
+**Recommendation**
+Decompose into three single-responsibility seams, and enforce an **offline-vs-runtime temporal
+split** so the trading loop is physically read-only.
+
+Three seams (not two — the "reader" is really a read/write *store* that ingestion writes into):
+
+| Seam | Responsibility | Implementations | Direction |
+|------|----------------|-----------------|-----------|
+| **`PriceProvider`** | external API → canonical OHLCV | CCXT, OANDA, Yahoo, Binance-live | read-from-vendor |
+| **`PriceStore`** | persist & retrieve canonical OHLCV | InMemory, CSV, Parquet, SQL | **read *and* write** |
+| **`BarFeed`** | given an event-time, hand a strategy the right look-ahead-safe window | one impl, store-backed | runtime read-model |
+
+Lifecycle split:
+- **Ingestion is an offline pipeline** — `provider.fetch() → store.write()`, run as a CLI/job
+  *before* a backtest; never invoked from the event loop.
+- **Runtime is read-only** — `store.read() → feed.window()`; missing data errors loudly instead of
+  silently downloading.
+
+**Suggested approach**
+```
+price_handler/
+  providers/          # external → canonical OHLCV (the "ingestor")
+    base.py           # PriceProvider(Protocol): fetch_ohlcv(), get_symbols()
+    ccxt_provider.py
+    oanda_provider.py
+    yahoo_provider.py
+    binance_stream.py # live: streaming variant of the provider seam
+  store/              # persist & retrieve (read AND write)
+    base.py           # PriceStore(Protocol): read_bars(), write_bars(), has()
+    in_memory.py
+    csv_store.py
+    sql_store.py      # single `bars` table (symbol, timeframe, ts) — UTC, parameterized
+  feed/
+    bar_feed.py       # window(), resampled(), megaframe() — look-ahead-safe (item 21)
+  ingestion.py        # offline pipeline provider -> store (CLI entry, not in run loop)
+```
+- Same `Factory + Protocol + InMemory/SQL` shape as order storage (items 9/18) — keeps M1 consistent.
+- **Live streaming fits the `PriceProvider` seam** as a push/subscription variant (async/callback) of
+  the same canonical-OHLCV contract — decide the async interface now so it isn't retrofitted later.
+- `PriceStore` SQL backend = **one `bars` table** keyed by `(symbol, timeframe, ts)`, which removes
+  the per-symbol-table dynamic DDL and the injection surface (item 26) outright.
+- `BarFeed` is where look-ahead correctness (item 21) and resampling performance (item 4) are
+  unit-tested, isolated from where bytes are stored.
+- Fold in the component fixes: item 25 (Provider resilience/pagination), item 26 (Store SQL safety),
+  item 27 (single adapter contract; fix-or-delete OANDA; storage interface). The SQL store backend
+  itself lands in the persistence milestone; the **seam** lands in M1.
+
+**Cross-refs:** subsumes 25, 26, 27 (price half); depends on 20 (real ABCs/Protocols), 17 (Decimal),
+10/11 (IDs, UTC timestamps); enables 21 (feed-level look-ahead tests), 4 (precomputed frames).
+
+---
+
+## 31. Strategy handler: unenforced signal contract + stranded sizing migration
+
+**Severity:** High
+
+*Extends item 24 (orphaned sizer/risk/sltp packages) with the base-class contract and the sizing
+architecture decision.*
+
+**Current state**
+- **`calculate_signal` is a duck-typed hope, not a contract.** `StrategiesHandler.calculate_signals`
+  calls `strategy.calculate_signal(ticker, data)` (`strategies_handler.py:52`), but `base.Strategy`
+  (`base.py`) never declares `calculate_signal` — not as a method, not as `@abstractmethod`.
+  `Strategy` is a plain `object` (no ABC). Every concrete strategy invents its own signature and
+  nothing catches a mismatch until runtime (the item-24 inconsistency).
+- **Sizing migration is stranded — orders are created with `quantity=0`.** The strategy emits
+  `quantity=0` (`base.py:63`); `order_validator.py:187` carries the comment *"TEMPORARY: Allow
+  quantity=0 during transition period before position sizer is moved to strategy"* and bypasses the
+  zero (`:195`); `order_manager` then builds the order with `quantity=signal_event.quantity` directly
+  (`:245, 256, 312, 357`) — i.e. zero. **Nothing sizes anywhere.** The `position_sizer/` +
+  `risk_manager/` packages are the abandoned *from*-state; sizing-in-strategy is the *to*-state that
+  was never built. This is a functional defect, not just messiness.
+- **Dead + broken `assign_symbol`** (`strategies_handler.py:60`) — the intended screener→strategy
+  bridge. Assumes a single strategy (`self.strategies[0]`) and reads
+  `self.strategies[0].settings['max_positions']`, but `Strategy` has no `.settings` attribute (it has
+  `setting_to_dict()` + a `max_positions` attr) → `AttributeError` if ever called. Never called.
+- **Magic sentinel:** `min_timeframe = timedelta(weeks=100)` as an init placeholder
+  (`strategies_handler.py:25`, mirrored in the screeners handler).
+
+**Recommendation — the sizing/SLTP architecture (decided)**
+Split responsibilities by what each layer legitimately knows:
+
+- **Strategy owns ALPHA + intent:** direction (what/when), SL/TP *levels or rules* (part of the trade
+  thesis — the strategy has the market data), and a **declarative sizing *policy*** (e.g. "risk 1% of
+  equity," "target 20% allocation," "stop = 1R = ATR×2"). SL/TP staying in the strategy is correct and
+  already plumbed (`SignalEvent.stop_loss/take_profit` → bracket orders at `order_manager.py:196-202`).
+- **Order/risk layer owns ALLOCATION:** it resolves the strategy's policy into a concrete
+  **per-portfolio** quantity using *that* portfolio's equity/cash/exposure/limits.
+
+Rationale (why sizing must NOT compute a final quantity inside the strategy):
+- A strategy fans **one signal out to N subscribed portfolios** (`base.py:56` —
+  `for portfolio_id in self.subscribed_portfolios`); each portfolio has different equity/cash/exposure,
+  so a strategy-computed quantity is one number wrong for every portfolio but one.
+- Sizing depends on portfolio/risk state (cash, concentration, correlation, risk budget) that a
+  strategy should not know or replicate; mixing it couples alpha to account state.
+
+This delivers the original goal — **per-strategy sizing behavior** — without portfolio state in the
+strategy. The concern that drove sizing into the strategy ("else the order handler needs per-strategy
+context") is dissolved: the **signal carries its own sizing contract** (`SignalEvent.strategy_id` +
+`strategy_setting`, `base.py:68`), so the order layer applies the policy without knowing about
+strategies. The `position_sizer/`/`sltp_models/` packages weren't a bad idea — they were filed in the
+wrong place: a per-strategy `PositionSizer`/`SLTPModel` should be **invoked by the order/risk layer
+with portfolio context injected**, not run portfolio-blind inside the strategy.
+
+**Suggested approach**
+- Make `Strategy` a real ABC (item 20) with a declared `calculate_signal(self, ticker, bars)` (item
+  24 unifies the signature).
+- Define a typed `SizingPolicy` (and optional `SLTPPolicy`) the strategy declares; carry it on the
+  `SignalEvent` (item 11 schema). Remove the `quantity=0` bypass once sizing resolves at order time.
+- Re-home the per-strategy sizer/SLTP objects into the order/risk resolution step; delete the orphaned
+  packages or move them there (item 24).
+- Delete `assign_symbol`; the screener→strategy rebalance is redesigned in item 32/the rebalance-loop
+  note.
+
+**Cross-refs:** extends 24; depends on 20 (ABC), 11 (signal carries policy), 6 (inject portfolio
+read-model into the sizer); pairs with 22/23 (per-portfolio cash/risk). Concrete bugs → `CONCERNS.md`.
+
+---
+
+## 32. Screeners handler: output is computed and discarded; orphaned duplicate dispatcher
+
+**Severity:** High
+
+**Current state**
+- **Screener output goes nowhere — two contradictory dead-end paths.**
+  - *Path A (wired):* PING → `screeners_handler.screen_markets` (`full_event_handler.py:68`) →
+    `screener.screen_market(...)` → result stored in `self.last_results`. `last_results` is **never
+    read** outside the handler (confirmed — only self-references at `:29,46,68,81,82,89`).
+  - *Path B (event):* concrete screeners *also* call `self.screener_signal(proposed)`
+    (`volume_spyke.py:52`, `most_performing.py:58`), emitting a `ScreenerEvent` onto the queue — but
+    the `SCREENER` branch in the dispatcher is `continue` (`full_event_handler.py:81-82`). Emitted and
+    discarded.
+  - The bridge that would turn proposals into traded symbols (`assign_symbol`) is dead+broken (item
+    31).
+- **Orphaned, broken duplicate `EventHandler`.** `events_handler/screener_event_handler.py` defines a
+  second class also named `EventHandler` with an alternate dispatch that references `self.universe`
+  (never assigned → `AttributeError`) and calls `self.universe.generate_bars(event)` — a method that
+  doesn't exist (it's `generate_bar_event`). Dead, broken, and confusingly name-colliding with the
+  real dispatcher.
+- **`@abstractmethod` on a non-ABC, with a missing `self`.** `screeners/base.py` imports
+  `ABC, abstractmethod` but declares `class Screener(object)` (`:11`), so `@abstractmethod` on
+  `screen_market` (`:67`) is inert; the signature also omits `self` (`:68`). Works only by duck typing
+  (item 20 family).
+- **`frequency` vs `timeframe` muddle + duplicated logic.** Firing is gated on `frequency`
+  (`:72`) but `add_screener` derives `min_timeframe` from `timeframe` (`:110`); `init_screeners` and
+  `screen_markets` store results in two different shapes (`{time: proposed}` vs `{time: {name:
+  proposed}}`, `:46` vs `:89`). The `frequency` field carries a `#TODO: da testare` (`base.py:28`).
+
+**Recommendation**
+Decide the screener's role and wire it end-to-end (or disable it explicitly). Either consume
+`ScreenerEvent` in the dispatcher to drive a real rebalance (see rebalance-loop note) or remove the
+emission and the `last_results` dead store until the loop exists — don't ship a subsystem whose entire
+output is silently dropped. Delete the orphaned `screener_event_handler.py`. Make `Screener` a real
+ABC (item 20). Unify `timeframe`/`frequency` semantics and the result-shape; add the missing
+frequency-cadence test.
+
+**Cross-refs:** part of the disconnected rebalance loop (24/31/33); depends on 20 (ABC), 11
+(`ScreenerEvent` schema); 1 (dispatcher). Concrete bugs → `CONCERNS.md`.
+
+---
+
+## 33. Universe: collapse to a thin symbol-set derivation (keep as a documented stub)
+
+**Severity:** Medium
+
+**Current state**
+- **It's a misfiled bar-event factory, not a universe.** The only method doing real work,
+  `DynamicUniverse.generate_bar_event` (`dynamic.py:55`), builds a `{ticker: bar}` dict from
+  `price_handler` and enqueues a `BarEvent` — a **feed** responsibility (item 30's `BarFeed`), not
+  asset-membership logic.
+- **The declared interface is a lie.** `Universe.get_assets(dt)` is the ABC contract
+  (`universe.py:12`); `StaticUniverse` implements it (`static.py:18`) **but is never used**; the one
+  actually used, `DynamicUniverse`, **doesn't implement `get_assets`** and exposes a different API
+  (`universe` property, `get_full_universe`, `init_universe`, `generate_bar_event`). The ABC is also
+  unenforced (dead `__metaclass__`, item 20).
+- **"Dynamic" never changes.** The docstring admits it (`dynamic.py:11-12`); `init_universe` is called
+  once at setup (`backtest:78`, `live:173`) then frozen — a static universe wearing a dynamic label.
+- **Redundant 4th copy of "what to trade," synced once.** Truth is `strategy.tickers` →
+  `get_strategies_universe()` → `universe.strategies_universe` → `price_handler.symbols`. Nothing
+  reconciles when `strategy.tickers` changes (the very dynamic case it exists for). And
+  `generate_bar_event` iterates **only** `strategies_universe` (`dynamic.py:67`), so screener-only
+  symbols get downloaded (via `get_full_universe`, `backtest:81`) but never receive bars.
+
+**Recommendation**
+Collapse it — but keep the file as a marked placeholder, per the project decision:
+- Reduce `universe/` to a thin derivation of the active symbol set
+  (`set(strategy tickers) ∪ screener universes`).
+- Move `generate_bar_event` into item 30's `BarFeed` (until that exists it may stay here, clearly
+  marked temporary).
+- Delete the `StaticUniverse` / `get_assets` ABC trio (unused; contract not honored).
+- Leave a prominent docstring/TODO: this is a deliberate placeholder for a *real* time-aware
+  `Universe` (`assets(t)` + a rebalance event), to be reintroduced **only alongside a working
+  screener→strategy rebalance loop** — do not rebuild "dynamic" membership before the loop that drives
+  it exists.
+
+**Cross-refs:** feed logic → 30; ABC → 20; part of the disconnected rebalance loop (24/31/32).
+
+---
+
+## 34. Config migration is half-finished and silently fatal (the run path doesn't import)
+
+**Severity:** Critical
+
+*Empirically verified by running the imports — not inferred. This is the single most consequential
+finding: the package's orchestration/data/timing layers do not run. It elevates items 12/13 from
+"modernize the config" to "the half-done migration is actively broken."*
+
+**Current state**
+A `config/` package was introduced (items 12/13) but the legacy flat `itrader/config.py` and its
+call sites were never retired. The package **shadows** the module (a package wins over a sibling
+module of the same name), so every legacy access fails — two distinct failure modes, both confirmed
+at runtime:
+- **`from itrader.config import <legacy symbol>` → `ImportError`.** `Config` and `FORBIDDEN_SYMBOLS`
+  live only in the shadowed flat `config.py` (`:33` `FORBIDDEN_SYMBOLS`, the `Config` class) and are
+  not re-exported by `config/__init__.py`. Verified:
+  - `from itrader.config import FORBIDDEN_SYMBOLS` → `ImportError` → **`CCXT.py:8` fails to import** →
+    `data_provider.py` fails → **`backtest_trading_system` fails to import** (verified end-to-end).
+  - `from itrader.config import Config` → `ImportError` → `live_trading_system.py:22` fails to import.
+- **`config.<ATTR>` on the runtime dict → `AttributeError`.** `config = system_provider.get_config()`
+  (`itrader/__init__.py:8`) returns a **plain `dict`** (`config/core/provider.py:67,143`). Verified:
+  `type(config)` is `dict`, `config.TIMEZONE` is missing. Attribute-style access exists in four
+  hot-path modules: `time_parser.py:9,166`, `data_provider.py:97`, `CCXT.py:71` — each raises when
+  called. `init_logger` survives *only* because it uses `getattr(config, "LOG_LEVEL", "INFO")` with a
+  default (`logger.py:179`), which is why importing `itrader` itself doesn't crash and the breakage
+  stays hidden.
+
+There are effectively **three** config surfaces: `itrader/config/` (the live one, a dict),
+`itrader/config.py` (flat `Config` with `TIMEZONE`/`FORBIDDEN_SYMBOLS`), and `itrader/legacy_config.py`
+(dead). None of the broken paths are exercised by any test (see item 35), so `make test` is green
+while the system can't be constructed.
+
+**Recommendation**
+Finish the migration before anything else — this is the top of the critical path. Collapse to one
+config surface (items 12/13), provide a typed object (Pydantic model) so `config.TIMEZONE`-style
+access is valid again (or migrate all call sites to the getter API + dict access), and delete the flat
+`config.py` and `legacy_config.py`. Add a smoke test that imports and constructs `TradingSystem`.
+
+**Cross-refs:** the concrete blocker behind items 12/13; gates item 35 (run path) and item 36
+(`time_parser` reads `config.TIMEZONE`). Concrete import failures → `CONCERNS.md`.
+
+---
+
+## 35. `trading_system/` orchestration: broken, duplicated, and entirely untested
+
+**Severity:** High
+
+**Current state**
+- **Backtest and live are copy-paste graphs that have already drifted.** The 9-component wiring is
+  duplicated across `backtest_trading_system.py:42-66` and `live_trading_system.py:94-124` (and the
+  `_initialise/_initialize_*_session` pair) with no shared builder; they already differ (backtest
+  passes real dates to `PriceHandler`, live passes empty strings; only live wraps init in try/except).
+- **Both run modes call `record_metrics` on the wrong object.** `backtest:102` and `live:221` call
+  `self.portfolio_handler.record_metrics(...)`, but `record_metrics` exists only on `Portfolio`
+  (`portfolio.py:294`), not `PortfolioHandler` (verified) → `AttributeError` on the first PING (live
+  catches and hot-spins).
+- **`TradingInterface` (the external/web API bridge) cannot function.** `__init__` calls
+  `get_itrader_logger(__name__)` but the function takes no args (`logger.py:192`) → `TypeError` on
+  construction. `create_market_order`/`create_limit_order` build `OrderEvent` **without the required
+  `order_type`** (`trading_interface.py:69-78,118-127` vs required field `event.py:301`) → `TypeError`.
+  They also push `ORDER` events straight onto the queue, **bypassing the documented
+  `SIGNAL → order_handler (validate + size)` path** — external orders skip validation, sizing, risk,
+  and bracket declaration. The module's own `validate_order_parameters` (`:135-186`) is never called;
+  `get_system_status` returns the raw internal status dict to callers; create methods swallow all
+  errors into `return False`.
+- **Live threading/lifecycle gaps.** `_running` is a plain bool read/written across threads without a
+  lock while sibling state has locks (`live:79,250,269,290,…`) — concurrent `start`/`stop` from a web
+  API race. The broad `except Exception: …; continue` loop (`live:236-241`) has no backoff, so a
+  poison event spins hot (the event was re-`put` at `:213`). `stop()` joins the thread but never
+  drains the queue (in-flight orders abandoned). `process_events` drains the *whole* queue while the
+  loop also `get`s/`task_done`s one event — `queue.join()` accounting is permanently inconsistent and
+  per-event stats undercount.
+- **`PingGenerator`** derives the ping vector from a single (first-inserted) symbol's index
+  (`backtest:85`), so symbols with differing indices won't all be pinged; accepts an unused `timezone`
+  and has a stale docstring (`ping_generator.py:27-50`).
+- **None of this is covered by any test** (verified: no test references `trading_system`/
+  `TradingInterface`). The components are unit-tested in isolation; the layer that wires them has never
+  run green end-to-end — which is why items 34/35 stayed invisible.
+
+**Recommendation**
+Extract a single `_build_components(...)` factory shared by both run modes. Fix `record_metrics` (call
+it on each `Portfolio`, or add a handler-level method). Rebuild `TradingInterface` to emit `SignalEvent`
+through the validation/sizing pipeline, call its validator, return structured results, and expose a
+shaped external status DTO. Make `_running`/status a single lock-guarded source of truth; add
+backoff/dead-letter (item 7) and queue-drain-on-stop. **Add an end-to-end smoke/integration test** that
+constructs and runs a minimal backtest — the absence of one is why the run path rotted.
+
+**Cross-refs:** gated by item 34 (imports); event-path bypass relates to 1/6/7/9; PING/BAR timing to 21.
+Concrete bugs → `CONCERNS.md`.
+
+---
+
+## 36. `time_parser.py`: timing-correctness bugs that silently mis-gate the whole system
+
+**Severity:** High
+
+**Current state**
+These functions decide *whether every strategy and screener fires* and feed look-ahead-sensitive
+windowing — a bug here corrupts behavior system-wide.
+- **`check_timeframe` anchors to UTC midnight** (`:114-137`): it measures seconds since *UTC* midnight
+  and tests `seconds % timeframe == 0` (`:128-132`). So a `1d` strategy fires at 00:00 UTC, never at
+  local midnight in a non-UTC market tz (verified `1d @ 00:00 Europe/Paris → False`); DST shifts the
+  UTC offset and silently mis-gates hourly bars across the transition (verified `1h @ 03:30 Paris
+  post-spring-forward → False`); timeframes that don't divide 86400 and week/month frames are
+  unsupported, and a `None` timeframe (see below) raises `AttributeError`. It gates
+  `strategies_handler.py:46` and `screeners_handler.py:72`.
+- **`to_timedelta` is case-sensitive and fails silently** (`:45-68`): maps only `{d,h,m}`, so
+  `'1H'`,`'1D'`,`'1w'`,`'1M'` all return `None` (verified). `None` then propagates into
+  `Strategy.timeframe`/`Screener.timeframe`, `data_provider.py:112` (`timedelta > None` → `TypeError`),
+  and `CCXT.py:79` (`resample(None)`). `'m'` already means minutes, so there's no week/month vocabulary
+  at all.
+- **`get_last_available_timestamp`** (`:18-43`) floors using minutes-since-local-midnight, so any
+  frequency ≥ 1 day collapses to "midnight today" regardless of frequency — the screener window start
+  (`screeners_handler.py:40`) is misaligned for daily/weekly screeners.
+- **`get_timenow_awere`/`round_timestamp_to_frequency`** read `config.TIMEZONE` → crash on the dict
+  (item 34); `get_timenow_awere` is called by `screeners_handler.py:36`.
+- **Dead but buggy:** `format_timeframe` (`:102`, unguarded `.match().groups()`), `elapsed_time`
+  (`:139`), `round_timestamp_to_frequency` (`:142`) have no callers; lines 143-167 mix spaces into a
+  tab file.
+
+**Recommendation**
+Decide the alignment anchor explicitly — for DST-immune behavior anchor to the Unix epoch
+(`int(ts.timestamp()) % tf == 0`); if local-market alignment is intended, do the modulo in the market
+tz. Make `to_timedelta` case-insensitive, support `w`, reject/handle `M` explicitly, and **raise** on
+unknown units instead of returning `None`. Guard `timeframe is None`. Delete the dead helpers. Add
+tests for 1d/4h in a non-UTC tz and across a DST boundary.
+
+**Cross-refs:** depends on 34 (`config.TIMEZONE`); central to 21 (look-ahead/bar timing) and the
+strategy/screener firing in 31/32. Concrete bugs → `CONCERNS.md`.
+
+---
+
+## 37. Exception hierarchy + logging infrastructure: inconsistent and partly dead
+
+**Severity:** Medium
+
+**Current state**
+- **Domain exceptions are constructed with the wrong arguments.** `PortfolioNotFoundError`
+  (`portfolio_handler.py:182`) is raised with a formatted string where `__init__(self, portfolio_id:
+  int)` (`core/exceptions/portfolio.py:36`) expects an int → renders `"Portfolio not found with ID
+  Portfolio <id> not found"` and the typed `portfolio_id` attribute becomes a string.
+  `PortfolioConfigurationError` (`:147`) misroutes its message into the `config_key` field. The typed
+  fields are unreliable for programmatic handling.
+- **`core/exceptions/execution.py` (12 classes) is entirely dead** — 0 raises, 0 `except` anywhere in
+  `itrader/`; the only references are 4 unused imports in `simulated.py:21-24`. The execution layer
+  signals failure via `ExecutionErrorCode` enum values on `FillEvent`s instead, so the exception module
+  is aspirational.
+- **Raise-only, never caught.** Across the package every domain exception has `except = 0`; the
+  granular hierarchy buys nothing today over a single base error. `ConcurrencyError`/
+  `PortfolioConcurrencyError` and `PortfolioStateError` are fully unused (only docstrings + dead
+  imports in `cash_manager.py:16`, `transaction_manager.py:18`, `position_manager.py:20`,
+  `metrics_manager.py:15`, `portfolio_handler.py:16`).
+- **Coverage gap → bare builtins everywhere else.** There is no `order.py`/`strategy.py`/`data.py`
+  exception module; only the 7 portfolio files use the hierarchy. Repo-wide there are **~36 bare
+  `raise ValueError/Exception/RuntimeError/TypeError`** (fee models, `portfolio.py`, `CCXT.py`,
+  `order.py:134`, `storage_factory.py:43,48`, …). The hierarchy is half-adopted.
+- **Logging convention is split.** `get_itrader_logger()` is used in 23 files, but 4 modules use
+  stdlib `logging.getLogger('TradingSystem')` (a never-configured name): `SMA_MACD_strategy.py:9`,
+  `sltp_models.py:7`, `BINANCE_Live.py:13`, `engine_logger.py:14`. `init_logger` hardcodes
+  `json_logs=False` (`logger.py:182`) so config-driven JSON logging is impossible; `setup_logging`
+  clears all root handlers at import (`logger.py:100`), mutating an embedding app's logging on
+  `import itrader`. Two unrelated `ValidationError` classes exist (`core/exceptions/base.py:11` and
+  `config/core/validator.py:14`). Optional-field rendering uses falsy checks (`if value:`,
+  `base.py:18`) that drop legitimate `0`/`""` values.
+
+**Recommendation**
+Decide the posture: either adopt the domain hierarchy everywhere (add `order`/`data` modules, fix the
+mis-constructed raises, pass structured args) or keep it minimal — don't ship a half-adopted hierarchy.
+Delete `execution.py` (or wire it in) and the unused `ConcurrencyError` family + dead imports. Route
+the 4 stdlib loggers through `get_itrader_logger().bind(...)`. Make `json_logs` config-driven, guard
+the import-time handler clear, rename the config `ValidationError`, and use `is not None` checks.
+
+**Cross-refs:** the in-package half of item 7 (error model); logging ties to item 15. Concrete bugs →
+`CONCERNS.md`.
+
+---
+
+## 38. Reporting `performance.py`/`plots.py`/`base.py`: broken metrics + pandas-2 breakage + dead code
+
+**Severity:** High
+
+*Extends item 14 (reporting layer) — the computation itself is wrong, not just mis-layered.*
+
+**Current state**
+- **Drawdown math is broken.** `calculate_drawdowns` (`performance.py:88-99`) zero-seeds the
+  high-water mark and applies `(hwm - returns)/hwm` to the `cum_returns` series — div-by-zero/`nan`
+  while the running peak is still 0, and nonsense for any series that isn't already an equity multiple
+  ≥1. Live via `statistics.py:84,86`. `create_drawdowns` (`:122-152`) is a dead duplicate, and
+  `calculate_max_drawdowns` expects a `'drawdowns'` column while the sibling produces `'Drawdown'`.
+- **pandas-2 fatal patterns** (the project runs `filterwarnings=["error"]`): chained `.iloc`
+  assignment `perf["Drawdown"].iloc[0] = 0.0` (`:98,146`); positional `series[-1]` on a Series
+  (`:13,42`, must be `.iloc[-1]`); exact `== 0` float comparisons (`:147`).
+- **Div-by-zero / non-standard stats.** `create_sharpe_ratio` divides by `np.std(returns)` (`:62`);
+  `create_sortino_ratio` divides by `np.std(returns[returns<0])` (`:74`, `nan` when no losers, and a
+  non-standard Sortino denominator); `calculate_profict_factor` divides win-count by loss-count
+  (`:44-51`, div-by-zero, mislabeled vs true profit factor, and the misspelling is load-bearing —
+  `statistics.py:116`). `aggregate_returns` constructs but never `raise`s its `ValueError` (`:27`).
+- **`plots.py` broken + dead.** `profit_loss_scatter` plots `x=profit.date`/`loss.date` but the column
+  is `exit_date` (`:68-69,77,88`) → `AttributeError`; deprecated plotly `titlefont_size` (`:29,55,
+  108,159`) raises on current plotly; module is imported only by `statistics.py` and littered with
+  `# OK, FUNZIONA` dev comments.
+- **`base.py` is a fake ABC** — `class AbstractStatistics(object)` + `__metaclass__ = ABCMeta`
+  (`:6,23`) → `@abstractmethod` unenforced (item 20 family); `print_summary` is `@abstractmethod` with
+  a full body.
+
+**Recommendation**
+Treat results as untrustworthy until fixed. Rewrite drawdown on the equity curve (`equity.cummax()`),
+guard all denominators, replace `[-1]`/chained-`.iloc`, fix the `plots` column refs + plotly API, make
+`AbstractStatistics` a real ABC, and delete the dead `create_drawdowns`/dev comments. Fold into the
+item-14 reporting split (computation / presentation / persistence).
+
+**Cross-refs:** extends 14; fake ABC → 20; gate behind tests like 21 (results untrustworthy until
+fixed). Concrete bugs → `CONCERNS.md`.
+
+---
+
+## 39. Execution `result_objects.py`/`base.py`: vestigial DTOs + fake ABC
+
+**Severity:** Medium
+
+**Current state**
+- **DTOs are mutable float-money.** All four result objects are plain `@dataclass` (not `frozen`),
+  with monetary/quantity fields typed `float` (`result_objects.py:31-34,61-73,130`) — consistent with
+  the rest of the execution layer but it's float money (item 17) in mutable "result" objects that can
+  be silently changed after creation. Fill checks use exact float equality (`remaining_quantity ==
+  0.0`, `:47-58`).
+- **`ExecutionResult` is a discarded side-channel.** `execute_order` returns an `ExecutionResult`
+  (`result_objects.py:16`) but the caller ignores it (`simulated.py:260`) and the same method enqueues
+  a `FillEvent` as a side effect; real reconciliation flows via `FillEvent`. `ExecutionResult` carries
+  `order_id`/`exchange_order_id` but **no `fill_id`** (`:27-28`), so it can't be the downstream linkage
+  carrier even if consumed — it's partly vestigial.
+- **`ValidationResult` name collision (×3)** across `result_objects.py:167`,
+  `order_handler/order_validator.py:29`, `config/core/validator.py:24`, with different constructor
+  signatures.
+- **`base.py` is a fake ABC + anemic.** `class AbstractExecutionHandler(object)` + `__metaclass__ =
+  ABCMeta` (`:4,21`) → unenforced (item 20); the contract declares only `on_order` while the concrete
+  handler also implements `on_market_data` (the BAR-driven matching entry point), `connect`,
+  `get_exchange_health`, etc.; the docstring references a non-existent "Compliance component".
+
+**Recommendation**
+Make result DTOs `frozen` and align them to the system-wide Decimal decision (item 17); either consume
+`ExecutionResult` (and add `fill_id`) or mark it diagnostic-only and stop returning it. Namespace the
+three `ValidationResult`s. Make `AbstractExecutionHandler` a real ABC (item 20) that includes
+`on_market_data`; drop the stale Compliance docstring.
+
+**Cross-refs:** float money → 17; linkage IDs → 11; fake ABC → 20; result objects relate to 9
+(facade)/27 (exchange contract). Concrete bugs → `CONCERNS.md`.
+
+---
+
+## 40. Testing strategy: migrate to pytest, restructure by type, add the missing run-path coverage
+
+**Severity:** High
+
+**Current state**
+- **Everything is `unittest`, not pytest.** All **28** test files are `unittest.TestCase` and use the
+  real unittest API, not just the class wrapper — `setUpClass`/`setUp`, `self.assertEqual`,
+  `self.assertRaises` throughout (e.g. `test/test_portfolio_handler/test_portfolio_handler.py` ~106
+  assertion calls, `test/test_execution_handler/test_matching_engine.py` ~43,
+  `test/test_portfolio_handler/test_position_manager.py` ~71). pytest runs these via its unittest
+  shim, so the suite is green — but every test forfeits fixtures, `parametrize`, and `pytest.raises`.
+- **No `conftest.py` exists anywhere** (only a stale `test/conftest.cpython-*.pyc` with no `.py`
+  source). Consequence: 28 `setUp`s re-build the same scaffolding (event queue, frozen time, sample
+  ticker/price/OHLC) by hand. The duplication is the main reason the suite is verbose and brittle.
+- **Markers are declared but never applied — the selection layer is fictional.** `pyproject.toml`
+  declares 8 markers (`unit, integration, slow, portfolio, events, orders, execution, strategy`) under
+  `--strict-markers`, but a tree-wide grep finds **zero** `@pytest.mark.*` decorators. So
+  `make test-unit` (`-m "unit"`) and `make test-integration` (`-m "integration"`) currently match **no
+  tests** and exit "no tests ran" (code 5). The unit/integration distinction the Makefile advertises
+  does not exist in practice.
+- **Layout is by domain, dir name is non-conventional.** Tests live under `test/` (singular;
+  `testpaths = ["test"]`) mirroring the package by handler (`test_order_handler/`,
+  `test_portfolio_handler/`, …). The Makefile mixes two selection axes inconsistently — some targets
+  are **directory**-based (`test-portfolio` → `test/test_portfolio_handler/`) and some are
+  **marker**-based (`test-unit` → `-m unit`), and the marker ones are dead (above).
+- **The run path — the part that's actually broken — has no tests at all.** Nothing under `test/`
+  imports `trading_system/`, the config layer, or runs an end-to-end backtest. This is the documented
+  reason items 34/35/36 survived: the suite exercises the (already-covered) handlers and never the
+  config/data/timing/orchestration that connects them (see item 35, and `CONCERNS.md` "entire run path
+  untested" — Critical).
+
+**Recommendation**
+1. **Migrate `unittest` → pytest, file-by-file and behavior-preserving.** Per file: convert
+   `TestCase`→ plain functions/classes, `setUp`→ fixtures, `self.assertX`→ `assert`,
+   `assertRaises`→ `pytest.raises`; confirm the **same test count** passes; commit. Never big-bang.
+   Watch `filterwarnings = ["error"]`: the migration can surface `ResourceWarning`s (unclosed
+   queues/DB sessions) that will now fail — fix the leak, don't widen the filter.
+2. **Restructure to `tests/` (plural) split by *type*, mirroring the package *inside* `unit/`.** This
+   preserves domain locality while making the unit/integration axis real:
+   ```
+   tests/
+     conftest.py              # cross-cutting, cheap, no I/O
+     unit/
+       conftest.py            # in-memory doubles
+       order_handler/  portfolio_handler/  execution_handler/  events/  strategy/ ...
+     integration/
+       conftest.py            # DB engine/session, event-cascade scaffolding
+       test_event_cascade.py  # PING→BAR→SIGNAL→ORDER→FILL through the real bus
+       test_backtest_smoke.py # construct + run a minimal backtest end-to-end
+     # e2e/  — add later if a live-mode harness materializes
+   ```
+   Update `testpaths`, and fix the Makefile so each target maps to a real selection.
+3. **Layered `conftest.py` (root + per-type), with deliberate fixture scoping.** Root holds only
+   genuinely cross-cutting fixtures (fresh `global_queue`, frozen clock, sample `BarEvent`, `idgen`
+   reset). `unit/conftest.py` holds in-memory doubles (fake `PortfolioHandler`, in-memory order
+   storage, stub exchange). `integration/conftest.py` holds the expensive scaffolding: a
+   **`scope="session"`** SQLAlchemy test **engine + schema** (build once) and a **`scope="function"`
+   transactional session that rolls back** per test (nested transaction / savepoint → `yield` →
+   `rollback`) so tests are isolated without paying re-creation cost. Discipline: a fixture only earns
+   a place in root if *both* types use it (else it belongs in the domain file — don't let root become a
+   god-fixture module), and **name fixtures by intent** (`in_memory_order_storage` vs
+   `pg_order_storage`) rather than override-by-shadowing a generic name across conftest levels (silent
+   shadowing breaks when a test moves folders).
+4. **Actually apply the type markers**, and pick **one** registration home. Derive
+   `unit`/`integration` from the test's folder via a `pytest_collection_modifyitems(items)` hook in
+   `tests/conftest.py` (apply `pytest.mark.unit`/`integration` by path), so `-m` selection and the
+   Makefile targets stop being no-ops without hand-decorating every test. For *registration* (the
+   `--strict-markers` requirement), the declarative `markers = [...]` in `pyproject.toml` and a
+   programmatic `pytest_configure` + `config.addinivalue_line("markers", …)` in `conftest.py` are
+   **equivalent** — use exactly one, never both (two lists silently drift). **Recommended:** register
+   via `pytest_configure` in `tests/conftest.py` so registration sits next to the
+   `pytest_collection_modifyitems` hook that applies them (one self-contained marker story), and delete
+   the `markers` block from `pyproject.toml`; keeping the declarative list there is equally valid if
+   you prefer all pytest config centralized — just don't duplicate. Register only markers something
+   uses (type markers `unit`/`integration`/`slow`; domain markers only if a target/CI consumes them).
+   **Do not** register an `asyncio` marker: this codebase is synchronous (backtest `for`-loop, live
+   background *thread* — no `asyncio`), and where async exists `pytest-asyncio` registers that marker
+   itself, so hand-registering it is dead weight that can mask a missing-plugin error.
+5. **Add the run-path coverage as a first-class deliverable, not an afterthought.** The highest-ROI new
+   tests are the two integration tests above — a smoke test that imports + constructs + runs a minimal
+   backtest (would have caught item 34's import failure and item 35's `record_metrics`), and an
+   event-cascade test asserting one PING produces the full FILL chain. This is the coverage whose
+   absence let the Criticals through.
+
+**Suggested approach**
+Treat the migration and the restructure as one mechanical, characterization-preserving pass (no
+behavior change to source), but **sequence the run-path smoke test first** — it can't be written until
+item 34 is fixed, and writing it *is* the verification that item 34 is fixed (Phase 0). The
+`unittest`→pytest conversion of existing handler tests is low-risk and can proceed in parallel/any
+time; the integration `conftest` DB fixtures should land alongside the SQL-storage work (items 26/18).
+
+**Cross-refs:** the missing run-path coverage is the enabling fix for **34** (import) and **35**
+(untested orchestration) — see Phase 0 in the sequencing note; integration DB fixtures pair with **26**
+(SQL) and **18** (portfolio storage seam); fixture/double design benefits from **6** (inject
+read-models) and **20** (real ABCs make doubles honest). No new defects for `CONCERNS.md` — the dead
+markers / no-op Makefile targets are captured here.
+
+---
+
+## Deep-review addenda to existing findings
+
+The subsystem review added concrete instances to earlier cross-cutting findings (no new finding
+number needed — fold these in when planning the referenced item):
+
+- **Item 5 (determinism):** unseeded module-global `random` in `fixed_slippage_model.py:61`,
+  `linear_slippage_model.py:63`, and failure/latency sim `simulated.py:142,150,181`
+  (`FixedSlippageModel` defaults `random_variation=True` and can even produce *favorable* slippage —
+  a free edge). `datetime.now()` minted across `portfolio.py:114,333,362,391`,
+  `portfolio_handler.py:108,155,...`, `cash_manager.py:438,444`, `transaction_manager.py:83,91,...`,
+  `position_manager.py:339`, and `simulated.py:106,170,181`. `update_market_value` passes
+  `datetime.now(UTC)` as the *market-data* timestamp instead of the bar time (`portfolio.py:391`).
+- **Item 6 (coupling):** new intra-portfolio instances (item 29); strategy `RiskManager.check_cash`
+  hardcodes a magic `cash < 30` floor (`advanced_risk_manager.py:60`).
+- **Item 15 (types/placement):** dead inline `PositionEvent` enum (`position_manager.py:25`); legacy
+  `logging.getLogger('TradingSystem')` instead of structlog in `sltp_models.py:6-7`,
+  `SMA_MACD_strategy.py:8-9`, and `reporting/engine_logger.py:14`.
+- **Item 17 (money):** `FillEvent.commission` is typed `float` but receives a `Decimal` from the fee
+  models (`simulated.py:208` → `event.py:376`) — a type lie + serialization hazard.
+- **Item 10 (timezone, data):** inconsistent tz handling — `config.TIMEZONE` (CCXT) vs hardcoded
+  `'Europe/Paris'` (`sql_handler.py:71`, `BINANCE_Live.py:162`) vs commented-out (OANDA);
+  `to_megaframe` silently drops tz-naive symbols *and* misaligns `keys=` (`data_provider.py:272-275`).
+
+## Concrete defects found during deep review (route to `CONCERNS.md`)
+
+These are outright bugs (not design choices). They motivate the refactor but belong in the defect
+log:
+
+- `transaction_manager.py:131` — unreachable `return False` (re-raise at `:284`); `bool` contract
+  never honored.
+- `portfolio_handler.py:58,399` — `max_portfolios` read from `limits.max_positions` (wrong config
+  field).
+- `portfolio_handler.py:319,322` — `update_portfolios_market` reads `bar.close_price` /
+  `bar_event.close_price`, inconsistent with the `get_last_close` API used elsewhere (likely
+  `AttributeError`).
+- `portfolio.py:408` — `'available_cash': self.cash` ignores `_reserved_cash`.
+- `simulated.py:475` — `TieredFeeModel(tiers=...)` → `TypeError` (item 28).
+- `simulated.py:214` — limit fills slipped past limit price (item 21).
+- `SimulatedExchange.configure` missing though `@abstractmethod` (masked by item 20).
+- `CCXT.py:116-118` — duplicate bars + early truncation + `end_date` ignored (item 25).
+- `sql_handler.py:36` — DDL identifier injection (item 26); `:72` — `.freq = inferred_freq` raises on
+  gaps.
+- `price_handler/exchange/OANDA.py:36` — non-existent `load_markets()`; OANDA adapter cannot
+  construct and is never wired in.
+- `price_handler/.../BINANCE_Live.py:9` — `ImportError` (`PriceHandler` not in `base.py`); `:180-202`
+  — references instance attrs as class attrs (`AttributeError`). The live streamer is dead code.
+- `strategy_handler/.../empty_strategy.py:15` — `super.__init__(...)` missing parentheses →
+  `TypeError`.
+- `strategies_handler.py:71` — `self.strategies[0].settings[...]` references a non-existent attribute
+  (`assign_symbol` is dead + broken).
+- `variable_sizer.py:52` — division by zero when `available_pos == 0`.
+- `sltp_models.py:17,38,65,95,122` — methods declared without `self`/`@staticmethod`; only callable as
+  `Class.method(...)`.
+- `config/` package shadows flat `config.py`: `from itrader.config import FORBIDDEN_SYMBOLS` / `Config`
+  → `ImportError` (verified) → **`CCXT.py:8` and `backtest_trading_system` fail to import** (item 34).
+- `config.TIMEZONE` attribute access on the runtime dict → `AttributeError` at `time_parser.py:9,166`,
+  `data_provider.py:97`, `CCXT.py:71` (verified; item 34).
+- `backtest_trading_system.py:102`, `live_trading_system.py:221` — `portfolio_handler.record_metrics`
+  doesn't exist (only on `Portfolio`) → `AttributeError` on first PING (item 35).
+- `trading_interface.py:35` — `get_itrader_logger(__name__)` passes an arg to a zero-arg function →
+  `TypeError` on construction (item 35).
+- `trading_interface.py:69-78,118-127` — `OrderEvent(...)` built without required `order_type` →
+  `TypeError` (item 35).
+- `time_parser.py:45-68` — `to_timedelta('1H'/'1D'/'1w'/'1M')` returns `None` → downstream
+  `TypeError`/`resample(None)` (item 36).
+- `time_parser.py:114-137` — `check_timeframe` UTC-midnight anchoring mis-gates non-UTC/DST/week-month
+  (item 36).
+- `RSI_scalping_strategy.py:4` — `from itrader.strategy_handler.base import BaseStrategy` → `ImportError`
+  (base defines `Strategy`, not `BaseStrategy`); the `my_strategies/*` tree is stale (item 31).
+- `outils/strategy.py` — module-level `@staticmethod` helpers (non-callable), imported nowhere; strategies
+  call `self.cross_up(...)` which resolves to nothing. Dead + broken.
+- `legacy_config.py`, `outils/profiling.py` — dead modules (no importers); `profiling.s_speed` references
+  a non-existent `event.typename`.
+- `portfolio_handler.py:182,147` — `PortfolioNotFoundError`/`PortfolioConfigurationError` raised with a
+  string in the wrong field → garbled render + wrong-typed attribute (item 37).
+- `performance.py:13,42` — `series[-1]` positional on a Series (pandas-2 `KeyError`); `:98,146` chained
+  `.iloc` assignment (fatal under `filterwarnings=["error"]`); `:27` `ValueError` constructed but never
+  raised; `:44-51,62,74` div-by-zero in profit-factor/Sharpe/Sortino (item 38).
+- `plots.py:77,88` — `x=profit.date`/`loss.date` but column is `exit_date` → `AttributeError`; deprecated
+  `titlefont_size` at `:29,55,108,159` (item 38).
+- `execution.py` exceptions (12 classes) — 0 raises / 0 catches anywhere; 4 unused imports at
+  `simulated.py:21-24` (item 37).
+
+---
+
+## Refactor sequencing note
+
+These items have dependencies — a sensible order for GSD phases:
+
+0. **Make it run + lock it down (do this before anything):** item 34 (finish the config migration —
+   the backtest system and CCXT don't even import today) and the run-path smoke/integration test from
+   item 40 (imports + constructs + runs a minimal backtest; also covers item 35's testing gap). Until
+   item 34 is fixed nothing downstream can be exercised, and until that smoke test exists every later
+   phase is flying blind — the entire run path (config/data/timing/orchestration) is currently
+   untested, which is the only reason items 34/35/36 survived this long. Stand up the `tests/`
+   skeleton (root `conftest` + `integration/`) from item 40 here so the smoke test has a home; the bulk
+   `unittest`→pytest conversion of existing handler tests can trail behind (Cleanups). **There are now
+   three Criticals: items 10, 22, and 34** — item 34 is the one blocking execution outright.
+1. **Foundations:** item 10 (IDs), item 8 (typing/mypy + frozen DTOs), items 12 & 13
+   (Pydantic settings + config models — the proper landing for item 34), and item 20 (real
+   ABCs/Protocols — now **eight** unenforced bases). Everything else builds on stable IDs, enforced
+   types, a clean settings/config layer, and *enforced* interfaces. Items 8, 12, 13 share the Pydantic
+   adoption; item 20 unblocks items 9/24/27/38/39 (the abstractions they fix are currently
+   un-enforced). Item 5 (seed RNG + inject a clock) belongs here too — determinism is a foundation, and
+   the deep review found wall-clock/RNG leaks in every subsystem. Item 36 (`time_parser` alignment +
+   `to_timedelta`) is a foundation for all timing and should be settled here, with tests.
+2. **Event schema:** item 11 (depends on 10 for `event_id`, on 8 for frozen/enums).
+3. **Dispatch + bus:** items 1 & 2 (depend on 11's `type`-as-field for type-based routing).
+4. **Money & transaction core:** items 17 (Decimal end-to-end), 22 (route cash through
+   `CashManager`), 23 (atomic transaction + rollback). These are tightly coupled and correctness-
+   critical; do them as one unit. **Item 22 is the only other Critical besides item 10.**
+5. **Boundaries & orchestration:** items 6 & 9 & 29 (Protocols/read-models, facade cleanup,
+   manager-owns-storage, intra-portfolio decoupling), item 7 + item 37 (error model + dead-letter +
+   adopt-or-trim the exception hierarchy and unify logging — depend on 11's error event type and the
+   fail-loud posture from 12), and item 35 (`trading_system`: shared component-builder, fix
+   `record_metrics`, rebuild `TradingInterface` onto the SIGNAL/validation path, lock-guard the live
+   lifecycle). Item 39 (execution result DTOs + real `AbstractExecutionHandler`) rides along here.
+6. **Backtest validity & metrics:** item 21 (resample look-ahead, limit-fill realism, bar-timing),
+   item 28 (fee/slippage correctness), and item 38 (reporting metrics — drawdown math + pandas-2
+   fatals) — gate all behind regression tests; both *results* and *reported metrics* are untrustworthy
+   until fixed.
+7. **Strategy / screener / universe layer (the disconnected rebalance loop):** items 24, 31, 32, 33.
+   These four describe one severed workflow — *screener proposes symbols → universe rebalances →
+   strategy trades the new set* — where **every link is broken** (proposals discarded, the
+   `assign_symbol` bridge dead, "dynamic" membership unimplemented, sizing stranded at `quantity=0`).
+   Treat them as one phase. Order within it: (a) item 31 — make `Strategy` a real ABC, unify
+   `calculate_signal`, and adopt the **strategy-declared sizing-policy / order-side per-portfolio
+   resolution** (removes the `quantity=0` hole); (b) item 33 — collapse universe to a symbol-set
+   derivation + documented stub; (c) item 32 — decide the screener's role and either wire
+   `ScreenerEvent` into a real rebalance or disable it explicitly (no silent dead output); delete the
+   orphaned `screener_event_handler.py`. Depends on item 20 (ABC), item 11 (signal carries the sizing
+   policy), item 6 (inject a portfolio read-model into the sizer), item 30 (`BarFeed` absorbs
+   `generate_bar_event`).
+8. **Data layer:** item 30 (price-handler refactor into Provider / Store / Feed + offline-vs-runtime
+   split) is the umbrella; it carries items 25 (ingestion robustness), 26 (SQL injection/2.0), 27
+   (adapter + storage seam). Item 26 has a security dimension — do the identifier-injection fix early
+   regardless of when the full refactor lands. In M1 ship the three seams (Protocol + in-memory/CSV
+   stores + look-ahead-safe `BarFeed`); defer the SQL store backend to the persistence milestone.
+9. **Performance:** items 3, 4 (independent; can run in parallel once DTOs/IDs are stable).
+10. **Cleanups (any time):** item 14 (delete dead `EngineLogger` + the unrunnable `BINANCE_Live`,
+    OANDA stub, orphaned strategy packages), item 15 (type placement), the dead modules
+    (`legacy_config.py`, `outils/profiling.py`, `outils/strategy.py`, the stale `my_strategies/*` tree
+    that imports a non-existent `BaseStrategy`), the bulk `unittest`→pytest conversion + conftest
+    fixture extraction of existing handler tests (item 40 — low-risk, behavior-preserving; the
+    skeleton/markers/run-path test from item 40 are Phase 0, this is the long tail), and the
+    concrete-defects inventory above → fold into `CONCERNS.md`.
+
+### Deferred to a persistence milestone
+
+The package targets **both backtest and live**. Persistence is a live-mode concern that should be
+built as **one coherent milestone**, not piecemeal. In milestone 1, define the **seams and durable
+record shapes** (they depend on items 10, 11, 17 — all milestone-1 foundations); defer the database
+backends to the persistence milestone. The storage concerns to unify:
+
+- Order storage — `PostgreSQLOrderStorage` is currently all `NotImplementedError` (`CONCERNS.md`)
+- Order lifecycle audit trail — `OrderStateChange` as durable records (item 19)
+- Portfolio-handler state — transactions, positions, cash, metrics (item 18)
+- Transaction audit trail / lifecycle (item 16, an instance of item 18)
+- Config as JSONB (item 13)
+- Reporting persistence (item 14)
+- Price storage — `PriceStore` SQL backend behind the M1 seam (item 30; seam itself is M1)
+- Resting-order book — survive live restart / delegate to venue (item 27)
+
+These share one **audit-trail pattern** (items 16 and 19, plus portfolio state in 18): append-only
+lifecycle records that are in-memory for backtest and durable child tables for live. Design the
+record shape once and apply it across orders, transactions, positions, and cash.
+
+**Milestone-1 obligation:** ship the storage abstractions (item 18) + in-memory backends + agreed
+record shapes, so the persistence milestone is purely additive (write the Postgres/JSONB/`NUMERIC`
+backends) with no second refactor.

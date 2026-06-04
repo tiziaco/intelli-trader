@@ -22,6 +22,12 @@
 - Impact: Breaks on any machine that is not the author's; exposes a default password.
 - Fix approach: Replace with `os.getenv('DATA_DB_URL', ...)` consistent with `Config.DATA_DB_URL` in `itrader/config.py`.
 
+**Dead modules with no importers:**
+- Issue: `itrader/legacy_config.py` (re-exports the legacy config; imported nowhere), `itrader/outils/profiling.py` (`speed`/`s_speed` unused; `s_speed` references a non-existent `event.typename`), and `itrader/outils/strategy.py` (module-level functions wrapped in `@staticmethod` — non-callable at module scope — imported by no file; strategies call `self.cross_up(...)` which never resolves). The `itrader/strategy_handler/my_strategies/*` tree imports a non-existent `BaseStrategy` and is stale legacy.
+- Files: `itrader/legacy_config.py`, `itrader/outils/profiling.py`, `itrader/outils/strategy.py`, `itrader/strategy_handler/my_strategies/`
+- Impact: Dead weight + confusion (three config surfaces; helpers that look usable but aren't).
+- Fix approach: Delete the dead modules; either delete or rebase the `my_strategies/*` tree onto the current `Strategy` base.
+
 **`legacy_config.py` exists with no callers:**
 - Issue: `itrader/legacy_config.py` re-imports from the domain config package and re-declares `FORBIDDEN_SYMBOLS`. No production module imports it.
 - Files: `itrader/legacy_config.py`
@@ -96,7 +102,127 @@
 - Trigger: Always active during live Binance streaming.
 - Workaround: None; the counter is also never reset on the branch that fires the ping (only reset on the else-branch ping method that is commented out).
 
+**CCXT pagination duplicates the boundary bar and truncates history:**
+- Symptoms: `download_data` continues paging with `since=last_ts` (the last already-fetched timestamp); CCXT's `since` is inclusive, so the boundary bar is re-fetched on every page. The loop runs `while len(ohlcv)==1000`, so an exactly-1000-row final page stops fetching early (truncated history) and a short page ends a download that should continue. The `end_date` parameter is accepted but never used.
+- Files: `itrader/price_handler/exchange/CCXT.py` lines 113–118 (and `:85` for the unused `end_date`)
+- Trigger: Any multi-page historical download.
+- Workaround: None; downloaded series silently contain duplicate timestamps (later deduped by `update_data`) and/or are short.
+
+**`read_prices` assigns `.freq` from `inferred_freq` and raises on gapped data:**
+- Symptoms: `df.index.freq = df.index.inferred_freq` sets `None` when the index has gaps; subsequent freq-dependent operations break, and on some index types the assignment itself raises. A read of imperfect stored data becomes a hard failure.
+- Files: `itrader/price_handler/sql_handler.py` line 72
+- Trigger: Reading any stored symbol whose bars have missing periods.
+- Workaround: None.
+
+**OANDA adapter cannot be constructed (`load_markets()` does not exist):**
+- Symptoms: `OANDA` exchange `__init__` calls `self.api.load_markets()`, a method that does not exist on the OANDA client; the adapter raises `AttributeError` on construction. It is also never wired into the factory (`data_provider.py:312-317` only handles `'binance'`), so OANDA is unreachable dead code.
+- Files: `itrader/price_handler/exchange/OANDA.py` line 36
+- Trigger: Any attempt to use OANDA as a data source.
+- Workaround: None — fix or delete the adapter.
+
+**Live Binance streamer is dead code (`ImportError` + class/instance attr confusion):**
+- Symptoms: `BINANCE_Live.py` imports `PriceHandler` from `.base` where it does not exist → `ImportError` at module load. Several methods reference instance attributes as class attributes → `AttributeError`. The module cannot be imported, let alone run.
+- Files: `itrader/price_handler/live_streaming/BINANCE_Live.py` line 9 (import), lines ~180–202 (attr access)
+- Trigger: Importing the live streamer.
+- Workaround: None; live streaming is non-functional.
+
+**Price adapter contract mismatch (`get_all_symbols` vs `get_tradable_symbols`):**
+- Symptoms: `AbstractExchange` declares `get_all_symbols()`, but `CCXT_exchange` implements `get_tradable_symbols()` and `PriceHandler` calls `get_tradable_symbols()`. OANDA implements `get_all_symbols()`. The "abstract" base does not enforce anything (Py2 `__metaclass__` idiom), so the divergence is silent until an OANDA exchange hits `get_tradable_symbols()` → `AttributeError`.
+- Files: `itrader/price_handler/exchange/base.py` line 16, `CCXT.py` line 25, `OANDA.py` line 39, `data_provider.py` lines 282, 304
+- Trigger: Swapping the price adapter to anything other than CCXT.
+- Workaround: None; adapters are not actually interchangeable.
+
+**Orders are created with `quantity=0` (position-sizing migration never finished):**
+- Symptoms: Strategies emit signals with `quantity=0` (`base.py:63`); the validator explicitly bypasses the zero (`# TEMPORARY: Allow quantity=0 during transition period before position sizer is moved to strategy`, `order_validator.py:187,195`); `OrderManager` then builds orders with `quantity=signal_event.quantity` directly (`order_manager.py:245,256,312,357`) — i.e. zero. No component computes a real size. Orders (and therefore fills) carry quantity 0.
+- Files: `itrader/strategy_handler/base.py` line 63, `itrader/order_handler/order_validator.py` lines 187, 195, `itrader/order_handler/order_manager.py` lines 245, 256, 312, 357
+- Trigger: Any signal from any current strategy.
+- Workaround: None — the old `position_sizer/`/`risk_manager/` packages are orphaned and the planned strategy-side sizing was never built (see `ARCHITECTURE-REVIEW.md` item 31).
+
+**Screener output is computed and then discarded (both code paths):**
+- Symptoms: `ScreenersHandler.screen_markets` stores results in `self.last_results`, which nothing outside the handler ever reads. Concrete screeners also emit a `ScreenerEvent`, but the dispatcher's `SCREENER` branch is `continue` (no-op). The screener→strategy bridge (`assign_symbol`) is never called. The entire screening subsystem produces no effect.
+- Files: `itrader/screeners_handler/screeners_handler.py` lines 46, 89 (`last_results`), `itrader/screeners_handler/screeners/volume_spyke.py` line 52, `most_performing.py` line 58 (`screener_signal`), `itrader/events_handler/full_event_handler.py` lines 81–82 (`SCREENER → continue`)
+- Trigger: Always, whenever screeners are configured.
+- Workaround: None.
+
+**Dead + broken `assign_symbol` (the intended screener→strategy bridge):**
+- Symptoms: `StrategiesHandler.assign_symbol` assumes a single strategy (`self.strategies[0]`) and reads `self.strategies[0].settings['max_positions']`, but `Strategy` has no `.settings` attribute (it has `setting_to_dict()` and a `max_positions` attr) → `AttributeError` if called. It is never called.
+- Files: `itrader/strategy_handler/strategies_handler.py` lines 60–88
+- Trigger: Would raise on any invocation; currently unreachable.
+- Workaround: None; remove or rebuild as part of the rebalance loop.
+
+**Orphaned, broken duplicate `EventHandler` in `screener_event_handler.py`:**
+- Symptoms: A second class also named `EventHandler` defines an alternate dispatch that references `self.universe` (never assigned in its `__init__` → `AttributeError`) and calls `self.universe.generate_bars(event)` — a method that does not exist (the real one is `generate_bar_event`). The module is dead and name-collides with the real `full_event_handler.EventHandler`.
+- Files: `itrader/events_handler/screener_event_handler.py` lines 51, and `__init__` (no `universe` assignment)
+- Trigger: Importing/using this dispatcher instead of `full_event_handler`.
+- Workaround: None — delete the file.
+
+**`SMA_MACD_strategy` uses label indexing on a datetime-indexed Series and a string `fillna`:**
+- Symptoms: `short_sma[-1]` / `long_sma[-1]` (`SMA_MACD_strategy.py:67`) are *label* lookups on a datetime-indexed Series, not positional — they raise `KeyError`/`FutureWarning` (and the project's `filterwarnings=["error"]` turns the warning into a failure); inconsistent with the `.iloc[-1]` used for MACD two lines down. `MACD(..., fillna='False')` (`:61`) passes the string `'False'` where a bool is expected.
+- Files: `itrader/strategy_handler/SMA_MACD_strategy.py` lines 61, 67
+- Trigger: Running the SMA_MACD strategy.
+- Workaround: Use `.iloc[-1]`; pass `fillna=False`.
+
+**Config package shadows the legacy flat `config.py` → core modules fail to import (VERIFIED):**
+- Symptoms: `itrader/config/` (package) shadows `itrader/config.py` (flat module), and the package does not re-export the legacy names. `from itrader.config import FORBIDDEN_SYMBOLS` and `from itrader.config import Config` both raise `ImportError` (verified at runtime). Consequently `itrader/price_handler/exchange/CCXT.py:8` fails to import, which cascades: `data_provider.py` → `backtest_trading_system` cannot be imported at all. `live_trading_system.py:22` fails the same way.
+- Files: `itrader/config.py`, `itrader/config/__init__.py`, `itrader/price_handler/exchange/CCXT.py` line 8, `itrader/trading_system/live_trading_system.py` line 22
+- Trigger: Importing the price handler or either trading system.
+- Workaround: None — the run path is unimportable. Component unit tests pass only because they never import this chain.
+
+**`config.TIMEZONE` attribute access on a dict → `AttributeError` (VERIFIED):**
+- Symptoms: `config = system_provider.get_config()` (`itrader/__init__.py:8`) returns a plain `dict`, but four modules read `config.TIMEZONE` as an attribute. Verified: `type(config)` is `dict`, `config.TIMEZONE` missing → `AttributeError` whenever these run. `init_logger` avoids it only via `getattr(config, "LOG_LEVEL", "INFO")`, which is why `import itrader` survives.
+- Files: `itrader/outils/time_parser.py` lines 9, 166; `itrader/price_handler/data_provider.py` line 97; `itrader/price_handler/exchange/CCXT.py` line 71
+- Trigger: Any call into `get_timenow_awere` (e.g. `screeners_handler.py:36`), `update_data`, or CCXT `_format_data`.
+- Workaround: None.
+
+**Both trading systems call `record_metrics` on the wrong object (VERIFIED):**
+- Symptoms: `backtest_trading_system.py:102` and `live_trading_system.py:221` call `self.portfolio_handler.record_metrics(...)`, but `record_metrics` exists only on `Portfolio` (`portfolio.py:294`), not `PortfolioHandler` → `AttributeError` on the first PING. The live loop catches it and hot-spins.
+- Files: `itrader/trading_system/backtest_trading_system.py` line 102, `itrader/trading_system/live_trading_system.py` line 221, `itrader/portfolio_handler/portfolio.py` line 294
+- Trigger: First ping of any run.
+- Workaround: None.
+
+**`TradingInterface` cannot construct or create an order:**
+- Symptoms: `__init__` calls `get_itrader_logger(__name__)` but the function takes no arguments (`logger.py:192`) → `TypeError`. `create_market_order`/`create_limit_order` build `OrderEvent` without the required `order_type` field (`event.py:301`) → `TypeError`. They also push `ORDER` events directly, bypassing the documented `SIGNAL → order_handler` validation/sizing path; the module's own `validate_order_parameters` is never called.
+- Files: `itrader/trading_system/trading_interface.py` lines 35, 69–78, 118–127, 135–186
+- Trigger: Instantiating `TradingInterface` or creating any external order.
+- Workaround: None — the external/API order path is non-functional.
+
+**`to_timedelta` returns `None` for uppercase/week/month timeframes (VERIFIED):**
+- Symptoms: maps only lowercase `d/h/m`; `'1H'`, `'1D'`, `'1w'`, `'1M'` all return `None`, which flows into `Strategy.timeframe`/`Screener.timeframe`, `data_provider.py:112` (`timedelta > None` → `TypeError`), `CCXT.py:79` (`resample(None)`), and crashes `check_timeframe`.
+- Files: `itrader/outils/time_parser.py` lines 45–68
+- Trigger: Any uppercase or week/month timeframe string.
+- Workaround: Use lowercase `m/h/d`; no week/month support exists.
+
+**`check_timeframe` anchors firing to UTC midnight (mis-gates non-UTC/DST/large timeframes):**
+- Symptoms: measures seconds since UTC midnight and tests divisibility, so a `1d` strategy fires at 00:00 UTC (never local midnight in a non-UTC tz), DST shifts silently mis-gate hourly bars, and frames that don't divide 86400 (and all week/month) are mis-evaluated. Gates whether every strategy (`strategies_handler.py:46`) and screener (`screeners_handler.py:72`) fires.
+- Files: `itrader/outils/time_parser.py` lines 114–137
+- Trigger: Any non-UTC market timezone, DST transition, or daily/weekly timeframe.
+- Workaround: None; anchor to the Unix epoch or the market tz.
+
+**`my_strategies/*` import a non-existent `BaseStrategy`:**
+- Symptoms: `from itrader.strategy_handler.base import BaseStrategy` → `ImportError` (base defines `Strategy`). These strategies also call `self.cross_up(...)` from the dead `outils/strategy.py`, which is not a method of `Strategy` → `AttributeError` even if the import were fixed.
+- Files: `itrader/strategy_handler/my_strategies/scalping/RSI_scalping_strategy.py` line 4 (and siblings), `itrader/outils/strategy.py`
+- Trigger: Importing any `my_strategies/*` module.
+- Workaround: None — the tree is stale legacy.
+
+**`reporting/performance.py`/`plots.py` use removed pandas/plotly APIs + broken drawdown math:**
+- Symptoms: `series[-1]` positional indexing (`performance.py:13,42`) raises in pandas ≥2.0; chained `.iloc` assignment (`:98,146`) is fatal under `filterwarnings=["error"]`; zero-seeded high-water-mark makes drawdown divide-by-zero/nonsense (`:88-99`); `aggregate_returns` builds a `ValueError` it never raises (`:27`); Sharpe/Sortino/profit-factor divide by zero on flat/no-loss series (`:44-74`). `plots.py:77,88` use `x=profit.date` though the column is `exit_date` → `AttributeError`; deprecated plotly `titlefont_size` (`:29,55,108,159`).
+- Files: `itrader/reporting/performance.py`, `itrader/reporting/plots.py`
+- Trigger: Any statistics/plotting call.
+- Workaround: None.
+
+**Portfolio domain exceptions raised with the wrong argument (garbled messages, wrong-typed attrs):**
+- Symptoms: `PortfolioNotFoundError(f"Portfolio {id} not found")` (`portfolio_handler.py:182`) passes a string where `__init__(self, portfolio_id: int)` expects an int → renders `"Portfolio not found with ID Portfolio <id> not found"` and the typed attribute becomes a string. `PortfolioConfigurationError` (`:147`) misroutes its message into the `config_key` field.
+- Files: `itrader/portfolio_handler/portfolio_handler.py` lines 147, 182, `itrader/core/exceptions/portfolio.py` line 36
+- Trigger: Any portfolio-not-found / max-portfolios error path.
+- Workaround: None.
+
 ## Security Considerations
+
+**Database-table identifier injection in the price SQL layer:**
+- Risk: `delete_all_tables` builds `text(f'DROP TABLE IF EXISTS {"%s"};' % sym)` — the symbol-derived table name is interpolated unquoted into DDL. `to_sql(symbol.lower(), ...)` and `read_sql(symbol, ...)` likewise use the symbol directly as a table name with no allowlist/quoting. A symbol containing a space or quote breaks or injects SQL. The one-table-per-symbol schema is the root cause of the dynamic-DDL surface.
+- Files: `itrader/price_handler/sql_handler.py` lines 36, 57, 59, 70
+- Current mitigation: None (symbols currently come from a trusted exchange list, but nothing enforces that).
+- Recommendations: Validate identifiers against `^[a-z0-9_]+$`, or — preferably — move to a single `bars` table keyed by `(symbol, timeframe, ts)` with parameterized queries, eliminating dynamic DDL entirely.
 
 **Default database credentials stored in source:**
 - Risk: `Config.DATA_DB_URL` defaults to `postgresql+psycopg2://postgres:1234@localhost:5432/...` and `SqlHandler.init_engine` hard-codes `tizianoiacovelli:1234`. If the environment variable is unset in production, real credentials may be overridden by these defaults or the hard-coded value is used directly.
@@ -168,6 +294,24 @@
 - Safe modification: Replace with `with engine.connect() as conn: conn.execute(...); conn.commit()`.
 - Test coverage: None.
 
+**`PriceHandler.load_data` downloads from the network inside the trading run path:**
+- Files: `itrader/price_handler/data_provider.py` lines 65–91
+- Why fragile: `load_data` does *"if symbol in SQL → read; else → download from CCXT and write to SQL."* Ingestion, caching, and reading are interleaved, so a backtest can silently hit the network mid-setup and a "reproducible" run depends on DB/network state. There is no way to force an offline, deterministic run.
+- Safe modification: Separate offline ingestion (`provider → store`, a CLI/job) from runtime reads (`store → feed`); make the run path read-only and error loudly on missing data. See `ARCHITECTURE-REVIEW.md` item 30.
+- Test coverage: None for the download branch.
+
+**Bare `except:` in price accessors swallows all errors and returns `None`:**
+- Files: `itrader/price_handler/data_provider.py` lines 145 (`get_last_close`), 171 (`get_bar`)
+- Why fragile: A blanket `except:` catches everything (including `KeyboardInterrupt`/`SystemExit` patterns and programming errors), logs a generic message, and returns `None`. Callers receive `None` for a price and may proceed with a bad valuation rather than failing fast.
+- Safe modification: Catch the specific lookup error (`KeyError`/`IndexError`); let unexpected errors propagate.
+- Test coverage: None.
+
+**`to_megaframe` silently drops tz-naive symbols and misaligns column keys:**
+- Files: `itrader/price_handler/data_provider.py` lines 272–275
+- Why fragile: Symbols whose resampled index has no tz are skipped (`if df.index.tz is not None`) with no warning, so a screener silently sees fewer symbols than expected. The `pd.concat(..., keys=self.prices.keys())` uses *all* stored symbols as keys regardless of which frames were actually appended, so keys can misalign with data.
+- Safe modification: Normalize all stored data to tz-aware UTC at ingestion; build `keys` from the frames actually included; log any dropped symbol.
+- Test coverage: None.
+
 **`screeners_handler` frequency-based triggering is marked as untested:**
 - Files: `itrader/screeners_handler/screeners/base.py` line 28
 - Why fragile: `self.frequency = to_timedelta(frequency)` carries a `#TODO: da testare` comment. No test verifies that screeners fire at the correct interval.
@@ -219,6 +363,12 @@
 - Blocks: Unattended live operation — any WebSocket drop silently stops the feed with no recovery.
 
 ## Test Coverage Gaps
+
+**The entire run path (orchestration / timing / config) is untested — the reason it's broken:**
+- What's not tested: `trading_system/` (backtest + live + `TradingInterface` + `PingGenerator`), `outils/time_parser.py`, and the config import/attribute paths. No test imports or constructs `TradingSystem`/`LiveTradingSystem`/`TradingInterface` (verified). Because nothing exercises these, the import-cascade failure (config shadowing), the `record_metrics` `AttributeError`, the `TradingInterface` `TypeError`s, and the `check_timeframe`/`to_timedelta` timing bugs all pass CI silently.
+- Files: `itrader/trading_system/`, `itrader/outils/time_parser.py`, `itrader/config*`
+- Risk: The system cannot be imported or run end-to-end, yet `make test` is green. Every architecture-refactor phase is flying blind until a smoke/integration test exists.
+- Priority: Critical — add an end-to-end smoke test (import → construct → run a minimal backtest) before refactoring.
 
 **Price handler and exchange adapters:**
 - What's not tested: `CCXT.py`, `OANDA.py`, `SqlHandler`, `PriceHandler.load_data`, `PriceHandler.update_data`, `BINANCE_Live.py`.
