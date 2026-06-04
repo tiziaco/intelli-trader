@@ -25,6 +25,7 @@ psycopg2-binary = "^2.9.12"
 structlog = "^24.4.0"
 pyyaml = "^6.0.3"
 readerwriterlock = "^1.0.9"
+uuid-utils = "^0.16.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.2"
@@ -33,6 +34,7 @@ pytest-watch = "^4.2.0"
 pytest-html = "^4.2.0"
 ipython = "^9.14.0"
 ipykernel = "^6.31.0"
+mypy = "^2.1.0"
 
 [tool.pytest.ini_options]
 # Test discovery
@@ -71,6 +73,31 @@ filterwarnings = [
     "ignore::UserWarning",
     "ignore::DeprecationWarning",
 ]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["itrader"]
+
+# Deferred subsystems (D-05): out of M2a scope — strict-clean lands with the
+# milestone that owns each. ignore_errors keeps the gate green for in-scope code
+# while these remain un-typed. Each module is tagged with its deferral category.
+[[tool.mypy.overrides]]
+module = [
+    "itrader.trading_system.live_trading_system",        # D-live
+    "itrader.trading_system.trading_interface",          # D-live
+    "itrader.price_handler.sql_handler",                 # D-sql
+    "itrader.price_handler.exchange.CCXT",               # D-oanda
+    "itrader.price_handler.exchange.OANDA",              # D-oanda
+    "itrader.price_handler.live_streaming.BINANCE_Live", # D-live
+    "itrader.screeners_handler.*",                       # D-screener
+]
+ignore_errors = true
+
+# Third-party libs that ship no type stubs.
+[[tool.mypy.overrides]]
+module = ["ta.*", "pandas_ta.*", "ccxt.*"]
+ignore_missing_imports = true
 
 [build-system]
 requires = ["poetry-core"]

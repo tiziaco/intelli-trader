@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-cov backtest precommit
+.PHONY: init-env clean test test-unit test-integration test-cov backtest precommit typecheck
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -64,6 +64,12 @@ test-cov:
 test-watch:
 	@echo "👀 Running tests in watch mode..."
 	poetry run pytest-watch test/ -- -v
+
+# Type-check the in-scope itrader package with mypy --strict (D-05/D-06).
+# Errors are expected until the strict-clean pass (Plan 07) — this gate must merely run.
+typecheck:
+	@echo "🔍 Running mypy --strict..."
+	poetry run mypy itrader
 
 # test-report:
 # 	@echo "📋 Generating test report..."
