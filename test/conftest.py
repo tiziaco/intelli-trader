@@ -32,6 +32,8 @@ DIR_MARKERS = {
     "test_strategy": "strategy",
     "test_integration": "integration",
     "test_smoke": "unit",
+    "test_outils": "unit",
+    "test_core": "unit",
 }
 
 
