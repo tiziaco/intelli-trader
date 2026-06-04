@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 01-05-PLAN.md — Phase 01 complete (oracle frozen + regression-locked)
-last_updated: "2026-06-04T14:40:26.453Z"
+status: ready_to_plan
+stopped_at: Phase 01 complete (5/5) — ready to discuss Phase 2
+last_updated: 2026-06-04T14:53:58.271Z
 last_activity: 2026-06-04
 progress:
   total_phases: 8
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 01 — m1-ignition-lock-the-oracle
+**Current focus:** Phase 2 — m2a — identity, money & determinism
 
 ## Current Position
 
-Phase: 01 (m1-ignition-lock-the-oracle) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
+Phase: 2
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-04
 
 Progress: [██████████] 100%
@@ -36,7 +36,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 0
+- Total plans completed: 5
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -44,7 +44,7 @@ Progress: [██████████] 100%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 01 | 5 | - | - |
 
 **Recent Trend:**
 
