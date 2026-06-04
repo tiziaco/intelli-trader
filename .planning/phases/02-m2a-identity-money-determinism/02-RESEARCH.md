@@ -506,7 +506,9 @@ pdt.assert_frame_equal(
 
 **If this table is empty:** N/A — four low-risk assumptions, all flagged for the planner to confirm at build time.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+_Q1 resolved: convert the 8 bases named in D-07 as the contract; the 2 extra dead bases are flagged as COVERAGE-INDEX deltas (handled in the ABC plan), not silently scoped in. Q2 and Q3 are Claude's Discretion per CONTEXT.md (per-event freeze audit; Order stays a mutable entity)._
 
 1. **Exact set of bases to convert (CONTEXT.md "8" vs tree "11 classes / 9 files").**
    - What we know: CONTEXT.md D-07 names 8 (3 Protocol + 5 ABC). The tree has the dead `__metaclass__` pattern in **9 files / 11 classes** — extras: `trading_system/simulation/base.py::SimulationEngine`, and `portfolio_handler/base.py` has **two** classes (`AbstractPortfolioHandler` + `AbstractPortfolio`). Also `Strategy` (`strategy_handler/base.py`) has **no** metaclass at all (bare `class Strategy(object)`), and `Screener` has one `@abstractmethod` with a self-less signature but no metaclass.
