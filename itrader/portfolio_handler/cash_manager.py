@@ -54,7 +54,7 @@ class CashManager:
     - Balance validation and consistency checks
     """
     
-    def __init__(self, portfolio, initial_cash: float = 0.0):
+    def __init__(self, portfolio, initial_cash: float | Decimal = 0.0):
         self.portfolio = portfolio
         self._lock = threading.RLock()
         self.logger = get_itrader_logger().bind(component="CashManager")
@@ -101,7 +101,7 @@ class CashManager:
         with self._lock:
             return self._reserved_cash
     
-    def deposit(self, amount: float, description: str = "Cash deposit", reference_id: str = None) -> bool:
+    def deposit(self, amount: float | Decimal, description: str = "Cash deposit", reference_id: str = None) -> bool:
         """
         Deposit cash to the portfolio.
         
@@ -151,7 +151,7 @@ class CashManager:
             
             return True
     
-    def withdraw(self, amount: float, description: str = "Cash withdrawal", reference_id: str = None) -> bool:
+    def withdraw(self, amount: float | Decimal, description: str = "Cash withdrawal", reference_id: str = None) -> bool:
         """
         Withdraw cash from the portfolio.
         
@@ -211,7 +211,7 @@ class CashManager:
             
             return True
     
-    def process_transaction_cash_flow(self, amount: float, is_debit: bool, description: str, transaction_id: str) -> bool:
+    def process_transaction_cash_flow(self, amount: float | Decimal, is_debit: bool, description: str, transaction_id: str) -> bool:
         """
         Process cash flow from a transaction.
         
@@ -272,7 +272,7 @@ class CashManager:
             
             return True
     
-    def reserve_cash(self, amount: float, description: str, reference_id: str) -> bool:
+    def reserve_cash(self, amount: float | Decimal, description: str, reference_id: str) -> bool:
         """
         Reserve cash for pending orders.
         
@@ -321,7 +321,7 @@ class CashManager:
             
             return True
     
-    def release_cash_reservation(self, amount: float, description: str, reference_id: str) -> bool:
+    def release_cash_reservation(self, amount: float | Decimal, description: str, reference_id: str) -> bool:
         """
         Release reserved cash.
         
@@ -412,7 +412,7 @@ class CashManager:
             
             return True
     
-    def _validate_and_convert_amount(self, amount: float, operation_type: str) -> Decimal:
+    def _validate_and_convert_amount(self, amount: float | Decimal, operation_type: str) -> Decimal:
         """Validate and convert amount to Decimal with proper precision."""
         if amount <= 0:
             raise InvalidTransactionError(
