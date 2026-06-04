@@ -6,8 +6,31 @@ routed to their correct milestone, never silently folded into the running phase.
 
 | ID | Found In | Description | Owner Milestone | Status |
 |----|----------|-------------|-----------------|--------|
-| DEF-01-A | Plan 01-03 (smoke trace) | `Position.avg_price` (position.py:81) computes `self.avg_sold * self.sell_quantity - self.sell_commission` mixing `float` (avg_sold/quantity) with `Decimal` (sell_commission) → `TypeError: unsupported operand type(s) for -: 'float' and 'decimal.Decimal'`. Surfaces only once fills actually execute against an open SELL position. | M4 (Decimal money end-to-end, #22 Critical cash-through-CashManager) | Deferred — owner approval pending |
-| DEF-01-B | Plan 01-03 (smoke trace) | The end-to-end smoke run needs three integration wirings to turn green: (1) `csv` registered as an execution-venue alias to `SimulatedExchange` in `ExecutionHandler.init_exchanges`; (2) the golden ticker `BTCUSD` added to the simulated exchange's `supported_symbols` (default preset only lists `*USDT`); (3) the `EnhancedOrderValidator` allowing `quantity=0` to pass to the sizing seam (currently `_validate_quantity_ranges` hard-rejects it, and `test_zero_quantity_signal` locks that behavior). | Plan 01-04 (oracle capture — plan explicitly says smoke-green is "confirm in Plan 04") | Deferred to Plan 04 |
+| DEF-01-A | Plan 01-03 (smoke trace) | `Position.avg_price` (position.py:81) computes `self.avg_sold * self.sell_quantity - self.sell_commission` mixing `float` (avg_sold/quantity) with `Decimal` (sell_commission) → `TypeError: unsupported operand type(s) for -: 'float' and 'decimal.Decimal'`. Surfaces only once fills actually execute against an open SELL position. | M4 (Decimal money end-to-end, #22 Critical cash-through-CashManager) | RESOLVED (minimal local fix) in Plan 01-04 — see note below; **must be reconciled at M4** |
+| DEF-01-B | Plan 01-03 (smoke trace) | The end-to-end smoke run needs three integration wirings to turn green: (1) `csv` registered as an execution-venue alias to `SimulatedExchange` in `ExecutionHandler.init_exchanges`; (2) the golden ticker `BTCUSD` added to the simulated exchange's `supported_symbols` (default preset only lists `*USDT`); (3) the `EnhancedOrderValidator` allowing `quantity=0` to pass to the sizing seam (currently `_validate_quantity_ranges` hard-rejects it, and `test_zero_quantity_signal` locks that behavior). | Plan 01-04 (oracle capture — plan explicitly says smoke-green is "confirm in Plan 04") | RESOLVED in Plan 01-04 — see note below |
+
+## Resolution Notes (Plan 01-04)
+
+- **DEF-01-B resolved.** (1) `csv` aliased to the same `SimulatedExchange` instance in
+  `ExecutionHandler.init_exchanges` (with an id-dedup guard in `on_market_data` so the shared
+  instance is driven once per bar). (2) `BTCUSD` added to that instance's `_supported_symbols`
+  (instance-level mutation, not the shared preset). (3) Implemented as a **narrow gate**:
+  fraction-of-cash sizing is resolved in `OrderManager` *before* the validator runs
+  (`_resolve_signal_quantity` called at the top of `process_signal`), so the running engine never
+  presents `quantity=0` to the validator — `test_zero_quantity_signal` (which calls
+  `validate_signal_pipeline` directly) is untouched and still asserts failure for `quantity=0`.
+  Two additional same-class wirings surfaced during the run and were applied: the validator now
+  admits the `csv` venue (`supported_exchanges`) and raises its stock-tuned `max_price` ceiling so
+  crypto prices (BTC ~$116k in 2024-2026) are not rejected. Also extended the sizing seam to size a
+  long-only SELL exit to the open long's net quantity so round-trips actually close (otherwise the
+  trade log stays empty).
+- **DEF-01-A resolved with a MINIMAL local fix (overlaps M4 scope — reconcile at M4).** The fee
+  model returns `Decimal` commissions into a float transaction/position path. Fixed at the single
+  fill→transaction boundary (`PortfolioHandler.on_fill` coerces `fill_event.commission` to `float`,
+  matching `Transaction.commission: float`) plus a defensive `float(...)` coercion in
+  `Position.avg_price`. This is a behavior-preserving type-consistency fix, NOT the Decimal-money
+  redesign M4 owns (#22 Critical) — M4 must revisit these two sites when money moves to Decimal
+  end-to-end.
 
 ## Notes
 

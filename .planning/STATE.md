@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-04T14:07:56.672Z"
+last_updated: "2026-06-04T14:22:46.780Z"
 last_activity: 2026-06-04
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 01 (m1-ignition-lock-the-oracle) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-06-04
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ Progress: [██████░░░░] 60%
 | Phase 01 P01 | 12 | 3 tasks | 4 files |
 | Phase 01 P02 | 10 | 2 tasks | 1 files |
 | Phase 01 P03 | 13 | 3 tasks | 3 files |
+| Phase 01 P04 | 22 | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Golden-master two-layer oracle: behavioral oracle (trade timing) is law M2→M4; numerical oracle re-baselines only after M2 (Phase 3) and after M5 (Phase 8)
 - Position sizing: strategy declares policy + SL/TP, order/risk layer resolves per-portfolio quantity; M1 implements the minimal seam (Phase 1) so M5 extends rather than replaces it (Phase 7)
 - [Phase ?]: D-07: csv/offline feed lives inside PriceHandler, skips SqlHandler + CCXT (Phase 1 Plan 2)
+- Plan 01-04: oracle generator pins dataset/window/cash/params as literals; equity sourced from metrics snapshots (not the broken _prepare_data)
+- Plan 01-04: DEF-01-B(3) resolved as sizing-before-validation (narrow gate), preserving test_zero_quantity_signal; long-only SELL exit sizes to close the open long
+- Plan 01-04: DEF-01-A resolved with minimal float-coercion at the fill->transaction commission boundary (overlaps M4 #22 — reconcile at M4)
 
 ### Pending Todos
 
@@ -93,6 +97,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-04T14:07:56.663Z
+Last session: 2026-06-04T14:22:46.772Z
 Stopped at: Phase 1 context gathered
 Resume file: None

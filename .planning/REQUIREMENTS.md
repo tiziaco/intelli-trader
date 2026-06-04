@@ -36,7 +36,7 @@
   `data/BTCUSD_1d_ohlcv_2018_2026.csv` (`make backtest` runs) *(definition-of-done gate, #35)*
 - [ ] **M1-08**: The **reference output is captured and committed** — trade log (entry/exit time +
   side), equity curve, final cash/metrics — establishing the behavioral + numerical oracle *(golden-master spine)*
-- [ ] **M1-09**: Test skeleton stands up — pytest migration scaffold, the 8 declared markers actually
+- [x] **M1-09**: Test skeleton stands up — pytest migration scaffold, the 8 declared markers actually
   applied to tests, conftest/fixtures layout, run-path **smoke test** (import→construct→run minimal
   backtest) *(#40 [skeleton], TC1 Critical)*
 - [ ] **M1-10**: A **run-path integration test** exists exercising the full backtest end-to-end, and
