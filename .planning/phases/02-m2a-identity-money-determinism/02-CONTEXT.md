@@ -95,6 +95,14 @@ timestamps from the captured oracle.
   `calculate_signal` contract → M5b #24; universe collapse → M5b #33; reporting split +
   `print_summary` → M5b #38; screener wiring → deferred D-screener. The **screener base is converted
   (cheap)** despite the module being mypy-excluded (D-05).
+- **D-08b (scope expansion, user-approved 2026-06-04):** Phase-2 research found the dead Py2
+  `__metaclass__` pattern in **11 classes across 9 files** — two beyond D-08's named 8:
+  `trading_system/simulation/base.py::SimulationEngine` and the two classes in
+  `portfolio_handler/base.py`. The owner **approved converting all 11 now** (not flagging the 2 as a
+  deferred delta). M2a therefore converts all 11 dead-metaclass bases to real ABCs/Protocols with
+  minimal conformance fixes; log the 2-class expansion as a COVERAGE-INDEX §E gap-discovery delta.
+  Per-base ABC-vs-Protocol classification for the 2 extras follows the D-07 policy (ABC when
+  subclasses inherit shared impl/lifecycle; Protocol when it's a swap-a-fake structural seam).
 
 ### Determinism: clock & RNG (M2-05, #5, PERF2)
 - **D-09:** **Injected clock returns simulation (bar/event) time** in backtest; live returns wall
