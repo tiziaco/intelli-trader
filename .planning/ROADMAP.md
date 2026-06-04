@@ -63,7 +63,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   - [x] 02-03-PLAN.md — UUIDv7 identity infra: idgen facade + native-UUID storage/flat index + UUID-typed exceptions
   - [x] 02-04-PLAN.md — Entity typing: UUID id fields + Decimal money; remove the transaction_manager float cash round-trip
   - [x] 02-05-PLAN.md — Convert 11 dead __metaclass__ bases to real ABCs/Protocols + SimulatedExchange conformance
-  - [ ] 02-06-PLAN.md — Determinism: seeded RNG injected into slippage/exchange + injected BacktestClock on the engine path
+  - [x] 02-06-PLAN.md — Determinism: seeded RNG injected into slippage/exchange + injected BacktestClock on the engine path
   - [ ] 02-07-PLAN.md — mypy --strict clean pass + frozen/slots events + D-15 oracle tolerance split + phase gate
 
 ### Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze
@@ -139,7 +139,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
-| 2. M2a — Identity, Money & Determinism | 5/7 | In Progress|  |
+| 2. M2a — Identity, Money & Determinism | 6/7 | In Progress|  |
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 0/TBD | Not started | - |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |
