@@ -39,6 +39,27 @@ gaps:
       - "Update test_core/test_clock.py::test_backtest_clock_now_before_advance_raises to expect RuntimeError instead of AssertionError"
       - "Drop the Decimal(str(...)) wrappers at transaction_manager.py:253-255 since the fields are already Decimal end-to-end"
       - "Decision required from owner: is the clock being 'constructed + advanced but no domain consumer reads it' acceptable for M2a (matching the D-09/D-10 recorded deferral), or does the plan text 'wires the clock onto the backtest engine path' require at least one live consumer? The 02-REVIEW.md CR-01 says the docstring guarantee is false. Minimally, the docstring/comment in backtest_trading_system.py:46-51 must be corrected to accurately state that no domain consumer reads clock.now() yet."
+# RE-VERIFICATION (after gap-closure plan 02-08) — 2026-06-04T23:20:00Z
+re_verification_02_08:
+  previous_status: gaps_found
+  previous_score: "3/4 (SC#1 and SC#3 VERIFIED; SC#2 and SC#4 PARTIAL)"
+  re_verified: 2026-06-04T23:20:00Z
+  status: passed
+  score: "4/4 success criteria MET"
+  verdict: PASS
+  gaps_closed:
+    - "Gap 1 (CR-02, SC#4): BacktestClock.now() bare assert — replaced with explicit raise RuntimeError; guard survives python -O; test now expects RuntimeError"
+    - "Gap 2 (CR-01, SC#4): false engine clock docstring — corrected at both comment sites in backtest_trading_system.py; no domain consumer was added (M2b deferral preserved)"
+    - "Gap 3a (WR-03, SC#2): redundant Decimal(str(transaction.price/quantity/commission)) round-trips removed from transaction_manager._calculate_transaction_cost"
+    - "Gap 3b (WR-01/WR-02, SC#2): float(self.tolerance) and 1e-6 literal removed from position_manager; comparisons are now Decimal-to-Decimal"
+    - "Gap 3c (WR-05, SC#2): float(portfolio.cash) / float(open_position.net_quantity) removed from order_manager; sizing computed in Decimal, coerced to float only at SignalEvent.quantity assignment"
+    - "Gap 3d (CR-03, SC#2): CashManager.apply_transaction_delta precision-preserving primitive added; _execute_transaction routes through it instead of the 2dp-quantizing setter path"
+  gaps_remaining: []
+  deferred_owner_approved:
+    - item: "test_oracle_numeric_values xfail (DEF-02-08-A): numeric oracle magnitudes drift past D-15 after CR-03/WR-05 precision fixes"
+      decision: "Owner-approved deferral — xfail(strict=False) on test_oracle_numeric_values; numeric re-freeze deferred to owner-gated post-M2 re-baseline (PROJECT.md: 're-baselines at exactly two points — after M2, after M5'). Behavioral identity (134 trades; entry/exit/side/pair EXACT; equity timestamp grid EXACT; trade_count EXACT) is actively enforced in test_oracle_behavioral_identity."
+      tracked_in: "deferred-items.md → DEF-02-08-A"
+  regressions: []
 ---
 
 # Phase 2: M2a — Identity, Money & Determinism — Verification Report
@@ -252,4 +273,178 @@ just the float bypass. Gaps 1 and 2 are not addressed in any later phase roadmap
 ---
 
 _Verified: 2026-06-04T22:32:00Z_
+_Verifier: Claude (gsd-verifier)_
+
+---
+
+---
+
+## Re-Verification After Gap-Closure Plan 02-08
+
+**Re-verified:** 2026-06-04T23:20:00Z
+**Previous status:** gaps_found (3/4 truths fully VERIFIED; SC#2 and SC#4 PARTIAL)
+**Re-verification status:** PASS
+**Score:** 4/4 success criteria MET
+
+### Summary of Gap Closures
+
+Gap-closure plan 02-08 was executed across three commits (e12ebed, e83219b, 5aa7f1a). All three
+verification gaps from the initial report are confirmed closed in the codebase.
+
+---
+
+### Per–Success Criteria Re-Scores
+
+| SC | Truth | Initial | After 02-08 | Evidence |
+|----|-------|---------|-------------|----------|
+| SC#1 | UUIDv7 single scheme | ✓ VERIFIED | ✓ VERIFIED | Unchanged — IDGenerator uses uuid_utils.compat; NewType aliases in core/ids.py; flat Dict[UUID, Order] index in InMemoryOrderStorage |
+| SC#2 | Decimal end-to-end — no float round-trips, centralized quantization | ⚠ PARTIAL | ✓ MET | All four float seams removed (WR-01/02/03/05); CR-03 precision-preserving ledger primitive added; grep gates all empty (see evidence below) |
+| SC#3 | mypy --strict clean; frozen/slots events; real ABCs | ✓ VERIFIED (scoped) | ✓ VERIFIED | `make typecheck` "Success: no issues found in 157 source files" — 0 errors; scope unchanged |
+| SC#4 | Deterministic — seeded RNG, injected clock guard, flat order index | ⚠ PARTIAL | ✓ MET | Clock guard replaced with explicit `raise RuntimeError` (python -O safe); false docstring corrected at both comment sites; RNG and flat index unchanged and verified |
+
+**Overall score: 4/4 MET**
+
+---
+
+### Gap 1 Closure: BacktestClock.now() python-O-safe guard
+
+**What was fixed:** `assert self._t is not None` replaced with an explicit
+`if self._t is None: raise RuntimeError(...)` inside `BacktestClock.now()`.
+
+**Evidence:**
+
+- `grep -n "raise RuntimeError" itrader/core/clock.py` → line 49: `raise RuntimeError(`
+- `grep -n "assert self._t" itrader/core/clock.py` → NOTHING (bare assert is gone)
+- `python -O -c "from itrader.core.clock import BacktestClock; BacktestClock().now()"` → exits
+  non-zero with `RuntimeError: BacktestClock not advanced: call set_time() before now().`
+- `poetry run pytest test/test_core/test_clock.py -q` → 3 passed
+- `grep "RuntimeError\|AssertionError" test/test_core/test_clock.py` → line 32 uses
+  `pytest.raises(RuntimeError)`; no `AssertionError` reference remains
+- Module and class docstrings in `clock.py` updated: "raises" (not "asserts"); guard noted as
+  surviving `python -O`
+
+**Status: VERIFIED**
+
+---
+
+### Gap 2 Closure: Honest clock docstring / no false consumer claim
+
+**What was fixed:** Both comment sites in `backtest_trading_system.py` corrected:
+- Constructor block (~lines 46-56): now accurately states the clock is staged and advanced each
+  ping but has NO domain consumer (`clock.now()` read nowhere); consumer-wiring is Phase 3 / M2b
+  (D-09/D-10); result determinism comes from `ping_event.time` explicitly, not via `clock.now()`.
+- Run-loop advance comment (~lines 119-123): same honest description; no consumer added.
+
+**Evidence:**
+
+- `grep -niE "any engine-path consumer of .now. reads deterministic" backtest_trading_system.py`
+  → NOTHING (false claim is gone from both comment sites)
+- `grep -niE "M2b|Phase 3|no domain consumer|consumer-wiring" backtest_trading_system.py` →
+  matches at lines 49, 52, 120, 121 — honest description present at both sites
+- `grep -n "self.clock = BacktestClock()" backtest_trading_system.py` → line 57: present
+- `grep -n "self.clock.set_time(ping_event.time)" backtest_trading_system.py` → line 124: present
+- No `clock.now()` consumer was added anywhere in the codebase (M2b deferral preserved)
+
+**Status: VERIFIED**
+
+---
+
+### Gap 3 Closure: Decimal money path — float seams and cash precision
+
+**Sub-gap 3a — WR-03 (redundant Decimal(str(...)) round-trips in transaction_manager):**
+
+- `grep -nE "Decimal\(str\(transaction\.(price|quantity|commission)\)\)" transaction_manager.py`
+  → NOTHING
+- `_calculate_transaction_cost` (line 265-273): uses `transaction.price`, `transaction.quantity`,
+  `transaction.commission` directly (already Decimal from `__post_init__`)
+
+**Sub-gap 3b — WR-01/WR-02 (float comparisons in position_manager):**
+
+- `grep -nE "float\(self\.tolerance\)" position_manager.py` → NOTHING (WR-01 fixed)
+- `grep -nE "> 1e-6" position_manager.py` → NOTHING (WR-02 fixed)
+- `_should_close_position` (line 186): `abs(position.net_quantity) <= self.tolerance`
+  (Decimal-to-Decimal)
+- `_validate_position_consistency` (line 211): `abs(position.net_quantity) > Decimal("0.000001")`
+
+**Sub-gap 3c — WR-05 (float sizing in order_manager):**
+
+- `grep -nE "float\(portfolio\.cash\)|float\(open_position\.net_quantity\)" order_manager.py`
+  → NOTHING
+- `_resolve_signal_quantity` (lines 275-289): sizing computed in Decimal; exit sizes from
+  `open_position.net_quantity` (Decimal) as `sized_qty: Decimal`; entry computes
+  `(Decimal("0.95") * portfolio.cash) / to_money(price)` as `raw_qty: Decimal`; coercion to
+  `float` occurs ONCE at `signal_event.quantity = float(...)` (SignalEvent field stays float
+  per IN-02/M4)
+
+**Sub-gap 3d — CR-03 (cash setter precision loss + setter-gate raise):**
+
+- `CashManager.apply_transaction_delta(delta, description, reference_id)` added at line 276 in
+  `cash_manager.py`: adds signed full-precision Decimal delta directly to `_balance` under lock;
+  records `CashOperation` (TRANSACTION_DEBIT/CREDIT) for audit; does NOT call
+  `_validate_and_convert_amount` (no 2dp quantize); does NOT enforce deposit/withdraw min/max-
+  balance gates (funds check already ran in `_check_funds_availability` upstream)
+- `transaction_manager._execute_transaction` (line 241): now routes through
+  `self.portfolio.cash_manager.apply_transaction_delta(transaction_cost, ...)` instead of
+  `self.portfolio.cash += transaction_cost` setter
+- Public `deposit`/`withdraw`/`process_transaction_cash_flow` and their 2dp policy gates are
+  untouched for existing external callers
+
+**Status: VERIFIED**
+
+---
+
+### Suite, Types, and Oracle
+
+| Check | Command | Result | Status |
+|-------|---------|--------|--------|
+| Full unit suite | `poetry run pytest -q --ignore=test/test_integration` | 298 passed | ✓ PASS |
+| Full suite incl. integration | `poetry run pytest -q` | 299 passed, 1 xfailed | ✓ PASS |
+| mypy --strict | `make typecheck` | "Success: no issues found in 157 source files" | ✓ PASS |
+| Oracle behavioral identity | `poetry run pytest test/test_integration/test_backtest_oracle.py::test_oracle_behavioral_identity` | PASSED | ✓ PASS — 134 trades, entry/exit/side/pair EXACT, equity timestamp grid EXACT, trade_count EXACT |
+| Oracle numeric values | `poetry run pytest test/test_integration/test_backtest_oracle.py::test_oracle_numeric_values` | XFAIL | ✓ OWNER-APPROVED DEFERRAL (DEF-02-08-A) — not a gap |
+| Clock guard under -O | `python -O -c "from itrader.core.clock import BacktestClock; BacktestClock().now()"` | RuntimeError raised | ✓ PASS |
+| Golden master byte-unchanged | `git status --porcelain test/golden/` | clean (no output) | ✓ PASS — no re-baseline |
+
+---
+
+### Owner-Approved Deferral: DEF-02-08-A (numeric oracle xfail)
+
+The Gap 3 Decimal precision fixes (CR-03 cash ledger + WR-05 sizing) shift numeric oracle
+magnitudes past the existing D-15 tolerance. Per the plan's GOLDEN-MASTER GUARDRAIL and
+PROJECT.md ("the numerical oracle re-baselines at exactly two points — after M2, after M5"),
+the executor STOPPED rather than re-bless the golden master.
+
+The owner resolved this via a test split, documented in `deferred-items.md → DEF-02-08-A`:
+
+- `test_oracle_behavioral_identity`: asserts behavioral LAW EXACT and ACTIVE (trade count,
+  entry/exit/side/pair, equity timestamp grid, trade_count — all byte-exact). This is the
+  regression guard. It passes.
+- `test_oracle_numeric_values`: asserts numeric magnitudes under D-15 tolerance.
+  `@pytest.mark.xfail(strict=False)` with reason `DEF-02-08-A`. The numeric re-freeze is
+  deferred to the owner-gated post-M2 numeric re-baseline plan (Phase 3 / M2b SC#4:
+  "golden-master gate: the numerical oracle is re-frozen after the Decimal precision shift").
+
+The xfail is an owner-approved deferral, not an unmet gap. The golden master files
+(`test/golden/trades.csv`, `equity.csv`, `summary.json`) are byte-unchanged.
+
+---
+
+### Verdict
+
+**PASS** — all four Phase 2 success criteria are MET after gap-closure plan 02-08.
+
+- SC#1 (UUIDv7): VERIFIED (unchanged from initial)
+- SC#2 (Decimal end-to-end): MET — all float seams removed (WR-01/02/03/05); cash ledger
+  precision-preserving primitive (CR-03) added and routed; grep gates empty
+- SC#3 (mypy --strict + frozen events + real ABCs): VERIFIED (unchanged from initial)
+- SC#4 (deterministic — clock guard + RNG + flat index): MET — BacktestClock.now() raises
+  RuntimeError (python -O safe); false docstring corrected; RNG and flat index unchanged
+
+The numeric oracle re-freeze is an owner-approved deferral (DEF-02-08-A) tracked to Phase 3 /
+M2b, not an open gap. Phase 2 goal is achieved.
+
+---
+
+_Initial verification: 2026-06-04T22:32:00Z_
+_Re-verification after 02-08: 2026-06-04T23:20:00Z_
 _Verifier: Claude (gsd-verifier)_
