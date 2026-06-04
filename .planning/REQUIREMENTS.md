@@ -25,11 +25,11 @@
   on the backtest path (minimal fix sufficient to run the golden daily UTC dataset) *(KB17 [start], #36 [start of M1→M2])*
 - [x] **M1-03**: `to_timedelta` returns a real value for the timeframes the golden run uses (no silent
   `None` flowing into timing/resampling) *(KB20 [start of M1→M2], #36 [start])*
-- [ ] **M1-04**: `SMA_MACD_strategy` runs without error — fix `[-1]` label-indexing to `.iloc[-1]` and
+- [x] **M1-04**: `SMA_MACD_strategy` runs without error — fix `[-1]` label-indexing to `.iloc[-1]` and
   the string `fillna='False'` → `fillna=False` *(KB15, instance of #24/#38)*
-- [ ] **M1-05**: Backtest orchestration runs a full PING→BAR→SIGNAL→ORDER→FILL loop — fix
+- [x] **M1-05**: Backtest orchestration runs a full PING→BAR→SIGNAL→ORDER→FILL loop — fix
   `record_metrics` being called on `PortfolioHandler` instead of `Portfolio` *(KB18, #35 [backtest part])*
-- [ ] **M1-06**: Orders carry a real non-zero quantity — implement *minimal* position sizing in the
+- [x] **M1-06**: Orders carry a real non-zero quantity — implement *minimal* position sizing in the
   architecturally-correct order/risk seam so `quantity=0` no longer reaches orders/fills
   *(KB11 [start of M1→M5], #24/#31 [minimal-sizing start])*
 - [x] **M1-07**: `SMA_MACD` produces a **non-trivial trade log + equity curve** on
