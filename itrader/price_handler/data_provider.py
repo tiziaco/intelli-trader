@@ -15,6 +15,7 @@ from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader.outils.data_outils import resample_ohlcv
 
 from itrader import config
+from itrader.config import TIMEZONE
 from itrader.logger import get_itrader_logger
 
 
@@ -86,9 +87,16 @@ class PriceHandler(AbstractPriceHandler):
 	
 	def load_data(self):
 		"""
-		Load price data from the data provider or sql database and 
-		store it in a dictionary 
+		Load price data from the data provider or sql database and
+		store it in a dictionary
 		"""
+
+		# D-07: offline/csv feed reads the committed golden CSV into
+		# self.prices in the EXACT CCXT frame shape and returns without ever
+		# touching SqlHandler or the CCXT exchange.
+		if self.is_csv:
+			self._load_csv_data()
+			return
 
 		# Read the list of coins stored in the db
 		sql_symblos = self.sql_handler.get_symbols_SQL()
@@ -111,7 +119,59 @@ class PriceHandler(AbstractPriceHandler):
 				self.sql_handler.to_database(symbol, price, True)
 		
 		self.logger.info('Price data loaded')
-	
+
+	def _load_csv_data(self):
+		"""
+		Load the golden CSV into self.prices in the EXACT frame shape the
+		CCXT path produces (see CCXT._format_data): lowercase OHLCV columns
+		and a tz-aware DatetimeIndex named 'date' converted to config.TIMEZONE.
+
+		Pitfall 6: the ping clock is derived from this same frame index
+		(backtest_trading_system.py: set_dates(self.prices[...].index)), so the
+		index tz is the ping tz by construction — one tz, no double-convert.
+
+		V5 / T-02-01: the committed CSV is trusted-but-verified — a malformed
+		header or empty frame raises loudly instead of silently yielding empty
+		bars (which would produce a silently-wrong oracle / zero trades).
+		"""
+		# Trusted-but-verify: validate the Binance-kline header before mapping.
+		expected_cols = ['Open time', 'Open', 'High', 'Low', 'Close', 'Volume']
+		raw = pd.read_csv(self.csv_path)
+		missing = [col for col in expected_cols if col not in raw.columns]
+		if missing:
+			raise ValueError(
+				f"Malformed CSV '{self.csv_path}': missing columns {missing}")
+
+		# Map Open time->date, Open/High/Low/Close/Volume->lowercase, drop the
+		# trailing Binance-kline columns (Close time, Quote asset volume,
+		# Number of trades, Taker buy base/quote, Ignore).
+		data = raw[expected_cols].copy()
+		data.columns = ['date', 'open', 'high', 'low', 'close', 'volume']
+
+		# Format index exactly like CCXT._format_data: tz-aware then convert to
+		# the configured timezone so it matches the ping clock by construction.
+		data = data.set_index('date')
+		data.index = pd.to_datetime(data.index, utc=True)
+		data.index = data.index.tz_convert(TIMEZONE)
+		data.index.name = 'date'
+		data = data.astype(float)
+
+		# D-02: pin the date window explicitly (2018-01-01 -> 2026-06-03) on the
+		# feed side so the oracle is insulated if the CSV is regenerated. The
+		# slice bounds are localized to the index tz to match correctly.
+		start = pd.Timestamp(self.CSV_START_DATE, tz=TIMEZONE)
+		end = pd.Timestamp(self.CSV_END_DATE, tz=TIMEZONE) \
+			+ pd.Timedelta(days=1)
+		data = data.loc[start:end]
+
+		if data.empty:
+			raise ValueError(
+				f"CSV '{self.csv_path}' produced an empty frame after the "
+				f"{self.CSV_START_DATE} -> {self.CSV_END_DATE} window slice")
+
+		self.prices[self.CSV_TICKER.upper()] = data
+		self.logger.info('Price data loaded from csv (%d bars)', len(data))
+
 	def update_data(self):
 		"""
 		Update the price data
