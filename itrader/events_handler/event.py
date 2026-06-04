@@ -322,12 +322,16 @@ class OrderEvent:
 		Reads the order's real type (`order.type`) and id (`order.id`),
 		and optional bracket linkage / command intent.
 		"""
+		# Boundary coercion (M2a): the Order entity carries Decimal money, but the
+		# OrderEvent + execution/matching/fee layer remain float until M4. Coerce
+		# here so the float execution layer stays consistent; the cash path
+		# re-enters Decimal at Transaction.new_transaction via to_money().
 		return cls(
 			order.time,
 			order.ticker,
 			order.action,
-			order.price,
-			order.quantity,
+			float(order.price),
+			float(order.quantity),
 			order.exchange,
 			order.strategy_id,
 			order.portfolio_id,

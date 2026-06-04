@@ -53,15 +53,17 @@ class TestPositionMultipleBuy(unittest.TestCase):
 		self.assertEqual(position.side, PositionSide.LONG)
 		self.assertEqual(position.buy_quantity, 3)
 		self.assertEqual(position.sell_quantity, 0)
-		self.assertAlmostEqual(position.avg_bought, 47333.33, delta=0.01)
+		# Money is Decimal end-to-end (M2a): coerce the computed Decimal to float
+		# for the tolerance comparison (assertAlmostEqual cannot mix Decimal/float).
+		self.assertAlmostEqual(float(position.avg_bought), 47333.33, delta=0.01)
 		self.assertEqual(position.avg_sold, 0)
-		self.assertAlmostEqual(position.avg_price, 47333.33, delta=0.01)
+		self.assertAlmostEqual(float(position.avg_price), 47333.33, delta=0.01)
 		self.assertEqual(position.market_value, 150000)
 		self.assertEqual(position.total_bought, 142000)
 		self.assertEqual(position.total_sold, 0)
-		self.assertAlmostEqual(position.net_total, 8000, delta=0.01)
+		self.assertAlmostEqual(float(position.net_total), 8000, delta=0.01)
 		self.assertEqual(position.realised_pnl, 0)
-		self.assertAlmostEqual(position.unrealised_pnl, 8000, delta=0.01)
+		self.assertAlmostEqual(float(position.unrealised_pnl), 8000, delta=0.01)
 
 if __name__ == "__main__":
 	unittest.main()

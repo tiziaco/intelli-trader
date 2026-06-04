@@ -1,10 +1,14 @@
 from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass
+from decimal import Decimal
+from typing import Optional
 
 from itrader import idgen
 from itrader.events_handler.event import FillEvent
 from itrader.core.enums import TransactionType
+from itrader.core.ids import PortfolioId, PositionId, TransactionId
+from itrader.core.money import to_money
 
 transaction_type_map = {
 	"BUY": TransactionType.BUY,
@@ -21,12 +25,23 @@ class Transaction(object):
 	time: datetime
 	type: TransactionType
 	ticker: str
-	price: float
-	quantity: float
-	commission: float
-	portfolio_id: int
-	id: int
-	position_id: int = None
+	price: Decimal
+	quantity: Decimal
+	commission: Decimal
+	portfolio_id: PortfolioId
+	id: TransactionId
+	position_id: Optional[PositionId] = None
+
+	def __post_init__(self):
+		"""Enter the Decimal money domain at the construction boundary (D-04).
+
+		Callers may still pass int/float money values; ``to_money`` normalises
+		them to ``Decimal`` via the string path so the entity stores Decimal
+		end-to-end with no float-repr artifact.
+		"""
+		self.price = to_money(self.price)
+		self.quantity = to_money(self.quantity)
+		self.commission = to_money(self.commission)
 
 	def __repr__(self):
 		"""
@@ -36,7 +51,7 @@ class Transaction(object):
 		return f"Transaction - {self.id} ({self.type.name}, {self.ticker}, {self.quantity}, {self.price}$)"
 
 	@property
-	def cost(self) -> float:
+	def cost(self) -> Decimal:
 		"""
 		Calculate the cost of the transaction without including
 		any commission costs.
@@ -44,17 +59,17 @@ class Transaction(object):
 		return self.quantity * self.price
 
 	@property
-	def total_cost(self):
+	def total_cost(self) -> Decimal:
 		"""
 		Calculate the cost of the transaction including
 		commission costs.
 
 		Returns
 		-------
-		`float`
+		`Decimal`
 			The transaction cost with commission.
 		"""
-		if self.commission == 0.0:
+		if self.commission == 0:
 			return self.cost
 		else:
 			return self.cost + self.commission
@@ -83,9 +98,9 @@ class Transaction(object):
 			filled_order.time,
 			transaction_type,
 			filled_order.ticker,
-			filled_order.price,
-			filled_order.quantity,
-			filled_order.commission,
+			to_money(filled_order.price),
+			to_money(filled_order.quantity),
+			to_money(filled_order.commission),
 			filled_order.portfolio_id,
 			idgen.generate_transaction_id()
 		)
