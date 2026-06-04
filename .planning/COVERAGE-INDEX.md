@@ -215,3 +215,40 @@ ignition fix).
 **Coverage assertion:** all 40 findings + all 65 defects appear in Section A/B exactly once with a
 milestone or deferred tag. Span items (`M1→M2`, `M1→M5`) are counted in each milestone in §C and must
 not be marked ☑ until their final milestone completes.
+
+---
+
+## Section E — Discovered during execution
+
+> Issues found **after** the baseline review (Sections A/B) — surfaced during GSD research, per-phase
+> planning, the M1 golden-master capture, or the M5 cross-validation. This is a **delta log**, not a
+> re-audit: only items NOT already in Sections A/B belong here. Sections A/B remain the baseline
+> coverage contract; this section extends it.
+
+### Triage protocol (mandatory for every new item)
+
+1. **Confirm it's a delta.** Check it isn't already captured (possibly under a different framing) in
+   Section A/B. If it is, link to that ID instead of adding a row.
+2. **Assign a stable ID.** New finding → `A41`, `A42`, … (continues Section A). New defect → next free
+   number in its `CONCERNS.md` category prefix (`TD12`, `KB25`, `FR11`, …), or `DX1`, `DX2`, … if it
+   fits no existing category.
+3. **Scope-tag it** using the same rules as the baseline: a milestone (`M1`–`M5`, or a span like
+   `M1→M5`) **only if** it is genuinely backtest-correctness work; otherwise a deferred tag
+   (`D-live` / `D-sql` / `D-screener` / `D-compliance` / `D-oanda`) or `OUT`. **Do not default a new
+   item into the phase that found it.**
+4. **Get approval before it changes any plan.** Add the row with status ☐ and **flag for owner
+   approval**. A new item NEVER silently joins the running phase's scope — that would corrupt the
+   golden-master behavior contract (M2–M4 must stay behavior-preserving; M5 is the only
+   result-changing milestone).
+5. **On approval,** the assigned milestone's plan picks it up; `STATE.md` tracks live status.
+
+### Log
+
+| ID | Item | Severity / category | Milestone | Found by (phase / mechanism) | Status |
+|----|------|---------------------|-----------|------------------------------|:--:|
+| _(none yet)_ | | | | | |
+
+**Note on dynamic discovery:** the highest-yield sources here are expected to be the **M1 reference
+capture** and **M5 external cross-validation** (vs `backtesting.py` / `backtrader`), not static
+re-reading — behavioral/accounting bugs are invisible to the static review that produced Sections A/B.
+When such a bug appears, triage it here the same way; do not hotfix it outside its assigned milestone.
