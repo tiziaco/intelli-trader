@@ -20,14 +20,14 @@ class RiskManager():
 		Portfolio metrics and open positions data
 	"""
 
-	def __init__(self, portfolio_handler: PortfolioHandler):
+	def __init__(self, portfolio_handler: PortfolioHandler) -> None:
 		self.portfolio_handler = portfolio_handler
 
 		self.logger = get_itrader_logger().bind(component="RiskManager")
 		self.logger.info('Risk Manager initialized')
 
 
-	def refine_orders(self, signal: SignalEvent):
+	def refine_orders(self, signal: SignalEvent) -> None:
 		"""
 		Calculate the StopLoss level annd create a OrderEvent.
 		"""
@@ -37,7 +37,7 @@ class RiskManager():
 		if signal.verified == True:
 			self.logger.debug('Order VALIDATED')
 
-	def check_cash(self, signal: SignalEvent):
+	def check_cash(self, signal: SignalEvent) -> None:
 		"""
 		Check if enough cash in the selected portfolio.
 		If not enough cash the signal is not verified.
@@ -54,9 +54,11 @@ class RiskManager():
 		cost = quantity * price
 		
 		if signal.ticker not in open_tickers:
-			# New position about to be opened. Check if enough cash
-			cash = portfolio.cash
-			
+			# New position about to be opened. Check if enough cash.
+			# Risk checks stay float-domain until M4 (locked decision); coerce the
+			# Decimal cash at this boundary so the comparison does not mix types.
+			cash = float(portfolio.cash)
+
 			if cash < 30 or cash <= cost:
 				signal.verified = False
 		if signal.verified == False:

@@ -12,10 +12,13 @@ Provides the business logic layer between OrderHandler (interface)
 and order storage/execution systems.
 """
 
-from typing import List
+from decimal import Decimal
+from typing import Any, List, Optional
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand
+from ..core.ids import OrderId
+from ..core.money import to_money
 from .base import OrderStorage
 from ..events_handler.event import OrderEvent, SignalEvent, FillEvent, FillStatus
 from .order_validator import EnhancedOrderValidator
@@ -36,8 +39,8 @@ class OrderManager:
 	and order storage/execution systems.
 	"""
 	
-	def __init__(self, order_storage: OrderStorage, logger, order_handler_ref, 
-	             market_execution: str = "immediate", portfolio_handler=None):
+	def __init__(self, order_storage: OrderStorage, logger: Any, order_handler_ref: Any,
+	             market_execution: str = "immediate", portfolio_handler: Any = None) -> None:
 		"""
 		Initialize the OrderManager.
 		
@@ -80,7 +83,7 @@ class OrderManager:
 			return
 		try:
 			if fill_event.status == FillStatus.EXECUTED:
-				if not order.add_fill(order.remaining_quantity, fill_event.price,
+				if not order.add_fill(order.remaining_quantity, to_money(fill_event.price),
 				                      fill_event.time, "exchange fill"):
 					self.logger.warning('add_fill rejected for order %s; mirror left unchanged', order_id)
 					return
@@ -226,7 +229,7 @@ class OrderManager:
 		
 		return results
 	
-	def _resolve_signal_quantity(self, signal_event: SignalEvent):
+	def _resolve_signal_quantity(self, signal_event: SignalEvent) -> Optional[OperationResult]:
 		"""
 		Resolve a strategy sentinel quantity (qty<=0) in the order/risk seam (D-08/D-09).
 
@@ -354,7 +357,7 @@ class OrderManager:
 			)
 	
 	def _create_stop_loss_order(self, signal_event: SignalEvent, exchange: str,
-	                            parent_id: int = None) -> OperationResult:
+	                            parent_id: Optional[OrderId] = None) -> OperationResult:
 		"""
 		Create a stop-loss order from a signal and emit its OrderEvent.
 
@@ -399,7 +402,7 @@ class OrderManager:
 				error_details=str(e), operation_type="create_stop_loss")
 	
 	def _create_take_profit_order(self, signal_event: SignalEvent, exchange: str,
-	                              parent_id: int = None) -> OperationResult:
+	                              parent_id: Optional[OrderId] = None) -> OperationResult:
 		"""
 		Create a take-profit order from a signal and emit its OrderEvent.
 
@@ -443,8 +446,8 @@ class OrderManager:
 				f"Error creating take-profit order: {e}",
 				error_details=str(e), operation_type="create_take_profit")
 	
-	def modify_order(self, order_id: int, new_price: float = None, new_quantity: float = None, 
-	                portfolio_id: int = None, reason: str = "user modification") -> OperationResult:
+	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None, 
+	                portfolio_id: Optional[int] = None, reason: str = "user modification") -> OperationResult:
 		"""
 		Modify an existing order and generate OrderEvent.
 		
@@ -489,8 +492,12 @@ class OrderManager:
 						operation_type="modify_order"
 					)
 			
-			# Apply the modification
-			success = order.modify_order(new_price, new_quantity, reason)
+			# Apply the modification. Order money is Decimal (M2a); coerce the
+			# float modify args at this boundary.
+			success = order.modify_order(
+				to_money(new_price) if new_price is not None else None,
+				to_money(new_quantity) if new_quantity is not None else None,
+				reason)
 			if success:
 				# Update in storage
 				self.order_storage.update_order(order)
@@ -517,7 +524,7 @@ class OrderManager:
 			return OperationResult.failure_result(error_msg, 
 				error_details=str(e), operation_type="modify_order")
 	
-	def cancel_order(self, order_id: int, portfolio_id: int = None, 
+	def cancel_order(self, order_id: int, portfolio_id: Optional[int] = None, 
 	                reason: str = "user cancellation") -> OperationResult:
 		"""
 		Cancel an existing order and generate OrderEvent.

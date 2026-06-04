@@ -111,7 +111,7 @@ class TieredFeeModel(FeeModel):
         price: Union[float, Decimal], 
         side: str = "buy",
         order_type: str = "market",
-        **kwargs
+        **kwargs: Any
     ) -> Decimal:
         """
         Calculate tiered fee for an order.
@@ -126,7 +126,7 @@ class TieredFeeModel(FeeModel):
             Order side ("buy" or "sell")
         order_type : str, optional
             Order type ("market", "limit", etc.)
-        **kwargs
+        **kwargs: Any
             Additional parameters (e.g., is_maker override, current_volume override)
             
         Returns
@@ -160,7 +160,7 @@ class TieredFeeModel(FeeModel):
         else:
             return trade_value * taker_rate
 
-    def _is_maker_order(self, order_type: str, **kwargs) -> bool:
+    def _is_maker_order(self, order_type: str, **kwargs: Any) -> bool:
         """
         Determine if an order is a maker order.
         
@@ -168,7 +168,7 @@ class TieredFeeModel(FeeModel):
         ----------
         order_type : str
             Order type
-        **kwargs
+        **kwargs: Any
             Additional parameters (e.g., is_maker override)
             
         Returns

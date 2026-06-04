@@ -6,7 +6,7 @@ Handles cash balance management, precision, and cash flow operations.
 import threading
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Any, Optional, List, Dict, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
@@ -54,7 +54,7 @@ class CashManager:
     - Balance validation and consistency checks
     """
     
-    def __init__(self, portfolio, initial_cash: float | Decimal = 0.0):
+    def __init__(self, portfolio: Any, initial_cash: float | Decimal = 0.0) -> None:
         self.portfolio = portfolio
         self._lock = threading.RLock()
         self.logger = get_itrader_logger().bind(component="CashManager")
@@ -101,7 +101,7 @@ class CashManager:
         with self._lock:
             return self._reserved_cash
     
-    def deposit(self, amount: float | Decimal, description: str = "Cash deposit", reference_id: str = None) -> bool:
+    def deposit(self, amount: float | Decimal, description: str = "Cash deposit", reference_id: Optional[str] = None) -> bool:
         """
         Deposit cash to the portfolio.
         
@@ -151,7 +151,7 @@ class CashManager:
             
             return True
     
-    def withdraw(self, amount: float | Decimal, description: str = "Cash withdrawal", reference_id: str = None) -> bool:
+    def withdraw(self, amount: float | Decimal, description: str = "Cash withdrawal", reference_id: Optional[str] = None) -> bool:
         """
         Withdraw cash from the portfolio.
         
@@ -228,7 +228,8 @@ class CashManager:
             InvalidTransactionError: If amount is invalid
             InsufficientFundsError: If insufficient funds for debit
         """
-        amount_decimal = self._validate_and_convert_amount(abs(amount), "transaction")
+        abs_amount = abs(to_money(amount))
+        amount_decimal = self._validate_and_convert_amount(abs_amount, "transaction")
         
         with self._lock:
             old_balance = self._balance

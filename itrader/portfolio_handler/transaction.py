@@ -28,11 +28,14 @@ class Transaction(object):
 	price: Decimal
 	quantity: Decimal
 	commission: Decimal
-	portfolio_id: PortfolioId
+	# 02-05 carry-over: events carry an int portfolio_id while Portfolio assigns a
+	# UUID-backed PortfolioId. Until the portfolio_id migration completes, accept
+	# both at this boundary (the full retype is deferred — not mandated by Task 2).
+	portfolio_id: "PortfolioId | int"
 	id: TransactionId
 	position_id: Optional[PositionId] = None
 
-	def __post_init__(self):
+	def __post_init__(self) -> None:
 		"""Enter the Decimal money domain at the construction boundary (D-04).
 
 		Callers may still pass int/float money values; ``to_money`` normalises
@@ -43,7 +46,7 @@ class Transaction(object):
 		self.quantity = to_money(self.quantity)
 		self.commission = to_money(self.commission)
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		"""
 		Provides a representation of the Transaction
 		to allow full recreation of the object.
@@ -75,7 +78,7 @@ class Transaction(object):
 			return self.cost + self.commission
 	
 	@classmethod
-	def new_transaction(cls, filled_order: FillEvent):
+	def new_transaction(cls, filled_order: FillEvent) -> "Transaction":
 		"""
 		Generate a new Transaction object from a FillEvent instance.
 
@@ -102,10 +105,10 @@ class Transaction(object):
 			to_money(filled_order.quantity),
 			to_money(filled_order.commission),
 			filled_order.portfolio_id,
-			idgen.generate_transaction_id()
+			TransactionId(idgen.generate_transaction_id())
 		)
 
-	def to_dict(self):
+	def to_dict(self) -> dict[str, object]:
 			return {
 				'transaction_id': self.id,
 				'portfolio_id' : self.portfolio_id,

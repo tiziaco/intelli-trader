@@ -1,5 +1,7 @@
+import queue
 from abc import ABC, abstractmethod
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -17,9 +19,9 @@ class Strategy(ABC):
 	objects for particular symbols based on the inputs of ticks
 	generated from a PriceHandler (derived) object.
 	"""
-	def __init__(self, name, timeframe, tickers, order_type = "market",
-			  	max_positions = 1, max_allocation = 0.80, allow_increase = False,
-				global_queue = None) -> None:
+	def __init__(self, name: str, timeframe: str, tickers: list[str], order_type: str = "market",
+			  	max_positions: int = 1, max_allocation: float = 0.80, allow_increase: bool = False,
+				global_queue: "Optional[queue.Queue[Any]]" = None) -> None:
 		self.strategy_id: StrategyId = StrategyId(idgen.generate_strategy_id())
 		self.name = name
 		self.is_active = True
@@ -27,22 +29,25 @@ class Strategy(ABC):
 		self.tickers = tickers
 		self.order_type = order_type
 		#self.portfolios = {}
-		self.subscribed_portfolios = []
-		self.last_event: BarEvent = None
+		self.subscribed_portfolios: list[int] = []
+		self.last_event: Optional[BarEvent] = None
 		self.global_queue = global_queue
 		# Risk management settings
 		self.max_positions = max_positions
 		self.max_allocation = max_allocation
 		self.allow_increase = allow_increase
+		# Lookback window (bars) a concrete strategy needs before it can signal.
+		# Concrete strategies (e.g. SMA_MACD) override this in their __init__.
+		self.max_window: int = 0
 	
-	def setting_to_dict(self):
+	def setting_to_dict(self) -> dict[str, Any]:
 		return {
 			'max_positions' : self.max_positions,
 			'max_allocation' : self.max_allocation,
 			'allow_increase' : self.allow_increase,
 		}
-	
-	def to_dict(self):
+
+	def to_dict(self) -> dict[str, Any]:
 		return {
 			"strategy_id" : self.strategy_id,
 			"strategy_name": self.name,
@@ -63,10 +68,12 @@ class Strategy(ABC):
 		"""
 		raise NotImplementedError("Should implement calculate_signal()")
 
-	def _generate_signal(self, ticker: str, action: str, sl: float = 0, tp: float = 0):
+	def _generate_signal(self, ticker: str, action: str, sl: float = 0, tp: float = 0) -> None:
 		"""
 		Generate a signal for the given `ticker`, `action`, `stop_loss`, and `take_profit`.
 		"""
+		if self.last_event is None:
+			return
 		last_close = self.last_event.get_last_close(ticker)
 		for portfolio_id in self.subscribed_portfolios:
 			signal = SignalEvent(
@@ -82,36 +89,38 @@ class Strategy(ABC):
 							portfolio_id = portfolio_id,
 							strategy_setting=self.setting_to_dict()
 						)
-			self.global_queue.put(signal)
+			if self.global_queue is not None:
+				self.global_queue.put(signal)
 		logger.debug('Strategy signal (%s - %s %s, %s $)', self.strategy_id,
 					ticker, action, round(last_close, 4))
 
-	def buy(self, ticker: str, sl: float = 0, tp: float = 0):
+	def buy(self, ticker: str, sl: float = 0, tp: float = 0) -> None:
 		"""
-		Add a buy signal from the strategy to the global queue 
+		Add a buy signal from the strategy to the global queue
 		of the trading system.
 		"""
 		self._generate_signal(ticker, 'BUY', sl, tp)
 
-	def sell(self, ticker: str, sl: float = 0, tp: float = 0):
+	def sell(self, ticker: str, sl: float = 0, tp: float = 0) -> None:
 		"""
-		Add a sell signal from the strategy to the global queue 
+		Add a sell signal from the strategy to the global queue
 		of the trading system.
 		"""
 		self._generate_signal(ticker, 'SELL', sl, tp)
-	
-	def last_time(self):
+
+	def last_time(self) -> Optional[datetime]:
 		if self.last_event is not None:
 			return self.last_event.time
+		return None
 
-	def subscribe_portfolio(self, portfolio_id:int):
+	def subscribe_portfolio(self, portfolio_id: int) -> None:
 		self.subscribed_portfolios.append(portfolio_id)
-	
-	def unsubscribe_portfolio(self, portfolio_id:int):
+
+	def unsubscribe_portfolio(self, portfolio_id: int) -> None:
 		self.subscribed_portfolios.remove(portfolio_id)
-	
-	def activate_strategy(self):
+
+	def activate_strategy(self) -> None:
 		self.is_active = True
 
-	def deactivate_strategy(self):
+	def deactivate_strategy(self) -> None:
 		self.is_active = False

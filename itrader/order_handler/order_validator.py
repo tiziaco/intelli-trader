@@ -56,7 +56,7 @@ class EnhancedOrderValidator:
     4. Financial Risk - Cash availability, margin requirements, risk limits
     """
     
-    def __init__(self, portfolio_handler=None):
+    def __init__(self, portfolio_handler: Any = None) -> None:
         """
         Initialize the enhanced order validator.
         
@@ -160,7 +160,7 @@ class EnhancedOrderValidator:
         Essential fields that must be present for signal processing.
         No business logic - just essential field presence and format validation.
         """
-        messages = []
+        messages: List[ValidationMessage] = []
         
         # Ticker validation
         if not signal.ticker or not signal.ticker.strip():
@@ -234,7 +234,7 @@ class EnhancedOrderValidator:
         Market and exchange-specific validation.
         Checks market hours, exchange rules, and instrument availability.
         """
-        messages = []
+        messages: List[ValidationMessage] = []
         
         # Exchange validation
         messages.extend(self._validate_exchange_support(signal))
@@ -252,7 +252,7 @@ class EnhancedOrderValidator:
     
     def _validate_exchange_support(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Validate exchange is supported."""
-        messages = []
+        messages: List[ValidationMessage] = []
         
         # Get exchange from portfolio or default
         if self.portfolio_handler:
@@ -273,7 +273,7 @@ class EnhancedOrderValidator:
     
     def _validate_market_hours(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Validate trading during market hours."""
-        messages = []
+        messages: List[ValidationMessage] = []
         
         # Get exchange for market hours
         if self.portfolio_handler:
@@ -299,7 +299,7 @@ class EnhancedOrderValidator:
     
     def _validate_price_ranges(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Validate price is within acceptable ranges."""
-        messages = []
+        messages: List[ValidationMessage] = []
         
         if signal.price < self.min_price:
             messages.append(ValidationMessage(
@@ -320,7 +320,7 @@ class EnhancedOrderValidator:
     
     def _validate_quantity_ranges(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Validate quantity is within acceptable ranges."""
-        messages = []
+        messages: List[ValidationMessage] = []
         
         if signal.quantity < self.min_quantity:
             messages.append(ValidationMessage(
@@ -346,7 +346,7 @@ class EnhancedOrderValidator:
         Portfolio-wide constraints validation.
         Checks portfolio-level limits, not strategy-specific rules.
         """
-        messages = []
+        messages: List[ValidationMessage] = []
         
         if not self.portfolio_handler:
             return messages
@@ -361,7 +361,7 @@ class EnhancedOrderValidator:
     
     def _check_portfolio_position_limits(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Check portfolio-wide position limits (not strategy-specific)."""
-        messages = []
+        messages: List[ValidationMessage] = []
         
         portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
         if not portfolio:
@@ -391,7 +391,7 @@ class EnhancedOrderValidator:
     
     def _check_portfolio_exposure_limits(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Check portfolio exposure limits."""
-        messages = []
+        messages: List[ValidationMessage] = []
         
         portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
         if not portfolio:
@@ -416,7 +416,7 @@ class EnhancedOrderValidator:
         
         return messages
     
-    def _is_closing_position(self, signal: SignalEvent, position) -> bool:
+    def _is_closing_position(self, signal: SignalEvent, position: Any) -> bool:
         """Check if signal is closing an existing position."""
         if not position:
             return False
@@ -431,7 +431,7 @@ class EnhancedOrderValidator:
         Financial capacity and risk constraints validation.
         Checks cash availability, margin requirements, risk limits.
         """
-        messages = []
+        messages: List[ValidationMessage] = []
         
         if not self.portfolio_handler:
             return messages
@@ -446,7 +446,7 @@ class EnhancedOrderValidator:
     
     def _check_cash_availability(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Check if portfolio has sufficient cash for the trade."""
-        messages = []
+        messages: List[ValidationMessage] = []
         
         portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
         if not portfolio:
@@ -481,7 +481,7 @@ class EnhancedOrderValidator:
     
     def _check_risk_limits(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Check various risk limits."""
-        messages = []
+        messages: List[ValidationMessage] = []
         
         portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
         if not portfolio:
@@ -530,7 +530,7 @@ class EnhancedOrderValidator:
         result = self.validate_signal_pipeline(signal)
         return result.messages
     
-    def validate_order_modification(self, order: Order, **modifications) -> List[ValidationMessage]:
+    def validate_order_modification(self, order: Order, **modifications: Any) -> List[ValidationMessage]:
         """
         Validate order modification parameters.
         
@@ -546,7 +546,7 @@ class EnhancedOrderValidator:
         List[ValidationMessage]
             Validation messages
         """
-        messages = []
+        messages: List[ValidationMessage] = []
         
         # Check new quantity vs filled quantity
         if 'new_quantity' in modifications:

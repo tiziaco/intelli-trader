@@ -2,7 +2,7 @@ from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from itrader.events_handler.event import SignalEvent
 from itrader import idgen
@@ -24,9 +24,9 @@ class OrderStateChange:
 	timestamp: datetime
 	reason: str
 	triggered_by: str = "system"  # system, user, exchange, etc.
-	additional_data: Optional[dict] = None
-	
-	def __str__(self):
+	additional_data: Optional[dict[str, Any]] = None
+
+	def __str__(self) -> str:
 		return f"{self.from_status} → {self.to_status} at {self.timestamp} ({self.reason})"
 
 @dataclass
@@ -49,8 +49,10 @@ class Order:
 	quantity: Decimal
 	exchange: str
 	strategy_id: StrategyId
-	portfolio_id: PortfolioId
-	id: OrderId = field(default_factory=lambda: idgen.generate_order_id())
+	# 02-05 carry-over: SignalEvent carries an int portfolio_id; accept both until
+	# the portfolio_id migration completes (not mandated by Task 2).
+	portfolio_id: "PortfolioId | int"
+	id: OrderId = field(default_factory=lambda: OrderId(idgen.generate_order_id()))
 
 	# Enhanced lifecycle tracking fields
 	filled_quantity: Decimal = field(default_factory=lambda: Decimal("0"))
@@ -73,7 +75,7 @@ class Order:
 	modification_count: int = 0
 	last_modification_time: Optional[datetime] = None
 
-	def __post_init__(self):
+	def __post_init__(self) -> None:
 		"""Enter the Decimal money domain at the construction boundary (D-04).
 
 		The factory methods already pass ``to_money(...)``; normalising here too
@@ -116,17 +118,17 @@ class Order:
 			return Decimal("0")
 		return (self.filled_quantity / self.quantity) * Decimal("100")
 
-	def __str__(self):
+	def __str__(self) -> str:
 		status_str = f"{self.status.name}"
 		if self.is_partially_filled:
 			status_str += f" ({self.filled_quantity}/{self.quantity})"
 		return f"Order - {self.id} ({self.type.name}, {self.ticker}, {self.action}, {status_str}, {self.price}$)"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 	
 	@classmethod
-	def new_order(cls, signal: SignalEvent, exchange: str):
+	def new_order(cls, signal: SignalEvent, exchange: str) -> "Order":
 		"""
 		Generate a new Order object from the signal validated from
 		the risk manager and compliance manager.
@@ -170,8 +172,8 @@ class Order:
 		return order
 	
 	@classmethod
-	def new_stop_order(cls, time, ticker, action, price, quantity, exchange,
-					strategy_id, portfolio_id):
+	def new_stop_order(cls, time: datetime, ticker: str, action: str, price: Any, quantity: Any, exchange: str,
+					strategy_id: Any, portfolio_id: Any) -> "Order":
 		"""
 		Generate a new Stop Order object.
 
@@ -203,8 +205,8 @@ class Order:
 		return order
 	
 	@classmethod
-	def new_limit_order(cls, time, ticker, action, price, quantity, exchange,
-					strategy_id, portfolio_id):
+	def new_limit_order(cls, time: datetime, ticker: str, action: str, price: Any, quantity: Any, exchange: str,
+					strategy_id: Any, portfolio_id: Any) -> "Order":
 		"""
 		Generate a new Limit Order object.
 
@@ -235,8 +237,8 @@ class Order:
 		
 		return order
 	
-	def add_state_change(self, new_status: OrderStatus, reason: str, 
-	                    triggered_by: str = "system", additional_data: Optional[dict] = None) -> bool:
+	def add_state_change(self, new_status: OrderStatus, reason: str,
+	                    triggered_by: str = "system", additional_data: Optional[dict[str, Any]] = None) -> bool:
 		"""
 		Add a state change to the order with validation.
 		
@@ -271,7 +273,6 @@ class Order:
 		)
 		
 		# Update order status and metadata
-		old_status = self.status
 		self.status = new_status
 		self.updated_at = datetime.now()
 		# TODO: check if i have to store the state changes permanently in sql

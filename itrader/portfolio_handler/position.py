@@ -1,12 +1,17 @@
 from enum import Enum
 from datetime import datetime
 from decimal import Decimal
+from typing import Any, Optional, Union
 
 from itrader import idgen
-from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.core.enums import PositionSide
+from itrader.portfolio_handler.transaction import Transaction
+from itrader.core.enums import PositionSide, TransactionType
 from itrader.core.ids import PortfolioId, PositionId
 from itrader.core.money import to_money
+
+# Money values accepted at construction boundaries (D-04): to_money normalises
+# int/float/Decimal to Decimal, so accept the wider input type on the seams.
+MoneyInput = Union[Decimal, int, float]
 
 position_side_map = {
 	"LONG": PositionSide.LONG,
@@ -28,17 +33,17 @@ class Position(object):
 		entry_date: datetime,
 		ticker: str,
 		side: PositionSide,
-		price: Decimal,
-		buy_quantity: Decimal,
-		sell_quantity: Decimal,
-		avg_bought: Decimal,
-		avg_sold: Decimal,
-		buy_commission: Decimal,
-		sell_commission: Decimal,
+		price: MoneyInput,
+		buy_quantity: MoneyInput,
+		sell_quantity: MoneyInput,
+		avg_bought: MoneyInput,
+		avg_sold: MoneyInput,
+		buy_commission: MoneyInput,
+		sell_commission: MoneyInput,
 		is_open: bool,
-		portfolio_id: PortfolioId
-	):
-		self.id: PositionId = idgen.generate_position_id()
+		portfolio_id: "PortfolioId | int"
+	) -> None:
+		self.id: PositionId = PositionId(idgen.generate_position_id())
 		self.ticker = ticker
 		self.side = side
 		# Money fields enter the Decimal domain at the construction boundary (D-04):
@@ -52,11 +57,11 @@ class Position(object):
 		self.buy_commission = to_money(buy_commission)
 		self.sell_commission = to_money(sell_commission)
 		self.entry_date = entry_date
-		self.exit_date = None
+		self.exit_date: Optional[datetime] = None
 		self.is_open = is_open
 		self.portfolio_id = portfolio_id
-	
-	def __repr__(self):
+
+	def __repr__(self) -> str:
 		rep = ('%s, %s, %s'%(self.ticker, self.side.name, self.net_quantity))
 		return rep
 
@@ -185,7 +190,7 @@ class Position(object):
 		return self.realised_pnl + self.unrealised_pnl
 
 	@classmethod
-	def open_position(cls, transaction: Transaction):
+	def open_position(cls, transaction: Transaction) -> "Position":
 		"""
 		Creates a new position object based on the provided transaction. 
 		It determines the position side based on the transaction type (BUY or SELL) 
@@ -210,7 +215,7 @@ class Position(object):
 			portfolio_id = transaction.portfolio_id,
 		)
 
-	def update_position(self, transaction: Transaction):
+	def update_position(self, transaction: Transaction) -> None:
 		"""
 		Updates the average bought/sold price, quantity, and commission
 		of the Position based on the transaction details.
@@ -225,7 +230,7 @@ class Position(object):
 			self.sell_commission += transaction.commission
 		self.update_current_price_time(transaction.price, transaction.time)
 
-	def close_position(self, price, time):
+	def close_position(self, price: MoneyInput, time: datetime) -> None:
 		"""
 		Close the position.
 		"""
@@ -233,7 +238,7 @@ class Position(object):
 		self.exit_date = time
 		self.current_price = to_money(price)
 
-	def update_current_price_time(self, price: Decimal, time: datetime):
+	def update_current_price_time(self, price: MoneyInput, time: datetime) -> None:
 		"""
 		Updates the Position's awareness of the current market price
 		and time.
@@ -248,7 +253,7 @@ class Position(object):
 		self.current_price = to_money(price)
 		self.current_time = time
 
-	def to_dict(self):
+	def to_dict(self) -> dict[str, Any]:
 			return {
 				'position_id': self.id,
 				'portfolio_id': self.portfolio_id,

@@ -1,7 +1,7 @@
 import uuid
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime
-from ..base import OrderStorage
+from ..base import OrderStorage, IdLike
 
 if TYPE_CHECKING:
     from ..order import Order
@@ -26,21 +26,21 @@ class InMemoryOrderStorage(OrderStorage):
     nested-scan elimination is M4-06 (PERF3) and is NOT pulled forward here.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the in-memory storage."""
         # Active orders (PENDING, PARTIALLY_FILLED)
-        self.active_orders: Dict[uuid.UUID, Dict[uuid.UUID, 'Order']] = {}
+        self.active_orders: Dict[Any, Dict[Any, 'Order']] = {}
 
         # All orders (including completed ones for history)
-        self.all_orders: Dict[uuid.UUID, Dict[uuid.UUID, 'Order']] = {}
+        self.all_orders: Dict[Any, Dict[Any, 'Order']] = {}
 
         # Archived orders (moved from all_orders for performance)
-        self.archived_orders: Dict[uuid.UUID, Dict[uuid.UUID, 'Order']] = {}
+        self.archived_orders: Dict[Any, Dict[Any, 'Order']] = {}
 
         # Flat global order index for O(1) cross-portfolio lookup (D-14, PERF2)
-        self._by_id: Dict[uuid.UUID, 'Order'] = {}
+        self._by_id: Dict[Any, 'Order'] = {}
 
-    def add_order(self, order) -> None:
+    def add_order(self, order: 'Order') -> None:
         """Add a new order to in-memory storage."""
         portfolio_key = order.portfolio_id
         order_key = order.id
@@ -55,7 +55,7 @@ class InMemoryOrderStorage(OrderStorage):
         if order.is_active:
             self.active_orders.setdefault(portfolio_key, {})[order_key] = order
     
-    def deactivate_order(self, order_id: uuid.UUID, portfolio_id: Optional[uuid.UUID] = None) -> bool:
+    def deactivate_order(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> bool:
         """
         Deactivate an order (remove from active but keep in all_orders for audit trail).
 
@@ -100,7 +100,7 @@ class InMemoryOrderStorage(OrderStorage):
         
         return deactivated
 
-    def remove_order(self, order_id: uuid.UUID, portfolio_id: Optional[uuid.UUID] = None) -> bool:
+    def remove_order(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> bool:
         """Remove an order from in-memory storage."""
         order_key = order_id
         removed = False
@@ -134,7 +134,7 @@ class InMemoryOrderStorage(OrderStorage):
 
         return removed
 
-    def _remove_order_search_all(self, order_key: uuid.UUID) -> bool:
+    def _remove_order_search_all(self, order_key: IdLike) -> bool:
         """Helper method to search and remove an order across all portfolios."""
         removed = False
 
@@ -163,7 +163,7 @@ class InMemoryOrderStorage(OrderStorage):
 
         return removed
     
-    def remove_orders_by_ticker(self, ticker: str, portfolio_id: uuid.UUID) -> int:
+    def remove_orders_by_ticker(self, ticker: str, portfolio_id: IdLike) -> int:
         """Remove all active orders for a specific ticker in a portfolio."""
         portfolio_key = portfolio_id
         if portfolio_key not in self.active_orders:
@@ -183,18 +183,18 @@ class InMemoryOrderStorage(OrderStorage):
 
         return len(orders_to_remove)
 
-    def get_pending_orders(self, portfolio_id: Optional[uuid.UUID] = None) -> Dict[uuid.UUID, Dict[uuid.UUID, 'Order']]:
+    def get_pending_orders(self, portfolio_id: Optional[IdLike] = None) -> Dict[Any, Dict[Any, 'Order']]:
         """Get pending orders (backward compatibility - now returns active orders)."""
         return self.get_active_orders_dict(portfolio_id)
 
-    def get_active_orders_dict(self, portfolio_id: Optional[uuid.UUID] = None) -> Dict[uuid.UUID, Dict[uuid.UUID, 'Order']]:
+    def get_active_orders_dict(self, portfolio_id: Optional[IdLike] = None) -> Dict[Any, Dict[Any, 'Order']]:
         """Get active orders as nested dictionary structure."""
         if portfolio_id:
             portfolio_key = portfolio_id
             return {portfolio_key: self.active_orders.get(portfolio_key, {})}
         return self.active_orders.copy()
 
-    def get_order_by_id(self, order_id: uuid.UUID, portfolio_id: Optional[uuid.UUID] = None) -> Optional['Order']:
+    def get_order_by_id(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> Optional['Order']:
         """Get a specific order by ID."""
         order_key = order_id
 
@@ -215,7 +215,7 @@ class InMemoryOrderStorage(OrderStorage):
 
         return None
 
-    def update_order(self, order) -> bool:
+    def update_order(self, order: 'Order') -> bool:
         """Update an existing order."""
         portfolio_key = order.portfolio_id
         order_key = order.id
@@ -240,9 +240,9 @@ class InMemoryOrderStorage(OrderStorage):
             return True
         return False
     
-    def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[uuid.UUID] = None) -> List['Order']:
+    def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """Get all orders for a specific ticker."""
-        orders = []
+        orders: List['Order'] = []
 
         if portfolio_id:
             portfolio_key = portfolio_id
@@ -256,7 +256,7 @@ class InMemoryOrderStorage(OrderStorage):
         
         return orders
     
-    def clear_portfolio_orders(self, portfolio_id: uuid.UUID) -> int:
+    def clear_portfolio_orders(self, portfolio_id: IdLike) -> int:
         """Clear all active orders for a portfolio."""
         portfolio_key = portfolio_id
         count = 0
@@ -270,9 +270,9 @@ class InMemoryOrderStorage(OrderStorage):
     
     # Enhanced storage methods implementation
     
-    def get_orders_by_status(self, status: 'OrderStatus', portfolio_id: Optional[uuid.UUID] = None) -> List['Order']:
+    def get_orders_by_status(self, status: 'OrderStatus', portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """Get orders by status, optionally filtered by portfolio."""
-        orders = []
+        orders: List['Order'] = []
 
         search_dict = self.all_orders
         if portfolio_id:
@@ -285,9 +285,9 @@ class InMemoryOrderStorage(OrderStorage):
         
         return orders
     
-    def get_active_orders(self, portfolio_id: Optional[uuid.UUID] = None) -> List['Order']:
+    def get_active_orders(self, portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """Get all active orders (PENDING and PARTIALLY_FILLED)."""
-        orders = []
+        orders: List['Order'] = []
 
         search_dict = self.active_orders
         if portfolio_id:
@@ -300,9 +300,9 @@ class InMemoryOrderStorage(OrderStorage):
         return orders
     
     def get_orders_by_time_range(self, start_time: datetime, end_time: datetime,
-                                portfolio_id: Optional[uuid.UUID] = None) -> List['Order']:
+                                portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """Get orders within a time range."""
-        orders = []
+        orders: List['Order'] = []
 
         search_dict = self.all_orders
         if portfolio_id:
@@ -316,7 +316,7 @@ class InMemoryOrderStorage(OrderStorage):
         
         return orders
     
-    def get_order_history(self, order_id: uuid.UUID) -> List[Dict]:
+    def get_order_history(self, order_id: IdLike) -> List[Dict[str, Any]]:
         """Get the state change history for an order."""
         order = self.get_order_by_id(order_id)
         if not order:
@@ -334,7 +334,7 @@ class InMemoryOrderStorage(OrderStorage):
             for change in order.state_changes
         ]
     
-    def archive_orders(self, cutoff_date: datetime, portfolio_id: Optional[uuid.UUID] = None) -> int:
+    def archive_orders(self, cutoff_date: datetime, portfolio_id: Optional[IdLike] = None) -> int:
         """Archive old orders to separate storage."""
         archived_count = 0
 
@@ -364,9 +364,9 @@ class InMemoryOrderStorage(OrderStorage):
         
         return archived_count
     
-    def search_orders(self, criteria: Dict, portfolio_id: Optional[uuid.UUID] = None) -> List['Order']:
+    def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """Search orders based on criteria."""
-        orders = []
+        orders: List['Order'] = []
 
         search_dict = self.all_orders
         if portfolio_id:
@@ -392,9 +392,9 @@ class InMemoryOrderStorage(OrderStorage):
         
         return orders
     
-    def get_orders_count_by_status(self, portfolio_id: Optional[uuid.UUID] = None) -> Dict[str, int]:
+    def get_orders_count_by_status(self, portfolio_id: Optional[IdLike] = None) -> Dict[str, int]:
         """Get count of orders by status."""
-        status_counts = {}
+        status_counts: Dict[str, int] = {}
 
         search_dict = self.all_orders
         if portfolio_id:

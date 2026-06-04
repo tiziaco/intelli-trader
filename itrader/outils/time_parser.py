@@ -1,21 +1,21 @@
 import re
 import pytz
 import pandas as pd
-from typing import Union
+from typing import Union, cast
 from datetime import datetime, timedelta, timezone
 from itrader import config
 
-def get_timenow_awere():
+def get_timenow_awere() -> datetime:
 	time_zone = pytz.timezone(config.TIMEZONE)
 	# Get the current UTC time
 	now = pd.to_datetime(datetime.now(tz=timezone.utc))
 	# Make it timezone aware
 	now = now.replace(tzinfo=pytz.utc).astimezone(time_zone)
 
-	return now
+	return cast(datetime, now)
 
 # Getting the frequency hours and minutes
-def get_last_available_timestamp(current_time: datetime, frequency: timedelta):
+def get_last_available_timestamp(current_time: datetime, frequency: timedelta) -> datetime:
 	"""
 	Calculate the last available timestamp based on the current time 
 	and the specified frequency.
@@ -112,7 +112,10 @@ def format_timeframe(timeframe: str) -> str:
 	"""
 	# Splitting text and number in string
 	temp = re.compile("([0-9]+)([a-zA-Z]+)")
-	res = temp.match(timeframe).groups()
+	match = temp.match(timeframe)
+	if match is None:
+		raise ValueError(f"Could not parse timeframe '{timeframe}'.")
+	res = match.groups()
 	if res[1] == 'm':
 		return (res[0] + 'min')
 	else:
@@ -143,10 +146,10 @@ def check_timeframe(time: datetime, timeframe: timedelta) -> bool:
 			# The timestamp IS NOT a multiple of the timeframe
 			return False
 
-def elapsed_time(cure_time: datetime,  past_time: datetime):
+def elapsed_time(cure_time: datetime,  past_time: datetime) -> timedelta:
 	return cure_time - past_time
 
-def round_timestamp_to_frequency(timestamp : datetime, frequency: timedelta):
+def round_timestamp_to_frequency(timestamp : datetime, frequency: timedelta) -> datetime:
     """
     Round a timestamp to the closest frequency.
 
@@ -172,4 +175,4 @@ def round_timestamp_to_frequency(timestamp : datetime, frequency: timedelta):
 	# Make the rounded timestamp timezone aware
     my_timezone = pytz.timezone(config.TIMEZONE)
     rounded_timestamp = my_timezone.localize(rounded_timestamp)
-    return rounded_timestamp
+    return cast(datetime, rounded_timestamp)

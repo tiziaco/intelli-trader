@@ -6,7 +6,9 @@ Handles transaction validation, processing, and audit trail.
 import threading
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
+
+from itrader.core.ids import TransactionId
 from dataclasses import dataclass
 from enum import Enum
 
@@ -49,13 +51,13 @@ class TransactionManager:
     Thread-safe implementation with proper error handling and logging.
     """
     
-    def __init__(self, portfolio):
+    def __init__(self, portfolio: Any) -> None:
         self.portfolio = portfolio  # Reference to parent portfolio
         self._lock = threading.RLock()  # Reentrant lock for nested calls
         self.logger = get_itrader_logger().bind(component="TransactionManager")
         
         # Transaction state tracking
-        self._pending_transactions: Dict[int, TransactionContext] = {}
+        self._pending_transactions: Dict[TransactionId, TransactionContext] = {}
         self._transaction_history: List[Transaction] = []
         
         # Validation rules
@@ -134,7 +136,7 @@ class TransactionManager:
                 # Clean up pending transaction
                 self._pending_transactions.pop(transaction.id, None)
     
-    def _validate_transaction(self, transaction: Transaction, context: TransactionContext):
+    def _validate_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Validate transaction data and business rules."""
         
         # Basic data validation
@@ -198,7 +200,7 @@ class TransactionManager:
             correlation_id=context.correlation_id
         )
     
-    def _check_funds_availability(self, transaction: Transaction, context: TransactionContext):
+    def _check_funds_availability(self, transaction: Transaction, context: TransactionContext) -> None:
         """Check if sufficient funds are available for the transaction."""
         
         if transaction.type == TransactionType.BUY:
@@ -221,7 +223,7 @@ class TransactionManager:
                 available_cash=str(available_cash)
             )
     
-    def _execute_transaction(self, transaction: Transaction, context: TransactionContext):
+    def _execute_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Execute the validated transaction."""
         
         # Calculate transaction cost with high precision
@@ -259,7 +261,7 @@ class TransactionManager:
             # Inflow of cash
             return (price * quantity - commission)
     
-    def _record_transaction(self, transaction: Transaction, context: TransactionContext):
+    def _record_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Record transaction in history for audit trail."""
         
         self._transaction_history.append(transaction)
@@ -270,7 +272,7 @@ class TransactionManager:
             portfolio_id=transaction.portfolio_id
         )
     
-    def _handle_transaction_error(self, transaction: Transaction, context: TransactionContext, error: Exception):
+    def _handle_transaction_error(self, transaction: Transaction, context: TransactionContext, error: Exception) -> None:
         """Handle transaction processing errors."""
         
         context.state = TransactionState.FAILED
@@ -295,12 +297,12 @@ class TransactionManager:
                 return self._transaction_history[-limit:]
             return self._transaction_history.copy()
     
-    def get_pending_transactions(self) -> Dict[int, TransactionContext]:
+    def get_pending_transactions(self) -> Dict[TransactionId, TransactionContext]:
         """Get currently pending transactions."""
         with self._lock:
             return self._pending_transactions.copy()
     
-    def cancel_pending_transaction(self, transaction_id: int) -> bool:
+    def cancel_pending_transaction(self, transaction_id: TransactionId) -> bool:
         """Cancel a pending transaction."""
         with self._lock:
             if transaction_id in self._pending_transactions:

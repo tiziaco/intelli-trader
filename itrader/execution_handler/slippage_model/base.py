@@ -16,7 +16,7 @@ class SlippageModel(ABC):
     at the exact expected price.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the slippage model."""
         pass
     

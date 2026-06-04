@@ -6,7 +6,7 @@ Handles position lifecycle, calculations, and risk management.
 import threading
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Any, Optional, List, Dict, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import numpy as np
@@ -14,6 +14,7 @@ import numpy as np
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.core.enums import PositionSide, TransactionType
+from itrader.core.ids import PositionId
 from itrader.core.exceptions import (
     InvalidTransactionError,
     PositionCalculationError,
@@ -33,7 +34,7 @@ class PositionEvent(Enum):
 @dataclass
 class PositionMetrics:
     """Position performance and risk metrics."""
-    position_id: int
+    position_id: PositionId
     ticker: str
     total_pnl: Decimal
     unrealized_pnl: Decimal
@@ -59,7 +60,7 @@ class PositionManager:
     - Position consolidation and splitting
     """
     
-    def __init__(self, portfolio):
+    def __init__(self, portfolio: Any) -> None:
         self.portfolio = portfolio
         self._lock = threading.RLock()
         self.logger = get_itrader_logger().bind(component="PositionManager")
@@ -182,7 +183,7 @@ class PositionManager:
         """Determine if a position should be closed based on quantity."""
         return abs(position.net_quantity) <= float(self.tolerance)
     
-    def _close_position(self, position: Position, price: float, time: datetime):
+    def _close_position(self, position: Position, price: Decimal | float, time: datetime) -> None:
         """Close a position and move it to closed positions."""
         
         position.close_position(price, time)
@@ -200,7 +201,7 @@ class PositionManager:
             holding_period=str(time - position.entry_date)
         )
     
-    def _validate_position_consistency(self, position: Position, transaction: Transaction):
+    def _validate_position_consistency(self, position: Position, transaction: Transaction) -> None:
         """Validate position consistency after update."""
         
         # Check for calculation errors
@@ -229,7 +230,7 @@ class PositionManager:
                 change_ratio=str(price_change_ratio)
             )
     
-    def update_position_market_values(self, price_data: Dict[str, float], timestamp: datetime):
+    def update_position_market_values(self, price_data: Dict[str, float], timestamp: datetime) -> None:
         """Update current market values for all positions."""
         
         with self._lock:
@@ -307,7 +308,7 @@ class PositionManager:
             
             return total_pnl
     
-    def calculate_position_metrics(self, position_id: int) -> Optional[PositionMetrics]:
+    def calculate_position_metrics(self, position_id: PositionId) -> Optional[PositionMetrics]:
         """Calculate comprehensive metrics for a position."""
         
         # Find position (active or closed)
@@ -397,7 +398,7 @@ class PositionManager:
             
             return True
     
-    def get_positions_summary(self) -> Dict:
+    def get_positions_summary(self) -> Dict[str, Any]:
         """Get comprehensive positions summary."""
         
         with self._lock:

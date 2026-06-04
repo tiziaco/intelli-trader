@@ -1,5 +1,6 @@
 from __future__ import print_function
 from abc import ABCMeta, abstractmethod
+from typing import Any
 
 class AbstractExchange(object):
     """
@@ -13,13 +14,13 @@ class AbstractExchange(object):
     __metaclass__ = ABCMeta
 
     @abstractmethod
-    def get_all_symbols(self):
+    def get_all_symbols(self) -> Any:
         raise NotImplementedError("Should implement get_all_symbols()")
-    
+
     @abstractmethod
-    def download_data(self):
+    def download_data(self) -> Any:
         raise NotImplementedError("Should implement download_data()")
 
     @abstractmethod
-    def _format_data(self, data):
+    def _format_data(self, data: Any) -> Any:
         raise NotImplementedError("Should implement format_data()")

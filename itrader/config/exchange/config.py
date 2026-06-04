@@ -47,7 +47,7 @@ class FeeModelConfig:
     
     def to_kwargs(self) -> Dict[str, Any]:
         """Convert to kwargs for fee model initialization."""
-        kwargs = {}
+        kwargs: Dict[str, Any] = {}
         if self.fee_rate is not None:
             kwargs['fee_rate'] = float(self.fee_rate)
         if self.maker_rate is not None:

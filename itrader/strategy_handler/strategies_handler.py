@@ -1,5 +1,6 @@
 from datetime import timedelta
 from queue import Queue
+from typing import Any
 
 from itrader.price_handler.data_provider import PriceHandler
 from itrader.strategy_handler.base import Strategy
@@ -13,14 +14,14 @@ class StrategiesHandler(object):
 	Manage all the strategies of the trading system.
 	"""
 
-	def __init__(self, global_queue, price_handler):
+	def __init__(self, global_queue: "Queue[Any]", price_handler: PriceHandler) -> None:
 		"""
 		Parameters
 		----------
 		events_queue: `Queue object`
 			The events queue of the trading system
 		"""
-		self.global_queue: Queue = global_queue
+		self.global_queue: "Queue[Any]" = global_queue
 		self.price_handler: PriceHandler = price_handler
 		self.min_timeframe: timedelta = timedelta(weeks=100)
 		#self.portfolios: dict = {}
@@ -29,7 +30,7 @@ class StrategiesHandler(object):
 		self.logger = get_itrader_logger().bind(component="StrategiesHandler")
 		self.logger.info('Strategies Handler initialized')
 
-	def calculate_signals(self, event: BarEvent):
+	def calculate_signals(self, event: BarEvent) -> None:
 		"""
 		Calculate the signal for every strategy to be traded.
 
@@ -57,7 +58,7 @@ class StrategiesHandler(object):
 	# 	"""
 	# 	self.portfolios = update_event.portfolios
 
-	def assign_symbol(self, signals):
+	def assign_symbol(self, signals: dict[str, Any]) -> None:
 		"""
 		Take the proposed symbols from the screener and assign it to the strategy.
 		If a proposed symbol is not in the strategy universe, remove it.
@@ -68,7 +69,9 @@ class StrategiesHandler(object):
 			List of the proposed symbol from the screener
 		"""
 		traded = self.strategies[0].tickers
-		max_pos = self.strategies[0].settings['max_positions']
+		# `settings` is a concrete-strategy attr (not on the base); screener flow
+		# is D-screener, so resolve dynamically to stay type-clean.
+		max_pos = getattr(self.strategies[0], 'settings')['max_positions']
 		
 		# TEMPORARY:
 		first_key = list(signals.keys())[0]
@@ -88,7 +91,7 @@ class StrategiesHandler(object):
 			self.logger.info('Strategies Handler: new symbols for %s : %s', self.strategies[0].__str__(), str(new_traded))
 
 	
-	def get_strategies_universe(self):
+	def get_strategies_universe(self) -> list[str]:
 		"""
 		Return a list with all the coins traded from the differents strategies.
 
@@ -97,7 +100,7 @@ class StrategiesHandler(object):
 		traded_tickers: `list`
 			List of strings with the traded symbols
 		"""
-		traded_tickers = []
+		traded_tickers: list[str] = []
 		for strategy in self.strategies:
 			# Check if the strategy is trading pairs
 			if strategy.tickers and isinstance(strategy.tickers[0], tuple):
@@ -108,7 +111,7 @@ class StrategiesHandler(object):
 		return list(set(traded_tickers))
 
 	
-	def add_strategy(self, strategy: Strategy):
+	def add_strategy(self, strategy: Strategy) -> None:
 		"""
 		Add a new strategy in the list of strategies to trade.
 		At the same time, calculate the minimum timeframe among 

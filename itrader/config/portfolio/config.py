@@ -115,8 +115,8 @@ class PortfolioConfig:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
-        result = {}
-        
+        result: Dict[str, Any] = {}
+
         # Basic settings
         result['portfolio_id'] = self.portfolio_id
         result['name'] = self.name

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any, Iterator, Optional, cast
 import numpy as np
 import re
 
@@ -24,11 +25,11 @@ class PingGenerator(SimulationEngine):
         Range at which to generate events
     """
 
-    def __init__(self, timezone='Europe/Paris'):
+    def __init__(self, timezone: str = 'Europe/Paris') -> None:
         self.timezone = timezone
-        self.dates = None
-    
-    def __iter__(self):
+        self.dates: Optional[np.ndarray[Any, Any]] = None
+
+    def __iter__(self) -> Iterator[PingEvent]:
         """
         Generate the daily timestamps in a ping event.
 
@@ -37,10 +38,13 @@ class PingGenerator(SimulationEngine):
         `PingEvent`
             Ping time simulation event to yield
         """
+        if self.dates is None:
+            return
         for time in np.nditer(self.dates, flags=["refs_ok"]): # enumerate(self.dates):
-            yield PingEvent(time.item(0))
-    
-    def set_dates(self, dates):
+            # nditer yields 0-d array scalars; .item(0) extracts the python value.
+            yield PingEvent(cast(Any, time).item(0))
+
+    def set_dates(self, dates: Any) -> None:
         self.dates = np.array(dates)
     
 

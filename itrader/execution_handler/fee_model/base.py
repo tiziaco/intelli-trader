@@ -19,7 +19,7 @@ class FeeModel(ABC):
         price: Union[float, Decimal], 
         side: str = "buy",
         order_type: str = "market",
-        **kwargs
+        **kwargs: Any
     ) -> Decimal:
         """
         Calculate the total trading fee for an order.

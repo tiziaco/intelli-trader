@@ -36,13 +36,15 @@ class CancelDecision:
 class MatchingEngine:
     """Resting-order book + trigger/OCO evaluation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._resting: Dict[int, OrderEvent] = {}
 
     # --- book management ---
 
     def submit(self, order_event: OrderEvent) -> None:
         """Add a resting order (stop/limit, or a next-bar market order)."""
+        if order_event.order_id is None:
+            raise ValueError("Cannot rest an order with no order_id")
         self._resting[order_event.order_id] = order_event
 
     def cancel(self, order_id: int) -> bool:
@@ -77,6 +79,10 @@ class MatchingEngine:
         open_ = bar.get_last_open(ticker)
         high = bar.get_last_high(ticker)
         low = bar.get_last_low(ticker)
+        # A present ticker always yields OHLC floats; guard the Optional return
+        # so a malformed bar is treated as no-trigger rather than crashing the book.
+        if open_ is None or high is None or low is None:
+            return None
 
         if order.order_type == OrderType.MARKET:
             # next-bar market order: unconditional fill at the open
@@ -124,7 +130,7 @@ class MatchingEngine:
                 # field) must not drop the whole bar. Programming errors
                 # (AttributeError, etc.) are NOT swallowed — they propagate.
                 continue
-            if price is not None:
+            if price is not None and order.order_id is not None:
                 candidates[order.order_id] = price
 
         if not candidates:
@@ -148,7 +154,7 @@ class MatchingEngine:
         # 3. Build fills and OCO cancels.
         fills: List[FillDecision] = []
         cancels: List[CancelDecision] = []
-        cancelled_ids = set()
+        cancelled_ids: set[Optional[int]] = set()
 
         for order_id, price in chosen.items():
             order = self._resting[order_id]
@@ -172,9 +178,11 @@ class MatchingEngine:
 
         # 4. Remove filled + cancelled orders from the book.
         for fill in fills:
-            self._resting.pop(fill.order_event.order_id, None)
+            if fill.order_event.order_id is not None:
+                self._resting.pop(fill.order_event.order_id, None)
         for cancel in cancels:
-            self._resting.pop(cancel.order_event.order_id, None)
+            if cancel.order_event.order_id is not None:
+                self._resting.pop(cancel.order_event.order_id, None)
 
         return fills, cancels
 

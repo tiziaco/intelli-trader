@@ -1,15 +1,16 @@
 from itertools import groupby
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from scipy.stats import linregress
 
 
-def aggregate_returns(returns, convert_to):
+def aggregate_returns(returns: Any, convert_to: str) -> Any:
     """
     Aggregates returns by day, week, month, or year.
     """
-    def cumulate_returns(x):
+    def cumulate_returns(x: Any) -> Any:
         return np.exp(np.log(1 + x).cumsum())[-1] - 1
 
     if convert_to == 'weekly':
@@ -27,7 +28,7 @@ def aggregate_returns(returns, convert_to):
         ValueError('convert_to must be weekly, monthly or yearly')
 
 
-def create_cagr(equity, periods=252):
+def create_cagr(equity: Any, periods: int = 252) -> Any:
     """
     Calculates the Compound Annual Growth Rate (CAGR)
     for the portfolio, by determining the number of years
@@ -41,7 +42,7 @@ def create_cagr(equity, periods=252):
     years = len(equity) / float(periods)
     return (equity[-1] ** (1.0 / years)) - 1.0
 
-def calculate_profict_factor(positions):
+def calculate_profict_factor(positions: Any) -> Any:
     """
     Calculate the profict factor as the ratio between the Total 
     number of profit-making trades / Total number of loss-making trades
@@ -50,7 +51,7 @@ def calculate_profict_factor(positions):
     loss_trades = positions[positions["trade_return"] <= 0].shape[0]
     return win_trades/loss_trades
 
-def create_sharpe_ratio(returns, periods=252):
+def create_sharpe_ratio(returns: Any, periods: int = 252) -> Any:
     """
     Create the Sharpe ratio for the strategy, based on a
     benchmark of zero (i.e. no risk-free rate information).
@@ -62,7 +63,7 @@ def create_sharpe_ratio(returns, periods=252):
     return np.sqrt(periods) * (np.mean(returns)) / np.std(returns)
 
 
-def create_sortino_ratio(returns, periods=252):
+def create_sortino_ratio(returns: Any, periods: int = 252) -> Any:
     """
     Create the Sortino ratio for the strategy, based on a
     benchmark of zero (i.e. no risk-free rate information).
@@ -73,7 +74,7 @@ def create_sortino_ratio(returns, periods=252):
     """
     return np.sqrt(periods) * (np.mean(returns)) / np.std(returns[returns < 0])
 
-def calculate_drawdowns(returns):
+def calculate_drawdowns(returns: Any) -> Any:
     """
     Calculate the drawdowns of the equity curve
 
@@ -98,7 +99,7 @@ def calculate_drawdowns(returns):
     perf["Drawdown"].iloc[0] = 0.0
     return perf["Drawdown"]
 
-def calculate_max_drawdowns(drawdowns):
+def calculate_max_drawdowns(drawdowns: Any) -> Any:
     """
     Calculate the largest peak-to-trough drawdown of the drawdawns
     as well as the duration of the drawdown. Requires that the
@@ -119,7 +120,7 @@ def calculate_max_drawdowns(drawdowns):
     )
     return np.max(dd['drawdowns']), duration
 
-def create_drawdowns(returns):
+def create_drawdowns(returns: Any) -> Any:
     """
     Calculate the largest peak-to-trough drawdown of the equity curve
     as well as the duration of the drawdown. Requires that the
@@ -152,14 +153,14 @@ def create_drawdowns(returns):
     return perf["Drawdown"], np.max(perf["Drawdown"]), duration
 
 
-def rsquared(x, y):
+def rsquared(x: Any, y: Any) -> Any:
     """
     Return R^2 where x and y are array-like.
     """
     slope, intercept, r_value, p_value, std_err = linregress(x, y)
     return r_value**2
 
-def long_trades_win_pct(positions):
+def long_trades_win_pct(positions: Any) -> Any:
     """
     Calculate the number of winning long trades
     """
@@ -170,7 +171,7 @@ def long_trades_win_pct(positions):
     else:
         return win_long / long_trades
 
-def short_trades_win_pct(positions):
+def short_trades_win_pct(positions: Any) -> Any:
     """
     Calculate the number of winning short trades
     """

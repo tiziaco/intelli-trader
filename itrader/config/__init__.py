@@ -9,6 +9,8 @@ This module provides a clean, domain-based configuration system with:
 - Core registry and provider infrastructure
 """
 
+from typing import Any, Optional
+
 # Core infrastructure
 from .core import (
     ConfigRegistry, ConfigProvider, FileConfigProvider, RuntimeConfigProvider,
@@ -60,6 +62,8 @@ import os as _os
 
 _flat_config_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "config.py")
 _flat_spec = _importlib_util.spec_from_file_location("itrader._flat_config", _flat_config_path)
+if _flat_spec is None or _flat_spec.loader is None:
+    raise ImportError(f"Could not load flat config module from {_flat_config_path}")
 _flat_config = _importlib_util.module_from_spec(_flat_spec)
 _flat_spec.loader.exec_module(_flat_config)
 
@@ -77,28 +81,28 @@ def get_config_registry(config_dir: str = "settings") -> ConfigRegistry:
     return ConfigRegistry(config_dir)
 
 
-def get_portfolio_config_provider(registry: ConfigRegistry = None) -> ConfigProvider:
+def get_portfolio_config_provider(registry: Optional[ConfigRegistry] = None) -> ConfigProvider[Any]:
     """Get portfolio configuration provider."""
     if registry is None:
         registry = get_config_registry()
     return registry.get_provider("portfolio")
 
 
-def get_trading_config_provider(registry: ConfigRegistry = None) -> ConfigProvider:
+def get_trading_config_provider(registry: Optional[ConfigRegistry] = None) -> ConfigProvider[Any]:
     """Get trading configuration provider."""
     if registry is None:
         registry = get_config_registry()
     return registry.get_provider("trading")
 
 
-def get_data_config_provider(registry: ConfigRegistry = None) -> ConfigProvider:
+def get_data_config_provider(registry: Optional[ConfigRegistry] = None) -> ConfigProvider[Any]:
     """Get data configuration provider."""
     if registry is None:
         registry = get_config_registry()
     return registry.get_provider("data")
 
 
-def get_system_config_provider(registry: ConfigRegistry = None) -> ConfigProvider:
+def get_system_config_provider(registry: Optional[ConfigRegistry] = None) -> ConfigProvider[Any]:
     """Get system configuration provider."""
     if registry is None:
         registry = get_config_registry()
@@ -161,7 +165,21 @@ __all__ = [
     'MonitoringSettings',
     'LoggingConfig',
     'get_default_logging_config',
-    
+
+    # Exchange domain
+    'ExchangeConfig',
+    'ExchangeType',
+    'FeeModelType',
+    'SlippageModelType',
+    'FeeModelConfig',
+    'SlippageModelConfig',
+    'ExchangeLimits',
+    'FailureSimulation',
+    'ConnectionSettings',
+    'validate_exchange_config',
+    'get_exchange_preset',
+    'list_available_exchange_presets',
+
     # Convenience functions
     'get_config_registry',
     'get_portfolio_config_provider',

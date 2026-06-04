@@ -4,11 +4,11 @@ from datetime import datetime, UTC
 from typing import Optional, Dict, List, Any
 from decimal import Decimal
 
-from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.portfolio_handler.position import Position, PositionSide
+from itrader.portfolio_handler.transaction import Transaction
+from itrader.portfolio_handler.position import Position
 from itrader.events_handler.event import BarEvent
 from itrader.config import PortfolioConfig, get_portfolio_preset
-from itrader.core.enums import PortfolioState
+from itrader.core.enums import PortfolioState, PositionSide, TransactionType
 
 # Import the new managers
 from itrader.portfolio_handler.transaction_manager import TransactionManager
@@ -37,13 +37,13 @@ class Portfolio(object):
 	"""
 
 	def __init__(self, user_id: int, name: str, exchange: str, cash: Decimal, time: datetime,
-	             config: Optional[PortfolioConfig] = None):
+	             config: Optional[PortfolioConfig] = None) -> None:
 		"""
 		Initialize enhanced portfolio with integrated capabilities.
 		"""
 		# Core portfolio identity
 		self.user_id = user_id
-		self.portfolio_id: PortfolioId = idgen.generate_portfolio_id()
+		self.portfolio_id: PortfolioId = PortfolioId(idgen.generate_portfolio_id())
 		self.name = name
 		self.exchange = exchange
 		self.creation_time = time
@@ -61,7 +61,7 @@ class Portfolio(object):
 		self._lock = threading.RLock()
 		
 		# Health monitoring
-		self._health_metrics = {
+		self._health_metrics: Dict[str, Any] = {
 			'last_health_check': time,
 			'validation_errors': 0,
 			'transaction_failures': 0,
@@ -74,24 +74,24 @@ class Portfolio(object):
 		# Validation
 		self._validate_initial_state()
 	
-	def _init_managers(self, initial_cash: float):
+	def _init_managers(self, initial_cash: float | Decimal) -> None:
 		"""Initialize portfolio managers."""
 		self.cash_manager = CashManager(self, initial_cash=initial_cash)
 		self.transaction_manager = TransactionManager(self)
 		self.position_manager = PositionManager(self)
 		self.metrics_manager = MetricsManager(self)
-	
-	def _validate_initial_state(self):
+
+	def _validate_initial_state(self) -> None:
 		"""Validate initial portfolio state."""
 		if self.cash_manager.balance < 0:
 			raise ValueError("Portfolio cannot start with negative cash")
 		if not self.name.strip():
 			raise ValueError("Portfolio name cannot be empty")
-	
-	def __str__(self):
+
+	def __str__(self) -> str:
 		return f"Portfolio-{self.portfolio_id}[{self._state.value}]"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 
 	# State Management Methods
@@ -143,7 +143,7 @@ class Portfolio(object):
 		return self.state == PortfolioState.ACTIVE
 
 	# Configuration Management
-	def update_config(self, **kwargs) -> None:
+	def update_config(self, **kwargs: Any) -> None:
 		"""Update portfolio configuration."""
 		with self._lock:
 			# Mapping for backward compatibility - maps old flat keys to new nested structure
@@ -201,7 +201,7 @@ class Portfolio(object):
 			return self.cash_manager.balance
 
 	@cash.setter
-	def cash(self, value: Decimal):
+	def cash(self, value: Decimal) -> None:
 		"""Set cash balance (thread-safe)."""
 		with self._lock:
 			current_balance = self.cash_manager.balance
@@ -212,7 +212,7 @@ class Portfolio(object):
 				self.cash_manager.withdraw(abs(difference), "Cash balance adjustment")
 
 	@property
-	def n_open_positions(self):
+	def n_open_positions(self) -> int:
 		"""Obtain the number of open positions (thread-safe)."""
 		with self._lock:
 			return len(self.position_manager.get_all_positions())
@@ -252,7 +252,7 @@ class Portfolio(object):
 			return float(self.position_manager.get_total_realized_pnl())
 
 	@property
-	def total_pnl(self):
+	def total_pnl(self) -> float:
 		"""
 		Calculate the sum of all the positions' total P&Ls.
 		"""
@@ -273,7 +273,7 @@ class Portfolio(object):
 		"""Get all transactions as a list."""
 		return self.transaction_manager.get_transaction_history()
 
-	def process_transaction(self, transaction: Transaction):
+	def process_transaction(self, transaction: Transaction) -> None:
 		"""
 		Process a transaction using the new manager architecture while 
 		preserving existing short position logic and behavior.
@@ -294,12 +294,12 @@ class Portfolio(object):
 			logger.error(f"Transaction processing failed: {e}")
 			raise
 
-	def update_market_value(self, bar_event: BarEvent):
+	def update_market_value(self, bar_event: BarEvent) -> None:
 		"""
 		Updates the value of all positions that are currently open.
 		"""
 		tickers = bar_event.bars.keys()
-		current_prices = {}
+		current_prices: Dict[str, Any] = {}
 		
 		for ticker in tickers:
 			current_price = bar_event.get_last_close(ticker)
@@ -308,11 +308,11 @@ class Portfolio(object):
 		# Update all positions with new prices
 		self.position_manager.update_position_market_values(current_prices, bar_event.time)
 
-	def record_metrics(self, time: datetime):
+	def record_metrics(self, time: datetime) -> None:
 		"""Record portfolio metrics using the metrics manager."""
 		self.metrics_manager.record_snapshot(time)
 
-	def get_open_position(self, ticker):
+	def get_open_position(self, ticker: str) -> Any:
 		"""Get an open position by ticker."""
 		return self.position_manager.get_position(ticker)
 
@@ -320,7 +320,7 @@ class Portfolio(object):
 	def validate_health(self) -> Dict[str, Any]:
 		"""Perform comprehensive health check."""
 		with self._lock:
-			health_report = {
+			health_report: Dict[str, Any] = {
 				'portfolio_id': self.portfolio_id,
 				'state': self.state.value,
 				'is_healthy': True,
@@ -388,7 +388,7 @@ class Portfolio(object):
 				self._health_metrics['transaction_failures'] += 1
 				raise
 	
-	def _validate_transaction(self, transaction: Transaction):
+	def _validate_transaction(self, transaction: Transaction) -> None:
 		"""Validate transaction against portfolio configuration."""
 		# Check position limits
 		if transaction.quantity > 0:  # Buy transaction
@@ -401,7 +401,7 @@ class Portfolio(object):
 				raise ValueError(f"Transaction value {transaction_value} exceeds limit {self.config.limits.max_position_value}")
 	
 	# Enhanced Market Value Update
-	def update_market_value_of_portfolio(self, prices: Dict[str, float]):
+	def update_market_value_of_portfolio(self, prices: Dict[str, float]) -> None:
 		"""Update portfolio market values (thread-safe)."""
 		with self._lock:
 			if not self.can_trade():

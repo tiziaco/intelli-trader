@@ -1,15 +1,18 @@
 from queue import Queue
 from datetime import datetime
+from decimal import Decimal
 from typing import Dict, Any, Optional
 import random
 import time
 import threading
 
 from .base import AbstractExchange
+from ..fee_model.base import FeeModel
 from ..fee_model.zero_fee_model import ZeroFeeModel
 from ..fee_model.percent_fee_model import PercentFeeModel
 from ..fee_model.maker_taker_fee_model import MakerTakerFeeModel
 from ..fee_model.tiered_fee_model import TieredFeeModel
+from ..slippage_model.base import SlippageModel
 from ..slippage_model.zero_slippage_model import ZeroSlippageModel
 from ..slippage_model.linear_slippage_model import LinearSlippageModel
 from ..slippage_model.fixed_slippage_model import FixedSlippageModel
@@ -23,7 +26,7 @@ from itrader.core.exceptions.execution import (
     InsufficientFundsExecutionError,
     ExchangeStateError
 )
-from itrader.events_handler.event import FillEvent, OrderEvent
+from itrader.events_handler.event import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation
 
@@ -38,8 +41,8 @@ class SimulatedExchange(AbstractExchange):
 	- Production-ready design
 	"""
 
-	def __init__(self, global_queue: Queue, config: Optional[ExchangeConfig] = None,
-				rng: Optional[random.Random] = None):
+	def __init__(self, global_queue: "Queue[Any]", config: Optional[ExchangeConfig] = None,
+				rng: Optional[random.Random] = None) -> None:
 		"""
 		Initialize the simulated exchange with minimal setup.
 
@@ -85,17 +88,17 @@ class SimulatedExchange(AbstractExchange):
 		
 		# Connection state
 		self._connected = False
-		self._connection_time = None
+		self._connection_time: Optional[datetime] = None
 		self._connection_status = ExchangeConnectionStatus.DISCONNECTED
-		
+
 		# Performance tracking
 		self._orders_executed = 0
 		self._orders_failed = 0
-		self._last_error = None
-		self._last_error_time = None
+		self._last_error: Optional[str] = None
+		self._last_error_time: Optional[datetime] = None
 		self._total_volume = 0.0
 		self._startup_time = datetime.now()
-		self._last_ping = None
+		self._last_ping: Optional[datetime] = None
 		
 		# Exchange limits and settings
 		self._supported_symbols = self.config.limits.supported_symbols
@@ -212,8 +215,12 @@ class SimulatedExchange(AbstractExchange):
 		self.global_queue.put(FillEvent.new_fill('REFUSED', 0.0, event))
 
 	def _emit_fill(self, event: OrderEvent, fill_price: float,
-	               fill_quantity: float) -> tuple[float, float, float]:
+	               fill_quantity: float) -> tuple[float, Decimal, float]:
 		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED)."""
+		# fee_model returns Decimal (M2a money); ExecutionResult.commission keeps the
+		# Decimal (tests + downstream rely on it). The FillEvent/fill layer stays float
+		# until M4, so coerce only at the new_fill boundary (mirrors the OrderEvent
+		# boundary coercion in event.py:new_order_event).
 		commission = self.fee_model.calculate_fee(
 			quantity=fill_quantity, price=fill_price,
 			side=event.action.lower(), order_type="market")
@@ -222,7 +229,7 @@ class SimulatedExchange(AbstractExchange):
 			side=event.action.lower(), order_type="market")
 		executed_price = fill_price * slippage_factor
 
-		fill_event = FillEvent.new_fill('EXECUTED', commission, event)
+		fill_event = FillEvent.new_fill('EXECUTED', float(commission), event)
 		fill_event.price = executed_price
 		# Override the matched fill quantity (may differ from event.quantity for
 		# partial fills driven by the matching engine in on_market_data).
@@ -236,7 +243,7 @@ class SimulatedExchange(AbstractExchange):
 						(slippage_factor - 1.0) * 100)
 		return executed_price, commission, slippage_factor
 
-	def on_market_data(self, bar) -> None:
+	def on_market_data(self, bar: "BarEvent") -> None:
 		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels."""
 		fills, cancels = self.matching_engine.on_bar(bar)
 		for decision in fills:
@@ -256,12 +263,13 @@ class SimulatedExchange(AbstractExchange):
 		if event.command == OrderCommand.CANCEL:
 			# Only acknowledge a cancel for an order that was actually resting;
 			# a cancel for an unknown/already-filled order emits no spurious fill.
-			if self.matching_engine.cancel(event.order_id):
+			if event.order_id is not None and self.matching_engine.cancel(event.order_id):
 				self.global_queue.put(FillEvent.new_fill('CANCELLED', 0.0, event))
 			return
 
 		if event.command == OrderCommand.MODIFY:
-			self.matching_engine.modify(event.order_id, event.price, event.quantity)
+			if event.order_id is not None:
+				self.matching_engine.modify(event.order_id, event.price, event.quantity)
 			return
 
 		# NEW
@@ -463,45 +471,50 @@ class SimulatedExchange(AbstractExchange):
 			}
 		}
 
-	def _init_fee_model(self):
+	def _init_fee_model(self) -> FeeModel:
 		"""Create fee model from configuration."""
 		config = self.config.fee_model
-		
+
 		if config.model_type.value in ['no_fee', 'zero']:
 			return ZeroFeeModel()
 		elif config.model_type.value == 'percent':
-			return PercentFeeModel(fee_rate=config.fee_rate or 0.001)
+			return PercentFeeModel(fee_rate=float(config.fee_rate or 0.001))
 		elif config.model_type.value == 'maker_taker':
 			return MakerTakerFeeModel(
-				maker_rate=config.maker_rate or 0.001,
-				taker_rate=config.taker_rate or 0.001
+				maker_rate=float(config.maker_rate or 0.001),
+				taker_rate=float(config.taker_rate or 0.001)
 			)
 		elif config.model_type.value == 'tiered':
-			default_tiers = [
-				{'min_volume': 0, 'max_volume': 100000, 'fee_rate': 0.001},
-				{'min_volume': 100000, 'max_volume': float('inf'), 'fee_rate': 0.0008}
-			]
-			return TieredFeeModel(tiers=config.tiers or default_tiers)
+			# TieredFeeModel takes fee_tiers as (min_volume, max_volume, fee_rate)
+			# tuples; convert the config's dict tiers when present, else fall back
+			# to the model's own defaults (config.tiers is dormant on the golden path).
+			fee_tiers = None
+			if config.tiers:
+				fee_tiers = [
+					(float(t['min_volume']), float(t['max_volume']), float(t['fee_rate']))
+					for t in config.tiers
+				]
+			return TieredFeeModel(fee_tiers=fee_tiers)
 		else:
 			self.logger.warning('Unknown fee model %s, defaulting to no_fee', config.model_type.value)
 			return ZeroFeeModel()
 
-	def _init_slippage_model(self):
+	def _init_slippage_model(self) -> SlippageModel:
 		"""Create slippage model from configuration."""
 		config = self.config.slippage_model
-		
+
 		if config.model_type.value in ['none', 'zero']:
 			return ZeroSlippageModel()
 		elif config.model_type.value == 'linear':
 			return LinearSlippageModel(
-				base_slippage_pct=config.base_slippage_pct or 0.01,
-				size_impact_factor=config.size_impact_factor or 0.00001,
-				max_slippage_pct=config.max_slippage_pct or 0.1,
+				base_slippage_pct=float(config.base_slippage_pct or 0.01),
+				size_impact_factor=float(config.size_impact_factor or 0.00001),
+				max_slippage_pct=float(config.max_slippage_pct or 0.1),
 				rng=self._rng
 			)
 		elif config.model_type.value == 'fixed':
 			return FixedSlippageModel(
-				slippage_pct=config.slippage_pct or 0.01,
+				slippage_pct=float(config.slippage_pct or 0.01),
 				random_variation=config.random_variation if config.random_variation is not None else True,
 				rng=self._rng
 			)
@@ -526,11 +539,11 @@ class SimulatedExchange(AbstractExchange):
 			return False
 		return True
 
-	def update_config(self, **kwargs) -> None:
+	def update_config(self, **kwargs: Any) -> None:
 		"""Update exchange configuration."""
 		with self._lock:
 			# Direct config attribute updates
-			config_mapping = {
+			config_mapping: Dict[str, Any] = {
 				'exchange_name': 'exchange_name',
 				'exchange_type': 'exchange_type',
 				'simulate_failures': ('failure_simulation', 'simulate_failures'),

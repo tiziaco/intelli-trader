@@ -10,13 +10,15 @@ from contextlib import contextmanager
 
 from readerwriterlock import rwlock
 
-from .portfolio import Portfolio, PortfolioConfig
+from .portfolio import Portfolio
 from itrader.core.exceptions import (
     PortfolioHandlerError, PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
-from itrader.core.enums import PortfolioState
-from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from itrader.core.enums import PortfolioState, TransactionType
+from itrader.core.ids import PortfolioId, TransactionId
+from itrader.core.money import to_money
+from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.event import BarEvent, FillEvent, FillStatus, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import (
     get_config_registry, get_portfolio_config_provider,
@@ -46,9 +48,9 @@ class PortfolioHandler:
     - Health monitoring
     """
     
-    def __init__(self, global_queue: Queue, config_dir: str = "settings", environment: str = "default"):
-        self.global_queue: Queue = global_queue
-        self.current_time = 0
+    def __init__(self, global_queue: "Queue[Any]", config_dir: str = "settings", environment: str = "default") -> None:
+        self.global_queue: "Queue[Any]" = global_queue
+        self.current_time: Any = 0
         
         # Initialize configuration system using new domain-based API
         self.config_provider = get_portfolio_config_provider()
@@ -59,8 +61,12 @@ class PortfolioHandler:
         self.max_concurrent_operations = 50  # Reasonable default for operations
         self.publish_error_events = True  # Default behavior
         
-        # Portfolio storage - now just stores portfolio instances
-        self._portfolios: Dict[int, Portfolio] = {}
+        # Portfolio storage - now just stores portfolio instances.
+        # 02-05 carry-over: portfolios are keyed by PortfolioId (UUID) at runtime
+        # while events still carry an int portfolio_id. Until the portfolio_id
+        # migration completes, the key is typed Any to bridge both forms (the full
+        # retype is deferred — not mandated by Task 2).
+        self._portfolios: Dict[Any, Portfolio] = {}
         
         # Global collection lock (lightweight, just for adding/removing portfolios)
         self._portfolios_lock = rwlock.RWLockFair()
@@ -79,23 +85,23 @@ class PortfolioHandler:
         )
     
     @property
-    def config(self):
+    def config(self) -> Any:
         """Get config structure for test compatibility."""
         class Limits:
-            def __init__(self, max_concurrent_operations):
+            def __init__(self, max_concurrent_operations: int) -> None:
                 self.max_concurrent_operations = max_concurrent_operations
-        
+
         class Config:
-            def __init__(self, limits):
+            def __init__(self, limits: Any) -> None:
                 self.limits = limits
-        
+
         return Config(Limits(self.max_concurrent_operations))
     
     def _generate_correlation_id(self) -> str:
         """Generate unique correlation ID for operation tracking."""
         return f"ph_{uuid.uuid4().hex[:12]}"
     
-    def _publish_error_event(self, error: Exception, operation: str, correlation_id: str, portfolio_id: Optional[int] = None):
+    def _publish_error_event(self, error: Exception, operation: str, correlation_id: str, portfolio_id: Optional[Any] = None) -> None:
         """Publish error event if enabled."""
         if not self.publish_error_events:
             return
@@ -129,7 +135,7 @@ class PortfolioHandler:
                 self._active_operations.discard(correlation_id)
     
     # Main portfolio management methods (keeping same names for compatibility)
-    def add_portfolio(self, user_id: int, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> int:
+    def add_portfolio(self, user_id: int, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> PortfolioId:
         """Create a new portfolio with enhanced capabilities."""
         
         with self._operation_context("add_portfolio") as correlation_id:
@@ -151,7 +157,7 @@ class PortfolioHandler:
                     user_id=user_id,
                     name=name,
                     exchange=exchange,
-                    cash=cash,
+                    cash=to_money(cash),
                     time=datetime.now(UTC),
                     config=portfolio_config
                 )
@@ -175,14 +181,14 @@ class PortfolioHandler:
                 self._publish_error_event(e, "add_portfolio", correlation_id)
                 raise
     
-    def get_portfolio(self, portfolio_id: int) -> Portfolio:
+    def get_portfolio(self, portfolio_id: Any) -> Portfolio:
         """Get portfolio instance."""
         with self._portfolios_lock.gen_rlock():
             if portfolio_id not in self._portfolios:
                 raise PortfolioNotFoundError(f"Portfolio {portfolio_id} not found")
             return self._portfolios[portfolio_id]
     
-    def delete_portfolio(self, portfolio_id: int, force: bool = False) -> bool:
+    def delete_portfolio(self, portfolio_id: Any, force: bool = False) -> bool:
         """Delete a portfolio with validation."""
         
         with self._operation_context("delete_portfolio") as correlation_id:
@@ -258,17 +264,17 @@ class PortfolioHandler:
                     time=fill_event.time,
                     type=transaction_type,
                     ticker=fill_event.ticker,
-                    price=fill_event.price,
-                    quantity=fill_event.quantity,
+                    price=to_money(fill_event.price),
+                    quantity=to_money(fill_event.quantity),
                     # DEF-01-A (overlaps M4 Decimal-money scope): the fee model returns a Decimal
                     # commission, but Transaction.commission is declared float and the whole
                     # transaction/position math path is float. Coerce at this single fill->transaction
                     # boundary so the Decimal never mixes with floats downstream (transaction_manager
                     # funds check, position avg_price, etc.). Must be reconciled when M4 moves money
                     # to Decimal end-to-end (#22 Critical).
-                    commission=float(fill_event.commission),
+                    commission=to_money(fill_event.commission),
                     portfolio_id=portfolio_id,
-                    id=idgen.generate_transaction_id()
+                    id=TransactionId(idgen.generate_transaction_id())
                 )
                 
                 result = portfolio.transact_shares(transaction)
@@ -317,13 +323,13 @@ class PortfolioHandler:
     def update_portfolios_market(self, bar_event: BarEvent) -> None:
         """Update market values for all portfolios (backward compatible method)."""
         # Extract prices from bar event
-        prices = {}
+        prices: Dict[str, Any] = {}
         if hasattr(bar_event, 'bars'):
             for ticker, bar in bar_event.bars.items():
-                prices[ticker] = bar.close_price
+                prices[ticker] = getattr(bar, 'close_price', None)
         else:
-            # Single ticker bar event
-            prices[bar_event.ticker] = bar_event.close_price
+            # Single ticker bar event (legacy shape)
+            prices[getattr(bar_event, 'ticker')] = getattr(bar_event, 'close_price')
         
         # Update all active portfolios
         active_portfolios = self.get_active_portfolios()
@@ -409,7 +415,8 @@ class PortfolioHandler:
     
     def get_config(self) -> Dict[str, Any]:
         """Get current PortfolioHandler configuration."""
-        return self.config_provider.get_config()
+        from typing import cast as _cast
+        return _cast(Dict[str, Any], self.config_provider.get_config())
     
     def validate_config(self, config: Dict[str, Any]) -> bool:
         """Validate PortfolioHandler configuration."""
@@ -434,12 +441,13 @@ class PortfolioHandler:
             self.logger.error("Failed to rollback configuration", error=str(e))
             return False
     
-    def update_portfolio_config(self, portfolio_id: int, updates: Dict[str, Any]) -> bool:
+    def update_portfolio_config(self, portfolio_id: Any, updates: Dict[str, Any]) -> bool:
         """Update configuration for a specific portfolio."""
         try:
-            success = self.config_provider.update_portfolio_config(updates, portfolio_id)
+            # Provider lacks a per-portfolio config method (dormant path); resolve dynamically.
+            success = bool(getattr(self.config_provider, 'update_portfolio_config')(updates, portfolio_id))
             if success:
-                self.logger.info("Portfolio configuration updated", 
+                self.logger.info("Portfolio configuration updated",
                                portfolio_id=portfolio_id, updates=updates)
             return success
         except Exception as e:
@@ -447,18 +455,20 @@ class PortfolioHandler:
                             portfolio_id=portfolio_id, error=str(e))
             return False
     
-    def get_portfolio_config(self, portfolio_id: int) -> Optional[Dict[str, Any]]:
+    def get_portfolio_config(self, portfolio_id: Any) -> Optional[Dict[str, Any]]:
         """Get configuration for a specific portfolio."""
         try:
-            config = self.config_provider.get_portfolio_config(portfolio_id)
-            return config.to_dict()
+            # Provider lacks a per-portfolio config method (dormant path); resolve dynamically.
+            portfolio_cfg = getattr(self.config_provider, 'get_portfolio_config')(portfolio_id)
+            result: Dict[str, Any] = portfolio_cfg.to_dict()
+            return result
         except Exception as e:
             self.logger.error("Failed to get portfolio configuration", 
                             portfolio_id=portfolio_id, error=str(e))
             return None
     
-    def __str__(self):
+    def __str__(self) -> str:
         return f"PortfolioHandler(portfolios={self.get_portfolio_count()})"
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return str(self)

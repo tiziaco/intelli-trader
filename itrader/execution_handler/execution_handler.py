@@ -1,8 +1,10 @@
 import random
 from queue import Queue
+from typing import Any, Optional
+
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
-from itrader.events_handler.event import FillEvent, OrderEvent
+from itrader.events_handler.event import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
 from itrader.config import SystemConfig, get_system_config_provider
@@ -23,7 +25,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 	while maintaining backward compatibility with existing systems.
 	"""
 
-	def __init__(self, global_queue: Queue):
+	def __init__(self, global_queue: "Queue[Any]") -> None:
 		"""
 		Parameters
 		----------
@@ -45,7 +47,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		self._rng: random.Random = random.Random(self._rng_seed)
 
 		# Initialize exchanges (requires logger + rng)
-		self.exchanges: dict[str, AbstractExchange] = self.init_exchanges()
+		self.exchanges: dict[str, Optional[AbstractExchange]] = self.init_exchanges()
 
 		self.logger.info('Execution Handler initialized (rng_seed=%s)', self._rng_seed)
 
@@ -66,7 +68,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		return int(system_config.performance.rng_seed)
 
 
-	def on_order(self, event: OrderEvent):
+	def on_order(self, event: OrderEvent) -> None:
 		"""Route an order event to the configured exchange's order router."""
 		try:
 			exchange = self.exchanges.get(event.exchange)
@@ -79,12 +81,12 @@ class ExecutionHandler(AbstractExecutionHandler):
 			self.logger.error('Unexpected error routing order for %s %s: %s',
 							 event.ticker, event.action, str(e), exc_info=True)
 
-	def on_market_data(self, bar):
+	def on_market_data(self, bar: BarEvent) -> None:
 		"""Drive resting-order matching on each exchange with a new bar."""
 		# Dedup by instance identity: multiple venue aliases (e.g. 'simulated' and 'csv')
 		# may point to the same exchange object; driving it once per bar avoids
 		# double-matching the resting-order book (DEF-01-B alias, Plan 01-04).
-		seen = set()
+		seen: set[int] = set()
 		for name, exchange in self.exchanges.items():
 			if exchange is None or id(exchange) in seen:
 				continue
@@ -96,7 +98,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 								 name, str(e), exc_info=True)
 
 	
-	def init_exchanges(self):
+	def init_exchanges(self) -> dict[str, Optional[AbstractExchange]]:
 		"""
 		Initialize configured exchanges.
 		
@@ -111,7 +113,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		# admits the golden ticker for the offline run (DEF-01-B, Plan 01-04). Mutating the
 		# instance set (not the shared preset) keeps other exchanges/tests unaffected.
 		simulated._supported_symbols = set(simulated._supported_symbols) | {'BTCUSD'}
-		exchanges = {
+		exchanges: dict[str, Optional[AbstractExchange]] = {
 			'simulated': simulated,
 			# Backtest portfolios use exchange="csv" (offline golden feed). Orders carry the
 			# portfolio's exchange string, so the 'csv' venue must resolve to the simulated
@@ -136,7 +138,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		
 		return exchanges
 
-	def get_exchange_health(self, exchange_name: str = None) -> dict:
+	def get_exchange_health(self, exchange_name: Optional[str] = None) -> dict[str, Any]:
 		"""
 		Get health status for one or all exchanges.
 		
@@ -150,9 +152,9 @@ class ExecutionHandler(AbstractExecutionHandler):
 		dict
 			Health status information for requested exchange(s)
 		"""
-		health_data = {}
-		
-		exchanges_to_check = [exchange_name] if exchange_name else self.exchanges.keys()
+		health_data: dict[str, Any] = {}
+
+		exchanges_to_check = [exchange_name] if exchange_name else list(self.exchanges.keys())
 		
 		for name in exchanges_to_check:
 			exchange = self.exchanges.get(name)

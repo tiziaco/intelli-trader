@@ -45,7 +45,7 @@ class ConfigurationError(ITradingSystemError):
 class StateError(ITradingSystemError):
     """Base exception for invalid state transitions or operations."""
     
-    def __init__(self, entity_id: uuid.UUID, current_state: str, required_state: Optional[str] = None, operation: Optional[str] = None):
+    def __init__(self, entity_id: uuid.UUID | int | str, current_state: str, required_state: Optional[str] = None, operation: Optional[str] = None):
         self.entity_id = entity_id
         self.current_state = current_state
         self.required_state = required_state
@@ -62,7 +62,7 @@ class StateError(ITradingSystemError):
 class ConcurrencyError(ITradingSystemError):
     """Base exception for concurrency-related errors."""
     
-    def __init__(self, operation: str, entity_id: Optional[uuid.UUID] = None, resource: Optional[str] = None):
+    def __init__(self, operation: str, entity_id: Optional[uuid.UUID | int | str] = None, resource: Optional[str] = None):
         self.operation = operation
         self.entity_id = entity_id
         self.resource = resource
@@ -77,7 +77,7 @@ class ConcurrencyError(ITradingSystemError):
 class NotFoundError(ITradingSystemError):
     """Base exception for entity not found errors."""
     
-    def __init__(self, entity_type: str, entity_id: Optional[uuid.UUID] = None, identifier: Optional[str] = None):
+    def __init__(self, entity_type: str, entity_id: Optional[uuid.UUID | int | str] = None, identifier: Optional[str] = None):
         self.entity_type = entity_type
         self.entity_id = entity_id
         self.identifier = identifier

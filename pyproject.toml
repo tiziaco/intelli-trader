@@ -91,12 +91,47 @@ module = [
     "itrader.price_handler.exchange.OANDA",              # D-oanda
     "itrader.price_handler.live_streaming.BINANCE_Live", # D-live
     "itrader.screeners_handler.*",                       # D-screener
+    "itrader.events_handler.screener_event_handler",     # D-screener — dead, superseded by full_event_handler;
+                                                         #   references self.universe never set in __init__ (latent
+                                                         #   AttributeError). Not imported anywhere. Wiring is D-screener.
 ]
 ignore_errors = true
 
-# Third-party libs that ship no type stubs.
+# Out-of-scope debt deferred by the Plan 02-07 owner decision (Option 2 — scope
+# down + documented overrides). These modules are NOT part of the D-05 M2a
+# in-scope set; their strict-clean lands with the milestone that owns each.
+# Each is documented + time-boxed — debt is deferred, NOT silently suppressed
+# across the in-scope backtest path.
 [[tool.mypy.overrides]]
-module = ["ta.*", "pandas_ta.*", "ccxt.*"]
+module = [
+    "itrader.strategy_handler.my_strategies.*",          # OUT — relocated to a separate repo (STATE.md)
+    "itrader.legacy_config",                             # D-config — superseded by itrader.config; removal pending
+    "itrader.order_handler.storage.postgresql_storage", # D-sql — live order persistence (sibling of sql_handler)
+    "itrader.config.exchange.schema",                   # D-exchange — dormant validator written against an older
+                                                        #   ValidationResult API (str errors + warnings kwarg); never
+                                                        #   invoked on the backtest path (only re-exported). Reconciling
+                                                        #   it with core.validator is an API change deferred to D-exchange.
+    "itrader.reporting.statistics",                     # D-sql/reporting — concrete reporter coupled to sqlalchemy
+                                                        #   (self.engine/self.meta/_to_sql) with the documented-broken
+                                                        #   _prepare_data path (STATE.md 01-04). Never exercised on the
+                                                        #   backtest path (run(print_summary=False)); full clean-up is
+                                                        #   the reporting/_prepare_data rework deferred post-M2.
+    "itrader.reporting.engine_logger",                  # D-sql/reporting — sqlalchemy-coupled engine logger; not wired
+                                                        #   into the backtest path. Deferred with the reporting rework.
+    "itrader.reporting.plots",                          # D-reporting — plotly visualisation, only consumed by the
+                                                        #   deferred statistics reporter. Off the backtest path.
+]
+ignore_errors = true
+
+# Third-party libs that ship no type stubs (no py.typed marker / stubs uninstalled).
+# ignore_missing_imports avoids hundreds of cascading import-untyped errors across
+# the in-scope package without masking our own type debt.
+[[tool.mypy.overrides]]
+module = [
+    "ta.*", "pandas_ta.*", "ccxt.*",
+    "pandas.*", "pytz.*", "tqdm.*", "yaml.*",
+    "scipy.*", "plotly.*", "sklearn.*", "statsmodels.*",
+]
 ignore_missing_imports = true
 
 [build-system]

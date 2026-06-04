@@ -1,5 +1,8 @@
 from abc import ABC
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+	from ..events_handler.event import BarEvent, PingEvent
 
 
 class Universe(ABC):
@@ -17,4 +20,15 @@ class Universe(ABC):
 	def get_assets(self, dt: Any) -> Any:
 		raise NotImplementedError(
 			"Should implement get_assets()"
+		)
+
+	def generate_bar_event(self, ping_event: "PingEvent") -> "Optional[BarEvent]":
+		"""Generate the per-tick BarEvent for the run path.
+
+		Declared on the base so the run-path reference (``universe.generate_bar_event``)
+		type-resolves against the abstract ``Universe`` type; ``DynamicUniverse``
+		provides the live implementation.
+		"""
+		raise NotImplementedError(
+			"Should implement generate_bar_event()"
 		)

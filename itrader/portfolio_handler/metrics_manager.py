@@ -88,7 +88,7 @@ class MetricsManager:
     - Performance reporting
     """
     
-    def __init__(self, portfolio):
+    def __init__(self, portfolio: Any) -> None:
         self.portfolio = portfolio
         self._lock = threading.RLock()
         self.logger = get_itrader_logger().bind(component="MetricsManager")
@@ -359,7 +359,7 @@ class MetricsManager:
                 "worst_return": min(returns)
             }
     
-    def set_benchmark_price(self, timestamp: datetime, price: float):
+    def set_benchmark_price(self, timestamp: datetime, price: float) -> None:
         """Set benchmark price for comparison."""
         with self._lock:
             self.benchmark_prices[timestamp] = Decimal(str(price))
@@ -446,7 +446,7 @@ class MetricsManager:
     def _get_open_positions_count(self) -> int:
         """Get count of open positions."""
         if hasattr(self.portfolio, 'n_open_positions'):
-            return self.portfolio.n_open_positions
+            return int(self.portfolio.n_open_positions)
         return 0
     
     def _calculate_portfolio_return(self, current_equity: Decimal) -> Decimal:

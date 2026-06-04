@@ -7,6 +7,7 @@ following the iTrader system's established patterns for data structures.
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, Dict, Any
 
 from itrader.core.enums.execution import ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus
@@ -31,7 +32,8 @@ class ExecutionResult:
     executed_price: Optional[float] = None
     executed_quantity: Optional[float] = None
     remaining_quantity: Optional[float] = None
-    commission: Optional[float] = None
+    # M2a money boundary: commission is the Decimal returned by the fee model.
+    commission: Optional[Decimal] = None
     execution_time: Optional[datetime] = None
     
     # Error information
@@ -69,7 +71,7 @@ class ExecutionResult:
         """Calculate net value after commission."""
         total = self.total_value
         if total is not None and self.commission is not None:
-            return total - self.commission
+            return total - float(self.commission)
         return total
 
 
