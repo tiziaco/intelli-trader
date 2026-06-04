@@ -1,6 +1,7 @@
 import queue
 from datetime import datetime
 
+from itrader.core.clock import BacktestClock
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.price_handler.data_provider import PriceHandler
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
@@ -40,6 +41,16 @@ class TradingSystem(object):
 		self.to_sql = to_sql
 
 		self.global_queue = queue.Queue()
+
+		# Determinism seam (D-09/D-10): an injected BacktestClock returns the
+		# advanced simulation/bar time instead of wall-clock, so any engine-path
+		# consumer of "now" reads deterministic simulation time. The run loop
+		# advances it (set_time) on every ping/bar. M2a builds + advances the
+		# mechanism here; M2b wires it into order/transaction timestamps. The
+		# perf-telemetry datetime.now() in _run_backtest stays wall-clock (D-09 —
+		# run duration is not a domain fact).
+		self.clock = BacktestClock()
+
 		self.price_handler = PriceHandler(self.exchange, [], '', start_date, end_dt = end_date)
 		self.universe = DynamicUniverse(self.price_handler, self.global_queue)
 		self.strategies_handler = StrategiesHandler(self.global_queue, self.price_handler)
@@ -97,6 +108,9 @@ class TradingSystem(object):
 		start_time = datetime.now()  # Capture start time
 
 		for ping_event in self.ping:
+			# Advance the injected clock to the current simulation/bar time so any
+			# engine-path consumer of "now" reads deterministic time (D-09/D-10).
+			self.clock.set_time(ping_event.time)
 			self.global_queue.put(ping_event)
 			self.event_handler.process_events()
 			for portfolio in self.portfolio_handler.get_active_portfolios():
