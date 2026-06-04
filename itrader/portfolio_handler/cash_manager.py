@@ -273,6 +273,57 @@ class CashManager:
             
             return True
     
+    def apply_transaction_delta(self, delta: Decimal, description: str = "Transaction cash delta", reference_id: Optional[str] = None) -> bool:
+        """Apply a signed, full-precision Decimal delta to the cash ledger.
+
+        Precision-preserving transaction-path primitive (CR-03). Unlike
+        ``deposit``/``withdraw``/``process_transaction_cash_flow`` this does NOT
+        route through ``_validate_and_convert_amount`` (so it never quantizes the
+        delta to 2dp) and does NOT enforce the deposit/withdraw min/max-balance
+        policy gates — the transaction layer already ran its own funds check in
+        ``TransactionManager._check_funds_availability`` before calling this.
+
+        The full instrument precision of ``delta`` is preserved on ``_balance``.
+        A negative delta is an outflow (BUY cost), a positive delta an inflow
+        (SELL proceeds). A ``CashOperation`` is recorded for the audit trail.
+
+        Args:
+            delta: Signed full-precision Decimal cash delta (no quantization).
+            description: Audit description.
+            reference_id: Optional reference ID (e.g. transaction id).
+
+        Returns:
+            bool: True if applied.
+        """
+        with self._lock:
+            old_balance = self._balance
+            new_balance = old_balance + delta
+
+            self._balance = new_balance
+
+            operation_type = (
+                CashOperationType.TRANSACTION_DEBIT
+                if delta < 0
+                else CashOperationType.TRANSACTION_CREDIT
+            )
+            self._create_operation(
+                operation_type,
+                abs(delta),
+                description,
+                reference_id,
+                old_balance,
+                new_balance,
+            )
+
+            self.logger.debug("Transaction cash delta applied",
+                delta=str(delta),
+                old_balance=str(old_balance),
+                new_balance=str(new_balance),
+                reference_id=reference_id
+            )
+
+            return True
+
     def reserve_cash(self, amount: float | Decimal, description: str, reference_id: str) -> bool:
         """
         Reserve cash for pending orders.

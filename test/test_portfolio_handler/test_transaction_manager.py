@@ -25,16 +25,35 @@ from itrader.core.exceptions import (
 from itrader import idgen
 
 
+class MockCashManager:
+    """Mock CashManager exposing the precision-preserving transaction primitive.
+
+    CR-03: TransactionManager now routes the cash mutation through
+    ``portfolio.cash_manager.apply_transaction_delta(delta)`` instead of the
+    quantizing ``cash`` setter. The mock adds the full-precision Decimal delta
+    straight to the parent portfolio's ``cash`` (no quantization, no policy gate),
+    mirroring the real primitive so the Decimal-exact assertions still hold.
+    """
+    def __init__(self, portfolio):
+        self._portfolio = portfolio
+
+    def apply_transaction_delta(self, delta, description="", reference_id=None):
+        self._portfolio.cash = self._portfolio.cash + delta
+        return True
+
+
 class MockPortfolio:
     """Mock portfolio for testing.
 
-    Cash is Decimal end-to-end (M2-02): TransactionManager now does
-    ``self.portfolio.cash += transaction_cost`` with a Decimal cost and NO
-    float() round-trip, so the mock's cash must be Decimal too.
+    Cash is Decimal end-to-end (M2-02). CR-03: TransactionManager mutates cash
+    via ``self.portfolio.cash_manager.apply_transaction_delta(delta)`` with a
+    full-precision Decimal delta and NO float() round-trip, so the mock exposes a
+    ``cash_manager`` that preserves full Decimal precision on ``cash``.
     """
     def __init__(self, initial_cash=Decimal("100000.0")):
         self.cash = Decimal(str(initial_cash))
         self.portfolio_id = idgen.generate_portfolio_id()
+        self.cash_manager = MockCashManager(self)
 
 
 class TestTransactionManager(unittest.TestCase):
