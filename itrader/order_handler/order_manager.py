@@ -269,14 +269,24 @@ class OrderManager:
 			open_position = portfolio.get_open_position(signal_event.ticker)
 			if signal_event.action == "SELL" and open_position is not None and open_position.net_quantity > 0:
 				# Long-only exit: close the open long by selling its full quantity.
-				# net_quantity is Decimal (M2a entity money); the SignalEvent + sizing
-				# layer is float until M4 — coerce at this boundary.
-				signal_event.quantity = float(open_position.net_quantity)
+				# net_quantity is Decimal (M2a entity money) — size in Decimal so the
+				# exit nets the long to exactly the position quantity. The SignalEvent
+				# field is float until M4/IN-02, so coerce ONCE at the assignment (WR-05).
+				sized_qty: Decimal = open_position.net_quantity
+				signal_event.quantity = float(sized_qty)
 			else:
 				# Entry (or SELL with no open long): fraction-of-cash sizing.
-				# portfolio.cash is Decimal on the ledger (M2-02); coerce at this
-				# float sizing boundary (cash routing through CashManager is M4 #22).
-				signal_event.quantity = (0.95 * float(portfolio.cash)) / price
+				# portfolio.cash is Decimal on the ledger (M2-02); compute sizing in
+				# Decimal — (0.95 * cash) / price — keeping full Decimal precision
+				# through the intermediate (D-01: quantize ONLY at money boundaries,
+				# never on an intermediate). The sized quantity is NOT a money-ledger
+				# boundary — it is an in-flight intermediate the exchange consumes — so
+				# it is carried at full precision and coerced to float ONCE at the
+				# assignment (the SignalEvent field is float until M4/IN-02) (WR-05).
+				# (Quantizing here to 8dp would both violate D-01 and shift the frozen
+				# numeric oracle past the D-15 tolerance — DEF-02-04-A: no re-baseline.)
+				raw_qty: Decimal = (Decimal("0.95") * portfolio.cash) / to_money(price)
+				signal_event.quantity = float(raw_qty)
 		return None
 
 	def _create_primary_order(self, signal_event: SignalEvent, exchange: str) -> OperationResult:

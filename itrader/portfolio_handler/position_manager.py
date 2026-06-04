@@ -181,7 +181,9 @@ class PositionManager:
     
     def _should_close_position(self, position: Position) -> bool:
         """Determine if a position should be closed based on quantity."""
-        return abs(position.net_quantity) <= float(self.tolerance)
+        # Decimal-to-Decimal comparison (WR-01): net_quantity and tolerance are
+        # both Decimal — no float() cast on the money/quantity path.
+        return abs(position.net_quantity) <= self.tolerance
     
     def _close_position(self, position: Position, price: Decimal | float, time: datetime) -> None:
         """Close a position and move it to closed positions."""
@@ -204,8 +206,9 @@ class PositionManager:
     def _validate_position_consistency(self, position: Position, transaction: Transaction) -> None:
         """Validate position consistency after update."""
         
-        # Check for calculation errors
-        if position.net_quantity < 0 and abs(position.net_quantity) > 1e-6:
+        # Check for calculation errors (WR-02: Decimal literal, not 1e-6 float —
+        # net_quantity is Decimal).
+        if position.net_quantity < 0 and abs(position.net_quantity) > Decimal("0.000001"):
             if position.side == PositionSide.LONG:
                 raise PositionCalculationError(
                     "Long position cannot have negative net quantity",

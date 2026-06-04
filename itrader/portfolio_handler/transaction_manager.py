@@ -229,11 +229,20 @@ class TransactionManager:
         # Calculate transaction cost with high precision
         transaction_cost = self._calculate_transaction_cost(transaction)
 
-        # Update portfolio cash (cash routing through CashManager is M4 #22).
-        # M2-02: cash is Decimal end-to-end — add the Decimal cost directly with
-        # NO float() round-trip (the #17 defect). This is THE money-defect fix.
+        # Apply the full-precision Decimal cost to the cash ledger via the
+        # precision-preserving CashManager primitive (CR-03). This avoids the 2dp
+        # quantization and the deposit/withdraw min/max-balance gate that the
+        # `self.portfolio.cash` setter would impose (it routes through
+        # deposit/withdraw -> _validate_and_convert_amount). The funds check for a
+        # BUY already ran in _check_funds_availability, so re-running the policy
+        # gate here would be both redundant and lossy. NO float() round-trip on
+        # the money value (the #17 defect).
         old_cash = self.portfolio.cash
-        self.portfolio.cash += transaction_cost
+        self.portfolio.cash_manager.apply_transaction_delta(
+            transaction_cost,
+            description=f"Transaction {transaction.type.name} {transaction.ticker}",
+            reference_id=str(transaction.id),
+        )
 
         self.logger.debug("Transaction executed",
             transaction_id=transaction.id,
@@ -250,10 +259,13 @@ class TransactionManager:
         Returns:
             Decimal: Transaction cost (negative for outflow, positive for inflow)
         """
-        price = Decimal(str(transaction.price))
-        quantity = Decimal(str(transaction.quantity))
-        commission = Decimal(str(transaction.commission))
-        
+        # Transaction money fields are already Decimal end-to-end (normalized in
+        # Transaction.__post_init__) — use them directly with NO Decimal(str(...))
+        # round-trip (WR-03).
+        price = transaction.price
+        quantity = transaction.quantity
+        commission = transaction.commission
+
         if transaction.type == TransactionType.BUY:
             # Outflow of cash
             return -(price * quantity + commission)
