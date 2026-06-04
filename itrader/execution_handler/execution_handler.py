@@ -1,9 +1,11 @@
+import random
 from queue import Queue
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
 from itrader.events_handler.event import FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
+from itrader.config import SystemConfig, get_system_config_provider
 from itrader.logger import get_itrader_logger
 
 class ExecutionHandler(AbstractExecutionHandler):
@@ -32,11 +34,36 @@ class ExecutionHandler(AbstractExecutionHandler):
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
 
 		self.global_queue = global_queue
-		
-		# Initialize exchanges (requires logger)
+
+		# Determinism seam (D-11): construct a SINGLE seeded random.Random at engine
+		# wiring and inject it into every stochastic component (SimulatedExchange +
+		# its slippage model). The seed comes from the documented system config key
+		# `performance.rng_seed` (default 42); a YAML override in settings/system.yaml
+		# wins when present. One shared Random — never seeded per-call or duplicated —
+		# so a backtest run is reproducible (#5/PERF2).
+		self._rng_seed: int = self._resolve_rng_seed()
+		self._rng: random.Random = random.Random(self._rng_seed)
+
+		# Initialize exchanges (requires logger + rng)
 		self.exchanges: dict[str, AbstractExchange] = self.init_exchanges()
 
-		self.logger.info('Execution Handler initialized')
+		self.logger.info('Execution Handler initialized (rng_seed=%s)', self._rng_seed)
+
+	def _resolve_rng_seed(self) -> int:
+		"""Resolve the determinism seed from the system config (D-11).
+
+		Reads `performance.rng_seed` via the system config provider when a
+		`settings/system.yaml` is present, otherwise falls back to the documented
+		`PerformanceSettings.rng_seed` default. `SystemConfig.from_dict` applies the
+		default for any missing key, so this is robust to an absent/partial YAML.
+		"""
+		try:
+			provider_data = get_system_config_provider().get_config()
+		except Exception as exc:  # provider/registry unavailable -> documented default
+			self.logger.debug('System config provider unavailable, using default rng_seed: %s', exc)
+			provider_data = {}
+		system_config = SystemConfig.from_dict(provider_data or {})
+		return int(system_config.performance.rng_seed)
 
 
 	def on_order(self, event: OrderEvent):
@@ -76,7 +103,9 @@ class ExecutionHandler(AbstractExecutionHandler):
 		Creates exchange instances using their default configurations.
 		Each exchange manages its own fee models, slippage simulation, etc.
 		"""
-		simulated = SimulatedExchange(self.global_queue)
+		# Inject the single seeded Random (D-11) so the exchange + its slippage
+		# model share one deterministic RNG instance for the whole backtest run.
+		simulated = SimulatedExchange(self.global_queue, rng=self._rng)
 		# The golden backtest trades BTCUSD, but the default exchange preset only lists
 		# *USDT symbols. Add BTCUSD to this instance's supported set so validate_symbol
 		# admits the golden ticker for the offline run (DEF-01-B, Plan 01-04). Mutating the
