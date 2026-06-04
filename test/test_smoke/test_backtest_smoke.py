@@ -53,10 +53,15 @@ def test_backtest_smoke_produces_nonzero_trade(backtest_engine):
     # (a) The run completes without raising (FutureWarning -> hard error caught here).
     system.run(print_summary=False)
 
-    # (b) At least one closed position exists with a non-zero quantity (M1-06 sizing).
+    # (b) At least one closed position exists, and at least one round-tripped a
+    # non-zero traded quantity (proves the M1-06 sizing seam emitted real orders).
+    # NOTE: a CLOSED position has net_quantity ~= 0 by construction (it closes when
+    # buy_quantity and sell_quantity net to within tolerance), so the non-zero-quantity
+    # assertion must check the *traded* size (buy/sell quantity), not the residual net.
     portfolio = system.portfolio_handler.get_portfolio(portfolio_id)
     closed_positions = portfolio.closed_positions
     assert closed_positions, "expected >=1 closed position from the smoke run"
     assert any(
-        abs(position.net_quantity) > 0 for position in closed_positions
-    ), "expected >=1 closed position with non-zero net_quantity (M1-06 sizing seam)"
+        position.buy_quantity > 0 or position.sell_quantity > 0
+        for position in closed_positions
+    ), "expected >=1 closed position with a non-zero traded quantity (M1-06 sizing seam)"
