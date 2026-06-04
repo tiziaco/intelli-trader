@@ -57,7 +57,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Money is `Decimal` end-to-end (prices, quantities, cash, commissions, PnL) with no `float` round-trips and a centralized quantization policy
   3. `mypy --strict` is clean across the package; hot-path DTOs/events are `frozen=True`/`slots=True` with `NewType` ID aliases; the eight Py2 `__metaclass__` bases are real ABCs/Protocols with non-conforming subclasses fixed
   4. Backtests are deterministic — RNG seeded behind an injected `Random`, clock injected (no local `datetime.now()`), flat global order index by id
-**Plans**: 7 plans
+**Plans**: 8 plans (7 execute + 1 gap-closure)
   - [x] 02-01-PLAN.md — Install deps (uuid-utils, mypy) + mypy --strict gate + make typecheck + Wave 0 test scaffolds
   - [x] 02-02-PLAN.md — New core modules: ids.py (NewType aliases), money.py (Decimal quantization), clock.py (injectable Clock)
   - [x] 02-03-PLAN.md — UUIDv7 identity infra: idgen facade + native-UUID storage/flat index + UUID-typed exceptions
@@ -65,6 +65,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   - [x] 02-05-PLAN.md — Convert 11 dead __metaclass__ bases to real ABCs/Protocols + SimulatedExchange conformance
   - [x] 02-06-PLAN.md — Determinism: seeded RNG injected into slippage/exchange + injected BacktestClock on the engine path
   - [x] 02-07-PLAN.md — mypy --strict clean pass + frozen/slots events + D-15 oracle tolerance split + phase gate
+  - [ ] 02-08-PLAN.md — Gap-closure: clock.now() raise guard (python -O safe) + honest clock docstring + remove float seams (WR-01/02/03/05) + Decimal-precision cash ledger
 
 ### Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze
 **Goal**: Collapse the over-engineered config package to Pydantic models, centralize scattered types, route portfolio-handler state through an in-memory storage seam, finalize `time_parser` timing correctness, delete dead modules, complete the bulk pytest conversion, and re-freeze the numerical oracle after the Decimal shift while confirming the behavioral oracle is unchanged. This closes the `#34` and `#36` spans started in M1.
