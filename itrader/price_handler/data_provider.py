@@ -40,19 +40,41 @@ class PriceHandler(AbstractPriceHandler):
 		The base currency for the downloaded data
 	"""
 	
+	# Default golden dataset for the offline/csv backtest feed (D-01).
+	CSV_DEFAULT_PATH = 'data/BTCUSD_1d_ohlcv_2018_2026.csv'
+	# Explicit date window for the offline oracle (D-02). Pinned on the feed
+	# side so the oracle is insulated if the CSV is ever regenerated.
+	CSV_START_DATE = '2018-01-01'
+	CSV_END_DATE = '2026-06-03'
+	# Fixed ticker for the offline feed (D-03/D-06).
+	CSV_TICKER = 'BTCUSD'
+
 	def __init__(self, exchange: str,
 				symbols: list, timeframe: str,
 				start_dt: str, end_dt: str = None,
-				base_currency: str = 'USDT'):
-		
+				base_currency: str = 'USDT',
+				csv_path: str = None):
+
 		self.timeframe = timeframe
 		self.start_date = start_dt
 		self.end_date = end_dt
 		self.base_currency = base_currency
 		self.prices: Dict[str, pd.DataFrame] = {}
-		self.exchange = self._init_exchange(exchange)
-		self.symbols = self._init_symbols(symbols)
-		self.sql_handler = SqlHandler()
+
+		# D-07: offline/csv feed branch lives INSIDE PriceHandler. On the csv
+		# path we construct neither SqlHandler (no PostgreSQL) nor a CCXT
+		# exchange (no network) — the backtest reads the committed golden CSV.
+		self.is_csv = (exchange is not None and exchange.lower() == 'csv')
+		if self.is_csv:
+			self.csv_path = csv_path if csv_path is not None else self.CSV_DEFAULT_PATH
+			self.exchange = None
+			self.sql_handler = None
+			self.symbols = self._init_symbols(symbols)
+		else:
+			self.csv_path = None
+			self.exchange = self._init_exchange(exchange)
+			self.symbols = self._init_symbols(symbols)
+			self.sql_handler = SqlHandler()
 
 		self.logger = get_itrader_logger().bind(component="PriceHandler")
 		self.logger.info('Price Handler initialized')
