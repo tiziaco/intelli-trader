@@ -1,4 +1,5 @@
 import unittest
+import uuid
 from datetime import datetime
 
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
@@ -42,7 +43,7 @@ class TestPosition(unittest.TestCase):
 		position.update_position(buy_transaction_2)
 
 		self.assertIsInstance(position, Position)
-		self.assertIsInstance(position.id, int)  # Just check it's an integer
+		self.assertIsInstance(position.id, uuid.UUID)  # ids are native UUIDv7
 		self.assertEqual(position.ticker, 'BTCUSDT')
 		self.assertEqual(position.portfolio_id, 'portfolio_id')
 

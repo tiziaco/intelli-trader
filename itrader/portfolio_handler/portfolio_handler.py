@@ -238,7 +238,9 @@ class PortfolioHandler:
         
         with self._operation_context("on_fill") as correlation_id:
             try:
-                portfolio_id = int(fill_event.portfolio_id)  # Convert string to int
+                # Portfolio ids are native uuid.UUID (D-13/D-14); the dict is keyed
+                # directly by the UUID — no int/str coercion (the integer scheme is gone).
+                portfolio_id = fill_event.portfolio_id
                 portfolio = self.get_portfolio(portfolio_id)
 
                 if fill_event.status != FillStatus.EXECUTED:
@@ -281,12 +283,8 @@ class PortfolioHandler:
                 return result
                 
             except Exception as e:
-                portfolio_id_int = None
-                try:
-                    portfolio_id_int = int(fill_event.portfolio_id)
-                except (ValueError, AttributeError):
-                    pass
-                self._publish_error_event(e, "on_fill", correlation_id, portfolio_id_int)
+                error_portfolio_id = getattr(fill_event, "portfolio_id", None)
+                self._publish_error_event(e, "on_fill", correlation_id, error_portfolio_id)
                 raise
     
     # Market data updates

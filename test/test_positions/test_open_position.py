@@ -1,4 +1,5 @@
 import unittest
+import uuid
 from datetime import datetime
 
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
@@ -32,7 +33,7 @@ class TestPosition(unittest.TestCase):
 		position = Position.open_position(buy_transaction)
 
 		self.assertIsInstance(position, Position)
-		self.assertIsInstance(position.id, int)  # Just check it's an integer
+		self.assertIsInstance(position.id, uuid.UUID)  # ids are native UUIDv7
 		self.assertEqual(position.ticker, 'BTCUSDT')
 		self.assertEqual(position.portfolio_id, 'portfolio_id')
 
@@ -62,7 +63,7 @@ class TestPosition(unittest.TestCase):
 		position = Position.open_position(sell_transaction)
 
 		self.assertIsInstance(position, Position)
-		self.assertIsInstance(position.id, int)  # Just check it's an integer
+		self.assertIsInstance(position.id, uuid.UUID)  # ids are native UUIDv7
 		self.assertEqual(position.ticker, 'BTCUSDT')
 		self.assertEqual(position.portfolio_id, 'portfolio_id')
 
@@ -94,7 +95,7 @@ class TestPosition(unittest.TestCase):
 		position.update_current_price_time(50000, time)
 
 		self.assertIsInstance(position, Position)
-		self.assertIsInstance(position.id, int)  # Just check it's an integer
+		self.assertIsInstance(position.id, uuid.UUID)  # ids are native UUIDv7
 		self.assertEqual(position.ticker, 'BTCUSDT')
 		self.assertEqual(position.portfolio_id, 'portfolio_id')
 
@@ -127,7 +128,7 @@ class TestPosition(unittest.TestCase):
 		position.update_current_price_time(50000, time)
 
 		self.assertIsInstance(position, Position)
-		self.assertIsInstance(position.id, int)  # Just check it's an integer
+		self.assertIsInstance(position.id, uuid.UUID)  # ids are native UUIDv7
 		self.assertEqual(position.ticker, 'BTCUSDT')
 		self.assertEqual(position.portfolio_id, 'portfolio_id')
 
