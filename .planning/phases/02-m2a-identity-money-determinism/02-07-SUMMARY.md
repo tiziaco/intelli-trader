@@ -2,144 +2,150 @@
 phase: 02-m2a-identity-money-determinism
 plan: 07
 subsystem: events / type-gate / oracle-test
-status: CHECKPOINT (paused — owner gate)
-tags: [frozen-events, mypy-strict, oracle-tolerance, M2-03, D-15]
+status: CHECKPOINT (paused — Task 4 owner phase-close gate)
+tags: [frozen-events, mypy-strict, oracle-tolerance, M2-03, D-15, in-scope-clean]
 requires: ["02-03", "02-04", "02-05", "02-06"]
 provides:
   - "frozen/slots immutable hot-path events (M2-03, Pattern F)"
+  - "make typecheck (mypy --strict) clean across the D-05 in-scope package (M2-03)"
   - "D-15 oracle split: behavioral identity EXACT + numeric bounded-tolerant"
 affects:
   - itrader/events_handler/event.py
   - test/test_integration/test_backtest_oracle.py
   - test/test_events/test_event_immutability.py
+  - "~60 in-scope itrader modules (catalogued below — Task 2 annotation pass)"
+  - pyproject.toml
 tech-stack:
   added: []
-  patterns: ["@dataclass(frozen=True, slots=True) on immutable events", "identity-EXACT / numeric-TOLERANT oracle split"]
+  patterns:
+    - "@dataclass(frozen=True, slots=True) on immutable events"
+    - "identity-EXACT / numeric-TOLERANT oracle split"
+    - "documented ignore_errors overrides for out-of-scope deferred subsystems (Option 2)"
+    - "Decimal/float coercion only at existing M2a boundaries; behavior-preserving"
 key-files:
   created:
     - test/test_events/test_event_immutability.py
   modified:
     - itrader/events_handler/event.py
     - test/test_integration/test_backtest_oracle.py
+    - pyproject.toml
+    - "~60 in-scope itrader modules (Task 2)"
 decisions:
   - "Freeze only genuinely-immutable events: PingEvent, BarEvent, PortfolioUpdateEvent, ScreenerEvent"
   - "OrderEvent left MUTABLE — price/quantity rewritten by MatchingEngine.modify (discovered at runtime)"
   - "SignalEvent + FillEvent left MUTABLE — documented downstream mutation"
   - "D-15 tolerance set to rtol=1e-6, atol=5e-2 (5 cents) — just above observed ~2.7e-2 M2a drift"
+  - "Task 2 = Option 2 (owner): clean in-scope set; out-of-scope debt deferred via documented overrides"
+  - "SignalEvent.strategy_id + OrderEvent.strategy_id int->StrategyId (02-05 carry-over) landed"
+  - "portfolio_id int<->PortfolioId(UUID) inconsistency bridged with documented unions; full retype deferred"
 metrics:
-  duration: ~25 min (partial — paused at checkpoint)
+  duration: ~3 h (Tasks 1-3 + the full Task 2 in-scope annotation pass)
   completed: 2026-06-04
 ---
 
 # Phase 2 Plan 7: Strict-Gate + Frozen-Events + Oracle-Gate Consolidation Summary
 
-**One-liner:** Froze the genuinely-immutable hot-path events (`frozen=True/slots=True`) and split
-the backtest oracle into behavioral-identity-EXACT + numeric-bounded-tolerant (D-15); paused at the
-owner gate because Task 2 (`make typecheck` clean) exceeds the plan's stated "minimal surgical fixes"
-scope and the Task 4 phase gate is owner-gated.
+**One-liner:** Froze the genuinely-immutable hot-path events (`frozen=True/slots=True`), drove
+`make typecheck` (mypy --strict) to **clean across the entire D-05 in-scope package** under the
+owner's Option-2 scope (out-of-scope debt documentedly deferred), and split the backtest oracle
+into behavioral-identity-EXACT + numeric-bounded-tolerant (D-15). Paused at the owner-gated
+Task 4 phase-close checkpoint.
 
-## Status: CHECKPOINT — 2 of 4 tasks complete, paused for owner decision
-
-This plan is `autonomous: false`. Tasks 1 and 3 are complete and committed. Task 2 surfaced a
-scope discrepancy (below) that is an architectural-scale decision (Rule 4) and must not be resolved
-unilaterally; Task 4 is an explicit owner-gated phase-close checkpoint. Both are returned for owner
-input.
+## Status: CHECKPOINT — Tasks 1, 2, 3 complete; paused at Task 4 (owner phase-close gate)
 
 ## Completed Work
 
 ### Task 1 — frozen/slots immutable events (M2-03, Pattern F) ✅ (TDD)
-- **RED** (`ffe2a3c`): added `test/test_events/test_event_immutability.py` asserting frozen behavior
-  for the immutable events and continued-mutability for the mutable ones.
-- **GREEN** (`227dab3`): applied `@dataclass(frozen=True, slots=True)` to **PingEvent, BarEvent,
-  PortfolioUpdateEvent, ScreenerEvent**.
-- **Left MUTABLE** (each verified against real run-path mutation):
-  - `SignalEvent` — `verified` (order_validator) + `quantity` (order_manager) rewritten post-build (Pitfall 4, M3 #11 blocker).
-  - `FillEvent` — `price`/`quantity` rewritten by `SimulatedExchange` after fee/slippage (simulated.py:226,229).
-  - `OrderEvent` — **discovered at runtime** that `MatchingEngine.modify` rewrites `price`/`quantity`
-    of a resting order (matching_engine.py:59-61). The initial GREEN froze OrderEvent and the
-    execution suite caught the `FrozenInstanceError`; OrderEvent was reverted to mutable and the test
-    contract updated to assert its mutability. This is the Pattern-F "defer ambiguous events" path.
-- **M3 boundary respected:** no `event_id`/`uuid4` change (`event.py:6` untouched).
-- **Verify:** `test/test_events -q` → 25 passed.
+- **RED** (`ffe2a3c`): added `test/test_events/test_event_immutability.py`.
+- **GREEN** (`227dab3`): `@dataclass(frozen=True, slots=True)` on **PingEvent, BarEvent,
+  PortfolioUpdateEvent, ScreenerEvent**. SignalEvent/FillEvent/OrderEvent left mutable (runtime
+  mutation verified). M3 event-id boundary untouched. `test/test_events -q` → 25 passed.
 
 ### Task 3 — D-15 oracle split (behavioral-EXACT + numeric-TOLERANT) ✅ (`e9af665`)
-- Trade **identity** columns `entry_date, exit_date, side, pair` asserted `check_exact=True`
-  (behavioral LAW). Equity **timestamp grid** asserted EXACT. Summary `final_cash`, `trade_count`,
-  `final_equity` asserted EXACT.
-- Numeric trade/equity columns + summary `total_realised_pnl` asserted within a bounded transitional
-  tolerance, each inline-flagged `# D-15 transitional — removed + re-frozen EXACT at M2b (Phase 3 SC4)`.
-- **Tolerance set empirically:** observed M2a Decimal drift maxed at **~2.732e-2** (equity
-  `total_equity`/`positions_value`) and **2.685e-2** (trade `total_sold`); `total_realised_pnl` drifts
-  **9.563e-3**. Chosen `rtol=1e-6, atol=5e-2` (5 cents) — just above worst-case observed, tight enough
-  to catch a dollar-level money bug, loose enough for sub-cent float→Decimal quantization.
-- **Golden CSVs NOT overwritten** — the numerical-oracle re-baseline (DEF-02-04-A) stays owner-gated
-  (CLAUDE.md golden-master discipline; re-freeze is Phase 3 / M2b work).
-- **Verify:** `test/test_integration/test_backtest_oracle.py -x` → 1 passed.
+- Identity columns (`entry_date, exit_date, side, pair`) + equity timestamp grid +
+  `final_cash/trade_count/final_equity` asserted `check_exact=True`.
+- Numeric columns within `rtol=1e-6, atol=5e-2` (5 cents — just above observed ~2.732e-2 worst
+  drift), each inline-flagged `# D-15 transitional — removed + re-frozen EXACT at M2b (Phase 3 SC4)`.
+- Golden CSVs NOT overwritten (numeric re-baseline stays owner-gated, Phase 3).
 
-### Full suite
-- `poetry run pytest -q` → **299 passed**. Behavioral oracle (134 trades, dates/sides/pairs,
-  final equity 53229.75) unchanged.
+### Task 2 — make typecheck clean across the D-05 in-scope package (M2-03) ✅ (`d85729a`)
+
+Owner decision **Option 2 — scope down + documented overrides**. `make typecheck` went from
+**922 errors / 83 files → 0 errors / 157 files clean**.
+
+**Mandated items landed:**
+- `SignalEvent.strategy_id` `int`→`StrategyId` (02-05 carry-over); `OrderEvent.strategy_id` too.
+- Dead local `old_status` at `order.py` removed (Pylance-flagged).
+
+**In-scope annotation pass (~60 modules, all behavior-preserving):** events_handler, core/enums,
+core/exceptions, full config domain (core/portfolio/system/exchange + `__init__` exports), logger,
+outils, universe, full portfolio_handler module (portfolio + 4 managers + handler + transaction +
+position + validators), full execution_handler (handler, simulated, matching_engine, fee/slippage
+models, result_objects), strategy_handler (base, SMA_MACD, empty, strategies_handler, sizers, risk,
+sltp), the csv price feed (`data_provider.py` + `price_handler/base.py` + exchange/base), reporting
+base + performance, trading_system backtest engine + ping_generator.
+
+**Documented `ignore_errors` overrides (out-of-scope debt, each commented):**
+`my_strategies.*` (separate repo), `legacy_config`, `postgresql_storage` (D-sql),
+`config.exchange.schema` (dormant validator vs old API), `reporting.statistics`/`engine_logger`/
+`plots` (D-sql/viz, off backtest path), `events_handler.screener_event_handler` (dead D-screener),
+plus the existing D-live/D-sql/D-oanda/D-screener set. Third-party stub-ignores: pandas, pytz,
+scipy, plotly, sklearn, statsmodels, tqdm, yaml.
+
+**Verify:** `make typecheck` exits 0 (157 files). `make test` → 299 passed. Oracle → 1 passed.
 
 ## Deviations from Plan
 
 ### [Rule 1 — Bug avoided] OrderEvent is not immutable
-- **Found during:** Task 1 GREEN (execution suite `test_matching_engine` failed with
-  `FrozenInstanceError`).
-- **Issue:** plan/Pattern-F listed OrderEvent as a freeze candidate; the matching engine's
-  resting-order `modify` mutates `OrderEvent.price`/`quantity` in the real run path.
-- **Fix:** OrderEvent left mutable; immutability test updated to `test_order_event_stays_mutable`.
-- **Files:** `itrader/events_handler/event.py`, `test/test_events/test_event_immutability.py`.
-- **Commit:** `227dab3`.
+- Found during Task 1 GREEN; OrderEvent left mutable, test updated. Commit `227dab3`.
 
-## CHECKPOINT — Owner Decision Required
+### [Rule 1 — Bugs fixed in dormant code during Task 2]
+- `ExecutionErrorCode.TIMEOUT` member added — `ExecutionTimeoutError` referenced a non-existent
+  enum value (AttributeError at raise-time). `core/enums/execution.py`. Commit `d85729a`.
+- `super.__init__(...)` → `super().__init__(...)` in `Empty_strategy` (missing parens → TypeError).
+- `raise NotImplemented(...)` → `raise NotImplementedError(...)` in `full_event_handler` (NotImplemented
+  is not an exception).
+- `time_parser.format_timeframe` / `outils/strategy` module-level `@staticmethod` misuse → None-guards
+  + decorator cleanup.
+- All caught by mypy, fixed inline, suite stays green.
 
-### Task 2 (`make typecheck` clean) — SCOPE ESCALATION (Rule 4)
+### [Scope — owner-approved Option 2] portfolio_id int↔PortfolioId
+- The 02-05 portfolio_id migration is incomplete: events carry `int` portfolio_id while entities
+  assign a UUID `PortfolioId`. Bridged at boundaries with documented `PortfolioId | int` unions and a
+  `PortfolioIdLike` exception alias rather than forcing the full retype (Rule 4 — deferred, not
+  mandated by Task 2). Documented inline at each seam.
 
-`make typecheck` currently reports **922 errors in 83 files**. The plan framed Task 2 as "minimal,
-surgical residual type-annotation fixes … `event.py` is the only additional file expected." Reality
-does not match that model:
+## CHECKPOINT — Task 4: Phase gate (`checkpoint:human-verify`, gate="blocking", OWNER-GATED)
 
-| Bucket | Errors | In M2a D-05 scope? |
-|--------|--------|--------------------|
-| `[no-untyped-def]` (missing annotations) | 339 | mixed |
-| `[no-untyped-call]` | 100 | mixed |
-| `[assignment]` (`=None` non-Optional) | 101 | mixed |
-| `my_strategies/*` (OUT-of-band, separate repo) | 197 | **NO** (STATE.md "OUT") |
-| `legacy_config.py` | 15 | likely NO |
-| `postgresql_storage.py` (D-sql sibling) | 16 | likely NO |
-| `price_handler` data_provider/exchange/live | 56 | partial (csv feed only is in-scope) |
+All automated verification is complete and green. Awaiting owner "approved" to close the phase
+(NOT auto-closed). Verification results gathered for owner review:
 
-Even a single confirmed in-scope file, `event.py`, carries **39** pure annotation-debt errors
-(`__str__/__repr__` missing `-> str`, dunder param annotations, `dict`→`dict[str, X]`, `=None`→`Optional`,
-`-> float` paths that `return None`). The in-scope surface spans ~50+ files and hundreds of edits.
-This is the pre-existing untyped-def debt that **Plan 02-05 explicitly deferred to "Plan 07"**
-(STATE.md: "mypy gate 316->906 is unmasked pre-existing untyped-def debt (not regression)").
+| Gate | Result |
+|------|--------|
+| `make typecheck` (mypy --strict, in-scope) | **PASS** — exit 0, 157 files, 0 errors |
+| `make test` (full suite) | **PASS** — 299 passed |
+| `poetry run pytest test/test_integration/test_backtest_oracle.py -x` | **PASS** — 1 passed |
+| Behavioral oracle (trade timing + sides + sequence) | **UNCHANGED** from M1 |
 
-This is an architectural-scale decision, not a surgical fix, and the plan is owner-gated. I did **not**:
-- hand-annotate 50–83 files unilaterally (large diff, real regression risk on a behavior-preserving
-  milestone), nor
-- broaden the override list to suppress thousands of errors (would defeat the M2-03 "in-scope clean"
-  intent and silently hide debt).
+**D-15 tolerance magnitude for owner review:** `rtol=1e-6`, `atol=5e-2` (5 cents), set just above
+the worst observed M2a Decimal drift (~2.732e-2). Documented inline with the M2b re-freeze note
+(`# D-15 transitional — removed + re-frozen EXACT at M2b (Phase 3 SC4)`). Identity columns
+(`entry_date, exit_date, side, pair`), equity timestamp grid, and `final_cash/trade_count/final_equity`
+remain `check_exact=True`.
 
-**Owner options for Task 2:**
-1. **Full in-scope clean (as written):** authorize the multi-file annotation pass across the D-05
-   in-scope set (events, enums, exceptions, config, portfolio, order, execution, strategy, csv feed,
-   reporting) — large but bounded; excludes `my_strategies/*`, `legacy_config.py`, D-sql/D-oanda/D-live.
-2. **Scope Task 2 down + add overrides:** confirm the precise D-05 in-scope file list, add documented
-   `ignore_errors` overrides for the remaining out-of-scope modules (`my_strategies.*`, `legacy_config`,
-   `postgresql_storage`, the non-csv `price_handler` adapters), and clean only the agreed in-scope set.
-3. **Defer Task 2 to M2b:** record `make typecheck` clean as a deferred carry-over and close the phase
-   on Tasks 1+3+4. (Conflicts with M2-03's stated DoD — needs explicit owner sign-off.)
+**Final reference numbers (frozen golden, unchanged):** final_equity **53229.75**, final_cash
+**53229.75**, **trade_count 134**, total_realised_pnl ≈ 43229.70 (drifts 9.563e-3, within tolerance).
 
-Also flagged for whichever path is chosen: **SignalEvent.strategy_id** is annotated `int` but receives
-a UUID-typed `StrategyId` (02-05 carry-over) — fix lands with the Task 2 pass.
+**Owner question (per plan how-to-verify step 4):** is the 5-cent tolerance tight enough to catch
+dollar-level money bugs yet loose enough for sub-cent Decimal/quantization drift? It is bounded,
+documented, and time-boxed to M2b.
 
-### Task 4 — Phase gate (`checkpoint:human-verify`, gate="blocking")
-Owner-run verification to close the phase: `make test` (green: 299), `make typecheck` (depends on Task
-2 decision), oracle test (green), and review of the D-15 tolerance magnitude (`rtol=1e-6, atol=5e-2`).
+**Resume signal:** Type "approved" to close the phase, or describe the tolerance/behavior concern.
 
 ## Self-Check: PASSED
 - FOUND: itrader/events_handler/event.py
 - FOUND: test/test_events/test_event_immutability.py
 - FOUND: test/test_integration/test_backtest_oracle.py
-- FOUND commits: ffe2a3c (RED), 227dab3 (GREEN), e9af665 (oracle)
+- FOUND: pyproject.toml ([tool.mypy] overrides extended — Option 2)
+- FOUND commits: ffe2a3c (RED), 227dab3 (GREEN), e9af665 (oracle), d85729a (typecheck clean)
+- VERIFIED: `make typecheck` exit 0 (157 files); `make test` 299 passed; oracle 1 passed
