@@ -39,7 +39,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Success Criteria** (what must be TRUE):
   1. `make backtest` imports and runs the full PING→BAR→SIGNAL→ORDER→FILL loop without error (Critical #34 ignition resolved; `record_metrics`, `to_timedelta`, `SMA_MACD` indexing fixed)
   2. Orders carry real non-zero quantities via minimal sizing placed in the order/risk seam (no `quantity=0` reaching fills)
-  3. `SMA_MACD` produces a non-trivial trade log + equity curve on `data/BTCUSD_1d_ohlcv_01_01_2021-04_06_2026.csv`, and that reference output (trade log with entry/exit time + side, equity curve, final cash/metrics) is **captured and committed** as the behavioral + numerical oracle
+  3. `SMA_MACD` produces a non-trivial trade log + equity curve on `data/BTCUSD_1d_ohlcv_2018_2026.csv`, and that reference output (trade log with entry/exit time + side, equity curve, final cash/metrics) is **captured and committed** as the behavioral + numerical oracle
   4. A run-path smoke test (import→construct→run) and a run-path integration test exist, the 8 declared pytest markers are applied, and the 274 existing component tests stay green
 **Plans**: TBD
 

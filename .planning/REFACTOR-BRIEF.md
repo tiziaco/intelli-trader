@@ -18,7 +18,7 @@ Make iTrader **run correctly in backtest mode** end-to-end on a single reference
 review, and leave behind an engine whose results are **trustworthy and regression-locked**.
 
 **Definition of done (program-level):**
-- `SMA_MACD_strategy` runs end-to-end on `data/BTCUSD_1d_ohlcv_01_01_2021-04_06_2026.csv` and produces
+- `SMA_MACD_strategy` runs end-to-end on `data/BTCUSD_1d_ohlcv_2018_2026.csv` and produces
   a non-trivial trade log + equity curve.
 - `mypy --strict` clean; **no `float` money** (Decimal end-to-end); a **single UUIDv7 ID scheme**.
 - Runs are **deterministic** (seeded RNG + injected clock).
@@ -75,7 +75,7 @@ These are **intentionally not** part of this program. They have their own milest
 
 | Term | Artifact |
 |---|---|
-| **Golden dataset** | `data/BTCUSD_1d_ohlcv_01_01_2021-04_06_2026.csv` (frozen input) |
+| **Golden dataset** | `data/BTCUSD_1d_ohlcv_2018_2026.csv` (frozen input) |
 | **Golden strategy** | `itrader/strategy_handler/SMA_MACD_strategy.py` (fixed params, frozen) |
 | **Reference output** | Snapshot of a full backtest run: trade log (entry/exit time + side), equity curve, final cash/metrics |
 | **Characterization tests** | The existing 274 component tests (portfolio/position/transaction/order/exec) — the *unit-level* oracle; migrate to pytest, keep |

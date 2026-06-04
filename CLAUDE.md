@@ -103,7 +103,7 @@ backtest mode** end-to-end on one reference strategy (`SMA_MACD`) over a fixed g
 fixing every structural issue surfaced in the architecture review, and leave behind an engine
 whose results are trustworthy and regression-locked.
 
-**Core Value:** A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_01_01_2021-04_06_2026.csv` produces
+**Core Value:** A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` produces
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
