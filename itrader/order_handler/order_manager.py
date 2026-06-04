@@ -121,8 +121,19 @@ class OrderManager:
 			List of operation results with OrderEvents for execution handler
 		"""
 		results = []
-		
+
 		try:
+			# 0. Resolve fraction-of-cash sizing BEFORE validation (D-08/D-09).
+			# The strategy emits quantity=0 (base.py:63); the order/risk layer resolves the
+			# per-portfolio quantity here so the in-flight signal carries a real size before
+			# the validator and order construction run. Doing this BEFORE validation is the
+			# narrow gate for DEF-01-B: the running engine never presents quantity=0 to the
+			# validator (so the offline run is admitted), while the validator's own zero-quantity
+			# rejection — exercised directly by test_zero_quantity_signal — is left intact.
+			sizing_error = self._resolve_signal_quantity(signal_event)
+			if sizing_error is not None:
+				return [sizing_error]
+
 			# 1. Validate the signal
 			if self.order_validator:
 				validation_result = self.order_validator.validate_signal_pipeline(signal_event)
@@ -215,6 +226,52 @@ class OrderManager:
 		
 		return results
 	
+	def _resolve_signal_quantity(self, signal_event: SignalEvent):
+		"""
+		Resolve a strategy sentinel quantity (qty<=0) in the order/risk seam (D-08/D-09).
+
+		The strategy emits quantity=0 (base.py:63); the order/risk layer — NOT the strategy
+		or position_sizer (D-09) — resolves the per-portfolio quantity. Two cases, both keyed
+		on the long-only reference strategy (SMA_MACD: BUY enters a long, SELL exits it; the
+		short block is commented out):
+
+		* EXIT (SELL with an open long position): size the order to the position's net
+		  quantity so the exit fully closes the long and a round-trip trade is recorded.
+		  Without this the exit SELL would be sized independently and never net the long to
+		  zero, so no position would ever close and the trade log would stay empty (M1-07).
+		* ENTRY (BUY, or a SELL with no open position): fraction-of-cash sizing,
+		  (0.95 * available_cash) / price — 95% buffer so float/rounding cannot overshoot a
+		  cash check; fractional BTC.
+
+		The resolved qty is carried on the in-flight signal so every downstream branch picks
+		it up: the MARKET path reads signal.quantity internally (order.py:143) and the
+		LIMIT/STOP branches pass signal_event.quantity explicitly.
+
+		Idempotent: only resolves when the signal carries no explicit quantity (qty<=0), so a
+		caller-supplied quantity is preserved and a second call after resolution is a no-op.
+
+		Returns
+		-------
+		OperationResult | None
+			A failure_result when the price is invalid (cannot size); otherwise None.
+		"""
+		if not signal_event.quantity or signal_event.quantity <= 0:
+			price = signal_event.price
+			if not price or price <= 0:
+				return OperationResult.failure_result(
+					f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
+					operation_type="create_primary_order"
+				)
+			portfolio = self.portfolio_handler.get_portfolio(signal_event.portfolio_id)
+			open_position = portfolio.get_open_position(signal_event.ticker)
+			if signal_event.action == "SELL" and open_position is not None and open_position.net_quantity > 0:
+				# Long-only exit: close the open long by selling its full quantity.
+				signal_event.quantity = open_position.net_quantity
+			else:
+				# Entry (or SELL with no open long): fraction-of-cash sizing.
+				signal_event.quantity = (0.95 * portfolio.cash) / price
+		return None
+
 	def _create_primary_order(self, signal_event: SignalEvent, exchange: str) -> OperationResult:
 		"""
 		Create the primary order based on signal.order_type.
@@ -232,27 +289,13 @@ class OrderManager:
 			Result of primary order creation
 		"""
 		try:
-			# Fraction-of-cash sizing (D-08/D-09): the order/risk layer resolves the
-			# per-portfolio quantity here, NOT the strategy or position_sizer. The strategy
-			# emits quantity=0 (base.py:63); we resolve it to (0.95 * available_cash) / price
-			# (95% buffer so float/rounding cannot overshoot a cash check; fractional BTC).
-			# Only resolve when the signal carries no explicit quantity (qty<=0) so callers
-			# that already supply a quantity keep their declared size unchanged.
-			if not signal_event.quantity or signal_event.quantity <= 0:
-				price = signal_event.price
-				if not price or price <= 0:
-					return OperationResult.failure_result(
-						f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
-						operation_type="create_primary_order"
-					)
-				portfolio = self.portfolio_handler.get_portfolio(signal_event.portfolio_id)
-				qty = (0.95 * portfolio.cash) / price
-				# Carry the computed qty into the in-flight signal BEFORE order construction.
-				# MARKET path reads signal.quantity internally (order.py:143); LIMIT/STOP branches
-				# pass signal_event.quantity explicitly. This single mutation covers all branches.
-				# Safe per RESEARCH A5: SMA_MACD uses only MARKET orders and the signal is consumed
-				# immediately here, never re-queued or reused, so the mutation cannot leak.
-				signal_event.quantity = qty
+			# Fraction-of-cash sizing (D-08/D-09): idempotently resolve the per-portfolio
+			# quantity in the order/risk seam. Normally already resolved at the top of
+			# process_signal (before validation); kept here too so the direct
+			# create_orders_from_signal entry point (which bypasses process_signal) is sized.
+			sizing_error = self._resolve_signal_quantity(signal_event)
+			if sizing_error is not None:
+				return sizing_error
 
 			order_type_str = signal_event.order_type.upper()
 

@@ -71,7 +71,11 @@ class EnhancedOrderValidator:
         self.min_order_value = 1.0
         self.max_order_value = 1000000.0
         self.min_price = 0.01
-        self.max_price = 100000.0
+        # Crypto prices exceed the stock-tuned $100k ceiling (the golden BTCUSD feed reaches
+        # ~$116k in 2024-2026), which would otherwise reject every late-window trade and make
+        # a complete oracle impossible. Raise the ceiling for the offline backtest run
+        # (DEF-01-B class, Plan 01-04).
+        self.max_price = 10000000.0
         self.min_quantity = 0.001
         self.max_quantity = 1000000.0
         self.min_cash_required = 30.0
@@ -83,8 +87,10 @@ class EnhancedOrderValidator:
             "default": {"open": time(0, 0), "close": time(23, 59)}  # 24/7 for crypto
         }
         
-        # Supported exchanges
-        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "simulated"}
+        # Supported exchanges. "csv" is the offline golden-feed venue used by the backtest
+        # path: portfolios are created with exchange="csv", so signals carry that venue and
+        # the validator must admit it for the offline run (DEF-01-B class, Plan 01-04).
+        self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "simulated", "csv"}
     
     def validate_signal_pipeline(self, signal: SignalEvent) -> ValidationResult:
         """

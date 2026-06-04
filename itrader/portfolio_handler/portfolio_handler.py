@@ -258,7 +258,13 @@ class PortfolioHandler:
                     ticker=fill_event.ticker,
                     price=fill_event.price,
                     quantity=fill_event.quantity,
-                    commission=fill_event.commission,
+                    # DEF-01-A (overlaps M4 Decimal-money scope): the fee model returns a Decimal
+                    # commission, but Transaction.commission is declared float and the whole
+                    # transaction/position math path is float. Coerce at this single fill->transaction
+                    # boundary so the Decimal never mixes with floats downstream (transaction_manager
+                    # funds check, position avg_price, etc.). Must be reconciled when M4 moves money
+                    # to Decimal end-to-end (#22 Critical).
+                    commission=float(fill_event.commission),
                     portfolio_id=portfolio_id,
                     id=idgen.generate_transaction_id()
                 )
