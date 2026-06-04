@@ -32,7 +32,7 @@ credentials*
 **cache**
 
 #UserData
-output
+output/
 my_strategies/
 settings/
 test.py
