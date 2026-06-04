@@ -118,7 +118,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		from itrader.core.enums import OrderType as OT
 		primary_event = next(e for e in order_events if e.order_type == OT.MARKET)
 		pending_orders = self.order_handler.order_storage.get_pending_orders()
-		portfolio_orders = pending_orders.get(str(primary_event.portfolio_id), {})
+		portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
 
 		# Assert primary Order Event
 		self.assertEqual(primary_event.ticker, 'BTCUSDT')
@@ -145,7 +145,7 @@ class TestOrderHandlerUpdates(unittest.TestCase):
 		from itrader.core.enums import OrderType as OT
 		primary_event = next(e for e in order_events if e.order_type == OT.MARKET)
 		pending_orders = self.order_handler.order_storage.get_pending_orders()
-		portfolio_orders = pending_orders.get(str(primary_event.portfolio_id), {})
+		portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
 
 		# Assert primary Order Event
 		self.assertEqual(primary_event.ticker, 'BTCUSDT')
