@@ -6,9 +6,10 @@ direct ``datetime.now()`` call inside the engine. This module provides the
 mechanism: a structural ``Clock`` protocol plus two concrete implementations.
 
 - ``BacktestClock`` returns the explicitly-advanced simulation/bar time. It never
-  silently falls back to wall-clock — ``now()`` asserts that the clock has been
-  advanced, so a forgotten ``set_time`` surfaces loudly instead of leaking
-  non-deterministic wall-clock time into a backtest.
+  silently falls back to wall-clock — ``now()`` raises ``RuntimeError`` when the
+  clock has not been advanced, so a forgotten ``set_time`` surfaces loudly instead
+  of leaking non-deterministic wall-clock time into a backtest. The guard is an
+  explicit ``raise`` (not an ``assert``) so it survives ``python -O``.
 - ``WallClock`` returns real ``datetime.now()`` for live/telemetry callers.
 
 **D-10 scope:** this plan builds the mechanism only. M2a wires the clock onto the
@@ -31,8 +32,10 @@ class Clock(Protocol):
 class BacktestClock:
     """Deterministic clock that returns the injected simulation/bar time.
 
-    Must be advanced via ``set_time`` before use; ``now()`` asserts the clock
-    has been advanced rather than falling back to wall-clock.
+    Must be advanced via ``set_time`` before use; ``now()`` raises
+    ``RuntimeError`` if the clock has not been advanced rather than falling back
+    to wall-clock. The guard is an explicit ``raise`` so it survives
+    ``python -O`` (which strips ``assert`` statements).
     """
 
     def __init__(self) -> None:
@@ -42,7 +45,10 @@ class BacktestClock:
         self._t = t
 
     def now(self) -> datetime:
-        assert self._t is not None, "BacktestClock not advanced"
+        if self._t is None:
+            raise RuntimeError(
+                "BacktestClock not advanced: call set_time() before now()."
+            )
         return self._t
 
 

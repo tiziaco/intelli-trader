@@ -3,9 +3,9 @@
 These tests lock the contracts the clock module (Task 4 of this plan) must
 satisfy:
 
-1. A fresh ``BacktestClock`` has no time yet — ``.now()`` raises/asserts before
-   ``.set_time(...)`` is called (the clock must be explicitly advanced; it never
-   silently falls back to wall-clock).
+1. A fresh ``BacktestClock`` has no time yet — ``.now()`` raises ``RuntimeError``
+   before ``.set_time(...)`` is called (the clock must be explicitly advanced; it
+   never silently falls back to wall-clock, and the guard survives ``python -O``).
 2. After ``c.set_time(t)``, ``c.now() == t`` (returns the injected sim/bar time).
 
 They are EXPECTED to fail (red) until Task 4 creates ``itrader/core/clock.py``.
@@ -29,7 +29,7 @@ pytestmark = pytest.mark.unit
 
 def test_backtest_clock_now_before_advance_raises():
     clock = BacktestClock()
-    with pytest.raises(AssertionError):
+    with pytest.raises(RuntimeError):
         clock.now()
 
 
