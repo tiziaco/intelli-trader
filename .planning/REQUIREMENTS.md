@@ -32,7 +32,7 @@
 - [ ] **M1-06**: Orders carry a real non-zero quantity — implement *minimal* position sizing in the
   architecturally-correct order/risk seam so `quantity=0` no longer reaches orders/fills
   *(KB11 [start of M1→M5], #24/#31 [minimal-sizing start])*
-- [ ] **M1-07**: `SMA_MACD` produces a **non-trivial trade log + equity curve** on
+- [x] **M1-07**: `SMA_MACD` produces a **non-trivial trade log + equity curve** on
   `data/BTCUSD_1d_ohlcv_2018_2026.csv` (`make backtest` runs) *(definition-of-done gate, #35)*
 - [ ] **M1-08**: The **reference output is captured and committed** — trade log (entry/exit time +
   side), equity curve, final cash/metrics — establishing the behavioral + numerical oracle *(golden-master spine)*

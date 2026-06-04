@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-04T13:52:59.556Z"
+last_updated: "2026-06-04T13:57:35.926Z"
 last_activity: 2026-06-04
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 01 (m1-ignition-lock-the-oracle) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-06-04
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
@@ -53,6 +53,7 @@ Progress: [██░░░░░░░░] 20%
 
 *Updated after each plan completion*
 | Phase 01 P01 | 12 | 3 tasks | 4 files |
+| Phase 01 P02 | 10 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -64,6 +65,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - IDs = single UUIDv7 scheme via `uuid-utils`
 - Golden-master two-layer oracle: behavioral oracle (trade timing) is law M2→M4; numerical oracle re-baselines only after M2 (Phase 3) and after M5 (Phase 8)
 - Position sizing: strategy declares policy + SL/TP, order/risk layer resolves per-portfolio quantity; M1 implements the minimal seam (Phase 1) so M5 extends rather than replaces it (Phase 7)
+- [Phase ?]: D-07: csv/offline feed lives inside PriceHandler, skips SqlHandler + CCXT (Phase 1 Plan 2)
 
 ### Pending Todos
 
@@ -90,6 +92,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-04T13:52:55.474Z
+Last session: 2026-06-04T13:57:27.205Z
 Stopped at: Phase 1 context gathered
 Resume file: None

@@ -43,7 +43,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. A run-path smoke test (import→construct→run) and a run-path integration test exist, the 8 declared pytest markers are applied, and the 274 existing component tests stay green
 **Plans**: 5 plans
   - [x] 01-01-PLAN.md — Test skeleton (conftest + auto-marking) + import ignition (config re-export, TIMEZONE, to_timedelta)
-  - [ ] 01-02-PLAN.md — CSV/offline price feed inside PriceHandler (exact CCXT frame shape, no SQL/CCXT)
+  - [x] 01-02-PLAN.md — CSV/offline price feed inside PriceHandler (exact CCXT frame shape, no SQL/CCXT)
   - [ ] 01-03-PLAN.md — Loop/strategy/sizing fixes (SMA_MACD .iloc/fillna, record_metrics per-Portfolio, fraction-of-cash sizing seam)
   - [ ] 01-04-PLAN.md — Run script + make backtest + deterministic oracle serialization; smoke test green
   - [ ] 01-05-PLAN.md — Freeze oracle to test/golden/ (human-blessed) + run-path integration test; full suite green
@@ -131,7 +131,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. M1 — Ignition + Lock the Oracle | 1/5 | In Progress|  |
+| 1. M1 — Ignition + Lock the Oracle | 2/5 | In Progress|  |
 | 2. M2a — Identity, Money & Determinism | 0/TBD | Not started | - |
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 0/TBD | Not started | - |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |
