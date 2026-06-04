@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-06-04T18:00:16.981Z"
+last_updated: "2026-06-04T18:20:14.506Z"
 last_activity: 2026-06-04
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 12
-  completed_plans: 9
+  completed_plans: 10
   percent: 13
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 02 (m2a-identity-money-determinism) — EXECUTING
-Plan: 5 of 7
+Plan: 6 of 7
 Status: Ready to execute
 Last activity: 2026-06-04
 
-Progress: [████████░░] 75%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [████████░░] 75%
 | Phase 02 P02 | 4 | 4 tasks | 6 files |
 | Phase 02 P03 | 13 | 3 tasks | 11 files |
 | Phase 02 P05 | 22 | 3 tasks | 12 files |
+| Phase 02 P04 | 20 | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 02-05: minimal-conformance ABC carve-out — Universe.get_assets and AbstractStatistics methods left non-abstract (run-path subclasses don't implement them; deep rework deferred M5b #33/#38)
 - [Phase ?]: Plan 02-05: SimulatedExchange.configure added (Pitfall 3, D-08) delegating to update_config; conforms to AbstractExchange Protocol. Strategy.calculate_signal now @abstractmethod (#20 real enforcement)
 - [Phase ?]: Plan 02-05: mypy gate 316->906 is unmasked pre-existing untyped-def debt (not regression), deferred to Plan 07; SignalEvent.strategy_id int->StrategyId retype noted for Plan 07
+- [Phase ?]: Plan 02-04: money Decimal at entity boundaries; float execution+sizing untouched (M4)
+- [Phase ?]: Plan 02-04: portfolio.cash Decimal end-to-end (#17 round-trip removed); aggregate read-props kept float; cash via CashManager + Decimal aggregates deferred to M4 #22
+- [Phase ?]: Plan 02-04: DEF-02-04-A golden numeric oracle drift (behavioral oracle preserved, only numeric cols) deferred to Pattern E + owner-gated post-M2 numerical re-baseline
 
 ### Pending Todos
 
@@ -113,6 +117,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-04T17:59:46.704Z
+Last session: 2026-06-04T18:20:04.306Z
 Stopped at: Phase 2 context gathered
 Resume file: None
