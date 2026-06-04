@@ -55,7 +55,7 @@
   `float` round-trips and a centralized quantization policy *(#17)*
 - [x] **M2-03**: `mypy --strict` is clean across the package; hot-path DTOs/events are
   `frozen=True`/`slots=True`; `NewType` ID aliases applied *(#8)*
-- [ ] **M2-04**: The eight Py2 `__metaclass__ = ABCMeta` "abstract" bases become real ABCs (or
+- [x] **M2-04**: The eight Py2 `__metaclass__ = ABCMeta` "abstract" bases become real ABCs (or
   `Protocol`s), surfacing and fixing the non-conforming subclasses *(#20)*
 - [x] **M2-05**: Backtests are deterministic — RNG seeded behind an injected `Random`, clock injected
   (no local `datetime.now()`), flat global order index by id *(#5, PERF2)*

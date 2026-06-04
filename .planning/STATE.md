@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-06-04T17:46:18.912Z"
+last_updated: "2026-06-04T18:00:16.981Z"
 last_activity: 2026-06-04
 progress:
   total_phases: 8
   completed_phases: 1
   total_plans: 12
-  completed_plans: 8
+  completed_plans: 9
   percent: 13
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 02 (m2a-identity-money-determinism) — EXECUTING
-Plan: 4 of 7
+Plan: 5 of 7
 Status: Ready to execute
 Last activity: 2026-06-04
 
-Progress: [███████░░░] 67%
+Progress: [████████░░] 75%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [███████░░░] 67%
 | Phase 02 P01 | 6 | 2 tasks | 6 files |
 | Phase 02 P02 | 4 | 4 tasks | 6 files |
 | Phase 02 P03 | 13 | 3 tasks | 11 files |
+| Phase 02 P05 | 22 | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,10 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 02-03: single UUIDv7 scheme via uuid_utils.compat.uuid7(); integer type-prefix scheme deleted (D-12/D-13/D-14)
 - [Phase ?]: Plan 02-03: InMemoryOrderStorage native-UUID keyed + flat Dict[uuid.UUID, Order] index for O(1) lookup (D-14, PERF2); nested dicts retained, scan elimination deferred to M4-06
 - [Phase ?]: Plan 02-03: removed int(portfolio_id) coercion in portfolio_handler.on_fill (Rule 1/3 deviation; file unowned by phase-02 plans) to keep suite green post UUID migration
+- [Phase ?]: Plan 02-05: 11 dead metaclass bases converted to 3 runtime_checkable Protocols + 8 real ABCs (D-07/D-08b)
+- [Phase ?]: Plan 02-05: minimal-conformance ABC carve-out — Universe.get_assets and AbstractStatistics methods left non-abstract (run-path subclasses don't implement them; deep rework deferred M5b #33/#38)
+- [Phase ?]: Plan 02-05: SimulatedExchange.configure added (Pitfall 3, D-08) delegating to update_config; conforms to AbstractExchange Protocol. Strategy.calculate_signal now @abstractmethod (#20 real enforcement)
+- [Phase ?]: Plan 02-05: mypy gate 316->906 is unmasked pre-existing untyped-def debt (not regression), deferred to Plan 07; SignalEvent.strategy_id int->StrategyId retype noted for Plan 07
 
 ### Pending Todos
 
@@ -108,6 +113,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-04T17:45:55.782Z
+Last session: 2026-06-04T17:59:46.704Z
 Stopped at: Phase 2 context gathered
 Resume file: None

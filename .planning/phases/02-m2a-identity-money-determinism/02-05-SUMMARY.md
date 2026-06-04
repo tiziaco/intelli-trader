@@ -153,3 +153,8 @@ None - no external service configuration required.
 ---
 *Phase: 02-m2a-identity-money-determinism*
 *Completed: 2026-06-04*
+
+## Self-Check: PASSED
+
+- FOUND: 02-05-SUMMARY.md
+- FOUND commits: a6e90cd (Task 1), 2db39ff (Task 2), d027d68 (Task 3)
