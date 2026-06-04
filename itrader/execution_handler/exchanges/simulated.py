@@ -499,6 +499,22 @@ class SimulatedExchange(AbstractExchange):
 			return ZeroSlippageModel()
 
 	# Configuration Management (following Portfolio pattern)
+	def configure(self, config: Dict[str, Any]) -> bool:
+		"""
+		Conform to the AbstractExchange Protocol (D-08, Pitfall 3).
+
+		`update_config` already applies settings but is not the Protocol method
+		name; `configure` delegates to it so SimulatedExchange structurally
+		satisfies AbstractExchange. Returns True on success, False on a rejected
+		(unknown) configuration key.
+		"""
+		try:
+			self.update_config(**config)
+		except ValueError as exc:
+			self.logger.warning('Exchange configure rejected: %s', exc)
+			return False
+		return True
+
 	def update_config(self, **kwargs) -> None:
 		"""Update exchange configuration."""
 		with self._lock:
