@@ -1,18 +1,15 @@
-from abc import ABCMeta, abstractmethod
+from typing import Any, Protocol, runtime_checkable
 
 
-class AbstractPositionSizer(object):
+@runtime_checkable
+class AbstractPositionSizer(Protocol):
     """
-    The AbstractPositionSizer abstract class modifies
-    the quantity (or not) of any share transacted
+    Structural interface (D-07) for position sizers, which modify
+    the quantity (or not) of any share transacted.
     """
 
-    __metaclass__ = ABCMeta
-
-    @abstractmethod
-    def size_order(self, portfolio, initial_order):
+    def size_order(self, portfolio: Any, initial_order: Any) -> Any:
         """
-        This TestPositionSizer object simply modifies
-        the quantity to be 100 of any share transacted.
+        Modify the order quantity according to the sizer policy.
         """
-        raise NotImplementedError("Should implement size_order()")
+        ...
