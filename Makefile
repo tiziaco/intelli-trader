@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-cov precommit
+.PHONY: init-env clean test test-unit test-integration test-cov backtest precommit
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -68,6 +68,11 @@ test-watch:
 # test-report:
 # 	@echo "📋 Generating test report..."
 # 	poetry run pytest tests/ --html=reports/test_report.html --self-contained-html -v
+
+# Generate the deterministic backtest oracle (output/{trades,equity}.csv + summary.json)
+backtest:
+	@echo "🚀 Running backtest oracle generator..."
+	poetry run python scripts/run_backtest.py
 
 precommit:
 	pre-commit run --all-files --hook-stage manual

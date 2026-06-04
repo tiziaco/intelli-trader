@@ -75,10 +75,15 @@ class Position(object):
 		"""
 		# if self.net_quantity == 0:
 		# 	return 0.0
+		# DEF-01-A (overlaps M4 Decimal-money scope): the fee model returns Decimal commissions
+		# (even ZeroFeeModel -> Decimal('0')), but avg_bought/avg_sold/quantities are float, so
+		# the raw mix raises TypeError on the first fill. Minimal, type-consistent local fix:
+		# coerce the commission to float here so this float-based property stays float end-to-end.
+		# Must be reconciled when M4 moves money to Decimal end-to-end (#22 Critical).
 		if self.side == PositionSide.LONG:
-			return (self.avg_bought * self.buy_quantity + self.buy_commission) / self.buy_quantity
+			return (self.avg_bought * self.buy_quantity + float(self.buy_commission)) / self.buy_quantity
 		else: # side = 'SHORT'
-			return (self.avg_sold * self.sell_quantity - self.sell_commission) / self.sell_quantity
+			return (self.avg_sold * self.sell_quantity - float(self.sell_commission)) / self.sell_quantity
 
 	@property
 	def net_quantity(self) -> float:

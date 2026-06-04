@@ -58,13 +58,13 @@ class SMA_MACD_strategy(Strategy):
 
 
 		# Calculate the MACD
-		MACD_Indicator = trend.MACD(bars.close, window_fast=self.FAST, window_slow=self.SLOW, window_sign=self.WIN, fillna='False')
+		MACD_Indicator = trend.MACD(bars.close, window_fast=self.FAST, window_slow=self.SLOW, window_sign=self.WIN, fillna=False)
 		MACDhist = MACD_Indicator.macd_diff().dropna()
 
 
 		### LONG signals
 		# Entry
-		if short_sma[-1] >= long_sma[-1]: # Filter
+		if short_sma.iloc[-1] >= long_sma.iloc[-1]: # Filter
 			if ((MACDhist.iloc[-1] >= 0) and (MACDhist.iloc[-2] < 0)): # Buy trigger
 				self.buy(ticker)
 		# Exit

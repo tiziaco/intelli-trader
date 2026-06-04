@@ -65,7 +65,14 @@ def to_timedelta(timeframe: str) -> timedelta:
 
 		if unit in attributes:
 			return timedelta(**{attributes[unit]: int(quantity)})
-	return None
+		# M1-03: fail loudly on the daily golden path instead of silently
+		# returning None (a None timedelta propagates as an opaque crash
+		# downstream). Week/month support is deferred to M2-10.
+		raise ValueError(
+			f"Unsupported timeframe unit '{unit}' in '{timeframe}'. "
+			f"Supported units: {sorted(attributes)} (weeks/months are M2-10)."
+		)
+	raise ValueError(f"Could not parse timeframe '{timeframe}'.")
 
 def timedelta_to_str(delta: timedelta) -> Union[str, None]:
 	"""

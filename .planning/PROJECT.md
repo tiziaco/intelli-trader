@@ -11,7 +11,7 @@ whose results are trustworthy and regression-locked.
 
 ## Core Value
 
-A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_01_01_2021-04_06_2026.csv` produces
+A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` produces
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
@@ -28,16 +28,17 @@ must import, run, and yield trustworthy results.
 - ✓ In-memory order storage backend + `SimulatedExchange`/`MatchingEngine` resting-book matching — existing
 - ✓ 274 component tests pass under pytest strictness (`filterwarnings=["error"]`, strict markers) — existing
 
+**Validated in Phase 1 (M1 — Ignition + lock the oracle), 2026-06-04:**
+- ✓ Run path imports and `SMA_MACD` runs end-to-end on the golden CSV producing a non-trivial trade log + equity curve — `make backtest`, 134 trades, final equity $53,229.75 (#34, #35-backtest)
+- ✓ Reference output captured + committed as the behavioral + numerical oracle at `test/golden/{trades,equity}.csv + summary.json`; regression-locked by an exact-diff (no float tolerance) run-path integration test
+- ✓ Test skeleton: root `conftest.py` path-based marker auto-marking, 8 markers applied, run-path smoke + integration tests; full suite 276 green (#40-skeleton, TC1)
+- ✓ Minimal fraction-of-cash sizing in the order/risk seam — orders no longer `quantity=0` (KB11, #24/#31 minimal)
+- ✓ Ignition bugs fixed: `SMA_MACD` `[-1]`/`fillna` (KB15), `record_metrics` target (KB18), `to_timedelta` None (KB20), config import cascade (KB16/KB17/TD2)
+- ⚠ Accepted deferrals (tracked in `phases/01-…/deferred-items.md`): **DEF-01-A** — a minimal Decimal→float commission coercion bridges ignition, to be reconciled when M4 makes money Decimal end-to-end; **DEF-01-C** — no margin/liquidation model, an un-liquidated short drives equity negative (min −$33,748); human-blessed into the M1 oracle as current-behavior-to-preserve, owner-routed to M5.
+
 ### Active
 
 <!-- The backtest-correctness program. Organized by milestone M1–M5 (see ROADMAP). -->
-
-**M1 — Ignition + lock the oracle**
-- [ ] Run path imports and `SMA_MACD` runs end-to-end on the golden CSV producing a non-trivial trade log + equity curve (#34, #35-backtest)
-- [ ] Capture + commit the reference output (trade log, equity curve, final cash/metrics) — the behavioral + numerical oracle
-- [ ] Test skeleton: pytest migration scaffold, markers applied, run-path smoke + integration test (#40-skeleton, TC1)
-- [ ] Minimal real position sizing in the order/risk seam so orders are no longer `quantity=0` (KB11, #24/#31 minimal)
-- [ ] Fix ignition-blocking bugs: `SMA_MACD` `[-1]`/`fillna` (KB15), `record_metrics` target (KB18), `to_timedelta` None (KB20), config import cascade (KB16/KB17/TD2)
 
 **M2 — Foundations**
 - [ ] UUIDv7 via `uuid-utils` as the single ID scheme (#10 Critical, #11-ids, #18/#19 ids)
@@ -157,4 +158,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-04 after initialization*
+*Last updated: 2026-06-04 — Phase 1 (M1 — Ignition + Lock the Oracle) complete; behavioral + numerical oracle frozen at test/golden/ and now law for M2–M4.*

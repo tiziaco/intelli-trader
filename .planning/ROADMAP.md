@@ -21,7 +21,7 @@ shift) and end of M5 (look-ahead/fill-realism fixes). Milestone identity is pres
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: M1 — Ignition + Lock the Oracle** - Make the backtest run end-to-end and capture/commit the reference output
+- [x] **Phase 1: M1 — Ignition + Lock the Oracle** - Make the backtest run end-to-end and capture/commit the reference output (completed 2026-06-04)
 - [ ] **Phase 2: M2a — Identity, Money & Determinism** - UUIDv7 IDs, Decimal money, mypy-strict frozen DTOs, real ABCs, seeded/clocked determinism
 - [ ] **Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze** - Pydantic config, centralized types, portfolio storage seam, time_parser final, dead-code purge, pytest conversion, re-freeze numerical oracle
 - [ ] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging
@@ -39,9 +39,14 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Success Criteria** (what must be TRUE):
   1. `make backtest` imports and runs the full PING→BAR→SIGNAL→ORDER→FILL loop without error (Critical #34 ignition resolved; `record_metrics`, `to_timedelta`, `SMA_MACD` indexing fixed)
   2. Orders carry real non-zero quantities via minimal sizing placed in the order/risk seam (no `quantity=0` reaching fills)
-  3. `SMA_MACD` produces a non-trivial trade log + equity curve on `data/BTCUSD_1d_ohlcv_01_01_2021-04_06_2026.csv`, and that reference output (trade log with entry/exit time + side, equity curve, final cash/metrics) is **captured and committed** as the behavioral + numerical oracle
+  3. `SMA_MACD` produces a non-trivial trade log + equity curve on `data/BTCUSD_1d_ohlcv_2018_2026.csv`, and that reference output (trade log with entry/exit time + side, equity curve, final cash/metrics) is **captured and committed** as the behavioral + numerical oracle
   4. A run-path smoke test (import→construct→run) and a run-path integration test exist, the 8 declared pytest markers are applied, and the 274 existing component tests stay green
-**Plans**: TBD
+**Plans**: 5 plans
+  - [x] 01-01-PLAN.md — Test skeleton (conftest + auto-marking) + import ignition (config re-export, TIMEZONE, to_timedelta)
+  - [x] 01-02-PLAN.md — CSV/offline price feed inside PriceHandler (exact CCXT frame shape, no SQL/CCXT)
+  - [x] 01-03-PLAN.md — Loop/strategy/sizing fixes (SMA_MACD .iloc/fillna, record_metrics per-Portfolio, fraction-of-cash sizing seam)
+  - [x] 01-04-PLAN.md — Run script + make backtest + deterministic oracle serialization; smoke test green
+  - [x] 01-05-PLAN.md — Freeze oracle to test/golden/ (human-blessed) + run-path integration test; full suite green
 
 ### Phase 2: M2a — Identity, Money & Determinism
 **Goal**: Replace the overflow-prone integer ID scheme with UUIDv7, make money Decimal end-to-end, achieve `mypy --strict` cleanliness with frozen/typed DTOs and real ABCs, and make runs deterministic via seeded RNG and an injected clock — the structural foundations the rest of the program builds on.
@@ -126,7 +131,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. M1 — Ignition + Lock the Oracle | 0/TBD | Not started | - |
+| 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
 | 2. M2a — Identity, Money & Determinism | 0/TBD | Not started | - |
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 0/TBD | Not started | - |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |

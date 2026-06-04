@@ -54,9 +54,14 @@ class ExecutionHandler(AbstractExecutionHandler):
 
 	def on_market_data(self, bar):
 		"""Drive resting-order matching on each exchange with a new bar."""
+		# Dedup by instance identity: multiple venue aliases (e.g. 'simulated' and 'csv')
+		# may point to the same exchange object; driving it once per bar avoids
+		# double-matching the resting-order book (DEF-01-B alias, Plan 01-04).
+		seen = set()
 		for name, exchange in self.exchanges.items():
-			if exchange is None:
+			if exchange is None or id(exchange) in seen:
 				continue
+			seen.add(id(exchange))
 			try:
 				exchange.on_market_data(bar)
 			except Exception as e:
@@ -71,8 +76,18 @@ class ExecutionHandler(AbstractExecutionHandler):
 		Creates exchange instances using their default configurations.
 		Each exchange manages its own fee models, slippage simulation, etc.
 		"""
+		simulated = SimulatedExchange(self.global_queue)
+		# The golden backtest trades BTCUSD, but the default exchange preset only lists
+		# *USDT symbols. Add BTCUSD to this instance's supported set so validate_symbol
+		# admits the golden ticker for the offline run (DEF-01-B, Plan 01-04). Mutating the
+		# instance set (not the shared preset) keeps other exchanges/tests unaffected.
+		simulated._supported_symbols = set(simulated._supported_symbols) | {'BTCUSD'}
 		exchanges = {
-			'simulated': SimulatedExchange(self.global_queue),
+			'simulated': simulated,
+			# Backtest portfolios use exchange="csv" (offline golden feed). Orders carry the
+			# portfolio's exchange string, so the 'csv' venue must resolve to the simulated
+			# matching engine for the backtest fill path to work (DEF-01-B, Plan 01-04).
+			'csv': simulated,
 			'ccxt': None  # Placeholder for live exchange implementation
 		}
 		

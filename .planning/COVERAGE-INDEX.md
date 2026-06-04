@@ -246,7 +246,7 @@ not be marked ☑ until their final milestone completes.
 
 | ID | Item | Severity / category | Milestone | Found by (phase / mechanism) | Status |
 |----|------|---------------------|-----------|------------------------------|:--:|
-| _(none yet)_ | | | | | |
+| DX1 | **Golden dataset swapped** — the `data/BTCUSD_1d_ohlcv_01_01_2021-04_06_2026.csv` named across the docs only contained 398 rows / 13 months (2025-05→2026-06) in a CoinMarketCap format (`;`-delimited, descending, `name="2781"`). Replaced by owner with `data/BTCUSD_1d_ohlcv_2018_2026.csv` (Binance-klines: comma, ascending, 3076 daily bars, 2018-01-01→2026-06-03). Doc references (PROJECT/REQUIREMENTS/ROADMAP/REFACTOR-BRIEF/CLAUDE.md) updated to the new filename. | DX — input/data | M1 | Phase 1 `/gsd-discuss-phase` (golden-run config) | ☑ |
 
 **Note on dynamic discovery:** the highest-yield sources here are expected to be the **M1 reference
 capture** and **M5 external cross-validation** (vs `backtesting.py` / `backtrader`), not static

@@ -15,6 +15,7 @@ from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader.outils.data_outils import resample_ohlcv
 
 from itrader import config
+from itrader.config import TIMEZONE
 from itrader.logger import get_itrader_logger
 
 
@@ -40,19 +41,41 @@ class PriceHandler(AbstractPriceHandler):
 		The base currency for the downloaded data
 	"""
 	
+	# Default golden dataset for the offline/csv backtest feed (D-01).
+	CSV_DEFAULT_PATH = 'data/BTCUSD_1d_ohlcv_2018_2026.csv'
+	# Explicit date window for the offline oracle (D-02). Pinned on the feed
+	# side so the oracle is insulated if the CSV is ever regenerated.
+	CSV_START_DATE = '2018-01-01'
+	CSV_END_DATE = '2026-06-03'
+	# Fixed ticker for the offline feed (D-03/D-06).
+	CSV_TICKER = 'BTCUSD'
+
 	def __init__(self, exchange: str,
 				symbols: list, timeframe: str,
 				start_dt: str, end_dt: str = None,
-				base_currency: str = 'USDT'):
-		
+				base_currency: str = 'USDT',
+				csv_path: str = None):
+
 		self.timeframe = timeframe
 		self.start_date = start_dt
 		self.end_date = end_dt
 		self.base_currency = base_currency
 		self.prices: Dict[str, pd.DataFrame] = {}
-		self.exchange = self._init_exchange(exchange)
-		self.symbols = self._init_symbols(symbols)
-		self.sql_handler = SqlHandler()
+
+		# D-07: offline/csv feed branch lives INSIDE PriceHandler. On the csv
+		# path we construct neither SqlHandler (no PostgreSQL) nor a CCXT
+		# exchange (no network) — the backtest reads the committed golden CSV.
+		self.is_csv = (exchange is not None and exchange.lower() == 'csv')
+		if self.is_csv:
+			self.csv_path = csv_path if csv_path is not None else self.CSV_DEFAULT_PATH
+			self.exchange = None
+			self.sql_handler = None
+			self.symbols = self._init_symbols(symbols)
+		else:
+			self.csv_path = None
+			self.exchange = self._init_exchange(exchange)
+			self.symbols = self._init_symbols(symbols)
+			self.sql_handler = SqlHandler()
 
 		self.logger = get_itrader_logger().bind(component="PriceHandler")
 		self.logger.info('Price Handler initialized')
@@ -64,9 +87,16 @@ class PriceHandler(AbstractPriceHandler):
 	
 	def load_data(self):
 		"""
-		Load price data from the data provider or sql database and 
-		store it in a dictionary 
+		Load price data from the data provider or sql database and
+		store it in a dictionary
 		"""
+
+		# D-07: offline/csv feed reads the committed golden CSV into
+		# self.prices in the EXACT CCXT frame shape and returns without ever
+		# touching SqlHandler or the CCXT exchange.
+		if self.is_csv:
+			self._load_csv_data()
+			return
 
 		# Read the list of coins stored in the db
 		sql_symblos = self.sql_handler.get_symbols_SQL()
@@ -89,7 +119,59 @@ class PriceHandler(AbstractPriceHandler):
 				self.sql_handler.to_database(symbol, price, True)
 		
 		self.logger.info('Price data loaded')
-	
+
+	def _load_csv_data(self):
+		"""
+		Load the golden CSV into self.prices in the EXACT frame shape the
+		CCXT path produces (see CCXT._format_data): lowercase OHLCV columns
+		and a tz-aware DatetimeIndex named 'date' converted to config.TIMEZONE.
+
+		Pitfall 6: the ping clock is derived from this same frame index
+		(backtest_trading_system.py: set_dates(self.prices[...].index)), so the
+		index tz is the ping tz by construction — one tz, no double-convert.
+
+		V5 / T-02-01: the committed CSV is trusted-but-verified — a malformed
+		header or empty frame raises loudly instead of silently yielding empty
+		bars (which would produce a silently-wrong oracle / zero trades).
+		"""
+		# Trusted-but-verify: validate the Binance-kline header before mapping.
+		expected_cols = ['Open time', 'Open', 'High', 'Low', 'Close', 'Volume']
+		raw = pd.read_csv(self.csv_path)
+		missing = [col for col in expected_cols if col not in raw.columns]
+		if missing:
+			raise ValueError(
+				f"Malformed CSV '{self.csv_path}': missing columns {missing}")
+
+		# Map Open time->date, Open/High/Low/Close/Volume->lowercase, drop the
+		# trailing Binance-kline columns (Close time, Quote asset volume,
+		# Number of trades, Taker buy base/quote, Ignore).
+		data = raw[expected_cols].copy()
+		data.columns = ['date', 'open', 'high', 'low', 'close', 'volume']
+
+		# Format index exactly like CCXT._format_data: tz-aware then convert to
+		# the configured timezone so it matches the ping clock by construction.
+		data = data.set_index('date')
+		data.index = pd.to_datetime(data.index, utc=True)
+		data.index = data.index.tz_convert(TIMEZONE)
+		data.index.name = 'date'
+		data = data.astype(float)
+
+		# D-02: pin the date window explicitly (2018-01-01 -> 2026-06-03) on the
+		# feed side so the oracle is insulated if the CSV is regenerated. The
+		# slice bounds are localized to the index tz to match correctly.
+		start = pd.Timestamp(self.CSV_START_DATE, tz=TIMEZONE)
+		end = pd.Timestamp(self.CSV_END_DATE, tz=TIMEZONE) \
+			+ pd.Timedelta(days=1)
+		data = data.loc[start:end]
+
+		if data.empty:
+			raise ValueError(
+				f"CSV '{self.csv_path}' produced an empty frame after the "
+				f"{self.CSV_START_DATE} -> {self.CSV_END_DATE} window slice")
+
+		self.prices[self.CSV_TICKER.upper()] = data
+		self.logger.info('Price data loaded from csv (%d bars)', len(data))
+
 	def update_data(self):
 		"""
 		Update the price data

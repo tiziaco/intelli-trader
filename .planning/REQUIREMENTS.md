@@ -18,28 +18,28 @@
 > output; stand up the test skeleton. **The only milestone built without an oracle — keep minimal.**
 > Critical #34 is the sole execution blocker. No oracle exists until M1 makes the engine run.
 
-- [ ] **M1-01**: The backtest run path imports successfully — resolve the config package/flat-module
+- [x] **M1-01**: The backtest run path imports successfully — resolve the config package/flat-module
   shadowing so `itrader.config` names load and the price-handler→trading-system import cascade no
   longer fails *(#34 Critical [start of M1→M2], KB16, KB17, TD2 [start])*
-- [ ] **M1-02**: `config.TIMEZONE`-style attribute access on the runtime config dict no longer raises
+- [x] **M1-02**: `config.TIMEZONE`-style attribute access on the runtime config dict no longer raises
   on the backtest path (minimal fix sufficient to run the golden daily UTC dataset) *(KB17 [start], #36 [start of M1→M2])*
-- [ ] **M1-03**: `to_timedelta` returns a real value for the timeframes the golden run uses (no silent
+- [x] **M1-03**: `to_timedelta` returns a real value for the timeframes the golden run uses (no silent
   `None` flowing into timing/resampling) *(KB20 [start of M1→M2], #36 [start])*
-- [ ] **M1-04**: `SMA_MACD_strategy` runs without error — fix `[-1]` label-indexing to `.iloc[-1]` and
+- [x] **M1-04**: `SMA_MACD_strategy` runs without error — fix `[-1]` label-indexing to `.iloc[-1]` and
   the string `fillna='False'` → `fillna=False` *(KB15, instance of #24/#38)*
-- [ ] **M1-05**: Backtest orchestration runs a full PING→BAR→SIGNAL→ORDER→FILL loop — fix
+- [x] **M1-05**: Backtest orchestration runs a full PING→BAR→SIGNAL→ORDER→FILL loop — fix
   `record_metrics` being called on `PortfolioHandler` instead of `Portfolio` *(KB18, #35 [backtest part])*
-- [ ] **M1-06**: Orders carry a real non-zero quantity — implement *minimal* position sizing in the
+- [x] **M1-06**: Orders carry a real non-zero quantity — implement *minimal* position sizing in the
   architecturally-correct order/risk seam so `quantity=0` no longer reaches orders/fills
   *(KB11 [start of M1→M5], #24/#31 [minimal-sizing start])*
-- [ ] **M1-07**: `SMA_MACD` produces a **non-trivial trade log + equity curve** on
-  `data/BTCUSD_1d_ohlcv_01_01_2021-04_06_2026.csv` (`make backtest` runs) *(definition-of-done gate, #35)*
-- [ ] **M1-08**: The **reference output is captured and committed** — trade log (entry/exit time +
+- [x] **M1-07**: `SMA_MACD` produces a **non-trivial trade log + equity curve** on
+  `data/BTCUSD_1d_ohlcv_2018_2026.csv` (`make backtest` runs) *(definition-of-done gate, #35)*
+- [x] **M1-08**: The **reference output is captured and committed** — trade log (entry/exit time +
   side), equity curve, final cash/metrics — establishing the behavioral + numerical oracle *(golden-master spine)*
-- [ ] **M1-09**: Test skeleton stands up — pytest migration scaffold, the 8 declared markers actually
+- [x] **M1-09**: Test skeleton stands up — pytest migration scaffold, the 8 declared markers actually
   applied to tests, conftest/fixtures layout, run-path **smoke test** (import→construct→run minimal
   backtest) *(#40 [skeleton], TC1 Critical)*
-- [ ] **M1-10**: A **run-path integration test** exists exercising the full backtest end-to-end, and
+- [x] **M1-10**: A **run-path integration test** exists exercising the full backtest end-to-end, and
   the 274 existing component tests stay green *(#40, TC1)*
 
 ### M2 — Foundations
