@@ -2,7 +2,7 @@
 phase: 02-m2a-identity-money-determinism
 plan: 07
 subsystem: events / type-gate / oracle-test
-status: CHECKPOINT (paused — Task 4 owner phase-close gate)
+status: COMPLETE
 tags: [frozen-events, mypy-strict, oracle-tolerance, M2-03, D-15, in-scope-clean]
 requires: ["02-03", "02-04", "02-05", "02-06"]
 provides:
@@ -48,10 +48,10 @@ metrics:
 **One-liner:** Froze the genuinely-immutable hot-path events (`frozen=True/slots=True`), drove
 `make typecheck` (mypy --strict) to **clean across the entire D-05 in-scope package** under the
 owner's Option-2 scope (out-of-scope debt documentedly deferred), and split the backtest oracle
-into behavioral-identity-EXACT + numeric-bounded-tolerant (D-15). Paused at the owner-gated
-Task 4 phase-close checkpoint.
+into behavioral-identity-EXACT + numeric-bounded-tolerant (D-15). Owner approved the phase-close
+gate (Task 4) — D-15 tolerance accepted, phase closed.
 
-## Status: CHECKPOINT — Tasks 1, 2, 3 complete; paused at Task 4 (owner phase-close gate)
+## Status: COMPLETE — all 4 tasks done; owner approved the phase-close gate
 
 ## Completed Work
 
@@ -115,10 +115,14 @@ scipy, plotly, sklearn, statsmodels, tqdm, yaml.
   `PortfolioIdLike` exception alias rather than forcing the full retype (Rule 4 — deferred, not
   mandated by Task 2). Documented inline at each seam.
 
-## CHECKPOINT — Task 4: Phase gate (`checkpoint:human-verify`, gate="blocking", OWNER-GATED)
+### Task 4 — Phase gate (`checkpoint:human-verify`, gate="blocking", OWNER-GATED) ✅ APPROVED
 
-All automated verification is complete and green. Awaiting owner "approved" to close the phase
-(NOT auto-closed). Verification results gathered for owner review:
+**Owner response: "approved"** (2026-06-04). The D-15 numeric tolerance (`rtol=1e-6`,
+`atol=5e-2` / 5¢) is accepted; identity + equity columns stay exact; the tolerance is time-boxed
+to the M2b numerical re-freeze (Phase 3 SC4). The phase may close.
+
+All automated verification was complete and green at approval time. Verification results
+presented for owner review:
 
 | Gate | Result |
 |------|--------|
@@ -140,12 +144,13 @@ remain `check_exact=True`.
 dollar-level money bugs yet loose enough for sub-cent Decimal/quantization drift? It is bounded,
 documented, and time-boxed to M2b.
 
-**Resume signal:** Type "approved" to close the phase, or describe the tolerance/behavior concern.
+**Owner resolution:** APPROVED — tolerance accepted as bounded/documented/time-boxed; phase closed.
 
 ## Self-Check: PASSED
 - FOUND: itrader/events_handler/event.py
 - FOUND: test/test_events/test_event_immutability.py
 - FOUND: test/test_integration/test_backtest_oracle.py
 - FOUND: pyproject.toml ([tool.mypy] overrides extended — Option 2)
-- FOUND commits: ffe2a3c (RED), 227dab3 (GREEN), e9af665 (oracle), d85729a (typecheck clean)
+- FOUND commits: ffe2a3c (RED), 227dab3 (GREEN), e9af665 (oracle), d85729a (typecheck clean), c3031ed (Tasks 1-3 docs)
 - VERIFIED: `make typecheck` exit 0 (157 files); `make test` 299 passed; oracle 1 passed
+- TASK 4: owner approved phase-close gate (2026-06-04) — all 4 tasks complete
