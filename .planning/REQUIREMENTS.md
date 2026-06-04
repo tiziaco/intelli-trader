@@ -186,6 +186,57 @@ single UUIDv7 scheme; deterministic runs (seeded RNG + injected clock); 274 comp
 
 ## Traceability
 
-<!-- Filled by the roadmapper: REQ-ID → Phase. -->
+REQ-ID → Phase. Span items map the *start* REQ to the early phase and the *complete* REQ to the later
+phase; a span is not done until its final phase completes.
 
-(Pending roadmap creation)
+| Requirement | Phase | Milestone | Span | Status |
+|-------------|-------|-----------|------|--------|
+| M1-01 | Phase 1 | M1 | #34 start → M2-06 | Pending |
+| M1-02 | Phase 1 | M1 | #36 start → M2-10 | Pending |
+| M1-03 | Phase 1 | M1 | #36 start → M2-10 | Pending |
+| M1-04 | Phase 1 | M1 | — | Pending |
+| M1-05 | Phase 1 | M1 | — | Pending |
+| M1-06 | Phase 1 | M1 | KB11/#24/#31 start → M5-06 | Pending |
+| M1-07 | Phase 1 | M1 | — | Pending |
+| M1-08 | Phase 1 | M1 | golden-master spine | Pending |
+| M1-09 | Phase 1 | M1 | — | Pending |
+| M1-10 | Phase 1 | M1 | — | Pending |
+| M2-01 | Phase 2 | M2a | — | Pending |
+| M2-02 | Phase 2 | M2a | — | Pending |
+| M2-03 | Phase 2 | M2a | — | Pending |
+| M2-04 | Phase 2 | M2a | — | Pending |
+| M2-05 | Phase 2 | M2a | — | Pending |
+| M2-06 | Phase 3 | M2b | completes #34 (from M1-01) | Pending |
+| M2-07 | Phase 3 | M2b | — | Pending |
+| M2-08 | Phase 3 | M2b | — | Pending |
+| M2-09 | Phase 3 | M2b | — | Pending |
+| M2-10 | Phase 3 | M2b | completes #36 (from M1-02/03) | Pending |
+| M2-11 | Phase 3 | M2b | — | Pending |
+| M2-12 | Phase 3 | M2b | — | Pending |
+| M2-13 | Phase 3 | M2b | numerical oracle re-freeze gate | Pending |
+| M3-01 | Phase 4 | M3 | — | Pending |
+| M3-02 | Phase 4 | M3 | — | Pending |
+| M3-03 | Phase 4 | M3 | — | Pending |
+| M3-04 | Phase 4 | M3 | behavior/value-preserving gate | Pending |
+| M4-01 | Phase 5 | M4 | — | Pending |
+| M4-02 | Phase 5 | M4 | — | Pending |
+| M4-03 | Phase 5 | M4 | — | Pending |
+| M4-04 | Phase 5 | M4 | — | Pending |
+| M4-05 | Phase 5 | M4 | — | Pending |
+| M4-06 | Phase 5 | M4 | — | Pending |
+| M4-07 | Phase 5 | M4 | — | Pending |
+| M4-08 | Phase 5 | M4 | value-preserving gate | Pending |
+| M5-01 | Phase 6 | M5a | — | Pending |
+| M5-02 | Phase 6 | M5a | — | Pending |
+| M5-03 | Phase 6 | M5a | — | Pending |
+| M5-04 | Phase 6 | M5a | — | Pending |
+| M5-05 | Phase 6 | M5a | — | Pending |
+| M5-06 | Phase 7 | M5b | completes #24/#31/KB11 (from M1-06) | Pending |
+| M5-07 | Phase 7 | M5b | — | Pending |
+| M5-08 | Phase 7 | M5b | — | Pending |
+| M5-09 | Phase 7 | M5b | — | Pending |
+| M5-10 | Phase 8 | M5c | final numerical oracle frozen | Pending |
+
+**Coverage:** 45/45 in-scope v1 REQ-IDs mapped to exactly one phase. No orphans, no duplicates. All
+`D-live`/`D-sql`/`D-screener`/`D-compliance`/`D-oanda`/`OUT` items remain in v2/Out of Scope and are
+excluded from all phases.
