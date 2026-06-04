@@ -4,11 +4,12 @@ from abc import ABC, abstractmethod
 from typing import Dict
 from datetime import datetime
 from queue import Queue
+from itrader.core.ids import ScreenerId
 from itrader.events_handler.event import ScreenerEvent, BarEvent
 from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader import logger, idgen
 
-class Screener(object):
+class Screener(ABC):
 	"""
 	AbstractScreener is an abstract base class providing an interface for
 	all subsequent (inherited) screener handling objects.
@@ -21,7 +22,7 @@ class Screener(object):
 	"""
 	def __init__(self, name, timeframe, frequency, universe,
 				global_queue = None) -> None:
-		self.id = idgen.generate_screener_id()
+		self.id: ScreenerId = ScreenerId(idgen.generate_screener_id())
 		self.name: str = name
 		self.is_active = True
 		self.timeframe = to_timedelta(timeframe)
@@ -65,5 +66,5 @@ class Screener(object):
 		self.subscribed_strategies.remove(strategy_id)
 	
 	@abstractmethod
-	def screen_market(prices: pd.DataFrame, event: BarEvent):
+	def screen_market(self, prices: pd.DataFrame, event: BarEvent) -> None:
 		logger.warning("SCREENER: please define a screen market method.")

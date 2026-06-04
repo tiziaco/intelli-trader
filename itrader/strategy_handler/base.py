@@ -1,10 +1,14 @@
+from abc import ABC, abstractmethod
 from datetime import timedelta
 
+import pandas as pd
+
+from itrader.core.ids import StrategyId
 from itrader.events_handler.event import SignalEvent, BarEvent
 from itrader.outils.time_parser import to_timedelta
 from itrader import logger, idgen
 
-class Strategy(object):
+class Strategy(ABC):
 	"""
 	BaseStrategy is a base class providing an interface for
 	all subsequent (inherited) strategy objects.
@@ -16,7 +20,7 @@ class Strategy(object):
 	def __init__(self, name, timeframe, tickers, order_type = "market",
 			  	max_positions = 1, max_allocation = 0.80, allow_increase = False,
 				global_queue = None) -> None:
-		self.strategy_id = idgen.generate_strategy_id()
+		self.strategy_id: StrategyId = StrategyId(idgen.generate_strategy_id())
 		self.name = name
 		self.is_active = True
 		self.timeframe = to_timedelta(timeframe)
@@ -47,6 +51,17 @@ class Strategy(object):
 			"is_active" : self.is_active,
 			'strategy_setting' : self.setting_to_dict()
 		}
+
+	@abstractmethod
+	def calculate_signal(self, ticker: str, bars: pd.DataFrame) -> None:
+		"""
+		Evaluate market data for `ticker` and emit signals via `buy`/`sell`.
+
+		Concrete strategies must implement their signal logic here. The richer
+		calculate_signal contract (return-typed signals) is deferred to M5b #24 —
+		this is the minimal abstract seam only.
+		"""
+		raise NotImplementedError("Should implement calculate_signal()")
 
 	def _generate_signal(self, ticker: str, action: str, sl: float = 0, tp: float = 0):
 		"""

@@ -1,9 +1,10 @@
-from abc import ABCMeta, abstractmethod
+from abc import ABC
+from typing import Any
 
 import pickle
 
 
-class AbstractStatistics(object):
+class AbstractStatistics(ABC):
     """
     Statistics is an abstract class providing an interface for
     all inherited statistic classes (live, historic, custom, etc).
@@ -14,16 +15,14 @@ class AbstractStatistics(object):
     essentially updating the object according to portfolio performance
     over time.
 
-    Ideally, Statistics should be subclassed according to the strategies
-    and timeframes-traded by the user. Different trading strategies
-    may require different metrics or frequencies-of-metrics to be updated,
-    however the example given is suitable for longer timeframes.
+    Real ABC (D-07): the dead ``__metaclass__ = ABCMeta`` Py2 no-op is removed.
+    The interface methods are intentionally NOT marked ``@abstractmethod`` —
+    the concrete reporters (``StatisticsReporting``, ``EngineLogger``) implement
+    only a subset, and reconciling the compute/presentation split is the
+    deferred reporting rework (M5b #38). Minimal conformance only.
     """
 
-    __metaclass__ = ABCMeta
-
-    @abstractmethod
-    def print_summary(self, statistics):
+    def print_summary(self, statistics: dict[str, Any]) -> None:
         """
         Print a summury with the main statistics of the backtest.
         """
@@ -37,8 +36,7 @@ class AbstractStatistics(object):
                 statistics['equity_stats']['max_drawdown_pct']*100.0))
         
 
-    @abstractmethod
-    def update(self):
+    def update(self) -> None:
         """
         Update all the statistics according to values of the portfolio
         and open positions. This should be called from within the
@@ -46,33 +44,30 @@ class AbstractStatistics(object):
         """
         raise NotImplementedError("Should implement update()")
 
-    @abstractmethod
-    def get_results(self):
+    def get_results(self) -> dict[str, Any]:
         """
         Return a dict containing all statistics.
         """
         raise NotImplementedError("Should implement get_results()")
 
-    @abstractmethod
-    def plot_results(self):
+    def plot_results(self) -> None:
         """
         Plot all statistics collected up until 'now'
         """
         raise NotImplementedError("Should implement plot_results()")
 
-    @abstractmethod
-    def save(self, filename):
+    def save(self, filename: str) -> None:
         """
         Save statistics results to filename
         """
         raise NotImplementedError("Should implement save()")
 
     @classmethod
-    def load(cls, filename):
+    def load(cls, filename: str) -> Any:
         with open(filename, 'rb') as fd:
             stats = pickle.load(fd)
         return stats
 
 
-def load(filename):
+def load(filename: str) -> Any:
     return AbstractStatistics.load(filename)

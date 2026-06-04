@@ -7,6 +7,17 @@ from itrader.strategy_handler.base import Strategy
 from itrader.events_handler.event import SignalEvent, BarEvent
 
 
+class _ConcreteStrategy(Strategy):
+	"""
+	Minimal concrete Strategy used to exercise the shared base behaviour
+	(buy/sell/init). ``Strategy`` is now a real ABC enforcing ``calculate_signal``
+	(02-05, #20), so the base cannot be instantiated directly.
+	"""
+
+	def calculate_signal(self, ticker: str, bars: pd.DataFrame) -> None:
+		return None
+
+
 class TestStrategy(unittest.TestCase):
 	"""
 	Test the base strategy object performing the different actions
@@ -22,7 +33,7 @@ class TestStrategy(unittest.TestCase):
 		cls.portfolio_name = 'test_pf'
 		cls.ticker = 'SOLUSDT'
 		cls.queue = Queue()
-		cls.strategy = Strategy("test_strategy", '1h', [cls.ticker],
+		cls.strategy = _ConcreteStrategy("test_strategy", '1h', [cls.ticker],
 							global_queue=cls.queue)
 		cls.strategy.subscribe_portfolio(cls.portfolio_name)
 
