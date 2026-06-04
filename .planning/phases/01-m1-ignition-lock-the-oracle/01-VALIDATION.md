@@ -2,7 +2,7 @@
 phase: 1
 slug: m1-ignition-lock-the-oracle
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-06-04
 ---
@@ -75,11 +75,14 @@ created: 2026-06-04
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 5s (quick) — full integration is `slow`-marked
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 5s (quick) — full integration is `slow`-marked
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+> Note: `wave_0_complete` stays `false` — the Wave 0 scaffolding (`test/conftest.py`, smoke, integration,
+> `test/golden/`) is BUILT during execution, not at plan time. Flip it to `true` only once those files exist.
+
+**Approval:** approved 2026-06-04

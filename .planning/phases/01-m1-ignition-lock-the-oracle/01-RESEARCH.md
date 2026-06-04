@@ -13,7 +13,7 @@
 - **D-03:** SMA_MACD parameters = code defaults: `short_window=50, long_window=100, FAST=6, SLOW=12, WIN=3`.
 - **D-04:** Starting cash = $10,000; fees = 0; slippage = 0. Cleanest oracle; M5 owns fee/slippage correctness.
 - **D-05:** Run invocation = committed Python run script + new `make backtest` target. NOT the notebook.
-- **D-06:** Ticker = `BTCUSD` (Claude's discretion to adjust if universe/price-handler wiring requires a specific symbol string).
+- **D-06:** Ticker = `BTCUSD` (Claude's discretion to adjust if universe/price-handler wiring requires a specific symbol).
 - **D-07:** Minimal `csv`/offline branch INSIDE `PriceHandler` (option 1, not standalone provider). Reads local CSV into `self.prices`, skips `SqlHandler`/`CCXT` construction entirely.
 - **D-08:** Sizing rule = `qty = (0.95 × available_cash) / price`, fractional BTC, long-only single-position.
 - **D-09:** Seam = `OrderManager.on_signal` path (where it reads `signal_event.quantity`). NOT the strategy/position_sizer.
@@ -344,22 +344,25 @@ qty = (0.95 * portfolio.cash) / signal_event.price        # D-08: fraction-of-ca
 
 **These `[ASSUMED]` items need confirmation during planning/execution — primarily A3 (run the import) and A4 (assert ≥1 trade).**
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Which M1-01 fix shape — re-export vs import-site edit?**
    - What we know: both unblock the import; flat `config.py` holds `FORBIDDEN_SYMBOLS`/`TIMEZONE`/`Config`; package holds domain classes.
    - What's unclear: owner preference; M2-06 collapses config to Pydantic anyway.
    - Recommendation: minimal re-export from `config/__init__.py` (smallest diff, no behavior change), defer the real fix to M2-06. Planner confirms.
+   - **RESOLVED:** re-export flat names from `config/__init__.py` (chosen by Plan 01-01 Task 1). The real config collapse is deferred to M2-06; the flat `config.py` is left unmodified.
 
 2. **CSV index timezone choice (Pitfall 6 / A4).**
    - What we know: CSV is UTC; PingGenerator default `Europe/Paris`; CCXT converts to `config.TIMEZONE`.
    - What's unclear: which tz makes `record_metrics`/`check_timeframe` behave correctly for daily bars.
    - Recommendation: keep index tz-aware and source ping dates from the same frame (they match by construction); the *value* of tz only matters where `check_timeframe` runs — confirm the daily path doesn't depend on a specific offset. Lock it once the smoke test produces ≥1 trade, then it's frozen in the oracle.
+   - **RESOLVED:** `Europe/Paris` chosen to match the CCXT convention (`CCXT.py:71` converts to `config.TIMEZONE`) and the existing config singleton / PingGenerator default. A tz mismatch (which would silently yield zero trades — Pitfall 6) is caught at runtime by the smoke test's run-completion + ≥1-non-zero-qty-trade assertion in **Plan 01-04 Task 3** (`test/test_smoke/test_backtest_smoke.py`), which runs GREEN *before* the oracle is blessed/frozen into `test/golden/` (Plan 01-05). The CSV-branch index and the ping dates are sourced from the same frame (`backtest_trading_system.py:85` `ping.set_dates`), so the two tz-match by construction regardless of the chosen offset value.
 
 3. **Equity-curve granularity / metric set in JSON summary (Claude's discretion).**
    - What we know: per-ping snapshots available; `StatisticsReporting` computes sharpe/sortino/cagr/drawdown but some of that math is buggy (M5-07 territory).
    - What's unclear: which metrics to freeze now without baking in M5-fixable bugs.
    - Recommendation: freeze raw deterministic series (per-ping equity, final cash, trade count, total realised PnL) + only metrics that are clearly correct; keep derived ratios minimal so the M5 re-baseline is the sanctioned place to add them.
+   - **RESOLVED:** Claude's Discretion — minimal deterministic metrics only. Freeze the raw deterministic series (per-ping equity from snapshots, final cash, trade count, total realised PnL) plus only clearly-correct values; keep derived ratios (sharpe/sortino/cagr/drawdown) out of the M1 oracle so the sanctioned place to add them is the M5 re-baseline.
 
 ## Environment Availability
 
