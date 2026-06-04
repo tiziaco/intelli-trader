@@ -15,6 +15,8 @@ from itrader.portfolio_handler.transaction_manager import TransactionManager
 from itrader.portfolio_handler.position_manager import PositionManager
 from itrader.portfolio_handler.cash_manager import CashManager
 from itrader.portfolio_handler.metrics_manager import MetricsManager
+from itrader.core.ids import PortfolioId
+from itrader.core.money import to_money
 
 from itrader import logger, idgen
 
@@ -34,14 +36,14 @@ class Portfolio(object):
 	Maintains backward compatibility with existing interface.
 	"""
 
-	def __init__(self, user_id: int, name: str, exchange: str, cash: float, time: datetime, 
+	def __init__(self, user_id: int, name: str, exchange: str, cash: Decimal, time: datetime,
 	             config: Optional[PortfolioConfig] = None):
 		"""
 		Initialize enhanced portfolio with integrated capabilities.
 		"""
 		# Core portfolio identity
 		self.user_id = user_id
-		self.portfolio_id = idgen.generate_portfolio_id()
+		self.portfolio_id: PortfolioId = idgen.generate_portfolio_id()
 		self.name = name
 		self.exchange = exchange
 		self.creation_time = time
@@ -188,17 +190,22 @@ class Portfolio(object):
 
 	# Thread-safe Properties (backward compatible)
 	@property
-	def cash(self) -> float:
-		"""Get current cash balance (thread-safe)."""
+	def cash(self) -> Decimal:
+		"""Get current cash balance as Decimal (thread-safe).
+
+		M2-02: money is Decimal end-to-end on the cash path — the former
+		float() cast on the ledger balance is removed so reading cash no longer
+		round-trips money back to float.
+		"""
 		with self._lock:
-			return float(self.cash_manager.balance)
-	
+			return self.cash_manager.balance
+
 	@cash.setter
-	def cash(self, value: float):
+	def cash(self, value: Decimal):
 		"""Set cash balance (thread-safe)."""
 		with self._lock:
 			current_balance = self.cash_manager.balance
-			difference = Decimal(str(value)) - current_balance
+			difference = to_money(value) - current_balance
 			if difference > 0:
 				self.cash_manager.deposit(difference, "Cash balance adjustment")
 			elif difference < 0:
@@ -211,25 +218,35 @@ class Portfolio(object):
 			return len(self.position_manager.get_all_positions())
 
 	@property
-	def total_market_value(self):
-		"""Get total market value excluding cash (thread-safe)."""
+	def total_market_value(self) -> float:
+		"""Get total market value excluding cash (thread-safe).
+
+		Returned as float for the float-based consumers (order validator,
+		metrics, reporting). The cash *ledger* is Decimal end-to-end (M2-02);
+		routing these aggregates through Decimal is M4 scope.
+		"""
 		with self._lock:
 			return float(self.position_manager.get_total_market_value())
 
 	@property
-	def total_equity(self):
-		"""Get total equity including cash (thread-safe)."""
+	def total_equity(self) -> float:
+		"""Get total equity including cash (thread-safe).
+
+		Float for consumer compatibility (order-validator exposure ratios,
+		metrics, reporting). cash is Decimal on the ledger (M2-02); coerce it at
+		this read boundary so total_equity stays float for downstream consumers.
+		"""
 		with self._lock:
-			return self.total_market_value + self.cash
+			return self.total_market_value + float(self.cash)
 
 	@property
-	def total_unrealised_pnl(self):
+	def total_unrealised_pnl(self) -> float:
 		"""Calculate unrealised P&L (thread-safe)."""
 		with self._lock:
 			return float(self.position_manager.get_total_unrealized_pnl())
 
 	@property
-	def total_realised_pnl(self):
+	def total_realised_pnl(self) -> float:
 		"""Calculate realised P&L (thread-safe)."""
 		with self._lock:
 			return float(self.position_manager.get_total_realized_pnl())
@@ -343,7 +360,9 @@ class Portfolio(object):
 		if not positions:
 			return 0.0
 		
-		max_position_value = max(abs(pos.market_value) for pos in positions.values())
+		# pos.market_value is Decimal (M2a entity money); total_equity is float —
+		# coerce to float for this reporting ratio.
+		max_position_value = max(abs(float(pos.market_value)) for pos in positions.values())
 		return max_position_value / self.total_equity
 	
 	# Enhanced Transaction Processing

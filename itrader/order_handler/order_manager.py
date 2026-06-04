@@ -266,10 +266,14 @@ class OrderManager:
 			open_position = portfolio.get_open_position(signal_event.ticker)
 			if signal_event.action == "SELL" and open_position is not None and open_position.net_quantity > 0:
 				# Long-only exit: close the open long by selling its full quantity.
-				signal_event.quantity = open_position.net_quantity
+				# net_quantity is Decimal (M2a entity money); the SignalEvent + sizing
+				# layer is float until M4 — coerce at this boundary.
+				signal_event.quantity = float(open_position.net_quantity)
 			else:
 				# Entry (or SELL with no open long): fraction-of-cash sizing.
-				signal_event.quantity = (0.95 * portfolio.cash) / price
+				# portfolio.cash is Decimal on the ledger (M2-02); coerce at this
+				# float sizing boundary (cash routing through CashManager is M4 #22).
+				signal_event.quantity = (0.95 * float(portfolio.cash)) / price
 		return None
 
 	def _create_primary_order(self, signal_event: SignalEvent, exchange: str) -> OperationResult:

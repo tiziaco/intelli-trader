@@ -26,9 +26,14 @@ from itrader import idgen
 
 
 class MockPortfolio:
-    """Mock portfolio for testing."""
-    def __init__(self, initial_cash=100000.0):
-        self.cash = initial_cash
+    """Mock portfolio for testing.
+
+    Cash is Decimal end-to-end (M2-02): TransactionManager now does
+    ``self.portfolio.cash += transaction_cost`` with a Decimal cost and NO
+    float() round-trip, so the mock's cash must be Decimal too.
+    """
+    def __init__(self, initial_cash=Decimal("100000.0")):
+        self.cash = Decimal(str(initial_cash))
         self.portfolio_id = idgen.generate_portfolio_id()
 
 
@@ -151,8 +156,8 @@ class TestTransactionManager(unittest.TestCase):
 
     def test_insufficient_funds_error(self):
         """Test insufficient funds error for BUY transaction."""
-        # Set portfolio cash to low amount
-        self.portfolio.cash = 1000.0
+        # Set portfolio cash to low amount (Decimal end-to-end)
+        self.portfolio.cash = Decimal("1000.0")
         
         large_transaction = Transaction(
             time=datetime.now(),
@@ -378,11 +383,12 @@ class TestTransactionManager(unittest.TestCase):
         
         self.assertTrue(result)
         
-        # Calculate expected result with proper precision
+        # Calculate expected result with proper precision (Decimal end-to-end:
+        # no float() round-trip — cash stays Decimal on the cash path).
         expected_cost = Decimal('33333.33') * Decimal('0.3') + Decimal('5.55')
-        expected_cash = initial_cash - float(expected_cost)
-        
-        self.assertAlmostEqual(self.portfolio.cash, expected_cash, places=2)
+        expected_cash = initial_cash - expected_cost
+
+        self.assertEqual(self.portfolio.cash, expected_cash)
 
 
 if __name__ == '__main__':

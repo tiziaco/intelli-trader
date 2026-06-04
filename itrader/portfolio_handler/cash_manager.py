@@ -15,6 +15,7 @@ from itrader.core.exceptions import (
     InvalidTransactionError,
     ConcurrencyError
 )
+from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
 
 
@@ -58,8 +59,9 @@ class CashManager:
         self._lock = threading.RLock()
         self.logger = get_itrader_logger().bind(component="CashManager")
         
-        # Cash balance with high precision
-        self._balance = Decimal(str(initial_cash)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        # Cash balance with high precision (D-04 string entry via to_money;
+        # quantize to the cash scale at this ledger boundary, D-03 HALF_UP).
+        self._balance = to_money(initial_cash).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         
         # Reserved cash for pending orders
         self._reserved_cash = Decimal('0.00')
@@ -418,8 +420,8 @@ class CashManager:
                 {"amount": amount}
             )
         
-        # Convert to Decimal with proper precision
-        amount_decimal = Decimal(str(amount)).quantize(self.precision, rounding=ROUND_HALF_UP)
+        # Convert to Decimal with proper precision (D-04 string entry).
+        amount_decimal = to_money(amount).quantize(self.precision, rounding=ROUND_HALF_UP)
         
         if amount_decimal <= 0:
             raise InvalidTransactionError(

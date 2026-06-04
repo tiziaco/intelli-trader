@@ -156,33 +156,34 @@ class TransactionManager:
                 {"commission": transaction.commission, "transaction_id": transaction.id}
             )
         
-        # Convert to Decimal for precision
-        price = Decimal(str(transaction.price))
-        quantity = Decimal(str(transaction.quantity))
-        commission = Decimal(str(transaction.commission))
-        
+        # Transaction money fields are already Decimal end-to-end (M2a) — use them
+        # directly (no Decimal(str(...)) round-trip needed).
+        price = transaction.price
+        quantity = transaction.quantity
+        commission = transaction.commission
+
         # Business rule validation
         transaction_value = price * quantity
-        
+
         if transaction_value < self.min_transaction_amount:
             raise InvalidTransactionError(
                 f"Transaction value ${transaction_value} below minimum ${self.min_transaction_amount}",
-                {"transaction_value": float(transaction_value), "transaction_id": transaction.id}
+                {"transaction_value": str(transaction_value), "transaction_id": transaction.id}
             )
-        
+
         if transaction_value > self.max_transaction_amount:
             raise InvalidTransactionError(
                 f"Transaction value ${transaction_value} exceeds maximum ${self.max_transaction_amount}",
-                {"transaction_value": float(transaction_value), "transaction_id": transaction.id}
+                {"transaction_value": str(transaction_value), "transaction_id": transaction.id}
             )
-        
+
         # Commission rate validation
         if transaction_value > 0:
             commission_rate = commission / transaction_value
             if commission_rate > self.commission_rate_limit:
                 raise InvalidTransactionError(
                     f"Commission rate {commission_rate:.4f} exceeds limit {self.commission_rate_limit}",
-                    {"commission_rate": float(commission_rate), "transaction_id": transaction.id}
+                    {"commission_rate": str(commission_rate), "transaction_id": transaction.id}
                 )
         
         # Ticker validation (basic format check)
@@ -201,16 +202,18 @@ class TransactionManager:
         """Check if sufficient funds are available for the transaction."""
         
         if transaction.type == TransactionType.BUY:
-            required_cash = Decimal(str(transaction.price * transaction.quantity + transaction.commission))
-            available_cash = Decimal(str(self.portfolio.cash))
-            
+            # transaction money fields are Decimal end-to-end (M2a); cash is Decimal
+            # (no defensive Decimal(str(cash)) needed — the float round-trip is gone).
+            required_cash = transaction.price * transaction.quantity + transaction.commission
+            available_cash = self.portfolio.cash
+
             if available_cash < required_cash:
                 raise InsufficientFundsError(
                     required_cash=float(required_cash),
                     available_cash=float(available_cash),
                     transaction_id=transaction.id
                 )
-                
+
             self.logger.debug("Funds availability check passed",
                 transaction_id=transaction.id,
                 correlation_id=context.correlation_id,
@@ -223,17 +226,19 @@ class TransactionManager:
         
         # Calculate transaction cost with high precision
         transaction_cost = self._calculate_transaction_cost(transaction)
-        
-        # Update portfolio cash (this will be moved to CashManager later)
+
+        # Update portfolio cash (cash routing through CashManager is M4 #22).
+        # M2-02: cash is Decimal end-to-end — add the Decimal cost directly with
+        # NO float() round-trip (the #17 defect). This is THE money-defect fix.
         old_cash = self.portfolio.cash
-        self.portfolio.cash += float(transaction_cost)
-        
+        self.portfolio.cash += transaction_cost
+
         self.logger.debug("Transaction executed",
             transaction_id=transaction.id,
             correlation_id=context.correlation_id,
-            old_cash=old_cash,
-            new_cash=self.portfolio.cash,
-            transaction_cost=float(transaction_cost)
+            old_cash=str(old_cash),
+            new_cash=str(self.portfolio.cash),
+            transaction_cost=str(transaction_cost)
         )
     
     def _calculate_transaction_cost(self, transaction: Transaction) -> Decimal:
