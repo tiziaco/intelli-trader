@@ -232,8 +232,30 @@ class OrderManager:
 			Result of primary order creation
 		"""
 		try:
+			# Fraction-of-cash sizing (D-08/D-09): the order/risk layer resolves the
+			# per-portfolio quantity here, NOT the strategy or position_sizer. The strategy
+			# emits quantity=0 (base.py:63); we resolve it to (0.95 * available_cash) / price
+			# (95% buffer so float/rounding cannot overshoot a cash check; fractional BTC).
+			# Only resolve when the signal carries no explicit quantity (qty<=0) so callers
+			# that already supply a quantity keep their declared size unchanged.
+			if not signal_event.quantity or signal_event.quantity <= 0:
+				price = signal_event.price
+				if not price or price <= 0:
+					return OperationResult.failure_result(
+						f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
+						operation_type="create_primary_order"
+					)
+				portfolio = self.portfolio_handler.get_portfolio(signal_event.portfolio_id)
+				qty = (0.95 * portfolio.cash) / price
+				# Carry the computed qty into the in-flight signal BEFORE order construction.
+				# MARKET path reads signal.quantity internally (order.py:143); LIMIT/STOP branches
+				# pass signal_event.quantity explicitly. This single mutation covers all branches.
+				# Safe per RESEARCH A5: SMA_MACD uses only MARKET orders and the signal is consumed
+				# immediately here, never re-queued or reused, so the mutation cannot leak.
+				signal_event.quantity = qty
+
 			order_type_str = signal_event.order_type.upper()
-			
+
 			if order_type_str == 'MARKET':
 				order = Order.new_order(signal_event, exchange)
 			elif order_type_str == 'LIMIT':
