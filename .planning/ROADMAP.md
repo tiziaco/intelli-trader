@@ -22,7 +22,7 @@ shift) and end of M5 (look-ahead/fill-realism fixes). Milestone identity is pres
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: M1 — Ignition + Lock the Oracle** - Make the backtest run end-to-end and capture/commit the reference output (completed 2026-06-04)
-- [x] **Phase 2: M2a — Identity, Money & Determinism** - UUIDv7 IDs, Decimal money, mypy-strict frozen DTOs, real ABCs, seeded/clocked determinism (all 7 plans executed; verification gaps_found 2026-06-04 — gap-closure pending) (completed 2026-06-04)
+- [x] **Phase 2: M2a — Identity, Money & Determinism** - UUIDv7 IDs, Decimal money, mypy-strict frozen DTOs, real ABCs, seeded/clocked determinism (all 8 plans executed incl. gap-closure 02-08; re-verification PASS 4/4 SC 2026-06-04; numeric oracle re-freeze deferred to post-M2 per DEF-02-08-A) (completed 2026-06-04)
 - [ ] **Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze** - Pydantic config, centralized types, portfolio storage seam, time_parser final, dead-code purge, pytest conversion, re-freeze numerical oracle
 - [ ] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging
 - [ ] **Phase 5: M4 — Money & Transaction Correctness** - Cash through CashManager, atomic transactions, order facade layering, frozen execution DTOs
