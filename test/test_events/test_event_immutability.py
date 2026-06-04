@@ -6,8 +6,10 @@ Behavioral contract:
   order manager; freezing it would raise ``FrozenInstanceError`` (Pitfall 4, M3 #11 blocker).
 - ``FillEvent`` stays MUTABLE — ``price``/``quantity`` are rewritten post-construction by
   the simulated exchange after fee/slippage application.
-- The remaining hot-path events (PingEvent, BarEvent, PortfolioUpdateEvent, ScreenerEvent,
-  OrderEvent) are genuinely immutable and MUST be frozen: reassigning a field raises
+- ``OrderEvent`` stays MUTABLE — ``price``/``quantity`` of a resting order are rewritten by
+  ``MatchingEngine.modify`` (resting-order modify is real run-path behavior).
+- The remaining hot-path events (PingEvent, BarEvent, PortfolioUpdateEvent, ScreenerEvent)
+  are genuinely immutable and MUST be frozen: reassigning a field raises
   ``FrozenInstanceError``.
 """
 
@@ -89,10 +91,13 @@ def test_screener_event_is_frozen():
         screener.screener_id = "other"
 
 
-def test_order_event_is_frozen():
+def test_order_event_stays_mutable():
+    """OrderEvent.price/quantity are rewritten by MatchingEngine.modify — stay mutable."""
     order = OrderEvent(
         _TIME, "BTCUSDT", "BUY", 42.0, 1.0, "default", "strat", "pf",
         OrderType.MARKET,
     )
-    with pytest.raises(FrozenInstanceError):
-        order.price = 99.0
+    order.price = 99.0  # must NOT raise (resting-order modify path)
+    order.quantity = 3.0
+    assert order.price == 99.0
+    assert order.quantity == 3.0

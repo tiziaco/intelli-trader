@@ -25,7 +25,7 @@ fill_status_map = {
 	"CANCELLED": FillStatus.CANCELLED,
 }
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PingEvent:
 	"""
 	Handles the event of receiving a new market update tick,
@@ -43,7 +43,7 @@ class PingEvent:
 		return str(self)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BarEvent:
 	"""
 	Handles the event of receiving a new market
@@ -169,7 +169,7 @@ class BarEvent:
 		else:
 			return float(low_data)
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PortfolioUpdateEvent:
 	"""
 	Handles the event of receiving a new market
@@ -241,7 +241,7 @@ class SignalEvent:
 	def __repr__(self):
 		return str(self)
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ScreenerEvent:
 	"""
 	Screener event generated from a Screener object.
