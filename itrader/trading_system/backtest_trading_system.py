@@ -43,13 +43,17 @@ class TradingSystem(object):
 
 		self.global_queue: "queue.Queue[Any]" = queue.Queue()
 
-		# Determinism seam (D-09/D-10): an injected BacktestClock returns the
-		# advanced simulation/bar time instead of wall-clock, so any engine-path
-		# consumer of "now" reads deterministic simulation time. The run loop
-		# advances it (set_time) on every ping/bar. M2a builds + advances the
-		# mechanism here; M2b wires it into order/transaction timestamps. The
-		# perf-telemetry datetime.now() in _run_backtest stays wall-clock (D-09 —
-		# run duration is not a domain fact).
+		# Determinism seam (D-09/D-10): an injected BacktestClock that returns the
+		# advanced simulation/bar time instead of wall-clock. M2a STAGES the seam —
+		# it is constructed here and advanced (set_time) on every ping in the run
+		# loop — but it currently has NO domain consumer: clock.now() is read
+		# nowhere, and every domain timestamp (order audit, transaction, cash,
+		# metrics) still uses wall-clock. Wiring domain "now" reads onto this clock
+		# is Phase 3 / M2b (D-09/D-10). Backtest RESULT determinism holds today
+		# because the result-bearing path is fed ping_event.time explicitly (see
+		# record_metrics in _run_backtest), not via clock.now(). The perf-telemetry
+		# datetime.now() in _run_backtest stays wall-clock (D-09 — run duration is
+		# not a domain fact).
 		self.clock = BacktestClock()
 
 		self.price_handler = PriceHandler(self.exchange, [], '', start_date or '', end_dt = end_date)
@@ -112,8 +116,11 @@ class TradingSystem(object):
 		start_time = datetime.now()  # Capture start time
 
 		for ping_event in self.ping:
-			# Advance the injected clock to the current simulation/bar time so any
-			# engine-path consumer of "now" reads deterministic time (D-09/D-10).
+			# Advance the injected clock to the current simulation/bar time to keep
+			# the determinism seam staged. NOTE: the clock has no domain consumer
+			# yet — clock.now() is read nowhere; consumer-wiring is Phase 3 / M2b
+			# (D-09/D-10). Result determinism comes from passing ping_event.time
+			# explicitly to record_metrics below, not from clock.now().
 			self.clock.set_time(ping_event.time)
 			self.global_queue.put(ping_event)
 			self.event_handler.process_events()
