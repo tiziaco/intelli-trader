@@ -18,12 +18,12 @@
 > output; stand up the test skeleton. **The only milestone built without an oracle — keep minimal.**
 > Critical #34 is the sole execution blocker. No oracle exists until M1 makes the engine run.
 
-- [ ] **M1-01**: The backtest run path imports successfully — resolve the config package/flat-module
+- [x] **M1-01**: The backtest run path imports successfully — resolve the config package/flat-module
   shadowing so `itrader.config` names load and the price-handler→trading-system import cascade no
   longer fails *(#34 Critical [start of M1→M2], KB16, KB17, TD2 [start])*
-- [ ] **M1-02**: `config.TIMEZONE`-style attribute access on the runtime config dict no longer raises
+- [x] **M1-02**: `config.TIMEZONE`-style attribute access on the runtime config dict no longer raises
   on the backtest path (minimal fix sufficient to run the golden daily UTC dataset) *(KB17 [start], #36 [start of M1→M2])*
-- [ ] **M1-03**: `to_timedelta` returns a real value for the timeframes the golden run uses (no silent
+- [x] **M1-03**: `to_timedelta` returns a real value for the timeframes the golden run uses (no silent
   `None` flowing into timing/resampling) *(KB20 [start of M1→M2], #36 [start])*
 - [ ] **M1-04**: `SMA_MACD_strategy` runs without error — fix `[-1]` label-indexing to `.iloc[-1]` and
   the string `fillna='False'` → `fillna=False` *(KB15, instance of #24/#38)*
