@@ -1,65 +1,69 @@
-"""Wave-0 characterization stub for M2-06 (config → Pydantic models).
+"""M2-06 config-model tests (Pydantic v2 collapse, landed by 03-05).
 
-This stub is written at Wave 0 of Phase 3 (M2b) under the CURRENT ``test/`` tree
-(``testpaths=["test"]``) so ``make test`` collects it immediately. It pins the two
-M2-06 behaviors the config-collapse wave (03-05) must deliver:
+Pins the three M2-06 behaviors the config collapse delivers:
 
   1. ``PortfolioConfig.model_validate(d).model_dump(mode="json")`` round-trips a config
-     dict with JSON-safe coercion (Decimal → str, UUID → str) — the single model that
-     serves BOTH the backtest-dict and the live-JSONB path.
-  2. ``Settings()`` raises ``pydantic.ValidationError`` (fail-loud) when a required-no-default
-     secret (``database_url``) is absent from the environment — secrets never silently
-     default.
+     dict with JSON-safe coercion (Decimal -> str) — the single model that serves BOTH
+     the backtest-dict and the live-JSONB path.
+  2. ``PortfolioConfig.default()`` returns the conservative-preset-equivalent model.
+  3. ``Settings()`` raises ``pydantic.ValidationError`` (fail-loud) when the
+     required-no-default secret (``database_url``) is absent from the environment —
+     secrets never silently default.
 
-Until 03-05 lands the Pydantic ``PortfolioConfig`` / ``Settings`` models, the concrete
-assertions are gated behind ``pytest.importorskip`` so the suite stays GREEN (no red
-collection error). When the code arrives, the importorskip resolves and the assertions
-turn live; the skip is removed.
-
-NOTE (03-08): this file MOVES with the test tree into ``tests/unit/test_config/`` during
-the 03-08 type-split — 03-08 must reconcile it there without duplicating it here.
+NOTE (03-08): this file MOVES with the test tree into ``tests/unit/test_config/``
+during the 03-08 type-split — 03-08 must reconcile it there without duplicating it here.
 """
+
+from decimal import Decimal
 
 import pytest
 
+import pydantic
+from itrader.config.models import PortfolioConfig
+from itrader.config.settings import Settings
+
 
 def test_portfolio_config_model_dump_json_round_trips():
-    """M2-06: PortfolioConfig.model_dump(mode="json") round-trips with JSON-safe coercion.
+    """M2-06: PortfolioConfig round-trips via model_validate / model_dump(mode="json").
 
-    Pending 03-05 (config → Pydantic). The model does not exist yet, so import-skip keeps
-    this green at Wave 0; the body becomes a live assertion when 03-05 lands the model.
+    JSON mode coerces Decimal -> str (no float round-trip); re-validating the dumped
+    dict reconstructs the model exactly.
     """
-    pydantic = pytest.importorskip("pydantic", reason="pending 03-05: config → Pydantic models")
-    config_models = pytest.importorskip(
-        "itrader.config.models",
-        reason="pending 03-05: PortfolioConfig Pydantic model not built yet",
-    )
+    source = {"name": "oracle_pf", "initial_capital": Decimal("10000.00")}
+    model = PortfolioConfig.model_validate(source)
+    dumped = model.model_dump(mode="json")
 
-    from decimal import Decimal
+    # JSON mode: Decimal -> str.
+    assert isinstance(dumped["initial_capital"], str)
+    # Round-trips exactly (Decimal value preserved, model equality holds).
+    revalidated = PortfolioConfig.model_validate(dumped)
+    assert revalidated.initial_capital == Decimal("10000.00")
+    assert revalidated == model
 
-    PortfolioConfig = config_models.PortfolioConfig
-    source = {"name": "oracle_pf", "cash": Decimal("10000.00")}
-    dumped = PortfolioConfig.model_validate(source).model_dump(mode="json")
 
-    # JSON mode coerces Decimal → str (no float round-trip); the round-trip re-validates.
-    assert isinstance(dumped["cash"], str)
-    assert PortfolioConfig.model_validate(dumped).cash == Decimal("10000.00")
+def test_portfolio_config_default_factory():
+    """M2-06 (D-03): PortfolioConfig.default() replaces the 'default' preset function."""
+    cfg = PortfolioConfig.default()
+    assert isinstance(cfg, PortfolioConfig)
+    # The 'default' preset historically returned an all-default PortfolioConfig.
+    assert cfg == PortfolioConfig()
+    assert cfg.initial_capital == Decimal("100000.0")
 
 
 def test_settings_missing_required_secret_raises_validation_error():
-    """M2-06: Settings() fails loud (ValidationError) when a required secret is absent.
+    """M2-06 (D-02): Settings() fails loud when the required secret is absent.
 
-    Pending 03-05 (pydantic-settings). Import-skip keeps this green at Wave 0; becomes a
-    live assertion when 03-05 lands the Settings model with a required-no-default
-    ``database_url`` secret.
+    ``database_url`` is required-no-default; with no ITRADER_DATABASE_URL in the env and
+    ``_env_file=None`` (ignore any local .env), instantiation must raise — never
+    silently default to a working secret.
     """
-    pydantic = pytest.importorskip("pydantic", reason="pending 03-05: config → Pydantic models")
-    settings_module = pytest.importorskip(
-        "itrader.config.settings",
-        reason="pending 03-05: pydantic-settings Settings model not built yet",
-    )
-
-    Settings = settings_module.Settings
     with pytest.raises(pydantic.ValidationError):
-        # database_url is required-no-default; absent from env → fail loud, never silent-default.
         Settings(_env_file=None)
+
+
+def test_settings_secret_is_masked_when_provided():
+    """M2-06 (D-02): a provided secret is a SecretStr — masked in repr, value via getter."""
+    settings = Settings(_env_file=None, database_url="postgresql://u:p@host/db")
+    # SecretStr masks repr/str so the secret never appears in logs/serialization.
+    assert "p@host" not in repr(settings)
+    assert settings.database_url.get_secret_value() == "postgresql://u:p@host/db"
