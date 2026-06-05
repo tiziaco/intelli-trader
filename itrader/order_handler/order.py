@@ -331,6 +331,10 @@ class Order:
 			True if fill was successfully applied
 		"""
 		fill_quantity = to_money(fill_quantity)
+		# WR-04 / D-04: normalise the price at the money-domain boundary too, so
+		# the audit record never carries a raw int/float that would contaminate
+		# later Decimal comparisons/sums.
+		fill_price = to_money(fill_price)
 		if fill_quantity <= 0 or fill_quantity > self.remaining_quantity:
 			return False
 
