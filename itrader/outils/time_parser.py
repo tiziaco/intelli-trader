@@ -3,10 +3,10 @@ import pytz
 import pandas as pd
 from typing import Union, cast
 from datetime import datetime, timedelta, timezone
-from itrader import config
+from itrader.config import TIMEZONE
 
 def get_timenow_awere() -> datetime:
-	time_zone = pytz.timezone(config.TIMEZONE)
+	time_zone = pytz.timezone(TIMEZONE)
 	# Get the current UTC time
 	now = pd.to_datetime(datetime.now(tz=timezone.utc))
 	# Make it timezone aware

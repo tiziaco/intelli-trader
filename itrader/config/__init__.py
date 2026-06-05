@@ -47,33 +47,24 @@ from .exchange import (
     list_available_exchange_presets
 )
 
-# Re-export flat-module config names (M1-01 minimal fix).
+# Reference-data + timezone re-exports (M2-06 / D-02/D-03).
 #
-# The flat module ``itrader/config.py`` defines ``FORBIDDEN_SYMBOLS``, ``TIMEZONE``,
-# and ``Config``, but this package directory (``itrader/config/``) shadows it for
-# ``from itrader.config import X``. Several backtest-path consumers still import the
-# flat names (e.g. ``CCXT.py``: ``from itrader.config import FORBIDDEN_SYMBOLS`` and
-# ``config.TIMEZONE``; ``data_provider.py``/``time_parser.py``: ``config.TIMEZONE``).
-# We load the shadowed flat module by file path and re-export the three names so the
-# import cascade resolves without modifying the flat ``config.py``. The real config
-# collapse is deferred to M2-06.
-import importlib.util as _importlib_util
-import os as _os
+# The flat ``itrader/config.py`` shadow module (the M1-01 file-path loader workaround)
+# has been DELETED. Its public names are now sourced from their permanent homes:
+#   - ``FORBIDDEN_SYMBOLS``/``SUPPORTED_*`` -> ``itrader.core.constants`` (D-03)
+#   - ``TIMEZONE``                          -> ``Settings.timezone`` (D-02/D-07)
+# Re-exported here so existing ``from itrader.config import FORBIDDEN_SYMBOLS`` /
+# ``from itrader.config import TIMEZONE`` consumers resolve without the flat shadow.
+from itrader.core.constants import (
+    FORBIDDEN_SYMBOLS, SUPPORTED_CURRENCIES, SUPPORTED_EXCHANGES
+)
+from .settings import Settings
 
-_flat_config_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "config.py")
-_flat_spec = _importlib_util.spec_from_file_location("itrader._flat_config", _flat_config_path)
-if _flat_spec is None or _flat_spec.loader is None:
-    raise ImportError(f"Could not load flat config module from {_flat_config_path}")
-_flat_config = _importlib_util.module_from_spec(_flat_spec)
-_flat_spec.loader.exec_module(_flat_config)
-
-FORBIDDEN_SYMBOLS = _flat_config.FORBIDDEN_SYMBOLS
-Config = _flat_config.Config
-# ``TIMEZONE`` lives only as a ``Config`` class attribute in the flat module
-# (value ``'Europe/Paris'``); expose it as a module-level constant here so the four
-# ``config.TIMEZONE`` call sites resolve. Must match the PingGenerator default and
-# the CSV-branch index tz (Pitfall 6 tz-consistency).
-TIMEZONE = Config.TIMEZONE
+# Module-level TIMEZONE constant (value 'Europe/Paris' by default). Read from the
+# Settings field default rather than instantiating Settings (which requires the
+# fail-loud secret). Must match the PingGenerator default + the CSV-branch index tz
+# (tz-consistency, D-07). A future live wiring would read Settings().timezone instead.
+TIMEZONE: str = str(Settings.model_fields["timezone"].default)
 
 # Convenience functions
 def get_config_registry(config_dir: str = "settings") -> ConfigRegistry:
@@ -187,8 +178,10 @@ __all__ = [
     'get_data_config_provider',
     'get_system_config_provider',
 
-    # Flat-module re-exports (M1-01)
+    # Reference-data + timezone re-exports (M2-06 / D-02/D-03)
     'FORBIDDEN_SYMBOLS',
+    'SUPPORTED_CURRENCIES',
+    'SUPPORTED_EXCHANGES',
     'TIMEZONE',
-    'Config'
+    'Settings',
 ]

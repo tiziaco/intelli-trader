@@ -2,7 +2,6 @@ import pandas as pd
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy_utils import database_exists, create_database
 
-from itrader import config
 from itrader.logger import get_itrader_logger
 
 class SqlHandler(object):
