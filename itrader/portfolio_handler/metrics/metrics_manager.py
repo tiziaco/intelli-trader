@@ -86,10 +86,19 @@ class MetricsManager:
         
         # Store initial portfolio equity as baseline for return calculations
         self.initial_equity = Decimal(str(portfolio.total_equity))
-        
-        # Historical snapshots for trend analysis
-        self._snapshots: List[PortfolioSnapshot] = []
-        
+
+        # M2-08: metrics snapshots (append-only history) now live in the injected
+        # state-storage seam. This manager no longer owns the container — it routes
+        # reads/writes through self._storage. A real Portfolio always injects a
+        # shared seam; a manager constructed standalone (e.g. with a lightweight
+        # test portfolio) falls back to its own in-memory backend.
+        from itrader.portfolio_handler.base import PortfolioStateStorage
+        from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+        storage = getattr(portfolio, "state_storage", None)
+        if storage is None:
+            storage = PortfolioStateStorageFactory.create("backtest")
+        self._storage: PortfolioStateStorage = storage
+
         # Performance metrics cache
         self._metrics_cache: Dict[str, PerformanceMetrics] = {}
         self._cache_timestamp: Dict[str, datetime] = {}
@@ -147,12 +156,13 @@ class MetricsManager:
                 portfolio_return=portfolio_return
             )
             
-            # Store snapshot
-            self._snapshots.append(snapshot)
-            
+            # Store snapshot (via the seam)
+            self._storage.add_snapshot(snapshot)
+
             # Manage snapshot history size
-            if len(self._snapshots) > self.max_snapshots:
-                self._snapshots = self._snapshots[-self.max_snapshots:]
+            snapshots = self._storage.get_snapshots()
+            if len(snapshots) > self.max_snapshots:
+                self._storage.set_snapshots(snapshots[-self.max_snapshots:])
             
             # Invalidate cache when new data is added
             self._cache_timestamp.clear()
@@ -169,11 +179,11 @@ class MetricsManager:
         """Get current portfolio metrics."""
         
         with self._lock:
-            if not self._snapshots:
+            if not self._storage.get_snapshots():
                 # Create initial snapshot if none exists
                 self.record_snapshot()
-            
-            latest_snapshot = self._snapshots[-1]
+
+            latest_snapshot = self._storage.get_snapshots()[-1]
             
             return {
                 "timestamp": latest_snapshot.timestamp.isoformat(),
@@ -202,8 +212,9 @@ class MetricsManager:
         if end_date is None:
             # If no end_date provided and we have snapshots, use the latest snapshot's timestamp
             # This ensures tests with historical data work correctly
-            if self._snapshots:
-                end_date = self._snapshots[-1].timestamp
+            _snaps = self._storage.get_snapshots()
+            if _snaps:
+                end_date = _snaps[-1].timestamp
             else:
                 end_date = datetime.now()
         
@@ -249,13 +260,14 @@ class MetricsManager:
             Dict containing drawdown analysis
         """
         with self._lock:
-            if not self._snapshots:
+            all_snaps = self._storage.get_snapshots()
+            if not all_snaps:
                 return {"error": "No snapshots available"}
-            
+
             if start_date is None:
-                relevant_snapshots = self._snapshots
+                relevant_snapshots = all_snaps
             else:
-                relevant_snapshots = [s for s in self._snapshots if s.timestamp >= start_date]
+                relevant_snapshots = [s for s in all_snaps if s.timestamp >= start_date]
             
             if len(relevant_snapshots) < 2:
                 return {"error": "Insufficient data for drawdown analysis"}
@@ -302,14 +314,15 @@ class MetricsManager:
             Dict containing return distribution statistics
         """
         with self._lock:
-            if len(self._snapshots) < period_days + 1:
+            snaps = self._storage.get_snapshots()
+            if len(snaps) < period_days + 1:
                 return {"error": "Insufficient data for return analysis"}
-            
+
             # Calculate period returns
             returns = []
-            for i in range(period_days, len(self._snapshots)):
-                current_equity = float(self._snapshots[i].total_equity)
-                previous_equity = float(self._snapshots[i - period_days].total_equity)
+            for i in range(period_days, len(snaps)):
+                current_equity = float(snaps[i].total_equity)
+                previous_equity = float(snaps[i - period_days].total_equity)
                 
                 if previous_equity > 0:
                     period_return = (current_equity - previous_equity) / previous_equity
@@ -361,8 +374,8 @@ class MetricsManager:
         """Get portfolio snapshots for a date range."""
         
         with self._lock:
-            snapshots = self._snapshots
-            
+            snapshots = self._storage.get_snapshots()
+
             if start_date:
                 snapshots = [s for s in snapshots if s.timestamp >= start_date]
             
@@ -467,12 +480,13 @@ class MetricsManager:
         elif period == MetricsPeriod.YEARLY:
             return end_date - timedelta(days=365)
         else:  # ALL_TIME
-            return self._snapshots[0].timestamp if self._snapshots else end_date
-    
+            snaps = self._storage.get_snapshots()
+            return snaps[0].timestamp if snaps else end_date
+
     def _get_snapshots_for_period(self, start_date: datetime, end_date: datetime) -> List[PortfolioSnapshot]:
         """Get snapshots within a date range."""
         filtered_snapshots = []
-        for snapshot in self._snapshots:
+        for snapshot in self._storage.get_snapshots():
             if start_date <= snapshot.timestamp <= end_date:
                 filtered_snapshots.append(snapshot)
         return filtered_snapshots

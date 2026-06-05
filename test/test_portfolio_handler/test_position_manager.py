@@ -64,8 +64,8 @@ class TestPositionManager(unittest.TestCase):
 
     def test_position_manager_initialization(self):
         """Test PositionManager initialization."""
-        self.assertEqual(len(self.position_manager._positions), 0)
-        self.assertEqual(len(self.position_manager._closed_positions), 0)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 0)
+        self.assertEqual(len(self.position_manager._storage.get_closed_positions()), 0)
         self.assertEqual(self.position_manager.max_total_positions, 100)
         self.assertEqual(self.position_manager.max_position_value, Decimal('1000000.00'))
 
@@ -80,8 +80,8 @@ class TestPositionManager(unittest.TestCase):
         self.assertEqual(position.avg_price, 50025.0)  # Price + commission per unit
         
         # Check position is stored
-        self.assertEqual(len(self.position_manager._positions), 1)
-        self.assertIn("BTCUSDT", self.position_manager._positions)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 1)
+        self.assertIn("BTCUSDT", self.position_manager._storage.get_positions())
 
     def test_create_new_position_sell(self):
         """Test creating a new position with SELL transaction."""
@@ -129,7 +129,7 @@ class TestPositionManager(unittest.TestCase):
         self.assertEqual(updated_position.net_quantity, initial_quantity + Decimal("0.5"))
         
         # Still only one position in manager
-        self.assertEqual(len(self.position_manager._positions), 1)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 1)
 
     def test_close_position_exact_match(self):
         """Test closing a position with exact quantity match."""
@@ -152,8 +152,8 @@ class TestPositionManager(unittest.TestCase):
         
         # Position should be closed and moved
         self.assertFalse(position.is_open)
-        self.assertEqual(len(self.position_manager._positions), 0)
-        self.assertEqual(len(self.position_manager._closed_positions), 1)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 0)
+        self.assertEqual(len(self.position_manager._storage.get_closed_positions()), 1)
 
     def test_partial_position_close(self):
         """Test partial position closing."""
@@ -166,8 +166,8 @@ class TestPositionManager(unittest.TestCase):
         # Position should still be open with reduced quantity
         self.assertTrue(position.is_open)
         self.assertEqual(position.net_quantity, 0.5)  # 1.0 - 0.5
-        self.assertEqual(len(self.position_manager._positions), 1)
-        self.assertEqual(len(self.position_manager._closed_positions), 0)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 1)
+        self.assertEqual(len(self.position_manager._storage.get_closed_positions()), 0)
 
     def test_position_value_limits(self):
         """Test position value limits validation."""
@@ -440,7 +440,7 @@ class TestPositionManager(unittest.TestCase):
             )
             self.position_manager.process_position_update(transaction)
         
-        self.assertEqual(len(self.position_manager._positions), 3)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 3)
         
         # Close all positions
         current_prices = {
@@ -452,8 +452,8 @@ class TestPositionManager(unittest.TestCase):
         closed_positions = self.position_manager.close_all_positions(current_prices, datetime.now())
         
         self.assertEqual(len(closed_positions), 3)
-        self.assertEqual(len(self.position_manager._positions), 0)
-        self.assertEqual(len(self.position_manager._closed_positions), 3)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 0)
+        self.assertEqual(len(self.position_manager._storage.get_closed_positions()), 3)
 
     def test_concurrent_position_updates(self):
         """Test thread safety with concurrent position updates."""
@@ -494,7 +494,7 @@ class TestPositionManager(unittest.TestCase):
         # Check results
         self.assertEqual(len(errors), 0, f"Concurrent update errors: {errors}")
         self.assertEqual(len(results), 10)
-        self.assertEqual(len(self.position_manager._positions), 10)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 10)
 
     def test_concurrent_same_ticker_updates(self):
         """Test thread safety with concurrent updates to same ticker."""
@@ -536,7 +536,7 @@ class TestPositionManager(unittest.TestCase):
         self.assertEqual(len(results), 5)
         
         # Should have only one position for the ticker
-        self.assertEqual(len(self.position_manager._positions), 1)
+        self.assertEqual(len(self.position_manager._storage.get_positions()), 1)
         
         # Position should have accumulated quantity
         position = self.position_manager.get_position("TESTTICKER")

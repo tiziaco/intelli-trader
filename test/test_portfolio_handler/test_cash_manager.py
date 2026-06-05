@@ -41,7 +41,7 @@ class TestCashManager(unittest.TestCase):
         self.assertEqual(self.cash_manager.balance, Decimal('100000.00'))
         self.assertEqual(self.cash_manager.available_balance, Decimal('100000.00'))
         self.assertEqual(self.cash_manager.reserved_balance, Decimal('0.00'))
-        self.assertEqual(len(self.cash_manager._cash_operations), 0)
+        self.assertEqual(len(self.cash_manager._storage.get_cash_operations()), 0)
 
     def test_deposit_valid_amount(self):
         """Test valid cash deposit."""
@@ -280,13 +280,13 @@ class TestCashManager(unittest.TestCase):
         self.assertTrue(self.cash_manager.validate_balance_consistency())
         
         # Test with manipulated state (simulating corruption)
-        original_reserved = self.cash_manager._reserved_cash
-        self.cash_manager._reserved_cash = Decimal('-100.00')  # Invalid negative reserved
+        original_reserved = self.cash_manager._storage.get_reserved_cash()
+        self.cash_manager._storage.set_reserved_cash(Decimal('-100.00'))  # Invalid negative reserved
         
         self.assertFalse(self.cash_manager.validate_balance_consistency())
         
         # Restore state
-        self.cash_manager._reserved_cash = original_reserved
+        self.cash_manager._storage.set_reserved_cash(original_reserved)
 
     def test_concurrent_operations(self):
         """Test thread safety with concurrent operations."""

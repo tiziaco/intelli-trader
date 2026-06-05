@@ -46,10 +46,19 @@ class TransactionManager:
         self._lock = threading.RLock()  # Reentrant lock for nested calls
         self.logger = get_itrader_logger().bind(component="TransactionManager")
         
-        # Transaction state tracking
-        self._pending_transactions: Dict[TransactionId, TransactionContext] = {}
-        self._transaction_history: List[Transaction] = []
-        
+        # M2-08: pending transaction contexts (working state) + transaction
+        # history (append-only) now live in the injected state-storage seam. This
+        # manager no longer owns those containers — it routes reads/writes through
+        # self._storage. A real Portfolio always injects a shared seam; a manager
+        # constructed standalone (e.g. with a lightweight test portfolio) falls
+        # back to its own in-memory backend so the seam is always present.
+        from itrader.portfolio_handler.base import PortfolioStateStorage
+        from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+        storage = getattr(portfolio, "state_storage", None)
+        if storage is None:
+            storage = PortfolioStateStorageFactory.create("backtest")
+        self._storage: PortfolioStateStorage = storage
+
         # Validation rules
         self.min_transaction_amount = Decimal('0.01')
         self.max_transaction_amount = Decimal('1000000.00')
@@ -84,7 +93,7 @@ class TransactionManager:
                     updated_at=datetime.now()
                 )
                 
-                self._pending_transactions[transaction.id] = context
+                self._storage.set_pending_transaction(transaction.id, context)
                 
                 self.logger.info("Transaction processing started",
                     transaction_id=transaction.id,
@@ -124,7 +133,7 @@ class TransactionManager:
                 
             finally:
                 # Clean up pending transaction
-                self._pending_transactions.pop(transaction.id, None)
+                self._storage.remove_pending_transaction(transaction.id)
     
     def _validate_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Validate transaction data and business rules."""
@@ -266,7 +275,7 @@ class TransactionManager:
     def _record_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Record transaction in history for audit trail."""
         
-        self._transaction_history.append(transaction)
+        self._storage.add_transaction(transaction)
         
         self.logger.info("Transaction recorded",
             transaction_id=transaction.id,
@@ -295,20 +304,22 @@ class TransactionManager:
     def get_transaction_history(self, limit: Optional[int] = None) -> List[Transaction]:
         """Get transaction history."""
         with self._lock:
+            history = self._storage.get_transaction_history()
             if limit:
-                return self._transaction_history[-limit:]
-            return self._transaction_history.copy()
-    
+                return history[-limit:]
+            return history
+
     def get_pending_transactions(self) -> Dict[TransactionId, TransactionContext]:
         """Get currently pending transactions."""
         with self._lock:
-            return self._pending_transactions.copy()
-    
+            return self._storage.get_pending_transactions()
+
     def cancel_pending_transaction(self, transaction_id: TransactionId) -> bool:
         """Cancel a pending transaction."""
         with self._lock:
-            if transaction_id in self._pending_transactions:
-                context = self._pending_transactions[transaction_id]
+            pending = self._storage.get_pending_transactions()
+            if transaction_id in pending:
+                context = pending[transaction_id]
                 context.state = TransactionState.CANCELLED
                 context.updated_at = datetime.now()
                 

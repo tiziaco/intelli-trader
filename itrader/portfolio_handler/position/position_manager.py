@@ -55,13 +55,20 @@ class PositionManager:
         self.portfolio = portfolio
         self._lock = threading.RLock()
         self.logger = get_itrader_logger().bind(component="PositionManager")
-        
-        # Active positions by ticker
-        self._positions: Dict[str, Position] = {}
-        
-        # Closed positions history
-        self._closed_positions: List[Position] = []
-        
+
+        # M2-08: open + closed positions now live in the injected state-storage
+        # seam (self.portfolio.state_storage). This manager no longer owns those
+        # containers — it routes all reads/writes through self._storage. A real
+        # Portfolio always injects a shared seam; a manager constructed standalone
+        # (e.g. with a lightweight test portfolio) falls back to its own in-memory
+        # backend so the seam is always present.
+        from itrader.portfolio_handler.base import PortfolioStateStorage
+        from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
+        storage = getattr(portfolio, "state_storage", None)
+        if storage is None:
+            storage = PortfolioStateStorageFactory.create("backtest")
+        self._storage: PortfolioStateStorage = storage
+
         # Position limits and configuration
         self.max_positions_per_ticker = 1  # Max concurrent positions per ticker
         self.max_total_positions = 100     # Max total open positions
@@ -96,8 +103,8 @@ class PositionManager:
         """
         with self._lock:
             ticker = transaction.ticker
-            existing_position = self._positions.get(ticker)
-            
+            existing_position = self._storage.get_position(ticker)
+
             if existing_position:
                 return self._update_existing_position(existing_position, transaction)
             else:
@@ -107,10 +114,10 @@ class PositionManager:
         """Create a new position from a transaction."""
         
         # Validate position limits
-        if len(self._positions) >= self.max_total_positions:
+        if len(self._storage.get_positions()) >= self.max_total_positions:
             raise InvalidTransactionError(
                 f"Cannot create position: Maximum {self.max_total_positions} positions reached",
-                {"current_positions": len(self._positions)}
+                {"current_positions": len(self._storage.get_positions())}
             )
         
         # Validate position value
@@ -129,7 +136,7 @@ class PositionManager:
         
         # Create new position
         position = Position.open_position(transaction)
-        self._positions[transaction.ticker] = position
+        self._storage.set_position(transaction.ticker, position)
         
         self.logger.info("New position created",
             position_id=position.id,
@@ -180,12 +187,10 @@ class PositionManager:
         """Close a position and move it to closed positions."""
         
         position.close_position(price, time)
-        
-        # Move from active to closed positions
-        if position.ticker in self._positions:
-            del self._positions[position.ticker]
-        
-        self._closed_positions.append(position)
+
+        # Move from active to closed positions (via the seam)
+        self._storage.remove_position(position.ticker)
+        self._storage.add_closed_position(position)
         
         self.logger.info("Position closed",
             position_id=position.id,
@@ -230,76 +235,78 @@ class PositionManager:
         with self._lock:
             updated_count = 0
             
-            for ticker, position in self._positions.items():
+            positions = self._storage.get_positions()
+            for ticker, position in positions.items():
                 if ticker in price_data:
                     current_price = price_data[ticker]
                     position.update_current_price_time(current_price, timestamp)
                     updated_count += 1
-            
+
             self.logger.debug("Position market values updated",
                 updated_positions=updated_count,
-                total_positions=len(self._positions)
+                total_positions=len(positions)
             )
     
     def get_position(self, ticker: str) -> Optional[Position]:
         """Get active position for a ticker."""
         with self._lock:
-            return self._positions.get(ticker)
-    
+            return self._storage.get_position(ticker)
+
     def get_all_positions(self) -> Dict[str, Position]:
         """Get all active positions."""
         with self._lock:
-            return self._positions.copy()
-    
+            return self._storage.get_positions()
+
     def get_closed_positions(self, limit: Optional[int] = None) -> List[Position]:
         """Get closed positions history."""
         with self._lock:
+            closed = self._storage.get_closed_positions()
             if limit:
-                return self._closed_positions[-limit:]
-            return self._closed_positions.copy()
-    
+                return closed[-limit:]
+            return closed
+
     def get_position_count(self) -> int:
         """Get count of active positions."""
         with self._lock:
-            return len(self._positions)
-    
+            return len(self._storage.get_positions())
+
     def get_total_market_value(self) -> Decimal:
         """Calculate total market value of all positions."""
         with self._lock:
             total_value = Decimal('0.00')
-            
-            for position in self._positions.values():
+
+            for position in self._storage.get_positions().values():
                 market_value = Decimal(str(position.market_value))
                 total_value += market_value
-            
+
             return total_value
-    
+
     def get_total_unrealized_pnl(self) -> Decimal:
         """Calculate total unrealized P&L across all positions."""
         with self._lock:
             total_pnl = Decimal('0.00')
-            
-            for position in self._positions.values():
+
+            for position in self._storage.get_positions().values():
                 unrealized_pnl = Decimal(str(position.unrealised_pnl))
                 total_pnl += unrealized_pnl
-            
+
             return total_pnl
-    
+
     def get_total_realized_pnl(self) -> Decimal:
         """Calculate total realized P&L from open and closed positions."""
         with self._lock:
             total_pnl = Decimal('0.00')
-            
+
             # Add realized P&L from open positions
-            for position in self._positions.values():
+            for position in self._storage.get_positions().values():
                 realized_pnl = Decimal(str(position.realised_pnl))
                 total_pnl += realized_pnl
-            
+
             # Add realized P&L from closed positions
-            for position in self._closed_positions:
+            for position in self._storage.get_closed_positions():
                 realized_pnl = Decimal(str(position.realised_pnl))
                 total_pnl += realized_pnl
-            
+
             return total_pnl
     
     def calculate_position_metrics(self, position_id: PositionId) -> Optional[PositionMetrics]:
@@ -307,13 +314,13 @@ class PositionManager:
         
         # Find position (active or closed)
         position = None
-        for p in self._positions.values():
+        for p in self._storage.get_positions().values():
             if p.id == position_id:
                 position = p
                 break
-        
+
         if not position:
-            for p in self._closed_positions:
+            for p in self._storage.get_closed_positions():
                 if p.id == position_id:
                     position = p
                     break
@@ -357,8 +364,8 @@ class PositionManager:
                 return {}
             
             concentrations = {}
-            
-            for ticker, position in self._positions.items():
+
+            for ticker, position in self._storage.get_positions().items():
                 position_value = Decimal(str(position.market_value))
                 concentration_pct = (position_value / total_portfolio_value) * 100
                 concentrations[ticker] = concentration_pct
@@ -369,13 +376,14 @@ class PositionManager:
         """Validate if transaction would violate position limits."""
         
         with self._lock:
+            open_positions = self._storage.get_positions()
             # Check total position count
-            if transaction.ticker not in self._positions and len(self._positions) >= self.max_total_positions:
+            if transaction.ticker not in open_positions and len(open_positions) >= self.max_total_positions:
                 return False
-            
+
             # Check position value limits
-            if transaction.ticker in self._positions:
-                position = self._positions[transaction.ticker]
+            if transaction.ticker in open_positions:
+                position = open_positions[transaction.ticker]
                 # Simulate the update to check new value
                 new_quantity = position.net_quantity
                 if transaction.type == TransactionType.BUY:
@@ -397,8 +405,8 @@ class PositionManager:
         
         with self._lock:
             return {
-                "active_positions": len(self._positions),
-                "closed_positions": len(self._closed_positions),
+                "active_positions": len(self._storage.get_positions()),
+                "closed_positions": len(self._storage.get_closed_positions()),
                 "total_market_value": float(self.get_total_market_value()),
                 "total_unrealized_pnl": float(self.get_total_unrealized_pnl()),
                 "total_realized_pnl": float(self.get_total_realized_pnl()),
@@ -410,8 +418,8 @@ class PositionManager:
         """Get count of positions by side (LONG/SHORT)."""
         
         side_counts = {"LONG": 0, "SHORT": 0}
-        
-        for position in self._positions.values():
+
+        for position in self._storage.get_positions().values():
             side_counts[position.side.name] += 1
         
         return side_counts
@@ -421,8 +429,8 @@ class PositionManager:
         
         with self._lock:
             closed_positions = []
-            
-            for ticker, position in list(self._positions.items()):
+
+            for ticker, position in list(self._storage.get_positions().items()):
                 if ticker in current_prices:
                     self._close_position(position, current_prices[ticker], timestamp)
                     closed_positions.append(position)

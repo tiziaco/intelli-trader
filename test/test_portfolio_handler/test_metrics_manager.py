@@ -49,7 +49,7 @@ class TestMetricsManager(unittest.TestCase):
 
     def test_metrics_manager_initialization(self):
         """Test MetricsManager initialization."""
-        self.assertEqual(len(self.metrics_manager._snapshots), 0)
+        self.assertEqual(len(self.metrics_manager._storage.get_snapshots()), 0)
         self.assertEqual(self.metrics_manager.cache_duration_minutes, 5)
         self.assertEqual(self.metrics_manager.max_snapshots, 10000)
         self.assertEqual(self.metrics_manager.risk_free_rate, Decimal('0.02'))
@@ -67,7 +67,7 @@ class TestMetricsManager(unittest.TestCase):
         self.assertEqual(snapshot.positions_value, Decimal('20000.0'))
         
         # Check snapshot is stored
-        self.assertEqual(len(self.metrics_manager._snapshots), 1)
+        self.assertEqual(len(self.metrics_manager._storage.get_snapshots()), 1)
 
     def test_record_multiple_snapshots(self):
         """Test recording multiple snapshots with different values."""
@@ -88,7 +88,7 @@ class TestMetricsManager(unittest.TestCase):
         
         second_snapshot = self.metrics_manager.record_snapshot(base_time + timedelta(days=1))
         
-        self.assertEqual(len(self.metrics_manager._snapshots), 2)
+        self.assertEqual(len(self.metrics_manager._storage.get_snapshots()), 2)
         self.assertEqual(second_snapshot.total_equity, Decimal('105000.0'))
         self.assertEqual(second_snapshot.unrealized_pnl, Decimal('2000.0'))
         self.assertEqual(second_snapshot.realized_pnl, Decimal('1000.0'))
@@ -112,10 +112,10 @@ class TestMetricsManager(unittest.TestCase):
             self.metrics_manager.record_snapshot(base_time + timedelta(days=i))
         
         # Should only keep the last 5 snapshots
-        self.assertEqual(len(self.metrics_manager._snapshots), 5)
+        self.assertEqual(len(self.metrics_manager._storage.get_snapshots()), 5)
         
         # First snapshot should be from day 5 (index 5)
-        first_snapshot = self.metrics_manager._snapshots[0]
+        first_snapshot = self.metrics_manager._storage.get_snapshots()[0]
         self.assertEqual(first_snapshot.total_equity, Decimal('105000.0'))
 
     def test_get_current_metrics(self):
@@ -137,12 +137,12 @@ class TestMetricsManager(unittest.TestCase):
     def test_get_current_metrics_auto_snapshot(self):
         """Test that current metrics creates snapshot if none exists."""
         # No snapshots recorded yet
-        self.assertEqual(len(self.metrics_manager._snapshots), 0)
+        self.assertEqual(len(self.metrics_manager._storage.get_snapshots()), 0)
         
         current_metrics = self.metrics_manager.get_current_metrics()
         
         # Should automatically create a snapshot
-        self.assertEqual(len(self.metrics_manager._snapshots), 1)
+        self.assertEqual(len(self.metrics_manager._storage.get_snapshots()), 1)
         self.assertIn("total_equity", current_metrics)
 
     def test_calculate_performance_metrics_insufficient_data(self):
@@ -406,7 +406,7 @@ class TestMetricsManager(unittest.TestCase):
         # Check results
         self.assertEqual(len(errors), 0, f"Concurrent snapshot errors: {errors}")
         self.assertEqual(len(results), 10)
-        self.assertEqual(len(self.metrics_manager._snapshots), 10)
+        self.assertEqual(len(self.metrics_manager._storage.get_snapshots()), 10)
 
     def test_portfolio_return_calculation(self):
         """Test portfolio return calculation."""

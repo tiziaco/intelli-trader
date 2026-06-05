@@ -79,8 +79,8 @@ class TestTransactionManager(unittest.TestCase):
     def test_transaction_manager_initialization(self):
         """Test TransactionManager initialization."""
         self.assertIsNotNone(self.transaction_manager.portfolio)
-        self.assertEqual(len(self.transaction_manager._pending_transactions), 0)
-        self.assertEqual(len(self.transaction_manager._transaction_history), 0)
+        self.assertEqual(len(self.transaction_manager._storage.get_pending_transactions()), 0)
+        self.assertEqual(len(self.transaction_manager._storage.get_transaction_history()), 0)
         self.assertEqual(self.transaction_manager.min_transaction_amount, Decimal('0.01'))
 
     def test_valid_buy_transaction_processing(self):
@@ -90,7 +90,7 @@ class TestTransactionManager(unittest.TestCase):
         result = self.transaction_manager.process_transaction(self.valid_transaction)
         
         self.assertTrue(result)
-        self.assertEqual(len(self.transaction_manager._transaction_history), 1)
+        self.assertEqual(len(self.transaction_manager._storage.get_transaction_history()), 1)
         
         # Check cash was debited
         expected_cash = initial_cash - (self.valid_transaction.price * self.valid_transaction.quantity + self.valid_transaction.commission)
