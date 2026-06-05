@@ -636,7 +636,7 @@ def test_fill_route_order(wired_event_handler):
 
 **All other claims** in this research are `[VERIFIED]` by code execution in the project venv or by direct file reads, or `[CITED]` to stdlib docs.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Shim vs big-bang for `events_handler/event.py`**
    - What we know: 31 itrader files + 20+ test files import from the old path; Phase 3 did both styles (shim for config during transition, then delete).
