@@ -22,8 +22,8 @@ from itrader.order_handler.order import Order
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.order_handler.storage.in_memory_storage import InMemoryOrderStorage
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.events_handler.event import SignalEvent, OrderEvent, FillEvent
-from itrader.core.enums import OrderType, OrderCommand, OrderStatus
+from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
+from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side
 
 
 # --- OrderManager initialization -------------------------------------------
@@ -63,8 +63,8 @@ class _Harness:
 
     def signal(self, stop_loss=0.0, take_profit=0.0):
         return SignalEvent(
-            time=_dt.datetime(2024, 1, 1), order_type="MARKET",
-            ticker="BTCUSDT", action="BUY", price=40.0, quantity=1.0,
+            time=_dt.datetime(2024, 1, 1), order_type=OrderType.MARKET,
+            ticker="BTCUSDT", action=Side.BUY, price=40.0, quantity=1.0,
             stop_loss=stop_loss, take_profit=take_profit, strategy_id=1,
             portfolio_id=self.portfolio_id, strategy_setting={},
         )
@@ -80,8 +80,8 @@ class _Harness:
 
     def fill(self, order, status):
         oe = OrderEvent(
-            time=_dt.datetime(2024, 1, 1), ticker=order.ticker, action=order.action,
-            price=order.price, quantity=order.quantity, exchange=order.exchange,
+            time=_dt.datetime(2024, 1, 1), ticker=order.ticker, action=Side(order.action),
+            price=float(order.price), quantity=float(order.quantity), exchange=order.exchange,
             strategy_id=order.strategy_id, portfolio_id=order.portfolio_id,
             order_type=OrderType.STOP, order_id=order.id,
         )
@@ -157,9 +157,10 @@ def test_cancelled_fill_marks_order_cancelled(harness):
 
 def test_unknown_order_id_is_safe(harness):
     # A fill for an order not in storage must not raise.
+    import dataclasses
     order = harness.rest_a_stop()
-    fake = harness.fill(order, "EXECUTED")
-    fake.order_id = 999999
+    # Events are frozen (M3-01) — build the unknown-id variant via replace.
+    fake = dataclasses.replace(harness.fill(order, "EXECUTED"), order_id=999999)
     harness.handler.on_fill(fake)  # should be a no-op, no exception
     assert harness.storage.get_order_by_id(999999, harness.portfolio_id) is None
     # The real order remains untouched (still active/PENDING).

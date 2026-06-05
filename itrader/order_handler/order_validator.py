@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .order import Order
-from ..core.enums import OrderType, OrderStatus
+from ..core.enums import OrderType, OrderStatus, Side
 
 
 class ValidationLevel(Enum):
@@ -422,8 +422,10 @@ class EnhancedOrderValidator:
         if not position:
             return False
 
-        return ((position.side.name == 'LONG' and order.action == 'SELL') or
-                (position.side.name == 'SHORT' and order.action == 'BUY'))
+        # The Order ENTITY stores a str action until M4 (D-05 boundary rule) —
+        # compare against the Side member's value, never a bare string literal.
+        return ((position.side.name == 'LONG' and order.action == Side.SELL.value) or
+                (position.side.name == 'SHORT' and order.action == Side.BUY.value))
     
     # ===== PHASE 4: FINANCIAL RISK VALIDATION =====
     

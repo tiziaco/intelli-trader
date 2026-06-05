@@ -7,7 +7,7 @@ from .order import Order
 from ..core.enums import OrderStatus
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
-from ..events_handler.event import SignalEvent, OrderEvent, FillEvent, PortfolioUpdateEvent
+from ..events_handler.events import SignalEvent, OrderEvent, FillEvent, PortfolioUpdateEvent
 from .storage import OrderStorageFactory
 
 from itrader.logger import get_itrader_logger

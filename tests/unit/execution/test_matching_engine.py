@@ -4,14 +4,14 @@ import pandas as pd
 import pytest
 
 from itrader.execution_handler.matching_engine import MatchingEngine
-from itrader.events_handler.event import OrderEvent, BarEvent
-from itrader.core.enums import OrderType, OrderCommand
+from itrader.events_handler.events import OrderEvent, BarEvent
+from itrader.core.enums import OrderType, OrderCommand, Side
 
 
 def make_order_event(order_type, action, price, order_id,
                      ticker="BTCUSDT", quantity=1.0, parent_order_id=None):
     return OrderEvent(
-        time=datetime(2024, 1, 1), ticker=ticker, action=action, price=price,
+        time=datetime(2024, 1, 1), ticker=ticker, action=Side(action), price=price,
         quantity=quantity, exchange="default", strategy_id=1, portfolio_id=1,
         order_type=order_type, order_id=order_id, parent_order_id=parent_order_id,
         command=OrderCommand.NEW,

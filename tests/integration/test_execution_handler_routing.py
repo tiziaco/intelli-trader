@@ -5,8 +5,8 @@ import pandas as pd
 import pytest
 
 from itrader.execution_handler.execution_handler import ExecutionHandler
-from itrader.events_handler.event import OrderEvent, BarEvent, FillStatus
-from itrader.core.enums import OrderType, OrderCommand
+from itrader.events_handler.events import OrderEvent, BarEvent
+from itrader.core.enums import FillStatus, OrderType, OrderCommand, Side
 
 
 class _RoutingEnv:
@@ -19,7 +19,7 @@ class _RoutingEnv:
 
     def oe(self, order_type, action="BUY", price=40.0, order_id=1):
         return OrderEvent(
-            time=datetime(2024, 1, 1), ticker="BTCUSDT", action=action, price=price,
+            time=datetime(2024, 1, 1), ticker="BTCUSDT", action=Side(action), price=price,
             quantity=1.0, exchange="simulated", strategy_id=1, portfolio_id=1,
             order_type=order_type, order_id=order_id, command=OrderCommand.NEW,
         )

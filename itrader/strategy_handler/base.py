@@ -5,8 +5,9 @@ from typing import Any, Optional
 
 import pandas as pd
 
+from itrader.core.enums import OrderType, Side
 from itrader.core.ids import StrategyId
-from itrader.events_handler.event import SignalEvent, BarEvent
+from itrader.events_handler.events import SignalEvent, BarEvent
 from itrader.outils.time_parser import to_timedelta
 from itrader import logger, idgen
 
@@ -78,11 +79,14 @@ class Strategy(ABC):
 		for portfolio_id in self.subscribed_portfolios:
 			# quantity is omitted (defaults to None, D-10): the order/risk layer
 			# sizes the signal — the 0 sentinel is gone.
+			# D-05 boundary parse: the strategy string contract ('BUY'/'SELL',
+			# 'market'/...) is converted to enum members HERE — the case-insensitive
+			# `_missing_` classmethods raise ValueError on unknown strings.
 			signal = SignalEvent(
 							time = self.last_event.time,
-							order_type = self.order_type,
+							order_type = OrderType(self.order_type),
 							ticker = ticker,
-							action = action,
+							action = Side(action),
 							price = last_close,
 							stop_loss = sl,
 							take_profit = tp,

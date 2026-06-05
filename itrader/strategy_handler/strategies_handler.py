@@ -4,7 +4,7 @@ from typing import Any
 
 from itrader.price_handler.data_provider import PriceHandler
 from itrader.strategy_handler.base import Strategy
-from itrader.events_handler.event import BarEvent, PortfolioUpdateEvent
+from itrader.events_handler.events import BarEvent, PortfolioUpdateEvent
 from itrader.outils.time_parser import check_timeframe
 from itrader.logger import get_itrader_logger
 

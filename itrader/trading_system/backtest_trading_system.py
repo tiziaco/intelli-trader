@@ -16,7 +16,7 @@ from itrader.universe.dynamic import DynamicUniverse
 from itrader.reporting.statistics import StatisticsReporting
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.event import EventType
+from itrader.events_handler.events import EventType
 
 
 class TradingSystem(object):

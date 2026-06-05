@@ -8,7 +8,8 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.storage import OrderStorageFactory
-from itrader.events_handler.event import SignalEvent, BarEvent, FillStatus, EventType
+from itrader.events_handler.events import SignalEvent, BarEvent
+from itrader.core.enums import EventType, FillStatus, OrderType, Side
 
 
 class _StopLimitHarness:
@@ -27,8 +28,8 @@ class _StopLimitHarness:
 
     def signal(self, action, order_type="MARKET", price=40.0, stop_loss=0.0, take_profit=0.0):
         return SignalEvent(
-            time=datetime(2024, 1, 1), order_type=order_type, ticker="BTCUSDT",
-            action=action, price=price, quantity=1.0, stop_loss=stop_loss,
+            time=datetime(2024, 1, 1), order_type=OrderType(order_type), ticker="BTCUSDT",
+            action=Side(action), price=price, quantity=1.0, stop_loss=stop_loss,
             take_profit=take_profit, strategy_id=1, portfolio_id=self.pid,
             strategy_setting={},
         )
@@ -74,7 +75,7 @@ def test_stop_loss_rests_then_fills_on_breach(harness):
     harness.drain_fills()
     harness.execution.on_market_data(harness.bar(open_=38, high=39, low=20, close=25))
     executed = [f for f in harness.drain_fills() if f.status == FillStatus.EXECUTED]
-    assert any(f.action == "SELL" for f in executed)
+    assert any(f.action is Side.SELL for f in executed)
 
 
 def test_take_profit_fill_cancels_stop_via_oco(harness):
@@ -85,8 +86,8 @@ def test_take_profit_fill_cancels_stop_via_oco(harness):
     # Bar pierces the TP (high 60 >= 55) but not the SL (low 40 > 30).
     harness.execution.on_market_data(harness.bar(open_=50, high=60, low=40, close=58))
     statuses = [(ev.action, ev.status) for ev in harness.drain_fills()]
-    assert ("SELL", FillStatus.EXECUTED) in statuses
-    assert ("SELL", FillStatus.CANCELLED) in statuses
+    assert (Side.SELL, FillStatus.EXECUTED) in statuses
+    assert (Side.SELL, FillStatus.CANCELLED) in statuses
 
 
 def test_stop_does_not_fill_when_not_breached(harness):
@@ -95,5 +96,5 @@ def test_stop_does_not_fill_when_not_breached(harness):
     # Drain the BUY entry fill before processing the bar
     harness.drain_fills()
     harness.execution.on_market_data(harness.bar(open_=40, high=45, low=35, close=42))
-    sell_fills = [f for f in harness.drain_fills() if f.action == "SELL"]
+    sell_fills = [f for f in harness.drain_fills() if f.action is Side.SELL]
     assert sell_fills == []

@@ -6,8 +6,8 @@ import pytest
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
-from itrader.events_handler.event import OrderEvent, SignalEvent
-from itrader.core.enums import OrderType, OrderStatus
+from itrader.events_handler.events import OrderEvent, SignalEvent
+from itrader.core.enums import OrderType, OrderStatus, Side
 
 
 _STRATEGY_ID = 1
@@ -31,9 +31,9 @@ class _OnSignalHarness:
         """Create a mock signal with proper quantity for testing."""
         return SignalEvent(
             time=datetime.now(),
-            order_type=order_type,
+            order_type=OrderType(order_type),
             ticker=ticker,
-            action=action,
+            action=Side(action),
             price=price,
             quantity=quantity,
             stop_loss=stop_loss,
@@ -65,7 +65,7 @@ def test_on_signal_buy(harness):
 
     assert isinstance(order_event, OrderEvent)
     assert order_event.ticker == "BTCUSDT"
-    assert order_event.action == "BUY"
+    assert order_event.action is Side.BUY
     assert order_event.quantity == 100.0
 
 
@@ -78,7 +78,7 @@ def test_on_signal_sell(harness):
 
     assert isinstance(order_event, OrderEvent)
     assert order_event.ticker == "BTCUSDT"
-    assert order_event.action == "SELL"
+    assert order_event.action is Side.SELL
     assert order_event.quantity == 50.0
 
 
@@ -100,7 +100,7 @@ def test_on_signal_buy_with_sl_tp(harness):
     portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
 
     assert primary_event.ticker == "BTCUSDT"
-    assert primary_event.action == "BUY"
+    assert primary_event.action is Side.BUY
     assert primary_event.quantity == 100.0
     # All 3 legs emitted
     assert len(order_events) == 3
@@ -127,7 +127,7 @@ def test_on_signal_sell_with_sl_tp(harness):
     portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
 
     assert primary_event.ticker == "BTCUSDT"
-    assert primary_event.action == "SELL"
+    assert primary_event.action is Side.SELL
     assert primary_event.quantity == 50.0
     # All 3 legs emitted
     assert len(order_events) == 3

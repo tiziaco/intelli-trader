@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from itrader.events_handler.event import OrderEvent
+from itrader.events_handler.events import OrderEvent
 from itrader.core.enums import OrderType, OrderCommand
 from itrader.order_handler.order import Order
 
@@ -39,3 +39,20 @@ def test_parent_order_id_copied():
     order.parent_order_id = 999
     oe = OrderEvent.new_order_event(order)
     assert oe.parent_order_id == 999
+
+
+def test_action_parsed_to_side_member():
+    # D-05: the entity stores a str action until M4; the factory parses it
+    # to a Side member at the event boundary.
+    from itrader.core.enums import Side
+    oe = OrderEvent.new_order_event(_order(OrderType.MARKET))
+    assert oe.action is Side.SELL
+
+
+def test_frozen_base_fields_present():
+    # M3-01 base fields: uuid7 event_id + business-time created_at; D-11
+    # bracket linkage defaults to the empty tuple on non-bracket orders.
+    oe = OrderEvent.new_order_event(_order(OrderType.MARKET))
+    assert oe.event_id.version == 7
+    assert oe.created_at == oe.time
+    assert oe.child_order_ids == ()

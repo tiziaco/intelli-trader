@@ -16,10 +16,10 @@ from decimal import Decimal
 from typing import Any, List, Optional
 from .order import Order
 from .operation_result import OperationResult
-from ..core.enums import OrderCommand, OrderStatus, FillStatus
+from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
 from ..core.money import to_money
 from .base import OrderStorage
-from ..events_handler.event import OrderEvent, SignalEvent, FillEvent
+from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 
 
@@ -253,26 +253,27 @@ class OrderManager:
 			The PENDING primary order, or a failure result for an
 			unsupported order type (short-circuits before entity creation).
 		"""
-		order_type_str = signal_event.order_type.upper()
-
-		if order_type_str == 'MARKET':
+		# D-05: the signal carries an enum-typed OrderType; dispatch on the
+		# member. The Order ENTITY keeps its str action until M4 — convert at
+		# this boundary via .value.
+		if signal_event.order_type is OrderType.MARKET:
 			return Order.new_order(signal_event, exchange, quantity=quantity)
-		elif order_type_str == 'LIMIT':
+		elif signal_event.order_type is OrderType.LIMIT:
 			return Order.new_limit_order(
 				time=signal_event.time,
 				ticker=signal_event.ticker,
-				action=signal_event.action,
+				action=signal_event.action.value,
 				price=signal_event.price,
 				quantity=quantity,
 				exchange=exchange,
 				strategy_id=signal_event.strategy_id,
 				portfolio_id=signal_event.portfolio_id
 			)
-		elif order_type_str == 'STOP':
+		elif signal_event.order_type is OrderType.STOP:
 			return Order.new_stop_order(
 				time=signal_event.time,
 				ticker=signal_event.ticker,
-				action=signal_event.action,
+				action=signal_event.action.value,
 				price=signal_event.price,
 				quantity=quantity,
 				exchange=exchange,
@@ -280,7 +281,7 @@ class OrderManager:
 				portfolio_id=signal_event.portfolio_id
 			)
 		return OperationResult.failure_result(
-			f"Unsupported order type: {order_type_str}",
+			f"Unsupported order type: {signal_event.order_type}",
 			operation_type="create_primary_order"
 		)
 
@@ -320,7 +321,8 @@ class OrderManager:
 				sl_order = Order.new_stop_order(
 					time=signal_event.time,
 					ticker=signal_event.ticker,
-					action='BUY' if signal_event.action == 'SELL' else 'SELL',
+					# Invert on Side (D-05); the entity stores str until M4.
+					action='BUY' if signal_event.action is Side.SELL else 'SELL',
 					price=signal_event.stop_loss,
 					quantity=quantity,
 					exchange=exchange,
@@ -333,7 +335,8 @@ class OrderManager:
 				tp_order = Order.new_limit_order(
 					time=signal_event.time,
 					ticker=signal_event.ticker,
-					action='BUY' if signal_event.action == 'SELL' else 'SELL',
+					# Invert on Side (D-05); the entity stores str until M4.
+					action='BUY' if signal_event.action is Side.SELL else 'SELL',
 					price=signal_event.take_profit,
 					quantity=quantity,
 					exchange=exchange,
@@ -437,7 +440,7 @@ class OrderManager:
 			)
 		portfolio = self.portfolio_handler.get_portfolio(signal_event.portfolio_id)
 		open_position = portfolio.get_open_position(signal_event.ticker)
-		if signal_event.action == "SELL" and open_position is not None and open_position.net_quantity > 0:
+		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
 			# Long-only exit: close the open long by selling its full quantity.
 			# net_quantity is Decimal (M2a entity money) — size in Decimal so the
 			# exit nets the long to exactly the position quantity (D-13: the

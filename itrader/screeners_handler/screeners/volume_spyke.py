@@ -4,7 +4,7 @@ import numpy as np
 from pandas_ta import overlap
 
 from itrader.screeners_handler.screeners.base import Screener
-from itrader.events_handler.event import BarEvent
+from itrader.events_handler.events import BarEvent
 
 class VolumeSpykeScreener(Screener):
 	def __init__(self, tickers = ['all'], frequency = '15m', timeframe = '15m', window = 20):

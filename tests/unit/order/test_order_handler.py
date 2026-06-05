@@ -5,7 +5,8 @@ import pytest
 
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
-from itrader.events_handler.event import SignalEvent
+from itrader.events_handler.events import SignalEvent
+from itrader.core.enums import OrderType, Side
 
 
 _STRATEGY_ID = 1
@@ -26,9 +27,9 @@ def order_handler():
 
     buy_signal = SignalEvent(
         time=datetime.now(UTC),
-        order_type="MARKET",
+        order_type=OrderType.MARKET,
         ticker="BTCUSDT",
-        action="BUY",
+        action=Side.BUY,
         price=40.0,
         quantity=100.0,
         stop_loss=0.0,

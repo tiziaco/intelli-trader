@@ -3,7 +3,7 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from itrader.events_handler.event import BarEvent
+from itrader.events_handler.events import BarEvent
 
 
 @pytest.fixture

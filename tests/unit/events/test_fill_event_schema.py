@@ -3,15 +3,15 @@ from datetime import datetime
 
 import uuid_utils.compat as uuid_compat
 
-from itrader.events_handler.event import OrderEvent, FillEvent, FillStatus
-from itrader.core.enums import OrderType
+from itrader.events_handler.events import OrderEvent, FillEvent
+from itrader.core.enums import FillStatus, OrderType, Side
 
 _STRATEGY_ID = uuid_compat.uuid7()
 
 
 def _order_event():
     return OrderEvent(
-        time=datetime(2024, 1, 1), ticker="BTCUSDT", action="BUY",
+        time=datetime(2024, 1, 1), ticker="BTCUSDT", action=Side.BUY,
         price=40.0, quantity=1.0, exchange="default", strategy_id=_STRATEGY_ID,
         portfolio_id=1, order_type=OrderType.MARKET, order_id=7,
     )
@@ -69,3 +69,14 @@ def test_executed_values_land_without_mutation():
     assert fill.commission == 0.1
     assert order.price == 40.0
     assert order.quantity == 1.0
+
+
+def test_frozen_base_fields_and_side_carried():
+    # M3-01 base fields: uuid7 event_id + business-time created_at; the
+    # Side member is carried from the originating order (D-05).
+    order = _order_event()
+    fill = FillEvent.new_fill(
+        "EXECUTED", order, price=order.price, quantity=order.quantity, commission=0.0)
+    assert fill.event_id.version == 7
+    assert fill.created_at == fill.time
+    assert fill.action is Side.BUY

@@ -2,7 +2,7 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-	from ..events_handler.event import BarEvent, TimeEvent
+	from ..events_handler.events import BarEvent, TimeEvent
 
 
 class Universe(ABC):

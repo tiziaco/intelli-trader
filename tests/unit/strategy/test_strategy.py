@@ -5,7 +5,8 @@ import pandas as pd
 import pytest
 
 from itrader.strategy_handler.base import Strategy
-from itrader.events_handler.event import SignalEvent, BarEvent
+from itrader.events_handler.events import SignalEvent, BarEvent
+from itrader.core.enums import OrderType, Side
 
 
 _PORTFOLIO_NAME = "test_pf"
@@ -68,7 +69,8 @@ def test_buy_signal(strategy):
 
     assert isinstance(event, SignalEvent)
     assert event.strategy_id == strat.strategy_id
-    assert event.action == "BUY"
+    assert event.action is Side.BUY
+    assert event.order_type is OrderType.MARKET
     assert event.ticker == _TICKER
     assert event.stop_loss == 40
     assert event.take_profit == 50
@@ -83,7 +85,8 @@ def test_sell_signal(strategy):
 
     assert isinstance(event, SignalEvent)
     assert event.strategy_id == strat.strategy_id
-    assert event.action == "SELL"
+    assert event.action is Side.SELL
+    assert event.order_type is OrderType.MARKET
     assert event.ticker == _TICKER
     assert event.stop_loss == 40
     assert event.take_profit == 50
