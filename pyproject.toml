@@ -26,6 +26,8 @@ structlog = "^24.4.0"
 pyyaml = "^6.0.3"
 readerwriterlock = "^1.0.9"
 uuid-utils = "^0.16.0"
+pydantic = "^2.13"
+pydantic-settings = "^2.14"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.2"
