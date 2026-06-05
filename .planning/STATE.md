@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 03-09-PLAN.md
-last_updated: "2026-06-05T10:38:09.582Z"
+status: ready_to_plan
+stopped_at: Phase 03 complete (9/9) — ready to discuss Phase 4
+last_updated: 2026-06-05T10:54:12.118Z
 last_activity: 2026-06-05
 progress:
   total_phases: 8
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 03 — m2b-config-types-storage-seam-oracle-re-freeze
+**Current focus:** Phase 4 — m3 — event & dispatch core
 
 ## Current Position
 
-Phase: 03 (m2b-config-types-storage-seam-oracle-re-freeze) — EXECUTING
-Plan: 9 of 9
-Status: Phase complete — ready for verification
+Phase: 4
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-05
 
 Progress: [██████████] 100%
@@ -36,7 +36,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 5
+- Total plans completed: 14
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -45,6 +45,7 @@ Progress: [██████████] 100%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 5 | - | - |
+| 03 | 9 | - | - |
 
 **Recent Trend:**
 
