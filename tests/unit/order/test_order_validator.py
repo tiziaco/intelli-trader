@@ -58,7 +58,6 @@ class TestEnhancedOrderValidator:
         
         assert result.success is True
         assert len(result.errors) == 0
-        assert signal.verified is True
         assert result.summary == "All validations passed"
 
     def test_critical_field_validation_failure(self):
@@ -69,7 +68,6 @@ class TestEnhancedOrderValidator:
         
         assert result.success is False
         assert len(result.errors) > 0
-        assert signal.verified is False
         assert any("ticker" in msg.message.lower() for msg in result.errors)
         assert result.summary == "Critical field validation failed"
 

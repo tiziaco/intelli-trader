@@ -115,37 +115,33 @@ class EnhancedOrderValidator:
             SUCCESS, WARNING, or ERROR with detailed messages
         """
         all_messages = []
-        
+
         # PHASE 1: Critical Field Validation
         critical_messages = self._validate_critical_fields(signal)
         all_messages.extend(critical_messages)
         if self._has_critical_errors(critical_messages):
-            signal.verified = False
             return ValidationResult(False, all_messages, "Critical field validation failed")
-        
-        # PHASE 2: Market & Exchange Validation  
+
+        # PHASE 2: Market & Exchange Validation
         market_messages = self._validate_market_conditions(signal)
         all_messages.extend(market_messages)
         if self._has_critical_errors(market_messages):
-            signal.verified = False
             return ValidationResult(False, all_messages, "Market validation failed")
-        
+
         # PHASE 3: Portfolio Constraints Validation
         portfolio_messages = self._validate_portfolio_constraints(signal)
         all_messages.extend(portfolio_messages)
         if self._has_critical_errors(portfolio_messages):
-            signal.verified = False
             return ValidationResult(False, all_messages, "Portfolio validation failed")
-        
+
         # PHASE 4: Financial Risk Validation
         risk_messages = self._validate_financial_risk(signal)
         all_messages.extend(risk_messages)
         if self._has_critical_errors(risk_messages):
-            signal.verified = False
             return ValidationResult(False, all_messages, "Financial risk validation failed")
-        
-        # All phases passed
-        signal.verified = True
+
+        # All phases passed. The typed ValidationResult IS the verdict (D-03):
+        # the signal is never mutated — no verified flag exists anymore.
         has_warnings = any(msg.level == ValidationLevel.WARNING for msg in all_messages)
         return ValidationResult(True, all_messages, "All validations passed", has_warnings)
     
@@ -189,16 +185,18 @@ class EnhancedOrderValidator:
                 "INVALID_PRICE"
             ))
         
-        # Quantity validation (signal should come pre-sized from strategy)
-        # TEMPORARY: Allow quantity=0 during transition period before position sizer is moved to strategy
-        if signal.quantity < 0:
+        # Quantity validation. None means "order/risk layer sizes me" (D-10);
+        # the run path always sizes before validation, so None/0 here only
+        # occurs when the validator is exercised directly on an unsized signal.
+        quantity = signal.quantity
+        if quantity is not None and quantity < 0:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 "Quantity cannot be negative",
                 "quantity",
                 "NEGATIVE_QUANTITY"
             ))
-        elif signal.quantity == 0:
+        elif quantity is None or quantity == 0:
             messages.append(ValidationMessage(
                 ValidationLevel.WARNING,
                 "Quantity is zero - signal needs position sizing (transition period)",
@@ -321,22 +319,25 @@ class EnhancedOrderValidator:
     def _validate_quantity_ranges(self, signal: SignalEvent) -> List[ValidationMessage]:
         """Validate quantity is within acceptable ranges."""
         messages: List[ValidationMessage] = []
-        
-        if signal.quantity < self.min_quantity:
+
+        # None means "order/risk layer sizes me" (D-10): an unsized quantity
+        # carries the 0-equivalent semantics the range check always applied.
+        quantity = signal.quantity if signal.quantity is not None else 0.0
+        if quantity < self.min_quantity:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
-                f"Quantity {signal.quantity} below minimum {self.min_quantity}",
+                f"Quantity {quantity} below minimum {self.min_quantity}",
                 "quantity",
                 "QUANTITY_TOO_LOW"
             ))
-        elif signal.quantity > self.max_quantity:
+        elif quantity > self.max_quantity:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
-                f"Quantity {signal.quantity} above maximum {self.max_quantity}",
+                f"Quantity {quantity} above maximum {self.max_quantity}",
                 "quantity",
                 "QUANTITY_TOO_HIGH"
             ))
-        
+
         return messages
     
     # ===== PHASE 3: PORTFOLIO CONSTRAINTS VALIDATION =====
@@ -397,8 +398,8 @@ class EnhancedOrderValidator:
         if not portfolio:
             return messages
         
-        # Calculate position value
-        position_value = signal.quantity * signal.price
+        # Calculate position value (None quantity = unsized, D-10 — no exposure yet)
+        position_value = (signal.quantity if signal.quantity is not None else 0.0) * signal.price
         
         # Check against portfolio total equity
         total_equity = portfolio.total_equity
@@ -452,7 +453,7 @@ class EnhancedOrderValidator:
         if not portfolio:
             return messages
         
-        quantity = signal.quantity
+        quantity = signal.quantity if signal.quantity is not None else 0.0
         price = signal.price
         cost = quantity * price
         
@@ -487,8 +488,8 @@ class EnhancedOrderValidator:
         if not portfolio:
             return messages
         
-        # Order value limits
-        order_value = signal.quantity * signal.price
+        # Order value limits (None quantity = unsized, D-10 — zero order value)
+        order_value = (signal.quantity if signal.quantity is not None else 0.0) * signal.price
         
         if order_value < self.min_order_value:
             messages.append(ValidationMessage(

@@ -159,6 +159,11 @@ class Order:
 		if order_type is None:
 			raise ValueError(f'OrderType {signal.order_type} not supported')
 
+		# D-10: a None quantity means the signal was never sized — an order
+		# cannot be constructed from an unsized signal.
+		if signal.quantity is None:
+			raise ValueError(f'Cannot create order from unsized signal for {signal.ticker}')
+
 		order = cls(
 			signal.time,
 			order_type,
