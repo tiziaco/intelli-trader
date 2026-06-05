@@ -126,30 +126,91 @@ def test_check_timeframe_hourly_grid():
 
 
 def test_check_timeframe_dst_boundary_is_immune():
-    """Epoch alignment is DST-immune: a 00:00 UTC daily bar fires regardless of DST.
+    """Midnight-relative alignment is DST-immune: a 00:00 UTC daily bar fires regardless of DST.
 
     2020-03-29 is the EU DST spring-forward day; the old market-tz-local anchor
-    would mis-align here. Epoch alignment fires on the 00:00 UTC grid unchanged.
+    would mis-align here. Midnight-of-day-UTC alignment fires on the 00:00 UTC
+    grid unchanged.
     """
     daily = timedelta(days=1)
     dst_midnight_utc = datetime(2020, 3, 29, 0, 0, 0, tzinfo=pytz.utc)
     assert check_timeframe(dst_midnight_utc, daily) is True
 
 
+def test_check_timeframe_weekly_fires_on_any_midnight():
+    """Weekly timeframe fires on ANY midnight, not only Thursdays (WR-01 regression).
+
+    The old epoch seam anchored on 1970-01-01 (a Thursday), so a weekly tf fired
+    only on Thursday 00:00 UTC. The midnight-relative anchor fires on every
+    midnight regardless of weekday; a midday point never fires.
+    """
+    weekly = timedelta(weeks=1)
+    # 2018-01-01 is a Monday — the old epoch seam returned False here.
+    monday_midnight = datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc)
+    # 2018-01-03 is a Wednesday — another non-Thursday midnight in the same week.
+    wednesday_midnight = datetime(2018, 1, 3, 0, 0, 0, tzinfo=pytz.utc)
+    midday = datetime(2018, 1, 1, 12, 0, 0, tzinfo=pytz.utc)
+
+    assert check_timeframe(monday_midnight, weekly) is True
+    assert check_timeframe(wednesday_midnight, weekly) is True
+    assert check_timeframe(midday, weekly) is False
+
+
+def test_check_timeframe_7h_aligns_to_midnight():
+    """A 7h (non-day-divisor) timeframe aligns to midnight-of-day.
+
+    seconds-since-midnight is 0 at 00:00 (0 % 25200 == 0) and 25200 at 07:00
+    (25200 % 25200 == 0); 06:00 (21600) does not align. The old epoch seam never
+    aligned 7h to midnight.
+    """
+    seven_h = to_timedelta("7h")
+    midnight = datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc)
+    seven_am = datetime(2018, 1, 1, 7, 0, 0, tzinfo=pytz.utc)
+    six_am = datetime(2018, 1, 1, 6, 0, 0, tzinfo=pytz.utc)
+
+    assert check_timeframe(midnight, seven_h) is True
+    assert check_timeframe(seven_am, seven_h) is True
+    assert check_timeframe(six_am, seven_h) is False
+
+
+def test_check_timeframe_dst_boundary_tz_aware():
+    """A tz-aware DST-zone timestamp is judged on the UTC midnight grid (DST-immune).
+
+    Build a tz-aware instant in Europe/Rome that crosses the EU spring-forward
+    (2020-03-29). check_timeframe converts to UTC first, so firing is judged on
+    the UTC midnight grid deterministically. The corresponding 00:00 UTC instant
+    fires for daily; the off-grid local-DST instant does not mis-fire.
+    """
+    daily = timedelta(days=1)
+    rome = pytz.timezone("Europe/Rome")
+    # Local 01:00 on spring-forward day is an off-grid (non-UTC-midnight) instant.
+    off_grid_local = rome.localize(datetime(2020, 3, 29, 1, 0, 0))
+    midnight_utc = datetime(2020, 3, 29, 0, 0, 0, tzinfo=pytz.utc)
+
+    assert check_timeframe(midnight_utc, daily) is True
+    assert check_timeframe(off_grid_local, daily) is False
+
+
 # --------------------------------------------------------------------------- #
-# _aligned — the single replaceable epoch seam                                 #
+# _aligned — the single replaceable midnight-relative seam                     #
 # --------------------------------------------------------------------------- #
 
-def test_aligned_seam_epoch_modulo():
-    """_aligned is the int(ts.timestamp()) % int(tf.total_seconds()) == 0 seam."""
+def test_aligned_seam_midnight_relative():
+    """_aligned is the (seconds-since-UTC-midnight % tf_seconds) == 0 seam."""
     daily = timedelta(days=1)
     midnight_utc = datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc)
     midday_utc = datetime(2018, 1, 1, 12, 0, 0, tzinfo=pytz.utc)
 
     assert _aligned(midnight_utc, daily) is True
     assert _aligned(midday_utc, daily) is False
-    # explicit epoch arithmetic cross-check
-    assert int(midnight_utc.timestamp()) % int(daily.total_seconds()) == 0
+    # explicit midnight-relative arithmetic cross-check
+    utc_mid = midday_utc.astimezone(pytz.utc).replace(
+        second=0, microsecond=0
+    )
+    seconds_since_midnight = (
+        utc_mid - utc_mid.replace(hour=0, minute=0, second=0, microsecond=0)
+    ).total_seconds()
+    assert seconds_since_midnight % int(daily.total_seconds()) != 0
 
 
 # --------------------------------------------------------------------------- #
