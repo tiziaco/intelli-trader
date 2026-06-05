@@ -79,7 +79,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 9 plans (8 waves; oracle re-freeze isolated as the terminal wave)
   - [x] 03-01-PLAN.md — Wave 0: capture D-17 inertness reference FIRST + poetry add pydantic/pydantic-settings + 5 characterization test stubs
   - [x] 03-02-PLAN.md — Dead-module purge (M2-11): delete legacy_config, outils/profiling, outils/strategy, orphaned screener_event_handler EventHandler
-  - [ ] 03-03-PLAN.md — Enum centralization (M2-07): relocate FillStatus + 4 manager enums to core/enums as class enums with _missing_; replace string→enum maps
+  - [x] 03-03-PLAN.md — Enum centralization (M2-07): relocate FillStatus + 4 manager enums to core/enums as class enums with _missing_; replace string→enum maps
   - [ ] 03-04-PLAN.md — time_parser finalization (M2-10): epoch-aligned _aligned seam + case-insensitive to_timedelta (week/month) + delete dead helpers
   - [ ] 03-05-PLAN.md — Config collapse (M2-06): Pydantic v2 models + Settings fail-loud secrets + core/constants.py; absorb+delete flat config shadow; rewire consumers
   - [ ] 03-06-PLAN.md — Portfolio subdomain reorg (M2-08, D-11): pure git mv into position/transaction/cash/metrics packages
@@ -150,7 +150,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
 | 2. M2a — Identity, Money & Determinism | 8/8 | Complete   | 2026-06-04 |
-| 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 2/9 | In Progress|  |
+| 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 3/9 | In Progress|  |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/TBD | Not started | - |

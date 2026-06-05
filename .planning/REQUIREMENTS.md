@@ -62,7 +62,7 @@
 - [ ] **M2-06**: The `config/` package collapses to Pydantic v2 models + `pydantic-settings` for
   infra/secrets; one model round-trips backtest-dict and live-JSONB forms; settings layer carries no
   working secret defaults *(#13, #12 [settings part; secrets→D-live], completes #34/TD2 dual-config)*
-- [ ] **M2-07**: Shared enums/entities are centralized in `core/enums` / own modules; scattered
+- [x] **M2-07**: Shared enums/entities are centralized in `core/enums` / own modules; scattered
   string→enum map dicts and their buggy `ValueError`s are replaced *(#15)*
 - [ ] **M2-08**: Portfolio-handler manager state routes through an in-memory storage **seam**
   (transactions/positions/cash-ledger/metrics), mirroring the order-storage pattern; durable record
