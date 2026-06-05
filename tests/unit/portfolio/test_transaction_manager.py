@@ -20,7 +20,6 @@ from itrader.core.enums import TransactionType
 from itrader.core.exceptions import (
     InvalidTransactionError,
     InsufficientFundsError,
-    ConcurrencyError,
 )
 from itrader import idgen
 

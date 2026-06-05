@@ -20,12 +20,6 @@ from ..result_objects import ExecutionResult, ConnectionResult, HealthStatus, Va
 from ..matching_engine import MatchingEngine
 from itrader.core.enums.execution import ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
 from itrader.core.enums import OrderType, OrderCommand
-from itrader.core.exceptions.execution import (
-    ExecutionError,
-    InvalidSymbolExecutionError,
-    InsufficientFundsExecutionError,
-    ExchangeStateError
-)
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation

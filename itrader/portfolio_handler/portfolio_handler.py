@@ -153,7 +153,7 @@ class PortfolioHandler:
                 # Check global limits
                 with self._portfolios_lock.gen_rlock():
                     if len(self._portfolios) >= self.max_portfolios:
-                        raise PortfolioConfigurationError(f"Maximum portfolios limit reached: {self.max_portfolios}")
+                        raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
                 
                 # Create portfolio instance
                 portfolio = Portfolio(
@@ -188,7 +188,7 @@ class PortfolioHandler:
         """Get portfolio instance."""
         with self._portfolios_lock.gen_rlock():
             if portfolio_id not in self._portfolios:
-                raise PortfolioNotFoundError(f"Portfolio {portfolio_id} not found")
+                raise PortfolioNotFoundError(portfolio_id)
             return self._portfolios[portfolio_id]
     
     def delete_portfolio(self, portfolio_id: Any, force: bool = False) -> bool:

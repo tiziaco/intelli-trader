@@ -4,7 +4,7 @@ Portfolio-specific exceptions for the iTrader system.
 
 from typing import Any, Optional, Union
 
-from .base import ITradingSystemError, ValidationError, ConfigurationError, StateError, ConcurrencyError, NotFoundError
+from .base import ITraderError, ValidationError, ConfigurationError, StateError, NotFoundError
 from ..ids import PortfolioId, TransactionId
 
 # 02-05 carry-over: portfolio_id is a PortfolioId (UUID) at the entity layer but an
@@ -12,7 +12,7 @@ from ..ids import PortfolioId, TransactionId
 PortfolioIdLike = Union[PortfolioId, int, str]
 
 
-class PortfolioError(ITradingSystemError):
+class PortfolioError(ITraderError):
     """Base exception for portfolio-related errors."""
     pass
 
@@ -51,13 +51,6 @@ class PositionCalculationError(PortfolioError):
     def __init__(self, message: str, position_data: Optional[dict[str, Any]] = None):
         self.position_data = position_data
         super().__init__(f"Position calculation error: {message}")
-
-
-class PortfolioConcurrencyError(ConcurrencyError):
-    """Raised when concurrent access causes data inconsistency in portfolios."""
-    
-    def __init__(self, operation: str, portfolio_id: Optional[PortfolioIdLike] = None):
-        super().__init__(operation, portfolio_id, "portfolio")
 
 
 # PortfolioHandler specific exceptions
