@@ -59,7 +59,7 @@
   `Protocol`s), surfacing and fixing the non-conforming subclasses *(#20)*
 - [x] **M2-05**: Backtests are deterministic — RNG seeded behind an injected `Random`, clock injected
   (no local `datetime.now()`), flat global order index by id *(#5, PERF2)*
-- [ ] **M2-06**: The `config/` package collapses to Pydantic v2 models + `pydantic-settings` for
+- [x] **M2-06**: The `config/` package collapses to Pydantic v2 models + `pydantic-settings` for
   infra/secrets; one model round-trips backtest-dict and live-JSONB forms; settings layer carries no
   working secret defaults *(#13, #12 [settings part; secrets→D-live], completes #34/TD2 dual-config)*
 - [x] **M2-07**: Shared enums/entities are centralized in `core/enums` / own modules; scattered

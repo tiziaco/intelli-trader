@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 3 context gathered
-last_updated: "2026-06-05T09:08:07.133Z"
+last_updated: "2026-06-05T09:29:23.088Z"
 last_activity: 2026-06-05
 progress:
   total_phases: 8
   completed_phases: 2
   total_plans: 22
-  completed_plans: 17
+  completed_plans: 18
   percent: 25
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 03 (m2b-config-types-storage-seam-oracle-re-freeze) — EXECUTING
-Plan: 5 of 9
+Plan: 6 of 9
 Status: Ready to execute
 Last activity: 2026-06-05
 
-Progress: [████████░░] 77%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -68,6 +68,7 @@ Progress: [████████░░] 77%
 | Phase 03 P02 | 2 | 1 tasks | 4 files |
 | Phase 03 P03 | 5 | 2 tasks | 11 files |
 | Phase 03 P04 | 9 | 1 tasks | 2 files |
+| Phase 03 P05 | 90 | 3 tasks | 42 files |
 
 ## Accumulated Context
 
@@ -105,6 +106,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 03-02: four dead modules purged (legacy_config, outils/profiling, outils/strategy, events_handler/screener_event_handler) via D-13 mechanical-delete, zero importers re-verified; flat config.py shadow left for 03-05
 - [Phase ?]: Plan 03-03: FillStatus + 4 manager enums relocated to core/enums as class-based with _missing_ case-insensitive parse; string->enum maps deleted (D-04/D-05); OrderStatus/FillStatus/TransactionState kept DISTINCT; behavioral oracle byte-exact
 - [Phase 03]: Plan 03-04: check_timeframe epoch-aligned via a single replaceable _aligned seam (D-06/D-07); to_timedelta case-insensitive + week + month-specific raise + None-guard + raise-on-unknown (D-08); dead helpers deleted; behavioral oracle byte-exact (D-18)
+- [Phase ?]: Plan 03-05: config/ collapsed to Pydantic v2 (5 domain models + models.py aggregate) + pydantic-settings Settings with fail-loud required-no-default SecretStr database_url (M2-06); flat config.py shadow + importlib shim + getters/registry/provider/validator/schema deleted (D-01); FORBIDDEN_SYMBOLS concat bug fixed in core/constants.py; consumers construct models directly; behavioral oracle byte-exact, mypy --strict clean
 
 ### Pending Todos
 
@@ -131,6 +133,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-05T09:07:57.433Z
+Last session: 2026-06-05T09:29:18.019Z
 Stopped at: Phase 3 context gathered
 Resume file: None
