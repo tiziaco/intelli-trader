@@ -175,7 +175,7 @@ class OrderManager:
 			# 3. Create-all-then-emit (D-11): assemble brackets, store, emit.
 			results.extend(self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary))
 
-			self.logger.info('Processed signal for %s %s: %d operations completed',
+			self.logger.debug('Processed signal for %s %s: %d operations completed',
 							signal_event.ticker, signal_event.action, len(results))
 
 		except Exception as e:
@@ -386,7 +386,7 @@ class OrderManager:
 				))
 
 			success_count = sum(1 for r in results if r.success)
-			self.logger.info(f'Created {success_count}/{len(results)} orders from signal: {signal_event.ticker} {signal_event.action}')
+			self.logger.debug(f'Created {success_count}/{len(results)} orders from signal: {signal_event.ticker} {signal_event.action}')
 
 		except Exception as e:
 			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
