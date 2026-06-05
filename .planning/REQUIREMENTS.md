@@ -70,7 +70,7 @@
 - [ ] **M2-09**: Order state-change audit and transaction timestamps are **event-derived/deterministic**
   (not `datetime.now()`); `modify_order` routes through the validated `add_state_change` path
   *(#19 [timestamps part])*
-- [ ] **M2-10**: `time_parser` timing is correct — `check_timeframe` anchoring fixed for non-UTC/DST/
+- [x] **M2-10**: `time_parser` timing is correct — `check_timeframe` anchoring fixed for non-UTC/DST/
   week-month, `to_timedelta` case-insensitive with week/month support, dead buggy helpers removed
   *(completes #36 M1→M2, KB21)*
 - [x] **M2-11**: Dead modules deleted — `legacy_config.py`, `outils/profiling.py`, `outils/strategy.py`,
