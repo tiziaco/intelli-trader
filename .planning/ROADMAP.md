@@ -96,7 +96,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The dispatch loop is race-free — `get_nowait()`+`queue.Empty` replaces the `empty()`/`get(False)` TOCTOU; routing is separated from ordering via a `dict[EventType, list[Callable]]` registry; unknown types raise `NotImplementedError`
   3. The domain-exception hierarchy is used consistently (no bare `ValueError`/`NotImplemented`/swallowed `None`), logging is unified, and portfolio exceptions are constructed with correct-typed arguments
   4. **Golden-master gate:** the behavioral oracle is unchanged and the post-M2 numerical oracle is reproduced exactly after the event/dispatch refactor
-**Plans**: TBD
+**Plans**: 8 plans (7 waves; mostly sequential by design — event.py is the shared choke point and the byte-exact oracle gates every commit; exceptions runs parallel with dispatch in wave 6)
+  - [ ] 04-01-PLAN.md — Foundations: class-based EventType (TIME/ERROR) + Side in core/enums, FillId/EventId aliases, TimeEvent/TimeGenerator rename (D-08)
+  - [ ] 04-02-PLAN.md — Order pipeline de-mutation: drop signal.verified + quantity-0 sentinel, Order entity as pipeline state with audited REJECTED route, create-all-then-emit brackets (D-03/D-10/D-11/D-13)
+  - [ ] 04-03-PLAN.md — Execution de-mutation: construct-complete FillEvent with fill_id/strategy_id, MatchingEngine replace-in-book (Pattern 5, D-12)
+  - [ ] 04-04-PLAN.md — Frozen events package build: Event base (event_id/created_at), all concrete events, ErrorEvent hierarchy (D-01/D-02/D-06/D-09) + inverted immutability tests
+  - [ ] 04-05-PLAN.md — Big-bang cutover: repoint ~31 itrader + 20 test files, kw-only pass (~79 sites), Side/OrderType typing, required IDs, delete event.py
+  - [ ] 04-06-PLAN.md — Race-free dispatch registry: get_nowait drain, route-dict literal, ERROR consumer, _on_handler_error seam (D-14..D-17) + D-23 tests
+  - [ ] 04-07-PLAN.md — Exceptions: ITraderError rename, delete execution.py/ConcurrencyError, KB24 arg fixes, new order/data modules (D-18/D-19)
+  - [ ] 04-08-PLAN.md — Logging: env-driven log_level/json_logs (no Settings() at import), guarded handler init, structlog swaps, DEBUG demotions (D-20/D-21)
 
 ### Phase 5: M4 — Money & Transaction Correctness
 **Goal**: Route every trade's cash through `CashManager` (Critical #22), make transaction processing atomic with rollback, enforce one-directional order-handler layering with O(1) lookup and a narrow read-model Protocol, and freeze the execution result DTOs — value-preserving against the oracle.
