@@ -83,7 +83,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   - [x] 03-04-PLAN.md — time_parser finalization (M2-10): epoch-aligned _aligned seam + case-insensitive to_timedelta (week/month) + delete dead helpers
   - [x] 03-05-PLAN.md — Config collapse (M2-06): Pydantic v2 models + Settings fail-loud secrets + core/constants.py; absorb+delete flat config shadow; rewire consumers
   - [x] 03-06-PLAN.md — Portfolio subdomain reorg (M2-08, D-11): pure git mv into position/transaction/cash/metrics packages
-  - [ ] 03-07-PLAN.md — Storage seam + timestamp determinism (M2-08/M2-09): unified PortfolioStateStorage seam + event-derived order timestamps + modify_order validated path
+  - [x] 03-07-PLAN.md — Storage seam + timestamp determinism (M2-08/M2-09): unified PortfolioStateStorage seam + event-derived order timestamps + modify_order validated path
   - [ ] 03-08-PLAN.md — pytest restructure + conversion (M2-12): test/→tests/ type-split + folder-derived markers + convert all unittest.TestCase
   - [ ] 03-09-PLAN.md — Oracle re-freeze (M2-13), TERMINAL: D-17 inertness gate (blocking owner sign-off) → D-16 byte-exact re-freeze, tolerance/xfail removed; D-18 behavioral identity unchanged
 
@@ -150,7 +150,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
 | 2. M2a — Identity, Money & Determinism | 8/8 | Complete   | 2026-06-04 |
-| 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 6/9 | In Progress|  |
+| 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 7/9 | In Progress|  |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/TBD | Not started | - |

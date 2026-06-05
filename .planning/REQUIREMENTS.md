@@ -67,7 +67,7 @@
 - [x] **M2-08**: Portfolio-handler manager state routes through an in-memory storage **seam**
   (transactions/positions/cash-ledger/metrics), mirroring the order-storage pattern; durable record
   shapes decided (Postgres backend → D-sql) *(#18 [seam part])*
-- [ ] **M2-09**: Order state-change audit and transaction timestamps are **event-derived/deterministic**
+- [x] **M2-09**: Order state-change audit and transaction timestamps are **event-derived/deterministic**
   (not `datetime.now()`); `modify_order` routes through the validated `add_state_change` path
   *(#19 [timestamps part])*
 - [x] **M2-10**: `time_parser` timing is correct — `check_timeframe` anchoring fixed for non-UTC/DST/
