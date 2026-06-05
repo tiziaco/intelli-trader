@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: M1 — Ignition + Lock the Oracle** - Make the backtest run end-to-end and capture/commit the reference output (completed 2026-06-04)
 - [x] **Phase 2: M2a — Identity, Money & Determinism** - UUIDv7 IDs, Decimal money, mypy-strict frozen DTOs, real ABCs, seeded/clocked determinism (all 8 plans executed incl. gap-closure 02-08; re-verification PASS 4/4 SC 2026-06-04; numeric oracle re-freeze deferred to post-M2 per DEF-02-08-A) (completed 2026-06-04)
 - [x] **Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze** - Pydantic config, centralized types, portfolio storage seam, time_parser final, dead-code purge, pytest conversion, re-freeze numerical oracle (completed 2026-06-05)
-- [ ] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging
+- [x] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging (completed 2026-06-05)
 - [ ] **Phase 5: M4 — Money & Transaction Correctness** - Cash through CashManager, atomic transactions, order facade layering, frozen execution DTOs
 - [ ] **Phase 6: M5a — Backtest Validity, Fills & Data Pipeline** - Look-ahead/fill realism, Bar struct, precomputed frames, fee/slippage, price-handler Provider/Store/Feed split
 - [ ] **Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage** - Complete strategy-declared sizing, correct reporting/metrics, universe stub, strategy/data/reporting tests
@@ -104,7 +104,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   - [x] 04-05-PLAN.md — Big-bang cutover: repoint ~31 itrader + 20 test files, kw-only pass (~79 sites), Side/OrderType typing, required IDs, delete event.py
   - [x] 04-06-PLAN.md — Race-free dispatch registry: get_nowait drain, route-dict literal, ERROR consumer, _on_handler_error seam (D-14..D-17) + D-23 tests
   - [x] 04-07-PLAN.md — Exceptions: ITraderError rename, delete execution.py/ConcurrencyError, KB24 arg fixes, new order/data modules (D-18/D-19)
-  - [ ] 04-08-PLAN.md — Logging: env-driven log_level/json_logs (no Settings() at import), guarded handler init, structlog swaps, DEBUG demotions (D-20/D-21)
+  - [x] 04-08-PLAN.md — Logging: env-driven log_level/json_logs (no Settings() at import), guarded handler init, structlog swaps, DEBUG demotions (D-20/D-21)
 
 ### Phase 5: M4 — Money & Transaction Correctness
 **Goal**: Route every trade's cash through `CashManager` (Critical #22), make transaction processing atomic with rollback, enforce one-directional order-handler layering with O(1) lookup and a narrow read-model Protocol, and freeze the execution result DTOs — value-preserving against the oracle.
@@ -159,7 +159,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
 | 2. M2a — Identity, Money & Determinism | 8/8 | Complete   | 2026-06-04 |
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 9/9 | Complete   | 2026-06-05 |
-| 4. M3 — Event & Dispatch Core | 7/8 | In Progress|  |
+| 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/TBD | Not started | - |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/TBD | Not started | - |
