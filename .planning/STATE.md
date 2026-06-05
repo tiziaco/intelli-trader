@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 Phase: 4
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-05
+Last activity: 2026-06-05 - Completed quick task 260605-ih3: WR-01 weekly anchor fix
 
 Progress: [██████████] 100%
 
@@ -128,6 +128,12 @@ None yet.
 - Phase 1 first work is Critical #34: the run path does not import today (the only Critical that blocks execution). Everything downstream depends on resolving it, then capturing + committing the reference output.
 - Golden-master gates are hard phase-boundary criteria: end of Phase 3 (re-freeze numerical oracle), Phases 4–5 behavior/value-preserving, end of Phase 8 (cross-validate + freeze final oracle).
 - New issues found during execution go to COVERAGE-INDEX §E (delta log) with owner approval — never silently folded into the running phase.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260605-ih3 | Fix WR-01 weekly/DST check_timeframe anchoring (midnight-relative, not epoch) + tests | 2026-06-05 | 85384c5 | [260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc](./quick/260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc/) |
 
 ## Deferred Items
 
