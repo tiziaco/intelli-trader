@@ -8,6 +8,7 @@ import pytest
 from itrader.order_handler.storage import InMemoryOrderStorage, OrderStorageFactory
 from itrader.order_handler.order import Order
 from itrader.core.enums import OrderType, OrderStatus
+from itrader.core.exceptions import ConfigurationError
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
@@ -243,14 +244,14 @@ def test_create_in_memory_directly():
 
 def test_create_live_storage_without_db_url():
     """Test creating live storage without database URL raises error."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ConfigurationError) as exc_info:
         OrderStorageFactory.create("live")
     assert "Database URL is required" in str(exc_info.value)
 
 
 def test_unsupported_environment():
     """Test creating storage with unsupported environment."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ConfigurationError) as exc_info:
         OrderStorageFactory.create("unknown")
     assert "Unknown environment: unknown" in str(exc_info.value)
 

@@ -7,6 +7,7 @@ from typing import Any, List, Optional
 from itrader.events_handler.events import SignalEvent
 from itrader import idgen
 from itrader.core.ids import OrderId, PortfolioId, StrategyId
+from itrader.core.exceptions import UnsizedSignalError
 from itrader.core.money import to_money
 from ..core.enums import (
     OrderType, OrderStatus,
@@ -168,7 +169,7 @@ class Order:
 		# cannot be constructed without a resolved quantity.
 		resolved_quantity = quantity if quantity is not None else signal.quantity
 		if resolved_quantity is None:
-			raise ValueError(f'Cannot create order from unsized signal for {signal.ticker}')
+			raise UnsizedSignalError(signal.ticker)
 
 		order = cls(
 			signal.time,

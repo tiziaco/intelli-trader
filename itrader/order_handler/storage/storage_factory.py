@@ -1,4 +1,7 @@
 from typing import Optional
+
+from itrader.core.exceptions import ConfigurationError
+
 from ..base import OrderStorage
 from .in_memory_storage import InMemoryOrderStorage
 
@@ -31,21 +34,25 @@ class OrderStorageFactory:
             
         Raises
         ------
-        ValueError
+        ConfigurationError
             If environment is not supported or required parameters are missing
         """
         environment = environment.lower()
-        
+
         if environment in ('backtest', 'test'):
             return InMemoryOrderStorage()
         elif environment == 'live':
             if not db_url:
-                raise ValueError("Database URL is required for live environment")
+                raise ConfigurationError(
+                    "db_url", None,
+                    "Database URL is required for live environment"
+                )
             # Import here to avoid circular imports and optional dependencies
             from .postgresql_storage import PostgreSQLOrderStorage
             return PostgreSQLOrderStorage(db_url)
         else:
-            raise ValueError(
+            raise ConfigurationError(
+                "environment", environment,
                 f"Unknown environment: {environment}. "
                 f"Supported environments are: 'backtest', 'live', 'test'"
             )

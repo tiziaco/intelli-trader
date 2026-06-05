@@ -28,6 +28,19 @@ from .portfolio import (
     PortfolioValidationError
 )
 
+# Order exceptions
+from .order import (
+    OrderError,
+    UnsizedSignalError
+)
+
+# Data exceptions
+from .data import (
+    DataError,
+    MalformedDataError,
+    MissingPriceDataError
+)
+
 __all__ = [
     # Base exceptions
     'ITraderError',
@@ -46,5 +59,14 @@ __all__ = [
     'InvalidPortfolioOperationError',
     'PortfolioStateError',
     'PortfolioConfigurationError',
-    'PortfolioValidationError'
+    'PortfolioValidationError',
+
+    # Order exceptions
+    'OrderError',
+    'UnsizedSignalError',
+
+    # Data exceptions
+    'DataError',
+    'MalformedDataError',
+    'MissingPriceDataError'
 ]
