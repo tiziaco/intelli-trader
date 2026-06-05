@@ -15,8 +15,7 @@ from itrader.portfolio_handler.transaction import Transaction
 from itrader.core.enums import TransactionType, TransactionState
 from itrader.core.exceptions import (
     InvalidTransactionError,
-    InsufficientFundsError,
-    ConcurrencyError
+    InsufficientFundsError
 )
 from itrader.logger import get_itrader_logger
 from itrader import idgen
@@ -87,7 +86,6 @@ class TransactionManager:
         Raises:
             InvalidTransactionError: If transaction data is invalid
             InsufficientFundsError: If insufficient funds
-            ConcurrencyError: If concurrent access issues
         """
         correlation_id = f"txn_{transaction.id}_{int(datetime.now().timestamp() * 1000)}"
         

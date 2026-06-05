@@ -7,11 +7,10 @@ organized by domain and with a clear inheritance hierarchy.
 
 # Base exceptions
 from .base import (
-    ITradingSystemError,
+    ITraderError,
     ValidationError,
     ConfigurationError,
     StateError,
-    ConcurrencyError,
     NotFoundError
 )
 
@@ -22,7 +21,6 @@ from .portfolio import (
     InvalidTransactionError,
     PortfolioNotFoundError,
     PositionCalculationError,
-    PortfolioConcurrencyError,
     PortfolioHandlerError,
     InvalidPortfolioOperationError,
     PortfolioStateError,
@@ -30,55 +28,23 @@ from .portfolio import (
     PortfolioValidationError
 )
 
-# Execution exceptions
-from .execution import (
-    ExecutionError,
-    ExchangeConnectionError,
-    OrderExecutionError,
-    InsufficientFundsExecutionError,
-    InvalidSymbolExecutionError,
-    RateLimitExecutionError,
-    OrderValidationExecutionError,
-    ExchangeConfigurationError,
-    ExchangeStateError,
-    ExchangeNotFoundError,
-    ExecutionTimeoutError,
-    MarketClosedExecutionError
-)
-
 __all__ = [
     # Base exceptions
-    'ITradingSystemError',
+    'ITraderError',
     'ValidationError',
     'ConfigurationError',
     'StateError',
-    'ConcurrencyError',
     'NotFoundError',
-    
+
     # Portfolio exceptions
     'PortfolioError',
     'InsufficientFundsError',
     'InvalidTransactionError',
     'PortfolioNotFoundError',
     'PositionCalculationError',
-    'PortfolioConcurrencyError',
     'PortfolioHandlerError',
     'InvalidPortfolioOperationError',
     'PortfolioStateError',
     'PortfolioConfigurationError',
-    'PortfolioValidationError',
-    
-    # Execution exceptions
-    'ExecutionError',
-    'ExchangeConnectionError',
-    'OrderExecutionError',
-    'InsufficientFundsExecutionError',
-    'InvalidSymbolExecutionError',
-    'RateLimitExecutionError',
-    'OrderValidationExecutionError',
-    'ExchangeConfigurationError',
-    'ExchangeStateError',
-    'ExchangeNotFoundError',
-    'ExecutionTimeoutError',
-    'MarketClosedExecutionError'
+    'PortfolioValidationError'
 ]

@@ -12,8 +12,7 @@ from dataclasses import dataclass
 from itrader.core.enums import CashOperationType
 from itrader.core.exceptions import (
     InsufficientFundsError,
-    InvalidTransactionError,
-    ConcurrencyError
+    InvalidTransactionError
 )
 from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
