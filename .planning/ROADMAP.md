@@ -77,7 +77,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `time_parser` timing is correct (anchoring fixed for non-UTC/DST/week-month; `to_timedelta` case-insensitive with week/month), completing the `#36` span; dead modules (`legacy_config`, `outils/profiling`, `outils/strategy`, orphaned `screener_event_handler` `EventHandler`) are deleted; the bulk `unittest`→pytest conversion lands
   4. **Golden-master gate:** the numerical oracle is re-frozen after the Decimal precision shift and the behavioral oracle (trade timing) is verified unchanged
 **Plans**: 9 plans (8 waves; oracle re-freeze isolated as the terminal wave)
-  - [ ] 03-01-PLAN.md — Wave 0: capture D-17 inertness reference FIRST + poetry add pydantic/pydantic-settings + 5 characterization test stubs
+  - [x] 03-01-PLAN.md — Wave 0: capture D-17 inertness reference FIRST + poetry add pydantic/pydantic-settings + 5 characterization test stubs
   - [ ] 03-02-PLAN.md — Dead-module purge (M2-11): delete legacy_config, outils/profiling, outils/strategy, orphaned screener_event_handler EventHandler
   - [ ] 03-03-PLAN.md — Enum centralization (M2-07): relocate FillStatus + 4 manager enums to core/enums as class enums with _missing_; replace string→enum maps
   - [ ] 03-04-PLAN.md — time_parser finalization (M2-10): epoch-aligned _aligned seam + case-insensitive to_timedelta (week/month) + delete dead helpers
@@ -150,7 +150,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
 | 2. M2a — Identity, Money & Determinism | 8/8 | Complete   | 2026-06-04 |
-| 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 0/9 | Planned | - |
+| 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 1/9 | In Progress|  |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/TBD | Not started | - |

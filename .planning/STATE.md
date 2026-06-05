@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 3 context gathered
-last_updated: "2026-06-05T08:43:38.031Z"
-last_activity: 2026-06-05 -- Phase 03 planning complete
+last_updated: "2026-06-05T08:52:58.152Z"
+last_activity: 2026-06-05
 progress:
   total_phases: 8
   completed_phases: 2
   total_plans: 22
-  completed_plans: 13
+  completed_plans: 14
   percent: 25
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 02 — m2a-identity-money-determinism
+**Current focus:** Phase 03 — m2b-config-types-storage-seam-oracle-re-freeze
 
 ## Current Position
 
-Phase: 02 — COMPLETE
-Plan: 1 of 8
+Phase: 03 (m2b-config-types-storage-seam-oracle-re-freeze) — EXECUTING
+Plan: 2 of 9
 Status: Ready to execute
-Last activity: 2026-06-05 -- Phase 03 planning complete
+Last activity: 2026-06-05
 
-Progress: [██████████] 100%
+Progress: [██████░░░░] 64%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [██████████] 100%
 | Phase 02 P04 | 20 | 3 tasks | 9 files |
 | Phase 02 P06 | 8 | 3 tasks | 7 files |
 | Phase 02 P07 | 180 | 4 tasks | 5 files |
+| Phase 03 P01 | 3 | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -95,6 +96,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 02-04: DEF-02-04-A golden numeric oracle drift (behavioral oracle preserved, only numeric cols) deferred to Pattern E + owner-gated post-M2 numerical re-baseline
 - [Phase ?]: Plan 02-07: owner approved phase-close gate — D-15 numeric tolerance (rtol=1e-6, atol=5e-2 / 5c) accepted, identity+equity columns exact, time-boxed to M2b numerical re-freeze (Phase 3 SC4)
 - [Phase ?]: Plan 02-07: frozen=True/slots=True on PingEvent/BarEvent/PortfolioUpdateEvent/ScreenerEvent (M2-03); SignalEvent/FillEvent/OrderEvent left mutable (runtime mutation); make typecheck clean across D-05 in-scope package (Option 2 overrides for deferred subsystems)
+- [Phase 03]: Plan 03-01: D-17 inertness reference captured from unmodified M2a-end HEAD (final_equity 53229.685, 134 trades) — byte-exact baseline for the 03-09 oracle re-freeze gate
+- [Phase 03]: Plan 03-01: pydantic ^2.13 + pydantic-settings ^2.14 added as lockfile-tracked Poetry deps (unblocks config collapse 03-05)
+- [Phase 03]: Plan 03-01: 5 Wave-0 characterization stubs (M2-06..10) under current test/ tree, skip/importorskip-gated, move into tests/unit/... at 03-08; suite 300 pass / 11 skip / 1 xfail
 
 ### Pending Todos
 
@@ -121,6 +125,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-05T07:53:21.634Z
+Last session: 2026-06-05T08:50:54.353Z
 Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-m2b-config-types-storage-seam-oracle-re-freeze/03-CONTEXT.md
+Resume file: None
