@@ -2,6 +2,8 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from itrader.core.enums import TransactionType
+
 
 
 CHART_THEME = 'plotly_dark'  # others include seaborn, ggplot2, plotly_dark, plotly_white
@@ -117,9 +119,11 @@ def signals_plot (price, transactions):
 	"""
 	Plot a line chart with the strategy signals.
 	"""
-	# Map actions to symbols and colors
-	symbol = np.where(transactions.action == 'BUY', 'triangle-up', 'triangle-down')
-	marker_color = np.where(transactions.action == 'BUY', 'green', 'red')
+	# Map actions to symbols and colors. The transactions frame is
+	# entity-derived (Transaction.to_dict writes type.name) — compare against
+	# the enum member's name, never a bare string literal.
+	symbol = np.where(transactions.action == TransactionType.BUY.name, 'triangle-up', 'triangle-down')
+	marker_color = np.where(transactions.action == TransactionType.BUY.name, 'green', 'red')
 	hover_text=[]
 	df_dict = transactions.to_dict('records')
 

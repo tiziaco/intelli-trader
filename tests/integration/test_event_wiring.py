@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Pre-import the real event module BEFORE the stubbed import below. Stubbing
+# Pre-import the real enum module BEFORE the stubbed import below. Stubbing
 # submodules disrupts the import machinery enough to otherwise re-import
-# `itrader.events_handler.event` a second time, producing a distinct EventType
+# `itrader.core.enums` a second time, producing a distinct EventType
 # enum whose members fail identity-based `==` against the test's EventType.
 # Caching it first guarantees full_event_handler reuses the same EventType.
-from itrader.events_handler.event import EventType  # noqa: E402  (must precede stub import)
+from itrader.core.enums import EventType  # noqa: E402  (must precede stub import)
 
 # `full_event_handler` imports the full handler chain at module load, which
 # currently fails on an unrelated pre-existing bug (price_handler -> CCXT ->

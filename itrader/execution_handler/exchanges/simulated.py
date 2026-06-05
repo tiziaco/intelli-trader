@@ -20,13 +20,7 @@ from ..result_objects import ExecutionResult, ConnectionResult, HealthStatus, Va
 from ..matching_engine import MatchingEngine
 from itrader.core.enums.execution import ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
 from itrader.core.enums import OrderType, OrderCommand
-from itrader.core.exceptions.execution import (
-    ExecutionError,
-    InvalidSymbolExecutionError,
-    InsufficientFundsExecutionError,
-    ExchangeStateError
-)
-from itrader.events_handler.event import BarEvent, FillEvent, OrderEvent
+from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation
 
@@ -212,7 +206,9 @@ class SimulatedExchange(AbstractExchange):
 	def _emit_rejection(self, event: OrderEvent, reason: str) -> None:
 		"""Enqueue a FillEvent(REFUSED) so the order mirror can reconcile a rejected order."""
 		self.logger.debug('Emitting REFUSED fill for %s %s: %s', event.action, event.ticker, reason)
-		self.global_queue.put(FillEvent.new_fill('REFUSED', 0.0, event))
+		# REFUSED carries the order's own price/quantity, commission 0.0.
+		self.global_queue.put(FillEvent.new_fill(
+			'REFUSED', event, price=event.price, quantity=event.quantity, commission=0.0))
 
 	def _emit_fill(self, event: OrderEvent, fill_price: float,
 	               fill_quantity: float) -> tuple[float, Decimal, float]:
@@ -221,24 +217,28 @@ class SimulatedExchange(AbstractExchange):
 		# Decimal (tests + downstream rely on it). The FillEvent/fill layer stays float
 		# until M4, so coerce only at the new_fill boundary (mirrors the OrderEvent
 		# boundary coercion in event.py:new_order_event).
+		# D-05: the event carries a Side member; the fee/slippage models keep
+		# their lowercase-string contract — convert via .value at this boundary.
 		commission = self.fee_model.calculate_fee(
 			quantity=fill_quantity, price=fill_price,
-			side=event.action.lower(), order_type="market")
+			side=event.action.value.lower(), order_type="market")
 		slippage_factor = self.slippage_model.calculate_slippage_factor(
 			quantity=fill_quantity, price=fill_price,
-			side=event.action.lower(), order_type="market")
+			side=event.action.value.lower(), order_type="market")
 		executed_price = fill_price * slippage_factor
 
-		fill_event = FillEvent.new_fill('EXECUTED', float(commission), event)
-		fill_event.price = executed_price
-		# Override the matched fill quantity (may differ from event.quantity for
-		# partial fills driven by the matching engine in on_market_data).
-		fill_event.quantity = fill_quantity
+		# Construct-complete (D-12): the slippage-adjusted price and the matched
+		# fill quantity (may differ from event.quantity for partial fills driven
+		# by the matching engine in on_market_data) are explicit constructor
+		# inputs — the fill is never mutated after construction.
+		fill_event = FillEvent.new_fill(
+			'EXECUTED', event,
+			price=executed_price, quantity=fill_quantity, commission=float(commission))
 		self.global_queue.put(fill_event)
 
 		self._orders_executed += 1
 		self._total_volume += executed_price * fill_quantity
-		self.logger.info('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
+		self.logger.debug('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
 						event.action, event.ticker, fill_quantity, executed_price,
 						(slippage_factor - 1.0) * 100)
 		return executed_price, commission, slippage_factor
@@ -249,7 +249,11 @@ class SimulatedExchange(AbstractExchange):
 		for decision in fills:
 			self._emit_fill(decision.order_event, decision.fill_price, decision.fill_quantity)
 		for cancel in cancels:
-			self.global_queue.put(FillEvent.new_fill('CANCELLED', 0.0, cancel.order_event))
+			# CANCELLED carries the order's own price/quantity, commission 0.0.
+			self.global_queue.put(FillEvent.new_fill(
+				'CANCELLED', cancel.order_event,
+				price=cancel.order_event.price, quantity=cancel.order_event.quantity,
+				commission=0.0))
 
 	def on_order(self, event: OrderEvent) -> None:
 		"""
@@ -264,7 +268,10 @@ class SimulatedExchange(AbstractExchange):
 			# Only acknowledge a cancel for an order that was actually resting;
 			# a cancel for an unknown/already-filled order emits no spurious fill.
 			if event.order_id is not None and self.matching_engine.cancel(event.order_id):
-				self.global_queue.put(FillEvent.new_fill('CANCELLED', 0.0, event))
+				# CANCELLED carries the order's own price/quantity, commission 0.0.
+				self.global_queue.put(FillEvent.new_fill(
+					'CANCELLED', event, price=event.price, quantity=event.quantity,
+					commission=0.0))
 			return
 
 		if event.command == OrderCommand.MODIFY:

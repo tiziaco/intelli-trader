@@ -5,8 +5,21 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+import uuid_utils.compat as uuid_compat
+
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.events_handler.event import FillEvent, BarEvent, PortfolioUpdateEvent, FillStatus
+from itrader.events_handler.events import FillEvent, BarEvent, PortfolioUpdateEvent
+from itrader.core.enums import FillStatus, Side
+
+
+def _fill(ticker, action, price, quantity, portfolio_id):
+    """Construct-complete EXECUTED fill with the D-12 required linkage ids."""
+    return FillEvent(
+        time=datetime.now(), status=FillStatus.EXECUTED, ticker=ticker,
+        action=action, price=price, quantity=quantity, commission=0,
+        portfolio_id=portfolio_id, fill_id=uuid_compat.uuid7(),
+        order_id=uuid_compat.uuid7(), strategy_id=1,
+    )
 
 
 @pytest.fixture
@@ -22,10 +35,8 @@ def env():
 
 def test_update_portfolios_market(env):
     # Open 2 positions, 1 long and 1 short
-    buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-                         "BTCUSDT", "BUY", 40, 1, 0, env.portfolio_id)
-    sell_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-                          "ETHUSDT", "SELL", 20, 1, 0, env.portfolio_id)
+    buy_fill = _fill("BTCUSDT", Side.BUY, 40, 1, env.portfolio_id)
+    sell_fill = _fill("ETHUSDT", Side.SELL, 20, 1, env.portfolio_id)
     env.ptf_handler.on_fill(buy_fill)
     env.ptf_handler.on_fill(sell_fill)
     # Create a simulated BarEvent
@@ -55,8 +66,7 @@ def test_update_portfolios_market(env):
 
 def test_generate_portfolios_update_event(env):
     # Open 1 long positions
-    buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-                         "BTCUSDT", "BUY", 40, 1, 0, env.portfolio_id)
+    buy_fill = _fill("BTCUSDT", Side.BUY, 40, 1, env.portfolio_id)
     env.ptf_handler.on_fill(buy_fill)
 
     update_event = env.ptf_handler.generate_portfolios_update_event()

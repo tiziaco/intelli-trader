@@ -4,7 +4,8 @@ from datetime import datetime
 import pytest
 
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.events_handler.event import SignalEvent, OrderEvent, FillEvent
+from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
+from itrader.core.enums import OrderType, Side
 from itrader.order_handler.order import Order
 
 
@@ -14,9 +15,9 @@ def fill_event():
     time = datetime.now()
     signal_event = SignalEvent(
         time=time,
-        order_type="MARKET",
+        order_type=OrderType.MARKET,
         ticker="BTCUSDT",
-        action="BUY",
+        action=Side.BUY,
         price=42350.72,
         quantity=1,
         stop_loss=42000,
@@ -27,7 +28,9 @@ def fill_event():
     )
     order = Order.new_order(signal_event, "simulated")
     mkt_order_event = OrderEvent.new_order_event(order)
-    return FillEvent.new_fill("EXECUTED", 1.5, mkt_order_event)
+    return FillEvent.new_fill(
+        "EXECUTED", mkt_order_event,
+        price=mkt_order_event.price, quantity=mkt_order_event.quantity, commission=1.5)
 
 
 def test_transaction_initialization(fill_event):

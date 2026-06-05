@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 from typing import Any
 
@@ -13,6 +14,30 @@ __all__ = [
     'init_logger',
     'setup_logging'
 ]
+
+# Sentinel attribute set on handlers installed by this module so that repeated
+# setup calls only replace OUR handler — never handlers installed by embedding
+# applications or pytest (guarded, idempotent init).
+_ITRADER_HANDLER_FLAG = "_itrader_handler"
+
+
+def _env_log_level() -> str:
+    """Resolve the log level from ``ITRADER_LOG_LEVEL`` (default ``INFO``).
+
+    Read directly from ``os.environ`` — do NOT construct a ``Settings`` instance here:
+    ``ITRADER_DATABASE_URL`` is a required-no-default ``SecretStr``, so
+    instantiating ``Settings`` at import time would raise ``ValidationError``
+    on every ``import itrader`` (Pitfall 8). The env name matches the
+    pydantic-settings ``ITRADER_`` prefix so ``Settings.log_level`` stays the
+    documented knob.
+    """
+    return os.environ.get("ITRADER_LOG_LEVEL", "INFO")
+
+
+def _env_json_logs() -> bool:
+    """Resolve JSON rendering from ``ITRADER_JSON_LOGS`` (default off)."""
+    raw = os.environ.get("ITRADER_JSON_LOGS", "false")
+    return raw.strip().lower() in ("1", "true", "yes")
 
 
 def drop_color_message_key(_: Any, __: str, event_dict: EventDict) -> EventDict:
@@ -33,9 +58,11 @@ def reorder_fields_for_console(logger: Any, method_name: str, event_dict: EventD
         # Store the logger name and remove it from the dict temporarily
         logger_name = event_dict.pop("logger")
         
-        # Check if there's a component field to include in the logger name
+        # Check if there's a component field to include in the logger name.
+        # Explicit None check (D-20): a falsy-but-legitimate value (e.g. "")
+        # must not silently fall through to the bare logger name.
         component = event_dict.pop("component", None)
-        if component:
+        if component is not None:
             # Show as [itrader.ComponentName] instead of just [itrader]
             display_name = f"{logger_name}.{component}"
         else:
@@ -95,10 +122,16 @@ def setup_logging(json_logs: bool = False, log_level: str = "INFO") -> None:
     # Configure root logger
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
+    setattr(handler, _ITRADER_HANDLER_FLAG, True)
 
-    # Clear any existing handlers and add our structured logging handler
+    # Guarded handler swap: only remove handlers THIS module installed
+    # (tracked via the sentinel attribute). Handlers installed by embedding
+    # applications or pytest are left untouched, and repeated setup calls
+    # are idempotent (no duplicate-handler stacking).
     root_logger = logging.getLogger()
-    root_logger.handlers.clear()
+    for existing in list(root_logger.handlers):
+        if getattr(existing, _ITRADER_HANDLER_FLAG, False):
+            root_logger.removeHandler(existing)
     root_logger.addHandler(handler)
     root_logger.setLevel(log_level.upper())
 
@@ -166,21 +199,25 @@ class ITraderStructLogger:
         self.logger.exception(event, *args, **kw)
 
 
-def init_logger(config: Any) -> "ITraderStructLogger":
+def init_logger(config: Any = None) -> "ITraderStructLogger":
     """
     Initialize the structured logger for itrader package.
 
+    Log level and JSON rendering are environment-driven (M3-03 / D-20):
+    ``ITRADER_LOG_LEVEL`` (default ``INFO``) and ``ITRADER_JSON_LOGS``
+    (default off). Read via ``os.environ`` directly — never by constructing
+    a ``Settings`` instance, which would raise ``ValidationError`` at import time
+    whenever ``ITRADER_DATABASE_URL`` is unset (Pitfall 8).
+
     Args:
-        config: Configuration object with logging settings
+        config: Accepted for backward compatibility; ignored. Logging
+            configuration comes from the environment.
 
     Returns:
         ITraderStructLogger: Configured structured logger instance
     """
-    # Determine log level from config
-    log_level = getattr(config, "LOG_LEVEL", "INFO")
-
-    # Setup structured logging
-    setup_logging(json_logs=False, log_level=log_level)
+    # Setup structured logging from the environment
+    setup_logging(json_logs=_env_json_logs(), log_level=_env_log_level())
 
     # Create and return the structured logger
     return ITraderStructLogger("itrader")

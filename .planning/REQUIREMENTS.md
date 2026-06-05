@@ -89,13 +89,13 @@
   required linkage IDs (`order_id`/`fill_id`/`strategy_id`/`child_order_ids` no longer `Optional=None`),
   and enum-typed `action`/`order_type`; `type` becomes a real field; errors get their own `EventType`
   *(#11)*
-- [ ] **M3-02**: The dispatch loop is race-free — `get_nowait()`+`queue.Empty` replaces the
+- [x] **M3-02**: The dispatch loop is race-free — `get_nowait()`+`queue.Empty` replaces the
   `empty()`/`get(False)` TOCTOU; routing is separated from ordering via a `dict[EventType, list[Callable]]`
   registry; unknown type raises `NotImplementedError` (not `NotImplemented`) *(#1, #2, FR2, KB1)*
 - [ ] **M3-03**: The existing domain-exception hierarchy is used consistently (no bare
   `ValueError`/`NotImplemented`/swallowed-`None`); logging convention unified; portfolio exceptions
   constructed with correct-typed arguments *(#7 [domain part; FastAPI edge→D-live], #37, KB24)*
-- [ ] **M3-04**: Behavioral oracle unchanged and numerical oracle reproduced after the event/dispatch
+- [x] **M3-04**: Behavioral oracle unchanged and numerical oracle reproduced after the event/dispatch
   refactor *(golden-master gate)*
 
 ### M4 — Money & transaction correctness

@@ -15,6 +15,7 @@ from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader.outils.data_outils import resample_ohlcv
 
 from itrader.config import TIMEZONE
+from itrader.core.exceptions import MalformedDataError, MissingPriceDataError
 from itrader.logger import get_itrader_logger
 
 
@@ -146,8 +147,8 @@ class PriceHandler(AbstractPriceHandler):
 		raw = pd.read_csv(self.csv_path)
 		missing = [col for col in expected_cols if col not in raw.columns]
 		if missing:
-			raise ValueError(
-				f"Malformed CSV '{self.csv_path}': missing columns {missing}")
+			raise MalformedDataError(
+				str(self.csv_path), f"missing columns {missing}")
 
 		# Map Open time->date, Open/High/Low/Close/Volume->lowercase, drop the
 		# trailing Binance-kline columns (Close time, Quote asset volume,
@@ -172,9 +173,10 @@ class PriceHandler(AbstractPriceHandler):
 		data = data.loc[start:end]
 
 		if data.empty:
-			raise ValueError(
-				f"CSV '{self.csv_path}' produced an empty frame after the "
-				f"{self.CSV_START_DATE} -> {self.CSV_END_DATE} window slice")
+			raise MissingPriceDataError(
+				str(self.csv_path),
+				f"empty frame after the {self.CSV_START_DATE} -> "
+				f"{self.CSV_END_DATE} window slice")
 
 		self.prices[self.CSV_TICKER.upper()] = data
 		self.logger.info('Price data loaded from csv (%d bars)', len(data))

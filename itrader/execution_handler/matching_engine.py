@@ -10,11 +10,13 @@ logging side-effects. It takes OrderEvents and BarEvents in and returns plain
 decision objects out, so it is fully deterministic and unit-testable.
 """
 
+import dataclasses
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-from itrader.events_handler.event import OrderEvent, BarEvent
-from itrader.core.enums import OrderType
+from itrader.core.ids import OrderId
+from itrader.events_handler.events import OrderEvent, BarEvent
+from itrader.core.enums import OrderType, Side
 
 
 @dataclass
@@ -37,7 +39,9 @@ class MatchingEngine:
     """Resting-order book + trigger/OCO evaluation."""
 
     def __init__(self) -> None:
-        self._resting: Dict[int, OrderEvent] = {}
+        # Order ids have been UUIDv7-backed since M2 (D-12) — the book is
+        # keyed by OrderId, never by int.
+        self._resting: dict[OrderId, OrderEvent] = {}
 
     # --- book management ---
 
@@ -47,26 +51,36 @@ class MatchingEngine:
             raise ValueError("Cannot rest an order with no order_id")
         self._resting[order_event.order_id] = order_event
 
-    def cancel(self, order_id: int) -> bool:
+    def cancel(self, order_id: OrderId) -> bool:
         """Remove a resting order. Returns True if it was present."""
         return self._resting.pop(order_id, None) is not None
 
-    def modify(self, order_id: int, new_price: Optional[float] = None,
+    def modify(self, order_id: OrderId, new_price: Optional[float] = None,
                new_quantity: Optional[float] = None) -> bool:
-        """Mutate a resting order's price/quantity. Returns True if present."""
+        """Replace a resting order with an updated copy. Returns True if present.
+
+        Replace-in-book: the stored OrderEvent is never mutated in place —
+        ``dataclasses.replace`` builds an updated copy from the None-guarded
+        changed kwargs and stores it back under the same key. ``replace``
+        deliberately PRESERVES ``order_id`` (and ``event_id`` once events
+        carry one): a MODIFY changes an order's terms, not its identity —
+        it is the same instruction, amended (RESEARCH Open Question 2).
+        """
         order = self._resting.get(order_id)
         if order is None:
             return False
-        if new_price is not None:
-            order.price = new_price
-        if new_quantity is not None:
-            order.quantity = new_quantity
+        # None-guarded: an omitted kwarg keeps the resting order's own value.
+        self._resting[order_id] = dataclasses.replace(
+            order,
+            price=order.price if new_price is None else new_price,
+            quantity=order.quantity if new_quantity is None else new_quantity,
+        )
         return True
 
-    def has_order(self, order_id: int) -> bool:
+    def has_order(self, order_id: OrderId) -> bool:
         return order_id in self._resting
 
-    def get_order(self, order_id: int) -> Optional[OrderEvent]:
+    def get_order(self, order_id: OrderId) -> Optional[OrderEvent]:
         return self._resting.get(order_id)
 
     # --- matching ---
@@ -89,7 +103,7 @@ class MatchingEngine:
             return open_
 
         if order.order_type == OrderType.STOP:
-            if order.action == 'SELL':              # stop-loss on a long
+            if order.action is Side.SELL:           # stop-loss on a long
                 if low <= order.price:
                     return min(open_, order.price)  # pessimistic gap-down
             else:                                   # BUY stop (cover short)
@@ -100,7 +114,7 @@ class MatchingEngine:
             # Limits fill at the limit price even on a favorable gap (we never
             # credit a better-than-limit fill to the strategy) — intentionally
             # asymmetric with the pessimistic open-based gap fill used for stops.
-            if order.action == 'SELL':              # take-profit on a long
+            if order.action is Side.SELL:           # take-profit on a long
                 if high >= order.price:
                     return order.price
             else:                                   # BUY limit (cover short)
@@ -121,7 +135,7 @@ class MatchingEngine:
           are cancelled (OCO), even if they did not trigger this bar.
         """
         # 1. Collect candidate fills (price reached).
-        candidates: Dict[int, float] = {}
+        candidates: dict[OrderId, float] = {}
         for order in list(self._resting.values()):
             try:
                 price = self._evaluate(order, bar)
@@ -137,7 +151,7 @@ class MatchingEngine:
             return [], []
 
         # 2. Resolve, per bracket, which single order fills.
-        chosen: Dict[int, float] = {}   # order_id -> fill_price
+        chosen: dict[OrderId, float] = {}   # order_id -> fill_price
         seen_brackets = set()
         for order_id, price in candidates.items():
             order = self._resting[order_id]
@@ -154,7 +168,7 @@ class MatchingEngine:
         # 3. Build fills and OCO cancels.
         fills: List[FillDecision] = []
         cancels: List[CancelDecision] = []
-        cancelled_ids: set[Optional[int]] = set()
+        cancelled_ids: set[Optional[OrderId]] = set()
 
         for order_id, price in chosen.items():
             order = self._resting[order_id]
@@ -186,7 +200,8 @@ class MatchingEngine:
 
         return fills, cancels
 
-    def _pick_bracket_winner(self, bracket: int, candidates: Dict[int, float]) -> int:
+    def _pick_bracket_winner(self, bracket: OrderId,
+                             candidates: dict[OrderId, float]) -> OrderId:
         """Among candidate legs of a bracket, prefer a STOP (pessimistic)."""
         leg_ids = [oid for oid in candidates
                    if self._resting[oid].parent_order_id == bracket]

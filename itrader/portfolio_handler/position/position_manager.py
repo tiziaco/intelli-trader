@@ -16,8 +16,7 @@ from itrader.core.enums import PositionSide, TransactionType, PositionEvent
 from itrader.core.ids import PositionId
 from itrader.core.exceptions import (
     InvalidTransactionError,
-    PositionCalculationError,
-    ConcurrencyError
+    PositionCalculationError
 )
 from itrader.logger import get_itrader_logger
 

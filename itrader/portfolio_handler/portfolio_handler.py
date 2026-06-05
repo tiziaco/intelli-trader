@@ -15,11 +15,11 @@ from itrader.core.exceptions import (
     PortfolioHandlerError, PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
-from itrader.core.enums import PortfolioState, TransactionType, FillStatus
+from itrader.core.enums import PortfolioState, TransactionType, FillStatus, Side
 from itrader.core.ids import PortfolioId, TransactionId
 from itrader.core.money import to_money
 from itrader.portfolio_handler.transaction import Transaction
-from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
+from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import PortfolioConfig, get_portfolio_preset
 
 from itrader import idgen
@@ -104,6 +104,11 @@ class PortfolioHandler:
         if not self.publish_error_events:
             return
         
+        # Frozen PortfolioErrorEvent (D-06): type=EventType.ERROR via the
+        # ErrorEvent base; source defaults to "portfolio" on the child.
+        # Wall-clock carve-out (RESEARCH Open Question 4): error paths never
+        # fire during a green oracle run, so datetime.now(UTC) here cannot
+        # perturb determinism — the engine path itself stays on business time.
         error_event = PortfolioErrorEvent(
             time=datetime.now(UTC),
             error_type=type(error).__name__,
@@ -112,7 +117,7 @@ class PortfolioHandler:
             correlation_id=correlation_id,
             portfolio_id=portfolio_id
         )
-        
+
         self.global_queue.put(error_event)
     
     @contextmanager
@@ -148,7 +153,7 @@ class PortfolioHandler:
                 # Check global limits
                 with self._portfolios_lock.gen_rlock():
                     if len(self._portfolios) >= self.max_portfolios:
-                        raise PortfolioConfigurationError(f"Maximum portfolios limit reached: {self.max_portfolios}")
+                        raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
                 
                 # Create portfolio instance
                 portfolio = Portfolio(
@@ -183,7 +188,7 @@ class PortfolioHandler:
         """Get portfolio instance."""
         with self._portfolios_lock.gen_rlock():
             if portfolio_id not in self._portfolios:
-                raise PortfolioNotFoundError(f"Portfolio {portfolio_id} not found")
+                raise PortfolioNotFoundError(portfolio_id)
             return self._portfolios[portfolio_id]
     
     def delete_portfolio(self, portfolio_id: Any, force: bool = False) -> bool:
@@ -256,8 +261,11 @@ class PortfolioHandler:
                     )
                     return False
 
-                # Portfolio handles its own validation and processing
-                transaction_type = TransactionType.BUY if fill_event.action == "BUY" else TransactionType.SELL
+                # Portfolio handles its own validation and processing.
+                # D-05 boundary map: events carry Side; Portfolio maps
+                # Side -> TransactionType at its own boundary (the vocabularies
+                # stay distinct — same precedent as FillStatus -> OrderStatus).
+                transaction_type = TransactionType.BUY if fill_event.action is Side.BUY else TransactionType.SELL
                 transaction = Transaction(
                     time=fill_event.time,
                     type=transaction_type,

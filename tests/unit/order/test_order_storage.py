@@ -8,6 +8,7 @@ import pytest
 from itrader.order_handler.storage import InMemoryOrderStorage, OrderStorageFactory
 from itrader.order_handler.order import Order
 from itrader.core.enums import OrderType, OrderStatus
+from itrader.core.exceptions import ConfigurationError
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
@@ -188,6 +189,38 @@ def test_clear_portfolio_orders(store):
     assert len(pending_orders[store.pid2]) == 1
 
 
+def test_add_rejected_order_persists_without_entering_active_book(store):
+    """A REJECTED order persisted via add_order is auditable but never active (D-13).
+
+    Rejected signals now leave a REJECTED order in storage: it must appear in
+    the audit surface (all_orders / by-status / by-id) while the active-book
+    counts — what get_pending_orders/get_active_orders report — stay untouched.
+    """
+    rejected = Order(
+        time=datetime.now(UTC), type=OrderType.MARKET, status=OrderStatus.PENDING,
+        ticker="BTCUSDT", action="BUY", price=40000.0, quantity=0.1,
+        exchange="binance", strategy_id=1, portfolio_id=store.pid1,
+    )
+    assert rejected.add_state_change(
+        OrderStatus.REJECTED, "validation failed", triggered_by="validator"
+    )
+
+    store.storage.add_order(store.order1)   # active PENDING order
+    store.storage.add_order(rejected)       # persisted REJECTED order
+
+    # Audit surface: retrievable by id and by status
+    assert store.storage.get_order_by_id(rejected.id, store.pid1) == rejected
+    by_status = store.storage.get_orders_by_status(OrderStatus.REJECTED, store.pid1)
+    assert by_status == [rejected]
+
+    # Active book: only the PENDING order — the REJECTED one never enters it
+    active = store.storage.get_active_orders(store.pid1)
+    assert [o.id for o in active] == [store.order1.id]
+    pending = store.storage.get_pending_orders(store.pid1)
+    assert rejected.id not in pending[store.pid1]
+    assert store.order1.id in pending[store.pid1]
+
+
 # --- OrderStorageFactory ----------------------------------------------------
 
 
@@ -211,14 +244,14 @@ def test_create_in_memory_directly():
 
 def test_create_live_storage_without_db_url():
     """Test creating live storage without database URL raises error."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ConfigurationError) as exc_info:
         OrderStorageFactory.create("live")
     assert "Database URL is required" in str(exc_info.value)
 
 
 def test_unsupported_environment():
     """Test creating storage with unsupported environment."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(ConfigurationError) as exc_info:
         OrderStorageFactory.create("unknown")
     assert "Unknown environment: unknown" in str(exc_info.value)
 

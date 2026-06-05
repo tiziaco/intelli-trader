@@ -7,7 +7,7 @@ ensuring consistent error handling and event generation.
 
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
-from ..events_handler.event import OrderEvent
+from ..events_handler.events import OrderEvent
 
 
 @dataclass

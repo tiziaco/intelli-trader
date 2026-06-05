@@ -6,12 +6,12 @@ import uuid
 from typing import Optional
 
 
-class ITradingSystemError(Exception):
+class ITraderError(Exception):
     """Base exception for all iTrader system errors."""
     pass
 
 
-class ValidationError(ITradingSystemError):
+class ValidationError(ITraderError):
     """Base exception for validation errors."""
     
     def __init__(self, field: str, value: Optional[str] = None, message: Optional[str] = None):
@@ -25,10 +25,10 @@ class ValidationError(ITradingSystemError):
         super().__init__(error_msg)
 
 
-class ConfigurationError(ITradingSystemError):
+class ConfigurationError(ITraderError):
     """Base exception for configuration errors."""
-    
-    def __init__(self, config_key: Optional[str] = None, config_value: Optional[str] = None, reason: Optional[str] = None):
+
+    def __init__(self, config_key: Optional[str] = None, config_value: Optional[object] = None, reason: Optional[str] = None):
         self.config_key = config_key
         self.config_value = config_value
         self.reason = reason
@@ -42,7 +42,7 @@ class ConfigurationError(ITradingSystemError):
         super().__init__(message)
 
 
-class StateError(ITradingSystemError):
+class StateError(ITraderError):
     """Base exception for invalid state transitions or operations."""
     
     def __init__(self, entity_id: uuid.UUID | int | str, current_state: str, required_state: Optional[str] = None, operation: Optional[str] = None):
@@ -59,22 +59,7 @@ class StateError(ITradingSystemError):
         super().__init__(message)
 
 
-class ConcurrencyError(ITradingSystemError):
-    """Base exception for concurrency-related errors."""
-    
-    def __init__(self, operation: str, entity_id: Optional[uuid.UUID | int | str] = None, resource: Optional[str] = None):
-        self.operation = operation
-        self.entity_id = entity_id
-        self.resource = resource
-        message = f"Concurrency error during '{operation}'"
-        if entity_id:
-            message += f" on entity {entity_id}"
-        if resource:
-            message += f" accessing resource '{resource}'"
-        super().__init__(message)
-
-
-class NotFoundError(ITradingSystemError):
+class NotFoundError(ITraderError):
     """Base exception for entity not found errors."""
     
     def __init__(self, entity_type: str, entity_id: Optional[uuid.UUID | int | str] = None, identifier: Optional[str] = None):

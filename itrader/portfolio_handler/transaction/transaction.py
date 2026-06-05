@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 
 from itrader import idgen
-from itrader.events_handler.event import FillEvent
+from itrader.events_handler.events import FillEvent
 from itrader.core.enums import TransactionType
 from itrader.core.ids import PortfolioId, PositionId, TransactionId
 from itrader.core.money import to_money
@@ -88,7 +88,9 @@ class Transaction(object):
 			Instance of the filled order
 		"""
 
-		transaction_type = TransactionType(filled_order.action)
+		# D-05 boundary map: the FillEvent carries a Side member — parse the
+		# TransactionType from its string value (case-insensitive _missing_).
+		transaction_type = TransactionType(filled_order.action.value)
 
 		return cls(
 			filled_order.time,

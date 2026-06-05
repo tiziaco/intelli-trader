@@ -78,7 +78,7 @@ from .exchange import (
 
 # Module-level TIMEZONE constant (value 'Europe/Paris' by default). Read from the
 # Settings field default rather than instantiating Settings (which requires the
-# fail-loud secret). Must match the PingGenerator default + the CSV-branch index tz
+# fail-loud secret). Must match the TimeGenerator default + the CSV-branch index tz
 # (tz-consistency, D-07). A future live wiring would read Settings().timezone instead.
 TIMEZONE: str = str(Settings.model_fields["timezone"].default)
 

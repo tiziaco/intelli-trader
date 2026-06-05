@@ -4,8 +4,8 @@ from queue import Queue
 import pytest
 
 from itrader.execution_handler.execution_handler import ExecutionHandler
-from itrader.events_handler.event import FillEvent, OrderEvent
-from itrader.core.enums import OrderType
+from itrader.events_handler.events import FillEvent, OrderEvent
+from itrader.core.enums import OrderType, Side
 
 
 @pytest.fixture
@@ -14,14 +14,16 @@ def env():
     queue = Queue()
     execution_handler = ExecutionHandler(queue)
     order_event = OrderEvent(
-        datetime.now(UTC),
-        "BTCUSDT",
-        "BUY",
-        100.0,  # price
-        1.0,    # quantity
-        "simulated",
-        1, 1,
-        OrderType.MARKET,
+        time=datetime.now(UTC),
+        ticker="BTCUSDT",
+        action=Side.BUY,
+        price=100.0,
+        quantity=1.0,
+        exchange="simulated",
+        strategy_id=1,
+        portfolio_id=1,
+        order_type=OrderType.MARKET,
+        order_id=1,
     )
     yield queue, execution_handler, order_event
     while not queue.empty():
@@ -40,4 +42,4 @@ def test_on_order(env):
     # Retrieve fill event from the queue
     fill_event: FillEvent = queue.get(False)
     assert isinstance(fill_event, FillEvent)
-    assert fill_event.action == "BUY"
+    assert fill_event.action is Side.BUY

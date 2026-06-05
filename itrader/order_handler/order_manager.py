@@ -16,11 +16,10 @@ from decimal import Decimal
 from typing import Any, List, Optional
 from .order import Order
 from .operation_result import OperationResult
-from ..core.enums import OrderCommand, FillStatus
-from ..core.ids import OrderId
+from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
 from ..core.money import to_money
 from .base import OrderStorage
-from ..events_handler.event import OrderEvent, SignalEvent, FillEvent
+from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 
 
@@ -104,121 +103,291 @@ class OrderManager:
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""
-		Process signal event with smart order creation logic.
-		
+		Process signal event with entity-based validation (D-13) and
+		create-all-then-emit bracket assembly (D-11).
+
 		This method:
-		1. Validates the signal
-		2. For now, creates new orders (future: smart modify existing orders)
-		3. Creates primary order (market/limit/stop) based on signal.order_type
-		4. Creates stop-loss and take-profit orders if specified
-		5. Handles execution based on market_execution mode
-		
+		1. Resolves sizing BEFORE any entity creation (sizing failures
+		   short-circuit, DEF-01-B narrow gate preserved)
+		2. Creates the primary Order entity (PENDING) immediately —
+		   the entity IS the pipeline state, the signal is never mutated
+		3. Validates the ENTITY; rejection transitions it PENDING→REJECTED
+		   through the audited add_state_change path and persists it
+		4. On acceptance, builds the full bracket (SL/TP), links it
+		   two-directionally, stores all and emits OrderEvents parent-first
+
 		Parameters
 		----------
 		signal_event : SignalEvent
 			The signal event to process
-			
+
 		Returns
 		-------
 		List[OperationResult]
 			List of operation results with OrderEvents for execution handler
 		"""
-		results = []
+		results: List[OperationResult] = []
 
 		try:
 			# 0. Resolve fraction-of-cash sizing BEFORE validation (D-08/D-09).
-			# The strategy emits quantity=0 (base.py:63); the order/risk layer resolves the
-			# per-portfolio quantity here so the in-flight signal carries a real size before
-			# the validator and order construction run. Doing this BEFORE validation is the
-			# narrow gate for DEF-01-B: the running engine never presents quantity=0 to the
-			# validator (so the offline run is admitted), while the validator's own zero-quantity
-			# rejection — exercised directly by test_zero_quantity_signal — is left intact.
-			sizing_error = self._resolve_signal_quantity(signal_event)
-			if sizing_error is not None:
-				return [sizing_error]
+			# The strategy emits quantity=None (D-10); the order/risk layer resolves the
+			# per-portfolio quantity here. Sizing failures (invalid price) short-circuit
+			# BEFORE any entity is created — the narrow DEF-01-B gate: the running engine
+			# never presents an unsized order to the validator, while the validator's own
+			# zero-quantity rejection (test_zero_quantity_signal) is left intact.
+			resolved = self._resolve_signal_quantity(signal_event)
+			if isinstance(resolved, OperationResult):
+				return [resolved]
 
-			# 1. Validate the signal
+			exchange = self._get_signal_exchange(signal_event)
+
+			# 1. Entity-as-state (D-13): create the primary Order (PENDING) first.
+			primary = self._build_primary_order(signal_event, exchange, resolved)
+			if isinstance(primary, OperationResult):
+				return [primary]
+
+			# 2. Validate the ENTITY, not the signal (D-13). Rejection becomes an
+			# auditable FIX/Nautilus-style state change persisted to storage —
+			# rejected signals no longer vanish.
 			if self.order_validator:
-				validation_result = self.order_validator.validate_signal_pipeline(signal_event)
+				validation_result = self.order_validator.validate_order_pipeline(primary)
 				if not validation_result.success:
 					error_msg = f"Signal validation failed: {validation_result.summary}"
-					self.logger.error('%s - %s', error_msg, 
+					self.logger.error('%s - %s', error_msg,
 									[msg.message for msg in validation_result.errors])
-					return [OperationResult.failure_result(error_msg, 
-						error_details=str(validation_result.errors), 
+					# Audited PENDING→REJECTED transition; the timestamp defaults to
+					# the order's own event-derived time (M2-09 — never wall clock).
+					primary.add_state_change(
+						OrderStatus.REJECTED,
+						validation_result.summary,
+						triggered_by="validator",
+					)
+					self.order_storage.add_order(primary)
+					return [OperationResult.failure_result(error_msg,
+						error_details=str(validation_result.errors),
 						operation_type="signal_validation")]
-				
+
 				# Log warnings if any
 				if validation_result.has_warnings:
 					self.logger.warning('Signal validation warnings: %s',
 									   [msg.message for msg in validation_result.warnings])
-			
-			# 2. For now, always create new orders 
-			# (Future enhancement: check existing orders and decide modify vs create new)
-			create_results = self.create_orders_from_signal(signal_event)
-			results.extend(create_results)
-			
-			self.logger.info('Processed signal for %s %s: %d operations completed', 
+
+			# 3. Create-all-then-emit (D-11): assemble brackets, store, emit.
+			results.extend(self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary))
+
+			self.logger.debug('Processed signal for %s %s: %d operations completed',
 							signal_event.ticker, signal_event.action, len(results))
-			
+
 		except Exception as e:
 			error_msg = f"Error processing signal: {e}"
 			self.logger.error(error_msg, exc_info=True)
-			results.append(OperationResult.failure_result(error_msg, 
+			results.append(OperationResult.failure_result(error_msg,
 				error_details=str(e), operation_type="signal_processing"))
-		
+
 		return results
-	
+
 	def create_orders_from_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""
-		Create all orders from a signal event.
-		
+		Create all orders from a signal event (direct, unvalidated entry point).
+
 		Creates:
 		1. Primary order (market/limit/stop based on signal.order_type)
 		2. Stop-loss order (if signal.stop_loss > 0)
 		3. Take-profit order (if signal.take_profit > 0)
-		
+
+		All entities are built FIRST with two-directional bracket linkage,
+		then stored, then emitted parent-first (D-11). This entry point —
+		used by OrderHandler.create_order — performs no validation, exactly
+		like the pre-D-13 flow (validation lives in process_signal).
+
 		Parameters
 		----------
 		signal_event : SignalEvent
 			The signal event containing order details
-			
+
 		Returns
 		-------
 		List[OperationResult]
 			List of operation results for each order created
 		"""
-		results = []
-		
 		try:
-			# Get exchange for orders
-			portfolio_id = signal_event.portfolio_id
-			if self.portfolio_handler:
-				exchange = self.portfolio_handler.get_portfolio(portfolio_id).exchange
-			else:
-				exchange = "default"  # Fallback
-			
-			# 1. Create primary order based on order_type
-			primary_order_result = self._create_primary_order(signal_event, exchange)
-			results.append(primary_order_result)
-			
-			# Primary order id for bracket linkage
-			primary_order_ids = primary_order_result.affected_order_ids
-			parent_id = primary_order_ids[0] if primary_order_ids else None
+			resolved = self._resolve_signal_quantity(signal_event)
+			if isinstance(resolved, OperationResult):
+				return [resolved]
 
-			# 2. Create stop-loss order if specified
+			exchange = self._get_signal_exchange(signal_event)
+
+			primary = self._build_primary_order(signal_event, exchange, resolved)
+			if isinstance(primary, OperationResult):
+				return [primary]
+
+			return self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
+
+		except Exception as e:
+			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
+			return [OperationResult.failure_result(
+				f"Failed to create orders from signal",
+				error_details=str(e),
+				operation_type="create_orders_from_signal"
+			)]
+
+	def _get_signal_exchange(self, signal_event: SignalEvent) -> str:
+		"""Resolve the exchange the signal's portfolio trades on."""
+		if self.portfolio_handler:
+			exchange: str = self.portfolio_handler.get_portfolio(signal_event.portfolio_id).exchange
+			return exchange
+		return "default"  # Fallback
+
+	def _build_primary_order(self, signal_event: SignalEvent, exchange: str,
+	                         quantity: Decimal) -> "Order | OperationResult":
+		"""
+		Build (but do not store/emit) the primary Order entity for a signal.
+
+		D-13: the entity is created PENDING immediately after sizing resolves;
+		the resolved quantity lives Decimal-native on the entity — the signal
+		is never mutated.
+
+		Returns
+		-------
+		Order | OperationResult
+			The PENDING primary order, or a failure result for an
+			unsupported order type (short-circuits before entity creation).
+		"""
+		# D-05: the signal carries an enum-typed OrderType; dispatch on the
+		# member. The Order ENTITY keeps its str action until M4 — convert at
+		# this boundary via .value.
+		if signal_event.order_type is OrderType.MARKET:
+			return Order.new_order(signal_event, exchange, quantity=quantity)
+		elif signal_event.order_type is OrderType.LIMIT:
+			return Order.new_limit_order(
+				time=signal_event.time,
+				ticker=signal_event.ticker,
+				action=signal_event.action.value,
+				price=signal_event.price,
+				quantity=quantity,
+				exchange=exchange,
+				strategy_id=signal_event.strategy_id,
+				portfolio_id=signal_event.portfolio_id
+			)
+		elif signal_event.order_type is OrderType.STOP:
+			return Order.new_stop_order(
+				time=signal_event.time,
+				ticker=signal_event.ticker,
+				action=signal_event.action.value,
+				price=signal_event.price,
+				quantity=quantity,
+				exchange=exchange,
+				strategy_id=signal_event.strategy_id,
+				portfolio_id=signal_event.portfolio_id
+			)
+		return OperationResult.failure_result(
+			f"Unsupported order type: {signal_event.order_type}",
+			operation_type="create_primary_order"
+		)
+
+	def _assemble_bracket_and_emit(self, signal_event: SignalEvent, exchange: str,
+	                               quantity: Decimal, primary: Order) -> List[OperationResult]:
+		"""
+		Create-all-then-emit (D-11): build every bracket entity first, link
+		parent and children two-directionally, store all, THEN emit
+		OrderEvents parent-first (primary, stop-loss, take-profit) — the
+		queue arrival sequence is identical to the old emit-per-creation flow.
+
+		Parameters
+		----------
+		signal_event : SignalEvent
+			The originating signal (SL/TP prices read from it).
+		exchange : str
+			Exchange for the orders.
+		quantity : Decimal
+			The resolved order quantity (shared by all bracket legs).
+		primary : Order
+			The already-built (and validated) primary order entity.
+
+		Returns
+		-------
+		List[OperationResult]
+			One success result per created order, parent-first.
+		"""
+		results: List[OperationResult] = []
+
+		try:
+			# Build ALL bracket entities first — every UUIDv7 id exists
+			# before anything is stored or emitted (D-11).
+			sl_order: Optional[Order] = None
+			tp_order: Optional[Order] = None
+
 			if signal_event.stop_loss > 0:
-				sl_result = self._create_stop_loss_order(signal_event, exchange, parent_id)
-				results.append(sl_result)
+				sl_order = Order.new_stop_order(
+					time=signal_event.time,
+					ticker=signal_event.ticker,
+					# Invert on Side (D-05); the entity stores str until M4.
+					action='BUY' if signal_event.action is Side.SELL else 'SELL',
+					price=signal_event.stop_loss,
+					quantity=quantity,
+					exchange=exchange,
+					strategy_id=signal_event.strategy_id,
+					portfolio_id=signal_event.portfolio_id
+				)
+				sl_order.parent_order_id = primary.id
 
-			# 3. Create take-profit order if specified
 			if signal_event.take_profit > 0:
-				tp_result = self._create_take_profit_order(signal_event, exchange, parent_id)
-				results.append(tp_result)
+				tp_order = Order.new_limit_order(
+					time=signal_event.time,
+					ticker=signal_event.ticker,
+					# Invert on Side (D-05); the entity stores str until M4.
+					action='BUY' if signal_event.action is Side.SELL else 'SELL',
+					price=signal_event.take_profit,
+					quantity=quantity,
+					exchange=exchange,
+					strategy_id=signal_event.strategy_id,
+					portfolio_id=signal_event.portfolio_id
+				)
+				tp_order.parent_order_id = primary.id
+
+			# Two-directional linkage: the parent carries its children's ids
+			# (order.py child_order_ids — declared since M2, populated here).
+			primary.child_order_ids = [
+				child.id for child in (sl_order, tp_order) if child is not None
+			]
+
+			# Store all, THEN emit — the primary OrderEvent below already
+			# carries the complete child linkage.
+			self.order_storage.add_order(primary)
+			if sl_order is not None:
+				self.order_storage.add_order(sl_order)
+			if tp_order is not None:
+				self.order_storage.add_order(tp_order)
+
+			# Emit parent-first: primary, stop-loss, take-profit.
+			results.append(OperationResult.success_result(
+				f"{primary.type.name} order created: {primary.ticker} {primary.action} at {primary.price}",
+				order_events=[OrderEvent.new_order_event(primary)],
+				operation_type="create_primary_order",
+				affected_order_ids=[primary.id]
+			))
+
+			if sl_order is not None:
+				self.logger.debug(f'Stop-loss order created: {sl_order.ticker} at {sl_order.price}')
+				results.append(OperationResult.success_result(
+					f"Stop-loss order created: {sl_order.ticker} at {sl_order.price}",
+					order_events=[OrderEvent.new_order_event(sl_order)],
+					operation_type="create_stop_loss",
+					affected_order_ids=[sl_order.id]
+				))
+
+			if tp_order is not None:
+				self.logger.debug(f'Take-profit order created: {tp_order.ticker} at {tp_order.price}')
+				results.append(OperationResult.success_result(
+					f"Take-profit order created: {tp_order.ticker} at {tp_order.price}",
+					order_events=[OrderEvent.new_order_event(tp_order)],
+					operation_type="create_take_profit",
+					affected_order_ids=[tp_order.id]
+				))
 
 			success_count = sum(1 for r in results if r.success)
-			self.logger.info(f'Created {success_count}/{len(results)} orders from signal: {signal_event.ticker} {signal_event.action}')
-			
+			self.logger.debug(f'Created {success_count}/{len(results)} orders from signal: {signal_event.ticker} {signal_event.action}')
+
 		except Exception as e:
 			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
 			results.append(OperationResult.failure_result(
@@ -226,16 +395,19 @@ class OrderManager:
 				error_details=str(e),
 				operation_type="create_orders_from_signal"
 			))
-		
+
 		return results
 	
-	def _resolve_signal_quantity(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+	def _resolve_signal_quantity(self, signal_event: SignalEvent) -> "Decimal | OperationResult":
 		"""
-		Resolve a strategy sentinel quantity (qty<=0) in the order/risk seam (D-08/D-09).
+		Resolve the order quantity in the order/risk seam (D-08/D-09/D-13).
 
-		The strategy emits quantity=0 (base.py:63); the order/risk layer — NOT the strategy
-		or position_sizer (D-09) — resolves the per-portfolio quantity. Two cases, both keyed
-		on the long-only reference strategy (SMA_MACD: BUY enters a long, SELL exits it; the
+		The strategy emits quantity=None (D-10); the order/risk layer — NOT the
+		strategy or position_sizer (D-09) — resolves the per-portfolio quantity.
+		The resolved Decimal is RETURNED and flows native onto the Order entity
+		(D-13) — the signal is never mutated (the WR-05 float coercion died with
+		the signal mutation). Two sizing cases, both keyed on the long-only
+		reference strategy (SMA_MACD: BUY enters a long, SELL exits it; the
 		short block is commented out):
 
 		* EXIT (SELL with an open long position): size the order to the position's net
@@ -246,217 +418,49 @@ class OrderManager:
 		  (0.95 * available_cash) / price — 95% buffer so float/rounding cannot overshoot a
 		  cash check; fractional BTC.
 
-		The resolved qty is carried on the in-flight signal so every downstream branch picks
-		it up: the MARKET path reads signal.quantity internally (order.py:143) and the
-		LIMIT/STOP branches pass signal_event.quantity explicitly.
-
-		Idempotent: only resolves when the signal carries no explicit quantity (qty<=0), so a
-		caller-supplied quantity is preserved and a second call after resolution is a no-op.
+		An explicit caller-supplied positive quantity is entered into the money
+		domain unchanged (the same to_money entry the Order factories applied
+		to the float signal field before D-13).
 
 		Returns
 		-------
-		OperationResult | None
-			A failure_result when the price is invalid (cannot size); otherwise None.
+		Decimal | OperationResult
+			The resolved quantity, or a failure_result when the price is
+			invalid (cannot size) — BEFORE any entity creation.
 		"""
-		if not signal_event.quantity or signal_event.quantity <= 0:
-			price = signal_event.price
-			if not price or price <= 0:
-				return OperationResult.failure_result(
-					f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
-					operation_type="create_primary_order"
-				)
-			portfolio = self.portfolio_handler.get_portfolio(signal_event.portfolio_id)
-			open_position = portfolio.get_open_position(signal_event.ticker)
-			if signal_event.action == "SELL" and open_position is not None and open_position.net_quantity > 0:
-				# Long-only exit: close the open long by selling its full quantity.
-				# net_quantity is Decimal (M2a entity money) — size in Decimal so the
-				# exit nets the long to exactly the position quantity. The SignalEvent
-				# field is float until M4/IN-02, so coerce ONCE at the assignment (WR-05).
-				sized_qty: Decimal = open_position.net_quantity
-				signal_event.quantity = float(sized_qty)
-			else:
-				# Entry (or SELL with no open long): fraction-of-cash sizing.
-				# portfolio.cash is Decimal on the ledger (M2-02); compute sizing in
-				# Decimal — (0.95 * cash) / price — keeping full Decimal precision
-				# through the intermediate (D-01: quantize ONLY at money boundaries,
-				# never on an intermediate). The sized quantity is NOT a money-ledger
-				# boundary — it is an in-flight intermediate the exchange consumes — so
-				# it is carried at full precision and coerced to float ONCE at the
-				# assignment (the SignalEvent field is float until M4/IN-02) (WR-05).
-				# (Quantizing here to 8dp would both violate D-01 and shift the frozen
-				# numeric oracle past the D-15 tolerance — DEF-02-04-A: no re-baseline.)
-				raw_qty: Decimal = (Decimal("0.95") * portfolio.cash) / to_money(price)
-				signal_event.quantity = float(raw_qty)
-		return None
+		if signal_event.quantity and signal_event.quantity > 0:
+			# Explicit caller-supplied quantity: preserved as-is.
+			return to_money(signal_event.quantity)
 
-	def _create_primary_order(self, signal_event: SignalEvent, exchange: str) -> OperationResult:
-		"""
-		Create the primary order based on signal.order_type.
-		
-		Parameters
-		----------
-		signal_event : SignalEvent
-			The signal event
-		exchange : str
-			Exchange for the order
-			
-		Returns
-		-------
-		OperationResult
-			Result of primary order creation
-		"""
-		try:
-			# Fraction-of-cash sizing (D-08/D-09): idempotently resolve the per-portfolio
-			# quantity in the order/risk seam. Normally already resolved at the top of
-			# process_signal (before validation); kept here too so the direct
-			# create_orders_from_signal entry point (which bypasses process_signal) is sized.
-			sizing_error = self._resolve_signal_quantity(signal_event)
-			if sizing_error is not None:
-				return sizing_error
-
-			order_type_str = signal_event.order_type.upper()
-
-			if order_type_str == 'MARKET':
-				order = Order.new_order(signal_event, exchange)
-			elif order_type_str == 'LIMIT':
-				order = Order.new_limit_order(
-					time=signal_event.time,
-					ticker=signal_event.ticker,
-					action=signal_event.action,
-					price=signal_event.price,
-					quantity=signal_event.quantity,
-					exchange=exchange,
-					strategy_id=signal_event.strategy_id,
-					portfolio_id=signal_event.portfolio_id
-				)
-			elif order_type_str == 'STOP':
-				order = Order.new_stop_order(
-					time=signal_event.time,
-					ticker=signal_event.ticker,
-					action=signal_event.action,
-					price=signal_event.price,
-					quantity=signal_event.quantity,
-					exchange=exchange,
-					strategy_id=signal_event.strategy_id,
-					portfolio_id=signal_event.portfolio_id
-				)
-			else:
-				return OperationResult.failure_result(
-					f"Unsupported order type: {order_type_str}",
-					operation_type="create_primary_order"
-				)
-			
-			# Add to storage
-			self.order_storage.add_order(order)
-			
-			# Generate OrderEvent for the primary order
-			order_event = OrderEvent.new_order_event(order)
-			
-			return OperationResult.success_result(
-				f"{order_type_str} order created: {order.ticker} {order.action} at {order.price}",
-				order_events=[order_event],
-				operation_type="create_primary_order",
-				affected_order_ids=[order.id]
-			)
-			
-		except Exception as e:
+		price = signal_event.price
+		if not price or price <= 0:
 			return OperationResult.failure_result(
-				f"Error creating primary order: {e}",
-				error_details=str(e),
+				f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
 				operation_type="create_primary_order"
 			)
-	
-	def _create_stop_loss_order(self, signal_event: SignalEvent, exchange: str,
-	                            parent_id: Optional[OrderId] = None) -> OperationResult:
-		"""
-		Create a stop-loss order from a signal and emit its OrderEvent.
+		portfolio = self.portfolio_handler.get_portfolio(signal_event.portfolio_id)
+		open_position = portfolio.get_open_position(signal_event.ticker)
+		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
+			# Long-only exit: close the open long by selling its full quantity.
+			# net_quantity is Decimal (M2a entity money) — size in Decimal so the
+			# exit nets the long to exactly the position quantity (D-13: the
+			# Decimal flows native onto the Order entity, no float roundtrip).
+			sized_qty: Decimal = open_position.net_quantity
+			return sized_qty
+		# Entry (or SELL with no open long): fraction-of-cash sizing.
+		# portfolio.cash is Decimal on the ledger (M2-02); compute sizing in
+		# Decimal — (0.95 * cash) / price — keeping full Decimal precision
+		# through the intermediate (D-01: quantize ONLY at money boundaries,
+		# never on an intermediate). The sized quantity is NOT a money-ledger
+		# boundary — it is an in-flight intermediate the exchange consumes — so
+		# it is carried at full precision; the float execution layer still sees
+		# the identical float at the OrderEvent boundary coercion (D-04).
+		# (Quantizing here to 8dp would both violate D-01 and shift the frozen
+		# numeric oracle past the D-15 tolerance — DEF-02-04-A: no re-baseline.)
+		raw_qty: Decimal = (Decimal("0.95") * portfolio.cash) / to_money(price)
+		return raw_qty
 
-		Parameters
-		----------
-		signal_event : SignalEvent
-			The originating signal (stop price taken from signal.stop_loss).
-		exchange : str
-			Exchange for the order.
-		parent_id : int, optional
-			Id of the primary order this stop-loss brackets (OCO linkage).
-
-		Returns
-		-------
-		OperationResult
-			Success result carrying the stop-loss OrderEvent, or a failure result.
-		"""
-		try:
-			sl_order = Order.new_stop_order(
-				time=signal_event.time,
-				ticker=signal_event.ticker,
-				action='BUY' if signal_event.action == 'SELL' else 'SELL',
-				price=signal_event.stop_loss,
-				quantity=signal_event.quantity,
-				exchange=exchange,
-				strategy_id=signal_event.strategy_id,
-				portfolio_id=signal_event.portfolio_id
-			)
-			sl_order.parent_order_id = parent_id
-			self.order_storage.add_order(sl_order)
-			order_event = OrderEvent.new_order_event(sl_order)
-			self.logger.debug(f'Stop-loss order created: {sl_order.ticker} at {sl_order.price}')
-			return OperationResult.success_result(
-				f"Stop-loss order created: {sl_order.ticker} at {sl_order.price}",
-				order_events=[order_event],
-				operation_type="create_stop_loss",
-				affected_order_ids=[sl_order.id]
-			)
-		except Exception as e:
-			return OperationResult.failure_result(
-				f"Error creating stop-loss order: {e}",
-				error_details=str(e), operation_type="create_stop_loss")
-	
-	def _create_take_profit_order(self, signal_event: SignalEvent, exchange: str,
-	                              parent_id: Optional[OrderId] = None) -> OperationResult:
-		"""
-		Create a take-profit order from a signal and emit its OrderEvent.
-
-		Parameters
-		----------
-		signal_event : SignalEvent
-			The originating signal (limit price taken from signal.take_profit).
-		exchange : str
-			Exchange for the order.
-		parent_id : int, optional
-			Id of the primary order this take-profit brackets (OCO linkage).
-
-		Returns
-		-------
-		OperationResult
-			Success result carrying the take-profit OrderEvent, or a failure result.
-		"""
-		try:
-			tp_order = Order.new_limit_order(
-				time=signal_event.time,
-				ticker=signal_event.ticker,
-				action='BUY' if signal_event.action == 'SELL' else 'SELL',
-				price=signal_event.take_profit,
-				quantity=signal_event.quantity,
-				exchange=exchange,
-				strategy_id=signal_event.strategy_id,
-				portfolio_id=signal_event.portfolio_id
-			)
-			tp_order.parent_order_id = parent_id
-			self.order_storage.add_order(tp_order)
-			order_event = OrderEvent.new_order_event(tp_order)
-			self.logger.debug(f'Take-profit order created: {tp_order.ticker} at {tp_order.price}')
-			return OperationResult.success_result(
-				f"Take-profit order created: {tp_order.ticker} at {tp_order.price}",
-				order_events=[order_event],
-				operation_type="create_take_profit",
-				affected_order_ids=[tp_order.id]
-			)
-		except Exception as e:
-			return OperationResult.failure_result(
-				f"Error creating take-profit order: {e}",
-				error_details=str(e), operation_type="create_take_profit")
-	
-	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None, 
+	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None,
 	                portfolio_id: Optional[int] = None, reason: str = "user modification") -> OperationResult:
 		"""
 		Modify an existing order and generate OrderEvent.

@@ -4,12 +4,13 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, List, Optional
 
-from itrader.events_handler.event import SignalEvent
+from itrader.events_handler.events import SignalEvent
 from itrader import idgen
 from itrader.core.ids import OrderId, PortfolioId, StrategyId
+from itrader.core.exceptions import UnsizedSignalError
 from itrader.core.money import to_money
 from ..core.enums import (
-    OrderType, OrderStatus, order_type_map, order_status_map,
+    OrderType, OrderStatus,
     VALID_ORDER_TRANSITIONS
 )
 
@@ -138,7 +139,8 @@ class Order:
 		return str(self)
 	
 	@classmethod
-	def new_order(cls, signal: SignalEvent, exchange: str) -> "Order":
+	def new_order(cls, signal: SignalEvent, exchange: str,
+	              quantity: Optional[Decimal] = None) -> "Order":
 		"""
 		Generate a new Order object from the signal validated from
 		the risk manager and compliance manager.
@@ -149,24 +151,35 @@ class Order:
 			The object representing the signal
 		exchange : str
 			The exchange for the order
-		
+		quantity : `Decimal`, optional
+			The resolved order quantity (D-13: the order/risk layer sizes the
+			order and threads the Decimal-native quantity here — the signal is
+			never mutated). Falls back to ``signal.quantity`` when omitted.
+
 		Returns
 		-------
 		Order : `Order`
 			A new Order object with the specified type.
 		"""
-		order_type = order_type_map.get(signal.order_type.upper())
-		if order_type is None:
-			raise ValueError(f'OrderType {signal.order_type} not supported')
+		# D-05: the signal carries an enum-typed OrderType — use it directly
+		# (the old order_type_map string lookup collapsed at the 04-05 cutover).
+		order_type = signal.order_type
+
+		# D-10: a None quantity means the signal was never sized — an order
+		# cannot be constructed without a resolved quantity.
+		resolved_quantity = quantity if quantity is not None else signal.quantity
+		if resolved_quantity is None:
+			raise UnsizedSignalError(signal.ticker)
 
 		order = cls(
 			signal.time,
 			order_type,
 			OrderStatus.PENDING,
 			signal.ticker,
-			signal.action,
+			# The entity stores a str action until M4 — convert at this boundary.
+			signal.action.value,
 			to_money(signal.price),
-			to_money(signal.quantity),
+			to_money(resolved_quantity),
 			exchange,
 			signal.strategy_id,
 			signal.portfolio_id

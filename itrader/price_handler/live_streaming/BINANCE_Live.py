@@ -7,10 +7,10 @@ from sqlalchemy import create_engine
 import pandas as pd
 
 from ..base import PriceHandler
-from ...events_handler.event import PingEvent
+from ...events_handler.events import TimeEvent
 
-import logging
-logger = logging.getLogger('TradingSystem')
+from itrader.logger import get_itrader_logger
+logger = get_itrader_logger().bind(component="BINANCELiveStreamer")
 
 
 class BINANCELiveStreamer(PriceHandler):
@@ -105,8 +105,8 @@ class BINANCELiveStreamer(PriceHandler):
                     #print(f'\nTotal closed 1: ' + str(self._closed) + ' ' + dt.datetime.strftime(now, '%Y-%m-%d %H:%M:%S'))
                     # Send ping event Method 1
                     if self.global_queue is not None:
-                        # Generate ping event
-                        ping = PingEvent(self.time)
+                        # Generate ping event (keyword-form, kw_only frozen event)
+                        ping = TimeEvent(time=self.time)
                         self.global_queue.put(ping)
             else:
                 # Send ping event Method 2
@@ -120,7 +120,7 @@ class BINANCELiveStreamer(PriceHandler):
 
                     # if self.global_queue is not None:
                     #     # Generate ping event
-                    #     ping = PingEvent(self.time)
+                    #     ping = TimeEvent(self.time)
                     #     self.global_queue.put(ping)
 
                 

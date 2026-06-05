@@ -20,7 +20,20 @@ from itrader.config import PortfolioConfig
 from itrader.core.exceptions import (
     PortfolioNotFoundError, PortfolioValidationError,
 )
-from itrader.events_handler.event import FillEvent, PortfolioErrorEvent, FillStatus
+from itrader.events_handler.events import FillEvent, PortfolioErrorEvent
+from itrader.core.enums import FillStatus, Side
+
+import uuid_utils.compat as uuid_compat
+
+
+def _fill_event(ticker, action, price, quantity, commission, portfolio_id, time=None):
+    """Construct-complete fill with the D-12 required linkage ids."""
+    return FillEvent(
+        time=time or datetime.now(), status=FillStatus.EXECUTED, ticker=ticker,
+        action=action, price=price, quantity=quantity, commission=commission,
+        portfolio_id=portfolio_id, fill_id=uuid_compat.uuid7(),
+        order_id=uuid_compat.uuid7(), strategy_id=1,
+    )
 
 
 # Legacy-compatibility test data.
@@ -199,8 +212,7 @@ def test_buy_fill(env):
     portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
 
     # Bought 1 BTC over one filled event from the execution handler
-    buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-                         "BTCUSDT", "BUY", 40000, 1, 0, portfolio_id)
+    buy_fill = _fill_event("BTCUSDT", Side.BUY, 40000, 1, 0, portfolio_id)
     env.handler.on_fill(buy_fill)
     portfolio = env.handler.get_portfolio(portfolio_id)
     position = portfolio.positions["BTCUSDT"]
@@ -226,8 +238,7 @@ def test_sell_fill(env):
     portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
 
     # Sold 1 BTC (short position) over one filled event from the execution handler
-    sell_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-                          "BTCUSDT", "SELL", 40000, 1, 0, portfolio_id)
+    sell_fill = _fill_event("BTCUSDT", Side.SELL, 40000, 1, 0, portfolio_id)
     env.handler.on_fill(sell_fill)
     portfolio = env.handler.get_portfolio(portfolio_id)
     position = portfolio.positions["BTCUSDT"]
@@ -252,10 +263,8 @@ def test_fill_event_processing_success(env):
     """Test successful fill event processing (enhanced)."""
     portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 10000.0)
 
-    fill_event = FillEvent(
-        time=datetime.now(UTC), status=FillStatus.EXECUTED, ticker="AAPL",
-        action="BUY", price=50.0, quantity=100, commission=1.0, portfolio_id=portfolio_id,
-    )
+    fill_event = _fill_event("AAPL", Side.BUY, 50.0, 100, 1.0, portfolio_id,
+                             time=datetime.now(UTC))
 
     result = env.handler.on_fill(fill_event)
     assert result
@@ -271,10 +280,8 @@ def test_fill_event_processing_inactive_portfolio(env):
     portfolio = env.handler.get_portfolio(portfolio_id)
     portfolio.set_state(PortfolioState.INACTIVE)
 
-    fill_event = FillEvent(
-        time=datetime.now(UTC), status=FillStatus.EXECUTED, ticker="AAPL",
-        action="BUY", price=150.0, quantity=100, commission=1.0, portfolio_id=portfolio_id,
-    )
+    fill_event = _fill_event("AAPL", Side.BUY, 150.0, 100, 1.0, portfolio_id,
+                             time=datetime.now(UTC))
 
     with pytest.raises(ValueError):
         env.handler.on_fill(fill_event)
@@ -282,10 +289,8 @@ def test_fill_event_processing_inactive_portfolio(env):
 
 def test_fill_event_processing_invalid_portfolio(env):
     """Test fill event processing with invalid portfolio ID."""
-    fill_event = FillEvent(
-        time=datetime.now(UTC), status=FillStatus.EXECUTED, ticker="AAPL",
-        action="BUY", price=150.0, quantity=100, commission=1.0, portfolio_id="99999",
-    )
+    fill_event = _fill_event("AAPL", Side.BUY, 150.0, 100, 1.0, "99999",
+                             time=datetime.now(UTC))
 
     with pytest.raises(PortfolioNotFoundError):
         env.handler.on_fill(fill_event)
@@ -301,8 +306,7 @@ def test_portfolios_to_dict(env):
     portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
 
     # Add a transaction to test with data
-    buy_fill = FillEvent(datetime.now(), FillStatus.EXECUTED,
-                         "BTCUSDT", "SELL", 40000, 1, 0, portfolio_id)
+    buy_fill = _fill_event("BTCUSDT", Side.SELL, 40000, 1, 0, portfolio_id)
     env.handler.on_fill(buy_fill)
 
     portfolios_dict = env.handler.portfolios_to_dict()
@@ -358,10 +362,8 @@ def test_error_event_publishing(env):
         env.global_queue.get()
 
     # Process fill event with invalid portfolio to trigger error event
-    fill_event = FillEvent(
-        time=datetime.now(UTC), status=FillStatus.EXECUTED, ticker="AAPL",
-        action="BUY", price=150.0, quantity=100, commission=1.0, portfolio_id="99999",
-    )
+    fill_event = _fill_event("AAPL", Side.BUY, 150.0, 100, 1.0, "99999",
+                             time=datetime.now(UTC))
 
     try:
         env.handler.on_fill(fill_event)

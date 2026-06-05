@@ -3,11 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from itrader.events_handler.event import EventType, FillStatus
+from itrader.core.enums import EventType, FillStatus, OrderType, OrderStatus, Side
 from itrader.order_handler.order import Order
-from itrader.core.enums import OrderType, OrderStatus
-from itrader.events_handler.event import (
-    PingEvent,
+from itrader.events_handler.events import (
+    TimeEvent,
     BarEvent,
     SignalEvent,
     OrderEvent,
@@ -19,19 +18,22 @@ from itrader.events_handler.event import (
 def events():
     """The full set of events constructed from a market BUY signal."""
     time = datetime.now()
-    ping_event = PingEvent(time)
-    bar_event = BarEvent(time, {})
+    time_event = TimeEvent(time=time)
+    bar_event = BarEvent(time=time, bars={})
     signal_event = SignalEvent(
-        time, "MARKET", "BTCUSDT", "BUY",
-        42350.72, 1, 42000, 45000,
-        "test_strategy", "portfolio_id", {},  # strategy_setting as empty dict
+        time=time, order_type=OrderType.MARKET, ticker="BTCUSDT", action=Side.BUY,
+        price=42350.72, stop_loss=42000, take_profit=45000,
+        strategy_id="test_strategy", portfolio_id="portfolio_id",
+        strategy_setting={}, quantity=1,
     )
     # Create Order first, then OrderEvent
     order = Order.new_order(signal_event, "test_exchange")
     mkt_order_event = OrderEvent.new_order_event(order)
-    fill_event = FillEvent.new_fill("EXECUTED", 1.5, mkt_order_event)
+    fill_event = FillEvent.new_fill(
+        "EXECUTED", mkt_order_event,
+        price=mkt_order_event.price, quantity=mkt_order_event.quantity, commission=1.5)
     return SimpleNamespace(
-        ping_event=ping_event,
+        time_event=time_event,
         bar_event=bar_event,
         signal_event=signal_event,
         order=order,
@@ -40,26 +42,31 @@ def events():
     )
 
 
-def test_ping_event_initialization(events):
-    assert isinstance(events.ping_event, PingEvent)
+def test_time_event_initialization(events):
+    assert isinstance(events.time_event, TimeEvent)
+    assert events.time_event.type is EventType.TIME
 
 
 def test_bar_event_initialization(events):
     assert isinstance(events.bar_event, BarEvent)
+    assert events.bar_event.type is EventType.BAR
 
 
 def test_signal_event_initialization(events):
     assert isinstance(events.signal_event, SignalEvent)
     assert type(events.mkt_order_event.time) is datetime
     assert events.signal_event.ticker == "BTCUSDT"
-    assert events.signal_event.action == "BUY"
+    assert events.signal_event.action is Side.BUY
+    assert events.signal_event.order_type is OrderType.MARKET
     assert events.signal_event.price == 42350.72
     assert events.signal_event.quantity == 1
     assert events.signal_event.stop_loss == 42000
     assert events.signal_event.take_profit == 45000
     assert events.signal_event.strategy_id == "test_strategy"
     assert events.signal_event.portfolio_id == "portfolio_id"
-    assert events.signal_event.verified is False
+    # Frozen-event base fields (M3-01)
+    assert events.signal_event.event_id.version == 7
+    assert events.signal_event.created_at == events.signal_event.time
 
 
 def test_order_event_initialization(events):
@@ -70,11 +77,15 @@ def test_order_event_initialization(events):
     assert events.order.status == OrderStatus.PENDING
     # Test OrderEvent attributes
     assert events.mkt_order_event.ticker == "BTCUSDT"
-    assert events.mkt_order_event.action == "BUY"
+    assert events.mkt_order_event.action is Side.BUY
     assert events.mkt_order_event.price == 42350.72
     assert events.mkt_order_event.quantity == 1
     assert events.mkt_order_event.strategy_id == "test_strategy"
     assert events.mkt_order_event.portfolio_id == "portfolio_id"
+    # D-12: the OrderEvent carries its entity's id; D-11: empty bracket tuple
+    assert events.mkt_order_event.order_id == events.order.id
+    assert events.mkt_order_event.child_order_ids == ()
+    assert events.mkt_order_event.event_id.version == 7
 
 
 def test_fill_event_initialization(events):
@@ -82,8 +93,12 @@ def test_fill_event_initialization(events):
     assert type(events.mkt_order_event.time) is datetime
     assert events.fill_event.status == FillStatus.EXECUTED
     assert events.fill_event.ticker == "BTCUSDT"
-    assert events.fill_event.action == "BUY"
+    assert events.fill_event.action is Side.BUY
     assert events.fill_event.price == 42350.72
     assert events.fill_event.quantity == 1
     assert events.fill_event.commission == 1.5
     assert events.fill_event.portfolio_id == "portfolio_id"
+    # D-12 audit chain: fill -> order -> strategy
+    assert events.fill_event.fill_id.version == 7
+    assert events.fill_event.order_id == events.order.id
+    assert events.fill_event.strategy_id == "test_strategy"

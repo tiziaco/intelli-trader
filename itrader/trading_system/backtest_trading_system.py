@@ -11,12 +11,12 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
-from itrader.trading_system.simulation.ping_generator import PingGenerator
+from itrader.trading_system.simulation.time_generator import TimeGenerator
 from itrader.universe.dynamic import DynamicUniverse
 from itrader.reporting.statistics import StatisticsReporting
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.event import EventType
+from itrader.events_handler.events import EventType
 
 
 class TradingSystem(object):
@@ -69,7 +69,7 @@ class TradingSystem(object):
 		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage)
 		
 		self.execution_handler = ExecutionHandler(self.global_queue)
-		self.ping = PingGenerator()
+		self.time_generator = TimeGenerator()
 		self.reporting = StatisticsReporting(
 			self.portfolio_handler,
 			self.price_handler)
@@ -101,7 +101,7 @@ class TradingSystem(object):
 		self.price_handler.set_timeframe(self.strategies_handler.min_timeframe,
 										self.screeners_handler.min_timeframe)
 		self.price_handler.load_data()
-		self.ping.set_dates(next(iter(self.price_handler.prices.items()))[1].index)
+		self.time_generator.set_dates(next(iter(self.price_handler.prices.items()))[1].index)
 		#self.reporting.prices = self.price_handler.prices
 
 	def _run_backtest(self) -> None:
@@ -109,23 +109,23 @@ class TradingSystem(object):
 		Carries out an for-loop that polls the
 		events queue and directs each event to either the
 		strategy component of the execution handler. The
-		loop continue until the ping series is completed
+		loop continue until the time series is completed
 		"""
 
 		self.logger.info('    RUNNING BACKTEST   ')
 		start_time = datetime.now()  # Capture start time
 
-		for ping_event in self.ping:
+		for time_event in self.time_generator:
 			# Advance the injected clock to the current simulation/bar time to keep
 			# the determinism seam staged. NOTE: the clock has no domain consumer
 			# yet — clock.now() is read nowhere; consumer-wiring is Phase 3 / M2b
-			# (D-09/D-10). Result determinism comes from passing ping_event.time
+			# (D-09/D-10). Result determinism comes from passing time_event.time
 			# explicitly to record_metrics below, not from clock.now().
-			self.clock.set_time(ping_event.time)
-			self.global_queue.put(ping_event)
+			self.clock.set_time(time_event.time)
+			self.global_queue.put(time_event)
 			self.event_handler.process_events()
 			for portfolio in self.portfolio_handler.get_active_portfolios():
-				portfolio.record_metrics(ping_event.time)
+				portfolio.record_metrics(time_event.time)
 		self.logger.info('    BACKTEST COMPLETED   ')
 		end_time = datetime.now()  # Capture end time
 		duration = end_time - start_time
