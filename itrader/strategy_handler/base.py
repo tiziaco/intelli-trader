@@ -76,13 +76,14 @@ class Strategy(ABC):
 			return
 		last_close = self.last_event.get_last_close(ticker)
 		for portfolio_id in self.subscribed_portfolios:
+			# quantity is omitted (defaults to None, D-10): the order/risk layer
+			# sizes the signal — the 0 sentinel is gone.
 			signal = SignalEvent(
 							time = self.last_event.time,
 							order_type = self.order_type,
 							ticker = ticker,
 							action = action,
 							price = last_close,
-							quantity = 0,
 							stop_loss = sl,
 							take_profit = tp,
 							strategy_id = self.strategy_id,

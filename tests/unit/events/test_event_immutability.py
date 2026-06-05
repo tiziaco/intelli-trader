@@ -1,9 +1,9 @@
 """M2-03 (Pattern F): genuinely-immutable hot-path events are frozen.
 
 Behavioral contract:
-- ``SignalEvent`` stays MUTABLE — ``verified`` is assigned after construction by the
-  order validator (event.py order-validation seam) and ``quantity`` is rewritten by the
-  order manager; freezing it would raise ``FrozenInstanceError`` (Pitfall 4, M3 #11 blocker).
+- ``SignalEvent`` stays structurally MUTABLE until the Plan 04-04 freeze, but no
+  production code writes to it anymore (D-03/D-13: ``verified`` is deleted, the
+  validator verdict is the typed ValidationResult + Order-entity state).
 - ``FillEvent`` stays MUTABLE — ``price``/``quantity`` are rewritten post-construction by
   the simulated exchange after fee/slippage application.
 - ``OrderEvent`` stays MUTABLE — ``price``/``quantity`` of a resting order are rewritten by
@@ -35,16 +35,21 @@ _TIME = datetime(2024, 1, 1)
 
 def _signal():
     return SignalEvent(
-        _TIME, "MARKET", "BTCUSDT", "BUY", 42.0, 1.0, 41.0, 45.0,
-        "strat", "pf", {},
+        time=_TIME, order_type="MARKET", ticker="BTCUSDT", action="BUY",
+        price=42.0, stop_loss=41.0, take_profit=45.0,
+        strategy_id="strat", portfolio_id="pf", strategy_setting={},
+        quantity=1.0,
     )
 
 
-def test_signal_event_verified_stays_mutable():
-    """SignalEvent.verified must remain assignable post-construction (Pitfall 4)."""
-    signal = _signal()
-    signal.verified = True  # must NOT raise
-    assert signal.verified is True
+def test_signal_event_quantity_defaults_to_none():
+    """Omitted quantity means 'order/risk layer sizes me' (D-10 — no 0 sentinel)."""
+    signal = SignalEvent(
+        time=_TIME, order_type="MARKET", ticker="BTCUSDT", action="BUY",
+        price=42.0, stop_loss=41.0, take_profit=45.0,
+        strategy_id="strat", portfolio_id="pf", strategy_setting={},
+    )
+    assert signal.quantity is None
 
 
 def test_signal_event_quantity_stays_mutable():

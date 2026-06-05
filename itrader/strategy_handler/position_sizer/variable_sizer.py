@@ -25,14 +25,13 @@ class DynamicSizer():
 		self.logger.info('   POSITION SIZER: Dynamic Sizer => OK')
 
 
-	def size_order(self, signal: SignalEvent) -> None:
+	def size_order(self, signal: SignalEvent) -> float:
 		"""
 		Calculate the size of the order (80% of the available cash).
-		"""
-		if not signal.verified:
-			signal.quantity = 0
-			return
 
+		Returns the computed quantity; the signal is never mutated (D-03 —
+		signals are immutable strategy facts, the order layer owns sizing).
+		"""
 		ticker = signal.ticker
 		portfolio_id = signal.portfolio_id
 		strategy_setting = signal.strategy_setting
@@ -55,7 +54,8 @@ class DynamicSizer():
 
 		# Define or not an integer value for the position size
 		#TODO
-		
-		# Assign the calculated size to the order event
-		signal.quantity = round(quantity,5)
-		self.logger.debug('Order sized %s %s', signal.quantity, signal.ticker)
+
+		# Return the calculated size (the signal is never mutated, D-03).
+		sized_quantity = round(quantity, 5)
+		self.logger.debug('Order sized %s %s', sized_quantity, signal.ticker)
+		return sized_quantity

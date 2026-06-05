@@ -9,7 +9,7 @@ from uuid import uuid4
 # importable from this module for existing consumers until the Plan 04-05 cutover.
 from ..core.enums import EventType as EventType
 from ..core.enums import OrderType, OrderCommand, FillStatus
-from ..core.ids import StrategyId
+from ..core.ids import OrderId, StrategyId
 
 @dataclass(frozen=True, slots=True)
 class TimeEvent:
@@ -193,8 +193,6 @@ class SignalEvent:
 		'BUY' (for long) or 'SELL' (for short)
 	price: `float`
 		Last close price for the instrument
-	quantity: `float`
-		Quantity to trade
 	stop_loss: `float`
 		Stop loss price for the instrument
 	take_profit: `float`
@@ -205,6 +203,10 @@ class SignalEvent:
 		The ID of the portfolio where to transact the position
 	strategy_setting: `dict`
 		Strategy settings used to generate the signal.
+	quantity: `float | None`
+		Quantity to trade. ``None`` (the default) means "the order/risk
+		layer sizes me" (D-10 — the 0 sentinel is gone); an explicit
+		caller-supplied positive quantity is used as-is.
 	"""
 
 	time: datetime
@@ -212,14 +214,13 @@ class SignalEvent:
 	ticker: str
 	action: str
 	price: float
-	quantity: float
 	stop_loss: float
 	take_profit: float
 	# 02-05 carry-over: strategy_id carries a UUIDv7-backed StrategyId, not a raw int.
 	strategy_id: StrategyId
 	portfolio_id: int
 	strategy_setting: dict[str, Any]
-	verified: bool = False
+	quantity: float | None = None
 	type = EventType.SIGNAL
 
 	def __str__(self) -> str:
@@ -289,6 +290,9 @@ class OrderEvent:
 	stop_price: Optional[float] = None
 	order_id: Optional[int] = None
 	parent_order_id: Optional[int] = None
+	# D-11: two-directional bracket linkage — a bracket parent carries its
+	# children's ids; non-bracket orders carry the empty tuple.
+	child_order_ids: tuple[OrderId, ...] = ()
 	command: 'OrderCommand' = OrderCommand.NEW
 	type = EventType.ORDER
 
@@ -326,6 +330,7 @@ class OrderEvent:
 			stop_price=getattr(order, 'stop_price', None),
 			order_id=getattr(order, 'id', None),
 			parent_order_id=getattr(order, 'parent_order_id', None),
+			child_order_ids=tuple(getattr(order, 'child_order_ids', ()) or ()),
 			command=command,
 		)
 

@@ -22,9 +22,10 @@ def events():
     time_event = TimeEvent(time)
     bar_event = BarEvent(time, {})
     signal_event = SignalEvent(
-        time, "MARKET", "BTCUSDT", "BUY",
-        42350.72, 1, 42000, 45000,
-        "test_strategy", "portfolio_id", {},  # strategy_setting as empty dict
+        time=time, order_type="MARKET", ticker="BTCUSDT", action="BUY",
+        price=42350.72, stop_loss=42000, take_profit=45000,
+        strategy_id="test_strategy", portfolio_id="portfolio_id",
+        strategy_setting={}, quantity=1,
     )
     # Create Order first, then OrderEvent
     order = Order.new_order(signal_event, "test_exchange")
@@ -59,7 +60,6 @@ def test_signal_event_initialization(events):
     assert events.signal_event.take_profit == 45000
     assert events.signal_event.strategy_id == "test_strategy"
     assert events.signal_event.portfolio_id == "portfolio_id"
-    assert events.signal_event.verified is False
 
 
 def test_order_event_initialization(events):
