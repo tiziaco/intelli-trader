@@ -75,7 +75,7 @@
   *(completes #36 M1→M2, KB21)*
 - [x] **M2-11**: Dead modules deleted — `legacy_config.py`, `outils/profiling.py`, `outils/strategy.py`,
   and the orphaned duplicate `screener_event_handler.py` `EventHandler` *(TD4 [`my_strategies`→OUT], TD5, KB14, #32 [orphan delete part])*
-- [ ] **M2-12**: The bulk `unittest.TestCase` → pytest conversion proceeds (layered `tests/{unit,integration}`,
+- [x] **M2-12**: The bulk `unittest.TestCase` → pytest conversion proceeds (layered `tests/{unit,integration}`,
   conftests), building on the M1 skeleton *(#40 [bulk-conversion part])*
 - [ ] **M2-13**: **Numerical oracle re-frozen** after the Decimal shift; behavioral oracle (trade
   timing) verified unchanged *(golden-master re-baseline gate)*

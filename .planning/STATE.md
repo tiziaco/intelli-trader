@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 3 context gathered
-last_updated: "2026-06-05T09:52:49.348Z"
+stopped_at: Completed 03-08-PLAN.md
+last_updated: "2026-06-05T10:21:42.385Z"
 last_activity: 2026-06-05
 progress:
   total_phases: 8
   completed_phases: 2
   total_plans: 22
-  completed_plans: 20
+  completed_plans: 21
   percent: 25
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 03 (m2b-config-types-storage-seam-oracle-re-freeze) — EXECUTING
-Plan: 8 of 9
+Plan: 9 of 9
 Status: Ready to execute
 Last activity: 2026-06-05
 
-Progress: [█████████░] 91%
+Progress: [██████████] 95%
 
 ## Performance Metrics
 
@@ -71,6 +71,7 @@ Progress: [█████████░] 91%
 | Phase 03 P05 | 90 | 3 tasks | 42 files |
 | Phase 03 P06 | 9 | 1 tasks | 15 files |
 | Phase 03 P07 | 18 | 2 tasks | 16 files |
+| Phase 03 P08 | 95 | 2 tasks | 51 files |
 
 ## Accumulated Context
 
@@ -110,6 +111,9 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 03]: Plan 03-04: check_timeframe epoch-aligned via a single replaceable _aligned seam (D-06/D-07); to_timedelta case-insensitive + week + month-specific raise + None-guard + raise-on-unknown (D-08); dead helpers deleted; behavioral oracle byte-exact (D-18)
 - [Phase ?]: Plan 03-05: config/ collapsed to Pydantic v2 (5 domain models + models.py aggregate) + pydantic-settings Settings with fail-loud required-no-default SecretStr database_url (M2-06); flat config.py shadow + importlib shim + getters/registry/provider/validator/schema deleted (D-01); FORBIDDEN_SYMBOLS concat bug fixed in core/constants.py; consumers construct models directly; behavioral oracle byte-exact, mypy --strict clean
 - [Phase ?]: Plan 03-06: portfolio_handler reorganized into position/ transaction/ cash/ metrics/ subdomain packages via history-preserving git mv (D-11); package __init__ re-exports + enum re-exports from core.enums keep consumer paths short; suite/typecheck/behavioral-oracle green, zero behavior change
+- [Phase ?]: Plan 03-08: test/ -> tests/ via history-preserving git mv split by TYPE (unit mirrors package, integration holds cascade/smoke/oracle); folder-derived TYPE markers in layered conftests, single registration home (pyproject markers)
+- [Phase ?]: Plan 03-08: 29 unittest.TestCase files converted to pytest one-file-per-commit at constant 346 collected; filterwarnings=['error'] intact (leaks fixed via yield-teardown queue drains); D-16/D-17 oracle numeric re-freeze deferred to 03-09
+- [Phase ?]: Plan 03-08: Rule 1 fix - Task 1 commit 33c3281 recorded git-mv renames but dropped tracked-file content edits (git add aborted on stale 'test' pathspec); corrected in 6a623ae so committed HEAD collects 346 on fresh checkout
 
 ### Pending Todos
 
@@ -136,6 +140,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-05T09:52:44.347Z
-Stopped at: Phase 3 context gathered
+Last session: 2026-06-05T10:21:42.376Z
+Stopped at: Completed 03-08-PLAN.md
 Resume file: None
