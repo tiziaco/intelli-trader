@@ -1,8 +1,8 @@
 ---
 phase: 03
 slug: m2b-config-types-storage-seam-oracle-re-freeze
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-06-05
 ---
@@ -52,6 +52,8 @@ created: 2026-06-05
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky — populate Task IDs during planning.*
 
+> **Path note:** the commands above show the **post-03-08** locations (`tests/unit/...`, `tests/integration/...`). The Wave-0 stubs (plan 03-01) are first created under the **current** `test/<domain>/` tree so `testpaths=["test"]` collects them immediately, then 03-08's `git mv` carries them to the `tests/unit/...` paths shown here. Plan 03-01 is authoritative for the pre-move Wave-0 paths.
+
 ---
 
 ## Wave 0 Requirements
@@ -79,11 +81,13 @@ created: 2026-06-05
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (03-01 stubs + pydantic install cover M2-06…M2-10)
+- [x] No watch-mode flags
+- [x] Feedback latency < 60s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+*Note: `wave_0_complete` remains `false` until execution lands the Wave 0 stubs — it is an execution-time flag, not a planning-time one.*
+
+**Approval:** approved 2026-06-05
