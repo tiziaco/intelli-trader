@@ -183,11 +183,18 @@ def test_check_timeframe_dst_boundary_tz_aware():
     """
     daily = timedelta(days=1)
     rome = pytz.timezone("Europe/Rome")
-    # Local 01:00 on spring-forward day is an off-grid (non-UTC-midnight) instant.
-    off_grid_local = rome.localize(datetime(2020, 3, 29, 1, 0, 0))
+    # Local 03:00 just after spring-forward is CEST (UTC+2) -> 01:00 UTC, an
+    # off-grid (non-UTC-midnight) instant that must NOT fire daily.
+    off_grid_local = rome.localize(datetime(2020, 3, 29, 3, 0, 0))
+    assert off_grid_local.astimezone(pytz.utc).hour == 1  # sanity: maps to 01:00 UTC
+    # Local 02:00 CET (UTC+1, the instant before spring-forward) -> 01:00 UTC too,
+    # but local 01:00 CET -> 00:00 UTC, which IS on-grid and fires.
+    on_grid_local = rome.localize(datetime(2020, 3, 29, 1, 0, 0))
+    assert on_grid_local.astimezone(pytz.utc).hour == 0  # sanity: maps to 00:00 UTC
     midnight_utc = datetime(2020, 3, 29, 0, 0, 0, tzinfo=pytz.utc)
 
     assert check_timeframe(midnight_utc, daily) is True
+    assert check_timeframe(on_grid_local, daily) is True
     assert check_timeframe(off_grid_local, daily) is False
 
 

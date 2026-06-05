@@ -126,22 +126,23 @@ def timedelta_to_str(delta: timedelta) -> Union[str, None]:
 
 def _aligned(ts: datetime, tf: timedelta) -> bool:
 	"""
-	Single replaceable alignment seam (D-06): is `ts` on the Unix-epoch grid
-	of period `tf`?
+	Single replaceable alignment seam (D-06): is `ts` on the midnight-relative
+	(date-anchored, UTC) grid of period `tf`?
 
-	Uses `int(ts.timestamp()) % int(tf.total_seconds()) == 0`. The Unix-epoch
-	anchor is DST-immune and, for the golden daily bars at 00:00 UTC, COINCIDES
-	with the previous midnight-of-day-UTC anchor — so the behavioral oracle is
-	unchanged **for the in-scope daily-UTC path only** (this is the sole timeframe
-	the SMA_MACD golden dataset exercises). Isolating the anchor here lets a future
-	session/exchange-calendar anchor (stocks) replace it without rewriting any
-	firing logic.
+	Converts `ts` to UTC, zeroes sub-minute components, computes the seconds
+	elapsed since that day's UTC midnight, and fires when
+	`seconds_since_midnight % int(tf.total_seconds()) == 0`. The anchor is
+	midnight-OF-THE-DAY (in UTC), so any timeframe fires on every midnight
+	regardless of unit: a weekly `tf` fires on every midnight (not only
+	Thursdays — the old Unix-epoch grid was anchored on 1970-01-01, a Thursday),
+	and a non-day-divisor `7h` `tf` aligns to midnight (00:00, 07:00, 14:00, ...).
 
-	CAVEAT (not behavior-preserving for sub-day-divisor timeframes): epoch
-	1970-01-01 was a Thursday, so a weekly `tf` fires only on Thursday 00:00 UTC
-	(the old midnight anchor fired on any midnight); a `7h` `tf` no longer aligns
-	to midnight at all. Correct calendar/week anchoring + a weekly test are
-	deferred — see `.planning/todos/` (M2-10 weekly-anchor follow-up).
+	For the golden daily bars at 00:00 UTC, seconds-since-midnight is 0, so
+	`0 % 86400 == 0` → True — identical to the epoch grid for daily, so the
+	daily 00:00 UTC firing is preserved byte-exact. The anchor is DST-immune
+	because alignment is judged on the UTC grid after conversion. Isolating the
+	anchor here lets a future session/exchange-calendar anchor (stocks) replace
+	it without rewriting any firing logic.
 
 	Parameters
 	----------
@@ -150,15 +151,18 @@ def _aligned(ts: datetime, tf: timedelta) -> bool:
 	tf: `timedelta`
 		The timeframe period to align against.
 	"""
-	return int(ts.timestamp()) % int(tf.total_seconds()) == 0
+	utc = ts.astimezone(pytz.utc).replace(second=0, microsecond=0)
+	midnight = utc.replace(hour=0, minute=0, second=0, microsecond=0)
+	seconds_since_midnight = (utc - midnight).total_seconds()
+	return seconds_since_midnight % int(tf.total_seconds()) == 0
 
 def check_timeframe(time: datetime, timeframe: timedelta) -> bool:
 	"""
 	Check if the current time is a multiple of the strategy's timeframe.
 	In that case return True and go on calculating the signals.
 
-	Delegates to the single `_aligned` epoch seam (D-06) — callers never
-	re-implement alignment.
+	Delegates to the single `_aligned` midnight-relative seam (D-06) — callers
+	never re-implement alignment.
 
 	Parameters
 	----------
