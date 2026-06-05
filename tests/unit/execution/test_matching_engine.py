@@ -56,6 +56,45 @@ def test_modify_price_and_quantity(engine):
     assert resting.quantity == 3.0
 
 
+def test_modify_replaces_in_book_without_mutating_original(engine):
+    """Replace-in-book: modify stores an updated COPY; the submitted event is untouched."""
+    oe = make_order_event(OrderType.LIMIT, "SELL", 50.0, order_id=2, quantity=1.0)
+    engine.submit(oe)
+    assert engine.modify(2, new_price=55.0, new_quantity=3.0)
+    resting = engine.get_order(2)
+    assert resting is not oe                 # a new object was stored back
+    assert oe.price == 50.0                  # original event never mutated
+    assert oe.quantity == 1.0
+    assert resting.price == 55.0
+    assert resting.quantity == 3.0
+
+
+def test_modify_preserves_order_identity(engine):
+    """dataclasses.replace deliberately preserves order_id (and event_id once
+    events carry one): a MODIFY amends the order's terms, not its identity."""
+    oe = make_order_event(OrderType.LIMIT, "SELL", 50.0, order_id=2,
+                          parent_order_id=100)
+    engine.submit(oe)
+    assert engine.modify(2, new_price=60.0)
+    resting = engine.get_order(2)
+    assert resting.order_id == 2             # same identity, same book key
+    assert resting.parent_order_id == 100    # bracket linkage preserved too
+    assert engine.has_order(2)
+
+
+def test_modify_none_guarded_args_leave_other_field_unchanged(engine):
+    oe = make_order_event(OrderType.LIMIT, "SELL", 50.0, order_id=2, quantity=4.0)
+    engine.submit(oe)
+    assert engine.modify(2, new_price=52.0)          # quantity not passed
+    resting = engine.get_order(2)
+    assert resting.price == 52.0
+    assert resting.quantity == 4.0                   # untouched
+    assert engine.modify(2, new_quantity=7.0)        # price not passed
+    resting = engine.get_order(2)
+    assert resting.price == 52.0                     # untouched
+    assert resting.quantity == 7.0
+
+
 def test_modify_unknown_returns_false(engine):
     assert not engine.modify(999, new_price=1.0)
 
