@@ -18,7 +18,9 @@ NOTE (03-08): this file MOVES with the test tree into ``tests/unit/test_order_ha
 during the 03-08 type-split — 03-08 reconciles it there without duplication.
 """
 
+import ast
 import inspect
+import textwrap
 from datetime import datetime
 from decimal import Decimal
 
@@ -113,11 +115,44 @@ def test_modify_order_routes_through_add_state_change():
     assert order.last_modification_time == MODIFY_TIME
 
 
+def _calls_datetime_now(func) -> bool:
+    """Return True if the function body has a literal ``datetime.now()`` call node.
+
+    Parses the AST so docstring mentions of ``datetime.now()`` do not count — only
+    actual call expressions do.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            f = node.func
+            if (
+                isinstance(f, ast.Attribute)
+                and f.attr == "now"
+                and isinstance(f.value, ast.Name)
+                and f.value.id == "datetime"
+            ):
+                return True
+    return False
+
+
+def _appends_state_change_directly(func) -> bool:
+    """Return True if the function body calls ``self.state_changes.append(...)``."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            f = node.func
+            if (
+                f.attr == "append"
+                and isinstance(f.value, ast.Attribute)
+                and f.value.attr == "state_changes"
+            ):
+                return True
+    return False
+
+
 def test_no_bare_datetime_now_in_add_state_change_or_modify_order():
-    """M2-09: add_state_change / modify_order no longer call bare datetime.now()."""
-    add_src = inspect.getsource(Order.add_state_change)
-    modify_src = inspect.getsource(Order.modify_order)
-    assert "datetime.now()" not in add_src
-    assert "datetime.now()" not in modify_src
+    """M2-09: add_state_change / modify_order no longer CALL bare datetime.now()."""
+    assert not _calls_datetime_now(Order.add_state_change)
+    assert not _calls_datetime_now(Order.modify_order)
     # modify_order must not directly append to the state-change history.
-    assert "self.state_changes.append" not in modify_src
+    assert not _appends_state_change_directly(Order.modify_order)

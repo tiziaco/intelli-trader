@@ -238,10 +238,11 @@ class Order:
 		return order
 	
 	def add_state_change(self, new_status: OrderStatus, reason: str,
-	                    triggered_by: str = "system", additional_data: Optional[dict[str, Any]] = None) -> bool:
+	                    triggered_by: str = "system", additional_data: Optional[dict[str, Any]] = None,
+	                    time: Optional[datetime] = None, allow_same_status: bool = False) -> bool:
 		"""
 		Add a state change to the order with validation.
-		
+
 		Parameters
 		----------
 		new_status : OrderStatus
@@ -252,41 +253,56 @@ class Order:
 			Who/what triggered the change
 		additional_data : dict, optional
 			Additional data about the state change
-			
+		time : datetime, optional
+			The event/transition time to stamp the recorded state change with
+			(D-12: event-derived, never ``datetime.now()``). Defaults to the
+			order's own event time (``self.time``) when not supplied — the single
+			deterministic source of transition timestamps.
+		allow_same_status : bool, optional
+			When True, permit a transition where ``new_status == self.status``
+			(used by ``modify_order``, which records a tracked modification without
+			a status change). Normal lifecycle transitions leave this False.
+
 		Returns
 		-------
 		bool
 			True if state change was valid and applied, False otherwise
 		"""
-		# Validate state transition
-		if not self._is_valid_transition(self.status, new_status):
-			return False
-		
+		# Validate state transition (a same-status modification record is allowed
+		# only when the caller explicitly opts in).
+		if not (allow_same_status and new_status == self.status):
+			if not self._is_valid_transition(self.status, new_status):
+				return False
+
+		# Event-derived transition time (D-12): default to the order's event time,
+		# never the wall clock.
+		event_time = time if time is not None else self.time
+
 		# Create state change record
 		state_change = OrderStateChange(
 			from_status=self.status,
 			to_status=new_status,
-			timestamp=datetime.now(),
+			timestamp=event_time,
 			reason=reason,
 			triggered_by=triggered_by,
 			additional_data=additional_data
 		)
-		
+
 		# Update order status and metadata
 		self.status = new_status
-		self.updated_at = datetime.now()
+		self.updated_at = event_time
 		# TODO: check if i have to store the state changes permanently in sql
 		# when in live trading / production
 		self.state_changes.append(state_change)
-		
-		# Update specific timestamp fields
+
+		# Update specific timestamp fields (event-derived)
 		if new_status == OrderStatus.FILLED:
-			self.filled_at = datetime.now()
+			self.filled_at = event_time
 		elif new_status == OrderStatus.CANCELLED:
-			self.cancelled_at = datetime.now()
+			self.cancelled_at = event_time
 		elif new_status == OrderStatus.EXPIRED:
-			self.expired_at = datetime.now()
-		
+			self.expired_at = event_time
+
 		return True
 	
 	def _is_valid_transition(self, from_status: OrderStatus, to_status: OrderStatus) -> bool:
@@ -334,8 +350,10 @@ class Order:
 			"fill_time": fill_time.isoformat(),
 			"total_filled": self.filled_quantity
 		}
-		
-		return self.add_state_change(new_status, reason, "exchange", additional_data)
+
+		# Thread the real fill_time into the recorded transition timestamp (D-12):
+		# the transition is stamped with the fill time, not the wall clock.
+		return self.add_state_change(new_status, reason, "exchange", additional_data, time=fill_time)
 	
 	def cancel_order(self, reason: str = "user cancellation") -> bool:
 		"""
@@ -390,10 +408,11 @@ class Order:
 		"""
 		return self.add_state_change(OrderStatus.EXPIRED, reason, "system")
 	
-	def modify_order(self, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None, reason: str = "order modification") -> bool:
+	def modify_order(self, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
+					reason: str = "order modification", time: Optional[datetime] = None) -> bool:
 		"""
 		Modify order parameters if in a modifiable state.
-		
+
 		Parameters
 		----------
 		new_price : float, optional
@@ -402,7 +421,11 @@ class Order:
 			New order quantity
 		reason : str, optional
 			Reason for modification
-			
+		time : datetime, optional
+			The event/transition time to stamp the modification with (D-12:
+			event-derived, never ``datetime.now()``). Defaults to the order's own
+			event time when not supplied.
+
 		Returns
 		-------
 		bool
@@ -410,7 +433,7 @@ class Order:
 		"""
 		if not self.is_active:
 			return False
-		
+
 		if new_price is not None:
 			new_price = to_money(new_price)
 		if new_quantity is not None:
@@ -430,25 +453,25 @@ class Order:
 			changes["old_quantity"] = self.quantity
 			changes["new_quantity"] = new_quantity
 			self.quantity = new_quantity
-		
+
 		if changes:
+			event_time = time if time is not None else self.time
 			self.modification_count += 1
-			self.last_modification_time = datetime.now()
-			self.updated_at = datetime.now()
-			
-			# Add state change to track modification
-			state_change = OrderStateChange(
-				from_status=self.status,
-				to_status=self.status,  # Status doesn't change, but we track the modification
-				timestamp=datetime.now(),
-				reason=reason,
+			self.last_modification_time = event_time
+
+			# Route the modification record through the single validated
+			# add_state_change path (D-12). The status does not change, so opt into
+			# allow_same_status; add_state_change stamps updated_at + the recorded
+			# transition with the event-derived time.
+			return self.add_state_change(
+				self.status,
+				reason,
 				triggered_by="user",
-				additional_data=changes
+				additional_data=changes,
+				time=event_time,
+				allow_same_status=True,
 			)
-			self.state_changes.append(state_change)
-			
-			return True
-		
+
 		return False
 	
 	def get_state_history(self) -> List[OrderStateChange]:
