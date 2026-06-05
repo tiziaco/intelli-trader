@@ -27,6 +27,12 @@ from .order import OrderEvent
 # Fill events
 from .fill import FillEvent
 
+# Error events (D-06)
+from .error import (
+    ErrorEvent,
+    PortfolioErrorEvent,
+)
+
 # Event type discriminator (single definition lives in core/enums)
 from itrader.core.enums import EventType
 
@@ -48,6 +54,10 @@ __all__ = [
 
     # Fill events
     'FillEvent',
+
+    # Error events
+    'ErrorEvent',
+    'PortfolioErrorEvent',
 
     # Event type discriminator
     'EventType',
