@@ -10,9 +10,9 @@ from decimal import Decimal
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-from itrader.portfolio_handler.transaction_manager import (
-    TransactionManager, 
-    TransactionState, 
+from itrader.portfolio_handler.transaction.transaction_manager import (
+    TransactionManager,
+    TransactionState,
     TransactionContext
 )
 from itrader.portfolio_handler.transaction import Transaction

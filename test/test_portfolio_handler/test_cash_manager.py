@@ -10,9 +10,9 @@ from decimal import Decimal
 from datetime import datetime
 from unittest.mock import Mock
 
-from itrader.portfolio_handler.cash_manager import (
-    CashManager, 
-    CashOperationType, 
+from itrader.portfolio_handler.cash.cash_manager import (
+    CashManager,
+    CashOperationType,
     CashOperation
 )
 from itrader.core.exceptions import (

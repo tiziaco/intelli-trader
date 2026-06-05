@@ -11,10 +11,10 @@ from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.core.enums import PortfolioState, PositionSide, TransactionType
 
 # Import the new managers
-from itrader.portfolio_handler.transaction_manager import TransactionManager
-from itrader.portfolio_handler.position_manager import PositionManager
-from itrader.portfolio_handler.cash_manager import CashManager
-from itrader.portfolio_handler.metrics_manager import MetricsManager
+from itrader.portfolio_handler.transaction.transaction_manager import TransactionManager
+from itrader.portfolio_handler.position.position_manager import PositionManager
+from itrader.portfolio_handler.cash.cash_manager import CashManager
+from itrader.portfolio_handler.metrics.metrics_manager import MetricsManager
 from itrader.core.ids import PortfolioId
 from itrader.core.money import to_money
 

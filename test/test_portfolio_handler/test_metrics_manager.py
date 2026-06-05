@@ -10,7 +10,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 from unittest.mock import Mock
 
-from itrader.portfolio_handler.metrics_manager import (
+from itrader.portfolio_handler.metrics.metrics_manager import (
     MetricsManager,
     MetricsPeriod,
     PortfolioSnapshot,
