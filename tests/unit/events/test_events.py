@@ -1,93 +1,89 @@
-import unittest
 from datetime import datetime
+from types import SimpleNamespace
+
+import pytest
+
 from itrader.events_handler.event import EventType, FillStatus
 from itrader.order_handler.order import Order
 from itrader.core.enums import OrderType, OrderStatus
-from itrader.events_handler.event import \
-	PingEvent, BarEvent, SignalEvent, OrderEvent, FillEvent
+from itrader.events_handler.event import (
+    PingEvent,
+    BarEvent,
+    SignalEvent,
+    OrderEvent,
+    FillEvent,
+)
 
 
-class TestEvents(unittest.TestCase):
-	"""
-	Test all the events that can be handled by the trading system.
-	"""
-
-	@classmethod
-	def setUpClass(cls):
-		"""
-		Set up the test data that will be used across all test methods.
-		"""
-		cls.time = datetime.now()
-		cls.ticker = 'BTCUSDT'
-		cls.side = 'LONG'
-		cls.action = 'BUY'
-		cls.price = 42350.72
-		cls.quantity = 1
-		cls.commission = 1.5
-		cls.stop_loss = 42000
-		cls.take_profit = 45000
-		cls.strategy_id = 'test_strategy'
-		cls.portfolio_id = 'portfolio_id'
-		cls.order_type = 'MARKET'
-
-	def setUp(self):
-		"""
-		Set up the test data that will be used in each test method.
-		"""
-		self.ping_event = PingEvent(self.time)
-		self.bar_event = BarEvent(self.time, {})
-		self.signal_event = SignalEvent(self.time, self.order_type, self.ticker, self.action,
-										self.price, self.quantity, self.stop_loss, self.take_profit,
-										self.strategy_id, self.portfolio_id, {})  # strategy_setting as empty dict
-		# Create Order first, then OrderEvent
-		self.order = Order.new_order(self.signal_event, 'test_exchange')
-		self.mkt_order_event = OrderEvent.new_order_event(self.order)
-		self.fill_event = FillEvent.new_fill('EXECUTED', self.commission, self.mkt_order_event)
-
-	def test_ping_event_initialization(self):
-		self.assertIsInstance(self.ping_event, PingEvent)
-
-	def test_bar_event_initialization(self):
-		self.assertIsInstance(self.bar_event, BarEvent)
-
-	def test_signal_event_initialization(self):
-		self.assertIsInstance(self.signal_event, SignalEvent)
-		self.assertIs(type(self.mkt_order_event.time), datetime)
-		self.assertEqual(self.signal_event.ticker, 'BTCUSDT')
-		self.assertEqual(self.signal_event.action, 'BUY')
-		self.assertEqual(self.signal_event.price, 42350.72)
-		self.assertEqual(self.signal_event.quantity, 1)
-		self.assertEqual(self.signal_event.stop_loss, 42000)
-		self.assertEqual(self.signal_event.take_profit, 45000)
-		self.assertEqual(self.signal_event.strategy_id, 'test_strategy')
-		self.assertEqual(self.signal_event.portfolio_id, 'portfolio_id')
-		self.assertEqual(self.signal_event.verified, False)
-
-	def test_order_event_initialization(self):
-		self.assertIsInstance(self.mkt_order_event, OrderEvent)
-		self.assertIs(type(self.mkt_order_event.time), datetime)
-		# Test Order object attributes (not OrderEvent)
-		self.assertEqual(self.order.type, OrderType.MARKET)
-		self.assertEqual(self.order.status, OrderStatus.PENDING)
-		# Test OrderEvent attributes
-		self.assertEqual(self.mkt_order_event.ticker, 'BTCUSDT')
-		self.assertEqual(self.mkt_order_event.action, 'BUY')
-		self.assertEqual(self.mkt_order_event.price, 42350.72)
-		self.assertEqual(self.mkt_order_event.quantity, 1)
-		self.assertEqual(self.mkt_order_event.strategy_id, 'test_strategy')
-		self.assertEqual(self.mkt_order_event.portfolio_id, 'portfolio_id')
-
-	def test_fill_event_initialization(self):
-		self.assertIsInstance(self.fill_event, FillEvent)
-		self.assertIs(type(self.mkt_order_event.time), datetime)
-		self.assertEqual(self.fill_event.status, FillStatus.EXECUTED)
-		self.assertEqual(self.fill_event.ticker, 'BTCUSDT')
-		self.assertEqual(self.fill_event.action, 'BUY')
-		self.assertEqual(self.fill_event.price, 42350.72)
-		self.assertEqual(self.fill_event.quantity, 1)
-		self.assertEqual(self.fill_event.commission, 1.5)
-		self.assertEqual(self.fill_event.portfolio_id, 'portfolio_id')
+@pytest.fixture
+def events():
+    """The full set of events constructed from a market BUY signal."""
+    time = datetime.now()
+    ping_event = PingEvent(time)
+    bar_event = BarEvent(time, {})
+    signal_event = SignalEvent(
+        time, "MARKET", "BTCUSDT", "BUY",
+        42350.72, 1, 42000, 45000,
+        "test_strategy", "portfolio_id", {},  # strategy_setting as empty dict
+    )
+    # Create Order first, then OrderEvent
+    order = Order.new_order(signal_event, "test_exchange")
+    mkt_order_event = OrderEvent.new_order_event(order)
+    fill_event = FillEvent.new_fill("EXECUTED", 1.5, mkt_order_event)
+    return SimpleNamespace(
+        ping_event=ping_event,
+        bar_event=bar_event,
+        signal_event=signal_event,
+        order=order,
+        mkt_order_event=mkt_order_event,
+        fill_event=fill_event,
+    )
 
 
-if __name__ == "__main__":
-	unittest.main()
+def test_ping_event_initialization(events):
+    assert isinstance(events.ping_event, PingEvent)
+
+
+def test_bar_event_initialization(events):
+    assert isinstance(events.bar_event, BarEvent)
+
+
+def test_signal_event_initialization(events):
+    assert isinstance(events.signal_event, SignalEvent)
+    assert type(events.mkt_order_event.time) is datetime
+    assert events.signal_event.ticker == "BTCUSDT"
+    assert events.signal_event.action == "BUY"
+    assert events.signal_event.price == 42350.72
+    assert events.signal_event.quantity == 1
+    assert events.signal_event.stop_loss == 42000
+    assert events.signal_event.take_profit == 45000
+    assert events.signal_event.strategy_id == "test_strategy"
+    assert events.signal_event.portfolio_id == "portfolio_id"
+    assert events.signal_event.verified is False
+
+
+def test_order_event_initialization(events):
+    assert isinstance(events.mkt_order_event, OrderEvent)
+    assert type(events.mkt_order_event.time) is datetime
+    # Test Order object attributes (not OrderEvent)
+    assert events.order.type == OrderType.MARKET
+    assert events.order.status == OrderStatus.PENDING
+    # Test OrderEvent attributes
+    assert events.mkt_order_event.ticker == "BTCUSDT"
+    assert events.mkt_order_event.action == "BUY"
+    assert events.mkt_order_event.price == 42350.72
+    assert events.mkt_order_event.quantity == 1
+    assert events.mkt_order_event.strategy_id == "test_strategy"
+    assert events.mkt_order_event.portfolio_id == "portfolio_id"
+
+
+def test_fill_event_initialization(events):
+    assert isinstance(events.fill_event, FillEvent)
+    assert type(events.mkt_order_event.time) is datetime
+    assert events.fill_event.status == FillStatus.EXECUTED
+    assert events.fill_event.ticker == "BTCUSDT"
+    assert events.fill_event.action == "BUY"
+    assert events.fill_event.price == 42350.72
+    assert events.fill_event.quantity == 1
+    assert events.fill_event.commission == 1.5
+    assert events.fill_event.portfolio_id == "portfolio_id"
