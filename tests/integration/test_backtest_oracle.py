@@ -3,7 +3,7 @@
 Behavior (D-16): run the FULL SMA_MACD backtest over the pinned golden window by
 invoking the committed oracle generator (``scripts/run_backtest.py::main``) in-process,
 which writes a fresh ``output/{trades,equity}.csv`` + ``output/summary.json``. The test
-then loads BOTH the fresh ``output/`` and the committed ``test/golden/`` equivalents and
+then loads BOTH the fresh ``output/`` and the committed ``tests/golden/`` equivalents and
 asserts they are EQUAL on the deterministic columns (D-12) with NO float tolerance
 (D-13 — exact; a tolerance would mask real regressions and M1 runs are bit-reproducible).
 
@@ -13,10 +13,10 @@ NOT a byte-compare. Trades are identified by ``(entry_date, exit_date, side)`` (
 equity by ``(timestamp, total_equity)``; summary by final cash / trade count / realised PnL.
 
 This test carries the ``integration`` + ``slow`` markers AUTOMATICALLY via the
-``test_integration`` path (root-conftest auto-marking, D-14/D-16) — markers are NOT
-hand-added here.
+``tests/integration/`` path (root-conftest folder-derived TYPE auto-marking, D-13) —
+markers are NOT hand-added here.
 
-It is RED until Task 2 of this plan commits ``test/golden/`` — that is expected.
+It is RED until ``tests/golden/`` is frozen — that is expected.
 """
 
 import importlib.util
@@ -28,7 +28,7 @@ import pandas.testing as pdt
 import pytest
 
 
-# Repo layout: this file lives at <repo>/test/test_integration/, so the repo root is
+# Repo layout: this file lives at <repo>/tests/integration/, so the repo root is
 # two parents up. The oracle generator and its output dir are anchored from there.
 _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 _RUN_BACKTEST = _REPO_ROOT / "scripts" / "run_backtest.py"
@@ -96,17 +96,17 @@ def _run_full_backtest():
 
 @pytest.fixture(scope="module")
 def oracle_run():
-    """Run the full 2018->2026 backtest ONCE and load fresh output/ + frozen test/golden/.
+    """Run the full 2018->2026 backtest ONCE and load fresh output/ + frozen tests/golden/.
 
     Module-scoped so the (slow) full run is shared by the behavioral-identity test and the
     deferred numeric test. The golden paths are constants here (the conftest ``golden_*``
     fixtures are function-scoped and cannot feed a module-scoped fixture); they resolve to the
-    same committed ``test/golden/`` directory.
+    same committed ``tests/golden/`` directory.
     """
-    golden_dir = _REPO_ROOT / "test" / "golden"
+    golden_dir = _REPO_ROOT / "tests" / "golden"
     if not golden_dir.exists():
         pytest.skip(
-            "test/golden/ not yet frozen (Task 2 of plan 01-05) — integration RED until blessed"
+            "tests/golden/ not yet frozen (Task 2 of plan 01-05) — integration RED until blessed"
         )
 
     # Full 2018->2026 run writes a fresh output/{trades,equity}.csv + summary.json.

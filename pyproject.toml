@@ -40,7 +40,7 @@ mypy = "^2.1.0"
 
 [tool.pytest.ini_options]
 # Test discovery
-testpaths = ["test"]
+testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -54,16 +54,13 @@ addopts = [
     "-v",                     # Verbose output
 ]
 
-# Test markers
+# Test markers — TYPE axis (D-13). Folder-derived in tests/conftest.py
+# (tests/unit -> unit; tests/integration -> integration + slow). This is the SINGLE
+# marker-registration home; conftest only applies, never registers (--strict-markers).
 markers = [
-    "unit: Unit tests",
-    "integration: Integration tests", 
-    "slow: Slow running tests",
-    "portfolio: Portfolio related tests",
-    "events: Event handling tests",
-    "orders: Order processing tests",
-    "execution: Trade execution tests",
-    "strategy: Strategy tests",
+    "unit: Unit test — drives ONE collaborating component (tests/unit/)",
+    "integration: Integration test — asserts cross-component interaction (tests/integration/)",
+    "slow: Slow running test (the full-engine integration runs)",
 ]
 
 # Minimum version

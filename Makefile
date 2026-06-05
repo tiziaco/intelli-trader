@@ -26,44 +26,44 @@ clean:
 # Test commands
 test:
 	@echo "🧪 Running all tests..."
-	poetry run pytest test/ -v
+	poetry run pytest tests/ -v
 
 test-unit:
 	@echo "🔬 Running unit tests..."
-	poetry run pytest test/ -v -m "unit"
+	poetry run pytest tests/ -v -m "unit"
 
 test-integration:
 	@echo "🔗 Running integration tests..."
-	poetry run pytest test/ -v -m "integration"
+	poetry run pytest tests/ -v -m "integration"
 
 test-portfolio:
 	@echo "📊 Running portfolio tests..."
-	poetry run pytest test/test_portfolio/ -v
+	poetry run pytest tests/unit/portfolio/ -v
 
 test-events:
 	@echo "📡 Running events tests..."
-	poetry run pytest test/test_events/ -v
+	poetry run pytest tests/unit/events/ -v
 
 test-orders:
 	@echo "📝 Running order handler tests..."
-	poetry run pytest test/test_order_handler/ -v
+	poetry run pytest tests/unit/order/ -v
 
 test-execution:
 	@echo "⚡ Running execution handler tests..."
-	poetry run pytest test/test_execution_handler/ -v
+	poetry run pytest tests/unit/execution/ -v
 
 test-strategy:
 	@echo "🎯 Running strategy tests..."
-	poetry run pytest test/test_strategy/ -v
+	poetry run pytest tests/unit/strategy/ -v
 
 test-cov:
 	@echo "📈 Running tests with coverage..."
-	poetry run pytest test/ --cov=itrader --cov-report=html --cov-report=term-missing -v
+	poetry run pytest tests/ --cov=itrader --cov-report=html --cov-report=term-missing -v
 	open htmlcov/index.html
 
 test-watch:
 	@echo "👀 Running tests in watch mode..."
-	poetry run pytest-watch test/ -- -v
+	poetry run pytest-watch tests/ -- -v
 
 # Type-check the in-scope itrader package with mypy --strict (D-05/D-06).
 # Errors are expected until the strict-clean pass (Plan 07) — this gate must merely run.
