@@ -9,8 +9,8 @@ import pandas as pd
 from ..base import PriceHandler
 from ...events_handler.events import TimeEvent
 
-import logging
-logger = logging.getLogger('TradingSystem')
+from itrader.logger import get_itrader_logger
+logger = get_itrader_logger().bind(component="BINANCELiveStreamer")
 
 
 class BINANCELiveStreamer(PriceHandler):

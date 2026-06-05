@@ -4,8 +4,8 @@ import pandas as pd
 from itrader.core.enums import Side
 from itrader.events_handler.events import SignalEvent
 
-import logging
-logger = logging.getLogger('TradingSystem')
+from itrader.logger import get_itrader_logger
+logger = get_itrader_logger().bind(component="SltpModels")
 
 
 class FixedPercentage():

@@ -238,7 +238,7 @@ class SimulatedExchange(AbstractExchange):
 
 		self._orders_executed += 1
 		self._total_volume += executed_price * fill_quantity
-		self.logger.info('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
+		self.logger.debug('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
 						event.action, event.ticker, fill_quantity, executed_price,
 						(slippage_factor - 1.0) * 100)
 		return executed_price, commission, slippage_factor

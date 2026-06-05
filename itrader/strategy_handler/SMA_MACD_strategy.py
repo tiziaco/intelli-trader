@@ -5,8 +5,8 @@ from itrader.strategy_handler.base import Strategy
 
 from ta import trend
 
-import logging
-logger = logging.getLogger('TradingSystem')
+from itrader.logger import get_itrader_logger
+logger = get_itrader_logger().bind(component="SMA_MACD_strategy")
 
 class SMA_MACD_strategy(Strategy):
 	"""
