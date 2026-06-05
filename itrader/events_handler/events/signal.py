@@ -1,7 +1,7 @@
 """
 Strategy signal event: a pure, immutable strategy fact (D-03 — no
-``verified`` verdict flag; the validator verdict lives on the Order
-entity, never on the event).
+verdict flag; the validator verdict lives on the Order entity, never
+on the event).
 """
 
 from dataclasses import dataclass, field
