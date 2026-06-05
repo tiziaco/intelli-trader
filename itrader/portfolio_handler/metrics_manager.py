@@ -8,21 +8,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Tuple, Any
 from dataclasses import dataclass, asdict
-from enum import Enum
 import statistics
 import math
 
+from itrader.core.enums import MetricsPeriod
 from itrader.core.exceptions import InvalidTransactionError
 from itrader.logger import get_itrader_logger
-
-
-class MetricsPeriod(Enum):
-    DAILY = "DAILY"
-    WEEKLY = "WEEKLY"
-    MONTHLY = "MONTHLY"
-    QUARTERLY = "QUARTERLY"
-    YEARLY = "YEARLY"
-    ALL_TIME = "ALL_TIME"
 
 
 @dataclass

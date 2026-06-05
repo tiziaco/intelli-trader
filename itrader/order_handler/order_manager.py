@@ -16,11 +16,11 @@ from decimal import Decimal
 from typing import Any, List, Optional
 from .order import Order
 from .operation_result import OperationResult
-from ..core.enums import OrderCommand
+from ..core.enums import OrderCommand, FillStatus
 from ..core.ids import OrderId
 from ..core.money import to_money
 from .base import OrderStorage
-from ..events_handler.event import OrderEvent, SignalEvent, FillEvent, FillStatus
+from ..events_handler.event import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 
 

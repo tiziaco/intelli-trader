@@ -27,6 +27,21 @@ class TransactionType(Enum):
     DIVIDEND = "dividend"
     FEE = "fee"
 
+    @classmethod
+    def _missing_(cls, value: object) -> "TransactionType":
+        """Case-insensitive string parse; raise a clear f-string error.
+
+        Replaces the scattered ``transaction_type_map.get(action)`` dict and
+        the buggy ``raise ValueError('Value %s', x)`` printf-tuple form in
+        ``transaction.py`` (D-04). Accepts the upstream uppercase ``action``
+        strings (e.g. ``"BUY"``/``"SELL"``) the old map keyed on.
+        """
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.upper() == value.upper():
+                    return member
+        raise ValueError(f"Unknown TransactionType: {value!r}")
+
 
 class PortfolioEventType(Enum):
     """Portfolio event types for tracking changes."""

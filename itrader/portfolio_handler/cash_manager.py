@@ -8,8 +8,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from typing import Any, Optional, List, Dict, Tuple
 from dataclasses import dataclass
-from enum import Enum
 
+from itrader.core.enums import CashOperationType
 from itrader.core.exceptions import (
     InsufficientFundsError,
     InvalidTransactionError,
@@ -17,15 +17,6 @@ from itrader.core.exceptions import (
 )
 from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
-
-
-class CashOperationType(Enum):
-    DEPOSIT = "DEPOSIT"
-    WITHDRAWAL = "WITHDRAWAL"
-    TRANSACTION_DEBIT = "TRANSACTION_DEBIT"
-    TRANSACTION_CREDIT = "TRANSACTION_CREDIT"
-    RESERVATION = "RESERVATION"
-    RELEASE_RESERVATION = "RELEASE_RESERVATION"
 
 
 @dataclass

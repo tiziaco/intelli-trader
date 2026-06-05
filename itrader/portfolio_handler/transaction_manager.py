@@ -10,26 +10,16 @@ from typing import Any, Optional, List, Dict
 
 from itrader.core.ids import TransactionId
 from dataclasses import dataclass
-from enum import Enum
 
 from itrader.portfolio_handler.transaction import Transaction
-from itrader.core.enums import TransactionType
+from itrader.core.enums import TransactionType, TransactionState
 from itrader.core.exceptions import (
-    InvalidTransactionError, 
+    InvalidTransactionError,
     InsufficientFundsError,
     ConcurrencyError
 )
 from itrader.logger import get_itrader_logger
 from itrader import idgen
-
-
-class TransactionState(Enum):
-    PENDING = "PENDING"
-    VALIDATED = "VALIDATED"
-    EXECUTED = "EXECUTED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
-    ROLLED_BACK = "ROLLED_BACK"
 
 
 @dataclass

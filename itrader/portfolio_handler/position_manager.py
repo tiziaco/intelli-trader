@@ -8,12 +8,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from typing import Any, Optional, List, Dict, Tuple
 from dataclasses import dataclass
-from enum import Enum
 import numpy as np
 
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction
-from itrader.core.enums import PositionSide, TransactionType
+from itrader.core.enums import PositionSide, TransactionType, PositionEvent
 from itrader.core.ids import PositionId
 from itrader.core.exceptions import (
     InvalidTransactionError,
@@ -21,14 +20,6 @@ from itrader.core.exceptions import (
     ConcurrencyError
 )
 from itrader.logger import get_itrader_logger
-
-
-class PositionEvent(Enum):
-    OPENED = "OPENED"
-    UPDATED = "UPDATED"
-    CLOSED = "CLOSED"
-    MERGED = "MERGED"
-    SPLIT = "SPLIT"
 
 
 @dataclass

@@ -15,11 +15,11 @@ from itrader.core.exceptions import (
     PortfolioHandlerError, PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
-from itrader.core.enums import PortfolioState, TransactionType
+from itrader.core.enums import PortfolioState, TransactionType, FillStatus
 from itrader.core.ids import PortfolioId, TransactionId
 from itrader.core.money import to_money
 from itrader.portfolio_handler.transaction import Transaction
-from itrader.events_handler.event import BarEvent, FillEvent, FillStatus, PortfolioUpdateEvent, PortfolioErrorEvent
+from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import (
     get_config_registry, get_portfolio_config_provider,
     PortfolioConfig, get_portfolio_preset

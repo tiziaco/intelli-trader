@@ -10,11 +10,6 @@ from itrader.core.enums import TransactionType
 from itrader.core.ids import PortfolioId, PositionId, TransactionId
 from itrader.core.money import to_money
 
-transaction_type_map = {
-	"BUY": TransactionType.BUY,
-	"SELL": TransactionType.SELL,
-}
-
 @dataclass
 class Transaction(object):
 	"""
@@ -93,9 +88,7 @@ class Transaction(object):
 			Instance of the filled order
 		"""
 
-		transaction_type = transaction_type_map.get(filled_order.action)
-		if transaction_type is None:
-			raise ValueError('Value %s not supported', filled_order.action)
+		transaction_type = TransactionType(filled_order.action)
 
 		return cls(
 			filled_order.time,
