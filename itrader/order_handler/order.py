@@ -56,8 +56,11 @@ class Order:
 
 	# Enhanced lifecycle tracking fields
 	filled_quantity: Decimal = field(default_factory=lambda: Decimal("0"))
-	created_at: datetime = field(default_factory=datetime.now)
-	updated_at: datetime = field(default_factory=datetime.now)
+	# WR-03 / D-12: event-derived timestamps, never wall-clock. These are
+	# overwritten in __post_init__ from the order's own (event-derived) time so
+	# construction never leaks a non-deterministic, tz-naive datetime.now().
+	created_at: datetime = field(default=None)  # type: ignore[assignment]
+	updated_at: datetime = field(default=None)  # type: ignore[assignment]
 	filled_at: Optional[datetime] = None
 	cancelled_at: Optional[datetime] = None
 	expired_at: Optional[datetime] = None
@@ -85,6 +88,13 @@ class Order:
 		self.price = to_money(self.price)
 		self.quantity = to_money(self.quantity)
 		self.filled_quantity = to_money(self.filled_quantity)
+		# WR-03 / D-12: derive lifecycle timestamps from the order's own
+		# event-derived time, never wall-clock. Only fill in the defaults so an
+		# explicit caller-supplied timestamp is preserved.
+		if self.created_at is None:
+			self.created_at = self.time
+		if self.updated_at is None:
+			self.updated_at = self.time
 
 	@property
 	def remaining_quantity(self) -> Decimal:
