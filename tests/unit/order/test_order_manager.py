@@ -85,7 +85,7 @@ class _Harness:
             strategy_id=order.strategy_id, portfolio_id=order.portfolio_id,
             order_type=OrderType.STOP, order_id=order.id,
         )
-        return FillEvent.new_fill(status, 0.0, oe)
+        return FillEvent.new_fill(status, oe, price=oe.price, quantity=oe.quantity, commission=0.0)
 
 
 @pytest.fixture
