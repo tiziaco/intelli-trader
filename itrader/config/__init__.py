@@ -1,194 +1,140 @@
-"""
-Configuration management system with domain-based architecture.
+"""Domain-based configuration: Pydantic v2 models + a pydantic-settings layer.
 
-This module provides a clean, domain-based configuration system with:
-- Portfolio configurations and presets
-- Trading execution settings
-- Data source and feed management
-- System-level settings and logging
-- Core registry and provider infrastructure
+The hand-rolled registry/provider/validator/schema machinery and the getters
+(``get_config_registry``, ``get_*_config_provider``) were deleted in the M2-06 config
+collapse (D-01). Consumers now construct Pydantic models directly. This package is a
+clean re-export of those models plus the ``Settings`` env layer and the reference-data
+constants — mirroring the grouped-re-export style of ``itrader.core.enums``.
 """
 
-from typing import Any, Optional
-
-# Core infrastructure
-from .core import (
-    ConfigRegistry, ConfigProvider, FileConfigProvider, RuntimeConfigProvider,
-    ConfigValidator, SchemaValidator, BusinessValidator, ValidationError, ValidationResult
-)
-
-# Domain configurations
-from .portfolio import (
-    PortfolioConfig, PortfolioType, RiskLevel, PortfolioLimits, RiskManagement, TradingRules,
-    validate_portfolio_config, get_portfolio_preset, list_available_presets
-)
-
-from .trading import (
-    TradingConfig, OrderType, TimeInForce, ExecutionMode,
-    OrderDefaults, ExecutionSettings, RiskControls, FeeStructure, StrategySettings,
-    validate_trading_config
-)
-
-from .data import (
-    DataConfig, DataSource, DataFrequency, StorageType,
-    DataSourceConfig, DataFeedConfig, StorageConfig, ProcessingConfig, RealTimeConfig
-)
-
-from .system import (
-    SystemConfig, Environment, PerformanceSettings, SecuritySettings,
-    DatabaseSettings, NotificationSettings, MonitoringSettings,
-    LoggingConfig, get_default_logging_config
-)
-
-from .exchange import (
-    ExchangeConfig, ExchangeType, FeeModelType, SlippageModelType,
-    FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation,
-    ConnectionSettings, validate_exchange_config, get_exchange_preset,
-    list_available_exchange_presets
-)
-
-# Re-export flat-module config names (M1-01 minimal fix).
+# Reference-data + timezone re-exports (M2-06 / D-02/D-03).
 #
-# The flat module ``itrader/config.py`` defines ``FORBIDDEN_SYMBOLS``, ``TIMEZONE``,
-# and ``Config``, but this package directory (``itrader/config/``) shadows it for
-# ``from itrader.config import X``. Several backtest-path consumers still import the
-# flat names (e.g. ``CCXT.py``: ``from itrader.config import FORBIDDEN_SYMBOLS`` and
-# ``config.TIMEZONE``; ``data_provider.py``/``time_parser.py``: ``config.TIMEZONE``).
-# We load the shadowed flat module by file path and re-export the three names so the
-# import cascade resolves without modifying the flat ``config.py``. The real config
-# collapse is deferred to M2-06.
-import importlib.util as _importlib_util
-import os as _os
+# The flat ``itrader/config.py`` shadow module (the M1-01 file-path loader workaround)
+# has been DELETED. Its public names are now sourced from their permanent homes:
+#   - FORBIDDEN_SYMBOLS / SUPPORTED_*  ->  itrader.core.constants (D-03)
+#   - TIMEZONE                         ->  Settings.timezone (D-02/D-07)
+from itrader.core.constants import (
+    FORBIDDEN_SYMBOLS,
+    SUPPORTED_CURRENCIES,
+    SUPPORTED_EXCHANGES,
+)
 
-_flat_config_path = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "config.py")
-_flat_spec = _importlib_util.spec_from_file_location("itrader._flat_config", _flat_config_path)
-if _flat_spec is None or _flat_spec.loader is None:
-    raise ImportError(f"Could not load flat config module from {_flat_config_path}")
-_flat_config = _importlib_util.module_from_spec(_flat_spec)
-_flat_spec.loader.exec_module(_flat_config)
+from .settings import Settings
 
-FORBIDDEN_SYMBOLS = _flat_config.FORBIDDEN_SYMBOLS
-Config = _flat_config.Config
-# ``TIMEZONE`` lives only as a ``Config`` class attribute in the flat module
-# (value ``'Europe/Paris'``); expose it as a module-level constant here so the four
-# ``config.TIMEZONE`` call sites resolve. Must match the PingGenerator default and
-# the CSV-branch index tz (Pitfall 6 tz-consistency).
-TIMEZONE = Config.TIMEZONE
+# Domain models (Pydantic v2)
+from .portfolio import (
+    EventSettings,
+    PortfolioConfig,
+    PortfolioLimits,
+    PortfolioType,
+    RiskLevel,
+    RiskManagement,
+    TradingRules,
+    ValidationSettings,
+    get_portfolio_preset,
+)
+from .trading import (
+    ExecutionMode,
+    ExecutionSettings,
+    FeeStructure,
+    OrderDefaults,
+    OrderType,
+    RiskControls,
+    StrategySettings,
+    TimeInForce,
+    TradingConfig,
+)
+from .data import (
+    DataConfig,
+    DataFeedConfig,
+    DataFrequency,
+    DataSource,
+    DataSourceConfig,
+    ProcessingConfig,
+    RealTimeConfig,
+    StorageConfig,
+    StorageType,
+)
+from .system import (
+    Environment,
+    LogLevel,
+    MonitoringSettings,
+    PerformanceSettings,
+    SystemConfig,
+)
+from .exchange import (
+    ConnectionSettings,
+    ExchangeConfig,
+    ExchangeLimits,
+    ExchangeType,
+    FailureSimulation,
+    FeeModelConfig,
+    FeeModelType,
+    SlippageModelConfig,
+    SlippageModelType,
+    get_exchange_preset,
+    list_available_exchange_presets,
+)
 
-# Convenience functions
-def get_config_registry(config_dir: str = "settings") -> ConfigRegistry:
-    """Get or create global configuration registry."""
-    return ConfigRegistry(config_dir)
-
-
-def get_portfolio_config_provider(registry: Optional[ConfigRegistry] = None) -> ConfigProvider[Any]:
-    """Get portfolio configuration provider."""
-    if registry is None:
-        registry = get_config_registry()
-    return registry.get_provider("portfolio")
-
-
-def get_trading_config_provider(registry: Optional[ConfigRegistry] = None) -> ConfigProvider[Any]:
-    """Get trading configuration provider."""
-    if registry is None:
-        registry = get_config_registry()
-    return registry.get_provider("trading")
-
-
-def get_data_config_provider(registry: Optional[ConfigRegistry] = None) -> ConfigProvider[Any]:
-    """Get data configuration provider."""
-    if registry is None:
-        registry = get_config_registry()
-    return registry.get_provider("data")
-
-
-def get_system_config_provider(registry: Optional[ConfigRegistry] = None) -> ConfigProvider[Any]:
-    """Get system configuration provider."""
-    if registry is None:
-        registry = get_config_registry()
-    return registry.get_provider("system")
-
+# Module-level TIMEZONE constant (value 'Europe/Paris' by default). Read from the
+# Settings field default rather than instantiating Settings (which requires the
+# fail-loud secret). Must match the PingGenerator default + the CSV-branch index tz
+# (tz-consistency, D-07). A future live wiring would read Settings().timezone instead.
+TIMEZONE: str = str(Settings.model_fields["timezone"].default)
 
 __all__ = [
-    # Core infrastructure
-    'ConfigRegistry',
-    'ConfigProvider',
-    'FileConfigProvider',
-    'RuntimeConfigProvider',
-    'ConfigValidator',
-    'SchemaValidator',
-    'BusinessValidator',
-    'ValidationError',
-    'ValidationResult',
-    
+    # Settings + reference data
+    "Settings",
+    "FORBIDDEN_SYMBOLS",
+    "SUPPORTED_CURRENCIES",
+    "SUPPORTED_EXCHANGES",
+    "TIMEZONE",
     # Portfolio domain
-    'PortfolioConfig',
-    'PortfolioType',
-    'RiskLevel',
-    'PortfolioLimits',
-    'RiskManagement',
-    'TradingRules',
-    'validate_portfolio_config',
-    'get_portfolio_preset',
-    'list_available_presets',
-    
+    "PortfolioConfig",
+    "PortfolioType",
+    "RiskLevel",
+    "PortfolioLimits",
+    "RiskManagement",
+    "TradingRules",
+    "ValidationSettings",
+    "EventSettings",
+    "get_portfolio_preset",
     # Trading domain
-    'TradingConfig',
-    'OrderType',
-    'TimeInForce',
-    'ExecutionMode',
-    'OrderDefaults',
-    'ExecutionSettings',
-    'RiskControls',
-    'FeeStructure',
-    'StrategySettings',
-    'validate_trading_config',
-    
+    "TradingConfig",
+    "OrderType",
+    "TimeInForce",
+    "ExecutionMode",
+    "OrderDefaults",
+    "ExecutionSettings",
+    "RiskControls",
+    "FeeStructure",
+    "StrategySettings",
     # Data domain
-    'DataConfig',
-    'DataSource',
-    'DataFrequency',
-    'StorageType',
-    'DataSourceConfig',
-    'DataFeedConfig',
-    'StorageConfig',
-    'ProcessingConfig',
-    'RealTimeConfig',
-    
+    "DataConfig",
+    "DataSource",
+    "DataFrequency",
+    "StorageType",
+    "DataSourceConfig",
+    "DataFeedConfig",
+    "StorageConfig",
+    "ProcessingConfig",
+    "RealTimeConfig",
     # System domain
-    'SystemConfig',
-    'Environment',
-    'PerformanceSettings',
-    'SecuritySettings',
-    'DatabaseSettings',
-    'NotificationSettings',
-    'MonitoringSettings',
-    'LoggingConfig',
-    'get_default_logging_config',
-
+    "SystemConfig",
+    "Environment",
+    "LogLevel",
+    "PerformanceSettings",
+    "MonitoringSettings",
     # Exchange domain
-    'ExchangeConfig',
-    'ExchangeType',
-    'FeeModelType',
-    'SlippageModelType',
-    'FeeModelConfig',
-    'SlippageModelConfig',
-    'ExchangeLimits',
-    'FailureSimulation',
-    'ConnectionSettings',
-    'validate_exchange_config',
-    'get_exchange_preset',
-    'list_available_exchange_presets',
-
-    # Convenience functions
-    'get_config_registry',
-    'get_portfolio_config_provider',
-    'get_trading_config_provider',
-    'get_data_config_provider',
-    'get_system_config_provider',
-
-    # Flat-module re-exports (M1-01)
-    'FORBIDDEN_SYMBOLS',
-    'TIMEZONE',
-    'Config'
+    "ExchangeConfig",
+    "ExchangeType",
+    "FeeModelType",
+    "SlippageModelType",
+    "FeeModelConfig",
+    "SlippageModelConfig",
+    "ExchangeLimits",
+    "FailureSimulation",
+    "ConnectionSettings",
+    "get_exchange_preset",
+    "list_available_exchange_presets",
 ]

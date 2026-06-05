@@ -59,25 +59,25 @@
   `Protocol`s), surfacing and fixing the non-conforming subclasses *(#20)*
 - [x] **M2-05**: Backtests are deterministic — RNG seeded behind an injected `Random`, clock injected
   (no local `datetime.now()`), flat global order index by id *(#5, PERF2)*
-- [ ] **M2-06**: The `config/` package collapses to Pydantic v2 models + `pydantic-settings` for
+- [x] **M2-06**: The `config/` package collapses to Pydantic v2 models + `pydantic-settings` for
   infra/secrets; one model round-trips backtest-dict and live-JSONB forms; settings layer carries no
   working secret defaults *(#13, #12 [settings part; secrets→D-live], completes #34/TD2 dual-config)*
-- [ ] **M2-07**: Shared enums/entities are centralized in `core/enums` / own modules; scattered
+- [x] **M2-07**: Shared enums/entities are centralized in `core/enums` / own modules; scattered
   string→enum map dicts and their buggy `ValueError`s are replaced *(#15)*
-- [ ] **M2-08**: Portfolio-handler manager state routes through an in-memory storage **seam**
+- [x] **M2-08**: Portfolio-handler manager state routes through an in-memory storage **seam**
   (transactions/positions/cash-ledger/metrics), mirroring the order-storage pattern; durable record
   shapes decided (Postgres backend → D-sql) *(#18 [seam part])*
-- [ ] **M2-09**: Order state-change audit and transaction timestamps are **event-derived/deterministic**
+- [x] **M2-09**: Order state-change audit and transaction timestamps are **event-derived/deterministic**
   (not `datetime.now()`); `modify_order` routes through the validated `add_state_change` path
   *(#19 [timestamps part])*
-- [ ] **M2-10**: `time_parser` timing is correct — `check_timeframe` anchoring fixed for non-UTC/DST/
+- [x] **M2-10**: `time_parser` timing is correct — `check_timeframe` anchoring fixed for non-UTC/DST/
   week-month, `to_timedelta` case-insensitive with week/month support, dead buggy helpers removed
   *(completes #36 M1→M2, KB21)*
-- [ ] **M2-11**: Dead modules deleted — `legacy_config.py`, `outils/profiling.py`, `outils/strategy.py`,
+- [x] **M2-11**: Dead modules deleted — `legacy_config.py`, `outils/profiling.py`, `outils/strategy.py`,
   and the orphaned duplicate `screener_event_handler.py` `EventHandler` *(TD4 [`my_strategies`→OUT], TD5, KB14, #32 [orphan delete part])*
-- [ ] **M2-12**: The bulk `unittest.TestCase` → pytest conversion proceeds (layered `tests/{unit,integration}`,
+- [x] **M2-12**: The bulk `unittest.TestCase` → pytest conversion proceeds (layered `tests/{unit,integration}`,
   conftests), building on the M1 skeleton *(#40 [bulk-conversion part])*
-- [ ] **M2-13**: **Numerical oracle re-frozen** after the Decimal shift; behavioral oracle (trade
+- [x] **M2-13**: **Numerical oracle re-frozen** after the Decimal shift; behavioral oracle (trade
   timing) verified unchanged *(golden-master re-baseline gate)*
 
 ### M3 — Event & dispatch core

@@ -1,0 +1,380 @@
+"""
+Test suite for CashManager class.
+Tests cash operations, precision, thread safety, and validation.
+"""
+
+import threading
+import time
+from decimal import Decimal
+
+import pytest
+
+from itrader.portfolio_handler.cash.cash_manager import (
+    CashManager,
+    CashOperationType,
+    CashOperation,
+)
+from itrader.core.exceptions import (
+    InvalidTransactionError,
+    InsufficientFundsError,
+)
+
+
+class MockPortfolio:
+    """Mock portfolio for testing."""
+
+    def __init__(self):
+        self.portfolio_id = 12345
+
+
+@pytest.fixture
+def cm():
+    """A CashManager seeded with $100000 on a mock portfolio."""
+    portfolio = MockPortfolio()
+    return CashManager(portfolio, 100000.0)
+
+
+def test_cash_manager_initialization(cm):
+    """Test CashManager initialization."""
+    assert cm.balance == Decimal("100000.00")
+    assert cm.available_balance == Decimal("100000.00")
+    assert cm.reserved_balance == Decimal("0.00")
+    assert len(cm._storage.get_cash_operations()) == 0
+
+
+def test_deposit_valid_amount(cm):
+    """Test valid cash deposit."""
+    initial_balance = cm.balance
+
+    result = cm.deposit(5000.0, "Test deposit")
+
+    assert result
+    assert cm.balance == initial_balance + Decimal("5000.00")
+
+    # Check operation was recorded
+    operations = cm.get_cash_operations()
+    assert len(operations) == 1
+    assert operations[0].operation_type == CashOperationType.DEPOSIT
+    assert operations[0].amount == Decimal("5000.00")
+
+
+def test_deposit_with_reference_id(cm):
+    """Test deposit with reference ID."""
+    reference_id = "DEPOSIT_123"
+
+    result = cm.deposit(1000.0, "Test deposit", reference_id)
+
+    assert result
+    operations = cm.get_cash_operations()
+    assert operations[0].reference_id == reference_id
+
+
+def test_deposit_exceeds_maximum_balance(cm):
+    """Test deposit that would exceed maximum balance."""
+    # Set a low maximum balance for testing
+    cm.max_balance = Decimal("150000.00")
+
+    with pytest.raises(InvalidTransactionError) as exc_info:
+        cm.deposit(60000.0, "Large deposit")
+
+    assert "exceed maximum balance limit" in str(exc_info.value)
+
+
+def test_deposit_invalid_amount(cm):
+    """Test deposit with invalid (negative) amount."""
+    with pytest.raises(InvalidTransactionError) as exc_info:
+        cm.deposit(-1000.0, "Invalid deposit")
+
+    assert "must be positive" in str(exc_info.value)
+
+
+def test_withdrawal_valid_amount(cm):
+    """Test valid cash withdrawal."""
+    initial_balance = cm.balance
+
+    result = cm.withdraw(25000.0, "Test withdrawal")
+
+    assert result
+    assert cm.balance == initial_balance - Decimal("25000.00")
+
+    # Check operation was recorded
+    operations = cm.get_cash_operations()
+    assert len(operations) == 1
+    assert operations[0].operation_type == CashOperationType.WITHDRAWAL
+    assert operations[0].amount == Decimal("25000.00")
+
+
+def test_withdrawal_insufficient_funds(cm):
+    """Test withdrawal with insufficient funds."""
+    with pytest.raises(InsufficientFundsError) as exc_info:
+        cm.withdraw(150000.0, "Large withdrawal")
+
+    assert exc_info.value.required_cash == 150000.0
+    assert exc_info.value.available_cash == 100000.0
+
+
+def test_withdrawal_invalid_amount(cm):
+    """Test withdrawal with invalid amount."""
+    with pytest.raises(InvalidTransactionError) as exc_info:
+        cm.withdraw(0.0, "Invalid withdrawal")
+
+    assert "must be positive" in str(exc_info.value)
+
+
+def test_transaction_cash_flow_debit(cm):
+    """Test transaction cash flow debit."""
+    initial_balance = cm.balance
+
+    result = cm.process_transaction_cash_flow(5000.0, True, "Buy transaction", "TXN_123")
+
+    assert result
+    assert cm.balance == initial_balance - Decimal("5000.00")
+
+    # Check operation was recorded
+    operations = cm.get_cash_operations()
+    assert len(operations) == 1
+    assert operations[0].operation_type == CashOperationType.TRANSACTION_DEBIT
+
+
+def test_transaction_cash_flow_credit(cm):
+    """Test transaction cash flow credit."""
+    initial_balance = cm.balance
+
+    result = cm.process_transaction_cash_flow(7500.0, False, "Sell transaction", "TXN_124")
+
+    assert result
+    assert cm.balance == initial_balance + Decimal("7500.00")
+
+    # Check operation was recorded
+    operations = cm.get_cash_operations()
+    assert len(operations) == 1
+    assert operations[0].operation_type == CashOperationType.TRANSACTION_CREDIT
+
+
+def test_transaction_cash_flow_insufficient_funds(cm):
+    """Test transaction debit with insufficient funds."""
+    with pytest.raises(InsufficientFundsError):
+        cm.process_transaction_cash_flow(150000.0, True, "Large buy", "TXN_125")
+
+
+def test_cash_reservation(cm):
+    """Test cash reservation for pending orders."""
+    result = cm.reserve_cash(30000.0, "Order reservation", "ORDER_123")
+
+    assert result
+    assert cm.reserved_balance == Decimal("30000.00")
+    assert cm.available_balance == Decimal("70000.00")
+    assert cm.balance == Decimal("100000.00")  # Total unchanged
+
+    # Check operation was recorded
+    operations = cm.get_cash_operations()
+    assert len(operations) == 1
+    assert operations[0].operation_type == CashOperationType.RESERVATION
+
+
+def test_cash_reservation_insufficient_funds(cm):
+    """Test cash reservation with insufficient available funds."""
+    with pytest.raises(InsufficientFundsError):
+        cm.reserve_cash(150000.0, "Large reservation", "ORDER_124")
+
+
+def test_release_cash_reservation(cm):
+    """Test releasing cash reservation."""
+    # First, make a reservation
+    cm.reserve_cash(20000.0, "Initial reservation", "ORDER_125")
+
+    # Then release part of it
+    result = cm.release_cash_reservation(15000.0, "Partial release", "ORDER_125")
+
+    assert result
+    assert cm.reserved_balance == Decimal("5000.00")
+    assert cm.available_balance == Decimal("95000.00")
+
+    # Check operations were recorded
+    operations = cm.get_cash_operations()
+    assert len(operations) == 2
+    assert operations[1].operation_type == CashOperationType.RELEASE_RESERVATION
+
+
+def test_release_more_than_reserved(cm):
+    """Test releasing more cash than reserved."""
+    # Make small reservation
+    cm.reserve_cash(1000.0, "Small reservation", "ORDER_126")
+
+    # Try to release more
+    with pytest.raises(InvalidTransactionError) as exc_info:
+        cm.release_cash_reservation(2000.0, "Invalid release", "ORDER_126")
+
+    assert "Cannot release" in str(exc_info.value)
+
+
+def test_decimal_precision(cm):
+    """Test decimal precision in calculations."""
+    # Test with amounts that could cause floating point issues
+    cm.deposit(33333.33, "Precision test deposit")
+    cm.withdraw(11111.11, "Precision test withdrawal")
+
+    # Calculate expected balance
+    expected_balance = Decimal("100000.00") + Decimal("33333.33") - Decimal("11111.11")
+    assert cm.balance == expected_balance
+
+
+def test_precision_rounding(cm):
+    """Test proper rounding with small amounts."""
+    # Amount with more than 2 decimal places
+    cm.deposit(1000.999, "Rounding test")  # Should round to 1001.00
+
+    expected_balance = Decimal("100000.00") + Decimal("1001.00")
+    assert cm.balance == expected_balance
+
+
+def test_get_balance_info(cm):
+    """Test getting comprehensive balance information."""
+    # Make some operations
+    cm.deposit(5000.0, "Test deposit")
+    cm.reserve_cash(15000.0, "Test reservation", "ORDER_127")
+
+    balance_info = cm.get_balance_info()
+
+    assert balance_info["total_balance"] == 105000.0
+    assert balance_info["available_balance"] == 90000.0
+    assert balance_info["reserved_balance"] == 15000.0
+    assert "min_balance" in balance_info
+    assert "max_balance" in balance_info
+
+
+def test_get_cash_operations_with_filter(cm):
+    """Test getting cash operations with type filter."""
+    # Perform different types of operations
+    cm.deposit(1000.0, "Deposit 1")
+    cm.withdraw(500.0, "Withdrawal 1")
+    cm.deposit(2000.0, "Deposit 2")
+
+    # Get only deposit operations
+    deposit_operations = cm.get_cash_operations(operation_type=CashOperationType.DEPOSIT)
+
+    assert len(deposit_operations) == 2
+    assert all(op.operation_type == CashOperationType.DEPOSIT for op in deposit_operations)
+
+
+def test_get_cash_operations_with_limit(cm):
+    """Test getting cash operations with limit."""
+    # Perform multiple operations
+    for i in range(5):
+        cm.deposit(100.0, f"Deposit {i}")
+
+    # Get limited operations
+    limited_operations = cm.get_cash_operations(limit=3)
+
+    assert len(limited_operations) == 3
+
+
+def test_balance_consistency_validation(cm):
+    """Test balance consistency validation."""
+    # Normal state should be consistent
+    assert cm.validate_balance_consistency()
+
+    # Test with manipulated state (simulating corruption)
+    original_reserved = cm._storage.get_reserved_cash()
+    cm._storage.set_reserved_cash(Decimal("-100.00"))  # Invalid negative reserved
+
+    assert not cm.validate_balance_consistency()
+
+    # Restore state
+    cm._storage.set_reserved_cash(original_reserved)
+
+
+def test_concurrent_operations(cm):
+    """Test thread safety with concurrent operations."""
+    results = []
+    errors = []
+
+    def deposit_thread(thread_id):
+        try:
+            results.append(cm.deposit(100.0, f"Concurrent deposit {thread_id}"))
+        except Exception as e:
+            errors.append(e)
+
+    def withdraw_thread(thread_id):
+        try:
+            results.append(cm.withdraw(50.0, f"Concurrent withdrawal {thread_id}"))
+        except Exception as e:
+            errors.append(e)
+
+    # Start multiple threads
+    threads = []
+    for i in range(5):
+        dep_thread = threading.Thread(target=deposit_thread, args=(i,))
+        with_thread = threading.Thread(target=withdraw_thread, args=(i,))
+        threads.extend([dep_thread, with_thread])
+
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    # Check results
+    assert len(errors) == 0, f"Concurrent operation errors: {errors}"
+    assert len(results) == 10
+    assert all(results)
+
+    # Check final balance consistency
+    assert cm.validate_balance_consistency()
+
+    # Expected balance: 100000 + (5 * 100) - (5 * 50) = 100250
+    assert cm.balance == Decimal("100250.00")
+
+
+def test_concurrent_reservation_operations(cm):
+    """Test thread safety with concurrent reservation operations."""
+    results = []
+    errors = []
+
+    def reserve_release_thread(thread_id):
+        try:
+            reserve_result = cm.reserve_cash(
+                1000.0, f"Reservation {thread_id}", f"ORDER_{thread_id}"
+            )
+            # Small delay to increase chance of race conditions
+            time.sleep(0.01)
+            release_result = cm.release_cash_reservation(
+                1000.0, f"Release {thread_id}", f"ORDER_{thread_id}"
+            )
+            results.extend([reserve_result, release_result])
+        except Exception as e:
+            errors.append(e)
+
+    # Start multiple threads
+    threads = []
+    for i in range(5):
+        thread = threading.Thread(target=reserve_release_thread, args=(i,))
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    # Check results
+    assert len(errors) == 0, f"Concurrent reservation errors: {errors}"
+    assert len(results) == 10
+    assert all(results)
+
+    # Final state should have no reservations
+    assert cm.reserved_balance == Decimal("0.00")
+    assert cm.available_balance == cm.balance
+
+
+def test_operation_id_uniqueness(cm):
+    """Test that operation IDs are unique."""
+    operation_ids = set()
+
+    for i in range(100):
+        cm.deposit(1.0, f"Test deposit {i}")
+
+    operations = cm.get_cash_operations()
+
+    for operation in operations:
+        assert operation.operation_id not in operation_ids
+        operation_ids.add(operation.operation_id)
+
+    assert len(operation_ids) == 100

@@ -15,17 +15,14 @@ from itrader.core.exceptions import (
     PortfolioHandlerError, PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
-from itrader.core.enums import PortfolioState, TransactionType
+from itrader.core.enums import PortfolioState, TransactionType, FillStatus
 from itrader.core.ids import PortfolioId, TransactionId
 from itrader.core.money import to_money
 from itrader.portfolio_handler.transaction import Transaction
-from itrader.events_handler.event import BarEvent, FillEvent, FillStatus, PortfolioUpdateEvent, PortfolioErrorEvent
-from itrader.config import (
-    get_config_registry, get_portfolio_config_provider,
-    PortfolioConfig, get_portfolio_preset
-)
+from itrader.events_handler.event import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
+from itrader.config import PortfolioConfig, get_portfolio_preset
 
-from itrader import config, idgen
+from itrader import idgen
 from itrader.logger import get_itrader_logger
 
 
@@ -34,7 +31,7 @@ class PortfolioHandler:
     Enhanced PortfolioHandler with better separation of concerns.
     
     This handler focuses on:
-    - Global system configuration via ConfigRegistry
+    - Global system configuration via a Pydantic PortfolioConfig
     - Portfolio lifecycle management (creation, deletion)
     - System-wide monitoring and health checks
     - Event publishing coordination
@@ -52,12 +49,13 @@ class PortfolioHandler:
         self.global_queue: "Queue[Any]" = global_queue
         self.current_time: Any = 0
         
-        # Initialize configuration system using new domain-based API
-        self.config_provider = get_portfolio_config_provider()
-        self.config_data = self.config_provider.get_config()
-        
+        # Initialize configuration by constructing the Pydantic model directly
+        # (M2-06 / D-01): the registry/provider getters were deleted. Pydantic validates
+        # on construction, so no separate validator is needed.
+        self.config_data: PortfolioConfig = PortfolioConfig.default()
+
         # Extract key configuration values with defaults
-        self.max_portfolios = self.config_data.get('limits', {}).get('max_positions', 10)
+        self.max_portfolios = self.config_data.limits.max_positions
         self.max_concurrent_operations = 50  # Reasonable default for operations
         self.publish_error_events = True  # Default behavior
         
@@ -398,74 +396,66 @@ class PortfolioHandler:
         )
     
     # Configuration Management Methods
+    #
+    # M2-06 / D-01: the hot-reloadable registry/provider machinery was deleted; the
+    # handler holds a single validated Pydantic ``PortfolioConfig`` (``config_data``).
+    # ``update_config`` merges + re-validates via the model (Pydantic raises on bad
+    # input); the per-portfolio variants were never wired on the backtest path.
     def update_config(self, updates: Dict[str, Any]) -> bool:
-        """Update PortfolioHandler configuration at runtime."""
+        """Update PortfolioHandler configuration at runtime (merge + re-validate)."""
         try:
-            success = self.config_provider.update_config(updates)
-            if success:
-                # Refresh local config data
-                self.config_data = self.config_provider.get_config()
-                # Update cached values
-                self.max_portfolios = self.config_data.get('limits', {}).get('max_positions', 10)
-                self.logger.info("Configuration updated successfully", updates=updates)
-            return success
+            merged = {**self.config_data.model_dump(), **updates}
+            self.config_data = PortfolioConfig.model_validate(merged)
+            self.max_portfolios = self.config_data.limits.max_positions
+            self.logger.info("Configuration updated successfully", updates=updates)
+            return True
         except Exception as e:
             self.logger.error("Failed to update configuration", error=str(e))
             return False
-    
+
     def get_config(self) -> Dict[str, Any]:
-        """Get current PortfolioHandler configuration."""
-        from typing import cast as _cast
-        return _cast(Dict[str, Any], self.config_provider.get_config())
-    
+        """Get current PortfolioHandler configuration as a dict."""
+        return self.config_data.model_dump(mode="json")
+
     def validate_config(self, config: Dict[str, Any]) -> bool:
-        """Validate PortfolioHandler configuration."""
+        """Validate a candidate PortfolioHandler configuration via the Pydantic model."""
         try:
-            # Use portfolio config validation
-            from itrader.config import validate_portfolio_config
-            return validate_portfolio_config(config)
+            PortfolioConfig.model_validate(config)
+            return True
         except Exception as e:
             self.logger.error("Configuration validation failed", error=str(e))
             return False
-    
+
     def rollback_config(self, steps: int = 1) -> bool:
-        """Rollback PortfolioHandler configuration."""
+        """Reset PortfolioHandler configuration to the default preset."""
         try:
-            # Reset to default portfolio configuration
-            default_config = get_portfolio_preset('default')
-            success = self.config_provider.update_config(default_config.to_dict())
-            if success:
-                self.logger.info("Configuration rolled back to defaults")
-            return success
+            self.config_data = get_portfolio_preset('default')
+            self.max_portfolios = self.config_data.limits.max_positions
+            self.logger.info("Configuration rolled back to defaults")
+            return True
         except Exception as e:
             self.logger.error("Failed to rollback configuration", error=str(e))
             return False
-    
+
     def update_portfolio_config(self, portfolio_id: Any, updates: Dict[str, Any]) -> bool:
-        """Update configuration for a specific portfolio."""
-        try:
-            # Provider lacks a per-portfolio config method (dormant path); resolve dynamically.
-            success = bool(getattr(self.config_provider, 'update_portfolio_config')(updates, portfolio_id))
-            if success:
-                self.logger.info("Portfolio configuration updated",
-                               portfolio_id=portfolio_id, updates=updates)
-            return success
-        except Exception as e:
-            self.logger.error("Failed to update portfolio configuration", 
-                            portfolio_id=portfolio_id, error=str(e))
-            return False
-    
+        """Update configuration for a specific portfolio (not wired — D-live).
+
+        Per-portfolio config mutation was a dormant provider method never wired on the
+        backtest path; it is deferred with the live runtime-config surface (D-live).
+        """
+        self.logger.warning(
+            "update_portfolio_config is not wired (deferred to D-live)",
+            portfolio_id=portfolio_id,
+        )
+        return False
+
     def get_portfolio_config(self, portfolio_id: Any) -> Optional[Dict[str, Any]]:
-        """Get configuration for a specific portfolio."""
-        try:
-            # Provider lacks a per-portfolio config method (dormant path); resolve dynamically.
-            portfolio_cfg = getattr(self.config_provider, 'get_portfolio_config')(portfolio_id)
-            result: Dict[str, Any] = portfolio_cfg.to_dict()
-            return result
-        except Exception as e:
-            self.logger.error("Failed to get portfolio configuration", 
-                            portfolio_id=portfolio_id, error=str(e))
-            return None
+        """Get configuration for a specific portfolio (not wired — D-live)."""
+        self.logger.warning(
+            "get_portfolio_config is not wired (deferred to D-live)",
+            portfolio_id=portfolio_id,
+        )
+        return None
     
     def __str__(self) -> str:
         return f"PortfolioHandler(portfolios={self.get_portfolio_count()})"

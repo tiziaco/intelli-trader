@@ -11,10 +11,14 @@ from itrader.config import PortfolioConfig, get_portfolio_preset
 from itrader.core.enums import PortfolioState, PositionSide, TransactionType
 
 # Import the new managers
-from itrader.portfolio_handler.transaction_manager import TransactionManager
-from itrader.portfolio_handler.position_manager import PositionManager
-from itrader.portfolio_handler.cash_manager import CashManager
-from itrader.portfolio_handler.metrics_manager import MetricsManager
+from itrader.portfolio_handler.transaction.transaction_manager import TransactionManager
+from itrader.portfolio_handler.position.position_manager import PositionManager
+from itrader.portfolio_handler.cash.cash_manager import CashManager
+from itrader.portfolio_handler.metrics.metrics_manager import MetricsManager
+from itrader.portfolio_handler.storage import (
+	PortfolioStateStorage,
+	PortfolioStateStorageFactory,
+)
 from itrader.core.ids import PortfolioId
 from itrader.core.money import to_money
 
@@ -29,7 +33,7 @@ class Portfolio(object):
 	
 	Each portfolio is now self-contained with its own:
 	- State management (ACTIVE, INACTIVE, ARCHIVED)
-	- Configuration (limits, validation settings) via ConfigRegistry
+	- Configuration (limits, validation settings) via a Pydantic PortfolioConfig
 	- Thread safety (per-portfolio lock)
 	- Health monitoring
 	
@@ -75,7 +79,16 @@ class Portfolio(object):
 		self._validate_initial_state()
 	
 	def _init_managers(self, initial_cash: float | Decimal) -> None:
-		"""Initialize portfolio managers."""
+		"""Initialize portfolio managers.
+
+		M2-08: a single ``PortfolioStateStorage`` seam is injected here and shared
+		by all four managers (mirroring how ``OrderManager`` receives an
+		``OrderStorage`` from ``OrderStorageFactory.create(environment)``). The
+		managers no longer own their state containers — they read/write through
+		this seam. The backtest path uses the in-memory backend; live persistence
+		is a pure backend swap (deferred to D-sql).
+		"""
+		self.state_storage: PortfolioStateStorage = PortfolioStateStorageFactory.create("backtest")
 		self.cash_manager = CashManager(self, initial_cash=initial_cash)
 		self.transaction_manager = TransactionManager(self)
 		self.position_manager = PositionManager(self)

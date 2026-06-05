@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Phase 2 context gathered
-last_updated: "2026-06-04T21:25:30.168Z"
-last_activity: 2026-06-04 -- Phase 02 marked complete
+status: ready_to_plan
+stopped_at: Phase 03 complete (9/9) — ready to discuss Phase 4
+last_updated: 2026-06-05T10:54:12.118Z
+last_activity: 2026-06-05
 progress:
   total_phases: 8
-  completed_phases: 2
-  total_plans: 13
-  completed_plans: 13
-  percent: 25
+  completed_phases: 3
+  total_plans: 22
+  completed_plans: 22
+  percent: 38
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 02 — m2a-identity-money-determinism
+**Current focus:** Phase 4 — m3 — event & dispatch core
 
 ## Current Position
 
-Phase: 02 — COMPLETE
-Plan: 1 of 8
-Status: Phase 02 complete
-Last activity: 2026-06-04 -- Phase 02 marked complete
+Phase: 4
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-05 - Completed quick task 260605-ih3: WR-01 weekly anchor fix
 
 Progress: [██████████] 100%
 
@@ -36,7 +36,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 5
+- Total plans completed: 14
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -45,6 +45,7 @@ Progress: [██████████] 100%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 5 | - | - |
+| 03 | 9 | - | - |
 
 **Recent Trend:**
 
@@ -64,6 +65,15 @@ Progress: [██████████] 100%
 | Phase 02 P04 | 20 | 3 tasks | 9 files |
 | Phase 02 P06 | 8 | 3 tasks | 7 files |
 | Phase 02 P07 | 180 | 4 tasks | 5 files |
+| Phase 03 P01 | 3 | 3 tasks | 10 files |
+| Phase 03 P02 | 2 | 1 tasks | 4 files |
+| Phase 03 P03 | 5 | 2 tasks | 11 files |
+| Phase 03 P04 | 9 | 1 tasks | 2 files |
+| Phase 03 P05 | 90 | 3 tasks | 42 files |
+| Phase 03 P06 | 9 | 1 tasks | 15 files |
+| Phase 03 P07 | 18 | 2 tasks | 16 files |
+| Phase 03 P08 | 95 | 2 tasks | 51 files |
+| Phase 03 P09 | 8 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -95,6 +105,19 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 02-04: DEF-02-04-A golden numeric oracle drift (behavioral oracle preserved, only numeric cols) deferred to Pattern E + owner-gated post-M2 numerical re-baseline
 - [Phase ?]: Plan 02-07: owner approved phase-close gate — D-15 numeric tolerance (rtol=1e-6, atol=5e-2 / 5c) accepted, identity+equity columns exact, time-boxed to M2b numerical re-freeze (Phase 3 SC4)
 - [Phase ?]: Plan 02-07: frozen=True/slots=True on PingEvent/BarEvent/PortfolioUpdateEvent/ScreenerEvent (M2-03); SignalEvent/FillEvent/OrderEvent left mutable (runtime mutation); make typecheck clean across D-05 in-scope package (Option 2 overrides for deferred subsystems)
+- [Phase 03]: Plan 03-01: D-17 inertness reference captured from unmodified M2a-end HEAD (final_equity 53229.685, 134 trades) — byte-exact baseline for the 03-09 oracle re-freeze gate
+- [Phase 03]: Plan 03-01: pydantic ^2.13 + pydantic-settings ^2.14 added as lockfile-tracked Poetry deps (unblocks config collapse 03-05)
+- [Phase 03]: Plan 03-01: 5 Wave-0 characterization stubs (M2-06..10) under current test/ tree, skip/importorskip-gated, move into tests/unit/... at 03-08; suite 300 pass / 11 skip / 1 xfail
+- [Phase ?]: Plan 03-02: four dead modules purged (legacy_config, outils/profiling, outils/strategy, events_handler/screener_event_handler) via D-13 mechanical-delete, zero importers re-verified; flat config.py shadow left for 03-05
+- [Phase ?]: Plan 03-03: FillStatus + 4 manager enums relocated to core/enums as class-based with _missing_ case-insensitive parse; string->enum maps deleted (D-04/D-05); OrderStatus/FillStatus/TransactionState kept DISTINCT; behavioral oracle byte-exact
+- [Phase 03]: Plan 03-04: check_timeframe epoch-aligned via a single replaceable _aligned seam (D-06/D-07); to_timedelta case-insensitive + week + month-specific raise + None-guard + raise-on-unknown (D-08); dead helpers deleted; behavioral oracle byte-exact (D-18)
+- [Phase ?]: Plan 03-05: config/ collapsed to Pydantic v2 (5 domain models + models.py aggregate) + pydantic-settings Settings with fail-loud required-no-default SecretStr database_url (M2-06); flat config.py shadow + importlib shim + getters/registry/provider/validator/schema deleted (D-01); FORBIDDEN_SYMBOLS concat bug fixed in core/constants.py; consumers construct models directly; behavioral oracle byte-exact, mypy --strict clean
+- [Phase ?]: Plan 03-06: portfolio_handler reorganized into position/ transaction/ cash/ metrics/ subdomain packages via history-preserving git mv (D-11); package __init__ re-exports + enum re-exports from core.enums keep consumer paths short; suite/typecheck/behavioral-oracle green, zero behavior change
+- [Phase ?]: Plan 03-08: test/ -> tests/ via history-preserving git mv split by TYPE (unit mirrors package, integration holds cascade/smoke/oracle); folder-derived TYPE markers in layered conftests, single registration home (pyproject markers)
+- [Phase ?]: Plan 03-08: 29 unittest.TestCase files converted to pytest one-file-per-commit at constant 346 collected; filterwarnings=['error'] intact (leaks fixed via yield-teardown queue drains); D-16/D-17 oracle numeric re-freeze deferred to 03-09
+- [Phase ?]: Plan 03-08: Rule 1 fix - Task 1 commit 33c3281 recorded git-mv renames but dropped tracked-file content edits (git add aborted on stale 'test' pathspec); corrected in 6a623ae so committed HEAD collects 346 on fresh checkout
+- [Phase ?]: Plan 03-09: numerical oracle re-frozen byte-exact at M2b end-state (final_equity 53229.68512642488, replacing stale M1 float 53229.75); D-15 tolerance + DEF-02-08-A xfail closed; numeric cols check_exact=True; behavioral identity unchanged (D-18); one of PROJECT.md's two sanctioned numeric re-baseline points
+- [Phase ?]: Plan 03-09: D-17 inertness gate byte-exact (behavioral AND numeric) vs M2A-INERTNESS-REF before re-freeze — M2b structural changes proven numerically inert, no time_parser firing shift
 
 ### Pending Todos
 
@@ -105,6 +128,12 @@ None yet.
 - Phase 1 first work is Critical #34: the run path does not import today (the only Critical that blocks execution). Everything downstream depends on resolving it, then capturing + committing the reference output.
 - Golden-master gates are hard phase-boundary criteria: end of Phase 3 (re-freeze numerical oracle), Phases 4–5 behavior/value-preserving, end of Phase 8 (cross-validate + freeze final oracle).
 - New issues found during execution go to COVERAGE-INDEX §E (delta log) with owner approval — never silently folded into the running phase.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260605-ih3 | Fix WR-01 weekly/DST check_timeframe anchoring (midnight-relative, not epoch) + tests | 2026-06-05 | 85384c5 | [260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc](./quick/260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc/) |
 
 ## Deferred Items
 
@@ -121,6 +150,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-04T20:20:59.789Z
-Stopped at: Phase 2 context gathered
+Last session: 2026-06-05T10:38:09.573Z
+Stopped at: Completed 03-09-PLAN.md
 Resume file: None

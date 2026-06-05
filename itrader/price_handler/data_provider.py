@@ -14,7 +14,6 @@ from .exchange.CCXT import CCXT_exchange
 from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader.outils.data_outils import resample_ohlcv
 
-from itrader import config
 from itrader.config import TIMEZONE
 from itrader.logger import get_itrader_logger
 
@@ -132,7 +131,7 @@ class PriceHandler(AbstractPriceHandler):
 		"""
 		Load the golden CSV into self.prices in the EXACT frame shape the
 		CCXT path produces (see CCXT._format_data): lowercase OHLCV columns
-		and a tz-aware DatetimeIndex named 'date' converted to config.TIMEZONE.
+		and a tz-aware DatetimeIndex named 'date' converted to TIMEZONE.
 
 		Pitfall 6: the ping clock is derived from this same frame index
 		(backtest_trading_system.py: set_dates(self.prices[...].index)), so the
@@ -184,7 +183,7 @@ class PriceHandler(AbstractPriceHandler):
 		"""
 		Update the price data
 		"""
-		time_zone = pytz.timezone(config.TIMEZONE)
+		time_zone = pytz.timezone(TIMEZONE)
 
 		while True: # repeat until we get all historical bars
 			update_counter = 0

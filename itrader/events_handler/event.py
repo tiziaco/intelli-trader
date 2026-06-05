@@ -5,11 +5,11 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import uuid4
 
-from ..core.enums import OrderType, OrderCommand
+from ..core.enums import OrderType, OrderCommand, FillStatus
 from ..core.ids import StrategyId
 
+# EventType stays inline (D-05): M3 (#11) owns its redesign.
 EventType = Enum("EventType", "PING BAR UPDATE SIGNAL ORDER FILL SCREENER")
-FillStatus = Enum("FillStatus", "EXECUTED REFUSED CANCELLED")
 
 event_type_map = {
 	"PING": EventType.PING,
@@ -18,12 +18,6 @@ event_type_map = {
 	"SIGNAL": EventType.SIGNAL,
 	"ORDER": EventType.ORDER,
 	"FILL": EventType.FILL
-}
-
-fill_status_map = {
-	"EXECUTED": FillStatus.EXECUTED,
-	"REFUSED": FillStatus.REFUSED,
-	"CANCELLED": FillStatus.CANCELLED,
 }
 
 @dataclass(frozen=True, slots=True)
@@ -408,9 +402,7 @@ class FillEvent:
 			Instance of the executed order
 		"""
 
-		fill_status = fill_status_map.get(status)
-		if fill_status is None:
-			raise ValueError('Value %s not supported', status)
+		fill_status = FillStatus(status)
 		return cls(
 			order.time,
 			fill_status,

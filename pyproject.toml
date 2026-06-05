@@ -26,6 +26,8 @@ structlog = "^24.4.0"
 pyyaml = "^6.0.3"
 readerwriterlock = "^1.0.9"
 uuid-utils = "^0.16.0"
+pydantic = "^2.13"
+pydantic-settings = "^2.14"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.2"
@@ -38,7 +40,7 @@ mypy = "^2.1.0"
 
 [tool.pytest.ini_options]
 # Test discovery
-testpaths = ["test"]
+testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -52,16 +54,13 @@ addopts = [
     "-v",                     # Verbose output
 ]
 
-# Test markers
+# Test markers — TYPE axis (D-13). Folder-derived in tests/conftest.py
+# (tests/unit -> unit; tests/integration -> integration + slow). This is the SINGLE
+# marker-registration home; conftest only applies, never registers (--strict-markers).
 markers = [
-    "unit: Unit tests",
-    "integration: Integration tests", 
-    "slow: Slow running tests",
-    "portfolio: Portfolio related tests",
-    "events: Event handling tests",
-    "orders: Order processing tests",
-    "execution: Trade execution tests",
-    "strategy: Strategy tests",
+    "unit: Unit test — drives ONE collaborating component (tests/unit/)",
+    "integration: Integration test — asserts cross-component interaction (tests/integration/)",
+    "slow: Slow running test (the full-engine integration runs)",
 ]
 
 # Minimum version
@@ -105,12 +104,7 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
     "itrader.strategy_handler.my_strategies.*",          # OUT — relocated to a separate repo (STATE.md)
-    "itrader.legacy_config",                             # D-config — superseded by itrader.config; removal pending
     "itrader.order_handler.storage.postgresql_storage", # D-sql — live order persistence (sibling of sql_handler)
-    "itrader.config.exchange.schema",                   # D-exchange — dormant validator written against an older
-                                                        #   ValidationResult API (str errors + warnings kwarg); never
-                                                        #   invoked on the backtest path (only re-exported). Reconciling
-                                                        #   it with core.validator is an API change deferred to D-exchange.
     "itrader.reporting.statistics",                     # D-sql/reporting — concrete reporter coupled to sqlalchemy
                                                         #   (self.engine/self.meta/_to_sql) with the documented-broken
                                                         #   _prepare_data path (STATE.md 01-04). Never exercised on the

@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: M1 — Ignition + Lock the Oracle** - Make the backtest run end-to-end and capture/commit the reference output (completed 2026-06-04)
 - [x] **Phase 2: M2a — Identity, Money & Determinism** - UUIDv7 IDs, Decimal money, mypy-strict frozen DTOs, real ABCs, seeded/clocked determinism (all 8 plans executed incl. gap-closure 02-08; re-verification PASS 4/4 SC 2026-06-04; numeric oracle re-freeze deferred to post-M2 per DEF-02-08-A) (completed 2026-06-04)
-- [ ] **Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze** - Pydantic config, centralized types, portfolio storage seam, time_parser final, dead-code purge, pytest conversion, re-freeze numerical oracle
+- [x] **Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze** - Pydantic config, centralized types, portfolio storage seam, time_parser final, dead-code purge, pytest conversion, re-freeze numerical oracle (completed 2026-06-05)
 - [ ] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging
 - [ ] **Phase 5: M4 — Money & Transaction Correctness** - Cash through CashManager, atomic transactions, order facade layering, frozen execution DTOs
 - [ ] **Phase 6: M5a — Backtest Validity, Fills & Data Pipeline** - Look-ahead/fill realism, Bar struct, precomputed frames, fee/slippage, price-handler Provider/Store/Feed split
@@ -76,7 +76,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Portfolio-handler manager state routes through an in-memory storage seam mirroring the order-storage pattern; order audit and transaction timestamps are event-derived/deterministic and `modify_order` routes through the validated path
   3. `time_parser` timing is correct (anchoring fixed for non-UTC/DST/week-month; `to_timedelta` case-insensitive with week/month), completing the `#36` span; dead modules (`legacy_config`, `outils/profiling`, `outils/strategy`, orphaned `screener_event_handler` `EventHandler`) are deleted; the bulk `unittest`→pytest conversion lands
   4. **Golden-master gate:** the numerical oracle is re-frozen after the Decimal precision shift and the behavioral oracle (trade timing) is verified unchanged
-**Plans**: TBD
+**Plans**: 9 plans (8 waves; oracle re-freeze isolated as the terminal wave)
+  - [x] 03-01-PLAN.md — Wave 0: capture D-17 inertness reference FIRST + poetry add pydantic/pydantic-settings + 5 characterization test stubs
+  - [x] 03-02-PLAN.md — Dead-module purge (M2-11): delete legacy_config, outils/profiling, outils/strategy, orphaned screener_event_handler EventHandler
+  - [x] 03-03-PLAN.md — Enum centralization (M2-07): relocate FillStatus + 4 manager enums to core/enums as class enums with _missing_; replace string→enum maps
+  - [x] 03-04-PLAN.md — time_parser finalization (M2-10): epoch-aligned _aligned seam + case-insensitive to_timedelta (week/month) + delete dead helpers
+  - [x] 03-05-PLAN.md — Config collapse (M2-06): Pydantic v2 models + Settings fail-loud secrets + core/constants.py; absorb+delete flat config shadow; rewire consumers
+  - [x] 03-06-PLAN.md — Portfolio subdomain reorg (M2-08, D-11): pure git mv into position/transaction/cash/metrics packages
+  - [x] 03-07-PLAN.md — Storage seam + timestamp determinism (M2-08/M2-09): unified PortfolioStateStorage seam + event-derived order timestamps + modify_order validated path
+  - [x] 03-08-PLAN.md — pytest restructure + conversion (M2-12): test/→tests/ type-split + folder-derived markers + convert all unittest.TestCase
+  - [x] 03-09-PLAN.md — Oracle re-freeze (M2-13), TERMINAL: D-17 inertness gate (blocking owner sign-off) → D-16 byte-exact re-freeze, tolerance/xfail removed; D-18 behavioral identity unchanged
 
 ### Phase 4: M3 — Event & Dispatch Core
 **Goal**: Make events immutable facts with linkage IDs and `event_id`, replace the racy/fused dispatch loop with a race-free routing registry, and apply the domain-exception hierarchy and unified logging consistently — all behavior-preserving against the post-M2 oracle.
@@ -141,7 +150,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
 | 2. M2a — Identity, Money & Determinism | 8/8 | Complete   | 2026-06-04 |
-| 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 0/TBD | Not started | - |
+| 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 9/9 | Complete   | 2026-06-05 |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/TBD | Not started | - |

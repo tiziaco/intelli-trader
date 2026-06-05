@@ -1,11 +1,12 @@
-from itrader.config import get_config_registry, get_system_config_provider
+from itrader.config import SystemConfig
 from itrader.logger import init_logger
 from itrader.outils.id_generator import IDGenerator
 
-# Initialize configuration system
-config_registry = get_config_registry()
-system_provider = get_system_config_provider(config_registry)
-config = system_provider.get_config()
+# Initialize configuration directly (M2-06 / D-01): the registry/provider getters were
+# deleted; construct the Pydantic SystemConfig with documented defaults. A backtest run
+# never needs a YAML override (the rng_seed default is the deterministic seed). Live /
+# YAML-driven config wiring is deferred (D-live).
+config = SystemConfig.default()
 
 # Initialize logger and ID generator
 logger = init_logger(config)

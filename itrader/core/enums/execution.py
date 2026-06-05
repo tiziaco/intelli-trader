@@ -54,3 +54,36 @@ class ExchangeType(Enum):
     LIVE = "live"
     PAPER = "paper"
     SANDBOX = "sandbox"
+
+
+class FillStatus(Enum):
+    """Execution-truth fill status emitted by the exchange.
+
+    Kept DISTINCT from ``OrderStatus`` (the order mirror) and
+    ``TransactionState`` (the portfolio transaction lifecycle): the
+    ``FillStatus.EXECUTED -> OrderStatus.FILLED`` mapping in
+    ``order_manager`` is the intended exchange-truth -> mirror reconciliation
+    (D-04) and must be preserved.
+
+    Member values are explicit uppercase strings, preserving the exact member
+    names of the prior functional ``Enum("FillStatus", "EXECUTED REFUSED
+    CANCELLED")`` definition. No code relies on the ``.value`` being an int
+    (verified), so explicit string values are safe and clearer.
+    """
+    EXECUTED = "EXECUTED"
+    REFUSED = "REFUSED"
+    CANCELLED = "CANCELLED"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "FillStatus":
+        """Case-insensitive string parse; raise a clear f-string error.
+
+        Invoked by ``FillStatus(value)`` on lookup failure. Replaces the
+        scattered ``fill_status_map.get(status)`` dict pattern and the buggy
+        ``raise ValueError('Value %s', x)`` printf-tuple form (D-04).
+        """
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.upper() == value.upper():
+                    return member
+        raise ValueError(f"Unknown FillStatus: {value!r}")

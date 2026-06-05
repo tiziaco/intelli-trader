@@ -1,3 +1,4 @@
+import os
 import queue
 import threading
 import time
@@ -19,7 +20,13 @@ from itrader.reporting.statistics import StatisticsReporting
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.event import EventType, PingEvent, OrderEvent
-from itrader.config import Config
+
+# Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
+# (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the
+# env var directly here. A future D-live wiring would source this from Settings.
+_SYSTEM_DB_URL = os.getenv(
+    "SYSTEM_DB_URL", "postgresql+psycopg2://postgres:1234@localhost:5432/......."
+)
 
 
 class SystemStatus(Enum):
@@ -101,7 +108,7 @@ class LiveTradingSystem:
         # Create order storage for live trading (PostgreSQL)
         # Note: For now using in-memory until Phase 2 is complete
         try:
-            order_storage = OrderStorageFactory.create('live', Config.SYSTEM_DB_URL)
+            order_storage = OrderStorageFactory.create('live', _SYSTEM_DB_URL)
         except NotImplementedError:
             # Fallback to in-memory during Phase 1
             self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")

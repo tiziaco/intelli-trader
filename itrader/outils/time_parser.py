@@ -3,10 +3,10 @@ import pytz
 import pandas as pd
 from typing import Union, cast
 from datetime import datetime, timedelta, timezone
-from itrader import config
+from itrader.config import TIMEZONE
 
 def get_timenow_awere() -> datetime:
-	time_zone = pytz.timezone(config.TIMEZONE)
+	time_zone = pytz.timezone(TIMEZONE)
 	# Get the current UTC time
 	now = pd.to_datetime(datetime.now(tz=timezone.utc))
 	# Make it timezone aware
@@ -46,6 +46,11 @@ def to_timedelta(timeframe: str) -> timedelta:
 	"""
 	Transform the timeframe string in a `timedelta` object.
 
+	Case-insensitive (`1H`/`1h`, `1D`/`1d`, `1W`/`1w` all parse). Supports
+	week (`w`) as a fixed 7-day timedelta. Raises a clear month-specific
+	`ValueError` on `M`/`m`-as-month (a month is not a fixed timedelta) and
+	on any unknown unit — never returns a silent `None`.
+
 	Parameters
 	----------
 	timeframe: `str`
@@ -56,21 +61,34 @@ def to_timedelta(timeframe: str) -> timedelta:
 	delta: `TimeDelta` object
 		The time delta corresponding to the timeframe.
 	"""
-	
-	# Splitting text and number in thestring
+	# Guard None up front: a None timeframe must fail loudly here, not crash
+	# opaquely downstream in re.match / resample.
+	if timeframe is None:
+		raise ValueError("Timeframe is None; expected a string like '1d', '1h', '1W'.")
+
+	# Splitting text and number in the string
 	match = re.match(r"(\d+)([a-zA-Z]+)", timeframe)
 	if match:
-		quantity, unit = match.groups()
-		attributes = {'d': 'days', 'h': 'hours', 'm': 'minutes'}
+		quantity, raw_unit = match.groups()
+		# Month is special and ambiguous with minutes: by convention an
+		# UPPERCASE 'M' means month (NOT a fixed timedelta), while lowercase
+		# 'm' means minutes. Reject month explicitly with a specific message
+		# BEFORE case-folding, so '1M' raises while '1m' stays minutes.
+		if raw_unit == 'M' or raw_unit.lower() == 'mo':
+			raise ValueError(
+				f"Month timeframe '{timeframe}' is not supported: a month is "
+				f"not a fixed timedelta (it varies 28-31 days). Use a fixed "
+				f"unit (d/h/m/w)."
+			)
+		unit = raw_unit.lower()  # case-insensitive: '1H' parses like '1h'
+		attributes = {'d': 'days', 'h': 'hours', 'm': 'minutes', 'w': 'weeks'}
 
 		if unit in attributes:
 			return timedelta(**{attributes[unit]: int(quantity)})
-		# M1-03: fail loudly on the daily golden path instead of silently
-		# returning None (a None timedelta propagates as an opaque crash
-		# downstream). Week/month support is deferred to M2-10.
+		# Any other unit is unknown — fail loudly, never return a silent None.
 		raise ValueError(
-			f"Unsupported timeframe unit '{unit}' in '{timeframe}'. "
-			f"Supported units: {sorted(attributes)} (weeks/months are M2-10)."
+			f"Unsupported timeframe unit '{raw_unit}' in '{timeframe}'. "
+			f"Supported units: {sorted(attributes)}."
 		)
 	raise ValueError(f"Could not parse timeframe '{timeframe}'.")
 
@@ -106,73 +124,51 @@ def timedelta_to_str(delta: timedelta) -> Union[str, None]:
 
 	return ' '.join(parts) if parts else None
 
-def format_timeframe(timeframe: str) -> str:
+def _aligned(ts: datetime, tf: timedelta) -> bool:
 	"""
-	Replace 'm' with 'min' in the timeframe string.
+	Single replaceable alignment seam (D-06): is `ts` on the midnight-relative
+	(date-anchored, UTC) grid of period `tf`?
+
+	Converts `ts` to UTC, zeroes sub-minute components, computes the seconds
+	elapsed since that day's UTC midnight, and fires when
+	`seconds_since_midnight % int(tf.total_seconds()) == 0`. The anchor is
+	midnight-OF-THE-DAY (in UTC), so any timeframe fires on every midnight
+	regardless of unit: a weekly `tf` fires on every midnight (not only
+	Thursdays — the old Unix-epoch grid was anchored on 1970-01-01, a Thursday),
+	and a non-day-divisor `7h` `tf` aligns to midnight (00:00, 07:00, 14:00, ...).
+
+	For the golden daily bars at 00:00 UTC, seconds-since-midnight is 0, so
+	`0 % 86400 == 0` → True — identical to the epoch grid for daily, so the
+	daily 00:00 UTC firing is preserved byte-exact. The anchor is DST-immune
+	because alignment is judged on the UTC grid after conversion. Isolating the
+	anchor here lets a future session/exchange-calendar anchor (stocks) replace
+	it without rewriting any firing logic.
+
+	Parameters
+	----------
+	ts: `datetime`
+		The (timezone-aware) event time.
+	tf: `timedelta`
+		The timeframe period to align against.
 	"""
-	# Splitting text and number in string
-	temp = re.compile("([0-9]+)([a-zA-Z]+)")
-	match = temp.match(timeframe)
-	if match is None:
-		raise ValueError(f"Could not parse timeframe '{timeframe}'.")
-	res = match.groups()
-	if res[1] == 'm':
-		return (res[0] + 'min')
-	else:
-		return timeframe
+	utc = ts.astimezone(pytz.utc).replace(second=0, microsecond=0)
+	midnight = utc.replace(hour=0, minute=0, second=0, microsecond=0)
+	seconds_since_midnight = (utc - midnight).total_seconds()
+	return seconds_since_midnight % int(tf.total_seconds()) == 0
 
 def check_timeframe(time: datetime, timeframe: timedelta) -> bool:
-		"""
-		Check if the current time of is a multiple of the
-		strategy's timeframe.
-		In that case return True end go on calculating the signals.
+	"""
+	Check if the current time is a multiple of the strategy's timeframe.
+	In that case return True and go on calculating the signals.
 
-		Parameters
-		----------
-		time: `timestamp`
-			Event time
-		timeframe: `timedelta object`
-			Timeframe of the strategy
-		"""
-		# Calculate the number of seconds in the timestamp
-		time = time.astimezone(pytz.utc).replace(second=0, microsecond=0)
-		seconds = (time - time.replace(hour=0, minute=0, second=0, microsecond=0)).total_seconds()
+	Delegates to the single `_aligned` midnight-relative seam (D-06) — callers
+	never re-implement alignment.
 
-		# Check if the number of seconds is a multiple of the delta
-		if seconds % timeframe.total_seconds() == 0:
-			# The timestamp IS a multiple of the timeframe
-			return True
-		else:
-			# The timestamp IS NOT a multiple of the timeframe
-			return False
-
-def elapsed_time(cure_time: datetime,  past_time: datetime) -> timedelta:
-	return cure_time - past_time
-
-def round_timestamp_to_frequency(timestamp : datetime, frequency: timedelta) -> datetime:
-    """
-    Round a timestamp to the closest frequency.
-
-    Parameters:
-    - timestamp: datetime object representing the timestamp
-    - frequency: timedelta object representing the frequency
-
-    Returns:
-    - rounded_timestamp: datetime object representing the rounded timestamp
-    """
-    # Convert timestamp to Unix timestamp (seconds since epoch)
-    timestamp_unix = int(timestamp.timestamp())
-
-    # Convert frequency to seconds
-    frequency_seconds = int(frequency.total_seconds())
-
-    # Round the Unix timestamp to the closest multiple of frequency
-    rounded_timestamp_unix = round(timestamp_unix / frequency_seconds) * frequency_seconds
-
-    # Convert rounded Unix timestamp back to datetime object
-    rounded_timestamp = datetime.fromtimestamp(rounded_timestamp_unix)
-
-	# Make the rounded timestamp timezone aware
-    my_timezone = pytz.timezone(config.TIMEZONE)
-    rounded_timestamp = my_timezone.localize(rounded_timestamp)
-    return cast(datetime, rounded_timestamp)
+	Parameters
+	----------
+	time: `datetime`
+		Event time (timezone-aware).
+	timeframe: `timedelta`
+		Timeframe of the strategy.
+	"""
+	return _aligned(time, timeframe)
