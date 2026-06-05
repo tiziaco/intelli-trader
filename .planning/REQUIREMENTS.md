@@ -64,7 +64,7 @@
   working secret defaults *(#13, #12 [settings part; secrets→D-live], completes #34/TD2 dual-config)*
 - [x] **M2-07**: Shared enums/entities are centralized in `core/enums` / own modules; scattered
   string→enum map dicts and their buggy `ValueError`s are replaced *(#15)*
-- [ ] **M2-08**: Portfolio-handler manager state routes through an in-memory storage **seam**
+- [x] **M2-08**: Portfolio-handler manager state routes through an in-memory storage **seam**
   (transactions/positions/cash-ledger/metrics), mirroring the order-storage pattern; durable record
   shapes decided (Postgres backend → D-sql) *(#18 [seam part])*
 - [ ] **M2-09**: Order state-change audit and transaction timestamps are **event-derived/deterministic**
