@@ -9,7 +9,7 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.universe.universe import Universe
-from itrader.events_handler.event import EventType
+from itrader.core.enums import EventType
 
 from itrader.logger import get_itrader_logger
 

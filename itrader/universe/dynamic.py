@@ -2,7 +2,7 @@ import queue
 from typing import Any, Optional
 
 from itrader.universe.universe import Universe
-from ..events_handler.event import BarEvent, TimeEvent
+from ..events_handler.events import BarEvent, TimeEvent
 
 from itrader.logger import get_itrader_logger
 
@@ -74,7 +74,7 @@ class DynamicUniverse(Universe):
 			else:
 				self.logger.warning('Dynamic Universe: ticker %s not present in the price handler', ticker)
 
-		bar_event = BarEvent(time_event.time, bars)
+		bar_event = BarEvent(time=time_event.time, bars=bars)
 		self.last_bar = bar_event
 
 		if self.global_queue is not None:

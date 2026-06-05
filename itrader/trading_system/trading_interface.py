@@ -9,7 +9,11 @@ without cluttering the core LiveTradingSystem class.
 
 from datetime import datetime
 from typing import Optional, Dict, Any
-from itrader.events_handler.event import OrderEvent
+
+import uuid_utils.compat as uuid_compat
+
+from itrader.core.enums import OrderType, Side
+from itrader.events_handler.events import OrderEvent
 from itrader.logger import get_itrader_logger
 
 
@@ -65,20 +69,24 @@ class TradingInterface:
             return False
         
         try:
-            # Create order event with the correct parameters
+            # Create order event with the correct parameters (keyword-form,
+            # D-12 minimal conformance: order_id is REQUIRED — generate a
+            # UUIDv7 at this call site; no deeper rework, D-live).
             order_event = OrderEvent(
                 time=datetime.now(),
                 ticker=symbol,
-                action=side,  # 'BUY' or 'SELL'
+                action=Side(side),  # 'BUY' or 'SELL'
                 price=0.0,    # Market order - price will be determined by execution
                 quantity=quantity,
                 exchange=self.live_trading_system.exchange,
                 strategy_id=strategy_id,
-                portfolio_id=portfolio_id
+                portfolio_id=portfolio_id,
+                order_type=OrderType.MARKET,
+                order_id=uuid_compat.uuid7()
             )
-            
+
             return self.live_trading_system.add_event(order_event)
-            
+
         except Exception as e:
             self.logger.error(f'Failed to create market order: {e}')
             return False
@@ -114,20 +122,24 @@ class TradingInterface:
             return False
         
         try:
-            # Create order event with the correct parameters
+            # Create order event with the correct parameters (keyword-form,
+            # D-12 minimal conformance: order_id is REQUIRED — generate a
+            # UUIDv7 at this call site; no deeper rework, D-live).
             order_event = OrderEvent(
                 time=datetime.now(),
                 ticker=symbol,
-                action=side,  # 'BUY' or 'SELL'
+                action=Side(side),  # 'BUY' or 'SELL'
                 price=price,
                 quantity=quantity,
                 exchange=self.live_trading_system.exchange,
                 strategy_id=strategy_id,
-                portfolio_id=portfolio_id
+                portfolio_id=portfolio_id,
+                order_type=OrderType.LIMIT,
+                order_id=uuid_compat.uuid7()
             )
-            
+
             return self.live_trading_system.add_event(order_event)
-            
+
         except Exception as e:
             self.logger.error(f'Failed to create limit order: {e}')
             return False

@@ -5,7 +5,7 @@ from typing import Dict
 from datetime import datetime
 from queue import Queue
 from itrader.core.ids import ScreenerId
-from itrader.events_handler.event import ScreenerEvent, BarEvent
+from itrader.events_handler.events import ScreenerEvent, BarEvent
 from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader import logger, idgen
 

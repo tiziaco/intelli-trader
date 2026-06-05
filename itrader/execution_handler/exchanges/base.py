@@ -1,6 +1,6 @@
 from typing import Any, Dict, Protocol, runtime_checkable
 
-from itrader.events_handler.event import OrderEvent
+from itrader.events_handler.events import OrderEvent
 from ..result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
 
 

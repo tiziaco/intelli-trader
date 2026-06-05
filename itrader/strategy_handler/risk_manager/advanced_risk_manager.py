@@ -1,4 +1,4 @@
-from itrader.events_handler.event import SignalEvent
+from itrader.events_handler.events import SignalEvent
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
 from itrader.logger import get_itrader_logger

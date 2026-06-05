@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from itrader.events_handler.event import OrderEvent
+from itrader.events_handler.events import OrderEvent
 
 class AbstractExecutionHandler(ABC):
 	"""

@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from itrader.core.ids import OrderId
-from itrader.events_handler.event import OrderEvent, BarEvent
-from itrader.core.enums import OrderType
+from itrader.events_handler.events import OrderEvent, BarEvent
+from itrader.core.enums import OrderType, Side
 
 
 @dataclass
@@ -103,7 +103,7 @@ class MatchingEngine:
             return open_
 
         if order.order_type == OrderType.STOP:
-            if order.action == 'SELL':              # stop-loss on a long
+            if order.action is Side.SELL:           # stop-loss on a long
                 if low <= order.price:
                     return min(open_, order.price)  # pessimistic gap-down
             else:                                   # BUY stop (cover short)
@@ -114,7 +114,7 @@ class MatchingEngine:
             # Limits fill at the limit price even on a favorable gap (we never
             # credit a better-than-limit fill to the strategy) — intentionally
             # asymmetric with the pessimistic open-based gap fill used for stops.
-            if order.action == 'SELL':              # take-profit on a long
+            if order.action is Side.SELL:           # take-profit on a long
                 if high >= order.price:
                     return order.price
             else:                                   # BUY limit (cover short)

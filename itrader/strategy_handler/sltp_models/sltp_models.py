@@ -1,7 +1,8 @@
 import pandas_ta as ta
 import pandas as pd
 
-from itrader.events_handler.event import SignalEvent
+from itrader.core.enums import Side
+from itrader.events_handler.events import SignalEvent
 
 import logging
 logger = logging.getLogger('TradingSystem')
@@ -9,13 +10,17 @@ logger = logging.getLogger('TradingSystem')
 
 class FixedPercentage():
 	"""
-	This class calculate the sttop loss and take profit price.
-	The limit prices are based on a fixed percentage of the 
+	This class calculate the stop loss and take profit price.
+	The limit prices are based on a fixed percentage of the
 	last price.
+
+	M3-01: events are frozen facts — the models RETURN the computed
+	level instead of mutating the signal; the caller threads the value
+	into the signal it constructs.
 	"""
 
 	@staticmethod
-	def calculate_sl(signal: SignalEvent, sl_level: float = 0.03) -> None:
+	def calculate_sl(signal: SignalEvent, sl_level: float = 0.03) -> float:
 		"""
 		Define stopLoss level at a % of the last close.
 
@@ -23,23 +28,29 @@ class FixedPercentage():
 		----------
 		signal:
 			Signal instance
-		tp_level: `float`
-			Take profit pct distance from close (between 0 and 1)
+		sl_level: `float`
+			Stop loss pct distance from close (between 0 and 1)
+
+		Returns
+		-------
+		`float`
+			The computed stop-loss price (0.0 for an unknown side).
 		"""
 		last_close = signal.price
 
-		if signal.action == 'BUY':
+		if signal.action is Side.BUY:
 			# LONG direction: sl lower
-			signal.stop_loss = round(last_close * (1 - sl_level), 5)
-		elif signal.action == 'SELL':
+			return round(last_close * (1 - sl_level), 5)
+		elif signal.action is Side.SELL:
 			# SHORT direction: sl higher
-			signal.stop_loss  = round(last_close * (1 + sl_level), 5)
+			return round(last_close * (1 + sl_level), 5)
+		return 0.0
 
 
 	@staticmethod
-	def calculate_tp(signal: SignalEvent, tp_level: float = 0.03) -> None:
+	def calculate_tp(signal: SignalEvent, tp_level: float = 0.03) -> float:
 		"""
-		Define stopLoss level at a % of the last close
+		Define take profit level at a % of the last close
 
 		Parameters
 		----------
@@ -47,27 +58,33 @@ class FixedPercentage():
 			Signal instance
 		tp_level: `float`
 			Take profit pct distance from close (between 0 and 1)
+
+		Returns
+		-------
+		`float`
+			The computed take-profit price (0.0 for an unknown side).
 		"""
 		last_close = signal.price
 
-		if signal.action == 'BUY':
+		if signal.action is Side.BUY:
 			# LONG direction: tp higher
-			signal.take_profit = last_close * (1 + tp_level)
-		elif signal.action == 'SELL':
+			return last_close * (1 + tp_level)
+		elif signal.action is Side.SELL:
 			# SHORT direction: tp lower
-			signal.take_profit = last_close * (1 - tp_level)
-		
+			return last_close * (1 - tp_level)
+		return 0.0
+
 class Proportional():
 	"""
 	This class calculate the take profit price.
-	The limit price is proportional to the defined 
+	The limit price is proportional to the defined
 	stop loss price.
 	"""
 
 	@staticmethod
-	def calculate_tp(signal: SignalEvent, multiplier: float = 0.03) -> None:
+	def calculate_tp(signal: SignalEvent, multiplier: float = 0.03) -> float:
 		"""
-		Define stopLoss level at a % of the last close
+		Define take profit level proportional to the stop loss distance
 
 		Parameters
 		----------
@@ -75,18 +92,24 @@ class Proportional():
 			Signal instance
 		multiplier: `float`
 			ATR multiplier (between 1 and 3)
+
+		Returns
+		-------
+		`float`
+			The computed take-profit price (0.0 for an unknown side).
 		"""
 		last_close = signal.price
 		sl = signal.stop_loss
 
-		if signal.action == 'BUY':
+		if signal.action is Side.BUY:
 			# LONG direction: tp higher
 			delta = last_close - sl
-			signal.take_profit = last_close + multiplier * delta
-		elif signal.action == 'SELL':
+			return last_close + multiplier * delta
+		elif signal.action is Side.SELL:
 			# SHORT direction: tp lower
 			delta = sl - last_close
-			signal.take_profit = last_close - multiplier * delta
+			return last_close - multiplier * delta
+		return 0.0
 
 
 class ATRsltp():
@@ -96,7 +119,7 @@ class ATRsltp():
 	"""
 
 	@staticmethod
-	def calculate_sl(signal: SignalEvent, bars: pd.DataFrame, multiplier: float = 2, lookback: int = 20) -> None:
+	def calculate_sl(signal: SignalEvent, bars: pd.DataFrame, multiplier: float = 2, lookback: int = 20) -> float:
 		"""
 		Define stopLoss level based on the ATR value.
 		It is calculated on the open or close price of the bar,
@@ -112,21 +135,27 @@ class ATRsltp():
 			ATR multiplier (between 1 and 3)
 		lookback: `int`
 			ATR lookback (between 1 and 20)
+
+		Returns
+		-------
+		`float`
+			The computed stop-loss price (0.0 for an unknown side).
 		"""
 		atr = ta.atr(bars.high, bars.low, bars.close, lookback, mamode='rma', drift=1)
 
-		if signal.action == 'BUY':
+		if signal.action is Side.BUY:
 			# LONG direction: sl lower
-			signal.stop_loss = bars.open.iloc[-1] - atr.iloc[-1] * multiplier
-		elif signal.action == 'SELL':
+			return float(bars.open.iloc[-1] - atr.iloc[-1] * multiplier)
+		elif signal.action is Side.SELL:
 			# SHORT direction: sl higher
-			signal.stop_loss  = bars.close.iloc[-1] + atr.iloc[-1] * multiplier
+			return float(bars.close.iloc[-1] + atr.iloc[-1] * multiplier)
+		return 0.0
 
 
 	@staticmethod
-	def calculate_tp(signal: SignalEvent, bars: pd.DataFrame, multiplier: float = 2, lookback: int = 20) -> None:
+	def calculate_tp(signal: SignalEvent, bars: pd.DataFrame, multiplier: float = 2, lookback: int = 20) -> float:
 		"""
-		Define stopLoss level based on the ATR value.
+		Define take profit level based on the ATR value.
 		It is calculated on the open or close price of the bar,
 		according to the direction of the trade.
 
@@ -138,12 +167,18 @@ class ATRsltp():
 			ATR multiplier (between 1 and 3)
 		lookback: `int`
 			ATR lookback (between 1 and 20)
+
+		Returns
+		-------
+		`float`
+			The computed take-profit price (0.0 for an unknown side).
 		"""
 		atr = ta.atr(bars.high, bars.low, bars.close, lookback, mamode='rma', drift=1)
 
-		if signal.action == 'BUY':
+		if signal.action is Side.BUY:
 			# LONG direction: tp higher
-			signal.take_profit = bars.close.iloc[-1] + atr.iloc[-1] * multiplier
-		elif signal.action == 'SELL':
+			return float(bars.close.iloc[-1] + atr.iloc[-1] * multiplier)
+		elif signal.action is Side.SELL:
 			# SHORT direction: tp lower
-			signal.take_profit = bars.open.iloc[-1] - atr.iloc[-1] * multiplier
+			return float(bars.open.iloc[-1] - atr.iloc[-1] * multiplier)
+		return 0.0

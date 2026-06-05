@@ -4,7 +4,7 @@ import numpy as np
 import re
 
 from itrader.trading_system.simulation.base import SimulationEngine
-from ...events_handler.event import TimeEvent
+from ...events_handler.events import TimeEvent
 
 
 class TimeGenerator(SimulationEngine):

@@ -4,8 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import uuid_utils.compat as uuid_compat
+
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.events_handler.event import FillEvent, FillStatus
+from itrader.events_handler.events import FillEvent
+from itrader.core.enums import FillStatus, Side
 
 
 @pytest.fixture
@@ -19,11 +22,15 @@ def env():
             time=datetime(2024, 1, 1),
             status=FillStatus[status],
             ticker="BTCUSDT",
-            action="BUY",
+            action=Side.BUY,
             price=40.0,
             quantity=1.0,
             commission=0.0,
             portfolio_id=pid,
+            # D-12: required linkage ids
+            fill_id=uuid_compat.uuid7(),
+            order_id=uuid_compat.uuid7(),
+            strategy_id=1,
         )
 
     yield SimpleNamespace(queue=queue, ptf=ptf, pid=pid, fill=fill)

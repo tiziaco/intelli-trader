@@ -4,7 +4,7 @@ import numpy as np
 from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 
 from itrader.screeners_handler.screeners.base import Screener
-from itrader.events_handler.event import BarEvent
+from itrader.events_handler.events import BarEvent
 
 class MostPerformingScreener(Screener):
 	def __init__(self, tickers = ['all'], frequency = '1h', window = 26,timeframe = '1h'):

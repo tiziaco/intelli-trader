@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
-from itrader.events_handler.event import BarEvent, FillEvent, OrderEvent
+from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
 from itrader.config import SystemConfig

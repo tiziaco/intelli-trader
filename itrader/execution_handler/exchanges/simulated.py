@@ -26,7 +26,7 @@ from itrader.core.exceptions.execution import (
     InsufficientFundsExecutionError,
     ExchangeStateError
 )
-from itrader.events_handler.event import BarEvent, FillEvent, OrderEvent
+from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation
 
@@ -223,12 +223,14 @@ class SimulatedExchange(AbstractExchange):
 		# Decimal (tests + downstream rely on it). The FillEvent/fill layer stays float
 		# until M4, so coerce only at the new_fill boundary (mirrors the OrderEvent
 		# boundary coercion in event.py:new_order_event).
+		# D-05: the event carries a Side member; the fee/slippage models keep
+		# their lowercase-string contract — convert via .value at this boundary.
 		commission = self.fee_model.calculate_fee(
 			quantity=fill_quantity, price=fill_price,
-			side=event.action.lower(), order_type="market")
+			side=event.action.value.lower(), order_type="market")
 		slippage_factor = self.slippage_model.calculate_slippage_factor(
 			quantity=fill_quantity, price=fill_price,
-			side=event.action.lower(), order_type="market")
+			side=event.action.value.lower(), order_type="market")
 		executed_price = fill_price * slippage_factor
 
 		# Construct-complete (D-12): the slippage-adjusted price and the matched
