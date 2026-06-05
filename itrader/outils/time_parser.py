@@ -132,8 +132,16 @@ def _aligned(ts: datetime, tf: timedelta) -> bool:
 	Uses `int(ts.timestamp()) % int(tf.total_seconds()) == 0`. The Unix-epoch
 	anchor is DST-immune and, for the golden daily bars at 00:00 UTC, COINCIDES
 	with the previous midnight-of-day-UTC anchor — so the behavioral oracle is
-	unchanged. Isolating the anchor here lets a future session/exchange-calendar
-	anchor (stocks) replace it without rewriting any firing logic.
+	unchanged **for the in-scope daily-UTC path only** (this is the sole timeframe
+	the SMA_MACD golden dataset exercises). Isolating the anchor here lets a future
+	session/exchange-calendar anchor (stocks) replace it without rewriting any
+	firing logic.
+
+	CAVEAT (not behavior-preserving for sub-day-divisor timeframes): epoch
+	1970-01-01 was a Thursday, so a weekly `tf` fires only on Thursday 00:00 UTC
+	(the old midnight anchor fired on any midnight); a `7h` `tf` no longer aligns
+	to midnight at all. Correct calendar/week anchoring + a weekly test are
+	deferred — see `.planning/todos/` (M2-10 weekly-anchor follow-up).
 
 	Parameters
 	----------
