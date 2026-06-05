@@ -36,6 +36,15 @@ must import, run, and yield trustworthy results.
 - ✓ Ignition bugs fixed: `SMA_MACD` `[-1]`/`fillna` (KB15), `record_metrics` target (KB18), `to_timedelta` None (KB20), config import cascade (KB16/KB17/TD2)
 - ⚠ Accepted deferrals (tracked in `phases/01-…/deferred-items.md`): **DEF-01-A** — a minimal Decimal→float commission coercion bridges ignition, to be reconciled when M4 makes money Decimal end-to-end; **DEF-01-C** — no margin/liquidation model, an un-liquidated short drives equity negative (min −$33,748); human-blessed into the M1 oracle as current-behavior-to-preserve, owner-routed to M5.
 
+**Validated in Phase 3 (M2b — Config, Types, Storage Seam & Oracle Re-Freeze), 2026-06-05:**
+- ✓ `config/` collapsed to Pydantic v2 models + `pydantic-settings` (3,380→~1,130 lines); `Settings` has a required `SecretStr database_url` with no working secret default; model round-trips backtest-dict and live-JSONB forms; flat `config.py` shadow + registry/getters/importlib-shim deleted; `FORBIDDEN_SYMBOLS` string-concat bug fixed (M2-06, #12/#13/#34/TD2)
+- ✓ Shared enums centralized into `core/enums` (FillStatus + 4 manager enums) with case-insensitive `_missing_` parsers; buggy string→enum maps replaced (M2-07, #15)
+- ✓ Portfolio-handler manager state routes through a unified `PortfolioStateStorage` seam (ABC + in-memory backend + factory) mirroring order storage; order/transaction timestamps event-derived; `modify_order` routes through the validated path (M2-08/M2-09, #18/#19)
+- ✓ `time_parser` finalized: single `_aligned` epoch seam (daily-UTC byte-exact), `to_timedelta` case-insensitive with week support + month rejection; dead helpers removed (M2-10, #36). ⚠ Weekly/DST `check_timeframe` anchoring deferred via documented caveat + follow-up todo (WR-01; out of golden-path scope)
+- ✓ Four dead modules purged: `legacy_config`, `outils/profiling`, `outils/strategy`, orphaned `screener_event_handler` (M2-11, TD4/TD5)
+- ✓ Bulk `unittest`→pytest conversion: `test/`→`tests/{unit,integration}` (47 history-preserving renames), 29 TestCase files converted, folder-derived markers, suite 346 green (M2-12, #40)
+- ✓ Numerical oracle re-frozen byte-exact after the Decimal shift (`final_equity` 53229.685…); D-15 tolerance + DEF-02-08-A xfail removed, numeric asserts `check_exact=True`; behavioral oracle confirmed unchanged via D-17 inertness gate (M2-13)
+
 ### Active
 
 <!-- The backtest-correctness program. Organized by milestone M1–M5 (see ROADMAP). -->
@@ -45,9 +54,9 @@ must import, run, and yield trustworthy results.
 - [ ] Decimal money end-to-end, no float round-trips (#17)
 - [ ] `mypy --strict` clean; frozen/typed DTOs; real ABCs replacing Py2 `__metaclass__` (#8, #20)
 - [ ] Determinism: seeded RNG + injected clock + flat order index (#5, PERF2)
-- [ ] Config collapsed to Pydantic models + `pydantic-settings`; type placement centralized (#12-settings, #13, #15)
-- [ ] `time_parser` timing correctness finalized (#36, KB21); delete dead modules (TD4, TD5, KB14)
-- [ ] Re-freeze the numerical oracle (float→Decimal precision shift)
+- [x] Config collapsed to Pydantic models + `pydantic-settings`; type placement centralized (#12-settings, #13, #15) — Phase 3
+- [x] `time_parser` timing correctness finalized (#36, KB21); delete dead modules (TD4, TD5, KB14) — Phase 3 (weekly/DST anchor deferred, see follow-up todo)
+- [x] Re-freeze the numerical oracle (float→Decimal precision shift) — Phase 3
 
 **M3 — Event & dispatch core**
 - [ ] Immutable events with linkage IDs + `event_id`; enums not strings (#11)
@@ -158,4 +167,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-04 — Phase 1 (M1 — Ignition + Lock the Oracle) complete; behavioral + numerical oracle frozen at test/golden/ and now law for M2–M4.*
+*Last updated: 2026-06-05 — Phase 3 (M2b — Config, Types, Storage Seam & Oracle Re-Freeze) complete; M2 milestone done. Config collapsed to Pydantic v2, types centralized, portfolio storage seam in place, dead modules purged, pytest restructured to tests/, and the numerical oracle re-frozen byte-exact (Decimal, final_equity 53229.685…) — the second of the two sanctioned re-baseline points. Behavioral oracle remains law for M3–M4.*
