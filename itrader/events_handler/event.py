@@ -12,11 +12,11 @@ from ..core.enums import OrderType, OrderCommand, FillStatus
 from ..core.ids import StrategyId
 
 @dataclass(frozen=True, slots=True)
-class PingEvent:
+class TimeEvent:
 	"""
-	Handles the event of receiving a new market update tick,
-	which is defined as a ticker symbol and associated best
-	bid and ask from the top of the order book.
+	Signals that the simulation clock advanced to ``time`` ("the clock
+	advanced to T"), pairing with the ``itrader.core.clock.Clock`` family
+	(D-08). Drives per-tick screening and bar generation.
 	"""
 
 	time: datetime

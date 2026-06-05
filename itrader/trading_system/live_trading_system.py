@@ -19,7 +19,7 @@ from itrader.universe.dynamic import DynamicUniverse
 from itrader.reporting.statistics import StatisticsReporting
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.event import EventType, PingEvent, OrderEvent
+from itrader.events_handler.event import EventType, TimeEvent, OrderEvent
 
 # Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
 # (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the

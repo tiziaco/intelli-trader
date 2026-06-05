@@ -8,7 +8,7 @@ Behavioral contract:
   the simulated exchange after fee/slippage application.
 - ``OrderEvent`` stays MUTABLE — ``price``/``quantity`` of a resting order are rewritten by
   ``MatchingEngine.modify`` (resting-order modify is real run-path behavior).
-- The remaining hot-path events (PingEvent, BarEvent, PortfolioUpdateEvent, ScreenerEvent)
+- The remaining hot-path events (TimeEvent, BarEvent, PortfolioUpdateEvent, ScreenerEvent)
   are genuinely immutable and MUST be frozen: reassigning a field raises
   ``FrozenInstanceError``.
 """
@@ -22,10 +22,10 @@ from itrader.events_handler.event import (
     BarEvent,
     FillEvent,
     OrderEvent,
-    PingEvent,
     PortfolioUpdateEvent,
     ScreenerEvent,
     SignalEvent,
+    TimeEvent,
 )
 from itrader.core.enums import OrderType
 
@@ -67,10 +67,10 @@ def test_fill_event_stays_mutable():
     assert fill.quantity == 2.0
 
 
-def test_ping_event_is_frozen():
-    ping = PingEvent(_TIME)
+def test_time_event_is_frozen():
+    time_event = TimeEvent(_TIME)
     with pytest.raises(FrozenInstanceError):
-        ping.time = datetime(2025, 1, 1)
+        time_event.time = datetime(2025, 1, 1)
 
 
 def test_bar_event_is_frozen():
