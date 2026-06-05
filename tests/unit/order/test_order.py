@@ -138,6 +138,35 @@ class TestOrderLifecycle:
         assert order.quantity == 150.0
         assert order.modification_count == 2
 
+    def test_validator_rejection_is_audited_state_change(self):
+        """PENDING → REJECTED through add_state_change is a complete audit record (D-13).
+
+        The transition is stamped with the order's own event-derived time
+        (M2-09 — never the wall clock) and records who triggered it.
+        """
+        order = self.create_test_order()
+
+        assert order.add_state_change(
+            OrderStatus.REJECTED, "Financial risk validation failed",
+            triggered_by="validator",
+        )
+
+        assert order.status == OrderStatus.REJECTED
+        assert order.is_terminal
+        assert not order.is_active
+
+        last_change = order.get_latest_state_change()
+        assert last_change.from_status == OrderStatus.PENDING
+        assert last_change.to_status == OrderStatus.REJECTED
+        assert last_change.triggered_by == "validator"
+        assert last_change.reason == "Financial risk validation failed"
+        # Event-derived timestamp: defaults to the order's own event time
+        assert last_change.timestamp == self.base_time
+        assert order.updated_at == self.base_time
+
+        # REJECTED is terminal — no further transitions are valid
+        assert not order.add_state_change(OrderStatus.FILLED, "late fill")
+
     def test_state_change_history(self):
         """Test state change history tracking."""
         order = self.create_test_order()
