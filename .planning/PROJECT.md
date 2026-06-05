@@ -36,6 +36,13 @@ must import, run, and yield trustworthy results.
 - ✓ Ignition bugs fixed: `SMA_MACD` `[-1]`/`fillna` (KB15), `record_metrics` target (KB18), `to_timedelta` None (KB20), config import cascade (KB16/KB17/TD2)
 - ⚠ Accepted deferrals (tracked in `phases/01-…/deferred-items.md`): **DEF-01-A** — a minimal Decimal→float commission coercion bridges ignition, to be reconciled when M4 makes money Decimal end-to-end; **DEF-01-C** — no margin/liquidation model, an un-liquidated short drives equity negative (min −$33,748); human-blessed into the M1 oracle as current-behavior-to-preserve, owner-routed to M5.
 
+**Validated in Phase 4 (M3 — Event & Dispatch Core), 2026-06-05:**
+- ✓ Events are frozen/slots/kw_only facts in the new `events_handler/events/` package: uuid7 `event_id` + business-time `created_at`, required non-Optional linkage IDs (`order_id`, `fill_id`, `strategy_id`), enum-typed `action: Side`/`order_type: OrderType`, `type` as a real field, dedicated `EventType.ERROR`; legacy `event.py` deleted with no shim (M3-01, D-08/D-09)
+- ✓ All in-flight event mutation removed: SignalEvent `verified`/quantity-sentinel gone (Order entity is the pipeline state, rejections audited PENDING→REJECTED), FillEvent construct-complete at the exchange boundary, MatchingEngine replace-in-book via `dataclasses.replace` (D-10..D-13)
+- ✓ Race-free dispatch: `get_nowait()`+`queue.Empty` drain (TOCTOU gone), `_routes: dict[EventType, list[Callable]]` registry where list order is execution order, explicit ERROR route, `NotImplementedError` on unknown types (M3-02, D-14..D-17)
+- ✓ `ITraderError` exception hierarchy applied consistently (dead execution/concurrency exceptions deleted, order/data domains added, KB24 portfolio constructor args fixed); logging unified on structlog with env-driven level/json config, per-event logs demoted to DEBUG (M3-03, D-18..D-21)
+- ✓ Golden-master gate: behavioral + post-M2 numerical oracle byte-exact at every wave; suite 349→429 green; `mypy --strict` clean (M3-04)
+
 **Validated in Phase 3 (M2b — Config, Types, Storage Seam & Oracle Re-Freeze), 2026-06-05:**
 - ✓ `config/` collapsed to Pydantic v2 models + `pydantic-settings` (3,380→~1,130 lines); `Settings` has a required `SecretStr database_url` with no working secret default; model round-trips backtest-dict and live-JSONB forms; flat `config.py` shadow + registry/getters/importlib-shim deleted; `FORBIDDEN_SYMBOLS` string-concat bug fixed (M2-06, #12/#13/#34/TD2)
 - ✓ Shared enums centralized into `core/enums` (FillStatus + 4 manager enums) with case-insensitive `_missing_` parsers; buggy string→enum maps replaced (M2-07, #15)
@@ -59,10 +66,10 @@ must import, run, and yield trustworthy results.
 - [x] Re-freeze the numerical oracle (float→Decimal precision shift) — Phase 3
 
 **M3 — Event & dispatch core**
-- [ ] Immutable events with linkage IDs + `event_id`; enums not strings (#11)
-- [ ] Race-free dispatch registry separating routing from ordering (#1, #2, FR2, KB1)
-- [ ] Unified domain errors + logging; portfolio exceptions constructed correctly (#7-domain, #37, KB24)
-- [ ] Behavioral oracle unchanged
+- [x] Immutable events with linkage IDs + `event_id`; enums not strings (#11) — Phase 4
+- [x] Race-free dispatch registry separating routing from ordering (#1, #2, FR2, KB1) — Phase 4
+- [x] Unified domain errors + logging; portfolio exceptions constructed correctly (#7-domain, #37, KB24) — Phase 4
+- [x] Behavioral oracle unchanged — Phase 4 (numerical oracle also byte-exact)
 
 **M4 — Money & transaction correctness**
 - [ ] Cash flows through `CashManager` — no float setter bypass (#22 Critical)
@@ -167,4 +174,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-05 — Phase 3 (M2b — Config, Types, Storage Seam & Oracle Re-Freeze) complete; M2 milestone done. Config collapsed to Pydantic v2, types centralized, portfolio storage seam in place, dead modules purged, pytest restructured to tests/, and the numerical oracle re-frozen byte-exact (Decimal, final_equity 53229.685…) — the second of the two sanctioned re-baseline points. Behavioral oracle remains law for M3–M4.*
+*Last updated: 2026-06-05 — Phase 4 (M3 — Event & Dispatch Core) complete; M3 milestone done. Events are frozen facts with uuid7 `event_id` and required linkage IDs (legacy `event.py` deleted), dispatch runs through a race-free routing registry, `ITraderError` hierarchy and structlog logging unified. Behavioral + numerical oracle byte-exact throughout; suite 429 green, `mypy --strict` clean. Next: Phase 5 (M4 — Money & Transaction Correctness).*
