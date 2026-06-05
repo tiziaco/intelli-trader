@@ -98,7 +98,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. **Golden-master gate:** the behavioral oracle is unchanged and the post-M2 numerical oracle is reproduced exactly after the event/dispatch refactor
 **Plans**: 8 plans (7 waves; mostly sequential by design — event.py is the shared choke point and the byte-exact oracle gates every commit; exceptions runs parallel with dispatch in wave 6)
   - [x] 04-01-PLAN.md — Foundations: class-based EventType (TIME/ERROR) + Side in core/enums, FillId/EventId aliases, TimeEvent/TimeGenerator rename (D-08)
-  - [ ] 04-02-PLAN.md — Order pipeline de-mutation: drop signal.verified + quantity-0 sentinel, Order entity as pipeline state with audited REJECTED route, create-all-then-emit brackets (D-03/D-10/D-11/D-13)
+  - [x] 04-02-PLAN.md — Order pipeline de-mutation: drop signal.verified + quantity-0 sentinel, Order entity as pipeline state with audited REJECTED route, create-all-then-emit brackets (D-03/D-10/D-11/D-13)
   - [ ] 04-03-PLAN.md — Execution de-mutation: construct-complete FillEvent with fill_id/strategy_id, MatchingEngine replace-in-book (Pattern 5, D-12)
   - [ ] 04-04-PLAN.md — Frozen events package build: Event base (event_id/created_at), all concrete events, ErrorEvent hierarchy (D-01/D-02/D-06/D-09) + inverted immutability tests
   - [ ] 04-05-PLAN.md — Big-bang cutover: repoint ~31 itrader + 20 test files, kw-only pass (~79 sites), Side/OrderType typing, required IDs, delete event.py
@@ -159,7 +159,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
 | 2. M2a — Identity, Money & Determinism | 8/8 | Complete   | 2026-06-04 |
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 9/9 | Complete   | 2026-06-05 |
-| 4. M3 — Event & Dispatch Core | 1/8 | In Progress|  |
+| 4. M3 — Event & Dispatch Core | 2/8 | In Progress|  |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/TBD | Not started | - |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/TBD | Not started | - |
