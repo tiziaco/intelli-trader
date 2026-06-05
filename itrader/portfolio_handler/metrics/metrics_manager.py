@@ -97,6 +97,14 @@ class MetricsManager:
         storage = getattr(portfolio, "state_storage", None)
         if storage is None:
             storage = PortfolioStateStorageFactory.create("backtest")
+            # WR-02: share the fabricated seam with sibling managers so a
+            # standalone-constructed portfolio does not end up with disjoint
+            # per-manager backends (which would silently break cross-manager
+            # invariants). A real Portfolio always sets state_storage first.
+            try:
+                portfolio.state_storage = storage
+            except AttributeError:
+                pass
         self._storage: PortfolioStateStorage = storage
 
         # Performance metrics cache
