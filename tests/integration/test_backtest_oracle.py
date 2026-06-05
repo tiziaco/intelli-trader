@@ -57,7 +57,13 @@ _SUMMARY_NUMERIC_KEYS = ("final_cash", "final_equity", "total_realised_pnl")
 
 def _load_run_backtest_module():
     """Import scripts/run_backtest.py as a module (it is not on the package path)."""
+    # WR-05: fail loudly with a clear message if the oracle generator moved or
+    # spec_from_file_location could not resolve a loader, rather than dying with
+    # an opaque AttributeError on None.
+    if not _RUN_BACKTEST.exists():
+        pytest.fail(f"oracle generator missing: {_RUN_BACKTEST}")
     spec = importlib.util.spec_from_file_location("run_backtest", _RUN_BACKTEST)
+    assert spec is not None and spec.loader is not None, f"cannot load {_RUN_BACKTEST}"
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
