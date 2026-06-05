@@ -4,10 +4,12 @@ Behavioral contract:
 - ``SignalEvent`` stays structurally MUTABLE until the Plan 04-04 freeze, but no
   production code writes to it anymore (D-03/D-13: ``verified`` is deleted, the
   validator verdict is the typed ValidationResult + Order-entity state).
-- ``FillEvent`` stays MUTABLE — ``price``/``quantity`` are rewritten post-construction by
-  the simulated exchange after fee/slippage application.
-- ``OrderEvent`` stays MUTABLE — ``price``/``quantity`` of a resting order are rewritten by
-  ``MatchingEngine.modify`` (resting-order modify is real run-path behavior).
+- ``FillEvent`` stays structurally MUTABLE until the Plan 04-04/04-05 freeze, but the
+  exchange constructs it complete (D-12) — no production code rewrites
+  ``price``/``quantity`` post-construction anymore.
+- ``OrderEvent`` stays structurally MUTABLE until the freeze, but ``MatchingEngine.modify``
+  is replace-in-book (``dataclasses.replace``) — no production code mutates a resting
+  order in place anymore.
 - The remaining hot-path events (TimeEvent, BarEvent, PortfolioUpdateEvent, ScreenerEvent)
   are genuinely immutable and MUST be frozen: reassigning a field raises
   ``FrozenInstanceError``.
@@ -60,12 +62,17 @@ def test_signal_event_quantity_stays_mutable():
 
 
 def test_fill_event_stays_mutable():
-    """FillEvent.price/quantity are rewritten by the simulated exchange — stay mutable."""
+    """FillEvent stays structurally mutable until the 04-04/04-05 freeze.
+
+    Production no longer mutates fills (the exchange constructs them
+    complete, D-12), but the dataclass itself is frozen only at the cutover.
+    """
     order = OrderEvent(
         _TIME, "BTCUSDT", "BUY", 42.0, 1.0, "default", "strat", "pf",
         OrderType.MARKET,
     )
-    fill = FillEvent.new_fill("EXECUTED", 1.5, order)
+    fill = FillEvent.new_fill(
+        "EXECUTED", order, price=order.price, quantity=order.quantity, commission=1.5)
     fill.price = 43.0  # must NOT raise
     fill.quantity = 2.0  # must NOT raise
     assert fill.price == 43.0
@@ -97,12 +104,16 @@ def test_screener_event_is_frozen():
 
 
 def test_order_event_stays_mutable():
-    """OrderEvent.price/quantity are rewritten by MatchingEngine.modify — stay mutable."""
+    """OrderEvent stays structurally mutable until the 04-04/04-05 freeze.
+
+    MatchingEngine.modify is replace-in-book (no in-place mutation), but the
+    dataclass itself is frozen only at the cutover.
+    """
     order = OrderEvent(
         _TIME, "BTCUSDT", "BUY", 42.0, 1.0, "default", "strat", "pf",
         OrderType.MARKET,
     )
-    order.price = 99.0  # must NOT raise (resting-order modify path)
+    order.price = 99.0  # must NOT raise (structure not yet frozen)
     order.quantity = 3.0
     assert order.price == 99.0
     assert order.quantity == 3.0

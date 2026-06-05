@@ -27,7 +27,9 @@ def fill_event():
     )
     order = Order.new_order(signal_event, "simulated")
     mkt_order_event = OrderEvent.new_order_event(order)
-    return FillEvent.new_fill("EXECUTED", 1.5, mkt_order_event)
+    return FillEvent.new_fill(
+        "EXECUTED", mkt_order_event,
+        price=mkt_order_event.price, quantity=mkt_order_event.quantity, commission=1.5)
 
 
 def test_transaction_initialization(fill_event):

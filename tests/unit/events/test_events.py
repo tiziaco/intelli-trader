@@ -30,7 +30,9 @@ def events():
     # Create Order first, then OrderEvent
     order = Order.new_order(signal_event, "test_exchange")
     mkt_order_event = OrderEvent.new_order_event(order)
-    fill_event = FillEvent.new_fill("EXECUTED", 1.5, mkt_order_event)
+    fill_event = FillEvent.new_fill(
+        "EXECUTED", mkt_order_event,
+        price=mkt_order_event.price, quantity=mkt_order_event.quantity, commission=1.5)
     return SimpleNamespace(
         time_event=time_event,
         bar_event=bar_event,
