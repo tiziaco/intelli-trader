@@ -9,7 +9,7 @@ from uuid import uuid4
 # importable from this module for existing consumers until the Plan 04-05 cutover.
 from ..core.enums import EventType as EventType
 from ..core.enums import OrderType, OrderCommand, FillStatus
-from ..core.ids import StrategyId
+from ..core.ids import OrderId, StrategyId
 
 @dataclass(frozen=True, slots=True)
 class TimeEvent:
@@ -290,6 +290,9 @@ class OrderEvent:
 	stop_price: Optional[float] = None
 	order_id: Optional[int] = None
 	parent_order_id: Optional[int] = None
+	# D-11: two-directional bracket linkage — a bracket parent carries its
+	# children's ids; non-bracket orders carry the empty tuple.
+	child_order_ids: tuple[OrderId, ...] = ()
 	command: 'OrderCommand' = OrderCommand.NEW
 	type = EventType.ORDER
 
@@ -327,6 +330,7 @@ class OrderEvent:
 			stop_price=getattr(order, 'stop_price', None),
 			order_id=getattr(order, 'id', None),
 			parent_order_id=getattr(order, 'parent_order_id', None),
+			child_order_ids=tuple(getattr(order, 'child_order_ids', ()) or ()),
 			command=command,
 		)
 

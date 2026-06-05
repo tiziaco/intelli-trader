@@ -5,7 +5,6 @@ from enum import Enum
 
 from .order import Order
 from ..core.enums import OrderType, OrderStatus
-from ..events_handler.event import SignalEvent
 
 
 class ValidationLevel(Enum):
@@ -92,23 +91,30 @@ class EnhancedOrderValidator:
         # the validator must admit it for the offline run (DEF-01-B class, Plan 01-04).
         self.supported_exchanges = {"NYSE", "NASDAQ", "BINANCE", "OANDA", "default", "simulated", "csv"}
     
-    def validate_signal_pipeline(self, signal: SignalEvent) -> ValidationResult:
+    def validate_order_pipeline(self, order: Order) -> ValidationResult:
         """
-        Complete signal validation pipeline with progressive validation phases.
-        
+        Complete order validation pipeline with progressive validation phases.
+
+        D-13 (entity-as-state): the pipeline checks the PENDING ``Order``
+        entity, not the in-flight signal. The values validated (quantity,
+        price, action, ticker) are the same values the signal pipeline
+        validated before the entity-based cutover, so verdicts are identical.
+        Money comparisons stay float-domain until M4 (locked decision): the
+        entity's Decimal price/quantity are coerced at this read boundary.
+
         Phases:
         1. Critical Fields - Essential fields validation
-        2. Market Conditions - Exchange rules, market hours 
+        2. Market Conditions - Exchange rules, market hours
         3. Portfolio Constraints - Portfolio-level limits
         4. Financial Risk - Cash availability, risk limits
-        
+
         Each phase builds on the previous without redundant re-validation.
-        
+
         Parameters
         ----------
-        signal : SignalEvent
-            The signal to validate
-            
+        order : Order
+            The PENDING order entity to validate
+
         Returns
         -------
         ValidationResult
@@ -117,31 +123,32 @@ class EnhancedOrderValidator:
         all_messages = []
 
         # PHASE 1: Critical Field Validation
-        critical_messages = self._validate_critical_fields(signal)
+        critical_messages = self._validate_critical_fields(order)
         all_messages.extend(critical_messages)
         if self._has_critical_errors(critical_messages):
             return ValidationResult(False, all_messages, "Critical field validation failed")
 
         # PHASE 2: Market & Exchange Validation
-        market_messages = self._validate_market_conditions(signal)
+        market_messages = self._validate_market_conditions(order)
         all_messages.extend(market_messages)
         if self._has_critical_errors(market_messages):
             return ValidationResult(False, all_messages, "Market validation failed")
 
         # PHASE 3: Portfolio Constraints Validation
-        portfolio_messages = self._validate_portfolio_constraints(signal)
+        portfolio_messages = self._validate_portfolio_constraints(order)
         all_messages.extend(portfolio_messages)
         if self._has_critical_errors(portfolio_messages):
             return ValidationResult(False, all_messages, "Portfolio validation failed")
 
         # PHASE 4: Financial Risk Validation
-        risk_messages = self._validate_financial_risk(signal)
+        risk_messages = self._validate_financial_risk(order)
         all_messages.extend(risk_messages)
         if self._has_critical_errors(risk_messages):
             return ValidationResult(False, all_messages, "Financial risk validation failed")
 
         # All phases passed. The typed ValidationResult IS the verdict (D-03):
-        # the signal is never mutated — no verified flag exists anymore.
+        # nothing is mutated — acceptance/rejection is applied to the entity
+        # by the caller through the audited add_state_change path.
         has_warnings = any(msg.level == ValidationLevel.WARNING for msg in all_messages)
         return ValidationResult(True, all_messages, "All validations passed", has_warnings)
     
@@ -151,114 +158,108 @@ class EnhancedOrderValidator:
     
     # ===== PHASE 1: CRITICAL FIELDS VALIDATION =====
     
-    def _validate_critical_fields(self, signal: SignalEvent) -> List[ValidationMessage]:
+    def _validate_critical_fields(self, order: Order) -> List[ValidationMessage]:
         """
-        Essential fields that must be present for signal processing.
+        Essential fields that must be present for order processing.
         No business logic - just essential field presence and format validation.
         """
         messages: List[ValidationMessage] = []
-        
+
         # Ticker validation
-        if not signal.ticker or not signal.ticker.strip():
+        if not order.ticker or not order.ticker.strip():
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 "Ticker symbol is required",
                 "ticker",
                 "MISSING_TICKER"
             ))
-        
+
         # Action validation
-        if signal.action not in ["BUY", "SELL"]:
+        if order.action not in ["BUY", "SELL"]:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
-                f"Invalid action: {signal.action}. Must be BUY or SELL",
+                f"Invalid action: {order.action}. Must be BUY or SELL",
                 "action",
                 "INVALID_ACTION"
             ))
-        
-        # Price validation
-        if signal.price <= 0:
+
+        # Price validation (float-domain comparison until M4)
+        if float(order.price) <= 0:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 "Price must be positive",
                 "price",
                 "INVALID_PRICE"
             ))
-        
-        # Quantity validation. None means "order/risk layer sizes me" (D-10);
-        # the run path always sizes before validation, so None/0 here only
-        # occurs when the validator is exercised directly on an unsized signal.
-        quantity = signal.quantity
-        if quantity is not None and quantity < 0:
+
+        # Quantity validation. The run path always sizes before entity
+        # creation, so a zero quantity here only occurs when the validator
+        # is exercised directly on a hand-built order.
+        quantity = float(order.quantity)
+        if quantity < 0:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 "Quantity cannot be negative",
                 "quantity",
                 "NEGATIVE_QUANTITY"
             ))
-        elif quantity is None or quantity == 0:
+        elif quantity == 0:
             messages.append(ValidationMessage(
                 ValidationLevel.WARNING,
                 "Quantity is zero - signal needs position sizing (transition period)",
                 "quantity",
                 "ZERO_QUANTITY_TRANSITION"
             ))
-        
-        # Order type validation
-        if hasattr(signal, 'order_type') and signal.order_type:
-            if signal.order_type.upper() not in ["MARKET", "STOP", "LIMIT"]:
-                messages.append(ValidationMessage(
-                    ValidationLevel.ERROR,
-                    f"Invalid order type: {signal.order_type}",
-                    "order_type",
-                    "INVALID_ORDER_TYPE"
-                ))
-        
+
+        # Order type is an OrderType enum on the entity by construction —
+        # an unsupported type fails before the entity exists (D-13), so the
+        # legacy string order-type check is structurally impossible here.
+
         # Portfolio ID validation
-        if not signal.portfolio_id:
+        if not order.portfolio_id:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 "Portfolio ID is required",
                 "portfolio_id",
                 "MISSING_PORTFOLIO_ID"
             ))
-        
+
         return messages
     
     # ===== PHASE 2: MARKET CONDITIONS VALIDATION =====
     
-    def _validate_market_conditions(self, signal: SignalEvent) -> List[ValidationMessage]:
+    def _validate_market_conditions(self, order: Order) -> List[ValidationMessage]:
         """
         Market and exchange-specific validation.
         Checks market hours, exchange rules, and instrument availability.
         """
         messages: List[ValidationMessage] = []
-        
+
         # Exchange validation
-        messages.extend(self._validate_exchange_support(signal))
-        
+        messages.extend(self._validate_exchange_support(order))
+
         # Market hours validation
-        messages.extend(self._validate_market_hours(signal))
-        
+        messages.extend(self._validate_market_hours(order))
+
         # Price range validation
-        messages.extend(self._validate_price_ranges(signal))
-        
-        # Quantity range validation  
-        messages.extend(self._validate_quantity_ranges(signal))
-        
+        messages.extend(self._validate_price_ranges(order))
+
+        # Quantity range validation
+        messages.extend(self._validate_quantity_ranges(order))
+
         return messages
-    
-    def _validate_exchange_support(self, signal: SignalEvent) -> List[ValidationMessage]:
+
+    def _validate_exchange_support(self, order: Order) -> List[ValidationMessage]:
         """Validate exchange is supported."""
         messages: List[ValidationMessage] = []
-        
+
         # Get exchange from portfolio or default
         if self.portfolio_handler:
-            portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
+            portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
             exchange = getattr(portfolio, 'exchange', 'default') if portfolio else 'default'
         else:
             exchange = 'default'
-        
+
         if exchange not in self.supported_exchanges:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
@@ -266,25 +267,25 @@ class EnhancedOrderValidator:
                 "exchange",
                 "UNSUPPORTED_EXCHANGE"
             ))
-        
+
         return messages
-    
-    def _validate_market_hours(self, signal: SignalEvent) -> List[ValidationMessage]:
+
+    def _validate_market_hours(self, order: Order) -> List[ValidationMessage]:
         """Validate trading during market hours."""
         messages: List[ValidationMessage] = []
-        
+
         # Get exchange for market hours
         if self.portfolio_handler:
-            portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
+            portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
             exchange = getattr(portfolio, 'exchange', 'default') if portfolio else 'default'
         else:
             exchange = 'default'
-        
+
         # Check market hours for non-crypto exchanges
         if exchange in ["NYSE", "NASDAQ"]:
-            current_time = signal.time.time()
+            current_time = order.time.time()
             market_hours = self.market_hours.get(exchange, self.market_hours["default"])
-            
+
             if not (market_hours["open"] <= current_time <= market_hours["close"]):
                 messages.append(ValidationMessage(
                     ValidationLevel.WARNING,
@@ -292,37 +293,36 @@ class EnhancedOrderValidator:
                     "market_hours",
                     "OUTSIDE_MARKET_HOURS"
                 ))
-        
+
         return messages
-    
-    def _validate_price_ranges(self, signal: SignalEvent) -> List[ValidationMessage]:
-        """Validate price is within acceptable ranges."""
+
+    def _validate_price_ranges(self, order: Order) -> List[ValidationMessage]:
+        """Validate price is within acceptable ranges (float-domain until M4)."""
         messages: List[ValidationMessage] = []
-        
-        if signal.price < self.min_price:
+
+        price = float(order.price)
+        if price < self.min_price:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
-                f"Price {signal.price} below minimum {self.min_price}",
+                f"Price {price} below minimum {self.min_price}",
                 "price",
                 "PRICE_TOO_LOW"
             ))
-        elif signal.price > self.max_price:
+        elif price > self.max_price:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
-                f"Price {signal.price} above maximum {self.max_price}",
-                "price", 
+                f"Price {price} above maximum {self.max_price}",
+                "price",
                 "PRICE_TOO_HIGH"
             ))
-        
+
         return messages
-    
-    def _validate_quantity_ranges(self, signal: SignalEvent) -> List[ValidationMessage]:
-        """Validate quantity is within acceptable ranges."""
+
+    def _validate_quantity_ranges(self, order: Order) -> List[ValidationMessage]:
+        """Validate quantity is within acceptable ranges (float-domain until M4)."""
         messages: List[ValidationMessage] = []
 
-        # None means "order/risk layer sizes me" (D-10): an unsized quantity
-        # carries the 0-equivalent semantics the range check always applied.
-        quantity = signal.quantity if signal.quantity is not None else 0.0
+        quantity = float(order.quantity)
         if quantity < self.min_quantity:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
@@ -342,71 +342,71 @@ class EnhancedOrderValidator:
     
     # ===== PHASE 3: PORTFOLIO CONSTRAINTS VALIDATION =====
     
-    def _validate_portfolio_constraints(self, signal: SignalEvent) -> List[ValidationMessage]:
+    def _validate_portfolio_constraints(self, order: Order) -> List[ValidationMessage]:
         """
         Portfolio-wide constraints validation.
         Checks portfolio-level limits, not strategy-specific rules.
         """
         messages: List[ValidationMessage] = []
-        
+
         if not self.portfolio_handler:
             return messages
-        
+
         # Portfolio position limits
-        messages.extend(self._check_portfolio_position_limits(signal))
-        
+        messages.extend(self._check_portfolio_position_limits(order))
+
         # Portfolio exposure limits
-        messages.extend(self._check_portfolio_exposure_limits(signal))
-        
+        messages.extend(self._check_portfolio_exposure_limits(order))
+
         return messages
-    
-    def _check_portfolio_position_limits(self, signal: SignalEvent) -> List[ValidationMessage]:
+
+    def _check_portfolio_position_limits(self, order: Order) -> List[ValidationMessage]:
         """Check portfolio-wide position limits (not strategy-specific)."""
         messages: List[ValidationMessage] = []
-        
-        portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
+
+        portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
         if not portfolio:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
-                f"Portfolio {signal.portfolio_id} not found",
+                f"Portfolio {order.portfolio_id} not found",
                 "portfolio_id",
                 "PORTFOLIO_NOT_FOUND"
             ))
             return messages
-        
+
         # Portfolio-level limits (configurable per portfolio, not per strategy)
         max_portfolio_positions = getattr(portfolio, 'max_positions', 50)  # Portfolio setting
         current_positions = portfolio.n_open_positions
-        
+
         if current_positions >= max_portfolio_positions:
-            position = portfolio.positions.get(signal.ticker)
-            if not position or not self._is_closing_position(signal, position):
+            position = portfolio.positions.get(order.ticker)
+            if not position or not self._is_closing_position(order, position):
                 messages.append(ValidationMessage(
                     ValidationLevel.ERROR,
                     f"Portfolio max positions ({max_portfolio_positions}) reached",
                     "portfolio_limits",
                     "PORTFOLIO_MAX_POSITIONS"
                 ))
-        
+
         return messages
-    
-    def _check_portfolio_exposure_limits(self, signal: SignalEvent) -> List[ValidationMessage]:
-        """Check portfolio exposure limits."""
+
+    def _check_portfolio_exposure_limits(self, order: Order) -> List[ValidationMessage]:
+        """Check portfolio exposure limits (float-domain until M4)."""
         messages: List[ValidationMessage] = []
-        
-        portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
+
+        portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
         if not portfolio:
             return messages
-        
-        # Calculate position value (None quantity = unsized, D-10 — no exposure yet)
-        position_value = (signal.quantity if signal.quantity is not None else 0.0) * signal.price
-        
+
+        # Calculate position value
+        position_value = float(order.quantity) * float(order.price)
+
         # Check against portfolio total equity
         total_equity = portfolio.total_equity
         if total_equity > 0:
             exposure_percentage = position_value / total_equity
             max_single_position_exposure = 0.20  # 20% max per position
-            
+
             if exposure_percentage > max_single_position_exposure:
                 messages.append(ValidationMessage(
                     ValidationLevel.WARNING,
@@ -414,53 +414,53 @@ class EnhancedOrderValidator:
                     "exposure",
                     "HIGH_POSITION_EXPOSURE"
                 ))
-        
+
         return messages
-    
-    def _is_closing_position(self, signal: SignalEvent, position: Any) -> bool:
-        """Check if signal is closing an existing position."""
+
+    def _is_closing_position(self, order: Order, position: Any) -> bool:
+        """Check if the order is closing an existing position."""
         if not position:
             return False
-        
-        return ((position.side.name == 'LONG' and signal.action == 'SELL') or 
-                (position.side.name == 'SHORT' and signal.action == 'BUY'))
+
+        return ((position.side.name == 'LONG' and order.action == 'SELL') or
+                (position.side.name == 'SHORT' and order.action == 'BUY'))
     
     # ===== PHASE 4: FINANCIAL RISK VALIDATION =====
     
-    def _validate_financial_risk(self, signal: SignalEvent) -> List[ValidationMessage]:
+    def _validate_financial_risk(self, order: Order) -> List[ValidationMessage]:
         """
         Financial capacity and risk constraints validation.
         Checks cash availability, margin requirements, risk limits.
         """
         messages: List[ValidationMessage] = []
-        
+
         if not self.portfolio_handler:
             return messages
-        
+
         # Cash availability validation
-        messages.extend(self._check_cash_availability(signal))
-        
+        messages.extend(self._check_cash_availability(order))
+
         # Risk limits validation
-        messages.extend(self._check_risk_limits(signal))
-        
+        messages.extend(self._check_risk_limits(order))
+
         return messages
-    
-    def _check_cash_availability(self, signal: SignalEvent) -> List[ValidationMessage]:
-        """Check if portfolio has sufficient cash for the trade."""
+
+    def _check_cash_availability(self, order: Order) -> List[ValidationMessage]:
+        """Check if portfolio has sufficient cash for the trade (float-domain until M4)."""
         messages: List[ValidationMessage] = []
-        
-        portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
+
+        portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
         if not portfolio:
             return messages
-        
-        quantity = signal.quantity if signal.quantity is not None else 0.0
-        price = signal.price
+
+        quantity = float(order.quantity)
+        price = float(order.price)
         cost = quantity * price
-        
+
         # Only check cash for new positions (not closing existing positions)
-        if signal.ticker not in portfolio.positions:
+        if order.ticker not in portfolio.positions:
             cash = portfolio.cash
-            
+
             # Minimum cash requirement
             if cash < self.min_cash_required:
                 messages.append(ValidationMessage(
@@ -474,23 +474,23 @@ class EnhancedOrderValidator:
                 messages.append(ValidationMessage(
                     ValidationLevel.ERROR,
                     f"Insufficient cash: ${cash:.2f} < ${cost:.2f} required",
-                    "cash", 
+                    "cash",
                     "INSUFFICIENT_CASH_COST"
                 ))
-        
+
         return messages
-    
-    def _check_risk_limits(self, signal: SignalEvent) -> List[ValidationMessage]:
-        """Check various risk limits."""
+
+    def _check_risk_limits(self, order: Order) -> List[ValidationMessage]:
+        """Check various risk limits (float-domain until M4)."""
         messages: List[ValidationMessage] = []
-        
-        portfolio = self.portfolio_handler.get_portfolio(signal.portfolio_id)
+
+        portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
         if not portfolio:
             return messages
-        
-        # Order value limits (None quantity = unsized, D-10 — zero order value)
-        order_value = (signal.quantity if signal.quantity is not None else 0.0) * signal.price
-        
+
+        # Order value limits
+        order_value = float(order.quantity) * float(order.price)
+
         if order_value < self.min_order_value:
             messages.append(ValidationMessage(
                 ValidationLevel.WARNING,
@@ -505,32 +505,11 @@ class EnhancedOrderValidator:
                 "order_value",
                 "ORDER_VALUE_TOO_HIGH"
             ))
-        
+
         return messages
     
-    # ===== BACKWARD COMPATIBILITY METHODS FOR TESTS =====
-    
-    def validate_signal(self, signal: SignalEvent) -> List[ValidationMessage]:
-        """
-        Backward compatibility method for tests.
-        Uses the new pipeline and returns just the messages.
-        """
-        result = self.validate_signal_pipeline(signal)
-        return result.messages
-    
-    def validate_signal_basic(self, signal: SignalEvent) -> List[ValidationMessage]:
-        """
-        Backward compatibility method for basic validation only.
-        """
-        return self._validate_critical_fields(signal)
-    
-    def validate_signal_complete(self, signal: SignalEvent) -> List[ValidationMessage]:
-        """
-        Backward compatibility method for complete validation.
-        """
-        result = self.validate_signal_pipeline(signal)
-        return result.messages
-    
+    # ===== ORDER MODIFICATION / RESULT HELPERS =====
+
     def validate_order_modification(self, order: Order, **modifications: Any) -> List[ValidationMessage]:
         """
         Validate order modification parameters.
@@ -585,5 +564,3 @@ class EnhancedOrderValidator:
     def get_warnings(self, messages: List[ValidationMessage]) -> List[ValidationMessage]:
         """Get only warning messages from validation results."""
         return [msg for msg in messages if msg.level == ValidationLevel.WARNING]
-
-    # ===== END BACKWARD COMPATIBILITY METHODS =====

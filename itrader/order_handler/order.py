@@ -138,7 +138,8 @@ class Order:
 		return str(self)
 	
 	@classmethod
-	def new_order(cls, signal: SignalEvent, exchange: str) -> "Order":
+	def new_order(cls, signal: SignalEvent, exchange: str,
+	              quantity: Optional[Decimal] = None) -> "Order":
 		"""
 		Generate a new Order object from the signal validated from
 		the risk manager and compliance manager.
@@ -149,7 +150,11 @@ class Order:
 			The object representing the signal
 		exchange : str
 			The exchange for the order
-		
+		quantity : `Decimal`, optional
+			The resolved order quantity (D-13: the order/risk layer sizes the
+			order and threads the Decimal-native quantity here — the signal is
+			never mutated). Falls back to ``signal.quantity`` when omitted.
+
 		Returns
 		-------
 		Order : `Order`
@@ -160,8 +165,9 @@ class Order:
 			raise ValueError(f'OrderType {signal.order_type} not supported')
 
 		# D-10: a None quantity means the signal was never sized — an order
-		# cannot be constructed from an unsized signal.
-		if signal.quantity is None:
+		# cannot be constructed without a resolved quantity.
+		resolved_quantity = quantity if quantity is not None else signal.quantity
+		if resolved_quantity is None:
 			raise ValueError(f'Cannot create order from unsized signal for {signal.ticker}')
 
 		order = cls(
@@ -171,7 +177,7 @@ class Order:
 			signal.ticker,
 			signal.action,
 			to_money(signal.price),
-			to_money(signal.quantity),
+			to_money(resolved_quantity),
 			exchange,
 			signal.strategy_id,
 			signal.portfolio_id
