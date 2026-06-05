@@ -2,6 +2,8 @@
 Execution-specific exceptions for the iTrader system.
 """
 
+from typing import Optional
+
 from .base import ITradingSystemError, ValidationError, ConfigurationError, StateError, ConcurrencyError, NotFoundError
 from ..enums.execution import ExecutionErrorCode
 
@@ -17,7 +19,7 @@ class ExecutionError(ITradingSystemError):
 class ExchangeConnectionError(ExecutionError):
     """Raised when exchange connection fails."""
     
-    def __init__(self, exchange_name: str, reason: str = None):
+    def __init__(self, exchange_name: str, reason: Optional[str] = None):
         self.exchange_name = exchange_name
         self.reason = reason
         message = f"Connection failed to exchange '{exchange_name}'"
@@ -29,7 +31,7 @@ class ExchangeConnectionError(ExecutionError):
 class OrderExecutionError(ExecutionError):
     """Raised when order execution fails."""
     
-    def __init__(self, order_id: str = None, reason: str = None, error_code: ExecutionErrorCode = ExecutionErrorCode.EXCHANGE_ERROR):
+    def __init__(self, order_id: Optional[str] = None, reason: Optional[str] = None, error_code: ExecutionErrorCode = ExecutionErrorCode.EXCHANGE_ERROR):
         self.order_id = order_id
         self.reason = reason
         message = "Order execution failed"
@@ -43,7 +45,7 @@ class OrderExecutionError(ExecutionError):
 class InsufficientFundsExecutionError(ExecutionError):
     """Raised when insufficient funds for order execution."""
     
-    def __init__(self, required_amount: float, available_amount: float, symbol: str = None):
+    def __init__(self, required_amount: float, available_amount: float, symbol: Optional[str] = None):
         self.required_amount = required_amount
         self.available_amount = available_amount
         self.symbol = symbol
@@ -56,7 +58,7 @@ class InsufficientFundsExecutionError(ExecutionError):
 class InvalidSymbolExecutionError(ExecutionError):
     """Raised when trading symbol is invalid or not supported."""
     
-    def __init__(self, symbol: str, exchange: str = None):
+    def __init__(self, symbol: str, exchange: Optional[str] = None):
         self.symbol = symbol
         self.exchange = exchange
         message = f"Invalid symbol: {symbol}"
@@ -68,7 +70,7 @@ class InvalidSymbolExecutionError(ExecutionError):
 class RateLimitExecutionError(ExecutionError):
     """Raised when exchange rate limit is exceeded."""
     
-    def __init__(self, exchange: str = None, retry_after: int = None):
+    def __init__(self, exchange: Optional[str] = None, retry_after: Optional[int] = None):
         self.exchange = exchange
         self.retry_after = retry_after
         message = "Rate limit exceeded"
@@ -82,14 +84,14 @@ class RateLimitExecutionError(ExecutionError):
 class OrderValidationExecutionError(ValidationError):
     """Raised when order validation fails before execution."""
     
-    def __init__(self, field: str, value: str = None, message: str = None):
+    def __init__(self, field: str, value: Optional[str] = None, message: Optional[str] = None):
         super().__init__(field, value, message)
 
 
 class ExchangeConfigurationError(ConfigurationError):
     """Raised when exchange configuration is invalid."""
     
-    def __init__(self, exchange_name: str, config_key: str = None, reason: str = None):
+    def __init__(self, exchange_name: str, config_key: Optional[str] = None, reason: Optional[str] = None):
         self.exchange_name = exchange_name
         message = f"Configuration error for exchange '{exchange_name}'"
         if config_key:
@@ -102,7 +104,7 @@ class ExchangeConfigurationError(ConfigurationError):
 class ExchangeStateError(StateError):
     """Raised when exchange is in invalid state for operation."""
     
-    def __init__(self, exchange_name: str, current_state: str, required_state: str = None, operation: str = None):
+    def __init__(self, exchange_name: str, current_state: str, required_state: Optional[str] = None, operation: Optional[str] = None):
         self.exchange_name = exchange_name
         # Use exchange_name as entity_id for consistency with base class
         super().__init__(exchange_name, current_state, required_state, operation)
@@ -119,7 +121,7 @@ class ExchangeNotFoundError(NotFoundError):
 class ExecutionTimeoutError(ExecutionError):
     """Raised when order execution times out."""
     
-    def __init__(self, order_id: str = None, timeout_seconds: int = None):
+    def __init__(self, order_id: Optional[str] = None, timeout_seconds: Optional[int] = None):
         self.order_id = order_id
         self.timeout_seconds = timeout_seconds
         message = "Order execution timed out"
@@ -133,7 +135,7 @@ class ExecutionTimeoutError(ExecutionError):
 class MarketClosedExecutionError(ExecutionError):
     """Raised when attempting to trade while market is closed."""
     
-    def __init__(self, symbol: str, market_hours: str = None):
+    def __init__(self, symbol: str, market_hours: Optional[str] = None):
         self.symbol = symbol
         self.market_hours = market_hours
         message = f"Market is closed for {symbol}"

@@ -107,7 +107,7 @@ class FileConfigProvider(ConfigProvider[Dict[str, Any]]):
             self.logger.error("Failed to reset config", error=str(e))
             return False
     
-    def _refresh_cache(self):
+    def _refresh_cache(self) -> None:
         """Refresh configuration cache if file has changed."""
         if not self.config_file.exists():
             return
@@ -123,7 +123,7 @@ class FileConfigProvider(ConfigProvider[Dict[str, Any]]):
         except Exception as e:
             self.logger.error("Failed to refresh config cache", error=str(e))
     
-    def _save_config(self, config: Dict[str, Any]):
+    def _save_config(self, config: Dict[str, Any]) -> None:
         """Save configuration to file."""
         self.config_file.parent.mkdir(parents=True, exist_ok=True)
         

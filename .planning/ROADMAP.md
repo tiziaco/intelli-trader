@@ -22,7 +22,7 @@ shift) and end of M5 (look-ahead/fill-realism fixes). Milestone identity is pres
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: M1 — Ignition + Lock the Oracle** - Make the backtest run end-to-end and capture/commit the reference output (completed 2026-06-04)
-- [ ] **Phase 2: M2a — Identity, Money & Determinism** - UUIDv7 IDs, Decimal money, mypy-strict frozen DTOs, real ABCs, seeded/clocked determinism
+- [x] **Phase 2: M2a — Identity, Money & Determinism** - UUIDv7 IDs, Decimal money, mypy-strict frozen DTOs, real ABCs, seeded/clocked determinism (all 8 plans executed incl. gap-closure 02-08; re-verification PASS 4/4 SC 2026-06-04; numeric oracle re-freeze deferred to post-M2 per DEF-02-08-A) (completed 2026-06-04)
 - [ ] **Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze** - Pydantic config, centralized types, portfolio storage seam, time_parser final, dead-code purge, pytest conversion, re-freeze numerical oracle
 - [ ] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging
 - [ ] **Phase 5: M4 — Money & Transaction Correctness** - Cash through CashManager, atomic transactions, order facade layering, frozen execution DTOs
@@ -57,7 +57,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Money is `Decimal` end-to-end (prices, quantities, cash, commissions, PnL) with no `float` round-trips and a centralized quantization policy
   3. `mypy --strict` is clean across the package; hot-path DTOs/events are `frozen=True`/`slots=True` with `NewType` ID aliases; the eight Py2 `__metaclass__` bases are real ABCs/Protocols with non-conforming subclasses fixed
   4. Backtests are deterministic — RNG seeded behind an injected `Random`, clock injected (no local `datetime.now()`), flat global order index by id
-**Plans**: TBD
+**Plans**: 8 plans (7 execute + 1 gap-closure)
+  - [x] 02-01-PLAN.md — Install deps (uuid-utils, mypy) + mypy --strict gate + make typecheck + Wave 0 test scaffolds
+  - [x] 02-02-PLAN.md — New core modules: ids.py (NewType aliases), money.py (Decimal quantization), clock.py (injectable Clock)
+  - [x] 02-03-PLAN.md — UUIDv7 identity infra: idgen facade + native-UUID storage/flat index + UUID-typed exceptions
+  - [x] 02-04-PLAN.md — Entity typing: UUID id fields + Decimal money; remove the transaction_manager float cash round-trip
+  - [x] 02-05-PLAN.md — Convert 11 dead __metaclass__ bases to real ABCs/Protocols + SimulatedExchange conformance
+  - [x] 02-06-PLAN.md — Determinism: seeded RNG injected into slippage/exchange + injected BacktestClock on the engine path
+  - [x] 02-07-PLAN.md — mypy --strict clean pass + frozen/slots events + D-15 oracle tolerance split + phase gate
+  - [x] 02-08-PLAN.md — Gap-closure: clock.now() raise guard (python -O safe) + honest clock docstring + remove float seams (WR-01/02/03/05) + Decimal-precision cash ledger
 
 ### Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze
 **Goal**: Collapse the over-engineered config package to Pydantic models, centralize scattered types, route portfolio-handler state through an in-memory storage seam, finalize `time_parser` timing correctness, delete dead modules, complete the bulk pytest conversion, and re-freeze the numerical oracle after the Decimal shift while confirming the behavioral oracle is unchanged. This closes the `#34` and `#36` spans started in M1.
@@ -132,7 +140,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. M1 — Ignition + Lock the Oracle | 5/5 | Complete   | 2026-06-04 |
-| 2. M2a — Identity, Money & Determinism | 0/TBD | Not started | - |
+| 2. M2a — Identity, Money & Determinism | 8/8 | Complete   | 2026-06-04 |
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 0/TBD | Not started | - |
 | 4. M3 — Event & Dispatch Core | 0/TBD | Not started | - |
 | 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |

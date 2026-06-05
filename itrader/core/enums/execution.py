@@ -33,6 +33,9 @@ class ExecutionErrorCode(Enum):
     EXCHANGE_MAINTENANCE = "exchange_maintenance"
     AUTHENTICATION_ERROR = "authentication_error"
     PERMISSION_DENIED = "permission_denied"
+    # Referenced by ExecutionTimeoutError; previously missing (would AttributeError
+    # at raise-time). Added to back the existing timeout error path.
+    TIMEOUT = "timeout"
 
 
 class ExchangeConnectionStatus(Enum):

@@ -48,7 +48,7 @@ class PercentFeeModel(FeeModel):
         price: Union[float, Decimal], 
         side: str = "buy",
         order_type: str = "market",
-        **kwargs
+        **kwargs: Any
     ) -> Decimal:
         """
         Calculate percentage-based fee for an order.
@@ -63,7 +63,7 @@ class PercentFeeModel(FeeModel):
             Order side ("buy" or "sell")
         order_type : str, optional
             Order type (ignored in this model)
-        **kwargs
+        **kwargs: Any
             Additional parameters (ignored)
             
         Returns

@@ -6,7 +6,7 @@ across different domains (portfolio, trading, data, system).
 """
 
 import threading
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, cast
 from pathlib import Path
 
 from .provider import ConfigProvider, FileConfigProvider
@@ -28,7 +28,7 @@ class ConfigRegistry:
         self._lock = threading.RLock()
         
         # Domain providers
-        self._providers: Dict[str, ConfigProvider] = {}
+        self._providers: Dict[str, ConfigProvider[Any]] = {}
         self._validators: Dict[str, ConfigValidator] = {}
         
         # Ensure config directory exists
@@ -36,7 +36,7 @@ class ConfigRegistry:
         
         self.logger.info("ConfigRegistry initialized", config_dir=str(self.config_dir))
     
-    def register_domain(self, domain: str, provider: Optional[ConfigProvider] = None) -> ConfigProvider:
+    def register_domain(self, domain: str, provider: Optional[ConfigProvider[Any]] = None) -> ConfigProvider[Any]:
         """
         Register a domain with its configuration provider.
         
@@ -56,7 +56,7 @@ class ConfigRegistry:
             
             return provider
     
-    def get_provider(self, domain: str) -> ConfigProvider:
+    def get_provider(self, domain: str) -> ConfigProvider[Any]:
         """
         Get configuration provider for a domain.
         
@@ -76,7 +76,7 @@ class ConfigRegistry:
             
             return self._providers[domain]
     
-    def register_validator(self, domain: str, validator: ConfigValidator):
+    def register_validator(self, domain: str, validator: ConfigValidator) -> None:
         """Register a validator for a domain."""
         with self._lock:
             self._validators[domain] = validator
@@ -89,7 +89,7 @@ class ConfigRegistry:
     def get_config(self, domain: str) -> Dict[str, Any]:
         """Get configuration for a domain."""
         provider = self.get_provider(domain)
-        return provider.get_config()
+        return cast(Dict[str, Any], provider.get_config())
     
     def update_config(self, domain: str, updates: Dict[str, Any]) -> bool:
         """Update configuration for a domain."""
@@ -120,7 +120,7 @@ class ConfigRegistry:
         with self._lock:
             return list(self._providers.keys())
     
-    def reset_all(self):
+    def reset_all(self) -> None:
         """Reset all domains and clear registry."""
         with self._lock:
             for domain in list(self._providers.keys()):

@@ -1,3 +1,5 @@
+from typing import Any
+
 from itrader.universe.universe import Universe
 
 
@@ -12,10 +14,10 @@ class StaticUniverse(Universe):
         The list of Asset symbols that form the StaticUniverse.
     """
 
-    def __init__(self, asset_list):
+    def __init__(self, asset_list: list[str]) -> None:
         self.asset_list = asset_list
 
-    def get_assets(self, dt):
+    def get_assets(self, dt: Any) -> list[str]:
         """
         Obtain the list of assets in the Universe at a particular
         point in time. This will always return a static list

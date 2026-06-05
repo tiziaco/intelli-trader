@@ -46,7 +46,7 @@ class MakerTakerFeeModel(FeeModel):
         price: Union[float, Decimal], 
         side: str = "buy",
         order_type: str = "market",
-        **kwargs
+        **kwargs: Any
     ) -> Decimal:
         """
         Calculate maker/taker fee for an order.
@@ -61,7 +61,7 @@ class MakerTakerFeeModel(FeeModel):
             Order side ("buy" or "sell")
         order_type : str, optional
             Order type ("market", "limit", etc.)
-        **kwargs
+        **kwargs: Any
             Additional parameters (e.g., is_maker boolean override)
             
         Returns
@@ -85,7 +85,7 @@ class MakerTakerFeeModel(FeeModel):
         else:
             return trade_value * self.taker_rate
 
-    def _is_maker_order(self, order_type: str, **kwargs) -> bool:
+    def _is_maker_order(self, order_type: str, **kwargs: Any) -> bool:
         """
         Determine if an order is a maker order.
         
@@ -93,7 +93,7 @@ class MakerTakerFeeModel(FeeModel):
         ----------
         order_type : str
             Order type
-        **kwargs
+        **kwargs: Any
             Additional parameters (e.g., is_maker override)
             
         Returns

@@ -4,6 +4,7 @@ Consolidated PortfolioHandler tests combining legacy and enhanced functionality.
 
 import unittest
 import threading
+import uuid
 from queue import Queue
 from datetime import datetime, UTC
 from decimal import Decimal
@@ -49,11 +50,10 @@ class TestPortfolioHandler(unittest.TestCase):
             self.user_id, self.portfolio_name, self.exchange, self.cash
         )
         
-        # Assert if the portfolio has been created
+        # Assert if the portfolio has been created (ids are now native UUIDv7)
         self.assertEqual(self.handler.get_portfolio_count(), 1)
-        self.assertIsInstance(portfolio_id, int)
-        self.assertGreater(portfolio_id, 0)
-    
+        self.assertIsInstance(portfolio_id, uuid.UUID)
+
     def test_get_portfolio(self):
         """Test portfolio retrieval (legacy compatibility)."""
         portfolio_id = self.handler.add_portfolio(
@@ -76,9 +76,8 @@ class TestPortfolioHandler(unittest.TestCase):
             cash=10000.0
         )
         
-        self.assertIsInstance(portfolio_id, int)
-        self.assertGreater(portfolio_id, 0)
-        
+        self.assertIsInstance(portfolio_id, uuid.UUID)
+
         # Verify portfolio exists and has correct attributes
         portfolio = self.handler.get_portfolio(portfolio_id)
         self.assertEqual(portfolio.user_id, 1)
@@ -279,7 +278,7 @@ class TestPortfolioHandler(unittest.TestCase):
             price=50.0,  # Lower price to stay within cash limits
             quantity=100,
             commission=1.0,
-            portfolio_id=str(portfolio_id)
+            portfolio_id=portfolio_id
         )
         
         result = self.handler.on_fill(fill_event)
@@ -304,7 +303,7 @@ class TestPortfolioHandler(unittest.TestCase):
             price=150.0,
             quantity=100,
             commission=1.0,
-            portfolio_id=str(portfolio_id)
+            portfolio_id=portfolio_id
         )
         
         with self.assertRaises(ValueError):
@@ -416,7 +415,9 @@ class TestPortfolioHandler(unittest.TestCase):
             error_event = self.global_queue.get()
             self.assertIsInstance(error_event, PortfolioErrorEvent)
             self.assertEqual(error_event.error_type, "PortfolioNotFoundError")
-            self.assertEqual(error_event.portfolio_id, 99999)
+            # The error event carries the id as supplied on the fill (no int
+            # coercion now that ids are native UUIDs, not the old integer scheme).
+            self.assertEqual(error_event.portfolio_id, "99999")
         else:
             # If no error event was published, that's also acceptable behavior
             # depending on configuration

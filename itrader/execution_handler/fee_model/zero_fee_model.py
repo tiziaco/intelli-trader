@@ -18,7 +18,7 @@ class ZeroFeeModel(FeeModel):
         price: Union[float, Decimal], 
         side: str = "buy",
         order_type: str = "market",
-        **kwargs
+        **kwargs: Any
     ) -> Decimal:
         """
         Calculate fee for an order (always returns Decimal('0')).
@@ -33,7 +33,7 @@ class ZeroFeeModel(FeeModel):
             Order side ("buy" or "sell")
         order_type : str, optional
             Order type
-        **kwargs
+        **kwargs: Any
             Additional parameters (ignored)
             
         Returns

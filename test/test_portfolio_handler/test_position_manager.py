@@ -125,7 +125,8 @@ class TestPositionManager(unittest.TestCase):
         
         # Should be the same position object
         self.assertEqual(initial_position.id, updated_position.id)
-        self.assertEqual(updated_position.net_quantity, initial_quantity + 0.5)
+        # net_quantity is Decimal end-to-end (M2a); add Decimal, not float.
+        self.assertEqual(updated_position.net_quantity, initial_quantity + Decimal("0.5"))
         
         # Still only one position in manager
         self.assertEqual(len(self.position_manager._positions), 1)

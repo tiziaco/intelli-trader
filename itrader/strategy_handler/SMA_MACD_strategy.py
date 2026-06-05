@@ -17,14 +17,14 @@ class SMA_MACD_strategy(Strategy):
 	"""
 	def __init__(
 		self,
-		timeframe,
-		tickers=[],
-		short_window=50,
-		long_window=100,
-		FAST=6,
-		SLOW=12,
-		WIN=3,
-	):
+		timeframe: str,
+		tickers: list[str] = [],
+		short_window: int = 50,
+		long_window: int = 100,
+		FAST: int = 6,
+		SLOW: int = 12,
+		WIN: int = 3,
+	) -> None:
 		super().__init__("SMA_MACD", timeframe, tickers)
 
 		# Strategy parameters
@@ -36,24 +36,27 @@ class SMA_MACD_strategy(Strategy):
 
 		self.max_window = max([self.long_window, 100])
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		return f'{self.name}_{self.timeframe}'
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 
 
 
-	def calculate_signal(self, ticker: str, bars: pd.DataFrame):
+	def calculate_signal(self, ticker: str, bars: pd.DataFrame) -> None:
 		# Check if enough bars to calculate the signal
-		
+
 		if len(bars) < self.max_window:
 			return
+		last_time = self.last_time()
+		if last_time is None:
+			return
 		# Calculate the SMA
-		start_dt = self.last_time() - self.timeframe * self.short_window
+		start_dt = last_time - self.timeframe * self.short_window
 		short_sma = trend.SMAIndicator(bars[start_dt:].close, self.short_window, True).sma_indicator().dropna()
- 
-		start_dt = self.last_time() - self.timeframe * self.long_window
+
+		start_dt = last_time - self.timeframe * self.long_window
 		long_sma = trend.SMAIndicator(bars[start_dt:].close, self.long_window, True).sma_indicator().dropna()
 
 

@@ -1,12 +1,15 @@
 from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import List, Optional
+from decimal import Decimal
+from typing import Any, List, Optional
 
 from itrader.events_handler.event import SignalEvent
 from itrader import idgen
+from itrader.core.ids import OrderId, PortfolioId, StrategyId
+from itrader.core.money import to_money
 from ..core.enums import (
-    OrderType, OrderStatus, order_type_map, order_status_map, 
+    OrderType, OrderStatus, order_type_map, order_status_map,
     VALID_ORDER_TRANSITIONS
 )
 
@@ -21,9 +24,9 @@ class OrderStateChange:
 	timestamp: datetime
 	reason: str
 	triggered_by: str = "system"  # system, user, exchange, etc.
-	additional_data: Optional[dict] = None
-	
-	def __str__(self):
+	additional_data: Optional[dict[str, Any]] = None
+
+	def __str__(self) -> str:
 		return f"{self.from_status} → {self.to_status} at {self.timestamp} ({self.reason})"
 
 @dataclass
@@ -42,38 +45,51 @@ class Order:
 	status: OrderStatus
 	ticker: str
 	action: str
-	price: float
-	quantity: float
+	price: Decimal
+	quantity: Decimal
 	exchange: str
-	strategy_id: int
-	portfolio_id: int
-	id: int = field(default_factory=lambda: idgen.generate_order_id())
-	
+	strategy_id: StrategyId
+	# 02-05 carry-over: SignalEvent carries an int portfolio_id; accept both until
+	# the portfolio_id migration completes (not mandated by Task 2).
+	portfolio_id: "PortfolioId | int"
+	id: OrderId = field(default_factory=lambda: OrderId(idgen.generate_order_id()))
+
 	# Enhanced lifecycle tracking fields
-	filled_quantity: float = 0.0
+	filled_quantity: Decimal = field(default_factory=lambda: Decimal("0"))
 	created_at: datetime = field(default_factory=datetime.now)
 	updated_at: datetime = field(default_factory=datetime.now)
 	filled_at: Optional[datetime] = None
 	cancelled_at: Optional[datetime] = None
 	expired_at: Optional[datetime] = None
 	expiry_time: Optional[datetime] = None
-	
+
 	# State change tracking
 	state_changes: List[OrderStateChange] = field(default_factory=list)
-	
+
 	# Order relationships
-	parent_order_id: Optional[int] = None
-	child_order_ids: List[int] = field(default_factory=list)
+	parent_order_id: Optional[OrderId] = None
+	child_order_ids: List[OrderId] = field(default_factory=list)
 	
 	# Additional metadata
 	rejection_reason: Optional[str] = None
 	modification_count: int = 0
 	last_modification_time: Optional[datetime] = None
 
+	def __post_init__(self) -> None:
+		"""Enter the Decimal money domain at the construction boundary (D-04).
+
+		The factory methods already pass ``to_money(...)``; normalising here too
+		guarantees Decimal money even when ``Order`` is constructed directly
+		(callers may still pass int/float price/quantity).
+		"""
+		self.price = to_money(self.price)
+		self.quantity = to_money(self.quantity)
+		self.filled_quantity = to_money(self.filled_quantity)
+
 	@property
-	def remaining_quantity(self) -> float:
+	def remaining_quantity(self) -> Decimal:
 		"""Calculate remaining quantity to be filled."""
-		return max(0.0, self.quantity - self.filled_quantity)
+		return max(Decimal("0"), self.quantity - self.filled_quantity)
 	
 	@property
 	def is_fully_filled(self) -> bool:
@@ -96,23 +112,23 @@ class Order:
 		return self.status in [OrderStatus.FILLED, OrderStatus.CANCELLED, OrderStatus.REJECTED, OrderStatus.EXPIRED]
 	
 	@property
-	def fill_percentage(self) -> float:
+	def fill_percentage(self) -> Decimal:
 		"""Get the percentage of the order that has been filled."""
 		if self.quantity == 0:
-			return 0.0
-		return (self.filled_quantity / self.quantity) * 100.0
+			return Decimal("0")
+		return (self.filled_quantity / self.quantity) * Decimal("100")
 
-	def __str__(self):
+	def __str__(self) -> str:
 		status_str = f"{self.status.name}"
 		if self.is_partially_filled:
 			status_str += f" ({self.filled_quantity}/{self.quantity})"
 		return f"Order - {self.id} ({self.type.name}, {self.ticker}, {self.action}, {status_str}, {self.price}$)"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 	
 	@classmethod
-	def new_order(cls, signal: SignalEvent, exchange: str):
+	def new_order(cls, signal: SignalEvent, exchange: str) -> "Order":
 		"""
 		Generate a new Order object from the signal validated from
 		the risk manager and compliance manager.
@@ -139,8 +155,8 @@ class Order:
 			OrderStatus.PENDING,
 			signal.ticker,
 			signal.action,
-			signal.price,
-			signal.quantity,
+			to_money(signal.price),
+			to_money(signal.quantity),
 			exchange,
 			signal.strategy_id,
 			signal.portfolio_id
@@ -156,8 +172,8 @@ class Order:
 		return order
 	
 	@classmethod
-	def new_stop_order(cls, time, ticker, action, price, quantity, exchange,
-					strategy_id, portfolio_id):
+	def new_stop_order(cls, time: datetime, ticker: str, action: str, price: Any, quantity: Any, exchange: str,
+					strategy_id: Any, portfolio_id: Any) -> "Order":
 		"""
 		Generate a new Stop Order object.
 
@@ -172,8 +188,8 @@ class Order:
 			OrderStatus.PENDING,
 			ticker,
 			action,
-			price,
-			quantity,
+			to_money(price),
+			to_money(quantity),
 			exchange,
 			strategy_id,
 			portfolio_id
@@ -189,8 +205,8 @@ class Order:
 		return order
 	
 	@classmethod
-	def new_limit_order(cls, time, ticker, action, price, quantity, exchange,
-					strategy_id, portfolio_id):
+	def new_limit_order(cls, time: datetime, ticker: str, action: str, price: Any, quantity: Any, exchange: str,
+					strategy_id: Any, portfolio_id: Any) -> "Order":
 		"""
 		Generate a new Limit Order object.
 
@@ -205,8 +221,8 @@ class Order:
 			OrderStatus.PENDING,
 			ticker,
 			action,
-			price,
-			quantity,
+			to_money(price),
+			to_money(quantity),
 			exchange,
 			strategy_id,
 			portfolio_id
@@ -221,8 +237,8 @@ class Order:
 		
 		return order
 	
-	def add_state_change(self, new_status: OrderStatus, reason: str, 
-	                    triggered_by: str = "system", additional_data: Optional[dict] = None) -> bool:
+	def add_state_change(self, new_status: OrderStatus, reason: str,
+	                    triggered_by: str = "system", additional_data: Optional[dict[str, Any]] = None) -> bool:
 		"""
 		Add a state change to the order with validation.
 		
@@ -257,7 +273,6 @@ class Order:
 		)
 		
 		# Update order status and metadata
-		old_status = self.status
 		self.status = new_status
 		self.updated_at = datetime.now()
 		# TODO: check if i have to store the state changes permanently in sql
@@ -279,7 +294,7 @@ class Order:
 		valid_transitions = VALID_ORDER_TRANSITIONS.get(from_status, [])
 		return to_status in valid_transitions
 	
-	def add_fill(self, fill_quantity: float, fill_price: float, fill_time: datetime, reason: str = "market fill") -> bool:
+	def add_fill(self, fill_quantity: Decimal, fill_price: Decimal, fill_time: datetime, reason: str = "market fill") -> bool:
 		"""
 		Add a partial or full fill to the order.
 		
@@ -299,9 +314,10 @@ class Order:
 		bool
 			True if fill was successfully applied
 		"""
+		fill_quantity = to_money(fill_quantity)
 		if fill_quantity <= 0 or fill_quantity > self.remaining_quantity:
 			return False
-		
+
 		# Update filled quantity
 		self.filled_quantity += fill_quantity
 		
@@ -374,7 +390,7 @@ class Order:
 		"""
 		return self.add_state_change(OrderStatus.EXPIRED, reason, "system")
 	
-	def modify_order(self, new_price: Optional[float] = None, new_quantity: Optional[float] = None, reason: str = "order modification") -> bool:
+	def modify_order(self, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None, reason: str = "order modification") -> bool:
 		"""
 		Modify order parameters if in a modifiable state.
 		
@@ -395,16 +411,21 @@ class Order:
 		if not self.is_active:
 			return False
 		
+		if new_price is not None:
+			new_price = to_money(new_price)
+		if new_quantity is not None:
+			new_quantity = to_money(new_quantity)
+
 		# Validate new quantity against filled quantity
 		if new_quantity is not None and new_quantity < self.filled_quantity:
 			return False
-		
+
 		changes = {}
 		if new_price is not None and new_price != self.price:
 			changes["old_price"] = self.price
 			changes["new_price"] = new_price
 			self.price = new_price
-		
+
 		if new_quantity is not None and new_quantity != self.quantity:
 			changes["old_quantity"] = self.quantity
 			changes["new_quantity"] = new_quantity

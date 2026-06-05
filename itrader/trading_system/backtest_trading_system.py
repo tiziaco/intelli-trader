@@ -1,6 +1,8 @@
 import queue
 from datetime import datetime
+from typing import Any, Optional
 
+from itrader.core.clock import BacktestClock
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.price_handler.data_provider import PriceHandler
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
@@ -23,11 +25,11 @@ class TradingSystem(object):
 	carrying out either a backtest session.
 	"""
 	def __init__(
-		self, exchange='binance',
-		start_date = None,
-		end_date = '',
-		to_sql = False,
-	):
+		self, exchange: str = 'binance',
+		start_date: Optional[str] = None,
+		end_date: str = '',
+		to_sql: bool = False,
+	) -> None:
 		"""
 		Set up the backtest variables according to
 		what has been passed in.
@@ -39,11 +41,27 @@ class TradingSystem(object):
 		self.end_date = end_date
 		self.to_sql = to_sql
 
-		self.global_queue = queue.Queue()
-		self.price_handler = PriceHandler(self.exchange, [], '', start_date, end_dt = end_date)
+		self.global_queue: "queue.Queue[Any]" = queue.Queue()
+
+		# Determinism seam (D-09/D-10): an injected BacktestClock that returns the
+		# advanced simulation/bar time instead of wall-clock. M2a STAGES the seam —
+		# it is constructed here and advanced (set_time) on every ping in the run
+		# loop — but it currently has NO domain consumer: clock.now() is read
+		# nowhere, and every domain timestamp (order audit, transaction, cash,
+		# metrics) still uses wall-clock. Wiring domain "now" reads onto this clock
+		# is Phase 3 / M2b (D-09/D-10). Backtest RESULT determinism holds today
+		# because the result-bearing path is fed ping_event.time explicitly (see
+		# record_metrics in _run_backtest), not via clock.now(). The perf-telemetry
+		# datetime.now() in _run_backtest stays wall-clock (D-09 — run duration is
+		# not a domain fact).
+		self.clock = BacktestClock()
+
+		self.price_handler = PriceHandler(self.exchange, [], '', start_date or '', end_dt = end_date)
 		self.universe = DynamicUniverse(self.price_handler, self.global_queue)
 		self.strategies_handler = StrategiesHandler(self.global_queue, self.price_handler)
-		self.screeners_handler = ScreenersHandler(self.global_queue, self.price_handler)
+		# ScreenersHandler is a deferred subsystem (D-screener, ignore_errors override)
+		# so its constructor is untyped to the gate.
+		self.screeners_handler = ScreenersHandler(self.global_queue, self.price_handler)  # type: ignore[no-untyped-call]
 		self.portfolio_handler = PortfolioHandler(self.global_queue)
 		
 		# Create order storage for backtesting (in-memory)
@@ -68,7 +86,7 @@ class TradingSystem(object):
 		self.logger.info('Trading system initialised')
 
 
-	def _initialise_backtest_session(self):
+	def _initialise_backtest_session(self) -> None:
 		"""
 		Load the data in the price handler and define the pings vector
 		for the for-loop iteration.
@@ -76,8 +94,9 @@ class TradingSystem(object):
 		self.logger.info('Initialising backtest session')
 
 		self.universe.init_universe(
-			self.strategies_handler.get_strategies_universe(), 
-			self.screeners_handler.get_screeners_universe())
+			self.strategies_handler.get_strategies_universe(),
+			# D-screener deferred subsystem (ignore_errors override) — untyped to the gate.
+			self.screeners_handler.get_screeners_universe())  # type: ignore[no-untyped-call]
 		self.price_handler.set_symbols(self.universe.get_full_universe())
 		self.price_handler.set_timeframe(self.strategies_handler.min_timeframe,
 										self.screeners_handler.min_timeframe)
@@ -85,7 +104,7 @@ class TradingSystem(object):
 		self.ping.set_dates(next(iter(self.price_handler.prices.items()))[1].index)
 		#self.reporting.prices = self.price_handler.prices
 
-	def _run_backtest(self):
+	def _run_backtest(self) -> None:
 		"""
 		Carries out an for-loop that polls the
 		events queue and directs each event to either the
@@ -97,6 +116,12 @@ class TradingSystem(object):
 		start_time = datetime.now()  # Capture start time
 
 		for ping_event in self.ping:
+			# Advance the injected clock to the current simulation/bar time to keep
+			# the determinism seam staged. NOTE: the clock has no domain consumer
+			# yet — clock.now() is read nowhere; consumer-wiring is Phase 3 / M2b
+			# (D-09/D-10). Result determinism comes from passing ping_event.time
+			# explicitly to record_metrics below, not from clock.now().
+			self.clock.set_time(ping_event.time)
 			self.global_queue.put(ping_event)
 			self.event_handler.process_events()
 			for portfolio in self.portfolio_handler.get_active_portfolios():
@@ -106,7 +131,7 @@ class TradingSystem(object):
 		duration = end_time - start_time
 		print("Backtest duration:", duration)
 
-	def run(self, print_summary=False):
+	def run(self, print_summary: bool = False) -> None:
 		"""
 		Runs the backtest and print out the backtest statistics
 		at the end of the simulation.
@@ -115,7 +140,10 @@ class TradingSystem(object):
 		self._run_backtest()
 
 		if print_summary:
-			self.reporting.calculate_statistics()
+			# Dormant summary path: StatisticsReporting is a deferred D-sql/reporting
+			# subsystem (ignore_errors override) with the known-broken _prepare_data
+			# path (STATE.md 01-04); the working backtest runs print_summary=False.
+			self.reporting.calculate_statistics()  # type: ignore[no-untyped-call,call-arg]
 			self.reporting.print_summary()
 
 		# Close the logger file

@@ -2,7 +2,14 @@
 Portfolio-specific exceptions for the iTrader system.
 """
 
+from typing import Any, Optional, Union
+
 from .base import ITradingSystemError, ValidationError, ConfigurationError, StateError, ConcurrencyError, NotFoundError
+from ..ids import PortfolioId, TransactionId
+
+# 02-05 carry-over: portfolio_id is a PortfolioId (UUID) at the entity layer but an
+# int in the event layer; these diagnostic exceptions accept either form.
+PortfolioIdLike = Union[PortfolioId, int, str]
 
 
 class PortfolioError(ITradingSystemError):
@@ -13,7 +20,7 @@ class PortfolioError(ITradingSystemError):
 class InsufficientFundsError(PortfolioError):
     """Raised when attempting to execute a transaction with insufficient funds."""
     
-    def __init__(self, required_cash: float, available_cash: float, transaction_id: int = None):
+    def __init__(self, required_cash: float, available_cash: float, transaction_id: "Optional[TransactionId | int]" = None):
         self.required_cash = required_cash
         self.available_cash = available_cash
         self.transaction_id = transaction_id
@@ -25,7 +32,7 @@ class InsufficientFundsError(PortfolioError):
 class InvalidTransactionError(PortfolioError):
     """Raised when transaction data is invalid."""
     
-    def __init__(self, message: str, transaction_data: dict = None):
+    def __init__(self, message: str, transaction_data: Optional[dict[str, Any]] = None):
         self.transaction_data = transaction_data
         super().__init__(f"Invalid transaction: {message}")
 
@@ -33,7 +40,7 @@ class InvalidTransactionError(PortfolioError):
 class PortfolioNotFoundError(NotFoundError):
     """Raised when trying to access a non-existent portfolio."""
     
-    def __init__(self, portfolio_id: int):
+    def __init__(self, portfolio_id: PortfolioIdLike):
         self.portfolio_id = portfolio_id
         super().__init__("Portfolio", portfolio_id)
 
@@ -41,7 +48,7 @@ class PortfolioNotFoundError(NotFoundError):
 class PositionCalculationError(PortfolioError):
     """Raised when position calculations result in inconsistent state."""
     
-    def __init__(self, message: str, position_data: dict = None):
+    def __init__(self, message: str, position_data: Optional[dict[str, Any]] = None):
         self.position_data = position_data
         super().__init__(f"Position calculation error: {message}")
 
@@ -49,7 +56,7 @@ class PositionCalculationError(PortfolioError):
 class PortfolioConcurrencyError(ConcurrencyError):
     """Raised when concurrent access causes data inconsistency in portfolios."""
     
-    def __init__(self, operation: str, portfolio_id: int = None):
+    def __init__(self, operation: str, portfolio_id: Optional[PortfolioIdLike] = None):
         super().__init__(operation, portfolio_id, "portfolio")
 
 
@@ -62,7 +69,7 @@ class PortfolioHandlerError(PortfolioError):
 class InvalidPortfolioOperationError(PortfolioHandlerError):
     """Raised when attempting an invalid operation on a portfolio."""
     
-    def __init__(self, operation: str, portfolio_id: int = None, reason: str = None):
+    def __init__(self, operation: str, portfolio_id: Optional[PortfolioIdLike] = None, reason: Optional[str] = None):
         self.operation = operation
         self.portfolio_id = portfolio_id
         self.reason = reason
@@ -77,7 +84,7 @@ class InvalidPortfolioOperationError(PortfolioHandlerError):
 class PortfolioStateError(StateError):
     """Raised when portfolio is in invalid state for requested operation."""
     
-    def __init__(self, portfolio_id: int, current_state: str, required_state: str = None, operation: str = None):
+    def __init__(self, portfolio_id: PortfolioIdLike, current_state: str, required_state: Optional[str] = None, operation: Optional[str] = None):
         super().__init__(portfolio_id, current_state, required_state, operation)
         self.portfolio_id = portfolio_id
 
@@ -90,7 +97,7 @@ class PortfolioConfigurationError(ConfigurationError):
 class PortfolioValidationError(ValidationError):
     """Raised when portfolio validation fails."""
     
-    def __init__(self, portfolio_id: int, validation_type: str, details: str = None):
+    def __init__(self, portfolio_id: PortfolioIdLike, validation_type: str, details: Optional[str] = None):
         self.portfolio_id = portfolio_id
         self.validation_type = validation_type
         self.details = details

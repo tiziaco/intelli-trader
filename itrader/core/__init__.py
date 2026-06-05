@@ -10,6 +10,7 @@ This module provides the foundational components used throughout the system:
 # Import all exceptions and enums for easy access
 from .exceptions import *
 from .enums import *
+from .ids import *
 
 # Re-export everything for backward compatibility and convenience
 __all__ = [
@@ -20,6 +21,8 @@ __all__ = [
 # Extend __all__ with imported items
 from .exceptions import __all__ as exceptions_all
 from .enums import __all__ as enums_all
+from .ids import __all__ as ids_all
 
 __all__.extend(exceptions_all)
 __all__.extend(enums_all)
+__all__.extend(ids_all)

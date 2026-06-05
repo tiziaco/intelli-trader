@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready_to_plan
-stopped_at: Phase 01 complete (5/5) — ready to discuss Phase 2
-last_updated: 2026-06-04T14:53:58.271Z
-last_activity: 2026-06-04
+status: completed
+stopped_at: Phase 2 context gathered
+last_updated: "2026-06-04T21:25:30.168Z"
+last_activity: 2026-06-04 -- Phase 02 marked complete
 progress:
   total_phases: 8
-  completed_phases: 1
-  total_plans: 5
-  completed_plans: 5
-  percent: 13
+  completed_phases: 2
+  total_plans: 13
+  completed_plans: 13
+  percent: 25
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 2 — m2a — identity, money & determinism
+**Current focus:** Phase 02 — m2a-identity-money-determinism
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-04
+Phase: 02 — COMPLETE
+Plan: 1 of 8
+Status: Phase 02 complete
+Last activity: 2026-06-04 -- Phase 02 marked complete
 
 Progress: [██████████] 100%
 
@@ -57,6 +57,13 @@ Progress: [██████████] 100%
 | Phase 01 P03 | 13 | 3 tasks | 3 files |
 | Phase 01 P04 | 22 | 3 tasks | 8 files |
 | Phase 01 P05 | 18 | 3 tasks | 4 files |
+| Phase 02 P01 | 6 | 2 tasks | 6 files |
+| Phase 02 P02 | 4 | 4 tasks | 6 files |
+| Phase 02 P03 | 13 | 3 tasks | 11 files |
+| Phase 02 P05 | 22 | 3 tasks | 12 files |
+| Phase 02 P04 | 20 | 3 tasks | 9 files |
+| Phase 02 P06 | 8 | 3 tasks | 7 files |
+| Phase 02 P07 | 180 | 4 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -74,6 +81,20 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - Plan 01-04: DEF-01-A resolved with minimal float-coercion at the fill->transaction commission boundary (overlaps M4 #22 — reconcile at M4)
 - [Phase ?]: Plan 01-05: blessed BTCUSD SMA_MACD oracle frozen into committed test/golden/ and regression-locked by an exact (no-tolerance, D-13) run-path integration test; Phase 01 complete
 - [Phase ?]: Plan 01-05: DEF-01-C (no margin/liquidation model — un-liquidated short liability drives total_equity negative) BLESSED into the M1 oracle as current-behavior-to-preserve, deferred to M5
+- [Phase ?]: Plan 02-01: mypy --strict gate (make typecheck) stood up with deferral overrides for 7 D-live/D-sql/D-oanda/D-screener modules (D-05/D-06); gate runs but errors deferred to Plan 07
+- [Phase ?]: Plan 02-01: UUID Wave 0 scaffold lands red (asserts stdlib uuid.UUID type); money/clock scaffolds co-located with Plan 02 to avoid same-wave scaffold race
+- [Phase ?]: Plan 02-03: single UUIDv7 scheme via uuid_utils.compat.uuid7(); integer type-prefix scheme deleted (D-12/D-13/D-14)
+- [Phase ?]: Plan 02-03: InMemoryOrderStorage native-UUID keyed + flat Dict[uuid.UUID, Order] index for O(1) lookup (D-14, PERF2); nested dicts retained, scan elimination deferred to M4-06
+- [Phase ?]: Plan 02-03: removed int(portfolio_id) coercion in portfolio_handler.on_fill (Rule 1/3 deviation; file unowned by phase-02 plans) to keep suite green post UUID migration
+- [Phase ?]: Plan 02-05: 11 dead metaclass bases converted to 3 runtime_checkable Protocols + 8 real ABCs (D-07/D-08b)
+- [Phase ?]: Plan 02-05: minimal-conformance ABC carve-out — Universe.get_assets and AbstractStatistics methods left non-abstract (run-path subclasses don't implement them; deep rework deferred M5b #33/#38)
+- [Phase ?]: Plan 02-05: SimulatedExchange.configure added (Pitfall 3, D-08) delegating to update_config; conforms to AbstractExchange Protocol. Strategy.calculate_signal now @abstractmethod (#20 real enforcement)
+- [Phase ?]: Plan 02-05: mypy gate 316->906 is unmasked pre-existing untyped-def debt (not regression), deferred to Plan 07; SignalEvent.strategy_id int->StrategyId retype noted for Plan 07
+- [Phase ?]: Plan 02-04: money Decimal at entity boundaries; float execution+sizing untouched (M4)
+- [Phase ?]: Plan 02-04: portfolio.cash Decimal end-to-end (#17 round-trip removed); aggregate read-props kept float; cash via CashManager + Decimal aggregates deferred to M4 #22
+- [Phase ?]: Plan 02-04: DEF-02-04-A golden numeric oracle drift (behavioral oracle preserved, only numeric cols) deferred to Pattern E + owner-gated post-M2 numerical re-baseline
+- [Phase ?]: Plan 02-07: owner approved phase-close gate — D-15 numeric tolerance (rtol=1e-6, atol=5e-2 / 5c) accepted, identity+equity columns exact, time-boxed to M2b numerical re-freeze (Phase 3 SC4)
+- [Phase ?]: Plan 02-07: frozen=True/slots=True on PingEvent/BarEvent/PortfolioUpdateEvent/ScreenerEvent (M2-03); SignalEvent/FillEvent/OrderEvent left mutable (runtime mutation); make typecheck clean across D-05 in-scope package (Option 2 overrides for deferred subsystems)
 
 ### Pending Todos
 
@@ -100,6 +121,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-04T14:40:26.446Z
-Stopped at: Completed 01-05-PLAN.md — Phase 01 complete (oracle frozen + regression-locked)
+Last session: 2026-06-04T20:20:59.789Z
+Stopped at: Phase 2 context gathered
 Resume file: None

@@ -14,7 +14,8 @@ class FixedPercentage():
 	last price.
 	"""
 
-	def calculate_sl(signal: SignalEvent, sl_level = 0.03):
+	@staticmethod
+	def calculate_sl(signal: SignalEvent, sl_level: float = 0.03) -> None:
 		"""
 		Define stopLoss level at a % of the last close.
 
@@ -35,7 +36,8 @@ class FixedPercentage():
 			signal.stop_loss  = round(last_close * (1 + sl_level), 5)
 
 
-	def calculate_tp(signal: SignalEvent, tp_level = 0.03):
+	@staticmethod
+	def calculate_tp(signal: SignalEvent, tp_level: float = 0.03) -> None:
 		"""
 		Define stopLoss level at a % of the last close
 
@@ -62,7 +64,8 @@ class Proportional():
 	stop loss price.
 	"""
 
-	def calculate_tp(signal: SignalEvent, multiplier = 0.03):
+	@staticmethod
+	def calculate_tp(signal: SignalEvent, multiplier: float = 0.03) -> None:
 		"""
 		Define stopLoss level at a % of the last close
 
@@ -92,7 +95,8 @@ class ATRsltp():
 	The limit prices are based on the ATR indicator
 	"""
 
-	def calculate_sl(signal: SignalEvent, bars: pd.DataFrame, multiplier = 2, lookback = 20):
+	@staticmethod
+	def calculate_sl(signal: SignalEvent, bars: pd.DataFrame, multiplier: float = 2, lookback: int = 20) -> None:
 		"""
 		Define stopLoss level based on the ATR value.
 		It is calculated on the open or close price of the bar,
@@ -119,7 +123,8 @@ class ATRsltp():
 			signal.stop_loss  = bars.close.iloc[-1] + atr.iloc[-1] * multiplier
 
 
-	def calculate_tp(signal: SignalEvent, bars: pd.DataFrame, multiplier = 2, lookback = 20):
+	@staticmethod
+	def calculate_tp(signal: SignalEvent, bars: pd.DataFrame, multiplier: float = 2, lookback: int = 20) -> None:
 		"""
 		Define stopLoss level based on the ATR value.
 		It is calculated on the open or close price of the bar,

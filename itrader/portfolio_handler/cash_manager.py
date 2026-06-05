@@ -6,7 +6,7 @@ Handles cash balance management, precision, and cash flow operations.
 import threading
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
-from typing import Optional, List, Dict, Tuple
+from typing import Any, Optional, List, Dict, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
@@ -15,6 +15,7 @@ from itrader.core.exceptions import (
     InvalidTransactionError,
     ConcurrencyError
 )
+from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
 
 
@@ -53,13 +54,14 @@ class CashManager:
     - Balance validation and consistency checks
     """
     
-    def __init__(self, portfolio, initial_cash: float = 0.0):
+    def __init__(self, portfolio: Any, initial_cash: float | Decimal = 0.0) -> None:
         self.portfolio = portfolio
         self._lock = threading.RLock()
         self.logger = get_itrader_logger().bind(component="CashManager")
         
-        # Cash balance with high precision
-        self._balance = Decimal(str(initial_cash)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        # Cash balance with high precision (D-04 string entry via to_money;
+        # quantize to the cash scale at this ledger boundary, D-03 HALF_UP).
+        self._balance = to_money(initial_cash).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         
         # Reserved cash for pending orders
         self._reserved_cash = Decimal('0.00')
@@ -99,7 +101,7 @@ class CashManager:
         with self._lock:
             return self._reserved_cash
     
-    def deposit(self, amount: float, description: str = "Cash deposit", reference_id: str = None) -> bool:
+    def deposit(self, amount: float | Decimal, description: str = "Cash deposit", reference_id: Optional[str] = None) -> bool:
         """
         Deposit cash to the portfolio.
         
@@ -149,7 +151,7 @@ class CashManager:
             
             return True
     
-    def withdraw(self, amount: float, description: str = "Cash withdrawal", reference_id: str = None) -> bool:
+    def withdraw(self, amount: float | Decimal, description: str = "Cash withdrawal", reference_id: Optional[str] = None) -> bool:
         """
         Withdraw cash from the portfolio.
         
@@ -209,7 +211,7 @@ class CashManager:
             
             return True
     
-    def process_transaction_cash_flow(self, amount: float, is_debit: bool, description: str, transaction_id: str) -> bool:
+    def process_transaction_cash_flow(self, amount: float | Decimal, is_debit: bool, description: str, transaction_id: str) -> bool:
         """
         Process cash flow from a transaction.
         
@@ -226,7 +228,8 @@ class CashManager:
             InvalidTransactionError: If amount is invalid
             InsufficientFundsError: If insufficient funds for debit
         """
-        amount_decimal = self._validate_and_convert_amount(abs(amount), "transaction")
+        abs_amount = abs(to_money(amount))
+        amount_decimal = self._validate_and_convert_amount(abs_amount, "transaction")
         
         with self._lock:
             old_balance = self._balance
@@ -270,7 +273,58 @@ class CashManager:
             
             return True
     
-    def reserve_cash(self, amount: float, description: str, reference_id: str) -> bool:
+    def apply_transaction_delta(self, delta: Decimal, description: str = "Transaction cash delta", reference_id: Optional[str] = None) -> bool:
+        """Apply a signed, full-precision Decimal delta to the cash ledger.
+
+        Precision-preserving transaction-path primitive (CR-03). Unlike
+        ``deposit``/``withdraw``/``process_transaction_cash_flow`` this does NOT
+        route through ``_validate_and_convert_amount`` (so it never quantizes the
+        delta to 2dp) and does NOT enforce the deposit/withdraw min/max-balance
+        policy gates — the transaction layer already ran its own funds check in
+        ``TransactionManager._check_funds_availability`` before calling this.
+
+        The full instrument precision of ``delta`` is preserved on ``_balance``.
+        A negative delta is an outflow (BUY cost), a positive delta an inflow
+        (SELL proceeds). A ``CashOperation`` is recorded for the audit trail.
+
+        Args:
+            delta: Signed full-precision Decimal cash delta (no quantization).
+            description: Audit description.
+            reference_id: Optional reference ID (e.g. transaction id).
+
+        Returns:
+            bool: True if applied.
+        """
+        with self._lock:
+            old_balance = self._balance
+            new_balance = old_balance + delta
+
+            self._balance = new_balance
+
+            operation_type = (
+                CashOperationType.TRANSACTION_DEBIT
+                if delta < 0
+                else CashOperationType.TRANSACTION_CREDIT
+            )
+            self._create_operation(
+                operation_type,
+                abs(delta),
+                description,
+                reference_id,
+                old_balance,
+                new_balance,
+            )
+
+            self.logger.debug("Transaction cash delta applied",
+                delta=str(delta),
+                old_balance=str(old_balance),
+                new_balance=str(new_balance),
+                reference_id=reference_id
+            )
+
+            return True
+
+    def reserve_cash(self, amount: float | Decimal, description: str, reference_id: str) -> bool:
         """
         Reserve cash for pending orders.
         
@@ -319,7 +373,7 @@ class CashManager:
             
             return True
     
-    def release_cash_reservation(self, amount: float, description: str, reference_id: str) -> bool:
+    def release_cash_reservation(self, amount: float | Decimal, description: str, reference_id: str) -> bool:
         """
         Release reserved cash.
         
@@ -410,7 +464,7 @@ class CashManager:
             
             return True
     
-    def _validate_and_convert_amount(self, amount: float, operation_type: str) -> Decimal:
+    def _validate_and_convert_amount(self, amount: float | Decimal, operation_type: str) -> Decimal:
         """Validate and convert amount to Decimal with proper precision."""
         if amount <= 0:
             raise InvalidTransactionError(
@@ -418,8 +472,8 @@ class CashManager:
                 {"amount": amount}
             )
         
-        # Convert to Decimal with proper precision
-        amount_decimal = Decimal(str(amount)).quantize(self.precision, rounding=ROUND_HALF_UP)
+        # Convert to Decimal with proper precision (D-04 string entry).
+        amount_decimal = to_money(amount).quantize(self.precision, rounding=ROUND_HALF_UP)
         
         if amount_decimal <= 0:
             raise InvalidTransactionError(

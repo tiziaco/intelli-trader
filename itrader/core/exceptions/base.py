@@ -2,6 +2,9 @@
 Base exception classes for the iTrader system.
 """
 
+import uuid
+from typing import Optional
+
 
 class ITradingSystemError(Exception):
     """Base exception for all iTrader system errors."""
@@ -11,7 +14,7 @@ class ITradingSystemError(Exception):
 class ValidationError(ITradingSystemError):
     """Base exception for validation errors."""
     
-    def __init__(self, field: str, value: str = None, message: str = None):
+    def __init__(self, field: str, value: Optional[str] = None, message: Optional[str] = None):
         self.field = field
         self.value = value
         error_msg = f"Validation error for field '{field}'"
@@ -25,7 +28,7 @@ class ValidationError(ITradingSystemError):
 class ConfigurationError(ITradingSystemError):
     """Base exception for configuration errors."""
     
-    def __init__(self, config_key: str = None, config_value: str = None, reason: str = None):
+    def __init__(self, config_key: Optional[str] = None, config_value: Optional[str] = None, reason: Optional[str] = None):
         self.config_key = config_key
         self.config_value = config_value
         self.reason = reason
@@ -42,7 +45,7 @@ class ConfigurationError(ITradingSystemError):
 class StateError(ITradingSystemError):
     """Base exception for invalid state transitions or operations."""
     
-    def __init__(self, entity_id: int, current_state: str, required_state: str = None, operation: str = None):
+    def __init__(self, entity_id: uuid.UUID | int | str, current_state: str, required_state: Optional[str] = None, operation: Optional[str] = None):
         self.entity_id = entity_id
         self.current_state = current_state
         self.required_state = required_state
@@ -59,7 +62,7 @@ class StateError(ITradingSystemError):
 class ConcurrencyError(ITradingSystemError):
     """Base exception for concurrency-related errors."""
     
-    def __init__(self, operation: str, entity_id: int = None, resource: str = None):
+    def __init__(self, operation: str, entity_id: Optional[uuid.UUID | int | str] = None, resource: Optional[str] = None):
         self.operation = operation
         self.entity_id = entity_id
         self.resource = resource
@@ -74,7 +77,7 @@ class ConcurrencyError(ITradingSystemError):
 class NotFoundError(ITradingSystemError):
     """Base exception for entity not found errors."""
     
-    def __init__(self, entity_type: str, entity_id: int = None, identifier: str = None):
+    def __init__(self, entity_type: str, entity_id: Optional[uuid.UUID | int | str] = None, identifier: Optional[str] = None):
         self.entity_type = entity_type
         self.entity_id = entity_id
         self.identifier = identifier

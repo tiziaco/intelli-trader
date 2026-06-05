@@ -1,9 +1,13 @@
+import random
 from queue import Queue
+from typing import Any, Optional
+
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
-from itrader.events_handler.event import FillEvent, OrderEvent
+from itrader.events_handler.event import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
+from itrader.config import SystemConfig, get_system_config_provider
 from itrader.logger import get_itrader_logger
 
 class ExecutionHandler(AbstractExecutionHandler):
@@ -21,7 +25,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 	while maintaining backward compatibility with existing systems.
 	"""
 
-	def __init__(self, global_queue: Queue):
+	def __init__(self, global_queue: "Queue[Any]") -> None:
 		"""
 		Parameters
 		----------
@@ -32,14 +36,39 @@ class ExecutionHandler(AbstractExecutionHandler):
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
 
 		self.global_queue = global_queue
-		
-		# Initialize exchanges (requires logger)
-		self.exchanges: dict[str, AbstractExchange] = self.init_exchanges()
 
-		self.logger.info('Execution Handler initialized')
+		# Determinism seam (D-11): construct a SINGLE seeded random.Random at engine
+		# wiring and inject it into every stochastic component (SimulatedExchange +
+		# its slippage model). The seed comes from the documented system config key
+		# `performance.rng_seed` (default 42); a YAML override in settings/system.yaml
+		# wins when present. One shared Random — never seeded per-call or duplicated —
+		# so a backtest run is reproducible (#5/PERF2).
+		self._rng_seed: int = self._resolve_rng_seed()
+		self._rng: random.Random = random.Random(self._rng_seed)
+
+		# Initialize exchanges (requires logger + rng)
+		self.exchanges: dict[str, Optional[AbstractExchange]] = self.init_exchanges()
+
+		self.logger.info('Execution Handler initialized (rng_seed=%s)', self._rng_seed)
+
+	def _resolve_rng_seed(self) -> int:
+		"""Resolve the determinism seed from the system config (D-11).
+
+		Reads `performance.rng_seed` via the system config provider when a
+		`settings/system.yaml` is present, otherwise falls back to the documented
+		`PerformanceSettings.rng_seed` default. `SystemConfig.from_dict` applies the
+		default for any missing key, so this is robust to an absent/partial YAML.
+		"""
+		try:
+			provider_data = get_system_config_provider().get_config()
+		except Exception as exc:  # provider/registry unavailable -> documented default
+			self.logger.debug('System config provider unavailable, using default rng_seed: %s', exc)
+			provider_data = {}
+		system_config = SystemConfig.from_dict(provider_data or {})
+		return int(system_config.performance.rng_seed)
 
 
-	def on_order(self, event: OrderEvent):
+	def on_order(self, event: OrderEvent) -> None:
 		"""Route an order event to the configured exchange's order router."""
 		try:
 			exchange = self.exchanges.get(event.exchange)
@@ -52,12 +81,12 @@ class ExecutionHandler(AbstractExecutionHandler):
 			self.logger.error('Unexpected error routing order for %s %s: %s',
 							 event.ticker, event.action, str(e), exc_info=True)
 
-	def on_market_data(self, bar):
+	def on_market_data(self, bar: BarEvent) -> None:
 		"""Drive resting-order matching on each exchange with a new bar."""
 		# Dedup by instance identity: multiple venue aliases (e.g. 'simulated' and 'csv')
 		# may point to the same exchange object; driving it once per bar avoids
 		# double-matching the resting-order book (DEF-01-B alias, Plan 01-04).
-		seen = set()
+		seen: set[int] = set()
 		for name, exchange in self.exchanges.items():
 			if exchange is None or id(exchange) in seen:
 				continue
@@ -69,20 +98,22 @@ class ExecutionHandler(AbstractExecutionHandler):
 								 name, str(e), exc_info=True)
 
 	
-	def init_exchanges(self):
+	def init_exchanges(self) -> dict[str, Optional[AbstractExchange]]:
 		"""
 		Initialize configured exchanges.
 		
 		Creates exchange instances using their default configurations.
 		Each exchange manages its own fee models, slippage simulation, etc.
 		"""
-		simulated = SimulatedExchange(self.global_queue)
+		# Inject the single seeded Random (D-11) so the exchange + its slippage
+		# model share one deterministic RNG instance for the whole backtest run.
+		simulated = SimulatedExchange(self.global_queue, rng=self._rng)
 		# The golden backtest trades BTCUSD, but the default exchange preset only lists
 		# *USDT symbols. Add BTCUSD to this instance's supported set so validate_symbol
 		# admits the golden ticker for the offline run (DEF-01-B, Plan 01-04). Mutating the
 		# instance set (not the shared preset) keeps other exchanges/tests unaffected.
 		simulated._supported_symbols = set(simulated._supported_symbols) | {'BTCUSD'}
-		exchanges = {
+		exchanges: dict[str, Optional[AbstractExchange]] = {
 			'simulated': simulated,
 			# Backtest portfolios use exchange="csv" (offline golden feed). Orders carry the
 			# portfolio's exchange string, so the 'csv' venue must resolve to the simulated
@@ -107,7 +138,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 		
 		return exchanges
 
-	def get_exchange_health(self, exchange_name: str = None) -> dict:
+	def get_exchange_health(self, exchange_name: Optional[str] = None) -> dict[str, Any]:
 		"""
 		Get health status for one or all exchanges.
 		
@@ -121,9 +152,9 @@ class ExecutionHandler(AbstractExecutionHandler):
 		dict
 			Health status information for requested exchange(s)
 		"""
-		health_data = {}
-		
-		exchanges_to_check = [exchange_name] if exchange_name else self.exchanges.keys()
+		health_data: dict[str, Any] = {}
+
+		exchanges_to_check = [exchange_name] if exchange_name else list(self.exchanges.keys())
 		
 		for name in exchanges_to_check:
 			exchange = self.exchanges.get(name)

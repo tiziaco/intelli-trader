@@ -3,7 +3,7 @@ import pytz
 import numpy as np
 import pandas as pd
 
-from typing import Dict
+from typing import Any, Dict, Optional
 from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
@@ -51,10 +51,10 @@ class PriceHandler(AbstractPriceHandler):
 	CSV_TICKER = 'BTCUSD'
 
 	def __init__(self, exchange: str,
-				symbols: list, timeframe: str,
-				start_dt: str, end_dt: str = None,
+				symbols: list[str], timeframe: str,
+				start_dt: str, end_dt: Optional[str] = None,
 				base_currency: str = 'USDT',
-				csv_path: str = None):
+				csv_path: Optional[str] = None) -> None:
 
 		self.timeframe = timeframe
 		self.start_date = start_dt
@@ -65,7 +65,12 @@ class PriceHandler(AbstractPriceHandler):
 		# D-07: offline/csv feed branch lives INSIDE PriceHandler. On the csv
 		# path we construct neither SqlHandler (no PostgreSQL) nor a CCXT
 		# exchange (no network) — the backtest reads the committed golden CSV.
+		# The SQL/CCXT attrs are deferred subsystems (D-sql/D-oanda) typed Any so
+		# the dormant non-csv branches stay type-clean without widening scope.
 		self.is_csv = (exchange is not None and exchange.lower() == 'csv')
+		self.csv_path: Optional[str]
+		self.exchange: Any
+		self.sql_handler: Any
 		if self.is_csv:
 			self.csv_path = csv_path if csv_path is not None else self.CSV_DEFAULT_PATH
 			self.exchange = None
@@ -75,17 +80,20 @@ class PriceHandler(AbstractPriceHandler):
 			self.csv_path = None
 			self.exchange = self._init_exchange(exchange)
 			self.symbols = self._init_symbols(symbols)
-			self.sql_handler = SqlHandler()
+			# SqlHandler is a deferred subsystem (D-sql, ignore_errors override) so
+			# its constructor is untyped to the gate; this non-csv branch is dormant
+			# on the golden backtest path.
+			self.sql_handler = SqlHandler()  # type: ignore[no-untyped-call]
 
 		self.logger = get_itrader_logger().bind(component="PriceHandler")
 		self.logger.info('Price Handler initialized')
 
 	@property
-	def available_symbols(self) -> list:
-		return self.prices.keys()
+	def available_symbols(self) -> list[str]:
+		return list(self.prices.keys())
 
-	
-	def load_data(self):
+
+	def load_data(self) -> None:
 		"""
 		Load price data from the data provider or sql database and
 		store it in a dictionary
@@ -120,7 +128,7 @@ class PriceHandler(AbstractPriceHandler):
 		
 		self.logger.info('Price data loaded')
 
-	def _load_csv_data(self):
+	def _load_csv_data(self) -> None:
 		"""
 		Load the golden CSV into self.prices in the EXACT frame shape the
 		CCXT path produces (see CCXT._format_data): lowercase OHLCV columns
@@ -172,7 +180,7 @@ class PriceHandler(AbstractPriceHandler):
 		self.prices[self.CSV_TICKER.upper()] = data
 		self.logger.info('Price data loaded from csv (%d bars)', len(data))
 
-	def update_data(self):
+	def update_data(self) -> None:
 		"""
 		Update the price data
 		"""
@@ -205,8 +213,17 @@ class PriceHandler(AbstractPriceHandler):
 				self.logger.info('Price updated')
 				break
 
+	# Minimal-conformance stubs (D-07): the AbstractPriceHandler Protocol declares
+	# these but the backtest path never calls them (live/streaming concern). Provide
+	# concrete NotImplementedError bodies so PriceHandler is not implicitly abstract.
+	def get_last_bar(self, ticker: str) -> Any:
+		raise NotImplementedError("get_last_bar is not used on the backtest path")
+
+	def get_last_date(self, ticker: str) -> Any:
+		raise NotImplementedError("get_last_date is not used on the backtest path")
+
 	#******* Data Manipulation ***************
-	def get_last_close(self, ticker: str):
+	def get_last_close(self, ticker: str) -> Any:
 		"""
 		Get the last close price for a ticker.
 
@@ -230,7 +247,7 @@ class PriceHandler(AbstractPriceHandler):
 		else:
 			self.logger.error('Price data for %s not found', ticker)
 
-	def get_bar(self, ticker: str, time: pd.Timestamp):
+	def get_bar(self, ticker: str, time: Any) -> Any:
 		"""
 		Get a specific bar at a specified time in the time series.
 
@@ -256,9 +273,9 @@ class PriceHandler(AbstractPriceHandler):
 		else:
 			self.logger.error('Price data for %s not found', ticker)
 
-	def get_bars(self, ticker: str, 
-			start_dt: pd.Timestamp = None,
-			end_dt: pd.Timestamp = None) -> pd.DataFrame:
+	def get_bars(self, ticker: str,
+			start_dt: Optional[pd.Timestamp] = None,
+			end_dt: Optional[pd.Timestamp] = None) -> Any:
 		"""
 		Slice the dataframe for a defined tickerbetwen the start 
 		and the end date.
@@ -279,7 +296,7 @@ class PriceHandler(AbstractPriceHandler):
 		"""
 		if ticker not in self.available_symbols:
 			self.logger.error('Price data for %s not found', ticker)
-			return
+			return None
 		if start_dt is not None and end_dt is not None:
 			return self.prices[ticker].loc[start_dt : end_dt]
 		elif start_dt is not None and end_dt is None:
@@ -319,13 +336,15 @@ class PriceHandler(AbstractPriceHandler):
 		if timeframe != current_timeframe:
 			ratio = timeframe / current_timeframe
 			start_dt = (time - current_timeframe * window * ratio) + timeframe
-			return resample_ohlcv(self.get_bars(ticker, start_dt, time+timeframe), 
-						timeframe).head(window)
+			# resample_ohlcv takes a pandas offset string, not a timedelta.
+			resample_rule = timedelta_to_str(timeframe) or self.timeframe
+			return resample_ohlcv(self.get_bars(ticker, start_dt, time+timeframe),
+						resample_rule).head(window)
 		else:
 			start_dt = time - (timeframe * window) + timeframe
 			return self.get_bars(ticker, start_dt, time)
 
-	def to_megaframe(self, time: pd.Timestamp, tf_delta: pd.Timedelta, window: int):
+	def to_megaframe(self, time: pd.Timestamp, tf_delta: Any, window: int) -> Any:
 		"""
 		Put all the price data in a MultiIndex DataFrame with 2 levels
 		columns: 1st = symbol and 2nd = OHLCV data.
@@ -346,7 +365,7 @@ class PriceHandler(AbstractPriceHandler):
 		megaframe: 'DataFrame'
 			DataFrame with prices data of all the stored symbols
 		"""
-		df_list=[]
+		df_list: list[Any] = []
 		for symbol in self.available_symbols:
 			df = self.get_resampled_bars(time, symbol, tf_delta, window)
 			df.name = symbol
@@ -359,18 +378,20 @@ class PriceHandler(AbstractPriceHandler):
 
 	## Setters
 
-	def set_symbols(self, tickers: list[str]):
+	def set_symbols(self, tickers: list[str]) -> None:
 		if 'all' in tickers:
 			self.symbols = self.exchange.get_tradable_symbols()
 		else:
 			self.symbols = tickers
-	
-	def set_timeframe(self, timeframe_strat: timedelta, timeframe_scr: timedelta):
+
+	def set_timeframe(self, timeframe_strat: timedelta, timeframe_scr: timedelta) -> None:
 		min_timeframe = min([timeframe_strat, timeframe_scr])
-		self.timeframe = timedelta_to_str(min_timeframe)
+		new_timeframe = timedelta_to_str(min_timeframe)
+		if new_timeframe is not None:
+			self.timeframe = new_timeframe
 
 	## Init methods
-	def _init_symbols(self, symbols: list):
+	def _init_symbols(self, symbols: list[str]) -> Any:
 		"""
 		Initialise the symbols
 
@@ -380,19 +401,21 @@ class PriceHandler(AbstractPriceHandler):
 			The list of symbols to be downloaded.
 		"""
 		# Delete duplicated symbols
-		symbols = np.unique(symbols)
+		unique_symbols = np.unique(symbols)
 
-		if 'all' in symbols:
+		if 'all' in unique_symbols:
 			return self.exchange.get_tradable_symbols()
-		return symbols
+		return unique_symbols
 
-	def _init_exchange(self, exchange: str):
+	def _init_exchange(self, exchange: str) -> Any:
 		"""
 		Factory method to initialise the correct exchange
 		"""
 		exchange_name = exchange.lower()
 		if exchange_name == 'binance':
-			return CCXT_exchange(exchange_name, self.base_currency)
+			# CCXT_exchange is a deferred subsystem (D-oanda override); its abstract
+			# completeness is out of M2a scope and this branch is dormant on the csv path.
+			return CCXT_exchange(exchange_name, self.base_currency)  # type: ignore[abstract]
 		# elif exchange_name == 'kraken':
 		# 	return CCXTKrakenExchange()
 		else:

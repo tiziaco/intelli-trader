@@ -3,7 +3,7 @@ import sys
 from typing import Any
 
 import structlog
-from structlog.types import EventDict
+from structlog.types import EventDict, Processor
 
 
 # Export only what's needed for the simple approach
@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 
-def drop_color_message_key(_, __, event_dict: EventDict) -> EventDict:
+def drop_color_message_key(_: Any, __: str, event_dict: EventDict) -> EventDict:
     """
     Uvicorn logs the message a second time in the extra `color_message`, but we don't
     need it. This processor drops the key from the event dict if it exists.
@@ -24,7 +24,7 @@ def drop_color_message_key(_, __, event_dict: EventDict) -> EventDict:
     return event_dict
 
 
-def reorder_fields_for_console(logger, method_name, event_dict):
+def reorder_fields_for_console(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
     """
     Reorder fields to show: timestamp, level, logger_name.component, message
     This makes the logger name with component appear before the main message with blue color.
@@ -50,11 +50,11 @@ def reorder_fields_for_console(logger, method_name, event_dict):
     return event_dict
 
 
-def setup_logging(json_logs: bool = False, log_level: str = "INFO"):
+def setup_logging(json_logs: bool = False, log_level: str = "INFO") -> None:
     """Configure structlog for the itrader package"""
 
     # Simple, working configuration that displays logger names
-    processors = [
+    processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -78,6 +78,7 @@ def setup_logging(json_logs: bool = False, log_level: str = "INFO"):
     )
 
     # Set up the formatter - this is the key part that makes logger names work
+    log_renderer: Processor
     if json_logs:
         log_renderer = structlog.processors.JSONRenderer()
     else:
@@ -121,7 +122,7 @@ class ITraderStructLogger:
     def __init__(self, log_name: str = "itrader"):
         self.logger = structlog.stdlib.get_logger(log_name)
 
-    def bind(self, **new_values: Any):
+    def bind(self, **new_values: Any) -> "ITraderStructLogger":
         """
         Bind values to create a new logger with bound context.
         This is the core method for the simple approach.
@@ -144,28 +145,28 @@ class ITraderStructLogger:
         
         return new_logger
 
-    def debug(self, event: str | None = None, *args: Any, **kw: Any):
+    def debug(self, event: str | None = None, *args: Any, **kw: Any) -> None:
         self.logger.debug(event, *args, **kw)
 
-    def info(self, event: str | None = None, *args: Any, **kw: Any):
+    def info(self, event: str | None = None, *args: Any, **kw: Any) -> None:
         self.logger.info(event, *args, **kw)
 
-    def warning(self, event: str | None = None, *args: Any, **kw: Any):
+    def warning(self, event: str | None = None, *args: Any, **kw: Any) -> None:
         self.logger.warning(event, *args, **kw)
 
     warn = warning
 
-    def error(self, event: str | None = None, *args: Any, **kw: Any):
+    def error(self, event: str | None = None, *args: Any, **kw: Any) -> None:
         self.logger.error(event, *args, **kw)
 
-    def critical(self, event: str | None = None, *args: Any, **kw: Any):
+    def critical(self, event: str | None = None, *args: Any, **kw: Any) -> None:
         self.logger.critical(event, *args, **kw)
 
-    def exception(self, event: str | None = None, *args: Any, **kw: Any):
+    def exception(self, event: str | None = None, *args: Any, **kw: Any) -> None:
         self.logger.exception(event, *args, **kw)
 
 
-def init_logger(config):
+def init_logger(config: Any) -> "ITraderStructLogger":
     """
     Initialize the structured logger for itrader package.
 
@@ -186,10 +187,10 @@ def init_logger(config):
 
 
 # Global logger instance for simple usage
-_global_logger = None
+_global_logger: "ITraderStructLogger | None" = None
 
 
-def get_itrader_logger():
+def get_itrader_logger() -> "ITraderStructLogger":
     """
     Get the global itrader logger instance.
     This is the RECOMMENDED approach for simple, efficient logging.

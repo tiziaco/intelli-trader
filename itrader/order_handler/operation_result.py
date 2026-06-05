@@ -6,7 +6,7 @@ ensuring consistent error handling and event generation.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, List, Optional
 from ..events_handler.event import OrderEvent
 
 
@@ -23,11 +23,11 @@ class OperationResult:
 	order_events: List[OrderEvent] = field(default_factory=list)
 	error_details: Optional[str] = None
 	operation_type: str = ""
-	affected_order_ids: List[int] = field(default_factory=list)
+	affected_order_ids: List[Any] = field(default_factory=list)
 	
 	@classmethod
-	def success_result(cls, message: str, order_events: List[OrderEvent] = None, 
-	                  operation_type: str = "", affected_order_ids: List[int] = None):
+	def success_result(cls, message: str, order_events: Optional[List[OrderEvent]] = None,
+	                  operation_type: str = "", affected_order_ids: Optional[List[Any]] = None) -> "OperationResult":
 		"""Create a successful operation result."""
 		return cls(
 			success=True,
@@ -38,8 +38,8 @@ class OperationResult:
 		)
 	
 	@classmethod
-	def failure_result(cls, message: str, error_details: str = None, 
-	                  operation_type: str = ""):
+	def failure_result(cls, message: str, error_details: Optional[str] = None,
+	                  operation_type: str = "") -> "OperationResult":
 		"""Create a failed operation result."""
 		return cls(
 			success=False,
@@ -48,7 +48,7 @@ class OperationResult:
 			operation_type=operation_type
 		)
 	
-	def __str__(self):
+	def __str__(self) -> str:
 		status = "SUCCESS" if self.success else "FAILURE"
 		return f"{status}: {self.message}"
 
@@ -68,14 +68,14 @@ class SignalProcessingResult:
 	@property
 	def all_order_events(self) -> List[OrderEvent]:
 		"""Get all OrderEvents from all operation results."""
-		events = []
+		events: List[OrderEvent] = []
 		for result in self.operation_results:
 			events.extend(result.order_events)
 		return events
-	
+
 	@classmethod
-	def from_operations(cls, operation_results: List[OperationResult], 
-	                   overall_message: str = ""):
+	def from_operations(cls, operation_results: List[OperationResult],
+	                   overall_message: str = "") -> "SignalProcessingResult":
 		"""Create SignalProcessingResult from a list of operation results."""
 		overall_success = any(result.success for result in operation_results)
 		if not overall_message:

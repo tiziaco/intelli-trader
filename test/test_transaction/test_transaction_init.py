@@ -1,4 +1,5 @@
 import unittest
+from decimal import Decimal
 from datetime import datetime
 
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
@@ -60,7 +61,10 @@ class TestTransaction(unittest.TestCase):
 		self.assertEqual(transaction.type, TransactionType.BUY)
 		self.assertIs(type(transaction.time), datetime)
 		self.assertEqual(transaction.ticker, 'BTCUSDT')
-		self.assertEqual(transaction.price, 42350.72)
+		# Money is Decimal end-to-end (D-02/D-04): entered via to_money(str(x)),
+		# so price equals the exact Decimal, not the binary float 42350.72.
+		self.assertIsInstance(transaction.price, Decimal)
+		self.assertEqual(transaction.price, Decimal('42350.72'))
 		self.assertEqual(transaction.quantity, 1)
 		self.assertEqual(transaction.portfolio_id, 'portfolio_id')
 

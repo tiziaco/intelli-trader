@@ -581,23 +581,27 @@ class TestSimulatedExchangeEdgeCases:
         symbols1.add('NEW_SYMBOL')
         assert 'NEW_SYMBOL' not in symbols2
 
-    @patch('random.random')
-    def test_failure_simulation_deterministic(self, mock_random):
-        """Test failure simulation with deterministic random values."""
+    def test_failure_simulation_deterministic(self):
+        """Test failure simulation with deterministic random values.
+
+        D-11: the exchange now draws from an injected ``random.Random`` instance
+        (``self._rng``), not the global ``random`` module, so patch the instance's
+        bound ``random`` method to control the draw.
+        """
         self.exchange.connect()
         self.exchange.update_config(simulate_failures=True, failure_rate=0.5)
-        
+
         # Test failure (random returns 0.3, which is < 0.5)
-        mock_random.return_value = 0.3
-        order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
-        result = self.exchange.execute_order(order)
-        assert result.success is False
+        with patch.object(self.exchange._rng, 'random', return_value=0.3):
+            order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
+            result = self.exchange.execute_order(order)
+            assert result.success is False
 
         # Test success (random returns 0.7, which is >= 0.5)
-        mock_random.return_value = 0.7
-        order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
-        result = self.exchange.execute_order(order)
-        assert result.success is True
+        with patch.object(self.exchange._rng, 'random', return_value=0.7):
+            order = OrderEvent(datetime.now(), 'BTCUSDT', 'BUY', 150.0, 100.0, 'simulated', 1, 1, OrderType.MARKET)
+            result = self.exchange.execute_order(order)
+            assert result.success is True
 
 
 class TestSimulatedExchangeRouting(unittest.TestCase):

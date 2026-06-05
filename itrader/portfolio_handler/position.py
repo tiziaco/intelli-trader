@@ -1,9 +1,17 @@
 from enum import Enum
 from datetime import datetime
+from decimal import Decimal
+from typing import Any, Optional, Union
 
 from itrader import idgen
-from itrader.portfolio_handler.transaction import Transaction, TransactionType
-from itrader.core.enums import PositionSide
+from itrader.portfolio_handler.transaction import Transaction
+from itrader.core.enums import PositionSide, TransactionType
+from itrader.core.ids import PortfolioId, PositionId
+from itrader.core.money import to_money
+
+# Money values accepted at construction boundaries (D-04): to_money normalises
+# int/float/Decimal to Decimal, so accept the wider input type on the seams.
+MoneyInput = Union[Decimal, int, float]
 
 position_side_map = {
 	"LONG": PositionSide.LONG,
@@ -25,39 +33,41 @@ class Position(object):
 		entry_date: datetime,
 		ticker: str,
 		side: PositionSide,
-		price: float,
-		buy_quantity: float,
-		sell_quantity: float,
-		avg_bought: float,
-		avg_sold: float,
-		buy_commission: float,
-		sell_commission: float,
+		price: MoneyInput,
+		buy_quantity: MoneyInput,
+		sell_quantity: MoneyInput,
+		avg_bought: MoneyInput,
+		avg_sold: MoneyInput,
+		buy_commission: MoneyInput,
+		sell_commission: MoneyInput,
 		is_open: bool,
-		portfolio_id: int
-	):
-		self.id = idgen.generate_position_id()
+		portfolio_id: "PortfolioId | int"
+	) -> None:
+		self.id: PositionId = PositionId(idgen.generate_position_id())
 		self.ticker = ticker
 		self.side = side
-		self.current_price = price
-		self.current_time = entry_date 
-		self.buy_quantity = buy_quantity
-		self.sell_quantity = sell_quantity
-		self.avg_bought = avg_bought
-		self.avg_sold = avg_sold
-		self.buy_commission = buy_commission
-		self.sell_commission = sell_commission
+		# Money fields enter the Decimal domain at the construction boundary (D-04):
+		# callers may pass int/float (e.g. the opposite-side 0 in open_position).
+		self.current_price = to_money(price)
+		self.current_time = entry_date
+		self.buy_quantity = to_money(buy_quantity)
+		self.sell_quantity = to_money(sell_quantity)
+		self.avg_bought = to_money(avg_bought)
+		self.avg_sold = to_money(avg_sold)
+		self.buy_commission = to_money(buy_commission)
+		self.sell_commission = to_money(sell_commission)
 		self.entry_date = entry_date
-		self.exit_date = None
+		self.exit_date: Optional[datetime] = None
 		self.is_open = is_open
 		self.portfolio_id = portfolio_id
-	
-	def __repr__(self):
+
+	def __repr__(self) -> str:
 		rep = ('%s, %s, %s'%(self.ticker, self.side.name, self.net_quantity))
 		return rep
 
 
 	@property
-	def market_value(self) -> float:
+	def market_value(self) -> Decimal:
 		"""
 		Return the market value (respecting the direction) of the
 		Position based on the current price available to the Position.
@@ -69,45 +79,41 @@ class Position(object):
 			return self.current_price * abs(self.net_quantity)
 
 	@property
-	def avg_price(self) -> float:
+	def avg_price(self) -> Decimal:
 		"""
 		The average price paid for all assets on the long or short side.
 		"""
-		# if self.net_quantity == 0:
-		# 	return 0.0
-		# DEF-01-A (overlaps M4 Decimal-money scope): the fee model returns Decimal commissions
-		# (even ZeroFeeModel -> Decimal('0')), but avg_bought/avg_sold/quantities are float, so
-		# the raw mix raises TypeError on the first fill. Minimal, type-consistent local fix:
-		# coerce the commission to float here so this float-based property stays float end-to-end.
-		# Must be reconciled when M4 moves money to Decimal end-to-end (#22 Critical).
+		# DEF-01-A reconciled here (M2a #17/#22): commissions are now Decimal
+		# end-to-end, so the former float(self.*_commission) coercion is removed —
+		# the whole expression stays in the Decimal domain.
 		if self.side == PositionSide.LONG:
-			return (self.avg_bought * self.buy_quantity + float(self.buy_commission)) / self.buy_quantity
+			return (self.avg_bought * self.buy_quantity + self.buy_commission) / self.buy_quantity
 		else: # side = 'SHORT'
-			return (self.avg_sold * self.sell_quantity - float(self.sell_commission)) / self.sell_quantity
+			return (self.avg_sold * self.sell_quantity - self.sell_commission) / self.sell_quantity
 
 	@property
-	def net_quantity(self) -> float:
+	def net_quantity(self) -> Decimal:
 		"""
 		The difference in the quantity of assets bought and sold to date.
 		"""
 		return abs(self.buy_quantity - self.sell_quantity)
 
 	@property
-	def total_bought(self) -> float:
+	def total_bought(self) -> Decimal:
 		"""
 		Calculates the total average cost of assets bought.
 		"""
 		return self.avg_bought * self.buy_quantity
 
 	@property
-	def total_sold(self) -> float:
+	def total_sold(self) -> Decimal:
 		"""
 		Calculates the total average cost of assets sold.
 		"""
 		return self.avg_sold * self.sell_quantity
 
 	@property
-	def net_total(self) -> float:
+	def net_total(self) -> Decimal:
 		"""
 		Calculates the net total average cost of assets
 		bought and sold.
@@ -123,14 +129,14 @@ class Position(object):
 				return self.total_sold - abs(self.market_value)
 
 	@property
-	def commission(self) -> float:
+	def commission(self) -> Decimal:
 		"""
 		Calculates the total commission from assets bought and sold.
 		"""
 		return self.buy_commission + self.sell_commission
 
 	@property
-	def net_incl_commission(self) -> float:
+	def net_incl_commission(self) -> Decimal:
 		"""
 		Calculates the net total average cost of assets bought
 		and sold including the commission.
@@ -138,13 +144,13 @@ class Position(object):
 		return self.net_total - self.commission
 
 	@property
-	def realised_pnl(self) -> float:
+	def realised_pnl(self) -> Decimal:
 		"""
 		Calculates the profit & loss (P&L) that has been realised.
 		"""
 		if self.side == PositionSide.LONG:
 			if self.sell_quantity == 0:
-				return 0.0
+				return Decimal("0")
 			else:
 				return (
 					((self.avg_sold - self.avg_bought) * self.sell_quantity) -
@@ -153,7 +159,7 @@ class Position(object):
 				)
 		elif self.side == PositionSide.SHORT:
 			if self.buy_quantity == 0:
-				return 0.0
+				return Decimal("0")
 			else:
 				return (
 					((self.avg_sold - self.avg_bought) * self.buy_quantity) -
@@ -164,7 +170,7 @@ class Position(object):
 			return self.net_incl_commission
 
 	@property
-	def unrealised_pnl(self) -> float:
+	def unrealised_pnl(self) -> Decimal:
 		"""
 		Calculates the profit & loss (P&L) that has yet to be 'realised'
 		in the remaining non-zero quantity of assets, due to the current
@@ -174,16 +180,17 @@ class Position(object):
 			return (self.current_price - self.avg_price) * self.net_quantity
 		elif self.side == PositionSide.SHORT:
 			return (self.avg_price - self.current_price) * self.net_quantity
+		return Decimal("0")
 
 	@property
-	def total_pnl(self) -> float:
+	def total_pnl(self) -> Decimal:
 		"""
 		Calculates the sum of the unrealised and realised profit & loss (P&L).
 		"""
 		return self.realised_pnl + self.unrealised_pnl
 
 	@classmethod
-	def open_position(cls, transaction: Transaction):
+	def open_position(cls, transaction: Transaction) -> "Position":
 		"""
 		Creates a new position object based on the provided transaction. 
 		It determines the position side based on the transaction type (BUY or SELL) 
@@ -208,7 +215,7 @@ class Position(object):
 			portfolio_id = transaction.portfolio_id,
 		)
 
-	def update_position(self, transaction: Transaction):
+	def update_position(self, transaction: Transaction) -> None:
 		"""
 		Updates the average bought/sold price, quantity, and commission
 		of the Position based on the transaction details.
@@ -223,30 +230,30 @@ class Position(object):
 			self.sell_commission += transaction.commission
 		self.update_current_price_time(transaction.price, transaction.time)
 
-	def close_position(self, price, time):
+	def close_position(self, price: MoneyInput, time: datetime) -> None:
 		"""
 		Close the position.
 		"""
 		self.is_open = False
 		self.exit_date = time
-		self.current_price = price
+		self.current_price = to_money(price)
 
-	def update_current_price_time(self, price: float, time: datetime):
+	def update_current_price_time(self, price: MoneyInput, time: datetime) -> None:
 		"""
 		Updates the Position's awareness of the current market price
 		and time.
 
 		Parameters
 		----------
-		price : `float`
+		price : `Decimal`
 			The current market price.
 		time : `datetime`
 			The optional timestamp of the current market price.
 		"""
-		self.current_price = price
+		self.current_price = to_money(price)
 		self.current_time = time
 
-	def to_dict(self):
+	def to_dict(self) -> dict[str, Any]:
 			return {
 				'position_id': self.id,
 				'portfolio_id': self.portfolio_id,

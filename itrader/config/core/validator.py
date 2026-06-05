@@ -5,7 +5,7 @@ This module provides validation capabilities for configuration data.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Callable, Dict, Any, List, Optional
 import threading
 
 from itrader.logger import get_itrader_logger
@@ -28,12 +28,12 @@ class ValidationResult:
         self.is_valid = is_valid
         self.errors = errors or []
     
-    def add_error(self, error: ValidationError):
+    def add_error(self, error: ValidationError) -> None:
         """Add a validation error."""
         self.errors.append(error)
         self.is_valid = False
-    
-    def __bool__(self):
+
+    def __bool__(self) -> bool:
         return self.is_valid
 
 
@@ -68,7 +68,7 @@ class SchemaValidator(ConfigValidator):
         
         return result
     
-    def _validate_dict(self, config: Dict[str, Any], schema: Dict[str, Any], result: ValidationResult, path: str = ""):
+    def _validate_dict(self, config: Dict[str, Any], schema: Dict[str, Any], result: ValidationResult, path: str = "") -> None:
         """Recursively validate dictionary against schema."""
         for key, expected_type in schema.items():
             full_path = f"{path}.{key}" if path else key
@@ -98,7 +98,7 @@ class SchemaValidator(ConfigValidator):
 class BusinessValidator(ConfigValidator):
     """Business logic validator for configuration data."""
     
-    def __init__(self, domain: str, validation_rules: List[callable]):
+    def __init__(self, domain: str, validation_rules: List[Callable[[Dict[str, Any]], Any]]):
         super().__init__(domain)
         self.validation_rules = validation_rules
     

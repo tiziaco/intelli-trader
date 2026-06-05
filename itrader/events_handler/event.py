@@ -2,10 +2,11 @@ import pandas as pd
 from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 from ..core.enums import OrderType, OrderCommand
+from ..core.ids import StrategyId
 
 EventType = Enum("EventType", "PING BAR UPDATE SIGNAL ORDER FILL SCREENER")
 FillStatus = Enum("FillStatus", "EXECUTED REFUSED CANCELLED")
@@ -25,7 +26,7 @@ fill_status_map = {
 	"CANCELLED": FillStatus.CANCELLED,
 }
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PingEvent:
 	"""
 	Handles the event of receiving a new market update tick,
@@ -36,14 +37,14 @@ class PingEvent:
 	time: datetime
 	type = EventType.PING
 
-	def __str__(self):
+	def __str__(self) -> str:
 		return f"{self.type}, Time: {self.time}"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BarEvent:
 	"""
 	Handles the event of receiving a new market
@@ -60,13 +61,13 @@ class BarEvent:
 	# where Bar is a dataclass with the above fields
 	type = EventType.BAR
 
-	def __str__(self):
+	def __str__(self) -> str:
 		return f"{self.type}, Time: {self.time}"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 
-	def get_last_close(self, ticker) -> float:
+	def get_last_close(self, ticker: str) -> float:
 		close_data = self.bars[ticker]['close']
 
 		# TODO: check why the close data is not always a Series (from test).
@@ -82,7 +83,7 @@ class BarEvent:
 		else:
 			return float(close_data)
 
-	def get_last_open(self, ticker) -> float:
+	def get_last_open(self, ticker: str) -> Optional[float]:
 		"""
 		Get the opening price for the ticker from the current bar.
 
@@ -111,7 +112,7 @@ class BarEvent:
 		else:
 			return float(open_data)
 
-	def get_last_high(self, ticker) -> float:
+	def get_last_high(self, ticker: str) -> Optional[float]:
 		"""
 		Get the high price for the ticker from the current bar.
 
@@ -140,7 +141,7 @@ class BarEvent:
 		else:
 			return float(high_data)
 
-	def get_last_low(self, ticker) -> float:
+	def get_last_low(self, ticker: str) -> Optional[float]:
 		"""
 		Get the low price for the ticker from the current bar.
 
@@ -169,7 +170,7 @@ class BarEvent:
 		else:
 			return float(low_data)
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PortfolioUpdateEvent:
 	"""
 	Handles the event of receiving a new market
@@ -178,13 +179,13 @@ class PortfolioUpdateEvent:
 	"""
 
 	time: datetime
-	portfolios: dict
+	portfolios: dict[str, Any]
 	type = EventType.UPDATE
 
-	def __str__(self):
+	def __str__(self) -> str:
 		return f"{self.type}, Time: {self.time}"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 
 @dataclass
@@ -213,7 +214,7 @@ class SignalEvent:
 		Stop loss price for the instrument
 	take_profit: `float`
 		Take profit price for the instrument
-	strategy_id: `int`
+	strategy_id: `StrategyId`
 		The ID of the strategy who generated the signal
 	portfolio_id: `int`
 		The ID of the portfolio where to transact the position
@@ -229,19 +230,20 @@ class SignalEvent:
 	quantity: float
 	stop_loss: float
 	take_profit: float
-	strategy_id: int
+	# 02-05 carry-over: strategy_id carries a UUIDv7-backed StrategyId, not a raw int.
+	strategy_id: StrategyId
 	portfolio_id: int
-	strategy_setting: dict
+	strategy_setting: dict[str, Any]
 	verified: bool = False
 	type = EventType.SIGNAL
 
-	def __str__(self):
+	def __str__(self) -> str:
 		return f"{self.type} ({self.ticker}, {self.action}, {round(self.price, 4)} $)"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ScreenerEvent:
 	"""
 	Screener event generated from a Screener object.
@@ -273,10 +275,10 @@ class ScreenerEvent:
 	tickers : list[str]
 	type = EventType.SCREENER
 
-	def __str__(self):
+	def __str__(self) -> str:
 		return f"{self.type} ({self.screener_name})"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 
 @dataclass
@@ -296,7 +298,7 @@ class OrderEvent:
 	price: float
 	quantity: float
 	exchange: str
-	strategy_id: int
+	strategy_id: StrategyId
 	portfolio_id: int
 	order_type: OrderType
 	stop_price: Optional[float] = None
@@ -305,29 +307,33 @@ class OrderEvent:
 	command: 'OrderCommand' = OrderCommand.NEW
 	type = EventType.ORDER
 
-	def __str__(self):
+	def __str__(self) -> str:
 		base = f"{self.type} ({self.ticker}, {self.action}, {self.order_type.name}, {self.quantity}, {round(self.price, 4)} $"
 		if self.stop_price:
 			base += f", stop: {round(self.stop_price, 4)}"
 		return base + f", ID: {self.order_id})"
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
-	
+
 	@classmethod
-	def new_order_event(cls, order, command: 'OrderCommand' = OrderCommand.NEW):
+	def new_order_event(cls, order: Any, command: 'OrderCommand' = OrderCommand.NEW) -> 'OrderEvent':
 		"""
 		Generate a new OrderEvent from an Order.
 
 		Reads the order's real type (`order.type`) and id (`order.id`),
 		and optional bracket linkage / command intent.
 		"""
+		# Boundary coercion (M2a): the Order entity carries Decimal money, but the
+		# OrderEvent + execution/matching/fee layer remain float until M4. Coerce
+		# here so the float execution layer stays consistent; the cash path
+		# re-enters Decimal at Transaction.new_transaction via to_money().
 		return cls(
 			order.time,
 			order.ticker,
 			order.action,
-			order.price,
-			order.quantity,
+			float(order.price),
+			float(order.quantity),
 			order.exchange,
 			order.strategy_id,
 			order.portfolio_id,
@@ -374,18 +380,18 @@ class FillEvent:
 	price: float
 	quantity: float
 	commission: float
-	portfolio_id: str
+	portfolio_id: int
 	order_id: Optional[int] = None
 	type = EventType.FILL
 
-	def __str__(self):
+	def __str__(self) -> str:
 		return f'{self.type} ({self.ticker}, {self.action}, {round(self.quantity, 4)}, {round(self.price, 4)} $)'
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
-	
+
 	@classmethod
-	def new_fill(cls, status: str, commission: float, order: OrderEvent):
+	def new_fill(cls, status: str, commission: float, order: OrderEvent) -> 'FillEvent':
 		"""
 		Generate a new FillEvent object.
 
@@ -427,26 +433,26 @@ class PortfolioErrorEvent:
 	time: datetime
 	error_type: str
 	error_message: str
-	portfolio_id: int = None
-	operation: str = None
-	correlation_id: str = None
+	portfolio_id: Optional[int] = None
+	operation: Optional[str] = None
+	correlation_id: Optional[str] = None
 	severity: str = "ERROR"  # ERROR, CRITICAL, WARNING
-	details: dict = None
-	
+	details: Optional[dict[str, Any]] = None
+
 	type = EventType.UPDATE  # Reuse UPDATE type for now
-	
-	def __str__(self):
+
+	def __str__(self) -> str:
 		base = f"PortfolioError: {self.error_type} - {self.error_message}"
 		if self.portfolio_id:
 			base += f" (Portfolio: {self.portfolio_id})"
 		if self.operation:
 			base += f" (Operation: {self.operation})"
 		return base
-	
-	def __repr__(self):
+
+	def __repr__(self) -> str:
 		return str(self)
-	
-	def to_dict(self):
+
+	def to_dict(self) -> dict[str, Any]:
 		"""Convert event to dictionary for logging/serialization."""
 		return {
 			"time": self.time.isoformat(),

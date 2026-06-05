@@ -14,7 +14,7 @@ class ZeroSlippageModel(SlippageModel):
     execute at exactly the expected price with no price impact.
     """
     
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the zero slippage model."""
         super().__init__()
     

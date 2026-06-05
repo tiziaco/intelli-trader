@@ -75,10 +75,10 @@ class LoggingConfig:
     flush_interval_seconds: float = 1.0
     
     # Component-specific log levels
-    component_levels: Dict[str, str] = None
-    
+    component_levels: Optional[Dict[str, str]] = None
+
     # Handlers
-    handlers: List[LogHandler] = None
+    handlers: Optional[List[LogHandler]] = None
     
     # Advanced settings
     enable_correlation_ids: bool = True
@@ -86,7 +86,7 @@ class LoggingConfig:
     enable_performance_logging: bool = False
     enable_error_tracking: bool = True
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize default values after creation."""
         if self.component_levels is None:
             self.component_levels = {
@@ -163,7 +163,7 @@ class LoggingConfig:
                     'backup_count': handler.backup_count,
                     'enabled': handler.enabled
                 }
-                for handler in self.handlers
+                for handler in (self.handlers or [])
             ],
             
             # Advanced settings

@@ -6,7 +6,9 @@ Handles transaction validation, processing, and audit trail.
 import threading
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Any, Optional, List, Dict
+
+from itrader.core.ids import TransactionId
 from dataclasses import dataclass
 from enum import Enum
 
@@ -49,13 +51,13 @@ class TransactionManager:
     Thread-safe implementation with proper error handling and logging.
     """
     
-    def __init__(self, portfolio):
+    def __init__(self, portfolio: Any) -> None:
         self.portfolio = portfolio  # Reference to parent portfolio
         self._lock = threading.RLock()  # Reentrant lock for nested calls
         self.logger = get_itrader_logger().bind(component="TransactionManager")
         
         # Transaction state tracking
-        self._pending_transactions: Dict[int, TransactionContext] = {}
+        self._pending_transactions: Dict[TransactionId, TransactionContext] = {}
         self._transaction_history: List[Transaction] = []
         
         # Validation rules
@@ -134,7 +136,7 @@ class TransactionManager:
                 # Clean up pending transaction
                 self._pending_transactions.pop(transaction.id, None)
     
-    def _validate_transaction(self, transaction: Transaction, context: TransactionContext):
+    def _validate_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Validate transaction data and business rules."""
         
         # Basic data validation
@@ -156,33 +158,34 @@ class TransactionManager:
                 {"commission": transaction.commission, "transaction_id": transaction.id}
             )
         
-        # Convert to Decimal for precision
-        price = Decimal(str(transaction.price))
-        quantity = Decimal(str(transaction.quantity))
-        commission = Decimal(str(transaction.commission))
-        
+        # Transaction money fields are already Decimal end-to-end (M2a) — use them
+        # directly (no Decimal(str(...)) round-trip needed).
+        price = transaction.price
+        quantity = transaction.quantity
+        commission = transaction.commission
+
         # Business rule validation
         transaction_value = price * quantity
-        
+
         if transaction_value < self.min_transaction_amount:
             raise InvalidTransactionError(
                 f"Transaction value ${transaction_value} below minimum ${self.min_transaction_amount}",
-                {"transaction_value": float(transaction_value), "transaction_id": transaction.id}
+                {"transaction_value": str(transaction_value), "transaction_id": transaction.id}
             )
-        
+
         if transaction_value > self.max_transaction_amount:
             raise InvalidTransactionError(
                 f"Transaction value ${transaction_value} exceeds maximum ${self.max_transaction_amount}",
-                {"transaction_value": float(transaction_value), "transaction_id": transaction.id}
+                {"transaction_value": str(transaction_value), "transaction_id": transaction.id}
             )
-        
+
         # Commission rate validation
         if transaction_value > 0:
             commission_rate = commission / transaction_value
             if commission_rate > self.commission_rate_limit:
                 raise InvalidTransactionError(
                     f"Commission rate {commission_rate:.4f} exceeds limit {self.commission_rate_limit}",
-                    {"commission_rate": float(commission_rate), "transaction_id": transaction.id}
+                    {"commission_rate": str(commission_rate), "transaction_id": transaction.id}
                 )
         
         # Ticker validation (basic format check)
@@ -197,20 +200,22 @@ class TransactionManager:
             correlation_id=context.correlation_id
         )
     
-    def _check_funds_availability(self, transaction: Transaction, context: TransactionContext):
+    def _check_funds_availability(self, transaction: Transaction, context: TransactionContext) -> None:
         """Check if sufficient funds are available for the transaction."""
         
         if transaction.type == TransactionType.BUY:
-            required_cash = Decimal(str(transaction.price * transaction.quantity + transaction.commission))
-            available_cash = Decimal(str(self.portfolio.cash))
-            
+            # transaction money fields are Decimal end-to-end (M2a); cash is Decimal
+            # (no defensive Decimal(str(cash)) needed — the float round-trip is gone).
+            required_cash = transaction.price * transaction.quantity + transaction.commission
+            available_cash = self.portfolio.cash
+
             if available_cash < required_cash:
                 raise InsufficientFundsError(
                     required_cash=float(required_cash),
                     available_cash=float(available_cash),
                     transaction_id=transaction.id
                 )
-                
+
             self.logger.debug("Funds availability check passed",
                 transaction_id=transaction.id,
                 correlation_id=context.correlation_id,
@@ -218,22 +223,33 @@ class TransactionManager:
                 available_cash=str(available_cash)
             )
     
-    def _execute_transaction(self, transaction: Transaction, context: TransactionContext):
+    def _execute_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Execute the validated transaction."""
         
         # Calculate transaction cost with high precision
         transaction_cost = self._calculate_transaction_cost(transaction)
-        
-        # Update portfolio cash (this will be moved to CashManager later)
+
+        # Apply the full-precision Decimal cost to the cash ledger via the
+        # precision-preserving CashManager primitive (CR-03). This avoids the 2dp
+        # quantization and the deposit/withdraw min/max-balance gate that the
+        # `self.portfolio.cash` setter would impose (it routes through
+        # deposit/withdraw -> _validate_and_convert_amount). The funds check for a
+        # BUY already ran in _check_funds_availability, so re-running the policy
+        # gate here would be both redundant and lossy. NO float() round-trip on
+        # the money value (the #17 defect).
         old_cash = self.portfolio.cash
-        self.portfolio.cash += float(transaction_cost)
-        
+        self.portfolio.cash_manager.apply_transaction_delta(
+            transaction_cost,
+            description=f"Transaction {transaction.type.name} {transaction.ticker}",
+            reference_id=str(transaction.id),
+        )
+
         self.logger.debug("Transaction executed",
             transaction_id=transaction.id,
             correlation_id=context.correlation_id,
-            old_cash=old_cash,
-            new_cash=self.portfolio.cash,
-            transaction_cost=float(transaction_cost)
+            old_cash=str(old_cash),
+            new_cash=str(self.portfolio.cash),
+            transaction_cost=str(transaction_cost)
         )
     
     def _calculate_transaction_cost(self, transaction: Transaction) -> Decimal:
@@ -243,10 +259,13 @@ class TransactionManager:
         Returns:
             Decimal: Transaction cost (negative for outflow, positive for inflow)
         """
-        price = Decimal(str(transaction.price))
-        quantity = Decimal(str(transaction.quantity))
-        commission = Decimal(str(transaction.commission))
-        
+        # Transaction money fields are already Decimal end-to-end (normalized in
+        # Transaction.__post_init__) — use them directly with NO Decimal(str(...))
+        # round-trip (WR-03).
+        price = transaction.price
+        quantity = transaction.quantity
+        commission = transaction.commission
+
         if transaction.type == TransactionType.BUY:
             # Outflow of cash
             return -(price * quantity + commission)
@@ -254,7 +273,7 @@ class TransactionManager:
             # Inflow of cash
             return (price * quantity - commission)
     
-    def _record_transaction(self, transaction: Transaction, context: TransactionContext):
+    def _record_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Record transaction in history for audit trail."""
         
         self._transaction_history.append(transaction)
@@ -265,7 +284,7 @@ class TransactionManager:
             portfolio_id=transaction.portfolio_id
         )
     
-    def _handle_transaction_error(self, transaction: Transaction, context: TransactionContext, error: Exception):
+    def _handle_transaction_error(self, transaction: Transaction, context: TransactionContext, error: Exception) -> None:
         """Handle transaction processing errors."""
         
         context.state = TransactionState.FAILED
@@ -290,12 +309,12 @@ class TransactionManager:
                 return self._transaction_history[-limit:]
             return self._transaction_history.copy()
     
-    def get_pending_transactions(self) -> Dict[int, TransactionContext]:
+    def get_pending_transactions(self) -> Dict[TransactionId, TransactionContext]:
         """Get currently pending transactions."""
         with self._lock:
             return self._pending_transactions.copy()
     
-    def cancel_pending_transaction(self, transaction_id: int) -> bool:
+    def cancel_pending_transaction(self, transaction_id: TransactionId) -> bool:
         """Cancel a pending transaction."""
         with self._lock:
             if transaction_id in self._pending_transactions:

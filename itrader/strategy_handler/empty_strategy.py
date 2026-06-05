@@ -11,17 +11,19 @@ class Empty_strategy(Strategy):
 	short_window - Lookback period for short moving average
 	long_window - Lookback period for long moving average
 	"""
-	def __init__(self, name, timeframe, tickers):
-		super.__init__(self, name, timeframe, tickers)
+	def __init__(self, name: str, timeframe: str, tickers: list[str]) -> None:
+		# Fix: was `super.__init__(self, ...)` (missing parens) — a latent
+		# TypeError if Empty_strategy were ever instantiated.
+		super().__init__(name, timeframe, tickers)
 
 		self.max_window = 1
-	
-	def __str__(self):
+
+	def __str__(self) -> str:
 		return "Empty_%s" % self.timeframe
 
-	def __repr__(self):
+	def __repr__(self) -> str:
 		return str(self)
 
 
-	def calculate_signal(self, ticker: str, bars: pd.DataFrame):
+	def calculate_signal(self, ticker: str, bars: pd.DataFrame) -> None:
 		return

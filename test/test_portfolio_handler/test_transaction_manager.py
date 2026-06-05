@@ -25,11 +25,35 @@ from itrader.core.exceptions import (
 from itrader import idgen
 
 
+class MockCashManager:
+    """Mock CashManager exposing the precision-preserving transaction primitive.
+
+    CR-03: TransactionManager now routes the cash mutation through
+    ``portfolio.cash_manager.apply_transaction_delta(delta)`` instead of the
+    quantizing ``cash`` setter. The mock adds the full-precision Decimal delta
+    straight to the parent portfolio's ``cash`` (no quantization, no policy gate),
+    mirroring the real primitive so the Decimal-exact assertions still hold.
+    """
+    def __init__(self, portfolio):
+        self._portfolio = portfolio
+
+    def apply_transaction_delta(self, delta, description="", reference_id=None):
+        self._portfolio.cash = self._portfolio.cash + delta
+        return True
+
+
 class MockPortfolio:
-    """Mock portfolio for testing."""
-    def __init__(self, initial_cash=100000.0):
-        self.cash = initial_cash
+    """Mock portfolio for testing.
+
+    Cash is Decimal end-to-end (M2-02). CR-03: TransactionManager mutates cash
+    via ``self.portfolio.cash_manager.apply_transaction_delta(delta)`` with a
+    full-precision Decimal delta and NO float() round-trip, so the mock exposes a
+    ``cash_manager`` that preserves full Decimal precision on ``cash``.
+    """
+    def __init__(self, initial_cash=Decimal("100000.0")):
+        self.cash = Decimal(str(initial_cash))
         self.portfolio_id = idgen.generate_portfolio_id()
+        self.cash_manager = MockCashManager(self)
 
 
 class TestTransactionManager(unittest.TestCase):
@@ -151,8 +175,8 @@ class TestTransactionManager(unittest.TestCase):
 
     def test_insufficient_funds_error(self):
         """Test insufficient funds error for BUY transaction."""
-        # Set portfolio cash to low amount
-        self.portfolio.cash = 1000.0
+        # Set portfolio cash to low amount (Decimal end-to-end)
+        self.portfolio.cash = Decimal("1000.0")
         
         large_transaction = Transaction(
             time=datetime.now(),
@@ -378,11 +402,12 @@ class TestTransactionManager(unittest.TestCase):
         
         self.assertTrue(result)
         
-        # Calculate expected result with proper precision
+        # Calculate expected result with proper precision (Decimal end-to-end:
+        # no float() round-trip — cash stays Decimal on the cash path).
         expected_cost = Decimal('33333.33') * Decimal('0.3') + Decimal('5.55')
-        expected_cash = initial_cash - float(expected_cost)
-        
-        self.assertAlmostEqual(self.portfolio.cash, expected_cash, places=2)
+        expected_cash = initial_cash - expected_cost
+
+        self.assertEqual(self.portfolio.cash, expected_cash)
 
 
 if __name__ == '__main__':

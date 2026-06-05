@@ -1,6 +1,10 @@
+import uuid
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 from datetime import datetime
+
+# Order/portfolio ids may arrive as UUID (native scheme, D-14) or legacy str/int.
+IdLike = Union[str, int, uuid.UUID]
 
 if TYPE_CHECKING:
     from .order import Order
@@ -14,8 +18,8 @@ class OrderBase(object):
 	orders and fill them. 
 	"""
 
-	def __init__(self, events_queue, portfolios = {}):
-		self.portfolios = portfolios
+	def __init__(self, events_queue: Any, portfolios: Optional[Dict[Any, Any]] = None) -> None:
+		self.portfolios = portfolios if portfolios is not None else {}
 
 
 class OrderStorage(ABC):
@@ -27,7 +31,7 @@ class OrderStorage(ABC):
     """
     
     @abstractmethod
-    def add_order(self, order) -> None:
+    def add_order(self, order: 'Order') -> None:
         """
         Add a new order to the storage.
         
@@ -39,15 +43,15 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def remove_order(self, order_id: Union[str, int], portfolio_id: Union[str, int] = None) -> bool:
+    def remove_order(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> bool:
         """
         Remove an order from the storage.
         
         Parameters
         ----------
-        order_id : Union[str, int]
+        order_id : IdLike
             The ID of the order to remove
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             The portfolio ID for direct access (more efficient)
             
         Returns
@@ -58,7 +62,7 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def remove_orders_by_ticker(self, ticker: str, portfolio_id: Union[str, int]) -> int:
+    def remove_orders_by_ticker(self, ticker: str, portfolio_id: IdLike) -> int:
         """
         Remove all orders for a specific ticker in a portfolio.
         
@@ -66,7 +70,7 @@ class OrderStorage(ABC):
         ----------
         ticker : str
             The ticker symbol
-        portfolio_id : Union[str, int]
+        portfolio_id : IdLike
             The portfolio ID
             
         Returns
@@ -77,13 +81,13 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def get_pending_orders(self, portfolio_id: Union[str, int] = None) -> Dict[str, Dict[str, 'Order']]:
+    def get_pending_orders(self, portfolio_id: Optional[IdLike] = None) -> Dict[Any, Dict[Any, 'Order']]:
         """
         Get pending orders, optionally filtered by portfolio.
         
         Parameters
         ----------
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID to filter by. If None, returns all portfolios.
             
         Returns
@@ -94,15 +98,15 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def get_order_by_id(self, order_id: Union[str, int], portfolio_id: Union[str, int] = None) -> Optional['Order']:
+    def get_order_by_id(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> Optional['Order']:
         """
         Get a specific order by ID.
         
         Parameters
         ----------
-        order_id : Union[str, int]
+        order_id : IdLike
             The order ID
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID for direct access
             
         Returns
@@ -113,7 +117,7 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def update_order(self, order) -> bool:
+    def update_order(self, order: 'Order') -> bool:
         """
         Update an existing order.
         
@@ -130,7 +134,7 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def get_orders_by_ticker(self, ticker: str, portfolio_id: Union[str, int] = None) -> List['Order']:
+    def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """
         Get all orders for a specific ticker.
         
@@ -138,7 +142,7 @@ class OrderStorage(ABC):
         ----------
         ticker : str
             The ticker symbol
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID to filter by
             
         Returns
@@ -149,13 +153,13 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def clear_portfolio_orders(self, portfolio_id: Union[str, int]) -> int:
+    def clear_portfolio_orders(self, portfolio_id: IdLike) -> int:
         """
         Clear all orders for a portfolio.
         
         Parameters
         ----------
-        portfolio_id : Union[str, int]
+        portfolio_id : IdLike
             The portfolio ID
             
         Returns
@@ -168,7 +172,7 @@ class OrderStorage(ABC):
     # Enhanced storage methods for comprehensive order management
     
     @abstractmethod
-    def get_orders_by_status(self, status: 'OrderStatus', portfolio_id: Union[str, int] = None) -> List['Order']:
+    def get_orders_by_status(self, status: 'OrderStatus', portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """
         Get orders by status, optionally filtered by portfolio.
         
@@ -176,7 +180,7 @@ class OrderStorage(ABC):
         ----------
         status : OrderStatus
             The order status to filter by
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID to filter by
             
         Returns
@@ -187,13 +191,13 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def get_active_orders(self, portfolio_id: Union[str, int] = None) -> List['Order']:
+    def get_active_orders(self, portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """
         Get all active orders (PENDING and PARTIALLY_FILLED).
         
         Parameters
         ----------
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID to filter by
             
         Returns
@@ -205,7 +209,7 @@ class OrderStorage(ABC):
     
     @abstractmethod
     def get_orders_by_time_range(self, start_time: datetime, end_time: datetime, 
-                                portfolio_id: Union[str, int] = None) -> List['Order']:
+                                portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """
         Get orders within a time range.
         
@@ -215,7 +219,7 @@ class OrderStorage(ABC):
             Start of time range
         end_time : datetime
             End of time range
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID to filter by
             
         Returns
@@ -226,13 +230,13 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def get_order_history(self, order_id: Union[str, int]) -> List[Dict]:
+    def get_order_history(self, order_id: IdLike) -> List[Dict[str, Any]]:
         """
         Get the state change history for an order.
         
         Parameters
         ----------
-        order_id : Union[str, int]
+        order_id : IdLike
             The order ID
             
         Returns
@@ -243,7 +247,7 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def archive_orders(self, cutoff_date: datetime, portfolio_id: Union[str, int] = None) -> int:
+    def archive_orders(self, cutoff_date: datetime, portfolio_id: Optional[IdLike] = None) -> int:
         """
         Archive old orders to separate storage.
         
@@ -251,7 +255,7 @@ class OrderStorage(ABC):
         ----------
         cutoff_date : datetime
             Orders older than this date will be archived
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID to filter by
             
         Returns
@@ -262,7 +266,7 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def search_orders(self, criteria: Dict, portfolio_id: Union[str, int] = None) -> List['Order']:
+    def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """
         Search orders based on criteria.
         
@@ -270,7 +274,7 @@ class OrderStorage(ABC):
         ----------
         criteria : Dict
             Search criteria (e.g., {'ticker': 'AAPL', 'action': 'BUY'})
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID to filter by
             
         Returns
@@ -281,13 +285,13 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def get_orders_count_by_status(self, portfolio_id: Union[str, int] = None) -> Dict[str, int]:
+    def get_orders_count_by_status(self, portfolio_id: Optional[IdLike] = None) -> Dict[str, int]:
         """
         Get count of orders by status.
         
         Parameters
         ----------
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             Portfolio ID to filter by
             
         Returns
@@ -298,7 +302,7 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def deactivate_order(self, order_id: Union[str, int], portfolio_id: Union[str, int] = None) -> bool:
+    def deactivate_order(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> bool:
         """
         Deactivate an order (remove from active but keep in all_orders for audit trail).
         
@@ -307,9 +311,9 @@ class OrderStorage(ABC):
         
         Parameters
         ----------
-        order_id : Union[str, int]
+        order_id : IdLike
             The ID of the order to deactivate
-        portfolio_id : Union[str, int], optional
+        portfolio_id : IdLike, optional
             The portfolio ID for direct access (more efficient)
             
         Returns
