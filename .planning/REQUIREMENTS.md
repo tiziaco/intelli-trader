@@ -73,7 +73,7 @@
 - [ ] **M2-10**: `time_parser` timing is correct — `check_timeframe` anchoring fixed for non-UTC/DST/
   week-month, `to_timedelta` case-insensitive with week/month support, dead buggy helpers removed
   *(completes #36 M1→M2, KB21)*
-- [ ] **M2-11**: Dead modules deleted — `legacy_config.py`, `outils/profiling.py`, `outils/strategy.py`,
+- [x] **M2-11**: Dead modules deleted — `legacy_config.py`, `outils/profiling.py`, `outils/strategy.py`,
   and the orphaned duplicate `screener_event_handler.py` `EventHandler` *(TD4 [`my_strategies`→OUT], TD5, KB14, #32 [orphan delete part])*
 - [ ] **M2-12**: The bulk `unittest.TestCase` → pytest conversion proceeds (layered `tests/{unit,integration}`,
   conftests), building on the M1 skeleton *(#40 [bulk-conversion part])*

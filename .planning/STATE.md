@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 3 context gathered
-last_updated: "2026-06-05T08:52:58.152Z"
+last_updated: "2026-06-05T08:56:08.795Z"
 last_activity: 2026-06-05
 progress:
   total_phases: 8
   completed_phases: 2
   total_plans: 22
-  completed_plans: 14
+  completed_plans: 15
   percent: 25
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 03 (m2b-config-types-storage-seam-oracle-re-freeze) — EXECUTING
-Plan: 2 of 9
+Plan: 3 of 9
 Status: Ready to execute
 Last activity: 2026-06-05
 
-Progress: [██████░░░░] 64%
+Progress: [███████░░░] 68%
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Progress: [██████░░░░] 64%
 | Phase 02 P06 | 8 | 3 tasks | 7 files |
 | Phase 02 P07 | 180 | 4 tasks | 5 files |
 | Phase 03 P01 | 3 | 3 tasks | 10 files |
+| Phase 03 P02 | 2 | 1 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase 03]: Plan 03-01: D-17 inertness reference captured from unmodified M2a-end HEAD (final_equity 53229.685, 134 trades) — byte-exact baseline for the 03-09 oracle re-freeze gate
 - [Phase 03]: Plan 03-01: pydantic ^2.13 + pydantic-settings ^2.14 added as lockfile-tracked Poetry deps (unblocks config collapse 03-05)
 - [Phase 03]: Plan 03-01: 5 Wave-0 characterization stubs (M2-06..10) under current test/ tree, skip/importorskip-gated, move into tests/unit/... at 03-08; suite 300 pass / 11 skip / 1 xfail
+- [Phase ?]: Plan 03-02: four dead modules purged (legacy_config, outils/profiling, outils/strategy, events_handler/screener_event_handler) via D-13 mechanical-delete, zero importers re-verified; flat config.py shadow left for 03-05
 
 ### Pending Todos
 
@@ -125,6 +127,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-05T08:50:54.353Z
+Last session: 2026-06-05T08:56:00.936Z
 Stopped at: Phase 3 context gathered
 Resume file: None
