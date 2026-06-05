@@ -7,14 +7,13 @@ update_config, and get_config_dict methods.
 """
 
 import pytest
-import unittest
 from datetime import datetime
 from queue import Queue
 from unittest.mock import Mock, patch
 from decimal import Decimal
 
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-from itrader.events_handler.event import OrderEvent, FillEvent
+from itrader.events_handler.event import OrderEvent, FillEvent, FillStatus
 from itrader.config import ExchangeConfig, get_exchange_preset
 from itrader.config.exchange import (
     FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation,
@@ -24,7 +23,7 @@ from itrader.core.enums.execution import (
     ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus
 )
 from itrader.execution_handler.result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
-from itrader.core.enums import OrderType
+from itrader.core.enums import OrderType, OrderCommand
 
 
 class TestSimulatedExchangeInitialization:
@@ -606,98 +605,103 @@ class TestSimulatedExchangeEdgeCases:
             assert result.success is True
 
 
-class TestSimulatedExchangeRouting(unittest.TestCase):
-	def setUp(self):
-		from queue import Queue
-		from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-		from itrader.core.enums import OrderType, OrderCommand
-		from itrader.events_handler.event import OrderEvent, FillStatus
-		self.Queue = Queue
-		self.OrderType = OrderType
-		self.OrderCommand = OrderCommand
-		self.OrderEvent = OrderEvent
-		self.FillStatus = FillStatus
-		self.queue = Queue()
-		self.exchange = SimulatedExchange(self.queue)
-		self.exchange.connect()
-		# Ensure the symbol validates on the default preset used by tests.
-		self.exchange.update_config(supported_symbols={'BTCUSDT'})
+class _RoutingHarness:
+    """Connected SimulatedExchange restricted to BTCUSDT, with event factories."""
 
-	def _oe(self, order_type, action='BUY', price=40.0, order_id=1, command=None, parent_order_id=None):
-		import datetime as _dt
-		return self.OrderEvent(
-			time=_dt.datetime(2024, 1, 1), ticker='BTCUSDT',
-			action=action, price=price, quantity=1.0, exchange='default',
-			strategy_id=1, portfolio_id=1, order_type=order_type, order_id=order_id,
-			parent_order_id=parent_order_id,
-			command=command or self.OrderCommand.NEW,
-		)
+    def __init__(self):
+        self.queue = Queue()
+        self.exchange = SimulatedExchange(self.queue)
+        self.exchange.connect()
+        # Ensure the symbol validates on the default preset used by tests.
+        self.exchange.update_config(supported_symbols={"BTCUSDT"})
 
-	def test_new_market_order_fills_immediately(self):
-		self.exchange.on_order(self._oe(self.OrderType.MARKET))
-		fills = [self.queue.get() for _ in range(self.queue.qsize())]
-		self.assertEqual(len(fills), 1)
-		self.assertIs(fills[0].status, self.FillStatus.EXECUTED)
+    def oe(self, order_type, action="BUY", price=40.0, order_id=1, command=None, parent_order_id=None):
+        return OrderEvent(
+            time=datetime(2024, 1, 1), ticker="BTCUSDT",
+            action=action, price=price, quantity=1.0, exchange="default",
+            strategy_id=1, portfolio_id=1, order_type=order_type, order_id=order_id,
+            parent_order_id=parent_order_id,
+            command=command or OrderCommand.NEW,
+        )
 
-	def test_new_stop_order_rests_no_fill(self):
-		self.exchange.on_order(self._oe(self.OrderType.STOP, action='SELL', price=30.0, order_id=2))
-		self.assertEqual(self.queue.qsize(), 0)
-		self.assertTrue(self.exchange.matching_engine.has_order(2))
-
-	def test_cancel_command_removes_and_emits_cancelled(self):
-		self.exchange.on_order(self._oe(self.OrderType.STOP, action='SELL', price=30.0, order_id=3))
-		self.exchange.on_order(self._oe(self.OrderType.STOP, action='SELL', price=30.0, order_id=3,
-		                                command=self.OrderCommand.CANCEL))
-		self.assertFalse(self.exchange.matching_engine.has_order(3))
-		fills = [self.queue.get() for _ in range(self.queue.qsize())]
-		self.assertEqual(len(fills), 1)
-		self.assertIs(fills[0].status, self.FillStatus.CANCELLED)
-		self.assertEqual(fills[0].order_id, 3)
-
-	def _bar(self, open_, high, low, close):
-		import pandas as pd
-		import datetime as _dt
-		from itrader.events_handler.event import BarEvent
-		bars = {'BTCUSDT': pd.DataFrame(
-			{'open': [open_], 'high': [high], 'low': [low], 'close': [close], 'volume': [1]})}
-		return BarEvent(time=_dt.datetime(2024, 1, 1), bars=bars)
-
-	def test_on_market_data_fills_resting_stop(self):
-		self.exchange.on_order(self._oe(self.OrderType.STOP, action='SELL', price=30.0, order_id=5))
-		self.exchange.on_market_data(self._bar(open_=35, high=36, low=20, close=25))
-		fills = [self.queue.get() for _ in range(self.queue.qsize())]
-		self.assertEqual(len(fills), 1)
-		self.assertIs(fills[0].status, self.FillStatus.EXECUTED)
-		self.assertEqual(fills[0].order_id, 5)
-
-	def test_on_market_data_emits_oco_cancel(self):
-		self.exchange.on_order(self._oe(self.OrderType.STOP, 'SELL', 30.0, order_id=6, parent_order_id=100))
-		self.exchange.on_order(self._oe(self.OrderType.LIMIT, 'SELL', 55.0, order_id=7, parent_order_id=100))
-		self.exchange.on_market_data(self._bar(open_=50, high=60, low=40, close=58))  # TP fills
-		events = [self.queue.get() for _ in range(self.queue.qsize())]
-		statuses = {e.order_id: e.status for e in events}
-		self.assertIs(statuses[7], self.FillStatus.EXECUTED)
-		self.assertIs(statuses[6], self.FillStatus.CANCELLED)
-
-	def test_rejected_market_order_emits_refused_fill(self):
-		# 'ETHUSDT' is not in supported_symbols (setUp only allows BTCUSDT) -> validation reject.
-		self.exchange.on_order(self._oe(self.OrderType.MARKET, order_id=99,
-		                                command=self.OrderCommand.NEW))
-		# sanity: BTCUSDT market fills; now send an unsupported-symbol order directly.
-		bad = self.OrderEvent(
-			time=__import__('datetime').datetime(2024, 1, 1), ticker='ETHUSDT',
-			action='BUY', price=40.0, quantity=1.0, exchange='default', strategy_id=1,
-			portfolio_id=1, order_type=self.OrderType.MARKET, order_id=100,
-			command=self.OrderCommand.NEW)
-		# drain the first (successful) fill, then exercise the rejection
-		while not self.queue.empty():
-			self.queue.get()
-		self.exchange.on_order(bad)
-		fills = [self.queue.get() for _ in range(self.queue.qsize())]
-		self.assertEqual(len(fills), 1)
-		self.assertIs(fills[0].status, self.FillStatus.REFUSED)
-		self.assertEqual(fills[0].order_id, 100)
+    def bar(self, open_, high, low, close):
+        import pandas as pd
+        from itrader.events_handler.event import BarEvent
+        bars = {
+            "BTCUSDT": pd.DataFrame(
+                {"open": [open_], "high": [high], "low": [low], "close": [close], "volume": [1]}
+            )
+        }
+        return BarEvent(time=datetime(2024, 1, 1), bars=bars)
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
+@pytest.fixture
+def routing():
+    h = _RoutingHarness()
+    yield h
+    while not h.queue.empty():
+        h.queue.get_nowait()
+
+
+def test_new_market_order_fills_immediately(routing):
+    routing.exchange.on_order(routing.oe(OrderType.MARKET))
+    fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(fills) == 1
+    assert fills[0].status is FillStatus.EXECUTED
+
+
+def test_new_stop_order_rests_no_fill(routing):
+    routing.exchange.on_order(routing.oe(OrderType.STOP, action="SELL", price=30.0, order_id=2))
+    assert routing.queue.qsize() == 0
+    assert routing.exchange.matching_engine.has_order(2)
+
+
+def test_cancel_command_removes_and_emits_cancelled(routing):
+    routing.exchange.on_order(routing.oe(OrderType.STOP, action="SELL", price=30.0, order_id=3))
+    routing.exchange.on_order(
+        routing.oe(OrderType.STOP, action="SELL", price=30.0, order_id=3, command=OrderCommand.CANCEL)
+    )
+    assert not routing.exchange.matching_engine.has_order(3)
+    fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(fills) == 1
+    assert fills[0].status is FillStatus.CANCELLED
+    assert fills[0].order_id == 3
+
+
+def test_on_market_data_fills_resting_stop(routing):
+    routing.exchange.on_order(routing.oe(OrderType.STOP, action="SELL", price=30.0, order_id=5))
+    routing.exchange.on_market_data(routing.bar(open_=35, high=36, low=20, close=25))
+    fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(fills) == 1
+    assert fills[0].status is FillStatus.EXECUTED
+    assert fills[0].order_id == 5
+
+
+def test_on_market_data_emits_oco_cancel(routing):
+    routing.exchange.on_order(routing.oe(OrderType.STOP, "SELL", 30.0, order_id=6, parent_order_id=100))
+    routing.exchange.on_order(routing.oe(OrderType.LIMIT, "SELL", 55.0, order_id=7, parent_order_id=100))
+    routing.exchange.on_market_data(routing.bar(open_=50, high=60, low=40, close=58))  # TP fills
+    events = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    statuses = {e.order_id: e.status for e in events}
+    assert statuses[7] is FillStatus.EXECUTED
+    assert statuses[6] is FillStatus.CANCELLED
+
+
+def test_rejected_market_order_emits_refused_fill(routing):
+    # 'ETHUSDT' is not in supported_symbols (only BTCUSDT) -> validation reject.
+    routing.exchange.on_order(routing.oe(OrderType.MARKET, order_id=99, command=OrderCommand.NEW))
+    # sanity: BTCUSDT market fills; now send an unsupported-symbol order directly.
+    bad = OrderEvent(
+        time=datetime(2024, 1, 1), ticker="ETHUSDT",
+        action="BUY", price=40.0, quantity=1.0, exchange="default", strategy_id=1,
+        portfolio_id=1, order_type=OrderType.MARKET, order_id=100,
+        command=OrderCommand.NEW,
+    )
+    # drain the first (successful) fill, then exercise the rejection
+    while not routing.queue.empty():
+        routing.queue.get()
+    routing.exchange.on_order(bad)
+    fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(fills) == 1
+    assert fills[0].status is FillStatus.REFUSED
+    assert fills[0].order_id == 100
