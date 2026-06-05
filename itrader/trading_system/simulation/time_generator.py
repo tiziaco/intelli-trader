@@ -4,16 +4,17 @@ import numpy as np
 import re
 
 from itrader.trading_system.simulation.base import SimulationEngine
-from ...events_handler.event import PingEvent
+from ...events_handler.event import TimeEvent
 
 
-
-class PingGenerator(SimulationEngine):
+class TimeGenerator(SimulationEngine):
     """
-    A SimulationEngine subclass that generates events on a 
-    frequency defined with the time frame variable
+    A SimulationEngine subclass that generates events on a
+    frequency defined with the time frame variable.
 
-    It produces a ping event.
+    It yields a ``TimeEvent`` per simulation timestamp — "the clock
+    advanced to T" — pairing with the ``itrader.core.clock.Clock``
+    family (D-08).
 
     Parameters
     ----------
@@ -29,28 +30,20 @@ class PingGenerator(SimulationEngine):
         self.timezone = timezone
         self.dates: Optional[np.ndarray[Any, Any]] = None
 
-    def __iter__(self) -> Iterator[PingEvent]:
+    def __iter__(self) -> Iterator[TimeEvent]:
         """
-        Generate the daily timestamps in a ping event.
+        Generate the daily timestamps in a time event.
 
         Yields
         ------
-        `PingEvent`
-            Ping time simulation event to yield
+        `TimeEvent`
+            Simulation-clock event ("the clock advanced to T") to yield
         """
         if self.dates is None:
             return
-        for time in np.nditer(self.dates, flags=["refs_ok"]): # enumerate(self.dates):
+        for time in np.nditer(self.dates, flags=["refs_ok"]):
             # nditer yields 0-d array scalars; .item(0) extracts the python value.
-            yield PingEvent(cast(Any, time).item(0))
+            yield TimeEvent(time=cast(Any, time).item(0))
 
     def set_dates(self, dates: Any) -> None:
         self.dates = np.array(dates)
-    
-
-    """
-    for index, time in enumerate(self.dates):
-            yield PingEvent(time)
-    """
-
-    

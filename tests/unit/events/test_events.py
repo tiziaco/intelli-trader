@@ -7,7 +7,7 @@ from itrader.events_handler.event import EventType, FillStatus
 from itrader.order_handler.order import Order
 from itrader.core.enums import OrderType, OrderStatus
 from itrader.events_handler.event import (
-    PingEvent,
+    TimeEvent,
     BarEvent,
     SignalEvent,
     OrderEvent,
@@ -19,7 +19,7 @@ from itrader.events_handler.event import (
 def events():
     """The full set of events constructed from a market BUY signal."""
     time = datetime.now()
-    ping_event = PingEvent(time)
+    time_event = TimeEvent(time)
     bar_event = BarEvent(time, {})
     signal_event = SignalEvent(
         time, "MARKET", "BTCUSDT", "BUY",
@@ -31,7 +31,7 @@ def events():
     mkt_order_event = OrderEvent.new_order_event(order)
     fill_event = FillEvent.new_fill("EXECUTED", 1.5, mkt_order_event)
     return SimpleNamespace(
-        ping_event=ping_event,
+        time_event=time_event,
         bar_event=bar_event,
         signal_event=signal_event,
         order=order,
@@ -40,8 +40,8 @@ def events():
     )
 
 
-def test_ping_event_initialization(events):
-    assert isinstance(events.ping_event, PingEvent)
+def test_time_event_initialization(events):
+    assert isinstance(events.time_event, TimeEvent)
 
 
 def test_bar_event_initialization(events):

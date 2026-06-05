@@ -26,6 +26,12 @@ from .execution import (
     FillStatus
 )
 
+# Event enums
+from .event import (
+    EventType,
+    Side
+)
+
 # Order enums
 from .order import (
     OrderType,
@@ -54,7 +60,12 @@ __all__ = [
     'ExchangeConnectionStatus',
     'ExchangeType',
     'FillStatus',
-    
+
+    # Event enums
+    'EventType',
+    'Side',
+
+
     # Order enums
     'OrderType',
     'OrderStatus',

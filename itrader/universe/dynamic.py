@@ -2,7 +2,7 @@ import queue
 from typing import Any, Optional
 
 from itrader.universe.universe import Universe
-from ..events_handler.event import BarEvent, PingEvent
+from ..events_handler.event import BarEvent, TimeEvent
 
 from itrader.logger import get_itrader_logger
 
@@ -55,26 +55,26 @@ class DynamicUniverse(Universe):
 		"""
 		return self.universe
 	
-	def generate_bar_event(self, ping_event: PingEvent) -> Optional[BarEvent]:
+	def generate_bar_event(self, time_event: TimeEvent) -> Optional[BarEvent]:
 		"""
 		Generate a bar event with the last price data of all the
 		traded symbol from the different strategies.
 
 		Parameters
 		----------
-		ping_event: `Ping event object`
-			Ping object with the last closed bar time.
+		time_event: `TimeEvent`
+			Simulation-clock event carrying the last closed bar time.
 		"""
 		bars: dict[str, Any] = {}
 
 		for ticker in self.strategies_universe:
 			if ticker in self.price_handler.prices.keys():
-				bar = self.price_handler.get_bar(ticker, ping_event.time)
+				bar = self.price_handler.get_bar(ticker, time_event.time)
 				bars[ticker] = bar
 			else:
 				self.logger.warning('Dynamic Universe: ticker %s not present in the price handler', ticker)
 
-		bar_event = BarEvent(ping_event.time, bars)
+		bar_event = BarEvent(time_event.time, bars)
 		self.last_bar = bar_event
 
 		if self.global_queue is not None:

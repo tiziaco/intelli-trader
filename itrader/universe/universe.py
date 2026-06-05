@@ -2,7 +2,7 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-	from ..events_handler.event import BarEvent, PingEvent
+	from ..events_handler.event import BarEvent, TimeEvent
 
 
 class Universe(ABC):
@@ -22,7 +22,7 @@ class Universe(ABC):
 			"Should implement get_assets()"
 		)
 
-	def generate_bar_event(self, ping_event: "PingEvent") -> "Optional[BarEvent]":
+	def generate_bar_event(self, time_event: "TimeEvent") -> "Optional[BarEvent]":
 		"""Generate the per-tick BarEvent for the run path.
 
 		Declared on the base so the run-path reference (``universe.generate_bar_event``)

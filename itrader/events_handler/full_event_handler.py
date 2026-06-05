@@ -64,8 +64,8 @@ class EventHandler(object):
 				event = self.global_queue.get(False)
 			except queue.Empty:
 				continue
-			if event.type == EventType.PING:
-				self.logger.info(f"PING EVENT: {event.time}")
+			if event.type == EventType.TIME:
+				self.logger.info(f"TIME EVENT: {event.time}")
 				self.screeners_handler.screen_markets(event)
 				self.universe.generate_bar_event(event)
 			elif event.type == EventType.BAR:
