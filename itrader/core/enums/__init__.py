@@ -10,7 +10,11 @@ from .portfolio import (
     PortfolioState,
     PositionSide,
     TransactionType,
-    PortfolioEventType
+    PortfolioEventType,
+    CashOperationType,
+    PositionEvent,
+    MetricsPeriod,
+    TransactionState
 )
 
 # Execution enums
@@ -18,7 +22,8 @@ from .execution import (
     ExecutionStatus,
     ExecutionErrorCode,
     ExchangeConnectionStatus,
-    ExchangeType
+    ExchangeType,
+    FillStatus
 )
 
 # Order enums
@@ -35,15 +40,20 @@ from .order import (
 __all__ = [
     # Portfolio enums
     'PortfolioState',
-    'PositionSide', 
+    'PositionSide',
     'TransactionType',
     'PortfolioEventType',
-    
+    'CashOperationType',
+    'PositionEvent',
+    'MetricsPeriod',
+    'TransactionState',
+
     # Execution enums
     'ExecutionStatus',
     'ExecutionErrorCode',
     'ExchangeConnectionStatus',
     'ExchangeType',
+    'FillStatus',
     
     # Order enums
     'OrderType',

@@ -38,3 +38,95 @@ class PortfolioEventType(Enum):
     POSITION_CLOSED = "position_closed"
     CASH_DEPOSIT = "cash_deposit"
     CASH_WITHDRAWAL = "cash_withdrawal"
+
+
+class CashOperationType(Enum):
+    """Cash operation types for the portfolio cash audit trail.
+
+    Relocated from ``cash_manager.py`` (D-04). Member values preserve the
+    prior class-based definition exactly.
+    """
+    DEPOSIT = "DEPOSIT"
+    WITHDRAWAL = "WITHDRAWAL"
+    TRANSACTION_DEBIT = "TRANSACTION_DEBIT"
+    TRANSACTION_CREDIT = "TRANSACTION_CREDIT"
+    RESERVATION = "RESERVATION"
+    RELEASE_RESERVATION = "RELEASE_RESERVATION"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "CashOperationType":
+        """Case-insensitive string parse; raise a clear f-string error."""
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.upper() == value.upper():
+                    return member
+        raise ValueError(f"Unknown CashOperationType: {value!r}")
+
+
+class PositionEvent(Enum):
+    """Position lifecycle events.
+
+    Relocated from ``position_manager.py`` (D-04). Member values preserve the
+    prior class-based definition exactly.
+    """
+    OPENED = "OPENED"
+    UPDATED = "UPDATED"
+    CLOSED = "CLOSED"
+    MERGED = "MERGED"
+    SPLIT = "SPLIT"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "PositionEvent":
+        """Case-insensitive string parse; raise a clear f-string error."""
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.upper() == value.upper():
+                    return member
+        raise ValueError(f"Unknown PositionEvent: {value!r}")
+
+
+class MetricsPeriod(Enum):
+    """Reporting periods for portfolio metrics.
+
+    Relocated from ``metrics_manager.py`` (D-04). Member values preserve the
+    prior class-based definition exactly.
+    """
+    DAILY = "DAILY"
+    WEEKLY = "WEEKLY"
+    MONTHLY = "MONTHLY"
+    QUARTERLY = "QUARTERLY"
+    YEARLY = "YEARLY"
+    ALL_TIME = "ALL_TIME"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "MetricsPeriod":
+        """Case-insensitive string parse; raise a clear f-string error."""
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.upper() == value.upper():
+                    return member
+        raise ValueError(f"Unknown MetricsPeriod: {value!r}")
+
+
+class TransactionState(Enum):
+    """Portfolio transaction lifecycle states.
+
+    Relocated from ``transaction_manager.py`` (D-04). Kept DISTINCT from
+    ``OrderStatus`` and ``FillStatus``. Member values preserve the prior
+    class-based definition exactly.
+    """
+    PENDING = "PENDING"
+    VALIDATED = "VALIDATED"
+    EXECUTED = "EXECUTED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+    ROLLED_BACK = "ROLLED_BACK"
+
+    @classmethod
+    def _missing_(cls, value: object) -> "TransactionState":
+        """Case-insensitive string parse; raise a clear f-string error."""
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.upper() == value.upper():
+                    return member
+        raise ValueError(f"Unknown TransactionState: {value!r}")
