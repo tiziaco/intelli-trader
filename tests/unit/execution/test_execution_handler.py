@@ -1,52 +1,43 @@
-import unittest
 from datetime import datetime, UTC
 from queue import Queue
+
+import pytest
 
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.events_handler.event import FillEvent, OrderEvent
 from itrader.core.enums import OrderType
 
-class TestExecutionHandlerUpdates(unittest.TestCase):
-	"""
-	Test the execution handler module.
-	"""
 
-	@classmethod
-	def setUpClass(cls):
-		"""
-		Set up the execution handler instance.
-		"""
-		cls.queue = Queue()
-		cls.execution_handler = ExecutionHandler(cls.queue)
-
-	def setUp(self):
-		"""
-		Set up an order event that will be processed by the 
-		execution handler.
-		"""
-		self.order_event = OrderEvent(
-			datetime.now(UTC),
-			'BTCUSDT',
-			'BUY',
-			100.0,  # price
-			1.0,    # quantity
-			'simulated',
-			1, 1,
-			OrderType.MARKET,
-		)
-
-	def test_execution_handler_initialization(self):
-		self.assertIsInstance(self.execution_handler, ExecutionHandler)
-	
-	def test_on_order(self):
-		# Generate a portfolio update event and process it from the order handler
-		self.execution_handler.on_order(self.order_event)
-		# Retrive fill event from the queue
-		fill_event: FillEvent = self.queue.get(False)
-		# Retrive the updated portfolios dict
-		self.assertIsInstance(fill_event, FillEvent)
-		self.assertEqual(fill_event.action, 'BUY')
+@pytest.fixture
+def env():
+    """ExecutionHandler with its queue plus a market BUY order event."""
+    queue = Queue()
+    execution_handler = ExecutionHandler(queue)
+    order_event = OrderEvent(
+        datetime.now(UTC),
+        "BTCUSDT",
+        "BUY",
+        100.0,  # price
+        1.0,    # quantity
+        "simulated",
+        1, 1,
+        OrderType.MARKET,
+    )
+    yield queue, execution_handler, order_event
+    while not queue.empty():
+        queue.get_nowait()
 
 
-if __name__ == "__main__":
-	unittest.main()
+def test_execution_handler_initialization(env):
+    _queue, execution_handler, _order_event = env
+    assert isinstance(execution_handler, ExecutionHandler)
+
+
+def test_on_order(env):
+    queue, execution_handler, order_event = env
+    # Generate a fill event and process it from the order handler
+    execution_handler.on_order(order_event)
+    # Retrieve fill event from the queue
+    fill_event: FillEvent = queue.get(False)
+    assert isinstance(fill_event, FillEvent)
+    assert fill_event.action == "BUY"
