@@ -107,12 +107,7 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
     "itrader.strategy_handler.my_strategies.*",          # OUT — relocated to a separate repo (STATE.md)
-    "itrader.legacy_config",                             # D-config — superseded by itrader.config; removal pending
     "itrader.order_handler.storage.postgresql_storage", # D-sql — live order persistence (sibling of sql_handler)
-    "itrader.config.exchange.schema",                   # D-exchange — dormant validator written against an older
-                                                        #   ValidationResult API (str errors + warnings kwarg); never
-                                                        #   invoked on the backtest path (only re-exported). Reconciling
-                                                        #   it with core.validator is an API change deferred to D-exchange.
     "itrader.reporting.statistics",                     # D-sql/reporting — concrete reporter coupled to sqlalchemy
                                                         #   (self.engine/self.meta/_to_sql) with the documented-broken
                                                         #   _prepare_data path (STATE.md 01-04). Never exercised on the

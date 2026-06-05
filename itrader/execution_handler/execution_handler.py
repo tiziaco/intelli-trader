@@ -7,7 +7,7 @@ from .exchanges.base import AbstractExchange
 from itrader.events_handler.event import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
-from itrader.config import SystemConfig, get_system_config_provider
+from itrader.config import SystemConfig
 from itrader.logger import get_itrader_logger
 
 class ExecutionHandler(AbstractExecutionHandler):
@@ -54,17 +54,11 @@ class ExecutionHandler(AbstractExecutionHandler):
 	def _resolve_rng_seed(self) -> int:
 		"""Resolve the determinism seed from the system config (D-11).
 
-		Reads `performance.rng_seed` via the system config provider when a
-		`settings/system.yaml` is present, otherwise falls back to the documented
-		`PerformanceSettings.rng_seed` default. `SystemConfig.from_dict` applies the
-		default for any missing key, so this is robust to an absent/partial YAML.
+		The config registry/provider getters were deleted in the M2-06 collapse
+		(D-01); construct the Pydantic ``SystemConfig`` directly. The documented
+		``PerformanceSettings.rng_seed`` default (42) drives deterministic backtests.
 		"""
-		try:
-			provider_data = get_system_config_provider().get_config()
-		except Exception as exc:  # provider/registry unavailable -> documented default
-			self.logger.debug('System config provider unavailable, using default rng_seed: %s', exc)
-			provider_data = {}
-		system_config = SystemConfig.from_dict(provider_data or {})
+		system_config = SystemConfig.default()
 		return int(system_config.performance.rng_seed)
 
 

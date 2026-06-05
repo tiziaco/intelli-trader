@@ -16,8 +16,10 @@ from decimal import Decimal
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.events_handler.event import OrderEvent, FillEvent
 from itrader.config import ExchangeConfig, get_exchange_preset
-from itrader.config.exchange import FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation
-from itrader.config.exchange.config import FeeModelType, SlippageModelType, ExchangeType
+from itrader.config.exchange import (
+    FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation,
+    FeeModelType, SlippageModelType, ExchangeType,
+)
 from itrader.core.enums.execution import (
     ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus
 )

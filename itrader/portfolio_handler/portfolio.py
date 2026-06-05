@@ -29,7 +29,7 @@ class Portfolio(object):
 	
 	Each portfolio is now self-contained with its own:
 	- State management (ACTIVE, INACTIVE, ARCHIVED)
-	- Configuration (limits, validation settings) via ConfigRegistry
+	- Configuration (limits, validation settings) via a Pydantic PortfolioConfig
 	- Thread safety (per-portfolio lock)
 	- Health monitoring
 	
