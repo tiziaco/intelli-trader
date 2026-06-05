@@ -1,162 +1,136 @@
-import unittest
-import pandas as pd
 from datetime import datetime
 from queue import Queue
+
+import pytest
 
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
-from itrader.events_handler.event import OrderEvent, BarEvent, SignalEvent
+from itrader.events_handler.event import OrderEvent, SignalEvent
+from itrader.core.enums import OrderType
 
 
-class TestOrderHandlerUpdates(unittest.TestCase):
-	"""
-	Test a order handler object performing different actions
-	like create create a new order, manage portfolio updates,
-	check pending order and managing the risk of new orders.
-	"""
-
-	@classmethod
-	def setUpClass(cls):
-		"""
-		Set up the test data that will be used across all test methods.
-		"""
-		# Init test Portfolio
-		cls.user_id = 1
-		cls.portfolio_name = 'test_ptf'
-		cls.exchange = 'default'
-		cls.strategy_id = 1
-		cls.portfolio_id = 1
-		cls.cash = 10000  # Increased from 1000 to 10000 to handle larger orders
-		# Init global queue
-		cls.queue = Queue()
-		# Init Portfolio Handler
-		cls.ptf_handler = PortfolioHandler(cls.queue)
-		# Init Order Storage
-		cls.order_storage = OrderStorageFactory.create('test')
-		# Init Order Handler
-		cls.order_handler = OrderHandler(cls.queue, cls.ptf_handler, cls.order_storage)
+_STRATEGY_ID = 1
 
 
-	def setUp(self):
-		"""
-		For each test: create a new portfolio and generate a portfolio update event.
-		"""
-		# Add new portfolio
-		self.last_ptf_id = self.ptf_handler.add_portfolio(self.user_id, self.portfolio_name, self.exchange, self.cash)
+class _OnSignalHarness:
+    """OrderHandler harness with a single funded portfolio and a signal factory."""
 
-	def tearDown(self):
-		"""Drain the queue after each test to prevent cross-test bleed."""
-		while not self.queue.empty():
-			try:
-				self.queue.get_nowait()
-			except Exception:
-				break
-	
-	def create_mock_signal(self, action, ticker='BTCUSDT', quantity=100.0, price=40.0, 
-	                      order_type='MARKET', stop_loss=0.0, take_profit=0.0):
-		"""Create a mock signal with proper quantity for testing."""
-		return SignalEvent(
-			time=datetime.now(),
-			order_type=order_type,
-			ticker=ticker,
-			action=action,
-			price=price,
-			quantity=quantity,
-			stop_loss=stop_loss,
-			take_profit=take_profit,
-			strategy_id=self.strategy_id,
-			portfolio_id=self.last_ptf_id,
-			strategy_setting={}
-		)
-		
-	
-	def test_on_signal_buy(self):
-		# Create a mock buy signal with proper quantity
-		buy_signal = self.create_mock_signal('BUY', quantity=100.0, price=40.0)
-		
-		# Process the signal through the order handler
-		self.order_handler.on_signal(buy_signal)
+    def __init__(self):
+        self.queue = Queue()
+        self.ptf_handler = PortfolioHandler(self.queue)
+        self.order_storage = OrderStorageFactory.create("test")
+        self.order_handler = OrderHandler(self.queue, self.ptf_handler, self.order_storage)
+        # One portfolio per harness instance (per-test, like the legacy setUp).
+        self.last_ptf_id = self.ptf_handler.add_portfolio(1, "test_ptf", "default", 10000)
 
-		# Retrieve the market order that should have been generated
-		order_event: OrderEvent = self.queue.get(False)
-		
-		# Assert Order Event from queue
-		self.assertIsInstance(order_event, OrderEvent)
-		self.assertEqual(order_event.ticker, 'BTCUSDT')
-		self.assertEqual(order_event.action, 'BUY')
-		self.assertEqual(order_event.quantity, 100.0)
-	
-	def test_on_signal_sell(self):
-		# Create a mock sell signal with proper quantity
-		sell_signal = self.create_mock_signal('SELL', quantity=50.0, price=40.0)
-		
-		# Process the signal through the order handler
-		self.order_handler.on_signal(sell_signal)
-
-		# Retrieve the market order that should have been generated
-		order_event: OrderEvent = self.queue.get(False)
-		
-		# Assert Order Event from queue
-		self.assertIsInstance(order_event, OrderEvent)
-		self.assertEqual(order_event.ticker, 'BTCUSDT')
-		self.assertEqual(order_event.action, 'SELL')
-		self.assertEqual(order_event.quantity, 50.0)
-	
-	def test_on_signal_buy_with_sl_tp(self):
-		# Create a mock buy signal with stop loss and take profit
-		buy_signal = self.create_mock_signal('BUY', quantity=100.0, price=40.0, stop_loss=30.0, take_profit=50.0)
-
-		# Process the signal through the order handler
-		self.order_handler.on_signal(buy_signal)
-
-		# Drain all 3 order events: MARKET (primary) + STOP (SL) + LIMIT (TP)
-		emitted = [self.queue.get(False) for _ in range(self.queue.qsize())]
-		order_events = [e for e in emitted
-		                if isinstance(e, OrderEvent) and e.type.name == 'ORDER']
-		# Find the primary MARKET order event
-		from itrader.core.enums import OrderType as OT
-		primary_event = next(e for e in order_events if e.order_type == OT.MARKET)
-		pending_orders = self.order_handler.order_storage.get_pending_orders()
-		portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
-
-		# Assert primary Order Event
-		self.assertEqual(primary_event.ticker, 'BTCUSDT')
-		self.assertEqual(primary_event.action, 'BUY')
-		self.assertEqual(primary_event.quantity, 100.0)
-		# All 3 legs emitted
-		self.assertEqual(len(order_events), 3)
-		# All 3 orders remain pending (market order is filled by execution handler, not self-filled)
-		self.assertIsInstance(pending_orders, dict)
-		self.assertEqual(len(portfolio_orders), 3)  # MARKET, SL and TP orders all pending
-
-	def test_on_signal_sell_with_sl_tp(self):
-		# Create a mock sell signal with stop loss and take profit
-		sell_signal = self.create_mock_signal('SELL', quantity=50.0, price=40.0, stop_loss=30.0, take_profit=50.0)
-
-		# Process the signal through the order handler
-		self.order_handler.on_signal(sell_signal)
-
-		# Drain all 3 order events: MARKET (primary) + STOP (SL) + LIMIT (TP)
-		emitted = [self.queue.get(False) for _ in range(self.queue.qsize())]
-		order_events = [e for e in emitted
-		                if isinstance(e, OrderEvent) and e.type.name == 'ORDER']
-		# Find the primary MARKET order event
-		from itrader.core.enums import OrderType as OT
-		primary_event = next(e for e in order_events if e.order_type == OT.MARKET)
-		pending_orders = self.order_handler.order_storage.get_pending_orders()
-		portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
-
-		# Assert primary Order Event
-		self.assertEqual(primary_event.ticker, 'BTCUSDT')
-		self.assertEqual(primary_event.action, 'SELL')
-		self.assertEqual(primary_event.quantity, 50.0)
-		# All 3 legs emitted
-		self.assertEqual(len(order_events), 3)
-		# All 3 orders remain pending (market order is filled by execution handler, not self-filled)
-		self.assertIsInstance(pending_orders, dict)
-		self.assertEqual(len(portfolio_orders), 3)  # MARKET, SL and TP orders all pending
+    def create_mock_signal(
+        self, action, ticker="BTCUSDT", quantity=100.0, price=40.0,
+        order_type="MARKET", stop_loss=0.0, take_profit=0.0,
+    ):
+        """Create a mock signal with proper quantity for testing."""
+        return SignalEvent(
+            time=datetime.now(),
+            order_type=order_type,
+            ticker=ticker,
+            action=action,
+            price=price,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            strategy_id=_STRATEGY_ID,
+            portfolio_id=self.last_ptf_id,
+            strategy_setting={},
+        )
 
 
-if __name__ == "__main__":
-	unittest.main()
+@pytest.fixture
+def harness():
+    h = _OnSignalHarness()
+    yield h
+    # Drain the queue after each test to prevent cross-test bleed.
+    while not h.queue.empty():
+        try:
+            h.queue.get_nowait()
+        except Exception:
+            break
+
+
+def test_on_signal_buy(harness):
+    buy_signal = harness.create_mock_signal("BUY", quantity=100.0, price=40.0)
+
+    harness.order_handler.on_signal(buy_signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+
+    assert isinstance(order_event, OrderEvent)
+    assert order_event.ticker == "BTCUSDT"
+    assert order_event.action == "BUY"
+    assert order_event.quantity == 100.0
+
+
+def test_on_signal_sell(harness):
+    sell_signal = harness.create_mock_signal("SELL", quantity=50.0, price=40.0)
+
+    harness.order_handler.on_signal(sell_signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+
+    assert isinstance(order_event, OrderEvent)
+    assert order_event.ticker == "BTCUSDT"
+    assert order_event.action == "SELL"
+    assert order_event.quantity == 50.0
+
+
+def test_on_signal_buy_with_sl_tp(harness):
+    buy_signal = harness.create_mock_signal(
+        "BUY", quantity=100.0, price=40.0, stop_loss=30.0, take_profit=50.0
+    )
+
+    harness.order_handler.on_signal(buy_signal)
+
+    # Drain all 3 order events: MARKET (primary) + STOP (SL) + LIMIT (TP)
+    emitted = [harness.queue.get(False) for _ in range(harness.queue.qsize())]
+    order_events = [
+        e for e in emitted if isinstance(e, OrderEvent) and e.type.name == "ORDER"
+    ]
+    # Find the primary MARKET order event
+    primary_event = next(e for e in order_events if e.order_type == OrderType.MARKET)
+    pending_orders = harness.order_handler.order_storage.get_pending_orders()
+    portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
+
+    assert primary_event.ticker == "BTCUSDT"
+    assert primary_event.action == "BUY"
+    assert primary_event.quantity == 100.0
+    # All 3 legs emitted
+    assert len(order_events) == 3
+    # All 3 orders remain pending (market order is filled by execution handler, not self-filled)
+    assert isinstance(pending_orders, dict)
+    assert len(portfolio_orders) == 3  # MARKET, SL and TP orders all pending
+
+
+def test_on_signal_sell_with_sl_tp(harness):
+    sell_signal = harness.create_mock_signal(
+        "SELL", quantity=50.0, price=40.0, stop_loss=30.0, take_profit=50.0
+    )
+
+    harness.order_handler.on_signal(sell_signal)
+
+    # Drain all 3 order events: MARKET (primary) + STOP (SL) + LIMIT (TP)
+    emitted = [harness.queue.get(False) for _ in range(harness.queue.qsize())]
+    order_events = [
+        e for e in emitted if isinstance(e, OrderEvent) and e.type.name == "ORDER"
+    ]
+    # Find the primary MARKET order event
+    primary_event = next(e for e in order_events if e.order_type == OrderType.MARKET)
+    pending_orders = harness.order_handler.order_storage.get_pending_orders()
+    portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
+
+    assert primary_event.ticker == "BTCUSDT"
+    assert primary_event.action == "SELL"
+    assert primary_event.quantity == 50.0
+    # All 3 legs emitted
+    assert len(order_events) == 3
+    # All 3 orders remain pending (market order is filled by execution handler, not self-filled)
+    assert isinstance(pending_orders, dict)
+    assert len(portfolio_orders) == 3  # MARKET, SL and TP orders all pending
