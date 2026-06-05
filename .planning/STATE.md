@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 03-08-PLAN.md
-last_updated: "2026-06-05T10:21:42.385Z"
+status: verifying
+stopped_at: Completed 03-09-PLAN.md
+last_updated: "2026-06-05T10:38:09.582Z"
 last_activity: 2026-06-05
 progress:
   total_phases: 8
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 22
-  completed_plans: 21
-  percent: 25
+  completed_plans: 22
+  percent: 38
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 
 Phase: 03 (m2b-config-types-storage-seam-oracle-re-freeze) — EXECUTING
 Plan: 9 of 9
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-05
 
-Progress: [██████████] 95%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -72,6 +72,7 @@ Progress: [██████████] 95%
 | Phase 03 P06 | 9 | 1 tasks | 15 files |
 | Phase 03 P07 | 18 | 2 tasks | 16 files |
 | Phase 03 P08 | 95 | 2 tasks | 51 files |
+| Phase 03 P09 | 8 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -114,6 +115,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 03-08: test/ -> tests/ via history-preserving git mv split by TYPE (unit mirrors package, integration holds cascade/smoke/oracle); folder-derived TYPE markers in layered conftests, single registration home (pyproject markers)
 - [Phase ?]: Plan 03-08: 29 unittest.TestCase files converted to pytest one-file-per-commit at constant 346 collected; filterwarnings=['error'] intact (leaks fixed via yield-teardown queue drains); D-16/D-17 oracle numeric re-freeze deferred to 03-09
 - [Phase ?]: Plan 03-08: Rule 1 fix - Task 1 commit 33c3281 recorded git-mv renames but dropped tracked-file content edits (git add aborted on stale 'test' pathspec); corrected in 6a623ae so committed HEAD collects 346 on fresh checkout
+- [Phase ?]: Plan 03-09: numerical oracle re-frozen byte-exact at M2b end-state (final_equity 53229.68512642488, replacing stale M1 float 53229.75); D-15 tolerance + DEF-02-08-A xfail closed; numeric cols check_exact=True; behavioral identity unchanged (D-18); one of PROJECT.md's two sanctioned numeric re-baseline points
+- [Phase ?]: Plan 03-09: D-17 inertness gate byte-exact (behavioral AND numeric) vs M2A-INERTNESS-REF before re-freeze — M2b structural changes proven numerically inert, no time_parser firing shift
 
 ### Pending Todos
 
@@ -140,6 +143,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-05T10:21:42.376Z
-Stopped at: Completed 03-08-PLAN.md
+Last session: 2026-06-05T10:38:09.573Z
+Stopped at: Completed 03-09-PLAN.md
 Resume file: None
