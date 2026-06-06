@@ -1,5 +1,6 @@
 import queue
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
 
 from itrader.core.clock import BacktestClock
@@ -11,6 +12,7 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
+from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.simulation.time_generator import TimeGenerator
 from itrader.universe.dynamic import DynamicUniverse
 from itrader.reporting.statistics import StatisticsReporting
@@ -63,12 +65,32 @@ class TradingSystem(object):
 		# so its constructor is untyped to the gate.
 		self.screeners_handler = ScreenersHandler(self.global_queue, self.price_handler)  # type: ignore[no-untyped-call]
 		self.portfolio_handler = PortfolioHandler(self.global_queue)
-		
+
+		# Execution handler is constructed BEFORE the order handler so the
+		# admission gate's commission estimator can adapt the simulated
+		# exchange's fee model (Plan 05-06, D-04). Construction-order only —
+		# runtime communication stays queue-mediated.
+		self.execution_handler = ExecutionHandler(self.global_queue)
+
+		# Commission estimator for the admission cash-reservation gate
+		# (Plan 05-06, D-04): an adapter shaped (quantity, price) -> Decimal
+		# over the simulated exchange's fee model, INJECTED so order_manager
+		# never imports across the execution boundary (RESEARCH Pattern 1).
+		# fee_model is read at call time — update_config may rebuild it. The
+		# golden run pins fees 0 (ZeroFeeModel default), so the estimate is 0
+		# and the reservation equals price x quantity exactly (value-preserving).
+		simulated_exchange = self.execution_handler.exchanges.get('simulated')
+
+		def _estimate_commission(quantity: Decimal, price: Decimal) -> Decimal:
+			if not isinstance(simulated_exchange, SimulatedExchange):
+				return Decimal("0")
+			return simulated_exchange.fee_model.calculate_fee(
+				quantity, price, side="buy", order_type="market")
+
 		# Create order storage for backtesting (in-memory)
 		order_storage = OrderStorageFactory.create('backtest')
-		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage)
-		
-		self.execution_handler = ExecutionHandler(self.global_queue)
+		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
+		                                  commission_estimator=_estimate_commission)
 		self.time_generator = TimeGenerator()
 		self.reporting = StatisticsReporting(
 			self.portfolio_handler,

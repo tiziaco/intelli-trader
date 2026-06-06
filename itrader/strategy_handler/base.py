@@ -7,6 +7,7 @@ import pandas as pd
 
 from itrader.core.enums import OrderType, Side
 from itrader.core.ids import StrategyId
+from itrader.core.money import to_money
 from itrader.events_handler.events import SignalEvent, BarEvent
 from itrader.outils.time_parser import to_timedelta
 from itrader import logger, idgen
@@ -76,20 +77,31 @@ class Strategy(ABC):
 		if self.last_event is None:
 			return
 		last_close = self.last_event.get_last_close(ticker)
+		if last_close is None:
+			# WR-12: the ticker is absent from the last bar (sparse universe,
+			# data gap) — no price means no signal. Without this guard,
+			# to_money(None) raises InvalidOperation inside the strategy
+			# callback (the matching engine guards this same Optional).
+			logger.warning('No last close for %s — signal skipped (%s %s)',
+						ticker, self.strategy_id, action)
+			return
 		for portfolio_id in self.subscribed_portfolios:
 			# quantity is omitted (defaults to None, D-10): the order/risk layer
 			# sizes the signal — the 0 sentinel is gone.
 			# D-05 boundary parse: the strategy string contract ('BUY'/'SELL',
 			# 'market'/...) is converted to enum members HERE — the case-insensitive
 			# `_missing_` classmethods raise ValueError on unknown strings.
+			# D-22 money boundary: the strategy's float prices (bar close, sl/tp)
+			# enter the Decimal domain HERE via to_money — the D-04 string path
+			# (Decimal(str(x))), numerically inert by construction.
 			signal = SignalEvent(
 							time = self.last_event.time,
 							order_type = OrderType(self.order_type),
 							ticker = ticker,
 							action = Side(action),
-							price = last_close,
-							stop_loss = sl,
-							take_profit = tp,
+							price = to_money(last_close),
+							stop_loss = to_money(sl),
+							take_profit = to_money(tp),
 							strategy_id = self.strategy_id,
 							portfolio_id = portfolio_id,
 							strategy_setting=self.setting_to_dict()

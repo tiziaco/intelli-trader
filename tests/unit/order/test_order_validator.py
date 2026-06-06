@@ -1,12 +1,14 @@
 import pytest
 from datetime import datetime
+from decimal import Decimal
 from unittest.mock import Mock
 
 from itrader.order_handler.order_validator import (
     EnhancedOrderValidator, ValidationResult, ValidationMessage, ValidationLevel
 )
 from itrader.order_handler.order import Order
-from itrader.core.enums import OrderType, OrderStatus
+from itrader.core.enums import OrderType, OrderStatus, PositionSide
+from itrader.core.portfolio_read_model import PositionView
 
 
 class TestEnhancedOrderValidator:
@@ -15,25 +17,21 @@ class TestEnhancedOrderValidator:
     The validator checks the PENDING ``Order`` entity, not the in-flight
     signal — the typed ``ValidationResult`` IS the verdict (D-03); nothing
     is mutated by validation.
+
+    The validator reads portfolio state through the narrow PortfolioReadModel
+    Protocol (Plan 05-03, D-16) — mocks stub the six Protocol methods, not
+    portfolio attributes.
     """
 
     def setup_method(self):
         """Set up test fixtures."""
+        # Mock read model with sufficient cash and a supported exchange
         self.portfolio_handler = Mock()
+        self.portfolio_handler.available_cash.return_value = Decimal("20000.00")
+        self.portfolio_handler.get_position.return_value = None  # flat
+        self.portfolio_handler.exchange_for.return_value = "NYSE"
+        self.portfolio_handler.open_position_count.return_value = 5
         self.validator = EnhancedOrderValidator(self.portfolio_handler)
-
-        # Mock portfolio with sufficient cash and proper attributes
-        mock_portfolio = Mock()
-        mock_portfolio.cash = 20000.0
-        mock_portfolio.positions = {}
-        mock_portfolio.exchange = "NYSE"  # Set a supported exchange
-        mock_portfolio.max_positions = 50
-        mock_portfolio.n_open_positions = 5  # Current open positions
-        mock_portfolio.max_position_size = 10000.0
-        mock_portfolio.max_portfolio_risk = 0.2
-        mock_portfolio.total_equity = 50000.0  # Total portfolio value
-        mock_portfolio.total_value = 50000.0   # Alternative name
-        self.portfolio_handler.get_portfolio.return_value = mock_portfolio
 
     def create_test_order(self, **kwargs):
         """Create a PENDING test order entity with default values."""
@@ -78,12 +76,8 @@ class TestEnhancedOrderValidator:
 
     def test_market_conditions_validation(self):
         """Test market conditions validation phase."""
-        # Test invalid exchange by mocking portfolio with unsupported exchange
-        mock_portfolio = Mock()
-        mock_portfolio.cash = 20000.0
-        mock_portfolio.positions = {}
-        mock_portfolio.exchange = "INVALID_EXCHANGE"
-        self.portfolio_handler.get_portfolio.return_value = mock_portfolio
+        # Test invalid exchange via the read model's exchange_for
+        self.portfolio_handler.exchange_for.return_value = "INVALID_EXCHANGE"
 
         order = self.create_test_order()
         result = self.validator.validate_order_pipeline(order)
@@ -94,18 +88,8 @@ class TestEnhancedOrderValidator:
 
     def test_portfolio_constraints_validation(self):
         """Test portfolio constraints validation phase."""
-        # Mock insufficient cash
-        mock_portfolio = Mock()
-        mock_portfolio.cash = 1000.0  # Not enough for 100 * 150 = 15000
-        mock_portfolio.positions = {}
-        mock_portfolio.exchange = "NYSE"
-        mock_portfolio.max_positions = 50
-        mock_portfolio.n_open_positions = 5
-        mock_portfolio.max_position_size = 10000.0
-        mock_portfolio.max_portfolio_risk = 0.2
-        mock_portfolio.total_equity = 50000.0
-        mock_portfolio.total_value = 50000.0
-        self.portfolio_handler.get_portfolio.return_value = mock_portfolio
+        # Mock insufficient cash: not enough for 100 * 150 = 15000
+        self.portfolio_handler.available_cash.return_value = Decimal("1000.00")
 
         order = self.create_test_order(action="BUY", price=150.0, quantity=100.0)
         result = self.validator.validate_order_pipeline(order)
@@ -203,18 +187,14 @@ class TestEnhancedOrderValidator:
 
     def test_sell_order_validation(self):
         """Test validation for sell orders."""
-        # Mock a position to sell
-        mock_portfolio = Mock()
-        mock_portfolio.cash = 10000.0
-        mock_portfolio.positions = {'AAPL': Mock(quantity=200.0)}
-        mock_portfolio.exchange = "NYSE"  # Add exchange attribute
-        mock_portfolio.max_positions = 50
-        mock_portfolio.n_open_positions = 5
-        mock_portfolio.max_position_size = 10000.0
-        mock_portfolio.max_portfolio_risk = 0.2
-        mock_portfolio.total_equity = 50000.0
-        mock_portfolio.total_value = 50000.0
-        self.portfolio_handler.get_portfolio.return_value = mock_portfolio
+        # Mock an open long position to sell (frozen PositionView, D-15)
+        self.portfolio_handler.available_cash.return_value = Decimal("10000.00")
+        self.portfolio_handler.get_position.return_value = PositionView(
+            ticker="AAPL",
+            side=PositionSide.LONG,
+            net_quantity=Decimal("200.0"),
+            avg_price=Decimal("140.0"),
+        )
 
         order = self.create_test_order(action="SELL", quantity=100.0)
         result = self.validator.validate_order_pipeline(order)

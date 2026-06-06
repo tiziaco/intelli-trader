@@ -266,12 +266,33 @@ def test_fill_event_processing_success(env):
     fill_event = _fill_event("AAPL", Side.BUY, 50.0, 100, 1.0, portfolio_id,
                              time=datetime.now(UTC))
 
-    result = env.handler.on_fill(fill_event)
-    assert result
+    # D-10: on_fill is raise/None — success means no exception raised.
+    env.handler.on_fill(fill_event)
 
     portfolio = env.handler.get_portfolio(portfolio_id)
     assert portfolio.n_open_positions == 1
     assert portfolio.cash < 10000.0  # Cash should be reduced
+
+
+def test_on_fill_returns_none(env):
+    """D-10 contract propagation: on_fill is raise/None — no bool channel."""
+    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 100000.0)
+    fill_event = _fill_event("AAPL", Side.BUY, 50.0, 100, 1.0, portfolio_id,
+                             time=datetime.now(UTC))
+
+    assert env.handler.on_fill(fill_event) is None
+
+
+def test_on_fill_transaction_carries_fill_id(env):
+    """D-11: the recorded Transaction's fill_id matches the originating
+    FillEvent's (fill -> order -> strategy audit chain)."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    buy_fill = _fill_event("BTCUSDT", Side.BUY, 40000, 1, 0, portfolio_id)
+
+    env.handler.on_fill(buy_fill)
+
+    transaction = env.handler.get_portfolio(portfolio_id).transactions[0]
+    assert transaction.fill_id == buy_fill.fill_id
 
 
 def test_fill_event_processing_inactive_portfolio(env):
@@ -388,10 +409,16 @@ def test_error_event_publishing(env):
 # ===================
 
 
-def test_concurrent_operation_limits(env):
-    """Test concurrent operation limits."""
-    assert env.handler.config.limits.max_concurrent_operations > 0
-    assert len(env.handler._active_operations) == 0
+def test_no_concurrency_limiting_single_writer(env):
+    """D-19: concurrency-limiting machinery is gone — single-writer contract.
+
+    Regression-locks the deletion of _operations_lock/_active_operations:
+    all portfolio state mutations happen on the engine thread; queue.Queue
+    is the thread boundary.
+    """
+    assert not hasattr(env.handler, '_active_operations')
+    assert not hasattr(env.handler, '_operations_lock')
+    assert not hasattr(env.handler, '_portfolios_lock')
 
 
 def test_correlation_id_generation(env):

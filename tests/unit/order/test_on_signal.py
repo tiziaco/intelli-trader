@@ -96,7 +96,7 @@ def test_on_signal_buy_with_sl_tp(harness):
     ]
     # Find the primary MARKET order event
     primary_event = next(e for e in order_events if e.order_type == OrderType.MARKET)
-    pending_orders = harness.order_handler.order_storage.get_pending_orders()
+    pending_orders = harness.order_storage.get_pending_orders()
     portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
 
     assert primary_event.ticker == "BTCUSDT"
@@ -123,7 +123,7 @@ def test_on_signal_sell_with_sl_tp(harness):
     ]
     # Find the primary MARKET order event
     primary_event = next(e for e in order_events if e.order_type == OrderType.MARKET)
-    pending_orders = harness.order_handler.order_storage.get_pending_orders()
+    pending_orders = harness.order_storage.get_pending_orders()
     portfolio_orders = pending_orders.get(primary_event.portfolio_id, {})
 
     assert primary_event.ticker == "BTCUSDT"
@@ -154,7 +154,7 @@ def test_rejected_signal_persists_audited_rejected_order(harness):
     # No OrderEvent reaches the execution handler
     assert harness.queue.empty()
 
-    storage = harness.order_handler.order_storage
+    storage = harness.order_storage
     # Exactly one stored order for the ticker — the rejected primary; the
     # bracket children were never created (create-all-then-emit only runs
     # after acceptance).
@@ -203,7 +203,7 @@ def test_bracket_two_directional_linkage_and_parent_first_emission(harness):
     assert tp_event.child_order_ids == ()
 
     # The stored entities carry the same two-directional linkage
-    storage = harness.order_handler.order_storage
+    storage = harness.order_storage
     stored_parent = storage.get_order_by_id(parent_event.order_id, harness.last_ptf_id)
     assert set(stored_parent.child_order_ids) == {sl_event.order_id, tp_event.order_id}
     for child_id in stored_parent.child_order_ids:

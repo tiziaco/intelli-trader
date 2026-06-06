@@ -12,18 +12,27 @@ decision objects out, so it is fully deterministic and unit-testable.
 
 import dataclasses
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import List, Optional, Tuple
 
 from itrader.core.ids import OrderId
+from itrader.core.money import to_money
 from itrader.events_handler.events import OrderEvent, BarEvent
 from itrader.core.enums import OrderType, Side
 
 
 @dataclass
 class FillDecision:
-    """One resting order has matched and should be filled."""
+    """One resting order has matched and should be filled.
+
+    D-22 boundary: ``fill_quantity`` is the order's own Decimal quantity
+    (carried through untouched); ``fill_price`` is a FLOAT — the product of
+    the engine's float trigger/gap math against float bar OHLC. The exchange
+    converts it back into the money domain via ``to_money`` at FillEvent
+    construction.
+    """
     order_event: OrderEvent
-    fill_quantity: float
+    fill_quantity: Decimal
     fill_price: float
     reason: str
 
@@ -55,8 +64,8 @@ class MatchingEngine:
         """Remove a resting order. Returns True if it was present."""
         return self._resting.pop(order_id, None) is not None
 
-    def modify(self, order_id: OrderId, new_price: Optional[float] = None,
-               new_quantity: Optional[float] = None) -> bool:
+    def modify(self, order_id: OrderId, new_price: Optional[Decimal] = None,
+               new_quantity: Optional[Decimal] = None) -> bool:
         """Replace a resting order with an updated copy. Returns True if present.
 
         Replace-in-book: the stored OrderEvent is never mutated in place —
@@ -65,6 +74,10 @@ class MatchingEngine:
         deliberately PRESERVES ``order_id`` (and ``event_id`` once events
         carry one): a MODIFY changes an order's terms, not its identity —
         it is the same instruction, amended (RESEARCH Open Question 2).
+
+        D-22: the annotation follows the event retype (Decimal money);
+        ``to_money`` normalizes so a legacy float caller still stores
+        Decimal in the book (identity on Decimal input).
         """
         order = self._resting.get(order_id)
         if order is None:
@@ -72,8 +85,8 @@ class MatchingEngine:
         # None-guarded: an omitted kwarg keeps the resting order's own value.
         self._resting[order_id] = dataclasses.replace(
             order,
-            price=order.price if new_price is None else new_price,
-            quantity=order.quantity if new_quantity is None else new_quantity,
+            price=order.price if new_price is None else to_money(new_price),
+            quantity=order.quantity if new_quantity is None else to_money(new_quantity),
         )
         return True
 
@@ -98,28 +111,37 @@ class MatchingEngine:
         if open_ is None or high is None or low is None:
             return None
 
+        # D-22 boundary (Pitfall 4): order.price is Decimal but bar OHLC is
+        # float (pandas) until M5a's Bar struct pushes Decimal deeper. Convert
+        # ONCE here so the trigger comparisons and min/max gap-fill math stay
+        # pure float — Decimal x float arithmetic would raise TypeError, and a
+        # mixed min/max would leak a Decimal into the float fill price. The
+        # fill price re-enters the money domain via to_money at FillEvent
+        # construction in the exchange.
+        trigger = float(order.price)
+
         if order.order_type == OrderType.MARKET:
             # next-bar market order: unconditional fill at the open
             return open_
 
         if order.order_type == OrderType.STOP:
             if order.action is Side.SELL:           # stop-loss on a long
-                if low <= order.price:
-                    return min(open_, order.price)  # pessimistic gap-down
+                if low <= trigger:
+                    return min(open_, trigger)      # pessimistic gap-down
             else:                                   # BUY stop (cover short)
-                if high >= order.price:
-                    return max(open_, order.price)  # pessimistic gap-up
+                if high >= trigger:
+                    return max(open_, trigger)      # pessimistic gap-up
 
         elif order.order_type == OrderType.LIMIT:
             # Limits fill at the limit price even on a favorable gap (we never
             # credit a better-than-limit fill to the strategy) — intentionally
             # asymmetric with the pessimistic open-based gap fill used for stops.
             if order.action is Side.SELL:           # take-profit on a long
-                if high >= order.price:
-                    return order.price
+                if high >= trigger:
+                    return trigger
             else:                                   # BUY limit (cover short)
-                if low <= order.price:
-                    return order.price
+                if low <= trigger:
+                    return trigger
 
         return None
 

@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
 
+import uuid_utils.compat as uuid_compat
+
 import pytest
 
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
@@ -16,13 +18,13 @@ def test_long_position_multiple_buy():
     time = datetime.now()
     # TODO: use Transaction.new_transaction() or implement an auto generate ID method
     buy_transaction_1 = Transaction(
-        time, TransactionType.BUY, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=1
+        time, TransactionType.BUY, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=1, fill_id=uuid_compat.uuid7()
     )
     position = Position.open_position(buy_transaction_1)
     # Increase Long position
     time = datetime.now()
     buy_transaction_2 = Transaction(
-        time, TransactionType.BUY, _TICKER, 50000, 2, 0, _PORTFOLIO_ID, id=2
+        time, TransactionType.BUY, _TICKER, 50000, 2, 0, _PORTFOLIO_ID, id=2, fill_id=uuid_compat.uuid7()
     )
     position.update_position(buy_transaction_2)
 

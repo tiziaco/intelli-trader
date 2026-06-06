@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 import pandas as pd
 import pytest
@@ -175,6 +176,53 @@ def test_ignores_ticker_not_in_bar(engine):
     fills, _ = engine.on_bar(make_bar(open_=40, high=60, low=20, close=50))  # BTCUSDT only
     assert fills == []
     assert engine.has_order(1)
+
+
+# --- D-22 Decimal order money at the float matching boundary ----------------
+
+
+def test_stop_with_decimal_price_triggers_and_fills_float(engine):
+    # D-22 boundary (Pitfall 4): order.price is Decimal; the engine converts
+    # ONCE at the matching boundary (float(order.price)) so the trigger/gap
+    # math stays float — no Decimal x float TypeError, and the decision's
+    # fill_price is a float (the exchange converts back via to_money at
+    # FillEvent emission).
+    engine.submit(make_order_event(OrderType.STOP, "SELL", Decimal("30.0"), order_id=1))
+    fills, _ = engine.on_bar(make_bar(open_=35, high=36, low=20, close=25))
+    assert len(fills) == 1
+    assert isinstance(fills[0].fill_price, float)
+    assert fills[0].fill_price == 30.0
+
+
+def test_limit_with_decimal_price_triggers_and_fills_float(engine):
+    engine.submit(make_order_event(OrderType.LIMIT, "SELL", Decimal("50.0"), order_id=1))
+    fills, _ = engine.on_bar(make_bar(open_=45, high=60, low=44, close=58))
+    assert len(fills) == 1
+    assert isinstance(fills[0].fill_price, float)
+    assert fills[0].fill_price == 50.0
+
+
+def test_decimal_stop_gap_fill_math_no_type_error(engine):
+    # Gap-down: min(open, stop) is the hazard zone for Decimal x float —
+    # the boundary conversion keeps it pure float.
+    engine.submit(make_order_event(OrderType.STOP, "SELL", Decimal("30.0"), order_id=1))
+    fills, _ = engine.on_bar(make_bar(open_=25, high=27, low=18, close=20))
+    assert isinstance(fills[0].fill_price, float)
+    assert fills[0].fill_price == 25.0
+
+
+def test_modify_accepts_decimal_and_stores_decimal(engine):
+    # D-22: modify's annotation follows the event retype — the resting copy
+    # carries Decimal money.
+    oe = make_order_event(OrderType.LIMIT, "SELL", Decimal("50.0"), order_id=2,
+                          quantity=Decimal("1.0"))
+    engine.submit(oe)
+    assert engine.modify(2, new_price=Decimal("55.0"), new_quantity=Decimal("3.0"))
+    resting = engine.get_order(2)
+    assert isinstance(resting.price, Decimal)
+    assert resting.price == Decimal("55.0")
+    assert isinstance(resting.quantity, Decimal)
+    assert resting.quantity == Decimal("3.0")
 
 
 # --- OCO / brackets ---------------------------------------------------------

@@ -3,8 +3,8 @@ Test suite for CashManager class.
 Tests cash operations, precision, thread safety, and validation.
 """
 
-import threading
-import time
+import uuid
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
@@ -159,9 +159,8 @@ def test_transaction_cash_flow_insufficient_funds(cm):
 
 def test_cash_reservation(cm):
     """Test cash reservation for pending orders."""
-    result = cm.reserve_cash(30000.0, "Order reservation", "ORDER_123")
+    cm.reserve_cash(30000.0, "Order reservation", "ORDER_123")
 
-    assert result
     assert cm.reserved_balance == Decimal("30000.00")
     assert cm.available_balance == Decimal("70000.00")
     assert cm.balance == Decimal("100000.00")  # Total unchanged
@@ -179,33 +178,21 @@ def test_cash_reservation_insufficient_funds(cm):
 
 
 def test_release_cash_reservation(cm):
-    """Test releasing cash reservation."""
+    """Test releasing a cash reservation by reference (Plan 05-03)."""
     # First, make a reservation
     cm.reserve_cash(20000.0, "Initial reservation", "ORDER_125")
 
-    # Then release part of it
-    result = cm.release_cash_reservation(15000.0, "Partial release", "ORDER_125")
+    # Then release it by reference — the full reserved amount comes back
+    cm.release_reservation("ORDER_125")
 
-    assert result
-    assert cm.reserved_balance == Decimal("5000.00")
-    assert cm.available_balance == Decimal("95000.00")
+    assert cm.reserved_balance == Decimal("0.00")
+    assert cm.available_balance == Decimal("100000.00")
 
     # Check operations were recorded
     operations = cm.get_cash_operations()
     assert len(operations) == 2
     assert operations[1].operation_type == CashOperationType.RELEASE_RESERVATION
-
-
-def test_release_more_than_reserved(cm):
-    """Test releasing more cash than reserved."""
-    # Make small reservation
-    cm.reserve_cash(1000.0, "Small reservation", "ORDER_126")
-
-    # Try to release more
-    with pytest.raises(InvalidTransactionError) as exc_info:
-        cm.release_cash_reservation(2000.0, "Invalid release", "ORDER_126")
-
-    assert "Cannot release" in str(exc_info.value)
+    assert operations[1].amount == Decimal("20000")
 
 
 def test_decimal_precision(cm):
@@ -274,47 +261,27 @@ def test_balance_consistency_validation(cm):
     # Normal state should be consistent
     assert cm.validate_balance_consistency()
 
-    # Test with manipulated state (simulating corruption)
-    original_reserved = cm._storage.get_reserved_cash()
-    cm._storage.set_reserved_cash(Decimal("-100.00"))  # Invalid negative reserved
+    # Test with manipulated state (simulating corruption): inject a negative
+    # reservation directly through the seam (the manager API would reject it).
+    cm._storage.add_reservation("CORRUPT", Decimal("-100.00"))
 
     assert not cm.validate_balance_consistency()
 
     # Restore state
-    cm._storage.set_reserved_cash(original_reserved)
+    cm._storage.pop_reservation("CORRUPT")
 
 
-def test_concurrent_operations(cm):
-    """Test thread safety with concurrent operations."""
+def test_interleaved_operations_sequential_single_writer(cm):
+    """WR-11: the D-19 single-writer contract deliberately removed the
+    CashManager locks — ALL mutations happen on the engine thread. The old
+    multi-threaded variant of this test asserted a thread-safety property the
+    code intentionally no longer provides (a lost-update race). The same
+    operation mix, run sequentially on one writer, must be exact."""
     results = []
-    errors = []
-
-    def deposit_thread(thread_id):
-        try:
-            results.append(cm.deposit(100.0, f"Concurrent deposit {thread_id}"))
-        except Exception as e:
-            errors.append(e)
-
-    def withdraw_thread(thread_id):
-        try:
-            results.append(cm.withdraw(50.0, f"Concurrent withdrawal {thread_id}"))
-        except Exception as e:
-            errors.append(e)
-
-    # Start multiple threads
-    threads = []
     for i in range(5):
-        dep_thread = threading.Thread(target=deposit_thread, args=(i,))
-        with_thread = threading.Thread(target=withdraw_thread, args=(i,))
-        threads.extend([dep_thread, with_thread])
+        results.append(cm.deposit(100.0, f"Sequential deposit {i}"))
+        results.append(cm.withdraw(50.0, f"Sequential withdrawal {i}"))
 
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    # Check results
-    assert len(errors) == 0, f"Concurrent operation errors: {errors}"
     assert len(results) == 10
     assert all(results)
 
@@ -325,43 +292,196 @@ def test_concurrent_operations(cm):
     assert cm.balance == Decimal("100250.00")
 
 
-def test_concurrent_reservation_operations(cm):
-    """Test thread safety with concurrent reservation operations."""
-    results = []
-    errors = []
-
-    def reserve_release_thread(thread_id):
-        try:
-            reserve_result = cm.reserve_cash(
-                1000.0, f"Reservation {thread_id}", f"ORDER_{thread_id}"
-            )
-            # Small delay to increase chance of race conditions
-            time.sleep(0.01)
-            release_result = cm.release_cash_reservation(
-                1000.0, f"Release {thread_id}", f"ORDER_{thread_id}"
-            )
-            results.extend([reserve_result, release_result])
-        except Exception as e:
-            errors.append(e)
-
-    # Start multiple threads
-    threads = []
+def test_interleaved_reservation_operations_sequential_single_writer(cm):
+    """WR-11: reservation churn under the D-19 single-writer contract —
+    overlapping reserve/release cycles run sequentially leave no residue."""
+    # Overlap the reservations (all reserved before any release) to exercise
+    # the multi-key reservation accounting, then release them all.
     for i in range(5):
-        thread = threading.Thread(target=reserve_release_thread, args=(i,))
-        threads.append(thread)
-        thread.start()
-
-    for thread in threads:
-        thread.join()
-
-    # Check results
-    assert len(errors) == 0, f"Concurrent reservation errors: {errors}"
-    assert len(results) == 10
-    assert all(results)
+        cm.reserve_cash(1000.0, f"Reservation {i}", f"ORDER_{i}")
+    assert cm.reserved_balance == Decimal("5000.00")
+    for i in range(5):
+        cm.release_reservation(f"ORDER_{i}")
 
     # Final state should have no reservations
     assert cm.reserved_balance == Decimal("0.00")
     assert cm.available_balance == cm.balance
+
+
+# ---------------------------------------------------------------------------
+# Per-reference reservations (Plan 05-03 Task 2 — D-13/OQ4 groundwork)
+# ---------------------------------------------------------------------------
+
+
+def test_reservations_sum_per_reference(cm):
+    """Two reservations under different refs: reserved_balance is the sum."""
+    cm.reserve_cash(Decimal("10000.00"), "order A", "ORDER_A")
+    cm.reserve_cash(Decimal("25000.00"), "order B", "ORDER_B")
+
+    assert cm.reserved_balance == Decimal("35000.00")
+    assert cm.available_balance == Decimal("65000.00")
+    assert cm.balance == Decimal("100000.00")  # Total unchanged
+
+
+def test_reservation_full_precision_round_trip(cm):
+    """OQ4: reservations are stored at FULL precision — no 2dp quantize."""
+    cm.reserve_cash(Decimal("123.45678901"), "full precision", "ORDER_FP")
+
+    assert cm.reserved_balance == Decimal("123.45678901")
+    assert cm.available_balance == Decimal("100000.00") - Decimal("123.45678901")
+
+
+def test_release_reservation_removes_exactly_that_reference(cm):
+    """release_reservation(ref) pops exactly that reservation, others stay."""
+    cm.reserve_cash(Decimal("10000.00"), "order A", "ORDER_A")
+    cm.reserve_cash(Decimal("5000.00"), "order B", "ORDER_B")
+
+    cm.release_reservation("ORDER_A")
+
+    assert cm.reserved_balance == Decimal("5000.00")
+    assert cm.available_balance == Decimal("95000.00")
+
+    # Release audit entry recorded only for the existing reservation
+    operations = cm.get_cash_operations(
+        operation_type=CashOperationType.RELEASE_RESERVATION
+    )
+    assert len(operations) == 1
+
+
+def test_release_unknown_reference_is_silent_noop(cm):
+    """Releasing an unknown reference is idempotent — no raise, no audit entry."""
+    cm.release_reservation("NEVER_RESERVED")
+    cm.release_reservation("NEVER_RESERVED")  # twice — still a no-op
+
+    assert cm.reserved_balance == Decimal("0.00")
+    operations = cm.get_cash_operations(
+        operation_type=CashOperationType.RELEASE_RESERVATION
+    )
+    assert len(operations) == 0
+
+
+def test_release_is_idempotent_after_real_reservation(cm):
+    """Releasing the same reference twice releases once, second is a no-op."""
+    cm.reserve_cash(Decimal("1000.00"), "order", "ORDER_X")
+    cm.release_reservation("ORDER_X")
+    cm.release_reservation("ORDER_X")  # idempotent
+
+    assert cm.reserved_balance == Decimal("0.00")
+    operations = cm.get_cash_operations(
+        operation_type=CashOperationType.RELEASE_RESERVATION
+    )
+    assert len(operations) == 1
+
+
+def test_reserve_insufficient_funds_reserves_nothing(cm):
+    """A failed reservation raises typed InsufficientFundsError and reserves 0."""
+    with pytest.raises(InsufficientFundsError):
+        cm.reserve_cash(Decimal("150000.00"), "too large", "ORDER_BIG")
+
+    assert cm.reserved_balance == Decimal("0.00")
+    assert cm.available_balance == cm.balance
+
+
+# ---------------------------------------------------------------------------
+# Fill-flow primitives (Plan 05-05 Task 1 — D-05/D-06/D-10, Pitfalls 1/2/5)
+# ---------------------------------------------------------------------------
+
+_EVENT_TIME = datetime(2021, 3, 14, 9, 26, 53)
+
+
+def test_apply_fill_cash_flow_full_precision_no_quantize(cm):
+    """Pitfall 1: an 8dp signed delta moves balance by EXACTLY that delta."""
+    delta = Decimal("-9543.21987654")
+
+    cm.apply_fill_cash_flow(
+        amount=delta,
+        fee=Decimal("0"),
+        description="BUY BTCUSD fill",
+        reference_id="txn-1",
+        timestamp=_EVENT_TIME,
+    )
+
+    # No 2dp quantization — the full 8dp precision survives on the ledger.
+    assert cm.balance == Decimal("100000.00") + delta
+    assert cm.balance == Decimal("90456.78012346")
+
+
+def test_apply_fill_cash_flow_one_ledger_entry_with_fee(cm):
+    """D-06: exactly one CashOperation per fill — amount = signed net delta,
+    fee = commission portion; balance reconstruction holds."""
+    buy_delta = Decimal("-50025.00")   # -(50000 * 1 + 25 commission)
+    sell_delta = Decimal("51974.00")   # 52000 * 1 - 26 commission
+
+    cm.apply_fill_cash_flow(
+        amount=buy_delta, fee=Decimal("25"),
+        description="BUY", reference_id="txn-buy", timestamp=_EVENT_TIME,
+    )
+    cm.apply_fill_cash_flow(
+        amount=sell_delta, fee=Decimal("26"),
+        description="SELL", reference_id="txn-sell", timestamp=_EVENT_TIME,
+    )
+
+    operations = cm.get_cash_operations()
+    assert len(operations) == 2
+
+    buy_op, sell_op = operations
+    assert buy_op.operation_type == CashOperationType.TRANSACTION_DEBIT
+    assert buy_op.amount == buy_delta          # SIGNED net delta, not abs
+    assert buy_op.fee == Decimal("25")
+    assert buy_op.reference_id == "txn-buy"
+
+    assert sell_op.operation_type == CashOperationType.TRANSACTION_CREDIT
+    assert sell_op.amount == sell_delta
+    assert sell_op.fee == Decimal("26")
+
+    # Balance reconstruction: balance = initial + Σ amounts.
+    assert cm.balance == Decimal("100000.00") + buy_delta + sell_delta
+
+
+def test_cash_operation_event_time_and_uuid_id(cm):
+    """Pitfall 5: ledger records are deterministic — caller-supplied event
+    time (never wall clock) + UUID operation id."""
+    cm.apply_fill_cash_flow(
+        amount=Decimal("-100.00"), fee=Decimal("0"),
+        description="BUY", reference_id="txn-2", timestamp=_EVENT_TIME,
+    )
+
+    operation = cm.get_cash_operations()[0]
+    assert operation.timestamp == _EVENT_TIME
+    assert isinstance(operation.operation_id, uuid.UUID)
+
+
+def test_assert_funds_invariant_raises_when_required_exceeds_balance(cm):
+    """D-10: required > balance raises typed InsufficientFundsError."""
+    with pytest.raises(InsufficientFundsError):
+        cm.assert_funds_invariant(Decimal("100000.01"))
+
+
+def test_assert_funds_invariant_passes_when_required_within_balance(cm):
+    """required <= balance passes (returns None)."""
+    assert cm.assert_funds_invariant(Decimal("100000.00")) is None
+    assert cm.assert_funds_invariant(Decimal("0.01")) is None
+
+
+def test_assert_funds_invariant_ignores_reservations(cm):
+    """Pitfall 2: the invariant guard checks BALANCE, never the
+    reservation-adjusted buying power — an order's own un-released
+    reservation must NOT false-positive under portfolio-first FILL dispatch."""
+    cm.reserve_cash(Decimal("95000.00"), "pending order", "ORDER_RES")
+    assert cm.available_balance == Decimal("5000.00")
+
+    # required > available_balance but <= balance — must NOT raise.
+    assert cm.assert_funds_invariant(Decimal("50000.00")) is None
+
+
+def test_fill_flow_primitives_return_none(cm):
+    """D-10 one-channel contract: both primitives return None."""
+    result = cm.apply_fill_cash_flow(
+        amount=Decimal("10.00"), fee=Decimal("0"),
+        description="credit", reference_id="txn-3", timestamp=_EVENT_TIME,
+    )
+    assert result is None
+    assert cm.assert_funds_invariant(Decimal("1.00")) is None
 
 
 def test_operation_id_uniqueness(cm):

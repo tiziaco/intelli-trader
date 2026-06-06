@@ -13,11 +13,14 @@ and order storage/execution systems.
 """
 
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
+from ..core.exceptions import InsufficientFundsError
+from ..core.ids import PortfolioId
 from ..core.money import to_money
+from ..core.portfolio_read_model import PortfolioReadModel
 from .base import OrderStorage
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
@@ -38,68 +41,167 @@ class OrderManager:
 	and order storage/execution systems.
 	"""
 	
-	def __init__(self, order_storage: OrderStorage, logger: Any, order_handler_ref: Any,
-	             market_execution: str = "immediate", portfolio_handler: Any = None) -> None:
+	def __init__(self, order_storage: OrderStorage, logger: Any,
+	             market_execution: str = "immediate",
+	             portfolio_handler: Optional[PortfolioReadModel] = None,
+	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
 		"""
 		Initialize the OrderManager.
-		
+
+		D-18: the manager has EXCLUSIVE ownership of the order storage and no
+		back-reference to OrderHandler — layering is one-directional
+		(facade -> manager -> storage). The manager never touches the events
+		queue: it returns OperationResults carrying OrderEvents and the
+		handler performs all queue puts.
+
 		Parameters
 		----------
 		order_storage : OrderStorage
-			Storage interface for order operations
+			Storage interface for order operations (manager-owned, D-18)
 		logger : Logger
 			Logger instance for order processing events
-		order_handler_ref : OrderHandler
-			Reference to parent OrderHandler for callbacks
 		market_execution : str
 			Market order execution mode:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Execute market orders on next bar (realistic backtesting)
-		portfolio_handler : PortfolioHandler, optional
-			Portfolio handler for position-aware operations
+		portfolio_handler : PortfolioReadModel, optional
+			Narrow portfolio read boundary for position-aware operations
+			(D-16: the concrete handler conforms structurally)
+		commission_estimator : Callable[[Decimal, Decimal], Decimal], optional
+			Estimates the commission for an order as f(quantity, price) ->
+			Decimal, feeding the admission reservation amount (Plan 05-06,
+			D-04). INJECTED at wiring time — order_manager never imports
+			across the execution boundary (RESEARCH Pattern 1). None means a
+			zero estimate, which reproduces the pre-reservation funds-check
+			math exactly (mode-agnostic; the golden run pins fees 0).
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
-		self.order_handler = order_handler_ref
 		self.market_execution = market_execution
 		self.portfolio_handler = portfolio_handler
+		self.commission_estimator = commission_estimator
 
 		# Initialize validator if portfolio_handler is available
 		self.order_validator = EnhancedOrderValidator(portfolio_handler) if portfolio_handler else None
 
-	def on_fill(self, fill_event: FillEvent) -> None:
+	def _estimate_commission(self, order: Order) -> Decimal:
+		"""Estimate the commission for an order's admission reservation (D-04).
+
+		Delegates to the injected estimator (quantity, price) -> Decimal;
+		``None`` -> ``Decimal("0")`` so the reservation amount degrades to
+		exactly price x quantity — today's funds-check math.
+		"""
+		if self.commission_estimator is None:
+			return Decimal("0")
+		return self.commission_estimator(order.quantity, order.price)
+
+	def on_fill(self, fill_event: FillEvent) -> List[OrderEvent]:
 		"""
 		Reconcile the order mirror against an exchange fill.
 
-		EXECUTED -> mark the order FILLED; CANCELLED -> mark CANCELLED.
-		Then deactivate it from the active book (kept in all_orders for audit).
+		EXECUTED -> mark the order FILLED; CANCELLED -> mark CANCELLED;
+		REFUSED -> mark REJECTED. The terminal status change alone moves the
+		order out of active queries (D-20: "active" is an entity predicate,
+		not a container) — the order stays in storage for the audit trail.
+
+		Returns
+		-------
+		List[OrderEvent]
+			CANCEL OrderEvents for bracket children orphaned by a parent that
+			reached a terminal state without any fill (WR-05). The manager
+			never touches the queue (D-18) — the handler enqueues these.
 		"""
+		cancel_events: List[OrderEvent] = []
 		order_id = getattr(fill_event, 'order_id', None)
 		if order_id is None:
-			return
+			return cancel_events
 		order = self.order_storage.get_order_by_id(order_id, fill_event.portfolio_id)
 		if order is None:
-			return
+			return cancel_events
 		try:
+			applied = True
 			if fill_event.status == FillStatus.EXECUTED:
-				if not order.add_fill(order.remaining_quantity, to_money(fill_event.price),
+				# D-22: fill_event.price is Decimal — to_money is an identity
+				# normalization at this domain entry (kept deliberately: the
+				# mirror never trusts an unnormalized money input).
+				# WR-01: reconcile with the exchange-truth fill quantity, not a
+				# blanket remaining_quantity — the exchange may emit partial
+				# fills (matching-engine driven) and the mirror must track them.
+				# The event quantity is float-roundtripped at the D-22 exchange
+				# boundary, so a FULL fill can legitimately differ from
+				# remaining_quantity at full Decimal precision in either
+				# direction: at-or-above remaining clamps (warn on a genuine
+				# overshoot), and a quantity equal to the float roundtrip of
+				# remaining IS the full fill — both resolve to remaining so the
+				# mirror reaches FILLED exactly as before. Anything below is a
+				# genuine partial fill.
+				fill_qty = to_money(fill_event.quantity)
+				remaining = order.remaining_quantity
+				if fill_qty == to_money(float(remaining)):
+					# Float-roundtrip-equal at the D-22 boundary -> full fill
+					# (covers both roundtrip-up and roundtrip-down quietly).
+					fill_qty = remaining
+				elif fill_qty > remaining:
+					self.logger.warning(
+						'Fill quantity %s exceeds remaining %s for order %s; clamping',
+						fill_qty, remaining, order_id)
+					fill_qty = remaining
+				if not order.add_fill(fill_qty, to_money(fill_event.price),
 				                      fill_event.time, "exchange fill"):
+					# WR-02: do NOT early-return — the portfolio has already
+					# settled this fill (FILL dispatches portfolio-first), so
+					# the uniform terminal release below must still run or the
+					# BUY's reservation is stuck forever (T-05-17). Only the
+					# mirror update is skipped.
 					self.logger.warning('add_fill rejected for order %s; mirror left unchanged', order_id)
-					return
+					applied = False
 			elif fill_event.status == FillStatus.CANCELLED:
 				order.cancel_order("exchange cancellation")
 			elif fill_event.status == FillStatus.REFUSED:
 				order.reject_order("exchange rejection")
 			else:
 				# Truly unknown status: leave the order active and alert.
+				# (No release either — an unknown status is not a terminal
+				# reconciliation, so the reservation is intentionally held.)
 				self.logger.warning('Unhandled fill status %s for order %s; order left active',
 				                    fill_event.status, order_id)
-				return
-			# Only reached for an applied EXECUTED or CANCELLED reconciliation.
-			self.order_storage.update_order(order)
-			self.order_storage.deactivate_order(order.id, order.portfolio_id)
+				return cancel_events
+			# Reached for every terminal-status fill (EXECUTED/CANCELLED/
+			# REFUSED), whether or not the mirror transition applied.
+			# D-20: no deactivate step — the terminal status set above already
+			# removes the order from active queries via the is_active predicate.
+			if applied:
+				self.order_storage.update_order(order)
+			# D-01/OQ2 (Plan 05-06): the reserver owns the release — a uniform
+			# idempotent release on EVERY terminal reconciliation (FILLED/
+			# CANCELLED/REJECTED). Never-reserved orders (SELLs, bracket
+			# children) hit the silent no-op. Ordering vs the settlement debit
+			# is irrelevant: the 05-05 invariant guard checks balance, never
+			# available_balance, so a release-after-debit cannot false-positive
+			# (T-05-17: no stuck reservations corrupting buying power).
+			if self.portfolio_handler is not None:
+				self.portfolio_handler.release(
+					cast(PortfolioId, order.portfolio_id), order.id)
+			# WR-05: a parent that reaches a terminal state WITHOUT any fill
+			# (REFUSED/CANCELLED) leaves its protective SL/TP children resting
+			# on the exchange with no position to protect — when price later
+			# crosses them they would fill against a flat portfolio. Cancel
+			# the children locally and return their CANCEL OrderEvents so the
+			# exchange removes the resting orders too.
+			if (fill_event.status in (FillStatus.CANCELLED, FillStatus.REFUSED)
+					and order.child_order_ids and order.filled_quantity == 0):
+				for child_id in order.child_order_ids:
+					# 02-05 carry-over: the cancel_order API still declares int
+					# ids while runtime ids are UUIDv7 — cast bridges until the
+					# id-annotation retype lands (IN-06, deferred).
+					child_result = self.cancel_order(
+						cast(int, child_id), cast(int, order.portfolio_id),
+						reason=f"parent order {order.id} terminal without fill")
+					if child_result.success and child_result.order_events:
+						cancel_events.extend(child_result.order_events)
 		except Exception as e:
 			self.logger.error('Error reconciling fill for order %s: %s', order_id, e)
+		return cancel_events
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""
@@ -127,6 +229,14 @@ class OrderManager:
 			List of operation results with OrderEvents for execution handler
 		"""
 		results: List[OperationResult] = []
+
+		# WR-03: track the reserve -> emit window. If the admission reserve
+		# succeeded but the primary OrderEvent was never produced (assembly/
+		# storage failure, or an exception between reserve and emit), no fill
+		# will ever arrive to trigger the terminal release in on_fill — the
+		# reservation must be released here or it is orphaned forever.
+		reserved_primary: Optional[Order] = None
+		primary_emitted = False
 
 		try:
 			# 0. Resolve fraction-of-cash sizing BEFORE validation (D-08/D-09).
@@ -172,8 +282,53 @@ class OrderManager:
 					self.logger.warning('Signal validation warnings: %s',
 									   [msg.message for msg in validation_result.warnings])
 
+			# 2b. Admission cash-reservation gate (Plan 05-06, Critical #22 / M4-01).
+			# D-02: SYNCHRONOUS check-and-reserve — the only pre-trade gate. A
+			# queue-mediated reserve was explicitly rejected: it would open a
+			# TOCTOU window between the funds check and the order emit (T-05-14).
+			# D-03: only the cash-debiting primary (BUY) reserves — SELLs and
+			# bracket SL/TP children are exempt (no OCO double-reservation,
+			# T-05-15). D-04: reserve = price x quantity + estimated commission;
+			# the zero default reproduces the old funds-check math exactly.
+			# Decimal-native arithmetic — intermediates are never quantized.
+			if self.portfolio_handler is not None and primary.action == Side.BUY.value:
+				cost = primary.price * primary.quantity + self._estimate_commission(primary)
+				try:
+					self.portfolio_handler.reserve(
+						cast(PortfolioId, primary.portfolio_id), primary.id, cost)
+					reserved_primary = primary
+				except InsufficientFundsError as e:
+					# T-05-16: the failure goes through the Phase 4 audited
+					# add_state_change path and is persisted — rejected orders
+					# never vanish silently. Nothing is emitted (D-02).
+					error_msg = f"Cash reservation failed: {e}"
+					self.logger.error('%s for %s %s', error_msg,
+									signal_event.ticker, signal_event.action)
+					primary.add_state_change(
+						OrderStatus.REJECTED,
+						str(e),
+						triggered_by="cash_reservation",
+					)
+					self.order_storage.add_order(primary)
+					return [OperationResult.failure_result(error_msg,
+						error_details=str(e),
+						operation_type="cash_reservation")]
+
 			# 3. Create-all-then-emit (D-11): assemble brackets, store, emit.
-			results.extend(self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary))
+			assembled = self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
+			primary_emitted = any(
+				r.success and primary.id in (r.affected_order_ids or [])
+				for r in assembled
+			)
+			if reserved_primary is not None and not primary_emitted \
+					and self.portfolio_handler is not None:
+				# WR-03: assembly failed after the admission reserve — no
+				# OrderEvent reaches the exchange, so no terminal fill will
+				# ever drive the on_fill release. Release here (idempotent).
+				self.portfolio_handler.release(
+					cast(PortfolioId, reserved_primary.portfolio_id),
+					reserved_primary.id)
+			results.extend(assembled)
 
 			self.logger.debug('Processed signal for %s %s: %d operations completed',
 							signal_event.ticker, signal_event.action, len(results))
@@ -181,6 +336,17 @@ class OrderManager:
 		except Exception as e:
 			error_msg = f"Error processing signal: {e}"
 			self.logger.error(error_msg, exc_info=True)
+			if reserved_primary is not None and not primary_emitted \
+					and self.portfolio_handler is not None:
+				# WR-03: same leak path for an exception raised anywhere
+				# between the successful reserve and the primary emit.
+				try:
+					self.portfolio_handler.release(
+						cast(PortfolioId, reserved_primary.portfolio_id),
+						reserved_primary.id)
+				except Exception:
+					self.logger.error('Failed to release orphaned reservation for order %s',
+									reserved_primary.id, exc_info=True)
 			results.append(OperationResult.failure_result(error_msg,
 				error_details=str(e), operation_type="signal_processing"))
 
@@ -232,10 +398,13 @@ class OrderManager:
 			)]
 
 	def _get_signal_exchange(self, signal_event: SignalEvent) -> str:
-		"""Resolve the exchange the signal's portfolio trades on."""
+		"""Resolve the exchange the signal's portfolio trades on (Protocol read, D-16)."""
 		if self.portfolio_handler:
-			exchange: str = self.portfolio_handler.get_portfolio(signal_event.portfolio_id).exchange
-			return exchange
+			# 02-05 carry-over: events still declare portfolio_id as int while
+			# the runtime value is a native UUID — cast bridges until the
+			# event-field retype lands (deferred, not mandated by this plan).
+			return self.portfolio_handler.exchange_for(
+				cast(PortfolioId, signal_event.portfolio_id))
 		return "default"  # Fallback
 
 	def _build_primary_order(self, signal_event: SignalEvent, exchange: str,
@@ -438,26 +607,42 @@ class OrderManager:
 				f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
 				operation_type="create_primary_order"
 			)
-		portfolio = self.portfolio_handler.get_portfolio(signal_event.portfolio_id)
-		open_position = portfolio.get_open_position(signal_event.ticker)
+		if self.portfolio_handler is None:
+			# The run path always wires a read model before sizing; a missing
+			# one previously surfaced as an AttributeError caught upstream —
+			# the typed failure result is the same verdict, made explicit.
+			return OperationResult.failure_result(
+				f"Cannot size order: no portfolio read model available for {signal_event.ticker}",
+				operation_type="create_primary_order"
+			)
+		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
+		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		open_position = self.portfolio_handler.get_position(
+			portfolio_id, signal_event.ticker)
 		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
 			# Long-only exit: close the open long by selling its full quantity.
 			# net_quantity is Decimal (M2a entity money) — size in Decimal so the
 			# exit nets the long to exactly the position quantity (D-13: the
 			# Decimal flows native onto the Order entity, no float roundtrip).
+			# The read crosses the boundary as a frozen PositionView (D-15).
 			sized_qty: Decimal = open_position.net_quantity
 			return sized_qty
 		# Entry (or SELL with no open long): fraction-of-cash sizing.
-		# portfolio.cash is Decimal on the ledger (M2-02); compute sizing in
+		# available_cash is the single trading-decision figure (D-14); it is
+		# Decimal on the ledger (M2-02) and — until plan 05-06 wires
+		# reservations onto the trade path — numerically identical to the old
+		# portfolio.cash read (available == total). Compute sizing in
 		# Decimal — (0.95 * cash) / price — keeping full Decimal precision
 		# through the intermediate (D-01: quantize ONLY at money boundaries,
 		# never on an intermediate). The sized quantity is NOT a money-ledger
 		# boundary — it is an in-flight intermediate the exchange consumes — so
-		# it is carried at full precision; the float execution layer still sees
-		# the identical float at the OrderEvent boundary coercion (D-04).
+		# it is carried at full precision; since D-22 the Decimal rides the
+		# OrderEvent untouched and the exchange converts ONCE at its float
+		# matching boundary (the identical double the old float coercion saw).
 		# (Quantizing here to 8dp would both violate D-01 and shift the frozen
 		# numeric oracle past the D-15 tolerance — DEF-02-04-A: no re-baseline.)
-		raw_qty: Decimal = (Decimal("0.95") * portfolio.cash) / to_money(price)
+		available = self.portfolio_handler.available_cash(portfolio_id)
+		raw_qty: Decimal = (Decimal("0.95") * available) / to_money(price)
 		return raw_qty
 
 	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None,
@@ -572,6 +757,16 @@ class OrderManager:
 				# Update in storage
 				self.order_storage.update_order(order)
 
+				# WR-04: the local terminal transition owns the release. The
+				# exchange only emits FillEvent(CANCELLED) for orders actually
+				# resting in its matching engine, so a cancel it never
+				# acknowledges would otherwise hold the BUY's reservation
+				# forever. The release is idempotent — a later exchange
+				# CANCELLED fill re-releasing is a silent no-op.
+				if self.portfolio_handler is not None:
+					self.portfolio_handler.release(
+						cast(PortfolioId, order.portfolio_id), order.id)
+
 				# Generate OrderEvent for cancelled order
 				order_event = OrderEvent.new_order_event(order, command=OrderCommand.CANCEL)
 				
@@ -591,5 +786,37 @@ class OrderManager:
 		except Exception as e:
 			error_msg = f"Error cancelling order {order_id}: {e}"
 			self.logger.error(error_msg, exc_info=True)
-			return OperationResult.failure_result(error_msg, 
+			return OperationResult.failure_result(error_msg,
 				error_details=str(e), operation_type="cancel_order")
+
+	# --- Read interface (D-18) -------------------------------------------------
+	# The manager owns the storage; OrderHandler read methods delegate here.
+	# Pure pass-through layer: same names, same signatures as the facade.
+
+	def get_order_by_id(self, order_id: int, portfolio_id: Optional[Any] = None) -> Optional[Order]:
+		"""Get an order by its ID from the manager-owned storage."""
+		return self.order_storage.get_order_by_id(order_id, portfolio_id)
+
+	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[Any] = None) -> List[Order]:
+		"""Get orders by their status from the manager-owned storage."""
+		return self.order_storage.get_orders_by_status(status, portfolio_id)
+
+	def get_active_orders(self, portfolio_id: Optional[Any] = None) -> List[Order]:
+		"""Get all active orders (PENDING and PARTIALLY_FILLED)."""
+		return self.order_storage.get_active_orders(portfolio_id)
+
+	def get_order_history(self, order_id: int) -> List[Dict[str, Any]]:
+		"""Get the state change history for an order."""
+		return self.order_storage.get_order_history(order_id)
+
+	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[Any] = None) -> List[Order]:
+		"""Get all orders for a specific ticker."""
+		return self.order_storage.get_orders_by_ticker(ticker, portfolio_id)
+
+	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[Any] = None) -> List[Order]:
+		"""Search orders based on criteria."""
+		return self.order_storage.search_orders(criteria, portfolio_id)
+
+	def get_orders_summary(self, portfolio_id: Optional[Any] = None) -> Dict[str, int]:
+		"""Get a summary of orders by status."""
+		return self.order_storage.get_orders_count_by_status(portfolio_id)

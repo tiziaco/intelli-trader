@@ -36,6 +36,15 @@ must import, run, and yield trustworthy results.
 - ✓ Ignition bugs fixed: `SMA_MACD` `[-1]`/`fillna` (KB15), `record_metrics` target (KB18), `to_timedelta` None (KB20), config import cascade (KB16/KB17/TD2)
 - ⚠ Accepted deferrals (tracked in `phases/01-…/deferred-items.md`): **DEF-01-A** — a minimal Decimal→float commission coercion bridges ignition, to be reconciled when M4 makes money Decimal end-to-end; **DEF-01-C** — no margin/liquidation model, an un-liquidated short drives equity negative (min −$33,748); human-blessed into the M1 oracle as current-behavior-to-preserve, owner-routed to M5.
 
+**Validated in Phase 5 (M4 — Money & Transaction Correctness), 2026-06-06:**
+- ✓ Every trade's cash routes through `CashManager`: `Portfolio.cash` setter deleted, BUY-only check-and-reserve admission gate (price × quantity + injected commission estimate), idempotent release on all terminal reconciliations, live deterministic per-fill `CashOperation` ledger; D-14 inertness trace — 137 reservations over the golden run, trade log byte-identical (M4-01, #22 Critical)
+- ✓ Atomic validate-first settlement: validate → funds invariant → position mutate → cash apply → record; saga machinery deleted; D-10 raise/None contract through `transact_shares`/`on_fill`; `Transaction.net_cash_delta` on the entity (M4-02, #16/#23)
+- ✓ One-directional facade→manager→storage order-handler layering with flat O(1) `{order_id: order}` storage; cross-handler reads via narrow `PortfolioReadModel` Protocol + frozen `PositionView` in `itrader/core/` (M4-03/M4-04/M4-06, #6/#9/#29, PERF3, D-16..D-18)
+- ✓ Thread-safety theater deleted — all 8 portfolio-state locks removed, single-writer contract documented, `readerwriterlock` dependency dropped (M4-05, D-19, #29)
+- ✓ Execution DTOs frozen/Decimal/real-ABC; `ExecutionResult` deleted — FillEvents are the only execution output, silent rejection path now emits `FillEvent(REFUSED)` (M4-07, #39, D-21)
+- ✓ D-22 closed: Signal/Order/Fill event money fields are Decimal end-to-end with engineered-inert float boundaries in matching internals; golden gate green — `final_equity = 53229.68512642488` byte-exact, suite 429→504 green, `mypy --strict` clean (M4-08)
+- ✓ Post-phase code review: 24 findings (2 critical), all 14 critical+warning findings fixed with oracle byte-exact (05-REVIEW.md / 05-REVIEW-FIX.md); WR-09 live-mode smoke-run pending in 05-HUMAN-UAT.md
+
 **Validated in Phase 4 (M3 — Event & Dispatch Core), 2026-06-05:**
 - ✓ Events are frozen/slots/kw_only facts in the new `events_handler/events/` package: uuid7 `event_id` + business-time `created_at`, required non-Optional linkage IDs (`order_id`, `fill_id`, `strategy_id`), enum-typed `action: Side`/`order_type: OrderType`, `type` as a real field, dedicated `EventType.ERROR`; legacy `event.py` deleted with no shim (M3-01, D-08/D-09)
 - ✓ All in-flight event mutation removed: SignalEvent `verified`/quantity-sentinel gone (Order entity is the pipeline state, rejections audited PENDING→REJECTED), FillEvent construct-complete at the exchange boundary, MatchingEngine replace-in-book via `dataclasses.replace` (D-10..D-13)
@@ -72,11 +81,11 @@ must import, run, and yield trustworthy results.
 - [x] Behavioral oracle unchanged — Phase 4 (numerical oracle also byte-exact)
 
 **M4 — Money & transaction correctness**
-- [ ] Cash flows through `CashManager` — no float setter bypass (#22 Critical)
-- [ ] Atomic transactions with rollback + correct return contract (#16, #23)
-- [ ] Order handler facade/manager/storage layering; read path through manager; O(1) order lookup (#6, #9, #29, PERF3)
-- [ ] Execution result DTOs frozen/Decimal/real-ABC (#39)
-- [ ] Value-preserving against the oracle (any numeric diff explained)
+- [x] Cash flows through `CashManager` — no float setter bypass (#22 Critical) — Phase 5
+- [x] Atomic transactions with rollback + correct return contract (#16, #23) — Phase 5
+- [x] Order handler facade/manager/storage layering; read path through manager; O(1) order lookup (#6, #9, #29, PERF3) — Phase 5
+- [x] Execution result DTOs frozen/Decimal/real-ABC (#39) — Phase 5
+- [x] Value-preserving against the oracle (any numeric diff explained) — Phase 5 (byte-exact, no diffs to explain)
 
 **M5 — Backtest validity, fills, metrics, strategy/data**
 - [ ] Fix look-ahead / fill realism / bar-timing; `Bar` struct payload; precomputed resample frames (#21, #3, #4, FR1)
@@ -174,4 +183,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-05 — Phase 4 (M3 — Event & Dispatch Core) complete; M3 milestone done. Events are frozen facts with uuid7 `event_id` and required linkage IDs (legacy `event.py` deleted), dispatch runs through a race-free routing registry, `ITraderError` hierarchy and structlog logging unified. Behavioral + numerical oracle byte-exact throughout; suite 429 green, `mypy --strict` clean. Next: Phase 5 (M4 — Money & Transaction Correctness).*
+*Last updated: 2026-06-06 — Phase 5 (M4 — Money & Transaction Correctness) complete; M4 milestone done. Cash routes through `CashManager` with a live reservation lifecycle, settlement is atomic validate-first (saga deleted), order handler is one-directional with O(1) storage and a narrow `PortfolioReadModel` Protocol, execution output is events-only with frozen Decimal DTOs, and event money is Decimal end-to-end (D-22 closed). Value-preserving: `final_equity = 53229.68512642488` byte-exact; suite 504 green, `mypy --strict` clean. Post-phase review fixed all 14 critical+warning findings. Next: Phase 6 (M5a — Backtest Validity, Fills & Data Pipeline).*

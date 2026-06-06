@@ -79,3 +79,20 @@ def test_generate_portfolios_update_event(env):
     assert portfolios_id == [str(env.portfolio_id)]
     # Assert the portfolio's metrics
     assert portfolios.get(str(env.portfolio_id)).get("available_cash") == 960
+    assert portfolios.get(str(env.portfolio_id)).get("reserved_cash") == 0
+
+
+def test_update_event_available_cash_is_reservation_adjusted(env):
+    """WR-07 regression: the serialized available_cash is the reservation-
+    adjusted buying power (total - reserved), not the total balance."""
+    from decimal import Decimal
+
+    portfolio = env.ptf_handler.get_portfolio(env.portfolio_id)
+    portfolio.cash_manager.reserve_cash(Decimal("100.00"), "pending order", "ORDER_X")
+
+    update_event = env.ptf_handler.generate_portfolios_update_event()
+    snapshot = update_event.portfolios[str(env.portfolio_id)]
+
+    assert snapshot["cash"] == 1000
+    assert snapshot["available_cash"] == 900
+    assert snapshot["reserved_cash"] == 100

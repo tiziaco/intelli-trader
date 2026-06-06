@@ -36,6 +36,10 @@ class PortfolioLimits(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_positions: int = Field(default=50, gt=0)
+    # WR-08: cap on how many PORTFOLIOS the handler may hold — a distinct
+    # limit from max_positions (max open positions per portfolio). The two
+    # were previously conflated, so tightening one silently capped the other.
+    max_portfolios: int = Field(default=50, gt=0)
     max_position_value: Decimal = Decimal("1000000.0")
     max_portfolio_concentration: float = Field(default=0.25, gt=0, le=1)
     max_daily_loss: Optional[Decimal] = None

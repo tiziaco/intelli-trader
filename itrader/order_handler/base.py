@@ -247,25 +247,6 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def archive_orders(self, cutoff_date: datetime, portfolio_id: Optional[IdLike] = None) -> int:
-        """
-        Archive old orders to separate storage.
-        
-        Parameters
-        ----------
-        cutoff_date : datetime
-            Orders older than this date will be archived
-        portfolio_id : IdLike, optional
-            Portfolio ID to filter by
-            
-        Returns
-        -------
-        int
-            Number of orders archived
-        """
-        pass
-    
-    @abstractmethod
     def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """
         Search orders based on criteria.
@@ -298,27 +279,5 @@ class OrderStorage(ABC):
         -------
         Dict[str, int]
             Dictionary with status names as keys and counts as values
-        """
-        pass
-    
-    @abstractmethod
-    def deactivate_order(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> bool:
-        """
-        Deactivate an order (remove from active but keep in all_orders for audit trail).
-        
-        Professional trading behavior: filled orders remain in historical records
-        but are removed from active order queries.
-        
-        Parameters
-        ----------
-        order_id : IdLike
-            The ID of the order to deactivate
-        portfolio_id : IdLike, optional
-            The portfolio ID for direct access (more efficient)
-            
-        Returns
-        -------
-        bool
-            True if order was found and deactivated, False otherwise
         """
         pass

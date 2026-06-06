@@ -4,7 +4,6 @@ from decimal import Decimal
 from typing import Dict, Any, Optional
 import random
 import time
-import threading
 
 from .base import AbstractExchange
 from ..fee_model.base import FeeModel
@@ -16,9 +15,9 @@ from ..slippage_model.base import SlippageModel
 from ..slippage_model.zero_slippage_model import ZeroSlippageModel
 from ..slippage_model.linear_slippage_model import LinearSlippageModel
 from ..slippage_model.fixed_slippage_model import FixedSlippageModel
-from ..result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
+from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 from ..matching_engine import MatchingEngine
-from itrader.core.enums.execution import ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
+from itrader.core.enums.execution import ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
 from itrader.core.enums import OrderType, OrderCommand
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
@@ -31,8 +30,10 @@ class SimulatedExchange(AbstractExchange):
 	Features:
 	- Minimal initialization
 	- Configuration-driven behavior
-	- Thread-safe configuration updates
 	- Production-ready design
+
+	D-19 single-writer contract: configuration updates happen on the engine
+	thread; queue.Queue is the thread boundary — other threads only put events.
 	"""
 
 	def __init__(self, global_queue: "Queue[Any]", config: Optional[ExchangeConfig] = None,
@@ -77,9 +78,8 @@ class SimulatedExchange(AbstractExchange):
 		self.simulate_failures = self.config.failure_simulation.simulate_failures
 		self.failure_rate = float(self.config.failure_simulation.failure_rate)
 		
-		# Thread safety
-		self._lock = threading.RLock()
-		
+		# D-19: config lock removed — single-writer contract, see class docstring.
+
 		# Connection state
 		self._connected = False
 		self._connection_time: Optional[datetime] = None
@@ -102,15 +102,17 @@ class SimulatedExchange(AbstractExchange):
 		
 		self.logger.info('Simulated Exchange initialized: %s', self.config.exchange_name)
 
-	def execute_order(self, event: OrderEvent) -> ExecutionResult:
+	def execute_order(self, event: OrderEvent) -> None:
 		"""
-		Execute order with comprehensive error handling and validation.
-		
+		Execute a market order; FillEvents are the ONLY output (D-21).
+
 		Simulates realistic exchange behavior including validation,
-		slippage, failures, and detailed execution results.
+		slippage and failure simulation. Every outcome — EXECUTED or
+		REFUSED — is emitted onto the global queue as a FillEvent;
+		there is no synchronous result object.
 		"""
 		execution_time = datetime.now()
-		
+
 		try:
 			# Pre-execution validation
 			validation_result = self.validate_order(event)
@@ -118,32 +120,18 @@ class SimulatedExchange(AbstractExchange):
 				self._orders_failed += 1
 				self._last_error = validation_result.error_message
 				self._last_error_time = execution_time
-
 				self._emit_rejection(event, validation_result.error_message or "validation failed")
-				return ExecutionResult(
-					success=False,
-					status=ExecutionStatus.REJECTED,
-					error_code=validation_result.error_code or ExecutionErrorCode.INVALID_ORDER,
-					error_message=validation_result.error_message,
-					execution_time=execution_time
-				)
-			
+				return
+
 			# Check connection status
 			if not self.is_connected():
 				self._orders_failed += 1
 				error_msg = "Exchange not connected"
 				self._last_error = error_msg
 				self._last_error_time = execution_time
-
 				self._emit_rejection(event, "exchange not connected")
-				return ExecutionResult(
-					success=False,
-					status=ExecutionStatus.FAILED,
-					error_code=ExecutionErrorCode.NETWORK_ERROR,
-					error_message=error_msg,
-					execution_time=execution_time
-				)
-			
+				return
+
 			# Simulate random failures if enabled
 			if self.simulate_failures and self._rng.random() < self.failure_rate:
 				self._orders_failed += 1
@@ -153,95 +141,74 @@ class SimulatedExchange(AbstractExchange):
 					(ExecutionErrorCode.RATE_LIMIT_EXCEEDED, "Simulated rate limit"),
 					(ExecutionErrorCode.EXCHANGE_MAINTENANCE, "Simulated execution timeout")
 				]
-				error_code, error_msg = self._rng.choice(error_scenarios)
+				_error_code, error_msg = self._rng.choice(error_scenarios)
 				self._last_error = error_msg
 				self._last_error_time = execution_time
-
 				self._emit_rejection(event, error_msg)
-				return ExecutionResult(
-					success=False,
-					status=ExecutionStatus.FAILED,
-					error_code=error_code,
-					error_message=error_msg,
-					execution_time=execution_time
-				)
-			
-			executed_price, commission, slippage_factor = self._emit_fill(
-				event, event.price, event.quantity)
-			executed_quantity = event.quantity
+				return
 
-			return ExecutionResult(
-				success=True,
-				status=ExecutionStatus.SUCCESS,
-				order_id=f"SIM_{self._orders_executed}_{int(execution_time.timestamp())}",
-				exchange_order_id=f"SIMEX_{self._orders_executed}",
-				executed_price=executed_price,
-				executed_quantity=executed_quantity,
-				remaining_quantity=0.0,
-				commission=commission,
-				execution_time=execution_time,
-				error_code=ExecutionErrorCode.NO_ERROR,
-				metadata={
-					'slippage_applied': (slippage_factor - 1.0) * 100,
-					'original_price': event.price,
-					'execution_latency_ms': self._rng.uniform(5, 25),
-					'exchange_name': self._exchange_name
-				}
-			)
-			
+			self._emit_fill(event, event.price, event.quantity)
+
 		except Exception as e:
 			self._orders_failed += 1
 			self._last_error = str(e)
 			self._last_error_time = execution_time
 			self.logger.error('Unexpected error executing order: %s', str(e), exc_info=True)
-			
-			return ExecutionResult(
-				success=False,
-				status=ExecutionStatus.FAILED,
-				error_code=ExecutionErrorCode.EXCHANGE_ERROR,
-				error_message=f"Unexpected error: {str(e)}",
-				execution_time=execution_time
-			)
+			# T-05-08: even unexpected failures must surface as an auditable
+			# FillEvent(REFUSED) so the order mirror reconciles — no outcome
+			# may be lost now that the sync result channel is gone (D-21).
+			self._emit_rejection(event, f"Unexpected error: {str(e)}")
 
 	def _emit_rejection(self, event: OrderEvent, reason: str) -> None:
 		"""Enqueue a FillEvent(REFUSED) so the order mirror can reconcile a rejected order."""
 		self.logger.debug('Emitting REFUSED fill for %s %s: %s', event.action, event.ticker, reason)
-		# REFUSED carries the order's own price/quantity, commission 0.0.
+		# REFUSED carries the order's own (Decimal, D-22) price/quantity,
+		# commission Decimal("0") — never settled, so no float round-trip needed.
 		self.global_queue.put(FillEvent.new_fill(
-			'REFUSED', event, price=event.price, quantity=event.quantity, commission=0.0))
+			'REFUSED', event, price=event.price, quantity=event.quantity,
+			commission=Decimal("0")))
 
-	def _emit_fill(self, event: OrderEvent, fill_price: float,
-	               fill_quantity: float) -> tuple[float, Decimal, float]:
-		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED)."""
-		# fee_model returns Decimal (M2a money); ExecutionResult.commission keeps the
-		# Decimal (tests + downstream rely on it). The FillEvent/fill layer stays float
-		# until M4, so coerce only at the new_fill boundary (mirrors the OrderEvent
-		# boundary coercion in event.py:new_order_event).
+	def _emit_fill(self, event: OrderEvent, fill_price: "float | Decimal",
+	               fill_quantity: "float | Decimal") -> None:
+		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED).
+
+		D-22 boundary (Pitfall 4): fee/slippage/matching math stays FLOAT
+		internally — bar OHLC is float (pandas) until M5a's Bar struct and
+		the slippage factor is float. Decimal order money converts to float
+		ONCE on entry here; the executed values re-enter the money domain
+		ONCE at FillEvent construction via to_money (Decimal(str(x)) — the
+		exact Decimal today's float fill produced at the ledger, so the
+		retype is numerically inert).
+		"""
+		price_f = float(fill_price)
+		quantity_f = float(fill_quantity)
+		# fee_model returns Decimal (M2a money) from float inputs; it passes
+		# through new_fill's to_money as an identity normalization.
 		# D-05: the event carries a Side member; the fee/slippage models keep
 		# their lowercase-string contract — convert via .value at this boundary.
 		commission = self.fee_model.calculate_fee(
-			quantity=fill_quantity, price=fill_price,
+			quantity=quantity_f, price=price_f,
 			side=event.action.value.lower(), order_type="market")
 		slippage_factor = self.slippage_model.calculate_slippage_factor(
-			quantity=fill_quantity, price=fill_price,
+			quantity=quantity_f, price=price_f,
 			side=event.action.value.lower(), order_type="market")
-		executed_price = fill_price * slippage_factor
+		executed_price = price_f * slippage_factor
 
 		# Construct-complete (D-12): the slippage-adjusted price and the matched
 		# fill quantity (may differ from event.quantity for partial fills driven
 		# by the matching engine in on_market_data) are explicit constructor
-		# inputs — the fill is never mutated after construction.
+		# inputs — the fill is never mutated after construction. new_fill
+		# enters the floats into Decimal via to_money (D-22).
 		fill_event = FillEvent.new_fill(
 			'EXECUTED', event,
-			price=executed_price, quantity=fill_quantity, commission=float(commission))
+			price=executed_price, quantity=quantity_f, commission=commission)
 		self.global_queue.put(fill_event)
 
 		self._orders_executed += 1
-		self._total_volume += executed_price * fill_quantity
+		self._total_volume += executed_price * quantity_f
 		self.logger.debug('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
-						event.action, event.ticker, fill_quantity, executed_price,
+						event.action, event.ticker, quantity_f, executed_price,
 						(slippage_factor - 1.0) * 100)
-		return executed_price, commission, slippage_factor
 
 	def on_market_data(self, bar: "BarEvent") -> None:
 		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels."""
@@ -249,11 +216,12 @@ class SimulatedExchange(AbstractExchange):
 		for decision in fills:
 			self._emit_fill(decision.order_event, decision.fill_price, decision.fill_quantity)
 		for cancel in cancels:
-			# CANCELLED carries the order's own price/quantity, commission 0.0.
+			# CANCELLED carries the order's own (Decimal) price/quantity,
+			# commission Decimal("0") — never settled (D-22).
 			self.global_queue.put(FillEvent.new_fill(
 				'CANCELLED', cancel.order_event,
 				price=cancel.order_event.price, quantity=cancel.order_event.quantity,
-				commission=0.0))
+				commission=Decimal("0")))
 
 	def on_order(self, event: OrderEvent) -> None:
 		"""
@@ -268,10 +236,11 @@ class SimulatedExchange(AbstractExchange):
 			# Only acknowledge a cancel for an order that was actually resting;
 			# a cancel for an unknown/already-filled order emits no spurious fill.
 			if event.order_id is not None and self.matching_engine.cancel(event.order_id):
-				# CANCELLED carries the order's own price/quantity, commission 0.0.
+				# CANCELLED carries the order's own (Decimal) price/quantity,
+				# commission Decimal("0") — never settled (D-22).
 				self.global_queue.put(FillEvent.new_fill(
 					'CANCELLED', event, price=event.price, quantity=event.quantity,
-					commission=0.0))
+					commission=Decimal("0")))
 			return
 
 		if event.command == OrderCommand.MODIFY:
@@ -348,12 +317,14 @@ class SimulatedExchange(AbstractExchange):
 		"""Perform comprehensive health check and return status."""
 		current_time = datetime.now()
 		self._last_ping = current_time
-		
+
 		# Calculate metrics
 		total_orders = self._orders_executed + self._orders_failed
 		error_rate = (self._orders_failed / total_orders) if total_orders > 0 else 0.0
 		uptime = (current_time - self._startup_time).total_seconds()
-		
+
+		# total_volume is internal float telemetry; coerce to Decimal at the
+		# DTO boundary (money-denominated field, locked money decision).
 		return HealthStatus(
 			exchange_name=self._exchange_name,
 			connected=self._connected,
@@ -366,13 +337,13 @@ class SimulatedExchange(AbstractExchange):
 			last_error_time=self._last_error_time,
 			orders_executed_today=self._orders_executed,
 			orders_failed_today=self._orders_failed,
-			total_volume_today=self._total_volume,
+			total_volume_today=Decimal(str(self._total_volume)),
 			connection_established=self._connection_time,
 			last_heartbeat=current_time
 		)
 
-	def validate_order(self, event: OrderEvent) -> ValidationResult:
-		"""Comprehensive order validation with detailed feedback."""
+	def validate_order(self, event: OrderEvent) -> OrderPreflightResult:
+		"""Comprehensive pre-trade order checks with detailed feedback (OQ3)."""
 		validation_time = datetime.now()
 		failed_checks = []
 		warnings = []
@@ -423,7 +394,7 @@ class SimulatedExchange(AbstractExchange):
 			
 			error_message = "; ".join(failed_checks)
 		
-		return ValidationResult(
+		return OrderPreflightResult(
 			is_valid=is_valid,
 			error_code=error_code,
 			error_message=error_message,
@@ -548,72 +519,70 @@ class SimulatedExchange(AbstractExchange):
 
 	def update_config(self, **kwargs: Any) -> None:
 		"""Update exchange configuration."""
-		with self._lock:
-			# Direct config attribute updates
-			config_mapping: Dict[str, Any] = {
-				'exchange_name': 'exchange_name',
-				'exchange_type': 'exchange_type',
-				'simulate_failures': ('failure_simulation', 'simulate_failures'),
-				'failure_rate': ('failure_simulation', 'failure_rate'),
-				'supported_symbols': ('limits', 'supported_symbols'),
-				'min_order_size': ('limits', 'min_order_size'),
-				'max_order_size': ('limits', 'max_order_size'),
-				'fee_model_type': ('fee_model', 'model_type'),
-				'fee_rate': ('fee_model', 'fee_rate'),
-				'maker_rate': ('fee_model', 'maker_rate'),
-				'taker_rate': ('fee_model', 'taker_rate'),
-				'slippage_model_type': ('slippage_model', 'model_type'),
-				'base_slippage_pct': ('slippage_model', 'base_slippage_pct'),
-				'slippage_pct': ('slippage_model', 'slippage_pct'),
-			}
+		# Direct config attribute updates
+		config_mapping: Dict[str, Any] = {
+			'exchange_name': 'exchange_name',
+			'exchange_type': 'exchange_type',
+			'simulate_failures': ('failure_simulation', 'simulate_failures'),
+			'failure_rate': ('failure_simulation', 'failure_rate'),
+			'supported_symbols': ('limits', 'supported_symbols'),
+			'min_order_size': ('limits', 'min_order_size'),
+			'max_order_size': ('limits', 'max_order_size'),
+			'fee_model_type': ('fee_model', 'model_type'),
+			'fee_rate': ('fee_model', 'fee_rate'),
+			'maker_rate': ('fee_model', 'maker_rate'),
+			'taker_rate': ('fee_model', 'taker_rate'),
+			'slippage_model_type': ('slippage_model', 'model_type'),
+			'base_slippage_pct': ('slippage_model', 'base_slippage_pct'),
+			'slippage_pct': ('slippage_model', 'slippage_pct'),
+		}
 			
-			for key, value in kwargs.items():
-				if isinstance(config_mapping.get(key), tuple):
-					section_name, attr_name = config_mapping[key]
-					section = getattr(self.config, section_name)
-					setattr(section, attr_name, value)
-				elif key in config_mapping:
-					setattr(self.config, config_mapping[key], value)
-				elif hasattr(self.config, key):
-					setattr(self.config, key, value)
-				else:
-					raise ValueError(f"Unknown configuration key: {key}")
+		for key, value in kwargs.items():
+			if isinstance(config_mapping.get(key), tuple):
+				section_name, attr_name = config_mapping[key]
+				section = getattr(self.config, section_name)
+				setattr(section, attr_name, value)
+			elif key in config_mapping:
+				setattr(self.config, config_mapping[key], value)
+			elif hasattr(self.config, key):
+				setattr(self.config, key, value)
+			else:
+				raise ValueError(f"Unknown configuration key: {key}")
 			
-			# Re-initialize components affected by config changes
-			if any(k.startswith('fee_') for k in kwargs) or 'fee_model_type' in kwargs:
-				self.fee_model = self._init_fee_model()
-			if any(k.startswith('slippage_') for k in kwargs) or 'slippage_model_type' in kwargs:
-				self.slippage_model = self._init_slippage_model()
-			if 'simulate_failures' in kwargs or 'failure_rate' in kwargs:
-				self.simulate_failures = self.config.failure_simulation.simulate_failures
-				self.failure_rate = float(self.config.failure_simulation.failure_rate)
+		# Re-initialize components affected by config changes
+		if any(k.startswith('fee_') for k in kwargs) or 'fee_model_type' in kwargs:
+			self.fee_model = self._init_fee_model()
+		if any(k.startswith('slippage_') for k in kwargs) or 'slippage_model_type' in kwargs:
+			self.slippage_model = self._init_slippage_model()
+		if 'simulate_failures' in kwargs or 'failure_rate' in kwargs:
+			self.simulate_failures = self.config.failure_simulation.simulate_failures
+			self.failure_rate = float(self.config.failure_simulation.failure_rate)
 			
-			# Update internal state for limits
-			if any(k in ['supported_symbols', 'min_order_size', 'max_order_size'] for k in kwargs):
-				self._supported_symbols = self.config.limits.supported_symbols
-				self._min_order_size = float(self.config.limits.min_order_size)
-				self._max_order_size = float(self.config.limits.max_order_size)
+		# Update internal state for limits
+		if any(k in ['supported_symbols', 'min_order_size', 'max_order_size'] for k in kwargs):
+			self._supported_symbols = self.config.limits.supported_symbols
+			self._min_order_size = float(self.config.limits.min_order_size)
+			self._max_order_size = float(self.config.limits.max_order_size)
 			
-			# Update exchange name if changed
-			if 'exchange_name' in kwargs:
-				self._exchange_name = self.config.exchange_name
+		# Update exchange name if changed
+		if 'exchange_name' in kwargs:
+			self._exchange_name = self.config.exchange_name
 
 	def get_config_dict(self) -> Dict[str, Any]:
 		"""Get configuration as dictionary."""
-		with self._lock:
-			return {
-				'exchange_name': self.config.exchange_name,
-				'exchange_type': self.config.exchange_type.value if hasattr(self.config.exchange_type, 'value') else str(self.config.exchange_type),
-				'simulate_failures': self.config.failure_simulation.simulate_failures,
-				'failure_rate': float(self.config.failure_simulation.failure_rate),
-				'supported_symbols': list(self.config.limits.supported_symbols),
-				'min_order_size': float(self.config.limits.min_order_size),
-				'max_order_size': float(self.config.limits.max_order_size),
-				'fee_model_type': self.config.fee_model.model_type.value,
-				'fee_rate': self.config.fee_model.fee_rate,
-				'maker_rate': self.config.fee_model.maker_rate,
-				'taker_rate': self.config.fee_model.taker_rate,
-				'slippage_model_type': self.config.slippage_model.model_type.value,
-				'base_slippage_pct': self.config.slippage_model.base_slippage_pct,
-				'slippage_pct': self.config.slippage_model.slippage_pct,
-			}
+		return {
+			'exchange_name': self.config.exchange_name,
+			'exchange_type': self.config.exchange_type.value if hasattr(self.config.exchange_type, 'value') else str(self.config.exchange_type),
+			'simulate_failures': self.config.failure_simulation.simulate_failures,
+			'failure_rate': float(self.config.failure_simulation.failure_rate),
+			'supported_symbols': list(self.config.limits.supported_symbols),
+			'min_order_size': float(self.config.limits.min_order_size),
+			'max_order_size': float(self.config.limits.max_order_size),
+			'fee_model_type': self.config.fee_model.model_type.value,
+			'fee_rate': self.config.fee_model.fee_rate,
+			'maker_rate': self.config.fee_model.maker_rate,
+			'taker_rate': self.config.fee_model.taker_rate,
+			'slippage_model_type': self.config.slippage_model.model_type.value,
+			'base_slippage_pct': self.config.slippage_model.base_slippage_pct,
+			'slippage_pct': self.config.slippage_model.slippage_pct,
+		}

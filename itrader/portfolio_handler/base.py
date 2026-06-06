@@ -101,7 +101,7 @@ class PortfolioStateStorage(ABC):
     portfolio managers used to own:
 
       * open positions (working state, keyed by ticker) + closed positions (history)
-      * pending transactions (working state) + transaction history (append-only)
+      * transaction history (append-only)
       * reserved cash (working state) + cash operations (append-only audit trail)
       * metrics snapshots (append-only history)
 
@@ -186,42 +186,10 @@ class PortfolioStateStorage(ABC):
         """
         pass
 
-    # -- Transactions (pending = working state, history = append-only) -------
-
-    @abstractmethod
-    def set_pending_transaction(self, transaction_id: Any, context: Any) -> None:
-        """Store the in-flight context for a pending transaction.
-
-        Parameters
-        ----------
-        transaction_id : Any
-            The transaction id (native ``TransactionId``) keying the context.
-        context : Any
-            The ``TransactionContext`` for the in-flight transaction.
-        """
-        pass
-
-    @abstractmethod
-    def remove_pending_transaction(self, transaction_id: Any) -> None:
-        """Remove a pending transaction context (no error if absent).
-
-        Parameters
-        ----------
-        transaction_id : Any
-            The transaction id whose pending context is removed.
-        """
-        pass
-
-    @abstractmethod
-    def get_pending_transactions(self) -> Dict[Any, Any]:
-        """Return a shallow copy of all pending transaction contexts.
-
-        Returns
-        -------
-        Dict[Any, Any]
-            Pending transaction contexts keyed by transaction id.
-        """
-        pass
+    # -- Transactions (append-only history) ----------------------------------
+    # Plan 05-05 (D-11): the pending-transaction working state is gone with
+    # the saga machinery — settlements are validate-first atomic, so there is
+    # no in-flight context to store. Only the append-only history remains.
 
     @abstractmethod
     def add_transaction(self, transaction: 'Transaction') -> None:
@@ -249,23 +217,49 @@ class PortfolioStateStorage(ABC):
 
     @abstractmethod
     def get_reserved_cash(self) -> Decimal:
-        """Return the currently reserved cash amount.
+        """Return the total currently reserved cash amount.
+
+        Plan 05-03: reservations are tracked per reference id (flat
+        ``dict[str, Decimal]`` — mirrors the order storage's flat ``_by_id``
+        shape); this returns their sum.
 
         Returns
         -------
         Decimal
-            The reserved cash balance.
+            The sum of all per-reference reservations.
         """
         pass
 
     @abstractmethod
-    def set_reserved_cash(self, amount: Decimal) -> None:
-        """Set the reserved cash amount.
+    def add_reservation(self, reference_id: str, amount: Decimal) -> None:
+        """Store (insert or replace) a cash reservation keyed by reference id.
+
+        Amounts are stored at FULL precision (OQ4): the released amount must
+        equal the reserved amount exactly, so no quantization happens here.
 
         Parameters
         ----------
+        reference_id : str
+            The reference (e.g. order id) the reservation is keyed by.
         amount : Decimal
-            The new reserved cash balance.
+            The reserved amount (full precision).
+        """
+        pass
+
+    @abstractmethod
+    def pop_reservation(self, reference_id: str) -> Optional[Decimal]:
+        """Remove and return the reservation for a reference id.
+
+        Parameters
+        ----------
+        reference_id : str
+            The reference whose reservation is removed.
+
+        Returns
+        -------
+        Optional[Decimal]
+            The reserved amount if a reservation existed, else ``None``
+            (no error when absent — release is idempotent).
         """
         pass
 

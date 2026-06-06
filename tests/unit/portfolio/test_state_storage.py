@@ -84,27 +84,33 @@ def test_positions_round_trip():
 
 
 def test_transactions_round_trip():
-    """M2-08: pending and history transactions round-trip through the seam."""
-    backend = InMemoryPortfolioStateStorage()
-    ctx = object()
-    txn = object()
+    """M2-08/05-05: transaction history round-trips through the seam.
 
-    backend.set_pending_transaction("txn-1", ctx)
-    assert backend.get_pending_transactions() == {"txn-1": ctx}
-    backend.remove_pending_transaction("txn-1")
-    assert backend.get_pending_transactions() == {}
+    The pending-transaction working state died with the saga machinery
+    (Plan 05-05 D-11) — only the append-only history remains.
+    """
+    backend = InMemoryPortfolioStateStorage()
+    txn = object()
 
     backend.add_transaction(txn)
     assert backend.get_transaction_history() == [txn]
 
+    # No pending-transaction surface survives anywhere on the backend.
+    assert not [a for a in dir(backend) if "pending" in a.lower()]
+
 
 def test_cash_ops_and_reserved_round_trip():
-    """M2-08: reserved cash (working state) + cash operations (history) round-trip."""
+    """M2-08/05-03: per-reference reservations + cash operations round-trip."""
     backend = InMemoryPortfolioStateStorage()
 
     assert backend.get_reserved_cash() == Decimal("0.00")
-    backend.set_reserved_cash(Decimal("123.45"))
-    assert backend.get_reserved_cash() == Decimal("123.45")
+    backend.add_reservation("ref-a", Decimal("123.45"))
+    backend.add_reservation("ref-b", Decimal("0.55"))
+    assert backend.get_reserved_cash() == Decimal("124.00")
+
+    assert backend.pop_reservation("ref-a") == Decimal("123.45")
+    assert backend.pop_reservation("ref-a") is None  # idempotent
+    assert backend.get_reserved_cash() == Decimal("0.55")
 
     op = object()
     backend.add_cash_operation(op)

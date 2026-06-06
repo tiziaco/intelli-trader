@@ -13,8 +13,7 @@ from .portfolio import (
     PortfolioEventType,
     CashOperationType,
     PositionEvent,
-    MetricsPeriod,
-    TransactionState
+    MetricsPeriod
 )
 
 # Execution enums
@@ -52,7 +51,6 @@ __all__ = [
     'CashOperationType',
     'PositionEvent',
     'MetricsPeriod',
-    'TransactionState',
 
     # Execution enums
     'ExecutionStatus',

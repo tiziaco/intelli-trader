@@ -5,11 +5,13 @@ Fill event: the exchange's immutable execution truth, construct-complete
 
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 import uuid_utils.compat as uuid_compat
 
 from itrader.core.enums import EventType, FillStatus, Side
 from itrader.core.ids import OrderId, StrategyId
+from itrader.core.money import to_money
 
 from .base import Event
 from .order import OrderEvent
@@ -31,12 +33,13 @@ class FillEvent(Event):
         The ticker symbol, e.g. 'BTCUSD'.
     action: `Side`
         ``Side.BUY`` (for long) or ``Side.SELL`` (for short)
-    quantity: `float`
-        Quantity transacted
-    price: `float`
-        Executed price confirmed by the exchange
-    commission: `float`
-        Transaction fee
+    quantity: `Decimal`
+        Quantity transacted (Decimal since D-22, closing the Phase 4 D-04
+        deferral — float inputs enter via ``to_money`` at construction)
+    price: `Decimal`
+        Executed price confirmed by the exchange (Decimal, D-22)
+    commission: `Decimal`
+        Transaction fee (Decimal, D-22)
     portfolio_id: `int`
         Portfolio id where transact the position
     fill_id: `uuid.UUID`
@@ -54,9 +57,9 @@ class FillEvent(Event):
     status: FillStatus
     ticker: str
     action: Side
-    price: float
-    quantity: float
-    commission: float
+    price: Decimal
+    quantity: Decimal
+    commission: Decimal
     portfolio_id: int
     fill_id: uuid.UUID
     order_id: OrderId
@@ -70,7 +73,8 @@ class FillEvent(Event):
 
     @classmethod
     def new_fill(cls, status: str, order: OrderEvent, *,
-                 price: float, quantity: float, commission: float) -> 'FillEvent':
+                 price: 'Decimal | float', quantity: 'Decimal | float',
+                 commission: 'Decimal | float') -> 'FillEvent':
         """
         Generate a complete FillEvent from the originating order.
 
@@ -80,7 +84,13 @@ class FillEvent(Event):
         fresh UUIDv7 generated here, at fill construction; ``strategy_id``
         and ``order_id`` are carried from the originating order for the
         fill -> order -> strategy audit chain. REFUSED/CANCELLED fills
-        pass the order's own price/quantity with commission 0.0.
+        pass the order's own price/quantity with commission Decimal("0").
+
+        Money (D-22): this is THE float -> Decimal crossing for execution
+        output. Float values from the exchange's internal matching/slippage
+        math enter the money domain here, once, via ``to_money``
+        (``Decimal(str(x))`` — numerically inert by construction, D-04);
+        Decimal inputs pass through as an identity normalization.
 
         Parameters
         ----------
@@ -88,11 +98,11 @@ class FillEvent(Event):
             The execution state of the fill order e.g. 'EXECUTED', 'REFUSED', 'CANCELLED'
         order : `OrderEvent`
             The instance of the originating order
-        price : `float`
+        price : `Decimal | float`
             Executed price confirmed by the exchange (keyword-only)
-        quantity : `float`
+        quantity : `Decimal | float`
             Executed quantity confirmed by the exchange (keyword-only)
-        commission : `float`
+        commission : `Decimal | float`
             Transaction fee charged by the exchange (keyword-only)
 
         Returns
@@ -107,9 +117,9 @@ class FillEvent(Event):
             status=fill_status,
             ticker=order.ticker,
             action=order.action,
-            price=price,
-            quantity=quantity,
-            commission=commission,
+            price=to_money(price),
+            quantity=to_money(quantity),
+            commission=to_money(commission),
             portfolio_id=order.portfolio_id,
             fill_id=uuid_compat.uuid7(),
             order_id=order.order_id,

@@ -1,22 +1,26 @@
 """
 Enhanced PortfolioHandler with better separation of concerns.
+
+D-19 single-writer contract: ALL portfolio state mutations happen on the
+engine thread; queue.Queue is the thread boundary — other threads only put
+events. Composite reads are consistent because nothing mutates concurrently.
+Live cross-thread reads are a D-live design item.
 """
-import threading
 import uuid
 from queue import Queue
 from datetime import datetime, UTC
-from typing import Dict, Optional, Set, Any, List, Generator, Union
+from decimal import Decimal
+from typing import Dict, Optional, Any, List, Generator, Union
 from contextlib import contextmanager
-
-from readerwriterlock import rwlock
 
 from .portfolio import Portfolio
 from itrader.core.exceptions import (
-    PortfolioHandlerError, PortfolioNotFoundError, InvalidPortfolioOperationError,
+    PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
 from itrader.core.enums import PortfolioState, TransactionType, FillStatus, Side
-from itrader.core.ids import PortfolioId, TransactionId
+from itrader.core.ids import OrderId, PortfolioId, TransactionId
+from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
@@ -35,14 +39,17 @@ class PortfolioHandler:
     - Portfolio lifecycle management (creation, deletion)
     - System-wide monitoring and health checks
     - Event publishing coordination
-    - Global thread safety for collection operations
     - Runtime configuration updates via API
-    
+
     Individual portfolios manage their own:
     - State (ACTIVE, INACTIVE, ARCHIVED)
     - Configuration (limits, validation)
-    - Thread safety (per-portfolio locks)
     - Health monitoring
+
+    D-19 single-writer contract: ALL portfolio state mutations happen on the
+    engine thread; queue.Queue is the thread boundary — other threads only put
+    events. Composite reads are consistent because nothing mutates
+    concurrently. Live cross-thread reads are a D-live design item.
     """
     
     def __init__(self, global_queue: "Queue[Any]", config_dir: str = "settings", environment: str = "default") -> None:
@@ -54,47 +61,28 @@ class PortfolioHandler:
         # on construction, so no separate validator is needed.
         self.config_data: PortfolioConfig = PortfolioConfig.default()
 
-        # Extract key configuration values with defaults
-        self.max_portfolios = self.config_data.limits.max_positions
-        self.max_concurrent_operations = 50  # Reasonable default for operations
+        # Extract key configuration values with defaults.
+        # WR-08: sourced from the dedicated limits.max_portfolios field —
+        # NOT limits.max_positions (the per-portfolio position limit).
+        self.max_portfolios = self.config_data.limits.max_portfolios
         self.publish_error_events = True  # Default behavior
-        
+
         # Portfolio storage - now just stores portfolio instances.
         # 02-05 carry-over: portfolios are keyed by PortfolioId (UUID) at runtime
         # while events still carry an int portfolio_id. Until the portfolio_id
         # migration completes, the key is typed Any to bridge both forms (the full
         # retype is deferred — not mandated by Task 2).
+        # D-19: collection lock removed — single-writer contract, see class docstring.
         self._portfolios: Dict[Any, Portfolio] = {}
-        
-        # Global collection lock (lightweight, just for adding/removing portfolios)
-        self._portfolios_lock = rwlock.RWLockFair()
-        
-        # Operation tracking for global monitoring
-        self._active_operations: Set[str] = set()
-        self._operations_lock = threading.Lock()
-        
+
         # Global logger
         self.logger = get_itrader_logger().bind(component="PortfolioHandler")
-        
+
         self.logger.info(
             "Enhanced PortfolioHandler initialized",
-            max_portfolios=self.max_portfolios,
-            max_concurrent_ops=self.max_concurrent_operations
+            max_portfolios=self.max_portfolios
         )
-    
-    @property
-    def config(self) -> Any:
-        """Get config structure for test compatibility."""
-        class Limits:
-            def __init__(self, max_concurrent_operations: int) -> None:
-                self.max_concurrent_operations = max_concurrent_operations
 
-        class Config:
-            def __init__(self, limits: Any) -> None:
-                self.limits = limits
-
-        return Config(Limits(self.max_concurrent_operations))
-    
     def _generate_correlation_id(self) -> str:
         """Generate unique correlation ID for operation tracking."""
         return f"ph_{uuid.uuid4().hex[:12]}"
@@ -122,20 +110,15 @@ class PortfolioHandler:
     
     @contextmanager
     def _operation_context(self, operation_name: str) -> Generator[str, None, None]:
-        """Context manager for operation tracking."""
+        """Context manager providing a correlation ID for operation tracking.
+
+        D-19: the concurrency-limiting machinery (_operations_lock /
+        _active_operations) was removed with the single-writer contract.
+        Correlation-id generation and error-event publication (Pitfall 8)
+        survive — this context only supplies the correlation id now.
+        """
         correlation_id = self._generate_correlation_id()
-        
-        # Check concurrent operation limits
-        with self._operations_lock:
-            if len(self._active_operations) >= self.max_concurrent_operations:
-                raise PortfolioHandlerError(f"Maximum concurrent operations limit reached: {self.max_concurrent_operations}")
-            self._active_operations.add(correlation_id)
-        
-        try:
-            yield correlation_id
-        finally:
-            with self._operations_lock:
-                self._active_operations.discard(correlation_id)
+        yield correlation_id
     
     # Main portfolio management methods (keeping same names for compatibility)
     def add_portfolio(self, user_id: int, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> PortfolioId:
@@ -151,9 +134,8 @@ class PortfolioHandler:
                     raise PortfolioValidationError(0, "name", "Portfolio name cannot be empty")
                 
                 # Check global limits
-                with self._portfolios_lock.gen_rlock():
-                    if len(self._portfolios) >= self.max_portfolios:
-                        raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
+                if len(self._portfolios) >= self.max_portfolios:
+                    raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
                 
                 # Create portfolio instance
                 portfolio = Portfolio(
@@ -166,8 +148,7 @@ class PortfolioHandler:
                 )
                 
                 # Store portfolio
-                with self._portfolios_lock.gen_wlock():
-                    self._portfolios[portfolio.portfolio_id] = portfolio
+                self._portfolios[portfolio.portfolio_id] = portfolio
                 
                 self.logger.info(
                     "Portfolio created successfully",
@@ -186,10 +167,9 @@ class PortfolioHandler:
     
     def get_portfolio(self, portfolio_id: Any) -> Portfolio:
         """Get portfolio instance."""
-        with self._portfolios_lock.gen_rlock():
-            if portfolio_id not in self._portfolios:
-                raise PortfolioNotFoundError(portfolio_id)
-            return self._portfolios[portfolio_id]
+        if portfolio_id not in self._portfolios:
+            raise PortfolioNotFoundError(portfolio_id)
+        return self._portfolios[portfolio_id]
     
     def delete_portfolio(self, portfolio_id: Any, force: bool = False) -> bool:
         """Delete a portfolio with validation."""
@@ -210,8 +190,7 @@ class PortfolioHandler:
                 portfolio.set_state(PortfolioState.ARCHIVED, "Portfolio deletion")
                 
                 # Remove from collection
-                with self._portfolios_lock.gen_wlock():
-                    del self._portfolios[portfolio_id]
+                del self._portfolios[portfolio_id]
                 
                 self.logger.info(
                     "Portfolio deleted successfully",
@@ -228,23 +207,70 @@ class PortfolioHandler:
     
     def get_active_portfolios(self) -> List[Portfolio]:
         """Get all active portfolios."""
-        with self._portfolios_lock.gen_rlock():
-            return [p for p in self._portfolios.values() if p.is_active()]
-    
+        return [p for p in self._portfolios.values() if p.is_active()]
+
     def get_portfolios_by_state(self, state: PortfolioState) -> List[Portfolio]:
         """Get portfolios by state."""
-        with self._portfolios_lock.gen_rlock():
-            return [p for p in self._portfolios.values() if p.state == state]
-    
+        return [p for p in self._portfolios.values() if p.state == state]
+
     def get_portfolio_count(self) -> int:
         """Get total portfolio count."""
-        with self._portfolios_lock.gen_rlock():
-            return len(self._portfolios)
-    
+        return len(self._portfolios)
+
+    # PortfolioReadModel — structural Protocol implementation (D-16, Plan 05-03)
+    #
+    # The order domain reads portfolio state through these six members ONLY
+    # (itrader/core/portfolio_read_model.py). No inheritance, no adapter:
+    # PortfolioHandler satisfies the runtime_checkable Protocol structurally.
+    # D-15: live Position objects never cross the boundary — get_position
+    # returns a frozen PositionView snapshot (None when flat).
+
+    def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return the portfolio's buying power (balance minus reservations, D-14)."""
+        return self.get_portfolio(portfolio_id).cash_manager.available_balance
+
+    def get_position(self, portfolio_id: PortfolioId, ticker: str) -> Optional[PositionView]:
+        """Return a frozen snapshot of the open position, or None when flat (D-15)."""
+        position = self.get_portfolio(portfolio_id).get_open_position(ticker)
+        if position is None:
+            return None
+        return PositionView(
+            ticker=position.ticker,
+            side=position.side,
+            net_quantity=position.net_quantity,
+            avg_price=position.avg_price,
+        )
+
+    def reserve(self, portfolio_id: PortfolioId, order_id: OrderId, amount: Decimal) -> None:
+        """Reserve cash for a pending order (per-reference, full precision — OQ4)."""
+        self.get_portfolio(portfolio_id).cash_manager.reserve_cash(
+            amount, "order cash reservation", str(order_id)
+        )
+
+    def release(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        """Release the cash reservation keyed by an order id (idempotent)."""
+        self.get_portfolio(portfolio_id).cash_manager.release_reservation(str(order_id))
+
+    def exchange_for(self, portfolio_id: PortfolioId) -> str:
+        """Return the exchange the portfolio trades on (admission metadata, OQ1)."""
+        exchange: str = self.get_portfolio(portfolio_id).exchange
+        return exchange
+
+    def open_position_count(self, portfolio_id: PortfolioId) -> int:
+        """Return the number of open positions (position-limit check, OQ1)."""
+        count: int = self.get_portfolio(portfolio_id).n_open_positions
+        return count
+
     # Fill event processing
-    def on_fill(self, fill_event: FillEvent) -> bool:
-        """Process fill event for the appropriate portfolio."""
-        
+    def on_fill(self, fill_event: FillEvent) -> None:
+        """Process fill event for the appropriate portfolio.
+
+        D-10 contract: returns ``None``; failures raise typed domain
+        exceptions which propagate to the dispatch registry's
+        ``_on_handler_error`` seam (backtest re-raise — the run stops loudly
+        rather than producing corrupted numbers).
+        """
+
         with self._operation_context("on_fill") as correlation_id:
             try:
                 # Portfolio ids are native uuid.UUID (D-13/D-14); the dict is keyed
@@ -259,12 +285,15 @@ class PortfolioHandler:
                         ticker=fill_event.ticker,
                         correlation_id=correlation_id,
                     )
-                    return False
+                    return
 
                 # Portfolio handles its own validation and processing.
                 # D-05 boundary map: events carry Side; Portfolio maps
                 # Side -> TransactionType at its own boundary (the vocabularies
                 # stay distinct — same precedent as FillStatus -> OrderStatus).
+                # D-22: FillEvent money is Decimal end-to-end now — to_money is
+                # an identity normalization at this domain entry (kept
+                # deliberately: the ledger never trusts an unnormalized input).
                 transaction_type = TransactionType.BUY if fill_event.action is Side.BUY else TransactionType.SELL
                 transaction = Transaction(
                     time=fill_event.time,
@@ -272,28 +301,23 @@ class PortfolioHandler:
                     ticker=fill_event.ticker,
                     price=to_money(fill_event.price),
                     quantity=to_money(fill_event.quantity),
-                    # DEF-01-A (overlaps M4 Decimal-money scope): the fee model returns a Decimal
-                    # commission, but Transaction.commission is declared float and the whole
-                    # transaction/position math path is float. Coerce at this single fill->transaction
-                    # boundary so the Decimal never mixes with floats downstream (transaction_manager
-                    # funds check, position avg_price, etc.). Must be reconciled when M4 moves money
-                    # to Decimal end-to-end (#22 Critical).
                     commission=to_money(fill_event.commission),
                     portfolio_id=portfolio_id,
-                    id=TransactionId(idgen.generate_transaction_id())
+                    id=TransactionId(idgen.generate_transaction_id()),
+                    # D-11 audit chain: the settlement record carries the
+                    # originating fill's identity (fill -> order -> strategy).
+                    fill_id=fill_event.fill_id,
                 )
-                
-                result = portfolio.transact_shares(transaction)
-                
+
+                portfolio.transact_shares(transaction)
+
                 self.logger.debug(
                     "Fill event processed",
                     portfolio_id=portfolio_id,
                     ticker=fill_event.ticker,
                     correlation_id=correlation_id
                 )
-                
-                return result
-                
+
             except Exception as e:
                 error_portfolio_id = getattr(fill_event, "portfolio_id", None)
                 self._publish_error_event(e, "on_fill", correlation_id, error_portfolio_id)
@@ -353,10 +377,8 @@ class PortfolioHandler:
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:
         """Generate global health report."""
-        with self._portfolios_lock.gen_rlock():
-            portfolios = list(self._portfolios.values())
-        
-        # Analyze portfolios without holding the global lock
+        portfolios = list(self._portfolios.values())
+
         healthy_count = 0
         unhealthy_portfolios = []
         state_counts = {state: 0 for state in PortfolioState}
@@ -380,21 +402,18 @@ class PortfolioHandler:
             'unhealthy_portfolios': len(unhealthy_portfolios),
             'unhealthy_details': unhealthy_portfolios,
             'portfolios_by_state': {state.value: count for state, count in state_counts.items()},
-            'active_operations': len(self._active_operations),
             'global_limits': {
-                'max_portfolios': self.max_portfolios,
-                'max_concurrent_operations': self.max_concurrent_operations
+                'max_portfolios': self.max_portfolios
             }
         }
     
     # Export and serialization
     def portfolios_to_dict(self) -> Dict[str, Dict[str, Any]]:
         """Convert all portfolios to dictionary format."""
-        with self._portfolios_lock.gen_rlock():
-            return {
-                str(portfolio_id): portfolio.to_dict()
-                for portfolio_id, portfolio in self._portfolios.items()
-            }
+        return {
+            str(portfolio_id): portfolio.to_dict()
+            for portfolio_id, portfolio in self._portfolios.items()
+        }
     
     def generate_portfolios_update_event(self) -> PortfolioUpdateEvent:
         """Generate portfolio update event."""
@@ -414,7 +433,7 @@ class PortfolioHandler:
         try:
             merged = {**self.config_data.model_dump(), **updates}
             self.config_data = PortfolioConfig.model_validate(merged)
-            self.max_portfolios = self.config_data.limits.max_positions
+            self.max_portfolios = self.config_data.limits.max_portfolios
             self.logger.info("Configuration updated successfully", updates=updates)
             return True
         except Exception as e:
@@ -438,7 +457,7 @@ class PortfolioHandler:
         """Reset PortfolioHandler configuration to the default preset."""
         try:
             self.config_data = get_portfolio_preset('default')
-            self.max_portfolios = self.config_data.limits.max_positions
+            self.max_portfolios = self.config_data.limits.max_portfolios
             self.logger.info("Configuration rolled back to defaults")
             return True
         except Exception as e:

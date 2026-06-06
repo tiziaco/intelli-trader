@@ -4,6 +4,7 @@ import threading
 import time
 import json
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
 from enum import Enum
 
@@ -15,6 +16,7 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
+from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.universe.dynamic import DynamicUniverse
 from itrader.reporting.statistics import StatisticsReporting
 
@@ -24,9 +26,9 @@ from itrader.events_handler.events import EventType, TimeEvent, OrderEvent
 # Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
 # (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the
 # env var directly here. A future D-live wiring would source this from Settings.
-_SYSTEM_DB_URL = os.getenv(
-    "SYSTEM_DB_URL", "postgresql+psycopg2://postgres:1234@localhost:5432/......."
-)
+# WR-10: no hardcoded credential fallback — an unset SYSTEM_DB_URL yields ""
+# and the system falls back to in-memory order storage with a loud warning.
+_SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")
 
 
 class SystemStatus(Enum):
@@ -107,15 +109,40 @@ class LiveTradingSystem:
         
         # Create order storage for live trading (PostgreSQL)
         # Note: For now using in-memory until Phase 2 is complete
-        try:
-            order_storage = OrderStorageFactory.create('live', _SYSTEM_DB_URL)
-        except NotImplementedError:
-            # Fallback to in-memory during Phase 1
-            self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")
+        if not _SYSTEM_DB_URL:
+            # WR-10: fail loudly into the in-memory fallback instead of
+            # shipping a default connection string with embedded credentials.
+            self.logger.warning(
+                "SYSTEM_DB_URL is not set — using in-memory order storage "
+                "(orders will NOT survive a restart)"
+            )
             order_storage = OrderStorageFactory.create('backtest')
+        else:
+            try:
+                order_storage = OrderStorageFactory.create('live', _SYSTEM_DB_URL)
+            except NotImplementedError:
+                # Fallback to in-memory during Phase 1
+                self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")
+                order_storage = OrderStorageFactory.create('backtest')
         
-        self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage)
+        # Execution handler constructed BEFORE the order handler so the
+        # admission gate's commission estimator can adapt the simulated
+        # exchange's fee model (Plan 05-06, D-04 — mode-agnostic wiring).
         self.execution_handler = ExecutionHandler(self.global_queue)
+
+        # Commission estimator for the admission cash-reservation gate
+        # (Plan 05-06, D-04): (quantity, price) -> Decimal adapter over the
+        # simulated exchange's fee model; fee_model read at call time.
+        simulated_exchange = self.execution_handler.exchanges.get('simulated')
+
+        def _estimate_commission(quantity: Decimal, price: Decimal) -> Decimal:
+            if not isinstance(simulated_exchange, SimulatedExchange):
+                return Decimal("0")
+            return simulated_exchange.fee_model.calculate_fee(
+                quantity, price, side="buy", order_type="market")
+
+        self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
+                                          commission_estimator=_estimate_commission)
         self.reporting = StatisticsReporting(
             self.portfolio_handler,
             self.price_handler
@@ -215,20 +242,28 @@ class LiveTradingSystem:
                 try:
                     event = self.global_queue.get(timeout=self.queue_timeout)
                     last_event_time = datetime.now()
-                    
-                    # Process the event through the event handler
-                    self.global_queue.put(event)  # Put it back for processing
-                    self.event_handler.process_events()
-                    
+
+                    # WR-09: dispatch the dequeued event DIRECTLY through the
+                    # event handler's routing. The previous get -> put-back ->
+                    # process_events() pattern re-appended the event behind
+                    # anything already queued, breaking the single-FIFO-queue
+                    # ordering contract (e.g. a BAR processed before its PING).
+                    # The task_done() bookkeeping is dropped with it: nothing
+                    # joins this queue, and the put-back/internal gets left
+                    # unfinished_tasks permanently drifting.
+                    self.event_handler._dispatch(event)
+
                     # Update statistics
                     self._update_stats(event.type.name if hasattr(event, 'type') else 'UNKNOWN')
-                    
-                    # Record portfolio metrics if it's a TIME event
+
+                    # Record portfolio metrics if it's a TIME event.
+                    # CR-02: record_metrics lives on Portfolio, not
+                    # PortfolioHandler — iterate the active portfolios exactly
+                    # like the backtest path does.
                     if hasattr(event, 'type') and event.type == EventType.TIME:
-                        self.portfolio_handler.record_metrics(event.time)
-                    
-                    self.global_queue.task_done()
-                    
+                        for portfolio in self.portfolio_handler.get_active_portfolios():
+                            portfolio.record_metrics(event.time)
+
                 except queue.Empty:
                     # No events in queue, check if we've been idle too long
                     current_time = datetime.now()

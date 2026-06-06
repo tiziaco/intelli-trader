@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
 
+import uuid_utils.compat as uuid_compat
+
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.portfolio_handler.position import Position, PositionSide
 
@@ -12,7 +14,7 @@ _PORTFOLIO_ID = "portfolio_id"
 def test_open_long_position():
     time = datetime.now()
     buy_transaction = Transaction(
-        time, TransactionType.BUY, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=1
+        time, TransactionType.BUY, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=1, fill_id=uuid_compat.uuid7()
     )
     position = Position.open_position(buy_transaction)
 
@@ -39,7 +41,7 @@ def test_open_long_position():
 def test_open_short_position():
     time = datetime.now()
     sell_transaction = Transaction(
-        time, TransactionType.SELL, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=2
+        time, TransactionType.SELL, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=2, fill_id=uuid_compat.uuid7()
     )
     position = Position.open_position(sell_transaction)
 
@@ -65,7 +67,7 @@ def test_open_short_position():
 def test_update_price_time_long_position():
     time = datetime.now()
     buy_transaction = Transaction(
-        time, TransactionType.BUY, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=3
+        time, TransactionType.BUY, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=3, fill_id=uuid_compat.uuid7()
     )
     position = Position.open_position(buy_transaction)
     # Update price and time
@@ -95,7 +97,7 @@ def test_update_price_time_long_position():
 def test_update_price_time_short_position():
     time = datetime.now()
     sell_transaction = Transaction(
-        time, TransactionType.SELL, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=4
+        time, TransactionType.SELL, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=4, fill_id=uuid_compat.uuid7()
     )
     position = Position.open_position(sell_transaction)
     # Update price and time

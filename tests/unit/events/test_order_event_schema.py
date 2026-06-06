@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 from itrader.events_handler.events import OrderEvent
 from itrader.core.enums import OrderType, OrderCommand
@@ -47,6 +48,27 @@ def test_action_parsed_to_side_member():
     from itrader.core.enums import Side
     oe = OrderEvent.new_order_event(_order(OrderType.MARKET))
     assert oe.action is Side.SELL
+
+
+def test_decimal_money_passes_through_exactly():
+    # D-22 (closing the Phase 4 D-04 deferral): the factory passes the Order
+    # entity's Decimal price/quantity through EXACTLY — the float() boundary
+    # coercion is gone, so no binary round-trip can alter the value.
+    order = Order(
+        time=datetime(2024, 1, 1), type=OrderType.LIMIT, status=None,
+        ticker="BTCUSDT", action="SELL",
+        price=Decimal("123.45678901"), quantity=Decimal("0.12345678901234567890123456"),
+        exchange="default", strategy_id=1, portfolio_id=1,
+    )
+    oe = OrderEvent.new_order_event(order)
+    assert isinstance(oe.price, Decimal)
+    assert isinstance(oe.quantity, Decimal)
+    assert oe.price == Decimal("123.45678901")
+    assert str(oe.price) == "123.45678901"
+    # Full 26-significant-digit Decimal survives — a float round-trip could not
+    # carry this precision.
+    assert oe.quantity == Decimal("0.12345678901234567890123456")
+    assert str(oe.quantity) == "0.12345678901234567890123456"
 
 
 def test_frozen_base_fields_present():

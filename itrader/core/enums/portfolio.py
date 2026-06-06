@@ -123,25 +123,7 @@ class MetricsPeriod(Enum):
         raise ValueError(f"Unknown MetricsPeriod: {value!r}")
 
 
-class TransactionState(Enum):
-    """Portfolio transaction lifecycle states.
-
-    Relocated from ``transaction_manager.py`` (D-04). Kept DISTINCT from
-    ``OrderStatus`` and ``FillStatus``. Member values preserve the prior
-    class-based definition exactly.
-    """
-    PENDING = "PENDING"
-    VALIDATED = "VALIDATED"
-    EXECUTED = "EXECUTED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
-    ROLLED_BACK = "ROLLED_BACK"
-
-    @classmethod
-    def _missing_(cls, value: object) -> "TransactionState":
-        """Case-insensitive string parse; raise a clear f-string error."""
-        if isinstance(value, str):
-            for member in cls:
-                if member.value.upper() == value.upper():
-                    return member
-        raise ValueError(f"Unknown TransactionState: {value!r}")
+# Plan 05-05 (D-11): the transaction-state lifecycle enum was deleted with
+# the saga machinery —
+# settlements are validate-first atomic; the applied Transaction entity is
+# the audit record and carries no second lifecycle.

@@ -55,9 +55,3 @@ class PostgreSQLOrderStorage(OrderStorage):
     
     def search_orders(self, criteria, portfolio_id=None):
         raise NotImplementedError("To be implemented in Phase 2")
-    
-    def archive_orders(self, cutoff_date, portfolio_id=None):
-        raise NotImplementedError("To be implemented in Phase 2")
-    
-    def deactivate_order(self, order_id, portfolio_id=None):
-        raise NotImplementedError("To be implemented in Phase 2")
