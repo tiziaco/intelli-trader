@@ -133,7 +133,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The per-tick market-data payload is an immutable `Bar` struct (no pandas Series, no `hasattr`/`get_last_close` type-branching), and resampled frames are precomputed once per (ticker, timeframe) and sliced per tick (no `resample` in the hot loop)
   3. Fee/slippage models are correct (maker fees live, tiered model fixed, slippage not applied to limit fills, connect latency `time.sleep` gated/removed)
   4. The price handler splits into Provider/Store/Feed seams with an offline-vs-runtime lifecycle: the run path is read-only and errors loudly on missing data (no mid-run network fetch), bare `except:`→`None` and `to_megaframe` tz/key bugs fixed, strategies use the resampled-bars API not `price_handler.prices`
-**Plans**: TBD
+**Plans**: 6 plans (4 waves; D-22 structural-first — waves 1-3 are inert and oracle byte-exact gated, wave 4 is the only result-changing plan with the D-23 owner checkpoint)
+
+Plans:
+- [ ] 06-01-PLAN.md — Bar struct + BarEvent dict[str, Bar] redesign + consumer collapse (inert, M5-02)
+- [ ] 06-02-PLAN.md — Provider/Store seams: CsvPriceStore + quarantine relocations + ingestion stub (inert, M5-05)
+- [ ] 06-03-PLAN.md — BarFeed: precompute + completed-bars visibility + megaframe fix + timing-contract doc/tests (inert, M5-01/M5-03/M5-05)
+- [ ] 06-04-PLAN.md — Decimal-native matching/fee/slippage + limit-or-better + tiered/sleep/partial-fill deletions (inert-defensive, M5-01/M5-04)
+- [ ] 06-05-PLAN.md — Store+Feed rewiring + PriceHandler deletion + push-based strategy windows (inert, M5-03/M5-05)
+- [ ] 06-06-PLAN.md — Next-bar-open fills (D-01/D-13) + owner-gated oracle re-freeze (RESULT-CHANGING, M5-01)
 
 ### Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage
 **Goal**: Complete the strategy-declared sizing policy started minimally in M1 (closing the `#24`/`#31`/KB11 span), make reporting/metrics correct, collapse the universe to a documented stub, and add strategy/data/reporting/universe test coverage.
@@ -168,6 +176,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 9/9 | Complete   | 2026-06-05 |
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
-| 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/TBD | Not started | - |
+| 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/6 | Planned | - |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/TBD | Not started | - |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
