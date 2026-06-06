@@ -241,9 +241,13 @@ class LiveTradingSystem:
                     # Update statistics
                     self._update_stats(event.type.name if hasattr(event, 'type') else 'UNKNOWN')
                     
-                    # Record portfolio metrics if it's a TIME event
+                    # Record portfolio metrics if it's a TIME event.
+                    # CR-02: record_metrics lives on Portfolio, not
+                    # PortfolioHandler — iterate the active portfolios exactly
+                    # like the backtest path does.
                     if hasattr(event, 'type') and event.type == EventType.TIME:
-                        self.portfolio_handler.record_metrics(event.time)
+                        for portfolio in self.portfolio_handler.get_active_portfolios():
+                            portfolio.record_metrics(event.time)
                     
                     self.global_queue.task_done()
                     
