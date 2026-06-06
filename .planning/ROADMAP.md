@@ -167,8 +167,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 06-03-PLAN.md — BarFeed: precompute + completed-bars visibility + megaframe fix + timing-contract doc/tests (inert, M5-01/M5-03/M5-05)
-- [ ] 06-04-PLAN.md — Decimal-native matching/fee/slippage + limit-or-better + tiered/sleep/partial-fill deletions (inert-defensive, M5-01/M5-04)
+- [x] 06-03-PLAN.md — BarFeed: precompute + completed-bars visibility + megaframe fix + timing-contract doc/tests (inert, M5-01/M5-03/M5-05)
+- [x] 06-04-PLAN.md — Decimal-native matching/fee/slippage + limit-or-better + tiered/sleep/partial-fill deletions (inert-defensive, M5-01/M5-04)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -217,6 +217,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 9/9 | Complete   | 2026-06-05 |
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
-| 6. M5a — Backtest Validity, Fills & Data Pipeline | 2/6 | In Progress|  |
+| 6. M5a — Backtest Validity, Fills & Data Pipeline | 4/6 | In Progress|  |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/TBD | Not started | - |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
