@@ -3,7 +3,6 @@ Transaction Manager for portfolio operations.
 Handles transaction validation, processing, and audit trail.
 """
 
-import threading
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from typing import Any, Optional, List, Dict
@@ -36,13 +35,13 @@ class TransactionManager:
     """
     Manages the complete transaction lifecycle including validation,
     execution, rollback, and audit trail.
-    
-    Thread-safe implementation with proper error handling and logging.
+
+    Proper error handling and logging throughout.
     """
-    
+
     def __init__(self, portfolio: Any) -> None:
         self.portfolio = portfolio  # Reference to parent portfolio
-        self._lock = threading.RLock()  # Reentrant lock for nested calls
+        # D-19: lock removed — single-writer contract, see Portfolio docstring.
         self.logger = get_itrader_logger().bind(component="TransactionManager")
         
         # M2-08: pending transaction contexts (working state) + transaction
@@ -89,57 +88,56 @@ class TransactionManager:
         """
         correlation_id = f"txn_{transaction.id}_{int(datetime.now().timestamp() * 1000)}"
         
-        with self._lock:
-            try:
-                # Create transaction context
-                context = TransactionContext(
-                    correlation_id=correlation_id,
-                    state=TransactionState.PENDING,
-                    created_at=datetime.now(),
-                    updated_at=datetime.now()
-                )
+        try:
+            # Create transaction context
+            context = TransactionContext(
+                correlation_id=correlation_id,
+                state=TransactionState.PENDING,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
                 
-                self._storage.set_pending_transaction(transaction.id, context)
+            self._storage.set_pending_transaction(transaction.id, context)
                 
-                self.logger.info("Transaction processing started",
-                    transaction_id=transaction.id,
-                    correlation_id=correlation_id,
-                    ticker=transaction.ticker,
-                    type=transaction.type.name,
-                    quantity=str(transaction.quantity),
-                    price=str(transaction.price)
-                )
+            self.logger.info("Transaction processing started",
+                transaction_id=transaction.id,
+                correlation_id=correlation_id,
+                ticker=transaction.ticker,
+                type=transaction.type.name,
+                quantity=str(transaction.quantity),
+                price=str(transaction.price)
+            )
                 
-                # Phase 1: Validate transaction
-                self._validate_transaction(transaction, context)
-                context.state = TransactionState.VALIDATED
-                context.updated_at = datetime.now()
+            # Phase 1: Validate transaction
+            self._validate_transaction(transaction, context)
+            context.state = TransactionState.VALIDATED
+            context.updated_at = datetime.now()
                 
-                # Phase 2: Check funds availability
-                self._check_funds_availability(transaction, context)
+            # Phase 2: Check funds availability
+            self._check_funds_availability(transaction, context)
                 
-                # Phase 3: Execute transaction
-                self._execute_transaction(transaction, context)
-                context.state = TransactionState.EXECUTED
-                context.updated_at = datetime.now()
+            # Phase 3: Execute transaction
+            self._execute_transaction(transaction, context)
+            context.state = TransactionState.EXECUTED
+            context.updated_at = datetime.now()
                 
-                # Phase 4: Record in history
-                self._record_transaction(transaction, context)
+            # Phase 4: Record in history
+            self._record_transaction(transaction, context)
                 
-                self.logger.info("Transaction processed successfully",
-                    transaction_id=transaction.id,
-                    correlation_id=correlation_id
-                )
+            self.logger.info("Transaction processed successfully",
+                transaction_id=transaction.id,
+                correlation_id=correlation_id
+            )
                 
-                return True
+            return True
                 
-            except Exception as e:
-                self._handle_transaction_error(transaction, context, e)
-                return False
+        except Exception as e:
+            self._handle_transaction_error(transaction, context, e)
+            return False
                 
-            finally:
-                # Clean up pending transaction
-                self._storage.remove_pending_transaction(transaction.id)
+        finally:
+            # Clean up pending transaction
+            self._storage.remove_pending_transaction(transaction.id)
     
     def _validate_transaction(self, transaction: Transaction, context: TransactionContext) -> None:
         """Validate transaction data and business rules."""
@@ -309,29 +307,26 @@ class TransactionManager:
     
     def get_transaction_history(self, limit: Optional[int] = None) -> List[Transaction]:
         """Get transaction history."""
-        with self._lock:
-            history = self._storage.get_transaction_history()
-            if limit:
-                return history[-limit:]
-            return history
+        history = self._storage.get_transaction_history()
+        if limit:
+            return history[-limit:]
+        return history
 
     def get_pending_transactions(self) -> Dict[TransactionId, TransactionContext]:
         """Get currently pending transactions."""
-        with self._lock:
-            return self._storage.get_pending_transactions()
+        return self._storage.get_pending_transactions()
 
     def cancel_pending_transaction(self, transaction_id: TransactionId) -> bool:
         """Cancel a pending transaction."""
-        with self._lock:
-            pending = self._storage.get_pending_transactions()
-            if transaction_id in pending:
-                context = pending[transaction_id]
-                context.state = TransactionState.CANCELLED
-                context.updated_at = datetime.now()
+        pending = self._storage.get_pending_transactions()
+        if transaction_id in pending:
+            context = pending[transaction_id]
+            context.state = TransactionState.CANCELLED
+            context.updated_at = datetime.now()
                 
-                self.logger.info("Transaction cancelled",
-                    transaction_id=transaction_id,
-                    correlation_id=context.correlation_id
-                )
-                return True
-            return False
+            self.logger.info("Transaction cancelled",
+                transaction_id=transaction_id,
+                correlation_id=context.correlation_id
+            )
+            return True
+        return False

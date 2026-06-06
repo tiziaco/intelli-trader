@@ -1,18 +1,20 @@
 """
 Enhanced PortfolioHandler with better separation of concerns.
+
+D-19 single-writer contract: ALL portfolio state mutations happen on the
+engine thread; queue.Queue is the thread boundary — other threads only put
+events. Composite reads are consistent because nothing mutates concurrently.
+Live cross-thread reads are a D-live design item.
 """
-import threading
 import uuid
 from queue import Queue
 from datetime import datetime, UTC
-from typing import Dict, Optional, Set, Any, List, Generator, Union
+from typing import Dict, Optional, Any, List, Generator, Union
 from contextlib import contextmanager
-
-from readerwriterlock import rwlock
 
 from .portfolio import Portfolio
 from itrader.core.exceptions import (
-    PortfolioHandlerError, PortfolioNotFoundError, InvalidPortfolioOperationError,
+    PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
 from itrader.core.enums import PortfolioState, TransactionType, FillStatus, Side
@@ -35,14 +37,17 @@ class PortfolioHandler:
     - Portfolio lifecycle management (creation, deletion)
     - System-wide monitoring and health checks
     - Event publishing coordination
-    - Global thread safety for collection operations
     - Runtime configuration updates via API
-    
+
     Individual portfolios manage their own:
     - State (ACTIVE, INACTIVE, ARCHIVED)
     - Configuration (limits, validation)
-    - Thread safety (per-portfolio locks)
     - Health monitoring
+
+    D-19 single-writer contract: ALL portfolio state mutations happen on the
+    engine thread; queue.Queue is the thread boundary — other threads only put
+    events. Composite reads are consistent because nothing mutates
+    concurrently. Live cross-thread reads are a D-live design item.
     """
     
     def __init__(self, global_queue: "Queue[Any]", config_dir: str = "settings", environment: str = "default") -> None:
@@ -56,45 +61,24 @@ class PortfolioHandler:
 
         # Extract key configuration values with defaults
         self.max_portfolios = self.config_data.limits.max_positions
-        self.max_concurrent_operations = 50  # Reasonable default for operations
         self.publish_error_events = True  # Default behavior
-        
+
         # Portfolio storage - now just stores portfolio instances.
         # 02-05 carry-over: portfolios are keyed by PortfolioId (UUID) at runtime
         # while events still carry an int portfolio_id. Until the portfolio_id
         # migration completes, the key is typed Any to bridge both forms (the full
         # retype is deferred — not mandated by Task 2).
+        # D-19: collection lock removed — single-writer contract, see class docstring.
         self._portfolios: Dict[Any, Portfolio] = {}
-        
-        # Global collection lock (lightweight, just for adding/removing portfolios)
-        self._portfolios_lock = rwlock.RWLockFair()
-        
-        # Operation tracking for global monitoring
-        self._active_operations: Set[str] = set()
-        self._operations_lock = threading.Lock()
-        
+
         # Global logger
         self.logger = get_itrader_logger().bind(component="PortfolioHandler")
-        
+
         self.logger.info(
             "Enhanced PortfolioHandler initialized",
-            max_portfolios=self.max_portfolios,
-            max_concurrent_ops=self.max_concurrent_operations
+            max_portfolios=self.max_portfolios
         )
-    
-    @property
-    def config(self) -> Any:
-        """Get config structure for test compatibility."""
-        class Limits:
-            def __init__(self, max_concurrent_operations: int) -> None:
-                self.max_concurrent_operations = max_concurrent_operations
 
-        class Config:
-            def __init__(self, limits: Any) -> None:
-                self.limits = limits
-
-        return Config(Limits(self.max_concurrent_operations))
-    
     def _generate_correlation_id(self) -> str:
         """Generate unique correlation ID for operation tracking."""
         return f"ph_{uuid.uuid4().hex[:12]}"
@@ -122,20 +106,15 @@ class PortfolioHandler:
     
     @contextmanager
     def _operation_context(self, operation_name: str) -> Generator[str, None, None]:
-        """Context manager for operation tracking."""
+        """Context manager providing a correlation ID for operation tracking.
+
+        D-19: the concurrency-limiting machinery (_operations_lock /
+        _active_operations) was removed with the single-writer contract.
+        Correlation-id generation and error-event publication (Pitfall 8)
+        survive — this context only supplies the correlation id now.
+        """
         correlation_id = self._generate_correlation_id()
-        
-        # Check concurrent operation limits
-        with self._operations_lock:
-            if len(self._active_operations) >= self.max_concurrent_operations:
-                raise PortfolioHandlerError(f"Maximum concurrent operations limit reached: {self.max_concurrent_operations}")
-            self._active_operations.add(correlation_id)
-        
-        try:
-            yield correlation_id
-        finally:
-            with self._operations_lock:
-                self._active_operations.discard(correlation_id)
+        yield correlation_id
     
     # Main portfolio management methods (keeping same names for compatibility)
     def add_portfolio(self, user_id: int, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> PortfolioId:
@@ -151,9 +130,8 @@ class PortfolioHandler:
                     raise PortfolioValidationError(0, "name", "Portfolio name cannot be empty")
                 
                 # Check global limits
-                with self._portfolios_lock.gen_rlock():
-                    if len(self._portfolios) >= self.max_portfolios:
-                        raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
+                if len(self._portfolios) >= self.max_portfolios:
+                    raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
                 
                 # Create portfolio instance
                 portfolio = Portfolio(
@@ -166,8 +144,7 @@ class PortfolioHandler:
                 )
                 
                 # Store portfolio
-                with self._portfolios_lock.gen_wlock():
-                    self._portfolios[portfolio.portfolio_id] = portfolio
+                self._portfolios[portfolio.portfolio_id] = portfolio
                 
                 self.logger.info(
                     "Portfolio created successfully",
@@ -186,10 +163,9 @@ class PortfolioHandler:
     
     def get_portfolio(self, portfolio_id: Any) -> Portfolio:
         """Get portfolio instance."""
-        with self._portfolios_lock.gen_rlock():
-            if portfolio_id not in self._portfolios:
-                raise PortfolioNotFoundError(portfolio_id)
-            return self._portfolios[portfolio_id]
+        if portfolio_id not in self._portfolios:
+            raise PortfolioNotFoundError(portfolio_id)
+        return self._portfolios[portfolio_id]
     
     def delete_portfolio(self, portfolio_id: Any, force: bool = False) -> bool:
         """Delete a portfolio with validation."""
@@ -210,8 +186,7 @@ class PortfolioHandler:
                 portfolio.set_state(PortfolioState.ARCHIVED, "Portfolio deletion")
                 
                 # Remove from collection
-                with self._portfolios_lock.gen_wlock():
-                    del self._portfolios[portfolio_id]
+                del self._portfolios[portfolio_id]
                 
                 self.logger.info(
                     "Portfolio deleted successfully",
@@ -228,18 +203,15 @@ class PortfolioHandler:
     
     def get_active_portfolios(self) -> List[Portfolio]:
         """Get all active portfolios."""
-        with self._portfolios_lock.gen_rlock():
-            return [p for p in self._portfolios.values() if p.is_active()]
-    
+        return [p for p in self._portfolios.values() if p.is_active()]
+
     def get_portfolios_by_state(self, state: PortfolioState) -> List[Portfolio]:
         """Get portfolios by state."""
-        with self._portfolios_lock.gen_rlock():
-            return [p for p in self._portfolios.values() if p.state == state]
-    
+        return [p for p in self._portfolios.values() if p.state == state]
+
     def get_portfolio_count(self) -> int:
         """Get total portfolio count."""
-        with self._portfolios_lock.gen_rlock():
-            return len(self._portfolios)
+        return len(self._portfolios)
     
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> bool:
@@ -353,10 +325,8 @@ class PortfolioHandler:
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:
         """Generate global health report."""
-        with self._portfolios_lock.gen_rlock():
-            portfolios = list(self._portfolios.values())
-        
-        # Analyze portfolios without holding the global lock
+        portfolios = list(self._portfolios.values())
+
         healthy_count = 0
         unhealthy_portfolios = []
         state_counts = {state: 0 for state in PortfolioState}
@@ -380,21 +350,18 @@ class PortfolioHandler:
             'unhealthy_portfolios': len(unhealthy_portfolios),
             'unhealthy_details': unhealthy_portfolios,
             'portfolios_by_state': {state.value: count for state, count in state_counts.items()},
-            'active_operations': len(self._active_operations),
             'global_limits': {
-                'max_portfolios': self.max_portfolios,
-                'max_concurrent_operations': self.max_concurrent_operations
+                'max_portfolios': self.max_portfolios
             }
         }
     
     # Export and serialization
     def portfolios_to_dict(self) -> Dict[str, Dict[str, Any]]:
         """Convert all portfolios to dictionary format."""
-        with self._portfolios_lock.gen_rlock():
-            return {
-                str(portfolio_id): portfolio.to_dict()
-                for portfolio_id, portfolio in self._portfolios.items()
-            }
+        return {
+            str(portfolio_id): portfolio.to_dict()
+            for portfolio_id, portfolio in self._portfolios.items()
+        }
     
     def generate_portfolios_update_event(self) -> PortfolioUpdateEvent:
         """Generate portfolio update event."""

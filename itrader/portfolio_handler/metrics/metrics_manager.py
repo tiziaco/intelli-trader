@@ -3,7 +3,6 @@ Metrics Manager for portfolio performance tracking and analytics.
 Handles portfolio metrics calculation, historical tracking, and reporting.
 """
 
-import threading
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Tuple, Any
@@ -81,7 +80,7 @@ class MetricsManager:
     
     def __init__(self, portfolio: Any) -> None:
         self.portfolio = portfolio
-        self._lock = threading.RLock()
+        # D-19: lock removed — single-writer contract, see Portfolio docstring.
         self.logger = get_itrader_logger().bind(component="MetricsManager")
         
         # Store initial portfolio equity as baseline for return calculations
@@ -138,72 +137,70 @@ class MetricsManager:
         if timestamp is None:
             timestamp = datetime.now()
         
-        with self._lock:
-            # Calculate current portfolio metrics
-            total_equity = self._get_total_equity()
-            cash_balance = self._get_cash_balance()
-            positions_value = self._get_positions_value()
-            unrealized_pnl = self._get_unrealized_pnl()
-            realized_pnl = self._get_realized_pnl()
-            total_pnl = unrealized_pnl + realized_pnl
-            open_positions = self._get_open_positions_count()
+        # Calculate current portfolio metrics
+        total_equity = self._get_total_equity()
+        cash_balance = self._get_cash_balance()
+        positions_value = self._get_positions_value()
+        unrealized_pnl = self._get_unrealized_pnl()
+        realized_pnl = self._get_realized_pnl()
+        total_pnl = unrealized_pnl + realized_pnl
+        open_positions = self._get_open_positions_count()
             
-            # Calculate portfolio return (from initial equity if available)
-            portfolio_return = self._calculate_portfolio_return(total_equity)
+        # Calculate portfolio return (from initial equity if available)
+        portfolio_return = self._calculate_portfolio_return(total_equity)
             
-            # Create snapshot
-            snapshot = PortfolioSnapshot(
-                timestamp=timestamp,
-                total_equity=total_equity,
-                cash_balance=cash_balance,
-                positions_value=positions_value,
-                unrealized_pnl=unrealized_pnl,
-                realized_pnl=realized_pnl,
-                total_pnl=total_pnl,
-                open_positions_count=open_positions,
-                portfolio_return=portfolio_return
-            )
+        # Create snapshot
+        snapshot = PortfolioSnapshot(
+            timestamp=timestamp,
+            total_equity=total_equity,
+            cash_balance=cash_balance,
+            positions_value=positions_value,
+            unrealized_pnl=unrealized_pnl,
+            realized_pnl=realized_pnl,
+            total_pnl=total_pnl,
+            open_positions_count=open_positions,
+            portfolio_return=portfolio_return
+        )
             
-            # Store snapshot (via the seam)
-            self._storage.add_snapshot(snapshot)
+        # Store snapshot (via the seam)
+        self._storage.add_snapshot(snapshot)
 
-            # Manage snapshot history size
-            snapshots = self._storage.get_snapshots()
-            if len(snapshots) > self.max_snapshots:
-                self._storage.set_snapshots(snapshots[-self.max_snapshots:])
+        # Manage snapshot history size
+        snapshots = self._storage.get_snapshots()
+        if len(snapshots) > self.max_snapshots:
+            self._storage.set_snapshots(snapshots[-self.max_snapshots:])
             
-            # Invalidate cache when new data is added
-            self._cache_timestamp.clear()
+        # Invalidate cache when new data is added
+        self._cache_timestamp.clear()
             
-            self.logger.debug("Portfolio snapshot recorded",
-                timestamp=timestamp.isoformat(),
-                total_equity=str(total_equity),
-                total_pnl=str(total_pnl)
-            )
+        self.logger.debug("Portfolio snapshot recorded",
+            timestamp=timestamp.isoformat(),
+            total_equity=str(total_equity),
+            total_pnl=str(total_pnl)
+        )
             
-            return snapshot
+        return snapshot
     
     def get_current_metrics(self) -> Dict[str, Any]:
         """Get current portfolio metrics."""
         
-        with self._lock:
-            if not self._storage.get_snapshots():
-                # Create initial snapshot if none exists
-                self.record_snapshot()
+        if not self._storage.get_snapshots():
+            # Create initial snapshot if none exists
+            self.record_snapshot()
 
-            latest_snapshot = self._storage.get_snapshots()[-1]
+        latest_snapshot = self._storage.get_snapshots()[-1]
             
-            return {
-                "timestamp": latest_snapshot.timestamp.isoformat(),
-                "total_equity": float(latest_snapshot.total_equity),
-                "cash_balance": float(latest_snapshot.cash_balance),
-                "positions_value": float(latest_snapshot.positions_value),
-                "unrealized_pnl": float(latest_snapshot.unrealized_pnl),
-                "realized_pnl": float(latest_snapshot.realized_pnl),
-                "total_pnl": float(latest_snapshot.total_pnl),
-                "portfolio_return": float(latest_snapshot.portfolio_return),
-                "open_positions": latest_snapshot.open_positions_count
-            }
+        return {
+            "timestamp": latest_snapshot.timestamp.isoformat(),
+            "total_equity": float(latest_snapshot.total_equity),
+            "cash_balance": float(latest_snapshot.cash_balance),
+            "positions_value": float(latest_snapshot.positions_value),
+            "unrealized_pnl": float(latest_snapshot.unrealized_pnl),
+            "realized_pnl": float(latest_snapshot.realized_pnl),
+            "total_pnl": float(latest_snapshot.total_pnl),
+            "portfolio_return": float(latest_snapshot.portfolio_return),
+            "open_positions": latest_snapshot.open_positions_count
+        }
     
     def calculate_performance_metrics(self, period: MetricsPeriod, 
                                     end_date: Optional[datetime] = None) -> Optional[PerformanceMetrics]:
@@ -232,30 +229,29 @@ class MetricsManager:
         if self._is_cache_valid(cache_key):
             return self._metrics_cache[cache_key]
         
-        with self._lock:
-            # Determine start date based on period
-            start_date = self._get_period_start_date(period, end_date)
+        # Determine start date based on period
+        start_date = self._get_period_start_date(period, end_date)
             
-            # Get snapshots for the period
-            period_snapshots = self._get_snapshots_for_period(start_date, end_date)
+        # Get snapshots for the period
+        period_snapshots = self._get_snapshots_for_period(start_date, end_date)
             
-            if len(period_snapshots) < 2:
-                self.logger.warning("Insufficient data for metrics calculation",
-                    period=period.name,
-                    snapshots_count=len(period_snapshots)
-                )
-                return None
-            
-            # Calculate metrics
-            metrics = self._calculate_metrics_from_snapshots(
-                period, start_date, end_date, period_snapshots
+        if len(period_snapshots) < 2:
+            self.logger.warning("Insufficient data for metrics calculation",
+                period=period.name,
+                snapshots_count=len(period_snapshots)
             )
+            return None
             
-            # Cache results
-            self._metrics_cache[cache_key] = metrics
-            self._cache_timestamp[cache_key] = datetime.now()
+        # Calculate metrics
+        metrics = self._calculate_metrics_from_snapshots(
+            period, start_date, end_date, period_snapshots
+        )
             
-            return metrics
+        # Cache results
+        self._metrics_cache[cache_key] = metrics
+        self._cache_timestamp[cache_key] = datetime.now()
+            
+        return metrics
     
     def get_drawdown_analysis(self, start_date: Optional[datetime] = None) -> Dict[str, Any]:
         """
@@ -267,49 +263,48 @@ class MetricsManager:
         Returns:
             Dict containing drawdown analysis
         """
-        with self._lock:
-            all_snaps = self._storage.get_snapshots()
-            if not all_snaps:
-                return {"error": "No snapshots available"}
+        all_snaps = self._storage.get_snapshots()
+        if not all_snaps:
+            return {"error": "No snapshots available"}
 
-            if start_date is None:
-                relevant_snapshots = all_snaps
-            else:
-                relevant_snapshots = [s for s in all_snaps if s.timestamp >= start_date]
+        if start_date is None:
+            relevant_snapshots = all_snaps
+        else:
+            relevant_snapshots = [s for s in all_snaps if s.timestamp >= start_date]
             
-            if len(relevant_snapshots) < 2:
-                return {"error": "Insufficient data for drawdown analysis"}
+        if len(relevant_snapshots) < 2:
+            return {"error": "Insufficient data for drawdown analysis"}
             
-            # Calculate running maximum and drawdowns
-            equity_values = [float(s.total_equity) for s in relevant_snapshots]
-            timestamps = [s.timestamp for s in relevant_snapshots]
+        # Calculate running maximum and drawdowns
+        equity_values = [float(s.total_equity) for s in relevant_snapshots]
+        timestamps = [s.timestamp for s in relevant_snapshots]
             
-            running_max = []
-            drawdowns = []
-            current_max = equity_values[0]
+        running_max = []
+        drawdowns = []
+        current_max = equity_values[0]
             
-            for value in equity_values:
-                current_max = max(current_max, value)
-                running_max.append(current_max)
+        for value in equity_values:
+            current_max = max(current_max, value)
+            running_max.append(current_max)
                 
-                drawdown = (value - current_max) / current_max if current_max > 0 else 0
-                drawdowns.append(drawdown)
+            drawdown = (value - current_max) / current_max if current_max > 0 else 0
+            drawdowns.append(drawdown)
             
-            # Find maximum drawdown
-            max_drawdown = min(drawdowns) if drawdowns else 0
-            max_dd_index = drawdowns.index(max_drawdown) if max_drawdown < 0 else 0
+        # Find maximum drawdown
+        max_drawdown = min(drawdowns) if drawdowns else 0
+        max_dd_index = drawdowns.index(max_drawdown) if max_drawdown < 0 else 0
             
-            # Calculate drawdown duration
-            max_dd_duration = self._calculate_drawdown_duration(drawdowns, max_dd_index)
+        # Calculate drawdown duration
+        max_dd_duration = self._calculate_drawdown_duration(drawdowns, max_dd_index)
             
-            return {
-                "max_drawdown": max_drawdown,
-                "max_drawdown_date": timestamps[max_dd_index].isoformat(),
-                "max_drawdown_duration_days": max_dd_duration,
-                "current_drawdown": drawdowns[-1],
-                "drawdown_periods": len([d for d in drawdowns if d < -0.01]),  # Periods > 1% drawdown
-                "recovery_periods": len([i for i, d in enumerate(drawdowns) if d == 0 and i > 0])
-            }
+        return {
+            "max_drawdown": max_drawdown,
+            "max_drawdown_date": timestamps[max_dd_index].isoformat(),
+            "max_drawdown_duration_days": max_dd_duration,
+            "current_drawdown": drawdowns[-1],
+            "drawdown_periods": len([d for d in drawdowns if d < -0.01]),  # Periods > 1% drawdown
+            "recovery_periods": len([i for i, d in enumerate(drawdowns) if d == 0 and i > 0])
+        }
     
     def get_return_distribution(self, period_days: int = 1) -> Dict[str, Any]:
         """
@@ -321,79 +316,76 @@ class MetricsManager:
         Returns:
             Dict containing return distribution statistics
         """
-        with self._lock:
-            snaps = self._storage.get_snapshots()
-            if len(snaps) < period_days + 1:
-                return {"error": "Insufficient data for return analysis"}
+        snaps = self._storage.get_snapshots()
+        if len(snaps) < period_days + 1:
+            return {"error": "Insufficient data for return analysis"}
 
-            # Calculate period returns
-            returns = []
-            for i in range(period_days, len(snaps)):
-                current_equity = float(snaps[i].total_equity)
-                previous_equity = float(snaps[i - period_days].total_equity)
+        # Calculate period returns
+        returns = []
+        for i in range(period_days, len(snaps)):
+            current_equity = float(snaps[i].total_equity)
+            previous_equity = float(snaps[i - period_days].total_equity)
                 
-                if previous_equity > 0:
-                    period_return = (current_equity - previous_equity) / previous_equity
-                    returns.append(period_return)
+            if previous_equity > 0:
+                period_return = (current_equity - previous_equity) / previous_equity
+                returns.append(period_return)
             
-            if not returns:
-                return {"error": "No returns calculated"}
+        if not returns:
+            return {"error": "No returns calculated"}
             
-            # Calculate distribution statistics
-            mean_return = statistics.mean(returns)
-            std_return = statistics.stdev(returns) if len(returns) > 1 else 0
+        # Calculate distribution statistics
+        mean_return = statistics.mean(returns)
+        std_return = statistics.stdev(returns) if len(returns) > 1 else 0
             
-            sorted_returns = sorted(returns)
-            percentiles = {
-                "5th": sorted_returns[int(len(sorted_returns) * 0.05)],
-                "25th": sorted_returns[int(len(sorted_returns) * 0.25)],
-                "50th": statistics.median(returns),
-                "75th": sorted_returns[int(len(sorted_returns) * 0.75)],
-                "95th": sorted_returns[int(len(sorted_returns) * 0.95)]
-            }
+        sorted_returns = sorted(returns)
+        percentiles = {
+            "5th": sorted_returns[int(len(sorted_returns) * 0.05)],
+            "25th": sorted_returns[int(len(sorted_returns) * 0.25)],
+            "50th": statistics.median(returns),
+            "75th": sorted_returns[int(len(sorted_returns) * 0.75)],
+            "95th": sorted_returns[int(len(sorted_returns) * 0.95)]
+        }
             
-            # Count positive/negative returns
-            positive_returns = [r for r in returns if r > 0]
-            negative_returns = [r for r in returns if r < 0]
+        # Count positive/negative returns
+        positive_returns = [r for r in returns if r > 0]
+        negative_returns = [r for r in returns if r < 0]
             
-            return {
-                "period_days": period_days,
-                "total_periods": len(returns),
-                "mean_return": mean_return,
-                "std_deviation": std_return,
-                "skewness": self._calculate_skewness(returns),
-                "kurtosis": self._calculate_kurtosis(returns),
-                "percentiles": percentiles,
-                "positive_periods": len(positive_returns),
-                "negative_periods": len(negative_returns),
-                "win_rate": len(positive_returns) / len(returns) if returns else 0,
-                "best_return": max(returns),
-                "worst_return": min(returns)
-            }
+        return {
+            "period_days": period_days,
+            "total_periods": len(returns),
+            "mean_return": mean_return,
+            "std_deviation": std_return,
+            "skewness": self._calculate_skewness(returns),
+            "kurtosis": self._calculate_kurtosis(returns),
+            "percentiles": percentiles,
+            "positive_periods": len(positive_returns),
+            "negative_periods": len(negative_returns),
+            "win_rate": len(positive_returns) / len(returns) if returns else 0,
+            "best_return": max(returns),
+            "worst_return": min(returns)
+        }
     
     def set_benchmark_price(self, timestamp: datetime, price: float) -> None:
         """Set benchmark price for comparison."""
-        with self._lock:
-            self.benchmark_prices[timestamp] = Decimal(str(price))
+        self.benchmark_prices[timestamp] = Decimal(str(price))
     
     def get_snapshots(self, start_date: Optional[datetime] = None, 
                      end_date: Optional[datetime] = None, 
                      limit: Optional[int] = None) -> List[PortfolioSnapshot]:
         """Get portfolio snapshots for a date range."""
         
-        with self._lock:
-            snapshots = self._storage.get_snapshots()
+        snapshots = self._storage.get_snapshots()
 
-            if start_date:
-                snapshots = [s for s in snapshots if s.timestamp >= start_date]
+        if start_date:
+            snapshots = [s for s in snapshots if s.timestamp >= start_date]
             
-            if end_date:
-                snapshots = [s for s in snapshots if s.timestamp <= end_date]
+        if end_date:
+            snapshots = [s for s in snapshots if s.timestamp <= end_date]
             
-            if limit:
-                snapshots = snapshots[-limit:]
+        if limit:
+            snapshots = snapshots[-limit:]
             
-            return snapshots.copy()
+        return snapshots.copy()
     
     def export_metrics_to_dict(self, period: MetricsPeriod) -> Optional[Dict[str, Any]]:
         """Export performance metrics to dictionary format."""

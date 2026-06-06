@@ -388,10 +388,16 @@ def test_error_event_publishing(env):
 # ===================
 
 
-def test_concurrent_operation_limits(env):
-    """Test concurrent operation limits."""
-    assert env.handler.config.limits.max_concurrent_operations > 0
-    assert len(env.handler._active_operations) == 0
+def test_no_concurrency_limiting_single_writer(env):
+    """D-19: concurrency-limiting machinery is gone — single-writer contract.
+
+    Regression-locks the deletion of _operations_lock/_active_operations:
+    all portfolio state mutations happen on the engine thread; queue.Queue
+    is the thread boundary.
+    """
+    assert not hasattr(env.handler, '_active_operations')
+    assert not hasattr(env.handler, '_operations_lock')
+    assert not hasattr(env.handler, '_portfolios_lock')
 
 
 def test_correlation_id_generation(env):
