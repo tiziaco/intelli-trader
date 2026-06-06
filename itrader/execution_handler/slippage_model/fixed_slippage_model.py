@@ -1,20 +1,29 @@
 """
-Fixed slippage model - constant slippage percentage regardless of order size.
+Fixed slippage model - constant slippage percentage regardless of order size
+(Decimal-native, D-12).
 """
 
 import random
+from decimal import Decimal
 from typing import Dict, Any
+
+from itrader.core.money import to_money
+
 from .base import SlippageModel
 
 
 class FixedSlippageModel(SlippageModel):
     """
     Fixed slippage model that applies a constant slippage percentage.
-    
+
     This model applies the same slippage percentage to all orders
     regardless of size, with optional random variation.
+
+    Money (D-12): the returned factor is Decimal. The seeded RNG jitter is
+    drawn as a float (Phase 2 D-11 seam — deterministic given the seed) and
+    enters the Decimal domain exactly once via ``to_money``.
     """
-    
+
     def __init__(self, slippage_pct: float = 0.01,
                  random_variation: bool = True,
                  rng: random.Random | None = None):
@@ -36,48 +45,54 @@ class FixedSlippageModel(SlippageModel):
         self.slippage_pct = slippage_pct
         self.random_variation = random_variation
         self._rng: random.Random = rng or random.Random()
-    
-    def calculate_slippage_factor(self, quantity: float, price: float, 
-                                side: str, order_type: str = "market") -> float:
+
+    def calculate_slippage_factor(self, quantity: Decimal, price: Decimal,
+                                  side: str = "buy", order_type: str = "market") -> Decimal:
         """
         Calculate slippage factor based on fixed percentage.
-        
+
         Parameters
         ----------
-        quantity : float
+        quantity : Decimal
             Order quantity (ignored for fixed model)
-        price : float
+        price : Decimal
             Order price (ignored for fixed model)
         side : str
             Order side ('buy' or 'sell')
         order_type : str
             Order type
-            
+
         Returns
         -------
-        float
+        Decimal
             Slippage factor to multiply with price
+
+        Raises
+        ------
+        ValidationError
+            On invalid inputs — there is no silent neutral-factor fallback
+            (plan 06-04, T-06-13)
         """
-        if not self.validate_inputs(quantity, price, side, order_type):
-            return 1.0
-        
+        self.validate_inputs(quantity, price, side, order_type)
+
         # Calculate slippage
         if self.random_variation:
-            # Apply random variation around the fixed rate
-            slippage = self._rng.uniform(-self.slippage_pct, self.slippage_pct) / 100.0
+            # Seeded float jitter (D-11 seam) enters Decimal ONCE via to_money.
+            jitter = self._rng.uniform(-self.slippage_pct, self.slippage_pct)
+            slippage = to_money(jitter) / Decimal("100")
         else:
             # Use fixed rate with direction based on order side
             if side.lower() == 'buy':
-                slippage = self.slippage_pct / 100.0  # Positive slippage for buys
+                slippage = to_money(self.slippage_pct) / Decimal("100")    # worse for buys
             else:  # sell
-                slippage = -self.slippage_pct / 100.0  # Negative slippage for sells
-        
-        return 1.0 + slippage
-    
+                slippage = -to_money(self.slippage_pct) / Decimal("100")  # worse for sells
+
+        return Decimal("1") + slippage
+
     def get_slippage_info(self) -> Dict[str, Any]:
         """
         Get information about the fixed slippage model.
-        
+
         Returns
         -------
         Dict[str, Any]
