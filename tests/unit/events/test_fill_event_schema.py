@@ -61,14 +61,14 @@ def test_strategy_id_copied_from_order():
 
 def test_executed_values_land_without_mutation():
     # Construct-complete (D-12): the executed price/quantity are explicit
-    # constructor inputs — they land on the fill as-is, and the originating
-    # order is left untouched.
+    # constructor inputs — they land on the fill (normalized via to_money,
+    # D-22), and the originating order is left untouched.
     order = _order_event()
     fill = FillEvent.new_fill(
         "EXECUTED", order, price=41.5, quantity=0.75, commission=0.1)
-    assert fill.price == 41.5
-    assert fill.quantity == 0.75
-    assert fill.commission == 0.1
+    assert fill.price == Decimal("41.5")
+    assert fill.quantity == Decimal("0.75")
+    assert fill.commission == Decimal("0.1")
     assert order.price == 40.0
     assert order.quantity == 1.0
 

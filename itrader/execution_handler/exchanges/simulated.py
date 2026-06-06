@@ -162,39 +162,52 @@ class SimulatedExchange(AbstractExchange):
 	def _emit_rejection(self, event: OrderEvent, reason: str) -> None:
 		"""Enqueue a FillEvent(REFUSED) so the order mirror can reconcile a rejected order."""
 		self.logger.debug('Emitting REFUSED fill for %s %s: %s', event.action, event.ticker, reason)
-		# REFUSED carries the order's own price/quantity, commission 0.0.
+		# REFUSED carries the order's own (Decimal, D-22) price/quantity,
+		# commission Decimal("0") — never settled, so no float round-trip needed.
 		self.global_queue.put(FillEvent.new_fill(
-			'REFUSED', event, price=event.price, quantity=event.quantity, commission=0.0))
+			'REFUSED', event, price=event.price, quantity=event.quantity,
+			commission=Decimal("0")))
 
-	def _emit_fill(self, event: OrderEvent, fill_price: float,
-	               fill_quantity: float) -> None:
-		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED)."""
-		# fee_model returns Decimal (M2a money). The FillEvent/fill layer stays float
-		# until the D-22 event retype (plan 05-07), so coerce only at the new_fill
-		# boundary (mirrors the OrderEvent boundary coercion in new_order_event).
+	def _emit_fill(self, event: OrderEvent, fill_price: "float | Decimal",
+	               fill_quantity: "float | Decimal") -> None:
+		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED).
+
+		D-22 boundary (Pitfall 4): fee/slippage/matching math stays FLOAT
+		internally — bar OHLC is float (pandas) until M5a's Bar struct and
+		the slippage factor is float. Decimal order money converts to float
+		ONCE on entry here; the executed values re-enter the money domain
+		ONCE at FillEvent construction via to_money (Decimal(str(x)) — the
+		exact Decimal today's float fill produced at the ledger, so the
+		retype is numerically inert).
+		"""
+		price_f = float(fill_price)
+		quantity_f = float(fill_quantity)
+		# fee_model returns Decimal (M2a money) from float inputs; it passes
+		# through new_fill's to_money as an identity normalization.
 		# D-05: the event carries a Side member; the fee/slippage models keep
 		# their lowercase-string contract — convert via .value at this boundary.
 		commission = self.fee_model.calculate_fee(
-			quantity=fill_quantity, price=fill_price,
+			quantity=quantity_f, price=price_f,
 			side=event.action.value.lower(), order_type="market")
 		slippage_factor = self.slippage_model.calculate_slippage_factor(
-			quantity=fill_quantity, price=fill_price,
+			quantity=quantity_f, price=price_f,
 			side=event.action.value.lower(), order_type="market")
-		executed_price = fill_price * slippage_factor
+		executed_price = price_f * slippage_factor
 
 		# Construct-complete (D-12): the slippage-adjusted price and the matched
 		# fill quantity (may differ from event.quantity for partial fills driven
 		# by the matching engine in on_market_data) are explicit constructor
-		# inputs — the fill is never mutated after construction.
+		# inputs — the fill is never mutated after construction. new_fill
+		# enters the floats into Decimal via to_money (D-22).
 		fill_event = FillEvent.new_fill(
 			'EXECUTED', event,
-			price=executed_price, quantity=fill_quantity, commission=float(commission))
+			price=executed_price, quantity=quantity_f, commission=commission)
 		self.global_queue.put(fill_event)
 
 		self._orders_executed += 1
-		self._total_volume += executed_price * fill_quantity
+		self._total_volume += executed_price * quantity_f
 		self.logger.debug('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
-						event.action, event.ticker, fill_quantity, executed_price,
+						event.action, event.ticker, quantity_f, executed_price,
 						(slippage_factor - 1.0) * 100)
 
 	def on_market_data(self, bar: "BarEvent") -> None:
@@ -203,11 +216,12 @@ class SimulatedExchange(AbstractExchange):
 		for decision in fills:
 			self._emit_fill(decision.order_event, decision.fill_price, decision.fill_quantity)
 		for cancel in cancels:
-			# CANCELLED carries the order's own price/quantity, commission 0.0.
+			# CANCELLED carries the order's own (Decimal) price/quantity,
+			# commission Decimal("0") — never settled (D-22).
 			self.global_queue.put(FillEvent.new_fill(
 				'CANCELLED', cancel.order_event,
 				price=cancel.order_event.price, quantity=cancel.order_event.quantity,
-				commission=0.0))
+				commission=Decimal("0")))
 
 	def on_order(self, event: OrderEvent) -> None:
 		"""
@@ -222,10 +236,11 @@ class SimulatedExchange(AbstractExchange):
 			# Only acknowledge a cancel for an order that was actually resting;
 			# a cancel for an unknown/already-filled order emits no spurious fill.
 			if event.order_id is not None and self.matching_engine.cancel(event.order_id):
-				# CANCELLED carries the order's own price/quantity, commission 0.0.
+				# CANCELLED carries the order's own (Decimal) price/quantity,
+				# commission Decimal("0") — never settled (D-22).
 				self.global_queue.put(FillEvent.new_fill(
 					'CANCELLED', event, price=event.price, quantity=event.quantity,
-					commission=0.0))
+					commission=Decimal("0")))
 			return
 
 		if event.command == OrderCommand.MODIFY:

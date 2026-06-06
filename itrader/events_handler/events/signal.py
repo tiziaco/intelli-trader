@@ -5,6 +5,7 @@ on the event).
 """
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from itrader.core.enums import EventType, OrderType, Side
@@ -33,19 +34,21 @@ class SignalEvent(Event):
         ``Side.BUY`` (for long) or ``Side.SELL`` (for short) — enum-typed
         at the event boundary (D-05); Portfolio maps Side -> TransactionType
         at its own boundary.
-    price: `float`
-        Last close price for the instrument (float until M4, D-04)
-    stop_loss: `float`
-        Stop loss price for the instrument
-    take_profit: `float`
-        Take profit price for the instrument
+    price: `Decimal`
+        Last close price for the instrument. Decimal-typed since D-22
+        (closing the Phase 4 D-04 deferral): the strategy's float close
+        enters via ``to_money`` (the string path) at signal construction.
+    stop_loss: `Decimal`
+        Stop loss price for the instrument (Decimal, D-22)
+    take_profit: `Decimal`
+        Take profit price for the instrument (Decimal, D-22)
     strategy_id: `StrategyId`
         The ID of the strategy who generated the signal
     portfolio_id: `int`
         The ID of the portfolio where to transact the position
     strategy_setting: `dict`
         Strategy settings used to generate the signal.
-    quantity: `float | None`
+    quantity: `Decimal | None`
         Quantity to trade. ``None`` (the default) means "the order/risk
         layer sizes me" (D-10 — the 0 sentinel is gone); an explicit
         caller-supplied positive quantity is used as-is.
@@ -55,14 +58,14 @@ class SignalEvent(Event):
     ticker: str
     action: Side
     order_type: OrderType
-    price: float
-    stop_loss: float
-    take_profit: float
+    price: Decimal
+    stop_loss: Decimal
+    take_profit: Decimal
     # 02-05 carry-over: strategy_id carries a UUIDv7-backed StrategyId, not a raw int.
     strategy_id: StrategyId
     portfolio_id: int
     strategy_setting: dict[str, Any]
-    quantity: float | None = None
+    quantity: Decimal | None = None
 
     def __str__(self) -> str:
         return f"{self.type} ({self.ticker}, {self.action}, {round(self.price, 4)} $)"

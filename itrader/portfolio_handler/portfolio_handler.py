@@ -289,9 +289,9 @@ class PortfolioHandler:
                 # D-05 boundary map: events carry Side; Portfolio maps
                 # Side -> TransactionType at its own boundary (the vocabularies
                 # stay distinct — same precedent as FillStatus -> OrderStatus).
-                # Money enters the Decimal domain here via to_money (the M4
-                # reconciliation of the former DEF-01-A float coercion: the
-                # transaction/position path is Decimal end-to-end now).
+                # D-22: FillEvent money is Decimal end-to-end now — to_money is
+                # an identity normalization at this domain entry (kept
+                # deliberately: the ledger never trusts an unnormalized input).
                 transaction_type = TransactionType.BUY if fill_event.action is Side.BUY else TransactionType.SELL
                 transaction = Transaction(
                     time=fill_event.time,

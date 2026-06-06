@@ -36,7 +36,9 @@ class FixedPercentage():
 		`float`
 			The computed stop-loss price (0.0 for an unknown side).
 		"""
-		last_close = signal.price
+		# D-22: signal money is Decimal — the SL/TP models compute in float
+		# (pre-signal domain); coerce at this boundary.
+		last_close = float(signal.price)
 
 		if signal.action is Side.BUY:
 			# LONG direction: sl lower
@@ -64,7 +66,8 @@ class FixedPercentage():
 		`float`
 			The computed take-profit price (0.0 for an unknown side).
 		"""
-		last_close = signal.price
+		# D-22: signal money is Decimal — coerce at this float boundary.
+		last_close = float(signal.price)
 
 		if signal.action is Side.BUY:
 			# LONG direction: tp higher
@@ -98,8 +101,9 @@ class Proportional():
 		`float`
 			The computed take-profit price (0.0 for an unknown side).
 		"""
-		last_close = signal.price
-		sl = signal.stop_loss
+		# D-22: signal money is Decimal — coerce at this float boundary.
+		last_close = float(signal.price)
+		sl = float(signal.stop_loss)
 
 		if signal.action is Side.BUY:
 			# LONG direction: tp higher
