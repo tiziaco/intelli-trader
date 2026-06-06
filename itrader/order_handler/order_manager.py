@@ -191,8 +191,11 @@ class OrderManager:
 			if (fill_event.status in (FillStatus.CANCELLED, FillStatus.REFUSED)
 					and order.child_order_ids and order.filled_quantity == 0):
 				for child_id in order.child_order_ids:
+					# 02-05 carry-over: the cancel_order API still declares int
+					# ids while runtime ids are UUIDv7 — cast bridges until the
+					# id-annotation retype lands (IN-06, deferred).
 					child_result = self.cancel_order(
-						child_id, order.portfolio_id,
+						cast(int, child_id), cast(int, order.portfolio_id),
 						reason=f"parent order {order.id} terminal without fill")
 					if child_result.success and child_result.order_events:
 						cancel_events.extend(child_result.order_events)
