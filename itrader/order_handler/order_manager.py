@@ -129,6 +129,16 @@ class OrderManager:
 			# D-20: no deactivate step — the terminal status set above already
 			# removes the order from active queries via the is_active predicate.
 			self.order_storage.update_order(order)
+			# D-01/OQ2 (Plan 05-06): the reserver owns the release — a uniform
+			# idempotent release on EVERY terminal reconciliation (FILLED/
+			# CANCELLED/REJECTED). Never-reserved orders (SELLs, bracket
+			# children) hit the silent no-op. Ordering vs the settlement debit
+			# is irrelevant: the 05-05 invariant guard checks balance, never
+			# available_balance, so a release-after-debit cannot false-positive
+			# (T-05-17: no stuck reservations corrupting buying power).
+			if self.portfolio_handler is not None:
+				self.portfolio_handler.release(
+					cast(PortfolioId, order.portfolio_id), order.id)
 		except Exception as e:
 			self.logger.error('Error reconciling fill for order %s: %s', order_id, e)
 
