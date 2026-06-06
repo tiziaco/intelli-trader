@@ -27,7 +27,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: M2b — Config, Types, Storage Seam & Oracle Re-Freeze** - Pydantic config, centralized types, portfolio storage seam, time_parser final, dead-code purge, pytest conversion, re-freeze numerical oracle (completed 2026-06-05)
 - [x] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging (completed 2026-06-05)
 - [x] **Phase 5: M4 — Money & Transaction Correctness** - Cash through CashManager, atomic transactions, order facade layering, frozen execution DTOs (completed 2026-06-06)
-- [x] **Phase 6: M5a — Backtest Validity, Fills & Data Pipeline** - Look-ahead/fill realism, Bar struct, precomputed frames, fee/slippage, price-handler Provider/Store/Feed split (completed 2026-06-06)
+- [ ] **Phase 6: M5a — Backtest Validity, Fills & Data Pipeline** - Look-ahead/fill realism, Bar struct, precomputed frames, fee/slippage, price-handler Provider/Store/Feed split (gap closure pending)
 - [ ] **Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage** - Complete strategy-declared sizing, correct reporting/metrics, universe stub, strategy/data/reporting tests
 - [ ] **Phase 8: M5c — Cross-Validation & Final Oracle** - Cross-validate vs backtesting.py + backtrader; freeze the final numerical reference
 
@@ -217,6 +217,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 9/9 | Complete   | 2026-06-05 |
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
-| 6. M5a — Backtest Validity, Fills & Data Pipeline | 6/6 | Complete   | 2026-06-06 |
+| 6. M5a — Backtest Validity, Fills & Data Pipeline | 6/6 | Gaps Found | —          |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/TBD | Not started | - |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
