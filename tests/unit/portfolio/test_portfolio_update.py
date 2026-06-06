@@ -34,7 +34,7 @@ def env():
         queue.get_nowait()
 
 
-def test_update_portfolios_market(env):
+def test_update_portfolios_market_value(env):
     # Open 2 positions, 1 long and 1 short
     buy_fill = _fill("BTCUSDT", Side.BUY, 40, 1, env.portfolio_id)
     sell_fill = _fill("ETHUSDT", Side.SELL, 20, 1, env.portfolio_id)
