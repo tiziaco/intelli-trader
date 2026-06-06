@@ -26,9 +26,9 @@ from itrader.events_handler.events import EventType, TimeEvent, OrderEvent
 # Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
 # (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the
 # env var directly here. A future D-live wiring would source this from Settings.
-_SYSTEM_DB_URL = os.getenv(
-    "SYSTEM_DB_URL", "postgresql+psycopg2://postgres:1234@localhost:5432/......."
-)
+# WR-10: no hardcoded credential fallback — an unset SYSTEM_DB_URL yields ""
+# and the system falls back to in-memory order storage with a loud warning.
+_SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")
 
 
 class SystemStatus(Enum):
@@ -109,12 +109,21 @@ class LiveTradingSystem:
         
         # Create order storage for live trading (PostgreSQL)
         # Note: For now using in-memory until Phase 2 is complete
-        try:
-            order_storage = OrderStorageFactory.create('live', _SYSTEM_DB_URL)
-        except NotImplementedError:
-            # Fallback to in-memory during Phase 1
-            self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")
+        if not _SYSTEM_DB_URL:
+            # WR-10: fail loudly into the in-memory fallback instead of
+            # shipping a default connection string with embedded credentials.
+            self.logger.warning(
+                "SYSTEM_DB_URL is not set — using in-memory order storage "
+                "(orders will NOT survive a restart)"
+            )
             order_storage = OrderStorageFactory.create('backtest')
+        else:
+            try:
+                order_storage = OrderStorageFactory.create('live', _SYSTEM_DB_URL)
+            except NotImplementedError:
+                # Fallback to in-memory during Phase 1
+                self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")
+                order_storage = OrderStorageFactory.create('backtest')
         
         # Execution handler constructed BEFORE the order handler so the
         # admission gate's commission estimator can adapt the simulated
