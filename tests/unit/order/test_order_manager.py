@@ -146,6 +146,39 @@ def test_modify_emits_modify_command(harness):
     assert order_events[0].command is OrderCommand.MODIFY
 
 
+def test_modify_quantity_only_succeeds(harness):
+    """CR-01 regression: a quantity-only modification (new_price=None) must not
+    TypeError inside validate_order_modification's `new_price <= 0` check."""
+    order = harness.rest_a_stop()
+    ok = harness.handler.modify_order(
+        order.id, new_quantity=2.0, portfolio_id=harness.portfolio_id
+    )
+    assert ok
+    events = [harness.queue.get() for _ in range(harness.queue.qsize())]
+    order_events = [e for e in events if e.type.name == "ORDER"]
+    assert len(order_events) == 1
+    assert order_events[0].command is OrderCommand.MODIFY
+    stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)
+    assert stored.quantity == Decimal("2.0")
+
+
+def test_modify_price_only_on_partially_filled_order(harness):
+    """CR-01 regression: a price-only modification (new_quantity=None) on a
+    PARTIALLY_FILLED order must not TypeError on `None < filled_quantity`."""
+    order = harness.rest_a_stop()
+    assert order.add_fill(
+        Decimal("0.5"), Decimal("30.0"), _dt.datetime(2024, 1, 2), "partial fill"
+    )
+    harness.storage.update_order(order)
+    assert order.status == OrderStatus.PARTIALLY_FILLED
+    ok = harness.handler.modify_order(
+        order.id, new_price=28.0, portfolio_id=harness.portfolio_id
+    )
+    assert ok
+    stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)
+    assert stored.price == Decimal("28.0")
+
+
 # --- reconciliation ---------------------------------------------------------
 
 

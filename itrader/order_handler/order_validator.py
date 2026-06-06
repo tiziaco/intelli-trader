@@ -513,9 +513,12 @@ class EnhancedOrderValidator:
             Validation messages
         """
         messages: List[ValidationMessage] = []
-        
-        # Check new quantity vs filled quantity
-        if 'new_quantity' in modifications:
+
+        # Check new quantity vs filled quantity.
+        # CR-01: callers (OrderManager.modify_order) always pass both kwargs,
+        # including None for the unchanged one — a None value means "no change"
+        # and must be skipped, never compared (TypeError otherwise).
+        if 'new_quantity' in modifications and modifications['new_quantity'] is not None:
             new_quantity = modifications['new_quantity']
             if hasattr(order, 'filled_quantity') and order.filled_quantity:
                 if new_quantity < order.filled_quantity:
@@ -526,8 +529,8 @@ class EnhancedOrderValidator:
                         code="INVALID_MODIFICATION"
                     ))
         
-        # Check new price is valid
-        if 'new_price' in modifications:
+        # Check new price is valid (None means "no change" — skip, CR-01)
+        if 'new_price' in modifications and modifications['new_price'] is not None:
             new_price = modifications['new_price']
             if new_price <= 0:
                 messages.append(ValidationMessage(
