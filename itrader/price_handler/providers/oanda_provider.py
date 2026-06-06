@@ -5,7 +5,7 @@ from datetime import datetime
 
 from itrader.config import FORBIDDEN_SYMBOLS, TIMEZONE
 from itrader.outils.time_parser import to_timedelta
-from .base import AbstractExchange
+from .exchange_base import AbstractExchange
 
 
 class OANDA_exchange(AbstractExchange):
