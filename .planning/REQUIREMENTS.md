@@ -127,7 +127,7 @@
 > Goal: make the numbers trustworthy, then calibrate. **The one milestone allowed to change results** —
 > the oracle becomes external cross-validation; **final numerical oracle frozen** here.
 
-- [ ] **M5-01**: Backtest validity fixed — resampling look-ahead removed, limit fills no longer slip
+- [x] **M5-01**: Backtest validity fixed — resampling look-ahead removed, limit fills no longer slip
   past the limit, bar-timing documented and consistent between same/other-timeframe branches *(#21)*
 - [x] **M5-02**: The per-tick market-data payload is an immutable `Bar` struct (not pandas Series);
   the `hasattr` accessor ladders and `get_last_close` type-branching disappear *(#3, FR1)*
@@ -226,7 +226,7 @@ phase; a span is not done until its final phase completes.
 | M4-06 | Phase 5 | M4 | — | Pending |
 | M4-07 | Phase 5 | M4 | — | Pending |
 | M4-08 | Phase 5 | M4 | value-preserving gate | Pending |
-| M5-01 | Phase 6 | M5a | — | Pending |
+| M5-01 | Phase 6 | M5a | — | Complete |
 | M5-02 | Phase 6 | M5a | — | Complete |
 | M5-03 | Phase 6 | M5a | — | Pending |
 | M5-04 | Phase 6 | M5a | — | Complete |
