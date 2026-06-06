@@ -3,14 +3,12 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Any, Optional
 import random
-import time
 
 from .base import AbstractExchange
 from ..fee_model.base import FeeModel
 from ..fee_model.zero_fee_model import ZeroFeeModel
 from ..fee_model.percent_fee_model import PercentFeeModel
 from ..fee_model.maker_taker_fee_model import MakerTakerFeeModel
-from ..fee_model.tiered_fee_model import TieredFeeModel
 from ..slippage_model.base import SlippageModel
 from ..slippage_model.zero_slippage_model import ZeroSlippageModel
 from ..slippage_model.linear_slippage_model import LinearSlippageModel
@@ -19,6 +17,7 @@ from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResul
 from ..matching_engine import MatchingEngine
 from itrader.core.enums.execution import ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
 from itrader.core.enums import OrderType, OrderCommand
+from itrader.core.money import to_money
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation
@@ -90,7 +89,8 @@ class SimulatedExchange(AbstractExchange):
 		self._orders_failed = 0
 		self._last_error: Optional[str] = None
 		self._last_error_time: Optional[datetime] = None
-		self._total_volume = 0.0
+		# Money-denominated telemetry: Decimal end-to-end (D-12).
+		self._total_volume = Decimal("0")
 		self._startup_time = datetime.now()
 		self._last_ping: Optional[datetime] = None
 		
@@ -168,53 +168,64 @@ class SimulatedExchange(AbstractExchange):
 			'REFUSED', event, price=event.price, quantity=event.quantity,
 			commission=Decimal("0")))
 
-	def _emit_fill(self, event: OrderEvent, fill_price: "float | Decimal",
-	               fill_quantity: "float | Decimal") -> None:
+	def _emit_fill(self, event: OrderEvent, fill_price: Decimal,
+	               fill_quantity: Decimal) -> None:
 		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED).
 
-		D-22 boundary (Pitfall 4): fee/slippage/matching math stays FLOAT
-		internally — bar OHLC is float (pandas) until M5a's Bar struct and
-		the slippage factor is float. Decimal order money converts to float
-		ONCE on entry here; the executed values re-enter the money domain
-		ONCE at FillEvent construction via to_money (Decimal(str(x)) — the
-		exact Decimal today's float fill produced at the ledger, so the
-		retype is numerically inert).
+		Money (D-12): Decimal end-to-end — the old price_f/quantity_f float
+		casts are gone. ``to_money`` is an identity normalization at this
+		domain entry (the engine and event money are already Decimal).
+
+		Real order context (D-11): order_type and maker/taker classification
+		derive from the OrderEvent the caller already holds — a resting LIMIT
+		is a maker; MARKET and triggered STOP fills are takers.
+
+		Slippage gating (D-03): slippage applies ONLY to MARKET and STOP
+		fills. LIMIT fills take fill_price unmodified — limit-or-better means
+		a limit fill can never be slipped past its limit price.
 		"""
-		price_f = float(fill_price)
-		quantity_f = float(fill_quantity)
-		# fee_model returns Decimal (M2a money) from float inputs; it passes
-		# through new_fill's to_money as an identity normalization.
+		price = to_money(fill_price)
+		quantity = to_money(fill_quantity)
 		# D-05: the event carries a Side member; the fee/slippage models keep
 		# their lowercase-string contract — convert via .value at this boundary.
+		side = event.action.value.lower()
+		order_type = event.order_type.value
+		is_maker = event.order_type is OrderType.LIMIT
 		commission = self.fee_model.calculate_fee(
-			quantity=quantity_f, price=price_f,
-			side=event.action.value.lower(), order_type="market")
-		slippage_factor = self.slippage_model.calculate_slippage_factor(
-			quantity=quantity_f, price=price_f,
-			side=event.action.value.lower(), order_type="market")
-		executed_price = price_f * slippage_factor
+			quantity=quantity, price=price,
+			side=side, order_type=order_type, is_maker=is_maker)
+		if event.order_type is OrderType.LIMIT:
+			# D-03: limit fills are never slipped — limit-or-better.
+			slippage_factor = Decimal("1")
+		else:
+			slippage_factor = self.slippage_model.calculate_slippage_factor(
+				quantity=quantity, price=price,
+				side=side, order_type=order_type)
+		executed_price = price * slippage_factor
 
-		# Construct-complete (D-12): the slippage-adjusted price and the matched
-		# fill quantity (may differ from event.quantity for partial fills driven
-		# by the matching engine in on_market_data) are explicit constructor
-		# inputs — the fill is never mutated after construction. new_fill
-		# enters the floats into Decimal via to_money (D-22).
+		# Construct-complete (D-12): the slippage-adjusted price and the fill
+		# quantity (the order's full quantity — D-06 full-quantity contract)
+		# are explicit constructor inputs — the fill is never mutated after
+		# construction. new_fill's to_money is an identity normalization here.
 		fill_event = FillEvent.new_fill(
 			'EXECUTED', event,
-			price=executed_price, quantity=quantity_f, commission=commission)
+			price=executed_price, quantity=quantity, commission=commission)
 		self.global_queue.put(fill_event)
 
 		self._orders_executed += 1
-		self._total_volume += executed_price * quantity_f
+		self._total_volume += executed_price * quantity
 		self.logger.debug('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
-						event.action, event.ticker, quantity_f, executed_price,
-						(slippage_factor - 1.0) * 100)
+						event.action, event.ticker, quantity, executed_price,
+						(slippage_factor - Decimal("1")) * 100)
 
 	def on_market_data(self, bar: "BarEvent") -> None:
 		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels."""
 		fills, cancels = self.matching_engine.on_bar(bar)
 		for decision in fills:
-			self._emit_fill(decision.order_event, decision.fill_price, decision.fill_quantity)
+			# Full-quantity contract (D-06): FillDecision carries no quantity —
+			# the fill covers the order's entire quantity.
+			self._emit_fill(decision.order_event, decision.fill_price,
+			                decision.order_event.quantity)
 		for cancel in cancels:
 			# CANCELLED carries the order's own (Decimal) price/quantity,
 			# commission Decimal("0") — never settled (D-22).
@@ -265,10 +276,9 @@ class SimulatedExchange(AbstractExchange):
 					connection_time=self._connection_time
 				)
 			
-			# Simulate connection process
+			# PERF1 (plan 06-04): the simulated connection is instantaneous —
+			# the artificial connect-latency sleep is gone from the backtest path.
 			self._connection_status = ExchangeConnectionStatus.CONNECTING
-			time.sleep(0.1)  # Simulate connection delay
-			
 			self._connected = True
 			self._connection_time = datetime.now()
 			self._connection_status = ExchangeConnectionStatus.CONNECTED
@@ -323,8 +333,7 @@ class SimulatedExchange(AbstractExchange):
 		error_rate = (self._orders_failed / total_orders) if total_orders > 0 else 0.0
 		uptime = (current_time - self._startup_time).total_seconds()
 
-		# total_volume is internal float telemetry; coerce to Decimal at the
-		# DTO boundary (money-denominated field, locked money decision).
+		# total_volume is Decimal end-to-end (D-12) — no boundary coercion needed.
 		return HealthStatus(
 			exchange_name=self._exchange_name,
 			connected=self._connected,
@@ -337,7 +346,7 @@ class SimulatedExchange(AbstractExchange):
 			last_error_time=self._last_error_time,
 			orders_executed_today=self._orders_executed,
 			orders_failed_today=self._orders_failed,
-			total_volume_today=Decimal(str(self._total_volume)),
+			total_volume_today=self._total_volume,
 			connection_established=self._connection_time,
 			last_heartbeat=current_time
 		)
@@ -462,17 +471,6 @@ class SimulatedExchange(AbstractExchange):
 				maker_rate=float(config.maker_rate or 0.001),
 				taker_rate=float(config.taker_rate or 0.001)
 			)
-		elif config.model_type.value == 'tiered':
-			# TieredFeeModel takes fee_tiers as (min_volume, max_volume, fee_rate)
-			# tuples; convert the config's dict tiers when present, else fall back
-			# to the model's own defaults (config.tiers is dormant on the golden path).
-			fee_tiers = None
-			if config.tiers:
-				fee_tiers = [
-					(float(t['min_volume']), float(t['max_volume']), float(t['fee_rate']))
-					for t in config.tiers
-				]
-			return TieredFeeModel(fee_tiers=fee_tiers)
 		else:
 			self.logger.warning('Unknown fee model %s, defaulting to no_fee', config.model_type.value)
 			return ZeroFeeModel()

@@ -76,10 +76,11 @@ class TestSimulatedExchangeInitialization:
         # Verify models are created and functional
         assert hasattr(exchange.fee_model, 'calculate_fee')
         assert hasattr(exchange.slippage_model, 'calculate_slippage_factor')
-        
-        # Test fee model functionality
-        fee = exchange.fee_model.calculate_fee(100, 50.0, 'buy', 'market')
-        assert isinstance(fee, (int, float, Decimal))
+
+        # Test fee model functionality (D-12: Decimal-native contract)
+        fee = exchange.fee_model.calculate_fee(
+            Decimal("100"), Decimal("50.0"), 'buy', 'market')
+        assert isinstance(fee, Decimal)
         assert fee >= 0
 
     def test_no_lock_single_writer_contract(self):
@@ -651,7 +652,7 @@ class TestSimulatedExchangeEdgeCases:
 
 
 class TestDecimalFillBoundary:
-    """D-22: the float-bar -> Decimal-fill boundary enters via to_money."""
+    """D-12: the fill path is Decimal end-to-end — no float boundary remains."""
 
     def setup_method(self):
         self.queue = Queue()
@@ -691,19 +692,18 @@ class TestDecimalFillBoundary:
         assert fills[0].price == to_money(30.0)
         assert isinstance(fills[0].quantity, Decimal)
 
-    def test_slippage_fill_price_equals_to_money_of_float_math(self):
-        """Slippage math stays float internally; the fill price converts ONCE
-        at FillEvent construction via to_money(float_fill_price * factor)."""
-        from itrader.core.money import to_money
+    def test_slippage_fill_price_is_pure_decimal_product(self):
+        """D-12: slippage math is Decimal end-to-end — executed_price is the
+        exact Decimal product fill_price * slippage_factor (no float leg)."""
         with patch.object(self.exchange.slippage_model, 'calculate_slippage_factor',
-                          return_value=1.005):
+                          return_value=Decimal("1.005")):
             self.exchange.execute_order(self._order(price=Decimal("100.0")))
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         fill = fills[0]
         assert fill.status is FillStatus.EXECUTED
         assert isinstance(fill.price, Decimal)
-        assert fill.price == to_money(100.0 * 1.005)
+        assert fill.price == Decimal("100.0") * Decimal("1.005")
 
     def test_executed_fill_commission_is_decimal(self):
         self.exchange.update_config(fee_model_type=FeeModelType.PERCENT, fee_rate=0.001)
@@ -735,9 +735,11 @@ class _RoutingHarness:
         self.exchange.update_config(supported_symbols={"BTCUSDT"})
 
     def oe(self, order_type, action="BUY", price=40.0, order_id=1, command=None, parent_order_id=None):
+        # D-12: order events carry Decimal money — enter via Decimal(str(x)).
         return OrderEvent(
             time=datetime(2024, 1, 1), ticker="BTCUSDT",
-            action=Side(action), price=price, quantity=1.0, exchange="default",
+            action=Side(action), price=Decimal(str(price)), quantity=Decimal("1.0"),
+            exchange="default",
             strategy_id=1, portfolio_id=1, order_type=order_type, order_id=order_id,
             parent_order_id=parent_order_id,
             command=command or OrderCommand.NEW,
@@ -826,3 +828,111 @@ def test_rejected_market_order_emits_refused_fill(routing):
     assert len(fills) == 1
     assert fills[0].status is FillStatus.REFUSED
     assert fills[0].order_id == 100
+
+
+# --- D-03 slippage gating + D-11 real order context --------------------------
+
+
+class _FixedFactorSlippage:
+    """Stub slippage model returning a constant non-neutral Decimal factor."""
+
+    def __init__(self, factor=Decimal("1.01")):
+        self.factor = factor
+        self.calls = []
+
+    def calculate_slippage_factor(self, quantity, price, side="buy", order_type="market"):
+        self.calls.append({"quantity": quantity, "price": price,
+                           "side": side, "order_type": order_type})
+        return self.factor
+
+    def get_slippage_info(self):
+        return {"model_type": "stub"}
+
+
+class _CapturingFeeModel:
+    """Stub fee model capturing the real order context handed by _emit_fill."""
+
+    def __init__(self):
+        self.calls = []
+
+    def calculate_fee(self, quantity, price, side="buy", order_type="market",
+                      is_maker=None):
+        self.calls.append({"quantity": quantity, "price": price, "side": side,
+                           "order_type": order_type, "is_maker": is_maker})
+        return Decimal("0")
+
+    def get_fee_info(self):
+        return {"type": "stub"}
+
+
+def test_limit_fill_carries_no_slippage_market_fill_does(routing):
+    """D-03: slippage applies ONLY to MARKET/STOP fills — a resting limit
+    fill takes its limit-or-better price unmodified."""
+    stub = _FixedFactorSlippage(Decimal("1.01"))
+    routing.exchange.slippage_model = stub
+
+    # Resting SELL limit at 55: bar high 60 touches -> fill at 55, NO slippage.
+    routing.exchange.on_order(
+        routing.oe(OrderType.LIMIT, action="SELL", price=Decimal("55.0"), order_id=21))
+    routing.exchange.on_market_data(routing.bar(open_=50, high=60, low=45, close=58))
+    limit_fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(limit_fills) == 1
+    assert limit_fills[0].status is FillStatus.EXECUTED
+    assert limit_fills[0].price == Decimal("55.0")        # unmodified
+    assert stub.calls == []                               # slippage never consulted
+
+    # Market fill through the same exchange DOES take the slippage factor.
+    routing.exchange.on_order(
+        routing.oe(OrderType.MARKET, action="BUY", price=Decimal("50.0"), order_id=22))
+    market_fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(market_fills) == 1
+    assert market_fills[0].price == Decimal("50.0") * Decimal("1.01")
+    assert len(stub.calls) == 1
+
+
+def test_stop_fill_takes_slippage(routing):
+    """D-03: a triggered STOP is a taker fill — slippage applies."""
+    stub = _FixedFactorSlippage(Decimal("1.01"))
+    routing.exchange.slippage_model = stub
+    routing.exchange.on_order(
+        routing.oe(OrderType.STOP, action="SELL", price=Decimal("30.0"), order_id=23))
+    routing.exchange.on_market_data(routing.bar(open_=35, high=36, low=20, close=25))
+    fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(fills) == 1
+    assert fills[0].price == Decimal("30.0") * Decimal("1.01")
+    assert len(stub.calls) == 1
+    assert stub.calls[0]["order_type"] == "STOP"
+
+
+def test_fee_model_receives_real_order_context(routing):
+    """D-11: _emit_fill passes the real order context — no hardcoded
+    order_type='market'. A resting limit fill is classified maker."""
+    fee_stub = _CapturingFeeModel()
+    routing.exchange.fee_model = fee_stub
+
+    # Resting SELL limit fill -> is_maker=True, order_type LIMIT.
+    routing.exchange.on_order(
+        routing.oe(OrderType.LIMIT, action="SELL", price=Decimal("55.0"), order_id=31))
+    routing.exchange.on_market_data(routing.bar(open_=50, high=60, low=45, close=58))
+    assert len(fee_stub.calls) == 1
+    assert fee_stub.calls[0]["is_maker"] is True
+    assert fee_stub.calls[0]["order_type"] == "LIMIT"
+    while not routing.queue.empty():
+        routing.queue.get()
+
+    # Immediate MARKET fill -> is_maker=False, order_type MARKET (taker).
+    routing.exchange.on_order(
+        routing.oe(OrderType.MARKET, action="BUY", price=Decimal("50.0"), order_id=32))
+    assert len(fee_stub.calls) == 2
+    assert fee_stub.calls[1]["is_maker"] is False
+    assert fee_stub.calls[1]["order_type"] == "MARKET"
+
+    # Triggered STOP fill -> is_maker=False (taker), order_type STOP.
+    while not routing.queue.empty():
+        routing.queue.get()
+    routing.exchange.on_order(
+        routing.oe(OrderType.STOP, action="SELL", price=Decimal("30.0"), order_id=33))
+    routing.exchange.on_market_data(routing.bar(open_=35, high=36, low=20, close=25))
+    assert len(fee_stub.calls) == 3
+    assert fee_stub.calls[2]["is_maker"] is False
+    assert fee_stub.calls[2]["order_type"] == "STOP"
