@@ -61,8 +61,10 @@ class PortfolioHandler:
         # on construction, so no separate validator is needed.
         self.config_data: PortfolioConfig = PortfolioConfig.default()
 
-        # Extract key configuration values with defaults
-        self.max_portfolios = self.config_data.limits.max_positions
+        # Extract key configuration values with defaults.
+        # WR-08: sourced from the dedicated limits.max_portfolios field —
+        # NOT limits.max_positions (the per-portfolio position limit).
+        self.max_portfolios = self.config_data.limits.max_portfolios
         self.publish_error_events = True  # Default behavior
 
         # Portfolio storage - now just stores portfolio instances.
@@ -431,7 +433,7 @@ class PortfolioHandler:
         try:
             merged = {**self.config_data.model_dump(), **updates}
             self.config_data = PortfolioConfig.model_validate(merged)
-            self.max_portfolios = self.config_data.limits.max_positions
+            self.max_portfolios = self.config_data.limits.max_portfolios
             self.logger.info("Configuration updated successfully", updates=updates)
             return True
         except Exception as e:
@@ -455,7 +457,7 @@ class PortfolioHandler:
         """Reset PortfolioHandler configuration to the default preset."""
         try:
             self.config_data = get_portfolio_preset('default')
-            self.max_portfolios = self.config_data.limits.max_positions
+            self.max_portfolios = self.config_data.limits.max_portfolios
             self.logger.info("Configuration rolled back to defaults")
             return True
         except Exception as e:
