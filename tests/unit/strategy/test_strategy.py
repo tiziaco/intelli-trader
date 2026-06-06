@@ -76,6 +76,29 @@ def test_buy_signal(strategy):
     assert event.take_profit == 50
 
 
+def test_signal_money_fields_are_decimal(strategy):
+    """D-22: strategy float prices enter the SignalEvent via to_money — the
+    event carries Decimal money fields (price/stop_loss/take_profit), equal to
+    Decimal(str(float)) of the strategy's float inputs (numerically inert)."""
+    from decimal import Decimal
+    from itrader.core.money import to_money
+
+    strat, q = strategy
+    strat.buy("SOLUSDT", 40.5, 50.25)
+
+    event: SignalEvent = q.get(False)
+
+    assert isinstance(event.price, Decimal)
+    assert isinstance(event.stop_loss, Decimal)
+    assert isinstance(event.take_profit, Decimal)
+    # last close in the fixture bar is 105 (float) -> to_money string path
+    assert event.price == to_money(105.0)
+    assert event.stop_loss == to_money(40.5)
+    assert event.take_profit == to_money(50.25)
+    # quantity stays None (D-10) — the order/risk layer sizes the signal
+    assert event.quantity is None
+
+
 def test_sell_signal(strategy):
     """Generate a SELL signal with the ``sell()`` method of the Strategy object."""
     strat, q = strategy
