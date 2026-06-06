@@ -731,6 +731,16 @@ class OrderManager:
 				# Update in storage
 				self.order_storage.update_order(order)
 
+				# WR-04: the local terminal transition owns the release. The
+				# exchange only emits FillEvent(CANCELLED) for orders actually
+				# resting in its matching engine, so a cancel it never
+				# acknowledges would otherwise hold the BUY's reservation
+				# forever. The release is idempotent — a later exchange
+				# CANCELLED fill re-releasing is a silent no-op.
+				if self.portfolio_handler is not None:
+					self.portfolio_handler.release(
+						cast(PortfolioId, order.portfolio_id), order.id)
+
 				# Generate OrderEvent for cancelled order
 				order_event = OrderEvent.new_order_event(order, command=OrderCommand.CANCEL)
 				

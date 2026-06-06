@@ -399,6 +399,20 @@ def test_default_zero_commission_estimator_reserves_price_times_quantity():
     assert amount == primary.price * primary.quantity
 
 
+def test_local_cancel_releases_reservation():
+    """WR-04 regression: cancel_order's local terminal transition releases the
+    reservation directly — it must not depend on an exchange FillEvent(CANCELLED)
+    that only arrives for orders actually resting in the matching engine."""
+    read_model = _FakeReadModel()
+    manager, storage = _reserve_manager(read_model)
+    order = _rest_order(storage)
+
+    result = manager.cancel_order(order.id, order.portfolio_id)
+
+    assert result.success
+    assert read_model.release_calls == [(order.portfolio_id, order.id)]
+
+
 def test_failed_assembly_after_reserve_releases_reservation():
     """WR-03 regression: when bracket assembly/storage fails AFTER the
     admission reserve, no OrderEvent is emitted and no fill will ever arrive —
