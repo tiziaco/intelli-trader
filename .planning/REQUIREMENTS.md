@@ -113,7 +113,7 @@
   manager→handler back-ref removed; manager owns storage *(#9, #6)*
 - [ ] **M4-04**: Cross-handler reads go through a narrow `PortfolioReadModel` Protocol (read-only views),
   not the concrete `PortfolioHandler` or its internals *(#6)*
-- [ ] **M4-05**: Intra-portfolio manager coupling and cross-lock composite reads are resolved (no
+- [x] **M4-05**: Intra-portfolio manager coupling and cross-lock composite reads are resolved (no
   thread-safety theater) *(#29)*
 - [ ] **M4-06**: In-memory order storage uses an O(1) flat `{order_id: order}` index instead of nested-
   dict O(n) scans for removal/lookup *(PERF3)*
