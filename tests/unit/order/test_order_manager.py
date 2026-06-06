@@ -435,6 +435,26 @@ def test_terminal_fill_releases_reservation(status):
     assert read_model.release_calls == [(order.portfolio_id, order.id)]
 
 
+def test_rejected_add_fill_still_releases_reservation():
+    """WR-02 regression: when the mirror transition is rejected (e.g. an
+    EXECUTED fill arriving for an order already locally CANCELLED), the
+    terminal release MUST still run — the portfolio has already settled the
+    fill, so skipping the release would leave the reservation stuck forever."""
+    read_model = _FakeReadModel()
+    manager, storage = _reserve_manager(read_model)
+    order = _rest_order(storage)
+    assert order.cancel_order("local cancel before exchange ack")
+    storage.update_order(order)
+
+    manager.on_fill(_fill_for(order, "EXECUTED"))
+
+    # add_fill was rejected (order already terminal) — mirror unchanged...
+    stored = storage.get_order_by_id(order.id)
+    assert stored.status == OrderStatus.CANCELLED
+    # ...but the reservation release still happened.
+    assert read_model.release_calls == [(order.portfolio_id, order.id)]
+
+
 def test_release_on_never_reserved_sell_is_silent_noop(harness):
     """Releasing a never-reserved order (a SELL) is a silent idempotent no-op:
     no exception, no audit noise (CashManager records nothing for the no-op)."""

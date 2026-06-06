@@ -111,6 +111,7 @@ class OrderManager:
 		if order is None:
 			return
 		try:
+			applied = True
 			if fill_event.status == FillStatus.EXECUTED:
 				# D-22: fill_event.price is Decimal — to_money is an identity
 				# normalization at this domain entry (kept deliberately: the
@@ -139,21 +140,30 @@ class OrderManager:
 					fill_qty = remaining
 				if not order.add_fill(fill_qty, to_money(fill_event.price),
 				                      fill_event.time, "exchange fill"):
+					# WR-02: do NOT early-return — the portfolio has already
+					# settled this fill (FILL dispatches portfolio-first), so
+					# the uniform terminal release below must still run or the
+					# BUY's reservation is stuck forever (T-05-17). Only the
+					# mirror update is skipped.
 					self.logger.warning('add_fill rejected for order %s; mirror left unchanged', order_id)
-					return
+					applied = False
 			elif fill_event.status == FillStatus.CANCELLED:
 				order.cancel_order("exchange cancellation")
 			elif fill_event.status == FillStatus.REFUSED:
 				order.reject_order("exchange rejection")
 			else:
 				# Truly unknown status: leave the order active and alert.
+				# (No release either — an unknown status is not a terminal
+				# reconciliation, so the reservation is intentionally held.)
 				self.logger.warning('Unhandled fill status %s for order %s; order left active',
 				                    fill_event.status, order_id)
 				return
-			# Only reached for an applied EXECUTED or CANCELLED reconciliation.
+			# Reached for every terminal-status fill (EXECUTED/CANCELLED/
+			# REFUSED), whether or not the mirror transition applied.
 			# D-20: no deactivate step — the terminal status set above already
 			# removes the order from active queries via the is_active predicate.
-			self.order_storage.update_order(order)
+			if applied:
+				self.order_storage.update_order(order)
 			# D-01/OQ2 (Plan 05-06): the reserver owns the release — a uniform
 			# idempotent release on EVERY terminal reconciliation (FILLED/
 			# CANCELLED/REJECTED). Never-reserved orders (SELLs, bracket
