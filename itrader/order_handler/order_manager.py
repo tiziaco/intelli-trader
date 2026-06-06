@@ -115,7 +115,29 @@ class OrderManager:
 				# D-22: fill_event.price is Decimal — to_money is an identity
 				# normalization at this domain entry (kept deliberately: the
 				# mirror never trusts an unnormalized money input).
-				if not order.add_fill(order.remaining_quantity, to_money(fill_event.price),
+				# WR-01: reconcile with the exchange-truth fill quantity, not a
+				# blanket remaining_quantity — the exchange may emit partial
+				# fills (matching-engine driven) and the mirror must track them.
+				# The event quantity is float-roundtripped at the D-22 exchange
+				# boundary, so a FULL fill can legitimately differ from
+				# remaining_quantity at full Decimal precision in either
+				# direction: at-or-above remaining clamps (warn on a genuine
+				# overshoot), and a quantity equal to the float roundtrip of
+				# remaining IS the full fill — both resolve to remaining so the
+				# mirror reaches FILLED exactly as before. Anything below is a
+				# genuine partial fill.
+				fill_qty = to_money(fill_event.quantity)
+				remaining = order.remaining_quantity
+				if fill_qty == to_money(float(remaining)):
+					# Float-roundtrip-equal at the D-22 boundary -> full fill
+					# (covers both roundtrip-up and roundtrip-down quietly).
+					fill_qty = remaining
+				elif fill_qty > remaining:
+					self.logger.warning(
+						'Fill quantity %s exceeds remaining %s for order %s; clamping',
+						fill_qty, remaining, order_id)
+					fill_qty = remaining
+				if not order.add_fill(fill_qty, to_money(fill_event.price),
 				                      fill_event.time, "exchange fill"):
 					self.logger.warning('add_fill rejected for order %s; mirror left unchanged', order_id)
 					return

@@ -196,6 +196,43 @@ def test_cancelled_fill_marks_order_cancelled(harness):
     assert stored.status == OrderStatus.CANCELLED
 
 
+def test_partial_fill_reconciles_event_quantity(harness):
+    """WR-01 regression: the mirror reconciles the fill event's OWN quantity —
+    a genuine partial fill leaves the order PARTIALLY_FILLED with exactly the
+    filled portion, instead of blanket-marking the full remaining quantity."""
+    import dataclasses
+    order = harness.rest_a_stop()  # quantity 1.0
+    partial = dataclasses.replace(
+        harness.fill(order, "EXECUTED"), quantity=Decimal("0.4")
+    )
+    harness.handler.on_fill(partial)
+    stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)
+    assert stored.status == OrderStatus.PARTIALLY_FILLED
+    assert stored.filled_quantity == Decimal("0.4")
+    assert stored.remaining_quantity == Decimal("0.6")
+
+
+def test_full_fill_with_float_roundtrip_quantity_marks_filled(harness):
+    """WR-01 regression: a full fill whose event quantity went through the D-22
+    float roundtrip (Decimal(str(float(q)))) still reconciles to FILLED."""
+    import dataclasses
+    order = harness.rest_a_stop()
+    # Give the order a full-precision Decimal quantity that does NOT survive
+    # the float roundtrip exactly.
+    order.quantity = Decimal("0.123456789012345678901234567")
+    order.filled_quantity = Decimal("0")
+    harness.storage.update_order(order)
+    roundtripped = Decimal(str(float(order.quantity)))
+    assert roundtripped != order.quantity  # precondition: roundtrip is lossy
+    full = dataclasses.replace(
+        harness.fill(order, "EXECUTED"), quantity=roundtripped
+    )
+    harness.handler.on_fill(full)
+    stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)
+    assert stored.status == OrderStatus.FILLED
+    assert stored.remaining_quantity == Decimal("0")
+
+
 def test_unknown_order_id_is_safe(harness):
     # A fill for an order not in storage must not raise.
     import dataclasses
