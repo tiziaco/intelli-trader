@@ -72,7 +72,9 @@ class OrderManager:
 		Reconcile the order mirror against an exchange fill.
 
 		EXECUTED -> mark the order FILLED; CANCELLED -> mark CANCELLED.
-		Then deactivate it from the active book (kept in all_orders for audit).
+		The terminal status change alone moves the order out of active
+		queries (D-20: "active" is an entity predicate, not a container) —
+		the order stays in storage for the audit trail.
 		"""
 		order_id = getattr(fill_event, 'order_id', None)
 		if order_id is None:
@@ -96,8 +98,9 @@ class OrderManager:
 				                    fill_event.status, order_id)
 				return
 			# Only reached for an applied EXECUTED or CANCELLED reconciliation.
+			# D-20: no deactivate step — the terminal status set above already
+			# removes the order from active queries via the is_active predicate.
 			self.order_storage.update_order(order)
-			self.order_storage.deactivate_order(order.id, order.portfolio_id)
 		except Exception as e:
 			self.logger.error('Error reconciling fill for order %s: %s', order_id, e)
 
