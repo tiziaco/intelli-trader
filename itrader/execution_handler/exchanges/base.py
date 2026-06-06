@@ -28,14 +28,11 @@ class AbstractExchange(Protocol):
 		"""
 		Drive resting-order matching against a new market-data bar.
 
-		Concrete exchanges evaluate resting orders and emit fills/cancellations.
-		"""
-		...
-
-	def execute_order(self, event: OrderEvent) -> None:
-		"""
-		Execute an order; FillEvents on the global queue are the only
-		execution output (D-21) — no synchronous result is returned.
+		Concrete exchanges evaluate resting orders and emit fills/
+		cancellations. This is the ONLY place fills happen (D-13 single
+		matching path): ``execute_order`` is gone — a NEW order admitted
+		by ``on_order`` rests in the book and fills on a later bar
+		(next-bar-open convention for market orders, D-01/D-13).
 		"""
 		...
 

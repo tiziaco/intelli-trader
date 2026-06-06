@@ -1,9 +1,28 @@
 """
 Pure order-matching engine for simulated execution.
 
-Holds resting OrderEvents (stop/limit, and next-bar market orders) and decides
-which fill on each bar using intrabar high/low, with pessimistic gap fills and
-exchange-enforced OCO between bracket siblings.
+Holds resting OrderEvents (stop/limit, AND market orders — the single
+matching path, D-13) and decides which fill on each bar using intrabar
+high/low, with pessimistic gap fills and exchange-enforced OCO between
+bracket siblings.
+
+Next-bar-open convention (D-01/D-13): a market order decided at tick T rests
+in the book and fills unconditionally at the OPEN of the next bar it sees
+(stamped T+1tf) — the backtest never trades on information it could not have
+had. There is no immediate-execution path.
+
+Same-bar bracket rule (RESEARCH Open Question 1, accepted): a parent market
+order fills at bar N+1's open, and its resting SL/TP children MAY trigger on
+that SAME bar — entry at the open, children evaluated against the bar's
+high/low (real-exchange semantics, matched by both reference engines). The
+parent's fill is emitted BEFORE any child fill within one ``on_bar`` (fills
+are ordered parents-before-children), and the existing STOP-beats-LIMIT
+sibling priority arbitrates a same-bar double trigger.
+
+Last-bar edge (bar-timing contract rule 7): an order decided on the FINAL
+bar of the dataset never fills — no next bar exists, so it simply remains
+resting in the book when the run ends. Not special-cased; documented and
+regression-tested behavior.
 
 This module has NO dependency on the event queue, fee/slippage models, or
 logging side-effects. It takes OrderEvents and BarEvents in and returns plain
@@ -65,7 +84,8 @@ class MatchingEngine:
     # --- book management ---
 
     def submit(self, order_event: OrderEvent) -> None:
-        """Add a resting order (stop/limit, or a next-bar market order)."""
+        """Add a resting order (every NEW order rests here — stop, limit,
+        and market alike; D-13 single matching path)."""
         if order_event.order_id is None:
             raise ValueError("Cannot rest an order with no order_id")
         self._resting[order_event.order_id] = order_event
@@ -159,12 +179,19 @@ class MatchingEngine:
         """
         Evaluate all resting orders against `bar`.
 
-        - Candidates are orders whose trigger price is reached this bar.
+        - Candidates are orders whose trigger price is reached this bar;
+          resting MARKET orders fill unconditionally at the bar's open
+          (next-bar-open convention, D-01/D-13).
         - For bracket siblings (same non-None parent_order_id), at most one
           fills per bar; if both a STOP and a LIMIT are candidates, the STOP
           wins (pessimistic same-bar priority).
         - When a bracket leg fills, all other resting orders in that bracket
           are cancelled (OCO), even if they did not trigger this bar.
+        - Same-bar bracket rule: a parent market order filling at this bar's
+          open does NOT shield its children — they are evaluated against the
+          same bar's high/low and may fill on the bar that filled their
+          parent. The returned fills are ordered parents-before-children so
+          the entry settles before the protective exit.
         """
         # 1. Collect candidate fills (price reached).
         candidates: dict[OrderId, Decimal] = {}
@@ -220,6 +247,14 @@ class MatchingEngine:
                             and sibling.order_id not in cancelled_ids):
                         cancels.append(CancelDecision(sibling, "OCO - sibling filled"))
                         cancelled_ids.add(sibling.order_id)
+
+        # 3b. Parent-before-child fill ordering (Open Question 1): within one
+        # on_bar a bracket parent's market fill must be processed before any
+        # same-bar child trigger, so the portfolio opens the position before
+        # the protective exit settles. The stable sort keys standalone/parent
+        # orders (parent_order_id is None) ahead of bracket children while
+        # preserving book-insertion order within each group.
+        fills.sort(key=lambda f: f.order_event.parent_order_id is not None)
 
         # 4. Remove filled + cancelled orders from the book.
         for fill in fills:

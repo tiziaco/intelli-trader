@@ -1,11 +1,11 @@
 {
   "end_date": "2026-06-03",
-  "final_cash": 53229.68512642489,
-  "final_equity": 53229.68512642489,
+  "final_cash": 53103.01549885479,
+  "final_equity": 53103.01549885479,
   "start_date": "2018-01-01",
   "starting_cash": 10000.0,
   "ticker": "BTCUSD",
   "timeframe": "1d",
-  "total_realised_pnl": 43229.68512642489,
+  "total_realised_pnl": 43103.01549885479,
   "trade_count": 134
 }

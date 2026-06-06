@@ -5,6 +5,7 @@ Fill event: the exchange's immutable execution truth, construct-complete
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 
 import uuid_utils.compat as uuid_compat
@@ -74,7 +75,8 @@ class FillEvent(Event):
     @classmethod
     def new_fill(cls, status: str, order: OrderEvent, *,
                  price: 'Decimal | float', quantity: 'Decimal | float',
-                 commission: 'Decimal | float') -> 'FillEvent':
+                 commission: 'Decimal | float',
+                 time: 'datetime | None' = None) -> 'FillEvent':
         """
         Generate a complete FillEvent from the originating order.
 
@@ -85,6 +87,14 @@ class FillEvent(Event):
         and ``order_id`` are carried from the originating order for the
         fill -> order -> strategy audit chain. REFUSED/CANCELLED fills
         pass the order's own price/quantity with commission Decimal("0").
+
+        Fill time (D-01/D-13): for outcomes produced by a market-data bar
+        (EXECUTED matches, OCO CANCELLED) the exchange passes the MATCHING
+        BAR's event time — an order decided at tick T fills with
+        FillEvent.time = T+1tf, never the decision tick. When ``time`` is
+        omitted the fill defaults to the order's own decision time, which
+        is correct for admission-time outcomes (REFUSED rejections, CANCEL
+        command acknowledgements).
 
         Money (D-22): this is THE float -> Decimal crossing for execution
         output. Float values from the exchange's internal matching/slippage
@@ -104,6 +114,10 @@ class FillEvent(Event):
             Executed quantity confirmed by the exchange (keyword-only)
         commission : `Decimal | float`
             Transaction fee charged by the exchange (keyword-only)
+        time : `datetime`, optional
+            The fill's event time — the matching bar's time for fills
+            decided by a bar (D-01/D-13). Defaults to the order's
+            decision time for admission-time outcomes.
 
         Returns
         -------
@@ -113,7 +127,7 @@ class FillEvent(Event):
 
         fill_status = FillStatus(status)
         return cls(
-            time=order.time,
+            time=time if time is not None else order.time,
             status=fill_status,
             ticker=order.ticker,
             action=order.action,

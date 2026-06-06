@@ -284,6 +284,33 @@ def test_modify_accepts_decimal_and_stores_decimal(engine):
     assert resting.quantity == Decimal("3.0")
 
 
+# --- next-bar-open market fills + last-bar edge (D-01/D-13) ------------------
+
+
+def test_market_order_rests_until_next_bar_then_fills_at_open(engine, make_bar):
+    # A market order decided at tick T rests; the NEXT bar fills it at the
+    # bar's own open (Decimal equality — never the decision price).
+    engine.submit(make_order_event(OrderType.MARKET, "BUY", 40.0, order_id=1))
+    assert engine.has_order(1)               # resting, nothing filled yet
+    fills, cancels = engine.on_bar(make_bar(open_=41.5, high=45, low=40, close=44))
+    assert len(fills) == 1
+    assert fills[0].fill_price == Decimal("41.5")
+    assert not engine.has_order(1)
+    assert cancels == []
+
+
+def test_order_decided_on_last_bar_never_fills(engine, make_bar):
+    # Last-bar edge (bar-timing contract rule 7): the final dataset bar has
+    # already been matched when the order arrives (signals are computed ON
+    # that bar); no further bar ever comes, so the order NEVER fills — the
+    # book still holds it when the run ends. Not special-cased.
+    fills, _ = engine.on_bar(make_bar(open_=40, high=42, low=39, close=41))
+    assert fills == []                       # final bar matched an empty book
+    engine.submit(make_order_event(OrderType.MARKET, "BUY", 41.0, order_id=1))
+    # dataset exhausted — on_bar is never called again
+    assert engine.has_order(1)               # still resting, no fill produced
+
+
 # --- OCO / brackets ---------------------------------------------------------
 
 
@@ -329,6 +356,53 @@ def test_non_triggered_sibling_still_cancelled(bracket, make_bar):
     fills, cancels = engine.on_bar(make_bar(open_=50, high=56, low=45, close=55))
     assert fills[0].order_event.order_id == 12
     assert [c.order_event.order_id for c in cancels] == [11]
+
+
+def test_parent_market_fill_and_child_stop_trigger_same_bar(engine, make_bar):
+    # Same-bar bracket rule (Open Question 1, accepted): the parent MARKET
+    # order fills at the bar's open; its resting SL child triggers against
+    # the SAME bar's low; the TP sibling is OCO-cancelled. Parent fill is
+    # emitted BEFORE the child fill within one on_bar.
+    parent = make_order_event(OrderType.MARKET, "BUY", 100.0, order_id=1)
+    sl = make_order_event(OrderType.STOP, "SELL", 95.0, order_id=2, parent_order_id=1)
+    tp = make_order_event(OrderType.LIMIT, "SELL", 110.0, order_id=3, parent_order_id=1)
+    for order in (parent, sl, tp):
+        engine.submit(order)
+    fills, cancels = engine.on_bar(make_bar(open_=100, high=105, low=94, close=96))
+    assert [f.order_event.order_id for f in fills] == [1, 2]   # parent first
+    assert fills[0].fill_price == Decimal("100")               # entry at the open
+    assert fills[1].fill_price == Decimal("95")                # SL vs same bar's low
+    assert [c.order_event.order_id for c in cancels] == [3]    # TP OCO-cancelled
+    for order_id in (1, 2, 3):
+        assert not engine.has_order(order_id)
+
+
+def test_parent_fill_same_bar_double_trigger_prefers_stop(engine, make_bar):
+    # Parent fills at the open AND the bar pierces BOTH children: the
+    # pessimistic STOP-beats-LIMIT sibling priority arbitrates.
+    parent = make_order_event(OrderType.MARKET, "BUY", 100.0, order_id=1)
+    sl = make_order_event(OrderType.STOP, "SELL", 95.0, order_id=2, parent_order_id=1)
+    tp = make_order_event(OrderType.LIMIT, "SELL", 110.0, order_id=3, parent_order_id=1)
+    for order in (parent, sl, tp):
+        engine.submit(order)
+    fills, cancels = engine.on_bar(make_bar(open_=100, high=112, low=94, close=105))
+    assert [f.order_event.order_id for f in fills] == [1, 2]   # parent, then STOP
+    assert [c.order_event.order_id for c in cancels] == [3]
+
+
+def test_parent_market_fill_does_not_disturb_non_triggered_children(engine, make_bar):
+    # The parent filling alone neither fills nor cancels its children — they
+    # stay resting for later bars (the parent is standalone in arbitration).
+    parent = make_order_event(OrderType.MARKET, "BUY", 100.0, order_id=1)
+    sl = make_order_event(OrderType.STOP, "SELL", 80.0, order_id=2, parent_order_id=1)
+    tp = make_order_event(OrderType.LIMIT, "SELL", 130.0, order_id=3, parent_order_id=1)
+    for order in (parent, sl, tp):
+        engine.submit(order)
+    fills, cancels = engine.on_bar(make_bar(open_=100, high=105, low=95, close=102))
+    assert [f.order_event.order_id for f in fills] == [1]
+    assert cancels == []
+    assert engine.has_order(2)
+    assert engine.has_order(3)
 
 
 def test_two_independent_brackets_both_resolve(engine, make_bar):
