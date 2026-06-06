@@ -63,6 +63,15 @@ class DynamicSizer():
 			last_price = float(signal.price)
 
 			available_pos = (max_positions - open_count)
+			if available_pos <= 0:
+				# WR-06: every position slot is taken (or over-taken) — a new
+				# entry cannot be sized. Return 0 so the downstream
+				# zero-quantity validation rejects the order, instead of a
+				# ZeroDivisionError (== slots) or a negative quantity (> slots).
+				self.logger.warning(
+					'No position slots available (%s/%s open), sizing %s to 0',
+					open_count, max_positions, ticker)
+				return 0.0
 			quantity = (cash * (max_allocation * (1 / available_pos))) / last_price
 
 		# Define or not an integer value for the position size
