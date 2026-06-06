@@ -115,7 +115,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Transaction processing is atomic — funds checked before position mutation, rollback on failure, one coherent error/return contract (no unreachable `return False` behind a re-raise)
   3. Order-handler layering is one-directional facade→manager→storage with the read path through `OrderManager`, an O(1) `{order_id: order}` index, cross-handler reads via a narrow `PortfolioReadModel` Protocol, and resolved intra-portfolio coupling; execution `result_objects`/`base` DTOs are frozen, Decimal-typed, real-ABC, and carry `fill_id`
   4. **Golden-master gate:** value-preserving against the oracle — any numeric difference is explained and the behavioral oracle is unchanged
-**Plans**: TBD
+**Plans**: 7 plans (5 waves; lock-deletion and DTO-cleanup run parallel to their wave peers; D-22 retype isolated as the terminal oracle-risk wave)
+  - [ ] 05-01-PLAN.md — Order layering + flat storage: facade→manager→storage one-directional, nested dicts deleted (M4-03, M4-06)
+  - [ ] 05-02-PLAN.md — Lock-theater deletion + documented single-writer contract; readerwriterlock removed (M4-05)
+  - [ ] 05-03-PLAN.md — PortfolioReadModel Protocol + frozen PositionView + per-reference reservation API + consumer retypes (M4-04)
+  - [ ] 05-04-PLAN.md — Execution DTO cleanup: ExecutionResult deleted, real ABC, frozen/Decimal survivors (M4-07 structural)
+  - [ ] 05-05-PLAN.md — Settlement atomicity: validate-first reorder, saga deletion, raise/None contract, live deterministic ledger (M4-02)
+  - [ ] 05-06-PLAN.md — Reservation lifecycle wiring: check-and-reserve at admission, terminal release, D-14 inertness trace (M4-01)
+  - [ ] 05-07-PLAN.md — D-22 event-money Decimal retype + M4-08 value-preservation phase gate (M4-07, M4-08)
 
 ### Phase 6: M5a — Backtest Validity, Fills & Data Pipeline
 **Goal**: Fix the correctness of the backtest itself — remove resampling look-ahead, make fills realistic, replace the per-tick pandas Series payload with an immutable `Bar` struct, precompute resampled frames, correct fee/slippage, and split the price handler into Provider/Store/Feed seams with an offline-deterministic read path. This is where results are first allowed to change.
@@ -160,7 +167,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 2. M2a — Identity, Money & Determinism | 8/8 | Complete   | 2026-06-04 |
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 9/9 | Complete   | 2026-06-05 |
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
-| 5. M4 — Money & Transaction Correctness | 0/TBD | Not started | - |
+| 5. M4 — Money & Transaction Correctness | 0/7 | Not started | - |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 0/TBD | Not started | - |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/TBD | Not started | - |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
