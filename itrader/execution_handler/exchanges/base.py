@@ -1,7 +1,7 @@
 from typing import Any, Dict, Protocol, runtime_checkable
 
 from itrader.events_handler.events import OrderEvent
-from ..result_objects import ConnectionResult, HealthStatus, ValidationResult
+from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 
 
 @runtime_checkable
@@ -63,8 +63,9 @@ class AbstractExchange(Protocol):
 		...
 
 	# Validation methods
-	def validate_order(self, event: OrderEvent) -> ValidationResult:
-		"""Validate order before execution with comprehensive checks."""
+	def validate_order(self, event: OrderEvent) -> OrderPreflightResult:
+		"""Run pre-trade checks before execution (OQ3: execution-domain
+		preflight, distinct from the order-domain ValidationResult)."""
 		...
 
 	def validate_symbol(self, symbol: str) -> bool:

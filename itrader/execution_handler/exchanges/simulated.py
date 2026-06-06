@@ -1,5 +1,6 @@
 from queue import Queue
 from datetime import datetime
+from decimal import Decimal
 from typing import Dict, Any, Optional
 import random
 import time
@@ -14,7 +15,7 @@ from ..slippage_model.base import SlippageModel
 from ..slippage_model.zero_slippage_model import ZeroSlippageModel
 from ..slippage_model.linear_slippage_model import LinearSlippageModel
 from ..slippage_model.fixed_slippage_model import FixedSlippageModel
-from ..result_objects import ConnectionResult, HealthStatus, ValidationResult
+from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 from ..matching_engine import MatchingEngine
 from itrader.core.enums.execution import ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
 from itrader.core.enums import OrderType, OrderCommand
@@ -301,12 +302,14 @@ class SimulatedExchange(AbstractExchange):
 		"""Perform comprehensive health check and return status."""
 		current_time = datetime.now()
 		self._last_ping = current_time
-		
+
 		# Calculate metrics
 		total_orders = self._orders_executed + self._orders_failed
 		error_rate = (self._orders_failed / total_orders) if total_orders > 0 else 0.0
 		uptime = (current_time - self._startup_time).total_seconds()
-		
+
+		# total_volume is internal float telemetry; coerce to Decimal at the
+		# DTO boundary (money-denominated field, locked money decision).
 		return HealthStatus(
 			exchange_name=self._exchange_name,
 			connected=self._connected,
@@ -319,13 +322,13 @@ class SimulatedExchange(AbstractExchange):
 			last_error_time=self._last_error_time,
 			orders_executed_today=self._orders_executed,
 			orders_failed_today=self._orders_failed,
-			total_volume_today=self._total_volume,
+			total_volume_today=Decimal(str(self._total_volume)),
 			connection_established=self._connection_time,
 			last_heartbeat=current_time
 		)
 
-	def validate_order(self, event: OrderEvent) -> ValidationResult:
-		"""Comprehensive order validation with detailed feedback."""
+	def validate_order(self, event: OrderEvent) -> OrderPreflightResult:
+		"""Comprehensive pre-trade order checks with detailed feedback (OQ3)."""
 		validation_time = datetime.now()
 		failed_checks = []
 		warnings = []
@@ -376,7 +379,7 @@ class SimulatedExchange(AbstractExchange):
 			
 			error_message = "; ".join(failed_checks)
 		
-		return ValidationResult(
+		return OrderPreflightResult(
 			is_valid=is_valid,
 			error_code=error_code,
 			error_message=error_message,

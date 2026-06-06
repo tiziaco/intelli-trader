@@ -22,7 +22,7 @@ from itrader.config.exchange import (
 from itrader.core.enums.execution import (
     ExecutionErrorCode, ExchangeConnectionStatus
 )
-from itrader.execution_handler.result_objects import ConnectionResult, HealthStatus, ValidationResult
+from itrader.execution_handler.result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 from itrader.core.enums import OrderType, OrderCommand, FillStatus, Side
 
 
@@ -396,10 +396,33 @@ class TestSimulatedExchangeOrderValidation:
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order)
-        
+
+        # OQ3 rename: the execution-domain preflight DTO, distinct from
+        # the order-domain order_validator.ValidationResult.
+        assert isinstance(result, OrderPreflightResult)
         assert result.is_valid is True
         assert result.error_code is None
         assert result.error_message is None
+
+    def test_preflight_result_is_frozen(self):
+        """T-05-09: surviving DTOs are frozen — no post-init mutation."""
+        import dataclasses
+        order = OrderEvent(
+            time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
+            price=150.0, quantity=100.0, exchange='simulated',
+            strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
+        )
+        result = self.exchange.validate_order(order)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.is_valid = False
+
+        health = self.exchange.health_check()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            health.connected = False
+
+        conn = self.exchange.connect()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            conn.success = False
 
     def test_invalid_symbol_validation(self):
         """Test validation of order with invalid symbol."""
