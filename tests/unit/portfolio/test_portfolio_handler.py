@@ -274,6 +274,27 @@ def test_fill_event_processing_success(env):
     assert portfolio.cash < 10000.0  # Cash should be reduced
 
 
+def test_on_fill_returns_none(env):
+    """D-10 contract propagation: on_fill is raise/None — no bool channel."""
+    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 100000.0)
+    fill_event = _fill_event("AAPL", Side.BUY, 50.0, 100, 1.0, portfolio_id,
+                             time=datetime.now(UTC))
+
+    assert env.handler.on_fill(fill_event) is None
+
+
+def test_on_fill_transaction_carries_fill_id(env):
+    """D-11: the recorded Transaction's fill_id matches the originating
+    FillEvent's (fill -> order -> strategy audit chain)."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    buy_fill = _fill_event("BTCUSDT", Side.BUY, 40000, 1, 0, portfolio_id)
+
+    env.handler.on_fill(buy_fill)
+
+    transaction = env.handler.get_portfolio(portfolio_id).transactions[0]
+    assert transaction.fill_id == buy_fill.fill_id
+
+
 def test_fill_event_processing_inactive_portfolio(env):
     """Test fill event processing with inactive portfolio."""
     portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 10000.0)
