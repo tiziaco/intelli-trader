@@ -184,6 +184,8 @@ def test_handler_get_position_returns_frozen_view(handler_with_portfolio):
     """D-15: an open position crosses the boundary as a frozen PositionView."""
     from datetime import datetime
 
+    import uuid_utils.compat as uuid_compat
+
     from itrader import idgen
     from itrader.core.enums import TransactionType
     from itrader.core.ids import TransactionId
@@ -201,6 +203,7 @@ def test_handler_get_position_returns_frozen_view(handler_with_portfolio):
             commission=Decimal("0"),
             portfolio_id=portfolio_id,
             id=TransactionId(idgen.generate_transaction_id()),
+            fill_id=uuid_compat.uuid7(),
         )
     )
 

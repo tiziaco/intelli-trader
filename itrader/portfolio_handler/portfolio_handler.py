@@ -260,9 +260,15 @@ class PortfolioHandler:
         return count
 
     # Fill event processing
-    def on_fill(self, fill_event: FillEvent) -> bool:
-        """Process fill event for the appropriate portfolio."""
-        
+    def on_fill(self, fill_event: FillEvent) -> None:
+        """Process fill event for the appropriate portfolio.
+
+        D-10 contract: returns ``None``; failures raise typed domain
+        exceptions which propagate to the dispatch registry's
+        ``_on_handler_error`` seam (backtest re-raise — the run stops loudly
+        rather than producing corrupted numbers).
+        """
+
         with self._operation_context("on_fill") as correlation_id:
             try:
                 # Portfolio ids are native uuid.UUID (D-13/D-14); the dict is keyed
@@ -277,12 +283,15 @@ class PortfolioHandler:
                         ticker=fill_event.ticker,
                         correlation_id=correlation_id,
                     )
-                    return False
+                    return
 
                 # Portfolio handles its own validation and processing.
                 # D-05 boundary map: events carry Side; Portfolio maps
                 # Side -> TransactionType at its own boundary (the vocabularies
                 # stay distinct — same precedent as FillStatus -> OrderStatus).
+                # Money enters the Decimal domain here via to_money (the M4
+                # reconciliation of the former DEF-01-A float coercion: the
+                # transaction/position path is Decimal end-to-end now).
                 transaction_type = TransactionType.BUY if fill_event.action is Side.BUY else TransactionType.SELL
                 transaction = Transaction(
                     time=fill_event.time,
@@ -290,28 +299,23 @@ class PortfolioHandler:
                     ticker=fill_event.ticker,
                     price=to_money(fill_event.price),
                     quantity=to_money(fill_event.quantity),
-                    # DEF-01-A (overlaps M4 Decimal-money scope): the fee model returns a Decimal
-                    # commission, but Transaction.commission is declared float and the whole
-                    # transaction/position math path is float. Coerce at this single fill->transaction
-                    # boundary so the Decimal never mixes with floats downstream (transaction_manager
-                    # funds check, position avg_price, etc.). Must be reconciled when M4 moves money
-                    # to Decimal end-to-end (#22 Critical).
                     commission=to_money(fill_event.commission),
                     portfolio_id=portfolio_id,
-                    id=TransactionId(idgen.generate_transaction_id())
+                    id=TransactionId(idgen.generate_transaction_id()),
+                    # D-11 audit chain: the settlement record carries the
+                    # originating fill's identity (fill -> order -> strategy).
+                    fill_id=fill_event.fill_id,
                 )
-                
-                result = portfolio.transact_shares(transaction)
-                
+
+                portfolio.transact_shares(transaction)
+
                 self.logger.debug(
                     "Fill event processed",
                     portfolio_id=portfolio_id,
                     ticker=fill_event.ticker,
                     correlation_id=correlation_id
                 )
-                
-                return result
-                
+
             except Exception as e:
                 error_portfolio_id = getattr(fill_event, "portfolio_id", None)
                 self._publish_error_event(e, "on_fill", correlation_id, error_portfolio_id)

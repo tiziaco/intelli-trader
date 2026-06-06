@@ -5,6 +5,8 @@ Tests cash operations, precision, thread safety, and validation.
 
 import threading
 import time
+import uuid
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
@@ -419,6 +421,108 @@ def test_reserve_insufficient_funds_reserves_nothing(cm):
 
     assert cm.reserved_balance == Decimal("0.00")
     assert cm.available_balance == cm.balance
+
+
+# ---------------------------------------------------------------------------
+# Fill-flow primitives (Plan 05-05 Task 1 — D-05/D-06/D-10, Pitfalls 1/2/5)
+# ---------------------------------------------------------------------------
+
+_EVENT_TIME = datetime(2021, 3, 14, 9, 26, 53)
+
+
+def test_apply_fill_cash_flow_full_precision_no_quantize(cm):
+    """Pitfall 1: an 8dp signed delta moves balance by EXACTLY that delta."""
+    delta = Decimal("-9543.21987654")
+
+    cm.apply_fill_cash_flow(
+        amount=delta,
+        fee=Decimal("0"),
+        description="BUY BTCUSD fill",
+        reference_id="txn-1",
+        timestamp=_EVENT_TIME,
+    )
+
+    # No 2dp quantization — the full 8dp precision survives on the ledger.
+    assert cm.balance == Decimal("100000.00") + delta
+    assert cm.balance == Decimal("90456.78012346")
+
+
+def test_apply_fill_cash_flow_one_ledger_entry_with_fee(cm):
+    """D-06: exactly one CashOperation per fill — amount = signed net delta,
+    fee = commission portion; balance reconstruction holds."""
+    buy_delta = Decimal("-50025.00")   # -(50000 * 1 + 25 commission)
+    sell_delta = Decimal("51974.00")   # 52000 * 1 - 26 commission
+
+    cm.apply_fill_cash_flow(
+        amount=buy_delta, fee=Decimal("25"),
+        description="BUY", reference_id="txn-buy", timestamp=_EVENT_TIME,
+    )
+    cm.apply_fill_cash_flow(
+        amount=sell_delta, fee=Decimal("26"),
+        description="SELL", reference_id="txn-sell", timestamp=_EVENT_TIME,
+    )
+
+    operations = cm.get_cash_operations()
+    assert len(operations) == 2
+
+    buy_op, sell_op = operations
+    assert buy_op.operation_type == CashOperationType.TRANSACTION_DEBIT
+    assert buy_op.amount == buy_delta          # SIGNED net delta, not abs
+    assert buy_op.fee == Decimal("25")
+    assert buy_op.reference_id == "txn-buy"
+
+    assert sell_op.operation_type == CashOperationType.TRANSACTION_CREDIT
+    assert sell_op.amount == sell_delta
+    assert sell_op.fee == Decimal("26")
+
+    # Balance reconstruction: balance = initial + Σ amounts.
+    assert cm.balance == Decimal("100000.00") + buy_delta + sell_delta
+
+
+def test_cash_operation_event_time_and_uuid_id(cm):
+    """Pitfall 5: ledger records are deterministic — caller-supplied event
+    time (never wall clock) + UUID operation id."""
+    cm.apply_fill_cash_flow(
+        amount=Decimal("-100.00"), fee=Decimal("0"),
+        description="BUY", reference_id="txn-2", timestamp=_EVENT_TIME,
+    )
+
+    operation = cm.get_cash_operations()[0]
+    assert operation.timestamp == _EVENT_TIME
+    assert isinstance(operation.operation_id, uuid.UUID)
+
+
+def test_assert_funds_invariant_raises_when_required_exceeds_balance(cm):
+    """D-10: required > balance raises typed InsufficientFundsError."""
+    with pytest.raises(InsufficientFundsError):
+        cm.assert_funds_invariant(Decimal("100000.01"))
+
+
+def test_assert_funds_invariant_passes_when_required_within_balance(cm):
+    """required <= balance passes (returns None)."""
+    assert cm.assert_funds_invariant(Decimal("100000.00")) is None
+    assert cm.assert_funds_invariant(Decimal("0.01")) is None
+
+
+def test_assert_funds_invariant_ignores_reservations(cm):
+    """Pitfall 2: the invariant guard checks BALANCE, never the
+    reservation-adjusted buying power — an order's own un-released
+    reservation must NOT false-positive under portfolio-first FILL dispatch."""
+    cm.reserve_cash(Decimal("95000.00"), "pending order", "ORDER_RES")
+    assert cm.available_balance == Decimal("5000.00")
+
+    # required > available_balance but <= balance — must NOT raise.
+    assert cm.assert_funds_invariant(Decimal("50000.00")) is None
+
+
+def test_fill_flow_primitives_return_none(cm):
+    """D-10 one-channel contract: both primitives return None."""
+    result = cm.apply_fill_cash_flow(
+        amount=Decimal("10.00"), fee=Decimal("0"),
+        description="credit", reference_id="txn-3", timestamp=_EVENT_TIME,
+    )
+    assert result is None
+    assert cm.assert_funds_invariant(Decimal("1.00")) is None
 
 
 def test_operation_id_uniqueness(cm):

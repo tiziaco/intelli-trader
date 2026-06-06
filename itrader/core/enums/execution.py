@@ -59,11 +59,11 @@ class ExchangeType(Enum):
 class FillStatus(Enum):
     """Execution-truth fill status emitted by the exchange.
 
-    Kept DISTINCT from ``OrderStatus`` (the order mirror) and
-    ``TransactionState`` (the portfolio transaction lifecycle): the
+    Kept DISTINCT from ``OrderStatus`` (the order mirror): the
     ``FillStatus.EXECUTED -> OrderStatus.FILLED`` mapping in
     ``order_manager`` is the intended exchange-truth -> mirror reconciliation
-    (D-04) and must be preserved.
+    (D-04) and must be preserved. (The former portfolio transaction-state
+    lifecycle enum died with the saga machinery — Plan 05-05 D-11.)
 
     Member values are explicit uppercase strings, preserving the exact member
     names of the prior functional ``Enum("FillStatus", "EXECUTED REFUSED

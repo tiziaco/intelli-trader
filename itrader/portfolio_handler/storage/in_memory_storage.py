@@ -6,6 +6,9 @@ are the EXACT ones relocated out of the four portfolio managers — working stat
 (open positions, reserved cash) is mutable/removable; append-only history
 (closed positions, transaction history, cash operations, snapshots) only grows
 (snapshots additionally replaceable for the manager's max-size trim).
+
+Plan 05-05 (D-11): the pending-transaction container died with the saga
+machinery — settlements are validate-first atomic, no in-flight context.
 """
 
 from decimal import Decimal
@@ -26,8 +29,6 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         self._positions: Dict[str, 'Position'] = {}
         # Closed positions (append-only history) — was PositionManager._closed_positions
         self._closed_positions: List['Position'] = []
-        # Pending transaction contexts (working state) — was TransactionManager._pending_transactions
-        self._pending_transactions: Dict[Any, Any] = {}
         # Transaction history (append-only) — was TransactionManager._transaction_history
         self._transaction_history: List['Transaction'] = []
         # Reserved cash (working state, per reference id — Plan 05-03) —
@@ -59,16 +60,8 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
     def get_closed_positions(self) -> List['Position']:
         return self._closed_positions.copy()
 
-    # -- Transactions --------------------------------------------------------
-
-    def set_pending_transaction(self, transaction_id: Any, context: Any) -> None:
-        self._pending_transactions[transaction_id] = context
-
-    def remove_pending_transaction(self, transaction_id: Any) -> None:
-        self._pending_transactions.pop(transaction_id, None)
-
-    def get_pending_transactions(self) -> Dict[Any, Any]:
-        return self._pending_transactions.copy()
+    # -- Transactions (append-only history; pending state died with the saga,
+    # Plan 05-05 D-11) -------------------------------------------------------
 
     def add_transaction(self, transaction: 'Transaction') -> None:
         self._transaction_history.append(transaction)

@@ -3,10 +3,13 @@ Cash Manager for portfolio operations.
 Handles cash balance management, precision, and cash flow operations.
 """
 
+import uuid
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any, Optional, List, Dict, Tuple
 from dataclasses import dataclass
+
+import uuid_utils.compat as uuid_compat
 
 from itrader.core.enums import CashOperationType
 from itrader.core.exceptions import (
@@ -19,12 +22,21 @@ from itrader.logger import get_itrader_logger
 
 @dataclass
 class CashOperation:
-    """Record of a cash operation for audit trail."""
-    operation_id: str
+    """Record of a cash operation for audit trail.
+
+    Deterministic ledger record (Pitfall 5): ``operation_id`` is a UUIDv7
+    generated at record construction; ``timestamp`` is supplied by the caller
+    (event-derived on the fill path — NEVER wall clock there). D-06: for fill
+    settlements ``amount`` is the SIGNED net cash delta (principal ± commission)
+    and ``fee`` carries the commission portion included in ``amount``, so
+    balance reconstruction holds: balance = initial + Σ amounts.
+    """
+    operation_id: uuid.UUID
     operation_type: CashOperationType
     amount: Decimal
     timestamp: datetime
     description: str
+    fee: Decimal = Decimal("0")
     reference_id: Optional[str] = None
     balance_before: Optional[Decimal] = None
     balance_after: Optional[Decimal] = None
@@ -79,10 +91,7 @@ class CashManager:
         self.min_balance = Decimal('0.00')  # Minimum allowed balance
         self.max_balance = Decimal('10000000.00')  # Maximum allowed balance
         self.precision = Decimal('0.01')  # Precision for rounding
-        
-        # Operation counter for unique IDs
-        self._operation_counter = 0
-        
+
         self.logger.info("CashManager initialized",
             initial_balance=str(self._balance),
             min_balance=str(self.min_balance),
@@ -141,7 +150,8 @@ class CashManager:
             description,
             reference_id,
             old_balance,
-            new_balance
+            new_balance,
+            timestamp=datetime.now(UTC)  # admin path — wall clock, not oracle-serialized
         )
             
         self.logger.info("Cash deposit completed",
@@ -200,7 +210,8 @@ class CashManager:
             description,
             reference_id,
             old_balance,
-            new_balance
+            new_balance,
+            timestamp=datetime.now(UTC)  # admin path — wall clock, not oracle-serialized
         )
             
         self.logger.info("Cash withdrawal completed",
@@ -260,7 +271,8 @@ class CashManager:
             description,
             transaction_id,
             old_balance,
-            new_balance
+            new_balance,
+            timestamp=datetime.now(UTC)  # legacy path — wall clock, not oracle-serialized
         )
             
         self.logger.debug("Transaction cash flow processed",
@@ -273,55 +285,82 @@ class CashManager:
             
         return True
     
-    def apply_transaction_delta(self, delta: Decimal, description: str = "Transaction cash delta", reference_id: Optional[str] = None) -> bool:
-        """Apply a signed, full-precision Decimal delta to the cash ledger.
+    def apply_fill_cash_flow(self, amount: Decimal, fee: Decimal, description: str,
+                             reference_id: str, timestamp: datetime) -> None:
+        """Apply a fill settlement's signed, full-precision cash delta (D-05/D-06).
 
-        Precision-preserving transaction-path primitive (CR-03). Unlike
-        ``deposit``/``withdraw``/``process_transaction_cash_flow`` this does NOT
-        route through ``_validate_and_convert_amount`` (so it never quantizes the
-        delta to 2dp) and does NOT enforce the deposit/withdraw min/max-balance
-        policy gates — the transaction layer already ran its own funds check in
-        ``TransactionManager._check_funds_availability`` before calling this.
+        The ONE trade-path cash primitive. Deliberately does NOT route through
+        ``_validate_and_convert_amount`` (Pitfall 1: its 2dp HALF_UP quantize
+        would silently shift the balance → equity curve → byte-exact oracle
+        FAIL on 8dp instrument costs) and does NOT enforce the deposit/withdraw
+        min/max-balance policy gates (solvency was enforced pre-trade by the
+        reservation gate; the settlement-side check is the separate
+        ``assert_funds_invariant`` guard).
 
-        The full instrument precision of ``delta`` is preserved on ``_balance``.
-        A negative delta is an outflow (BUY cost), a positive delta an inflow
-        (SELL proceeds). A ``CashOperation`` is recorded for the audit trail.
+        Records exactly ONE ``CashOperation`` per fill (D-06): ``amount`` is
+        the SIGNED net cash delta (principal ± commission, full precision),
+        ``fee`` the commission portion included in it, ``timestamp`` the
+        caller-supplied event-derived time (Pitfall 5 — never wall clock).
 
         Args:
-            delta: Signed full-precision Decimal cash delta (no quantization).
+            amount: Signed full-precision net cash delta — negative for a BUY
+                outflow, positive for a SELL inflow. No quantization.
+            fee: Commission portion already included in ``amount``.
             description: Audit description.
-            reference_id: Optional reference ID (e.g. transaction id).
-
-        Returns:
-            bool: True if applied.
+            reference_id: Reference ID (e.g. transaction id).
+            timestamp: Event-derived time (transaction/fill time).
         """
         old_balance = self._balance
-        new_balance = old_balance + delta
+        new_balance = old_balance + amount
 
         self._balance = new_balance
 
         operation_type = (
             CashOperationType.TRANSACTION_DEBIT
-            if delta < 0
+            if amount < 0
             else CashOperationType.TRANSACTION_CREDIT
         )
         self._create_operation(
             operation_type,
-            abs(delta),
+            amount,
             description,
             reference_id,
             old_balance,
             new_balance,
+            timestamp=timestamp,
+            fee=fee,
         )
 
-        self.logger.debug("Transaction cash delta applied",
-            delta=str(delta),
+        self.logger.debug("Fill cash flow applied",
+            amount=str(amount),
+            fee=str(fee),
             old_balance=str(old_balance),
             new_balance=str(new_balance),
             reference_id=reference_id
         )
 
-        return True
+    def assert_funds_invariant(self, required: Decimal) -> None:
+        """D-10 engine-bug guard: raise when a settlement debit exceeds balance.
+
+        Compares against ``self._balance`` — NEVER the reservation-adjusted
+        buying power (Pitfall 2): FILL dispatches portfolio-first, so the
+        order's own un-released reservation would false-positive here. The
+        D-02 reservation gate should have prevented this state; if it fires,
+        it is an engine bug and the backtest stops loudly via the Phase 4
+        ``_on_handler_error`` re-raise seam.
+
+        Args:
+            required: The actual net cash cost of the settlement debit.
+
+        Raises:
+            InsufficientFundsError: When ``required`` exceeds the ledger
+                balance.
+        """
+        if required > self._balance:
+            raise InsufficientFundsError(
+                required_cash=float(required),
+                available_cash=float(self._balance),
+            )
 
     def reserve_cash(self, amount: float | Decimal, description: str, reference_id: str) -> None:
         """Reserve cash for a pending order, keyed by reference id (Plan 05-03).
@@ -366,7 +405,8 @@ class CashManager:
             description,
             reference_id,
             self._balance,
-            self._balance
+            self._balance,
+            timestamp=datetime.now(UTC)  # admission audit — wall clock, not oracle-serialized
         )
 
         self.logger.debug("Cash reserved",
@@ -397,7 +437,8 @@ class CashManager:
             "Cash reservation released",
             reference_id,
             self._balance,
-            self._balance
+            self._balance,
+            timestamp=datetime.now(UTC)  # admission audit — wall clock, not oracle-serialized
         )
 
         self.logger.debug("Cash reservation released",
@@ -468,23 +509,31 @@ class CashManager:
         
         return amount_decimal
     
-    def _create_operation(self, operation_type: CashOperationType, amount: Decimal, 
-                         description: str, reference_id: Optional[str], 
-                         balance_before: Decimal, balance_after: Decimal) -> CashOperation:
-        """Create a cash operation record."""
-        self._operation_counter += 1
-        operation_id = f"cash_op_{self._operation_counter}_{int(datetime.now().timestamp() * 1000)}"
-            
+    def _create_operation(self, operation_type: CashOperationType, amount: Decimal,
+                         description: str, reference_id: Optional[str],
+                         balance_before: Decimal, balance_after: Decimal,
+                         timestamp: datetime,
+                         fee: Decimal = Decimal("0")) -> CashOperation:
+        """Create a cash operation record.
+
+        Deterministic (Pitfall 5): ``operation_id`` is a UUIDv7 (the
+        ``uuid_utils.compat`` scheme used at fill construction) and
+        ``timestamp`` is CALLER-supplied — the fill path always passes the
+        transaction's event-derived time; admin paths (deposit/withdraw/
+        reservations, not on the oracle-serialized path) pass their own
+        wall-clock source explicitly at their call sites.
+        """
         operation = CashOperation(
-            operation_id=operation_id,
+            operation_id=uuid_compat.uuid7(),
             operation_type=operation_type,
             amount=amount,
-            timestamp=datetime.now(),
+            timestamp=timestamp,
             description=description,
+            fee=fee,
             reference_id=reference_id,
             balance_before=balance_before,
             balance_after=balance_after
         )
-            
+
         self._storage.add_cash_operation(operation)
         return operation

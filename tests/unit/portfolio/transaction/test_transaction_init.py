@@ -46,3 +46,5 @@ def test_transaction_initialization(fill_event):
     assert transaction.price == Decimal("42350.72")
     assert transaction.quantity == 1
     assert transaction.portfolio_id == "portfolio_id"
+    # D-11 audit chain: the Transaction carries the originating fill's id.
+    assert transaction.fill_id == fill_event.fill_id

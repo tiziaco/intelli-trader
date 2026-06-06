@@ -1,6 +1,8 @@
 import uuid
 from datetime import datetime
 
+import uuid_utils.compat as uuid_compat
+
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.portfolio_handler.position import Position, PositionSide
 
@@ -12,13 +14,13 @@ _PORTFOLIO_ID = "portfolio_id"
 def test_short_position_multiple_sell():
     time = datetime.now()
     sell_transaction = Transaction(
-        time, TransactionType.SELL, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=1
+        time, TransactionType.SELL, _TICKER, 42000, 1, 0, _PORTFOLIO_ID, id=1, fill_id=uuid_compat.uuid7()
     )
     position = Position.open_position(sell_transaction)
     # Increase Short position
     time = datetime.now()
     buy_transaction_2 = Transaction(
-        time, TransactionType.SELL, _TICKER, 40000, 4, 0, _PORTFOLIO_ID, id=2
+        time, TransactionType.SELL, _TICKER, 40000, 4, 0, _PORTFOLIO_ID, id=2, fill_id=uuid_compat.uuid7()
     )
     position.update_position(buy_transaction_2)
 

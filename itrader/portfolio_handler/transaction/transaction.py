@@ -1,6 +1,7 @@
+import uuid
 from enum import Enum
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
 
@@ -15,6 +16,13 @@ class Transaction(object):
 	"""
 	Instance of a Transaction, generated when a FillOrder event
 	is recived from the ExecutionHandler.
+
+	Parameters
+	----------
+	fill_id: `uuid.UUID`
+		REQUIRED — identity of the originating fill, carried from the
+		FillEvent so the applied Transaction entity IS the durable audit
+		record with the full fill -> order -> strategy linkage (D-11).
 	"""
 
 	time: datetime
@@ -28,6 +36,7 @@ class Transaction(object):
 	# both at this boundary (the full retype is deferred — not mandated by Task 2).
 	portfolio_id: "PortfolioId | int"
 	id: TransactionId
+	fill_id: uuid.UUID = field(kw_only=True)
 	position_id: Optional[PositionId] = None
 
 	def __post_init__(self) -> None:
@@ -71,7 +80,32 @@ class Transaction(object):
 			return self.cost
 		else:
 			return self.cost + self.commission
-	
+
+	@property
+	def net_cash_delta(self) -> Decimal:
+		"""
+		Signed, full-precision net cash delta this transaction settles for.
+
+		The entity owns its cash math (Plan 05-05 discretion call): this is
+		the EXACT delta the interim TransactionManager seam used to compute
+		(``_calculate_transaction_cost``) and apply via
+		the deleted full-precision delta primitive — value preservation (D-12).
+		The debit-side magnitude (``-net_cash_delta`` for a BUY) is also the
+		funds-check math that survived ``_check_funds_availability``
+		(price * quantity + commission), reused by the settlement invariant
+		guard and the D-04 reservation mirror (Plan 05-06).
+
+		Returns
+		-------
+		`Decimal`
+			Negative for a BUY (cash outflow: -(cost + commission)),
+			positive for a SELL (cash inflow: cost - commission).
+		"""
+		if self.type == TransactionType.BUY:
+			return -(self.price * self.quantity + self.commission)
+		else:  # SELL
+			return self.price * self.quantity - self.commission
+
 	@classmethod
 	def new_transaction(cls, filled_order: FillEvent) -> "Transaction":
 		"""
@@ -100,7 +134,8 @@ class Transaction(object):
 			to_money(filled_order.quantity),
 			to_money(filled_order.commission),
 			filled_order.portfolio_id,
-			TransactionId(idgen.generate_transaction_id())
+			TransactionId(idgen.generate_transaction_id()),
+			fill_id=filled_order.fill_id
 		)
 
 	def to_dict(self) -> dict[str, object]:

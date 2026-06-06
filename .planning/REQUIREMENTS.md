@@ -105,7 +105,7 @@
 
 - [ ] **M4-01**: Every trade routes cash through `CashManager` — no `portfolio.cash += float(...)`
   setter bypass; ledger/reservations/audit become live *(#22 Critical)*
-- [ ] **M4-02**: Transaction processing is atomic — funds checked before position mutation, rollback on
+- [x] **M4-02**: Transaction processing is atomic — funds checked before position mutation, rollback on
   failure, one coherent error/return contract (no unreachable `return False` behind a re-raise)
   *(#23, #16)*
 - [ ] **M4-03**: Order-handler layering is one-directional — facade→manager→storage; the read path

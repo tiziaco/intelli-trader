@@ -19,9 +19,8 @@ from itrader.portfolio_handler.storage import (
 	PortfolioStateStorageFactory,
 )
 from itrader.core.ids import PortfolioId
-from itrader.core.money import to_money
 
-from itrader import logger, idgen
+from itrader import idgen
 
 TOLERANCE = 1e-3
 
@@ -210,15 +209,10 @@ class Portfolio(object):
 		"""
 		return self.cash_manager.balance
 
-	@cash.setter
-	def cash(self, value: Decimal) -> None:
-		"""Set cash balance."""
-		current_balance = self.cash_manager.balance
-		difference = to_money(value) - current_balance
-		if difference > 0:
-			self.cash_manager.deposit(difference, "Cash balance adjustment")
-		elif difference < 0:
-			self.cash_manager.withdraw(abs(difference), "Cash balance adjustment")
+	# D-05 (Plan 05-05): the cash SETTER is deleted — every cash mutation goes
+	# through an audited CashManager primitive (deposit/withdraw/fill flow);
+	# the trade path applies cash via apply_fill_cash_flow in
+	# process_transaction. Assigning portfolio.cash raises AttributeError.
 
 	@property
 	def n_open_positions(self) -> int:
@@ -279,24 +273,57 @@ class Portfolio(object):
 
 	def process_transaction(self, transaction: Transaction) -> None:
 		"""
-		Process a transaction using the new manager architecture while 
-		preserving existing short position logic and behavior.
+		Settle a fill atomically: validate-first, then mutate (D-09/D-12).
+
+		The Portfolio orchestrates the settlement sequence under its own
+		roof — each manager does exactly one concern, never touching a
+		sibling. NOTHING mutates until all checks pass, so no rollback
+		machinery is needed (a fill is a FACT; solvency was enforced
+		pre-trade by the reservation gate):
+
+		1. validate          — pure checks (TransactionManager, raises typed)
+		2. funds invariant   — debit-side guard against BALANCE, never the
+		                       reservation-adjusted buying power (D-10,
+		                       Pitfall 2); never fires in the golden run
+		3. position mutate   — first mutation (PositionManager)
+		4. cash apply        — full-precision fill flow, ONE ledger entry
+		                       with fee + event time (CashManager, D-05/D-06)
+		5. record            — seam history append (TransactionManager, D-11)
+
+		Returns ``None`` on success; raises typed domain exceptions on
+		failure (D-10 — no bool channel). Backtest: the exception propagates
+		to the Phase 4 ``_on_handler_error`` re-raise seam and the run stops
+		loudly rather than producing corrupted numbers.
 		"""
 		# Update transaction with portfolio information
 		transaction.portfolio_id = self.portfolio_id
-		
-		# Process transaction through the managers in the correct order
-		try:
-			# Process position changes first (this handles short positions properly)
-			position = self.position_manager.process_position_update(transaction)
-			transaction.position_id = position.id
-			
-			# Process the transaction financially (cash flow) - this includes funds validation
-			self.transaction_manager.process_transaction(transaction)
-			
-		except Exception as e:
-			logger.error(f"Transaction processing failed: {e}")
-			raise
+
+		# 1. Pure validation — raises InvalidTransactionError, nothing mutated.
+		self.transaction_manager.validate(transaction)
+
+		# 2. Funds invariant on the debit side (D-10). The actual net cost is
+		#    the entity's own cash math (Transaction.net_cash_delta) — the
+		#    EXACT delta the interim seam computed (value preservation).
+		net_delta = transaction.net_cash_delta
+		if net_delta < 0:
+			self.cash_manager.assert_funds_invariant(-net_delta)
+
+		# 3. Position mutation (all checks passed; handles shorts properly).
+		position = self.position_manager.process_position_update(transaction)
+		transaction.position_id = position.id
+
+		# 4. Cash apply — full-precision signed delta, one ledger entry with
+		#    fee field and event-derived timestamp (D-05/D-06, Pitfalls 1/5).
+		self.cash_manager.apply_fill_cash_flow(
+			amount=net_delta,
+			fee=transaction.commission,
+			description=f"Transaction {transaction.type.name} {transaction.ticker}",
+			reference_id=str(transaction.id),
+			timestamp=transaction.time,
+		)
+
+		# 5. Record — the applied Transaction entity IS the audit record (D-11).
+		self.transaction_manager.record(transaction)
 
 	def update_market_value(self, bar_event: BarEvent) -> None:
 		"""
@@ -369,24 +396,27 @@ class Portfolio(object):
 		return max_position_value / self.total_equity
 	
 	# Enhanced Transaction Processing
-	def transact_shares(self, transaction: Transaction) -> bool:
-		"""Execute transaction with state and config validation."""
+	def transact_shares(self, transaction: Transaction) -> None:
+		"""Execute transaction with state and config validation.
+
+		D-10 contract: returns ``None`` on success, raises typed exceptions
+		on failure — no bool channel (propagated from process_transaction).
+		"""
 		# Validate portfolio can trade
 		if not self.can_trade():
 			raise ValueError(f"Portfolio {self.portfolio_id} cannot trade in state {self.state}")
-			
+
 		# Validate against configuration
 		if self.config.validation.validate_transactions:
 			self._validate_transaction(transaction)
-			
+
 		# Update activity timestamp
 		self._last_activity = datetime.now(UTC)
-			
-		# Delegate to existing process_transaction method
+
+		# Delegate to the validate-first settlement sequence (D-12)
 		try:
 			self.process_transaction(transaction)
-			return True
-		except Exception as e:
+		except Exception:
 			self._health_metrics['transaction_failures'] += 1
 			raise
 	
