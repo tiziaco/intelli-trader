@@ -1,6 +1,6 @@
 import numpy as np
 from datetime import datetime, UTC
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Mapping
 from decimal import Decimal
 
 from itrader.portfolio_handler.transaction import Transaction
@@ -329,13 +329,13 @@ class Portfolio(object):
 		"""
 		Updates the value of all positions that are currently open.
 		"""
-		tickers = bar_event.bars.keys()
+		# Close-marked equity (D-05): the Bar struct's close is already
+		# Decimal (D-14); a ticker with no bar at T is absent from the dict.
 		current_prices: Dict[str, Any] = {}
-		
-		for ticker in tickers:
-			current_price = bar_event.get_last_close(ticker)
-			current_prices[ticker] = current_price
-		
+
+		for ticker, bar in bar_event.bars.items():
+			current_prices[ticker] = bar.close
+
 		# Update all positions with new prices
 		self.position_manager.update_position_market_values(current_prices, bar_event.time)
 
@@ -433,7 +433,7 @@ class Portfolio(object):
 				raise ValueError(f"Transaction value {transaction_value} exceeds limit {self.config.limits.max_position_value}")
 	
 	# Enhanced Market Value Update
-	def update_market_value_of_portfolio(self, prices: Dict[str, float]) -> None:
+	def update_market_value_of_portfolio(self, prices: Mapping[str, float | Decimal]) -> None:
 		"""Update portfolio market values."""
 		if not self.can_trade():
 			return  # Skip updates for inactive portfolios

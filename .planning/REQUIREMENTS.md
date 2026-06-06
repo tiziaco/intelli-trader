@@ -129,7 +129,7 @@
 
 - [ ] **M5-01**: Backtest validity fixed — resampling look-ahead removed, limit fills no longer slip
   past the limit, bar-timing documented and consistent between same/other-timeframe branches *(#21)*
-- [ ] **M5-02**: The per-tick market-data payload is an immutable `Bar` struct (not pandas Series);
+- [x] **M5-02**: The per-tick market-data payload is an immutable `Bar` struct (not pandas Series);
   the `hasattr` accessor ladders and `get_last_close` type-branching disappear *(#3, FR1)*
 - [ ] **M5-03**: Resampled frames are precomputed once per (ticker, timeframe) at load and sliced per
   tick — no `resample` in the hot loop *(#4)*
@@ -227,7 +227,7 @@ phase; a span is not done until its final phase completes.
 | M4-07 | Phase 5 | M4 | — | Pending |
 | M4-08 | Phase 5 | M4 | value-preserving gate | Pending |
 | M5-01 | Phase 6 | M5a | — | Pending |
-| M5-02 | Phase 6 | M5a | — | Pending |
+| M5-02 | Phase 6 | M5a | — | Complete |
 | M5-03 | Phase 6 | M5a | — | Pending |
 | M5-04 | Phase 6 | M5a | — | Pending |
 | M5-05 | Phase 6 | M5a | — | Pending |

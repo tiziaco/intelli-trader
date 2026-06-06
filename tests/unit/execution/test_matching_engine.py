@@ -1,11 +1,10 @@
 from datetime import datetime
 from decimal import Decimal
 
-import pandas as pd
 import pytest
 
 from itrader.execution_handler.matching_engine import MatchingEngine
-from itrader.events_handler.events import OrderEvent, BarEvent
+from itrader.events_handler.events import OrderEvent
 from itrader.core.enums import OrderType, OrderCommand, Side
 
 
@@ -19,13 +18,9 @@ def make_order_event(order_type, action, price, order_id,
     )
 
 
-def make_bar(open_, high, low, close, ticker="BTCUSDT"):
-    bars = {
-        ticker: pd.DataFrame(
-            {"open": [open_], "high": [high], "low": [low], "close": [close], "volume": [1]}
-        )
-    }
-    return BarEvent(time=datetime(2024, 1, 1), bars=bars)
+# The bar payload comes from the shared `make_bar` factory fixture in
+# tests/conftest.py (M5-02: dict[str, Bar] Decimal payload) — same positional
+# (open_, high, low, close) signature as the legacy per-file helper.
 
 
 @pytest.fixture
@@ -103,7 +98,7 @@ def test_modify_unknown_returns_false(engine):
 # --- stop triggers ----------------------------------------------------------
 
 
-def test_sell_stop_triggers_when_low_pierces(engine):
+def test_sell_stop_triggers_when_low_pierces(engine, make_bar):
     # stop-loss on a long: SELL stop at 30, bar low 20 -> fills
     engine.submit(make_order_event(OrderType.STOP, "SELL", 30.0, order_id=1))
     fills, cancels = engine.on_bar(make_bar(open_=35, high=36, low=20, close=25))
@@ -112,28 +107,28 @@ def test_sell_stop_triggers_when_low_pierces(engine):
     assert not engine.has_order(1)       # removed from book
 
 
-def test_sell_stop_does_not_trigger_when_low_above(engine):
+def test_sell_stop_does_not_trigger_when_low_above(engine, make_bar):
     engine.submit(make_order_event(OrderType.STOP, "SELL", 30.0, order_id=1))
     fills, cancels = engine.on_bar(make_bar(open_=40, high=45, low=35, close=42))
     assert fills == []
     assert engine.has_order(1)
 
 
-def test_sell_stop_gap_fills_at_open(engine):
+def test_sell_stop_gap_fills_at_open(engine, make_bar):
     # bar gaps below the stop: open 25 < stop 30 -> realistic fill at open (worse)
     engine.submit(make_order_event(OrderType.STOP, "SELL", 30.0, order_id=1))
     fills, cancels = engine.on_bar(make_bar(open_=25, high=27, low=18, close=20))
     assert fills[0].fill_price == 25.0   # min(open, stop)
 
 
-def test_buy_stop_triggers_when_high_pierces(engine):
+def test_buy_stop_triggers_when_high_pierces(engine, make_bar):
     # stop on a short: BUY stop at 50, bar high 60 -> fills at stop
     engine.submit(make_order_event(OrderType.STOP, "BUY", 50.0, order_id=2))
     fills, cancels = engine.on_bar(make_bar(open_=45, high=60, low=44, close=58))
     assert fills[0].fill_price == 50.0
 
 
-def test_buy_stop_gap_fills_at_open(engine):
+def test_buy_stop_gap_fills_at_open(engine, make_bar):
     # bar gaps above the stop: open 55 > stop 50 -> fill at open (worse)
     engine.submit(make_order_event(OrderType.STOP, "BUY", 50.0, order_id=2))
     fills, cancels = engine.on_bar(make_bar(open_=55, high=62, low=54, close=60))
@@ -143,26 +138,26 @@ def test_buy_stop_gap_fills_at_open(engine):
 # --- limit triggers ---------------------------------------------------------
 
 
-def test_sell_limit_triggers_when_high_pierces(engine):
+def test_sell_limit_triggers_when_high_pierces(engine, make_bar):
     # take-profit on a long: SELL limit at 50, bar high 60 -> fills at limit
     engine.submit(make_order_event(OrderType.LIMIT, "SELL", 50.0, order_id=1))
     fills, _ = engine.on_bar(make_bar(open_=45, high=60, low=44, close=58))
     assert fills[0].fill_price == 50.0
 
 
-def test_sell_limit_does_not_trigger_when_high_below(engine):
+def test_sell_limit_does_not_trigger_when_high_below(engine, make_bar):
     engine.submit(make_order_event(OrderType.LIMIT, "SELL", 50.0, order_id=1))
     fills, _ = engine.on_bar(make_bar(open_=40, high=48, low=39, close=47))
     assert fills == []
 
 
-def test_buy_limit_triggers_when_low_pierces(engine):
+def test_buy_limit_triggers_when_low_pierces(engine, make_bar):
     engine.submit(make_order_event(OrderType.LIMIT, "BUY", 30.0, order_id=2))
     fills, _ = engine.on_bar(make_bar(open_=35, high=36, low=25, close=28))
     assert fills[0].fill_price == 30.0
 
 
-def test_independent_orders_on_same_bar_both_fill(engine):
+def test_independent_orders_on_same_bar_both_fill(engine, make_bar):
     # two unrelated orders (no bracket link) both trigger -> both fill
     engine.submit(make_order_event(OrderType.STOP, "SELL", 30.0, order_id=1))
     engine.submit(make_order_event(OrderType.LIMIT, "SELL", 55.0, order_id=2))
@@ -171,7 +166,7 @@ def test_independent_orders_on_same_bar_both_fill(engine):
     assert cancels == []
 
 
-def test_ignores_ticker_not_in_bar(engine):
+def test_ignores_ticker_not_in_bar(engine, make_bar):
     engine.submit(make_order_event(OrderType.STOP, "SELL", 30.0, order_id=1, ticker="ETHUSDT"))
     fills, _ = engine.on_bar(make_bar(open_=40, high=60, low=20, close=50))  # BTCUSDT only
     assert fills == []
@@ -181,7 +176,7 @@ def test_ignores_ticker_not_in_bar(engine):
 # --- D-22 Decimal order money at the float matching boundary ----------------
 
 
-def test_stop_with_decimal_price_triggers_and_fills_float(engine):
+def test_stop_with_decimal_price_triggers_and_fills_float(engine, make_bar):
     # D-22 boundary (Pitfall 4): order.price is Decimal; the engine converts
     # ONCE at the matching boundary (float(order.price)) so the trigger/gap
     # math stays float — no Decimal x float TypeError, and the decision's
@@ -194,7 +189,7 @@ def test_stop_with_decimal_price_triggers_and_fills_float(engine):
     assert fills[0].fill_price == 30.0
 
 
-def test_limit_with_decimal_price_triggers_and_fills_float(engine):
+def test_limit_with_decimal_price_triggers_and_fills_float(engine, make_bar):
     engine.submit(make_order_event(OrderType.LIMIT, "SELL", Decimal("50.0"), order_id=1))
     fills, _ = engine.on_bar(make_bar(open_=45, high=60, low=44, close=58))
     assert len(fills) == 1
@@ -202,7 +197,7 @@ def test_limit_with_decimal_price_triggers_and_fills_float(engine):
     assert fills[0].fill_price == 50.0
 
 
-def test_decimal_stop_gap_fill_math_no_type_error(engine):
+def test_decimal_stop_gap_fill_math_no_type_error(engine, make_bar):
     # Gap-down: min(open, stop) is the hazard zone for Decimal x float —
     # the boundary conversion keeps it pure float.
     engine.submit(make_order_event(OrderType.STOP, "SELL", Decimal("30.0"), order_id=1))
@@ -236,7 +231,7 @@ def bracket(engine):
     return engine, sl, tp
 
 
-def test_tp_fill_cancels_sl_sibling(bracket):
+def test_tp_fill_cancels_sl_sibling(bracket, make_bar):
     engine, sl, tp = bracket
     engine.submit(sl)
     engine.submit(tp)
@@ -250,7 +245,7 @@ def test_tp_fill_cancels_sl_sibling(bracket):
     assert not engine.has_order(12)
 
 
-def test_same_bar_both_pierced_prefers_stop(bracket):
+def test_same_bar_both_pierced_prefers_stop(bracket, make_bar):
     engine, sl, tp = bracket
     engine.submit(sl)
     engine.submit(tp)
@@ -262,7 +257,7 @@ def test_same_bar_both_pierced_prefers_stop(bracket):
     assert cancels[0].order_event.order_id == 12    # TP cancelled
 
 
-def test_non_triggered_sibling_still_cancelled(bracket):
+def test_non_triggered_sibling_still_cancelled(bracket, make_bar):
     engine, sl, tp = bracket
     # Only TP triggers; SL does not, but must be cancelled because its bracket leg filled.
     engine.submit(sl)
@@ -272,7 +267,7 @@ def test_non_triggered_sibling_still_cancelled(bracket):
     assert [c.order_event.order_id for c in cancels] == [11]
 
 
-def test_two_independent_brackets_both_resolve(engine):
+def test_two_independent_brackets_both_resolve(engine, make_bar):
     # Two distinct brackets resolve on the same bar without cross-contamination.
     # Bracket A: SL at 20 (no trigger, low 25 > 20), TP at 55 (fills, high 70 >= 55) -> TP wins.
     sl_a = make_order_event(OrderType.STOP, "SELL", 20.0, order_id=21, parent_order_id=200)

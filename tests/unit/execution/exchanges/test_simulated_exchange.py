@@ -673,14 +673,16 @@ class TestDecimalFillBoundary:
         """A Decimal-priced resting stop triggers and fills — no Decimal x float
         TypeError on the hot fill path (T-05-19); FillEvent.price is Decimal."""
         from itrader.core.money import to_money
-        import pandas as pd
+        from itrader.core.bar import Bar
         from itrader.events_handler.events import BarEvent
         stop = self._order(order_type=OrderType.STOP, action=Side.SELL,
                            price=Decimal("30.0"), order_id=5)
         self.exchange.on_order(stop)
-        bars = {"BTCUSDT": pd.DataFrame(
-            {"open": [35.0], "high": [36.0], "low": [20.0], "close": [25.0], "volume": [1]})}
-        self.exchange.on_market_data(BarEvent(time=datetime(2024, 1, 1), bars=bars))
+        t = datetime(2024, 1, 1)
+        bars = {"BTCUSDT": Bar(
+            time=t, open=Decimal("35.0"), high=Decimal("36.0"),
+            low=Decimal("20.0"), close=Decimal("25.0"), volume=Decimal("1"))}
+        self.exchange.on_market_data(BarEvent(time=t, bars=bars))
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         assert fills[0].status is FillStatus.EXECUTED
@@ -742,14 +744,16 @@ class _RoutingHarness:
         )
 
     def bar(self, open_, high, low, close):
-        import pandas as pd
+        from itrader.core.bar import Bar
         from itrader.events_handler.events import BarEvent
+        t = datetime(2024, 1, 1)
         bars = {
-            "BTCUSDT": pd.DataFrame(
-                {"open": [open_], "high": [high], "low": [low], "close": [close], "volume": [1]}
+            "BTCUSDT": Bar(
+                time=t, open=Decimal(str(open_)), high=Decimal(str(high)),
+                low=Decimal(str(low)), close=Decimal(str(close)), volume=Decimal("1"),
             )
         }
-        return BarEvent(time=datetime(2024, 1, 1), bars=bars)
+        return BarEvent(time=t, bars=bars)
 
 
 @pytest.fixture

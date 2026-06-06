@@ -5,7 +5,7 @@ Handles position lifecycle, calculations, and risk management.
 
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
-from typing import Any, Optional, List, Dict, Tuple
+from typing import Any, Optional, List, Dict, Tuple, Mapping
 from dataclasses import dataclass
 import numpy as np
 
@@ -233,7 +233,7 @@ class PositionManager:
                 change_ratio=str(price_change_ratio)
             )
     
-    def update_position_market_values(self, price_data: Dict[str, float], timestamp: datetime) -> None:
+    def update_position_market_values(self, price_data: Mapping[str, float | Decimal], timestamp: datetime) -> None:
         """Update current market values for all positions."""
         
         updated_count = 0

@@ -1,9 +1,10 @@
 from datetime import datetime
+from decimal import Decimal
 from queue import Queue
 
-import pandas as pd
 import pytest
 
+from itrader.core.bar import Bar
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
@@ -35,12 +36,14 @@ class _StopLimitHarness:
         )
 
     def bar(self, open_, high, low, close):
+        t = datetime(2024, 1, 1)
         bars = {
-            "BTCUSDT": pd.DataFrame(
-                {"open": [open_], "high": [high], "low": [low], "close": [close], "volume": [1]}
+            "BTCUSDT": Bar(
+                time=t, open=Decimal(str(open_)), high=Decimal(str(high)),
+                low=Decimal(str(low)), close=Decimal(str(close)), volume=Decimal("1"),
             )
         }
-        return BarEvent(time=datetime(2024, 1, 1), bars=bars)
+        return BarEvent(time=t, bars=bars)
 
     def route_orders(self):
         """Drain ORDER events from the queue into the execution handler."""

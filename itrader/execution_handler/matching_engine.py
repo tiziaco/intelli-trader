@@ -101,18 +101,20 @@ class MatchingEngine:
     def _evaluate(self, order: OrderEvent, bar: BarEvent) -> Optional[float]:
         """Return the fill price if `order` triggers on `bar`, else None."""
         ticker = order.ticker
-        if ticker not in bar.bars:
+        bar_struct = bar.bars.get(ticker)
+        if bar_struct is None:
+            # No bar for this ticker at T (sparse universe / data gap) —
+            # same no-data semantics as the legacy Optional accessors.
             return None
-        open_ = bar.get_last_open(ticker)
-        high = bar.get_last_high(ticker)
-        low = bar.get_last_low(ticker)
-        # A present ticker always yields OHLC floats; guard the Optional return
-        # so a malformed bar is treated as no-trigger rather than crashing the book.
-        if open_ is None or high is None or low is None:
-            return None
+        # TEMPORARY: the engine's internals stay float until the D-12 retype.
+        # Bar OHLC is Decimal(str(x)) by construction, and float(Decimal(str(x)))
+        # round-trips exactly — these casts are numerically inert.
+        open_ = float(bar_struct.open)   # D-12: removed in plan 06-04
+        high = float(bar_struct.high)    # D-12: removed in plan 06-04
+        low = float(bar_struct.low)      # D-12: removed in plan 06-04
 
-        # D-22 boundary (Pitfall 4): order.price is Decimal but bar OHLC is
-        # float (pandas) until M5a's Bar struct pushes Decimal deeper. Convert
+        # D-22 boundary (Pitfall 4): order.price is Decimal but the engine's
+        # trigger/gap math is float until the D-12 retype (plan 06-04). Convert
         # ONCE here so the trigger comparisons and min/max gap-fill math stay
         # pure float — Decimal x float arithmetic would raise TypeError, and a
         # mixed min/max would leak a Decimal into the float fill price. The

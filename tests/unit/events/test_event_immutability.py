@@ -23,11 +23,13 @@ the new ``events_handler/events/`` package supersedes that:
 import uuid
 from dataclasses import FrozenInstanceError
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Callable
 
 import pytest
 import uuid_utils.compat as uuid_compat
 
+from itrader.core.bar import Bar
 from itrader.core.enums import EventType, FillStatus, OrderType, Side
 from itrader.core.ids import OrderId, StrategyId
 from itrader.events_handler.events import (
@@ -53,7 +55,11 @@ def _time_event() -> TimeEvent:
 
 
 def _bar() -> BarEvent:
-    return BarEvent(time=_TIME, bars={})
+    # M5-02: the payload carries an immutable Bar struct per ticker.
+    return BarEvent(time=_TIME, bars={
+        "BTCUSDT": Bar(time=_TIME, open=Decimal("40"), high=Decimal("60"),
+                       low=Decimal("20"), close=Decimal("50"), volume=Decimal("1")),
+    })
 
 
 def _signal() -> SignalEvent:
@@ -152,6 +158,15 @@ def test_fill_event_payload_fields_are_frozen() -> None:
         fill.price = 43.0  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         fill.quantity = 2.0  # type: ignore[misc]
+
+
+def test_bar_event_payload_fields_are_frozen() -> None:
+    # M5-02: immutability covers the bars field AND the Bar struct inside it.
+    bar = _bar()
+    with pytest.raises(FrozenInstanceError):
+        bar.bars = {}  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        bar.bars["BTCUSDT"].close = Decimal("99")  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
