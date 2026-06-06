@@ -13,10 +13,11 @@ and order storage/execution systems.
 """
 
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
+from ..core.exceptions import InsufficientFundsError
 from ..core.ids import PortfolioId
 from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
@@ -42,7 +43,8 @@ class OrderManager:
 	
 	def __init__(self, order_storage: OrderStorage, logger: Any,
 	             market_execution: str = "immediate",
-	             portfolio_handler: Optional[PortfolioReadModel] = None) -> None:
+	             portfolio_handler: Optional[PortfolioReadModel] = None,
+	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
 		"""
 		Initialize the OrderManager.
 
@@ -65,14 +67,33 @@ class OrderManager:
 		portfolio_handler : PortfolioReadModel, optional
 			Narrow portfolio read boundary for position-aware operations
 			(D-16: the concrete handler conforms structurally)
+		commission_estimator : Callable[[Decimal, Decimal], Decimal], optional
+			Estimates the commission for an order as f(quantity, price) ->
+			Decimal, feeding the admission reservation amount (Plan 05-06,
+			D-04). INJECTED at wiring time — order_manager never imports
+			across the execution boundary (RESEARCH Pattern 1). None means a
+			zero estimate, which reproduces the pre-reservation funds-check
+			math exactly (mode-agnostic; the golden run pins fees 0).
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
 		self.market_execution = market_execution
 		self.portfolio_handler = portfolio_handler
+		self.commission_estimator = commission_estimator
 
 		# Initialize validator if portfolio_handler is available
 		self.order_validator = EnhancedOrderValidator(portfolio_handler) if portfolio_handler else None
+
+	def _estimate_commission(self, order: Order) -> Decimal:
+		"""Estimate the commission for an order's admission reservation (D-04).
+
+		Delegates to the injected estimator (quantity, price) -> Decimal;
+		``None`` -> ``Decimal("0")`` so the reservation amount degrades to
+		exactly price x quantity — today's funds-check math.
+		"""
+		if self.commission_estimator is None:
+			return Decimal("0")
+		return self.commission_estimator(order.quantity, order.price)
 
 	def on_fill(self, fill_event: FillEvent) -> None:
 		"""
@@ -181,6 +202,37 @@ class OrderManager:
 				if validation_result.has_warnings:
 					self.logger.warning('Signal validation warnings: %s',
 									   [msg.message for msg in validation_result.warnings])
+
+			# 2b. Admission cash-reservation gate (Plan 05-06, Critical #22 / M4-01).
+			# D-02: SYNCHRONOUS check-and-reserve — the only pre-trade gate. A
+			# queue-mediated reserve was explicitly rejected: it would open a
+			# TOCTOU window between the funds check and the order emit (T-05-14).
+			# D-03: only the cash-debiting primary (BUY) reserves — SELLs and
+			# bracket SL/TP children are exempt (no OCO double-reservation,
+			# T-05-15). D-04: reserve = price x quantity + estimated commission;
+			# the zero default reproduces the old funds-check math exactly.
+			# Decimal-native arithmetic — intermediates are never quantized.
+			if self.portfolio_handler is not None and primary.action == Side.BUY.value:
+				cost = primary.price * primary.quantity + self._estimate_commission(primary)
+				try:
+					self.portfolio_handler.reserve(
+						cast(PortfolioId, primary.portfolio_id), primary.id, cost)
+				except InsufficientFundsError as e:
+					# T-05-16: the failure goes through the Phase 4 audited
+					# add_state_change path and is persisted — rejected orders
+					# never vanish silently. Nothing is emitted (D-02).
+					error_msg = f"Cash reservation failed: {e}"
+					self.logger.error('%s for %s %s', error_msg,
+									signal_event.ticker, signal_event.action)
+					primary.add_state_change(
+						OrderStatus.REJECTED,
+						str(e),
+						triggered_by="cash_reservation",
+					)
+					self.order_storage.add_order(primary)
+					return [OperationResult.failure_result(error_msg,
+						error_details=str(e),
+						operation_type="cash_reservation")]
 
 			# 3. Create-all-then-emit (D-11): assemble brackets, store, emit.
 			results.extend(self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary))
