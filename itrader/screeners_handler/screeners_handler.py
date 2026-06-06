@@ -2,7 +2,7 @@ from datetime import timedelta
 from queue import Queue
 import pytz
 
-from itrader.price_handler.data_provider import PriceHandler
+from itrader.price_handler.feed.base import BarFeed
 from itrader.screeners_handler.screeners.base import Screener
 from itrader.events_handler.events import BarEvent
 from itrader.outils.time_parser import check_timeframe, get_timenow_awere, get_last_available_timestamp
@@ -15,15 +15,17 @@ class ScreenersHandler(object):
 	Manage all the screeners of the trading system.
 	"""
 
-	def __init__(self, global_queue, price_handler):
+	def __init__(self, global_queue, feed):
 		"""
 		Parameters
 		----------
-		events_queue: `Queue object`
+		global_queue: `Queue object`
 			The events queue of the trading system
+		feed: `BarFeed`
+			The market-data read model serving the screener megaframe (D-19).
 		"""
 		self.global_queue: Queue = global_queue
-		self.price_handler: PriceHandler = price_handler
+		self.feed: BarFeed = feed
 		self.min_timeframe: timedelta = timedelta(weeks=100)
 		self.screeners: list[Screener]= []
 		self.last_results: dict = {}
@@ -38,9 +40,10 @@ class ScreenersHandler(object):
 
 		for screener in self.screeners:
 			last_timestamp = get_last_available_timestamp(time_now, screener.frequency)
-			# Screen the market with all active screeners
+			# Screen the market with all active screeners (D-24: the Feed
+			# megaframe is the working API for the D-screener wiring).
 			proposed = screener.screen_market(
-				self.price_handler.to_megaframe(last_timestamp, screener.timeframe, screener.max_window),
+				self.feed.megaframe(last_timestamp, screener.timeframe, screener.max_window),
 				event
 			)
 			self.last_results = {event.time : proposed}
@@ -53,11 +56,11 @@ class ScreenersHandler(object):
 		"""
 		Calculate the signal for every strategy to be traded.
 
-		Before generating the signal check if the actual time 
+		Before generating the signal check if the actual time
 		is a multiple of the strategy's timeframe.
 
-		Also, it get the prices data from the PriceHandler and 
-		resample them according to the strategy's timeframe.
+		Also, it gets the prices data from the bar feed megaframe
+		resampled according to the screener's timeframe.
 
 		Parameters
 		----------
@@ -74,7 +77,7 @@ class ScreenersHandler(object):
 
 			# Screen the market with all active screeners
 			proposed = screener.screen_market(
-				self.price_handler.to_megaframe(event.time, screener.timeframe, screener.max_window),
+				self.feed.megaframe(event.time, screener.timeframe, screener.max_window),
 				event
 			)
 			 # Initialize the dictionary for the current event time if not already present
