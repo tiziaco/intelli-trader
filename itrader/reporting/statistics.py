@@ -10,7 +10,7 @@ import itrader.reporting.performance as perf
 import itrader.reporting.plots as plots
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.portfolio import Portfolio
-from itrader.price_handler.data_provider import PriceHandler
+from itrader.price_handler.store.base import PriceStore
 
 
 import sqlalchemy 
@@ -31,15 +31,17 @@ class StatisticsReporting(AbstractStatistics):
 	ratio chart.
 	"""
 	def __init__(self,
-			portfolio_handler: PortfolioHandler, 
-			price_handler: PriceHandler, 
+			portfolio_handler: PortfolioHandler,
+			store: PriceStore,
 			periods=355, to_sql=False
 	):
 		"""
-		Takes in a portfolio handler.
+		Takes in a portfolio handler and the price store (Plan 06-05:
+		start/end date, bar count and index access are served by the
+		Store's read accessors).
 		"""
 		self.portfolio_handler = portfolio_handler
-		self.price_handler = price_handler
+		self.store = store
 		self.periods = periods
 		# self.transaction = None
 		# self.positions = None
@@ -184,15 +186,16 @@ class StatisticsReporting(AbstractStatistics):
 		transactions, positions, equity_metrics = self._prepare_data(portfolio)
 		statistics = self.calculate_statistics(positions, equity_metrics)
 
-		start_dt = list(self.price_handler.prices.values())[0].index[0].strftime('%Y/%m/%d, %H:%M')
-		end_dt = list(self.price_handler.prices.values())[0].index[-1].strftime('%Y/%m/%d, %H:%M')
-		
+		bar_index = self.store.index(self.store.symbols()[0])
+		start_dt = bar_index[0].strftime('%Y/%m/%d, %H:%M')
+		end_dt = bar_index[-1].strftime('%Y/%m/%d, %H:%M')
+
 		print("---------------------------------------------------------")
 		print("                 STRATEGY STATISTICS")
 		print("---------------------------------------------------------")
 		print('Start date: %s', start_dt)
 		print('End date: %s', (end_dt))
-		print("Bars: %s",(len(list(self.price_handler.prices.values())[0])))
+		print("Bars: %s",(len(bar_index)))
 		print('')
 		print("Return: %0.2f%%" % (statistics['equity_stats']['tot_ret']*100))
 		print("Sharpe Ratio: %0.2f" % statistics['equity_stats']['sharpe'])
@@ -224,7 +227,7 @@ class StatisticsReporting(AbstractStatistics):
 
 		eq_line = plots.line_equity(equity_metrics['cum_returns'])
 		dd_line = plots.line_drwdwn(equity_metrics['drawdowns'])
-		profit_loss = plots.profit_loss_scatter(positions, list(self.price_handler.prices.values())[0].index)
+		profit_loss = plots.profit_loss_scatter(positions, self.store.index(self.store.symbols()[0]))
 
 		return plots.sub_plots3(eq_line, dd_line, profit_loss)
 	
@@ -232,7 +235,7 @@ class StatisticsReporting(AbstractStatistics):
 		portfolio = self.portfolio_handler.get_portfolio(portfolio_id)
 		transactions, positions, equity_metrics = self._prepare_data(portfolio)
 		transactions = transactions[transactions.ticker == ticker]
-		return plots.signals_plot(self.price_handler.get_bars(ticker), transactions)
+		return plots.signals_plot(self.store.read_bars(ticker), transactions)
 	
 	def _to_sql(self, strategy, bck):
 

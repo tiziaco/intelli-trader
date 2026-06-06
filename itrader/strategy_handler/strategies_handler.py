@@ -2,7 +2,7 @@ from datetime import timedelta
 from queue import Queue
 from typing import Any
 
-from itrader.price_handler.data_provider import PriceHandler
+from itrader.price_handler.feed.base import BarFeed
 from itrader.strategy_handler.base import Strategy
 from itrader.events_handler.events import BarEvent, PortfolioUpdateEvent
 from itrader.outils.time_parser import check_timeframe
@@ -14,15 +14,18 @@ class StrategiesHandler(object):
 	Manage all the strategies of the trading system.
 	"""
 
-	def __init__(self, global_queue: "Queue[Any]", price_handler: PriceHandler) -> None:
+	def __init__(self, global_queue: "Queue[Any]", feed: BarFeed) -> None:
 		"""
 		Parameters
 		----------
-		events_queue: `Queue object`
+		global_queue: `Queue object`
 			The events queue of the trading system
+		feed: `BarFeed`
+			The look-ahead-safe market-data read model the strategy
+			windows are served from (D-20).
 		"""
 		self.global_queue: "Queue[Any]" = global_queue
-		self.price_handler: PriceHandler = price_handler
+		self.feed: BarFeed = feed
 		self.min_timeframe: timedelta = timedelta(weeks=100)
 		#self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
@@ -49,7 +52,10 @@ class StrategiesHandler(object):
 			# Calculate the signal for each ticker or pair traded from the strategy
 			strategy.last_event = event
 			for ticker in strategy.tickers:
-				data = self.price_handler.get_resampled_bars(event.time, ticker, strategy.timeframe, strategy.max_window)
+				# Push-based window delivery (D-20): asof comes ONLY from the
+				# event — strategies never choose the as-of time (T-06-18).
+				# Completed bars only; zero resample on this path (M5-03).
+				data = self.feed.window(ticker, strategy.timeframe, strategy.max_window, asof=event.time)
 				strategy.calculate_signal(ticker, data)
 
 	# def on_portfolio_update(self, update_event: PortfolioUpdateEvent):

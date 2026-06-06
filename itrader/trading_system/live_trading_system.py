@@ -9,7 +9,9 @@ from typing import Optional, Dict, Any, Callable
 from enum import Enum
 
 from itrader.events_handler.full_event_handler import EventHandler
-from itrader.price_handler.data_provider import PriceHandler
+from itrader.outils.time_parser import to_timedelta
+from itrader.price_handler.feed.bar_feed import BacktestBarFeed
+from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
@@ -99,12 +101,16 @@ class LiveTradingSystem:
         }
         self._stats_lock = threading.Lock()
         
-        # Initialize components
+        # Initialize components — mirrors the backtest Store+Feed wiring shape
+        # (Plan 06-05, Pitfall 8). Minimal conformance only: a real live feed
+        # (streaming Store/Feed implementations) is owned by D-live; this keeps
+        # the module importing and constructing on the same seams.
         self.global_queue = queue.Queue()
-        self.price_handler = PriceHandler(self.exchange, [], '', '')  # Empty timeframe and start_dt for live trading
-        self.universe = DynamicUniverse(self.price_handler, self.global_queue)
-        self.strategies_handler = StrategiesHandler(self.global_queue, self.price_handler)
-        self.screeners_handler = ScreenersHandler(self.global_queue, self.price_handler)
+        self.store = CsvPriceStore()
+        self.feed = BacktestBarFeed(self.store, to_timedelta('1d'))
+        self.universe = DynamicUniverse(self.feed, self.global_queue)
+        self.strategies_handler = StrategiesHandler(self.global_queue, self.feed)
+        self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
         
         # Create order storage for live trading (PostgreSQL)
@@ -145,7 +151,7 @@ class LiveTradingSystem:
                                           commission_estimator=_estimate_commission)
         self.reporting = StatisticsReporting(
             self.portfolio_handler,
-            self.price_handler
+            self.store
         )
         self.event_handler = EventHandler(
             self.strategies_handler,
@@ -197,25 +203,22 @@ class LiveTradingSystem:
     
     def _initialize_live_session(self):
         """
-        Initialize the live trading session by setting up the universe,
-        price handler symbols, and other necessary components.
+        Initialize the live trading session by setting up the universe
+        and other necessary components.
         """
         self.logger.info('Initializing live trading session')
-        
+
         try:
             # Initialize universe with strategies and screeners
             self.universe.init_universe(
                 self.strategies_handler.get_strategies_universe(),
                 self.screeners_handler.get_screeners_universe()
             )
-            
-            # Set up price handler with symbols and timeframes
-            self.price_handler.set_symbols(self.universe.get_full_universe())
-            self.price_handler.set_timeframe(
-                self.strategies_handler.min_timeframe,
-                self.screeners_handler.min_timeframe
-            )
-            
+
+            # Plan 06-05: the legacy set_symbols/set_timeframe calls died with
+            # the price handler — the Store knows its symbols (store.symbols()).
+            # Live symbol/timeframe subscription wiring is owned by D-live.
+
             self.logger.info('Live trading session initialized')
             
         except Exception as e:

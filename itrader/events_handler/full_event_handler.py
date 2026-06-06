@@ -34,8 +34,6 @@ class EventHandler(object):
 
 	Parameters
 	----------
-	price_handler : `PriceHandler`
-		The data handler instance used for all market data.
 	global_queue : `Queue`
 		The global events queue of the trading system.
 	"""

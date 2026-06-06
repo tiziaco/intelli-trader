@@ -18,8 +18,8 @@ class Strategy(ABC):
 	all subsequent (inherited) strategy objects.
 
 	The goal of a (derived) Strategy object is to generate Signal
-	objects for particular symbols based on the inputs of ticks
-	generated from a PriceHandler (derived) object.
+	objects for particular symbols based on the history windows
+	pushed from the bar feed (D-20).
 	"""
 	def __init__(self, name: str, timeframe: str, tickers: list[str], order_type: str = "market",
 			  	max_positions: int = 1, max_allocation: float = 0.80, allow_increase: bool = False,
