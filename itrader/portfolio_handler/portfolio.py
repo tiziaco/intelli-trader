@@ -454,7 +454,12 @@ class Portfolio(object):
 			'current_time': self.current_time.isoformat(),
 			'state': self.state.value,
 			'cash': self.cash,
-			'available_cash': self.cash,  # Keep backward compatibility
+			# WR-07: the reservation gate is live (Plan 05-06) — available is
+			# a real, distinct figure (total - reserved), the D-14 single
+			# trading-decision figure. Reporting total here would inflate
+			# buying power by the sum of outstanding reservations.
+			'available_cash': self.cash_manager.available_balance,
+			'reserved_cash': self.cash_manager.reserved_balance,
 			'total_market_value': self.total_market_value,
 			'total_equity': self.total_equity,
 			'n_open_positions': self.n_open_positions,
