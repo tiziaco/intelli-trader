@@ -1,5 +1,6 @@
+from decimal import Decimal
 from queue import Queue
-from typing import Any, List, Dict, Optional
+from typing import Any, Callable, List, Dict, Optional
 
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from .base import OrderBase, OrderStorage
@@ -36,7 +37,8 @@ class OrderHandler(OrderBase):
 	- Validation and state management
 	"""
 	def __init__(self, events_queue: "Queue[Any]", portfolio_handler: PortfolioReadModel,
-	             order_storage: Optional[OrderStorage] = None, market_execution: str = "immediate") -> None:
+	             order_storage: Optional[OrderStorage] = None, market_execution: str = "immediate",
+	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
 		"""
 		Parameters
 		----------
@@ -51,14 +53,18 @@ class OrderHandler(OrderBase):
 			Market order execution timing. Options:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Queue market orders for next bar execution (realistic backtesting)
+		commission_estimator: Callable[[Decimal, Decimal], Decimal], optional
+			(quantity, price) -> estimated commission Decimal, forwarded to
+			OrderManager's admission reservation gate (Plan 05-06, D-04).
+			None -> zero estimate (golden run pins fees 0).
 		"""
 		self.events_queue = events_queue
 		self.portfolio_handler = portfolio_handler
 		self.market_execution = market_execution
-		
+
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
-		
+
 		# D-18: manager owns storage — the handler forwards the injected storage
 		# to OrderManager and retains NO reference to it. Every read path
 		# delegates through the manager (facade -> manager -> storage).
@@ -66,7 +72,8 @@ class OrderHandler(OrderBase):
 			order_storage or OrderStorageFactory.create_in_memory(),
 			self.logger,
 			market_execution,
-			portfolio_handler  # Pass portfolio_handler for position-aware logic
+			portfolio_handler,  # Pass portfolio_handler for position-aware logic
+			commission_estimator=commission_estimator
 		)
 		self.order_validator = EnhancedOrderValidator(portfolio_handler)
 		

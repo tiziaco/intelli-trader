@@ -4,6 +4,7 @@ import threading
 import time
 import json
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
 from enum import Enum
 
@@ -15,6 +16,7 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
+from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.universe.dynamic import DynamicUniverse
 from itrader.reporting.statistics import StatisticsReporting
 
@@ -114,8 +116,24 @@ class LiveTradingSystem:
             self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")
             order_storage = OrderStorageFactory.create('backtest')
         
-        self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage)
+        # Execution handler constructed BEFORE the order handler so the
+        # admission gate's commission estimator can adapt the simulated
+        # exchange's fee model (Plan 05-06, D-04 — mode-agnostic wiring).
         self.execution_handler = ExecutionHandler(self.global_queue)
+
+        # Commission estimator for the admission cash-reservation gate
+        # (Plan 05-06, D-04): (quantity, price) -> Decimal adapter over the
+        # simulated exchange's fee model; fee_model read at call time.
+        simulated_exchange = self.execution_handler.exchanges.get('simulated')
+
+        def _estimate_commission(quantity: Decimal, price: Decimal) -> Decimal:
+            if not isinstance(simulated_exchange, SimulatedExchange):
+                return Decimal("0")
+            return simulated_exchange.fee_model.calculate_fee(
+                quantity, price, side="buy", order_type="market")
+
+        self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
+                                          commission_estimator=_estimate_commission)
         self.reporting = StatisticsReporting(
             self.portfolio_handler,
             self.price_handler

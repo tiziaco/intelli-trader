@@ -10,7 +10,9 @@ Tests the OrderManager's functionality including:
 """
 
 import datetime as _dt
+import uuid
 from datetime import datetime
+from decimal import Decimal
 from queue import Queue
 from unittest.mock import Mock
 
@@ -24,6 +26,7 @@ from itrader.order_handler.storage.in_memory_storage import InMemoryOrderStorage
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
 from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side
+from itrader.core.exceptions import InsufficientFundsError
 
 
 # --- OrderManager initialization -------------------------------------------
@@ -183,3 +186,197 @@ def test_refused_fill_marks_order_rejected(harness):
     assert stored.status == OrderStatus.REJECTED
     active_ids = [o.id for o in harness.storage.get_active_orders(harness.portfolio_id)]
     assert order.id not in active_ids
+
+
+# --- admission reservation gate (Plan 05-06, D-02/D-03/D-04) -----------------
+
+
+class _FakeReadModel:
+    """PortfolioReadModel-shaped fake recording reserve/release calls.
+
+    Satisfies the runtime_checkable Protocol structurally (D-16) so it can
+    stand in for PortfolioHandler at the OrderManager admission boundary.
+    """
+
+    def __init__(self, cash=Decimal("100000")):
+        self._cash = cash
+        self.reserve_calls = []
+        self.release_calls = []
+        self.fail_reserve = False
+
+    def available_cash(self, portfolio_id):
+        return self._cash
+
+    def get_position(self, portfolio_id, ticker):
+        return None
+
+    def reserve(self, portfolio_id, order_id, amount):
+        if self.fail_reserve:
+            raise InsufficientFundsError(
+                required_cash=float(amount), available_cash=float(self._cash)
+            )
+        self.reserve_calls.append((portfolio_id, order_id, amount))
+
+    def release(self, portfolio_id, order_id):
+        self.release_calls.append((portfolio_id, order_id))
+
+    def exchange_for(self, portfolio_id):
+        return "default"
+
+    def open_position_count(self, portfolio_id):
+        return 0
+
+
+def _reserve_manager(read_model, commission_estimator=None):
+    """OrderManager wired to the fake read model + its own in-memory storage."""
+    storage = InMemoryOrderStorage()
+    manager = OrderManager(
+        storage,
+        Mock(),
+        market_execution="immediate",
+        portfolio_handler=read_model,
+        commission_estimator=commission_estimator,
+    )
+    return manager, storage
+
+
+def _reserve_signal(action=Side.BUY, quantity=2.0, price=40.0,
+                    stop_loss=0.0, take_profit=0.0):
+    return SignalEvent(
+        time=_dt.datetime(2024, 1, 1), order_type=OrderType.MARKET,
+        ticker="BTCUSDT", action=action, price=price, quantity=quantity,
+        stop_loss=stop_loss, take_profit=take_profit, strategy_id=1,
+        portfolio_id=uuid.uuid4(), strategy_setting={},
+    )
+
+
+def test_buy_signal_reserves_cost_plus_estimated_commission():
+    """A BUY reserves exactly price x quantity + estimated commission (D-02)."""
+    read_model = _FakeReadModel()
+    manager, storage = _reserve_manager(
+        read_model, commission_estimator=lambda quantity, price: Decimal("1.5")
+    )
+
+    results = manager.process_signal(_reserve_signal())
+
+    assert all(r.success for r in results)
+    assert len(read_model.reserve_calls) == 1
+    _, order_id, amount = read_model.reserve_calls[0]
+    primary = storage.get_order_by_id(order_id)
+    assert primary is not None
+    assert amount == primary.price * primary.quantity + Decimal("1.5")
+    # The order WAS emitted (OperationResult carries the OrderEvent).
+    assert any(r.order_events for r in results)
+
+
+def test_buy_reserve_failure_is_audited_rejected_and_emits_nothing():
+    """Reserve failure -> stored PENDING->REJECTED audit, nothing emitted (D-02)."""
+    read_model = _FakeReadModel()
+    read_model.fail_reserve = True
+    manager, storage = _reserve_manager(read_model)
+
+    results = manager.process_signal(_reserve_signal())
+
+    assert len(results) == 1
+    assert not results[0].success
+    assert not results[0].order_events  # nothing emitted
+    rejected = storage.get_orders_by_status(OrderStatus.REJECTED)
+    assert len(rejected) == 1
+    last_change = rejected[0].get_latest_state_change()
+    assert last_change is not None
+    assert last_change.to_status == OrderStatus.REJECTED
+    assert last_change.triggered_by == "cash_reservation"
+
+
+def test_sell_signal_reserves_nothing():
+    """SELL orders never reserve cash (D-03: cash-debiting orders only)."""
+    read_model = _FakeReadModel()
+    manager, _ = _reserve_manager(read_model)
+
+    results = manager.process_signal(_reserve_signal(action=Side.SELL))
+
+    assert all(r.success for r in results)
+    assert read_model.reserve_calls == []
+
+
+def test_bracket_children_reserve_nothing():
+    """Only the cash-debiting primary reserves — SL/TP legs are exempt (D-03)."""
+    read_model = _FakeReadModel()
+    manager, storage = _reserve_manager(read_model)
+
+    results = manager.process_signal(
+        _reserve_signal(stop_loss=30.0, take_profit=55.0)
+    )
+
+    assert sum(1 for r in results if r.success) == 3  # primary + SL + TP
+    assert len(read_model.reserve_calls) == 1  # exactly one reservation
+    _, reserved_order_id, _ = read_model.reserve_calls[0]
+    primary = storage.get_order_by_id(reserved_order_id)
+    assert primary is not None
+    assert primary.parent_order_id is None  # the reserved order IS the primary
+
+
+def test_default_zero_commission_estimator_reserves_price_times_quantity():
+    """With no estimator wired, reservation == price x quantity exactly (D-04)."""
+    read_model = _FakeReadModel()
+    manager, storage = _reserve_manager(read_model)  # estimator omitted -> 0
+
+    manager.process_signal(_reserve_signal())
+
+    assert len(read_model.reserve_calls) == 1
+    _, order_id, amount = read_model.reserve_calls[0]
+    primary = storage.get_order_by_id(order_id)
+    assert amount == primary.price * primary.quantity
+
+
+# --- terminal-state reservation release (Plan 05-06, D-01/OQ2) ---------------
+
+
+def _rest_order(storage):
+    order = Order.new_stop_order(
+        time=_dt.datetime(2024, 1, 1), ticker="BTCUSDT", action="SELL",
+        price=30.0, quantity=1.0, exchange="default", strategy_id=1,
+        portfolio_id=uuid.uuid4(),
+    )
+    storage.add_order(order)
+    return order
+
+
+def _fill_for(order, status):
+    oe = OrderEvent(
+        time=_dt.datetime(2024, 1, 1), ticker=order.ticker, action=Side(order.action),
+        price=float(order.price), quantity=float(order.quantity), exchange=order.exchange,
+        strategy_id=order.strategy_id, portfolio_id=order.portfolio_id,
+        order_type=OrderType.STOP, order_id=order.id,
+    )
+    return FillEvent.new_fill(status, oe, price=oe.price, quantity=oe.quantity, commission=0.0)
+
+
+@pytest.mark.parametrize("status", ["EXECUTED", "CANCELLED", "REFUSED"])
+def test_terminal_fill_releases_reservation(status):
+    """Every terminal reconciliation releases the order's reservation (OQ2:
+    the reserver owns the release — uniform across FILLED/CANCELLED/REJECTED)."""
+    read_model = _FakeReadModel()
+    manager, storage = _reserve_manager(read_model)
+    order = _rest_order(storage)
+
+    manager.on_fill(_fill_for(order, status))
+
+    assert read_model.release_calls == [(order.portfolio_id, order.id)]
+
+
+def test_release_on_never_reserved_sell_is_silent_noop(harness):
+    """Releasing a never-reserved order (a SELL) is a silent idempotent no-op:
+    no exception, no audit noise (CashManager records nothing for the no-op)."""
+    order = harness.rest_a_stop()  # SELL stop — never reserved
+    harness.handler.on_fill(harness.fill(order, "EXECUTED"))  # must not raise
+
+    stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)
+    assert stored.status == OrderStatus.FILLED
+    portfolio = harness.ptf_handler.get_portfolio(harness.portfolio_id)
+    assert portfolio.cash_manager.reserved_balance == 0
+    release_ops = [
+        op for op in portfolio.cash_manager.get_cash_operations()
+        if op.operation_type.name == "RELEASE_RESERVATION"
+    ]
+    assert release_ops == []
