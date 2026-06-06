@@ -30,8 +30,10 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         self._pending_transactions: Dict[Any, Any] = {}
         # Transaction history (append-only) — was TransactionManager._transaction_history
         self._transaction_history: List['Transaction'] = []
-        # Reserved cash (working state) — was CashManager._reserved_cash
-        self._reserved_cash: Decimal = Decimal('0.00')
+        # Reserved cash (working state, per reference id — Plan 05-03) —
+        # was a single aggregate Decimal; now a flat {reference_id: amount}
+        # dict mirroring order storage's _by_id shape. Full precision (OQ4).
+        self._reservations: Dict[str, Decimal] = {}
         # Cash operations (append-only audit) — was CashManager._cash_operations
         self._cash_operations: List[Any] = []
         # Metrics snapshots (append-only history) — was MetricsManager._snapshots
@@ -77,10 +79,13 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
     # -- Cash ----------------------------------------------------------------
 
     def get_reserved_cash(self) -> Decimal:
-        return self._reserved_cash
+        return sum(self._reservations.values(), Decimal("0.00"))
 
-    def set_reserved_cash(self, amount: Decimal) -> None:
-        self._reserved_cash = amount
+    def add_reservation(self, reference_id: str, amount: Decimal) -> None:
+        self._reservations[reference_id] = amount
+
+    def pop_reservation(self, reference_id: str) -> Optional[Decimal]:
+        return self._reservations.pop(reference_id, None)
 
     def add_cash_operation(self, operation: Any) -> None:
         self._cash_operations.append(operation)

@@ -9,6 +9,7 @@ Live cross-thread reads are a D-live design item.
 import uuid
 from queue import Queue
 from datetime import datetime, UTC
+from decimal import Decimal
 from typing import Dict, Optional, Any, List, Generator, Union
 from contextlib import contextmanager
 
@@ -18,7 +19,8 @@ from itrader.core.exceptions import (
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
 from itrader.core.enums import PortfolioState, TransactionType, FillStatus, Side
-from itrader.core.ids import PortfolioId, TransactionId
+from itrader.core.ids import OrderId, PortfolioId, TransactionId
+from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
@@ -212,7 +214,51 @@ class PortfolioHandler:
     def get_portfolio_count(self) -> int:
         """Get total portfolio count."""
         return len(self._portfolios)
-    
+
+    # PortfolioReadModel — structural Protocol implementation (D-16, Plan 05-03)
+    #
+    # The order domain reads portfolio state through these six members ONLY
+    # (itrader/core/portfolio_read_model.py). No inheritance, no adapter:
+    # PortfolioHandler satisfies the runtime_checkable Protocol structurally.
+    # D-15: live Position objects never cross the boundary — get_position
+    # returns a frozen PositionView snapshot (None when flat).
+
+    def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return the portfolio's buying power (balance minus reservations, D-14)."""
+        return self.get_portfolio(portfolio_id).cash_manager.available_balance
+
+    def get_position(self, portfolio_id: PortfolioId, ticker: str) -> Optional[PositionView]:
+        """Return a frozen snapshot of the open position, or None when flat (D-15)."""
+        position = self.get_portfolio(portfolio_id).get_open_position(ticker)
+        if position is None:
+            return None
+        return PositionView(
+            ticker=position.ticker,
+            side=position.side,
+            net_quantity=position.net_quantity,
+            avg_price=position.avg_price,
+        )
+
+    def reserve(self, portfolio_id: PortfolioId, order_id: OrderId, amount: Decimal) -> None:
+        """Reserve cash for a pending order (per-reference, full precision — OQ4)."""
+        self.get_portfolio(portfolio_id).cash_manager.reserve_cash(
+            amount, "order cash reservation", str(order_id)
+        )
+
+    def release(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        """Release the cash reservation keyed by an order id (idempotent)."""
+        self.get_portfolio(portfolio_id).cash_manager.release_reservation(str(order_id))
+
+    def exchange_for(self, portfolio_id: PortfolioId) -> str:
+        """Return the exchange the portfolio trades on (admission metadata, OQ1)."""
+        exchange: str = self.get_portfolio(portfolio_id).exchange
+        return exchange
+
+    def open_position_count(self, portfolio_id: PortfolioId) -> int:
+        """Return the number of open positions (position-limit check, OQ1)."""
+        count: int = self.get_portfolio(portfolio_id).n_open_positions
+        return count
+
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> bool:
         """Process fill event for the appropriate portfolio."""

@@ -323,101 +323,88 @@ class CashManager:
 
         return True
 
-    def reserve_cash(self, amount: float | Decimal, description: str, reference_id: str) -> bool:
-        """
-        Reserve cash for pending orders.
-        
+    def reserve_cash(self, amount: float | Decimal, description: str, reference_id: str) -> None:
+        """Reserve cash for a pending order, keyed by reference id (Plan 05-03).
+
+        Reservations are tracked per ``reference_id`` at FULL precision (OQ4:
+        the released amount must equal the reserved amount exactly, so this
+        deliberately skips ``_validate_and_convert_amount``'s 2dp quantize).
+        The audit entry records balance_before == balance_after — only the
+        reservation changes, never the ledger balance.
+
         Args:
-            amount: Amount to reserve
+            amount: Amount to reserve (full precision, no quantization)
             description: Description of the reservation
-            reference_id: Reference ID for tracking
-            
-        Returns:
-            bool: True if successful
-            
+            reference_id: Reference ID (e.g. order id) keying the reservation
+
         Raises:
-            InvalidTransactionError: If amount is invalid
-            InsufficientFundsError: If insufficient available funds
+            InvalidTransactionError: If amount is not positive
+            InsufficientFundsError: If amount exceeds available balance
+                (nothing is reserved in that case)
         """
-        amount_decimal = self._validate_and_convert_amount(amount, "reservation")
-        
+        amount_decimal = to_money(amount)
+        if amount_decimal <= 0:
+            raise InvalidTransactionError(
+                "Amount for reservation must be positive",
+                {"amount": float(amount_decimal)}
+            )
+
         available = self.available_balance
-            
+
         if available < amount_decimal:
             raise InsufficientFundsError(
                 required_cash=float(amount_decimal),
                 available_cash=float(available)
             )
-            
-        old_reserved = self._storage.get_reserved_cash()
-        new_reserved = old_reserved + amount_decimal
-        self._storage.set_reserved_cash(new_reserved)
 
-        # Record operation
-        operation = self._create_operation(
+        self._storage.add_reservation(reference_id, amount_decimal)
+
+        # Record operation (balance unchanged — reservation only)
+        self._create_operation(
             CashOperationType.RESERVATION,
             amount_decimal,
             description,
             reference_id,
             self._balance,
-            self._balance  # Balance doesn't change, only reservation
+            self._balance
         )
 
         self.logger.debug("Cash reserved",
             amount=str(amount_decimal),
-            old_reserved=str(old_reserved),
-            new_reserved=str(new_reserved),
+            reserved_total=str(self._storage.get_reserved_cash()),
             reference_id=reference_id
         )
-            
-        return True
-    
-    def release_cash_reservation(self, amount: float | Decimal, description: str, reference_id: str) -> bool:
-        """
-        Release reserved cash.
-        
+
+    def release_reservation(self, reference_id: str) -> None:
+        """Release the cash reservation keyed by a reference id (Plan 05-03).
+
+        Idempotent: releasing an unknown or already-released reference is a
+        silent no-op — no exception, no audit entry. When a reservation
+        existed, the exact reserved amount (full precision, OQ4) is released
+        and a RELEASE_RESERVATION audit entry is recorded.
+
         Args:
-            amount: Amount to release
-            description: Description of the release
-            reference_id: Reference ID for tracking
-            
-        Returns:
-            bool: True if successful
-            
-        Raises:
-            InvalidTransactionError: If amount is invalid or exceeds reserved amount
+            reference_id: Reference ID the reservation was keyed by
         """
-        amount_decimal = self._validate_and_convert_amount(amount, "release")
-        
-        reserved = self._storage.get_reserved_cash()
-        if amount_decimal > reserved:
-            raise InvalidTransactionError(
-                f"Cannot release ${amount_decimal}, only ${reserved} is reserved",
-                {"amount": float(amount_decimal), "reserved": float(reserved)}
-            )
+        released = self._storage.pop_reservation(reference_id)
+        if released is None:
+            return
 
-        old_reserved = reserved
-        new_reserved = reserved - amount_decimal
-        self._storage.set_reserved_cash(new_reserved)
-
-        # Record operation
-        operation = self._create_operation(
+        # Record operation (balance unchanged — reservation only)
+        self._create_operation(
             CashOperationType.RELEASE_RESERVATION,
-            amount_decimal,
-            description,
+            released,
+            "Cash reservation released",
             reference_id,
             self._balance,
-            self._balance  # Balance doesn't change, only reservation
+            self._balance
         )
 
         self.logger.debug("Cash reservation released",
-            amount=str(amount_decimal),
-            old_reserved=str(old_reserved),
-            new_reserved=str(new_reserved),
+            amount=str(released),
+            reserved_total=str(self._storage.get_reserved_cash()),
             reference_id=reference_id
         )
-            
-        return True
     
     def get_balance_info(self) -> Dict[str, float]:
         """Get comprehensive balance information."""

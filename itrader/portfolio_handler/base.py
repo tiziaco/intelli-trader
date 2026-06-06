@@ -249,23 +249,49 @@ class PortfolioStateStorage(ABC):
 
     @abstractmethod
     def get_reserved_cash(self) -> Decimal:
-        """Return the currently reserved cash amount.
+        """Return the total currently reserved cash amount.
+
+        Plan 05-03: reservations are tracked per reference id (flat
+        ``dict[str, Decimal]`` — mirrors the order storage's flat ``_by_id``
+        shape); this returns their sum.
 
         Returns
         -------
         Decimal
-            The reserved cash balance.
+            The sum of all per-reference reservations.
         """
         pass
 
     @abstractmethod
-    def set_reserved_cash(self, amount: Decimal) -> None:
-        """Set the reserved cash amount.
+    def add_reservation(self, reference_id: str, amount: Decimal) -> None:
+        """Store (insert or replace) a cash reservation keyed by reference id.
+
+        Amounts are stored at FULL precision (OQ4): the released amount must
+        equal the reserved amount exactly, so no quantization happens here.
 
         Parameters
         ----------
+        reference_id : str
+            The reference (e.g. order id) the reservation is keyed by.
         amount : Decimal
-            The new reserved cash balance.
+            The reserved amount (full precision).
+        """
+        pass
+
+    @abstractmethod
+    def pop_reservation(self, reference_id: str) -> Optional[Decimal]:
+        """Remove and return the reservation for a reference id.
+
+        Parameters
+        ----------
+        reference_id : str
+            The reference whose reservation is removed.
+
+        Returns
+        -------
+        Optional[Decimal]
+            The reserved amount if a reservation existed, else ``None``
+            (no error when absent — release is idempotent).
         """
         pass
 

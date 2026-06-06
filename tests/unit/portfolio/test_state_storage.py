@@ -99,12 +99,17 @@ def test_transactions_round_trip():
 
 
 def test_cash_ops_and_reserved_round_trip():
-    """M2-08: reserved cash (working state) + cash operations (history) round-trip."""
+    """M2-08/05-03: per-reference reservations + cash operations round-trip."""
     backend = InMemoryPortfolioStateStorage()
 
     assert backend.get_reserved_cash() == Decimal("0.00")
-    backend.set_reserved_cash(Decimal("123.45"))
-    assert backend.get_reserved_cash() == Decimal("123.45")
+    backend.add_reservation("ref-a", Decimal("123.45"))
+    backend.add_reservation("ref-b", Decimal("0.55"))
+    assert backend.get_reserved_cash() == Decimal("124.00")
+
+    assert backend.pop_reservation("ref-a") == Decimal("123.45")
+    assert backend.pop_reservation("ref-a") is None  # idempotent
+    assert backend.get_reserved_cash() == Decimal("0.55")
 
     op = object()
     backend.add_cash_operation(op)
