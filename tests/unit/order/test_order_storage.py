@@ -20,10 +20,10 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 def store():
     """In-memory storage seeded with three native-UUID orders.
 
-    Storage now keys by native ``uuid.UUID`` (D-14): order/portfolio ids are stored
-    as their native UUID, and ``get_order_by_id`` resolves cross-portfolio lookups
-    via the flat ``_by_id`` index (PERF2). These fixtures use real ``uuid.UUID`` ids
-    and assert native-UUID keys.
+    Storage keys by native ``uuid.UUID`` (D-14) and holds a SINGLE flat
+    ``{order_id: order}`` dict (``_by_id``, D-20/PERF3) — no nested
+    per-portfolio dicts exist. "Active" is purely an entity predicate
+    (``order.is_active``); queries scan-and-filter the flat dict.
     """
     storage = InMemoryOrderStorage()
 
@@ -65,6 +65,62 @@ def test_add_order(store):
     assert store.pid1 in pending_orders  # portfolio_id as native UUID
     assert store.oid1 in pending_orders[store.pid1]  # order_id as native UUID
     assert pending_orders[store.pid1][store.oid1] == store.order1
+
+
+def test_flat_dict_is_sole_container(store):
+    """D-20/PERF3: the flat ``_by_id`` dict is the ONLY instance container.
+
+    The nested per-portfolio dicts (active / all / archived) are deleted —
+    M4-06 scan elimination. Order classes are predicates on the entity, not
+    separate containers.
+    """
+    storage = store.storage
+    assert not hasattr(storage, "active_orders")
+    assert not hasattr(storage, "all_orders")
+    assert not hasattr(storage, "archived_orders")
+    storage.add_order(store.order1)
+    assert storage._by_id == {store.oid1: store.order1}
+
+
+def test_filled_order_leaves_active_queries_via_predicate(store):
+    """A status change ALONE moves an order out of active queries (D-20).
+
+    No ``deactivate_order``/``update_order`` call is needed: "active" is a
+    predicate over ``order.is_active`` evaluated at query time, not a
+    separate container membership.
+    """
+    store.storage.add_order(store.order1)
+    store.storage.add_order(store.order2)
+
+    # Fill order1 in place — entity status transitions PENDING -> FILLED.
+    assert store.order1.add_fill(
+        store.order1.quantity, store.order1.price, store.order1.time
+    )
+    assert store.order1.status == OrderStatus.FILLED
+
+    # Active queries exclude it purely via the predicate.
+    active = store.storage.get_active_orders(store.pid1)
+    assert [o.id for o in active] == [store.oid2]
+    pending = store.storage.get_pending_orders(store.pid1)
+    assert store.oid1 not in pending[store.pid1]
+    assert store.oid2 in pending[store.pid1]
+
+
+def test_history_queries_return_filled_orders(store):
+    """Filled (inactive) orders stay queryable from the flat dict (T-05-02).
+
+    "All orders" audit semantics are preserved: a FILLED order leaves active
+    queries but remains retrievable by id, status, and ticker.
+    """
+    store.storage.add_order(store.order1)
+    assert store.order1.add_fill(
+        store.order1.quantity, store.order1.price, store.order1.time
+    )
+
+    assert store.storage.get_order_by_id(store.oid1) == store.order1
+    assert store.storage.get_orders_by_status(OrderStatus.FILLED, store.pid1) == [store.order1]
+    assert store.storage.get_orders_by_ticker("BTCUSDT", store.pid1) == [store.order1]
+    assert store.storage.get_active_orders(store.pid1) == []
 
 
 def test_add_multiple_orders(store):
@@ -193,8 +249,9 @@ def test_add_rejected_order_persists_without_entering_active_book(store):
     """A REJECTED order persisted via add_order is auditable but never active (D-13).
 
     Rejected signals now leave a REJECTED order in storage: it must appear in
-    the audit surface (all_orders / by-status / by-id) while the active-book
-    counts — what get_pending_orders/get_active_orders report — stay untouched.
+    the audit surface (by-status / by-id queries over the flat dict) while the
+    active queries — get_pending_orders/get_active_orders — exclude it via the
+    ``is_active`` predicate.
     """
     rejected = Order(
         time=datetime.now(UTC), type=OrderType.MARKET, status=OrderStatus.PENDING,
