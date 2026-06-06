@@ -77,6 +77,14 @@ class Strategy(ABC):
 		if self.last_event is None:
 			return
 		last_close = self.last_event.get_last_close(ticker)
+		if last_close is None:
+			# WR-12: the ticker is absent from the last bar (sparse universe,
+			# data gap) — no price means no signal. Without this guard,
+			# to_money(None) raises InvalidOperation inside the strategy
+			# callback (the matching engine guards this same Optional).
+			logger.warning('No last close for %s — signal skipped (%s %s)',
+						ticker, self.strategy_id, action)
+			return
 		for portfolio_id in self.subscribed_portfolios:
 			# quantity is omitted (defaults to None, D-10): the order/risk layer
 			# sizes the signal — the 0 sentinel is gone.
