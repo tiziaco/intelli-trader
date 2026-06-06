@@ -1,7 +1,7 @@
 from typing import Any, Dict, Protocol, runtime_checkable
 
 from itrader.events_handler.events import OrderEvent
-from ..result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
+from ..result_objects import ConnectionResult, HealthStatus, ValidationResult
 
 
 @runtime_checkable
@@ -32,9 +32,10 @@ class AbstractExchange(Protocol):
 		"""
 		...
 
-	def execute_order(self, event: OrderEvent) -> ExecutionResult:
+	def execute_order(self, event: OrderEvent) -> None:
 		"""
-		Execute an order and return detailed execution result.
+		Execute an order; FillEvents on the global queue are the only
+		execution output (D-21) — no synchronous result is returned.
 		"""
 		...
 

@@ -7,72 +7,9 @@ following the iTrader system's established patterns for data structures.
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
 from typing import Optional, Dict, Any
 
-from itrader.core.enums.execution import ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus
-
-
-@dataclass
-class ExecutionResult:
-    """
-    Result of order execution with comprehensive details.
-    
-    Provides structured information about the execution attempt,
-    including success status, execution details, and error information.
-    """
-    success: bool
-    status: ExecutionStatus
-    
-    # Order identification
-    order_id: Optional[str] = None
-    exchange_order_id: Optional[str] = None
-    
-    # Execution details
-    executed_price: Optional[float] = None
-    executed_quantity: Optional[float] = None
-    remaining_quantity: Optional[float] = None
-    # M2a money boundary: commission is the Decimal returned by the fee model.
-    commission: Optional[Decimal] = None
-    execution_time: Optional[datetime] = None
-    
-    # Error information
-    error_code: Optional[ExecutionErrorCode] = None
-    error_message: Optional[str] = None
-    
-    # Additional metadata
-    metadata: Optional[Dict[str, Any]] = None
-    
-    @property
-    def is_fully_filled(self) -> bool:
-        """Check if order was completely filled."""
-        return (self.remaining_quantity is not None and 
-                self.remaining_quantity == 0.0 and 
-                self.executed_quantity is not None and 
-                self.executed_quantity > 0.0)
-    
-    @property
-    def is_partially_filled(self) -> bool:
-        """Check if order was partially filled."""
-        return (self.executed_quantity is not None and 
-                self.executed_quantity > 0.0 and 
-                self.remaining_quantity is not None and 
-                self.remaining_quantity > 0.0)
-    
-    @property
-    def total_value(self) -> Optional[float]:
-        """Calculate total value of executed trade."""
-        if self.executed_price is not None and self.executed_quantity is not None:
-            return self.executed_price * self.executed_quantity
-        return None
-    
-    @property
-    def net_value(self) -> Optional[float]:
-        """Calculate net value after commission."""
-        total = self.total_value
-        if total is not None and self.commission is not None:
-            return total - float(self.commission)
-        return total
+from itrader.core.enums.execution import ExecutionErrorCode, ExchangeConnectionStatus
 
 
 @dataclass
