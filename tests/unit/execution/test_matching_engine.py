@@ -420,3 +420,96 @@ def test_two_independent_brackets_both_resolve(engine, make_bar):
     assert len(cancels) == 2
     assert {f.order_event.order_id for f in fills} == {22, 31}    # A's TP, B's SL
     assert {c.order_event.order_id for c in cancels} == {21, 32}  # A's SL, B's TP
+
+
+# --- CR-01 parent-filled gate -------------------------------------------------
+# A bracket child (SL/TP) whose parent entry order STILL RESTS in the book is
+# dormant: it cannot fill and cannot OCO-cancel its sibling. Only once the
+# parent leaves the book (filled this bar in pass 1, filled/cancelled on an
+# earlier bar, or never rested) do the children become eligible — same-bar
+# market-parent semantics and children-only-book semantics are unchanged.
+
+
+def test_limit_parent_resting_shields_children(engine, make_bar):
+    # Defect lock (CR-01, limit entry): a BUY-LIMIT entry at 95 never touches
+    # (low 98 > 95) while the bar rallies through the TP zone (high 112 >= 110).
+    # Pre-fix the TP filled — opening a short from flat — and the SL was
+    # OCO-cancelled. Post-fix the whole bracket stays resting.
+    parent = make_order_event(OrderType.LIMIT, "BUY", 95.0, order_id=1)
+    sl = make_order_event(OrderType.STOP, "SELL", 90.0, order_id=2, parent_order_id=1)
+    tp = make_order_event(OrderType.LIMIT, "SELL", 110.0, order_id=3, parent_order_id=1)
+    for order in (parent, sl, tp):
+        engine.submit(order)
+    fills, cancels = engine.on_bar(make_bar(open_=100, high=112, low=98, close=111))
+    assert fills == []
+    assert cancels == []
+    for order_id in (1, 2, 3):
+        assert engine.has_order(order_id)
+
+
+def test_limit_parent_fill_same_bar_unlocks_children(engine, make_bar):
+    # The entry touches this bar (low 94 <= 95 -> in-bar touch fills at the
+    # limit 95) AND the TP zone is pierced (high 112 >= 110): the parent fills
+    # in pass 1, leaving the book, so the TP is eligible against the SAME bar.
+    # Parent fill precedes the child fill; the SL sibling is OCO-cancelled.
+    parent = make_order_event(OrderType.LIMIT, "BUY", 95.0, order_id=1)
+    sl = make_order_event(OrderType.STOP, "SELL", 90.0, order_id=2, parent_order_id=1)
+    tp = make_order_event(OrderType.LIMIT, "SELL", 110.0, order_id=3, parent_order_id=1)
+    for order in (parent, sl, tp):
+        engine.submit(order)
+    fills, cancels = engine.on_bar(make_bar(open_=100, high=112, low=94, close=105))
+    assert [f.order_event.order_id for f in fills] == [1, 3]   # parent first
+    assert fills[0].fill_price == Decimal("95")                # entry at the limit
+    assert fills[1].fill_price == Decimal("110")               # TP at the limit
+    assert [c.order_event.order_id for c in cancels] == [2]    # SL OCO-cancelled
+    for order_id in (1, 2, 3):
+        assert not engine.has_order(order_id)
+
+
+def test_children_dormant_until_parent_triggers_then_work_later_bar(engine, make_bar):
+    # Multi-bar lifecycle: children stay dormant across bars while the parent
+    # rests; once the parent fills, the children work on subsequent bars.
+    parent = make_order_event(OrderType.LIMIT, "BUY", 95.0, order_id=1)
+    sl = make_order_event(OrderType.STOP, "SELL", 90.0, order_id=2, parent_order_id=1)
+    tp = make_order_event(OrderType.LIMIT, "SELL", 110.0, order_id=3, parent_order_id=1)
+    for order in (parent, sl, tp):
+        engine.submit(order)
+    # Bar A: no entry touch (low 96 > 95) — nothing fills, nothing cancels.
+    fills, cancels = engine.on_bar(make_bar(open_=100, high=108, low=96, close=104))
+    assert fills == []
+    assert cancels == []
+    for order_id in (1, 2, 3):
+        assert engine.has_order(order_id)
+    # Bar B: entry touches (low 94 <= 95) -> parent fills at the limit 95;
+    # children do not trigger (high 99 < 110, low 94 > 90) and keep resting.
+    fills, cancels = engine.on_bar(make_bar(open_=96, high=99, low=94, close=98))
+    assert [f.order_event.order_id for f in fills] == [1]
+    assert fills[0].fill_price == Decimal("95")
+    assert cancels == []
+    assert not engine.has_order(1)
+    assert engine.has_order(2)
+    assert engine.has_order(3)
+    # Bar C: TP triggers (high 111 >= 110) — fills at the limit; SL cancelled.
+    fills, cancels = engine.on_bar(make_bar(open_=100, high=111, low=99, close=110))
+    assert [f.order_event.order_id for f in fills] == [3]
+    assert fills[0].fill_price == Decimal("110")
+    assert [c.order_event.order_id for c in cancels] == [2]
+    assert not engine.has_order(2)
+    assert not engine.has_order(3)
+
+
+def test_stop_parent_resting_shields_children(engine, make_bar):
+    # Defect lock (CR-01, stop entry): a BUY-STOP entry at 105 never triggers
+    # (high 103 < 105) while the bar pierces the SL zone (low 88 <= 90).
+    # Pre-fix the SL filled — opening a short from flat — and OCO-cancelled
+    # the TP. Post-fix the whole bracket stays resting.
+    parent = make_order_event(OrderType.STOP, "BUY", 105.0, order_id=1)
+    sl = make_order_event(OrderType.STOP, "SELL", 90.0, order_id=2, parent_order_id=1)
+    tp = make_order_event(OrderType.LIMIT, "SELL", 120.0, order_id=3, parent_order_id=1)
+    for order in (parent, sl, tp):
+        engine.submit(order)
+    fills, cancels = engine.on_bar(make_bar(open_=100, high=103, low=88, close=92))
+    assert fills == []
+    assert cancels == []
+    for order_id in (1, 2, 3):
+        assert engine.has_order(order_id)

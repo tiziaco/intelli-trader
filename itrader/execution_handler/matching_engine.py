@@ -11,13 +11,19 @@ in the book and fills unconditionally at the OPEN of the next bar it sees
 (stamped T+1tf) — the backtest never trades on information it could not have
 had. There is no immediate-execution path.
 
-Same-bar bracket rule (RESEARCH Open Question 1, accepted): a parent market
-order fills at bar N+1's open, and its resting SL/TP children MAY trigger on
-that SAME bar — entry at the open, children evaluated against the bar's
-high/low (real-exchange semantics, matched by both reference engines). The
-parent's fill is emitted BEFORE any child fill within one ``on_bar`` (fills
-are ordered parents-before-children), and the existing STOP-beats-LIMIT
-sibling priority arbitrates a same-bar double trigger.
+Same-bar bracket rule (RESEARCH Open Question 1, accepted) + parent-filled
+gate (CR-01): bracket children are DORMANT while their parent entry order
+still rests in the book — a child whose parent never triggered can neither
+fill nor OCO-cancel its sibling (no position exists to protect). A parent
+that fills THIS bar (market, limit, or stop entry) leaves the book in pass 1
+and thereby unlocks its children against this SAME bar's high/low — entry at
+the parent's fill price, children evaluated against the bar (real-exchange
+semantics, matched by both reference engines). A parent that is NOT in the
+book (never rested, or filled/cancelled on an earlier bar) does not gate:
+children-only books remain evaluable. The parent's fill is emitted BEFORE
+any child fill within one ``on_bar`` (pass-1 fills precede pass-2 fills),
+and the existing STOP-beats-LIMIT sibling priority arbitrates a same-bar
+double trigger.
 
 Last-bar edge (bar-timing contract rule 7): an order decided on the FINAL
 bar of the dataset never fills — no next bar exists, so it simply remains
@@ -177,25 +183,37 @@ class MatchingEngine:
 
     def on_bar(self, bar: BarEvent) -> Tuple[List[FillDecision], List[CancelDecision]]:
         """
-        Evaluate all resting orders against `bar`.
+        Evaluate all resting orders against `bar` in two passes.
 
         - Candidates are orders whose trigger price is reached this bar;
           resting MARKET orders fill unconditionally at the bar's open
           (next-bar-open convention, D-01/D-13).
+        - Pass 1 — parents/standalone (``parent_order_id is None``): each
+          fills independently (no bracket arbitration) and is removed from
+          the book BEFORE pass 2 runs.
+        - Pass 2 — bracket children: a child is eligible only if its
+          ``parent_order_id`` no longer keys the book (parent filled in
+          pass 1 this bar, filled/cancelled on an earlier bar, or never
+          rested). A child whose parent STILL RESTS is dormant — not a
+          candidate, cannot fill, cannot trigger OCO cancels (CR-01
+          parent-filled gate).
         - For bracket siblings (same non-None parent_order_id), at most one
           fills per bar; if both a STOP and a LIMIT are candidates, the STOP
           wins (pessimistic same-bar priority).
         - When a bracket leg fills, all other resting orders in that bracket
           are cancelled (OCO), even if they did not trigger this bar.
-        - Same-bar bracket rule: a parent market order filling at this bar's
-          open does NOT shield its children — they are evaluated against the
-          same bar's high/low and may fill on the bar that filled their
-          parent. The returned fills are ordered parents-before-children so
-          the entry settles before the protective exit.
+        - Same-bar bracket rule: a parent filling THIS bar (market, limit,
+          or stop entry) does NOT shield its children — having left the book
+          in pass 1, they are evaluated against the same bar's high/low and
+          may fill on the bar that filled their parent. Pass-1 fills precede
+          pass-2 fills in the returned list, so the entry settles before the
+          protective exit (parents-before-children contract).
         """
-        # 1. Collect candidate fills (price reached).
-        candidates: dict[OrderId, Decimal] = {}
+        # --- Pass 1: parents/standalone (parent_order_id is None) ---------
+        fills: List[FillDecision] = []
         for order in list(self._resting.values()):
+            if order.parent_order_id is not None:
+                continue                            # children belong to pass 2
             try:
                 price = self._evaluate(order, bar)
             except (TypeError, ValueError, KeyError):
@@ -204,28 +222,52 @@ class MatchingEngine:
                 # (AttributeError, etc.) are NOT swallowed — they propagate.
                 continue
             if price is not None and order.order_id is not None:
+                fills.append(FillDecision(
+                    order_event=order,
+                    fill_price=price,
+                    reason=self._fill_reason(order),
+                ))
+                # Leaving the book NOW is what unlocks this parent's bracket
+                # children for pass 2 on this same bar (CR-01).
+                self._resting.pop(order.order_id, None)
+
+        # --- Pass 2: bracket children whose parent has left the book ------
+        # 1. Collect candidate fills (price reached AND parent not resting).
+        candidates: dict[OrderId, Decimal] = {}
+        for order in list(self._resting.values()):
+            if order.parent_order_id is None:
+                continue                            # parents already handled
+            if order.parent_order_id in self._resting:
+                # CR-01 parent-filled gate: the parent entry still rests, so
+                # no position exists to protect — the child is dormant.
+                continue
+            try:
+                price = self._evaluate(order, bar)
+            except (TypeError, ValueError, KeyError):
+                continue                            # same malformed-order semantics
+            if price is not None and order.order_id is not None:
                 candidates[order.order_id] = price
 
         if not candidates:
-            return [], []
+            return fills, []
 
-        # 2. Resolve, per bracket, which single order fills.
+        # 2. Resolve, per bracket, which single child fills.
         chosen: dict[OrderId, Decimal] = {}   # order_id -> fill_price
         seen_brackets = set()
         for order_id, price in candidates.items():
             order = self._resting[order_id]
             bracket = order.parent_order_id
             if bracket is None:
-                chosen[order_id] = price            # standalone, fills independently
-                continue
+                continue                            # unreachable: pass-2 candidates are children
             if bracket in seen_brackets:
                 continue                            # already chose a leg for this bracket
             seen_brackets.add(bracket)
             winner_id = self._pick_bracket_winner(bracket, candidates)
             chosen[winner_id] = candidates[winner_id]
 
-        # 3. Build fills and OCO cancels.
-        fills: List[FillDecision] = []
+        # 3. Build child fills and OCO cancels. Appending to the pass-1 list
+        # preserves the parents-before-children fill ordering by construction
+        # (the former post-hoc stable sort is no longer needed).
         cancels: List[CancelDecision] = []
         cancelled_ids: set[Optional[OrderId]] = set()
 
@@ -237,29 +279,20 @@ class MatchingEngine:
                 reason=self._fill_reason(order),
             ))
             bracket = order.parent_order_id
-            if bracket is not None:
-                # O(n) sibling scan per filled bracket; negligible at backtest
-                # scale (< ~100 resting orders per symbol). Pre-index by
-                # parent_order_id if the book ever grows to thousands.
-                for sibling in list(self._resting.values()):
-                    if (sibling.parent_order_id == bracket
-                            and sibling.order_id != order_id
-                            and sibling.order_id not in cancelled_ids):
-                        cancels.append(CancelDecision(sibling, "OCO - sibling filled"))
-                        cancelled_ids.add(sibling.order_id)
+            # O(n) sibling scan per filled bracket; negligible at backtest
+            # scale (< ~100 resting orders per symbol). Pre-index by
+            # parent_order_id if the book ever grows to thousands.
+            for sibling in list(self._resting.values()):
+                if (sibling.parent_order_id == bracket
+                        and sibling.order_id != order_id
+                        and sibling.order_id not in cancelled_ids):
+                    cancels.append(CancelDecision(sibling, "OCO - sibling filled"))
+                    cancelled_ids.add(sibling.order_id)
 
-        # 3b. Parent-before-child fill ordering (Open Question 1): within one
-        # on_bar a bracket parent's market fill must be processed before any
-        # same-bar child trigger, so the portfolio opens the position before
-        # the protective exit settles. The stable sort keys standalone/parent
-        # orders (parent_order_id is None) ahead of bracket children while
-        # preserving book-insertion order within each group.
-        fills.sort(key=lambda f: f.order_event.parent_order_id is not None)
-
-        # 4. Remove filled + cancelled orders from the book.
-        for fill in fills:
-            if fill.order_event.order_id is not None:
-                self._resting.pop(fill.order_event.order_id, None)
+        # 4. Remove filled + cancelled children from the book (pass-1 fills
+        # were already popped as they filled).
+        for order_id in chosen:
+            self._resting.pop(order_id, None)
         for cancel in cancels:
             if cancel.order_event.order_id is not None:
                 self._resting.pop(cancel.order_event.order_id, None)
