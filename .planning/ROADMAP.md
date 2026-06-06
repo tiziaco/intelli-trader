@@ -172,7 +172,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 06-05-PLAN.md — Store+Feed rewiring + PriceHandler deletion + push-based strategy windows (inert, M5-03/M5-05)
+- [x] 06-05-PLAN.md — Store+Feed rewiring + PriceHandler deletion + push-based strategy windows (inert, M5-03/M5-05)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -217,6 +217,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. M2b — Config, Types, Storage Seam & Oracle Re-Freeze | 9/9 | Complete   | 2026-06-05 |
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
-| 6. M5a — Backtest Validity, Fills & Data Pipeline | 4/6 | In Progress|  |
+| 6. M5a — Backtest Validity, Fills & Data Pipeline | 5/6 | In Progress|  |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/TBD | Not started | - |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
