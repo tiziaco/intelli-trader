@@ -3,8 +3,6 @@ Test suite for CashManager class.
 Tests cash operations, precision, thread safety, and validation.
 """
 
-import threading
-import time
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -273,37 +271,17 @@ def test_balance_consistency_validation(cm):
     cm._storage.pop_reservation("CORRUPT")
 
 
-def test_concurrent_operations(cm):
-    """Test thread safety with concurrent operations."""
+def test_interleaved_operations_sequential_single_writer(cm):
+    """WR-11: the D-19 single-writer contract deliberately removed the
+    CashManager locks — ALL mutations happen on the engine thread. The old
+    multi-threaded variant of this test asserted a thread-safety property the
+    code intentionally no longer provides (a lost-update race). The same
+    operation mix, run sequentially on one writer, must be exact."""
     results = []
-    errors = []
-
-    def deposit_thread(thread_id):
-        try:
-            results.append(cm.deposit(100.0, f"Concurrent deposit {thread_id}"))
-        except Exception as e:
-            errors.append(e)
-
-    def withdraw_thread(thread_id):
-        try:
-            results.append(cm.withdraw(50.0, f"Concurrent withdrawal {thread_id}"))
-        except Exception as e:
-            errors.append(e)
-
-    # Start multiple threads
-    threads = []
     for i in range(5):
-        dep_thread = threading.Thread(target=deposit_thread, args=(i,))
-        with_thread = threading.Thread(target=withdraw_thread, args=(i,))
-        threads.extend([dep_thread, with_thread])
+        results.append(cm.deposit(100.0, f"Sequential deposit {i}"))
+        results.append(cm.withdraw(50.0, f"Sequential withdrawal {i}"))
 
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    # Check results
-    assert len(errors) == 0, f"Concurrent operation errors: {errors}"
     assert len(results) == 10
     assert all(results)
 
@@ -314,35 +292,16 @@ def test_concurrent_operations(cm):
     assert cm.balance == Decimal("100250.00")
 
 
-def test_concurrent_reservation_operations(cm):
-    """Test thread safety with concurrent reservation operations."""
-    results = []
-    errors = []
-
-    def reserve_release_thread(thread_id):
-        try:
-            cm.reserve_cash(1000.0, f"Reservation {thread_id}", f"ORDER_{thread_id}")
-            # Small delay to increase chance of race conditions
-            time.sleep(0.01)
-            cm.release_reservation(f"ORDER_{thread_id}")
-            results.append(True)
-        except Exception as e:
-            errors.append(e)
-
-    # Start multiple threads
-    threads = []
+def test_interleaved_reservation_operations_sequential_single_writer(cm):
+    """WR-11: reservation churn under the D-19 single-writer contract —
+    overlapping reserve/release cycles run sequentially leave no residue."""
+    # Overlap the reservations (all reserved before any release) to exercise
+    # the multi-key reservation accounting, then release them all.
     for i in range(5):
-        thread = threading.Thread(target=reserve_release_thread, args=(i,))
-        threads.append(thread)
-        thread.start()
-
-    for thread in threads:
-        thread.join()
-
-    # Check results
-    assert len(errors) == 0, f"Concurrent reservation errors: {errors}"
-    assert len(results) == 5
-    assert all(results)
+        cm.reserve_cash(1000.0, f"Reservation {i}", f"ORDER_{i}")
+    assert cm.reserved_balance == Decimal("5000.00")
+    for i in range(5):
+        cm.release_reservation(f"ORDER_{i}")
 
     # Final state should have no reservations
     assert cm.reserved_balance == Decimal("0.00")
