@@ -204,6 +204,14 @@ class OrderManager:
 		"""
 		results: List[OperationResult] = []
 
+		# WR-03: track the reserve -> emit window. If the admission reserve
+		# succeeded but the primary OrderEvent was never produced (assembly/
+		# storage failure, or an exception between reserve and emit), no fill
+		# will ever arrive to trigger the terminal release in on_fill — the
+		# reservation must be released here or it is orphaned forever.
+		reserved_primary: Optional[Order] = None
+		primary_emitted = False
+
 		try:
 			# 0. Resolve fraction-of-cash sizing BEFORE validation (D-08/D-09).
 			# The strategy emits quantity=None (D-10); the order/risk layer resolves the
@@ -262,6 +270,7 @@ class OrderManager:
 				try:
 					self.portfolio_handler.reserve(
 						cast(PortfolioId, primary.portfolio_id), primary.id, cost)
+					reserved_primary = primary
 				except InsufficientFundsError as e:
 					# T-05-16: the failure goes through the Phase 4 audited
 					# add_state_change path and is persisted — rejected orders
@@ -280,7 +289,20 @@ class OrderManager:
 						operation_type="cash_reservation")]
 
 			# 3. Create-all-then-emit (D-11): assemble brackets, store, emit.
-			results.extend(self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary))
+			assembled = self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
+			primary_emitted = any(
+				r.success and primary.id in (r.affected_order_ids or [])
+				for r in assembled
+			)
+			if reserved_primary is not None and not primary_emitted \
+					and self.portfolio_handler is not None:
+				# WR-03: assembly failed after the admission reserve — no
+				# OrderEvent reaches the exchange, so no terminal fill will
+				# ever drive the on_fill release. Release here (idempotent).
+				self.portfolio_handler.release(
+					cast(PortfolioId, reserved_primary.portfolio_id),
+					reserved_primary.id)
+			results.extend(assembled)
 
 			self.logger.debug('Processed signal for %s %s: %d operations completed',
 							signal_event.ticker, signal_event.action, len(results))
@@ -288,6 +310,17 @@ class OrderManager:
 		except Exception as e:
 			error_msg = f"Error processing signal: {e}"
 			self.logger.error(error_msg, exc_info=True)
+			if reserved_primary is not None and not primary_emitted \
+					and self.portfolio_handler is not None:
+				# WR-03: same leak path for an exception raised anywhere
+				# between the successful reserve and the primary emit.
+				try:
+					self.portfolio_handler.release(
+						cast(PortfolioId, reserved_primary.portfolio_id),
+						reserved_primary.id)
+				except Exception:
+					self.logger.error('Failed to release orphaned reservation for order %s',
+									reserved_primary.id, exc_info=True)
 			results.append(OperationResult.failure_result(error_msg,
 				error_details=str(e), operation_type="signal_processing"))
 

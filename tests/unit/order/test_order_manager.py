@@ -399,6 +399,30 @@ def test_default_zero_commission_estimator_reserves_price_times_quantity():
     assert amount == primary.price * primary.quantity
 
 
+def test_failed_assembly_after_reserve_releases_reservation():
+    """WR-03 regression: when bracket assembly/storage fails AFTER the
+    admission reserve, no OrderEvent is emitted and no fill will ever arrive —
+    the reservation must be released immediately or it leaks forever."""
+    read_model = _FakeReadModel()
+    manager, storage = _reserve_manager(read_model)
+
+    def _boom(order):
+        raise RuntimeError("storage write failed")
+
+    storage.add_order = _boom  # assembly's add_order raises -> failure result
+
+    results = manager.process_signal(_reserve_signal())
+
+    assert len(read_model.reserve_calls) == 1
+    _, reserved_order_id, _ = read_model.reserve_calls[0]
+    # Nothing was emitted...
+    assert not any(r.success and r.order_events for r in results)
+    # ...and the orphaned reservation was released.
+    assert read_model.release_calls == [
+        (read_model.reserve_calls[0][0], reserved_order_id)
+    ]
+
+
 # --- terminal-state reservation release (Plan 05-06, D-01/OQ2) ---------------
 
 
