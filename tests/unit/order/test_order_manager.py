@@ -399,6 +399,52 @@ def test_default_zero_commission_estimator_reserves_price_times_quantity():
     assert amount == primary.price * primary.quantity
 
 
+def test_refused_parent_cancels_orphaned_bracket_children():
+    """WR-05 regression: when the parent of a bracket reconciles REFUSED
+    without any fill, its SL/TP children are cancelled locally and CANCEL
+    OrderEvents for them are returned (and enqueued by the handler) so the
+    exchange removes the resting protective orders too."""
+    read_model = _FakeReadModel()
+    manager, storage = _reserve_manager(read_model)
+
+    manager.process_signal(_reserve_signal(stop_loss=30.0, take_profit=55.0))
+    primary = next(
+        o for o in storage.get_active_orders() if o.parent_order_id is None
+    )
+    assert len(primary.child_order_ids) == 2
+
+    cancel_events = manager.on_fill(_fill_for(primary, "REFUSED"))
+
+    # Parent reconciled to REJECTED; both children cancelled locally.
+    assert storage.get_order_by_id(primary.id).status == OrderStatus.REJECTED
+    for child_id in primary.child_order_ids:
+        assert storage.get_order_by_id(child_id).status == OrderStatus.CANCELLED
+    # One CANCEL OrderEvent per child is returned for the exchange.
+    assert len(cancel_events) == 2
+    assert all(e.command is OrderCommand.CANCEL for e in cancel_events)
+    assert sorted(e.order_id for e in cancel_events) == sorted(primary.child_order_ids)
+
+
+def test_filled_parent_keeps_bracket_children_active(harness):
+    """WR-05 guard: a parent that actually FILLED must NOT cancel its
+    protective children — they are the exit legs of the open position."""
+    harness.handler.on_signal(harness.signal(stop_loss=30.0, take_profit=55.0))
+    while not harness.queue.empty():
+        harness.queue.get_nowait()
+    primary = next(
+        o for o in harness.storage.get_active_orders(harness.portfolio_id)
+        if o.parent_order_id is None
+    )
+    harness.handler.on_fill(harness.fill(primary, "EXECUTED"))
+    assert (
+        harness.storage.get_order_by_id(primary.id, harness.portfolio_id).status
+        == OrderStatus.FILLED
+    )
+    for child_id in primary.child_order_ids:
+        child = harness.storage.get_order_by_id(child_id, harness.portfolio_id)
+        assert child.is_active
+
+
 def test_local_cancel_releases_reservation():
     """WR-04 regression: cancel_order's local terminal transition releases the
     reservation directly — it must not depend on an exchange FillEvent(CANCELLED)

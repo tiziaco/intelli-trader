@@ -95,21 +95,29 @@ class OrderManager:
 			return Decimal("0")
 		return self.commission_estimator(order.quantity, order.price)
 
-	def on_fill(self, fill_event: FillEvent) -> None:
+	def on_fill(self, fill_event: FillEvent) -> List[OrderEvent]:
 		"""
 		Reconcile the order mirror against an exchange fill.
 
-		EXECUTED -> mark the order FILLED; CANCELLED -> mark CANCELLED.
-		The terminal status change alone moves the order out of active
-		queries (D-20: "active" is an entity predicate, not a container) —
-		the order stays in storage for the audit trail.
+		EXECUTED -> mark the order FILLED; CANCELLED -> mark CANCELLED;
+		REFUSED -> mark REJECTED. The terminal status change alone moves the
+		order out of active queries (D-20: "active" is an entity predicate,
+		not a container) — the order stays in storage for the audit trail.
+
+		Returns
+		-------
+		List[OrderEvent]
+			CANCEL OrderEvents for bracket children orphaned by a parent that
+			reached a terminal state without any fill (WR-05). The manager
+			never touches the queue (D-18) — the handler enqueues these.
 		"""
+		cancel_events: List[OrderEvent] = []
 		order_id = getattr(fill_event, 'order_id', None)
 		if order_id is None:
-			return
+			return cancel_events
 		order = self.order_storage.get_order_by_id(order_id, fill_event.portfolio_id)
 		if order is None:
-			return
+			return cancel_events
 		try:
 			applied = True
 			if fill_event.status == FillStatus.EXECUTED:
@@ -157,7 +165,7 @@ class OrderManager:
 				# reconciliation, so the reservation is intentionally held.)
 				self.logger.warning('Unhandled fill status %s for order %s; order left active',
 				                    fill_event.status, order_id)
-				return
+				return cancel_events
 			# Reached for every terminal-status fill (EXECUTED/CANCELLED/
 			# REFUSED), whether or not the mirror transition applied.
 			# D-20: no deactivate step — the terminal status set above already
@@ -174,8 +182,23 @@ class OrderManager:
 			if self.portfolio_handler is not None:
 				self.portfolio_handler.release(
 					cast(PortfolioId, order.portfolio_id), order.id)
+			# WR-05: a parent that reaches a terminal state WITHOUT any fill
+			# (REFUSED/CANCELLED) leaves its protective SL/TP children resting
+			# on the exchange with no position to protect — when price later
+			# crosses them they would fill against a flat portfolio. Cancel
+			# the children locally and return their CANCEL OrderEvents so the
+			# exchange removes the resting orders too.
+			if (fill_event.status in (FillStatus.CANCELLED, FillStatus.REFUSED)
+					and order.child_order_ids and order.filled_quantity == 0):
+				for child_id in order.child_order_ids:
+					child_result = self.cancel_order(
+						child_id, order.portfolio_id,
+						reason=f"parent order {order.id} terminal without fill")
+					if child_result.success and child_result.order_events:
+						cancel_events.extend(child_result.order_events)
 		except Exception as e:
 			self.logger.error('Error reconciling fill for order %s: %s', order_id, e)
+		return cancel_events
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""

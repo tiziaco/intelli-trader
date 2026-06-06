@@ -107,8 +107,16 @@ class OrderHandler(OrderBase):
 
 	
 	def on_fill(self, fill_event: FillEvent) -> None:
-		"""Reconcile the order mirror from an exchange fill event."""
-		self.order_manager.on_fill(fill_event)
+		"""Reconcile the order mirror from an exchange fill event.
+
+		WR-05: reconciliation may cancel bracket children orphaned by a parent
+		that reached a terminal state without any fill — the manager returns
+		their CANCEL OrderEvents (D-18: the manager never touches the queue)
+		and the handler enqueues them for the execution handler.
+		"""
+		for order_event in self.order_manager.on_fill(fill_event):
+			self.events_queue.put(order_event)
+			self.logger.debug('Orphaned-child cancel event sent to execution handler: %s', order_event)
 
 	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None, 
 	                portfolio_id: Optional[Any] = None, reason: str = "user modification") -> bool:
