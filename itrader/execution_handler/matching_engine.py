@@ -8,6 +8,17 @@ exchange-enforced OCO between bracket siblings.
 This module has NO dependency on the event queue, fee/slippage models, or
 logging side-effects. It takes OrderEvents and BarEvents in and returns plain
 decision objects out, so it is fully deterministic and unit-testable.
+
+Money (D-12/D-14): matching is Decimal end-to-end — order prices and Bar OHLC
+are both Decimal, so trigger comparisons and gap-fill min/max run in the
+Decimal domain with NO quantization (never-round-prices: rounding happens only
+at money boundaries, never inside matching).
+
+DEF-01-C (known limitation, blessed into the M1 oracle): the engine has no
+margin/liquidation model. A short position that is never liquidated can drive
+total equity negative — this is current-behavior-to-preserve, routed to the
+Phase 7 (M5b) risk layer per D-07. Documentation only; no matching behavior
+encodes margin.
 """
 
 import dataclasses
@@ -25,15 +36,14 @@ from itrader.core.enums import OrderType, Side
 class FillDecision:
     """One resting order has matched and should be filled.
 
-    D-22 boundary: ``fill_quantity`` is the order's own Decimal quantity
-    (carried through untouched); ``fill_price`` is a FLOAT — the product of
-    the engine's float trigger/gap math against float bar OHLC. The exchange
-    converts it back into the money domain via ``to_money`` at FillEvent
-    construction.
+    Full-quantity contract (D-06): a fill always covers the order's entire
+    quantity — partial fills do not exist in the engine, so the decision
+    carries no quantity field (the exchange reads ``order_event.quantity``).
+    ``fill_price`` is Decimal, the product of Decimal-native trigger/gap math
+    against Decimal Bar OHLC (D-12).
     """
     order_event: OrderEvent
-    fill_quantity: Decimal
-    fill_price: float
+    fill_price: Decimal
     reason: str
 
 
@@ -98,7 +108,7 @@ class MatchingEngine:
 
     # --- matching ---
 
-    def _evaluate(self, order: OrderEvent, bar: BarEvent) -> Optional[float]:
+    def _evaluate(self, order: OrderEvent, bar: BarEvent) -> Optional[Decimal]:
         """Return the fill price if `order` triggers on `bar`, else None."""
         ticker = order.ticker
         bar_struct = bar.bars.get(ticker)
@@ -106,21 +116,14 @@ class MatchingEngine:
             # No bar for this ticker at T (sparse universe / data gap) —
             # same no-data semantics as the legacy Optional accessors.
             return None
-        # TEMPORARY: the engine's internals stay float until the D-12 retype.
-        # Bar OHLC is Decimal(str(x)) by construction, and float(Decimal(str(x)))
-        # round-trips exactly — these casts are numerically inert.
-        open_ = float(bar_struct.open)   # D-12: removed in plan 06-04
-        high = float(bar_struct.high)    # D-12: removed in plan 06-04
-        low = float(bar_struct.low)      # D-12: removed in plan 06-04
-
-        # D-22 boundary (Pitfall 4): order.price is Decimal but the engine's
-        # trigger/gap math is float until the D-12 retype (plan 06-04). Convert
-        # ONCE here so the trigger comparisons and min/max gap-fill math stay
-        # pure float — Decimal x float arithmetic would raise TypeError, and a
-        # mixed min/max would leak a Decimal into the float fill price. The
-        # fill price re-enters the money domain via to_money at FillEvent
-        # construction in the exchange.
-        trigger = float(order.price)
+        # D-12: Decimal end-to-end — Bar OHLC is Decimal by construction and
+        # order.price is Decimal money, so the trigger comparisons and min/max
+        # gap-fill math below run in the Decimal domain. NO quantization here
+        # (D-14 never-round-prices): rounding belongs to money boundaries only.
+        open_ = bar_struct.open
+        high = bar_struct.high
+        low = bar_struct.low
+        trigger = order.price
 
         if order.order_type == OrderType.MARKET:
             # next-bar market order: unconditional fill at the open
@@ -135,15 +138,20 @@ class MatchingEngine:
                     return max(open_, trigger)      # pessimistic gap-up
 
         elif order.order_type == OrderType.LIMIT:
-            # Limits fill at the limit price even on a favorable gap (we never
-            # credit a better-than-limit fill to the strategy) — intentionally
-            # asymmetric with the pessimistic open-based gap fill used for stops.
+            # Limit-or-better (D-03): a limit fill can never be worse than the
+            # limit price. On a favorable gap the order fills at the (better)
+            # open; an in-bar touch fills at the limit exactly. Asymmetric with
+            # the pessimistic open-based gap fill used for stops by design.
             if order.action is Side.SELL:           # take-profit on a long
-                if high >= trigger:
-                    return trigger
+                if open_ >= trigger:
+                    return open_                    # gap-through: better open
+                elif high >= trigger:
+                    return trigger                  # in-bar touch: at limit
             else:                                   # BUY limit (cover short)
-                if low <= trigger:
-                    return trigger
+                if open_ <= trigger:
+                    return open_                    # gap-through: better open
+                elif low <= trigger:
+                    return trigger                  # in-bar touch: at limit
 
         return None
 
@@ -159,7 +167,7 @@ class MatchingEngine:
           are cancelled (OCO), even if they did not trigger this bar.
         """
         # 1. Collect candidate fills (price reached).
-        candidates: dict[OrderId, float] = {}
+        candidates: dict[OrderId, Decimal] = {}
         for order in list(self._resting.values()):
             try:
                 price = self._evaluate(order, bar)
@@ -175,7 +183,7 @@ class MatchingEngine:
             return [], []
 
         # 2. Resolve, per bracket, which single order fills.
-        chosen: dict[OrderId, float] = {}   # order_id -> fill_price
+        chosen: dict[OrderId, Decimal] = {}   # order_id -> fill_price
         seen_brackets = set()
         for order_id, price in candidates.items():
             order = self._resting[order_id]
@@ -198,7 +206,6 @@ class MatchingEngine:
             order = self._resting[order_id]
             fills.append(FillDecision(
                 order_event=order,
-                fill_quantity=order.quantity,
                 fill_price=price,
                 reason=self._fill_reason(order),
             ))
@@ -225,7 +232,7 @@ class MatchingEngine:
         return fills, cancels
 
     def _pick_bracket_winner(self, bracket: OrderId,
-                             candidates: dict[OrderId, float]) -> OrderId:
+                             candidates: dict[OrderId, Decimal]) -> OrderId:
         """Among candidate legs of a bracket, prefer a STOP (pessimistic)."""
         leg_ids = [oid for oid in candidates
                    if self._resting[oid].parent_order_id == bracket]

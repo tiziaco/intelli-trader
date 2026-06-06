@@ -335,19 +335,24 @@ class Order:
 	
 	def add_fill(self, fill_quantity: Decimal, fill_price: Decimal, fill_time: datetime, reason: str = "market fill") -> bool:
 		"""
-		Add a partial or full fill to the order.
-		
+		Apply a full fill to the order (full-quantity contract, D-06).
+
+		The exchange fills the order's entire remaining quantity in one fill —
+		partial fills do not exist in the engine, so any quantity other than
+		exactly ``remaining_quantity`` is rejected and the mirror is left
+		unchanged.
+
 		Parameters
 		----------
-		fill_quantity : float
-			Quantity that was filled
-		fill_price : float
+		fill_quantity : Decimal
+			Quantity that was filled (must equal ``remaining_quantity``)
+		fill_price : Decimal
 			Price at which the fill occurred
 		fill_time : datetime
 			Time of the fill
 		reason : str, optional
 			Reason for the fill
-			
+
 		Returns
 		-------
 		bool
@@ -358,19 +363,16 @@ class Order:
 		# the audit record never carries a raw int/float that would contaminate
 		# later Decimal comparisons/sums.
 		fill_price = to_money(fill_price)
-		if fill_quantity <= 0 or fill_quantity > self.remaining_quantity:
+		# Full-quantity contract (D-06): the fill must cover the entire
+		# remaining quantity exactly — Decimal-native matching guarantees the
+		# exchange-truth quantity equals the mirror's remaining.
+		if fill_quantity <= 0 or fill_quantity != self.remaining_quantity:
 			return False
 
 		# Update filled quantity
 		self.filled_quantity += fill_quantity
-		
-		# Determine new status
-		if self.is_fully_filled:
-			new_status = OrderStatus.FILLED
-		else:
-			new_status = OrderStatus.PARTIALLY_FILLED
-		
-		# Add state change with fill details
+
+		# Add state change with fill details (audit shape preserved)
 		additional_data = {
 			"fill_quantity": fill_quantity,
 			"fill_price": fill_price,
@@ -380,7 +382,7 @@ class Order:
 
 		# Thread the real fill_time into the recorded transition timestamp (D-12):
 		# the transition is stamped with the fill time, not the wall clock.
-		return self.add_state_change(new_status, reason, "exchange", additional_data, time=fill_time)
+		return self.add_state_change(OrderStatus.FILLED, reason, "exchange", additional_data, time=fill_time)
 	
 	def cancel_order(self, reason: str = "user cancellation") -> bool:
 		"""

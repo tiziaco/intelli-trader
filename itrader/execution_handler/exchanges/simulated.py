@@ -214,7 +214,10 @@ class SimulatedExchange(AbstractExchange):
 		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels."""
 		fills, cancels = self.matching_engine.on_bar(bar)
 		for decision in fills:
-			self._emit_fill(decision.order_event, decision.fill_price, decision.fill_quantity)
+			# Full-quantity contract (D-06): FillDecision carries no quantity —
+			# the fill covers the order's entire quantity.
+			self._emit_fill(decision.order_event, decision.fill_price,
+			                decision.order_event.quantity)
 		for cancel in cancels:
 			# CANCELLED carries the order's own (Decimal) price/quantity,
 			# commission Decimal("0") — never settled (D-22).

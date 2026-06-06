@@ -78,37 +78,35 @@ class TestOrderLifecycle:
         assert order.status == OrderStatus.FILLED
 
     def test_order_fill_functionality(self):
-        """Test order fill processing."""
+        """Test order fill processing (full-quantity contract, D-06)."""
         order = self.create_test_order(quantity=100.0, price=150.0)
-        
-        # Test partial fill
+
+        # A fill covers the entire remaining quantity in one step.
         fill_time = datetime.now()
-        assert order.add_fill(50.0, 151.0, fill_time, "partial execution")
-        
-        assert order.filled_quantity == 50.0
-        assert order.remaining_quantity == 50.0
-        assert order.status == OrderStatus.PARTIALLY_FILLED
-        assert order.is_partially_filled
-        
-        # Test complete fill
-        assert order.add_fill(50.0, 152.0, fill_time, "complete execution")
-        
+        assert order.add_fill(100.0, 151.0, fill_time, "full execution")
+
         assert order.filled_quantity == 100.0
         assert order.remaining_quantity == 0.0
         assert order.status == OrderStatus.FILLED
         assert order.is_fully_filled
 
     def test_order_fill_validation(self):
-        """Test order fill validation."""
+        """Test order fill validation (full-quantity contract, D-06)."""
         order = self.create_test_order(quantity=100.0)
-        
+
         # Test overfill prevention
         fill_time = datetime.now()
         assert not order.add_fill(150.0, 100.0, fill_time)  # Should fail - exceeds quantity
         assert order.filled_quantity == 0.0  # Should remain unchanged
-        
+
         # Test negative fill prevention
         assert not order.add_fill(-10.0, 100.0, fill_time)  # Should fail - negative quantity
+
+        # Partial fills do not exist in the engine (D-06): a quantity below
+        # remaining is rejected and the mirror is left unchanged.
+        assert not order.add_fill(50.0, 100.0, fill_time)
+        assert order.filled_quantity == 0.0
+        assert order.status == OrderStatus.PENDING
 
     def test_order_cancellation(self):
         """Test order cancellation functionality."""
