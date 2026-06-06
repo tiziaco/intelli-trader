@@ -4,7 +4,6 @@ from decimal import Decimal
 from typing import Dict, Any, Optional
 import random
 import time
-import threading
 
 from .base import AbstractExchange
 from ..fee_model.base import FeeModel
@@ -31,8 +30,10 @@ class SimulatedExchange(AbstractExchange):
 	Features:
 	- Minimal initialization
 	- Configuration-driven behavior
-	- Thread-safe configuration updates
 	- Production-ready design
+
+	D-19 single-writer contract: configuration updates happen on the engine
+	thread; queue.Queue is the thread boundary — other threads only put events.
 	"""
 
 	def __init__(self, global_queue: "Queue[Any]", config: Optional[ExchangeConfig] = None,
@@ -77,9 +78,8 @@ class SimulatedExchange(AbstractExchange):
 		self.simulate_failures = self.config.failure_simulation.simulate_failures
 		self.failure_rate = float(self.config.failure_simulation.failure_rate)
 		
-		# Thread safety
-		self._lock = threading.RLock()
-		
+		# D-19: config lock removed — single-writer contract, see class docstring.
+
 		# Connection state
 		self._connected = False
 		self._connection_time: Optional[datetime] = None
@@ -548,72 +548,70 @@ class SimulatedExchange(AbstractExchange):
 
 	def update_config(self, **kwargs: Any) -> None:
 		"""Update exchange configuration."""
-		with self._lock:
-			# Direct config attribute updates
-			config_mapping: Dict[str, Any] = {
-				'exchange_name': 'exchange_name',
-				'exchange_type': 'exchange_type',
-				'simulate_failures': ('failure_simulation', 'simulate_failures'),
-				'failure_rate': ('failure_simulation', 'failure_rate'),
-				'supported_symbols': ('limits', 'supported_symbols'),
-				'min_order_size': ('limits', 'min_order_size'),
-				'max_order_size': ('limits', 'max_order_size'),
-				'fee_model_type': ('fee_model', 'model_type'),
-				'fee_rate': ('fee_model', 'fee_rate'),
-				'maker_rate': ('fee_model', 'maker_rate'),
-				'taker_rate': ('fee_model', 'taker_rate'),
-				'slippage_model_type': ('slippage_model', 'model_type'),
-				'base_slippage_pct': ('slippage_model', 'base_slippage_pct'),
-				'slippage_pct': ('slippage_model', 'slippage_pct'),
-			}
+		# Direct config attribute updates
+		config_mapping: Dict[str, Any] = {
+			'exchange_name': 'exchange_name',
+			'exchange_type': 'exchange_type',
+			'simulate_failures': ('failure_simulation', 'simulate_failures'),
+			'failure_rate': ('failure_simulation', 'failure_rate'),
+			'supported_symbols': ('limits', 'supported_symbols'),
+			'min_order_size': ('limits', 'min_order_size'),
+			'max_order_size': ('limits', 'max_order_size'),
+			'fee_model_type': ('fee_model', 'model_type'),
+			'fee_rate': ('fee_model', 'fee_rate'),
+			'maker_rate': ('fee_model', 'maker_rate'),
+			'taker_rate': ('fee_model', 'taker_rate'),
+			'slippage_model_type': ('slippage_model', 'model_type'),
+			'base_slippage_pct': ('slippage_model', 'base_slippage_pct'),
+			'slippage_pct': ('slippage_model', 'slippage_pct'),
+		}
 			
-			for key, value in kwargs.items():
-				if isinstance(config_mapping.get(key), tuple):
-					section_name, attr_name = config_mapping[key]
-					section = getattr(self.config, section_name)
-					setattr(section, attr_name, value)
-				elif key in config_mapping:
-					setattr(self.config, config_mapping[key], value)
-				elif hasattr(self.config, key):
-					setattr(self.config, key, value)
-				else:
-					raise ValueError(f"Unknown configuration key: {key}")
+		for key, value in kwargs.items():
+			if isinstance(config_mapping.get(key), tuple):
+				section_name, attr_name = config_mapping[key]
+				section = getattr(self.config, section_name)
+				setattr(section, attr_name, value)
+			elif key in config_mapping:
+				setattr(self.config, config_mapping[key], value)
+			elif hasattr(self.config, key):
+				setattr(self.config, key, value)
+			else:
+				raise ValueError(f"Unknown configuration key: {key}")
 			
-			# Re-initialize components affected by config changes
-			if any(k.startswith('fee_') for k in kwargs) or 'fee_model_type' in kwargs:
-				self.fee_model = self._init_fee_model()
-			if any(k.startswith('slippage_') for k in kwargs) or 'slippage_model_type' in kwargs:
-				self.slippage_model = self._init_slippage_model()
-			if 'simulate_failures' in kwargs or 'failure_rate' in kwargs:
-				self.simulate_failures = self.config.failure_simulation.simulate_failures
-				self.failure_rate = float(self.config.failure_simulation.failure_rate)
+		# Re-initialize components affected by config changes
+		if any(k.startswith('fee_') for k in kwargs) or 'fee_model_type' in kwargs:
+			self.fee_model = self._init_fee_model()
+		if any(k.startswith('slippage_') for k in kwargs) or 'slippage_model_type' in kwargs:
+			self.slippage_model = self._init_slippage_model()
+		if 'simulate_failures' in kwargs or 'failure_rate' in kwargs:
+			self.simulate_failures = self.config.failure_simulation.simulate_failures
+			self.failure_rate = float(self.config.failure_simulation.failure_rate)
 			
-			# Update internal state for limits
-			if any(k in ['supported_symbols', 'min_order_size', 'max_order_size'] for k in kwargs):
-				self._supported_symbols = self.config.limits.supported_symbols
-				self._min_order_size = float(self.config.limits.min_order_size)
-				self._max_order_size = float(self.config.limits.max_order_size)
+		# Update internal state for limits
+		if any(k in ['supported_symbols', 'min_order_size', 'max_order_size'] for k in kwargs):
+			self._supported_symbols = self.config.limits.supported_symbols
+			self._min_order_size = float(self.config.limits.min_order_size)
+			self._max_order_size = float(self.config.limits.max_order_size)
 			
-			# Update exchange name if changed
-			if 'exchange_name' in kwargs:
-				self._exchange_name = self.config.exchange_name
+		# Update exchange name if changed
+		if 'exchange_name' in kwargs:
+			self._exchange_name = self.config.exchange_name
 
 	def get_config_dict(self) -> Dict[str, Any]:
 		"""Get configuration as dictionary."""
-		with self._lock:
-			return {
-				'exchange_name': self.config.exchange_name,
-				'exchange_type': self.config.exchange_type.value if hasattr(self.config.exchange_type, 'value') else str(self.config.exchange_type),
-				'simulate_failures': self.config.failure_simulation.simulate_failures,
-				'failure_rate': float(self.config.failure_simulation.failure_rate),
-				'supported_symbols': list(self.config.limits.supported_symbols),
-				'min_order_size': float(self.config.limits.min_order_size),
-				'max_order_size': float(self.config.limits.max_order_size),
-				'fee_model_type': self.config.fee_model.model_type.value,
-				'fee_rate': self.config.fee_model.fee_rate,
-				'maker_rate': self.config.fee_model.maker_rate,
-				'taker_rate': self.config.fee_model.taker_rate,
-				'slippage_model_type': self.config.slippage_model.model_type.value,
-				'base_slippage_pct': self.config.slippage_model.base_slippage_pct,
-				'slippage_pct': self.config.slippage_model.slippage_pct,
-			}
+		return {
+			'exchange_name': self.config.exchange_name,
+			'exchange_type': self.config.exchange_type.value if hasattr(self.config.exchange_type, 'value') else str(self.config.exchange_type),
+			'simulate_failures': self.config.failure_simulation.simulate_failures,
+			'failure_rate': float(self.config.failure_simulation.failure_rate),
+			'supported_symbols': list(self.config.limits.supported_symbols),
+			'min_order_size': float(self.config.limits.min_order_size),
+			'max_order_size': float(self.config.limits.max_order_size),
+			'fee_model_type': self.config.fee_model.model_type.value,
+			'fee_rate': self.config.fee_model.fee_rate,
+			'maker_rate': self.config.fee_model.maker_rate,
+			'taker_rate': self.config.fee_model.taker_rate,
+			'slippage_model_type': self.config.slippage_model.model_type.value,
+			'base_slippage_pct': self.config.slippage_model.base_slippage_pct,
+			'slippage_pct': self.config.slippage_model.slippage_pct,
+		}

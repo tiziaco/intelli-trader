@@ -44,8 +44,7 @@ class TestSimulatedExchangeInitialization:
         assert exchange.config.exchange_name == "SimulatedExchange"
         assert exchange.fee_model is not None
         assert exchange.slippage_model is not None
-        assert hasattr(exchange, '_lock')
-        
+
         # Verify operational state
         assert not exchange._connected
         assert exchange._connection_status == ExchangeConnectionStatus.DISCONNECTED
@@ -74,14 +73,15 @@ class TestSimulatedExchangeInitialization:
         assert isinstance(fee, (int, float, Decimal))
         assert fee >= 0
 
-    def test_thread_safety_setup(self):
-        """Test that thread safety mechanisms are properly initialized."""
+    def test_no_lock_single_writer_contract(self):
+        """D-19: the config lock is gone — single-writer contract.
+
+        Regression-locks the lock deletion: configuration updates happen on
+        the engine thread; queue.Queue is the thread boundary.
+        """
         exchange = SimulatedExchange(self.queue)
-        
-        assert hasattr(exchange, '_lock')
-        # Test that lock can be acquired
-        with exchange._lock:
-            pass
+
+        assert not hasattr(exchange, '_lock')
 
 
 class TestSimulatedExchangeConfiguration:
@@ -164,27 +164,19 @@ class TestSimulatedExchangeConfiguration:
         with pytest.raises(ValueError, match="Unknown configuration key"):
             self.exchange.update_config(invalid_key="invalid_value")
 
-    def test_update_config_thread_safety(self):
-        """Test that config updates are thread-safe."""
-        import threading
-        import time
-        
-        def update_config():
-            for i in range(10):
-                self.exchange.update_config(failure_rate=i * 0.01)
-                time.sleep(0.001)
-        
-        # Run concurrent updates
-        threads = [threading.Thread(target=update_config) for _ in range(3)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        
+    def test_update_config_sequential_single_writer(self):
+        """D-19: config updates run on the engine thread (single-writer).
+
+        The former concurrent-update test exercised the deleted config lock;
+        sequential updates are the sanctioned pattern now.
+        """
+        for i in range(10):
+            self.exchange.update_config(failure_rate=i * 0.01)
+
         # Verify exchange is still in valid state
         config_dict = self.exchange.get_config_dict()
         assert isinstance(config_dict['failure_rate'], float)
-        assert 0.0 <= config_dict['failure_rate'] <= 0.09
+        assert config_dict['failure_rate'] == pytest.approx(0.09)
 
 
 class TestSimulatedExchangeOrderExecution:
