@@ -233,14 +233,20 @@ class LiveTradingSystem:
                 try:
                     event = self.global_queue.get(timeout=self.queue_timeout)
                     last_event_time = datetime.now()
-                    
-                    # Process the event through the event handler
-                    self.global_queue.put(event)  # Put it back for processing
-                    self.event_handler.process_events()
-                    
+
+                    # WR-09: dispatch the dequeued event DIRECTLY through the
+                    # event handler's routing. The previous get -> put-back ->
+                    # process_events() pattern re-appended the event behind
+                    # anything already queued, breaking the single-FIFO-queue
+                    # ordering contract (e.g. a BAR processed before its PING).
+                    # The task_done() bookkeeping is dropped with it: nothing
+                    # joins this queue, and the put-back/internal gets left
+                    # unfinished_tasks permanently drifting.
+                    self.event_handler._dispatch(event)
+
                     # Update statistics
                     self._update_stats(event.type.name if hasattr(event, 'type') else 'UNKNOWN')
-                    
+
                     # Record portfolio metrics if it's a TIME event.
                     # CR-02: record_metrics lives on Portfolio, not
                     # PortfolioHandler — iterate the active portfolios exactly
@@ -248,9 +254,7 @@ class LiveTradingSystem:
                     if hasattr(event, 'type') and event.type == EventType.TIME:
                         for portfolio in self.portfolio_handler.get_active_portfolios():
                             portfolio.record_metrics(event.time)
-                    
-                    self.global_queue.task_done()
-                    
+
                 except queue.Empty:
                     # No events in queue, check if we've been idle too long
                     current_time = datetime.now()
