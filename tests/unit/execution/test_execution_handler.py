@@ -3,6 +3,7 @@ from queue import Queue
 
 import pytest
 
+from itrader.execution_handler.base import AbstractExecutionHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.events_handler.events import FillEvent, OrderEvent
 from itrader.core.enums import OrderType, Side
@@ -43,3 +44,19 @@ def test_on_order(env):
     fill_event: FillEvent = queue.get(False)
     assert isinstance(fill_event, FillEvent)
     assert fill_event.action is Side.BUY
+
+
+def test_abstract_execution_handler_is_real_abc():
+    """AbstractExecutionHandler is a real ABC (D-21/#39): both event hooks
+    are abstract and the base class cannot be instantiated."""
+    with pytest.raises(TypeError):
+        AbstractExecutionHandler()  # type: ignore[abstract]
+
+    assert getattr(AbstractExecutionHandler.on_order, '__isabstractmethod__', False)
+    assert getattr(AbstractExecutionHandler.on_market_data, '__isabstractmethod__', False)
+
+
+def test_execution_handler_implements_both_hooks(env):
+    """The concrete ExecutionHandler satisfies the ABC contract."""
+    _queue, execution_handler, _order_event = env
+    assert isinstance(execution_handler, AbstractExecutionHandler)

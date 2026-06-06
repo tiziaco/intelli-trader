@@ -20,10 +20,19 @@ from itrader.config.exchange import (
     FeeModelType, SlippageModelType, ExchangeType,
 )
 from itrader.core.enums.execution import (
-    ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus
+    ExecutionErrorCode, ExchangeConnectionStatus
 )
-from itrader.execution_handler.result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
+from itrader.execution_handler.result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 from itrader.core.enums import OrderType, OrderCommand, FillStatus, Side
+
+
+def drain_fills(queue: Queue) -> list[FillEvent]:
+    """Drain and return every FillEvent currently on the queue (D-21:
+    FillEvents are the only execution output, so tests assert on them)."""
+    fills = []
+    while not queue.empty():
+        fills.append(queue.get_nowait())
+    return fills
 
 
 class TestSimulatedExchangeInitialization:
@@ -206,98 +215,99 @@ class TestSimulatedExchangeOrderExecution:
         return OrderEvent(**defaults)
 
     def test_successful_order_execution(self):
-        """Test successful order execution."""
+        """Test successful order execution emits a single EXECUTED fill."""
         order = self.create_test_order()
-        result = self.exchange.execute_order(order)
-        
-        assert result.success is True
-        assert result.status == ExecutionStatus.SUCCESS
-        assert result.executed_price > 0
-        assert result.executed_quantity == order.quantity
-        assert result.commission >= 0
-        assert result.order_id is not None
-        assert result.exchange_order_id is not None
-        
-        # Verify fill event was queued
-        assert not self.queue.empty()
-        fill_event = self.queue.get()
-        assert isinstance(fill_event, FillEvent)
+        assert self.exchange.execute_order(order) is None  # D-21: no sync result
+
+        fills = drain_fills(self.queue)
+        assert len(fills) == 1
+        fill = fills[0]
+        assert isinstance(fill, FillEvent)
+        assert fill.status is FillStatus.EXECUTED
+        assert fill.price > 0
+        assert fill.quantity == order.quantity
+        assert fill.commission >= 0
+        # D-12 linkage: fill_id/order_id audit chain
+        assert fill.fill_id is not None
+        assert fill.order_id == order.order_id
 
     def test_order_execution_with_slippage(self):
-        """Test order execution applies slippage correctly."""
+        """Test order execution applies slippage to the emitted fill price."""
         # Configure for linear slippage
         self.exchange.update_config(
             slippage_model_type=SlippageModelType.LINEAR,
             base_slippage_pct=0.01
         )
-        
+
         order = self.create_test_order(price=100.0)
-        result = self.exchange.execute_order(order)
-        
-        assert result.success is True
+        self.exchange.execute_order(order)
+
+        fills = drain_fills(self.queue)
+        assert len(fills) == 1
+        assert fills[0].status is FillStatus.EXECUTED
         # Price should be different due to slippage
-        assert result.executed_price != order.price
-        assert 'slippage_applied' in result.metadata
+        assert fills[0].price != order.price
 
     def test_order_execution_with_fees(self):
-        """Test order execution applies fees correctly."""
+        """Test order execution carries fees on the emitted fill."""
         # Configure for percentage fees
         self.exchange.update_config(
             fee_model_type=FeeModelType.PERCENT,
             fee_rate=0.001
         )
-        
+
         order = self.create_test_order(quantity=100.0, price=150.0)
-        result = self.exchange.execute_order(order)
-        
-        assert result.success is True
-        assert result.commission > 0
-        # Commission should be approximately 0.001 * 100 * 150 = 0.15
-        expected_commission = Decimal('0.001') * Decimal('100.0') * Decimal('150.0')
-        assert abs(result.commission - expected_commission) < Decimal('0.01')
+        self.exchange.execute_order(order)
+
+        fills = drain_fills(self.queue)
+        assert len(fills) == 1
+        fill = fills[0]
+        assert fill.status is FillStatus.EXECUTED
+        # Commission should be 0.001 * 100 * 150 = 15.0
+        assert fill.commission == pytest.approx(float(
+            Decimal('0.001') * Decimal('100.0') * Decimal('150.0')))
 
     def test_order_execution_failure_simulation(self):
-        """Test order execution with failure simulation."""
+        """Test order execution with failure simulation emits REFUSED."""
         # Enable failure simulation with high rate
         self.exchange.update_config(simulate_failures=True, failure_rate=1.0)
-        
+
         order = self.create_test_order()
-        result = self.exchange.execute_order(order)
-        
-        assert result.success is False
-        assert result.status == ExecutionStatus.FAILED
-        assert result.error_code in [
-            ExecutionErrorCode.NETWORK_ERROR,
-            ExecutionErrorCode.EXCHANGE_ERROR,
-            ExecutionErrorCode.RATE_LIMIT_EXCEEDED,
-            ExecutionErrorCode.EXCHANGE_MAINTENANCE
-        ]
+        self.exchange.execute_order(order)
+
+        fills = drain_fills(self.queue)
+        assert len(fills) == 1
+        assert fills[0].status is FillStatus.REFUSED
+        assert fills[0].order_id == order.order_id
+        # Failure scenario recorded for monitoring
+        assert self.exchange._last_error is not None
 
     def test_order_validation_failure(self):
-        """Test order execution with validation failure."""
+        """Test order execution with validation failure emits REFUSED."""
         # Create order with invalid symbol
         order = self.create_test_order(ticker='INVALID')
-        result = self.exchange.execute_order(order)
-        
-        assert result.success is False
-        assert result.status == ExecutionStatus.REJECTED
-        assert result.error_code == ExecutionErrorCode.SYMBOL_NOT_FOUND
+        self.exchange.execute_order(order)
+
+        fills = drain_fills(self.queue)
+        assert len(fills) == 1
+        assert fills[0].status is FillStatus.REFUSED
+        assert "Invalid symbol" in self.exchange._last_error
 
     def test_order_execution_metrics_tracking(self):
         """Test that execution metrics are properly tracked."""
         initial_executed = self.exchange._orders_executed
         initial_failed = self.exchange._orders_failed
-        
+
         # Execute successful order
         order = self.create_test_order()
-        result = self.exchange.execute_order(order)
-        assert result.success is True
+        self.exchange.execute_order(order)
+        assert drain_fills(self.queue)[0].status is FillStatus.EXECUTED
         assert self.exchange._orders_executed == initial_executed + 1
-        
+
         # Execute failing order (invalid symbol)
         order_fail = self.create_test_order(ticker='INVALID')
-        result_fail = self.exchange.execute_order(order_fail)
-        assert result_fail.success is False
+        self.exchange.execute_order(order_fail)
+        assert drain_fills(self.queue)[0].status is FillStatus.REFUSED
         assert self.exchange._orders_failed == initial_failed + 1
 
 
@@ -361,11 +371,12 @@ class TestSimulatedExchangeConnectionManagement:
             price=150.0, quantity=100.0, exchange='simulated',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
-        result = self.exchange.execute_order(order)
+        self.exchange.execute_order(order)
 
-        assert result.success is False
-        assert result.error_code == ExecutionErrorCode.NETWORK_ERROR
-        assert "not connected" in result.error_message.lower()
+        fills = drain_fills(self.queue)
+        assert len(fills) == 1
+        assert fills[0].status is FillStatus.REFUSED
+        assert "not connected" in self.exchange._last_error.lower()
 
 
 class TestSimulatedExchangeOrderValidation:
@@ -385,10 +396,33 @@ class TestSimulatedExchangeOrderValidation:
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
         result = self.exchange.validate_order(order)
-        
+
+        # OQ3 rename: the execution-domain preflight DTO, distinct from
+        # the order-domain order_validator.ValidationResult.
+        assert isinstance(result, OrderPreflightResult)
         assert result.is_valid is True
         assert result.error_code is None
         assert result.error_message is None
+
+    def test_preflight_result_is_frozen(self):
+        """T-05-09: surviving DTOs are frozen — no post-init mutation."""
+        import dataclasses
+        order = OrderEvent(
+            time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
+            price=150.0, quantity=100.0, exchange='simulated',
+            strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
+        )
+        result = self.exchange.validate_order(order)
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            result.is_valid = False
+
+        health = self.exchange.health_check()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            health.connected = False
+
+        conn = self.exchange.connect()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            conn.success = False
 
     def test_invalid_symbol_validation(self):
         """Test validation of order with invalid symbol."""
@@ -602,14 +636,18 @@ class TestSimulatedExchangeEdgeCases:
         # Test failure (random returns 0.3, which is < 0.5)
         with patch.object(self.exchange._rng, 'random', return_value=0.3):
             order = OrderEvent(time=datetime.now(), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
-            result = self.exchange.execute_order(order)
-            assert result.success is False
+            self.exchange.execute_order(order)
+            fills = drain_fills(self.queue)
+            assert len(fills) == 1
+            assert fills[0].status is FillStatus.REFUSED
 
         # Test success (random returns 0.7, which is >= 0.5)
         with patch.object(self.exchange._rng, 'random', return_value=0.7):
             order = OrderEvent(time=datetime.now(), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
-            result = self.exchange.execute_order(order)
-            assert result.success is True
+            self.exchange.execute_order(order)
+            fills = drain_fills(self.queue)
+            assert len(fills) == 1
+            assert fills[0].status is FillStatus.EXECUTED
 
 
 class _RoutingHarness:

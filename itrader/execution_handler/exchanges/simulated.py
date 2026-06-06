@@ -15,9 +15,9 @@ from ..slippage_model.base import SlippageModel
 from ..slippage_model.zero_slippage_model import ZeroSlippageModel
 from ..slippage_model.linear_slippage_model import LinearSlippageModel
 from ..slippage_model.fixed_slippage_model import FixedSlippageModel
-from ..result_objects import ExecutionResult, ConnectionResult, HealthStatus, ValidationResult
+from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 from ..matching_engine import MatchingEngine
-from itrader.core.enums.execution import ExecutionStatus, ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
+from itrader.core.enums.execution import ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
 from itrader.core.enums import OrderType, OrderCommand
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
@@ -102,15 +102,17 @@ class SimulatedExchange(AbstractExchange):
 		
 		self.logger.info('Simulated Exchange initialized: %s', self.config.exchange_name)
 
-	def execute_order(self, event: OrderEvent) -> ExecutionResult:
+	def execute_order(self, event: OrderEvent) -> None:
 		"""
-		Execute order with comprehensive error handling and validation.
-		
+		Execute a market order; FillEvents are the ONLY output (D-21).
+
 		Simulates realistic exchange behavior including validation,
-		slippage, failures, and detailed execution results.
+		slippage and failure simulation. Every outcome — EXECUTED or
+		REFUSED — is emitted onto the global queue as a FillEvent;
+		there is no synchronous result object.
 		"""
 		execution_time = datetime.now()
-		
+
 		try:
 			# Pre-execution validation
 			validation_result = self.validate_order(event)
@@ -118,32 +120,18 @@ class SimulatedExchange(AbstractExchange):
 				self._orders_failed += 1
 				self._last_error = validation_result.error_message
 				self._last_error_time = execution_time
-
 				self._emit_rejection(event, validation_result.error_message or "validation failed")
-				return ExecutionResult(
-					success=False,
-					status=ExecutionStatus.REJECTED,
-					error_code=validation_result.error_code or ExecutionErrorCode.INVALID_ORDER,
-					error_message=validation_result.error_message,
-					execution_time=execution_time
-				)
-			
+				return
+
 			# Check connection status
 			if not self.is_connected():
 				self._orders_failed += 1
 				error_msg = "Exchange not connected"
 				self._last_error = error_msg
 				self._last_error_time = execution_time
-
 				self._emit_rejection(event, "exchange not connected")
-				return ExecutionResult(
-					success=False,
-					status=ExecutionStatus.FAILED,
-					error_code=ExecutionErrorCode.NETWORK_ERROR,
-					error_message=error_msg,
-					execution_time=execution_time
-				)
-			
+				return
+
 			# Simulate random failures if enabled
 			if self.simulate_failures and self._rng.random() < self.failure_rate:
 				self._orders_failed += 1
@@ -153,55 +141,23 @@ class SimulatedExchange(AbstractExchange):
 					(ExecutionErrorCode.RATE_LIMIT_EXCEEDED, "Simulated rate limit"),
 					(ExecutionErrorCode.EXCHANGE_MAINTENANCE, "Simulated execution timeout")
 				]
-				error_code, error_msg = self._rng.choice(error_scenarios)
+				_error_code, error_msg = self._rng.choice(error_scenarios)
 				self._last_error = error_msg
 				self._last_error_time = execution_time
-
 				self._emit_rejection(event, error_msg)
-				return ExecutionResult(
-					success=False,
-					status=ExecutionStatus.FAILED,
-					error_code=error_code,
-					error_message=error_msg,
-					execution_time=execution_time
-				)
-			
-			executed_price, commission, slippage_factor = self._emit_fill(
-				event, event.price, event.quantity)
-			executed_quantity = event.quantity
+				return
 
-			return ExecutionResult(
-				success=True,
-				status=ExecutionStatus.SUCCESS,
-				order_id=f"SIM_{self._orders_executed}_{int(execution_time.timestamp())}",
-				exchange_order_id=f"SIMEX_{self._orders_executed}",
-				executed_price=executed_price,
-				executed_quantity=executed_quantity,
-				remaining_quantity=0.0,
-				commission=commission,
-				execution_time=execution_time,
-				error_code=ExecutionErrorCode.NO_ERROR,
-				metadata={
-					'slippage_applied': (slippage_factor - 1.0) * 100,
-					'original_price': event.price,
-					'execution_latency_ms': self._rng.uniform(5, 25),
-					'exchange_name': self._exchange_name
-				}
-			)
-			
+			self._emit_fill(event, event.price, event.quantity)
+
 		except Exception as e:
 			self._orders_failed += 1
 			self._last_error = str(e)
 			self._last_error_time = execution_time
 			self.logger.error('Unexpected error executing order: %s', str(e), exc_info=True)
-			
-			return ExecutionResult(
-				success=False,
-				status=ExecutionStatus.FAILED,
-				error_code=ExecutionErrorCode.EXCHANGE_ERROR,
-				error_message=f"Unexpected error: {str(e)}",
-				execution_time=execution_time
-			)
+			# T-05-08: even unexpected failures must surface as an auditable
+			# FillEvent(REFUSED) so the order mirror reconciles — no outcome
+			# may be lost now that the sync result channel is gone (D-21).
+			self._emit_rejection(event, f"Unexpected error: {str(e)}")
 
 	def _emit_rejection(self, event: OrderEvent, reason: str) -> None:
 		"""Enqueue a FillEvent(REFUSED) so the order mirror can reconcile a rejected order."""
@@ -211,12 +167,11 @@ class SimulatedExchange(AbstractExchange):
 			'REFUSED', event, price=event.price, quantity=event.quantity, commission=0.0))
 
 	def _emit_fill(self, event: OrderEvent, fill_price: float,
-	               fill_quantity: float) -> tuple[float, Decimal, float]:
+	               fill_quantity: float) -> None:
 		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED)."""
-		# fee_model returns Decimal (M2a money); ExecutionResult.commission keeps the
-		# Decimal (tests + downstream rely on it). The FillEvent/fill layer stays float
-		# until M4, so coerce only at the new_fill boundary (mirrors the OrderEvent
-		# boundary coercion in event.py:new_order_event).
+		# fee_model returns Decimal (M2a money). The FillEvent/fill layer stays float
+		# until the D-22 event retype (plan 05-07), so coerce only at the new_fill
+		# boundary (mirrors the OrderEvent boundary coercion in new_order_event).
 		# D-05: the event carries a Side member; the fee/slippage models keep
 		# their lowercase-string contract — convert via .value at this boundary.
 		commission = self.fee_model.calculate_fee(
@@ -241,7 +196,6 @@ class SimulatedExchange(AbstractExchange):
 		self.logger.debug('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
 						event.action, event.ticker, fill_quantity, executed_price,
 						(slippage_factor - 1.0) * 100)
-		return executed_price, commission, slippage_factor
 
 	def on_market_data(self, bar: "BarEvent") -> None:
 		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels."""
@@ -348,12 +302,14 @@ class SimulatedExchange(AbstractExchange):
 		"""Perform comprehensive health check and return status."""
 		current_time = datetime.now()
 		self._last_ping = current_time
-		
+
 		# Calculate metrics
 		total_orders = self._orders_executed + self._orders_failed
 		error_rate = (self._orders_failed / total_orders) if total_orders > 0 else 0.0
 		uptime = (current_time - self._startup_time).total_seconds()
-		
+
+		# total_volume is internal float telemetry; coerce to Decimal at the
+		# DTO boundary (money-denominated field, locked money decision).
 		return HealthStatus(
 			exchange_name=self._exchange_name,
 			connected=self._connected,
@@ -366,13 +322,13 @@ class SimulatedExchange(AbstractExchange):
 			last_error_time=self._last_error_time,
 			orders_executed_today=self._orders_executed,
 			orders_failed_today=self._orders_failed,
-			total_volume_today=self._total_volume,
+			total_volume_today=Decimal(str(self._total_volume)),
 			connection_established=self._connection_time,
 			last_heartbeat=current_time
 		)
 
-	def validate_order(self, event: OrderEvent) -> ValidationResult:
-		"""Comprehensive order validation with detailed feedback."""
+	def validate_order(self, event: OrderEvent) -> OrderPreflightResult:
+		"""Comprehensive pre-trade order checks with detailed feedback (OQ3)."""
 		validation_time = datetime.now()
 		failed_checks = []
 		warnings = []
@@ -423,7 +379,7 @@ class SimulatedExchange(AbstractExchange):
 			
 			error_message = "; ".join(failed_checks)
 		
-		return ValidationResult(
+		return OrderPreflightResult(
 			is_valid=is_valid,
 			error_code=error_code,
 			error_message=error_message,
