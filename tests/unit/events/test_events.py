@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -22,16 +23,18 @@ def events():
     bar_event = BarEvent(time=time, bars={})
     signal_event = SignalEvent(
         time=time, order_type=OrderType.MARKET, ticker="BTCUSDT", action=Side.BUY,
-        price=42350.72, stop_loss=42000, take_profit=45000,
+        # D-22: event money is Decimal — enter via the string path (D-04).
+        price=Decimal("42350.72"), stop_loss=Decimal("42000"), take_profit=Decimal("45000"),
         strategy_id="test_strategy", portfolio_id="portfolio_id",
-        strategy_setting={}, quantity=1,
+        strategy_setting={}, quantity=Decimal("1"),
     )
     # Create Order first, then OrderEvent
     order = Order.new_order(signal_event, "test_exchange")
     mkt_order_event = OrderEvent.new_order_event(order)
     fill_event = FillEvent.new_fill(
         "EXECUTED", mkt_order_event,
-        price=mkt_order_event.price, quantity=mkt_order_event.quantity, commission=1.5)
+        price=mkt_order_event.price, quantity=mkt_order_event.quantity,
+        commission=Decimal("1.5"))
     return SimpleNamespace(
         time_event=time_event,
         bar_event=bar_event,
@@ -58,10 +61,10 @@ def test_signal_event_initialization(events):
     assert events.signal_event.ticker == "BTCUSDT"
     assert events.signal_event.action is Side.BUY
     assert events.signal_event.order_type is OrderType.MARKET
-    assert events.signal_event.price == 42350.72
-    assert events.signal_event.quantity == 1
-    assert events.signal_event.stop_loss == 42000
-    assert events.signal_event.take_profit == 45000
+    assert events.signal_event.price == Decimal("42350.72")
+    assert events.signal_event.quantity == Decimal("1")
+    assert events.signal_event.stop_loss == Decimal("42000")
+    assert events.signal_event.take_profit == Decimal("45000")
     assert events.signal_event.strategy_id == "test_strategy"
     assert events.signal_event.portfolio_id == "portfolio_id"
     # Frozen-event base fields (M3-01)
@@ -78,8 +81,9 @@ def test_order_event_initialization(events):
     # Test OrderEvent attributes
     assert events.mkt_order_event.ticker == "BTCUSDT"
     assert events.mkt_order_event.action is Side.BUY
-    assert events.mkt_order_event.price == 42350.72
-    assert events.mkt_order_event.quantity == 1
+    # D-22: the entity's Decimal money passes through the event exactly.
+    assert events.mkt_order_event.price == Decimal("42350.72")
+    assert events.mkt_order_event.quantity == Decimal("1")
     assert events.mkt_order_event.strategy_id == "test_strategy"
     assert events.mkt_order_event.portfolio_id == "portfolio_id"
     # D-12: the OrderEvent carries its entity's id; D-11: empty bracket tuple
@@ -94,9 +98,10 @@ def test_fill_event_initialization(events):
     assert events.fill_event.status == FillStatus.EXECUTED
     assert events.fill_event.ticker == "BTCUSDT"
     assert events.fill_event.action is Side.BUY
-    assert events.fill_event.price == 42350.72
-    assert events.fill_event.quantity == 1
-    assert events.fill_event.commission == 1.5
+    # D-22: fill money is Decimal — exact Decimal equality, no approx.
+    assert events.fill_event.price == Decimal("42350.72")
+    assert events.fill_event.quantity == Decimal("1")
+    assert events.fill_event.commission == Decimal("1.5")
     assert events.fill_event.portfolio_id == "portfolio_id"
     # D-12 audit chain: fill -> order -> strategy
     assert events.fill_event.fill_id.version == 7

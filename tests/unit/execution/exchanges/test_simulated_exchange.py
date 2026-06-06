@@ -650,6 +650,78 @@ class TestSimulatedExchangeEdgeCases:
             assert fills[0].status is FillStatus.EXECUTED
 
 
+class TestDecimalFillBoundary:
+    """D-22: the float-bar -> Decimal-fill boundary enters via to_money."""
+
+    def setup_method(self):
+        self.queue = Queue()
+        self.exchange = SimulatedExchange(self.queue)
+        self.exchange.connect()
+        self.exchange.update_config(supported_symbols={"BTCUSDT"})
+
+    def _order(self, **kwargs) -> OrderEvent:
+        defaults = {
+            'time': datetime(2024, 1, 1), 'ticker': 'BTCUSDT', 'action': Side.BUY,
+            'quantity': Decimal("100.0"), 'price': Decimal("150.0"),
+            'exchange': 'simulated', 'strategy_id': 1, 'portfolio_id': 1,
+            'order_type': OrderType.MARKET, 'order_id': 1,
+        }
+        defaults.update(kwargs)
+        return OrderEvent(**defaults)
+
+    def test_resting_stop_with_decimal_price_fills_without_type_error(self):
+        """A Decimal-priced resting stop triggers and fills — no Decimal x float
+        TypeError on the hot fill path (T-05-19); FillEvent.price is Decimal."""
+        from itrader.core.money import to_money
+        import pandas as pd
+        from itrader.events_handler.events import BarEvent
+        stop = self._order(order_type=OrderType.STOP, action=Side.SELL,
+                           price=Decimal("30.0"), order_id=5)
+        self.exchange.on_order(stop)
+        bars = {"BTCUSDT": pd.DataFrame(
+            {"open": [35.0], "high": [36.0], "low": [20.0], "close": [25.0], "volume": [1]})}
+        self.exchange.on_market_data(BarEvent(time=datetime(2024, 1, 1), bars=bars))
+        fills = drain_fills(self.queue)
+        assert len(fills) == 1
+        assert fills[0].status is FillStatus.EXECUTED
+        assert isinstance(fills[0].price, Decimal)
+        # zero slippage on the default preset: fill at the stop, via to_money
+        assert fills[0].price == to_money(30.0)
+        assert isinstance(fills[0].quantity, Decimal)
+
+    def test_slippage_fill_price_equals_to_money_of_float_math(self):
+        """Slippage math stays float internally; the fill price converts ONCE
+        at FillEvent construction via to_money(float_fill_price * factor)."""
+        from itrader.core.money import to_money
+        with patch.object(self.exchange.slippage_model, 'calculate_slippage_factor',
+                          return_value=1.005):
+            self.exchange.execute_order(self._order(price=Decimal("100.0")))
+        fills = drain_fills(self.queue)
+        assert len(fills) == 1
+        fill = fills[0]
+        assert fill.status is FillStatus.EXECUTED
+        assert isinstance(fill.price, Decimal)
+        assert fill.price == to_money(100.0 * 1.005)
+
+    def test_executed_fill_commission_is_decimal(self):
+        self.exchange.update_config(fee_model_type=FeeModelType.PERCENT, fee_rate=0.001)
+        self.exchange.execute_order(self._order())
+        fills = drain_fills(self.queue)
+        assert isinstance(fills[0].commission, Decimal)
+        assert fills[0].commission == Decimal('0.001') * Decimal('100.0') * Decimal('150.0')
+
+    def test_refused_fill_carries_decimal_zero_commission(self):
+        order = self._order(ticker='INVALID')
+        self.exchange.execute_order(order)
+        fills = drain_fills(self.queue)
+        assert fills[0].status is FillStatus.REFUSED
+        assert isinstance(fills[0].commission, Decimal)
+        assert fills[0].commission == Decimal("0")
+        # REFUSED carries the order's own (Decimal) price/quantity untouched.
+        assert fills[0].price == order.price
+        assert fills[0].quantity == order.quantity
+
+
 class _RoutingHarness:
     """Connected SimulatedExchange restricted to BTCUSDT, with event factories."""
 

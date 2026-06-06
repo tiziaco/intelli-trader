@@ -59,7 +59,8 @@ class DynamicSizer():
 			# available_cash is the single trading-decision figure (D-14;
 			# available == total until plan 05-06 wires reservations).
 			cash = float(self.portfolio_handler.available_cash(portfolio_id))
-			last_price = signal.price
+			# D-22: signal money is Decimal — coerce at this float-sizing boundary.
+			last_price = float(signal.price)
 
 			available_pos = (max_positions - open_count)
 			quantity = (cash * (max_allocation * (1 / available_pos))) / last_price

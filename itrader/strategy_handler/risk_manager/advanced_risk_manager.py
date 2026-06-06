@@ -56,9 +56,10 @@ class RiskManager():
 		portfolio_id = cast(PortfolioId, signal.portfolio_id)
 
 		# Extract scalar values from signal attributes (an unsized signal —
-		# quantity None, D-10 — carries no cost yet).
-		quantity = signal.quantity if signal.quantity is not None else 0.0
-		price = signal.price
+		# quantity None, D-10 — carries no cost yet). D-22: signal money is
+		# Decimal — coerce at this float risk-check boundary.
+		quantity = float(signal.quantity) if signal.quantity is not None else 0.0
+		price = float(signal.price)
 
 		cost = quantity * price
 

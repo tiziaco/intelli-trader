@@ -4,6 +4,7 @@ fully linked to its originating Order entity (D-11/D-12).
 """
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from itrader.core.enums import EventType, OrderCommand, OrderType, Side
@@ -23,13 +24,19 @@ class OrderEvent(Event):
     Linkage (D-11/D-12): ``order_id`` is REQUIRED — every order event
     traces to its Order entity. A bracket parent carries its children's
     ids in ``child_order_ids``; non-bracket orders carry the empty tuple.
+
+    Money (D-22, closing the Phase 4 D-04 deferral): ``price``/``quantity``/
+    ``stop_price`` are Decimal — the entity's Decimal money passes through
+    the event untouched. The execution layer converts ONCE at its float
+    matching/slippage boundary and re-enters Decimal via ``to_money`` at
+    FillEvent construction.
     """
 
     type: EventType = field(default=EventType.ORDER, init=False)
     ticker: str
     action: Side
-    price: float
-    quantity: float
+    price: Decimal
+    quantity: Decimal
     exchange: str
     strategy_id: StrategyId
     portfolio_id: int
@@ -37,7 +44,7 @@ class OrderEvent(Event):
     # D-12: required linkage — ids are UUIDv7-backed since M2; an OrderEvent
     # without its entity id is malformed by construction (TypeError).
     order_id: OrderId
-    stop_price: float | None = None
+    stop_price: Decimal | None = None
     parent_order_id: OrderId | None = None
     # D-11: two-directional bracket linkage — a bracket parent carries its
     # children's ids; non-bracket orders carry the empty tuple.
@@ -62,17 +69,16 @@ class OrderEvent(Event):
         — required, no getattr-None default, D-12), plus the bracket
         linkage (``parent_order_id`` / ``child_order_ids``, D-11) and the
         command intent.
+
+        Money (D-22): the entity's Decimal ``price``/``quantity`` pass
+        through EXACTLY — the former M2a float() boundary coercion is gone.
         """
-        # Boundary coercion (M2a): the Order entity carries Decimal money, but the
-        # OrderEvent + execution/matching/fee layer remain float until M4. Coerce
-        # here so the float execution layer stays consistent; the cash path
-        # re-enters Decimal at Transaction.new_transaction via to_money().
         return cls(
             time=order.time,
             ticker=order.ticker,
             action=Side(order.action),
-            price=float(order.price),
-            quantity=float(order.quantity),
+            price=order.price,
+            quantity=order.quantity,
             exchange=order.exchange,
             strategy_id=order.strategy_id,
             portfolio_id=order.portfolio_id,

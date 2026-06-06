@@ -112,6 +112,9 @@ class OrderManager:
 			return
 		try:
 			if fill_event.status == FillStatus.EXECUTED:
+				# D-22: fill_event.price is Decimal — to_money is an identity
+				# normalization at this domain entry (kept deliberately: the
+				# mirror never trusts an unnormalized money input).
 				if not order.add_fill(order.remaining_quantity, to_money(fill_event.price),
 				                      fill_event.time, "exchange fill"):
 					self.logger.warning('add_fill rejected for order %s; mirror left unchanged', order_id)
@@ -542,8 +545,9 @@ class OrderManager:
 		# through the intermediate (D-01: quantize ONLY at money boundaries,
 		# never on an intermediate). The sized quantity is NOT a money-ledger
 		# boundary — it is an in-flight intermediate the exchange consumes — so
-		# it is carried at full precision; the float execution layer still sees
-		# the identical float at the OrderEvent boundary coercion (D-04).
+		# it is carried at full precision; since D-22 the Decimal rides the
+		# OrderEvent untouched and the exchange converts ONCE at its float
+		# matching boundary (the identical double the old float coercion saw).
 		# (Quantizing here to 8dp would both violate D-01 and shift the frozen
 		# numeric oracle past the D-15 tolerance — DEF-02-04-A: no re-baseline.)
 		available = self.portfolio_handler.available_cash(portfolio_id)
