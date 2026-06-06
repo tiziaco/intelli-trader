@@ -352,30 +352,6 @@ class PortfolioHandler:
                     error=str(e)
                 )
     
-    def update_portfolios_market(self, bar_event: BarEvent) -> None:
-        """Update market values for all portfolios (backward compatible method)."""
-        # Extract prices from bar event
-        prices: Dict[str, Any] = {}
-        if hasattr(bar_event, 'bars'):
-            for ticker, bar in bar_event.bars.items():
-                prices[ticker] = getattr(bar, 'close_price', None)
-        else:
-            # Single ticker bar event (legacy shape)
-            prices[getattr(bar_event, 'ticker')] = getattr(bar_event, 'close_price')
-        
-        # Update all active portfolios
-        active_portfolios = self.get_active_portfolios()
-        
-        for portfolio in active_portfolios:
-            try:
-                portfolio.update_market_value_of_portfolio(prices)
-            except Exception as e:
-                self.logger.warning(
-                    "Failed to update portfolio market value",
-                    portfolio_id=portfolio.portfolio_id,
-                    error=str(e)
-                )
-    
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:
         """Generate global health report."""
