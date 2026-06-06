@@ -1,0 +1,2089 @@
+diff --git a/itrader/execution_handler/exchanges/simulated.py b/itrader/execution_handler/exchanges/simulated.py
+index 4a85494..d76b7e8 100644
+--- a/itrader/execution_handler/exchanges/simulated.py
++++ b/itrader/execution_handler/exchanges/simulated.py
+@@ -3,14 +3,12 @@ from datetime import datetime
+ from decimal import Decimal
+ from typing import Dict, Any, Optional
+ import random
+-import time
+ 
+ from .base import AbstractExchange
+ from ..fee_model.base import FeeModel
+ from ..fee_model.zero_fee_model import ZeroFeeModel
+ from ..fee_model.percent_fee_model import PercentFeeModel
+ from ..fee_model.maker_taker_fee_model import MakerTakerFeeModel
+-from ..fee_model.tiered_fee_model import TieredFeeModel
+ from ..slippage_model.base import SlippageModel
+ from ..slippage_model.zero_slippage_model import ZeroSlippageModel
+ from ..slippage_model.linear_slippage_model import LinearSlippageModel
+@@ -19,6 +17,7 @@ from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResul
+ from ..matching_engine import MatchingEngine
+ from itrader.core.enums.execution import ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
+ from itrader.core.enums import OrderType, OrderCommand
++from itrader.core.money import to_money
+ from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
+ from itrader.logger import get_itrader_logger
+ from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation
+@@ -90,7 +89,8 @@ class SimulatedExchange(AbstractExchange):
+ 		self._orders_failed = 0
+ 		self._last_error: Optional[str] = None
+ 		self._last_error_time: Optional[datetime] = None
+-		self._total_volume = 0.0
++		# Money-denominated telemetry: Decimal end-to-end (D-12).
++		self._total_volume = Decimal("0")
+ 		self._startup_time = datetime.now()
+ 		self._last_ping: Optional[datetime] = None
+ 		
+@@ -168,47 +168,55 @@ class SimulatedExchange(AbstractExchange):
+ 			'REFUSED', event, price=event.price, quantity=event.quantity,
+ 			commission=Decimal("0")))
+ 
+-	def _emit_fill(self, event: OrderEvent, fill_price: "float | Decimal",
+-	               fill_quantity: "float | Decimal") -> None:
++	def _emit_fill(self, event: OrderEvent, fill_price: Decimal,
++	               fill_quantity: Decimal) -> None:
+ 		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED).
+ 
+-		D-22 boundary (Pitfall 4): fee/slippage/matching math stays FLOAT
+-		internally — bar OHLC is float (pandas) until M5a's Bar struct and
+-		the slippage factor is float. Decimal order money converts to float
+-		ONCE on entry here; the executed values re-enter the money domain
+-		ONCE at FillEvent construction via to_money (Decimal(str(x)) — the
+-		exact Decimal today's float fill produced at the ledger, so the
+-		retype is numerically inert).
++		Money (D-12): Decimal end-to-end — the old price_f/quantity_f float
++		casts are gone. ``to_money`` is an identity normalization at this
++		domain entry (the engine and event money are already Decimal).
++
++		Real order context (D-11): order_type and maker/taker classification
++		derive from the OrderEvent the caller already holds — a resting LIMIT
++		is a maker; MARKET and triggered STOP fills are takers.
++
++		Slippage gating (D-03): slippage applies ONLY to MARKET and STOP
++		fills. LIMIT fills take fill_price unmodified — limit-or-better means
++		a limit fill can never be slipped past its limit price.
+ 		"""
+-		price_f = float(fill_price)
+-		quantity_f = float(fill_quantity)
+-		# fee_model returns Decimal (M2a money) from float inputs; it passes
+-		# through new_fill's to_money as an identity normalization.
++		price = to_money(fill_price)
++		quantity = to_money(fill_quantity)
+ 		# D-05: the event carries a Side member; the fee/slippage models keep
+ 		# their lowercase-string contract — convert via .value at this boundary.
++		side = event.action.value.lower()
++		order_type = event.order_type.value
++		is_maker = event.order_type is OrderType.LIMIT
+ 		commission = self.fee_model.calculate_fee(
+-			quantity=quantity_f, price=price_f,
+-			side=event.action.value.lower(), order_type="market")
+-		slippage_factor = self.slippage_model.calculate_slippage_factor(
+-			quantity=quantity_f, price=price_f,
+-			side=event.action.value.lower(), order_type="market")
+-		executed_price = price_f * slippage_factor
+-
+-		# Construct-complete (D-12): the slippage-adjusted price and the matched
+-		# fill quantity (may differ from event.quantity for partial fills driven
+-		# by the matching engine in on_market_data) are explicit constructor
+-		# inputs — the fill is never mutated after construction. new_fill
+-		# enters the floats into Decimal via to_money (D-22).
++			quantity=quantity, price=price,
++			side=side, order_type=order_type, is_maker=is_maker)
++		if event.order_type is OrderType.LIMIT:
++			# D-03: limit fills are never slipped — limit-or-better.
++			slippage_factor = Decimal("1")
++		else:
++			slippage_factor = self.slippage_model.calculate_slippage_factor(
++				quantity=quantity, price=price,
++				side=side, order_type=order_type)
++		executed_price = price * slippage_factor
++
++		# Construct-complete (D-12): the slippage-adjusted price and the fill
++		# quantity (the order's full quantity — D-06 full-quantity contract)
++		# are explicit constructor inputs — the fill is never mutated after
++		# construction. new_fill's to_money is an identity normalization here.
+ 		fill_event = FillEvent.new_fill(
+ 			'EXECUTED', event,
+-			price=executed_price, quantity=quantity_f, commission=commission)
++			price=executed_price, quantity=quantity, commission=commission)
+ 		self.global_queue.put(fill_event)
+ 
+ 		self._orders_executed += 1
+-		self._total_volume += executed_price * quantity_f
++		self._total_volume += executed_price * quantity
+ 		self.logger.debug('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
+-						event.action, event.ticker, quantity_f, executed_price,
+-						(slippage_factor - 1.0) * 100)
++						event.action, event.ticker, quantity, executed_price,
++						(slippage_factor - Decimal("1")) * 100)
+ 
+ 	def on_market_data(self, bar: "BarEvent") -> None:
+ 		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels."""
+@@ -268,10 +276,9 @@ class SimulatedExchange(AbstractExchange):
+ 					connection_time=self._connection_time
+ 				)
+ 			
+-			# Simulate connection process
++			# PERF1 (plan 06-04): the simulated connection is instantaneous —
++			# the artificial time.sleep latency is gone from the backtest path.
+ 			self._connection_status = ExchangeConnectionStatus.CONNECTING
+-			time.sleep(0.1)  # Simulate connection delay
+-			
+ 			self._connected = True
+ 			self._connection_time = datetime.now()
+ 			self._connection_status = ExchangeConnectionStatus.CONNECTED
+@@ -326,8 +333,7 @@ class SimulatedExchange(AbstractExchange):
+ 		error_rate = (self._orders_failed / total_orders) if total_orders > 0 else 0.0
+ 		uptime = (current_time - self._startup_time).total_seconds()
+ 
+-		# total_volume is internal float telemetry; coerce to Decimal at the
+-		# DTO boundary (money-denominated field, locked money decision).
++		# total_volume is Decimal end-to-end (D-12) — no boundary coercion needed.
+ 		return HealthStatus(
+ 			exchange_name=self._exchange_name,
+ 			connected=self._connected,
+@@ -340,7 +346,7 @@ class SimulatedExchange(AbstractExchange):
+ 			last_error_time=self._last_error_time,
+ 			orders_executed_today=self._orders_executed,
+ 			orders_failed_today=self._orders_failed,
+-			total_volume_today=Decimal(str(self._total_volume)),
++			total_volume_today=self._total_volume,
+ 			connection_established=self._connection_time,
+ 			last_heartbeat=current_time
+ 		)
+@@ -465,17 +471,6 @@ class SimulatedExchange(AbstractExchange):
+ 				maker_rate=float(config.maker_rate or 0.001),
+ 				taker_rate=float(config.taker_rate or 0.001)
+ 			)
+-		elif config.model_type.value == 'tiered':
+-			# TieredFeeModel takes fee_tiers as (min_volume, max_volume, fee_rate)
+-			# tuples; convert the config's dict tiers when present, else fall back
+-			# to the model's own defaults (config.tiers is dormant on the golden path).
+-			fee_tiers = None
+-			if config.tiers:
+-				fee_tiers = [
+-					(float(t['min_volume']), float(t['max_volume']), float(t['fee_rate']))
+-					for t in config.tiers
+-				]
+-			return TieredFeeModel(fee_tiers=fee_tiers)
+ 		else:
+ 			self.logger.warning('Unknown fee model %s, defaulting to no_fee', config.model_type.value)
+ 			return ZeroFeeModel()
+diff --git a/itrader/execution_handler/fee_model/__init__.py b/itrader/execution_handler/fee_model/__init__.py
+index 92ad11d..162ea2e 100644
+--- a/itrader/execution_handler/fee_model/__init__.py
++++ b/itrader/execution_handler/fee_model/__init__.py
+@@ -1,5 +1,5 @@
+ """
+-Modern fee model system for trading operations.
++Decimal-native fee model system for trading operations (D-12).
+ 
+ This package provides a unified interface for calculating trading fees
+ across different scenarios and exchange types.
+@@ -9,12 +9,10 @@ from .base import FeeModel
+ from .zero_fee_model import ZeroFeeModel
+ from .percent_fee_model import PercentFeeModel
+ from .maker_taker_fee_model import MakerTakerFeeModel
+-from .tiered_fee_model import TieredFeeModel
+ 
+ __all__ = [
+     "FeeModel",
+-    "ZeroFeeModel", 
++    "ZeroFeeModel",
+     "PercentFeeModel",
+     "MakerTakerFeeModel",
+-    "TieredFeeModel"
+-]
+\ No newline at end of file
++]
+diff --git a/itrader/execution_handler/fee_model/base.py b/itrader/execution_handler/fee_model/base.py
+index e48848f..929e41c 100644
+--- a/itrader/execution_handler/fee_model/base.py
++++ b/itrader/execution_handler/fee_model/base.py
+@@ -1,108 +1,129 @@
++"""
++Fee model ABC — Decimal-native fee calculation for trading operations (D-12).
++
++Validation contract (the SURVIVOR pattern, plan 06-04): ``validate_inputs``
++raises typed exceptions from the core ``ValidationError`` family and returns
++``None`` — there is no boolean contract and no silent fallback anywhere in
++the fee/slippage layer.
++"""
++
+ from abc import ABC, abstractmethod
+ from decimal import Decimal
+-from typing import Union, Dict, Any, Optional
++from typing import Dict, Any
++
++from itrader.core.exceptions import ValidationError
++
++# Known order-type strings (case-insensitive) accepted at the model boundary.
++_KNOWN_ORDER_TYPES = {"market", "limit", "stop"}
+ 
+ 
+ class FeeModel(ABC):
+     """
+-    Modern, simplified fee calculation interface for trading operations.
+-    
+-    Provides a clean, single-method interface for calculating trading fees
+-    with support for modern trading patterns including maker/taker fees
+-    and order-type specific calculations.
++    Decimal-native fee calculation interface for trading operations.
++
++    Money (D-12): quantities, prices, rates, and returned fees are Decimal
++    end-to-end — no float casts inside fee math, no quantization (rounding
++    happens only at money boundaries, never in fee models).
+     """
+ 
++    def validate_inputs(
++        self,
++        quantity: Decimal,
++        price: Decimal,
++        side: str = "buy",
++        order_type: str = "market",
++    ) -> None:
++        """
++        Validate input parameters for fee calculation.
++
++        Raises typed exceptions (returns ``None`` on valid input) — the
++        boolean validation contract is dead (plan 06-04, T-06-13).
++
++        Parameters
++        ----------
++        quantity : Decimal
++            Number of units to trade (must be positive)
++        price : Decimal
++            Price per unit (must be positive)
++        side : str
++            Order side ("buy" or "sell")
++        order_type : str
++            Order type ("market", "limit", "stop" — case-insensitive)
++
++        Raises
++        ------
++        ValidationError
++            If any parameter is invalid
++        """
++        if not isinstance(quantity, (int, Decimal)) or quantity <= 0:
++            raise ValidationError("quantity", str(quantity), "must be a positive Decimal")
++
++        if not isinstance(price, Decimal) or price <= 0:
++            raise ValidationError("price", str(price), "must be a positive Decimal")
++
++        if side not in ("buy", "sell"):
++            raise ValidationError("side", side, "must be 'buy' or 'sell'")
++
++        if not isinstance(order_type, str) or order_type.lower() not in _KNOWN_ORDER_TYPES:
++            raise ValidationError(
++                "order_type", str(order_type),
++                f"must be one of {sorted(_KNOWN_ORDER_TYPES)} (case-insensitive)")
++
+     @abstractmethod
+     def calculate_fee(
+-        self, 
+-        quantity: Union[int, float, Decimal], 
+-        price: Union[float, Decimal], 
++        self,
++        quantity: Decimal,
++        price: Decimal,
+         side: str = "buy",
+         order_type: str = "market",
+-        **kwargs: Any
++        is_maker: bool | None = None,
+     ) -> Decimal:
+         """
+         Calculate the total trading fee for an order.
+-        
++
+         Parameters
+         ----------
+-        quantity : Union[int, float, Decimal]
++        quantity : Decimal
+             Number of units/shares to trade (always positive)
+-        price : Union[float, Decimal]
++        price : Decimal
+             Price per unit (always positive)
+         side : str, optional
+             Order side - "buy" or "sell" (default: "buy")
+         order_type : str, optional
+-            Order type - "market", "limit", etc. (default: "market")
+-        **kwargs
+-            Additional parameters for specific fee models
+-            
++            Order type - "market", "limit", "stop" (default: "market")
++        is_maker : bool | None, optional
++            Real order context (D-11): authoritative maker/taker
++            classification when provided; ``None`` lets the model fall back
++            to its own order_type-string classification.
++
+         Returns
+         -------
+         Decimal
+             Total fee amount in quote currency (always >= 0)
+-            
++
+         Raises
+         ------
+-        ValueError
+-            If quantity or price are negative or zero
++        ValidationError
++            If quantity or price are not positive, or side/order_type unknown
+         """
+         raise NotImplementedError("Subclasses must implement calculate_fee()")
+-    
+-    def validate_inputs(
+-        self, 
+-        quantity: Union[int, float, Decimal], 
+-        price: Union[float, Decimal], 
+-        side: str = "buy",
+-        order_type: str = "market"
+-    ) -> None:
+-        """
+-        Validate input parameters for fee calculation.
+-        
+-        Parameters
+-        ----------
+-        quantity : Union[int, float, Decimal]
+-            Number of units to trade
+-        price : Union[float, Decimal]
+-            Price per unit
+-        side : str
+-            Order side ("buy" or "sell")
+-        order_type : str
+-            Order type
+-            
+-        Raises
+-        ------
+-        ValueError
+-            If any parameter is invalid
+-        """
+-        if not isinstance(quantity, (int, float, Decimal)) or quantity <= 0:
+-            raise ValueError(f"Quantity must be positive, got {quantity}")
+-        
+-        if not isinstance(price, (float, Decimal)) or price <= 0:
+-            raise ValueError(f"Price must be positive, got {price}")
+-        
+-        if side not in ("buy", "sell"):
+-            raise ValueError(f"Side must be 'buy' or 'sell', got '{side}'")
+-            
+-        if not isinstance(order_type, str) or not order_type.strip():
+-            raise ValueError(f"Order type must be a non-empty string, got '{order_type}'")
+-    
++
+     @property
+     def fee_type(self) -> str:
+         """
+         Get the type of fee model for identification.
+-        
++
+         Returns
+         -------
+         str
+             Fee model type identifier
+         """
+         return self.__class__.__name__
+-    
++
+     def get_fee_info(self) -> Dict[str, Any]:
+         """
+         Get information about this fee model configuration.
+-        
++
+         Returns
+         -------
+         Dict[str, Any]
+diff --git a/itrader/execution_handler/fee_model/maker_taker_fee_model.py b/itrader/execution_handler/fee_model/maker_taker_fee_model.py
+index fe8229c..d2e2de0 100644
+--- a/itrader/execution_handler/fee_model/maker_taker_fee_model.py
++++ b/itrader/execution_handler/fee_model/maker_taker_fee_model.py
+@@ -1,132 +1,137 @@
++"""
++Maker/taker fee model — real-order-context classification (Decimal-native, D-11/D-12).
++"""
++
+ from decimal import Decimal
+-from typing import Union, Dict, Any, Optional
++from typing import Dict, Any
++
++from itrader.core.money import to_money
++
+ from .base import FeeModel
+ 
+ 
+ class MakerTakerFeeModel(FeeModel):
+     """
+     Fee model implementing maker/taker fee structure common in cryptocurrency exchanges.
+-    
++
+     Maker orders (limit orders that add liquidity) typically have lower fees,
+     while taker orders (market orders that remove liquidity) have higher fees.
+-    This model supports order-type based fee determination.
++
++    Classification (D-11): the ``is_maker`` parameter is AUTHORITATIVE when
++    provided — the exchange derives it from the real order context (resting
++    limit = maker; market and triggered stop = taker). The order_type-string
++    fallback survives only for direct callers that pass no context.
+     """
+ 
+     def __init__(
+-        self, 
+-        maker_rate: float = 0.0005, 
+-        taker_rate: float = 0.001
++        self,
++        maker_rate: float | Decimal = 0.0005,
++        taker_rate: float | Decimal = 0.001
+     ):
+         """
+         Initialize the maker/taker fee model.
+-        
++
+         Parameters
+         ----------
+-        maker_rate : float, optional
+-            Default maker fee rate as decimal (e.g., 0.0005 = 0.05%)
+-        taker_rate : float, optional
+-            Default taker fee rate as decimal (e.g., 0.001 = 0.1%)
+-            
++        maker_rate : float | Decimal, optional
++            Default maker fee rate as decimal fraction (e.g., 0.0005 = 0.05%);
++            converted once to Decimal via ``to_money``
++        taker_rate : float | Decimal, optional
++            Default taker fee rate as decimal fraction (e.g., 0.001 = 0.1%);
++            converted once to Decimal via ``to_money``
++
+         Raises
+         ------
+         ValueError
+             If any fee rate is negative
+         """
+-        if maker_rate < 0:
+-            raise ValueError(f"Maker rate must be non-negative, got {maker_rate}")
+-        if taker_rate < 0:
+-            raise ValueError(f"Taker rate must be non-negative, got {taker_rate}")
+-        
+-        self.maker_rate = Decimal(str(maker_rate))
+-        self.taker_rate = Decimal(str(taker_rate))
++        self.maker_rate = to_money(maker_rate)
++        self.taker_rate = to_money(taker_rate)
++
++        if self.maker_rate < 0:
++            raise ValueError(f"Maker rate must be non-negative, got {self.maker_rate}")
++        if self.taker_rate < 0:
++            raise ValueError(f"Taker rate must be non-negative, got {self.taker_rate}")
+ 
+     def calculate_fee(
+-        self, 
+-        quantity: Union[int, float, Decimal], 
+-        price: Union[float, Decimal], 
++        self,
++        quantity: Decimal,
++        price: Decimal,
+         side: str = "buy",
+         order_type: str = "market",
+-        **kwargs: Any
++        is_maker: bool | None = None,
+     ) -> Decimal:
+         """
+         Calculate maker/taker fee for an order.
+-        
++
+         Parameters
+         ----------
+-        quantity : Union[int, float, Decimal]
++        quantity : Decimal
+             Number of units to trade
+-        price : Union[float, Decimal]
++        price : Decimal
+             Price per unit
+         side : str, optional
+             Order side ("buy" or "sell")
+         order_type : str, optional
+-            Order type ("market", "limit", etc.)
+-        **kwargs: Any
+-            Additional parameters (e.g., is_maker boolean override)
+-            
++            Order type ("market", "limit", "stop")
++        is_maker : bool | None, optional
++            Authoritative maker/taker classification from real order context
++            (D-11). ``None`` falls back to order_type-string classification.
++
+         Returns
+         -------
+         Decimal
+             Fee amount based on maker/taker classification
+         """
+         self.validate_inputs(quantity, price, side, order_type)
+-        
+-        # Convert to Decimal for precision
+-        quantity_decimal = Decimal(str(quantity))
+-        price_decimal = Decimal(str(price))
+-        trade_value = abs(quantity_decimal * price_decimal)
+-        
+-        # Determine if this is a maker or taker order
+-        is_maker = self._is_maker_order(order_type, **kwargs)
+-        
+-        # Apply appropriate fee
+-        if is_maker:
++
++        # Pure Decimal arithmetic — no float casts, no quantization (D-12/D-14)
++        trade_value = abs(quantity * price)
++
++        # D-11: explicit context is authoritative; fall back to the
++        # order_type string only when no context was provided.
++        maker = is_maker if is_maker is not None else self._is_maker_order(order_type)
++
++        if maker:
+             return trade_value * self.maker_rate
+         else:
+             return trade_value * self.taker_rate
+ 
+-    def _is_maker_order(self, order_type: str, **kwargs: Any) -> bool:
++    def _is_maker_order(self, order_type: str) -> bool:
+         """
+-        Determine if an order is a maker order.
+-        
++        Classify maker/taker from the order-type string (fallback path).
++
+         Parameters
+         ----------
+         order_type : str
+             Order type
+-        **kwargs: Any
+-            Additional parameters (e.g., is_maker override)
+-            
++
+         Returns
+         -------
+         bool
+             True if this is a maker order
+         """
+-        # Allow explicit override
+-        if "is_maker" in kwargs:
+-            return bool(kwargs["is_maker"])
+-        
+-        # Default classification based on order type
+         order_type_lower = order_type.lower()
+-        
++
+         # Market orders are typically takers
+         if order_type_lower in ("market", "market_order"):
+             return False
+-        
++
+         # Limit orders are typically makers (though not always)
+         if order_type_lower in ("limit", "limit_order"):
+             return True
+-        
++
+         # Conservative default: assume taker (higher fee)
+         return False
+ 
+-    def calculate_maker_fee(self, quantity: Union[int, float, Decimal], price: Union[float, Decimal]) -> Decimal:
++    def calculate_maker_fee(self, quantity: Decimal, price: Decimal) -> Decimal:
+         """Calculate fee for a maker order (limit order)."""
+         return self.calculate_fee(quantity, price, order_type="limit", is_maker=True)
+-    
+-    def calculate_taker_fee(self, quantity: Union[int, float, Decimal], price: Union[float, Decimal]) -> Decimal:
++
++    def calculate_taker_fee(self, quantity: Decimal, price: Decimal) -> Decimal:
+         """Calculate fee for a taker order (market order)."""
+         return self.calculate_fee(quantity, price, order_type="market", is_maker=False)
+-    
++
+     def get_fee_info(self) -> Dict[str, Any]:
+         """Get information about this maker/taker fee model."""
+         base_info = super().get_fee_info()
+diff --git a/itrader/execution_handler/fee_model/percent_fee_model.py b/itrader/execution_handler/fee_model/percent_fee_model.py
+index aef2dfe..b2f2e57 100644
+--- a/itrader/execution_handler/fee_model/percent_fee_model.py
++++ b/itrader/execution_handler/fee_model/percent_fee_model.py
+@@ -1,91 +1,99 @@
++"""
++Percentage fee model — fixed rate on trade value (Decimal-native, D-12).
++"""
++
+ from decimal import Decimal
+-from typing import Union, Dict, Any, Optional
++from typing import Dict, Any, Optional
++
++from itrader.core.money import to_money
++
+ from .base import FeeModel
+ 
+ 
+ class PercentFeeModel(FeeModel):
+     """
+     Fee model that applies a fixed percentage fee to all trading operations.
+-    
++
+     Commonly used for traditional brokers and some exchanges that charge
+     a simple percentage of trade value. Supports different rates for
+     buy and sell orders if needed.
++
++    Money (D-12): rates are held as Decimal — constructor floats convert
++    ONCE via ``to_money``; the fee arithmetic is pure Decimal.
+     """
+ 
+-    def __init__(self, fee_rate: float = 0.001, buy_rate: Optional[float] = None, sell_rate: Optional[float] = None):
++    def __init__(self, fee_rate: float | Decimal = 0.001,
++                 buy_rate: Optional[float | Decimal] = None,
++                 sell_rate: Optional[float | Decimal] = None):
+         """
+         Initialize the percentage fee model.
+-        
++
+         Parameters
+         ----------
+-        fee_rate : float, optional
+-            Default fee rate as decimal (e.g., 0.001 = 0.1%)
+-        buy_rate : float, optional
++        fee_rate : float | Decimal, optional
++            Default fee rate as decimal fraction (e.g., 0.001 = 0.1%);
++            converted once to Decimal via ``to_money``
++        buy_rate : float | Decimal, optional
+             Specific fee rate for buy orders. If None, uses fee_rate
+-        sell_rate : float, optional
++        sell_rate : float | Decimal, optional
+             Specific fee rate for sell orders. If None, uses fee_rate
+-            
++
+         Raises
+         ------
+         ValueError
+             If any fee rate is negative
+         """
+-        if fee_rate < 0:
+-            raise ValueError(f"Fee rate must be non-negative, got {fee_rate}")
+-        
+-        self.fee_rate = Decimal(str(fee_rate))
+-        self.buy_rate = Decimal(str(buy_rate)) if buy_rate is not None else self.fee_rate
+-        self.sell_rate = Decimal(str(sell_rate)) if sell_rate is not None else self.fee_rate
+-        
++        self.fee_rate = to_money(fee_rate)
++        self.buy_rate = to_money(buy_rate) if buy_rate is not None else self.fee_rate
++        self.sell_rate = to_money(sell_rate) if sell_rate is not None else self.fee_rate
++
++        if self.fee_rate < 0:
++            raise ValueError(f"Fee rate must be non-negative, got {self.fee_rate}")
+         if self.buy_rate < 0:
+             raise ValueError(f"Buy rate must be non-negative, got {self.buy_rate}")
+         if self.sell_rate < 0:
+             raise ValueError(f"Sell rate must be non-negative, got {self.sell_rate}")
+ 
+     def calculate_fee(
+-        self, 
+-        quantity: Union[int, float, Decimal], 
+-        price: Union[float, Decimal], 
++        self,
++        quantity: Decimal,
++        price: Decimal,
+         side: str = "buy",
+         order_type: str = "market",
+-        **kwargs: Any
++        is_maker: bool | None = None,
+     ) -> Decimal:
+         """
+         Calculate percentage-based fee for an order.
+-        
++
+         Parameters
+         ----------
+-        quantity : Union[int, float, Decimal]
++        quantity : Decimal
+             Number of units to trade
+-        price : Union[float, Decimal]
++        price : Decimal
+             Price per unit
+         side : str, optional
+             Order side ("buy" or "sell")
+         order_type : str, optional
+             Order type (ignored in this model)
+-        **kwargs: Any
+-            Additional parameters (ignored)
+-            
++        is_maker : bool | None, optional
++            Maker/taker context (ignored — flat percentage either way)
++
+         Returns
+         -------
+         Decimal
+             Fee amount (percentage of trade value)
+         """
+         self.validate_inputs(quantity, price, side, order_type)
+-        
+-        # Convert to Decimal for precision
+-        quantity_decimal = Decimal(str(quantity))
+-        price_decimal = Decimal(str(price))
+-        
+-        # Calculate trade value
+-        trade_value = abs(quantity_decimal * price_decimal)
+-        
++
++        # Pure Decimal arithmetic — no float casts, no quantization (D-12/D-14)
++        trade_value = abs(quantity * price)
++
+         # Apply appropriate rate based on side
+         if side == "buy":
+             return trade_value * self.buy_rate
+         else:  # sell
+             return trade_value * self.sell_rate
+-    
++
+     def get_fee_info(self) -> Dict[str, Any]:
+         """Get information about this percentage fee model."""
+         base_info = super().get_fee_info()
+diff --git a/itrader/execution_handler/fee_model/tiered_fee_model.py b/itrader/execution_handler/fee_model/tiered_fee_model.py
+deleted file mode 100644
+index 3abb40b..0000000
+--- a/itrader/execution_handler/fee_model/tiered_fee_model.py
++++ /dev/null
+@@ -1,306 +0,0 @@
+-from decimal import Decimal
+-from typing import List, Tuple, Union, Dict, Any, Optional
+-from .base import FeeModel
+-
+-
+-class TieredFeeModel(FeeModel):
+-    """
+-    Fee model implementing tiered fee structure based on trading volume.
+-    
+-    Many exchanges offer volume-based fee discounts where traders with higher
+-    30-day trading volumes get reduced fees. This model supports configurable
+-    volume tiers with separate maker/taker rates.
+-    """
+-
+-    def __init__(self, fee_tiers: Optional[List[Tuple[float, float, float]]] = None, current_volume: float = 0.0):
+-        """
+-        Initialize the tiered fee model.
+-        
+-        Parameters
+-        ----------
+-        fee_tiers : List[Tuple[float, float, float]], optional
+-            List of (volume_threshold, maker_rate, taker_rate) tuples.
+-            Default creates a realistic crypto exchange tier structure.
+-        current_volume : float, optional
+-            Current 30-day trading volume (default: 0.0)
+-            
+-        Raises
+-        ------
+-        ValueError
+-            If fee tiers are invalid or current volume is negative
+-        """
+-        if current_volume < 0:
+-            raise ValueError(f"Current volume must be non-negative, got {current_volume}")
+-            
+-        if fee_tiers is None:
+-            # Default tier structure similar to major exchanges (volume, maker_rate, taker_rate)
+-            fee_tiers = [
+-                (0, 0.0015, 0.0015),        # Tier 0: < $0 - 0.15%/0.15%
+-                (10000, 0.0014, 0.0015),    # Tier 1: $10K+ - 0.14%/0.15%
+-                (50000, 0.0012, 0.0014),    # Tier 2: $50K+ - 0.12%/0.14%
+-                (100000, 0.0010, 0.0012),   # Tier 3: $100K+ - 0.10%/0.12%
+-                (250000, 0.0008, 0.0010),   # Tier 4: $250K+ - 0.08%/0.10%
+-                (500000, 0.0006, 0.0008),   # Tier 5: $500K+ - 0.06%/0.08%
+-                (1000000, 0.0004, 0.0006),  # Tier 6: $1M+ - 0.04%/0.06%
+-            ]
+-        
+-        self.fee_tiers = self._validate_and_sort_tiers(fee_tiers)
+-        self.current_volume = Decimal(str(current_volume))
+-        self._current_tier = self._determine_current_tier()
+-
+-    def _validate_and_sort_tiers(self, tiers: List[Tuple[float, float, float]]) -> List[Tuple[Decimal, Decimal, Decimal]]:
+-        """
+-        Validate and sort volume tiers.
+-        
+-        Parameters
+-        ----------
+-        tiers : List[Tuple[float, float, float]]
+-            Raw tier data (volume_threshold, maker_rate, taker_rate)
+-            
+-        Returns
+-        -------
+-        List[Tuple[Decimal, Decimal, Decimal]]
+-            Validated and sorted tiers
+-        """
+-        if not tiers:
+-            raise ValueError("Fee tiers cannot be empty")
+-        
+-        validated_tiers = []
+-        for i, tier in enumerate(tiers):
+-            if len(tier) != 3:
+-                raise ValueError(f"Each tier must have 3 values (volume, maker_rate, taker_rate), got {len(tier)} at tier {i}")
+-            
+-            volume, maker_rate, taker_rate = tier
+-            
+-            if volume < 0:
+-                raise ValueError(f"Volume threshold must be non-negative, got {volume} at tier {i}")
+-            if maker_rate < 0:
+-                raise ValueError(f"Maker rate must be non-negative, got {maker_rate} at tier {i}")
+-            if taker_rate < 0:
+-                raise ValueError(f"Taker rate must be non-negative, got {taker_rate} at tier {i}")
+-            
+-            validated_tiers.append((Decimal(str(volume)), Decimal(str(maker_rate)), Decimal(str(taker_rate))))
+-        
+-        # Sort by volume threshold
+-        validated_tiers.sort(key=lambda x: x[0])
+-        
+-        # First tier should start at 0
+-        if validated_tiers[0][0] != Decimal('0'):
+-            raise ValueError("First tier must start at volume 0")
+-        
+-        return validated_tiers
+-
+-    def _determine_current_tier(self) -> int:
+-        """
+-        Determine the current tier based on trading volume.
+-        
+-        Returns
+-        -------
+-        int
+-            Index of the current tier
+-        """
+-        for i in range(len(self.fee_tiers) - 1, -1, -1):
+-            volume_threshold, _, _ = self.fee_tiers[i]
+-            if self.current_volume >= volume_threshold:
+-                return i
+-        return 0  # Default to first tier
+-
+-    def calculate_fee(
+-        self, 
+-        quantity: Union[int, float, Decimal], 
+-        price: Union[float, Decimal], 
+-        side: str = "buy",
+-        order_type: str = "market",
+-        **kwargs: Any
+-    ) -> Decimal:
+-        """
+-        Calculate tiered fee for an order.
+-        
+-        Parameters
+-        ----------
+-        quantity : Union[int, float, Decimal]
+-            Number of units to trade
+-        price : Union[float, Decimal]
+-            Price per unit
+-        side : str, optional
+-            Order side ("buy" or "sell")
+-        order_type : str, optional
+-            Order type ("market", "limit", etc.)
+-        **kwargs: Any
+-            Additional parameters (e.g., is_maker override, current_volume override)
+-            
+-        Returns
+-        -------
+-        Decimal
+-            Fee amount based on current tier and maker/taker status
+-        """
+-        self.validate_inputs(quantity, price, side, order_type)
+-        
+-        # Convert to Decimal for precision
+-        quantity_decimal = Decimal(str(quantity))
+-        price_decimal = Decimal(str(price))
+-        trade_value = abs(quantity_decimal * price_decimal)
+-        
+-        # Allow volume override for specific calculations
+-        volume_to_use = kwargs.get('current_volume', self.current_volume)
+-        if volume_to_use != self.current_volume:
+-            # Temporarily calculate tier for different volume
+-            temp_tier = self._determine_tier_for_volume(Decimal(str(volume_to_use)))
+-            _, maker_rate, taker_rate = self.fee_tiers[temp_tier]
+-        else:
+-            # Use current tier
+-            _, maker_rate, taker_rate = self.fee_tiers[self._current_tier]
+-        
+-        # Determine if this is a maker or taker order
+-        is_maker = self._is_maker_order(order_type, **kwargs)
+-        
+-        # Apply appropriate fee
+-        if is_maker:
+-            return trade_value * maker_rate
+-        else:
+-            return trade_value * taker_rate
+-
+-    def _is_maker_order(self, order_type: str, **kwargs: Any) -> bool:
+-        """
+-        Determine if an order is a maker order.
+-        
+-        Parameters
+-        ----------
+-        order_type : str
+-            Order type
+-        **kwargs: Any
+-            Additional parameters (e.g., is_maker override)
+-            
+-        Returns
+-        -------
+-        bool
+-            True if this is a maker order
+-        """
+-        # Allow explicit override
+-        if "is_maker" in kwargs:
+-            return bool(kwargs["is_maker"])
+-        
+-        # Default classification based on order type
+-        order_type_lower = order_type.lower()
+-        
+-        # Market orders are typically takers
+-        if order_type_lower in ("market", "market_order"):
+-            return False
+-        
+-        # Limit orders are typically makers (though not always)
+-        if order_type_lower in ("limit", "limit_order"):
+-            return True
+-        
+-        # Conservative default: assume taker (higher fee)
+-        return False
+-
+-    def _determine_tier_for_volume(self, volume: Decimal) -> int:
+-        """Determine tier for a specific volume."""
+-        for i in range(len(self.fee_tiers) - 1, -1, -1):
+-            volume_threshold, _, _ = self.fee_tiers[i]
+-            if volume >= volume_threshold:
+-                return i
+-        return 0
+-
+-    def update_volume(self, new_volume: Union[float, Decimal]) -> None:
+-        """
+-        Update the current trading volume and recalculate tier.
+-        
+-        Parameters
+-        ----------
+-        new_volume : Union[float, Decimal]
+-            New 30-day trading volume
+-            
+-        Raises
+-        ------
+-        ValueError
+-            If new volume is negative
+-        """
+-        new_volume_decimal = Decimal(str(new_volume))
+-        if new_volume_decimal < 0:
+-            raise ValueError(f"Volume must be non-negative, got {new_volume}")
+-        
+-        self.current_volume = new_volume_decimal
+-        self._current_tier = self._determine_current_tier()
+-
+-    def add_to_volume(self, trade_value: Union[float, Decimal]) -> None:
+-        """
+-        Add trade value to current volume.
+-        
+-        Parameters
+-        ----------
+-        trade_value : Union[float, Decimal]
+-            Value of the completed trade to add to volume
+-        """
+-        trade_value_decimal = Decimal(str(trade_value))
+-        self.current_volume += abs(trade_value_decimal)
+-        self._current_tier = self._determine_current_tier()
+-
+-    def reset_volume(self) -> None:
+-        """Reset the volume tracker (e.g., for new trading period)."""
+-        self.current_volume = Decimal('0')
+-        self._current_tier = 0
+-
+-    def get_current_tier_info(self) -> Dict[str, Any]:
+-        """
+-        Get information about the current tier.
+-        
+-        Returns
+-        -------
+-        Dict[str, Any]
+-            Current tier information
+-        """
+-        volume_threshold, maker_rate, taker_rate = self.fee_tiers[self._current_tier]
+-        
+-        # Calculate next tier info
+-        next_tier_info = None
+-        if self._current_tier < len(self.fee_tiers) - 1:
+-            next_volume_threshold, next_maker_rate, next_taker_rate = self.fee_tiers[self._current_tier + 1]
+-            volume_needed = next_volume_threshold - self.current_volume
+-            next_tier_info = {
+-                "tier": self._current_tier + 1,
+-                "volume_threshold": float(next_volume_threshold),
+-                "maker_rate": float(next_maker_rate),
+-                "taker_rate": float(next_taker_rate),
+-                "volume_needed": float(volume_needed) if volume_needed > 0 else 0
+-            }
+-        
+-        return {
+-            "current_tier": self._current_tier,
+-            "volume_threshold": float(volume_threshold),
+-            "current_volume": float(self.current_volume),
+-            "maker_rate": float(maker_rate),
+-            "taker_rate": float(taker_rate),
+-            "maker_rate_pct": f"{float(maker_rate) * 100:.4f}%",
+-            "taker_rate_pct": f"{float(taker_rate) * 100:.4f}%",
+-            "next_tier": next_tier_info
+-        }
+-
+-    def get_fee_info(self) -> Dict[str, Any]:
+-        """Get information about this tiered fee model."""
+-        base_info = super().get_fee_info()
+-        base_info.update({
+-            "description": "Volume-based tiered fee structure with maker/taker rates",
+-            "total_tiers": len(self.fee_tiers),
+-            "current_tier_info": self.get_current_tier_info(),
+-            "all_tiers": [
+-                {
+-                    "tier": i,
+-                    "volume_threshold": float(volume),
+-                    "maker_rate": float(maker_rate),
+-                    "taker_rate": float(taker_rate),
+-                    "maker_rate_pct": f"{float(maker_rate) * 100:.4f}%",
+-                    "taker_rate_pct": f"{float(taker_rate) * 100:.4f}%"
+-                }
+-                for i, (volume, maker_rate, taker_rate) in enumerate(self.fee_tiers)
+-            ]
+-        })
+-        return base_info
+-
+-    def calculate_maker_fee(self, quantity: Union[int, float, Decimal], price: Union[float, Decimal]) -> Decimal:
+-        """Calculate fee for a maker order at current tier."""
+-        return self.calculate_fee(quantity, price, order_type="limit", is_maker=True)
+-    
+-    def calculate_taker_fee(self, quantity: Union[int, float, Decimal], price: Union[float, Decimal]) -> Decimal:
+-        """Calculate fee for a taker order at current tier."""
+-        return self.calculate_fee(quantity, price, order_type="market", is_maker=False)
+diff --git a/itrader/execution_handler/fee_model/zero_fee_model.py b/itrader/execution_handler/fee_model/zero_fee_model.py
+index 6826e8b..3fb2b40 100644
+--- a/itrader/execution_handler/fee_model/zero_fee_model.py
++++ b/itrader/execution_handler/fee_model/zero_fee_model.py
+@@ -1,51 +1,56 @@
++"""
++Zero fee model — no fees on any trade (Decimal-native, D-12).
++"""
++
+ from decimal import Decimal
+-from typing import Union, Dict, Any, Optional
++from typing import Dict, Any
++
+ from .base import FeeModel
+ 
+ 
+ class ZeroFeeModel(FeeModel):
+     """
+     Fee model that applies no fees to any trading operations.
+-    
++
+     Perfect for backtesting scenarios where you want to test strategy
+     performance without fee considerations, or for simulated trading
+     environments where fees are not relevant.
+     """
+ 
+     def calculate_fee(
+-        self, 
+-        quantity: Union[int, float, Decimal], 
+-        price: Union[float, Decimal], 
++        self,
++        quantity: Decimal,
++        price: Decimal,
+         side: str = "buy",
+         order_type: str = "market",
+-        **kwargs: Any
++        is_maker: bool | None = None,
+     ) -> Decimal:
+         """
+         Calculate fee for an order (always returns Decimal('0')).
+-        
++
+         Parameters
+         ----------
+-        quantity : Union[int, float, Decimal]
++        quantity : Decimal
+             Number of units to trade
+-        price : Union[float, Decimal]
++        price : Decimal
+             Price per unit
+         side : str, optional
+             Order side ("buy" or "sell")
+         order_type : str, optional
+             Order type
+-        **kwargs: Any
+-            Additional parameters (ignored)
+-            
++        is_maker : bool | None, optional
++            Maker/taker context (ignored — zero fees either way)
++
+         Returns
+         -------
+         Decimal
+             Always returns Decimal('0') (no fees)
+         """
+-        # Validate inputs for consistency
++        # Validate inputs for consistency (raises typed exceptions)
+         self.validate_inputs(quantity, price, side, order_type)
+-        
++
+         return Decimal('0')
+-    
++
+     def get_fee_info(self) -> Dict[str, Any]:
+         """Get information about this zero fee model."""
+         base_info = super().get_fee_info()
+diff --git a/itrader/execution_handler/slippage_model/base.py b/itrader/execution_handler/slippage_model/base.py
+index 86ef7a6..0d3be60 100644
+--- a/itrader/execution_handler/slippage_model/base.py
++++ b/itrader/execution_handler/slippage_model/base.py
+@@ -1,85 +1,116 @@
+ """
+-Base slippage model for simulating execution slippage.
++Base slippage model for simulating execution slippage (Decimal-native, D-12).
++
++Validation contract (plan 06-04, T-06-13): ``validate_inputs`` raises typed
++exceptions from the core ``ValidationError`` family — the old
++bool-and-silently-return-1.0 contract is dead. A bad input is LOUD, never a
++neutral factor.
+ """
+ 
+ from abc import ABC, abstractmethod
+-from typing import Dict, Any
+ from decimal import Decimal
++from typing import Dict, Any
++
++from itrader.core.exceptions import ValidationError
++
++# Known order-type strings (case-insensitive) accepted at the model boundary.
++_KNOWN_ORDER_TYPES = {"market", "limit", "stop"}
+ 
+ 
+ class SlippageModel(ABC):
+     """
+     Abstract base class for slippage models.
+-    
++
+     Slippage models calculate the price impact of orders during execution,
+-    simulating realistic market conditions where orders don't execute 
++    simulating realistic market conditions where orders don't execute
+     at the exact expected price.
++
++    Money (D-12): the returned factor is Decimal; any RNG float jitter
++    enters the Decimal domain exactly once via ``to_money`` (the Phase 2
++    D-11 seeded-RNG seam is preserved — deterministic given the seed).
+     """
+-    
++
+     def __init__(self) -> None:
+         """Initialize the slippage model."""
+         pass
+-    
++
+     @abstractmethod
+-    def calculate_slippage_factor(self, quantity: float, price: float, 
+-                                side: str, order_type: str = "market") -> float:
++    def calculate_slippage_factor(self, quantity: Decimal, price: Decimal,
++                                  side: str = "buy", order_type: str = "market") -> Decimal:
+         """
+         Calculate the slippage factor for an order.
+-        
++
+         Parameters
+         ----------
+-        quantity : float
++        quantity : Decimal
+             Order quantity
+-        price : float
++        price : Decimal
+             Order price
+         side : str
+             Order side ('buy' or 'sell')
+         order_type : str
+-            Order type ('market', 'limit', etc.)
+-            
++            Order type ('market', 'limit', 'stop')
++
+         Returns
+         -------
+-        float
+-            Slippage factor to multiply with price (1.0 = no slippage)
++        Decimal
++            Slippage factor to multiply with price (Decimal("1") = no slippage)
++
++        Raises
++        ------
++        ValidationError
++            If any input is invalid — there is NO silent neutral-factor
++            fallback (plan 06-04)
+         """
+         pass
+-    
++
+     @abstractmethod
+     def get_slippage_info(self) -> Dict[str, Any]:
+         """
+         Get information about the slippage model.
+-        
++
+         Returns
+         -------
+         Dict[str, Any]
+             Dictionary with slippage model information
+         """
+         pass
+-    
+-    def validate_inputs(self, quantity: float, price: float, side: str, order_type: str) -> bool:
++
++    def validate_inputs(self, quantity: Decimal, price: Decimal,
++                        side: str = "buy", order_type: str = "market") -> None:
+         """
+         Validate input parameters.
+-        
++
++        Raises typed exceptions (returns ``None`` on valid input) — the
++        boolean contract that let models silently return a neutral 1.0
++        factor on bad input is dead (plan 06-04, T-06-13).
++
+         Parameters
+         ----------
+-        quantity : float
+-            Order quantity
+-        price : float
+-            Order price
++        quantity : Decimal
++            Order quantity (must be positive)
++        price : Decimal
++            Order price (must be positive)
+         side : str
+-            Order side
++            Order side ("buy" or "sell")
+         order_type : str
+-            Order type
+-            
+-        Returns
+-        -------
+-        bool
+-            True if inputs are valid
++            Order type ("market", "limit", "stop" — case-insensitive)
++
++        Raises
++        ------
++        ValidationError
++            If any parameter is invalid
+         """
+-        if quantity <= 0:
+-            return False
+-        if price <= 0:
+-            return False
+-        if side.lower() not in ['buy', 'sell']:
+-            return False
+-        return True
++        if not isinstance(quantity, (int, Decimal)) or quantity <= 0:
++            raise ValidationError("quantity", str(quantity), "must be a positive Decimal")
++
++        if not isinstance(price, Decimal) or price <= 0:
++            raise ValidationError("price", str(price), "must be a positive Decimal")
++
++        if not isinstance(side, str) or side.lower() not in ("buy", "sell"):
++            raise ValidationError("side", str(side), "must be 'buy' or 'sell'")
++
++        if not isinstance(order_type, str) or order_type.lower() not in _KNOWN_ORDER_TYPES:
++            raise ValidationError(
++                "order_type", str(order_type),
++                f"must be one of {sorted(_KNOWN_ORDER_TYPES)} (case-insensitive)")
+diff --git a/itrader/execution_handler/slippage_model/fixed_slippage_model.py b/itrader/execution_handler/slippage_model/fixed_slippage_model.py
+index e11a34b..c047d48 100644
+--- a/itrader/execution_handler/slippage_model/fixed_slippage_model.py
++++ b/itrader/execution_handler/slippage_model/fixed_slippage_model.py
+@@ -1,20 +1,29 @@
+ """
+-Fixed slippage model - constant slippage percentage regardless of order size.
++Fixed slippage model - constant slippage percentage regardless of order size
++(Decimal-native, D-12).
+ """
+ 
+ import random
++from decimal import Decimal
+ from typing import Dict, Any
++
++from itrader.core.money import to_money
++
+ from .base import SlippageModel
+ 
+ 
+ class FixedSlippageModel(SlippageModel):
+     """
+     Fixed slippage model that applies a constant slippage percentage.
+-    
++
+     This model applies the same slippage percentage to all orders
+     regardless of size, with optional random variation.
++
++    Money (D-12): the returned factor is Decimal. The seeded RNG jitter is
++    drawn as a float (Phase 2 D-11 seam — deterministic given the seed) and
++    enters the Decimal domain exactly once via ``to_money``.
+     """
+-    
++
+     def __init__(self, slippage_pct: float = 0.01,
+                  random_variation: bool = True,
+                  rng: random.Random | None = None):
+@@ -36,48 +45,54 @@ class FixedSlippageModel(SlippageModel):
+         self.slippage_pct = slippage_pct
+         self.random_variation = random_variation
+         self._rng: random.Random = rng or random.Random()
+-    
+-    def calculate_slippage_factor(self, quantity: float, price: float, 
+-                                side: str, order_type: str = "market") -> float:
++
++    def calculate_slippage_factor(self, quantity: Decimal, price: Decimal,
++                                  side: str = "buy", order_type: str = "market") -> Decimal:
+         """
+         Calculate slippage factor based on fixed percentage.
+-        
++
+         Parameters
+         ----------
+-        quantity : float
++        quantity : Decimal
+             Order quantity (ignored for fixed model)
+-        price : float
++        price : Decimal
+             Order price (ignored for fixed model)
+         side : str
+             Order side ('buy' or 'sell')
+         order_type : str
+             Order type
+-            
++
+         Returns
+         -------
+-        float
++        Decimal
+             Slippage factor to multiply with price
++
++        Raises
++        ------
++        ValidationError
++            On invalid inputs — there is no silent neutral-factor fallback
++            (plan 06-04, T-06-13)
+         """
+-        if not self.validate_inputs(quantity, price, side, order_type):
+-            return 1.0
+-        
++        self.validate_inputs(quantity, price, side, order_type)
++
+         # Calculate slippage
+         if self.random_variation:
+-            # Apply random variation around the fixed rate
+-            slippage = self._rng.uniform(-self.slippage_pct, self.slippage_pct) / 100.0
++            # Seeded float jitter (D-11 seam) enters Decimal ONCE via to_money.
++            jitter = self._rng.uniform(-self.slippage_pct, self.slippage_pct)
++            slippage = to_money(jitter) / Decimal("100")
+         else:
+             # Use fixed rate with direction based on order side
+             if side.lower() == 'buy':
+-                slippage = self.slippage_pct / 100.0  # Positive slippage for buys
++                slippage = to_money(self.slippage_pct) / Decimal("100")    # worse for buys
+             else:  # sell
+-                slippage = -self.slippage_pct / 100.0  # Negative slippage for sells
+-        
+-        return 1.0 + slippage
+-    
++                slippage = -to_money(self.slippage_pct) / Decimal("100")  # worse for sells
++
++        return Decimal("1") + slippage
++
+     def get_slippage_info(self) -> Dict[str, Any]:
+         """
+         Get information about the fixed slippage model.
+-        
++
+         Returns
+         -------
+         Dict[str, Any]
+diff --git a/itrader/execution_handler/slippage_model/linear_slippage_model.py b/itrader/execution_handler/slippage_model/linear_slippage_model.py
+index d3c451c..d19ccb2 100644
+--- a/itrader/execution_handler/slippage_model/linear_slippage_model.py
++++ b/itrader/execution_handler/slippage_model/linear_slippage_model.py
+@@ -1,20 +1,30 @@
+ """
+-Linear slippage model - slippage increases linearly with order size.
++Linear slippage model - slippage increases linearly with order size
++(Decimal-native, D-12).
+ """
+ 
+ import random
++from decimal import Decimal
+ from typing import Dict, Any
++
++from itrader.core.money import to_money
++
+ from .base import SlippageModel
+ 
+ 
+ class LinearSlippageModel(SlippageModel):
+     """
+     Linear slippage model that simulates slippage proportional to order size.
+-    
++
+     This model combines base slippage (random market noise) with size impact
+     that increases linearly with order value.
++
++    Money (D-12): the returned factor is Decimal. The seeded RNG noise is
++    drawn as a float (Phase 2 D-11 seam — deterministic given the seed) and
++    enters the Decimal domain exactly once via ``to_money``; the size-impact
++    and capping arithmetic is pure Decimal.
+     """
+-    
++
+     def __init__(self, base_slippage_pct: float = 0.01,
+                  size_impact_factor: float = 0.00001,
+                  max_slippage_pct: float = 0.1,
+@@ -40,41 +50,49 @@ class LinearSlippageModel(SlippageModel):
+         self.size_impact_factor = size_impact_factor
+         self.max_slippage_pct = max_slippage_pct
+         self._rng: random.Random = rng or random.Random()
+-    
+-    def calculate_slippage_factor(self, quantity: float, price: float, 
+-                                side: str, order_type: str = "market") -> float:
++
++    def calculate_slippage_factor(self, quantity: Decimal, price: Decimal,
++                                  side: str = "buy", order_type: str = "market") -> Decimal:
+         """
+         Calculate slippage factor based on linear model.
+-        
++
+         Parameters
+         ----------
+-        quantity : float
++        quantity : Decimal
+             Order quantity
+-        price : float
++        price : Decimal
+             Order price
+         side : str
+             Order side ('buy' or 'sell')
+         order_type : str
+             Order type
+-            
++
+         Returns
+         -------
+-        float
++        Decimal
+             Slippage factor to multiply with price
++
++        Raises
++        ------
++        ValidationError
++            On invalid inputs — there is no silent neutral-factor fallback
++            (plan 06-04, T-06-13)
+         """
+-        if not self.validate_inputs(quantity, price, side, order_type):
+-            return 1.0
+-        
+-        # Base slippage - random market noise
+-        base_slippage = self._rng.uniform(-self.base_slippage_pct, self.base_slippage_pct) / 100.0
+-        
+-        # Size impact - proportional to order value
++        self.validate_inputs(quantity, price, side, order_type)
++
++        # Base slippage — seeded float noise (D-11 seam) enters Decimal ONCE
++        # via to_money.
++        noise = self._rng.uniform(-self.base_slippage_pct, self.base_slippage_pct)
++        base_slippage = to_money(noise) / Decimal("100")
++
++        # Size impact — proportional to order value, pure Decimal.
+         order_value = quantity * price
++        max_slippage = to_money(self.max_slippage_pct) / Decimal("100")
+         size_impact = min(
+-            self.max_slippage_pct / 100.0,
+-            order_value * self.size_impact_factor / 100.0
++            max_slippage,
++            order_value * to_money(self.size_impact_factor) / Decimal("100")
+         )
+-        
++
+         # Apply slippage direction based on order side
+         # Buy orders get positive slippage (worse price)
+         # Sell orders get negative slippage (worse price)
+@@ -82,17 +100,16 @@ class LinearSlippageModel(SlippageModel):
+             total_slippage = base_slippage + size_impact
+         else:  # sell
+             total_slippage = base_slippage - size_impact
+-        
++
+         # Cap total slippage
+-        total_slippage = max(-self.max_slippage_pct / 100.0, 
+-                           min(self.max_slippage_pct / 100.0, total_slippage))
+-        
+-        return 1.0 + total_slippage
+-    
++        total_slippage = max(-max_slippage, min(max_slippage, total_slippage))
++
++        return Decimal("1") + total_slippage
++
+     def get_slippage_info(self) -> Dict[str, Any]:
+         """
+         Get information about the linear slippage model.
+-        
++
+         Returns
+         -------
+         Dict[str, Any]
+diff --git a/itrader/execution_handler/slippage_model/zero_slippage_model.py b/itrader/execution_handler/slippage_model/zero_slippage_model.py
+index fdded06..7725692 100644
+--- a/itrader/execution_handler/slippage_model/zero_slippage_model.py
++++ b/itrader/execution_handler/slippage_model/zero_slippage_model.py
+@@ -1,50 +1,52 @@
+ """
+-Zero slippage model - perfect execution with no slippage.
++Zero slippage model - perfect execution with no slippage (Decimal-native, D-12).
+ """
+ 
++from decimal import Decimal
+ from typing import Dict, Any
++
+ from .base import SlippageModel
+ 
+ 
+ class ZeroSlippageModel(SlippageModel):
+     """
+     Zero slippage model that provides perfect execution with no slippage.
+-    
+-    This model always returns a slippage factor of 1.0, meaning orders
+-    execute at exactly the expected price with no price impact.
++
++    This model always returns a slippage factor of Decimal("1"), meaning
++    orders execute at exactly the expected price with no price impact.
+     """
+-    
++
+     def __init__(self) -> None:
+         """Initialize the zero slippage model."""
+         super().__init__()
+-    
+-    def calculate_slippage_factor(self, quantity: float, price: float, 
+-                                side: str, order_type: str = "market") -> float:
++
++    def calculate_slippage_factor(self, quantity: Decimal, price: Decimal,
++                                  side: str = "buy", order_type: str = "market") -> Decimal:
+         """
+-        Calculate slippage factor (always 1.0 for zero slippage).
+-        
++        Calculate slippage factor (always Decimal("1") for zero slippage).
++
+         Parameters
+         ----------
+-        quantity : float
++        quantity : Decimal
+             Order quantity (ignored)
+-        price : float
++        price : Decimal
+             Order price (ignored)
+         side : str
+             Order side (ignored)
+         order_type : str
+             Order type (ignored)
+-            
++
+         Returns
+         -------
+-        float
+-            Always returns 1.0 (no slippage)
++        Decimal
++            Always returns Decimal("1") (no slippage)
+         """
+-        return 1.0
+-    
++        return Decimal("1")
++
+     def get_slippage_info(self) -> Dict[str, Any]:
+         """
+         Get information about the zero slippage model.
+-        
++
+         Returns
+         -------
+         Dict[str, Any]
+diff --git a/tests/unit/execution/exchanges/test_simulated_exchange.py b/tests/unit/execution/exchanges/test_simulated_exchange.py
+index f8974fc..9ec8396 100644
+--- a/tests/unit/execution/exchanges/test_simulated_exchange.py
++++ b/tests/unit/execution/exchanges/test_simulated_exchange.py
+@@ -76,10 +76,11 @@ class TestSimulatedExchangeInitialization:
+         # Verify models are created and functional
+         assert hasattr(exchange.fee_model, 'calculate_fee')
+         assert hasattr(exchange.slippage_model, 'calculate_slippage_factor')
+-        
+-        # Test fee model functionality
+-        fee = exchange.fee_model.calculate_fee(100, 50.0, 'buy', 'market')
+-        assert isinstance(fee, (int, float, Decimal))
++
++        # Test fee model functionality (D-12: Decimal-native contract)
++        fee = exchange.fee_model.calculate_fee(
++            Decimal("100"), Decimal("50.0"), 'buy', 'market')
++        assert isinstance(fee, Decimal)
+         assert fee >= 0
+ 
+     def test_no_lock_single_writer_contract(self):
+@@ -651,7 +652,7 @@ class TestSimulatedExchangeEdgeCases:
+ 
+ 
+ class TestDecimalFillBoundary:
+-    """D-22: the float-bar -> Decimal-fill boundary enters via to_money."""
++    """D-12: the fill path is Decimal end-to-end — no float boundary remains."""
+ 
+     def setup_method(self):
+         self.queue = Queue()
+@@ -691,19 +692,18 @@ class TestDecimalFillBoundary:
+         assert fills[0].price == to_money(30.0)
+         assert isinstance(fills[0].quantity, Decimal)
+ 
+-    def test_slippage_fill_price_equals_to_money_of_float_math(self):
+-        """Slippage math stays float internally; the fill price converts ONCE
+-        at FillEvent construction via to_money(float_fill_price * factor)."""
+-        from itrader.core.money import to_money
++    def test_slippage_fill_price_is_pure_decimal_product(self):
++        """D-12: slippage math is Decimal end-to-end — executed_price is the
++        exact Decimal product fill_price * slippage_factor (no float leg)."""
+         with patch.object(self.exchange.slippage_model, 'calculate_slippage_factor',
+-                          return_value=1.005):
++                          return_value=Decimal("1.005")):
+             self.exchange.execute_order(self._order(price=Decimal("100.0")))
+         fills = drain_fills(self.queue)
+         assert len(fills) == 1
+         fill = fills[0]
+         assert fill.status is FillStatus.EXECUTED
+         assert isinstance(fill.price, Decimal)
+-        assert fill.price == to_money(100.0 * 1.005)
++        assert fill.price == Decimal("100.0") * Decimal("1.005")
+ 
+     def test_executed_fill_commission_is_decimal(self):
+         self.exchange.update_config(fee_model_type=FeeModelType.PERCENT, fee_rate=0.001)
+@@ -735,9 +735,11 @@ class _RoutingHarness:
+         self.exchange.update_config(supported_symbols={"BTCUSDT"})
+ 
+     def oe(self, order_type, action="BUY", price=40.0, order_id=1, command=None, parent_order_id=None):
++        # D-12: order events carry Decimal money — enter via Decimal(str(x)).
+         return OrderEvent(
+             time=datetime(2024, 1, 1), ticker="BTCUSDT",
+-            action=Side(action), price=price, quantity=1.0, exchange="default",
++            action=Side(action), price=Decimal(str(price)), quantity=Decimal("1.0"),
++            exchange="default",
+             strategy_id=1, portfolio_id=1, order_type=order_type, order_id=order_id,
+             parent_order_id=parent_order_id,
+             command=command or OrderCommand.NEW,
+@@ -826,3 +828,111 @@ def test_rejected_market_order_emits_refused_fill(routing):
+     assert len(fills) == 1
+     assert fills[0].status is FillStatus.REFUSED
+     assert fills[0].order_id == 100
++
++
++# --- D-03 slippage gating + D-11 real order context --------------------------
++
++
++class _FixedFactorSlippage:
++    """Stub slippage model returning a constant non-neutral Decimal factor."""
++
++    def __init__(self, factor=Decimal("1.01")):
++        self.factor = factor
++        self.calls = []
++
++    def calculate_slippage_factor(self, quantity, price, side="buy", order_type="market"):
++        self.calls.append({"quantity": quantity, "price": price,
++                           "side": side, "order_type": order_type})
++        return self.factor
++
++    def get_slippage_info(self):
++        return {"model_type": "stub"}
++
++
++class _CapturingFeeModel:
++    """Stub fee model capturing the real order context handed by _emit_fill."""
++
++    def __init__(self):
++        self.calls = []
++
++    def calculate_fee(self, quantity, price, side="buy", order_type="market",
++                      is_maker=None):
++        self.calls.append({"quantity": quantity, "price": price, "side": side,
++                           "order_type": order_type, "is_maker": is_maker})
++        return Decimal("0")
++
++    def get_fee_info(self):
++        return {"type": "stub"}
++
++
++def test_limit_fill_carries_no_slippage_market_fill_does(routing):
++    """D-03: slippage applies ONLY to MARKET/STOP fills — a resting limit
++    fill takes its limit-or-better price unmodified."""
++    stub = _FixedFactorSlippage(Decimal("1.01"))
++    routing.exchange.slippage_model = stub
++
++    # Resting SELL limit at 55: bar high 60 touches -> fill at 55, NO slippage.
++    routing.exchange.on_order(
++        routing.oe(OrderType.LIMIT, action="SELL", price=Decimal("55.0"), order_id=21))
++    routing.exchange.on_market_data(routing.bar(open_=50, high=60, low=45, close=58))
++    limit_fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
++    assert len(limit_fills) == 1
++    assert limit_fills[0].status is FillStatus.EXECUTED
++    assert limit_fills[0].price == Decimal("55.0")        # unmodified
++    assert stub.calls == []                               # slippage never consulted
++
++    # Market fill through the same exchange DOES take the slippage factor.
++    routing.exchange.on_order(
++        routing.oe(OrderType.MARKET, action="BUY", price=Decimal("50.0"), order_id=22))
++    market_fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
++    assert len(market_fills) == 1
++    assert market_fills[0].price == Decimal("50.0") * Decimal("1.01")
++    assert len(stub.calls) == 1
++
++
++def test_stop_fill_takes_slippage(routing):
++    """D-03: a triggered STOP is a taker fill — slippage applies."""
++    stub = _FixedFactorSlippage(Decimal("1.01"))
++    routing.exchange.slippage_model = stub
++    routing.exchange.on_order(
++        routing.oe(OrderType.STOP, action="SELL", price=Decimal("30.0"), order_id=23))
++    routing.exchange.on_market_data(routing.bar(open_=35, high=36, low=20, close=25))
++    fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
++    assert len(fills) == 1
++    assert fills[0].price == Decimal("30.0") * Decimal("1.01")
++    assert len(stub.calls) == 1
++    assert stub.calls[0]["order_type"] == "STOP"
++
++
++def test_fee_model_receives_real_order_context(routing):
++    """D-11: _emit_fill passes the real order context — no hardcoded
++    order_type='market'. A resting limit fill is classified maker."""
++    fee_stub = _CapturingFeeModel()
++    routing.exchange.fee_model = fee_stub
++
++    # Resting SELL limit fill -> is_maker=True, order_type LIMIT.
++    routing.exchange.on_order(
++        routing.oe(OrderType.LIMIT, action="SELL", price=Decimal("55.0"), order_id=31))
++    routing.exchange.on_market_data(routing.bar(open_=50, high=60, low=45, close=58))
++    assert len(fee_stub.calls) == 1
++    assert fee_stub.calls[0]["is_maker"] is True
++    assert fee_stub.calls[0]["order_type"] == "LIMIT"
++    while not routing.queue.empty():
++        routing.queue.get()
++
++    # Immediate MARKET fill -> is_maker=False, order_type MARKET (taker).
++    routing.exchange.on_order(
++        routing.oe(OrderType.MARKET, action="BUY", price=Decimal("50.0"), order_id=32))
++    assert len(fee_stub.calls) == 2
++    assert fee_stub.calls[1]["is_maker"] is False
++    assert fee_stub.calls[1]["order_type"] == "MARKET"
++
++    # Triggered STOP fill -> is_maker=False (taker), order_type STOP.
++    while not routing.queue.empty():
++        routing.queue.get()
++    routing.exchange.on_order(
++        routing.oe(OrderType.STOP, action="SELL", price=Decimal("30.0"), order_id=33))
++    routing.exchange.on_market_data(routing.bar(open_=35, high=36, low=20, close=25))
++    assert len(fee_stub.calls) == 3
++    assert fee_stub.calls[2]["is_maker"] is False
++    assert fee_stub.calls[2]["order_type"] == "STOP"
+diff --git a/tests/unit/execution/test_fee_models.py b/tests/unit/execution/test_fee_models.py
+new file mode 100644
+index 0000000..86b397f
+--- /dev/null
++++ b/tests/unit/execution/test_fee_models.py
+@@ -0,0 +1,162 @@
++"""
++Model-level fee tests (plan 06-04, M5-04/D-12).
++
++Locks the Decimal-native fee contract: pure-Decimal math, authoritative
++maker/taker classification from real order context (D-11), and typed
++ValidationError raises (no boolean validation contract, T-06-13).
++"""
++
++from decimal import Decimal
++
++import pytest
++
++from itrader.core.exceptions import ValidationError
++from itrader.execution_handler.fee_model.base import FeeModel
++from itrader.execution_handler.fee_model.zero_fee_model import ZeroFeeModel
++from itrader.execution_handler.fee_model.percent_fee_model import PercentFeeModel
++from itrader.execution_handler.fee_model.maker_taker_fee_model import MakerTakerFeeModel
++
++
++# --- zero fee model ----------------------------------------------------------
++
++
++def test_zero_model_returns_decimal_zero():
++    fee = ZeroFeeModel().calculate_fee(Decimal("100"), Decimal("250"))
++    assert isinstance(fee, Decimal)
++    assert fee == Decimal("0")
++
++
++def test_zero_model_validates_before_returning():
++    with pytest.raises(ValidationError):
++        ZeroFeeModel().calculate_fee(Decimal("-1"), Decimal("250"))
++
++
++# --- percent fee model -------------------------------------------------------
++
++
++def test_percent_math_exact_in_decimal():
++    # 0.1% of (100 units @ 250) == Decimal("25") EXACTLY — no float artifact.
++    model = PercentFeeModel(fee_rate=0.001)
++    fee = model.calculate_fee(Decimal("100"), Decimal("250"))
++    assert isinstance(fee, Decimal)
++    assert fee == Decimal("25.000")
++    assert fee == Decimal("100") * Decimal("250") * Decimal("0.001")
++
++
++def test_percent_rates_held_as_decimal():
++    # Constructor floats convert ONCE via to_money (Decimal(str(x))).
++    model = PercentFeeModel(fee_rate=0.001, buy_rate=0.002, sell_rate=0.003)
++    assert isinstance(model.fee_rate, Decimal)
++    assert model.fee_rate == Decimal("0.001")
++    assert model.buy_rate == Decimal("0.002")
++    assert model.sell_rate == Decimal("0.003")
++
++
++def test_percent_side_specific_rates():
++    model = PercentFeeModel(fee_rate=0.001, sell_rate=0.002)
++    buy_fee = model.calculate_fee(Decimal("10"), Decimal("100"), side="buy")
++    sell_fee = model.calculate_fee(Decimal("10"), Decimal("100"), side="sell")
++    assert buy_fee == Decimal("1.000")
++    assert sell_fee == Decimal("2.000")
++
++
++def test_percent_negative_rate_raises():
++    with pytest.raises(ValueError):
++        PercentFeeModel(fee_rate=-0.001)
++
++
++# --- maker/taker fee model ---------------------------------------------------
++
++
++def test_maker_taker_is_maker_true_overrides_order_type_string():
++    # D-11: is_maker is AUTHORITATIVE — maker rate applies even when the
++    # order_type string says "market".
++    model = MakerTakerFeeModel(maker_rate=0.0005, taker_rate=0.001)
++    fee = model.calculate_fee(Decimal("100"), Decimal("250"),
++                              order_type="market", is_maker=True)
++    assert fee == Decimal("100") * Decimal("250") * Decimal("0.0005")
++
++
++def test_maker_taker_is_maker_false_overrides_order_type_string():
++    # Taker rate applies even when the order_type string says "limit".
++    model = MakerTakerFeeModel(maker_rate=0.0005, taker_rate=0.001)
++    fee = model.calculate_fee(Decimal("100"), Decimal("250"),
++                              order_type="limit", is_maker=False)
++    assert fee == Decimal("100") * Decimal("250") * Decimal("0.001")
++
++
++def test_maker_taker_string_fallback_when_no_context():
++    # The order_type-string fallback survives for direct callers (D-11).
++    model = MakerTakerFeeModel(maker_rate=0.0005, taker_rate=0.001)
++    market_fee = model.calculate_fee(Decimal("10"), Decimal("100"), order_type="market")
++    limit_fee = model.calculate_fee(Decimal("10"), Decimal("100"), order_type="limit")
++    assert market_fee == Decimal("10") * Decimal("100") * Decimal("0.001")   # taker
++    assert limit_fee == Decimal("10") * Decimal("100") * Decimal("0.0005")  # maker
++
++
++def test_maker_taker_stop_defaults_to_taker():
++    # Conservative default: a triggered stop removes liquidity.
++    model = MakerTakerFeeModel(maker_rate=0.0005, taker_rate=0.001)
++    fee = model.calculate_fee(Decimal("10"), Decimal("100"), order_type="stop")
++    assert fee == Decimal("10") * Decimal("100") * Decimal("0.001")
++
++
++def test_maker_taker_rates_held_as_decimal():
++    model = MakerTakerFeeModel(maker_rate=0.0005, taker_rate=0.001)
++    assert isinstance(model.maker_rate, Decimal)
++    assert isinstance(model.taker_rate, Decimal)
++    assert model.maker_rate == Decimal("0.0005")
++    assert model.taker_rate == Decimal("0.001")
++
++
++# --- typed validation raises (T-06-13) ----------------------------------------
++
++
++@pytest.mark.parametrize("model", [
++    ZeroFeeModel(),
++    PercentFeeModel(fee_rate=0.001),
++    MakerTakerFeeModel(),
++])
++def test_validate_raises_on_non_positive_quantity(model):
++    with pytest.raises(ValidationError):
++        model.calculate_fee(Decimal("0"), Decimal("100"))
++    with pytest.raises(ValidationError):
++        model.calculate_fee(Decimal("-5"), Decimal("100"))
++
++
++@pytest.mark.parametrize("model", [
++    ZeroFeeModel(),
++    PercentFeeModel(fee_rate=0.001),
++    MakerTakerFeeModel(),
++])
++def test_validate_raises_on_non_positive_price(model):
++    with pytest.raises(ValidationError):
++        model.calculate_fee(Decimal("10"), Decimal("0"))
++    with pytest.raises(ValidationError):
++        model.calculate_fee(Decimal("10"), Decimal("-100"))
++
++
++def test_validate_raises_on_unknown_side():
++    with pytest.raises(ValidationError):
++        ZeroFeeModel().calculate_fee(Decimal("10"), Decimal("100"), side="hold")
++
++
++def test_validate_raises_on_unknown_order_type():
++    with pytest.raises(ValidationError):
++        ZeroFeeModel().calculate_fee(Decimal("10"), Decimal("100"), order_type="iceberg")
++
++
++def test_validate_inputs_returns_none_on_valid_input():
++    # The raise-contract: valid input -> None, invalid -> raise. No booleans.
++    assert ZeroFeeModel().validate_inputs(Decimal("10"), Decimal("100")) is None
++
++
++# --- D-10: TieredFeeModel is deleted ------------------------------------------
++
++
++def test_tiered_fee_model_is_gone():
++    import itrader.execution_handler.fee_model as fee_pkg
++    assert not hasattr(fee_pkg, "TieredFeeModel")
++    assert "TieredFeeModel" not in fee_pkg.__all__
++    with pytest.raises(ModuleNotFoundError):
++        import itrader.execution_handler.fee_model.tiered_fee_model  # noqa: F401
+diff --git a/tests/unit/execution/test_slippage_models.py b/tests/unit/execution/test_slippage_models.py
+new file mode 100644
+index 0000000..208362d
+--- /dev/null
++++ b/tests/unit/execution/test_slippage_models.py
+@@ -0,0 +1,138 @@
++"""
++Model-level slippage tests (plan 06-04, M5-04/D-12).
++
++Locks the Decimal-native slippage contract: Decimal factor, typed
++ValidationError raises (the bool-and-silently-return-1.0 contract is dead,
++T-06-13), and deterministic seeded jitter (Phase 2 D-11 seam).
++"""
++
++import random
++from decimal import Decimal
++
++import pytest
++
++from itrader.core.exceptions import ValidationError
++from itrader.core.money import to_money
++from itrader.execution_handler.slippage_model.zero_slippage_model import ZeroSlippageModel
++from itrader.execution_handler.slippage_model.fixed_slippage_model import FixedSlippageModel
++from itrader.execution_handler.slippage_model.linear_slippage_model import LinearSlippageModel
++
++
++# --- factor is Decimal --------------------------------------------------------
++
++
++def test_zero_model_returns_decimal_one():
++    factor = ZeroSlippageModel().calculate_slippage_factor(Decimal("10"), Decimal("100"))
++    assert isinstance(factor, Decimal)
++    assert factor == Decimal("1")
++
++
++def test_fixed_model_factor_is_decimal():
++    model = FixedSlippageModel(slippage_pct=0.01, random_variation=False)
++    factor = model.calculate_slippage_factor(Decimal("10"), Decimal("100"), side="buy")
++    assert isinstance(factor, Decimal)
++    assert factor == Decimal("1") + Decimal("0.01") / Decimal("100")
++
++
++def test_fixed_model_directional_without_variation():
++    model = FixedSlippageModel(slippage_pct=0.01, random_variation=False)
++    buy = model.calculate_slippage_factor(Decimal("10"), Decimal("100"), side="buy")
++    sell = model.calculate_slippage_factor(Decimal("10"), Decimal("100"), side="sell")
++    assert buy > Decimal("1")    # buys slip worse (higher price)
++    assert sell < Decimal("1")   # sells slip worse (lower price)
++
++
++def test_linear_model_factor_is_decimal():
++    model = LinearSlippageModel(base_slippage_pct=0.01, size_impact_factor=0.00001,
++                                max_slippage_pct=0.1, rng=random.Random(42))
++    factor = model.calculate_slippage_factor(Decimal("10"), Decimal("100"), side="buy")
++    assert isinstance(factor, Decimal)
++
++
++def test_linear_model_caps_total_slippage():
++    # Huge order value drives size impact past the cap — the factor is capped.
++    model = LinearSlippageModel(base_slippage_pct=0.0, size_impact_factor=1.0,
++                                max_slippage_pct=0.1, rng=random.Random(42))
++    factor = model.calculate_slippage_factor(Decimal("1000000"), Decimal("100"), side="buy")
++    assert factor == Decimal("1") + to_money(0.1) / Decimal("100")
++
++
++# --- typed validation raises — NO silent 1.0 (T-06-13) -------------------------
++
++
++@pytest.mark.parametrize("model", [
++    FixedSlippageModel(slippage_pct=0.01, random_variation=False),
++    LinearSlippageModel(rng=random.Random(1)),
++])
++def test_invalid_quantity_raises_not_neutral(model):
++    with pytest.raises(ValidationError):
++        model.calculate_slippage_factor(Decimal("0"), Decimal("100"), side="buy")
++    with pytest.raises(ValidationError):
++        model.calculate_slippage_factor(Decimal("-1"), Decimal("100"), side="buy")
++
++
++@pytest.mark.parametrize("model", [
++    FixedSlippageModel(slippage_pct=0.01, random_variation=False),
++    LinearSlippageModel(rng=random.Random(1)),
++])
++def test_invalid_price_raises_not_neutral(model):
++    with pytest.raises(ValidationError):
++        model.calculate_slippage_factor(Decimal("10"), Decimal("0"), side="buy")
++    with pytest.raises(ValidationError):
++        model.calculate_slippage_factor(Decimal("10"), Decimal("-5"), side="buy")
++
++
++def test_invalid_side_raises_not_neutral():
++    model = FixedSlippageModel(slippage_pct=0.01, random_variation=False)
++    with pytest.raises(ValidationError):
++        model.calculate_slippage_factor(Decimal("10"), Decimal("100"), side="hold")
++
++
++def test_invalid_order_type_raises_not_neutral():
++    model = FixedSlippageModel(slippage_pct=0.01, random_variation=False)
++    with pytest.raises(ValidationError):
++        model.calculate_slippage_factor(
++            Decimal("10"), Decimal("100"), side="buy", order_type="iceberg")
++
++
++def test_validate_inputs_returns_none_on_valid_input():
++    # The raise-contract: valid input -> None, invalid -> raise. No booleans.
++    model = ZeroSlippageModel()
++    assert model.validate_inputs(Decimal("10"), Decimal("100"), "buy", "market") is None
++
++
++# --- seeded determinism (Phase 2 D-11 seam preserved) --------------------------
++
++
++def test_fixed_jitter_deterministic_for_fixed_seed():
++    a = FixedSlippageModel(slippage_pct=0.01, random_variation=True,
++                           rng=random.Random(1234))
++    b = FixedSlippageModel(slippage_pct=0.01, random_variation=True,
++                           rng=random.Random(1234))
++    factors_a = [a.calculate_slippage_factor(Decimal("10"), Decimal("100"), "buy")
++                 for _ in range(5)]
++    factors_b = [b.calculate_slippage_factor(Decimal("10"), Decimal("100"), "buy")
++                 for _ in range(5)]
++    assert factors_a == factors_b
++    assert all(isinstance(f, Decimal) for f in factors_a)
++
++
++def test_linear_jitter_deterministic_for_fixed_seed():
++    a = LinearSlippageModel(base_slippage_pct=0.01, rng=random.Random(99))
++    b = LinearSlippageModel(base_slippage_pct=0.01, rng=random.Random(99))
++    factors_a = [a.calculate_slippage_factor(Decimal("10"), Decimal("100"), "sell")
++                 for _ in range(5)]
++    factors_b = [b.calculate_slippage_factor(Decimal("10"), Decimal("100"), "sell")
++                 for _ in range(5)]
++    assert factors_a == factors_b
++
++
++def test_jitter_enters_decimal_via_to_money_exactly_once():
++    # The float jitter from rng.uniform enters Decimal via to_money — the
++    # factor equals 1 + Decimal(str(jitter))/100 for the same seeded draw.
++    seed = 7
++    model = FixedSlippageModel(slippage_pct=0.01, random_variation=True,
++                               rng=random.Random(seed))
++    expected_jitter = random.Random(seed).uniform(-0.01, 0.01)
++    factor = model.calculate_slippage_factor(Decimal("10"), Decimal("100"), "buy")
++    assert factor == Decimal("1") + to_money(expected_jitter) / Decimal("100")
