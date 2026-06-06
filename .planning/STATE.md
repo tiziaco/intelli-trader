@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 6 context gathered
-last_updated: "2026-06-06T20:16:51.064Z"
+status: ready_to_plan
+stopped_at: Phase 06 complete (8/8) — ready to discuss Phase 7
+last_updated: 2026-06-06T20:40:45.540Z
 last_activity: 2026-06-06 -- Phase 06 execution started
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 45
-  completed_plans: 43
+  completed_plans: 45
   percent: 63
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 06 — m5a-backtest-validity-fills-data-pipeline
+**Current focus:** Phase 7 — m5b — sizing policy, metrics, universe & coverage
 
 ## Current Position
 
-Phase: 06 (m5a-backtest-validity-fills-data-pipeline) — EXECUTING
-Plan: 1 of 8
-Status: Executing Phase 06
-Last activity: 2026-06-06 -- Phase 06 execution started
+Phase: 7
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-06
 
 Progress: [██████████] 100%
 
@@ -36,7 +36,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 29
+- Total plans completed: 37
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -48,6 +48,7 @@ Progress: [██████████] 100%
 | 03 | 9 | - | - |
 | 04 | 8 | - | - |
 | 05 | 7 | - | - |
+| 06 | 8 | - | - |
 
 **Recent Trend:**
 
