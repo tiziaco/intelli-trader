@@ -1,6 +1,7 @@
 import queue
 from typing import Any, Optional
 
+from itrader.core.bar import Bar
 from itrader.universe.universe import Universe
 from ..events_handler.events import BarEvent, TimeEvent
 
@@ -65,12 +66,19 @@ class DynamicUniverse(Universe):
 		time_event: `TimeEvent`
 			Simulation-clock event carrying the last closed bar time.
 		"""
-		bars: dict[str, Any] = {}
+		bars: dict[str, Bar] = {}
 
 		for ticker in self.strategies_universe:
 			if ticker in self.price_handler.prices.keys():
-				bar = self.price_handler.get_bar(ticker, time_event.time)
-				bars[ticker] = bar
+				# TEMPORARY bridge — plan 06-05 replaces this with
+				# feed.current_bars(T). get_bar can return None via its
+				# bare-except path (FR7 — loud errors land in 06-02/06-05):
+				# on None the ticker stays ABSENT from the payload dict
+				# (get_bar already logged the miss).
+				series = self.price_handler.get_bar(ticker, time_event.time)
+				if series is None:
+					continue
+				bars[ticker] = Bar.from_row(time_event.time, series)
 			else:
 				self.logger.warning('Dynamic Universe: ticker %s not present in the price handler', ticker)
 

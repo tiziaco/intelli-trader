@@ -30,8 +30,13 @@ applied but neither ``unit`` nor ``integration`` reliably was. The boundary (D-1
 
 import pathlib
 import queue
+from datetime import datetime
+from decimal import Decimal
 
 import pytest
+
+from itrader.core.bar import Bar
+from itrader.events_handler.events import BarEvent
 
 
 def pytest_collection_modifyitems(config, items):
@@ -58,3 +63,49 @@ def pytest_collection_modifyitems(config, items):
 def global_queue():
     """A fresh FIFO event queue per test (constructor convention: ``queue.Queue``)."""
     return queue.Queue()
+
+
+# --- Shared bar helpers (M5-02 Bar-struct payload, D-14) ----------------------
+
+
+def _bar_struct(open_, high, low, close, time=datetime(2024, 1, 1), volume=1):
+    """A bare ``Bar`` with every field entered via ``Decimal(str(x))`` (D-14)."""
+    return Bar(
+        time=time,
+        open=Decimal(str(open_)),
+        high=Decimal(str(high)),
+        low=Decimal(str(low)),
+        close=Decimal(str(close)),
+        volume=Decimal(str(volume)),
+    )
+
+
+def _bar_event(open_, high, low, close, ticker="BTCUSDT",
+               time=datetime(2024, 1, 1), volume=1):
+    """A one-ticker BarEvent with a ``dict[str, Bar]`` payload.
+
+    Keeps the positional ``(open_, high, low, close)`` signature of the legacy
+    per-file ``make_bar`` helpers so test conversions stay mechanical.
+    """
+    return BarEvent(
+        time=time,
+        bars={ticker: _bar_struct(open_, high, low, close, time=time, volume=volume)},
+    )
+
+
+@pytest.fixture
+def make_bar_struct():
+    """Factory fixture: build a bare ``Bar`` value object."""
+    return _bar_struct
+
+
+@pytest.fixture
+def make_bar():
+    """Factory fixture: build a one-ticker ``BarEvent`` (Bar-struct payload)."""
+    return _bar_event
+
+
+@pytest.fixture
+def make_bar_event():
+    """Alias of ``make_bar`` for call sites preferring the explicit name."""
+    return _bar_event

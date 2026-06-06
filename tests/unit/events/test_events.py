@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from itrader.core.bar import Bar
 from itrader.core.enums import EventType, FillStatus, OrderType, OrderStatus, Side
 from itrader.order_handler.order import Order
 from itrader.events_handler.events import (
@@ -20,7 +21,12 @@ def events():
     """The full set of events constructed from a market BUY signal."""
     time = datetime.now()
     time_event = TimeEvent(time=time)
-    bar_event = BarEvent(time=time, bars={})
+    # M5-02: BarEvent payload is dict[str, Bar] — one Decimal struct per ticker.
+    bar_event = BarEvent(time=time, bars={
+        "BTCUSDT": Bar(time=time, open=Decimal("42000"), high=Decimal("42500"),
+                       low=Decimal("41800"), close=Decimal("42350.72"),
+                       volume=Decimal("10")),
+    })
     signal_event = SignalEvent(
         time=time, order_type=OrderType.MARKET, ticker="BTCUSDT", action=Side.BUY,
         # D-22: event money is Decimal — enter via the string path (D-04).
@@ -53,6 +59,9 @@ def test_time_event_initialization(events):
 def test_bar_event_initialization(events):
     assert isinstance(events.bar_event, BarEvent)
     assert events.bar_event.type is EventType.BAR
+    # M5-02 payload: direct field access on the Bar struct, Decimal money.
+    assert isinstance(events.bar_event.bars["BTCUSDT"], Bar)
+    assert events.bar_event.bars["BTCUSDT"].close == Decimal("42350.72")
 
 
 def test_signal_event_initialization(events):

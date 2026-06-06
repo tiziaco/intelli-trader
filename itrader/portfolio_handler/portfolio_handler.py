@@ -331,11 +331,13 @@ class PortfolioHandler:
         if isinstance(bar_events, BarEvent):
             bar_events = [bar_events]
         
-        # Convert bar events to price dictionary
+        # Convert bar events to price dictionary. The close is already
+        # Decimal via the Bar struct (D-14); downstream position updates
+        # enter via to_money (value-identity on Decimal input).
         prices = {}
         for bar_event in bar_events:
-            for ticker in bar_event.bars.keys():
-                prices[ticker] = bar_event.get_last_close(ticker)
+            for ticker, bar in bar_event.bars.items():
+                prices[ticker] = bar.close
         
         # Update only active portfolios (each handles its own thread safety)
         active_portfolios = self.get_active_portfolios()
