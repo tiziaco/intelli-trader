@@ -332,20 +332,22 @@ def handler_env():
 
 
 def test_order_handler_initialization_with_storage(handler_env):
-    """Test OrderHandler initializes correctly with custom storage."""
+    """The injected storage is forwarded to (and owned by) the manager (D-18)."""
     assert isinstance(handler_env.order_handler, OrderHandler)
-    assert isinstance(handler_env.order_handler.order_storage, InMemoryOrderStorage)
+    # The handler retains NO storage reference — the manager owns it.
+    assert not hasattr(handler_env.order_handler, "order_storage")
+    assert handler_env.order_handler.order_manager.order_storage is handler_env.storage
 
 
 def test_order_handler_initialization_without_storage(handler_env):
-    """Test OrderHandler initializes with default storage when none provided."""
+    """A default in-memory storage is created and owned by the manager (D-18)."""
     order_handler = OrderHandler(handler_env.queue, handler_env.ptf_handler)
-    assert isinstance(order_handler.order_storage, InMemoryOrderStorage)
+    assert not hasattr(order_handler, "order_storage")
+    assert isinstance(order_handler.order_manager.order_storage, InMemoryOrderStorage)
 
 
-def test_backward_compatibility_pending_orders(handler_env):
-    """Test that pending_orders attribute still works for backward compatibility."""
-    # Add an order through the handler (native UUID identities)
+def test_handler_reads_delegate_through_manager(handler_env):
+    """Handler get_*/search_* reads resolve through the manager-owned storage (D-18)."""
     pid = uuid.uuid4()
     oid = uuid.uuid4()
     order = Order(
@@ -353,11 +355,13 @@ def test_backward_compatibility_pending_orders(handler_env):
         ticker="BTCUSDT", action="BUY", price=40000.0, quantity=0.1,
         exchange="binance", strategy_id=1, portfolio_id=pid, id=oid,
     )
+    handler_env.storage.add_order(order)
 
-    handler_env.order_handler.add_pending_order(order)
-
-    # Check it's accessible through the storage (native UUID keys)
-    pending_orders = handler_env.order_handler.order_storage.get_pending_orders()
-    assert len(pending_orders) == 1
-    assert pid in pending_orders
-    assert oid in pending_orders[pid]
+    handler = handler_env.order_handler
+    assert handler.get_order_by_id(oid, pid) == order
+    assert handler.get_orders_by_status(OrderStatus.PENDING, pid) == [order]
+    assert handler.get_active_orders(pid) == [order]
+    assert handler.get_orders_by_ticker("BTCUSDT", pid) == [order]
+    assert handler.search_orders({"ticker": "BTCUSDT"}, pid) == [order]
+    assert handler.get_orders_summary(pid) == {"PENDING": 1}
+    assert handler.get_order_history(oid) == []

@@ -13,7 +13,7 @@ and order storage/execution systems.
 """
 
 from decimal import Decimal
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
@@ -38,19 +38,23 @@ class OrderManager:
 	and order storage/execution systems.
 	"""
 	
-	def __init__(self, order_storage: OrderStorage, logger: Any, order_handler_ref: Any,
+	def __init__(self, order_storage: OrderStorage, logger: Any,
 	             market_execution: str = "immediate", portfolio_handler: Any = None) -> None:
 		"""
 		Initialize the OrderManager.
-		
+
+		D-18: the manager has EXCLUSIVE ownership of the order storage and no
+		back-reference to OrderHandler — layering is one-directional
+		(facade -> manager -> storage). The manager never touches the events
+		queue: it returns OperationResults carrying OrderEvents and the
+		handler performs all queue puts.
+
 		Parameters
 		----------
 		order_storage : OrderStorage
-			Storage interface for order operations
+			Storage interface for order operations (manager-owned, D-18)
 		logger : Logger
 			Logger instance for order processing events
-		order_handler_ref : OrderHandler
-			Reference to parent OrderHandler for callbacks
 		market_execution : str
 			Market order execution mode:
 			- "immediate": Execute market orders immediately (live trading)
@@ -60,7 +64,6 @@ class OrderManager:
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
-		self.order_handler = order_handler_ref
 		self.market_execution = market_execution
 		self.portfolio_handler = portfolio_handler
 
@@ -594,5 +597,37 @@ class OrderManager:
 		except Exception as e:
 			error_msg = f"Error cancelling order {order_id}: {e}"
 			self.logger.error(error_msg, exc_info=True)
-			return OperationResult.failure_result(error_msg, 
+			return OperationResult.failure_result(error_msg,
 				error_details=str(e), operation_type="cancel_order")
+
+	# --- Read interface (D-18) -------------------------------------------------
+	# The manager owns the storage; OrderHandler read methods delegate here.
+	# Pure pass-through layer: same names, same signatures as the facade.
+
+	def get_order_by_id(self, order_id: int, portfolio_id: Optional[Any] = None) -> Optional[Order]:
+		"""Get an order by its ID from the manager-owned storage."""
+		return self.order_storage.get_order_by_id(order_id, portfolio_id)
+
+	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[Any] = None) -> List[Order]:
+		"""Get orders by their status from the manager-owned storage."""
+		return self.order_storage.get_orders_by_status(status, portfolio_id)
+
+	def get_active_orders(self, portfolio_id: Optional[Any] = None) -> List[Order]:
+		"""Get all active orders (PENDING and PARTIALLY_FILLED)."""
+		return self.order_storage.get_active_orders(portfolio_id)
+
+	def get_order_history(self, order_id: int) -> List[Dict[str, Any]]:
+		"""Get the state change history for an order."""
+		return self.order_storage.get_order_history(order_id)
+
+	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[Any] = None) -> List[Order]:
+		"""Get all orders for a specific ticker."""
+		return self.order_storage.get_orders_by_ticker(ticker, portfolio_id)
+
+	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[Any] = None) -> List[Order]:
+		"""Search orders based on criteria."""
+		return self.order_storage.search_orders(criteria, portfolio_id)
+
+	def get_orders_summary(self, portfolio_id: Optional[Any] = None) -> Dict[str, int]:
+		"""Get a summary of orders by status."""
+		return self.order_storage.get_orders_count_by_status(portfolio_id)
