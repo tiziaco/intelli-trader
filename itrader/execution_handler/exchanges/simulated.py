@@ -61,10 +61,10 @@ class SimulatedExchange(AbstractExchange):
 		# Seeded RNG seam (D-11): shared with the slippage model constructed below.
 		self._rng: random.Random = rng or random.Random()
 
-		# Resting-order book / matching engine
+		# Resting-order book / matching engine — the SINGLE matching path
+		# (D-13): every admitted NEW order rests here, market orders
+		# included, and fills at the next bar (next-bar-open convention).
 		self.matching_engine = MatchingEngine()
-		# Execution timing for market orders: "immediate" or "next_bar"
-		self.execution_timing = "immediate"
 
 		# Exchange configuration
 		self.config = config or get_exchange_preset('default')
@@ -102,35 +102,38 @@ class SimulatedExchange(AbstractExchange):
 		
 		self.logger.info('Simulated Exchange initialized: %s', self.config.exchange_name)
 
-	def execute_order(self, event: OrderEvent) -> None:
+	def _admit_order(self, event: OrderEvent) -> bool:
 		"""
-		Execute a market order; FillEvents are the ONLY output (D-21).
+		Pre-trade admission gate for NEW orders (D-21/D-13).
 
-		Simulates realistic exchange behavior including validation,
-		slippage and failure simulation. Every outcome — EXECUTED or
-		REFUSED — is emitted onto the global queue as a FillEvent;
-		there is no synchronous result object.
+		Runs at on_order time — validation, connection check and failure
+		simulation — BEFORE the order rests in the matching engine. Every
+		rejected outcome is emitted as a FillEvent(REFUSED) so the order
+		mirror reconciles; there is no synchronous result object. Returns
+		True when the order may rest in the book. Fills NEVER happen here:
+		the MatchingEngine decides them on subsequent bars (next-bar-open
+		convention, D-01/D-13).
 		"""
-		execution_time = datetime.now()
+		admission_time = datetime.now()
 
 		try:
-			# Pre-execution validation
+			# Pre-trade validation
 			validation_result = self.validate_order(event)
 			if not validation_result.is_valid:
 				self._orders_failed += 1
 				self._last_error = validation_result.error_message
-				self._last_error_time = execution_time
+				self._last_error_time = admission_time
 				self._emit_rejection(event, validation_result.error_message or "validation failed")
-				return
+				return False
 
 			# Check connection status
 			if not self.is_connected():
 				self._orders_failed += 1
 				error_msg = "Exchange not connected"
 				self._last_error = error_msg
-				self._last_error_time = execution_time
+				self._last_error_time = admission_time
 				self._emit_rejection(event, "exchange not connected")
-				return
+				return False
 
 			# Simulate random failures if enabled
 			if self.simulate_failures and self._rng.random() < self.failure_rate:
@@ -143,21 +146,22 @@ class SimulatedExchange(AbstractExchange):
 				]
 				_error_code, error_msg = self._rng.choice(error_scenarios)
 				self._last_error = error_msg
-				self._last_error_time = execution_time
+				self._last_error_time = admission_time
 				self._emit_rejection(event, error_msg)
-				return
+				return False
 
-			self._emit_fill(event, event.price, event.quantity)
+			return True
 
 		except Exception as e:
 			self._orders_failed += 1
 			self._last_error = str(e)
-			self._last_error_time = execution_time
-			self.logger.error('Unexpected error executing order: %s', str(e), exc_info=True)
+			self._last_error_time = admission_time
+			self.logger.error('Unexpected error admitting order: %s', str(e), exc_info=True)
 			# T-05-08: even unexpected failures must surface as an auditable
 			# FillEvent(REFUSED) so the order mirror reconciles — no outcome
 			# may be lost now that the sync result channel is gone (D-21).
 			self._emit_rejection(event, f"Unexpected error: {str(e)}")
+			return False
 
 	def _emit_rejection(self, event: OrderEvent, reason: str) -> None:
 		"""Enqueue a FillEvent(REFUSED) so the order mirror can reconcile a rejected order."""
@@ -169,8 +173,13 @@ class SimulatedExchange(AbstractExchange):
 			commission=Decimal("0")))
 
 	def _emit_fill(self, event: OrderEvent, fill_price: Decimal,
-	               fill_quantity: Decimal) -> None:
+	               fill_quantity: Decimal, fill_time: datetime) -> None:
 		"""Apply fee + slippage to a matched fill and enqueue a FillEvent(EXECUTED).
+
+		Fill time (D-01/D-13): ``fill_time`` is the MATCHING BAR's event
+		time — fill truth is stamped at the bar that produced it, never at
+		the order's decision tick. An order decided at tick T fills with
+		FillEvent.time = T+1tf.
 
 		Money (D-12): Decimal end-to-end — the old price_f/quantity_f float
 		casts are gone. ``to_money`` is an identity normalization at this
@@ -209,7 +218,8 @@ class SimulatedExchange(AbstractExchange):
 		# construction. new_fill's to_money is an identity normalization here.
 		fill_event = FillEvent.new_fill(
 			'EXECUTED', event,
-			price=executed_price, quantity=quantity, commission=commission)
+			price=executed_price, quantity=quantity, commission=commission,
+			time=fill_time)
 		self.global_queue.put(fill_event)
 
 		self._orders_executed += 1
@@ -219,29 +229,40 @@ class SimulatedExchange(AbstractExchange):
 						(slippage_factor - Decimal("1")) * 100)
 
 	def on_market_data(self, bar: "BarEvent") -> None:
-		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels."""
+		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels.
+
+		Every outcome decided by this bar — fills AND OCO cancellations —
+		is stamped with the bar's event time (D-01/D-13): the truth lives
+		at the bar that produced it, not at the order's decision tick.
+		"""
 		fills, cancels = self.matching_engine.on_bar(bar)
 		for decision in fills:
 			# Full-quantity contract (D-06): FillDecision carries no quantity —
 			# the fill covers the order's entire quantity.
 			self._emit_fill(decision.order_event, decision.fill_price,
-			                decision.order_event.quantity)
+			                decision.order_event.quantity, bar.time)
 		for cancel in cancels:
 			# CANCELLED carries the order's own (Decimal) price/quantity,
 			# commission Decimal("0") — never settled (D-22).
 			self.global_queue.put(FillEvent.new_fill(
 				'CANCELLED', cancel.order_event,
 				price=cancel.order_event.price, quantity=cancel.order_event.quantity,
-				commission=Decimal("0")))
+				commission=Decimal("0"), time=bar.time))
 
 	def on_order(self, event: OrderEvent) -> None:
 		"""
-		Route an order event by command and type.
+		Route an order event by command (D-13: ONE matching path).
 
 		- CANCEL: remove the resting order, emit FILL(CANCELLED).
 		- MODIFY: mutate the resting order.
-		- NEW MARKET (immediate): fill now via execute_order.
-		- NEW STOP/LIMIT, or NEW MARKET (next_bar): rest in the matching engine.
+		- NEW (every order type, MARKET included): run the pre-trade
+		  admission gate (validation, connection, failure simulation —
+		  rejections emit FillEvent(REFUSED) for mirror reconciliation),
+		  then rest the order in the matching engine. Fills happen ONLY
+		  on subsequent bars: a market order decided at tick T fills at
+		  the open of the bar stamped T+1tf (next-bar-open, D-01/D-13).
+		  An order decided on the FINAL dataset bar never fills — no next
+		  bar exists (bar-timing contract rule 7).
 		"""
 		if event.command == OrderCommand.CANCEL:
 			# Only acknowledge a cancel for an order that was actually resting;
@@ -259,11 +280,11 @@ class SimulatedExchange(AbstractExchange):
 				self.matching_engine.modify(event.order_id, event.price, event.quantity)
 			return
 
-		# NEW
-		if event.order_type == OrderType.MARKET and self.execution_timing == "immediate":
-			self.execute_order(event)
-		else:
-			self.matching_engine.submit(event)
+		# NEW — single matching path (D-13): every admitted order rests in
+		# the book; the MatchingEngine decides fills on subsequent bars.
+		if not self._admit_order(event):
+			return
+		self.matching_engine.submit(event)
 
 	def connect(self) -> ConnectionResult:
 		"""Simulate connection to exchange with realistic behavior."""

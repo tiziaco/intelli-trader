@@ -30,6 +30,16 @@ class OrderEvent(Event):
     the event untouched. The execution layer converts ONCE at its float
     matching/slippage boundary and re-enters Decimal via ``to_money`` at
     FillEvent construction.
+
+    Market-order ``price`` semantics (D-01/D-13 x Phase 5 D-04, Pitfall 6):
+    for MARKET orders ``price`` is a DECISION-PRICE ESTIMATE — the
+    decision-bar close the order/risk layer used for the admission cash
+    reservation (reserve = price x quantity + estimated commission). It is
+    a pre-trade GATE, not a fill ceiling: the actual fill settles at the
+    NEXT bar's open, and a gap-up fill above the estimate still settles
+    (the settlement funds invariant checks the ledger balance, never the
+    reservation-adjusted buying power; the reservation releases on terminal
+    reconciliation).
     """
 
     type: EventType = field(default=EventType.ORDER, init=False)

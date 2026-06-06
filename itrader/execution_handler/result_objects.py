@@ -1,12 +1,13 @@
 """
 Connection/health/preflight metadata DTOs for the execution layer.
 
-D-21: events are the ONLY execution output — ``ExecutionResult`` was
-deleted and ``execute_order`` returns ``None``; every execution outcome
-(EXECUTED, REFUSED, CANCELLED) travels as a FillEvent on the global
-queue. The dataclasses here are NOT execution results: they carry
-connection-lifecycle, health-monitoring and pre-trade-check metadata
-returned synchronously by exchange management methods.
+D-21: events are the ONLY execution output — ``ExecutionResult`` and the
+immediate ``execute_order`` path were deleted (D-13 single matching
+path); every execution outcome (EXECUTED, REFUSED, CANCELLED) travels as
+a FillEvent on the global queue. The dataclasses here are NOT execution
+results: they carry connection-lifecycle, health-monitoring and
+pre-trade-check metadata returned synchronously by exchange management
+methods.
 
 All DTOs are frozen/slots (construct-complete, no post-init mutation)
 and money-denominated fields are Decimal (locked money decision).
