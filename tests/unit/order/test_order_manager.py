@@ -30,22 +30,27 @@ from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side
 
 
 def test_order_manager_initialization():
-    """Test OrderManager initialization."""
+    """Test OrderManager initialization.
+
+    D-18: the manager owns the storage and takes NO OrderHandler
+    back-reference — layering is one-directional (facade -> manager -> storage).
+    """
     order_storage = InMemoryOrderStorage()
     logger = Mock()
-    order_handler_ref = Mock()
 
     order_manager_immediate = OrderManager(
-        order_storage, logger, order_handler_ref, market_execution="immediate"
+        order_storage, logger, market_execution="immediate"
     )
     order_manager_next_bar = OrderManager(
-        order_storage, logger, order_handler_ref, market_execution="next_bar"
+        order_storage, logger, market_execution="next_bar"
     )
 
     assert order_manager_immediate.market_execution == "immediate"
     assert order_manager_next_bar.market_execution == "next_bar"
     assert order_manager_immediate.order_storage == order_storage
     assert order_manager_immediate.logger == logger
+    # No back-reference to the handler exists (D-18)
+    assert not hasattr(order_manager_immediate, "order_handler")
 
 
 # --- shared handler harness -------------------------------------------------

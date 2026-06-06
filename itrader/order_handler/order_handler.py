@@ -58,11 +58,12 @@ class OrderHandler(OrderBase):
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
 		
-		self.order_storage = order_storage or OrderStorageFactory.create_in_memory()
+		# D-18: manager owns storage — the handler forwards the injected storage
+		# to OrderManager and retains NO reference to it. Every read path
+		# delegates through the manager (facade -> manager -> storage).
 		self.order_manager = OrderManager(
-			self.order_storage, 
-			self.logger, 
-			self, 
+			order_storage or OrderStorageFactory.create_in_memory(),
+			self.logger,
 			market_execution,
 			portfolio_handler  # Pass portfolio_handler for position-aware logic
 		)
@@ -101,39 +102,6 @@ class OrderHandler(OrderBase):
 		"""Reconcile the order mirror from an exchange fill event."""
 		self.order_manager.on_fill(fill_event)
 
-	def add_pending_order(self, order: Order) -> None:
-		"""
-		Legacy method - kept for backward compatibility.
-		Consider using OrderManager.create_orders_from_signal() instead.
-		"""
-		self.logger.warning("add_pending_order is deprecated - use OrderManager.create_orders_from_signal() instead")
-		self.order_storage.add_order(order)
-
-	def remove_orders(self, ticker: str, portfolio_id: Any) -> None:
-		"""
-		Legacy method - kept for backward compatibility.
-		Consider using OrderManager.cancel_order() instead.
-		"""
-		self.logger.warning("remove_orders is deprecated - use OrderManager.cancel_order() instead")
-		count = self.order_storage.remove_orders_by_ticker(ticker, portfolio_id)
-		if count > 0:
-			self.logger.debug('Removed %d pending orders for ticker %s in portfolio %s',
-							count, ticker, portfolio_id)
-
-	def remove_order(self, order_id: str, portfolio_id: Optional[Any] = None) -> bool:
-		"""
-		Legacy method - now handled by OrderManager.
-		Kept for temporary compatibility.
-		"""
-		self.logger.warning("remove_order is deprecated - use cancel_order instead")
-		removed = self.order_storage.remove_order(order_id, portfolio_id)
-		if removed:
-			self.logger.debug('Order %s removed', order_id)
-		else:
-			self.logger.warning('Order %s not found for removal', order_id)
-		return removed
-
-	
 	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None, 
 	                portfolio_id: Optional[Any] = None, reason: str = "user modification") -> bool:
 		"""
@@ -251,7 +219,7 @@ class OrderHandler(OrderBase):
 		Order
 			The order object if found, None otherwise
 		"""
-		return self.order_storage.get_order_by_id(order_id, portfolio_id)
+		return self.order_manager.get_order_by_id(order_id, portfolio_id)
 	
 	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[Any] = None) -> List[Order]:
 		"""
@@ -269,7 +237,7 @@ class OrderHandler(OrderBase):
 		List[Order]
 			List of orders with the specified status
 		"""
-		return self.order_storage.get_orders_by_status(status, portfolio_id)
+		return self.order_manager.get_orders_by_status(status, portfolio_id)
 	
 	def get_active_orders(self, portfolio_id: Optional[Any] = None) -> List[Order]:
 		"""
@@ -285,7 +253,7 @@ class OrderHandler(OrderBase):
 		List[Order]
 			List of active orders
 		"""
-		return self.order_storage.get_active_orders(portfolio_id)
+		return self.order_manager.get_active_orders(portfolio_id)
 	
 	def get_order_history(self, order_id: int) -> List[Dict[str, Any]]:
 		"""
@@ -301,7 +269,7 @@ class OrderHandler(OrderBase):
 		List[Dict]
 			List of state changes for the order
 		"""
-		return self.order_storage.get_order_history(order_id)
+		return self.order_manager.get_order_history(order_id)
 	
 	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[Any] = None) -> List[Order]:
 		"""
@@ -319,7 +287,7 @@ class OrderHandler(OrderBase):
 		List[Order]
 			List of orders for the ticker
 		"""
-		return self.order_storage.get_orders_by_ticker(ticker, portfolio_id)
+		return self.order_manager.get_orders_by_ticker(ticker, portfolio_id)
 	
 	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[Any] = None) -> List[Order]:
 		"""
@@ -337,7 +305,7 @@ class OrderHandler(OrderBase):
 		List[Order]
 			List of orders matching the criteria
 		"""
-		return self.order_storage.search_orders(criteria, portfolio_id)
+		return self.order_manager.search_orders(criteria, portfolio_id)
 	
 	def get_orders_summary(self, portfolio_id: Optional[Any] = None) -> Dict[str, int]:
 		"""
@@ -353,4 +321,4 @@ class OrderHandler(OrderBase):
 		Dict[str, int]
 			Dictionary with status names as keys and counts as values
 		"""
-		return self.order_storage.get_orders_count_by_status(portfolio_id)
+		return self.order_manager.get_orders_summary(portfolio_id)
