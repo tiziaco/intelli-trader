@@ -101,7 +101,7 @@ class PortfolioStateStorage(ABC):
     portfolio managers used to own:
 
       * open positions (working state, keyed by ticker) + closed positions (history)
-      * pending transactions (working state) + transaction history (append-only)
+      * transaction history (append-only)
       * reserved cash (working state) + cash operations (append-only audit trail)
       * metrics snapshots (append-only history)
 
@@ -186,42 +186,10 @@ class PortfolioStateStorage(ABC):
         """
         pass
 
-    # -- Transactions (pending = working state, history = append-only) -------
-
-    @abstractmethod
-    def set_pending_transaction(self, transaction_id: Any, context: Any) -> None:
-        """Store the in-flight context for a pending transaction.
-
-        Parameters
-        ----------
-        transaction_id : Any
-            The transaction id (native ``TransactionId``) keying the context.
-        context : Any
-            The ``TransactionContext`` for the in-flight transaction.
-        """
-        pass
-
-    @abstractmethod
-    def remove_pending_transaction(self, transaction_id: Any) -> None:
-        """Remove a pending transaction context (no error if absent).
-
-        Parameters
-        ----------
-        transaction_id : Any
-            The transaction id whose pending context is removed.
-        """
-        pass
-
-    @abstractmethod
-    def get_pending_transactions(self) -> Dict[Any, Any]:
-        """Return a shallow copy of all pending transaction contexts.
-
-        Returns
-        -------
-        Dict[Any, Any]
-            Pending transaction contexts keyed by transaction id.
-        """
-        pass
+    # -- Transactions (append-only history) ----------------------------------
+    # Plan 05-05 (D-11): the pending-transaction working state is gone with
+    # the saga machinery — settlements are validate-first atomic, so there is
+    # no in-flight context to store. Only the append-only history remains.
 
     @abstractmethod
     def add_transaction(self, transaction: 'Transaction') -> None:

@@ -266,8 +266,8 @@ def test_fill_event_processing_success(env):
     fill_event = _fill_event("AAPL", Side.BUY, 50.0, 100, 1.0, portfolio_id,
                              time=datetime.now(UTC))
 
-    result = env.handler.on_fill(fill_event)
-    assert result
+    # D-10: on_fill is raise/None — success means no exception raised.
+    env.handler.on_fill(fill_event)
 
     portfolio = env.handler.get_portfolio(portfolio_id)
     assert portfolio.n_open_positions == 1

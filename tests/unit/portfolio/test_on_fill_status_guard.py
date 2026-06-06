@@ -38,25 +38,26 @@ def env():
         queue.get_nowait()
 
 
+# D-10 (Plan 05-05): on_fill is raise/None — no bool channel. The guard's
+# observable behavior is whether a transaction/position was created.
+
+
 def test_cancelled_fill_creates_no_transaction(env):
-    result = env.ptf.on_fill(env.fill("CANCELLED"))
-    assert not result  # ignored, no transaction
+    assert env.ptf.on_fill(env.fill("CANCELLED")) is None  # ignored
     portfolio = env.ptf.get_portfolio(env.pid)
     assert len(portfolio.positions) == 0
     assert len(portfolio.transactions) == 0
 
 
 def test_refused_fill_creates_no_transaction(env):
-    result = env.ptf.on_fill(env.fill("REFUSED"))
-    assert not result  # ignored, no transaction
+    assert env.ptf.on_fill(env.fill("REFUSED")) is None  # ignored
     portfolio = env.ptf.get_portfolio(env.pid)
     assert len(portfolio.positions) == 0
     assert len(portfolio.transactions) == 0
 
 
 def test_executed_fill_is_processed(env):
-    result = env.ptf.on_fill(env.fill("EXECUTED"))
-    assert result  # processed normally
+    assert env.ptf.on_fill(env.fill("EXECUTED")) is None  # processed normally
     portfolio = env.ptf.get_portfolio(env.pid)
     assert len(portfolio.positions) == 1
     assert len(portfolio.transactions) == 1

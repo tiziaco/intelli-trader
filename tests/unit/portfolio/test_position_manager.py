@@ -9,6 +9,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+import uuid_utils.compat as uuid_compat
 
 from itrader.portfolio_handler.position.position_manager import (
     PositionManager,
@@ -41,12 +42,12 @@ def env():
     buy_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="BTCUSDT",
         price=50000.0, quantity=1.0, commission=25.0,
-        portfolio_id=portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     sell_transaction = Transaction(
         time=datetime.now(), type=TransactionType.SELL, ticker="BTCUSDT",
         price=52000.0, quantity=0.5, commission=13.0,
-        portfolio_id=portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     return SimpleNamespace(
         portfolio=portfolio,
@@ -85,7 +86,7 @@ def test_create_new_position_sell(env):
     sell_first_transaction = Transaction(
         time=datetime.now(), type=TransactionType.SELL, ticker="ETHUSDT",
         price=3000.0, quantity=2.0, commission=15.0,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     position = env.position_manager.process_position_update(sell_first_transaction)
@@ -105,7 +106,7 @@ def test_update_existing_position(env):
     buy_more_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="BTCUSDT",
         price=51000.0, quantity=0.5, commission=12.5,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     updated_position = pm.process_position_update(buy_more_transaction)
@@ -126,7 +127,7 @@ def test_close_position_exact_match(env):
     close_transaction = Transaction(
         time=datetime.now(), type=TransactionType.SELL, ticker="BTCUSDT",
         price=52000.0, quantity=1.0, commission=26.0,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     position = pm.process_position_update(close_transaction)
@@ -154,7 +155,7 @@ def test_position_value_limits(env):
     small_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="SMALLCOIN",
         price=1.0, quantity=5.0, commission=0.0,  # Value 5.0 < minimum 10.0
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     with pytest.raises(InvalidTransactionError) as exc_info:
@@ -172,14 +173,14 @@ def test_maximum_positions_limit(env):
         transaction = Transaction(
             time=datetime.now(), type=TransactionType.BUY, ticker=f"COIN{i}USDT",
             price=1000.0, quantity=1.0, commission=5.0,
-            portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+            portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
         )
         pm.process_position_update(transaction)
 
     excess_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="COIN3USDT",
         price=1000.0, quantity=1.0, commission=5.0,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     with pytest.raises(InvalidTransactionError) as exc_info:
@@ -211,7 +212,7 @@ def test_get_position_methods(env):
     eth_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="ETHUSDT",
         price=3000.0, quantity=2.0, commission=15.0,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     pm.process_position_update(eth_transaction)
 
@@ -251,7 +252,7 @@ def test_position_metrics_calculation(env):
     close_transaction = Transaction(
         time=datetime.now() + timedelta(days=1), type=TransactionType.SELL,
         ticker="BTCUSDT", price=52000.0, quantity=1.0, commission=26.0,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     pm.process_position_update(close_transaction)
@@ -271,12 +272,12 @@ def test_portfolio_concentration(env):
     btc_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="BTCUSDT",
         price=50000.0, quantity=1.0, commission=25.0,  # Value: 50,000
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     eth_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="ETHUSDT",
         price=3000.0, quantity=5.0, commission=15.0,  # Value: 15,000
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     pm.process_position_update(btc_transaction)
@@ -300,7 +301,7 @@ def test_position_limits_validation(env):
     large_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="BTCUSDT",
         price=100000.0, quantity=15.0, commission=25.0,  # Value 1.5M > 1M limit
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     assert not pm.validate_position_limits(large_transaction)
@@ -314,14 +315,14 @@ def test_positions_summary(env):
     short_transaction = Transaction(
         time=datetime.now(), type=TransactionType.SELL, ticker="ETHUSDT",
         price=3000.0, quantity=1.0, commission=15.0,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     pm.process_position_update(short_transaction)
 
     close_short = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="ETHUSDT",
         price=2900.0, quantity=1.0, commission=14.5,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     pm.process_position_update(close_short)
 
@@ -347,7 +348,7 @@ def test_close_all_positions(env):
         transaction = Transaction(
             time=datetime.now(), type=TransactionType.BUY, ticker=ticker,
             price=price, quantity=quantity, commission=10.0,
-            portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+            portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
         )
         pm.process_position_update(transaction)
 
@@ -373,7 +374,7 @@ def test_concurrent_position_updates(env):
             transaction = Transaction(
                 time=datetime.now(), type=TransactionType.BUY, ticker=f"COIN{thread_id}USDT",
                 price=1000.0, quantity=1.0, commission=5.0,
-                portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+                portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
             )
             results.append(pm.process_position_update(transaction))
         except Exception as e:
@@ -404,7 +405,7 @@ def test_concurrent_same_ticker_updates(env):
             transaction = Transaction(
                 time=datetime.now(), type=TransactionType.BUY, ticker="TESTTICKER",
                 price=1000.0 + thread_id, quantity=0.1, commission=1.0,
-                portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+                portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
             )
             results.append(pm.process_position_update(transaction))
         except Exception as e:
@@ -435,7 +436,7 @@ def test_precision_calculations(env):
     precise_transaction = Transaction(
         time=datetime.now(), type=TransactionType.BUY, ticker="PRECISIONTEST",
         price=33333.33333333, quantity=0.33333333, commission=5.55555555,
-        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
 
     position = env.position_manager.process_position_update(precise_transaction)

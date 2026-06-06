@@ -17,6 +17,7 @@ from decimal import Decimal
 from datetime import datetime
 
 import pytest
+import uuid_utils.compat as uuid_compat
 
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
@@ -48,7 +49,7 @@ def test_cash_stays_decimal_after_transaction_no_float_roundtrip(portfolio):
     """
     buy = Transaction(
         datetime.now(), TransactionType.BUY, "BTCUSDT",
-        40000, 1, 0, None, idgen.generate_transaction_id(),
+        40000, 1, 0, None, idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     portfolio.process_transaction(buy)
     # Cash is still Decimal mid-flight (the BUY debit went through the
@@ -57,7 +58,7 @@ def test_cash_stays_decimal_after_transaction_no_float_roundtrip(portfolio):
 
     sell = Transaction(
         datetime.now(), TransactionType.SELL, "BTCUSDT",
-        42000, 1, 0, None, idgen.generate_transaction_id(),
+        42000, 1, 0, None, idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     portfolio.process_transaction(sell)
 
@@ -70,7 +71,7 @@ def test_transaction_money_fields_are_decimal():
     """Transaction money fields and the cost property are Decimal."""
     txn = Transaction(
         datetime.now(), TransactionType.BUY, "BTCUSDT",
-        42350.72, 1, 1.5, None, idgen.generate_transaction_id(),
+        42350.72, 1, 1.5, None, idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
     assert isinstance(txn.price, Decimal)
     assert isinstance(txn.quantity, Decimal)
