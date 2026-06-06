@@ -1,10 +1,22 @@
 from datetime import datetime, time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, cast
 from dataclasses import dataclass
 from enum import Enum
 
 from .order import Order
 from ..core.enums import OrderType, OrderStatus, Side
+from ..core.ids import PortfolioId
+from ..core.portfolio_read_model import PortfolioReadModel
+
+
+def _portfolio_id(order: Order) -> PortfolioId:
+    """Bridge the entity's ``PortfolioId | int`` field to the Protocol type.
+
+    02-05 carry-over: the Order entity still declares ``portfolio_id`` as
+    ``PortfolioId | int`` while the runtime value is a native UUID — the cast
+    bridges until the entity-field retype lands (deferred, not this plan).
+    """
+    return cast(PortfolioId, order.portfolio_id)
 
 
 class ValidationLevel(Enum):
@@ -55,14 +67,15 @@ class EnhancedOrderValidator:
     4. Financial Risk - Cash availability, margin requirements, risk limits
     """
     
-    def __init__(self, portfolio_handler: Any = None) -> None:
+    def __init__(self, portfolio_handler: Optional[PortfolioReadModel] = None) -> None:
         """
         Initialize the enhanced order validator.
-        
+
         Parameters
         ----------
-        portfolio_handler : PortfolioHandler, optional
-            Portfolio handler for balance and position checks
+        portfolio_handler : PortfolioReadModel, optional
+            Narrow portfolio read boundary for balance and position checks
+            (D-16: the concrete PortfolioHandler conforms structurally)
         """
         self.portfolio_handler = portfolio_handler
         
@@ -250,13 +263,12 @@ class EnhancedOrderValidator:
         return messages
 
     def _validate_exchange_support(self, order: Order) -> List[ValidationMessage]:
-        """Validate exchange is supported."""
+        """Validate exchange is supported (Protocol read, OQ1 admission metadata)."""
         messages: List[ValidationMessage] = []
 
-        # Get exchange from portfolio or default
+        # Get exchange from the read model or default
         if self.portfolio_handler:
-            portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
-            exchange = getattr(portfolio, 'exchange', 'default') if portfolio else 'default'
+            exchange = self.portfolio_handler.exchange_for(_portfolio_id(order))
         else:
             exchange = 'default'
 
@@ -274,10 +286,9 @@ class EnhancedOrderValidator:
         """Validate trading during market hours."""
         messages: List[ValidationMessage] = []
 
-        # Get exchange for market hours
+        # Get exchange for market hours (Protocol read)
         if self.portfolio_handler:
-            portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
-            exchange = getattr(portfolio, 'exchange', 'default') if portfolio else 'default'
+            exchange = self.portfolio_handler.exchange_for(_portfolio_id(order))
         else:
             exchange = 'default'
 
@@ -355,64 +366,36 @@ class EnhancedOrderValidator:
         # Portfolio position limits
         messages.extend(self._check_portfolio_position_limits(order))
 
-        # Portfolio exposure limits
-        messages.extend(self._check_portfolio_exposure_limits(order))
+        # NOTE (D-14, OQ1 resolution): the former equity-based exposure check
+        # (_check_portfolio_exposure_limits) is DELETED. Equity is excluded
+        # from the order-domain surface — available_cash is the single
+        # trading-decision figure. The check was WARNING-level only (it warned
+        # on every golden BUY at 95% sizing) and never affected a verdict, so
+        # deleting it is behavior-preserving-for-verdicts.
 
         return messages
 
     def _check_portfolio_position_limits(self, order: Order) -> List[ValidationMessage]:
         """Check portfolio-wide position limits (not strategy-specific)."""
         messages: List[ValidationMessage] = []
+        assert self.portfolio_handler is not None  # guarded by caller
 
-        portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
-        if not portfolio:
-            messages.append(ValidationMessage(
-                ValidationLevel.ERROR,
-                f"Portfolio {order.portfolio_id} not found",
-                "portfolio_id",
-                "PORTFOLIO_NOT_FOUND"
-            ))
-            return messages
-
-        # Portfolio-level limits (configurable per portfolio, not per strategy)
-        max_portfolio_positions = getattr(portfolio, 'max_positions', 50)  # Portfolio setting
-        current_positions = portfolio.n_open_positions
+        # Portfolio-level position cap. The old getattr(portfolio,
+        # 'max_positions', 50) always resolved to the default on the run path
+        # (the real Portfolio exposes the limit under config.limits, never as
+        # a flat attribute) — the constant preserves every verdict; a
+        # per-portfolio cap on the Protocol surface is out of OQ1 scope.
+        max_portfolio_positions = 50
+        current_positions = self.portfolio_handler.open_position_count(_portfolio_id(order))
 
         if current_positions >= max_portfolio_positions:
-            position = portfolio.positions.get(order.ticker)
+            position = self.portfolio_handler.get_position(_portfolio_id(order), order.ticker)
             if not position or not self._is_closing_position(order, position):
                 messages.append(ValidationMessage(
                     ValidationLevel.ERROR,
                     f"Portfolio max positions ({max_portfolio_positions}) reached",
                     "portfolio_limits",
                     "PORTFOLIO_MAX_POSITIONS"
-                ))
-
-        return messages
-
-    def _check_portfolio_exposure_limits(self, order: Order) -> List[ValidationMessage]:
-        """Check portfolio exposure limits (float-domain until M4)."""
-        messages: List[ValidationMessage] = []
-
-        portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
-        if not portfolio:
-            return messages
-
-        # Calculate position value
-        position_value = float(order.quantity) * float(order.price)
-
-        # Check against portfolio total equity
-        total_equity = portfolio.total_equity
-        if total_equity > 0:
-            exposure_percentage = position_value / total_equity
-            max_single_position_exposure = 0.20  # 20% max per position
-
-            if exposure_percentage > max_single_position_exposure:
-                messages.append(ValidationMessage(
-                    ValidationLevel.WARNING,
-                    f"Position exposure {exposure_percentage:.1%} exceeds recommended {max_single_position_exposure:.1%}",
-                    "exposure",
-                    "HIGH_POSITION_EXPOSURE"
                 ))
 
         return messages
@@ -450,18 +433,18 @@ class EnhancedOrderValidator:
     def _check_cash_availability(self, order: Order) -> List[ValidationMessage]:
         """Check if portfolio has sufficient cash for the trade (float-domain until M4)."""
         messages: List[ValidationMessage] = []
-
-        portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
-        if not portfolio:
-            return messages
+        assert self.portfolio_handler is not None  # guarded by caller
 
         quantity = float(order.quantity)
         price = float(order.price)
         cost = quantity * price
 
-        # Only check cash for new positions (not closing existing positions)
-        if order.ticker not in portfolio.positions:
-            cash = portfolio.cash
+        # Only check cash for new positions (not closing existing positions).
+        # Per-ticker membership composes from get_position (OQ1); the cash
+        # figure is available_cash — the single trading-decision figure
+        # (D-14; available == total until plan 05-06 wires reservations).
+        if self.portfolio_handler.get_position(_portfolio_id(order), order.ticker) is None:
+            cash = self.portfolio_handler.available_cash(_portfolio_id(order))
 
             # Minimum cash requirement
             if cash < self.min_cash_required:
@@ -483,12 +466,13 @@ class EnhancedOrderValidator:
         return messages
 
     def _check_risk_limits(self, order: Order) -> List[ValidationMessage]:
-        """Check various risk limits (float-domain until M4)."""
-        messages: List[ValidationMessage] = []
+        """Check various risk limits (float-domain until M4).
 
-        portfolio = self.portfolio_handler.get_portfolio(order.portfolio_id)
-        if not portfolio:
-            return messages
+        Reads only order fields — the former portfolio lookup was an unused
+        not-found guard (the read model raises typed PortfolioNotFoundError
+        upstream), removed with the Protocol retype (D-16).
+        """
+        messages: List[ValidationMessage] = []
 
         # Order value limits
         order_value = float(order.quantity) * float(order.price)

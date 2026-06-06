@@ -1,7 +1,7 @@
 from queue import Queue
 from typing import Any, List, Dict, Optional
 
-from ..portfolio_handler.portfolio_handler import PortfolioHandler
+from itrader.core.portfolio_read_model import PortfolioReadModel
 from .base import OrderBase, OrderStorage
 from .order import Order
 from ..core.enums import OrderStatus
@@ -35,15 +35,16 @@ class OrderHandler(OrderBase):
 	- Position-aware operations (when portfolio_handler is available)
 	- Validation and state management
 	"""
-	def __init__(self, events_queue: "Queue[Any]", portfolio_handler: PortfolioHandler,
+	def __init__(self, events_queue: "Queue[Any]", portfolio_handler: PortfolioReadModel,
 	             order_storage: Optional[OrderStorage] = None, market_execution: str = "immediate") -> None:
 		"""
 		Parameters
 		----------
 		events_queue: `Queue object`
 			The events queue of the trading system
-		portfolio_handler: `PortfolioHandler`
-			The portfolio handler instance
+		portfolio_handler: `PortfolioReadModel`
+			The narrow portfolio read boundary (D-16: the concrete
+			PortfolioHandler satisfies this Protocol structurally)
 		order_storage: `OrderStorage`, optional
 			The order storage for storage operations. If None, uses InMemoryOrderStorage.
 		market_execution: str, optional
