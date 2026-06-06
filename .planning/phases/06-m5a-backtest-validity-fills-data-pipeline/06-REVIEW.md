@@ -1,6 +1,6 @@
 ---
 phase: 06-m5a-backtest-validity-fills-data-pipeline
-reviewed: 2026-06-06T00:00:00Z
+reviewed: 2026-06-06T12:00:00Z
 depth: standard
 files_reviewed: 60
 files_reviewed_list:
@@ -66,16 +66,16 @@ files_reviewed_list:
   - tests/unit/price/test_csv_store.py
   - tests/unit/strategy/test_strategy.py
 findings:
-  critical: 1
-  warning: 12
+  critical: 0
+  warning: 11
   info: 12
-  total: 25
+  total: 23
 status: issues_found
 ---
 
 # Phase 06: Code Review Report
 
-**Reviewed:** 2026-06-06
+**Reviewed:** 2026-06-06 (re-reviewed after gap-closure wave — see Re-review note)
 **Depth:** standard
 **Files Reviewed:** 60
 **Status:** issues_found
@@ -99,9 +99,31 @@ limit/stop-primary + SL/TP signal path), plus a set of Warnings concentrated in 
 exchange config plumbing, determinism seams, the off-by-one CSV date window, and the
 dormant-but-importable reporting module.
 
+**Re-review note (2026-06-06):** 4 files were re-reviewed at standard depth after the
+gap-closure wave (commits `7e63dd3`..`dca839c`): `itrader/execution_handler/matching_engine.py`,
+`itrader/portfolio_handler/portfolio_handler.py`, `tests/unit/execution/test_matching_engine.py`,
+`tests/unit/portfolio/test_portfolio_update.py`. CR-01 and WR-06 are RESOLVED (verified
+below). The two-pass parent-filled gate was traced through its edge cases — same-bar
+limit/stop-parent unlock, OCO sibling arbitration, parents-before-children fill ordering,
+cancelled-parent orphan handling (covered by the order-domain WR-05 cascade within one
+tick drain), and book-mutation-during-iteration safety — and no new defects were found.
+All 142 execution-unit + integration tests pass. No new findings; open totals drop to
+0 critical / 11 warning / 12 info.
+
 ## Critical Issues
 
 ### CR-01: Bracket children can fill before (or without) their parent entry filling — unintended reverse positions
+
+**Status: RESOLVED** (plan 06-07, commit fc65dd2)
+Verified on re-review: `MatchingEngine.on_bar` now runs two passes — pass 1 fills
+parents/standalone orders and pops them from the book; pass 2 skips any child whose
+`parent_order_id` still keys `self._resting` (dormant: cannot fill, cannot OCO-cancel).
+Four new regression tests (`test_limit_parent_resting_shields_children`,
+`test_limit_parent_fill_same_bar_unlocks_children`,
+`test_children_dormant_until_parent_triggers_then_work_later_bar`,
+`test_stop_parent_resting_shields_children`) lock the defect; the accepted same-bar
+market-parent rule and parents-before-children fill ordering are preserved by
+construction (pass-1 fills precede pass-2 fills).
 
 **File:** `itrader/execution_handler/matching_engine.py:178-267` (with `itrader/order_handler/order_manager.py:440-551`)
 **Issue:** `OrderManager._assemble_bracket_and_emit` emits the parent AND its SL/TP
@@ -239,6 +261,12 @@ def update_market_value_of_portfolio(self, prices, time: datetime) -> None:
 and delete the unused `update_market_value`.
 
 ### WR-06: `PortfolioHandler.update_portfolios_market` reads a nonexistent `close_price` field — dead and broken
+
+**Status: RESOLVED** (plan 06-08, commit dca839c)
+Verified on re-review: the method is deleted; grep confirms no remaining callers anywhere
+in `itrader/` or `tests/` (only the correct `update_portfolios_market_value` survives,
+wired in `full_event_handler.py:71`), and the colliding test was renamed to
+`test_update_portfolios_market_value`.
 
 **File:** `itrader/portfolio_handler/portfolio_handler.py:355-377`
 **Issue:** The "backward compatible" method extracts prices via
@@ -463,6 +491,6 @@ for that position is admitted/filled.
 
 ---
 
-_Reviewed: 2026-06-06_
+_Reviewed: 2026-06-06 (re-review of 4 gap-closure files: same date)_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
