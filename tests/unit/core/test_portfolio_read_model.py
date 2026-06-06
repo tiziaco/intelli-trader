@@ -1,0 +1,241 @@
+"""M4-04 conformance tests: PortfolioReadModel Protocol + frozen PositionView.
+
+These lock the narrow cross-handler read boundary (D-13..D-17, Plan 05-03):
+
+1. ``PositionView`` is a frozen/slots dataclass — mutation raises
+   ``FrozenInstanceError`` (D-15: live objects inside a module, immutable
+   snapshots across the boundary).
+2. ``PositionView`` carries exactly the four fields consumers read today
+   (ticker, side, net_quantity, avg_price) with Decimal money types.
+3. ``PortfolioReadModel`` is ``runtime_checkable`` — a minimal fake
+   implementing all six members passes ``isinstance``; an object missing
+   ``reserve`` fails (narrowness is enforced, not just satisfied).
+
+The real-handler conformance assertion (``isinstance(PortfolioHandler(...),
+PortfolioReadModel)``) is added in Task 2 of the same plan.
+"""
+
+import dataclasses
+from decimal import Decimal
+
+import pytest
+
+from itrader.core.enums import PositionSide
+from itrader.core.ids import OrderId, PortfolioId
+from itrader.core.portfolio_read_model import PortfolioReadModel, PositionView
+
+pytestmark = pytest.mark.unit
+
+
+def _make_view() -> PositionView:
+    return PositionView(
+        ticker="BTCUSD",
+        side=PositionSide.LONG,
+        net_quantity=Decimal("1.23456789"),
+        avg_price=Decimal("40123.45"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# PositionView: frozen, slots, Decimal-typed
+# ---------------------------------------------------------------------------
+
+
+def test_position_view_is_frozen():
+    """D-15: assigning to any field raises FrozenInstanceError."""
+    view = _make_view()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        view.net_quantity = Decimal("99")  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        view.ticker = "ETHUSD"  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        view.side = PositionSide.SHORT  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        view.avg_price = Decimal("0")  # type: ignore[misc]
+
+
+def test_position_view_fields_exact():
+    """D-15: exactly ticker/side/net_quantity/avg_price — no extra surface."""
+    field_names = [f.name for f in dataclasses.fields(PositionView)]
+    assert field_names == ["ticker", "side", "net_quantity", "avg_price"]
+
+
+def test_position_view_money_types_are_decimal():
+    """Money is Decimal end-to-end (locked decision): values cross as Decimal."""
+    view = _make_view()
+    assert isinstance(view.net_quantity, Decimal)
+    assert isinstance(view.avg_price, Decimal)
+    assert isinstance(view.side, PositionSide)
+    assert view.net_quantity == Decimal("1.23456789")
+    assert view.avg_price == Decimal("40123.45")
+
+
+def test_position_view_uses_slots():
+    """slots=True: no __dict__, so no attribute smuggling across the boundary."""
+    view = _make_view()
+    assert not hasattr(view, "__dict__")
+
+
+# ---------------------------------------------------------------------------
+# PortfolioReadModel: runtime_checkable Protocol, six members, narrow
+# ---------------------------------------------------------------------------
+
+
+class _ConformingFake:
+    """Minimal fake implementing all six Protocol members."""
+
+    def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
+        return Decimal("100000.00")
+
+    def get_position(self, portfolio_id: PortfolioId, ticker: str) -> PositionView | None:
+        return None
+
+    def reserve(self, portfolio_id: PortfolioId, order_id: OrderId, amount: Decimal) -> None:
+        return None
+
+    def release(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        return None
+
+    def exchange_for(self, portfolio_id: PortfolioId) -> str:
+        return "csv"
+
+    def open_position_count(self, portfolio_id: PortfolioId) -> int:
+        return 0
+
+
+class _MissingReserveFake:
+    """Implements five of six members — `reserve` deliberately absent."""
+
+    def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
+        return Decimal("0")
+
+    def get_position(self, portfolio_id: PortfolioId, ticker: str) -> PositionView | None:
+        return None
+
+    def release(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        return None
+
+    def exchange_for(self, portfolio_id: PortfolioId) -> str:
+        return "csv"
+
+    def open_position_count(self, portfolio_id: PortfolioId) -> int:
+        return 0
+
+
+def test_protocol_is_runtime_checkable_and_fake_conforms():
+    """D-16: structural typing — a fake with all six methods passes isinstance."""
+    assert isinstance(_ConformingFake(), PortfolioReadModel)
+
+
+def test_object_missing_reserve_fails_isinstance():
+    """Narrowness is enforced: a missing member breaks conformance."""
+    assert not isinstance(_MissingReserveFake(), PortfolioReadModel)
+
+
+def test_protocol_declares_exactly_six_methods():
+    """OQ1 resolution: four locked members + two admission-metadata members."""
+    expected = {
+        "available_cash",
+        "get_position",
+        "reserve",
+        "release",
+        "exchange_for",
+        "open_position_count",
+    }
+    declared = {
+        name
+        for name in vars(PortfolioReadModel)
+        if not name.startswith("_") and callable(vars(PortfolioReadModel)[name])
+    }
+    assert declared == expected
+
+
+# ---------------------------------------------------------------------------
+# Real-handler conformance (D-16: structural, no inheritance) — Task 2
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def handler_with_portfolio():
+    from queue import Queue
+
+    from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+
+    handler = PortfolioHandler(Queue())
+    portfolio_id = handler.add_portfolio(1, "Conformance", "csv", 100000)
+    return handler, portfolio_id
+
+
+def test_portfolio_handler_satisfies_protocol(handler_with_portfolio):
+    """D-16: PortfolioHandler passes isinstance — structurally, no inheritance."""
+    handler, _ = handler_with_portfolio
+    assert isinstance(handler, PortfolioReadModel)
+    # No inheritance: the Protocol is not in the MRO.
+    assert PortfolioReadModel not in type(handler).__mro__
+
+
+def test_handler_get_position_none_when_flat(handler_with_portfolio):
+    """D-15: no open position -> None (not an empty view)."""
+    handler, portfolio_id = handler_with_portfolio
+    assert handler.get_position(portfolio_id, "BTCUSD") is None
+
+
+def test_handler_get_position_returns_frozen_view(handler_with_portfolio):
+    """D-15: an open position crosses the boundary as a frozen PositionView."""
+    from datetime import datetime
+
+    from itrader import idgen
+    from itrader.core.enums import TransactionType
+    from itrader.core.ids import TransactionId
+    from itrader.portfolio_handler.transaction import Transaction
+
+    handler, portfolio_id = handler_with_portfolio
+    portfolio = handler.get_portfolio(portfolio_id)
+    portfolio.transact_shares(
+        Transaction(
+            time=datetime(2024, 1, 1),
+            type=TransactionType.BUY,
+            ticker="BTCUSD",
+            price=Decimal("40000.00"),
+            quantity=Decimal("1.5"),
+            commission=Decimal("0"),
+            portfolio_id=portfolio_id,
+            id=TransactionId(idgen.generate_transaction_id()),
+        )
+    )
+
+    view = handler.get_position(portfolio_id, "BTCUSD")
+    assert isinstance(view, PositionView)
+    assert view.ticker == "BTCUSD"
+    assert view.side is PositionSide.LONG
+    assert view.net_quantity == Decimal("1.5")
+    assert isinstance(view.avg_price, Decimal)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        view.net_quantity = Decimal("0")  # type: ignore[misc]
+
+
+def test_handler_available_cash_and_metadata(handler_with_portfolio):
+    """available_cash/exchange_for/open_position_count delegate to the portfolio."""
+    handler, portfolio_id = handler_with_portfolio
+    assert handler.available_cash(portfolio_id) == Decimal("100000.00")
+    assert handler.exchange_for(portfolio_id) == "csv"
+    assert handler.open_position_count(portfolio_id) == 0
+
+
+def test_handler_reserve_and_release_round_trip(handler_with_portfolio):
+    """reserve/release delegate to CashManager's per-reference machinery."""
+    import uuid
+
+    handler, portfolio_id = handler_with_portfolio
+    order_id = OrderId(uuid.uuid4())
+
+    handler.reserve(portfolio_id, order_id, Decimal("250.12345678"))
+    assert handler.available_cash(portfolio_id) == Decimal("100000.00") - Decimal(
+        "250.12345678"
+    )
+
+    handler.release(portfolio_id, order_id)
+    assert handler.available_cash(portfolio_id) == Decimal("100000.00")
+    # Idempotent: releasing again is a silent no-op.
+    handler.release(portfolio_id, order_id)
+    assert handler.available_cash(portfolio_id) == Decimal("100000.00")

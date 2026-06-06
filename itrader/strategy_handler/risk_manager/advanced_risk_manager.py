@@ -1,5 +1,8 @@
 from itrader.events_handler.events import SignalEvent
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from typing import cast
+
+from itrader.core.ids import PortfolioId
+from itrader.core.portfolio_read_model import PortfolioReadModel
 
 from itrader.logger import get_itrader_logger
 
@@ -20,7 +23,9 @@ class RiskManager():
 		Portfolio metrics and open positions data
 	"""
 
-	def __init__(self, portfolio_handler: PortfolioHandler) -> None:
+	def __init__(self, portfolio_handler: PortfolioReadModel) -> None:
+		# D-17: the risk manager is part of the admission path — it reads
+		# through the narrow PortfolioReadModel Protocol (D-16, structural).
 		self.portfolio_handler = portfolio_handler
 
 		self.logger = get_itrader_logger().bind(component="RiskManager")
@@ -47,9 +52,8 @@ class RiskManager():
 		returned, never written onto the signal (D-03).
 		"""
 		# TODO: implement check cash in case of position increase
-		portfolio_id = signal.portfolio_id
-		portfolio = self.portfolio_handler.get_portfolio(portfolio_id)
-		open_tickers = list(portfolio.positions.keys())
+		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
+		portfolio_id = cast(PortfolioId, signal.portfolio_id)
 
 		# Extract scalar values from signal attributes (an unsized signal —
 		# quantity None, D-10 — carries no cost yet).
@@ -58,11 +62,14 @@ class RiskManager():
 
 		cost = quantity * price
 
-		if signal.ticker not in open_tickers:
+		# Per-ticker membership composes from get_position (OQ1, D-15).
+		if self.portfolio_handler.get_position(portfolio_id, signal.ticker) is None:
 			# New position about to be opened. Check if enough cash.
-			# Risk checks stay float-domain until M4 (locked decision); coerce the
-			# Decimal cash at this boundary so the comparison does not mix types.
-			cash = float(portfolio.cash)
+			# Risk checks stay float-domain until M4 (locked decision); coerce
+			# the Decimal cash at this boundary so the comparison does not mix
+			# types. available_cash is the single trading-decision figure
+			# (D-14; available == total until 05-06 wires reservations).
+			cash = float(self.portfolio_handler.available_cash(portfolio_id))
 
 			if cash < 30 or cash <= cost:
 				self.logger.info('Order REFUSED: Not enough cash to trade')

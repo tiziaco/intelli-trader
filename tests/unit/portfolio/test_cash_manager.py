@@ -159,9 +159,8 @@ def test_transaction_cash_flow_insufficient_funds(cm):
 
 def test_cash_reservation(cm):
     """Test cash reservation for pending orders."""
-    result = cm.reserve_cash(30000.0, "Order reservation", "ORDER_123")
+    cm.reserve_cash(30000.0, "Order reservation", "ORDER_123")
 
-    assert result
     assert cm.reserved_balance == Decimal("30000.00")
     assert cm.available_balance == Decimal("70000.00")
     assert cm.balance == Decimal("100000.00")  # Total unchanged
@@ -179,33 +178,21 @@ def test_cash_reservation_insufficient_funds(cm):
 
 
 def test_release_cash_reservation(cm):
-    """Test releasing cash reservation."""
+    """Test releasing a cash reservation by reference (Plan 05-03)."""
     # First, make a reservation
     cm.reserve_cash(20000.0, "Initial reservation", "ORDER_125")
 
-    # Then release part of it
-    result = cm.release_cash_reservation(15000.0, "Partial release", "ORDER_125")
+    # Then release it by reference — the full reserved amount comes back
+    cm.release_reservation("ORDER_125")
 
-    assert result
-    assert cm.reserved_balance == Decimal("5000.00")
-    assert cm.available_balance == Decimal("95000.00")
+    assert cm.reserved_balance == Decimal("0.00")
+    assert cm.available_balance == Decimal("100000.00")
 
     # Check operations were recorded
     operations = cm.get_cash_operations()
     assert len(operations) == 2
     assert operations[1].operation_type == CashOperationType.RELEASE_RESERVATION
-
-
-def test_release_more_than_reserved(cm):
-    """Test releasing more cash than reserved."""
-    # Make small reservation
-    cm.reserve_cash(1000.0, "Small reservation", "ORDER_126")
-
-    # Try to release more
-    with pytest.raises(InvalidTransactionError) as exc_info:
-        cm.release_cash_reservation(2000.0, "Invalid release", "ORDER_126")
-
-    assert "Cannot release" in str(exc_info.value)
+    assert operations[1].amount == Decimal("20000")
 
 
 def test_decimal_precision(cm):
@@ -274,14 +261,14 @@ def test_balance_consistency_validation(cm):
     # Normal state should be consistent
     assert cm.validate_balance_consistency()
 
-    # Test with manipulated state (simulating corruption)
-    original_reserved = cm._storage.get_reserved_cash()
-    cm._storage.set_reserved_cash(Decimal("-100.00"))  # Invalid negative reserved
+    # Test with manipulated state (simulating corruption): inject a negative
+    # reservation directly through the seam (the manager API would reject it).
+    cm._storage.add_reservation("CORRUPT", Decimal("-100.00"))
 
     assert not cm.validate_balance_consistency()
 
     # Restore state
-    cm._storage.set_reserved_cash(original_reserved)
+    cm._storage.pop_reservation("CORRUPT")
 
 
 def test_concurrent_operations(cm):
@@ -332,15 +319,11 @@ def test_concurrent_reservation_operations(cm):
 
     def reserve_release_thread(thread_id):
         try:
-            reserve_result = cm.reserve_cash(
-                1000.0, f"Reservation {thread_id}", f"ORDER_{thread_id}"
-            )
+            cm.reserve_cash(1000.0, f"Reservation {thread_id}", f"ORDER_{thread_id}")
             # Small delay to increase chance of race conditions
             time.sleep(0.01)
-            release_result = cm.release_cash_reservation(
-                1000.0, f"Release {thread_id}", f"ORDER_{thread_id}"
-            )
-            results.extend([reserve_result, release_result])
+            cm.release_reservation(f"ORDER_{thread_id}")
+            results.append(True)
         except Exception as e:
             errors.append(e)
 
@@ -356,10 +339,84 @@ def test_concurrent_reservation_operations(cm):
 
     # Check results
     assert len(errors) == 0, f"Concurrent reservation errors: {errors}"
-    assert len(results) == 10
+    assert len(results) == 5
     assert all(results)
 
     # Final state should have no reservations
+    assert cm.reserved_balance == Decimal("0.00")
+    assert cm.available_balance == cm.balance
+
+
+# ---------------------------------------------------------------------------
+# Per-reference reservations (Plan 05-03 Task 2 — D-13/OQ4 groundwork)
+# ---------------------------------------------------------------------------
+
+
+def test_reservations_sum_per_reference(cm):
+    """Two reservations under different refs: reserved_balance is the sum."""
+    cm.reserve_cash(Decimal("10000.00"), "order A", "ORDER_A")
+    cm.reserve_cash(Decimal("25000.00"), "order B", "ORDER_B")
+
+    assert cm.reserved_balance == Decimal("35000.00")
+    assert cm.available_balance == Decimal("65000.00")
+    assert cm.balance == Decimal("100000.00")  # Total unchanged
+
+
+def test_reservation_full_precision_round_trip(cm):
+    """OQ4: reservations are stored at FULL precision — no 2dp quantize."""
+    cm.reserve_cash(Decimal("123.45678901"), "full precision", "ORDER_FP")
+
+    assert cm.reserved_balance == Decimal("123.45678901")
+    assert cm.available_balance == Decimal("100000.00") - Decimal("123.45678901")
+
+
+def test_release_reservation_removes_exactly_that_reference(cm):
+    """release_reservation(ref) pops exactly that reservation, others stay."""
+    cm.reserve_cash(Decimal("10000.00"), "order A", "ORDER_A")
+    cm.reserve_cash(Decimal("5000.00"), "order B", "ORDER_B")
+
+    cm.release_reservation("ORDER_A")
+
+    assert cm.reserved_balance == Decimal("5000.00")
+    assert cm.available_balance == Decimal("95000.00")
+
+    # Release audit entry recorded only for the existing reservation
+    operations = cm.get_cash_operations(
+        operation_type=CashOperationType.RELEASE_RESERVATION
+    )
+    assert len(operations) == 1
+
+
+def test_release_unknown_reference_is_silent_noop(cm):
+    """Releasing an unknown reference is idempotent — no raise, no audit entry."""
+    cm.release_reservation("NEVER_RESERVED")
+    cm.release_reservation("NEVER_RESERVED")  # twice — still a no-op
+
+    assert cm.reserved_balance == Decimal("0.00")
+    operations = cm.get_cash_operations(
+        operation_type=CashOperationType.RELEASE_RESERVATION
+    )
+    assert len(operations) == 0
+
+
+def test_release_is_idempotent_after_real_reservation(cm):
+    """Releasing the same reference twice releases once, second is a no-op."""
+    cm.reserve_cash(Decimal("1000.00"), "order", "ORDER_X")
+    cm.release_reservation("ORDER_X")
+    cm.release_reservation("ORDER_X")  # idempotent
+
+    assert cm.reserved_balance == Decimal("0.00")
+    operations = cm.get_cash_operations(
+        operation_type=CashOperationType.RELEASE_RESERVATION
+    )
+    assert len(operations) == 1
+
+
+def test_reserve_insufficient_funds_reserves_nothing(cm):
+    """A failed reservation raises typed InsufficientFundsError and reserves 0."""
+    with pytest.raises(InsufficientFundsError):
+        cm.reserve_cash(Decimal("150000.00"), "too large", "ORDER_BIG")
+
     assert cm.reserved_balance == Decimal("0.00")
     assert cm.available_balance == cm.balance
 

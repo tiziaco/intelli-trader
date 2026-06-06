@@ -13,11 +13,13 @@ and order storage/execution systems.
 """
 
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
+from ..core.ids import PortfolioId
 from ..core.money import to_money
+from ..core.portfolio_read_model import PortfolioReadModel
 from .base import OrderStorage
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
@@ -39,7 +41,8 @@ class OrderManager:
 	"""
 	
 	def __init__(self, order_storage: OrderStorage, logger: Any,
-	             market_execution: str = "immediate", portfolio_handler: Any = None) -> None:
+	             market_execution: str = "immediate",
+	             portfolio_handler: Optional[PortfolioReadModel] = None) -> None:
 		"""
 		Initialize the OrderManager.
 
@@ -59,8 +62,9 @@ class OrderManager:
 			Market order execution mode:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Execute market orders on next bar (realistic backtesting)
-		portfolio_handler : PortfolioHandler, optional
-			Portfolio handler for position-aware operations
+		portfolio_handler : PortfolioReadModel, optional
+			Narrow portfolio read boundary for position-aware operations
+			(D-16: the concrete handler conforms structurally)
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
@@ -238,10 +242,13 @@ class OrderManager:
 			)]
 
 	def _get_signal_exchange(self, signal_event: SignalEvent) -> str:
-		"""Resolve the exchange the signal's portfolio trades on."""
+		"""Resolve the exchange the signal's portfolio trades on (Protocol read, D-16)."""
 		if self.portfolio_handler:
-			exchange: str = self.portfolio_handler.get_portfolio(signal_event.portfolio_id).exchange
-			return exchange
+			# 02-05 carry-over: events still declare portfolio_id as int while
+			# the runtime value is a native UUID — cast bridges until the
+			# event-field retype lands (deferred, not mandated by this plan).
+			return self.portfolio_handler.exchange_for(
+				cast(PortfolioId, signal_event.portfolio_id))
 		return "default"  # Fallback
 
 	def _build_primary_order(self, signal_event: SignalEvent, exchange: str,
@@ -444,17 +451,31 @@ class OrderManager:
 				f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
 				operation_type="create_primary_order"
 			)
-		portfolio = self.portfolio_handler.get_portfolio(signal_event.portfolio_id)
-		open_position = portfolio.get_open_position(signal_event.ticker)
+		if self.portfolio_handler is None:
+			# The run path always wires a read model before sizing; a missing
+			# one previously surfaced as an AttributeError caught upstream —
+			# the typed failure result is the same verdict, made explicit.
+			return OperationResult.failure_result(
+				f"Cannot size order: no portfolio read model available for {signal_event.ticker}",
+				operation_type="create_primary_order"
+			)
+		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
+		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		open_position = self.portfolio_handler.get_position(
+			portfolio_id, signal_event.ticker)
 		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
 			# Long-only exit: close the open long by selling its full quantity.
 			# net_quantity is Decimal (M2a entity money) — size in Decimal so the
 			# exit nets the long to exactly the position quantity (D-13: the
 			# Decimal flows native onto the Order entity, no float roundtrip).
+			# The read crosses the boundary as a frozen PositionView (D-15).
 			sized_qty: Decimal = open_position.net_quantity
 			return sized_qty
 		# Entry (or SELL with no open long): fraction-of-cash sizing.
-		# portfolio.cash is Decimal on the ledger (M2-02); compute sizing in
+		# available_cash is the single trading-decision figure (D-14); it is
+		# Decimal on the ledger (M2-02) and — until plan 05-06 wires
+		# reservations onto the trade path — numerically identical to the old
+		# portfolio.cash read (available == total). Compute sizing in
 		# Decimal — (0.95 * cash) / price — keeping full Decimal precision
 		# through the intermediate (D-01: quantize ONLY at money boundaries,
 		# never on an intermediate). The sized quantity is NOT a money-ledger
@@ -463,7 +484,8 @@ class OrderManager:
 		# the identical float at the OrderEvent boundary coercion (D-04).
 		# (Quantizing here to 8dp would both violate D-01 and shift the frozen
 		# numeric oracle past the D-15 tolerance — DEF-02-04-A: no re-baseline.)
-		raw_qty: Decimal = (Decimal("0.95") * portfolio.cash) / to_money(price)
+		available = self.portfolio_handler.available_cash(portfolio_id)
+		raw_qty: Decimal = (Decimal("0.95") * available) / to_money(price)
 		return raw_qty
 
 	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None,
