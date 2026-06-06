@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, timezone
 from tqdm import tqdm
 
 from .base import AbstractPriceHandler
-from .sql_handler import SqlHandler
-from .exchange.CCXT import CCXT_exchange
+from .store.sql_store import SqlHandler
+from .providers.ccxt_provider import CCXT_exchange
 
 from itrader.outils.time_parser import to_timedelta, timedelta_to_str
 from itrader.outils.data_outils import resample_ohlcv

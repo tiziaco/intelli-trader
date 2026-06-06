@@ -3,7 +3,7 @@ import pytz
 import pandas as pd
 from datetime import datetime
 
-from .base import AbstractExchange
+from .exchange_base import AbstractExchange
 from itrader.outils.time_parser import to_timedelta
 from itrader.config import FORBIDDEN_SYMBOLS, TIMEZONE
 

@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 6 context gathered
-last_updated: "2026-06-06T14:17:39.752Z"
-last_activity: 2026-06-06 -- Phase 6 planning complete
+last_updated: "2026-06-06T14:21:21.389Z"
+last_activity: 2026-06-06 -- Phase 06 execution started
 progress:
   total_phases: 8
   completed_phases: 5
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 6 — m5a — backtest validity, fills & data pipeline
+**Current focus:** Phase 06 — m5a-backtest-validity-fills-data-pipeline
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-06 -- Phase 6 planning complete
+Phase: 06 (m5a-backtest-validity-fills-data-pipeline) — EXECUTING
+Plan: 1 of 6
+Status: Executing Phase 06
+Last activity: 2026-06-06 -- Phase 06 execution started
 
 Progress: [██████████] 100%
 
