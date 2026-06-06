@@ -6,7 +6,9 @@ sqlalchemy/psycopg2 and belongs to the deferred persistence milestone (D-sql).
 """
 
 from .base import PriceStore
+from .csv_store import CsvPriceStore
 
 __all__ = [
     'PriceStore',
+    'CsvPriceStore',
 ]
