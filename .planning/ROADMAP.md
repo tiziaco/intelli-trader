@@ -157,7 +157,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Fee/slippage models are correct (maker fees live, tiered model fixed, slippage not applied to limit fills, connect latency `time.sleep` gated/removed)
   4. The price handler splits into Provider/Store/Feed seams with an offline-vs-runtime lifecycle: the run path is read-only and errors loudly on missing data (no mid-run network fetch), bare `except:`→`None` and `to_megaframe` tz/key bugs fixed, strategies use the resampled-bars API not `price_handler.prices`
 
-**Plans**: 6 plans (4 waves; D-22 structural-first — waves 1-3 are inert and oracle byte-exact gated, wave 4 is the only result-changing plan with the D-23 owner checkpoint)
+**Plans**: 8 plans (4 waves + gap closure; D-22 structural-first — waves 1-3 are inert and oracle byte-exact gated, wave 4 is the only result-changing plan with the D-23 owner checkpoint; 06-07/06-08 close UAT gaps CR-01 and WR-06, both oracle-inert)
 
 Plans:
 **Wave 1**
@@ -177,6 +177,11 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion)*
 
 - [x] 06-06-PLAN.md — Next-bar-open fills (D-01/D-13) + owner-gated oracle re-freeze (RESULT-CHANGING, M5-01)
+
+**Gap Closure** *(from 06-VERIFICATION.md / 06-HUMAN-UAT.md)*
+
+- [ ] 06-07-PLAN.md — CR-01: parent-filled gate for bracket children in MatchingEngine.on_bar (inert, M5-01)
+- [ ] 06-08-PLAN.md — WR-06: delete dead update_portfolios_market + rename namesake test (inert, M5-02)
 
 ### Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage
 
