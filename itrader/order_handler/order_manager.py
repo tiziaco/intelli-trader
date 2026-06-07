@@ -17,13 +17,14 @@ from typing import Any, Callable, Dict, List, Optional, cast
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
-from ..core.exceptions import InsufficientFundsError
+from ..core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ..core.ids import PortfolioId
 from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
 from .base import OrderStorage
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
+from .sizing_resolver import SizingResolver
 
 
 class OrderManager:
@@ -83,6 +84,12 @@ class OrderManager:
 
 		# Initialize validator if portfolio_handler is available
 		self.order_validator = EnhancedOrderValidator(portfolio_handler) if portfolio_handler else None
+
+		# The ONE sizing resolver (D-01, M5-06): dispatches on the signal's
+		# DECLARED SizingPolicy. Same optionality pattern as the read model —
+		# constructed only when a read model is present (resolution reads
+		# portfolio state exclusively through the Protocol).
+		self.sizing_resolver = SizingResolver(portfolio_handler) if portfolio_handler else None
 
 	def _estimate_commission(self, order: Order) -> Decimal:
 		"""Estimate the commission for an order's admission reservation (D-04).
@@ -192,8 +199,10 @@ class OrderManager:
 		create-all-then-emit bracket assembly (D-11).
 
 		This method:
-		1. Resolves sizing BEFORE any entity creation (sizing failures
-		   short-circuit, DEF-01-B narrow gate preserved)
+		1. Resolves sizing FIRST via the SizingResolver dispatching on the
+		   signal's declared policy (D-01, M5-06); sizing failures store an
+		   audited REJECTED entity and short-circuit (D-06 — the DEF-01-B
+		   narrow gate preserved: no unsized order ever reaches validation)
 		2. Creates the primary Order entity (PENDING) immediately —
 		   the entity IS the pipeline state, the signal is never mutated
 		3. Validates the ENTITY; rejection transitions it PENDING→REJECTED
@@ -222,12 +231,14 @@ class OrderManager:
 		primary_emitted = False
 
 		try:
-			# 0. Resolve fraction-of-cash sizing BEFORE validation (D-08/D-09).
+			# 0. Resolve the DECLARED sizing policy BEFORE validation (D-01/D-08/D-09).
 			# The strategy emits quantity=None (D-10); the order/risk layer resolves the
-			# per-portfolio quantity here. Sizing failures (invalid price) short-circuit
-			# BEFORE any entity is created — the narrow DEF-01-B gate: the running engine
-			# never presents an unsized order to the validator, while the validator's own
-			# zero-quantity rejection (test_zero_quantity_signal) is left intact.
+			# per-portfolio quantity through the SizingResolver dispatching on
+			# signal.sizing_policy (M5-06). Sizing failures are AUDITED (D-06): the
+			# entity is stored REJECTED with triggered_by="sizing_policy" inside the
+			# resolve step and a failure_result short-circuits here — the DEF-01-B
+			# narrow gate holds: the running engine never presents an unsized order
+			# to the validator (which now hard-rejects any non-positive quantity).
 			resolved = self._resolve_signal_quantity(signal_event)
 			if isinstance(resolved, OperationResult):
 				return [resolved]
@@ -552,33 +563,41 @@ class OrderManager:
 	
 	def _resolve_signal_quantity(self, signal_event: SignalEvent) -> "Decimal | OperationResult":
 		"""
-		Resolve the order quantity in the order/risk seam (D-08/D-09/D-13).
+		Resolve the order quantity in the order/risk seam (D-01/D-08/D-09/D-13, M5-06).
 
-		The strategy emits quantity=None (D-10); the order/risk layer — NOT the
-		strategy or position_sizer (D-09) — resolves the per-portfolio quantity.
-		The resolved Decimal is RETURNED and flows native onto the Order entity
-		(D-13) — the signal is never mutated (the WR-05 float coercion died with
-		the signal mutation). Two sizing cases, both keyed on the long-only
-		reference strategy (SMA_MACD: BUY enters a long, SELL exits it; the
-		short block is commented out):
+		The strategy DECLARES a SizingPolicy on the signal (D-01); the order/risk
+		layer — never the strategy — resolves the per-portfolio quantity through
+		the ONE SizingResolver. The resolved Decimal is RETURNED and flows native
+		onto the Order entity (D-13) — the signal is never mutated. Branch ORDER
+		preserves the M1 seam exactly (Pitfall 1 byte-exactness):
 
-		* EXIT (SELL with an open long position): size the order to the position's net
-		  quantity so the exit fully closes the long and a round-trip trade is recorded.
-		  Without this the exit SELL would be sized independently and never net the long to
-		  zero, so no position would ever close and the trade log would stay empty (M1-07).
-		* ENTRY (BUY, or a SELL with no open position): fraction-of-cash sizing,
-		  (0.95 * available_cash) / price — 95% buffer so float/rounding cannot overshoot a
-		  cash check; fractional BTC.
+		* EXPLICIT: a caller-supplied positive quantity bypasses policy sizing
+		  entirely (D-07 — the explicit partial-exit path, preserved verbatim).
+		* EXIT (SELL with an open long position): the resolver sizes the exit from
+		  the position's net_quantity and the signal's exit_fraction. The golden
+		  exit_fraction == Decimal("1") returns net_quantity structurally
+		  UNCHANGED (D-07 no-op — no multiplication artifact, identical bytes
+		  to the M1 seam) so the exit fully closes the long and a round-trip
+		  trade is recorded (M1-07).
+		* ENTRY (BUY, or a SELL with no open long): the resolver dispatches on
+		  signal.sizing_policy. The FractionOfCash arm reproduces
+		  (fraction * available_cash) / to_money(price) operand-for-operand —
+		  the golden Decimal("0.95") quantity is repr-identical to the deleted
+		  M1 expression. NOTE: a SELL with no open long deliberately falls
+		  through to entry sizing and opens a short (the 2-shorts mechanism,
+		  Pitfall 4) — plan 07-07's direction guard removes that under owner
+		  sign-off; removing it here would be an unsanctioned result change.
 
-		An explicit caller-supplied positive quantity is entered into the money
-		domain unchanged (the same to_money entry the Order factories applied
-		to the float signal field before D-13).
+		Sizing failures (invalid price, SizingPolicyViolation) are AUDITED
+		rejections (D-06): the entity is built unsized, transitioned
+		PENDING→REJECTED with triggered_by="sizing_policy", and stored —
+		rejected signals never vanish (Pitfall 5, option (a)).
 
 		Returns
 		-------
 		Decimal | OperationResult
-			The resolved quantity, or a failure_result when the price is
-			invalid (cannot size) — BEFORE any entity creation.
+			The resolved quantity, or a failure_result when sizing fails
+			(the audited REJECTED entity is already persisted).
 		"""
 		if signal_event.quantity and signal_event.quantity > 0:
 			# Explicit caller-supplied quantity: preserved as-is.
@@ -586,11 +605,13 @@ class OrderManager:
 
 		price = signal_event.price
 		if not price or price <= 0:
-			return OperationResult.failure_result(
+			# Invalid-price guard: same verdict as the M1 seam, now routed
+			# through the audited D-06 rejection instead of a bare failure.
+			return self._reject_unsized_signal(
+				signal_event,
 				f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
-				operation_type="create_primary_order"
 			)
-		if self.portfolio_handler is None:
+		if self.portfolio_handler is None or self.sizing_resolver is None:
 			# The run path always wires a read model before sizing; a missing
 			# one previously surfaced as an AttributeError caught upstream —
 			# the typed failure result is the same verdict, made explicit.
@@ -603,30 +624,76 @@ class OrderManager:
 		open_position = self.portfolio_handler.get_position(
 			portfolio_id, signal_event.ticker)
 		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
-			# Long-only exit: close the open long by selling its full quantity.
-			# net_quantity is Decimal (M2a entity money) — size in Decimal so the
-			# exit nets the long to exactly the position quantity (D-13: the
-			# Decimal flows native onto the Order entity, no float roundtrip).
-			# The read crosses the boundary as a frozen PositionView (D-15).
-			sized_qty: Decimal = open_position.net_quantity
-			return sized_qty
-		# Entry (or SELL with no open long): fraction-of-cash sizing.
-		# available_cash is the single trading-decision figure (D-14); it is
-		# Decimal on the ledger (M2-02) and — until plan 05-06 wires
-		# reservations onto the trade path — numerically identical to the old
-		# portfolio.cash read (available == total). Compute sizing in
-		# Decimal — (0.95 * cash) / price — keeping full Decimal precision
-		# through the intermediate (D-01: quantize ONLY at money boundaries,
-		# never on an intermediate). The sized quantity is NOT a money-ledger
-		# boundary — it is an in-flight intermediate the exchange consumes — so
-		# it is carried at full precision; since D-22 the Decimal rides the
-		# OrderEvent untouched and the exchange converts ONCE at its float
-		# matching boundary (the identical double the old float coercion saw).
-		# (Quantizing here to 8dp would both violate D-01 and shift the frozen
-		# numeric oracle past the D-15 tolerance — DEF-02-04-A: no re-baseline.)
-		available = self.portfolio_handler.available_cash(portfolio_id)
-		raw_qty: Decimal = (Decimal("0.95") * available) / to_money(price)
-		return raw_qty
+			# Long-only exit: the resolver sizes the exit from exchange truth
+			# (net_quantity is Decimal, M2a entity money; the read crosses the
+			# boundary as a frozen PositionView, D-15). The golden
+			# exit_fraction == Decimal("1") is the D-07 structural no-op:
+			# net_quantity is returned UNCHANGED — the Decimal flows native
+			# onto the Order entity, no float roundtrip (D-13), so the exit
+			# nets the long to exactly the position quantity.
+			return self.sizing_resolver.resolve_exit(
+				open_position.net_quantity,
+				signal_event.exit_fraction,
+				signal_event.sizing_policy.step_size,
+			)
+		# Entry (or SELL with no open long — the preserved shorts fall-through,
+		# Pitfall 4): dispatch on the DECLARED policy (D-01). The FractionOfCash
+		# arm computes (fraction * available_cash) / to_money(price) — same
+		# operands, same order as the M1 seam; available_cash is the single
+		# trading-decision figure (D-14), Decimal on the ledger (M2-02). Full
+		# Decimal precision rides through the intermediate (D-01: quantize ONLY
+		# via an explicit policy step_size — the golden policy carries None);
+		# since D-22 the Decimal rides the OrderEvent untouched and the exchange
+		# converts ONCE at its float matching boundary.
+		try:
+			return self.sizing_resolver.resolve_entry(
+				signal_event.sizing_policy,
+				portfolio_id,
+				price,
+				stop=signal_event.stop_loss or None,
+			)
+		except SizingPolicyViolation as e:
+			# D-06 fail-loud: the policy violation becomes an audited
+			# REJECTED order naming the policy — never a silent drop.
+			return self._reject_unsized_signal(signal_event, str(e))
+
+	def _reject_unsized_signal(self, signal_event: SignalEvent,
+	                           reason: str) -> OperationResult:
+		"""
+		D-06 audited sizing rejection (Pitfall 5, option (a)).
+
+		Build the primary Order entity UNSIZED (quantity 0) via the existing
+		factory, transition it PENDING→REJECTED through the audited
+		add_state_change path with triggered_by="sizing_policy" and a reason
+		naming the policy violation, and persist it — rejected signals never
+		vanish (the exact shape of the validator-rejection template). The
+		entity is REJECTED before validation ever runs, so the validator's
+		positive-quantity rule is never consulted on it. Timestamps stay
+		event-derived (M2-09 — never wall clock: add_state_change defaults to
+		the order's own event time).
+		"""
+		error_msg = f"Signal sizing failed: {reason}"
+		self.logger.error('%s for %s %s', error_msg,
+						signal_event.ticker, signal_event.action)
+		try:
+			exchange = self._get_signal_exchange(signal_event)
+			rejected = self._build_primary_order(signal_event, exchange, Decimal("0"))
+			if isinstance(rejected, OperationResult):
+				return rejected
+			rejected.add_state_change(
+				OrderStatus.REJECTED,
+				reason,
+				triggered_by="sizing_policy",
+			)
+			self.order_storage.add_order(rejected)
+		except Exception as e:
+			# The audit entity could not be built (e.g. an unrepresentable
+			# price) — the rejection verdict stands; log the audit gap loudly.
+			self.logger.error('Failed to persist audited sizing rejection: %s',
+							e, exc_info=True)
+		return OperationResult.failure_result(error_msg,
+			error_details=reason,
+			operation_type="signal_sizing")
 
 	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None,
 	                portfolio_id: Optional[int] = None, reason: str = "user modification") -> OperationResult:
