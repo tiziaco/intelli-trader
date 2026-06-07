@@ -218,7 +218,7 @@ Plans:
 
 **Wave 5**
 
-- [ ] 07-07-PLAN.md — Re-freeze 1: LONG_ONLY direction guard (D-08) + freeze metrics/slippage artifacts (RESULT-CHANGING, owner-gated, M5-06/M5-07)
+- [x] 07-07-PLAN.md — Re-freeze 1: LONG_ONLY direction guard (D-08) + freeze metrics/slippage artifacts (RESULT-CHANGING, owner-gated, M5-06/M5-07)
 
 **Wave 6**
 
@@ -250,5 +250,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 8/8 | Complete   | 2026-06-06 |
-| 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 6/8 | In Progress|  |
+| 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 7/8 | In Progress|  |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
