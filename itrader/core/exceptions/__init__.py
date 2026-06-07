@@ -31,6 +31,7 @@ from .portfolio import (
 # Order exceptions
 from .order import (
     OrderError,
+    SizingPolicyViolation,
     UnsizedSignalError
 )
 
@@ -63,6 +64,7 @@ __all__ = [
 
     # Order exceptions
     'OrderError',
+    'SizingPolicyViolation',
     'UnsizedSignalError',
 
     # Data exceptions
