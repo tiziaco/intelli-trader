@@ -246,10 +246,15 @@ class OrderManager:
 		create-all-then-emit bracket assembly (D-11).
 
 		This method:
-		0. Enforces the strategy's DECLARED TradingDirection at admission
-		   (D-08) BEFORE sizing — a LONG_ONLY unsized SELL with no open long
-		   is an audited REJECTED order (triggered_by="admission_direction"),
-		   never a short-opening fall-through (DEF-01-C dead structurally)
+		0. Enforces the strategy's DECLARED admission constraints BEFORE
+		   sizing — direction (D-08), then max_positions, then allow_increase
+		   (D-10). A LONG_ONLY unsized SELL with no open long is an audited
+		   REJECTED order (triggered_by="admission_direction"), never a
+		   short-opening fall-through (DEF-01-C dead structurally); an unsized
+		   BUY-while-long with allow_increase=False is audited REJECTED
+		   (triggered_by="admission_increase"); an unsized new-position BUY at
+		   the max_positions limit is audited REJECTED
+		   (triggered_by="admission_max_positions")
 		1. Resolves sizing via the SizingResolver dispatching on the
 		   signal's declared policy (D-01, M5-06); sizing failures store an
 		   audited REJECTED entity and short-circuit (D-06 — the DEF-01-B
@@ -287,6 +292,15 @@ class OrderManager:
 			# with no open long is an AUDITED rejection (Pitfall 4 — the exact
 			# fall-through that opened the 2 blessed golden shorts is gone).
 			gate_rejection = self._enforce_direction_admission(signal_event)
+			if gate_rejection is not None:
+				return [gate_rejection]
+
+			# 0b. D-10 increase gate + max_positions gate (plan 07-08) — the
+			# rest of step 0. Gate ordering: direction -> max_positions ->
+			# increase; the cases are disjoint by position state (the increase
+			# case is an OPEN ticker, the max_positions case is a NEW ticker)
+			# so a signal trips at most ONE gate.
+			gate_rejection = self._enforce_position_admission(signal_event)
 			if gate_rejection is not None:
 				return [gate_rejection]
 
@@ -800,6 +814,96 @@ class OrderManager:
 				f"direction violation: SHORT_ONLY strategy cannot open a long "
 				f"(BUY with no open short) for {signal_event.ticker}",
 				triggered_by="admission_direction",
+				operation_type="signal_admission",
+				error_prefix="Signal rejected at admission",
+			)
+		return None
+
+	def _enforce_position_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+		"""
+		D-10 increase gate + max_positions gate — the rest of process_signal
+		step 0 (plan 07-08), running after the direction gate, BEFORE sizing.
+
+		Both gates police unsized BUYs only and dispatch on position state,
+		so a signal trips at most ONE gate (no double-gating):
+
+		* OPEN long for the ticker (net_quantity > 0) — the INCREASE case
+		  (D-10). ``allow_increase=False`` is an AUDITED rejection
+		  (triggered_by="admission_increase") — SMA_MACD's declared-but-
+		  ignored False, finally honest. ``allow_increase=True`` passes
+		  through to entry sizing: the resolver's FractionOfCash arm reads
+		  CURRENT available_cash, which IS "fraction of remaining available
+		  cash" semantics (the CONTEXT discretion clause — oracle-dark, the
+		  golden strategy declares False), and the existing check-and-reserve
+		  gate downstream covers the cash check (the literal M5-06 check_cash
+		  requirement — no new reservation code; insufficient funds still
+		  produces the audited cash_reservation rejection, T-07-21).
+		* NO open position for the ticker — the NEW-POSITION case. When the
+		  portfolio's open-position count has reached the strategy's declared
+		  ``max_positions``, the entry is an AUDITED rejection
+		  (triggered_by="admission_max_positions"). Oracle-dark: the golden
+		  run is single-ticker with max_positions=1 and at most one open
+		  position, so a new-entry BUY never trips it.
+		* OPEN short for the ticker (net_quantity < 0) — a BUY is a cover/
+		  exit; neither gate applies (short increases are out of v1 scope
+		  with the margin model, D-09).
+
+		Preserved paths the gates never block:
+		- First entries (no open position, count under the limit) size
+		  EXACTLY as before — byte-exactness of the post-07-07 reference
+		  depends on it when N=0.
+		- Explicit-quantity signals skip both gates (live/manual path).
+		- SELLs pass: exits are sized downstream; direction polices the rest.
+
+		Returns
+		-------
+		Optional[OperationResult]
+			A failure_result when a gate trips (the audited REJECTED entity
+			is already persisted, Pitfall 5 option (a)), or None when the
+			signal passes.
+		"""
+		if signal_event.quantity and signal_event.quantity > 0:
+			# Explicit caller-supplied quantity: the gates do not apply.
+			return None
+		if signal_event.action is not Side.BUY:
+			return None
+		if self.portfolio_handler is None:
+			# No position truth to consult — an unsized signal without a
+			# read model fails loudly in the sizing step right after.
+			return None
+		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
+		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		open_position = self.portfolio_handler.get_position(
+			portfolio_id, signal_event.ticker)
+		if open_position is not None and open_position.net_quantity > 0:
+			# INCREASE case (D-10): BUY for an already-open long.
+			if not signal_event.allow_increase:
+				return self._reject_unsized_signal(
+					signal_event,
+					f"position increase not allowed by strategy "
+					f"(allow_increase=False) for {signal_event.ticker}",
+					triggered_by="admission_increase",
+					operation_type="signal_admission",
+					error_prefix="Signal rejected at admission",
+				)
+			# allow_increase=True: fall through to entry sizing — the
+			# FractionOfCash arm reads CURRENT available_cash (remaining-cash
+			# semantics) and the check-and-reserve gate covers the cash check.
+			return None
+		if open_position is not None and open_position.net_quantity < 0:
+			# BUY against an open short is a cover/exit — neither gate applies.
+			return None
+		# NEW-POSITION case: no open position for the ticker (or a fully
+		# closed residual view). Enforce the declared concurrent-position cap.
+		if (self.portfolio_handler.open_position_count(portfolio_id)
+				>= signal_event.max_positions):
+			return self._reject_unsized_signal(
+				signal_event,
+				f"max positions reached: "
+				f"{self.portfolio_handler.open_position_count(portfolio_id)} open "
+				f">= max_positions={signal_event.max_positions}; "
+				f"new entry for {signal_event.ticker} not allowed by strategy",
+				triggered_by="admission_max_positions",
 				operation_type="signal_admission",
 				error_prefix="Signal rejected at admission",
 			)
