@@ -1,50 +1,52 @@
 """
-Zero slippage model - perfect execution with no slippage.
+Zero slippage model - perfect execution with no slippage (Decimal-native, D-12).
 """
 
+from decimal import Decimal
 from typing import Dict, Any
+
 from .base import SlippageModel
 
 
 class ZeroSlippageModel(SlippageModel):
     """
     Zero slippage model that provides perfect execution with no slippage.
-    
-    This model always returns a slippage factor of 1.0, meaning orders
-    execute at exactly the expected price with no price impact.
+
+    This model always returns a slippage factor of Decimal("1"), meaning
+    orders execute at exactly the expected price with no price impact.
     """
-    
+
     def __init__(self) -> None:
         """Initialize the zero slippage model."""
         super().__init__()
-    
-    def calculate_slippage_factor(self, quantity: float, price: float, 
-                                side: str, order_type: str = "market") -> float:
+
+    def calculate_slippage_factor(self, quantity: Decimal, price: Decimal,
+                                  side: str = "buy", order_type: str = "market") -> Decimal:
         """
-        Calculate slippage factor (always 1.0 for zero slippage).
-        
+        Calculate slippage factor (always Decimal("1") for zero slippage).
+
         Parameters
         ----------
-        quantity : float
+        quantity : Decimal
             Order quantity (ignored)
-        price : float
+        price : Decimal
             Order price (ignored)
         side : str
             Order side (ignored)
         order_type : str
             Order type (ignored)
-            
+
         Returns
         -------
-        float
-            Always returns 1.0 (no slippage)
+        Decimal
+            Always returns Decimal("1") (no slippage)
         """
-        return 1.0
-    
+        return Decimal("1")
+
     def get_slippage_info(self) -> Dict[str, Any]:
         """
         Get information about the zero slippage model.
-        
+
         Returns
         -------
         Dict[str, Any]

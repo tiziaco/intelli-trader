@@ -1,6 +1,7 @@
 import queue
-from typing import Any, Optional
+from typing import Optional
 
+from itrader.price_handler.feed.base import BarFeed
 from itrader.universe.universe import Universe
 from ..events_handler.events import BarEvent, TimeEvent
 
@@ -16,13 +17,13 @@ class DynamicUniverse(Universe):
 
 	Parameters
 	----------
-	assets : `list[str]`
-		List of assets and their entry date.
+	feed : `BarFeed`
+		The market-data read model the per-tick Bar facts come from (D-15).
 	"""
 
-	def __init__(self, price_handler: Any, global_queue: "Optional[queue.Queue[object]]" = None, uni_type: str = 'static') -> None:
+	def __init__(self, feed: BarFeed, global_queue: "Optional[queue.Queue[object]]" = None, uni_type: str = 'static') -> None:
 		self.uni_type = uni_type
-		self.price_handler = price_handler
+		self.feed = feed
 		self.global_queue = global_queue
 		self.strategies_universe: list[str] = []
 		self.screeners_universe: list[str] = []
@@ -65,14 +66,15 @@ class DynamicUniverse(Universe):
 		time_event: `TimeEvent`
 			Simulation-clock event carrying the last closed bar time.
 		"""
-		bars: dict[str, Any] = {}
+		# Per-tick fact lookup (D-15): the feed returns the Bar facts stamped
+		# exactly at the tick; tickers with no bar at this time are ABSENT
+		# from the dict (sparse universe). The bare-except -> None accessor
+		# path is gone — store/feed accessors raise loudly (FR7, T-06-19).
+		bars = self.feed.current_bars(time_event.time)
 
 		for ticker in self.strategies_universe:
-			if ticker in self.price_handler.prices.keys():
-				bar = self.price_handler.get_bar(ticker, time_event.time)
-				bars[ticker] = bar
-			else:
-				self.logger.warning('Dynamic Universe: ticker %s not present in the price handler', ticker)
+			if ticker not in bars:
+				self.logger.warning('Dynamic Universe: no bar for ticker %s at %s in the feed', ticker, str(time_event.time))
 
 		bar_event = BarEvent(time=time_event.time, bars=bars)
 		self.last_bar = bar_event

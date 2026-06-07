@@ -331,37 +331,15 @@ class PortfolioHandler:
         if isinstance(bar_events, BarEvent):
             bar_events = [bar_events]
         
-        # Convert bar events to price dictionary
+        # Convert bar events to price dictionary. The close is already
+        # Decimal via the Bar struct (D-14); downstream position updates
+        # enter via to_money (value-identity on Decimal input).
         prices = {}
         for bar_event in bar_events:
-            for ticker in bar_event.bars.keys():
-                prices[ticker] = bar_event.get_last_close(ticker)
+            for ticker, bar in bar_event.bars.items():
+                prices[ticker] = bar.close
         
         # Update only active portfolios (each handles its own thread safety)
-        active_portfolios = self.get_active_portfolios()
-        
-        for portfolio in active_portfolios:
-            try:
-                portfolio.update_market_value_of_portfolio(prices)
-            except Exception as e:
-                self.logger.warning(
-                    "Failed to update portfolio market value",
-                    portfolio_id=portfolio.portfolio_id,
-                    error=str(e)
-                )
-    
-    def update_portfolios_market(self, bar_event: BarEvent) -> None:
-        """Update market values for all portfolios (backward compatible method)."""
-        # Extract prices from bar event
-        prices: Dict[str, Any] = {}
-        if hasattr(bar_event, 'bars'):
-            for ticker, bar in bar_event.bars.items():
-                prices[ticker] = getattr(bar, 'close_price', None)
-        else:
-            # Single ticker bar event (legacy shape)
-            prices[getattr(bar_event, 'ticker')] = getattr(bar_event, 'close_price')
-        
-        # Update all active portfolios
         active_portfolios = self.get_active_portfolios()
         
         for portfolio in active_portfolios:

@@ -76,10 +76,11 @@ class TestSimulatedExchangeInitialization:
         # Verify models are created and functional
         assert hasattr(exchange.fee_model, 'calculate_fee')
         assert hasattr(exchange.slippage_model, 'calculate_slippage_factor')
-        
-        # Test fee model functionality
-        fee = exchange.fee_model.calculate_fee(100, 50.0, 'buy', 'market')
-        assert isinstance(fee, (int, float, Decimal))
+
+        # Test fee model functionality (D-12: Decimal-native contract)
+        fee = exchange.fee_model.calculate_fee(
+            Decimal("100"), Decimal("50.0"), 'buy', 'market')
+        assert isinstance(fee, Decimal)
         assert fee >= 0
 
     def test_no_lock_single_writer_contract(self):
@@ -189,7 +190,7 @@ class TestSimulatedExchangeConfiguration:
 
 
 class TestSimulatedExchangeOrderExecution:
-    """Test order execution functionality."""
+    """Next-bar-open execution (D-01/D-13): NEW orders rest, fills come from bars."""
 
     def setup_method(self):
         """Set up test fixtures."""
@@ -200,7 +201,7 @@ class TestSimulatedExchangeOrderExecution:
     def create_test_order(self, **kwargs) -> OrderEvent:
         """Create a test order event with default values."""
         defaults = {
-            'time': datetime.now(),
+            'time': datetime(2024, 1, 1),
             'ticker': 'BTCUSDT',  # Use a symbol that's in the default supported symbols
             'action': Side.BUY,
             'quantity': 100.0,
@@ -214,25 +215,45 @@ class TestSimulatedExchangeOrderExecution:
         defaults.update(kwargs)
         return OrderEvent(**defaults)
 
-    def test_successful_order_execution(self):
-        """Test successful order execution emits a single EXECUTED fill."""
+    def test_market_order_rests_then_fills_at_next_bar_open(self, make_bar):
+        """A market order decided at T rests in the book and fills at the
+        NEXT bar's open, with FillEvent.time == the bar's event time
+        (D-01/D-13 — Decimal equality, no same-drain fill)."""
         order = self.create_test_order()
-        assert self.exchange.execute_order(order) is None  # D-21: no sync result
+        assert self.exchange.on_order(order) is None    # D-21: no sync result
+
+        # No fill on the same drain — the order rests in the book.
+        assert drain_fills(self.queue) == []
+        assert self.exchange.matching_engine.has_order(order.order_id)
+
+        bar = make_bar(open_=152.5, high=155, low=149, close=154,
+                       time=datetime(2024, 1, 2))
+        self.exchange.on_market_data(bar)
 
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         fill = fills[0]
         assert isinstance(fill, FillEvent)
         assert fill.status is FillStatus.EXECUTED
-        assert fill.price > 0
+        assert fill.price == Decimal("152.5")           # next bar's open, exact
+        assert fill.time == bar.time                    # stamped T+1tf
         assert fill.quantity == order.quantity
         assert fill.commission >= 0
         # D-12 linkage: fill_id/order_id audit chain
         assert fill.fill_id is not None
         assert fill.order_id == order.order_id
 
-    def test_order_execution_with_slippage(self):
-        """Test order execution applies slippage to the emitted fill price."""
+    def test_order_decided_on_last_bar_never_fills(self):
+        """Last-bar edge (bar-timing contract rule 7): no next bar ever
+        arrives, so the order produces NO fill and stays in the book."""
+        order = self.create_test_order()
+        self.exchange.on_order(order)
+        # dataset exhausted — on_market_data is never called again
+        assert drain_fills(self.queue) == []
+        assert self.exchange.matching_engine.has_order(order.order_id)
+
+    def test_order_execution_with_slippage(self, make_bar):
+        """Slippage applies to the next-bar-open fill price."""
         # Configure for linear slippage
         self.exchange.update_config(
             slippage_model_type=SlippageModelType.LINEAR,
@@ -240,16 +261,17 @@ class TestSimulatedExchangeOrderExecution:
         )
 
         order = self.create_test_order(price=100.0)
-        self.exchange.execute_order(order)
+        self.exchange.on_order(order)
+        self.exchange.on_market_data(make_bar(open_=100, high=102, low=99, close=101))
 
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         assert fills[0].status is FillStatus.EXECUTED
-        # Price should be different due to slippage
-        assert fills[0].price != order.price
+        # Price should be different from the bar open due to slippage
+        assert fills[0].price != Decimal("100")
 
-    def test_order_execution_with_fees(self):
-        """Test order execution carries fees on the emitted fill."""
+    def test_order_execution_with_fees(self, make_bar):
+        """The next-bar-open fill carries fees computed on the fill price."""
         # Configure for percentage fees
         self.exchange.update_config(
             fee_model_type=FeeModelType.PERCENT,
@@ -257,23 +279,24 @@ class TestSimulatedExchangeOrderExecution:
         )
 
         order = self.create_test_order(quantity=100.0, price=150.0)
-        self.exchange.execute_order(order)
+        self.exchange.on_order(order)
+        self.exchange.on_market_data(make_bar(open_=150, high=152, low=149, close=151))
 
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         fill = fills[0]
         assert fill.status is FillStatus.EXECUTED
-        # Commission should be 0.001 * 100 * 150 = 15.0
+        # Commission should be 0.001 * 100 * 150 (open) = 15.0
         assert fill.commission == pytest.approx(float(
             Decimal('0.001') * Decimal('100.0') * Decimal('150.0')))
 
-    def test_order_execution_failure_simulation(self):
-        """Test order execution with failure simulation emits REFUSED."""
+    def test_order_admission_failure_simulation(self):
+        """Failure simulation fires at admission time and emits REFUSED."""
         # Enable failure simulation with high rate
         self.exchange.update_config(simulate_failures=True, failure_rate=1.0)
 
         order = self.create_test_order()
-        self.exchange.execute_order(order)
+        self.exchange.on_order(order)
 
         fills = drain_fills(self.queue)
         assert len(fills) == 1
@@ -281,32 +304,35 @@ class TestSimulatedExchangeOrderExecution:
         assert fills[0].order_id == order.order_id
         # Failure scenario recorded for monitoring
         assert self.exchange._last_error is not None
+        # The rejected order never rests in the book.
+        assert not self.exchange.matching_engine.has_order(order.order_id)
 
     def test_order_validation_failure(self):
-        """Test order execution with validation failure emits REFUSED."""
+        """Validation failure at admission time emits REFUSED."""
         # Create order with invalid symbol
         order = self.create_test_order(ticker='INVALID')
-        self.exchange.execute_order(order)
+        self.exchange.on_order(order)
 
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         assert fills[0].status is FillStatus.REFUSED
         assert "Invalid symbol" in self.exchange._last_error
 
-    def test_order_execution_metrics_tracking(self):
-        """Test that execution metrics are properly tracked."""
+    def test_order_execution_metrics_tracking(self, make_bar):
+        """Execution metrics: executed counts at fill time, failed at admission."""
         initial_executed = self.exchange._orders_executed
         initial_failed = self.exchange._orders_failed
 
-        # Execute successful order
+        # Admit a market order; it fills on the next bar.
         order = self.create_test_order()
-        self.exchange.execute_order(order)
+        self.exchange.on_order(order)
+        self.exchange.on_market_data(make_bar(open_=150, high=152, low=149, close=151))
         assert drain_fills(self.queue)[0].status is FillStatus.EXECUTED
         assert self.exchange._orders_executed == initial_executed + 1
 
-        # Execute failing order (invalid symbol)
-        order_fail = self.create_test_order(ticker='INVALID')
-        self.exchange.execute_order(order_fail)
+        # Failing order (invalid symbol) is rejected at admission.
+        order_fail = self.create_test_order(ticker='INVALID', order_id=2)
+        self.exchange.on_order(order_fail)
         assert drain_fills(self.queue)[0].status is FillStatus.REFUSED
         assert self.exchange._orders_failed == initial_failed + 1
 
@@ -361,22 +387,23 @@ class TestSimulatedExchangeConnectionManagement:
         assert not self.exchange.is_connected()
         assert self.exchange._connection_time is None
 
-    def test_order_execution_requires_connection(self):
-        """Test that order execution requires active connection."""
+    def test_order_admission_requires_connection(self):
+        """Order admission requires an active connection — REFUSED otherwise."""
         # Ensure not connected
         assert not self.exchange.is_connected()
-        
+
         order = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
             price=150.0, quantity=100.0, exchange='simulated',
             strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
         )
-        self.exchange.execute_order(order)
+        self.exchange.on_order(order)
 
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         assert fills[0].status is FillStatus.REFUSED
         assert "not connected" in self.exchange._last_error.lower()
+        assert not self.exchange.matching_engine.has_order(order.order_id)
 
 
 class TestSimulatedExchangeOrderValidation:
@@ -538,19 +565,20 @@ class TestSimulatedExchangeHealthMonitoring:
         assert health.last_ping_time is not None
         assert health.uptime_seconds >= 0
 
-    def test_health_check_metrics(self):
+    def test_health_check_metrics(self, make_bar):
         """Test health check includes execution metrics."""
-        # Connect and execute some orders
+        # Connect, admit a market order (fills on the next bar) and reject one.
         self.exchange.connect()
-        
-        order1 = OrderEvent(time=datetime.now(), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
-        order2 = OrderEvent(time=datetime.now(), ticker='INVALID', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
-        
-        self.exchange.execute_order(order1)  # Should succeed
-        self.exchange.execute_order(order2)  # Should fail (invalid symbol)
-        
+
+        order1 = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
+        order2 = OrderEvent(time=datetime(2024, 1, 1), ticker='INVALID', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=2)
+
+        self.exchange.on_order(order1)   # rests, fills on the next bar
+        self.exchange.on_market_data(make_bar(open_=150, high=152, low=149, close=151))
+        self.exchange.on_order(order2)   # fails admission (invalid symbol)
+
         health = self.exchange.health_check()
-        
+
         assert health.orders_executed_today == 1
         assert health.orders_failed_today == 1
         assert health.error_rate == 0.5  # 1 failed out of 2 total
@@ -628,30 +656,33 @@ class TestSimulatedExchangeEdgeCases:
 
         D-11: the exchange now draws from an injected ``random.Random`` instance
         (``self._rng``), not the global ``random`` module, so patch the instance's
-        bound ``random`` method to control the draw.
+        bound ``random`` method to control the draw. The simulation fires at
+        ADMISSION time (on_order) — a failed draw emits REFUSED, a passing
+        draw lets the order rest in the book (D-13: no immediate fill).
         """
         self.exchange.connect()
         self.exchange.update_config(simulate_failures=True, failure_rate=0.5)
 
         # Test failure (random returns 0.3, which is < 0.5)
         with patch.object(self.exchange._rng, 'random', return_value=0.3):
-            order = OrderEvent(time=datetime.now(), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
-            self.exchange.execute_order(order)
+            order = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
+            self.exchange.on_order(order)
             fills = drain_fills(self.queue)
             assert len(fills) == 1
             assert fills[0].status is FillStatus.REFUSED
+            assert not self.exchange.matching_engine.has_order(1)
 
-        # Test success (random returns 0.7, which is >= 0.5)
+        # Test success (random returns 0.7, which is >= 0.5): the order is
+        # admitted and RESTS — no fill until a bar arrives.
         with patch.object(self.exchange._rng, 'random', return_value=0.7):
-            order = OrderEvent(time=datetime.now(), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1)
-            self.exchange.execute_order(order)
-            fills = drain_fills(self.queue)
-            assert len(fills) == 1
-            assert fills[0].status is FillStatus.EXECUTED
+            order = OrderEvent(time=datetime(2024, 1, 1), ticker='BTCUSDT', action=Side.BUY, price=150.0, quantity=100.0, exchange='simulated', strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=2)
+            self.exchange.on_order(order)
+            assert drain_fills(self.queue) == []
+            assert self.exchange.matching_engine.has_order(2)
 
 
 class TestDecimalFillBoundary:
-    """D-22: the float-bar -> Decimal-fill boundary enters via to_money."""
+    """D-12: the fill path is Decimal end-to-end — no float boundary remains."""
 
     def setup_method(self):
         self.queue = Queue()
@@ -673,14 +704,16 @@ class TestDecimalFillBoundary:
         """A Decimal-priced resting stop triggers and fills — no Decimal x float
         TypeError on the hot fill path (T-05-19); FillEvent.price is Decimal."""
         from itrader.core.money import to_money
-        import pandas as pd
+        from itrader.core.bar import Bar
         from itrader.events_handler.events import BarEvent
         stop = self._order(order_type=OrderType.STOP, action=Side.SELL,
                            price=Decimal("30.0"), order_id=5)
         self.exchange.on_order(stop)
-        bars = {"BTCUSDT": pd.DataFrame(
-            {"open": [35.0], "high": [36.0], "low": [20.0], "close": [25.0], "volume": [1]})}
-        self.exchange.on_market_data(BarEvent(time=datetime(2024, 1, 1), bars=bars))
+        t = datetime(2024, 1, 1)
+        bars = {"BTCUSDT": Bar(
+            time=t, open=Decimal("35.0"), high=Decimal("36.0"),
+            low=Decimal("20.0"), close=Decimal("25.0"), volume=Decimal("1"))}
+        self.exchange.on_market_data(BarEvent(time=t, bars=bars))
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         assert fills[0].status is FillStatus.EXECUTED
@@ -689,30 +722,33 @@ class TestDecimalFillBoundary:
         assert fills[0].price == to_money(30.0)
         assert isinstance(fills[0].quantity, Decimal)
 
-    def test_slippage_fill_price_equals_to_money_of_float_math(self):
-        """Slippage math stays float internally; the fill price converts ONCE
-        at FillEvent construction via to_money(float_fill_price * factor)."""
-        from itrader.core.money import to_money
+    def test_slippage_fill_price_is_pure_decimal_product(self, make_bar):
+        """D-12: slippage math is Decimal end-to-end — executed_price is the
+        exact Decimal product fill_price * slippage_factor (no float leg).
+        The fill price is the NEXT bar's open (D-01/D-13)."""
         with patch.object(self.exchange.slippage_model, 'calculate_slippage_factor',
-                          return_value=1.005):
-            self.exchange.execute_order(self._order(price=Decimal("100.0")))
+                          return_value=Decimal("1.005")):
+            self.exchange.on_order(self._order(price=Decimal("100.0")))
+            self.exchange.on_market_data(
+                make_bar(open_=100, high=102, low=99, close=101))
         fills = drain_fills(self.queue)
         assert len(fills) == 1
         fill = fills[0]
         assert fill.status is FillStatus.EXECUTED
         assert isinstance(fill.price, Decimal)
-        assert fill.price == to_money(100.0 * 1.005)
+        assert fill.price == Decimal("100") * Decimal("1.005")
 
-    def test_executed_fill_commission_is_decimal(self):
+    def test_executed_fill_commission_is_decimal(self, make_bar):
         self.exchange.update_config(fee_model_type=FeeModelType.PERCENT, fee_rate=0.001)
-        self.exchange.execute_order(self._order())
+        self.exchange.on_order(self._order())
+        self.exchange.on_market_data(make_bar(open_=150, high=152, low=149, close=151))
         fills = drain_fills(self.queue)
         assert isinstance(fills[0].commission, Decimal)
-        assert fills[0].commission == Decimal('0.001') * Decimal('100.0') * Decimal('150.0')
+        assert fills[0].commission == Decimal('0.001') * Decimal('100.0') * Decimal('150')
 
     def test_refused_fill_carries_decimal_zero_commission(self):
         order = self._order(ticker='INVALID')
-        self.exchange.execute_order(order)
+        self.exchange.on_order(order)
         fills = drain_fills(self.queue)
         assert fills[0].status is FillStatus.REFUSED
         assert isinstance(fills[0].commission, Decimal)
@@ -733,23 +769,27 @@ class _RoutingHarness:
         self.exchange.update_config(supported_symbols={"BTCUSDT"})
 
     def oe(self, order_type, action="BUY", price=40.0, order_id=1, command=None, parent_order_id=None):
+        # D-12: order events carry Decimal money — enter via Decimal(str(x)).
         return OrderEvent(
             time=datetime(2024, 1, 1), ticker="BTCUSDT",
-            action=Side(action), price=price, quantity=1.0, exchange="default",
+            action=Side(action), price=Decimal(str(price)), quantity=Decimal("1.0"),
+            exchange="default",
             strategy_id=1, portfolio_id=1, order_type=order_type, order_id=order_id,
             parent_order_id=parent_order_id,
             command=command or OrderCommand.NEW,
         )
 
     def bar(self, open_, high, low, close):
-        import pandas as pd
+        from itrader.core.bar import Bar
         from itrader.events_handler.events import BarEvent
+        t = datetime(2024, 1, 1)
         bars = {
-            "BTCUSDT": pd.DataFrame(
-                {"open": [open_], "high": [high], "low": [low], "close": [close], "volume": [1]}
+            "BTCUSDT": Bar(
+                time=t, open=Decimal(str(open_)), high=Decimal(str(high)),
+                low=Decimal(str(low)), close=Decimal(str(close)), volume=Decimal("1"),
             )
         }
-        return BarEvent(time=datetime(2024, 1, 1), bars=bars)
+        return BarEvent(time=t, bars=bars)
 
 
 @pytest.fixture
@@ -760,11 +800,48 @@ def routing():
         h.queue.get_nowait()
 
 
-def test_new_market_order_fills_immediately(routing):
-    routing.exchange.on_order(routing.oe(OrderType.MARKET))
+def test_new_market_order_rests_then_fills_at_next_open(routing):
+    """D-01/D-13: a NEW market order rests — the fill comes from the next
+    bar at the bar's open, stamped with the bar's event time."""
+    routing.exchange.on_order(routing.oe(OrderType.MARKET, order_id=1))
+    assert routing.queue.qsize() == 0                  # no same-drain fill
+    assert routing.exchange.matching_engine.has_order(1)
+
+    bar = routing.bar(open_=41.5, high=45, low=40, close=44)
+    routing.exchange.on_market_data(bar)
     fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
     assert len(fills) == 1
     assert fills[0].status is FillStatus.EXECUTED
+    assert fills[0].price == Decimal("41.5")           # the bar's open, exact
+    assert fills[0].time == bar.time                   # T+1tf fill stamp
+
+
+def test_same_bar_parent_market_fill_and_child_stop_oco(routing):
+    """Same-bar bracket rule (Open Question 1): parent market fills at the
+    open, the SL child triggers against the SAME bar's low, the TP sibling
+    is OCO-cancelled — all stamped with the bar's event time."""
+    parent = routing.oe(OrderType.MARKET, action="BUY", price=100.0, order_id=1)
+    sl = routing.oe(OrderType.STOP, action="SELL", price=95.0, order_id=2,
+                    parent_order_id=1)
+    tp = routing.oe(OrderType.LIMIT, action="SELL", price=110.0, order_id=3,
+                    parent_order_id=1)
+    for order in (parent, sl, tp):
+        routing.exchange.on_order(order)
+    assert routing.queue.qsize() == 0                  # everything rests
+
+    bar = routing.bar(open_=100, high=105, low=94, close=96)
+    routing.exchange.on_market_data(bar)
+    events = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    by_id = {e.order_id: e for e in events}
+    assert by_id[1].status is FillStatus.EXECUTED      # parent entry at open
+    assert by_id[1].price == Decimal("100")
+    assert by_id[2].status is FillStatus.EXECUTED      # SL vs same bar's low
+    assert by_id[2].price == Decimal("95")
+    assert by_id[3].status is FillStatus.CANCELLED     # TP OCO-cancelled
+    # Parent fill is emitted BEFORE the child fill within the bar.
+    executed_ids = [e.order_id for e in events if e.status is FillStatus.EXECUTED]
+    assert executed_ids == [1, 2]
+    assert all(e.time == bar.time for e in events)
 
 
 def test_new_stop_order_rests_no_fill(routing):
@@ -806,19 +883,131 @@ def test_on_market_data_emits_oco_cancel(routing):
 
 def test_rejected_market_order_emits_refused_fill(routing):
     # 'ETHUSDT' is not in supported_symbols (only BTCUSDT) -> validation reject.
+    # sanity: a BTCUSDT market order is admitted and rests (no fill event).
     routing.exchange.on_order(routing.oe(OrderType.MARKET, order_id=99, command=OrderCommand.NEW))
-    # sanity: BTCUSDT market fills; now send an unsupported-symbol order directly.
+    assert routing.queue.qsize() == 0
+    assert routing.exchange.matching_engine.has_order(99)
+    # now send an unsupported-symbol order directly.
     bad = OrderEvent(
         time=datetime(2024, 1, 1), ticker="ETHUSDT",
         action=Side.BUY, price=40.0, quantity=1.0, exchange="default", strategy_id=1,
         portfolio_id=1, order_type=OrderType.MARKET, order_id=100,
         command=OrderCommand.NEW,
     )
-    # drain the first (successful) fill, then exercise the rejection
-    while not routing.queue.empty():
-        routing.queue.get()
     routing.exchange.on_order(bad)
     fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
     assert len(fills) == 1
     assert fills[0].status is FillStatus.REFUSED
     assert fills[0].order_id == 100
+    assert not routing.exchange.matching_engine.has_order(100)
+
+
+# --- D-03 slippage gating + D-11 real order context --------------------------
+
+
+class _FixedFactorSlippage:
+    """Stub slippage model returning a constant non-neutral Decimal factor."""
+
+    def __init__(self, factor=Decimal("1.01")):
+        self.factor = factor
+        self.calls = []
+
+    def calculate_slippage_factor(self, quantity, price, side="buy", order_type="market"):
+        self.calls.append({"quantity": quantity, "price": price,
+                           "side": side, "order_type": order_type})
+        return self.factor
+
+    def get_slippage_info(self):
+        return {"model_type": "stub"}
+
+
+class _CapturingFeeModel:
+    """Stub fee model capturing the real order context handed by _emit_fill."""
+
+    def __init__(self):
+        self.calls = []
+
+    def calculate_fee(self, quantity, price, side="buy", order_type="market",
+                      is_maker=None):
+        self.calls.append({"quantity": quantity, "price": price, "side": side,
+                           "order_type": order_type, "is_maker": is_maker})
+        return Decimal("0")
+
+    def get_fee_info(self):
+        return {"type": "stub"}
+
+
+def test_limit_fill_carries_no_slippage_market_fill_does(routing):
+    """D-03: slippage applies ONLY to MARKET/STOP fills — a resting limit
+    fill takes its limit-or-better price unmodified."""
+    stub = _FixedFactorSlippage(Decimal("1.01"))
+    routing.exchange.slippage_model = stub
+
+    # Resting SELL limit at 55: bar high 60 touches -> fill at 55, NO slippage.
+    routing.exchange.on_order(
+        routing.oe(OrderType.LIMIT, action="SELL", price=Decimal("55.0"), order_id=21))
+    routing.exchange.on_market_data(routing.bar(open_=50, high=60, low=45, close=58))
+    limit_fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(limit_fills) == 1
+    assert limit_fills[0].status is FillStatus.EXECUTED
+    assert limit_fills[0].price == Decimal("55.0")        # unmodified
+    assert stub.calls == []                               # slippage never consulted
+
+    # Market fill through the same exchange DOES take the slippage factor —
+    # applied to the next bar's open (D-01/D-13).
+    routing.exchange.on_order(
+        routing.oe(OrderType.MARKET, action="BUY", price=Decimal("50.0"), order_id=22))
+    routing.exchange.on_market_data(routing.bar(open_=50, high=52, low=49, close=51))
+    market_fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(market_fills) == 1
+    assert market_fills[0].price == Decimal("50") * Decimal("1.01")
+    assert len(stub.calls) == 1
+
+
+def test_stop_fill_takes_slippage(routing):
+    """D-03: a triggered STOP is a taker fill — slippage applies."""
+    stub = _FixedFactorSlippage(Decimal("1.01"))
+    routing.exchange.slippage_model = stub
+    routing.exchange.on_order(
+        routing.oe(OrderType.STOP, action="SELL", price=Decimal("30.0"), order_id=23))
+    routing.exchange.on_market_data(routing.bar(open_=35, high=36, low=20, close=25))
+    fills = [routing.queue.get() for _ in range(routing.queue.qsize())]
+    assert len(fills) == 1
+    assert fills[0].price == Decimal("30.0") * Decimal("1.01")
+    assert len(stub.calls) == 1
+    assert stub.calls[0]["order_type"] == "STOP"
+
+
+def test_fee_model_receives_real_order_context(routing):
+    """D-11: _emit_fill passes the real order context — no hardcoded
+    order_type='market'. A resting limit fill is classified maker."""
+    fee_stub = _CapturingFeeModel()
+    routing.exchange.fee_model = fee_stub
+
+    # Resting SELL limit fill -> is_maker=True, order_type LIMIT.
+    routing.exchange.on_order(
+        routing.oe(OrderType.LIMIT, action="SELL", price=Decimal("55.0"), order_id=31))
+    routing.exchange.on_market_data(routing.bar(open_=50, high=60, low=45, close=58))
+    assert len(fee_stub.calls) == 1
+    assert fee_stub.calls[0]["is_maker"] is True
+    assert fee_stub.calls[0]["order_type"] == "LIMIT"
+    while not routing.queue.empty():
+        routing.queue.get()
+
+    # Next-bar MARKET fill -> is_maker=False, order_type MARKET (taker).
+    routing.exchange.on_order(
+        routing.oe(OrderType.MARKET, action="BUY", price=Decimal("50.0"), order_id=32))
+    routing.exchange.on_market_data(routing.bar(open_=50, high=52, low=49, close=51))
+    assert len(fee_stub.calls) == 2
+    assert fee_stub.calls[1]["is_maker"] is False
+    assert fee_stub.calls[1]["order_type"] == "MARKET"
+
+    # Triggered STOP fill -> is_maker=False (taker), order_type STOP.
+    while not routing.queue.empty():
+        routing.queue.get()
+    routing.exchange.on_order(
+        routing.oe(OrderType.STOP, action="SELL", price=Decimal("30.0"), order_id=33))
+    routing.exchange.on_market_data(routing.bar(open_=35, high=36, low=20, close=25))
+    assert len(fee_stub.calls) == 3
+    assert fee_stub.calls[2]["is_maker"] is False
+    assert fee_stub.calls[2]["order_type"] == "STOP"

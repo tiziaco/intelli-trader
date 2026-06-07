@@ -5,7 +5,9 @@ from typing import Any, Optional
 
 from itrader.core.clock import BacktestClock
 from itrader.events_handler.full_event_handler import EventHandler
-from itrader.price_handler.data_provider import PriceHandler
+from itrader.outils.time_parser import to_timedelta
+from itrader.price_handler.feed.bar_feed import BacktestBarFeed
+from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
@@ -31,6 +33,7 @@ class TradingSystem(object):
 		start_date: Optional[str] = None,
 		end_date: str = '',
 		to_sql: bool = False,
+		timeframe: str = '1d',
 	) -> None:
 		"""
 		Set up the backtest variables according to
@@ -58,12 +61,21 @@ class TradingSystem(object):
 		# not a domain fact).
 		self.clock = BacktestClock()
 
-		self.price_handler = PriceHandler(self.exchange, [], '', start_date or '', end_dt = end_date)
-		self.universe = DynamicUniverse(self.price_handler, self.global_queue)
-		self.strategies_handler = StrategiesHandler(self.global_queue, self.price_handler)
+		# M5-05 (D-18): the composition root wires the Store+Feed seams directly.
+		# CsvPriceStore eagerly loads the committed golden CSV (read-only and
+		# offline on the run path — FR6); BacktestBarFeed is the look-ahead-safe
+		# read-model every market-data consumer queries per tick. Construction-
+		# time read-model injection, same style as the legacy price_handler arg:
+		# the CLAUDE.md queue-only rule governs handlers, the Feed is a read-model.
+		self.store = CsvPriceStore(
+			start_date=start_date,
+			end_date=end_date or None)
+		self.feed = BacktestBarFeed(self.store, to_timedelta(timeframe))
+		self.universe = DynamicUniverse(self.feed, self.global_queue)
+		self.strategies_handler = StrategiesHandler(self.global_queue, self.feed)
 		# ScreenersHandler is a deferred subsystem (D-screener, ignore_errors override)
 		# so its constructor is untyped to the gate.
-		self.screeners_handler = ScreenersHandler(self.global_queue, self.price_handler)  # type: ignore[no-untyped-call]
+		self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)  # type: ignore[no-untyped-call]
 		self.portfolio_handler = PortfolioHandler(self.global_queue)
 
 		# Execution handler is constructed BEFORE the order handler so the
@@ -92,9 +104,11 @@ class TradingSystem(object):
 		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
 		                                  commission_estimator=_estimate_commission)
 		self.time_generator = TimeGenerator()
+		# StatisticsReporting is a deferred reporting subsystem (ignore_errors
+		# override); it reads start/end dates + bar counts from the Store.
 		self.reporting = StatisticsReporting(
 			self.portfolio_handler,
-			self.price_handler)
+			self.store)
 		self.event_handler = EventHandler(
 			self.strategies_handler,
 			self.screeners_handler,
@@ -110,8 +124,9 @@ class TradingSystem(object):
 
 	def _initialise_backtest_session(self) -> None:
 		"""
-		Load the data in the price handler and define the pings vector
-		for the for-loop iteration.
+		Initialise the universe, derive the ping clock from the store's bar
+		index, and precompute the per-strategy resampled frames so the hot
+		loop never resamples (M5-03).
 		"""
 		self.logger.info('Initialising backtest session')
 
@@ -119,12 +134,15 @@ class TradingSystem(object):
 			self.strategies_handler.get_strategies_universe(),
 			# D-screener deferred subsystem (ignore_errors override) — untyped to the gate.
 			self.screeners_handler.get_screeners_universe())  # type: ignore[no-untyped-call]
-		self.price_handler.set_symbols(self.universe.get_full_universe())
-		self.price_handler.set_timeframe(self.strategies_handler.min_timeframe,
-										self.screeners_handler.min_timeframe)
-		self.price_handler.load_data()
-		self.time_generator.set_dates(next(iter(self.price_handler.prices.items()))[1].index)
-		#self.reporting.prices = self.price_handler.prices
+		# Ping clock derived from the store's bar index (T-06-16): the same
+		# tick grid the legacy `.prices` access produced, asserted byte-exact
+		# by the oracle's behavioral identity.
+		self.time_generator.set_dates(
+			self.store.index(self.store.symbols()[0]))
+		# M5-03: resample ONCE at run-init per registered strategy declaration —
+		# the per-tick window path is then a pure positional slice.
+		for strategy in self.strategies_handler.strategies:
+			self.feed.precompute(strategy.tickers, strategy.timeframe)
 
 	def _run_backtest(self) -> None:
 		"""

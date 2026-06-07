@@ -18,8 +18,8 @@ class Strategy(ABC):
 	all subsequent (inherited) strategy objects.
 
 	The goal of a (derived) Strategy object is to generate Signal
-	objects for particular symbols based on the inputs of ticks
-	generated from a PriceHandler (derived) object.
+	objects for particular symbols based on the history windows
+	pushed from the bar feed (D-20).
 	"""
 	def __init__(self, name: str, timeframe: str, tickers: list[str], order_type: str = "market",
 			  	max_positions: int = 1, max_allocation: float = 0.80, allow_increase: bool = False,
@@ -76,24 +76,27 @@ class Strategy(ABC):
 		"""
 		if self.last_event is None:
 			return
-		last_close = self.last_event.get_last_close(ticker)
-		if last_close is None:
+		bar = self.last_event.bars.get(ticker)
+		if bar is None:
 			# WR-12: the ticker is absent from the last bar (sparse universe,
-			# data gap) — no price means no signal. Without this guard,
-			# to_money(None) raises InvalidOperation inside the strategy
-			# callback (the matching engine guards this same Optional).
+			# data gap) — no price means no signal. The BarEvent payload
+			# contract (M5-02) keeps a no-data ticker ABSENT from the dict,
+			# so a membership guard replaces the legacy Optional accessor.
 			logger.warning('No last close for %s — signal skipped (%s %s)',
 						ticker, self.strategy_id, action)
 			return
+		last_close = bar.close
 		for portfolio_id in self.subscribed_portfolios:
 			# quantity is omitted (defaults to None, D-10): the order/risk layer
 			# sizes the signal — the 0 sentinel is gone.
 			# D-05 boundary parse: the strategy string contract ('BUY'/'SELL',
 			# 'market'/...) is converted to enum members HERE — the case-insensitive
 			# `_missing_` classmethods raise ValueError on unknown strings.
-			# D-22 money boundary: the strategy's float prices (bar close, sl/tp)
-			# enter the Decimal domain HERE via to_money — the D-04 string path
-			# (Decimal(str(x))), numerically inert by construction.
+			# D-22 money boundary: the strategy's float sl/tp prices enter the
+			# Decimal domain HERE via to_money — the D-04 string path
+			# (Decimal(str(x))), numerically inert by construction. The bar
+			# close is ALREADY Decimal via the Bar struct (D-14):
+			# to_money(Decimal) is value-identity, keeping this boundary honest.
 			signal = SignalEvent(
 							time = self.last_event.time,
 							order_type = OrderType(self.order_type),

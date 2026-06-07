@@ -1,12 +1,13 @@
 from datetime import datetime
+from decimal import Decimal
 from queue import Queue
 from types import SimpleNamespace
 
-import pandas as pd
 import pytest
 
 import uuid_utils.compat as uuid_compat
 
+from itrader.core.bar import Bar
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.events import FillEvent, BarEvent, PortfolioUpdateEvent
 from itrader.core.enums import FillStatus, Side
@@ -33,20 +34,21 @@ def env():
         queue.get_nowait()
 
 
-def test_update_portfolios_market(env):
+def test_update_portfolios_market_value(env):
     # Open 2 positions, 1 long and 1 short
     buy_fill = _fill("BTCUSDT", Side.BUY, 40, 1, env.portfolio_id)
     sell_fill = _fill("ETHUSDT", Side.SELL, 20, 1, env.portfolio_id)
     env.ptf_handler.on_fill(buy_fill)
     env.ptf_handler.on_fill(sell_fill)
-    # Create a simulated BarEvent
+    # Create a simulated BarEvent (M5-02: dict[str, Bar] Decimal payload)
+    t = datetime.now()
     bars_dict = {
-        "BTCUSDT": pd.DataFrame(
-            {"open": [30], "high": [60], "low": [20], "close": [50], "volume": [1000]}),
-        "ETHUSDT": pd.DataFrame(
-            {"open": [20], "high": [50], "low": [10], "close": [40], "volume": [500]}),
+        "BTCUSDT": Bar(time=t, open=Decimal("30"), high=Decimal("60"),
+                       low=Decimal("20"), close=Decimal("50"), volume=Decimal("1000")),
+        "ETHUSDT": Bar(time=t, open=Decimal("20"), high=Decimal("50"),
+                       low=Decimal("10"), close=Decimal("40"), volume=Decimal("500")),
     }
-    bar_event = BarEvent(time=datetime.now(), bars=bars_dict)
+    bar_event = BarEvent(time=t, bars=bars_dict)
 
     # Update portfolios market value
     env.ptf_handler.update_portfolios_market_value(bar_event)

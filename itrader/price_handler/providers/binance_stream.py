@@ -6,14 +6,16 @@ from sqlalchemy import create_engine
 
 import pandas as pd
 
-from ..base import PriceHandler
 from ...events_handler.events import TimeEvent
 
 from itrader.logger import get_itrader_logger
 logger = get_itrader_logger().bind(component="BINANCELiveStreamer")
 
 
-class BINANCELiveStreamer(PriceHandler):
+# Quarantined D-live module (Plan 06-05): the legacy price-handler base was
+# deleted with the Store/Feed split (D-18). This streamer is NOT imported on
+# any run path; D-live owns rebuilding it on the new seams.
+class BINANCELiveStreamer:
     """
     BINANCE_data_provider is designed to download data from the
     BINANCE server. It contains Open-High-Low-Close-Volume (OHLCV) data
@@ -176,11 +178,12 @@ class BINANCELiveStreamer(PriceHandler):
         # Add the bar in the ticker DataFrame
         df = pd.DataFrame.from_dict(bar_dict, orient='index', dtype=float)
 
-        # Add the bar in the ticker DataFrame
-        PriceHandler.prices[msg['s']] = pd.concat([PriceHandler.prices[msg['s']], df])
+        # Add the bar in the ticker DataFrame (D-live: `prices` was never
+        # initialised by this class — rebuilding the buffer is D-live's).
+        self.prices[msg['s']] = pd.concat([self.prices[msg['s']], df])
 
         # Slice the dataframe to the last max_prices_length bars
-        PriceHandler.prices[msg['s']] = PriceHandler.prices[msg['s']].tail(self.max_prices_length)
+        self.prices[msg['s']] = self.prices[msg['s']].tail(self.max_prices_length)
 
         self.ticks = 0
     
@@ -197,8 +200,8 @@ class BINANCELiveStreamer(PriceHandler):
     def set_klines_stream(self):
         klines_stream = 'wss://stream.binance.com:9443/stream?streams='
         
-        low = list(map(lambda x: x.lower(), PriceHandler.symbols))
+        low = list(map(lambda x: x.lower(), self.symbols))
         for sym in low:
-            klines_stream += sym+'@kline_'+PriceHandler.timeframe+'/'
+            klines_stream += sym+'@kline_'+self.timeframe+'/'
         self.klines_stream = klines_stream[:-1]
 

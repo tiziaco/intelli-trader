@@ -1,4 +1,5 @@
-from datetime import datetime, UTC
+from datetime import datetime
+from decimal import Decimal
 from queue import Queue
 
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from itrader.execution_handler.base import AbstractExecutionHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.events_handler.events import FillEvent, OrderEvent
-from itrader.core.enums import OrderType, Side
+from itrader.core.enums import FillStatus, OrderType, Side
 
 
 @pytest.fixture
@@ -15,7 +16,7 @@ def env():
     queue = Queue()
     execution_handler = ExecutionHandler(queue)
     order_event = OrderEvent(
-        time=datetime.now(UTC),
+        time=datetime(2024, 1, 1),
         ticker="BTCUSDT",
         action=Side.BUY,
         price=100.0,
@@ -36,14 +37,22 @@ def test_execution_handler_initialization(env):
     assert isinstance(execution_handler, ExecutionHandler)
 
 
-def test_on_order(env):
+def test_on_order_rests_then_fill_arrives_with_next_bar(env, make_bar):
+    """D-01/D-13: routing a NEW market order produces NO same-drain fill —
+    the order rests and fills at the next routed bar's open."""
     queue, execution_handler, order_event = env
-    # Generate a fill event and process it from the order handler
     execution_handler.on_order(order_event)
-    # Retrieve fill event from the queue
+    assert queue.qsize() == 0          # rests; no immediate FillEvent
+
+    bar = make_bar(open_=101.5, high=103, low=99, close=102,
+                   time=datetime(2024, 1, 2))
+    execution_handler.on_market_data(bar)
     fill_event: FillEvent = queue.get(False)
     assert isinstance(fill_event, FillEvent)
     assert fill_event.action is Side.BUY
+    assert fill_event.status is FillStatus.EXECUTED
+    assert fill_event.price == Decimal("101.5")   # the bar's open, exact
+    assert fill_event.time == bar.time            # stamped T+1tf
 
 
 def test_abstract_execution_handler_is_real_abc():

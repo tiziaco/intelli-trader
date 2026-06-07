@@ -1,387 +1,425 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-06-03
+**Analysis Date:** 2026-06-07
 
 ## Test Framework
 
 **Runner:**
-- pytest 8.3.3+
-- Config: `pyproject.toml` under `[tool.pytest.ini_options]`
+- pytest 8.4.2
+- Config: `pyproject.toml` `[tool.pytest.ini_options]`
 
 **Assertion Library:**
-- `unittest.TestCase` assertions (`assertEqual`, `assertIsInstance`, `assertRaises`, etc.) — primary style in most files
-- pytest-native `assert` statements — used in newer test files (`test_order.py`, `test_order_validator.py`, `test_simulated_exchange.py`)
+- pytest built-in assertions (`assert` statements)
+- `pandas.testing.assert_frame_equal` for DataFrame comparisons in integration tests
+- `pytest.approx` for floating-point tolerance (used sparingly in old portfolio tests)
 
 **Run Commands:**
 ```bash
-poetry run pytest test/ -v            # Run all tests
-make test                             # Same via Makefile
-make test-unit                        # Only -m "unit" marked tests
-make test-integration                 # Only -m "integration" marked tests
-make test-portfolio                   # test/test_portfolio_handler/
-make test-orders                      # test/test_order_handler/
-make test-execution                   # test/test_execution_handler/
-make test-events                      # test/test_events/
-make test-strategy                    # test/test_strategy/
-make test-cov                         # Coverage + open htmlcov/index.html
-make test-watch                       # pytest-watch (continuous)
-poetry run pytest test/path/test_file.py -v           # Single file
-poetry run pytest test/path/test_file.py -k "name" -v # Single test
+make test                # Run all tests (poetry run pytest tests/ -v)
+make test-unit           # Only unit-marked tests (-m "unit")
+make test-integration    # Only integration-marked tests (-m "integration")
+make test-portfolio      # tests/unit/portfolio/ subtree
+make test-orders         # tests/unit/order/ subtree
+make test-execution      # tests/unit/execution/ subtree
+make test-events         # tests/unit/events/ subtree
+make test-strategy       # tests/unit/strategy/ subtree
+make test-cov            # Coverage -> opens htmlcov/index.html
+make test-watch          # pytest-watch file-watch mode
+poetry run pytest test/path/test_file.py -v               # single file
+poetry run pytest test/path/test_file.py -k "test_name" -v  # single test
 ```
 
 ## Test File Organization
 
-**Location:** All tests are in a top-level `test/` directory — NOT co-located with source.
+**Location:**
+- Separate `tests/` tree — NOT co-located with source
+- Mirrors source structure: `itrader/order_handler/` → `tests/unit/order/`
+- Integration tests: `tests/integration/`
+- Unit tests: `tests/unit/<domain>/`
+- Golden/frozen reference files: `tests/golden/` (trades.csv, equity.csv, summary.json)
 
 **Naming:**
-- Files: `test_<module>.py` — mirrors the source module name
-- Classes: `Test<SubjectDescription>` (e.g., `TestOrderLifecycle`, `TestMatchingEngineStopTriggers`)
-- Functions: `test_<behavior_being_tested>` — descriptive names
+- `test_<module>.py` — mirrors the source module name
+- Test functions: `test_<what_is_tested>()` — descriptive, behavior-focused
 
-**Directory structure mirrors source packages:**
+**Directory structure:**
 ```
-test/
-├── test_events/                    # → itrader/events_handler/
-│   ├── test_events.py
-│   ├── test_event_wiring.py
-│   ├── test_bar_event_ohlc.py
-│   ├── test_fill_event_schema.py
-│   └── test_order_event_schema.py
-├── test_execution_handler/         # → itrader/execution_handler/
-│   ├── test_execution_handler.py
-│   ├── test_execution_handler_routing.py
-│   ├── test_matching_engine.py
-│   └── test_exchanges/
-│       └── test_simulated_exchange.py
-├── test_order_handler/             # → itrader/order_handler/
-│   ├── test_order.py
-│   ├── test_order_handler.py
-│   ├── test_order_manager.py
-│   ├── test_order_storage.py
-│   ├── test_order_validator.py
-│   ├── test_on_signal.py
-│   ├── test_stop_limit_orders.py
-│   └── test_order_command_enum.py
-├── test_portfolio_handler/         # → itrader/portfolio_handler/
-│   ├── test_portfolio.py
-│   ├── test_portfolio_handler.py
-│   ├── test_portfolio_update.py
-│   ├── test_cash_manager.py
-│   ├── test_metrics_manager.py
-│   ├── test_position_manager.py
-│   ├── test_transaction_manager.py
-│   └── test_on_fill_status_guard.py
-├── test_positions/                 # Position model tests
-├── test_strategy/                  # Strategy tests
-└── test_transaction/               # Transaction model tests
+tests/
+├── conftest.py                    # Root: global_queue fixture, make_bar/make_bar_struct factories, auto-marker hook
+├── golden/                        # Frozen oracle CSVs + summary.json (committed, never regenerated in tests)
+│   ├── trades.csv
+│   ├── equity.csv
+│   └── summary.json
+├── unit/
+│   ├── conftest.py                # Unit-layer anchor (minimal — shared fixtures stay at root)
+│   ├── config/
+│   ├── core/
+│   ├── events/
+│   ├── execution/
+│   │   └── exchanges/
+│   ├── order/
+│   ├── outils/
+│   ├── portfolio/
+│   │   ├── positions/
+│   │   └── transaction/
+│   ├── price/
+│   └── strategy/
+└── integration/
+    ├── conftest.py                # golden_dir/golden_*_path fixtures, backtest_engine factory
+    ├── test_backtest_oracle.py    # Golden-master oracle: full run vs frozen golden
+    ├── test_backtest_smoke.py     # Smoke: import → construct → run → nonzero trade
+    ├── test_event_wiring.py       # EventHandler routing (mock collaborators)
+    ├── test_execution_handler_routing.py
+    └── test_reservation_inertness.py  # Reservation gate inertness proof
 ```
 
-No `conftest.py` files exist anywhere — all fixtures are defined locally within each test file.
+## Test Markers
+
+Markers are registered in `pyproject.toml` `[tool.pytest.ini_options] markers`. Never hand-add markers to test files — auto-marking applies via the root conftest hook.
+
+**Folder-derived auto-marking (D-13/D-15):**
+- `tests/unit/**` → `unit` marker applied automatically
+- `tests/integration/**` → `integration` + `slow` markers applied automatically
+- Source: `tests/conftest.py::pytest_collection_modifyitems`
+
+**Registered markers:**
+- `unit` — drives ONE collaborating component (may use real `global_queue` + several classes from its own domain; does NOT assert cross-component cascades)
+- `integration` — asserts interaction ACROSS components (cross-domain, full cascade, smoke, oracle)
+- `slow` — slow-running full-engine integration runs (auto-applied with `integration`)
+
+**`--strict-markers` is enforced** — any unregistered marker fails collection.
+
+**Explicit `pytestmark` usage:**
+Some test files in `tests/unit/core/` and `tests/unit/price/` explicitly set `pytestmark = pytest.mark.unit` as a belt-and-suspenders declaration for Wave-0 scaffolds that predate the auto-marker:
+```python
+pytestmark = pytest.mark.unit
+```
 
 ## Test Structure
 
-**Legacy style (unittest.TestCase) — most files:**
+**Suite Organization — function-style (dominant pattern):**
 ```python
-import unittest
-from datetime import datetime
-from unittest.mock import Mock
+# Module-level helper (not a fixture) for constructing test objects
+def make_order_event(order_type, action, price, order_id, ticker="BTCUSDT", ...):
+    return OrderEvent(...)
 
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.events_handler.event import FillEvent, FillStatus
+# Fixtures provide shared state
+@pytest.fixture
+def engine():
+    return MatchingEngine()
 
-
-class TestOnFillStatusGuard(unittest.TestCase):
-
-    def setUp(self):
-        """Set up shared test state — runs before each test method."""
-        self.queue = Queue()
-        self.ptf = PortfolioHandler(self.queue)
-        self.pid = self.ptf.add_portfolio(1, 'p', 'default', 100000)
-
-    def test_executed_fill_is_processed(self):
-        result = self.ptf.on_fill(self._fill('EXECUTED'))
-        self.assertTrue(result)
-        portfolio = self.ptf.get_portfolio(self.pid)
-        self.assertEqual(len(portfolio.positions), 1)
-
-if __name__ == "__main__":
-    unittest.main()
+# Test functions use descriptive names
+def test_sell_stop_triggers_when_low_pierces(engine, make_bar):
+    engine.submit(make_order_event(OrderType.STOP, "SELL", 30.0, order_id=1))
+    fills, cancels = engine.on_bar(make_bar(open_=35, high=36, low=20, close=25))
+    assert len(fills) == 1
+    assert fills[0].fill_price == 30.0
 ```
 
-**Class-level shared setup (for expensive objects shared across all methods):**
+**Suite Organization — class-style (used in `test_simulated_exchange.py` and `test_order.py`):**
 ```python
-class TestExecutionHandlerUpdates(unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        """Runs once before any test in the class."""
-        cls.queue = Queue()
-        cls.execution_handler = ExecutionHandler(cls.queue)
-
-    def setUp(self):
-        """Runs before each test method — for per-test state."""
-        self.order_event = OrderEvent(...)
-```
-
-**Newer pytest style (no TestCase base) — newer test files:**
-```python
-import pytest
-from unittest.mock import Mock
-
-class TestOrderLifecycle:
+class TestSimulatedExchangeInitialization:
+    """Group related tests with shared setup."""
 
     def setup_method(self):
-        """pytest equivalent of setUp — runs before each test."""
+        """Per-test setup (pytest calls this, no decorator needed)."""
+        self.queue = Queue()
         self.base_time = datetime.now()
 
-    def create_test_order(self, **kwargs) -> Order:
-        """Builder helper — creates test objects with sane defaults."""
-        defaults = {
-            'time': self.base_time,
-            'type': OrderType.MARKET,
-            'status': OrderStatus.PENDING,
-            'ticker': 'AAPL',
-            'action': 'BUY',
-            'price': 150.0,
-            'quantity': 100.0,
-            'exchange': 'NYSE',
-            'strategy_id': 1,
-            'portfolio_id': 1
-        }
-        defaults.update(kwargs)
-        return Order(**defaults)
-
-    def test_order_creation_with_state_tracking(self):
-        order = self.create_test_order()
-        assert order.status == OrderStatus.PENDING
-        assert order.created_at is not None
+    def test_default_initialization(self):
+        exchange = SimulatedExchange(self.queue)
+        assert exchange.global_queue is self.queue
 ```
 
-**Choose style to match the file:** If the existing file uses `unittest.TestCase`, keep using it. If it uses plain pytest classes with `setup_method`, keep that pattern.
+**Harness classes (complex setup encapsulation):**
+```python
+class _Harness:
+    """OrderHandler + storage + one funded portfolio."""
+    def __init__(self):
+        self.queue = Queue()
+        self.ptf_handler = PortfolioHandler(self.queue)
+        self.storage = OrderStorageFactory.create("test")
+        self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
+        self.portfolio_id = self.ptf_handler.add_portfolio(1, "p", "default", 100000)
+    # ... helper methods
+
+@pytest.fixture
+def harness():
+    h = _Harness()
+    yield h
+    while not h.queue.empty():   # teardown: drain queue
+        h.queue.get_nowait()
+```
+Source: `tests/unit/order/test_order_manager.py:62`
+
+**`SimpleNamespace` for fixture return values:**
+```python
+@pytest.fixture
+def wiring():
+    q = queue.Queue()
+    handler = EventHandler(...)
+    yield SimpleNamespace(q=q, handler=handler, put=put, strategies=strategies, ...)
+    while not q.empty():       # teardown
+        q.get_nowait()
+```
+Source: `tests/integration/test_event_wiring.py:37`
 
 ## Mocking
 
-**Framework:** `unittest.mock` from the standard library — `Mock`, `MagicMock`, `patch`
+**Framework:** `unittest.mock` (`Mock`, `MagicMock`, `patch`, `patch.object`, `patch.dict`)
 
-**Dependency injection mock (most common):**
+**Patterns:**
 ```python
-from unittest.mock import Mock
+from unittest.mock import Mock, MagicMock, patch
 
-class TestEnhancedOrderValidator:
-    def setup_method(self):
-        self.portfolio_handler = Mock()
-        mock_portfolio = Mock()
-        mock_portfolio.cash = 20000.0
-        mock_portfolio.positions = {}
-        mock_portfolio.exchange = "NYSE"
-        self.portfolio_handler.get_portfolio.return_value = mock_portfolio
-        
-        self.validator = EnhancedOrderValidator(self.portfolio_handler)
-```
+# Simple Mock for logger (avoiding structlog dependency)
+logger = Mock()
 
-**Module-level patch for import-side-effect isolation:**
-```python
-from unittest.mock import MagicMock, patch
+# MagicMock for full handler mocks (all attribute access + calls work)
+strategies = MagicMock()
 
-_STUB_MODULES = {
-    name: MagicMock()
-    for name in [
-        'itrader.strategy_handler.strategies_handler',
-        'itrader.screeners_handler.screeners_handler',
-    ]
-}
+# patch.dict for sys.modules stubbing (isolate import side-effects)
+_STUB_MODULES = {name: MagicMock() for name in ["itrader.strategy_handler.strategies_handler", ...]}
 with patch.dict(sys.modules, _STUB_MODULES):
     from itrader.events_handler.full_event_handler import EventHandler
+
+# patch.object for method/attribute replacement on instances
+with patch.object(self.exchange._rng, 'random', return_value=0.3):
+    result = self.exchange.execute_order(order_event)
+
+# monkeypatch for environment variables and module attributes
+def test_log_level_env_honored(monkeypatch, clean_root_logger):
+    monkeypatch.setenv("ITRADER_LOG_LEVEL", "DEBUG")
+    monkeypatch.setattr(pd.DataFrame, 'resample', counting_resample)
 ```
 
-**Concrete MockPortfolio classes** (used when `Mock()` is too loose):
+**Preferred: Protocol-shaped fakes over `Mock`:**
+Where a structural Protocol is involved (e.g., `PortfolioReadModel`), tests use hand-rolled fake classes instead of `Mock`. This gives compile-time-checkable structural conformance:
 ```python
-class MockPortfolio:
-    """Mock portfolio for testing."""
-    def __init__(self):
-        self.portfolio_id = idgen.generate_portfolio_id()
+class _FakeReadModel:
+    """PortfolioReadModel-shaped fake recording reserve/release calls.
+    Satisfies the runtime_checkable Protocol structurally (D-16)."""
+    def __init__(self, cash=Decimal("100000")):
+        self._cash = cash
+        self.reserve_calls = []
+    def available_cash(self, portfolio_id): return self._cash
+    def reserve(self, portfolio_id, order_id, amount): ...
+    def release(self, portfolio_id, order_id): ...
+    def exchange_for(self, portfolio_id): return "default"
 ```
+Source: `tests/unit/order/test_order_manager.py:267`
 
 **What to mock:**
-- `portfolio_handler` when testing components that call `get_portfolio()`
-- `logger` when testing components where logging would add noise
-- Entire handler modules (via `patch.dict(sys.modules, ...)`) when the module has import-time side effects
-- External services (no real HTTP/DB calls in the test suite)
+- Logger instances (use `Mock()` to avoid structlog initialization side-effects)
+- Handler collaborators in routing tests (`MagicMock()` for full call capture)
+- Random number generators (use `patch.object(exchange._rng, 'random', ...)`)
+- Environment variables (use `monkeypatch.setenv/delenv`)
 
 **What NOT to mock:**
-- `Queue()` — use a real `queue.Queue()` for integration-style tests
-- `itrader.idgen` — use the real ID generator; tests rely on unique IDs
-- Domain logic classes under test — test them directly
+- `queue.Queue` — always use real instances; `global_queue` fixture provides fresh ones
+- Business-logic managers (`OrderManager`, `MatchingEngine`, `Portfolio`) in unit tests — test them with real instances
+- `Decimal` arithmetic — never mock money calculations
 
-## Fixtures and Factories
+## Fixtures
 
-No pytest `@fixture` decorators exist in the codebase. Test data is provided via:
+**Root conftest fixtures (`tests/conftest.py`):**
 
-**Builder helper methods (pytest-style classes):**
 ```python
-def create_test_order(self, **kwargs) -> Order:
-    defaults = {
-        'time': self.base_time,
-        'type': OrderType.MARKET,
-        'status': OrderStatus.PENDING,
-        'ticker': 'AAPL',
-        'action': 'BUY',
-        'price': 150.0,
-        'quantity': 100.0,
-        'exchange': 'NYSE',
-        'strategy_id': 1,
-        'portfolio_id': 1
-    }
-    defaults.update(kwargs)
-    return Order(**defaults)
+@pytest.fixture
+def global_queue():
+    """A fresh FIFO event queue per test."""
+    return queue.Queue()
+
+@pytest.fixture
+def make_bar_struct():
+    """Factory fixture: build a bare Bar value object (Decimal fields)."""
+    return _bar_struct   # positional: (open_, high, low, close, time=..., volume=1)
+
+@pytest.fixture
+def make_bar():
+    """Factory fixture: build a one-ticker BarEvent with dict[str, Bar] payload."""
+    return _bar_event    # positional: (open_, high, low, close, ticker="BTCUSDT", ...)
+
+@pytest.fixture
+def make_bar_event():
+    """Alias of make_bar for call sites preferring the explicit name."""
+    return _bar_event
 ```
 
-**Inline factory functions (module-level helpers):**
+**Integration conftest fixtures (`tests/integration/conftest.py`):**
 ```python
-def make_order_event(order_type, action, price, order_id,
-                     ticker='BTCUSDT', quantity=1.0, parent_order_id=None):
-    return OrderEvent(
-        time=datetime(2024, 1, 1), ticker=ticker, action=action, price=price,
-        quantity=quantity, exchange='default', strategy_id=1, portfolio_id=1,
-        order_type=order_type, order_id=order_id, parent_order_id=parent_order_id,
-        command=OrderCommand.NEW,
+@pytest.fixture
+def golden_dir():       # Path to tests/golden/
+@pytest.fixture
+def golden_trades_path()   # tests/golden/trades.csv
+@pytest.fixture
+def golden_equity_path()   # tests/golden/equity.csv
+@pytest.fixture
+def golden_summary_path()  # tests/golden/summary.json
+
+@pytest.fixture
+def backtest_engine():
+    """Factory that defers TradingSystem construction until invoked in a test."""
+    def _make(ticker="BTCUSD", timeframe="1d", start_date="2018-01-01",
+              end_date="2026-06-03", cash=10_000):
+        from itrader.trading_system.backtest_trading_system import TradingSystem
+        return TradingSystem(exchange="csv", ...)
+    return _make
+```
+
+**Fixture scopes:**
+- Default (function scope): most fixtures — fresh state per test
+- `scope="module"`: expensive runs shared across a module (e.g., `oracle_run` in `test_backtest_oracle.py`, `traced_run` in `test_reservation_inertness.py`)
+
+**Teardown with `yield`:**
+```python
+@pytest.fixture
+def harness():
+    h = _Harness()
+    yield h
+    while not h.queue.empty():   # ensure queue is empty after test
+        h.queue.get_nowait()
+```
+
+## Golden-Master Oracle Pattern
+
+The integration test suite uses a committed frozen-oracle directory (`tests/golden/`) as the behavioral regression lock. This is a first-class testing pattern in this codebase.
+
+**Structure:**
+- `tests/golden/trades.csv` — frozen trade log (entry/exit dates, sides, PnL)
+- `tests/golden/equity.csv` — frozen equity curve (timestamps, total equity)
+- `tests/golden/summary.json` — frozen summary metrics (trade count, final cash, total PnL)
+
+**Oracle test (`tests/integration/test_backtest_oracle.py`):**
+```python
+@pytest.fixture(scope="module")
+def oracle_run():
+    # Run the full 2018->2026 backtest ONCE; load fresh output/ + frozen golden/
+    _run_full_backtest()    # writes output/{trades,equity}.csv + summary.json
+    fresh_trades = pd.read_csv(_OUTPUT_DIR / "trades.csv")
+    golden_trades = pd.read_csv(golden_dir / "trades.csv")
+    ...
+
+def test_oracle_behavioral_identity(oracle_run):
+    pdt.assert_frame_equal(
+        fresh_trades_sorted[_TRADE_IDENTITY_COLUMNS],
+        golden_trades_sorted[_TRADE_IDENTITY_COLUMNS],
+        check_exact=True,   # NO tolerance — exact behavioral identity
+        check_like=True,
     )
-
-def make_bar(open_, high, low, close, ticker='BTCUSDT'):
-    bars = {ticker: pd.DataFrame(
-        {'open': [open_], 'high': [high], 'low': [low], 'close': [close], 'volume': [1]})}
-    return BarEvent(time=datetime(2024, 1, 1), bars=bars)
 ```
 
-**Location:** All test data builders are local to each test file. No shared fixtures directory.
+**Golden rules:**
+- Numeric comparisons are `check_exact=True` — no `rtol`/`atol` tolerance
+- Re-baseline is allowed at exactly two sanctioned points (after M2, after M5) — never ad hoc
+- `pytest.skip()` when `tests/golden/` does not exist — oracle tests are RED until frozen
 
-## Error / Exception Testing
-
-**unittest.TestCase style:**
-```python
-with self.assertRaises(InvalidTransactionError) as context:
-    self.cash_manager.deposit(60000.0, "Large deposit")
-self.assertIn("exceed maximum balance limit", str(context.exception))
-```
-
-**pytest style:**
-```python
-with pytest.raises(ValueError, match="Unknown configuration key"):
-    exchange.update_config(unknown_param=True)
-```
-
-Use `self.assertRaises` in `unittest.TestCase` subclasses. Use `pytest.raises` in plain pytest-style test classes.
-
-## Integration Test Pattern
-
-End-to-end tests wire real handler instances around a real `Queue`, send events in, and drain the queue to assert on outputs:
+## Parametrize Pattern
 
 ```python
-class TestStopLimitEndToEnd(unittest.TestCase):
-    def setUp(self):
-        self.queue = Queue()
-        self.ptf = PortfolioHandler(self.queue)
-        self.storage = OrderStorageFactory.create('test')
-        self.order_handler = OrderHandler(self.queue, self.ptf, self.storage)
-        self.execution = ExecutionHandler(self.queue)
-        exchange = self.execution.exchanges['simulated']
-        exchange.connect()
-        exchange.update_config(supported_symbols={'BTCUSDT'})
-        self.pid = self.ptf.add_portfolio(1, 'p', 'simulated', 100000)
+@pytest.mark.parametrize("status", ["EXECUTED", "CANCELLED", "REFUSED"])
+def test_terminal_fill_releases_reservation(status):
+    """Every terminal reconciliation releases the order's reservation."""
+    ...
+    manager.on_fill(_fill_for(order, status))
+    assert read_model.release_calls == [(order.portfolio_id, order.id)]
 
-    def _route_orders(self):
-        """Drain ORDER events from the queue into the execution handler."""
-        pending = []
-        while not self.queue.empty():
-            pending.append(self.queue.get())
-        for ev in pending:
-            if ev.type == EventType.ORDER:
-                self.execution.on_order(ev)
-
-    def _drain_fills(self):
-        fills = []
-        while not self.queue.empty():
-            ev = self.queue.get()
-            if ev.type == EventType.FILL:
-                fills.append(ev)
-        return fills
+@pytest.mark.parametrize("model", [
+    ZeroFeeModel(),
+    PercentFeeModel(fee_rate=0.001),
+    MakerTakerFeeModel(),
+])
+def test_validate_raises_on_non_positive_quantity(model):
+    with pytest.raises(ValidationError):
+        model.calculate_fee(Decimal("0"), Decimal("100"))
 ```
 
-This pattern appears in `test/test_order_handler/test_stop_limit_orders.py` and `test/test_order_handler/test_order_manager.py`. Use it for any test that exercises multiple handlers together.
+## Async Testing
 
-## Thread-Safety Testing
+Not used — the codebase is synchronous (event-driven via `queue.Queue`, not `asyncio`).
 
-Tests in `test_portfolio_handler/test_cash_manager.py` verify concurrent operations with `threading`:
+## Common Patterns
 
+**Exception testing:**
 ```python
-def test_concurrent_deposits(self):
-    results = []
-    errors = []
-
-    def deposit_worker():
-        try:
-            result = self.cash_manager.deposit(100.0, "Concurrent deposit")
-            results.append(result)
-        except Exception as e:
-            errors.append(e)
-
-    threads = [threading.Thread(target=deposit_worker) for _ in range(10)]
-    for t in threads: t.start()
-    for t in threads: t.join()
-
-    self.assertEqual(len(errors), 0)
-    self.assertEqual(len(results), 10)
+def test_buy_exceeding_balance_raises_before_position_mutation(portfolio):
+    too_big = _txn(TransactionType.BUY, "BTCUSDT", 40000, 10)  # 400k > 150k
+    with pytest.raises(InsufficientFundsError):
+        portfolio.process_transaction(too_big)
+    # Guard: state unchanged after failed call
+    assert len(portfolio.positions) == 0
+    assert portfolio.cash == Decimal("150000.00")
 ```
+
+**State-guard after failure:**
+After every `pytest.raises` block, assert that no state mutation occurred. This is a consistent pattern throughout portfolio and order tests.
+
+**Decimal equality (no tolerance):**
+```python
+# CORRECT — exact Decimal comparison
+assert fills[0].fill_price == Decimal("30.0")
+assert isinstance(fills[0].fill_price, Decimal)
+
+# WRONG — float tolerance masks Decimal correctness bugs
+assert fills[0].fill_price == pytest.approx(30.0)
+```
+
+**Queue drain after test (for fixtures with teardown):**
+```python
+@pytest.fixture
+def harness():
+    h = _Harness()
+    yield h
+    while not h.queue.empty():   # prevent strict-warnings leak
+        h.queue.get_nowait()
+```
+
+**Deferred import in integration tests:**
+```python
+def _make(...):
+    # Deferred import: only executed when a test calls the factory
+    from itrader.trading_system.backtest_trading_system import TradingSystem
+    return TradingSystem(...)
+```
+Prevents `--collect-only` failures when a dependency is not yet wired.
+
+**`dataclasses.replace` for frozen event variants:**
+```python
+import dataclasses
+partial = dataclasses.replace(
+    harness.fill(order, "EXECUTED"), quantity=Decimal("0.4")
+)
+```
+Used instead of mutating frozen events in tests that need varied event fields.
 
 ## Coverage
 
-**Requirements:** No enforced minimum. Coverage is optional/manual.
+**Requirements:** No minimum enforced in configuration; `filterwarnings = ["error"]` and `--strict-markers` are the quality gates.
 
 **View Coverage:**
 ```bash
-make test-cov      # Runs pytest-cov and opens htmlcov/index.html
+make test-cov   # runs pytest --cov=itrader --cov-report=html; opens htmlcov/index.html
 ```
 
-**Coverage tool:** `pytest-cov` 5.0+. Output directory: `htmlcov/` (gitignored).
-
-## Markers
-
-All markers are declared in `pyproject.toml`. Using an undeclared marker fails with `--strict-markers`:
-
-| Marker | Purpose | Run command |
-|--------|---------|-------------|
-| `unit` | Pure unit tests | `make test-unit` |
-| `integration` | Integration tests | `make test-integration` |
-| `slow` | Slow tests | `poetry run pytest -m slow` |
-| `portfolio` | Portfolio tests | `make test-portfolio` |
-| `events` | Event handling tests | `make test-events` |
-| `orders` | Order processing tests | `make test-orders` |
-| `execution` | Execution tests | `make test-execution` |
-| `strategy` | Strategy tests | `make test-strategy` |
-
-**Important:** No test file currently uses `@pytest.mark.<marker>` decorators — the markers exist for filtering but are not applied to individual tests yet. Running `make test-unit` produces zero results; `make test` runs everything.
-
-## Warning Policy
-
-`pyproject.toml` sets `filterwarnings = ["error", "ignore::UserWarning", "ignore::DeprecationWarning"]`. Any unexpected Python warning becomes a test failure. When adding new dependencies or calling deprecated APIs, explicitly suppress the warning in `filterwarnings` or fix the root cause.
+**Coverage scope:** `--cov=itrader` — only the package under test, not tests themselves.
 
 ## Test Types
 
-**Unit Tests (most files):**
-- Test a single class or function in isolation
-- External dependencies injected via `Mock()`
-- Examples: `test_order.py`, `test_cash_manager.py`, `test_order_validator.py`, `test_matching_engine.py`
+**Unit Tests (`tests/unit/`):**
+- Drive ONE collaborating component in isolation
+- May use a real `global_queue` + several classes from the same domain
+- Do NOT assert cross-component event cascades
+- Rely on real objects; use `Mock` only for logger and cross-domain boundaries
 
-**Integration Tests:**
-- Wire multiple real handlers together with a real `Queue`
-- Examples: `test_stop_limit_orders.py`, `test_portfolio_handler.py`, `test_order_manager.py`
+**Integration Tests (`tests/integration/`):**
+- Assert cross-component interaction (cross-domain, cross-manager, full cascade)
+- Include the golden-master oracle test (`test_backtest_oracle.py`) — full 2018→2026 SMA_MACD run
+- Include smoke test (`test_backtest_smoke.py`) — import → run → nonzero trade
+- Include routing tests (`test_event_wiring.py`) — EventHandler dispatch with mocked collaborators
+- Include inertness proof (`test_reservation_inertness.py`) — reservation gate provably neutral
 
-**E2E Tests:** Not present. The system has no automated end-to-end test runner covering a full backtest loop.
-
-**Schema/Contract Tests:**
-- Verify event dataclass fields and types match expected structure
-- Examples: `test_events/test_fill_event_schema.py`, `test_events/test_order_event_schema.py`
+**E2E Tests:** Not present — the `test_backtest_oracle.py` module-scoped fixture effectively serves this role for the backtest path.
 
 ---
 
-*Testing analysis: 2026-06-03*
+*Testing analysis: 2026-06-07*

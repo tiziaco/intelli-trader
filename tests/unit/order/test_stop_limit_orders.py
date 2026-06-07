@@ -1,9 +1,10 @@
 from datetime import datetime
+from decimal import Decimal
 from queue import Queue
 
-import pandas as pd
 import pytest
 
+from itrader.core.bar import Bar
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
@@ -34,13 +35,16 @@ class _StopLimitHarness:
             strategy_setting={},
         )
 
-    def bar(self, open_, high, low, close):
+    def bar(self, open_, high, low, close, time=datetime(2024, 1, 2)):
+        # Defaults to the bar AFTER the signal tick (signals are stamped
+        # 2024-01-01): under D-01/D-13 fills come from the NEXT bar.
         bars = {
-            "BTCUSDT": pd.DataFrame(
-                {"open": [open_], "high": [high], "low": [low], "close": [close], "volume": [1]}
+            "BTCUSDT": Bar(
+                time=time, open=Decimal(str(open_)), high=Decimal(str(high)),
+                low=Decimal(str(low)), close=Decimal(str(close)), volume=Decimal("1"),
             )
         }
-        return BarEvent(time=datetime(2024, 1, 1), bars=bars)
+        return BarEvent(time=time, bars=bars)
 
     def route_orders(self):
         """Drain ORDER events from the queue into the execution handler."""
@@ -68,24 +72,36 @@ def harness():
         h.queue.get_nowait()
 
 
-def test_stop_loss_rests_then_fills_on_breach(harness):
+def test_entry_rests_then_fills_at_next_open_and_stop_triggers_same_bar(harness):
     harness.order_handler.on_signal(harness.signal("BUY", stop_loss=30.0))
     harness.route_orders()
-    # Drain the BUY entry fill before processing the bar
-    harness.drain_fills()
-    harness.execution.on_market_data(harness.bar(open_=38, high=39, low=20, close=25))
-    executed = [f for f in harness.drain_fills() if f.status == FillStatus.EXECUTED]
-    assert any(f.action is Side.SELL for f in executed)
+    # D-01/D-13: the market entry RESTS — no fill on the same drain as the
+    # OrderEvent (the order mirror stays PENDING until exchange truth lands).
+    assert harness.drain_fills() == []
+
+    # The follow-up bar fills the entry at ITS OPEN (38, stamped with the
+    # bar's time) and the SL child triggers against the SAME bar's low.
+    bar = harness.bar(open_=38, high=39, low=20, close=25)
+    harness.execution.on_market_data(bar)
+    fills = harness.drain_fills()
+    executed = [f for f in fills if f.status == FillStatus.EXECUTED]
+    buys = [f for f in executed if f.action is Side.BUY]
+    assert len(buys) == 1
+    assert buys[0].price == Decimal("38")     # next bar's open, exact
+    assert buys[0].time == bar.time           # T+1tf fill stamp
+    assert any(f.action is Side.SELL for f in executed)  # SL same-bar trigger
 
 
 def test_take_profit_fill_cancels_stop_via_oco(harness):
     harness.order_handler.on_signal(harness.signal("BUY", stop_loss=30.0, take_profit=55.0))
     harness.route_orders()
-    # Drain the BUY entry fill before processing the bar
-    harness.drain_fills()
-    # Bar pierces the TP (high 60 >= 55) but not the SL (low 40 > 30).
+    # Entry rests — no same-drain fill (D-01/D-13).
+    assert harness.drain_fills() == []
+    # The bar fills the entry at its open (50), pierces the TP (high 60 >= 55)
+    # but not the SL (low 40 > 30): TP fills, SL is OCO-cancelled.
     harness.execution.on_market_data(harness.bar(open_=50, high=60, low=40, close=58))
     statuses = [(ev.action, ev.status) for ev in harness.drain_fills()]
+    assert (Side.BUY, FillStatus.EXECUTED) in statuses
     assert (Side.SELL, FillStatus.EXECUTED) in statuses
     assert (Side.SELL, FillStatus.CANCELLED) in statuses
 
@@ -93,8 +109,12 @@ def test_take_profit_fill_cancels_stop_via_oco(harness):
 def test_stop_does_not_fill_when_not_breached(harness):
     harness.order_handler.on_signal(harness.signal("BUY", stop_loss=30.0))
     harness.route_orders()
-    # Drain the BUY entry fill before processing the bar
-    harness.drain_fills()
+    # Entry rests — no same-drain fill (D-01/D-13).
+    assert harness.drain_fills() == []
+    # The bar fills the entry at its open; the SL (30) is never breached
+    # (low 35 > 30) so no SELL fill is produced.
     harness.execution.on_market_data(harness.bar(open_=40, high=45, low=35, close=42))
-    sell_fills = [f for f in harness.drain_fills() if f.action is Side.SELL]
+    fills = harness.drain_fills()
+    assert any(f.action is Side.BUY and f.status is FillStatus.EXECUTED for f in fills)
+    sell_fills = [f for f in fills if f.action is Side.SELL]
     assert sell_fills == []

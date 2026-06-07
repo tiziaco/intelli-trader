@@ -1,9 +1,11 @@
 from datetime import datetime
+from decimal import Decimal
 from queue import Queue
 
 import pandas as pd
 import pytest
 
+from itrader.core.bar import Bar
 from itrader.strategy_handler.base import Strategy
 from itrader.events_handler.events import SignalEvent, BarEvent
 from itrader.core.enums import OrderType, Side
@@ -35,12 +37,12 @@ def strategy():
     strat = _ConcreteStrategy("test_strategy", "1h", [_TICKER], global_queue=q)
     strat.subscribe_portfolio(_PORTFOLIO_NAME)
 
+    t = datetime.now()
     bars_dict = {
-        _TICKER: pd.DataFrame(
-            {"open": [100], "high": [110], "low": [90], "close": [105], "volume": [1000]}
-        )
+        _TICKER: Bar(time=t, open=Decimal("100"), high=Decimal("110"),
+                     low=Decimal("90"), close=Decimal("105"), volume=Decimal("1000"))
     }
-    strat.last_event = BarEvent(time=datetime.now(), bars=bars_dict)
+    strat.last_event = BarEvent(time=t, bars=bars_dict)
 
     yield strat, q
 

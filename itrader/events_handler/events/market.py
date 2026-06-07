@@ -4,10 +4,9 @@ results. All frozen ``Event`` subclasses (M3-01).
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
-import pandas as pd
-
+from itrader.core.bar import Bar
 from itrader.core.enums import EventType
 
 from .base import Event
@@ -33,130 +32,28 @@ class TimeEvent(Event):
 @dataclass(frozen=True, slots=True, kw_only=True)
 class BarEvent(Event):
     """
-    Handles the event of receiving a new market
-    open-high-low-close-volume bar, as would be generated
-    via common data providers.
+    A new market OHLCV bar for every ticker that traded at ``time``.
 
-    The ``bars`` dict payload and the ``get_last_*`` accessors are kept
-    verbatim from the legacy event — M5a owns the Bar-struct redesign.
+    Payload contract (M5-02, D-14/D-15):
+
+    - ``bars`` maps ticker -> ONE immutable ``Bar`` struct per tick
+      (Decimal OHLCV entered via the string path — no pandas payloads
+      on the queue).
+    - A ticker with no bar at T is ABSENT from the dict (sparse
+      universe / data gap); consumers guard membership with
+      ``bars.get(ticker)`` or an ``in`` check.
+    - The event carries only the current fact; history comes from the
+      Feed (D-15 "event = fact, feed = query").
     """
 
     type: EventType = field(default=EventType.BAR, init=False)
-    bars: dict[str, pd.DataFrame]
-    # TODO:
-    # improvment idea : define a Bar object instead of using a DataFrame
-    # to store the bar data
-    # e.g. Bar(open, high, low, close, volume)
-    # where Bar is a dataclass with the above fields
+    bars: dict[str, Bar]
 
     def __str__(self) -> str:
         return f"{self.type}, Time: {self.time}"
 
     def __repr__(self) -> str:
         return str(self)
-
-    def get_last_close(self, ticker: str) -> float:
-        close_data = self.bars[ticker]['close']
-
-        # TODO: check why the close data is not always a Series (from test).
-        # This shouldn't be the case after the before mentioned improvement is done.
-
-        # Handle pandas Series or DataFrame column
-        if hasattr(close_data, 'iloc'):
-            return float(close_data.iloc[-1])
-        # Handle numpy arrays
-        elif hasattr(close_data, '__getitem__') and hasattr(close_data, '__len__'):
-            return float(close_data[-1])
-        # Handle scalar values
-        else:
-            return float(close_data)
-
-    def get_last_open(self, ticker: str) -> Optional[float]:
-        """
-        Get the opening price for the ticker from the current bar.
-
-        Parameters
-        ----------
-        ticker : str
-            The ticker symbol
-
-        Returns
-        -------
-        float
-            The opening price for the ticker
-        """
-        if ticker not in self.bars:
-            return None
-
-        open_data = self.bars[ticker]['open']
-
-        # Handle pandas Series or DataFrame column
-        if hasattr(open_data, 'iloc'):
-            return float(open_data.iloc[-1])
-        # Handle numpy arrays
-        elif hasattr(open_data, '__getitem__') and hasattr(open_data, '__len__'):
-            return float(open_data[-1])
-        # Handle scalar values
-        else:
-            return float(open_data)
-
-    def get_last_high(self, ticker: str) -> Optional[float]:
-        """
-        Get the high price for the ticker from the current bar.
-
-        Parameters
-        ----------
-        ticker : str
-            The ticker symbol
-
-        Returns
-        -------
-        float
-            The high price for the ticker
-        """
-        if ticker not in self.bars:
-            return None
-
-        high_data = self.bars[ticker]['high']
-
-        # Handle pandas Series or DataFrame column
-        if hasattr(high_data, 'iloc'):
-            return float(high_data.iloc[-1])
-        # Handle numpy arrays
-        elif hasattr(high_data, '__getitem__') and hasattr(high_data, '__len__'):
-            return float(high_data[-1])
-        # Handle scalar values
-        else:
-            return float(high_data)
-
-    def get_last_low(self, ticker: str) -> Optional[float]:
-        """
-        Get the low price for the ticker from the current bar.
-
-        Parameters
-        ----------
-        ticker : str
-            The ticker symbol
-
-        Returns
-        -------
-        float
-            The low price for the ticker
-        """
-        if ticker not in self.bars:
-            return None
-
-        low_data = self.bars[ticker]['low']
-
-        # Handle pandas Series or DataFrame column
-        if hasattr(low_data, 'iloc'):
-            return float(low_data.iloc[-1])
-        # Handle numpy arrays
-        elif hasattr(low_data, '__getitem__') and hasattr(low_data, '__len__'):
-            return float(low_data[-1])
-        # Handle scalar values
-        else:
-            return float(low_data)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

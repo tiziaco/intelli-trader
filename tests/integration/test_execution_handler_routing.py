@@ -1,9 +1,10 @@
 from datetime import datetime
+from decimal import Decimal
 from queue import Queue
 
-import pandas as pd
 import pytest
 
+from itrader.core.bar import Bar
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.events_handler.events import OrderEvent, BarEvent
 from itrader.core.enums import FillStatus, OrderType, OrderCommand, Side
@@ -33,21 +34,34 @@ def env():
         e.queue.get_nowait()
 
 
-def test_market_order_routed_and_filled(env):
-    env.handler.on_order(env.oe(OrderType.MARKET))
+def test_market_order_routed_rests_then_fills_at_next_open(env):
+    """D-01/D-13: the handler routes the NEW market order to the exchange,
+    where it RESTS; the next routed bar fills it at the bar's open with
+    FillEvent.time == the bar's event time."""
+    env.handler.on_order(env.oe(OrderType.MARKET, price=40.0))
+    assert env.queue.qsize() == 0          # no same-drain fill
+
+    t = datetime(2024, 1, 2)
+    bars = {
+        "BTCUSDT": Bar(time=t, open=Decimal("41.5"), high=Decimal("45"),
+                       low=Decimal("40"), close=Decimal("44"), volume=Decimal("1"))
+    }
+    env.handler.on_market_data(BarEvent(time=t, bars=bars))
     fills = [env.queue.get() for _ in range(env.queue.qsize())]
     assert len(fills) == 1
     assert fills[0].status is FillStatus.EXECUTED
+    assert fills[0].price == Decimal("41.5")   # the next bar's open, exact
+    assert fills[0].time == t                  # stamped T+1tf
 
 
 def test_market_data_routed_to_exchange(env):
     env.handler.on_order(env.oe(OrderType.STOP, action="SELL", price=30.0, order_id=2))
+    t = datetime(2024, 1, 1)
     bars = {
-        "BTCUSDT": pd.DataFrame(
-            {"open": [35], "high": [36], "low": [20], "close": [25], "volume": [1]}
-        )
+        "BTCUSDT": Bar(time=t, open=Decimal("35"), high=Decimal("36"),
+                       low=Decimal("20"), close=Decimal("25"), volume=Decimal("1"))
     }
-    env.handler.on_market_data(BarEvent(time=datetime(2024, 1, 1), bars=bars))
+    env.handler.on_market_data(BarEvent(time=t, bars=bars))
     fills = [env.queue.get() for _ in range(env.queue.qsize())]
     assert len(fills) == 1
     assert fills[0].order_id == 2
