@@ -20,7 +20,6 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.universe import derive_membership
-from itrader.reporting.statistics import StatisticsReporting
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, TimeEvent, OrderEvent
@@ -148,10 +147,6 @@ class LiveTradingSystem:
 
         self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
                                           commission_estimator=_estimate_commission)
-        self.reporting = StatisticsReporting(
-            self.portfolio_handler,
-            self.store
-        )
         # The TIME route's BarEvent source is the feed-owned factory
         # (Plan 07-02, D-20) — mirrors the backtest wiring shape; a real
         # live feed is owned by D-live.
@@ -453,12 +448,11 @@ class LiveTradingSystem:
         dict or None
             Trading statistics if available
         """
-        try:
-            self.reporting.calculate_statistics()
-            return self.reporting.get_statistics()  # Assuming this method exists
-        except Exception as e:
-            self.logger.error(f'Error getting statistics: {e}')
-            return None
+        # The legacy StatisticsReporting subsystem was deleted with the M5-07
+        # reporting rework (plan 07-03); live-mode statistics are D-live scope
+        # and gain no metrics printout here (A4 — keep the module importing).
+        self.logger.warning('Live statistics unavailable: legacy reporting deleted (D-live scope)')
+        return None
     
     def print_status(self):
         """

@@ -17,7 +17,17 @@ from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.simulation.time_generator import TimeGenerator
 from itrader.universe import derive_membership
-from itrader.reporting.statistics import StatisticsReporting
+from itrader.reporting.frames import build_equity_curve, build_trade_log
+from itrader.reporting.metrics import (
+	cagr,
+	compute_returns,
+	format_metrics,
+	max_drawdown,
+	profit_factor,
+	sharpe,
+	sortino,
+	win_rate,
+)
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType
@@ -103,11 +113,6 @@ class TradingSystem(object):
 		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
 		                                  commission_estimator=_estimate_commission)
 		self.time_generator = TimeGenerator()
-		# StatisticsReporting is a deferred reporting subsystem (ignore_errors
-		# override); it reads start/end dates + bar counts from the Store.
-		self.reporting = StatisticsReporting(
-			self.portfolio_handler,
-			self.store)
 		# The TIME route's BarEvent source is the feed-owned factory
 		# (Plan 07-02, D-20): the data engine produces the per-tick
 		# BarEvent; queue + membership are bound onto the feed at
@@ -179,22 +184,49 @@ class TradingSystem(object):
 		duration = end_time - start_time
 		print("Backtest duration:", duration)
 
-	def run(self, print_summary: bool = False) -> None:
+	def run(self, print_summary: bool = True) -> None:
 		"""
-		Runs the backtest and print out the backtest statistics
-		at the end of the simulation.
+		Runs the backtest and, when ``print_summary`` is True (the default),
+		prints one formatted D-15 metrics block per registered portfolio at the
+		end of the run (D-14 amendment, user decision 2026-06-07). Display
+		ONLY: the engine writes NO files — artifact serialization remains
+		``scripts/run_backtest.py``'s job, and stdout printing changes no
+		``output/`` artifact bytes (oracle-inert).
 		"""
 		self._initialise_backtest_session()
 		self._run_backtest()
 
 		if print_summary:
-			# Dormant summary path: StatisticsReporting is a deferred D-sql/reporting
-			# subsystem (ignore_errors override) with the known-broken _prepare_data
-			# path (STATE.md 01-04); the working backtest runs print_summary=False.
-			self.reporting.calculate_statistics()  # type: ignore[no-untyped-call,call-arg]
-			self.reporting.print_summary()
+			self._print_metrics_summary()
 
-		# Close the logger file
-		#file_handler.close()
-		# Close the SQL connection
-		#self.sql_engine.dispose() # Close all checked in sessions
+	def _print_metrics_summary(self) -> None:
+		"""
+		End-of-run metrics printout (D-14 amendment): build the run-artifact
+		frames per portfolio via the pure ``reporting.frames`` builders,
+		compute the D-15 metric set via ``reporting.metrics`` (one formula
+		source — the same functions ``run_backtest.py`` serializes), and print
+		the ``format_metrics`` block. Empty runs are safe: guarded
+		denominators return 0.0 instead of raising.
+		"""
+		for portfolio in self.portfolio_handler.get_active_portfolios():
+			trades = build_trade_log(portfolio)
+			equity_frame = build_equity_curve(portfolio)
+			# astype(float) keeps the empty-run path warning-free (an empty
+			# frame's column is object-dtype); populated frames are float already.
+			equity = equity_frame["total_equity"].astype(float)
+			returns = compute_returns(equity)
+			metrics: dict[str, float] = {
+				"sharpe": sharpe(returns),
+				"sortino": sortino(returns),
+				"cagr": cagr(equity),
+				"max_drawdown": max_drawdown(equity),
+				"profit_factor": profit_factor(trades),
+				"win_rate": win_rate(trades),
+			}
+			print(format_metrics(metrics, title=f"Backtest metrics — {portfolio.name}"))
+			self.logger.info(
+				'Backtest summary',
+				portfolio=portfolio.name,
+				final_equity=float(portfolio.total_equity),
+				trade_count=len(trades),
+			)
