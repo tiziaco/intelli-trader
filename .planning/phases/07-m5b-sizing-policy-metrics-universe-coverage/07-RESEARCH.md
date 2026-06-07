@@ -650,17 +650,21 @@ chart.update_layout(
 
 All other claims in this document are `[VERIFIED]` (direct file reads, empirical venv checks) or `[CITED]` (backtesting.py source).
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Where exactly do rejected-at-admission orders get their quantity?** (Pitfall 5 options a/b/c)
    - What we know: the audited route requires an entity; sizing currently precedes entity creation.
    - What's unclear: which option the planner prefers; all three are correct.
    - Recommendation: option (a) — entity with quantity 0 + immediate REJECTED transition; cheapest, and the REJECTED state means the dead validator bypass is irrelevant.
+   - RESOLVED: option (a) adopted — quantity-0 entity + immediate audited REJECTED (plans 07-05 T1, 07-07 T1).
 2. **Does `SignalIntent` live in `core/` or `strategy_handler/`?**
    - What we know: it is NOT event-carried (it's the strategy→handler return value), so the Pitfall-3 cycle does not constrain it; `strategy_handler` already imports `core` and could import `order_handler` safely (no reverse import).
    - Recommendation: co-locate with `SizingPolicy` in `core/` for one coherent vocabulary module — but `strategy_handler/` is equally safe.
+   - RESOLVED: co-located in `core/sizing.py` with the policy vocabulary (plan 07-01 T1).
 3. **Frozen metrics block schema** (planner discretion per CONTEXT): flat keys (`"sharpe": ...`) vs nested (`"metrics": {...}`) in summary.json — nested keeps `_SUMMARY_NUMERIC_KEYS` churn to one entry but changes the comparison code; flat reuses the existing key-loop verbatim. Recommendation: nested block + one dict-equality assertion added at re-freeze 1.
+   - RESOLVED: nested `"metrics"` block adopted (plan 07-03 T3; frozen at re-freeze 1 in 07-07 T3).
 4. **Should the universe membership stub still feed the missing-ticker warning loop** currently in `generate_bar_event` (dynamic.py:75-77)? The feed factory can accept the membership list for the warning, or the warning dies with the module. Low stakes; recommend keeping the warning (it caught sparse-universe gaps in Phase 6).
+   - RESOLVED: warning kept — feed factory receives the membership list (plan 07-02 T1).
 
 ## Environment Availability
 
