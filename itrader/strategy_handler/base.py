@@ -1,6 +1,7 @@
 import queue
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Optional
 
 import pandas as pd
@@ -8,6 +9,7 @@ import pandas as pd
 from itrader.core.enums import OrderType, Side
 from itrader.core.ids import StrategyId
 from itrader.core.money import to_money
+from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.events_handler.events import SignalEvent, BarEvent
 from itrader.outils.time_parser import to_timedelta
 from itrader import logger, idgen
@@ -107,7 +109,14 @@ class Strategy(ABC):
 							take_profit = to_money(tp),
 							strategy_id = self.strategy_id,
 							portfolio_id = portfolio_id,
-							strategy_setting=self.setting_to_dict()
+							# Task-1 interim shim (07-04): the typed fields replace the
+							# strategy_setting dict; Task 2 relocates this whole
+							# construction into StrategiesHandler. The order layer does
+							# not read these fields yet (07-05) — oracle-inert.
+							sizing_policy = FractionOfCash(Decimal(str(self.max_allocation))),
+							direction = TradingDirection.LONG_ONLY,
+							allow_increase = self.allow_increase,
+							max_positions = self.max_positions,
 						)
 			if self.global_queue is not None:
 				self.global_queue.put(signal)

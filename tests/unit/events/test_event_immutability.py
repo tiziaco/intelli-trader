@@ -32,6 +32,7 @@ import uuid_utils.compat as uuid_compat
 from itrader.core.bar import Bar
 from itrader.core.enums import EventType, FillStatus, OrderType, Side
 from itrader.core.ids import OrderId, StrategyId
+from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.events_handler.events import (
     BarEvent,
     ErrorEvent,
@@ -67,7 +68,8 @@ def _signal() -> SignalEvent:
         time=_TIME, ticker="BTCUSDT", action=Side.BUY,
         order_type=OrderType.MARKET, price=42.0, stop_loss=41.0,
         take_profit=45.0, strategy_id=_STRATEGY_ID, portfolio_id=1,
-        strategy_setting={},
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
     )
 
 

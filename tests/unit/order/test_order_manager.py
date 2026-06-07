@@ -27,6 +27,7 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
 from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side
 from itrader.core.exceptions import InsufficientFundsError
+from itrader.core.sizing import FractionOfCash, TradingDirection
 
 
 # --- OrderManager initialization -------------------------------------------
@@ -74,7 +75,9 @@ class _Harness:
             time=_dt.datetime(2024, 1, 1), order_type=OrderType.MARKET,
             ticker="BTCUSDT", action=Side.BUY, price=40.0, quantity=1.0,
             stop_loss=stop_loss, take_profit=take_profit, strategy_id=1,
-            portfolio_id=self.portfolio_id, strategy_setting={},
+            portfolio_id=self.portfolio_id,
+            sizing_policy=FractionOfCash(Decimal("0.95")),
+            direction=TradingDirection.LONG_ONLY,
         )
 
     def rest_a_stop(self):
@@ -319,7 +322,9 @@ def _reserve_signal(action=Side.BUY, quantity=2.0, price=40.0,
         time=_dt.datetime(2024, 1, 1), order_type=OrderType.MARKET,
         ticker="BTCUSDT", action=action, price=price, quantity=quantity,
         stop_loss=stop_loss, take_profit=take_profit, strategy_id=1,
-        portfolio_id=uuid.uuid4(), strategy_setting={},
+        portfolio_id=uuid.uuid4(),
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
     )
 
 

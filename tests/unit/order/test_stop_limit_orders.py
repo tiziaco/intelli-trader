@@ -11,6 +11,7 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import SignalEvent, BarEvent
 from itrader.core.enums import EventType, FillStatus, OrderType, Side
+from itrader.core.sizing import FractionOfCash, TradingDirection
 
 
 class _StopLimitHarness:
@@ -32,7 +33,8 @@ class _StopLimitHarness:
             time=datetime(2024, 1, 1), order_type=OrderType(order_type), ticker="BTCUSDT",
             action=Side(action), price=price, quantity=1.0, stop_loss=stop_loss,
             take_profit=take_profit, strategy_id=1, portfolio_id=self.pid,
-            strategy_setting={},
+            sizing_policy=FractionOfCash(Decimal("0.95")),
+            direction=TradingDirection.LONG_ONLY,
         )
 
     def bar(self, open_, high, low, close, time=datetime(2024, 1, 2)):

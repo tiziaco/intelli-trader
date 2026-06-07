@@ -3,6 +3,7 @@ from typing import cast
 
 from itrader.core.ids import PortfolioId
 from itrader.core.portfolio_read_model import PortfolioReadModel
+from itrader.core.sizing import FractionOfCash
 
 from itrader.logger import get_itrader_logger
 
@@ -40,9 +41,15 @@ class DynamicSizer():
 		ticker = signal.ticker
 		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
 		portfolio_id = cast(PortfolioId, signal.portfolio_id)
-		strategy_setting = signal.strategy_setting
-		max_positions = int(strategy_setting.get('max_positions') or 1)
-		max_allocation = float(strategy_setting.get('max_allocation') or 0.80)
+		# 07-04 (D-01): the untyped settings dict is dead — read the typed
+		# signal fields. This sizer has ZERO importers and dies in plan
+		# 07-05 (D-04); the fix only keeps the strict typecheck gate green.
+		max_positions = signal.max_positions
+		max_allocation = (
+			float(signal.sizing_policy.fraction)
+			if isinstance(signal.sizing_policy, FractionOfCash)
+			else 0.80
+		)
 		# Per-ticker membership composes from get_position (OQ1); the open
 		# count backs the allocation split (admission metadata).
 		open_position = self.portfolio_handler.get_position(portfolio_id, ticker)
