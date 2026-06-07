@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from queue import Queue
 
 import pytest
@@ -8,6 +9,7 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import OrderEvent, SignalEvent
 from itrader.core.enums import OrderType, OrderStatus, Side
+from itrader.core.sizing import FractionOfCash, TradingDirection
 
 
 _STRATEGY_ID = 1
@@ -40,7 +42,11 @@ class _OnSignalHarness:
             take_profit=take_profit,
             strategy_id=_STRATEGY_ID,
             portfolio_id=self.last_ptf_id,
-            strategy_setting={},
+            # Typed policy defaults mirror the golden declarations (D-01/D-03):
+            # the order manager does not read these fields yet (07-05 wires them).
+            sizing_policy=FractionOfCash(Decimal("0.95")),
+            direction=TradingDirection.LONG_ONLY,
+            allow_increase=False,
         )
 
 

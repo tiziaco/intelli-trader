@@ -6,6 +6,7 @@ import pytest
 
 from itrader.core.bar import Bar
 from itrader.core.enums import EventType, FillStatus, OrderType, OrderStatus, Side
+from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.order_handler.order import Order
 from itrader.events_handler.events import (
     TimeEvent,
@@ -32,7 +33,9 @@ def events():
         # D-22: event money is Decimal — enter via the string path (D-04).
         price=Decimal("42350.72"), stop_loss=Decimal("42000"), take_profit=Decimal("45000"),
         strategy_id="test_strategy", portfolio_id="portfolio_id",
-        strategy_setting={}, quantity=Decimal("1"),
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
+        quantity=Decimal("1"),
     )
     # Create Order first, then OrderEvent
     order = Order.new_order(signal_event, "test_exchange")
