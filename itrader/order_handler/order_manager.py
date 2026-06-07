@@ -22,7 +22,7 @@ from ..core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ..core.ids import OrderId, PortfolioId, StrategyId
 from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
-from ..core.sizing import PercentFromDecision, PercentFromFill, SLTPPolicy
+from ..core.sizing import PercentFromDecision, PercentFromFill, SLTPPolicy, TradingDirection
 from .base import OrderStorage
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
@@ -246,7 +246,11 @@ class OrderManager:
 		create-all-then-emit bracket assembly (D-11).
 
 		This method:
-		1. Resolves sizing FIRST via the SizingResolver dispatching on the
+		0. Enforces the strategy's DECLARED TradingDirection at admission
+		   (D-08) BEFORE sizing — a LONG_ONLY unsized SELL with no open long
+		   is an audited REJECTED order (triggered_by="admission_direction"),
+		   never a short-opening fall-through (DEF-01-C dead structurally)
+		1. Resolves sizing via the SizingResolver dispatching on the
 		   signal's declared policy (D-01, M5-06); sizing failures store an
 		   audited REJECTED entity and short-circuit (D-06 — the DEF-01-B
 		   narrow gate preserved: no unsized order ever reaches validation)
@@ -278,7 +282,15 @@ class OrderManager:
 		primary_emitted = False
 
 		try:
-			# 0. Resolve the DECLARED sizing policy BEFORE validation (D-01/D-08/D-09).
+			# 0. D-08 direction admission gate — BEFORE sizing. Enforces the
+			# strategy's DECLARED TradingDirection: an unsized LONG_ONLY SELL
+			# with no open long is an AUDITED rejection (Pitfall 4 — the exact
+			# fall-through that opened the 2 blessed golden shorts is gone).
+			gate_rejection = self._enforce_direction_admission(signal_event)
+			if gate_rejection is not None:
+				return [gate_rejection]
+
+			# 1. Resolve the DECLARED sizing policy BEFORE validation (D-01/D-08/D-09).
 			# The strategy emits quantity=None (D-10); the order/risk layer resolves the
 			# per-portfolio quantity through the SizingResolver dispatching on
 			# signal.sizing_policy (M5-06). Sizing failures are AUDITED (D-06): the
@@ -292,12 +304,12 @@ class OrderManager:
 
 			exchange = self._get_signal_exchange(signal_event)
 
-			# 1. Entity-as-state (D-13): create the primary Order (PENDING) first.
+			# 2. Entity-as-state (D-13): create the primary Order (PENDING) first.
 			primary = self._build_primary_order(signal_event, exchange, resolved)
 			if isinstance(primary, OperationResult):
 				return [primary]
 
-			# 2. Validate the ENTITY, not the signal (D-13). Rejection becomes an
+			# 3. Validate the ENTITY, not the signal (D-13). Rejection becomes an
 			# auditable FIX/Nautilus-style state change persisted to storage —
 			# rejected signals no longer vanish.
 			if self.order_validator:
@@ -323,7 +335,7 @@ class OrderManager:
 					self.logger.warning('Signal validation warnings: %s',
 									   [msg.message for msg in validation_result.warnings])
 
-			# 2b. Admission cash-reservation gate (Plan 05-06, Critical #22 / M4-01).
+			# 3b. Admission cash-reservation gate (Plan 05-06, Critical #22 / M4-01).
 			# D-02: SYNCHRONOUS check-and-reserve — the only pre-trade gate. A
 			# queue-mediated reserve was explicitly rejected: it would open a
 			# TOCTOU window between the funds check and the order emit (T-05-14).
@@ -355,7 +367,7 @@ class OrderManager:
 						error_details=str(e),
 						operation_type="cash_reservation")]
 
-			# 3. Create-all-then-emit (D-11): assemble brackets, store, emit.
+			# 4. Create-all-then-emit (D-11): assemble brackets, store, emit.
 			assembled = self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
 			primary_emitted = any(
 				r.success and primary.id in (r.affected_order_ids or [])
@@ -729,6 +741,70 @@ class OrderManager:
 		                  parent.id, sl_order.price, tp_order.price)
 		return [OrderEvent.new_order_event(sl_order), OrderEvent.new_order_event(tp_order)]
 
+	def _enforce_direction_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+		"""
+		D-08 direction admission gate — step 0 of process_signal, BEFORE sizing.
+
+		Enforces the strategy's DECLARED TradingDirection at admission,
+		intercepting exactly the Pitfall-4 fall-through that opened the 2
+		blessed golden shorts: an unsized LONG_ONLY SELL with no open long
+		(no position, or net_quantity <= 0) previously fell through to entry
+		sizing and opened a short. Now it is an AUDITED rejection
+		(triggered_by="admission_direction") — DEF-01-C dies structurally.
+		SHORT_ONLY + BUY with no open short is rejected symmetrically
+		(oracle-dark: the golden strategy is LONG_ONLY).
+
+		Preserved paths the gate never blocks:
+		- Explicit-quantity signals (signal.quantity set) skip the gate —
+		  the live/manual path is untouched.
+		- LONG_SHORT passes: registration (strategies_handler), not
+		  admission, polices LONG_SHORT.
+		- LONG_ONLY SELL with an open long passes — the exit sizes as before.
+
+		Returns
+		-------
+		Optional[OperationResult]
+			A failure_result when the direction is violated (the audited
+			REJECTED entity is already persisted, Pitfall 5 option (a)),
+			or None when the signal passes the gate.
+		"""
+		if signal_event.quantity and signal_event.quantity > 0:
+			# Explicit caller-supplied quantity: the gate does not apply.
+			return None
+		if signal_event.direction is TradingDirection.LONG_SHORT:
+			return None
+		if self.portfolio_handler is None:
+			# No position truth to consult — an unsized signal without a
+			# read model fails loudly in the sizing step right after.
+			return None
+		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
+		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		open_position = self.portfolio_handler.get_position(
+			portfolio_id, signal_event.ticker)
+		if (signal_event.direction is TradingDirection.LONG_ONLY
+				and signal_event.action is Side.SELL
+				and (open_position is None or open_position.net_quantity <= 0)):
+			return self._reject_unsized_signal(
+				signal_event,
+				f"direction violation: LONG_ONLY strategy cannot open a short "
+				f"(SELL with no open long) for {signal_event.ticker}",
+				triggered_by="admission_direction",
+				operation_type="signal_admission",
+				error_prefix="Signal rejected at admission",
+			)
+		if (signal_event.direction is TradingDirection.SHORT_ONLY
+				and signal_event.action is Side.BUY
+				and (open_position is None or open_position.net_quantity >= 0)):
+			return self._reject_unsized_signal(
+				signal_event,
+				f"direction violation: SHORT_ONLY strategy cannot open a long "
+				f"(BUY with no open short) for {signal_event.ticker}",
+				triggered_by="admission_direction",
+				operation_type="signal_admission",
+				error_prefix="Signal rejected at admission",
+			)
+		return None
+
 	def _resolve_signal_quantity(self, signal_event: SignalEvent) -> "Decimal | OperationResult":
 		"""
 		Resolve the order quantity in the order/risk seam (D-01/D-08/D-09/D-13, M5-06).
@@ -751,10 +827,11 @@ class OrderManager:
 		  signal.sizing_policy. The FractionOfCash arm reproduces
 		  (fraction * available_cash) / to_money(price) operand-for-operand —
 		  the golden Decimal("0.95") quantity is repr-identical to the deleted
-		  M1 expression. NOTE: a SELL with no open long deliberately falls
-		  through to entry sizing and opens a short (the 2-shorts mechanism,
-		  Pitfall 4) — plan 07-07's direction guard removes that under owner
-		  sign-off; removing it here would be an unsanctioned result change.
+		  M1 expression. NOTE: a SELL with no open long can only reach this
+		  branch for a LONG_SHORT direction (a sanctioned short entry) — the
+		  D-08 admission gate in process_signal rejects the LONG_ONLY case
+		  upstream (the 2-shorts Pitfall-4 mechanism, removed at the 07-07
+		  owner-approved re-freeze).
 
 		Sizing failures (invalid price, SizingPolicyViolation) are AUDITED
 		rejections (D-06): the entity is built unsized, transitioned
@@ -804,8 +881,9 @@ class OrderManager:
 				signal_event.exit_fraction,
 				signal_event.sizing_policy.step_size,
 			)
-		# Entry (or SELL with no open long — the preserved shorts fall-through,
-		# Pitfall 4): dispatch on the DECLARED policy (D-01). The FractionOfCash
+		# Entry (or a LONG_SHORT SELL with no open long — a sanctioned short
+		# entry; the D-08 gate rejected the LONG_ONLY case before sizing):
+		# dispatch on the DECLARED policy (D-01). The FractionOfCash
 		# arm computes (fraction * available_cash) / to_money(price) — same
 		# operands, same order as the M1 seam; available_cash is the single
 		# trading-decision figure (D-14), Decimal on the ledger (M2-02). Full
@@ -825,22 +903,25 @@ class OrderManager:
 			# REJECTED order naming the policy — never a silent drop.
 			return self._reject_unsized_signal(signal_event, str(e))
 
-	def _reject_unsized_signal(self, signal_event: SignalEvent,
-	                           reason: str) -> OperationResult:
+	def _reject_unsized_signal(self, signal_event: SignalEvent, reason: str, *,
+	                           triggered_by: str = "sizing_policy",
+	                           operation_type: str = "signal_sizing",
+	                           error_prefix: str = "Signal sizing failed") -> OperationResult:
 		"""
-		D-06 audited sizing rejection (Pitfall 5, option (a)).
+		Audited admission/sizing rejection (D-06/D-08, Pitfall 5 option (a)).
 
 		Build the primary Order entity UNSIZED (quantity 0) via the existing
 		factory, transition it PENDING→REJECTED through the audited
-		add_state_change path with triggered_by="sizing_policy" and a reason
-		naming the policy violation, and persist it — rejected signals never
-		vanish (the exact shape of the validator-rejection template). The
-		entity is REJECTED before validation ever runs, so the validator's
-		positive-quantity rule is never consulted on it. Timestamps stay
-		event-derived (M2-09 — never wall clock: add_state_change defaults to
-		the order's own event time).
+		add_state_change path — ``triggered_by`` identifies the gate
+		("sizing_policy" for D-06 sizing failures, "admission_direction" for
+		the D-08 direction gate) and the reason names the violation — and
+		persist it: rejected signals never vanish (the exact shape of the
+		validator-rejection template). The entity is REJECTED before
+		validation ever runs, so the validator's positive-quantity rule is
+		never consulted on it. Timestamps stay event-derived (M2-09 — never
+		wall clock: add_state_change defaults to the order's own event time).
 		"""
-		error_msg = f"Signal sizing failed: {reason}"
+		error_msg = f"{error_prefix}: {reason}"
 		self.logger.error('%s for %s %s', error_msg,
 						signal_event.ticker, signal_event.action)
 		try:
@@ -851,17 +932,17 @@ class OrderManager:
 			rejected.add_state_change(
 				OrderStatus.REJECTED,
 				reason,
-				triggered_by="sizing_policy",
+				triggered_by=triggered_by,
 			)
 			self.order_storage.add_order(rejected)
 		except Exception as e:
 			# The audit entity could not be built (e.g. an unrepresentable
 			# price) — the rejection verdict stands; log the audit gap loudly.
-			self.logger.error('Failed to persist audited sizing rejection: %s',
+			self.logger.error('Failed to persist audited admission rejection: %s',
 							e, exc_info=True)
 		return OperationResult.failure_result(error_msg,
 			error_details=reason,
-			operation_type="signal_sizing")
+			operation_type=operation_type)
 
 	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None,
 	                portfolio_id: Optional[int] = None, reason: str = "user modification") -> OperationResult:
