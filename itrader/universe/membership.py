@@ -43,9 +43,8 @@ def derive_membership(
 
     The union logic relocated verbatim from
     ``StrategiesHandler.get_strategies_universe`` (tuple-pair flattening
-    included) plus the screener half of the legacy
-    ``DynamicUniverse.universe`` property: strategy tickers ∪ screener
-    tickers, deduplicated.
+    included) plus the screener half of the legacy universe union
+    property: strategy tickers ∪ screener tickers, deduplicated.
 
     Parameters
     ----------

@@ -16,7 +16,7 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.simulation.time_generator import TimeGenerator
-from itrader.universe.dynamic import DynamicUniverse
+from itrader.universe import derive_membership
 from itrader.reporting.statistics import StatisticsReporting
 
 from itrader.logger import get_itrader_logger
@@ -71,7 +71,6 @@ class TradingSystem(object):
 			start_date=start_date,
 			end_date=end_date or None)
 		self.feed = BacktestBarFeed(self.store, to_timedelta(timeframe))
-		self.universe = DynamicUniverse(self.feed, self.global_queue)
 		self.strategies_handler = StrategiesHandler(self.global_queue, self.feed)
 		# ScreenersHandler is a deferred subsystem (D-screener, ignore_errors override)
 		# so its constructor is untyped to the gate.
@@ -109,13 +108,17 @@ class TradingSystem(object):
 		self.reporting = StatisticsReporting(
 			self.portfolio_handler,
 			self.store)
+		# The TIME route's BarEvent source is the feed-owned factory
+		# (Plan 07-02, D-20): the data engine produces the per-tick
+		# BarEvent; queue + membership are bound onto the feed at
+		# session initialisation.
 		self.event_handler = EventHandler(
 			self.strategies_handler,
 			self.screeners_handler,
 			self.portfolio_handler,
 			self.order_handler,
 			self.execution_handler,
-			self.universe,
+			self.feed.generate_bar_event,
 			self.global_queue
 		)
 
@@ -124,16 +127,21 @@ class TradingSystem(object):
 
 	def _initialise_backtest_session(self) -> None:
 		"""
-		Initialise the universe, derive the ping clock from the store's bar
-		index, and precompute the per-strategy resampled frames so the hot
-		loop never resamples (M5-03).
+		Derive membership and bind the feed's BarEvent factory, derive the
+		ping clock from the store's bar index, and precompute the
+		per-strategy resampled frames so the hot loop never resamples
+		(M5-03).
 		"""
 		self.logger.info('Initialising backtest session')
 
-		self.universe.init_universe(
-			self.strategies_handler.get_strategies_universe(),
+		# Membership derived at wiring time (M5-08, D-20): the union of
+		# strategy tickers and the screener set — used by the feed's
+		# factory only for the missing-ticker warning loop.
+		membership = derive_membership(
+			self.strategies_handler.strategies,
 			# D-screener deferred subsystem (ignore_errors override) — untyped to the gate.
 			self.screeners_handler.get_screeners_universe())  # type: ignore[no-untyped-call]
+		self.feed.bind(self.global_queue, membership)
 		# Ping clock derived from the store's bar index (T-06-16): the same
 		# tick grid the legacy `.prices` access produced, asserted byte-exact
 		# by the oracle's behavioral identity.

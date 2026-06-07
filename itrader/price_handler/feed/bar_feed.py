@@ -49,7 +49,7 @@ event queue, performs no network access and no store writes, and is fully
 deterministic given the store frames. The logger is bound at construction
 only; the per-tick QUERY path (window/megaframe/current_bars) does not
 log. The one queue-aware seam is the BarEvent FACTORY
-(``generate_bar_event``, relocated from the deleted ``DynamicUniverse`` —
+(``generate_bar_event``, relocated from the deleted dynamic universe —
 Plan 07-02, D-20): the data engine produces the per-tick BarEvent and may
 log the missing-ticker warning (RESEARCH OQ4).
 """
@@ -205,7 +205,7 @@ class BacktestBarFeed(BarFeed):
         self._frames[key] = resampled
         return resampled
 
-    # -- BarEvent factory (relocated from DynamicUniverse — Plan 07-02, D-20) --
+    # -- BarEvent factory (relocated from the legacy universe — Plan 07-02, D-20) --
 
     def bind(self, global_queue: "Optional[queue.Queue[Any]]",
              membership: list[str]) -> None:
@@ -230,7 +230,7 @@ class BacktestBarFeed(BarFeed):
     def generate_bar_event(self, time_event: TimeEvent) -> Optional[BarEvent]:
         """Generate the per-tick BarEvent from the feed's own bar facts.
 
-        The relocated ``DynamicUniverse.generate_bar_event`` body (D-20 —
+        The relocated legacy-universe ``generate_bar_event`` body (D-20 —
         the data engine owns BarEvent production, LEAN/Nautilus shape):
         wrap ``current_bars(time)`` in a BarEvent, warn for any membership
         ticker absent from the produced bars (sparse universe), and either
