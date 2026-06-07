@@ -261,6 +261,23 @@ class PortfolioHandler:
         count: int = self.get_portfolio(portfolio_id).n_open_positions
         return count
 
+    def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return total equity as Decimal: full cash balance + position market values.
+
+        Plan 07-01 (M5-06): the RiskPercent sizing input — computed from the
+        Decimal internals directly (RESEARCH Pitfall 8: CashManager.balance and
+        PositionManager.get_total_market_value() are both Decimal-native), NEVER
+        through the float Portfolio.total_equity property. Uses the FULL ledger
+        balance (available cash + reservations) — equity is a sizing/metrics
+        figure, not buying power. Oracle-dark: the golden FractionOfCash policy
+        never reads it.
+        """
+        portfolio = self.get_portfolio(portfolio_id)
+        return (
+            portfolio.cash_manager.balance
+            + portfolio.position_manager.get_total_market_value()
+        )
+
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
         """Process fill event for the appropriate portfolio.
