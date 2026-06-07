@@ -16,18 +16,35 @@ Queue-only rule: this script constructs the system and reads result state AFTER 
 (``portfolio.closed_positions`` and the metrics snapshots). It never calls handler methods
 across domains during the run.
 
-The summary's derived metrics are intentionally minimal: sharpe/sortino/cagr math is M5-owned
-and currently buggy, so it is NOT frozen here.
+The summary carries the D-15 derived-metrics block (sharpe/sortino/cagr/max_drawdown/
+profit_factor/win_rate) computed by ``itrader.reporting.metrics`` — the same formula
+source the engine's end-of-run printout uses (D-14 amendment). The trades frame carries
+the D-17 slippage-attribution columns. Both are produced every run and freeze into
+``tests/golden/`` only at the named D-11 re-freezes (plan 07-07).
 
 Run via ``make backtest`` or ``poetry run python scripts/run_backtest.py``.
 """
 
 import json
 import pathlib
-from dataclasses import asdict
 
 import pandas as pd
 
+from itrader.reporting.frames import (
+    EQUITY_COLUMNS,
+    TRADE_COLUMNS,
+    build_equity_curve,
+    build_trade_log,
+)
+from itrader.reporting.metrics import (
+    cagr,
+    compute_returns,
+    max_drawdown,
+    profit_factor,
+    sharpe,
+    sortino,
+    win_rate,
+)
 from itrader.trading_system.backtest_trading_system import TradingSystem
 from itrader.strategy_handler.SMA_MACD_strategy import SMA_MACD_strategy
 from itrader.logger import get_itrader_logger
@@ -45,78 +62,73 @@ TIMEFRAME = "1d"                                  # D-06
 OUTPUT_DIR = pathlib.Path("output")              # D-10 / D-11 (gitignored)
 FLOAT_FORMAT = "%.10f"                            # pinned repr for cross-platform stability (T-04-01)
 
-# Deterministic trade-log columns only (D-12). EXCLUDES position_id / current_price /
-# unrealised_pnl, which are volatile / non-deterministic until M2.
-TRADE_COLUMNS = [
-    "entry_date",
-    "exit_date",
-    "side",
-    "net_quantity",
-    "avg_price",
-    "avg_bought",
-    "avg_sold",
-    "total_bought",
-    "total_sold",
-    "realised_pnl",
-    "pair",
-]
-
-# Deterministic equity-curve columns sourced from PortfolioSnapshot (metrics_manager.py:29).
-EQUITY_COLUMNS = [
-    "timestamp",
-    "total_equity",
-    "cash_balance",
-    "positions_value",
-    "unrealized_pnl",
-    "realized_pnl",
-    "total_pnl",
-    "open_positions_count",
-    "portfolio_return",
-]
+# D-17 slippage-attribution columns appended to the serialized trade log (after
+# the relocated TRADE_COLUMNS) — float columns, so the FLOAT_FORMAT pin applies.
+SLIPPAGE_COLUMNS = ["slippage_entry", "slippage_exit"]
 
 
-def build_trade_log(portfolio):
-    """Build the deterministic trade-log frame from closed positions (D-12).
+def attach_slippage(trades, closes):
+    """Attach the D-17 per-trade slippage columns — post-hoc, engine-inert (Pattern 3).
 
-    Source: ``portfolio.closed_positions`` -> ``Position.to_dict()`` (position.py:244),
-    keeping only the deterministic columns and sorting by (entry_date, exit_date, side)
-    so row ordering is reproducible.
+    Under the Phase 6 next-bar-open fill convention, a fill at bar ``T`` was decided
+    at the bar immediately BEFORE ``T`` in the store index; the attribution is
+    ``fill price - decision-bar close`` for the entry and exit fills separately.
+    In the zero-slippage golden run these columns measure the overnight next-open
+    gap introduced by Phase 6 fill realism. Computed purely from the store's
+    per-ticker close series + the trades frame — no engine/event/entity change.
     """
-    rows = [position.to_dict() for position in portfolio.closed_positions]
-    frame = pd.DataFrame(rows, columns=TRADE_COLUMNS) if rows else pd.DataFrame(columns=TRADE_COLUMNS)
-    if not frame.empty:
-        frame = frame.sort_values(["entry_date", "exit_date", "side"]).reset_index(drop=True)
-    return frame
+    if trades.empty:
+        trades["slippage_entry"] = pd.Series(dtype=float)
+        trades["slippage_exit"] = pd.Series(dtype=float)
+        return trades
+
+    index = closes.index
+
+    def decision_close(fill_time):
+        position = index.searchsorted(fill_time, side="left")
+        return float(closes.iloc[position - 1]) if position > 0 else float("nan")
+
+    def entry_fill_price(row):
+        # LONG enters by buying; SHORT enters by selling.
+        return float(row["avg_bought"] if row["side"] == "LONG" else row["avg_sold"])
+
+    def exit_fill_price(row):
+        # LONG exits by selling; SHORT exits by buying back.
+        return float(row["avg_sold"] if row["side"] == "LONG" else row["avg_bought"])
+
+    trades["slippage_entry"] = trades.apply(
+        lambda row: entry_fill_price(row) - decision_close(row["entry_date"]), axis=1)
+    trades["slippage_exit"] = trades.apply(
+        lambda row: exit_fill_price(row) - decision_close(row["exit_date"]), axis=1)
+    return trades
 
 
-def build_equity_curve(portfolio):
-    """Build the deterministic equity-curve frame from metrics snapshots (Pitfall 5).
+def build_metrics_block(equity, trades):
+    """Build the nested D-15 derived-metrics dict for ``summary.json``.
 
-    Sources the ``PortfolioSnapshot`` list directly from the metrics manager — NOT through
-    ``StatisticsReporting._prepare_data`` (which reads a non-existent ``portfolio.metrics``).
+    Computed by the pure ``itrader.reporting.metrics`` functions on the equity
+    curve + trades frame — the SAME formula source the engine's end-of-run
+    printout uses (one formula source, two consumers). All values are plain
+    floats, deterministic; the block freezes at the plan 07-07 re-freeze.
     """
-    snapshots = portfolio.metrics_manager.get_snapshots()
-    rows = []
-    for snapshot in snapshots:
-        record = asdict(snapshot)
-        # Decimal fields serialize as floats for a stable CSV repr; timestamp stays as-is.
-        rows.append({column: record.get(column) for column in EQUITY_COLUMNS})
-    frame = pd.DataFrame(rows, columns=EQUITY_COLUMNS) if rows else pd.DataFrame(columns=EQUITY_COLUMNS)
-    if not frame.empty:
-        for column in EQUITY_COLUMNS:
-            if column in ("timestamp", "open_positions_count"):
-                continue
-            frame[column] = frame[column].astype(float)
-        frame = frame.sort_values("timestamp").reset_index(drop=True)
-    return frame
+    equity_series = equity["total_equity"].astype(float)
+    returns = compute_returns(equity_series)
+    return {
+        "sharpe": float(sharpe(returns)),
+        "sortino": float(sortino(returns)),
+        "cagr": float(cagr(equity_series)),
+        "max_drawdown": float(max_drawdown(equity_series)),
+        "profit_factor": float(profit_factor(trades)),
+        "win_rate": float(win_rate(trades)),
+    }
 
 
 def build_summary(portfolio, trades):
     """Build a minimal deterministic summary dict (D-12).
 
     Final cash + a minimal deterministic metric set (trade count, total realised PnL,
-    final equity). Derived ratios (sharpe/sortino/cagr) are intentionally omitted — that
-    math is M5-owned and currently buggy, so freezing it here would corrupt the oracle.
+    final equity). The derived ratios live in the nested ``metrics`` block added by
+    ``build_metrics_block`` (D-15 — the M5-owned carve-out is closed this phase).
     """
     total_realised_pnl = float(trades["realised_pnl"].sum()) if not trades.empty else 0.0
     return {
@@ -155,20 +167,30 @@ def main():
     )
     strategy.subscribe_portfolio(portfolio_id)
 
-    # Run the full PING->BAR->SIGNAL->ORDER->FILL loop. print_summary=False avoids the
-    # broken StatisticsReporting._prepare_data path (Pitfall 5).
-    system.run(print_summary=False)
+    # Run the full PING->BAR->SIGNAL->ORDER->FILL loop. The default
+    # print_summary=True prints the engine-level D-15 metrics block at end of
+    # run (D-14 amendment) — stdout only, no output/ artifact bytes change.
+    system.run()
 
     # --- Read result state AFTER the run (queue-only rule) ------------------
     portfolio = system.portfolio_handler.get_portfolio(portfolio_id)
     trades = build_trade_log(portfolio)
     equity = build_equity_curve(portfolio)
+
+    # D-17: post-hoc slippage attribution from the store's close series.
+    closes = system.store.read_bars(TICKER)["close"]
+    trades = attach_slippage(trades, closes)
+
     summary = build_summary(portfolio, trades)
+    # D-15: nested derived-metrics block — produced every run, frozen at 07-07.
+    summary["metrics"] = build_metrics_block(equity, trades)
 
     # --- Serialize the deterministic oracle (D-10/D-12) --------------------
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    trades.to_csv(OUTPUT_DIR / "trades.csv", index=False, float_format=FLOAT_FORMAT)
-    equity.to_csv(OUTPUT_DIR / "equity.csv", index=False, float_format=FLOAT_FORMAT)
+    trades[TRADE_COLUMNS + SLIPPAGE_COLUMNS].to_csv(
+        OUTPUT_DIR / "trades.csv", index=False, float_format=FLOAT_FORMAT)
+    equity[EQUITY_COLUMNS].to_csv(
+        OUTPUT_DIR / "equity.csv", index=False, float_format=FLOAT_FORMAT)
     with open(OUTPUT_DIR / "summary.json", "w") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
 
