@@ -205,23 +205,17 @@ class EnhancedOrderValidator:
                 "INVALID_PRICE"
             ))
 
-        # Quantity validation. The run path always sizes before entity
-        # creation, so a zero quantity here only occurs when the validator
-        # is exercised directly on a hand-built order.
-        quantity = float(order.quantity)
-        if quantity < 0:
+        # Quantity validation. Sizing precedes validation on the run path and
+        # rejected-at-admission entities are stored REJECTED before validation
+        # ever runs (D-06), so nothing legitimate presents a non-positive
+        # quantity here — it fails like any other invalid field (D-04: the
+        # zero-quantity "transition period" is over).
+        if float(order.quantity) <= 0:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
-                "Quantity cannot be negative",
+                "Quantity must be positive",
                 "quantity",
-                "NEGATIVE_QUANTITY"
-            ))
-        elif quantity == 0:
-            messages.append(ValidationMessage(
-                ValidationLevel.WARNING,
-                "Quantity is zero - signal needs position sizing (transition period)",
-                "quantity",
-                "ZERO_QUANTITY_TRANSITION"
+                "INVALID_QUANTITY"
             ))
 
         # Order type is an OrderType enum on the entity by construction —

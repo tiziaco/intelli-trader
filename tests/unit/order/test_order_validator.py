@@ -202,18 +202,39 @@ class TestEnhancedOrderValidator:
         assert result.success is True or len(result.errors) == 0
 
     def test_zero_quantity_signal(self):
-        """Test validation of an order with zero quantity.
+        """A zero-quantity order FAILS validation — the bypass is dead (D-04).
 
         The run path never presents an unsized order here (sizing resolves
-        BEFORE validation — DEF-01-B gate); a zero quantity validated
-        directly must still be rejected.
+        BEFORE validation — DEF-01-B gate; sizing failures are stored as
+        audited REJECTED entities before validation runs, D-06). The
+        zero-quantity "transition period" warning bypass no longer exists:
+        a non-positive quantity is a hard ERROR in the critical-field
+        phase, like any other invalid field.
         """
         order = self.create_test_order(quantity=0.0)
         result = self.validator.validate_order_pipeline(order)
 
-        # Zero quantity should typically fail validation
+        # Zero quantity is rejected outright in the critical-field phase
         assert result.success is False
-        assert any("quantity" in msg.message.lower() for msg in result.errors)
+        assert result.summary == "Critical field validation failed"
+        assert any(
+            "quantity must be positive" in msg.message.lower()
+            for msg in result.errors
+        )
+        # The bypass is gone: no zero-quantity WARNING survives
+        assert not any("transition" in msg.message.lower() for msg in result.messages)
+
+    def test_negative_quantity_fails_validation(self):
+        """A negative quantity fails the same positive-quantity rule."""
+        order = self.create_test_order(quantity=-5.0)
+        result = self.validator.validate_order_pipeline(order)
+
+        assert result.success is False
+        assert result.summary == "Critical field validation failed"
+        assert any(
+            "quantity must be positive" in msg.message.lower()
+            for msg in result.errors
+        )
 
     def test_edge_case_validations(self):
         """Test various edge cases."""

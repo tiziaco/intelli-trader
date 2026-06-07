@@ -1,7 +1,7 @@
 """Narrow portfolio read boundary for the order domain (M4-04, D-13..D-17).
 
 The order domain (OrderHandler, OrderManager, EnhancedOrderValidator,
-DynamicSizer, RiskManager) reads portfolio state synchronously at admission
+SizingResolver) reads portfolio state synchronously at admission
 time. Before M4 it imported the concrete ``PortfolioHandler`` and reached into
 portfolio internals (finding #6). This module is the replacement: a single
 ``runtime_checkable`` ``PortfolioReadModel`` Protocol plus a frozen
