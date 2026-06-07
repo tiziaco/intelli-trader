@@ -143,12 +143,12 @@
 - [x] **M5-06**: Strategy-declared sizing **policy** is fully resolved per-portfolio in the order/risk
   layer, completing the M1 minimal seam — `VariableSizer` finished, `RiskManager.check_cash` covers
   position increases, `calculate_signal` contract enforced *(completes #24/#31 M1→M5, KB11 [final], TD7, TD10)*
-- [ ] **M5-07**: Reporting/metrics are correct — drawdown math, pandas-2/plotly API breakage, `is np.nan`
+- [x] **M5-07**: Reporting/metrics are correct — drawdown math, pandas-2/plotly API breakage, `is np.nan`
   identity bug, rolling-stats stub, and the dead `EngineLogger` resolved; computation split from
   presentation *(#38, #14 [compute; persist→D-sql], KB2, KB23, TD6)*
 - [x] **M5-08**: `universe/` collapses to a thin documented symbol-set stub (false "dynamic"/redundant
   copies removed) *(#33)*
-- [ ] **M5-09**: Strategy/data/reporting/universe paths gain test coverage — CSV price store, reporting/
+- [x] **M5-09**: Strategy/data/reporting/universe paths gain test coverage — CSV price store, reporting/
   statistics, universe *(TC2 [CSV part; adapters→D-oanda], TC4, TC6)*
 - [ ] **M5-10**: The engine is **cross-validated against `backtesting.py` + `backtrader`** on the same
   strategy + data; metrics reconciled; the **final numerical reference output is frozen** *(golden-master
@@ -231,10 +231,10 @@ phase; a span is not done until its final phase completes.
 | M5-03 | Phase 6 | M5a | — | Complete |
 | M5-04 | Phase 6 | M5a | — | Complete |
 | M5-05 | Phase 6 | M5a | — | Complete |
-| M5-06 | Phase 7 | M5b | completes #24/#31/KB11 (from M1-06) | Pending |
-| M5-07 | Phase 7 | M5b | — | Pending |
-| M5-08 | Phase 7 | M5b | — | Pending |
-| M5-09 | Phase 7 | M5b | — | Pending |
+| M5-06 | Phase 7 | M5b | completes #24/#31/KB11 (from M1-06) | Complete |
+| M5-07 | Phase 7 | M5b | — | Complete |
+| M5-08 | Phase 7 | M5b | — | Complete |
+| M5-09 | Phase 7 | M5b | — | Complete |
 | M5-10 | Phase 8 | M5c | final numerical oracle frozen | Pending |
 
 **Coverage:** 45/45 in-scope v1 REQ-IDs mapped to exactly one phase. No orphans, no duplicates. All
