@@ -16,6 +16,10 @@ Design decisions locked for this boundary:
 * **D-14 — ``available_cash`` (buying power) is the single trading-decision
   figure.** Equity/total cash stay on ``Portfolio`` for metrics/reporting and
   deliberately do NOT enter the order-domain surface.
+  *Narrow amendment (Plan 07-01, M5-06):* ``total_equity`` joins the Protocol
+  as the RiskPercent sizing input (RESEARCH Pitfall 8). The amendment is
+  oracle-dark — the golden FractionOfCash policy never reads it — and
+  cash-decision reads still go through ``available_cash`` exclusively.
 * **D-15 — live objects inside a module, immutable snapshots across the
   boundary.** ``get_position`` returns a frozen ``PositionView`` (``None``
   when flat), never the live ``Position``.
@@ -186,5 +190,26 @@ class PortfolioReadModel(Protocol):
         -------
         int
             Count of open positions.
+        """
+        ...
+
+    def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return total equity: full cash balance plus position market values.
+
+        Plan 07-01 (M5-06): the RiskPercent sizing input — D-14's "equity
+        excluded" rule is narrowly amended for it. The full ledger balance
+        (available cash + reservations) is used, NOT buying power; equity is
+        a sizing/metrics figure, not a cash-decision figure. Oracle-dark:
+        the golden FractionOfCash policy never reads it.
+
+        Parameters
+        ----------
+        portfolio_id : PortfolioId
+            The portfolio to read.
+
+        Returns
+        -------
+        Decimal
+            Total equity at full ledger precision.
         """
         ...
