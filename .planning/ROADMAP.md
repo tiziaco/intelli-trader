@@ -200,8 +200,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — Sizing vocabulary (core/sizing.py) + PortfolioReadModel.total_equity + SizingResolver (inert, M5-06)
-- [ ] 07-02-PLAN.md — Universe collapse: membership stub + BarEvent factory into BarFeed + TIME-route rewire (inert, M5-08/M5-09)
+- [x] 07-01-PLAN.md — Sizing vocabulary (core/sizing.py) + PortfolioReadModel.total_equity + SizingResolver (inert, M5-06)
+- [x] 07-02-PLAN.md — Universe collapse: membership stub + BarEvent factory into BarFeed + TIME-route rewire (inert, M5-08/M5-09)
 
 **Wave 2**
 
@@ -250,5 +250,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 8/8 | Complete   | 2026-06-06 |
-| 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/8 | Planned | - |
+| 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 2/8 | In Progress|  |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
