@@ -12,19 +12,43 @@ Provides the business logic layer between OrderHandler (interface)
 and order storage/execution systems.
 """
 
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, assert_never, cast
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
 from ..core.exceptions import InsufficientFundsError, SizingPolicyViolation
-from ..core.ids import PortfolioId
+from ..core.ids import OrderId, PortfolioId, StrategyId
 from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
+from ..core.sizing import PercentFromDecision, PercentFromFill, SLTPPolicy
 from .base import OrderStorage
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 from .sizing_resolver import SizingResolver
+
+_ONE = Decimal("1")
+
+
+@dataclass(frozen=True)
+class _PendingBracket:
+	"""Context for a PercentFromFill bracket awaiting its parent's fill (D-13).
+
+	RESEARCH Pattern 5 Option B: the manager holds a map keyed by the
+	parent order id carrying the policy plus everything needed to build
+	the children at fill time — the children do not exist until the
+	parent EXECUTES, so a placeholder-priced child can never trigger
+	before its parent fills (T-07-14, structurally unreachable).
+	"""
+
+	policy: PercentFromFill
+	ticker: str
+	action: str
+	quantity: Decimal
+	exchange: str
+	strategy_id: StrategyId
+	portfolio_id: "PortfolioId | int"
 
 
 class OrderManager:
@@ -91,6 +115,13 @@ class OrderManager:
 		# portfolio state exclusively through the Protocol).
 		self.sizing_resolver = SizingResolver(portfolio_handler) if portfolio_handler else None
 
+		# D-13 PercentFromFill pending brackets (RESEARCH Pattern 5 Option B):
+		# parent order id -> the context needed to create the fill-anchored
+		# children in on_fill. Entries are discarded when the parent reaches
+		# CANCELLED/REJECTED without executing (T-07-15 — no orphans possible:
+		# the children were never created).
+		self._pending_brackets: Dict[OrderId, _PendingBracket] = {}
+
 	def _estimate_commission(self, order: Order) -> Decimal:
 		"""Estimate the commission for an order's admission reservation (D-04).
 
@@ -115,16 +146,18 @@ class OrderManager:
 		-------
 		List[OrderEvent]
 			CANCEL OrderEvents for bracket children orphaned by a parent that
-			reached a terminal state without any fill (WR-05). The manager
-			never touches the queue (D-18) — the handler enqueues these.
+			reached a terminal state without any fill (WR-05), plus the
+			fill-anchored PercentFromFill children created on the parent's
+			EXECUTED fill (D-13, Pattern 5 Option B). The manager never
+			touches the queue (D-18) — the handler enqueues these.
 		"""
-		cancel_events: List[OrderEvent] = []
+		out_events: List[OrderEvent] = []
 		order_id = getattr(fill_event, 'order_id', None)
 		if order_id is None:
-			return cancel_events
+			return out_events
 		order = self.order_storage.get_order_by_id(order_id, fill_event.portfolio_id)
 		if order is None:
-			return cancel_events
+			return out_events
 		try:
 			applied = True
 			if fill_event.status == FillStatus.EXECUTED:
@@ -155,7 +188,7 @@ class OrderManager:
 				# reconciliation, so the reservation is intentionally held.)
 				self.logger.warning('Unhandled fill status %s for order %s; order left active',
 				                    fill_event.status, order_id)
-				return cancel_events
+				return out_events
 			# Reached for every terminal-status fill (EXECUTED/CANCELLED/
 			# REFUSED), whether or not the mirror transition applied.
 			# D-20: no deactivate step — the terminal status set above already
@@ -188,10 +221,24 @@ class OrderManager:
 						cast(int, child_id), cast(int, order.portfolio_id),
 						reason=f"parent order {order.id} terminal without fill")
 					if child_result.success and child_result.order_events:
-						cancel_events.extend(child_result.order_events)
+						out_events.extend(child_result.order_events)
+			# D-13 PercentFromFill (RESEARCH Pattern 5 Option B): the parent's
+			# EXECUTED fill is the moment its policy-declared children come
+			# into existence — created, stored, linked and emitted priced from
+			# the ACTUAL fill (IB attached-order semantics). A parent that
+			# terminates WITHOUT executing (CANCELLED/REJECTED) discards its
+			# pending entry: the children were never created, so no orphan can
+			# exist and the WR-05 logic above is untouched (T-07-15).
+			if fill_event.status == FillStatus.EXECUTED:
+				pending = self._pending_brackets.pop(order_id, None)
+				if pending is not None:
+					out_events.extend(
+						self._create_fill_anchored_children(order, pending, fill_event))
+			else:
+				self._pending_brackets.pop(order_id, None)
 		except Exception as e:
 			self.logger.error('Error reconciling fill for order %s: %s', order_id, e)
-		return cancel_events
+		return out_events
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""
@@ -456,6 +503,24 @@ class OrderManager:
 		OrderEvents parent-first (primary, stop-loss, take-profit) — the
 		queue arrival sequence is identical to the old emit-per-creation flow.
 
+		D-13 SLTP precedence: explicit stop_loss/take_profit levels are
+		PRIMARY — when either is present the declared sltp_policy is ignored
+		and this path behaves exactly as before. Only a signal with no
+		explicit level consults the policy: PercentFromDecision prices the
+		children from the signal's decision price at assembly time;
+		PercentFromFill defers them to the parent's fill.
+
+		CARVE-OUT: PercentFromFill children are created at parent fill
+		(IB attached-order semantics) — a documented exception to
+		create-all-then-emit (Phase 4 D-11). Until the parent EXECUTES the
+		children structurally do not exist (no placeholder-trigger hazard,
+		T-07-14); on_fill creates, stores, links and emits them priced from
+		the actual fill.
+
+		D-07 v1 limitation: bracket children are sized at entry and are NOT
+		resized by partial signal exits — a partial exit leaves the resting
+		SL/TP quantities at their entry size.
+
 		Parameters
 		----------
 		signal_event : SignalEvent
@@ -480,13 +545,47 @@ class OrderManager:
 			sl_order: Optional[Order] = None
 			tp_order: Optional[Order] = None
 
-			if signal_event.stop_loss > 0:
+			# D-13 SLTP dispatch with explicit precedence: explicit levels
+			# WIN whenever either is present (the truthy semantics below,
+			# preserved verbatim — even when an sltp_policy is also declared).
+			# Only a signal with NO explicit level consults the policy.
+			sl_price: Decimal = signal_event.stop_loss
+			tp_price: Decimal = signal_event.take_profit
+			sltp_policy = signal_event.sltp_policy
+			if not (sl_price > 0 or tp_price > 0) and sltp_policy is not None:
+				match sltp_policy:
+					case PercentFromDecision():
+						# Decision-time pricing: levels fixed from the
+						# signal's decision price (price ± pct for a BUY,
+						# mirrored for SELL) — Decimal arithmetic end-to-end
+						# (string-path constants enforced by the policy types).
+						sl_price, tp_price = self._bracket_levels(
+							sltp_policy, to_money(signal_event.price),
+							signal_event.action.value)
+					case PercentFromFill():
+						# CARVE-OUT to create-all-then-emit (Phase 4 D-11):
+						# NO children at assembly — record the pending bracket;
+						# on_fill creates them priced from the actual fill
+						# (IB attached-order semantics, Pattern 5 Option B).
+						self._pending_brackets[primary.id] = _PendingBracket(
+							policy=sltp_policy,
+							ticker=signal_event.ticker,
+							action=signal_event.action.value,
+							quantity=quantity,
+							exchange=exchange,
+							strategy_id=signal_event.strategy_id,
+							portfolio_id=signal_event.portfolio_id,
+						)
+					case _:
+						assert_never(sltp_policy)
+
+			if sl_price > 0:
 				sl_order = Order.new_stop_order(
 					time=signal_event.time,
 					ticker=signal_event.ticker,
 					# Invert on Side (D-05); the entity stores str until M4.
 					action='BUY' if signal_event.action is Side.SELL else 'SELL',
-					price=signal_event.stop_loss,
+					price=sl_price,
 					quantity=quantity,
 					exchange=exchange,
 					strategy_id=signal_event.strategy_id,
@@ -494,13 +593,13 @@ class OrderManager:
 				)
 				sl_order.parent_order_id = primary.id
 
-			if signal_event.take_profit > 0:
+			if tp_price > 0:
 				tp_order = Order.new_limit_order(
 					time=signal_event.time,
 					ticker=signal_event.ticker,
 					# Invert on Side (D-05); the entity stores str until M4.
 					action='BUY' if signal_event.action is Side.SELL else 'SELL',
-					price=signal_event.take_profit,
+					price=tp_price,
 					quantity=quantity,
 					exchange=exchange,
 					strategy_id=signal_event.strategy_id,
@@ -560,7 +659,76 @@ class OrderManager:
 			))
 
 		return results
-	
+
+	def _bracket_levels(self, policy: SLTPPolicy, anchor: Decimal,
+	                    action: str) -> "tuple[Decimal, Decimal]":
+		"""
+		Compute (stop_loss, take_profit) percent-offset levels from ``anchor``.
+
+		D-13: for a BUY parent the stop sits BELOW the anchor and the target
+		ABOVE — sl = anchor * (1 - sl_pct), tp = anchor * (1 + tp_pct);
+		mirrored for a SELL parent. The anchor is the decision price for
+		PercentFromDecision and the actual fill price for PercentFromFill —
+		identical ± pct math, different anchoring moment. Decimal end-to-end
+		(the policy types enforce string-path constants, Pitfall 1).
+		"""
+		if action == Side.SELL.value:
+			return anchor * (_ONE + policy.sl_pct), anchor * (_ONE - policy.tp_pct)
+		return anchor * (_ONE - policy.sl_pct), anchor * (_ONE + policy.tp_pct)
+
+	def _create_fill_anchored_children(self, parent: Order, pending: _PendingBracket,
+	                                   fill_event: FillEvent) -> List[OrderEvent]:
+		"""
+		Create, store, link and return the PercentFromFill children (D-13).
+
+		RESEARCH Pattern 5 Option B / IB attached-order semantics: invoked
+		from on_fill on the parent's EXECUTED fill — the children are priced
+		from the parent's ACTUAL fill price (the anchoring a strategy
+		structurally cannot express). Linkage mirrors the assembly path
+		exactly (parent_order_id on the children, child_order_ids on the
+		parent); entities are stored BEFORE the OrderEvents are returned.
+		The returned events ride the on_fill return list — the manager never
+		touches the queue (D-18); the handler enqueues them.
+
+		D-07 v1 limitation: the children carry the entry-sized quantity
+		recorded at assembly — partial signal exits do not resize them.
+		"""
+		anchor = to_money(fill_event.price)
+		sl_price, tp_price = self._bracket_levels(pending.policy, anchor, pending.action)
+		# Invert on the parent's action (D-05); the entity stores str until M4.
+		child_action = 'BUY' if pending.action == Side.SELL.value else 'SELL'
+		sl_order = Order.new_stop_order(
+			time=fill_event.time,
+			ticker=pending.ticker,
+			action=child_action,
+			price=sl_price,
+			quantity=pending.quantity,
+			exchange=pending.exchange,
+			strategy_id=pending.strategy_id,
+			portfolio_id=pending.portfolio_id
+		)
+		sl_order.parent_order_id = parent.id
+		tp_order = Order.new_limit_order(
+			time=fill_event.time,
+			ticker=pending.ticker,
+			action=child_action,
+			price=tp_price,
+			quantity=pending.quantity,
+			exchange=pending.exchange,
+			strategy_id=pending.strategy_id,
+			portfolio_id=pending.portfolio_id
+		)
+		tp_order.parent_order_id = parent.id
+		# Two-directional linkage, exactly as the assembly path does it.
+		parent.child_order_ids = [sl_order.id, tp_order.id]
+		# Store all, THEN emit (the D-11 ordering, preserved within the fill).
+		self.order_storage.add_order(sl_order)
+		self.order_storage.add_order(tp_order)
+		self.order_storage.update_order(parent)
+		self.logger.debug('Fill-anchored bracket created for parent %s: SL %s / TP %s',
+		                  parent.id, sl_order.price, tp_order.price)
+		return [OrderEvent.new_order_event(sl_order), OrderEvent.new_order_event(tp_order)]
+
 	def _resolve_signal_quantity(self, signal_event: SignalEvent) -> "Decimal | OperationResult":
 		"""
 		Resolve the order quantity in the order/risk seam (D-01/D-08/D-09/D-13, M5-06).
