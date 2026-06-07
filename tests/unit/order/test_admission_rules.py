@@ -1,17 +1,31 @@
-"""Direction admission rules (D-08, plan 07-07 — test-with-code, D-24).
+"""Admission rules (D-08 direction, D-10 increase, max_positions — D-24 test-with-code).
 
-The OrderManager enforces the strategy's DECLARED TradingDirection at
-admission, as step 0 of process_signal BEFORE sizing. The gate intercepts
-exactly the RESEARCH Pitfall-4 fall-through: an unsized LONG_ONLY SELL with
-no open long previously fell through to entry sizing and opened a short
-(the 2 blessed golden shorts). Now it is an audited REJECTED order with
-triggered_by == "admission_direction" — DEF-01-C dies structurally.
+The OrderManager enforces the strategy's DECLARED constraints at admission,
+as step 0 of process_signal BEFORE sizing:
 
-Preserved paths the gate must NOT block:
+- Direction gate (D-08, plan 07-07): an unsized LONG_ONLY SELL with no open
+  long previously fell through to entry sizing and opened a short (the 2
+  blessed golden shorts — RESEARCH Pitfall 4). Now it is an audited REJECTED
+  order with triggered_by == "admission_direction" — DEF-01-C dies
+  structurally.
+- Increase gate (D-10, plan 07-08): allow_increase=False + unsized
+  BUY-while-long is an audited REJECTED order with
+  triggered_by == "admission_increase" — SMA_MACD's declared-but-ignored
+  False is finally honest. allow_increase=True sizes the increase by policy
+  on CURRENT remaining available cash and flows through the Phase 5
+  check-and-reserve gate (the literal M5-06 check_cash requirement).
+- max_positions gate (plan 07-08, oracle-dark): an unsized BUY opening a
+  NEW position when open_position_count >= max_positions is an audited
+  REJECTED order with triggered_by == "admission_max_positions". A BUY for
+  an already-open ticker is the increase case, never this one (no
+  double-gating).
+
+Preserved paths the gates must NOT block:
 - LONG_ONLY SELL with an open long (the exit sizes and emits, unchanged)
-- LONG_ONLY BUY (entries pass)
+- LONG_ONLY BUY first entries (sized exactly as before — byte-exactness of
+  the post-07-07 reference depends on it when N=0)
 - LONG_SHORT signals (registration, not admission, polices LONG_SHORT)
-- Explicit-quantity signals (the live/manual path skips the gate)
+- Explicit-quantity signals (the live/manual path skips every gate)
 """
 
 from datetime import datetime
@@ -25,6 +39,7 @@ from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
 from itrader.core.enums import OrderType, OrderStatus, Side
+from itrader.core.money import to_money
 from itrader.core.sizing import FractionOfCash, TradingDirection
 
 
@@ -49,9 +64,10 @@ class _AdmissionHarness:
         self, action, ticker="BTCUSDT", quantity=None, price=40.0,
         order_type="MARKET", stop_loss=0.0, take_profit=0.0,
         direction=TradingDirection.LONG_ONLY, exit_fraction=Decimal("1"),
+        allow_increase=False, max_positions=1,
     ):
         """Create a mock signal. ``quantity=None`` means "the order layer
-        sizes me" (D-10) — the unsized path the direction gate polices."""
+        sizes me" (D-10) — the unsized path the admission gates police."""
         return SignalEvent(
             time=datetime.now(),
             order_type=OrderType(order_type),
@@ -65,7 +81,8 @@ class _AdmissionHarness:
             portfolio_id=self.last_ptf_id,
             sizing_policy=FractionOfCash(Decimal("0.95")),
             direction=direction,
-            allow_increase=False,
+            allow_increase=allow_increase,
+            max_positions=max_positions,
             exit_fraction=exit_fraction,
         )
 
@@ -222,3 +239,163 @@ def test_explicit_quantity_sell_skips_the_direction_gate(harness):
     order_event: OrderEvent = harness.queue.get(False)
     assert order_event.action is Side.SELL
     assert order_event.quantity == 1.5
+
+
+# --- D-10 increase gate + max_positions gate (plan 07-08) -------------------
+
+
+def _get_single_rejection(harness, ticker):
+    """Return the latest state change of the ONE REJECTED order for ticker.
+
+    Unlike the direction helper above, the increase/max_positions scenarios
+    store prior FILLED orders for the harness positions — filter to the
+    REJECTED entity instead of asserting the whole book."""
+    rejected = [
+        o for o in harness.order_storage.get_orders_by_ticker(ticker, harness.last_ptf_id)
+        if o.status == OrderStatus.REJECTED
+    ]
+    assert len(rejected) == 1
+    # Rejected-at-admission entities never enter the active book.
+    assert all(
+        o.status != OrderStatus.REJECTED
+        for o in harness.order_storage.get_active_orders(harness.last_ptf_id)
+    )
+    return rejected[0].get_latest_state_change()
+
+
+def test_allow_increase_false_unsized_buy_while_long_is_rejected(harness):
+    """allow_increase=False + unsized BUY + open long: zero emitted orders,
+    ONE stored REJECTED order naming the violation (D-10 — SMA_MACD's
+    declared-but-ignored False is finally honest)."""
+    harness.open_long(quantity=2.5, price=40.0)
+    assert harness.queue.empty()
+
+    signal = harness.create_mock_signal("BUY", allow_increase=False)
+    harness.order_handler.on_signal(signal)
+
+    assert harness.queue.empty()
+    last_change = _get_single_rejection(harness, "BTCUSDT")
+    assert last_change.from_status == OrderStatus.PENDING
+    assert last_change.to_status == OrderStatus.REJECTED
+    assert last_change.triggered_by == "admission_increase"
+    assert "position increase not allowed by strategy" in last_change.reason
+    # Event-derived timestamp — never the wall clock (M2-09).
+    assert last_change.timestamp == signal.time
+
+
+def test_allow_increase_true_sizes_increase_on_remaining_cash_and_reserves(harness):
+    """allow_increase=True + unsized BUY + open long: sized via the policy on
+    CURRENT remaining available_cash (fraction-of-remaining semantics — the
+    CONTEXT discretion clause) and reserved through the Phase 5
+    check-and-reserve gate (the literal M5-06 check_cash requirement)."""
+    harness.open_long(quantity=100, price=40.0)  # 4000 spent of 10000
+    remaining = harness.ptf_handler.available_cash(harness.last_ptf_id)
+    assert remaining < Decimal("10000")
+    expected = (Decimal("0.95") * remaining) / to_money(40.0)
+
+    signal = harness.create_mock_signal("BUY", allow_increase=True)
+    harness.order_handler.on_signal(signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    # The policy expression on REMAINING cash, repr-exact (Pitfall 1 shape).
+    assert str(order_event.quantity) == str(expected)
+    # The increase flowed through check-and-reserve: buying power dropped by
+    # exactly the reservation amount (price x quantity, zero commission).
+    reserved_available = harness.ptf_handler.available_cash(harness.last_ptf_id)
+    assert reserved_available == remaining - to_money(40.0) * expected
+
+
+def test_increase_with_insufficient_funds_yields_cash_reservation_rejection(harness):
+    """An allowed increase that cannot be funded still produces the existing
+    audited cash_reservation rejection — the sized increase is COVERED by the
+    check-and-reserve gate, never bypassing it (T-07-21)."""
+    harness.open_long(quantity=2.5, price=40.0)
+    # Inflate the estimated commission so reserve = price*qty + commission
+    # exceeds available cash (FractionOfCash <= 1 alone always fits).
+    harness.order_handler.order_manager.commission_estimator = (
+        lambda quantity, price: Decimal("1000000")
+    )
+
+    signal = harness.create_mock_signal("BUY", allow_increase=True)
+    harness.order_handler.on_signal(signal)
+
+    assert harness.queue.empty()
+    last_change = _get_single_rejection(harness, "BTCUSDT")
+    assert last_change.to_status == OrderStatus.REJECTED
+    assert last_change.triggered_by == "cash_reservation"
+
+
+def test_first_entry_is_untouched_by_the_new_gates(harness):
+    """A no-position first entry sizes EXACTLY as before — quantity str-equal
+    to the policy expression on available cash (byte-exactness of the
+    post-07-07 reference depends on this when N=0)."""
+    available = harness.ptf_handler.available_cash(harness.last_ptf_id)
+    expected = (Decimal("0.95") * available) / to_money(40.0)
+
+    signal = harness.create_mock_signal("BUY", allow_increase=False, max_positions=1)
+    harness.order_handler.on_signal(signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    assert str(order_event.quantity) == str(expected)
+
+
+def test_max_positions_rejects_new_ticker_entry_at_the_limit(harness):
+    """max_positions=1 + unsized BUY for a NEW ticker while another ticker's
+    position is open: audited REJECTED, triggered_by admission_max_positions
+    (oracle-dark — the golden run is single-ticker)."""
+    harness.open_long(quantity=2.5, price=40.0, ticker="BTCUSDT")
+    assert harness.ptf_handler.open_position_count(harness.last_ptf_id) == 1
+
+    signal = harness.create_mock_signal("BUY", ticker="ETHUSDT", max_positions=1)
+    harness.order_handler.on_signal(signal)
+
+    assert harness.queue.empty()
+    last_change = _get_single_rejection(harness, "ETHUSDT")
+    assert last_change.from_status == OrderStatus.PENDING
+    assert last_change.to_status == OrderStatus.REJECTED
+    assert last_change.triggered_by == "admission_max_positions"
+    assert last_change.timestamp == signal.time
+
+
+def test_max_positions_allows_new_entry_under_the_limit(harness):
+    """max_positions=2 with one open position: a new-ticker entry passes the
+    gate and sizes (no over-rejection, T-07-22)."""
+    harness.open_long(quantity=2.5, price=40.0, ticker="BTCUSDT")
+
+    signal = harness.create_mock_signal("BUY", ticker="ETHUSDT", max_positions=2)
+    harness.order_handler.on_signal(signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    assert order_event.ticker == "ETHUSDT"
+    assert order_event.quantity > 0
+
+
+def test_buy_for_open_ticker_is_the_increase_case_not_max_positions(harness):
+    """A BUY for the already-open ticker trips the increase gate, never the
+    max_positions gate — a signal trips at most ONE gate (no double-gating)."""
+    harness.open_long(quantity=2.5, price=40.0)
+    assert harness.ptf_handler.open_position_count(harness.last_ptf_id) == 1
+
+    signal = harness.create_mock_signal("BUY", allow_increase=False, max_positions=1)
+    harness.order_handler.on_signal(signal)
+
+    assert harness.queue.empty()
+    last_change = _get_single_rejection(harness, "BTCUSDT")
+    assert last_change.triggered_by == "admission_increase"
+
+
+def test_explicit_quantity_buy_skips_increase_and_max_positions_gates(harness):
+    """Explicit-quantity signals skip BOTH new gates — the preserved
+    live/manual path (open long, allow_increase=False, max_positions=1)."""
+    harness.open_long(quantity=2.5, price=40.0)
+
+    signal = harness.create_mock_signal(
+        "BUY", quantity=1.0, allow_increase=False, max_positions=1)
+    harness.order_handler.on_signal(signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    assert order_event.quantity == 1.0
