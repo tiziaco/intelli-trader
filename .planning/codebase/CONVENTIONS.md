@@ -1,216 +1,198 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-06-03
-
-## Indentation
-
-The codebase has a split-indentation situation — match the file you are editing:
-
-- **Tabs:** Most handler modules under `itrader/` use tab indentation.
-  - `itrader/order_handler/order.py` (tabs)
-  - `itrader/order_handler/order_handler.py` (tabs)
-  - `itrader/order_handler/order_manager.py` (tabs)
-  - `itrader/portfolio_handler/portfolio.py` (tabs)
-  - `itrader/execution_handler/execution_handler.py` (tabs)
-  - `itrader/events_handler/event.py` (tabs)
-
-- **4 spaces:** Newer refactored modules use 4-space indentation.
-  - `itrader/portfolio_handler/portfolio_handler.py` (spaces)
-  - `itrader/portfolio_handler/cash_manager.py` (spaces)
-  - `itrader/portfolio_handler/position_manager.py` (spaces)
-  - `itrader/portfolio_handler/transaction_manager.py` (spaces)
-  - `itrader/config/` (spaces throughout)
-  - `itrader/core/exceptions/` (spaces throughout)
-
-**Rule:** Open the file before writing. Use whatever character the existing lines use. Do not mix within a file.
+**Analysis Date:** 2026-06-07
 
 ## Naming Patterns
 
 **Files:**
-- `snake_case.py` throughout — no exceptions found.
-- Handler modules: `<domain>_handler.py` (e.g., `order_handler.py`, `execution_handler.py`)
-- Manager classes: `<domain>_manager.py` (e.g., `order_manager.py`, `cash_manager.py`)
-- Storage: `<backend>_storage.py` (e.g., `in_memory_storage.py`)
-- Tests mirror source: `test_<module>.py`
+- `snake_case.py` throughout — no exceptions in the codebase
+- Handler modules: `<domain>_handler.py` — e.g., `itrader/order_handler/order_handler.py`, `itrader/execution_handler/execution_handler.py`
+- Manager modules: `<domain>_manager.py` — e.g., `itrader/order_handler/order_manager.py`, `itrader/portfolio_handler/cash_manager.py`
+- Storage modules: `<backend>_storage.py` — e.g., `itrader/order_handler/storage/in_memory_storage.py`
+- Test files: `test_<module>.py`, mirroring source paths under `tests/`
 
 **Classes:**
 - `PascalCase` for all classes: `OrderHandler`, `PortfolioHandler`, `SimulatedExchange`, `MatchingEngine`
-- Handler classes named `<Domain>Handler` — a thin interface delegating to `<Domain>Manager`
-- Manager classes named `<Domain>Manager` — owns the business logic
-- Abstract bases named `Abstract<Name>` (e.g., `AbstractExchange`, `AbstractExecutionHandler`)
-- Config classes named `<Domain>Config` (e.g., `PortfolioConfig`, `ExchangeConfig`)
-- Exception classes named `<Specific><Category>Error` (e.g., `PortfolioNotFoundError`, `InsufficientFundsError`)
+- Handler classes: `<Domain>Handler` — thin interface delegating to `<Domain>Manager`
+- Manager classes: `<Domain>Manager` — owns business logic
+- Abstract bases: `Abstract<Name>` — e.g., `AbstractExchange`, `AbstractExecutionHandler`
+- Config classes: `<Domain>Config` — e.g., `PortfolioConfig`, `ExchangeConfig`
+- Exception classes: `<Specific><Category>Error` — e.g., `PortfolioNotFoundError`, `InsufficientFundsError`
+- Enum classes: `PascalCase` — e.g., `OrderType`, `OrderStatus`, `FillStatus`
 
-**Functions/Methods:**
+**Functions and Methods:**
 - `snake_case` throughout
 - Event handler callbacks: `on_<event_type>()` — e.g., `on_signal()`, `on_order()`, `on_fill()`, `on_market_data()`
-- Factory class methods: `new_<object>()` — e.g., `Order.new_order()`, `Order.new_stop_order()`, `FillEvent.new_fill()`
+- Factory class methods: `new_<object>()` — e.g., `Order.new_order()`, `FillEvent.new_fill()`, `OrderEvent.new_order_event()`
 - Boolean-returning properties: `is_<state>` — e.g., `is_active`, `is_fully_filled`, `is_partially_filled`
 - Getter methods: `get_<thing>()` — e.g., `get_portfolio()`, `get_latest_state_change()`
-- Private methods and attributes: `_<name>` with single underscore
+- Private attributes/methods: `_<name>` with single underscore
 
 **Variables:**
-- `snake_case` always
-- Queue variable: always named `global_queue` or `events_queue` in constructors
-- Logger: always `self.logger` bound from `get_itrader_logger().bind(component="ClassName")`
+- `snake_case` throughout
+- Queue variable: always `global_queue` or `events_queue` in constructors
+- Logger: always `self.logger = get_itrader_logger().bind(component="ClassName")`
 - Config: always `self.config`
 
-**Enums:**
-- Enum names: `PascalCase` (e.g., `OrderType`, `OrderStatus`, `FillStatus`)
-- Enum members: `UPPER_CASE` (e.g., `OrderStatus.PENDING`, `FillStatus.EXECUTED`)
-- String-to-enum maps: `<domain>_<type>_map` (e.g., `order_type_map`, `order_status_map`, `fill_status_map`)
+**Enum Members:**
+- `UPPER_CASE` — e.g., `OrderStatus.PENDING`, `FillStatus.EXECUTED`, `EventType.FILL`
+
+**String-to-enum maps:**
+- `<domain>_<type>_map` — e.g., `order_type_map`, `order_status_map`, `fill_status_map`
+
+## Code Style
+
+**Formatting:**
+- No formatter enforced (no Ruff, Black, or Prettier config found)
+- Mixed indentation in the codebase — **tabs** vs **4 spaces** both in use
+
+**Indentation rule (critical):**
+- **Tabs:** Most handler modules under `itrader/` — e.g., `itrader/order_handler/order_handler.py`, `itrader/execution_handler/matching_engine.py` use spaces; older handlers still use tabs. Match the file you edit.
+- **4 spaces:** Newer refactored modules: `itrader/config/`, `itrader/core/`, `itrader/events_handler/events/`, `itrader/portfolio_handler/portfolio_handler.py`, all test files.
+- **Rule:** Read the file first. Use the indentation style already present.
+
+**Linting:**
+- `mypy --strict` with `files = ["itrader"]` declared in `pyproject.toml`
+- Several mypy `[[tool.mypy.overrides]]` blocks with `ignore_errors = true` for deferred subsystems (live trading, SQL, screeners, reporting)
+- No flake8, ruff, or pylint config detected
+
+**Type annotations:**
+- Used throughout newer modules; constructor parameters annotated
+- `Optional[X]` from `typing` used in older modules; newer code uses `X | None`
+- `TYPE_CHECKING` guards used to avoid heavy runtime imports (e.g., `itrader/events_handler/full_event_handler.py:16`)
+- `# type: ignore[assignment]` used sparingly for known mypy gaps (e.g., `itrader/order_handler/order.py:63`)
 
 ## Import Organization
 
-**Order (within each file):**
-1. Standard library (`queue`, `threading`, `datetime`, `typing`, `dataclasses`)
-2. Third-party (`pandas`, `numpy`, `readerwriterlock`, `structlog`)
-3. Internal absolute imports from `itrader.*` — used for cross-domain imports
-4. Internal relative imports (`from .module import X`, `from ..domain import Y`) — used within a package
+**Order within files:**
+1. Standard library (`import queue`, `from decimal import Decimal`, `from datetime import datetime`)
+2. Third-party libraries (`import pytest`, `import pandas as pd`, `from pydantic import BaseModel`)
+3. Internal imports — absolute for cross-domain, relative for same-package
 
-**Cross-domain rule:** When importing from a sibling handler package, use absolute `itrader.*` paths:
+**Path conventions:**
+- Absolute imports: `from itrader.core.enums import OrderType` (preferred for cross-domain)
+- Relative imports: `from .base import OrderBase` (acceptable within same package)
+- Both patterns coexist: `from .order import Order` alongside `from itrader.logger import get_itrader_logger`
+- No path alias configuration detected
+
+**Module-level singletons (initialized on `import itrader`):**
+- `config` — `SystemConfig` instance, accessed via `from itrader import config`
+- `logger` — `ITraderStructLogger` instance, accessed via `from itrader import logger`
+- `idgen` — `IDGenerator` instance, accessed via `from itrader import idgen`
+- Source: `itrader/__init__.py`
+
+## Money / Decimal Policy
+
+This is a **hard correctness constraint**, not a style preference.
+
+**D-04 — String entry rule:** Always enter `Decimal` via `Decimal(str(x))` or `core.money.to_money(x)`. Never call `Decimal(some_float)`.
 ```python
-from itrader.core.enums import OrderType, OrderStatus
-from itrader.core.exceptions import PortfolioNotFoundError
-from itrader.events_handler.event import FillEvent, OrderEvent
-from itrader.logger import get_itrader_logger
-from itrader import config, idgen
+# CORRECT
+from itrader.core.money import to_money
+price = to_money(42.5)              # Decimal("42.5")
+price = Decimal(str(42.5))          # Decimal("42.5")
+
+# WRONG — carries binary float artifact
+price = Decimal(42.5)               # Decimal("42.4999999...")
 ```
 
-**Intra-package rule:** Use relative imports within the same handler package:
-```python
-from .order import Order
-from .base import OrderBase, OrderStorage
-from ..core.enums import OrderStatus
-```
+**D-01 — No mid-computation quantization:** Carry full 28-digit Decimal precision through all intermediate arithmetic. Call `core.money.quantize()` ONLY at cash ledger writes, reported PnL, and serialization.
 
-**No path aliases** — the project does not use import aliases or `__init__.py` re-exports beyond what is shown in `itrader/__init__.py`.
-
-## Dataclasses and Type Hints
-
-Events and core data objects are Python `dataclasses`:
-```python
-@dataclass
-class OrderStateChange:
-    from_status: Optional[OrderStatus]
-    to_status: OrderStatus
-    timestamp: datetime
-    reason: str
-    triggered_by: str = "system"
-    additional_data: Optional[dict] = None
-```
-
-Type hints are used consistently on function signatures in newer modules (portfolio managers, config, exceptions). Older handler modules (events_handler, strategy_handler) use type hints less consistently.
-
-Use `Optional[T]` from `typing` for nullable fields, not `T | None` (Python 3.10+ syntax not yet adopted uniformly).
-
-## Module-level Singletons
-
-`itrader/__init__.py` initializes three process-wide singletons on import:
-- `config` — system configuration object
-- `logger` — `ITraderStructLogger` instance
-- `idgen` — `IDGenerator` instance
-
-Import these directly in handler classes:
-```python
-from itrader import config, idgen
-from itrader.logger import get_itrader_logger
-```
-
-Do NOT re-initialize these in handler constructors. Use `get_itrader_logger()` to get a logger, then `.bind(component="ClassName")` immediately.
-
-## Logging
-
-**Framework:** structlog via `itrader/logger.py`
-
-**Pattern for every class:**
-```python
-from itrader.logger import get_itrader_logger
-
-class MyHandler:
-    def __init__(self, ...):
-        self.logger = get_itrader_logger().bind(component="MyHandler")
-        # ...
-        self.logger.info("MyHandler initialized", key=value)
-```
-
-**Log levels:**
-- `info` — successful operations, initialization messages
-- `warning` / `warn` — non-fatal issues (unknown exchange, skipped event)
-- `error` — caught exceptions, routing failures: `self.logger.error("msg", exc_info=True)`
-- `debug` — fine-grained tracing (not common in current code)
-
-**Structured fields:** Pass extra context as keyword arguments, not f-strings:
-```python
-# Correct
-self.logger.info("Order filled", order_id=order.id, ticker=order.ticker)
-
-# Avoid
-self.logger.info(f"Order {order.id} filled for {order.ticker}")
-```
+**D-03 — ROUND_HALF_UP at boundaries:** `quantize(value, instrument, kind)` applies per-instrument scale (BTC 8dp, USD cash 2dp) using `ROUND_HALF_UP`. Source: `itrader/core/money.py`.
 
 ## Error Handling
 
-**Exception hierarchy:** All custom exceptions inherit from `ITradingSystemError` in `itrader/core/exceptions/base.py`.
-
-**Domain exception packages:**
-- `itrader/core/exceptions/base.py` — `ITradingSystemError`, `ValidationError`, `ConfigurationError`, `StateError`, `ConcurrencyError`, `NotFoundError`
+**Exception hierarchy:**
+- `itrader/core/exceptions/base.py` — `ITraderError`, `ValidationError`, `ConfigurationError`, `StateError`, `NotFoundError`
 - `itrader/core/exceptions/portfolio.py` — `PortfolioError`, `InsufficientFundsError`, `PortfolioNotFoundError`, etc.
-- `itrader/core/exceptions/execution.py` — `ExecutionError`, `ExchangeConnectionError`, `OrderExecutionError`, etc.
+- `itrader/core/exceptions/order.py` — order-specific typed exceptions
+- `itrader/core/exceptions/data.py` — data-related exceptions
 
-**Raise domain-specific exceptions** rather than raw `ValueError`/`RuntimeError` wherever possible.
-
-**Catching pattern in handlers:**
+**Raise-contract (not boolean-return):**
 ```python
-try:
-    result = self.some_operation(event)
-except SpecificError as e:
-    self.logger.error("Operation failed", reason=str(e))
-    return None  # or False
-except Exception as e:
-    self.logger.error("Unexpected error", exc_info=True)
-    return None
+# CORRECT — raise typed exceptions, return None on success
+def validate_inputs(self, quantity: Decimal, price: Decimal) -> None:
+    if quantity <= 0:
+        raise ValidationError("quantity", str(quantity), "must be positive")
+
+# WRONG — boolean returns mask error details
+def validate_inputs(...) -> bool:
+    ...
 ```
 
-**Event queue errors:** If an operation fails and there is a corresponding error event type (e.g., `PortfolioErrorEvent`), publish it to the queue rather than raising into the event loop.
+**Handler error policy:**
+- `ExecutionHandler.on_order()` and `on_market_data()` catch exceptions per-exchange and log; they do not re-raise (prevents queue stalls)
+- `PortfolioHandler` uses `_operation_context()` context manager that publishes `PortfolioErrorEvent` on failure
+- `SimulatedExchange.execute_order()` returns `ExecutionResult(success=False, ...)` on rejection and emits `FillEvent(REFUSED)`
+- **Backtest fail-fast policy:** `EventHandler._on_handler_error()` re-raises — handler failures abort the run; see `itrader/events_handler/full_event_handler.py:141`
+
+**Logging patterns:**
+- Use `self.logger = get_itrader_logger().bind(component="ClassName")` — always bound with component name
+- `info` — successful operations, initialization messages
+- `warning` — non-fatal issues (unknown exchange, skipped event)
+- `error` — caught exceptions: `self.logger.error("msg", exc_info=True)`
+- `debug` — fine-grained tracing (queue dispatch messages, order events)
 
 ## Docstrings
 
-**Module-level:** Triple-quoted docstring at file top describing purpose and key responsibilities.
+**Module-level docstrings:** Present in newer modules; describe constraints and design decisions referenced by labels like `D-01`, `D-12`, `M5-02` (milestone/decision codes used throughout the codebase). Example: `itrader/execution_handler/matching_engine.py`.
 
-**Class-level:** Triple-quoted docstring describing class role, key methods, and architectural constraints.
+**Class docstrings:** `"""One-line summary.\n\nLonger description."""` format. Parameters often listed under `Parameters ----------`.
 
-**Method-level:** Triple-quoted docstring with summary line. Parameters documented with NumPy-style format in critical public methods:
+**Function/method docstrings:** NumPy-style with `Parameters`, `Returns` sections in public API methods. Event callbacks and internal methods use shorter single-line docstrings or inline comments.
+
+**Inline comments:** Reference design decisions as label codes (e.g., `# D-12: Decimal end-to-end`, `# D-18: manager owns storage`). These are mandatory for non-obvious architectural choices.
+
+## Dataclass Conventions
+
+**Event dataclasses (frozen, immutable facts):**
 ```python
-def __init__(self, events_queue: Queue, ...):
-    """
-    Parameters
-    ----------
-    events_queue : Queue
-        The events queue of the trading system
-    """
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FillEvent(Event):
+    type: EventType = field(default=EventType.FILL, init=False)
+    status: FillStatus
+    ...
 ```
+- All event classes: `frozen=True`, `slots=True`, `kw_only=True`
+- `type` field: always `init=False`, set via `field(default=EventType.X, init=False)`
+- Factory class methods `new_<event>()` for safe construction
 
-Short private/utility methods often have no docstring.
-
-## Handler-Manager Split
-
-Every domain uses a two-layer pattern — always follow it when adding behavior:
-
-- `OrderHandler` / `PortfolioHandler` / `ExecutionHandler` — thin interface, receives events from queue, delegates logic, emits events back to queue
-- `OrderManager` / `CashManager` / `PositionManager` etc. — owns business logic, has no direct queue access
-
-This ensures the queue boundary is never bypassed. Handlers must never call each other directly across domains — emit an event instead.
-
-## Configuration
-
-Access configuration through the domain config providers, not by reading raw files:
+**Value objects (frozen, no event machinery):**
 ```python
-from itrader.config import get_portfolio_config_provider, get_exchange_preset, PortfolioConfig
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Bar:
+    time: datetime
+    open: Decimal
+    ...
 ```
+- `Bar` (`itrader/core/bar.py`) is the canonical example — not an `Event` subclass
 
-Config objects are dataclasses (`PortfolioConfig`, `ExchangeConfig`) with typed fields. Default presets are loaded via `get_<domain>_preset('default')`.
+## Handler-Manager Split Pattern
+
+**Handler (interface layer):**
+- Receives events from the queue, delegates all logic to manager, emits events back to queue
+- No storage reference retained (facade → manager → storage)
+- Public API: `on_<event>()`, `<verb>_order()`, `get_<thing>()` methods
+
+**Manager (logic layer):**
+- Owns business logic and storage
+- Has no direct queue access — returns operation results/events to the handler
+- The handler enqueues returned events; the manager never does
+
+Example: `itrader/order_handler/order_handler.py` (handler) delegates to `itrader/order_handler/order_manager.py` (manager).
+
+## Queue Usage
+
+**Cross-domain communication rule:** Handlers NEVER call other handler methods directly. All cross-domain interaction uses `self.events_queue.put(event)`.
+
+```python
+# CORRECT
+self.events_queue.put(order_event)
+
+# WRONG — direct cross-domain call
+self.execution_handler.on_order(order_event)
+```
 
 ---
 
-*Convention analysis: 2026-06-03*
+*Convention analysis: 2026-06-07*
