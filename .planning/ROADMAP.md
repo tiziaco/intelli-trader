@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging (completed 2026-06-05)
 - [x] **Phase 5: M4 — Money & Transaction Correctness** - Cash through CashManager, atomic transactions, order facade layering, frozen execution DTOs (completed 2026-06-06)
 - [x] **Phase 6: M5a — Backtest Validity, Fills & Data Pipeline** - Look-ahead/fill realism, Bar struct, precomputed frames, fee/slippage, price-handler Provider/Store/Feed split (gap closure pending) (completed 2026-06-06)
-- [ ] **Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage** - Complete strategy-declared sizing, correct reporting/metrics, universe stub, strategy/data/reporting tests
+- [x] **Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage** - Complete strategy-declared sizing, correct reporting/metrics, universe stub, strategy/data/reporting tests (completed 2026-06-07)
 - [ ] **Phase 8: M5c — Cross-Validation & Final Oracle** - Cross-validate vs backtesting.py + backtrader; freeze the final numerical reference
 
 ## Phase Details
@@ -222,7 +222,7 @@ Plans:
 
 **Wave 6**
 
-- [ ] 07-08-PLAN.md — Re-freeze 2: allow_increase + max_positions guards (D-10) + phase gate (RESULT-CHANGING, owner-gated, M5-06)
+- [x] 07-08-PLAN.md — Re-freeze 2: allow_increase + max_positions guards (D-10) + phase gate (RESULT-CHANGING, owner-gated, M5-06)
 
 ### Phase 8: M5c — Cross-Validation & Final Oracle
 
@@ -250,5 +250,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 8/8 | Complete   | 2026-06-06 |
-| 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 7/8 | In Progress|  |
+| 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 8/8 | Complete   | 2026-06-07 |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
