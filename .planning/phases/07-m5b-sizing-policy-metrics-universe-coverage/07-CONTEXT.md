@@ -122,6 +122,13 @@ re-freezes. Phase 8 still owns the final sanctioned baseline.
   state. `run_backtest.py` and tests call it directly. `StatisticsReporting._prepare_data`/
   `_to_sql` die (SQL → D-sql); `EngineLogger` deleted (locked by requirement). Presentation is
   a separate optional module consuming the same frames.
+  - *Amendment (user decision, 2026-06-07, plan 07-03):* the metrics block also **prints at
+    the end of every backtest run, engine-level** — `TradingSystem.run(print_summary=True)`
+    builds frames per portfolio and prints `format_metrics(...)`. To enable this, the frame
+    builders (`build_trade_log`/`build_equity_curve`) relocate verbatim from `run_backtest.py`
+    into pure `itrader/reporting/frames.py` (duck-typed portfolio, no handler imports).
+    Artifact serialization (`output/`, `summary.json`) remains `run_backtest.py`'s job —
+    only display moves into the engine. Oracle-inert; byte-exact gated.
 - **D-15: Derived metrics FREEZE into golden `summary.json`** — sharpe, sortino, cagr, max
   drawdown, profit factor, win rate, computed deterministically by the golden run. Phase 8
   reconciles a frozen metrics reference; future metric-math regressions trip the oracle. Rides
