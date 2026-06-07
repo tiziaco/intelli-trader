@@ -17,6 +17,8 @@ Regression-locks the bar-timing contract (bar_feed module docstring, rules
    filterwarnings=["error"] makes any FutureWarning an implicit failure.
 """
 
+import logging
+import queue
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -27,6 +29,7 @@ import pytest
 from itrader.config import TIMEZONE
 from itrader.core.bar import Bar
 from itrader.core.exceptions import MissingPriceDataError
+from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.price_handler.feed import BacktestBarFeed
 from itrader.price_handler.store import CsvPriceStore
 
@@ -272,3 +275,46 @@ def test_minutes_precompute_resamples_without_futurewarning(tmp_path):
                          asof=ts('2020-03-02 09:59:00'))
     assert list(window.index) == [ts('2020-03-02 09:00:00'),
                                   ts('2020-03-02 09:30:00')]
+
+
+# -- 8. BarEvent factory (relocated from DynamicUniverse — Plan 07-02, D-20) ------
+
+def test_generate_bar_event_unbound_returns_the_bar_event(daily_feed):
+    # Without a bound queue the factory RETURNS the BarEvent (test-friendly
+    # contract, mirrors DynamicUniverse).
+    event = daily_feed.generate_bar_event(TimeEvent(time=ts('2020-01-03')))
+    assert isinstance(event, BarEvent)
+    assert event.time == ts('2020-01-03')
+    assert event.bars == daily_feed.current_bars(ts('2020-01-03'))
+
+
+def test_generate_bar_event_bound_queue_enqueues_and_returns_none(daily_feed):
+    q: queue.Queue = queue.Queue()
+    daily_feed.bind(q, ['BTCUSD'])
+    result = daily_feed.generate_bar_event(TimeEvent(time=ts('2020-01-03')))
+    assert result is None
+    event = q.get_nowait()
+    assert isinstance(event, BarEvent)
+    assert event.time == ts('2020-01-03')
+    assert set(event.bars) == {'BTCUSD'}
+    assert q.empty()
+
+
+def test_generate_bar_event_missing_membership_ticker_warns(duo_feed, caplog):
+    # The relocated missing-ticker warning (RESEARCH OQ4): a membership
+    # ticker ABSENT from the produced bars logs a warning naming the
+    # ticker and the tick time.
+    duo_feed.bind(None, ['BTCUSD', 'LATEUSD'])
+    with caplog.at_level(logging.WARNING):
+        event = duo_feed.generate_bar_event(TimeEvent(time=ts('2020-01-03')))
+    assert event is not None
+    assert 'LATEUSD' not in event.bars  # sparse universe: absent, not None
+    assert 'LATEUSD' in caplog.text
+    assert '2020-01-03' in caplog.text
+
+
+def test_generate_bar_event_no_warning_when_membership_covered(duo_feed, caplog):
+    duo_feed.bind(None, ['BTCUSD', 'ETHUSD'])
+    with caplog.at_level(logging.WARNING):
+        duo_feed.generate_bar_event(TimeEvent(time=ts('2020-01-03')))
+    assert caplog.records == []
