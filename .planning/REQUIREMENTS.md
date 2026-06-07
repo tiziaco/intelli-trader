@@ -146,7 +146,7 @@
 - [ ] **M5-07**: Reporting/metrics are correct — drawdown math, pandas-2/plotly API breakage, `is np.nan`
   identity bug, rolling-stats stub, and the dead `EngineLogger` resolved; computation split from
   presentation *(#38, #14 [compute; persist→D-sql], KB2, KB23, TD6)*
-- [ ] **M5-08**: `universe/` collapses to a thin documented symbol-set stub (false "dynamic"/redundant
+- [x] **M5-08**: `universe/` collapses to a thin documented symbol-set stub (false "dynamic"/redundant
   copies removed) *(#33)*
 - [ ] **M5-09**: Strategy/data/reporting/universe paths gain test coverage — CSV price store, reporting/
   statistics, universe *(TC2 [CSV part; adapters→D-oanda], TC4, TC6)*

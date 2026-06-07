@@ -47,15 +47,22 @@ hot-loop cost (#4). Here resampled frames are computed ONCE per
 Purity: like ``MatchingEngine``, the slice path has NO dependency on the
 event queue, performs no network access and no store writes, and is fully
 deterministic given the store frames. The logger is bound at construction
-only; the per-tick query path does not log.
+only; the per-tick QUERY path (window/megaframe/current_bars) does not
+log. The one queue-aware seam is the BarEvent FACTORY
+(``generate_bar_event``, relocated from the deleted dynamic universe —
+Plan 07-02, D-20): the data engine produces the per-tick BarEvent and may
+log the missing-ticker warning (RESEARCH OQ4).
 """
 
+import queue
 from datetime import datetime, timedelta
+from typing import Any, Optional
 
 import pandas as pd
 
 from itrader.core.bar import Bar
 from itrader.core.exceptions import MissingPriceDataError
+from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.logger import get_itrader_logger
 from itrader.price_handler.store.base import PriceStore
 
@@ -145,6 +152,13 @@ class BacktestBarFeed(BarFeed):
         for ticker in self._symbols:
             self._frames[(ticker, self._base_alias)] = store.read_bars(ticker)
 
+        # Run-path bindings for the BarEvent factory (Plan 07-02, D-20) —
+        # set by the trading system at wiring time via ``bind``. The queue
+        # is optional (unbound: the factory RETURNS the event); membership
+        # is used ONLY for the missing-ticker warning (RESEARCH OQ4).
+        self.global_queue: "Optional[queue.Queue[Any]]" = None
+        self.membership: list[str] = []
+
         self.logger = get_itrader_logger().bind(component="BacktestBarFeed")
         self.logger.info(
             'Backtest bar feed initialized (%d symbols, base timeframe %s)',
@@ -190,6 +204,57 @@ class BacktestBarFeed(BarFeed):
         resampled = base.resample(alias, label="left", closed="left").agg(_AGG)
         self._frames[key] = resampled
         return resampled
+
+    # -- BarEvent factory (relocated from the legacy universe — Plan 07-02, D-20) --
+
+    def bind(self, global_queue: "Optional[queue.Queue[Any]]",
+             membership: list[str]) -> None:
+        """Bind the run-path event sink and membership set (wiring time).
+
+        Called once by the trading system after membership is derived
+        (``itrader.universe.derive_membership``). ``global_queue`` may be
+        ``None`` — the factory then returns the BarEvent instead of
+        enqueueing it.
+
+        Parameters
+        ----------
+        global_queue : Optional[queue.Queue]
+            The global events queue, or ``None`` for the return contract.
+        membership : list[str]
+            The derived tradable symbol set — used ONLY for the
+            missing-ticker warning loop (RESEARCH OQ4).
+        """
+        self.global_queue = global_queue
+        self.membership = membership
+
+    def generate_bar_event(self, time_event: TimeEvent) -> Optional[BarEvent]:
+        """Generate the per-tick BarEvent from the feed's own bar facts.
+
+        The relocated legacy-universe ``generate_bar_event`` body (D-20 —
+        the data engine owns BarEvent production, LEAN/Nautilus shape):
+        wrap ``current_bars(time)`` in a BarEvent, warn for any membership
+        ticker absent from the produced bars (sparse universe), and either
+        enqueue (queue bound: returns ``None``) or return the event.
+
+        Parameters
+        ----------
+        time_event : TimeEvent
+            Simulation-clock event carrying the last closed bar time.
+        """
+        bars = self.current_bars(time_event.time)
+
+        for ticker in self.membership:
+            if ticker not in bars:
+                self.logger.warning(
+                    'Bar feed: no bar for ticker %s at %s in the feed',
+                    ticker, str(time_event.time))
+
+        bar_event = BarEvent(time=time_event.time, bars=bars)
+
+        if self.global_queue is not None:
+            self.global_queue.put(bar_event)
+            return None
+        return bar_event
 
     # -- Per-tick fact lookup (BarEvent payload, D-15) ------------------------
 

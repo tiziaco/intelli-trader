@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 7 context gathered
-last_updated: "2026-06-07T19:38:53.092Z"
-last_activity: 2026-06-07 -- Phase 7 planning complete
+last_updated: "2026-06-07T19:55:21.737Z"
+last_activity: 2026-06-07 -- Phase 07 execution started
 progress:
   total_phases: 8
   completed_phases: 6
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 7 — m5b — sizing policy, metrics, universe & coverage
+**Current focus:** Phase 07 — m5b-sizing-policy-metrics-universe-coverage
 
 ## Current Position
 
-Phase: 7
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-07 -- Phase 7 planning complete
+Phase: 07 (m5b-sizing-policy-metrics-universe-coverage) — EXECUTING
+Plan: 1 of 8
+Status: Executing Phase 07
+Last activity: 2026-06-07 -- Phase 07 execution started
 
 Progress: [██████████] 100%
 
