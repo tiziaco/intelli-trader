@@ -140,7 +140,7 @@
   lifecycle — the run path is read-only and errors loudly on missing data (no mid-run network fetch);
   bare `except:`→`None` and `to_megaframe` tz-drop/key-misalign fixed; strategies use the resampled-bars
   API not `price_handler.prices` directly *(#30, #27 [price seam; book-persist→D-live], FR6, FR7, FR8, PERF4)*
-- [ ] **M5-06**: Strategy-declared sizing **policy** is fully resolved per-portfolio in the order/risk
+- [x] **M5-06**: Strategy-declared sizing **policy** is fully resolved per-portfolio in the order/risk
   layer, completing the M1 minimal seam — `VariableSizer` finished, `RiskManager.check_cash` covers
   position increases, `calculate_signal` contract enforced *(completes #24/#31 M1→M5, KB11 [final], TD7, TD10)*
 - [ ] **M5-07**: Reporting/metrics are correct — drawdown math, pandas-2/plotly API breakage, `is np.nan`
