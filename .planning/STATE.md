@@ -4,14 +4,14 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 8 context gathered
-last_updated: "2026-06-08T10:06:26.194Z"
-last_activity: 2026-06-08 -- Phase 08 planning complete
+last_updated: "2026-06-08T13:59:07.770Z"
+last_activity: 2026-06-08
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 62
-  completed_plans: 53
-  percent: 85
+  completed_plans: 54
+  percent: 87
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 8 — m5c — cross validation & final oracle
+**Current focus:** Phase 08 — m5c-cross-validation-final-oracle
 
 ## Current Position
 
-Phase: 8
-Plan: Not started
+Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
+Plan: 2 of 9
 Status: Ready to execute
-Last activity: 2026-06-08 -- Phase 08 planning complete
+Last activity: 2026-06-08
 
-Progress: [██████████] 100%
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
@@ -78,6 +78,7 @@ Progress: [██████████] 100%
 | Phase 03 P07 | 18 | 2 tasks | 16 files |
 | Phase 03 P08 | 95 | 2 tasks | 51 files |
 | Phase 03 P09 | 8 | 3 tasks | 4 files |
+| Phase 08 P01 | 7 | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -122,6 +123,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 03-08: Rule 1 fix - Task 1 commit 33c3281 recorded git-mv renames but dropped tracked-file content edits (git add aborted on stale 'test' pathspec); corrected in 6a623ae so committed HEAD collects 346 on fresh checkout
 - [Phase ?]: Plan 03-09: numerical oracle re-frozen byte-exact at M2b end-state (final_equity 53229.68512642488, replacing stale M1 float 53229.75); D-15 tolerance + DEF-02-08-A xfail closed; numeric cols check_exact=True; behavioral identity unchanged (D-18); one of PROJECT.md's two sanctioned numeric re-baseline points
 - [Phase ?]: Plan 03-09: D-17 inertness gate byte-exact (behavioral AND numeric) vs M2A-INERTNESS-REF before re-freeze — M2b structural changes proven numerically inert, no time_parser firing shift
+- [Phase ?]: Plan 08-01: Portfolio.total_* money properties retyped to Decimal (D-06 closure on result-bearing path); float boundary moved to statistical-ratio metric inputs only; validator golden-path checks native Decimal
+- [Phase ?]: Plan 08-01: EXPECTED result-change (D-08) — equity-curve total_equity shifts at Decimal precision; behavioral oracle byte-identical, final_equity 46189.87730727451 unchanged; deferred to 08-03 REFREEZE-M5C-DECIMAL
 
 ### Pending Todos
 
@@ -155,6 +158,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-08T05:58:05.807Z
+Last session: 2026-06-08T13:59:02.650Z
 Stopped at: Phase 8 context gathered
-Resume file: .planning/phases/08-m5c-cross-validation-final-oracle/08-CONTEXT.md
+Resume file: None

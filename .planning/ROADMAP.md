@@ -237,7 +237,7 @@ Plans:
 
 **Plans**: 9 plans
 
-  - [ ] 08-01-PLAN.md — Golden-path Decimal cleanup: retype Portfolio.total_* properties to Decimal, clean MetricsManager money coercions, native-Decimal validator cash checks (D-06)
+  - [x] 08-01-PLAN.md — Golden-path Decimal cleanup: retype Portfolio.total_* properties to Decimal, clean MetricsManager money coercions, native-Decimal validator cash checks (D-06)
   - [ ] 08-02-PLAN.md — Caller fan-out + mypy --strict propagation sweep from the 08-01 retype; suite green under filterwarnings=["error"] (D-06/D-13)
   - [ ] 08-03-PLAN.md — Oracle regeneration + conditional REFREEZE-M5C-DECIMAL (owner sign-off); clean Decimal numbers become the cross-validation baseline (D-07/D-08)
   - [ ] 08-04-PLAN.md — Add pinned dev-deps (backtesting, backtrader, optional nautilus-trader) + engine import/run smoke gate on numpy2/py3.13 (D-10)
@@ -261,4 +261,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 8/8 | Complete   | 2026-06-06 |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 8/8 | Complete   | 2026-06-07 |
-| 8. M5c — Cross-Validation & Final Oracle | 0/9 | Not started | - |
+| 8. M5c — Cross-Validation & Final Oracle | 1/9 | In Progress|  |

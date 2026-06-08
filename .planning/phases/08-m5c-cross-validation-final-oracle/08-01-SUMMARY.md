@@ -123,6 +123,17 @@ External consumers that now see a Decimal where they previously saw a float. `my
 - **Blocker for 08-03:** the golden equity-curve numeric oracle must be re-frozen (`REFREEZE-M5C-DECIMAL`) — `test_oracle_numeric_values` fails by design until then (behavioral identity preserved, final_equity byte-exact).
 - **For 08-02:** the fan-out table above lists every Decimal-now-float boundary to sweep; mypy is already clean so this is redundant-cast removal, not error-fixing.
 
+## Self-Check: PASSED
+
+All modified source files and the SUMMARY exist on disk; all 7 commits (6 task RED/GREEN + 1 docs) are present in git history.
+
+- Files: portfolio.py, metrics_manager.py, order_validator.py, 08-01-SUMMARY.md — all FOUND
+- Commits: cdf60f5, 6c8ee92, 18cb7be, e99f1d4, d5f7569, 6311378, 7a749ea — all FOUND
+
+## TDD Gate Compliance
+
+All three tasks followed the RED → GREEN cycle. For each task a `test(...)` commit (failing test) precedes a `feat(...)` commit (implementation). No REFACTOR commits were needed — the retypes were clean as written. The RED gates were genuine failures (float-typed properties, float money fields, and a float-arithmetic cash rejection that Decimal admits).
+
 ---
 *Phase: 08-m5c-cross-validation-final-oracle*
 *Completed: 2026-06-08*
