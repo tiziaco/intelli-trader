@@ -158,6 +158,16 @@ class OrderManager:
 		order = self.order_storage.get_order_by_id(order_id, fill_event.portfolio_id)
 		if order is None:
 			return out_events
+		# WR-04: the terminal release MUST run even if the reconciliation body
+		# raises — a stuck BUY reservation corrupts buying power for the rest of
+		# the run (T-05-17). The release is therefore moved into a `finally`,
+		# gated by this flag so the early-return "unknown status" path (which
+		# intentionally holds the reservation) does not trigger it. The body is
+		# re-raised after logging (backtest fail-fast policy, matching the
+		# portfolio side of the same FILL via _on_handler_error) so a corrupted
+		# reconciliation aborts the run instead of producing silently-wrong
+		# numbers.
+		should_release = False
 		try:
 			applied = True
 			if fill_event.status == FillStatus.EXECUTED:
@@ -189,22 +199,15 @@ class OrderManager:
 				self.logger.warning('Unhandled fill status %s for order %s; order left active',
 				                    fill_event.status, order_id)
 				return out_events
+			# A terminal status was reached (EXECUTED/CANCELLED/REFUSED): arm the
+			# release before any further work so a raise below still releases.
+			should_release = True
 			# Reached for every terminal-status fill (EXECUTED/CANCELLED/
 			# REFUSED), whether or not the mirror transition applied.
 			# D-20: no deactivate step — the terminal status set above already
 			# removes the order from active queries via the is_active predicate.
 			if applied:
 				self.order_storage.update_order(order)
-			# D-01/OQ2 (Plan 05-06): the reserver owns the release — a uniform
-			# idempotent release on EVERY terminal reconciliation (FILLED/
-			# CANCELLED/REJECTED). Never-reserved orders (SELLs, bracket
-			# children) hit the silent no-op. Ordering vs the settlement debit
-			# is irrelevant: the 05-05 invariant guard checks balance, never
-			# available_balance, so a release-after-debit cannot false-positive
-			# (T-05-17: no stuck reservations corrupting buying power).
-			if self.portfolio_handler is not None:
-				self.portfolio_handler.release(
-					cast(PortfolioId, order.portfolio_id), order.id)
 			# WR-05: a parent that reaches a terminal state WITHOUT any fill
 			# (REFUSED/CANCELLED) leaves its protective SL/TP children resting
 			# on the exchange with no position to protect — when price later
@@ -241,7 +244,32 @@ class OrderManager:
 			else:
 				self._pending_brackets.pop(order_id, None)
 		except Exception as e:
-			self.logger.error('Error reconciling fill for order %s: %s', order_id, e)
+			# WR-04: log with a stack trace and RE-RAISE — backtest fail-fast.
+			# A reconciliation that cannot complete leaves the mirror and/or
+			# reservation in an inconsistent state; continuing would produce
+			# silently-wrong numbers. The portfolio side of the same FILL is
+			# already fail-fast via _on_handler_error; the order side now
+			# matches. The `finally` below still releases a terminal fill's
+			# reservation before the exception propagates.
+			self.logger.error('Error reconciling fill for order %s: %s',
+			                  order_id, e, exc_info=True)
+			raise
+		finally:
+			# WR-04: a terminal fill ALWAYS releases its reservation, even when
+			# the reconciliation body raised after the terminal status was set
+			# (T-05-17: a stuck reservation corrupts buying power for the whole
+			# run). `should_release` is False on the non-terminal early-return
+			# path, which intentionally holds the reservation. The release is
+			# idempotent — never-reserved orders (SELLs, children) silently
+			# no-op. Failures inside the release itself are logged, never masked.
+			if should_release and self.portfolio_handler is not None:
+				try:
+					self.portfolio_handler.release(
+						cast(PortfolioId, order.portfolio_id), order.id)
+				except Exception:
+					self.logger.error(
+						'Failed to release reservation for order %s during fill reconciliation',
+						order.id, exc_info=True)
 		return out_events
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
