@@ -11,7 +11,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class OrderType(str, Enum):
+class ConfigOrderType(str, Enum):
     """Supported order types."""
 
     MARKET = "market"
@@ -42,7 +42,7 @@ class OrderDefaults(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    default_order_type: OrderType = OrderType.MARKET
+    default_order_type: ConfigOrderType = ConfigOrderType.MARKET
     default_time_in_force: TimeInForce = TimeInForce.GTC
     default_quantity: Optional[Decimal] = None
     max_order_size: Optional[Decimal] = None

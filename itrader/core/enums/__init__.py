@@ -42,6 +42,16 @@ from .order import (
     VALID_ORDER_TRANSITIONS
 )
 
+# Trading enums
+from .trading import (
+    TradingDirection
+)
+
+# System enums
+from .system import (
+    SystemStatus
+)
+
 __all__ = [
     # Portfolio enums
     'PortfolioState',
@@ -71,5 +81,11 @@ __all__ = [
     'order_type_map',
     'order_status_map',
     'order_command_map',
-    'VALID_ORDER_TRANSITIONS'
+    'VALID_ORDER_TRANSITIONS',
+
+    # Trading enums
+    'TradingDirection',
+
+    # System enums
+    'SystemStatus'
 ]

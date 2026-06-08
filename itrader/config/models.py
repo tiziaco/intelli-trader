@@ -21,7 +21,7 @@ from itrader.config.exchange import (
     ConnectionSettings,
     ExchangeConfig,
     ExchangeLimits,
-    ExchangeType,
+    ExchangeVenue,
     FailureSimulation,
     FeeModelConfig,
     FeeModelType,
@@ -49,11 +49,11 @@ from itrader.config.system import (
     SystemConfig,
 )
 from itrader.config.trading import (
+    ConfigOrderType,
     ExecutionMode,
     ExecutionSettings,
     FeeStructure,
     OrderDefaults,
-    OrderType,
     RiskControls,
     StrategySettings,
     TimeInForce,
@@ -66,7 +66,7 @@ __all__ = [
     "RiskManagement", "TradingRules", "ValidationSettings", "EventSettings",
     "get_portfolio_preset",
     # Trading
-    "TradingConfig", "OrderType", "TimeInForce", "ExecutionMode", "OrderDefaults",
+    "TradingConfig", "ConfigOrderType", "TimeInForce", "ExecutionMode", "OrderDefaults",
     "ExecutionSettings", "RiskControls", "FeeStructure", "StrategySettings",
     # Data
     "DataConfig", "DataSource", "DataFrequency", "StorageType", "DataSourceConfig",
@@ -75,7 +75,7 @@ __all__ = [
     "SystemConfig", "Environment", "LogLevel", "PerformanceSettings",
     "MonitoringSettings",
     # Exchange
-    "ExchangeConfig", "ExchangeType", "FeeModelType", "SlippageModelType",
+    "ExchangeConfig", "ExchangeVenue", "FeeModelType", "SlippageModelType",
     "FeeModelConfig", "SlippageModelConfig", "ExchangeLimits", "FailureSimulation",
     "ConnectionSettings", "get_exchange_preset", "list_available_exchange_presets",
 ]

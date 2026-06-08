@@ -34,11 +34,11 @@ from .portfolio import (
     get_portfolio_preset,
 )
 from .trading import (
+    ConfigOrderType,
     ExecutionMode,
     ExecutionSettings,
     FeeStructure,
     OrderDefaults,
-    OrderType,
     RiskControls,
     StrategySettings,
     TimeInForce,
@@ -66,7 +66,7 @@ from .exchange import (
     ConnectionSettings,
     ExchangeConfig,
     ExchangeLimits,
-    ExchangeType,
+    ExchangeVenue,
     FailureSimulation,
     FeeModelConfig,
     FeeModelType,
@@ -101,7 +101,7 @@ __all__ = [
     "get_portfolio_preset",
     # Trading domain
     "TradingConfig",
-    "OrderType",
+    "ConfigOrderType",
     "TimeInForce",
     "ExecutionMode",
     "OrderDefaults",
@@ -127,7 +127,7 @@ __all__ = [
     "MonitoringSettings",
     # Exchange domain
     "ExchangeConfig",
-    "ExchangeType",
+    "ExchangeVenue",
     "FeeModelType",
     "SlippageModelType",
     "FeeModelConfig",
