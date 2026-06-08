@@ -80,3 +80,48 @@ def test_transaction_money_fields_are_decimal():
     # Entered via to_money(str(x)) — exact Decimal, no binary-float artifact.
     assert txn.price == Decimal("42350.72")
     assert txn.cost == Decimal("42350.72")
+
+
+# M5-10 (Plan 08-01): result-bearing money properties on Portfolio are Decimal
+# end-to-end — no float() narrowing at the property boundary (D-06, closes the
+# "Float Leaks at Portfolio Property Boundary" concern on the golden path).
+
+def test_total_market_value_is_decimal(portfolio):
+    """total_market_value returns the position_manager Decimal aggregate unchanged."""
+    assert isinstance(portfolio.total_market_value, Decimal)
+
+
+def test_total_equity_is_decimal_and_equals_market_plus_cash(portfolio):
+    """total_equity is Decimal and equals total_market_value + cash (Decimal+Decimal)."""
+    assert isinstance(portfolio.total_equity, Decimal)
+    assert portfolio.total_equity == portfolio.total_market_value + portfolio.cash
+    # Empty portfolio: equity is exactly the starting cash.
+    assert portfolio.total_equity == Decimal("150000")
+
+
+def test_total_unrealised_and_realised_pnl_are_decimal(portfolio):
+    """Both pnl read-properties return Decimal (no float narrowing)."""
+    assert isinstance(portfolio.total_unrealised_pnl, Decimal)
+    assert isinstance(portfolio.total_realised_pnl, Decimal)
+
+
+def test_total_pnl_is_decimal_and_equals_unrealised_plus_realised(portfolio):
+    """total_pnl is Decimal and equals total_unrealised_pnl + total_realised_pnl."""
+    assert isinstance(portfolio.total_pnl, Decimal)
+    assert portfolio.total_pnl == (
+        portfolio.total_unrealised_pnl + portfolio.total_realised_pnl
+    )
+
+
+def test_total_properties_stay_decimal_after_transaction(portfolio):
+    """After a round-trip trade, every total_* property is still Decimal."""
+    buy = Transaction(
+        datetime.now(), TransactionType.BUY, "BTCUSDT",
+        40000, 1, 0, None, idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
+    )
+    portfolio.process_transaction(buy)
+    assert isinstance(portfolio.total_market_value, Decimal)
+    assert isinstance(portfolio.total_equity, Decimal)
+    assert isinstance(portfolio.total_unrealised_pnl, Decimal)
+    assert isinstance(portfolio.total_realised_pnl, Decimal)
+    assert isinstance(portfolio.total_pnl, Decimal)
