@@ -150,7 +150,7 @@
   copies removed) *(#33)*
 - [x] **M5-09**: Strategy/data/reporting/universe paths gain test coverage — CSV price store, reporting/
   statistics, universe *(TC2 [CSV part; adapters→D-oanda], TC4, TC6)*
-- [ ] **M5-10**: The engine is **cross-validated against `backtesting.py` + `backtrader`** on the same
+- [x] **M5-10**: The engine is **cross-validated against `backtesting.py` + `backtrader`** on the same
   strategy + data; metrics reconciled; the **final numerical reference output is frozen** *(golden-master
   external-validation gate, definition-of-done)*
 

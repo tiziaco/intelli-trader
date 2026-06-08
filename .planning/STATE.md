@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 8 context gathered
-last_updated: "2026-06-08T13:59:07.770Z"
+stopped_at: Completed 08-02-PLAN.md
+last_updated: "2026-06-08T14:08:03.602Z"
 last_activity: 2026-06-08
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 62
-  completed_plans: 54
-  percent: 87
+  completed_plans: 55
+  percent: 88
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
-Plan: 2 of 9
+Plan: 3 of 9
 Status: Ready to execute
 Last activity: 2026-06-08
 
-Progress: [█████████░] 87%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -79,6 +79,7 @@ Progress: [█████████░] 87%
 | Phase 03 P08 | 95 | 2 tasks | 51 files |
 | Phase 03 P09 | 8 | 3 tasks | 4 files |
 | Phase 08 P01 | 7 | 3 tasks | 6 files |
+| Phase 08 P02 | 4 | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -125,6 +126,8 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 03-09: D-17 inertness gate byte-exact (behavioral AND numeric) vs M2A-INERTNESS-REF before re-freeze — M2b structural changes proven numerically inert, no time_parser firing shift
 - [Phase ?]: Plan 08-01: Portfolio.total_* money properties retyped to Decimal (D-06 closure on result-bearing path); float boundary moved to statistical-ratio metric inputs only; validator golden-path checks native Decimal
 - [Phase ?]: Plan 08-01: EXPECTED result-change (D-08) — equity-curve total_equity shifts at Decimal precision; behavioral oracle byte-identical, final_equity 46189.87730727451 unchanged; deferred to 08-03 REFREEZE-M5C-DECIMAL
+- [Phase ?]: Plan 08-02: 08-01 Decimal retype was inert at both cross-file consumers (mypy clean 151 files); sweep documented the Decimal->float serialization boundary in code
+- [Phase ?]: Plan 08-02: full suite 723 passed / 1 sanctioned design-failure (test_oracle_numeric_values, D-08 equity-curve precision shift); surfaced not fixed, deferred to 08-03 REFREEZE-M5C-DECIMAL; tests/golden untouched
 
 ### Pending Todos
 
@@ -158,6 +161,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-08T13:59:02.650Z
-Stopped at: Phase 8 context gathered
+Last session: 2026-06-08T14:08:03.592Z
+Stopped at: Completed 08-02-PLAN.md
 Resume file: None
