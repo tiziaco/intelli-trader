@@ -250,7 +250,23 @@ def test_long_short_registration_rejected(handler_env):
     handler, _q = handler_env
     strategy = _AlwaysBuyStrategy(direction=TradingDirection.LONG_SHORT)
 
-    with pytest.raises(ValueError, match="LONG_SHORT requires the margin"):
+    with pytest.raises(ValueError, match="Only LONG_ONLY is admissible"):
+        handler.add_strategy(strategy)
+
+    assert handler.strategies == []
+
+
+def test_short_only_registration_rejected(handler_env):
+    """CR-01/D-09: registering a SHORT_ONLY strategy raises loudly.
+
+    SHORT_ONLY has no cover arm in ``_resolve_signal_quantity``; a sanctioned
+    BUY-cover would fall through to entry sizing and could net the book LONG.
+    The door is closed at registration until the margin/liquidation milestone.
+    """
+    handler, _q = handler_env
+    strategy = _AlwaysBuyStrategy(direction=TradingDirection.SHORT_ONLY)
+
+    with pytest.raises(ValueError, match="Only LONG_ONLY is admissible"):
         handler.add_strategy(strategy)
 
     assert handler.strategies == []

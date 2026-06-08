@@ -144,16 +144,24 @@ class StrategiesHandler(object):
 		Raises
 		------
 		ValueError
-			If the strategy declares ``TradingDirection.LONG_SHORT`` (D-08):
-			shorting requires the margin/liquidation milestone — until it
-			lands, registration rejects the capability loudly instead of
-			silently mis-handling un-margined shorts.
+			If the strategy declares any direction other than
+			``TradingDirection.LONG_ONLY`` (D-08/D-09): shorting (LONG_SHORT
+			and SHORT_ONLY alike) requires the margin/liquidation milestone.
+			Until it lands, registration rejects the capability loudly instead
+			of silently mis-handling un-margined shorts. SHORT_ONLY in
+			particular has no cover arm in ``_resolve_signal_quantity`` (CR-01):
+			a sanctioned BUY-cover would fall through to entry sizing and could
+			net a SHORT_ONLY book LONG — so it must not be reachable yet.
 		"""
-		# D-08 registration guard: LONG_SHORT is not admissible yet.
-		if strategy.direction is TradingDirection.LONG_SHORT:
+		# D-08/D-09 registration guard: only LONG_ONLY is admissible until the
+		# margin/liquidation milestone lands. This closes the SHORT_ONLY cover
+		# hole (CR-01) at the door — the smaller, oracle-dark change: the golden
+		# FractionOfCash/LONG_ONLY path is unaffected.
+		if strategy.direction is not TradingDirection.LONG_ONLY:
 			raise ValueError(
-				"LONG_SHORT requires the margin/liquidation milestone — "
-				"declare LONG_ONLY or SHORT_ONLY (D-08)"
+				"Only LONG_ONLY is admissible until the margin/liquidation "
+				"milestone — shorting (LONG_SHORT / SHORT_ONLY) requires the "
+				"margin model (D-08/D-09)"
 			)
 
 		# Add the strategy in the strategies list
