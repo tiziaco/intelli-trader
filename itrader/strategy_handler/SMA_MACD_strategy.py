@@ -21,7 +21,7 @@ class SMA_MACD_strategy(Strategy):
 	def __init__(
 		self,
 		timeframe: str,
-		tickers: list[str] = [],
+		tickers: list[str] | None = None,
 		short_window: int = 50,
 		long_window: int = 100,
 		FAST: int = 6,
@@ -33,8 +33,11 @@ class SMA_MACD_strategy(Strategy):
 		# sizing expression byte-exact once 07-05 wires the resolver;
 		# LONG_ONLY + allow_increase=False declare the admission settings —
 		# enforcement comes later.
+		# WR-05: never share a mutable default list across instances — default
+		# to None and build a fresh per-instance list so a future tickers
+		# mutation cannot bleed across instances or into derive_membership.
 		super().__init__(
-			"SMA_MACD", timeframe, tickers,
+			"SMA_MACD", timeframe, list(tickers or []),
 			sizing_policy=FractionOfCash(Decimal("0.95")),
 			direction=TradingDirection.LONG_ONLY,
 			allow_increase=False,
