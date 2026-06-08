@@ -2,7 +2,9 @@
 
 **Researched:** 2026-06-08
 **Requirement:** M5-10 (cross-validate vs `backtesting.py` + `backtrader`; metrics reconciled; final numerical reference frozen) + program definition-of-done.
-**Method note:** The first two `gsd-phase-researcher` spawns died on transient socket errors during the heavy web-research phase. This RESEARCH.md was authored by the orchestrator inline from (a) the full local source/golden/config facts read directly, and (b) bounded Context7 lookups against the official `backtesting.py` and `backtrader` docs. Reference-engine API claims below are doc-confirmed where marked **[doc-confirmed]**; `nautilus_trader` specifics are **[verify at impl-time]** (non-gating per D-12, so this is acceptable).
+**Method note:** The first two `gsd-phase-researcher` spawns died on transient socket errors (user connectivity) during the heavy web-research phase. This RESEARCH.md was authored by the orchestrator inline from (a) the full local source/golden/config facts read directly, and (b) bounded Context7 lookups against the official `backtesting.py` and `backtrader` docs. Reference-engine API claims below are doc-confirmed where marked **[doc-confirmed]**.
+
+> **COMPANION FILE — read alongside this one:** After connectivity was restored, a fresh `gsd-phase-researcher` re-run produced **`08-RESEARCH-AGENT.md`**, which **empirically verified** the highest-uncertainty external claims by installing and running both gating engines on this exact stack. It supersedes this file on two points: (1) backtrader compatibility is **RESOLVED** (no fork needed — see Risk #2 below, now struck through), and (2) exact version pins are confirmed (`backtesting==0.6.5`, `backtrader==1.9.78.123`, `nautilus-trader==1.227.0`). It also adds concrete `nautilus_trader` `BacktestEngine` API guidance (MEDIUM confidence — non-gating per D-12). Where the two files differ, the AGENT companion's verified findings win.
 
 ---
 
@@ -150,10 +152,10 @@ Source of truth = `scripts/run_backtest.py` + `SMA_MACD_strategy.py`:
 - **NOT wired into `make test` / CI** (D-10) — the frozen `tests/golden/*` + the existing run-path integration test remain the permanent regression gate. Add the reference engines to the **poetry dev group** only.
 - **`filterwarnings=["error"]` isolation:** the test suite sets `filterwarnings=["error", "ignore::UserWarning", ...]`. Importing backtesting.py (bokeh) / backtrader (numpy-2 deprecations) / nautilus could emit warnings. Because the harness is a **script, not a test**, it is outside pytest's filter — confirmed safe per D-10. Do **not** import these engines anywhere under `tests/` or in any module imported at test-collection time.
 
-**Version pins (poetry dev group — pin exact for reproducibility, D-10):**
-- `backtesting` — pin a current 0.x (e.g. `~=0.6` / latest stable; the `FractionalBacktest` API used above is present in modern 0.3.3+/0.6.x). Confirm `FractionalBacktest` import path at install.
-- `backtrader` — `1.9.78.123` (last PyPI) **or** a maintained fork if the numpy-2/py3.13 import fails (validate first).
-- `nautilus-trader` — a recent pinned release (optional; only if it installs cleanly).
+**Version pins (poetry dev group — pin exact for reproducibility, D-10) — VERIFIED in `08-RESEARCH-AGENT.md`:**
+- `backtesting==0.6.5` — verified to install + run `FractionalBacktest` on this stack.
+- `backtrader==1.9.78.123` — verified to import + run a full backtest on py3.13.1/numpy 2.2.6 under warnings-as-errors; **NO fork needed** (do not use `backtrader_next`/`backtrader2` — different import names / divergent API).
+- `nautilus-trader==1.227.0` — optional/non-gating; PyPI metadata verified compatible (`requires_python <3.15,>=3.12`, numpy/pandas satisfied), prebuilt wheel; not run end-to-end (acceptable per D-12).
 
 ---
 
@@ -200,7 +202,7 @@ This phase is itself a validation milestone; its Nyquist-style validation covera
 ## Risks & landmines (ranked)
 
 1. **Fractional units → 0 trades** (both gating engines). MUST use `FractionalBacktest` (backtesting.py) and a custom float sizer (backtrader). If unhandled, comparison is void. **[highest]**
-2. **backtrader × numpy 2.x / Python 3.13 import failure.** Validate `import backtrader` + a trivial run on this interpreter as the *first* task; have a fork/shim fallback ready. **[high]**
+2. ~~**backtrader × numpy 2.x / Python 3.13 import failure.**~~ **RESOLVED — see `08-RESEARCH-AGENT.md` headline #1.** The connectivity-restored re-run empirically installed and ran plain `backtrader==1.9.78.123` to completion on this exact stack (py3.13.1 / numpy 2.2.6 / pandas 2.3.3) under `warnings.simplefilter("error")`, clean — backtrader uses `array.array`, not numpy, for line buffers, so the numpy-2 alias removals never bite. No fork/shim needed; pin `1.9.78.123`. 08-04 keeps the import/run smoke gate as a confirmation, not a risk. **[was high → now low/resolved]**
 3. **Misattributing indicator-library divergence as engine difference** (D-03). Mitigate by injecting identical `ta` series into all engines. **[high]**
 4. **Decimal retype fan-out** breaking `mypy --strict` / mixed Decimal+float arithmetic across reporting/validator callers. Budget a propagation sweep. **[med]**
 5. **Trusting engine-native annualized metrics** (different period/ddof conventions) instead of recomputing via iTrader's `metrics.py`. Always recompute apples-to-apples. **[med]**
