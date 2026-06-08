@@ -15,12 +15,18 @@ DEGRADE-SAFE CONTRACT (the D-12 non-gating guarantee):
     `CrossvalResult(reconciled=False, reason="Nautilus: not reconciled — ...")`.
   * The guarded `import nautilus_trader` happens INSIDE the function body (NOT at
     module scope) so this module ALWAYS imports even when nautilus-trader is
-    absent — and it IS absent here: 08-04 established that
-    `nautilus-trader==1.227.0` cannot be installed in this repo (its
-    `requires_python <3.15,>=3.12` conflicts with the repo's `python = "^3.13"`,
-    which resolves to `>=3.13,<4.0` with no `<3.15` ceiling, so poetry
-    version-solving fails). Per D-12 this is handled by a clean degrade, NOT by
-    narrowing the repo's python constraint for a non-gating reference.
+    absent.
+
+OWNER-DIRECTED DEVIATION (supersedes 08-04 D-12 drop): the project owner
+directed installing `nautilus-trader==1.227.0` by narrowing the repo's python
+constraint from `^3.13` (→ `>=3.13,<4.0`, which has no `<3.15` ceiling and so
+failed nautilus's `requires_python <3.15,>=3.12`) to `>=3.13,<3.14` — now a
+subset of `[3.12,3.15)`, so the 08-04 version-solve rejection disappears. This
+module therefore now completes the REAL low-level `BacktestEngine` force-match
+(below) instead of the prior clean-degrade scaffold. The degrade path remains
+intact as the D-12 safety net (any config/API/runtime failure still degrades
+rather than raising), so the freeze stays protected — but on this interpreter
+the engine reconciles a real result.
 
 UNIFORM ORCHESTRATOR CONTRACT (consumed by 08-07 exactly like the gating engines):
   * `run(prices=None, indicators=None) -> (trade_log_df, equity_series)` calls
@@ -39,16 +45,25 @@ or in `itrader/` — keep it on the script path only so the repo's
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 import pandas as pd
 
 from scripts.crossval.indicators import (
+    MIN_BARS,
     compute_indicators,
     load_golden_with_indicators,
 )
 
 CASH = 10_000.0
 FRACTION = 0.95
+
+# Nautilus next-bar-open fills: bar T closes and becomes available for execution
+# at its CLOSE timestamp, the matching engine then fills market orders at the
+# NEXT bar's open. The golden CSV stamps each bar at its OPEN (midnight UTC), so
+# we shift ts_init forward one full day (86_400 s in ns) to the bar close —
+# getting this wrong fakes a 1-bar divergence (08-RESEARCH-AGENT.md §2).
+_TS_INIT_DELTA_NS = 86_400_000_000_000
 
 
 @dataclass
@@ -99,6 +114,190 @@ def _indicators(ohlcv, short_sma, long_sma, macd_hist) -> pd.DataFrame:
     return compute_indicators(ohlcv["close"])
 
 
+def _build_zero_fee_btcusd():
+    """Construct a zero-fee BTCUSD `CurrencyPair` for the D-01 force-match.
+
+    Mirrors `TestInstrumentProvider.btcusdt_binance()` but with USD as the quote
+    currency (to match the $10k USD cash) and `maker_fee=taker_fee=Decimal("0")`
+    (D-01 zero fees). `size_precision=6` gives fractional-BTC 95%-of-equity
+    sizing; `price_precision=2` and a $10M `max_price` cover BTC's range over the
+    2018→2026 window. `min_notional=None` so no trade is rejected for being small.
+    """
+    from nautilus_trader.model.currencies import BTC, USD
+    from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
+    from nautilus_trader.model.instruments import CurrencyPair
+    from nautilus_trader.model.objects import Money, Price, Quantity
+
+    return CurrencyPair(
+        instrument_id=InstrumentId(symbol=Symbol("BTCUSD"), venue=Venue("SIM")),
+        raw_symbol=Symbol("BTCUSD"),
+        base_currency=BTC,
+        quote_currency=USD,
+        price_precision=2,
+        size_precision=6,
+        price_increment=Price(1e-02, precision=2),
+        size_increment=Quantity(1e-06, precision=6),
+        lot_size=None,
+        max_quantity=Quantity(9000, precision=6),
+        min_quantity=Quantity(1e-06, precision=6),
+        max_notional=None,
+        min_notional=None,
+        max_price=Price(10_000_000, precision=2),
+        min_price=Price(0.01, precision=2),
+        margin_init=Decimal(0),
+        margin_maint=Decimal(0),
+        maker_fee=Decimal("0"),
+        taker_fee=Decimal("0"),
+        ts_event=0,
+        ts_init=0,
+    )
+
+
+def _make_strategy_class():
+    """Build the SMA_MACD force-match Strategy class against the installed API.
+
+    Defined inside the guard (imports nautilus only when the package is present)
+    so module import never depends on nautilus_trader. The strategy consumes the
+    INJECTED `ta` arrays (NOT Nautilus-native indicators, D-03) via a
+    timestamp-keyed lookup, replicating the filter-gates-both-entry-AND-exit
+    quirk verbatim, sizing 95% of free balance, long-only, single-position.
+    """
+    from nautilus_trader.model.enums import OrderSide
+    from nautilus_trader.model.objects import Quantity
+    from nautilus_trader.trading.strategy import Strategy
+
+    class SMAMACDNautilus(Strategy):
+        def __init__(self, config=None):
+            super().__init__(config)
+            self.instrument = None
+            self.venue = None
+            self.bar_type = None
+            # Injected indicator lookup keyed by bar OPEN timestamp (ns).
+            self.sma_short_by_ts: dict[int, float] = {}
+            self.sma_long_by_ts: dict[int, float] = {}
+            self.macd_hist_by_ts: dict[int, float] = {}
+            self._prev_macd: float | None = None
+            self._bar_count = 0
+            self.trades_log: list[dict] = []
+            self.equity_dates: list[pd.Timestamp] = []
+            self.equity_values: list[float] = []
+            # Open-trade tracker for per-trade pnl assembly.
+            self._open_entry_ts = None
+            self._open_entry_price = None
+            self._open_qty = None
+
+        def configure(self, instrument, bar_type, indicators):
+            self.instrument = instrument
+            self.venue = instrument.id.venue
+            self.bar_type = bar_type
+            ts = indicators.index.view("int64")
+            for i, key in enumerate(ts):
+                self.sma_short_by_ts[int(key)] = float(indicators["sma_short"].iloc[i])
+                self.sma_long_by_ts[int(key)] = float(indicators["sma_long"].iloc[i])
+                self.macd_hist_by_ts[int(key)] = float(indicators["macd_hist"].iloc[i])
+
+        def on_start(self):
+            self.subscribe_bars(self.bar_type)
+
+        def _free_usd(self) -> float:
+            from nautilus_trader.model.currencies import USD
+
+            account = self.portfolio.account(self.venue)
+            if account is None:
+                return 0.0
+            free = account.balance_free(USD)
+            return 0.0 if free is None else float(free.as_double())
+
+        def on_bar(self, bar):
+            ts_open = bar.ts_event  # bar open timestamp (ns)
+            bar_dt = pd.Timestamp(ts_open, tz="UTC")
+            # Per-bar equity = free USD + mark-to-market value of any open BTC
+            # position at this bar's close (robust across account-config nuances;
+            # the zero-fee CASH account holds USD free + BTC position).
+            free = self._free_usd()
+            pos_value = 0.0
+            if self._open_qty is not None:
+                pos_value = float(self._open_qty) * float(bar.close.as_double())
+            self.equity_dates.append(bar_dt)
+            self.equity_values.append(free + pos_value)
+
+            self._bar_count += 1
+            macd = self.macd_hist_by_ts.get(int(ts_open))
+            sma_s = self.sma_short_by_ts.get(int(ts_open))
+            sma_l = self.sma_long_by_ts.get(int(ts_open))
+
+            prev_macd = self._prev_macd
+            # Advance the prev-macd window AFTER reading it (needs [-2] vs [-1]).
+            self._prev_macd = macd
+
+            # Warm-up gate: mirror the strategy's len(bars) < max_window guard.
+            if self._bar_count < MIN_BARS:
+                return
+            if macd is None or sma_s is None or sma_l is None or prev_macd is None:
+                return
+
+            in_position = self._open_qty is not None
+            # THE QUIRK — SMA filter gates BOTH entry and exit; exit is the
+            # nested elif inside the filter block. Filter False → held long is
+            # NOT closed on a MACD down-cross.
+            if sma_s >= sma_l:  # Filter
+                if (macd >= 0) and (prev_macd < 0):  # Buy trigger
+                    if not in_position:
+                        self._submit_entry(bar)
+                elif (macd <= 0) and (prev_macd > 0):  # Sell trigger
+                    if in_position:
+                        self._submit_exit()
+
+        def _submit_entry(self, bar):
+            free = self._free_usd()
+            price = float(bar.close.as_double())
+            if price <= 0 or free <= 0:
+                return
+            raw_qty = FRACTION * free / price
+            qty = self.instrument.make_qty(raw_qty)
+            if float(qty) <= 0:
+                return
+            order = self.order_factory.market(
+                instrument_id=self.instrument.id,
+                order_side=OrderSide.BUY,
+                quantity=qty,
+            )
+            self.submit_order(order)
+
+        def _submit_exit(self):
+            if self._open_qty is None:
+                return
+            qty = self.instrument.make_qty(self._open_qty)
+            order = self.order_factory.market(
+                instrument_id=self.instrument.id,
+                order_side=OrderSide.SELL,
+                quantity=qty,
+            )
+            self.submit_order(order)
+
+        def on_position_opened(self, event):
+            self._open_entry_ts = pd.Timestamp(event.ts_opened, tz="UTC")
+            self._open_entry_price = float(event.avg_px_open)
+            self._open_qty = float(event.quantity)
+
+        def on_position_closed(self, event):
+            self.trades_log.append(
+                {
+                    "entry_date": pd.Timestamp(event.ts_opened, tz="UTC"),
+                    "exit_date": pd.Timestamp(event.ts_closed, tz="UTC"),
+                    "side": "LONG",
+                    "realised_pnl": float(event.realized_pnl)
+                    if event.realized_pnl is not None
+                    else 0.0,
+                }
+            )
+            self._open_entry_ts = None
+            self._open_entry_price = None
+            self._open_qty = None
+
+    return SMAMACDNautilus
+
+
 def run_nautilus(
     ohlcv: "pd.DataFrame | None" = None,
     short_sma: "pd.Series | None" = None,
@@ -119,44 +318,99 @@ def run_nautilus(
             ohlcv = _load_golden_ohlcv()
         indicators = _indicators(ohlcv, short_sma, long_sma, macd_hist)
 
-        # --- Guarded Nautilus import (INSIDE the body, never module scope) --
-        # 08-04: nautilus-trader is NOT installable on this repo's Python
-        # (its requires_python <3.15,>=3.12 conflicts with python ^3.13 →
-        # >=3.13,<4.0). This import therefore raises ImportError here and the
-        # outer except degrades cleanly — the D-12 non-gating path.
-        import nautilus_trader  # noqa: F401
+        # --- Guarded Nautilus imports (INSIDE the body, never module scope) -
+        # Owner-directed deviation (supersedes 08-04 D-12): nautilus-trader is
+        # now installed (python narrowed to >=3.13,<3.14). The low-level
+        # BacktestEngine force-match below runs the real reconciled result; any
+        # failure still degrades via the outer except (D-12 safety net intact).
+        from nautilus_trader.backtest.engine import (  # noqa: F401
+            BacktestEngine,
+            BacktestEngineConfig,
+        )
+        from nautilus_trader.config import LoggingConfig
+        from nautilus_trader.model.currencies import USD
+        from nautilus_trader.model.data import BarType
+        from nautilus_trader.model.enums import (
+            AccountType,
+            BookType,
+            OmsType,
+        )
+        from nautilus_trader.model.identifiers import Venue
+        from nautilus_trader.model.objects import Money
+        from nautilus_trader.persistence.wranglers import BarDataWrangler
 
-        # ------------------------------------------------------------------
-        # Nautilus BacktestEngine force-match (verified-API guidance,
-        # 08-RESEARCH-AGENT.md §2). Only reached if the import above succeeds.
-        # Low-level BacktestEngine/BacktestEngineConfig API (NOT BacktestNode):
-        #   * add_venue(Venue("SIM"), oms_type=NETTING, account_type=CASH,
-        #     base_currency=USD, starting_balances=[Money(10_000, USD)],
-        #     book_type=BookType.L1_MBP)   # L1 REQUIRED for bar-based execution
-        #   * CurrencyPair instrument, maker_fee/taker_fee=Decimal("0"),
-        #     size_precision >= 6 (fractional BTC sizing)
-        #   * BarDataWrangler -> add_data; BarType DAY/EXTERNAL; ts_init at the
-        #     bar CLOSE (ts_init_delta=86_400_000_000_000 if the CSV stamps the
-        #     open) so next-bar-open fills line up with D-01
-        #   * a Strategy/Actor consuming the INJECTED ta arrays (NOT
-        #     Nautilus-native indicators, D-03), replicating the SMA_MACD
-        #     filter-gates-both-entry-AND-exit quirk verbatim, sizing 95% of
-        #     equity, long-only, single-position-from-flat (allow_increase=False)
-        #   * extract via engine.trader.generate_order_fills_report() /
-        #     generate_positions_report() / generate_account_report(Venue("SIM"))
-        #     -> normalize to trade_log[entry_date, exit_date, side,
-        #     realised_pnl] + a per-bar equity Series.
-        #
-        # This branch is unreachable on the current interpreter (the import
-        # degrades first). It is kept as the implementation site so that, on any
-        # future Python/version combination where nautilus-trader DOES install,
-        # the force-match can be completed in place without restructuring the
-        # degrade-safe contract. Until then the explicit raise below routes to
-        # the degrade path with a precise reason (rather than silently returning
-        # an empty reconciled result).
-        raise RuntimeError(
-            "nautilus-trader installed but the BacktestEngine force-match is not "
-            "implemented for this version on this interpreter"
+        venue = Venue("SIM")
+        instrument = _build_zero_fee_btcusd()
+
+        # Bar type: 1-DAY LAST EXTERNAL on the SIM BTCUSD instrument.
+        bar_type = BarType.from_str(f"{instrument.id}-1-DAY-LAST-EXTERNAL")
+
+        # --- Wrangle the golden OHLCV into Nautilus Bars --------------------
+        # The wrangler wants lowercase open/high/low/close/volume on a
+        # DatetimeIndex. ts_init is shifted forward one full day to the bar
+        # CLOSE so the bar becomes executable at close and market orders fill at
+        # the NEXT bar's open (D-01 next-bar-open fills).
+        feed = pd.DataFrame(
+            {
+                "open": ohlcv["open"].to_numpy(),
+                "high": ohlcv["high"].to_numpy(),
+                "low": ohlcv["low"].to_numpy(),
+                "close": ohlcv["close"].to_numpy(),
+                "volume": ohlcv["volume"].to_numpy(),
+            },
+            index=pd.DatetimeIndex(ohlcv.index),
+        )
+        wrangler = BarDataWrangler(bar_type=bar_type, instrument=instrument)
+        bars = wrangler.process(feed, ts_init_delta=_TS_INIT_DELTA_NS)
+
+        # --- Build the engine (zero fees via zero-fee instrument; no slippage)
+        engine = BacktestEngine(
+            config=BacktestEngineConfig(
+                trader_id="CROSSVAL-001",
+                logging=LoggingConfig(bypass_logging=True),
+            )
+        )
+        # No base_currency → a MULTI-currency CASH account that can hold both
+        # USD (quote) and BTC (the bought base asset). A single-currency CASH
+        # account (base_currency=USD) rejects a BTC/USD spot pair.
+        engine.add_venue(
+            venue=venue,
+            oms_type=OmsType.NETTING,
+            account_type=AccountType.CASH,
+            starting_balances=[Money(CASH, USD)],
+            book_type=BookType.L1_MBP,  # required for bar-based execution
+        )
+        engine.add_instrument(instrument)
+        engine.add_data(bars)
+
+        # --- Strategy consuming the INJECTED ta arrays (D-03) ---------------
+        strategy_cls = _make_strategy_class()
+        strategy = strategy_cls()
+        # Align indicators to the bar OPEN timestamps used by the strategy's
+        # lookup. ohlcv.index is the bar OPEN; indicators share that index.
+        strategy.configure(instrument, bar_type, indicators)
+        engine.add_strategy(strategy)
+
+        engine.run()
+
+        # --- Extract the reconciled result ----------------------------------
+        trade_log = pd.DataFrame(
+            strategy.trades_log,
+            columns=["entry_date", "exit_date", "side", "realised_pnl"],
+        )
+        equity_curve = pd.Series(
+            strategy.equity_values,
+            index=pd.DatetimeIndex(strategy.equity_dates),
+            name="equity",
+        )
+        engine.dispose()
+
+        return CrossvalResult(
+            engine="nautilus",
+            reconciled=True,
+            reason=None,
+            trade_log=trade_log,
+            equity_curve=equity_curve,
         )
 
     except Exception as exc:  # noqa: BLE001 — D-12: degrade on ANY failure
