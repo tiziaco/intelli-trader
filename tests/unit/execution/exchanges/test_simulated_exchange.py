@@ -17,7 +17,7 @@ from itrader.events_handler.events import OrderEvent, FillEvent
 from itrader.config import ExchangeConfig, get_exchange_preset
 from itrader.config.exchange import (
     FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation,
-    FeeModelType, SlippageModelType, ExchangeVenue,
+    FeeModelType, SlippageModelType,
 )
 from itrader.core.enums.execution import (
     ExecutionErrorCode, ExchangeConnectionStatus
