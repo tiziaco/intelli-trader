@@ -358,16 +358,24 @@ class PortfolioHandler:
         
         # Update only active portfolios (each handles its own thread safety)
         active_portfolios = self.get_active_portfolios()
-        
+
         for portfolio in active_portfolios:
             try:
                 portfolio.update_market_value_of_portfolio(prices)
             except Exception as e:
-                self.logger.warning(
-                    "Failed to update portfolio market value",
-                    portfolio_id=portfolio.portfolio_id,
-                    error=str(e)
-                )
+                # WR-08: a failed mark must NOT be swallowed. In a project whose
+                # core value is "numbers you can trust", silently continuing
+                # leaves the equity curve carrying stale position values that
+                # the metrics/drawdown/oracle blocks then consume as if valid.
+                # Mirror on_fill's D-10 fail-fast contract on this same dispatch
+                # path: publish a PortfolioErrorEvent to the ERROR route, then
+                # re-raise so the registry's _on_handler_error backtest policy
+                # aborts the run instead of producing silently-wrong numbers.
+                correlation_id = self._generate_correlation_id()
+                self._publish_error_event(
+                    e, "update_portfolios_market_value", correlation_id,
+                    portfolio.portfolio_id)
+                raise
     
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:
