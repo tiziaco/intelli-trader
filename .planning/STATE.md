@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready_to_plan
-stopped_at: Phase 07 complete (8/8) — ready to discuss Phase 8
-last_updated: 2026-06-07T22:37:42.505Z
-last_activity: 2026-06-07 -- Phase 07 execution started
+status: verifying
+stopped_at: Completed 08-09-PLAN.md — program CLOSED
+last_updated: "2026-06-08T15:42:30.790Z"
+last_activity: 2026-06-08
 progress:
   total_phases: 8
-  completed_phases: 6
-  total_plans: 53
-  completed_plans: 53
-  percent: 75
+  completed_phases: 8
+  total_plans: 62
+  completed_plans: 62
+  percent: 100
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-04)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 8 — m5c — cross validation & final oracle
+**Current focus:** Phase 08 — m5c-cross-validation-final-oracle
 
 ## Current Position
 
-Phase: 8
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-08 - Completed quick task 260608-a59: Demote by-design signal-rejection logs from error to warning
+Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
+Plan: 9 of 9
+Status: Phase complete — ready for verification
+Last activity: 2026-06-08 - Completed quick task 260608-qe2: enum cleanup (core/enums relocation + config collision renames)
 
 Progress: [██████████] 100%
 
@@ -78,6 +78,15 @@ Progress: [██████████] 100%
 | Phase 03 P07 | 18 | 2 tasks | 16 files |
 | Phase 03 P08 | 95 | 2 tasks | 51 files |
 | Phase 03 P09 | 8 | 3 tasks | 4 files |
+| Phase 08 P01 | 7 | 3 tasks | 6 files |
+| Phase 08 P02 | 4 | 3 tasks | 2 files |
+| Phase 08 P03 | 13 | 3 tasks | 3 files |
+| Phase 08 P04 | 2 | 2 tasks | 2 files |
+| Phase 08 P05 | 4 | 3 tasks | 4 files |
+| Phase 08 P06 | 7min | 2 tasks | 3 files |
+| Phase 08 P07 | 6min | 2 tasks | 3 files |
+| Phase 08 P08 | 25min | 3 tasks | 1 files |
+| Phase 08 P09 | 6 | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -122,6 +131,16 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 03-08: Rule 1 fix - Task 1 commit 33c3281 recorded git-mv renames but dropped tracked-file content edits (git add aborted on stale 'test' pathspec); corrected in 6a623ae so committed HEAD collects 346 on fresh checkout
 - [Phase ?]: Plan 03-09: numerical oracle re-frozen byte-exact at M2b end-state (final_equity 53229.68512642488, replacing stale M1 float 53229.75); D-15 tolerance + DEF-02-08-A xfail closed; numeric cols check_exact=True; behavioral identity unchanged (D-18); one of PROJECT.md's two sanctioned numeric re-baseline points
 - [Phase ?]: Plan 03-09: D-17 inertness gate byte-exact (behavioral AND numeric) vs M2A-INERTNESS-REF before re-freeze — M2b structural changes proven numerically inert, no time_parser firing shift
+- [Phase ?]: Plan 08-01: Portfolio.total_* money properties retyped to Decimal (D-06 closure on result-bearing path); float boundary moved to statistical-ratio metric inputs only; validator golden-path checks native Decimal
+- [Phase ?]: Plan 08-01: EXPECTED result-change (D-08) — equity-curve total_equity shifts at Decimal precision; behavioral oracle byte-identical, final_equity 46189.87730727451 unchanged; deferred to 08-03 REFREEZE-M5C-DECIMAL
+- [Phase ?]: Plan 08-02: 08-01 Decimal retype was inert at both cross-file consumers (mypy clean 151 files); sweep documented the Decimal->float serialization boundary in code
+- [Phase ?]: Plan 08-02: full suite 723 passed / 1 sanctioned design-failure (test_oracle_numeric_values, D-08 equity-curve precision shift); surfaced not fixed, deferred to 08-03 REFREEZE-M5C-DECIMAL; tests/golden untouched
+- [Phase ?]: Plan 08-03: M5c golden oracle re-frozen to clean Decimal numbers (branch a SHIFT, owner-approved D-08/D-11) — trades.csv byte-identical (134 trades), headline money byte-exact, only 19/3076 equity points + 3 ratio metrics moved ~1 ULP; REFREEZE-M5C-DECIMAL.md authored; oracle test green (D-08 numeric design-failure CLOSED); cross-validation baseline locked (D-07 gate satisfied)
+- [Phase ?]: Plan 08-04: pinned cross-validation reference engines EXACT in poetry dev group (D-10) — backtesting==0.6.5 + backtrader==1.9.78.123, locked in poetry.lock; smoke-gated clean on Python 3.13.1/numpy 2.2.6 (trivial Cerebro run end-to-end, NO fork/shim — research headline #1 confirmed); engines dev-group-only + absent from main deps + unimported by tests (filterwarnings=['error'] safe, 724 collect clean); nautilus-trader dropped (D-12 non-gating — its <3.15 python cap conflicts with repo ^3.13 resolution)
+- [Phase ?]: Plan 08-05: built scripts/crossval/ force-match harness — shared ta-indicator precompute (verbatim SMAIndicator/MACD calls + golden-CSV loader) + backtesting.py FractionalBacktest + backtrader custom-float-Sizer; both expose uniform run(prices=None,indicators=None)->(trade_log_df[entry_date,exit_date,side,realised_pnl],equity_series), consume IDENTICAL injected arrays (D-03), replicate filter-gates-both QUIRK + next-bar-open fills (D-01); both yield EXACTLY 134 trades (matches iTrader golden), backtrader final_equity 46189.8773 matches golden to ~10 decimals, backtesting.py 46027.30 within ~0.35%; engines script-only (D-10), 724-test suite collects clean
+- [Phase ?]: 08-06: Owner-directed Rule-4 deviation — installed nautilus-trader 1.227.0 by narrowing python to >=3.13,<3.14 (supersedes 08-04 D-12); real Nautilus force-match reconciles 134 trades / final_equity 46287.24 (~0.21% vs golden)
+- [Phase ?]: Plan 08-08: 0 BUG / 4 LEGITIMATE-DIFFERENCE cross-validation verdict (D-05) — no iTrader defect; iTrader's post-M5b numbers kept; NO re-freeze (owner-approved). 3x sortino = entry-bar equity-marking convention (134 differing bars == 134 entry bars, fully attributed); 1x nautilus win_rate = NETTING fill arithmetic on 2025 cluster, contradicted by both gating engines. Owner sign-off recorded as basis for 08-09 final oracle freeze.
+- [Phase ?]: Plan 08-09: owner APPROVED final oracle freeze at terminal checkpoint (2026-06-08); FINAL-ORACLE.md sign-off recorded; no re-freeze, golden artifacts byte-unchanged; program CLOSED. D-13 DoD GREEN on all 8 checks (134 trades / final_equity 46189.87730727451 / 3076 equity pts; mypy clean; 724 tests pass; integration gate byte-exact); M5-10 satisfied end-to-end
 
 ### Pending Todos
 
@@ -139,6 +158,8 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260605-ih3 | Fix WR-01 weekly/DST check_timeframe anchoring (midnight-relative, not epoch) + tests | 2026-06-05 | 85384c5 | [260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc](./quick/260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc/) |
 | 260608-a59 | Demote by-design signal-rejection logs from error to warning in order_manager.py (admission gates + cash reservation) | 2026-06-08 | c48810c | [260608-a59-demote-by-design-signal-rejection-logs-f](./quick/260608-a59-demote-by-design-signal-rejection-logs-f/) |
+| 260608-qe2 | Enum cleanup: relocate TradingDirection + SystemStatus into core/enums; resolve config name collisions (ExchangeType→ExchangeVenue, OrderType→ConfigOrderType) | 2026-06-08 | 6608300 | [260608-qe2-pre-milestone-close-enum-cleanup-move-tr](./quick/260608-qe2-pre-milestone-close-enum-cleanup-move-tr/) |
+| fast | Delete dead config-surface modules (config/trading.py, config/data.py) — fully unreferenced; kept PortfolioType/RiskLevel/Environment/LogLevel (live) | 2026-06-08 | db5354a | — |
 
 ## Deferred Items
 
@@ -155,6 +176,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-07T18:52:59.440Z
-Stopped at: Phase 7 context gathered
-Resume file: .planning/phases/07-m5b-sizing-policy-metrics-universe-coverage/07-CONTEXT.md
+Last session: 2026-06-08T15:42:17.889Z
+Stopped at: Completed 08-09-PLAN.md — program CLOSED
+Resume file: None

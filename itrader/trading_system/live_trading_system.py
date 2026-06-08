@@ -6,8 +6,8 @@ import json
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
-from enum import Enum
 
+from itrader.core.enums import SystemStatus
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
@@ -32,12 +32,8 @@ from itrader.events_handler.events import EventType, TimeEvent, OrderEvent
 _SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")
 
 
-class SystemStatus(Enum):
-    STOPPED = "stopped"
-    STARTING = "starting"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    ERROR = "error"
+# SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
+# imported above; the ``SystemStatus.X`` usages below resolve unchanged.
 
 
 class LiveTradingSystem:

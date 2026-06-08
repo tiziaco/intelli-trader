@@ -39,9 +39,8 @@ NOTHING from ``order_handler``, ``events_handler``, or ``strategy_handler``.
 
 from dataclasses import dataclass
 from decimal import Decimal
-from enum import Enum
 
-from itrader.core.enums import Side
+from itrader.core.enums import Side, TradingDirection
 from itrader.core.exceptions import SizingPolicyViolation
 
 __all__ = [
@@ -204,27 +203,9 @@ class PercentFromDecision:
 SLTPPolicy = PercentFromFill | PercentFromDecision
 
 
-class TradingDirection(Enum):
-    """Declared trading direction for a strategy (D-08 admission seam).
-
-    Class-based with explicit string values and a case-insensitive
-    ``_missing_`` (the OrderType house pattern) so a boundary parse like
-    ``TradingDirection("long_only")`` resolves any casing and raises a clear
-    ``ValueError`` on unknown strings instead of silently coercing.
-    """
-
-    LONG_ONLY = "LONG_ONLY"
-    LONG_SHORT = "LONG_SHORT"
-    SHORT_ONLY = "SHORT_ONLY"
-
-    @classmethod
-    def _missing_(cls, value: object) -> "TradingDirection":
-        """Case-insensitive string parse; raise a clear f-string error."""
-        if isinstance(value, str):
-            for member in cls:
-                if member.value.upper() == value.upper():
-                    return member
-        raise ValueError(f"Unknown TradingDirection: {value!r}")
+# TradingDirection now lives in its canonical home ``core/enums/trading.py``
+# and is re-exported here (see the import above + ``__all__``) so the existing
+# ``from itrader.core.sizing import TradingDirection`` call sites keep working.
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

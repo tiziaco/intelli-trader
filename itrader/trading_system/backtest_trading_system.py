@@ -241,6 +241,9 @@ class TradingSystem(object):
 				"win_rate": win_rate(trades),
 			}
 			print(format_metrics(metrics, title=f"Backtest metrics — {portfolio.name}"))
+			# Decimal->float at the serialization/logging edge: portfolio.total_equity
+			# is now Decimal end-to-end (08-01 retype); float() narrows it for the
+			# structlog kwarg only — a presentation edge, never money arithmetic.
 			self.logger.info(
 				'Backtest summary',
 				portfolio=portfolio.name,

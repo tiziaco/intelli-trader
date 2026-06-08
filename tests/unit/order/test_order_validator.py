@@ -253,6 +253,39 @@ class TestEnhancedOrderValidator:
         result = self.validator.validate_order_pipeline(order)
         assert isinstance(result, ValidationResult)
 
+    def test_cash_check_is_decimal_exact_at_boundary(self):
+        """M5-10 (D-06): the cash check compares Decimal cost vs Decimal cash.
+
+        Chosen so float narrowing genuinely diverges from Decimal at the
+        boundary: 1.07 * 101 is EXACTLY 108.07 in Decimal, but the float
+        product is 108.07000000000001. With cash = 108.07 (exact), a
+        Decimal-native check admits the order (cash < cost is False); a
+        float narrowing would reject it (cash < 108.07000000000001 is True).
+        This locks the golden-path cash check to native Decimal arithmetic.
+        """
+        self.portfolio_handler.available_cash.return_value = Decimal("108.07")
+        order = self.create_test_order(price=1.07, quantity=101.0)
+
+        result = self.validator.validate_order_pipeline(order)
+
+        # Exact-cash order is admitted under Decimal arithmetic: no
+        # INSUFFICIENT_CASH_COST error (the float path would wrongly reject).
+        assert not any(
+            msg.code == "INSUFFICIENT_CASH_COST" for msg in result.errors
+        )
+
+    def test_cash_check_rejects_one_cent_short(self):
+        """One cent short of cost is rejected with INSUFFICIENT_CASH_COST."""
+        self.portfolio_handler.available_cash.return_value = Decimal("108.06")
+        order = self.create_test_order(price=1.07, quantity=101.0)
+
+        result = self.validator.validate_order_pipeline(order)
+
+        assert result.success is False
+        assert any(
+            msg.code == "INSUFFICIENT_CASH_COST" for msg in result.errors
+        )
+
     def test_validation_result_properties(self):
         """Test ValidationResult properties."""
         order = self.create_test_order(price=-10.0)  # Will generate errors

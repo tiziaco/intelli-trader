@@ -1,4 +1,5 @@
 from datetime import datetime, time
+from decimal import Decimal
 from typing import Optional, List, Dict, Any, cast
 from dataclasses import dataclass
 from enum import Enum
@@ -112,8 +113,9 @@ class EnhancedOrderValidator:
         entity, not the in-flight signal. The values validated (quantity,
         price, action, ticker) are the same values the signal pipeline
         validated before the entity-based cutover, so verdicts are identical.
-        Money comparisons stay float-domain until M4 (locked decision): the
-        entity's Decimal price/quantity are coerced at this read boundary.
+        M5-10 (D-06): golden-path money comparisons are now native Decimal —
+        the entity's Decimal price/quantity are compared against Decimal-wrapped
+        thresholds, no float narrowing at the property boundary.
 
         Phases:
         1. Critical Fields - Essential fields validation
@@ -196,8 +198,8 @@ class EnhancedOrderValidator:
                 "INVALID_ACTION"
             ))
 
-        # Price validation (float-domain comparison until M4)
-        if float(order.price) <= 0:
+        # Price validation (M5-10: native Decimal comparison; Decimal vs int 0)
+        if order.price <= 0:
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 "Price must be positive",
@@ -210,7 +212,7 @@ class EnhancedOrderValidator:
         # ever runs (D-06), so nothing legitimate presents a non-positive
         # quantity here — it fails like any other invalid field (D-04: the
         # zero-quantity "transition period" is over).
-        if float(order.quantity) <= 0:
+        if order.quantity <= 0:  # M5-10: native Decimal comparison
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 "Quantity must be positive",
@@ -302,18 +304,23 @@ class EnhancedOrderValidator:
         return messages
 
     def _validate_price_ranges(self, order: Order) -> List[ValidationMessage]:
-        """Validate price is within acceptable ranges (float-domain until M4)."""
+        """Validate price is within acceptable ranges (M5-10: native Decimal).
+
+        The float thresholds are wrapped via Decimal(str(...)) at the comparison
+        site — never Decimal(float) (core/money.py:17). f-string formatting works
+        unchanged on Decimal.
+        """
         messages: List[ValidationMessage] = []
 
-        price = float(order.price)
-        if price < self.min_price:
+        price = order.price
+        if price < Decimal(str(self.min_price)):
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 f"Price {price} below minimum {self.min_price}",
                 "price",
                 "PRICE_TOO_LOW"
             ))
-        elif price > self.max_price:
+        elif price > Decimal(str(self.max_price)):
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 f"Price {price} above maximum {self.max_price}",
@@ -324,18 +331,21 @@ class EnhancedOrderValidator:
         return messages
 
     def _validate_quantity_ranges(self, order: Order) -> List[ValidationMessage]:
-        """Validate quantity is within acceptable ranges (float-domain until M4)."""
+        """Validate quantity is within acceptable ranges (M5-10: native Decimal).
+
+        Float thresholds wrapped via Decimal(str(...)) at the comparison site.
+        """
         messages: List[ValidationMessage] = []
 
-        quantity = float(order.quantity)
-        if quantity < self.min_quantity:
+        quantity = order.quantity
+        if quantity < Decimal(str(self.min_quantity)):
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 f"Quantity {quantity} below minimum {self.min_quantity}",
                 "quantity",
                 "QUANTITY_TOO_LOW"
             ))
-        elif quantity > self.max_quantity:
+        elif quantity > Decimal(str(self.max_quantity)):
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 f"Quantity {quantity} above maximum {self.max_quantity}",
@@ -425,12 +435,17 @@ class EnhancedOrderValidator:
         return messages
 
     def _check_cash_availability(self, order: Order) -> List[ValidationMessage]:
-        """Check if portfolio has sufficient cash for the trade (float-domain until M4)."""
+        """Check if portfolio has sufficient cash for the trade (M5-10: native Decimal).
+
+        cost = quantity * price is Decimal*Decimal; cash (available_cash) is
+        already Decimal; thresholds wrapped via Decimal(str(...)). The
+        ${cash:.2f} / ${cost:.2f} format specs work unchanged on Decimal.
+        """
         messages: List[ValidationMessage] = []
         assert self.portfolio_handler is not None  # guarded by caller
 
-        quantity = float(order.quantity)
-        price = float(order.price)
+        quantity = order.quantity
+        price = order.price
         cost = quantity * price
 
         # Only check cash for new positions (not closing existing positions).
@@ -441,7 +456,7 @@ class EnhancedOrderValidator:
             cash = self.portfolio_handler.available_cash(_portfolio_id(order))
 
             # Minimum cash requirement
-            if cash < self.min_cash_required:
+            if cash < Decimal(str(self.min_cash_required)):
                 messages.append(ValidationMessage(
                     ValidationLevel.ERROR,
                     f"Insufficient cash: ${cash:.2f} below minimum ${self.min_cash_required}",
@@ -460,25 +475,26 @@ class EnhancedOrderValidator:
         return messages
 
     def _check_risk_limits(self, order: Order) -> List[ValidationMessage]:
-        """Check various risk limits (float-domain until M4).
+        """Check various risk limits (M5-10: native Decimal).
 
         Reads only order fields — the former portfolio lookup was an unused
         not-found guard (the read model raises typed PortfolioNotFoundError
-        upstream), removed with the Protocol retype (D-16).
+        upstream), removed with the Protocol retype (D-16). order_value is
+        Decimal*Decimal; thresholds wrapped via Decimal(str(...)).
         """
         messages: List[ValidationMessage] = []
 
         # Order value limits
-        order_value = float(order.quantity) * float(order.price)
+        order_value = order.quantity * order.price
 
-        if order_value < self.min_order_value:
+        if order_value < Decimal(str(self.min_order_value)):
             messages.append(ValidationMessage(
                 ValidationLevel.WARNING,
                 f"Order value ${order_value:.2f} below minimum ${self.min_order_value}",
                 "order_value",
                 "ORDER_VALUE_TOO_LOW"
             ))
-        elif order_value > self.max_order_value:
+        elif order_value > Decimal(str(self.max_order_value)):
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 f"Order value ${order_value:.2f} exceeds maximum ${self.max_order_value}",

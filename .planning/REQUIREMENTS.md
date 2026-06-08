@@ -150,7 +150,7 @@
   copies removed) *(#33)*
 - [x] **M5-09**: Strategy/data/reporting/universe paths gain test coverage — CSV price store, reporting/
   statistics, universe *(TC2 [CSV part; adapters→D-oanda], TC4, TC6)*
-- [ ] **M5-10**: The engine is **cross-validated against `backtesting.py` + `backtrader`** on the same
+- [x] **M5-10**: The engine is **cross-validated against `backtesting.py` + `backtrader`** on the same
   strategy + data; metrics reconciled; the **final numerical reference output is frozen** *(golden-master
   external-validation gate, definition-of-done)*
 
@@ -235,7 +235,7 @@ phase; a span is not done until its final phase completes.
 | M5-07 | Phase 7 | M5b | — | Complete |
 | M5-08 | Phase 7 | M5b | — | Complete |
 | M5-09 | Phase 7 | M5b | — | Complete |
-| M5-10 | Phase 8 | M5c | final numerical oracle frozen | Pending |
+| M5-10 | Phase 8 | M5c | final numerical oracle frozen | Complete |
 
 **Coverage:** 45/45 in-scope v1 REQ-IDs mapped to exactly one phase. No orphans, no duplicates. All
 `D-live`/`D-sql`/`D-screener`/`D-compliance`/`D-oanda`/`OUT` items remain in v2/Out of Scope and are

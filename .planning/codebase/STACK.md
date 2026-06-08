@@ -1,128 +1,116 @@
 # Technology Stack
 
-**Analysis Date:** 2026-06-07
+**Analysis Date:** 2026-06-08
 
 ## Languages
 
 **Primary:**
-- Python 3.13.1 (CPython) - All application code, tests, and scripts
-- YAML - Domain config overrides under `settings/` (gitignored in production)
+- Python 3.13 (CPython 3.13.1) - All application and test code under `itrader/` and `tests/`. Pinned to `>=3.13,<3.14` in `pyproject.toml`; `.python-version` pins `3.13`.
 
 **Secondary:**
-- Rust (via `uuid-utils` C extension) - UUIDv7 generation; consumed through `uuid_utils.compat` in `itrader/outils/id_generator.py`
+- YAML - Configuration files under `settings/` (e.g. `settings/domains/portfolio.default.yaml`, `settings/portfolio_handler.yaml`)
+- Make - Developer task runner (`Makefile`)
 
 ## Runtime
 
 **Environment:**
-- CPython 3.13.1 (managed via pyenv; `.python-version` pins to `3.13` at repo root)
+- CPython 3.13.1, managed via pyenv (`pyenv local 3.13` in `Makefile::init-env`)
 
 **Package Manager:**
-- Poetry (virtualenvs installed in-project as `.venv/`)
-- Lockfile: `poetry.lock` present and committed
+- Poetry (`[tool.poetry]` in `pyproject.toml`); virtualenvs installed in-project (`poetry config virtualenvs.in-project true`) as `.venv/`
+- Lockfile: present and committed (`poetry.lock`, ~492 KB)
 
 ## Frameworks
 
 **Core:**
 - No web framework — pure Python library/application
-- Custom in-house event queue built on `queue.Queue` (stdlib)
-- Entry point for event dispatch: `itrader/events_handler/full_event_handler.py`
-- Entry point for backtest: `itrader/trading_system/backtest_trading_system.py`
-- Entry point for live: `itrader/trading_system/live_trading_system.py`
-
-**Configuration:**
-- pydantic 2.13 — domain config models (`PortfolioConfig`, `ExchangeConfig`, `SystemConfig`, `DataConfig`, `TradingConfig`) under `itrader/config/`
-- pydantic-settings 2.14 — `Settings(BaseSettings)` with `ITRADER_*` env-prefix in `itrader/config/settings.py`
-
-**Logging:**
-- structlog 24.4.0 — structured logging with context binding; configured in `itrader/logger.py`; outputs colored console or JSON depending on `ITRADER_JSON_LOGS`
+- Custom in-house event queue built on `queue.Queue` (stdlib). Dispatch entry point: `itrader/events_handler/full_event_handler.py`
 
 **Testing:**
-- pytest 8.4.2 — test runner; config in `pyproject.toml` `[tool.pytest.ini_options]`
-- pytest-cov 5.0.0 — coverage reports (HTML at `htmlcov/`)
-- pytest-watch 4.2.0 — file-watch mode
-- pytest-html 4.2.0 — HTML test reports
+- pytest ^8.4.2 - Test runner (`testpaths = ["tests"]`, `minversion = "8.0"`)
+- pytest-cov ^5.0.0 - Coverage reports (HTML at `htmlcov/`)
+- pytest-watch ^4.2.0 - File-watch mode (`make test-watch`)
+- pytest-html ^4.2.0 - HTML test reports
 
-**Type Checking:**
-- mypy 2.1.0 — `--strict` clean enforced; config in `pyproject.toml` `[tool.mypy]`; several deferred subsystems excluded via `[[tool.mypy.overrides]]`
+**Cross-Validation (dev-only):**
+- backtesting.py 0.6.5 - Gating cross-validation oracle (`tests/golden/CROSS-VALIDATION.md`)
+- backtrader 1.9.78.123 - Gating cross-validation oracle
+- nautilus-trader 1.227.0 - Non-gating reconciliation oracle
 
-**Build/Dev:**
-- `make` — task runner; `Makefile` at repo root loads `.env` via `include .env`
-- pyenv — Python version management
+**Type Checking / Build:**
+- mypy ^2.1.0 - `[tool.mypy]` runs `--strict` over `itrader` (`files = ["itrader"]`); per-module `ignore_errors`/`ignore_missing_imports` overrides for deferred subsystems and stubless third-party libs
+- Make - All developer commands (`Makefile`); loads `.env` at top level via `include .env`
+- pyenv - Python version management
+- poetry-core - Build backend (`[build-system]`)
 
 ## Key Dependencies
 
-**Data / Numerics:**
-- pandas 2.3.3 — primary data structure for OHLCV price series; used throughout all handlers
-- numpy 2.2.6 — numerical operations and array computing
-- scipy 1.17.1 — `linregress` for performance metrics in `itrader/reporting/performance.py`
-- scikit-learn 1.9.0 — `LinearRegression`, `PolynomialFeatures` for custom indicators in `itrader/strategy_handler/my_strategies/custom_indicators/`
-- statsmodels 0.14.6 — cointegration tests (`coint`, `OLS`) for pairs trading in `itrader/screeners_handler/screeners/cointegrated_pairs.py`
+**Data / Numerical:**
+- pandas ^2.3.3 - Primary OHLCV data structure across all handlers
+- numpy >=2.2.3,<2.3 - Numerical/array computing
+- scipy ^1.17.1 - `linregress` for performance metrics (`itrader/reporting/`)
+- scikit-learn ^1.9.0 - `LinearRegression`, `PolynomialFeatures` for custom indicators
+- statsmodels ^0.14.6 - Cointegration tests (`coint`, `OLS`) for pairs trading
 
 **Technical Analysis:**
-- ta 0.11.0 — technical indicator library; used in `itrader/strategy_handler/`
-- pandas-ta 0.4.71b0 — extended TA library (130+ indicators); used in `itrader/strategy_handler/sltp_models/` and strategy filters
+- ta ^0.11.0 - Technical indicator library (`itrader/strategy_handler/`)
+- pandas-ta 0.4.71b0 (pinned, beta) - Extended TA library used in strategy filters and SLTP models
 
-**Database / Storage:**
-- sqlalchemy 2.0.50 — ORM and engine for PostgreSQL price database in `itrader/price_handler/store/sql_store.py`
-- sqlalchemy-utils 0.41.2 — `database_exists`, `create_database` helpers used by `SqlHandler`
-- psycopg2-binary 2.9.12 — PostgreSQL adapter; used by SQLAlchemy engine URL `postgresql+psycopg2://`
+**Identity / Money / Validation:**
+- uuid-utils ^0.16.0 - Rust-backed UUIDv7 generation; `uuid_utils.compat.uuid7()` returns native `uuid.UUID` (`itrader/outils/id_generator.py`)
+- pydantic ^2.13 - Domain config models (`itrader/config/*.py`)
+- pydantic-settings ^2.14 - `Settings(BaseSettings)` env-var layer with `env_prefix="ITRADER_"` (`itrader/config/settings.py`)
+- Decimal (stdlib) - Money is Decimal end-to-end (locked project decision); float-for-money is a correctness defect
 
-**Exchange / Networking:**
-- ccxt 4.5.56 — unified interface to 100+ crypto exchanges; used in `itrader/price_handler/providers/ccxt_provider.py`
-- websocket-client — Binance live data streaming via `wss://stream.binance.com:9443`; used in `itrader/price_handler/providers/binance_stream.py` (D-live: quarantined, not on active run path)
-- tpqoa — OANDA REST API wrapper; used in `itrader/price_handler/providers/oanda_provider.py` (D-oanda: deferred, not declared in `pyproject.toml`)
+**Persistence:**
+- sqlalchemy ^2.0.50 - ORM/engine for PostgreSQL price database (`itrader/price_handler/store/sql_store.py`)
+- sqlalchemy-utils ^0.41.2 - `database_exists`, `create_database` helpers
+- psycopg2-binary ^2.9.12 - PostgreSQL adapter (`postgresql+psycopg2://`)
 
-**ID Generation:**
-- uuid-utils 0.16.0 — Rust-backed UUIDv7 implementation; accessed via `uuid_utils.compat` in `itrader/outils/id_generator.py`
+**External Data / Streaming:**
+- ccxt ^4.5.56 - Unified crypto-exchange interface (`itrader/price_handler/providers/ccxt_provider.py`)
+- websocket-client (`websocket`) - Binance live kline streaming (`itrader/price_handler/providers/binance_stream.py`)
+- tqdm ^4.67.3 - Progress bars during data download loops
 
-**Visualization:**
-- plotly 6.8.0 — interactive charts in `itrader/reporting/plots.py` (D-reporting: deferred, not on backtest path)
-- tqdm 4.67.3 — progress bars during data download loops in `itrader/price_handler/ingestion.py`
+**Logging / Reporting:**
+- structlog ^24.4.0 - Structured logging with context binding (`itrader/logger.py`); console (color) or JSON renderer
+- plotly ^6.8.0 - Interactive charts for performance reporting (`itrader/reporting/plots.py`)
+- pyyaml ^6.0.3 - YAML parsing for domain config (`itrader/config/`)
 
-**YAML:**
-- pyyaml 6.0.3 — YAML parsing for domain config files
+**Concurrency:**
+- readerwriterlock (transitive/used) - Reader-writer lock for thread-safe portfolio access (`itrader/portfolio_handler/portfolio_handler.py`)
 
-**Interactive:**
-- ipython 9.14.0 — interactive REPL
-- ipykernel 6.31.0 — Jupyter kernel support
+**Interactive (dev):**
+- ipython ^9.14.0, ipykernel ^6.31.0 - REPL / Jupyter kernel
 
 ## Configuration
 
-**Environment Variables (ITRADER_ prefix):**
-- `ITRADER_LOG_LEVEL` — log level (default `INFO`); read directly from `os.environ` in `itrader/logger.py`
-- `ITRADER_JSON_LOGS` — enable JSON log rendering (default `false`); read from `os.environ` in `itrader/logger.py`
-- `ITRADER_DATABASE_URL` — PostgreSQL DSN as `SecretStr`; required-no-default in `itrader/config/settings.py`; only needed for live path
+**Environment:**
+- `.env` file at repo root (present; loaded by `Makefile` via `include .env` + `.EXPORT_ALL_VARIABLES`). Contains DB URLs and exchange API credentials — see INTEGRATIONS.md for key names.
+- `pydantic-settings` `Settings` reads vars with prefix `ITRADER_` (`itrader/config/settings.py`, `extra="ignore"`)
+- Domain YAML configs loaded from `settings/` (gitignored in production); defaults shipped as `settings/domains/{domain}.default.yaml`
+- Process-wide singletons (`config`, `logger`, `idgen`) initialized in `itrader/__init__.py` on import
 
-**Settings files:**
-- `settings/` directory at repo root (gitignored in production); holds per-domain YAML overrides
-- Default YAML files under `settings/domains/` (e.g., `settings/portfolio_handler.default.yaml`)
-- Pydantic models are the canonical source of defaults — YAML files are optional overrides
+**Build / Tooling:**
+- `pyproject.toml` - Single source of truth for dependencies, pytest config, and mypy config
+- `Makefile` - All developer commands
 
-**Build config:**
-- `pyproject.toml` — single source of truth for dependencies, test config (`[tool.pytest.ini_options]`), mypy config (`[tool.mypy]`), and package metadata
-- `Makefile` — all developer commands; loads `.env` at top level via `include .env .EXPORT_ALL_VARIABLES`
-- `.env` file present at repo root (gitignored; never read its contents)
-
-**Process-wide singletons (initialized on `import itrader`):**
-- `config` — `SystemConfig.default()` instance
-- `logger` — `ITraderStructLogger` via `init_logger()`
-- `idgen` — `IDGenerator()` instance
-- Source: `itrader/__init__.py`
+**Test Strictness:**
+- `pyproject.toml::[tool.pytest.ini_options]` sets `filterwarnings = ["error", ...]`, `--strict-markers`, `--strict-config`. Only `unit`, `integration`, `slow` markers are declared (folder-derived in `tests/conftest.py`).
 
 ## Platform Requirements
 
 **Development:**
-- macOS or Linux (pyenv for Python version management)
-- pyenv with Python 3.13 installed
-- Poetry for dependency management and virtual environment
-- PostgreSQL running locally on port 5432 (for price storage via `SqlHandler` — optional for pure backtest)
-- OANDA `oanda.cfg` credentials file if using OANDA provider (D-oanda deferred)
+- macOS or Linux with pyenv + Python 3.13 installed
+- Poetry for dependency management and in-project `.venv/`
+- PostgreSQL on `localhost:5432` for the price database (`trading_system_prices`) when using SQL price storage
 
-**Production:**
-- No deployment target currently configured (pure library/application, no web server)
-- PostgreSQL database `trading_system_prices` for price history (live mode)
-- Binance WebSocket access for live streaming (D-live deferred)
+**Production / Live (deferred subsystems):**
+- PostgreSQL for live order storage (`PostgreSQLOrderStorage` is a `NotImplementedError` placeholder in `itrader/order_handler/storage/postgresql_storage.py`)
+- OANDA API credentials in an `oanda.cfg` file (referenced by `itrader/price_handler/providers/oanda_provider.py` via `tpqoa`)
+- Binance WebSocket access for live streaming (`itrader/price_handler/providers/binance_stream.py`)
+- No Dockerfile, docker-compose, or CI workflow detected
 
 ---
 
-*Stack analysis: 2026-06-07*
+*Stack analysis: 2026-06-08*

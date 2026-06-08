@@ -33,28 +33,6 @@ from .portfolio import (
     ValidationSettings,
     get_portfolio_preset,
 )
-from .trading import (
-    ExecutionMode,
-    ExecutionSettings,
-    FeeStructure,
-    OrderDefaults,
-    OrderType,
-    RiskControls,
-    StrategySettings,
-    TimeInForce,
-    TradingConfig,
-)
-from .data import (
-    DataConfig,
-    DataFeedConfig,
-    DataFrequency,
-    DataSource,
-    DataSourceConfig,
-    ProcessingConfig,
-    RealTimeConfig,
-    StorageConfig,
-    StorageType,
-)
 from .system import (
     Environment,
     LogLevel,
@@ -66,7 +44,7 @@ from .exchange import (
     ConnectionSettings,
     ExchangeConfig,
     ExchangeLimits,
-    ExchangeType,
+    ExchangeVenue,
     FailureSimulation,
     FeeModelConfig,
     FeeModelType,
@@ -99,26 +77,6 @@ __all__ = [
     "ValidationSettings",
     "EventSettings",
     "get_portfolio_preset",
-    # Trading domain
-    "TradingConfig",
-    "OrderType",
-    "TimeInForce",
-    "ExecutionMode",
-    "OrderDefaults",
-    "ExecutionSettings",
-    "RiskControls",
-    "FeeStructure",
-    "StrategySettings",
-    # Data domain
-    "DataConfig",
-    "DataSource",
-    "DataFrequency",
-    "StorageType",
-    "DataSourceConfig",
-    "DataFeedConfig",
-    "StorageConfig",
-    "ProcessingConfig",
-    "RealTimeConfig",
     # System domain
     "SystemConfig",
     "Environment",
@@ -127,7 +85,7 @@ __all__ = [
     "MonitoringSettings",
     # Exchange domain
     "ExchangeConfig",
-    "ExchangeType",
+    "ExchangeVenue",
     "FeeModelType",
     "SlippageModelType",
     "FeeModelConfig",

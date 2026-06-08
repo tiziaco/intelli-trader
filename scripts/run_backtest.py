@@ -130,7 +130,14 @@ def build_summary(portfolio, trades):
     final equity). The derived ratios live in the nested ``metrics`` block added by
     ``build_metrics_block`` (D-15 — the M5-owned carve-out is closed this phase).
     """
+    # total_realised_pnl reads the already-float trades-frame column (build_trade_log
+    # casts money to float at the frame edge) — a frame read, not a Portfolio property.
     total_realised_pnl = float(trades["realised_pnl"].sum()) if not trades.empty else 0.0
+    # Decimal->float at the serialization edge: portfolio.cash and
+    # portfolio.total_equity are Decimal end-to-end (08-01 retype); float()
+    # narrows them HERE, at the summary.json serialization boundary, with no
+    # arithmetic on the Decimal beforehand (direct reads). This is the single
+    # money Decimal->float boundary for summary.json.
     return {
         "ticker": TICKER,
         "timeframe": TIMEFRAME,

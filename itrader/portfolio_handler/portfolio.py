@@ -220,39 +220,39 @@ class Portfolio(object):
 		return len(self.position_manager.get_all_positions())
 
 	@property
-	def total_market_value(self) -> float:
-		"""Get total market value excluding cash.
+	def total_market_value(self) -> Decimal:
+		"""Get total market value excluding cash, as Decimal.
 
-		Returned as float for the float-based consumers (order validator,
-		metrics, reporting). The cash *ledger* is Decimal end-to-end (M2-02);
-		routing these aggregates through Decimal is M4 scope.
+		M5-10 (D-06): Decimal end-to-end on the result-bearing path — the
+		position_manager aggregate is already Decimal, so this returns it
+		unchanged with no float() narrowing at the property boundary.
 		"""
-		return float(self.position_manager.get_total_market_value())
+		return self.position_manager.get_total_market_value()
 
 	@property
-	def total_equity(self) -> float:
-		"""Get total equity including cash.
+	def total_equity(self) -> Decimal:
+		"""Get total equity including cash, as Decimal.
 
-		Float for consumer compatibility (order-validator exposure ratios,
-		metrics, reporting). cash is Decimal on the ledger (M2-02); coerce it at
-		this read boundary so total_equity stays float for downstream consumers.
+		M5-10 (D-06): Decimal-native aggregation — total_market_value (Decimal)
+		plus cash (Decimal). No float() cast: money stays Decimal end-to-end.
 		"""
-		return self.total_market_value + float(self.cash)
+		return self.total_market_value + self.cash
 
 	@property
-	def total_unrealised_pnl(self) -> float:
-		"""Calculate unrealised P&L."""
-		return float(self.position_manager.get_total_unrealized_pnl())
+	def total_unrealised_pnl(self) -> Decimal:
+		"""Calculate unrealised P&L as Decimal (M5-10, D-06)."""
+		return self.position_manager.get_total_unrealized_pnl()
 
 	@property
-	def total_realised_pnl(self) -> float:
-		"""Calculate realised P&L."""
-		return float(self.position_manager.get_total_realized_pnl())
+	def total_realised_pnl(self) -> Decimal:
+		"""Calculate realised P&L as Decimal (M5-10, D-06)."""
+		return self.position_manager.get_total_realized_pnl()
 
 	@property
-	def total_pnl(self) -> float:
-		"""
-		Calculate the sum of all the positions' total P&Ls.
+	def total_pnl(self) -> Decimal:
+		"""Sum of all positions' total P&Ls, as Decimal.
+
+		M5-10 (D-06): Decimal+Decimal aggregation of the two pnl read-properties.
 		"""
 		return self.total_unrealised_pnl + self.total_realised_pnl
 	
@@ -385,15 +385,18 @@ class Portfolio(object):
 		"""Get the percentage of the largest position."""
 		if self.total_equity <= 0:
 			return 0.0
-		
+
 		positions = self.position_manager.get_all_positions()
 		if not positions:
 			return 0.0
-		
-		# pos.market_value is Decimal (M2a entity money); total_equity is float —
-		# coerce to float for this reporting ratio.
-		max_position_value = max(abs(float(pos.market_value)) for pos in positions.values())
-		return max_position_value / self.total_equity
+
+		# M5-10: total_equity is now Decimal end-to-end. pos.market_value is
+		# Decimal (M2a entity money) — keep the ratio Decimal-native (no
+		# float/Decimal mix), then coerce only the final reporting ratio to float.
+		# IN-03: trust the Decimal source — no defensive Decimal(str(...)) wrap
+		# (which would silently mask a stray-float type regression).
+		max_position_value = max(abs(pos.market_value) for pos in positions.values())
+		return float(max_position_value / self.total_equity)
 	
 	# Enhanced Transaction Processing
 	def transact_shares(self, transaction: Transaction) -> None:

@@ -1,126 +1,96 @@
 # External Integrations
 
-**Analysis Date:** 2026-06-07
+**Analysis Date:** 2026-06-08
 
 ## APIs & External Services
 
-**Crypto Exchange Data (CCXT):**
-- ccxt 4.5.56 — unified interface to 100+ crypto exchanges (Binance, Coinbase, Kraken, etc.)
-  - SDK/Client: `ccxt` package; instantiated as `getattr(ccxt, name)()` in `itrader/price_handler/providers/ccxt_provider.py`
-  - Auth: No API key required for public OHLCV data download; private endpoints would need exchange-specific keys
-  - Status: Active — used by `CCXT_exchange.download_data()` for historical OHLCV ingestion
-  - Data: `fetch_ohlcv()` with paginated 1000-bar requests
+**Crypto market data (CCXT):**
+- CCXT unified exchange API - Historical OHLCV download
+  - SDK/Client: `ccxt` ^4.5.56 (`itrader/price_handler/providers/ccxt_provider.py`)
+  - Exchange selected dynamically: `getattr(ccxt, name)()` (line 19); no API key required for public OHLCV (`fetch_ohlcv`, lines 112/116)
+  - Symbol convention: `BTCUSDT` → `BTC/USDT` (`ccxt_provider.py:108`)
+  - Errors handled: `ccxt.NetworkError`, `ccxt.ExchangeError`
 
-**Binance Live Streaming:**
-- websocket-client — WebSocket connection to `wss://stream.binance.com:9443/stream`
-  - SDK/Client: `websocket.WebSocketApp` in `itrader/price_handler/providers/binance_stream.py`
-  - Auth: None (public stream endpoint)
-  - Status: **Quarantined / D-live deferred** — `BINANCELiveStreamer` is not imported on any active run path; `prices` buffer reference broken after Store/Feed split. Rebuilding is deferred to D-live milestone.
-  - Protocol: Subscribes to `{symbol}@kline_{timeframe}` streams; processes closed-bar messages
+**Crypto live streaming (Binance):**
+- Binance WebSocket kline stream - Real-time bars (live mode only)
+  - Client: `websocket-client` (`itrader/price_handler/providers/binance_stream.py`)
+  - Endpoint: `wss://stream.binance.com:9443/stream?streams=` (`binance_stream.py:201`), built per-symbol as `<sym>@kline_<timeframe>` (line 205)
+  - Auth: `BINANCE_MAIN_API_KEY` / `BINANCE_MAIN_API_SECRET` (and SPOT/FUTURE testnet variants) in `.env`; public kline stream itself needs no auth
 
-**OANDA REST API:**
-- tpqoa — OANDA REST v20 wrapper (not declared in `pyproject.toml`)
-  - SDK/Client: `tpqoa.tpqoa('oanda.cfg')` in `itrader/price_handler/providers/oanda_provider.py`
-  - Auth: `oanda.cfg` credentials file at repo root (must be provided manually; gitignored)
-  - Status: **D-oanda deferred** — `oanda_provider.py` excluded from mypy scope; not on active backtest run path
+**Forex (OANDA — deferred):**
+- OANDA v20 API - Forex data download (`OANDA_exchange` in `itrader/price_handler/providers/oanda_provider.py`)
+  - Client: `tpqoa` reading credentials from `oanda.cfg` (`oanda_provider.py:34`); `tpqoa` is NOT a declared dependency — provider is non-functional until installed
+  - Auth: `OANDA_TESTNET_ACCOUNT_ID` / `OANDA_TESTNET_API_KEY` / `OANDA_TESTNET_API_SECRET` in `.env`
+  - mypy-deferred (`tool.mypy.overrides`, D-oanda)
 
 ## Data Storage
 
-**Price Database (PostgreSQL):**
-- PostgreSQL — OHLCV price history storage
-  - Connection: Hardcoded as `postgresql+psycopg2://tizianoiacovelli:1234@localhost:5432/trading_system_prices` in `itrader/price_handler/store/sql_store.py` (tech debt: credentials in source)
-  - Client: SQLAlchemy 2.0.50 + psycopg2-binary 2.9.12
-  - Usage: `SqlHandler` in `itrader/price_handler/store/sql_store.py` — `to_database()`, `read_prices()`, `get_symbols_SQL()`
-  - Auto-creates database if missing via `sqlalchemy-utils.create_database()`
-  - Status: **D-sql deferred** — `sql_store.py` excluded from mypy scope; not exercised on the golden backtest path (CSV feed used instead)
+**Databases:**
+- PostgreSQL - Price history store
+  - Client: SQLAlchemy 2.0 engine + `sqlalchemy-utils` (`itrader/price_handler/store/sql_store.py`)
+  - Connection: HARDCODED in `sql_store.py:17` as `postgresql+psycopg2://tizianoiacovelli:1234@localhost:5432/trading_system_prices` (inline credentials — see CONCERNS). `.env` also exposes `DATA_DB_URL` and `SYSTEM_DB_URL`, which appear unused by the SQL store.
+  - Auto-creates the database via `database_exists` / `create_database`
+- PostgreSQL - Live order storage (NOT implemented)
+  - `PostgreSQLOrderStorage.__init__` raises `NotImplementedError` (`itrader/order_handler/storage/postgresql_storage.py`); placeholder for live mode
 
-**Order Storage (PostgreSQL — Live Mode):**
-- PostgreSQL — persistent order mirror for live trading
-  - Client: `itrader/order_handler/storage/postgresql_storage.py` — `PostgreSQLOrderStorage`
-  - Status: **Not implemented** — all methods raise `NotImplementedError("To be implemented in Phase 2")`; storage factory returns `InMemoryOrderStorage` for backtest
+**File Storage:**
+- CSV price store - `itrader/price_handler/store/csv_store.py`
+- Golden reference dataset: `data/BTCUSD_1d_ohlcv_2018_2026.csv` (the fixed backtest input)
 
-**CSV File Storage (Active — Backtest):**
-- Local filesystem — OHLCV golden dataset
-  - Location: `data/BTCUSD_1d_ohlcv_2018_2026.csv`
-  - Client: `itrader/price_handler/store/csv_store.py`
-  - Status: Active — this is the primary data source for all backtest runs
+**In-memory storage (backtest):**
+- `InMemoryOrderStorage` - Default order mirror for backtest (`itrader/order_handler/storage/in_memory_storage.py`); selected via `OrderStorageFactory` (`itrader/order_handler/storage/storage_factory.py`)
 
-**In-Memory Storage (Active — Backtest):**
-- `itrader/order_handler/storage/in_memory_storage.py` — `InMemoryOrderStorage`
-  - Used for all backtest runs via `OrderStorageFactory.create('backtest')`
-  - No external dependency
-- `itrader/portfolio_handler/storage/in_memory_storage.py` — portfolio state
-  - No external dependency
+**Caching:**
+- None
 
 ## Authentication & Identity
 
 **Auth Provider:**
-- None — no authentication provider integrated
-- Implementation: No auth layer; live API credentials are file-based (`oanda.cfg`) or env-var based (`ITRADER_DATABASE_URL`)
+- None for the application — no end-user auth layer
+- Exchange API keys (Binance, OANDA) are credentials for outbound data providers, stored in `.env`
 
-**ID Generation:**
-- uuid-utils 0.16.0 (Rust-backed) — UUIDv7 time-ordered IDs
-  - Implementation: `IDGenerator` in `itrader/outils/id_generator.py`; wraps `uuid_utils.compat.uuid7()` returning stdlib `uuid.UUID`
-  - Scope: All entity IDs — transactions, portfolios, positions, orders, strategies, screeners
-  - Singleton: `idgen` initialized in `itrader/__init__.py`
+**Internal IDs:**
+- Single UUIDv7 scheme via Rust-backed `uuid-utils` (`itrader/outils/id_generator.py`); time-ordered, collision-safe, index-friendly (RFC 9562)
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- None — no external error tracking service (e.g., Sentry) integrated
+- None (no Sentry/Rollbar/etc. detected)
 
 **Logs:**
-- structlog 24.4.0 — structured logging via `ITraderStructLogger` in `itrader/logger.py`
-- Output: Colored console (default) or JSON (`ITRADER_JSON_LOGS=true`)
-- Level: Controlled by `ITRADER_LOG_LEVEL` env var (default `INFO`)
-- Pattern: All handlers bind a component logger via `get_itrader_logger().bind(component="ClassName")`
-
-**Metrics / Profiling:**
-- `SystemConfig.monitoring` has ports for Prometheus metrics (9090) and health check (8080) — **not wired to any actual collector**; config model only, no exporter implemented
-
-**Performance Reporting:**
-- plotly 6.8.0 — `itrader/reporting/plots.py` (D-reporting deferred; not on backtest path)
-- scipy `linregress` — performance metrics in `itrader/reporting/performance.py`
-- sqlalchemy-based reporting engine — `itrader/reporting/engine_logger.py`, `itrader/reporting/statistics.py` (D-sql/reporting deferred; excluded from mypy)
+- structlog (`itrader/logger.py`); `setup_logging(json_logs, log_level)` chooses `structlog.processors.JSONRenderer` (production) or `structlog.dev.ConsoleRenderer(colors=True)` (dev). Level/JSON toggled by env (`_env_log_level`, `_env_json_logs`). Bind a component logger via `get_itrader_logger().bind(component="...")`.
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- No deployment target configured — pure library/application
+- Not configured — no deployment target detected
 
 **CI Pipeline:**
-- None detected — no `.github/workflows/`, `.circleci/`, `.travis.yml`, or similar
-
-**Pre-commit:**
-- `Makefile` has `precommit: pre-commit run --all-files --hook-stage manual` target
-- No `.pre-commit-config.yaml` detected at repo root
+- None (no `.github/workflows/`, no `.pre-commit-config.yaml`)
 
 ## Environment Configuration
 
-**Required env vars (live path only):**
-- `ITRADER_DATABASE_URL` — PostgreSQL DSN; declared as required-no-default `SecretStr` in `itrader/config/settings.py`; backtest path never instantiates `Settings` so this is never required for backtest
-
-**Optional env vars (all paths):**
-- `ITRADER_LOG_LEVEL` — defaults to `INFO`
-- `ITRADER_JSON_LOGS` — defaults to `false`
+**Required env var KEYS** (names only, from `.env`; values not read):
+- `DATA_DB_URL`, `SYSTEM_DB_URL` - Database URLs
+- `BINANCE_MAIN_API_KEY`, `BINANCE_MAIN_API_SECRET`
+- `BINANCE_SPOT_TESTNET_API_KEY`, `BINANCE_SPOT_TESTNET_API_SECRET`
+- `BINANCE_FUTURE_TESTNET_API_KEY`, `BINANCE_FUTURE_TESTNET_API_SECRET`
+- `OANDA_TESTNET_ACCOUNT_ID`, `OANDA_TESTNET_API_KEY`, `OANDA_TESTNET_API_SECRET`
+- pydantic-settings reads `ITRADER_`-prefixed vars (`itrader/config/settings.py`)
 
 **Secrets location:**
-- `.env` file at repo root (gitignored); loaded by `Makefile` via `include .env`
-- `oanda.cfg` at repo root (gitignored); read directly by `tpqoa.tpqoa()`
-- Credentials are NOT injected via pydantic-settings on the active backtest path — `Settings` is only instantiated when a live caller explicitly constructs it
+- `.env` at repo root (exchange keys + DB URLs), loaded by `Makefile`
+- `oanda.cfg` expected by the OANDA provider (`tpqoa`)
+- NOTE: PostgreSQL credentials are hardcoded inline in `itrader/price_handler/store/sql_store.py:17` rather than sourced from env
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- None — no HTTP webhook endpoints
+- None (no web server / HTTP endpoints in repo)
 
 **Outgoing:**
-- None — no outgoing webhook calls
-
-## Exchange Simulation (Internal)
-
-The `SimulatedExchange` in `itrader/execution_handler/exchanges/simulated.py` is an internal component, not an external integration. It supports four named configuration presets — `default` (zero fee/slippage), `realistic` (0.1% fee + linear slippage), `high_fee` (maker/taker 0.8%/1.0%), `low_latency` (0.05% fee) — defined in `itrader/config/exchange.py::get_exchange_preset()`.
+- Binance WebSocket callbacks: `_on_open`, `_on_close`, `_on_message` registered on `websocket.WebSocketApp` (`itrader/price_handler/providers/binance_stream.py:52`); `run_forever()` drives the stream
 
 ---
 
-*Integration audit: 2026-06-07*
+*Integration audit: 2026-06-08*
