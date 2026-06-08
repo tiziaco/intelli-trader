@@ -102,6 +102,11 @@ class StrategiesHandler(object):
 						allow_increase=strategy.allow_increase,
 						max_positions=strategy.max_positions,
 						exit_fraction=intent.exit_fraction,
+						# WR-01: honor an explicit caller-supplied quantity. The
+						# field is already Decimal | None (D-22 money domain) on
+						# both SignalIntent and SignalEvent — no boundary parse.
+						# None means "resolver decides" (the golden path).
+						quantity=intent.quantity,
 						sltp_policy=getattr(strategy, 'sltp_policy', None),
 					)
 					self.global_queue.put(signal)
