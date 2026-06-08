@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-06-08T14:33:10.831Z"
+last_updated: "2026-06-08T14:50:45.512Z"
 last_activity: 2026-06-08
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 62
-  completed_plans: 58
+  completed_plans: 59
   percent: 88
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
-Plan: 6 of 9
+Plan: 7 of 9
 Status: Ready to execute
 Last activity: 2026-06-08
 
-Progress: [█████████░] 94%
+Progress: [██████████] 95%
 
 ## Performance Metrics
 
@@ -83,6 +83,7 @@ Progress: [█████████░] 94%
 | Phase 08 P03 | 13 | 3 tasks | 3 files |
 | Phase 08 P04 | 2 | 2 tasks | 2 files |
 | Phase 08 P05 | 4 | 3 tasks | 4 files |
+| Phase 08 P06 | 7min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -134,6 +135,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 08-03: M5c golden oracle re-frozen to clean Decimal numbers (branch a SHIFT, owner-approved D-08/D-11) — trades.csv byte-identical (134 trades), headline money byte-exact, only 19/3076 equity points + 3 ratio metrics moved ~1 ULP; REFREEZE-M5C-DECIMAL.md authored; oracle test green (D-08 numeric design-failure CLOSED); cross-validation baseline locked (D-07 gate satisfied)
 - [Phase ?]: Plan 08-04: pinned cross-validation reference engines EXACT in poetry dev group (D-10) — backtesting==0.6.5 + backtrader==1.9.78.123, locked in poetry.lock; smoke-gated clean on Python 3.13.1/numpy 2.2.6 (trivial Cerebro run end-to-end, NO fork/shim — research headline #1 confirmed); engines dev-group-only + absent from main deps + unimported by tests (filterwarnings=['error'] safe, 724 collect clean); nautilus-trader dropped (D-12 non-gating — its <3.15 python cap conflicts with repo ^3.13 resolution)
 - [Phase ?]: Plan 08-05: built scripts/crossval/ force-match harness — shared ta-indicator precompute (verbatim SMAIndicator/MACD calls + golden-CSV loader) + backtesting.py FractionalBacktest + backtrader custom-float-Sizer; both expose uniform run(prices=None,indicators=None)->(trade_log_df[entry_date,exit_date,side,realised_pnl],equity_series), consume IDENTICAL injected arrays (D-03), replicate filter-gates-both QUIRK + next-bar-open fills (D-01); both yield EXACTLY 134 trades (matches iTrader golden), backtrader final_equity 46189.8773 matches golden to ~10 decimals, backtesting.py 46027.30 within ~0.35%; engines script-only (D-10), 724-test suite collects clean
+- [Phase ?]: 08-06: Owner-directed Rule-4 deviation — installed nautilus-trader 1.227.0 by narrowing python to >=3.13,<3.14 (supersedes 08-04 D-12); real Nautilus force-match reconciles 134 trades / final_equity 46287.24 (~0.21% vs golden)
 
 ### Pending Todos
 
@@ -167,6 +169,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-08T14:32:52.795Z
+Last session: 2026-06-08T14:50:22.322Z
 Stopped at: Completed 08-03-PLAN.md
 Resume file: None
