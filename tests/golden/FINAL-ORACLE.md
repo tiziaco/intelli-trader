@@ -126,6 +126,16 @@ tampering fails the gate.
 Golden-master discipline requires owner sign-off on the final oracle freeze (Phase 6/7
 D-21/D-11 law). This sign-off freezes the final oracle and closes the program.
 
-**Status:** _Awaiting owner sign-off at the 08-09 blocking human-verify checkpoint._
+**Status:** **APPROVED — final oracle FROZEN, program CLOSED.**
 
-> Owner: ____________________   Date: ____________   Signal: "approved"
+The project owner reviewed the FINAL-ORACLE declaration and the D-13 definition-of-done
+evidence block (§5, all eight checks GREEN) at the 08-09 blocking human-verify checkpoint
+and signed off.
+
+> Owner: tiziaco   Date: 2026-06-08   Signal: "approved"
+
+With this sign-off the `tests/golden/{summary.json, trades.csv, equity.csv}` set is the
+**final authoritative numerical oracle**. No further re-baseline is sanctioned. The
+iTrader Backtest-Correctness Refactor program is **complete**: the backtest path is
+correct, deterministic, type-clean, Decimal-money, single-UUID-scheme, and
+regression-locked by the byte-exact run-path integration gate.
