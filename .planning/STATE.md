@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: verifying
-stopped_at: Completed 08-09-PLAN.md — program CLOSED
-last_updated: "2026-06-08T15:42:30.790Z"
-last_activity: 2026-06-08
+milestone_name: Backtest-Correctness Refactor
+status: Awaiting next milestone
+stopped_at: Milestone v1.0 archived + tagged
+last_updated: "2026-06-08T22:11:11.814Z"
+last_activity: 2026-06-08 — Milestone v1.0 completed and archived
 progress:
   total_phases: 8
   completed_phases: 8
@@ -18,19 +18,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-04)
+See: .planning/PROJECT.md (updated 2026-06-08)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 08 — m5c-cross-validation-final-oracle
+**Current focus:** v1.0 shipped — planning next milestone (N+1 candidate, see ROADMAP.md Backlog). Run `/gsd:new-milestone`.
 
 ## Current Position
 
-Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
-Plan: 9 of 9
-Status: Phase complete — ready for verification
-Last activity: 2026-06-08 - Completed quick task 260608-qe2: enum cleanup (core/enums relocation + config collision renames)
-
-Progress: [██████████] 100%
+Phase: Milestone v1.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-08 — Milestone v1.0 completed and archived
 
 ## Performance Metrics
 
@@ -174,8 +172,31 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 | D-oanda | OANDA + Binance adapters | Deferred | Program start |
 | OUT | `my_strategies/*` (relocated to separate repo by user) | Out-of-band | Program start |
 
+### Acknowledged at v1.0 milestone close (2026-06-08)
+
+12 open artifact items acknowledged and deferred at milestone close (see `milestones/v1.0-MILESTONE-AUDIT.md`). All advisory, owner-deferred, or out-of-scope (live mode); none block the milestone.
+
+| Category | Item | Status |
+|----------|------|--------|
+| quick_task | 260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc | done (commit 85384c5); scanner-flagged missing |
+| quick_task | 260608-a59-demote-by-design-signal-rejection-logs-f | done (commit c48810c); scanner-flagged missing |
+| quick_task | 260608-qe2-pre-milestone-close-enum-cleanup-move-tr | done (commit 6608300); scanner-flagged missing |
+| uat_gap | 01-HUMAN-UAT.md | partial (2 open scenarios — DEF-01-C oracle blessing, advisory CR/WR) |
+| uat_gap | 05-HUMAN-UAT.md | partial (1 open — WR-09 live-mode smoke, D-live deferred) |
+| uat_gap | 07-HUMAN-UAT.md | partial (2 open — run-script output shape, refreeze-note ownership) |
+| verification_gap | 01-VERIFICATION.md | human_needed (must-haves 4/4 verified; advisory sign-off) |
+| verification_gap | 02-VERIFICATION.md | gaps_found → re-verified passed after 02-08 gap closure |
+| verification_gap | 05-VERIFICATION.md | human_needed (7/8; CR-01/CR-02 non-backtest-path) |
+| verification_gap | 07-VERIFICATION.md | human_needed (4/4 verified; advisory sign-off) |
+
+Substantive behavior deferrals (margin/liquidation, shorts, SHORT_ONLY cover-arm hole) → N+2 backlog.
+
 ## Session Continuity
 
 Last session: 2026-06-08T15:42:17.889Z
 Stopped at: Completed 08-09-PLAN.md — program CLOSED
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

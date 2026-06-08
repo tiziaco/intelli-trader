@@ -80,37 +80,12 @@ must import, run, and yield trustworthy results.
 
 ### Active
 
-<!-- The backtest-correctness program. Organized by milestone M1–M5 (see ROADMAP). -->
+<!-- v1.0 (Backtest-Correctness Refactor) SHIPPED 2026-06-08. All 45 v1 requirements (M1–M5)
+     are validated above. No active requirements until the next milestone is defined. -->
 
-**M2 — Foundations**
-- [ ] UUIDv7 via `uuid-utils` as the single ID scheme (#10 Critical, #11-ids, #18/#19 ids)
-- [ ] Decimal money end-to-end, no float round-trips (#17)
-- [ ] `mypy --strict` clean; frozen/typed DTOs; real ABCs replacing Py2 `__metaclass__` (#8, #20)
-- [ ] Determinism: seeded RNG + injected clock + flat order index (#5, PERF2)
-- [x] Config collapsed to Pydantic models + `pydantic-settings`; type placement centralized (#12-settings, #13, #15) — Phase 3
-- [x] `time_parser` timing correctness finalized (#36, KB21); delete dead modules (TD4, TD5, KB14) — Phase 3 (weekly/DST anchor deferred, see follow-up todo)
-- [x] Re-freeze the numerical oracle (float→Decimal precision shift) — Phase 3
+**None — v1.0 complete.** The full backtest-correctness program (M1→M5c, all 45 requirements) shipped and is recorded in the Validated section above and in `milestones/v1.0-*`.
 
-**M3 — Event & dispatch core**
-- [x] Immutable events with linkage IDs + `event_id`; enums not strings (#11) — Phase 4
-- [x] Race-free dispatch registry separating routing from ordering (#1, #2, FR2, KB1) — Phase 4
-- [x] Unified domain errors + logging; portfolio exceptions constructed correctly (#7-domain, #37, KB24) — Phase 4
-- [x] Behavioral oracle unchanged — Phase 4 (numerical oracle also byte-exact)
-
-**M4 — Money & transaction correctness**
-- [x] Cash flows through `CashManager` — no float setter bypass (#22 Critical) — Phase 5
-- [x] Atomic transactions with rollback + correct return contract (#16, #23) — Phase 5
-- [x] Order handler facade/manager/storage layering; read path through manager; O(1) order lookup (#6, #9, #29, PERF3) — Phase 5
-- [x] Execution result DTOs frozen/Decimal/real-ABC (#39) — Phase 5
-- [x] Value-preserving against the oracle (any numeric diff explained) — Phase 5 (byte-exact, no diffs to explain)
-
-**M5 — Backtest validity, fills, metrics, strategy/data**
-- [ ] Fix look-ahead / fill realism / bar-timing; `Bar` struct payload; precomputed resample frames (#21, #3, #4, FR1)
-- [ ] Fee/slippage correctness (#28); price-handler split into Provider/Store/Feed, offline-deterministic read path (#30, FR6/FR7/FR8, PERF1/PERF4)
-- [ ] Full strategy-declared sizing policy resolved per-portfolio; risk cash checks (#24, #31, TD7, TD10, KB11 final)
-- [ ] Reporting/metrics correctness (#14-compute, #38, KB2, KB23, TD6); universe stub (#33)
-- [ ] Strategy/data/reporting/universe test coverage (TC2-CSV, TC4, TC6)
-- [ ] Engine **cross-validated vs `backtesting.py` + `backtrader`**; final numerical oracle frozen
+**Next milestone candidate:** N+1 — Backtest Trustworthiness: Breadth (multi-strategy/scenario coverage, signal storage, strategy-interface hardening). See ROADMAP.md Backlog. Promote with `/gsd:new-milestone` (or `/gsd:review-backlog`), which defines fresh requirements.
 
 ### Out of Scope
 
@@ -173,14 +148,14 @@ must import, run, and yield trustworthy results.
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Money = Decimal end-to-end | Float round-trips defeat careful Decimal math; financial correctness (#17, #22) | — Pending |
-| IDs = UUIDv7 via `uuid-utils` | Integer scheme overflows BIGINT; time-ordered, index-friendly, Rust-backed perf (#10) | — Pending |
-| Backtest-correctness-first | Live is a separate risk surface; get the engine trustworthy first | — Pending |
-| Keep in-house event bus | Need deterministic synchronous ordered dispatch; libraries optimize for the opposite (#1, #2) | — Pending |
-| Config → Pydantic + pydantic-settings | Collapses 3300-line over-engineered package; one model is both backtest-dict and live-JSONB path (#12, #13) | — Pending |
-| Strategy declares sizing *policy* + SL/TP; order/risk layer resolves per-portfolio qty | Current sizing migration is stranded (qty=0); put the seam in the architecturally-correct place (#24, #31) | — Pending |
-| Universe → documented thin stub | Collapse false "dynamic" complexity; screener wired later (#33) | — Pending |
-| Golden-master two-layer oracle | Behavioral oracle (trade timing) law M2–M4; numerical oracle re-baselines only after M2 & M5 | — Pending |
+| Money = Decimal end-to-end | Float round-trips defeat careful Decimal math; financial correctness (#17, #22) | ✓ Good — shipped M2/M4; cash via CashManager, no float money on the result path |
+| IDs = UUIDv7 via `uuid-utils` | Integer scheme overflows BIGINT; time-ordered, index-friendly, Rust-backed perf (#10) | ✓ Good — single scheme shipped M2 (⚠️ `portfolio_id: int` annotation carry-over remains; runtime-correct) |
+| Backtest-correctness-first | Live is a separate risk surface; get the engine trustworthy first | ✓ Good — backtest path is trustworthy + cross-validated; live deferred to N+4 |
+| Keep in-house event bus | Need deterministic synchronous ordered dispatch; libraries optimize for the opposite (#1, #2) | ✓ Good — race-free dict-registry dispatch shipped M3 |
+| Config → Pydantic + pydantic-settings | Collapses 3300-line over-engineered package; one model is both backtest-dict and live-JSONB path (#12, #13) | ✓ Good — 3,380 → ~1,130 lines, shipped M2b |
+| Strategy declares sizing *policy* + SL/TP; order/risk layer resolves per-portfolio qty | Current sizing migration is stranded (qty=0); put the seam in the architecturally-correct place (#24, #31) | ✓ Good — SizingResolver shipped M5b (⚠️ SHORT_ONLY cover-arm hole, oracle-dark → N+2) |
+| Universe → documented thin stub | Collapse false "dynamic" complexity; screener wired later (#33) | ✓ Good — membership stub shipped M5b; screener → N+4 |
+| Golden-master two-layer oracle | Behavioral oracle (trade timing) law M2–M4; numerical oracle re-baselines only after M2 & M5 | ✓ Good — held byte-exact through M2–M4; re-baselined exactly at M2b & M5c; final oracle frozen + cross-validated |
 
 ## Evolution
 
@@ -199,5 +174,15 @@ This document evolves at phase transitions and milestone boundaries.
 3. Audit Out of Scope — reasons still valid?
 4. Update Context with current state
 
+## Current State
+
+**v1.0 — Backtest-Correctness Refactor — SHIPPED 2026-06-08.** All 8 phases (M1→M5c), 62 plans, all 45 v1 requirements validated. Program definition-of-done green on all 8 checks: `SMA_MACD` runs end-to-end (134 trades / `final_equity = 46189.87730727451` / 3076 equity points), `mypy --strict` clean, no float money, single UUIDv7 scheme, deterministic, 724 tests pass, run-path integration gate byte-exact, cross-validated vs `backtesting.py` + `backtrader` + `nautilus-trader`. The final numerical oracle is frozen in `tests/golden/` as the authoritative reference. ~19.5k LOC Python.
+
+**Tech debt at close (non-blocking, tracked):** partial M3-03 exception migration (bare `ValueError`s in `portfolio.py`, off the golden path), `portfolio_id: int` annotation carry-over, 2 partial Nyquist phases (02, 08), and advisory/live-mode review findings. Substantive behavior deferrals (margin/liquidation, shorts, SHORT_ONLY cover-arm) → N+2. See `milestones/v1.0-MILESTONE-AUDIT.md`.
+
+## Next Milestone Goals
+
+**N+1 — Backtest Trustworthiness: Breadth** (candidate, see ROADMAP.md Backlog): multi-strategy/scenario coverage with new golden standards, strategy-signal storage, strategy-interface hardening (pydantic config validation on the base `Strategy`), and an opportunistic codebase-map cleanup pass. Promote via `/gsd:new-milestone`.
+
 ---
-*Last updated: 2026-06-08 — Phase 7 (M5b — Sizing Policy, Metrics, Universe & Coverage) complete. Typed sizing policy resolved engine-side (SizingResolver, admission gates), pure strategy contract, correct reporting/metrics, universe stub. Two owner-approved re-freezes: long-only direction guard + allow_increase enforcement — oracle now 134 trades, 0 shorts, `final_equity = 46189.87730727451` byte-exact; suite 711 green, `mypy --strict` clean. Open: 07-REVIEW.md findings (1 critical, oracle-dark), 07-HUMAN-UAT.md (2 items). Next: Phase 8 (M5c — Cross-Validation & Final Oracle).*
+*Last updated: 2026-06-08 — v1.0 (Backtest-Correctness Refactor) milestone complete. All 8 phases shipped; final oracle frozen + cross-validated; 724 tests green, `mypy --strict` clean. Audit: tech_debt (45/45 requirements, 0 blockers). Next: define N+1 via `/gsd:new-milestone`.*

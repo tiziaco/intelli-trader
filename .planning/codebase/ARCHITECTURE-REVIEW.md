@@ -1,5 +1,13 @@
 # Architecture Review
 
+> **⚠ Historical snapshot — taken pre-v1.0 (2026-06-04).** This is the frozen "before" picture of
+> the codebase that scoped the v1.0 Backtest-Correctness Refactor. **Do not treat it as a live tracker
+> and do not re-audit it finding-by-finding.** Each finding #1–40 was mapped in `../COVERAGE-INDEX.md`
+> to a milestone (M1–M5) or a deferred tag, became a verified v1.0 requirement, and its final
+> disposition (☑ done · ◑ done-with-residual · ⊘ deferred) is recorded there as of the 2026-06-08
+> milestone close — see also `../milestones/v1.0-MILESTONE-AUDIT.md`. Kept intact as reference input
+> for the N+1 `gsd-map-codebase` cleanup pass.
+>
 > Companion to `CONCERNS.md`. Where `CONCERNS.md` catalogs **bugs and concrete defects**,
 > this document captures **architectural decisions** — the design-level changes to make
 > before/during the full refactor. Each finding is structured for GSD ingestion:
