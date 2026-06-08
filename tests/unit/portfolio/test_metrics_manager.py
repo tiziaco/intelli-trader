@@ -133,6 +133,30 @@ def test_get_current_metrics(env):
     assert current_metrics["cash_balance"] == 80000.0
 
 
+def test_get_current_metrics_money_fields_are_decimal(env):
+    """M5-10 (D-06): get_current_metrics money fields stay Decimal end-to-end.
+
+    The float() coercion of money is removed — only the statistical-ratio
+    metric inputs (drawdown/return-distribution/daily-return) narrow to float.
+    """
+    mm = env.metrics_manager
+    mm.record_snapshot()
+
+    current_metrics = mm.get_current_metrics()
+
+    for field in (
+        "total_equity",
+        "cash_balance",
+        "positions_value",
+        "unrealized_pnl",
+        "realized_pnl",
+        "total_pnl",
+    ):
+        assert isinstance(current_metrics[field], Decimal), (
+            f"{field} must be Decimal, got {type(current_metrics[field])}"
+        )
+
+
 def test_get_current_metrics_auto_snapshot(env):
     """Test that current metrics creates snapshot if none exists."""
     mm = env.metrics_manager
