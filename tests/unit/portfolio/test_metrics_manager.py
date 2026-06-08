@@ -57,6 +57,21 @@ def test_metrics_manager_initialization(env):
     assert mm.risk_free_rate == Decimal("0.02")
 
 
+def test_as_decimal_passthrough_on_decimal_money(env):
+    """IN-04: lock the production 'already Decimal' pass-through branch.
+
+    The real Portfolio's money properties return Decimal under M5-10 (D-06), so
+    ``_as_decimal`` must NOT round-trip through str — it returns the exact same
+    Decimal object. The other tests use a float-money mock and only exercise the
+    fallback coercion branch; this one covers the production path.
+    """
+    mm = env.metrics_manager
+    money = Decimal("100000.00")
+    result = mm._as_decimal(money)
+    # Pass-through: same object identity, not a str round-trip copy.
+    assert result is money
+
+
 def test_record_snapshot(env):
     """Test recording portfolio snapshots."""
     mm = env.metrics_manager
@@ -102,8 +117,8 @@ def test_snapshot_history_limit(env):
     base_time = datetime.now()
     for i in range(10):
         env.portfolio.update_values(
-            equity=100000.0 + i * 1000, cash=80000.0, market_value=20000.0 + i * 1000,
-            unrealized_pnl=i * 100, realized_pnl=0.0, positions=1,
+            equity=100000.0 + i * 1000.0, cash=80000.0, market_value=20000.0 + i * 1000.0,
+            unrealized_pnl=i * 100.0, realized_pnl=0.0, positions=1,
         )
         mm.record_snapshot(base_time + timedelta(days=i))
 
@@ -204,8 +219,8 @@ def test_performance_metrics_caching(env):
 
     for i in range(5):
         env.portfolio.update_values(
-            equity=100000 + i * 1000, cash=80000, market_value=20000 + i * 1000,
-            unrealized_pnl=i * 500, realized_pnl=i * 500, positions=1,
+            equity=100000.0 + i * 1000.0, cash=80000.0, market_value=20000.0 + i * 1000.0,
+            unrealized_pnl=i * 500.0, realized_pnl=i * 500.0, positions=1,
         )
         mm.record_snapshot(base_time + timedelta(days=i))
 
@@ -299,8 +314,8 @@ def test_get_snapshots_with_filters(env):
 
     for i in range(10):
         env.portfolio.update_values(
-            equity=100000 + i * 1000, cash=80000, market_value=20000 + i * 1000,
-            unrealized_pnl=i * 100, realized_pnl=0, positions=1,
+            equity=100000.0 + i * 1000.0, cash=80000.0, market_value=20000.0 + i * 1000.0,
+            unrealized_pnl=i * 100.0, realized_pnl=0.0, positions=1,
         )
         mm.record_snapshot(base_time + timedelta(days=i))
 
@@ -321,8 +336,8 @@ def test_get_snapshots_with_limit(env):
 
     for i in range(10):
         env.portfolio.update_values(
-            equity=100000 + i * 1000, cash=80000, market_value=20000 + i * 1000,
-            unrealized_pnl=i * 100, realized_pnl=0, positions=1,
+            equity=100000.0 + i * 1000.0, cash=80000.0, market_value=20000.0 + i * 1000.0,
+            unrealized_pnl=i * 100.0, realized_pnl=0.0, positions=1,
         )
         mm.record_snapshot(base_time + timedelta(days=i))
 
@@ -340,8 +355,8 @@ def test_export_metrics_to_dict(env):
 
     for i in range(7):
         env.portfolio.update_values(
-            equity=100000 + i * 1000, cash=80000, market_value=20000 + i * 1000,
-            unrealized_pnl=i * 500, realized_pnl=i * 500, positions=1,
+            equity=100000.0 + i * 1000.0, cash=80000.0, market_value=20000.0 + i * 1000.0,
+            unrealized_pnl=i * 500.0, realized_pnl=i * 500.0, positions=1,
         )
         mm.record_snapshot(base_time + timedelta(days=i))
 
@@ -420,8 +435,8 @@ def test_metrics_cache_invalidation(env):
 
     for i in range(5):
         env.portfolio.update_values(
-            equity=100000 + i * 1000, cash=80000, market_value=20000 + i * 1000,
-            unrealized_pnl=i * 500, realized_pnl=i * 500, positions=1,
+            equity=100000.0 + i * 1000.0, cash=80000.0, market_value=20000.0 + i * 1000.0,
+            unrealized_pnl=i * 500.0, realized_pnl=i * 500.0, positions=1,
         )
         mm.record_snapshot(base_time + timedelta(days=i))
 
