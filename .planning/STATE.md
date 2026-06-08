@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
 Plan: 9 of 9
 Status: Phase complete — ready for verification
-Last activity: 2026-06-08
+Last activity: 2026-06-08 - Completed quick task 260608-qe2: enum cleanup (core/enums relocation + config collision renames)
 
 Progress: [██████████] 100%
 
@@ -158,6 +158,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260605-ih3 | Fix WR-01 weekly/DST check_timeframe anchoring (midnight-relative, not epoch) + tests | 2026-06-05 | 85384c5 | [260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc](./quick/260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc/) |
 | 260608-a59 | Demote by-design signal-rejection logs from error to warning in order_manager.py (admission gates + cash reservation) | 2026-06-08 | c48810c | [260608-a59-demote-by-design-signal-rejection-logs-f](./quick/260608-a59-demote-by-design-signal-rejection-logs-f/) |
+| 260608-qe2 | Enum cleanup: relocate TradingDirection + SystemStatus into core/enums; resolve config name collisions (ExchangeType→ExchangeVenue, OrderType→ConfigOrderType) | 2026-06-08 | 6608300 | [260608-qe2-pre-milestone-close-enum-cleanup-move-tr](./quick/260608-qe2-pre-milestone-close-enum-cleanup-move-tr/) |
 
 ## Deferred Items
 
