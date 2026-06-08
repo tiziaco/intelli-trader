@@ -12,7 +12,7 @@ Provides the business logic layer between OrderHandler (interface)
 and order storage/execution systems.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, assert_never, cast
 from .order import Order
@@ -231,7 +231,11 @@ class OrderManager:
 			# exist and the WR-05 logic above is untouched (T-07-15).
 			if fill_event.status == FillStatus.EXECUTED:
 				pending = self._pending_brackets.pop(order_id, None)
-				if pending is not None:
+				# WR-03 (part 1): only anchor children when the mirror actually
+				# applied the fill. If add_fill was rejected (applied=False) the
+				# parent never moved, so creating fill-anchored children would
+				# link live SL/TP to a parent the engine still considers unfilled.
+				if pending is not None and applied:
 					out_events.extend(
 						self._create_fill_anchored_children(order, pending, fill_event))
 			else:
@@ -677,6 +681,12 @@ class OrderManager:
 			self.logger.debug(f'Created {success_count}/{len(results)} orders from signal: {signal_event.ticker} {signal_event.action}')
 
 		except Exception as e:
+			# WR-03 (part 2): the PercentFromFill pending entry is registered at
+			# assembly time (above) BEFORE add_order runs. If storage raises
+			# afterwards the primary never reaches the exchange, so no fill will
+			# ever consume the pending entry — disarm it here so a stale entry
+			# cannot later anchor children to a parent that was never emitted.
+			self._pending_brackets.pop(primary.id, None)
 			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
 			results.append(OperationResult.failure_result(
 				f"Failed to create orders from signal",
@@ -1104,9 +1114,19 @@ class OrderManager:
 				# Update in storage
 				self.order_storage.update_order(order)
 
+				# WR-03 (part 3): if this parent has an armed PercentFromFill
+				# pending bracket and the quantity changed, refresh the pending
+				# quantity so fill-anchored children are created at the CURRENT
+				# order quantity, not the stale assembly-time value.
+				if new_quantity is not None:
+					pending = self._pending_brackets.get(order.id)
+					if pending is not None:
+						self._pending_brackets[order.id] = replace(
+							pending, quantity=to_money(new_quantity))
+
 				# Generate OrderEvent
 				order_event = OrderEvent.new_order_event(order, command=OrderCommand.MODIFY)
-				
+
 				self.logger.info('Order %s modified successfully: %s', order_id, reason)
 				return OperationResult.success_result(
 					f"Order {order_id} modified successfully",
@@ -1159,6 +1179,14 @@ class OrderManager:
 			if success:
 				# Update in storage
 				self.order_storage.update_order(order)
+
+				# WR-03 (part 1): a locally-cancelled PercentFromFill parent must
+				# disarm its pending entry. Otherwise a late EXECUTED fill for
+				# the same order would still anchor and emit SL/TP children
+				# against a CANCELLED parent (on_fill keys child creation off the
+				# fill, not the parent's live status). The pop is keyed by the
+				# parent's id; children/non-PercentFromFill orders no-op.
+				self._pending_brackets.pop(order.id, None)
 
 				# WR-04: the local terminal transition owns the release. The
 				# exchange only emits FillEvent(CANCELLED) for orders actually
