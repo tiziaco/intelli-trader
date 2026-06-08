@@ -43,6 +43,20 @@ __all__ = ["SizingResolver"]
 _ONE = Decimal("1")
 
 
+def _quantize_to_step(qty: Decimal, step: Decimal) -> Decimal:
+    """Quantize ``qty`` DOWN to the nearest multiple of ``step`` (D-05, WR-02).
+
+    ``Decimal.quantize`` rounds to the *exponent* of ``step`` — correct only
+    when ``step`` is exactly ``1 x 10^n``. The D-05 contract is "ROUND_DOWN to
+    the step", i.e. to multiples of the step value: ``step_size=Decimal("0.5")``
+    must yield the 0.5 grid (2.3 -> 2.0), ``Decimal("5")`` the multiples-of-5
+    grid, ``Decimal("0.010")`` the 0.01 grid regardless of the string's stored
+    exponent. Dividing by the step, flooring to an integer count, and
+    re-multiplying gives the largest multiple of ``step`` not exceeding ``qty``.
+    """
+    return (qty / step).to_integral_value(rounding=ROUND_DOWN) * step
+
+
 class SizingResolver:
     """Resolve declared sizing policies into per-portfolio quantities (D-01).
 
@@ -111,9 +125,10 @@ class SizingResolver:
             case _:
                 assert_never(policy)
         if policy.step_size is not None:
-            # D-05: exchange step constraint — quantize ROUND_DOWN (never
-            # round an order quantity UP past what the policy resolved).
-            qty = qty.quantize(policy.step_size, rounding=ROUND_DOWN)
+            # D-05: exchange step constraint — ROUND_DOWN to a multiple of the
+            # step (never round an order quantity UP past what the policy
+            # resolved). WR-02: snap to the step VALUE, not its exponent.
+            qty = _quantize_to_step(qty, policy.step_size)
         return qty
 
     def resolve_exit(
@@ -153,5 +168,6 @@ class SizingResolver:
                 # Dust guard: a sub-step remainder is unclosable — the final
                 # exit takes the whole position instead of stranding dust.
                 return net_quantity
-            sized = sized.quantize(step_size, rounding=ROUND_DOWN)
+            # WR-02: snap to a multiple of the step VALUE, not its exponent.
+            sized = _quantize_to_step(sized, step_size)
         return sized

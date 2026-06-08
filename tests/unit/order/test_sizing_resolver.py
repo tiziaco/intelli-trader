@@ -140,6 +140,56 @@ def test_fixed_quantity_step_size_quantizes_round_down():
 
 
 # ---------------------------------------------------------------------------
+# WR-02: step_size snaps to the step VALUE (multiples), not its Decimal exponent
+# ---------------------------------------------------------------------------
+
+
+def test_step_size_half_grid_snaps_to_multiples_of_half():
+    # step=0.5: 2.3 must snap DOWN to 2.0 (a multiple of 0.5), NOT to the 0.1
+    # grid the old exponent-based quantize would have produced (which left 2.3).
+    result = _resolver().resolve_entry(
+        FixedQuantity(qty=Decimal("2.3"), step_size=Decimal("0.5")),
+        _PID,
+        to_money(100.0),
+        None,
+    )
+    assert result == Decimal("2.0")
+
+
+def test_step_size_integer_step_snaps_to_multiples():
+    # step=5: 13 must snap DOWN to 10 (a multiple of 5), NOT stay at 13 (the
+    # integer grid the exponent of "5" — which is 0 — would have produced).
+    result = _resolver().resolve_entry(
+        FixedQuantity(qty=Decimal("13"), step_size=Decimal("5")),
+        _PID,
+        to_money(100.0),
+        None,
+    )
+    assert result == Decimal("10")
+
+
+def test_step_size_trailing_zero_repr_uses_step_value_not_exponent():
+    # step="0.010" has exponent -3 but a VALUE of 0.01: 2.567 must snap to the
+    # 0.01 grid (2.56), NOT the 0.001 grid the stored exponent would imply.
+    result = _resolver().resolve_entry(
+        FixedQuantity(qty=Decimal("2.567"), step_size=Decimal("0.010")),
+        _PID,
+        to_money(100.0),
+        None,
+    )
+    assert result == Decimal("2.56")
+
+
+def test_exit_step_size_half_grid_snaps_to_multiples_of_half():
+    # resolve_exit must use the same step-value semantics: 7 * 0.333 = 2.331,
+    # remainder 4.669 >= 0.5 -> quantize 2.331 DOWN to 2.0 (multiple of 0.5).
+    result = _resolver().resolve_exit(
+        Decimal("7"), Decimal("0.333"), Decimal("0.5")
+    )
+    assert result == Decimal("2.0")
+
+
+# ---------------------------------------------------------------------------
 # RiskPercent — Van Tharp: (equity * risk_pct) / |price - stop|
 # ---------------------------------------------------------------------------
 
