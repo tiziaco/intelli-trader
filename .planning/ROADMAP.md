@@ -314,21 +314,29 @@ Scope (intent only):
   (look-ahead). An instrument/contract-spec model can also be folded in cheaply alongside
   the config typing (the `_INSTRUMENT_SCALES` seam is the seed).
 
+  Strategy-SIDE risk constructs (static SL/TP, ATR stops, breakeven, time exits) ARE in
+  scope here — they declare via the `SLTPPolicy` seam and need no engine change.
+
 **DEFER out of N+1:**
 - **Shorts** → N+2 (blocked by the D-08/D-09 guard; also the CR-01 cover-arm hole).
-- **Advanced trailing stop** — new trading behavior needing its own golden master (no
-  trailing support today; `OrderType` is only MARKET/STOP/LIMIT; `MatchingEngine` evaluates
-  static triggers). Only fold in if a strategy validated in N+1 genuinely cannot express
-  its exits without it.
+- **Advanced trailing stop** → **N+2** — engine-NATIVE matching behavior (the engine must
+  track the running extreme and ratchet the stop per bar), so it shares N+2's
+  matching-engine surface and gets bundled into its golden master. No trailing support
+  today; `OrderType` is only MARKET/STOP/LIMIT; `MatchingEngine` evaluates static triggers.
+  Look-ahead trap: ratchet timing must obey the `bar_feed.py` contract. **Escape hatch:**
+  pull a minimal version into N+1 only if a strategy in N+1's validation set genuinely
+  cannot express its exits without it.
 
 Plans:
 - [ ] TBD (promote with /gsd:review-backlog when ready)
 
-### Phase 999.4: N+2 — Margin, Leverage & Shorts (crypto) (BACKLOG)
+### Phase 999.4: N+2 — Margin, Leverage, Shorts & Trailing Stops (crypto) (BACKLOG)
 
-**Goal:** Build the margin/liquidation model the engine has deliberately deferred
-(D-08/D-09, DEF-01-C), unblocking shorts and leverage. This is a correctness-critical
-accounting change and gets its OWN golden master + cross-validation, like M5.
+**Goal:** The matching-engine / risk-execution milestone. Build the margin/liquidation
+model the engine has deliberately deferred (D-08/D-09, DEF-01-C), unblocking shorts and
+leverage, AND add engine-native trailing stops — all are stateful resting-order changes to
+the same `MatchingEngine` surface, so they're done in one pass and share one golden master +
+cross-validation, like M5.
 **Requirements:** TBD
 **Plans:** 0 plans
 
@@ -342,6 +350,10 @@ Scope (intent only):
 - **Leverage** + **levered Kelly** (fraction > 1 becomes expressible once margin exists).
 - **Funding/carry** — crypto perp funding-rate accounting (the crypto-first analogue of
   forex swap / equity borrow).
+- **Engine-native trailing stop** — new `TRAILING_STOP` `OrderType` + `MatchingEngine`
+  ratchet logic (track running extreme, move the resting stop per bar). For the
+  risk-management-heavy strategies. Look-ahead-safe per the `bar_feed.py` contract. Levered
+  Kelly (>1) also unlocks here once margin exists.
 - Config hooks already exist and are currently off: `allow_short_selling`, `enable_margin`
   (`config/portfolio.py`).
 
