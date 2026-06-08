@@ -41,10 +41,10 @@ poetry run pytest test/test_order_handler/test_order.py -k "test_name" -v
 
 ### Event-driven core
 
-Everything flows through a single `global_queue` (`queue.Queue`). `events_handler/full_event_handler.py::EventHandler.process_events()` drains the queue and dispatches each event by `EventType`. Events are dataclasses in `events_handler/event.py`, each carrying a class-level `type` attribute. The canonical flow:
+Everything flows through a single `global_queue` (`queue.Queue`). `events_handler/full_event_handler.py::EventHandler.process_events()` drains the queue and dispatches each event through **`self._routes`** — a single `dict[EventType, list[Callable]]` literal where **list order IS execution order**. Dispatch is data-driven, not a branch chain. Events are **frozen dataclasses** (`@dataclass(frozen=True, slots=True, kw_only=True)`) defined under `events_handler/events/` (split by domain: `base.py`, `market.py`, `signal.py`, `order.py`, `fill.py`, `error.py`); each subclasses `Event`, pins its `type` via `field(default=EventType.X, init=False)`, and carries a UUIDv7 `event_id` plus a business `time` (never wall clock). The canonical flow:
 
 ```
-PING   -> screeners_handler.screen_markets + universe.generate_bar_event
+TIME   -> screeners_handler.screen_markets + feed.generate_bar_event   (BacktestBarFeed produces BarEvents)
 BAR    -> portfolio_handler.update_portfolios_market_value
         + execution_handler.on_market_data              (exchange matches resting stop/limit -> FillEvent)
         + strategies_handler.calculate_signals
@@ -59,37 +59,45 @@ the resting-order book and is the source of truth for fills. The order handler
 translates signals into orders, declares brackets, and reconciles its mirror from
 `FillEvent`s — it never matches orders itself.
 
-Adding a new event type means: define the dataclass in `event.py`, add it to the `EventType` enum, and add a branch in `process_events()`.
+Adding a new event type means: define the frozen dataclass under `events_handler/events/<domain>.py`, add the member to `core/enums/event.py::EventType`, and add a branch to `EventHandler._routes`. `_dispatch` raises `NotImplementedError` on an unrouted type (silent drops are a tampering risk).
+
+**Read-model seams** sidestep the queue-only rule for *reads*: `OrderManager`/`OrderHandler` query portfolios through the injected `PortfolioReadModel` Protocol (`core/portfolio_read_model.py`) rather than importing the handler, and bar windows come from the injected `BacktestBarFeed`. The queue-only contract governs handler-to-handler *writes*, not injected read-models.
 
 ### Two run modes, same components
 
 Both wire up the identical component graph around one shared queue in their `__init__`:
-- `trading_system/backtest_trading_system.py::TradingSystem` — synchronous `for` loop over a `PingGenerator`, uses in-memory order storage.
-- `trading_system/live_trading_system.py::LiveTradingSystem` — processes the queue on a background thread with start/stop/status lifecycle. `trading_system/trading_interface.py::TradingInterface` is the bridge between an external/web API and the live system (order creation, validation, status).
+- `trading_system/backtest_trading_system.py::TradingSystem` — synchronous `for` loop over a `TimeGenerator` (`trading_system/simulation/time_generator.py`, yields `TimeEvent`s across a pinned bar-date grid), uses in-memory order storage. Backtest error policy is **fail-fast** (`EventHandler._on_handler_error` re-raises so a handler failure aborts the run rather than corrupting state).
+- `trading_system/live_trading_system.py::LiveTradingSystem` — processes the queue on a background daemon thread with start/stop/status lifecycle; overrides `_on_handler_error` with publish-and-continue (emit `ErrorEvent`, keep draining). `trading_system/trading_interface.py::TradingInterface` is the bridge between an external/web API and the live system (order creation, validation, status).
 
 ### Handlers (each owns a domain, talks via the queue)
 
 - **order_handler/** — `OrderHandler` is a thin interface layer; order *management* logic (signal-to-order, lifecycle, modify/cancel, bracket declaration) lives in `OrderManager`. It does **not** match orders: it declares brackets via `parent_order_id`/`child_order_ids` (the exchange enforces OCO) and reconciles the stored order mirror against exchange truth in `on_fill` (EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED). Validation via `EnhancedOrderValidator`. Persistence is pluggable through `OrderStorageFactory` (`in_memory` for backtest, `postgresql` for live) under `order_handler/storage/`.
-- **portfolio_handler/** — `PortfolioHandler` manages portfolio lifecycle; each `Portfolio` delegates to four managers: `CashManager`, `PositionManager`, `TransactionManager`, `MetricsManager`. Thread-safe via `readerwriterlock`.
-- **execution_handler/** — `ExecutionHandler` with pluggable `fee_model/`, `slippage_model/`, and `exchanges/` (e.g. `simulated`). Routes `on_order` and `on_market_data` to the exchange, turning `OrderEvent`/`BarEvent` into `FillEvent`s. The `SimulatedExchange` composes a pure `MatchingEngine` (`matching_engine.py`) that holds the resting-order book and evaluates stop/limit triggers against intrabar high/low with gap-aware fills and same-bar OCO priority; the exchange then applies fee/slippage and emits the fill.
-- **strategy_handler/** — `StrategiesHandler` runs strategies; each combines a `position_sizer/`, `risk_manager/`, and `sltp_models/`. Concrete strategies live in `strategy_handler/my_strategies/` (gitignored at the top level but present in-tree).
-- **screeners_handler/** & **universe/** — dynamic market screening and the tradable symbol universe.
-- **price_handler/** — data download/storage (CCXT, OANDA exchanges; Binance live streaming; SQL via SQLAlchemy).
+- **portfolio_handler/** — `PortfolioHandler` manages portfolio lifecycle and routes `on_fill`; it structurally satisfies the `PortfolioReadModel` Protocol. Each `Portfolio` delegates to four managers, each now in its own subdir: `cash/`, `position/`, `transaction/`, `metrics/`. In live mode individual portfolios use `threading.RLock`; the collection lock was removed in backtest (D-19 single-writer contract).
+- **execution_handler/** — `ExecutionHandler` with pluggable `fee_model/` (`zero`/`percent`/`maker_taker`), `slippage_model/` (`zero`/`fixed`/`linear`), and `exchanges/` (e.g. `simulated`). Routes `on_order` and `on_market_data` to the exchange, turning `OrderEvent`/`BarEvent` into `FillEvent`s. The `SimulatedExchange` composes a pure `MatchingEngine` (`matching_engine.py`) that holds the resting-order book and evaluates stop/limit triggers against intrabar high/low with gap-aware fills and same-bar OCO priority; the exchange then applies fee/slippage and emits the fill.
+- **strategy_handler/** — `StrategiesHandler` runs strategies; each combines a `position_sizer/` and `risk_manager/`. The reference strategy is `strategy_handler/SMA_MACD_strategy.py`; other concrete strategies live in `strategy_handler/my_strategies/`.
+- **price_handler/** — the data engine, reorganized into `store/` (`CsvPriceStore`, `SqlPriceStore` — read-only on the run path), `feed/` (`BacktestBarFeed` + the look-ahead-safety **bar-timing contract** in `feed/bar_feed.py`), and `providers/` (CCXT, OANDA, Binance stream).
+- **screeners_handler/** & **universe/** — dynamic market screening (deferred subsystem) and membership derivation (`universe/membership.py`).
+- **reporting/** — pure builders for run artifacts (`frames.py`) and derived metrics (`metrics.py`); plotting in `plots.py`.
 
 ### Configuration system
 
-`itrader/config/` is a domain-based config system: `core/` provides `ConfigRegistry` / `ConfigProvider` / validators; domains are `portfolio`, `trading`, `data`, `system`, `exchange`. Access via the convenience getters in `config/__init__.py` (`get_config_registry`, `get_portfolio_config_provider`, etc.). YAML config is loaded from the `settings/` directory (gitignored).
+`itrader/config/` is now a **Pydantic** config system. The old `ConfigRegistry` / `ConfigProvider` / convenience-getter layer was removed (M2-06); `SystemConfig.default()` is constructed directly. `SystemConfig` (`config/system.py`) carries `PerformanceSettings` (note `rng_seed`, default 42) and `MonitoringSettings`, alongside `PortfolioConfig`, `ExchangeConfig`, and other domain models. Optional YAML overrides still load from `settings/` (gitignored in prod; `*.default.yaml` defaults tracked under `settings/domains/`).
 
-**Import side effects:** `itrader/__init__.py` initializes process-wide singletons on import — `config`, `logger` (structlog, via `init_logger`), and `idgen` (`IDGenerator`). Modules import these directly (`from itrader import config, idgen`). Get a bound logger with `get_itrader_logger().bind(component="...")`.
+**Import side effects:** `itrader/__init__.py` initializes process-wide singletons on import — `config = SystemConfig.default()`, `logger` (structlog, via `init_logger`), and `idgen` (`IDGenerator`). Modules import these directly (`from itrader import config, idgen`). Get a bound logger with `get_itrader_logger().bind(component="...")`.
+
+### Determinism & money
+
+- **Money is `Decimal` end-to-end.** Float for money is a locked correctness defect; `float()` appears only at the serialization/logging edge.
+- **Determinism:** one shared seeded `random.Random` is injected at wiring (`performance.rng_seed`, default 42), and an injected `BacktestClock` (`core/clock.py`) is staged on the determinism seam. Runs are reproducible.
 
 ### Shared core
 
-`core/enums/` (OrderType, OrderStatus + `VALID_ORDER_TRANSITIONS`, portfolio/execution enums) and `core/exceptions/` hold the cross-cutting types used by all handlers. Use the enum maps (e.g. `order_type_map`) to convert string inputs to enums.
+`core/` depends on nothing inside `itrader`. It holds `enums/` (`OrderType`, `OrderStatus` + `VALID_ORDER_TRANSITIONS`, `EventType`, `Side`, portfolio/execution enums), `exceptions/` (`base.py`, `order.py`, `portfolio.py`, `data.py`), and the cross-cutting primitives `ids.py`, `money.py`, `clock.py`, `bar.py`, `sizing.py`, `portfolio_read_model.py`. Use the enum maps (e.g. `order_type_map`) to convert string inputs to enums.
 
 ## Conventions
 
-- Source uses **tab indentation** in most handler modules (config/ and some newer modules use spaces — match the file you edit).
-- Components are constructed with the `global_queue` as a constructor argument and never call each other directly across domains — emit an event instead.
+- **Indentation:** handler modules use **tabs**; `config/`, `core/`, `price_handler/feed/`, and the `events_handler/events/` package use **4 spaces** — match the file you edit.
+- Components are constructed with the `global_queue` as a constructor argument and never call each other directly across domains — emit an event instead (read-only cross-domain access goes through an injected read-model).
 
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
