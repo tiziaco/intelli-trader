@@ -159,6 +159,7 @@ None yet.
 | 260605-ih3 | Fix WR-01 weekly/DST check_timeframe anchoring (midnight-relative, not epoch) + tests | 2026-06-05 | 85384c5 | [260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc](./quick/260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc/) |
 | 260608-a59 | Demote by-design signal-rejection logs from error to warning in order_manager.py (admission gates + cash reservation) | 2026-06-08 | c48810c | [260608-a59-demote-by-design-signal-rejection-logs-f](./quick/260608-a59-demote-by-design-signal-rejection-logs-f/) |
 | 260608-qe2 | Enum cleanup: relocate TradingDirection + SystemStatus into core/enums; resolve config name collisions (ExchangeType→ExchangeVenue, OrderType→ConfigOrderType) | 2026-06-08 | 6608300 | [260608-qe2-pre-milestone-close-enum-cleanup-move-tr](./quick/260608-qe2-pre-milestone-close-enum-cleanup-move-tr/) |
+| fast | Delete dead config-surface modules (config/trading.py, config/data.py) — fully unreferenced; kept PortfolioType/RiskLevel/Environment/LogLevel (live) | 2026-06-08 | db5354a | — |
 
 ## Deferred Items
 
