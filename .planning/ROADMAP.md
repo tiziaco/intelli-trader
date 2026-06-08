@@ -235,7 +235,17 @@ Plans:
   2. **Golden-master gate:** the final numerical reference output is frozen, establishing the new authoritative oracle
   3. Program definition-of-done holds: `SMA_MACD` runs end-to-end with a non-trivial trade log + equity curve, `mypy --strict` clean, no float money, single UUIDv7 scheme, deterministic runs, 274 component tests green (pytest) plus a run-path integration test
 
-**Plans**: TBD
+**Plans**: 9 plans
+
+  - [ ] 08-01-PLAN.md — Golden-path Decimal cleanup: retype Portfolio.total_* properties to Decimal, clean MetricsManager money coercions, native-Decimal validator cash checks (D-06)
+  - [ ] 08-02-PLAN.md — Caller fan-out + mypy --strict propagation sweep from the 08-01 retype; suite green under filterwarnings=["error"] (D-06/D-13)
+  - [ ] 08-03-PLAN.md — Oracle regeneration + conditional REFREEZE-M5C-DECIMAL (owner sign-off); clean Decimal numbers become the cross-validation baseline (D-07/D-08)
+  - [ ] 08-04-PLAN.md — Add pinned dev-deps (backtesting, backtrader, optional nautilus-trader) + engine import/run smoke gate on numpy2/py3.13 (D-10)
+  - [ ] 08-05-PLAN.md — Shared ta-indicator precompute + gating force-match engine modules (FractionalBacktest + custom float sizer; next-bar-open + filter-gates-both quirk) (D-01/D-03/D-10)
+  - [ ] 08-06-PLAN.md — Optional Nautilus non-gating module behind a try-guard; degrades gracefully, never stalls the freeze (D-12)
+  - [ ] 08-07-PLAN.md — scripts/cross_validate.py orchestrator + reconciliation table + committed tests/golden/CROSS-VALIDATION.md (D-02/D-04/D-10)
+  - [ ] 08-08-PLAN.md — Per-divergence root-cause + conditional bug-fix re-freeze (D-05); dispositions recorded in CROSS-VALIDATION.md
+  - [ ] 08-09-PLAN.md — Freeze final oracle + full D-13 definition-of-done gate (D-11/D-13)
 
 ## Progress
 
@@ -251,4 +261,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 8/8 | Complete   | 2026-06-06 |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 8/8 | Complete   | 2026-06-07 |
-| 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |
+| 8. M5c — Cross-Validation & Final Oracle | 0/9 | Not started | - |
