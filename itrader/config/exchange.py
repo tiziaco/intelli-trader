@@ -14,8 +14,8 @@ from typing import Any, Dict, List, Optional, Set
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ExchangeType(str, Enum):
-    """Supported exchange types."""
+class ExchangeVenue(str, Enum):
+    """Supported exchange venues."""
 
     SIMULATED = "simulated"
     BINANCE = "binance"
@@ -138,7 +138,7 @@ class ExchangeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    exchange_type: ExchangeType = ExchangeType.SIMULATED
+    exchange_type: ExchangeVenue = ExchangeVenue.SIMULATED
     exchange_name: str = "DefaultExchange"
 
     fee_model: FeeModelConfig = Field(default_factory=FeeModelConfig)
@@ -170,7 +170,7 @@ def _default_preset() -> ExchangeConfig:
     """Default exchange config: zero fee, no slippage, no failures."""
     return ExchangeConfig(
         exchange_name="SimulatedExchange",
-        exchange_type=ExchangeType.SIMULATED,
+        exchange_type=ExchangeVenue.SIMULATED,
         fee_model=FeeModelConfig(model_type=FeeModelType.ZERO, fee_rate=Decimal("0.0")),
         slippage_model=SlippageModelConfig(
             model_type=SlippageModelType.NONE,
@@ -202,7 +202,7 @@ def _realistic_preset() -> ExchangeConfig:
     """Realistic exchange config with fees and slippage."""
     return ExchangeConfig(
         exchange_name="RealisticSimulatedExchange",
-        exchange_type=ExchangeType.SIMULATED,
+        exchange_type=ExchangeVenue.SIMULATED,
         fee_model=FeeModelConfig(
             model_type=FeeModelType.PERCENT, fee_rate=Decimal("0.001")
         ),
@@ -236,7 +236,7 @@ def _high_fee_preset() -> ExchangeConfig:
     """High-fee exchange config."""
     return ExchangeConfig(
         exchange_name="HighFeeSimulatedExchange",
-        exchange_type=ExchangeType.SIMULATED,
+        exchange_type=ExchangeVenue.SIMULATED,
         fee_model=FeeModelConfig(
             model_type=FeeModelType.MAKER_TAKER,
             maker_rate=Decimal("0.008"),
@@ -271,7 +271,7 @@ def _low_latency_preset() -> ExchangeConfig:
     """Low-latency exchange config."""
     return ExchangeConfig(
         exchange_name="LowLatencySimulatedExchange",
-        exchange_type=ExchangeType.SIMULATED,
+        exchange_type=ExchangeVenue.SIMULATED,
         fee_model=FeeModelConfig(
             model_type=FeeModelType.PERCENT, fee_rate=Decimal("0.0005")
         ),
