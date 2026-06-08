@@ -1,9 +1,13 @@
 import queue
 from datetime import datetime
 from decimal import Decimal
+from functools import reduce
 from typing import Any, Optional
 
+import pandas as pd
+
 from itrader.core.clock import BacktestClock
+from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
@@ -150,8 +154,21 @@ class TradingSystem(object):
 		# Ping clock derived from the store's bar index (T-06-16): the same
 		# tick grid the legacy `.prices` access produced, asserted byte-exact
 		# by the oracle's behavioral identity.
-		self.time_generator.set_dates(
-			self.store.index(self.store.symbols()[0]))
+		#
+		# WR-07: fail loudly on an empty store (an opaque IndexError otherwise),
+		# and derive the grid from the UNION of every symbol's index so a sparse
+		# multi-symbol universe never silently drops the bars of symbols whose
+		# dates are absent from the first symbol's calendar. For the
+		# single-symbol golden run the reduce returns that one index UNCHANGED
+		# (no union call), so the tick grid stays byte-identical (oracle-dark).
+		symbols = self.store.symbols()
+		if not symbols:
+			raise ConfigurationError(
+				"Backtest store has no symbols — cannot derive the ping clock "
+				"(empty data directory or bad store path)")
+		ping_grid = reduce(
+			pd.Index.union, (self.store.index(s) for s in symbols))
+		self.time_generator.set_dates(ping_grid)
 		# M5-03: resample ONCE at run-init per registered strategy declaration —
 		# the per-tick window path is then a pure positional slice.
 		for strategy in self.strategies_handler.strategies:
