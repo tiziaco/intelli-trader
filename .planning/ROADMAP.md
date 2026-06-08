@@ -361,6 +361,31 @@ Rationale: shorts are the "short half" of the breadth N+1 wanted, but they are g
 this accounting work — so it must come right after N+1, before infra/live. Crypto-first
 keeps it tractable (no multi-currency, no borrow-locate).
 
+**Design note — trailing stops on venues WITHOUT native support (spans N+2 build → N+4 live):**
+Native trailing is NOT universal (Binance spot lacks a clean native trailing; IBKR stocks
+DO have `TRAIL`; many smaller venues / DEXs have none; ccxt coverage is spotty and semantics
+vary — absolute vs % vs callback-rate, trigger basis last/mark/index). So make trailing a
+**declared intent + an exchange capability**, decided in the execution layer (NOT the
+strategy):
+- Add a capability seam to `AbstractExchange` (e.g. `supports(OrderType.TRAILING_STOP)`).
+  **Native-first** (survives client disconnect, lower latency, no rate-limit churn);
+  **synthetic-fallback** otherwise.
+- **Synthetic = always keep a REAL resting stop server-side; only the *ratchet* is
+  client-side.** Place a normal STOP, recompute the trail each bar (ratchet favorable-only),
+  and `MODIFY` the resting stop when the move exceeds a step threshold (rides the existing
+  `OrderHandler.modify_order` → `OrderEvent(MODIFY)` round-trip). The venue fills the plain
+  stop natively — the engine is NOT in the trigger path.
+- Safety property: engine downtime ⇒ trail freezes but the last stop still protects. NEVER
+  do the naive version (no resting stop; engine watches price and fires a market order on
+  trigger) — downtime = zero protection.
+- Risks to handle: modify churn vs rate limits (step threshold); cancel-replace gap on
+  venues w/o atomic modify (place-new-then-cancel-old); overnight/weekend gaps (stop-limit
+  caps fill price but risks no fill); venue min-distance rules.
+- Backtest (`MatchingEngine`) models the IDEAL engine-native trail; synthetic-live has
+  modify latency / step / gap behavior → backtest is slightly optimistic (a known sim-to-live
+  gap to flag at N+4). Backtest and live should SHARE the trail-computation logic; only "how
+  the stop rests" differs.
+
 Plans:
 - [ ] TBD (promote with /gsd:review-backlog when ready)
 
