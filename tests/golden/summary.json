@@ -1,11 +1,19 @@
 {
   "end_date": "2026-06-03",
-  "final_cash": 53103.01549885479,
-  "final_equity": 53103.01549885479,
+  "final_cash": 46189.87730727451,
+  "final_equity": 46189.87730727451,
+  "metrics": {
+    "cagr": 0.19910032815485068,
+    "max_drawdown": -0.5382568231814071,
+    "profit_factor": 1.291149869385797,
+    "sharpe": 0.6583614133806533,
+    "sortino": 1.0385040387966196,
+    "win_rate": 0.3656716417910448
+  },
   "start_date": "2018-01-01",
   "starting_cash": 10000.0,
   "ticker": "BTCUSD",
   "timeframe": "1d",
-  "total_realised_pnl": 43103.01549885479,
+  "total_realised_pnl": 36189.87730727451,
   "trade_count": 134
 }

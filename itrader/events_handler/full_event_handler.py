@@ -8,7 +8,6 @@ from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
-from itrader.universe.universe import Universe
 from itrader.core.enums import EventType
 
 from itrader.logger import get_itrader_logger
@@ -34,6 +33,10 @@ class EventHandler(object):
 
 	Parameters
 	----------
+	bar_event_source : `Callable`
+		The feed-backed BarEvent factory the TIME route invokes
+		(``BacktestBarFeed.generate_bar_event`` — Plan 07-02, D-20: the
+		data engine owns BarEvent production).
 	global_queue : `Queue`
 		The global events queue of the trading system.
 	"""
@@ -45,7 +48,7 @@ class EventHandler(object):
 		portfolio_handler: PortfolioHandler,
 		order_handler: OrderHandler,
 		execution_handler: ExecutionHandler,
-		universe: Universe,
+		bar_event_source: Callable[[Any], Any],
 		global_queue: "queue.Queue[Any]",
 	) -> None:
 		self.strategies_handler = strategies_handler
@@ -53,7 +56,7 @@ class EventHandler(object):
 		self.portfolio_handler = portfolio_handler
 		self.order_handler = order_handler
 		self.execution_handler = execution_handler
-		self.universe = universe
+		self.bar_event_source = bar_event_source
 		self.global_queue = global_queue
 
 		self.logger = get_itrader_logger().bind(component="FullEventHandler")
@@ -65,7 +68,7 @@ class EventHandler(object):
 		self._routes: dict[EventType, list[Callable[[Any], Any]]] = {
 			EventType.TIME: [
 				self.screeners_handler.screen_markets,
-				self.universe.generate_bar_event,
+				self.bar_event_source,
 			],
 			EventType.BAR: [
 				self.portfolio_handler.update_portfolios_market_value,  # 1) mark-to-market

@@ -1,9 +1,13 @@
 import queue
 from datetime import datetime
 from decimal import Decimal
+from functools import reduce
 from typing import Any, Optional
 
+import pandas as pd
+
 from itrader.core.clock import BacktestClock
+from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
@@ -16,8 +20,18 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.simulation.time_generator import TimeGenerator
-from itrader.universe.dynamic import DynamicUniverse
-from itrader.reporting.statistics import StatisticsReporting
+from itrader.universe import derive_membership
+from itrader.reporting.frames import build_equity_curve, build_trade_log
+from itrader.reporting.metrics import (
+	cagr,
+	compute_returns,
+	format_metrics,
+	max_drawdown,
+	profit_factor,
+	sharpe,
+	sortino,
+	win_rate,
+)
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType
@@ -71,7 +85,6 @@ class TradingSystem(object):
 			start_date=start_date,
 			end_date=end_date or None)
 		self.feed = BacktestBarFeed(self.store, to_timedelta(timeframe))
-		self.universe = DynamicUniverse(self.feed, self.global_queue)
 		self.strategies_handler = StrategiesHandler(self.global_queue, self.feed)
 		# ScreenersHandler is a deferred subsystem (D-screener, ignore_errors override)
 		# so its constructor is untyped to the gate.
@@ -104,18 +117,17 @@ class TradingSystem(object):
 		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
 		                                  commission_estimator=_estimate_commission)
 		self.time_generator = TimeGenerator()
-		# StatisticsReporting is a deferred reporting subsystem (ignore_errors
-		# override); it reads start/end dates + bar counts from the Store.
-		self.reporting = StatisticsReporting(
-			self.portfolio_handler,
-			self.store)
+		# The TIME route's BarEvent source is the feed-owned factory
+		# (Plan 07-02, D-20): the data engine produces the per-tick
+		# BarEvent; queue + membership are bound onto the feed at
+		# session initialisation.
 		self.event_handler = EventHandler(
 			self.strategies_handler,
 			self.screeners_handler,
 			self.portfolio_handler,
 			self.order_handler,
 			self.execution_handler,
-			self.universe,
+			self.feed.generate_bar_event,
 			self.global_queue
 		)
 
@@ -124,21 +136,39 @@ class TradingSystem(object):
 
 	def _initialise_backtest_session(self) -> None:
 		"""
-		Initialise the universe, derive the ping clock from the store's bar
-		index, and precompute the per-strategy resampled frames so the hot
-		loop never resamples (M5-03).
+		Derive membership and bind the feed's BarEvent factory, derive the
+		ping clock from the store's bar index, and precompute the
+		per-strategy resampled frames so the hot loop never resamples
+		(M5-03).
 		"""
 		self.logger.info('Initialising backtest session')
 
-		self.universe.init_universe(
-			self.strategies_handler.get_strategies_universe(),
+		# Membership derived at wiring time (M5-08, D-20): the union of
+		# strategy tickers and the screener set — used by the feed's
+		# factory only for the missing-ticker warning loop.
+		membership = derive_membership(
+			self.strategies_handler.strategies,
 			# D-screener deferred subsystem (ignore_errors override) — untyped to the gate.
 			self.screeners_handler.get_screeners_universe())  # type: ignore[no-untyped-call]
+		self.feed.bind(self.global_queue, membership)
 		# Ping clock derived from the store's bar index (T-06-16): the same
 		# tick grid the legacy `.prices` access produced, asserted byte-exact
 		# by the oracle's behavioral identity.
-		self.time_generator.set_dates(
-			self.store.index(self.store.symbols()[0]))
+		#
+		# WR-07: fail loudly on an empty store (an opaque IndexError otherwise),
+		# and derive the grid from the UNION of every symbol's index so a sparse
+		# multi-symbol universe never silently drops the bars of symbols whose
+		# dates are absent from the first symbol's calendar. For the
+		# single-symbol golden run the reduce returns that one index UNCHANGED
+		# (no union call), so the tick grid stays byte-identical (oracle-dark).
+		symbols = self.store.symbols()
+		if not symbols:
+			raise ConfigurationError(
+				"Backtest store has no symbols — cannot derive the ping clock "
+				"(empty data directory or bad store path)")
+		ping_grid = reduce(
+			pd.Index.union, (self.store.index(s) for s in symbols))
+		self.time_generator.set_dates(ping_grid)
 		# M5-03: resample ONCE at run-init per registered strategy declaration —
 		# the per-tick window path is then a pure positional slice.
 		for strategy in self.strategies_handler.strategies:
@@ -171,22 +201,49 @@ class TradingSystem(object):
 		duration = end_time - start_time
 		print("Backtest duration:", duration)
 
-	def run(self, print_summary: bool = False) -> None:
+	def run(self, print_summary: bool = True) -> None:
 		"""
-		Runs the backtest and print out the backtest statistics
-		at the end of the simulation.
+		Runs the backtest and, when ``print_summary`` is True (the default),
+		prints one formatted D-15 metrics block per registered portfolio at the
+		end of the run (D-14 amendment, user decision 2026-06-07). Display
+		ONLY: the engine writes NO files — artifact serialization remains
+		``scripts/run_backtest.py``'s job, and stdout printing changes no
+		``output/`` artifact bytes (oracle-inert).
 		"""
 		self._initialise_backtest_session()
 		self._run_backtest()
 
 		if print_summary:
-			# Dormant summary path: StatisticsReporting is a deferred D-sql/reporting
-			# subsystem (ignore_errors override) with the known-broken _prepare_data
-			# path (STATE.md 01-04); the working backtest runs print_summary=False.
-			self.reporting.calculate_statistics()  # type: ignore[no-untyped-call,call-arg]
-			self.reporting.print_summary()
+			self._print_metrics_summary()
 
-		# Close the logger file
-		#file_handler.close()
-		# Close the SQL connection
-		#self.sql_engine.dispose() # Close all checked in sessions
+	def _print_metrics_summary(self) -> None:
+		"""
+		End-of-run metrics printout (D-14 amendment): build the run-artifact
+		frames per portfolio via the pure ``reporting.frames`` builders,
+		compute the D-15 metric set via ``reporting.metrics`` (one formula
+		source — the same functions ``run_backtest.py`` serializes), and print
+		the ``format_metrics`` block. Empty runs are safe: guarded
+		denominators return 0.0 instead of raising.
+		"""
+		for portfolio in self.portfolio_handler.get_active_portfolios():
+			trades = build_trade_log(portfolio)
+			equity_frame = build_equity_curve(portfolio)
+			# astype(float) keeps the empty-run path warning-free (an empty
+			# frame's column is object-dtype); populated frames are float already.
+			equity = equity_frame["total_equity"].astype(float)
+			returns = compute_returns(equity)
+			metrics: dict[str, float] = {
+				"sharpe": sharpe(returns),
+				"sortino": sortino(returns),
+				"cagr": cagr(equity),
+				"max_drawdown": max_drawdown(equity),
+				"profit_factor": profit_factor(trades),
+				"win_rate": win_rate(trades),
+			}
+			print(format_metrics(metrics, title=f"Backtest metrics — {portfolio.name}"))
+			self.logger.info(
+				'Backtest summary',
+				portfolio=portfolio.name,
+				final_equity=float(portfolio.total_equity),
+				trade_count=len(trades),
+			)

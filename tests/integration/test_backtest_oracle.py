@@ -51,8 +51,21 @@ _EQUITY_IDENTITY_COLUMNS = ["timestamp"]
 # Summary identity = trade_count (behavioral law). The numeric keys (final_cash/final_equity/
 # total_realised_pnl) are re-frozen EXACT at the M2b re-baseline (D-16) — the M2a Decimal-end
 # values are now the committed golden.
+#
+# M5b re-freeze 1 (D-08/D-11, plan 07-07 — owner-approved, see
+# tests/golden/REFREEZE-M5B-DIRECTION.md): the LONG_ONLY direction guard at admission
+# removes the 2 blessed golden shorts (−2 SHORT, +2 LONG; trade count unchanged at 134)
+# and fraction-of-cash compounding shifts every downstream entry — final equity
+# 53103.0155 → 46132.7668. Two NEW frozen artifacts ride this named re-freeze:
+# the summary.json "metrics" block (D-15 — cagr/max_drawdown/profit_factor/sharpe/
+# sortino/win_rate, asserted as one exact dict comparison below) and the trades.csv
+# slippage_entry/slippage_exit columns (D-17 — auto-locked EXACT via the golden-derived
+# ``_trade_numeric`` column mechanic, presence asserted explicitly).
 _SUMMARY_IDENTITY_KEYS = ("trade_count",)
 _SUMMARY_NUMERIC_KEYS = ("final_cash", "final_equity", "total_realised_pnl")
+# D-17 slippage attribution columns — frozen at M5b re-freeze 1; their presence in the
+# golden header is asserted so the _trade_numeric auto-lock cannot silently lose them.
+_TRADE_SLIPPAGE_COLUMNS = ("slippage_entry", "slippage_exit")
 
 
 def _load_run_backtest_module():
@@ -181,6 +194,12 @@ def test_oracle_numeric_values(oracle_run):
     fresh_summary, golden_summary = oracle_run["summary"]
 
     # --- Trade numeric columns: EXACT (D-16) ----------------------------------
+    # D-17 (M5b re-freeze 1): the slippage attribution columns are part of the frozen
+    # header — assert their presence so the golden-derived auto-lock below covers them.
+    for column in _TRADE_SLIPPAGE_COLUMNS:
+        assert column in golden_trades_sorted.columns, (
+            f"frozen slippage column '{column}' missing from golden trades.csv header"
+        )
     _trade_numeric = [
         c for c in golden_trades_sorted.columns if c not in _TRADE_IDENTITY_COLUMNS
     ]
@@ -208,3 +227,12 @@ def test_oracle_numeric_values(oracle_run):
             f"summary numeric drift on '{key}': "
             f"fresh={fresh_summary[key]} golden={golden_summary[key]}"
         )
+
+    # --- Derived-metrics block: EXACT dict comparison (D-15, M5b re-freeze 1) --
+    # One dict comparison of the whole "metrics" object (RESEARCH OQ3): exact
+    # equality, consistent with the D-16 byte-exact discipline — a deterministic
+    # run reproduces the floats bit-for-bit, so any drift is a real regression.
+    assert fresh_summary["metrics"] == golden_summary["metrics"], (
+        f"summary metrics drift: fresh={fresh_summary['metrics']} "
+        f"golden={golden_summary['metrics']}"
+    )

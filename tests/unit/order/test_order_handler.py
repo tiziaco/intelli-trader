@@ -1,5 +1,6 @@
 from queue import Queue
 from datetime import datetime, UTC
+from decimal import Decimal
 
 import pytest
 
@@ -7,6 +8,7 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.events_handler.events import SignalEvent
 from itrader.core.enums import OrderType, Side
+from itrader.core.sizing import FractionOfCash, TradingDirection
 
 
 _STRATEGY_ID = 1
@@ -36,7 +38,8 @@ def order_handler():
         take_profit=0.0,
         strategy_id=_STRATEGY_ID,
         portfolio_id=_PORTFOLIO_ID,
-        strategy_setting={},
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
     )
     q.put(buy_signal)
 

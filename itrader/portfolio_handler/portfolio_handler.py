@@ -261,6 +261,23 @@ class PortfolioHandler:
         count: int = self.get_portfolio(portfolio_id).n_open_positions
         return count
 
+    def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return total equity as Decimal: full cash balance + position market values.
+
+        Plan 07-01 (M5-06): the RiskPercent sizing input — computed from the
+        Decimal internals directly (RESEARCH Pitfall 8: CashManager.balance and
+        PositionManager.get_total_market_value() are both Decimal-native), NEVER
+        through the float Portfolio.total_equity property. Uses the FULL ledger
+        balance (available cash + reservations) — equity is a sizing/metrics
+        figure, not buying power. Oracle-dark: the golden FractionOfCash policy
+        never reads it.
+        """
+        portfolio = self.get_portfolio(portfolio_id)
+        return (
+            portfolio.cash_manager.balance
+            + portfolio.position_manager.get_total_market_value()
+        )
+
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
         """Process fill event for the appropriate portfolio.
@@ -341,16 +358,24 @@ class PortfolioHandler:
         
         # Update only active portfolios (each handles its own thread safety)
         active_portfolios = self.get_active_portfolios()
-        
+
         for portfolio in active_portfolios:
             try:
                 portfolio.update_market_value_of_portfolio(prices)
             except Exception as e:
-                self.logger.warning(
-                    "Failed to update portfolio market value",
-                    portfolio_id=portfolio.portfolio_id,
-                    error=str(e)
-                )
+                # WR-08: a failed mark must NOT be swallowed. In a project whose
+                # core value is "numbers you can trust", silently continuing
+                # leaves the equity curve carrying stale position values that
+                # the metrics/drawdown/oracle blocks then consume as if valid.
+                # Mirror on_fill's D-10 fail-fast contract on this same dispatch
+                # path: publish a PortfolioErrorEvent to the ERROR route, then
+                # re-raise so the registry's _on_handler_error backtest policy
+                # aborts the run instead of producing silently-wrong numbers.
+                correlation_id = self._generate_correlation_id()
+                self._publish_error_event(
+                    e, "update_portfolios_market_value", correlation_id,
+                    portfolio.portfolio_id)
+                raise
     
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:

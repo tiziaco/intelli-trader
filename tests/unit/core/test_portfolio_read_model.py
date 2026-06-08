@@ -8,11 +8,16 @@ These lock the narrow cross-handler read boundary (D-13..D-17, Plan 05-03):
 2. ``PositionView`` carries exactly the four fields consumers read today
    (ticker, side, net_quantity, avg_price) with Decimal money types.
 3. ``PortfolioReadModel`` is ``runtime_checkable`` — a minimal fake
-   implementing all six members passes ``isinstance``; an object missing
+   implementing all seven members passes ``isinstance``; an object missing
    ``reserve`` fails (narrowness is enforced, not just satisfied).
 
 The real-handler conformance assertion (``isinstance(PortfolioHandler(...),
 PortfolioReadModel)``) is added in Task 2 of the same plan.
+
+Plan 07-01 (M5-06) widens the Protocol by ONE member: ``total_equity`` —
+the RiskPercent sizing input (RESEARCH Pitfall 8). D-14's "equity excluded"
+rule is narrowly amended for it; oracle-dark (the golden FractionOfCash
+policy never reads it).
 """
 
 import dataclasses
@@ -77,12 +82,12 @@ def test_position_view_uses_slots():
 
 
 # ---------------------------------------------------------------------------
-# PortfolioReadModel: runtime_checkable Protocol, six members, narrow
+# PortfolioReadModel: runtime_checkable Protocol, seven members, narrow
 # ---------------------------------------------------------------------------
 
 
 class _ConformingFake:
-    """Minimal fake implementing all six Protocol members."""
+    """Minimal fake implementing all seven Protocol members."""
 
     def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
         return Decimal("100000.00")
@@ -102,9 +107,12 @@ class _ConformingFake:
     def open_position_count(self, portfolio_id: PortfolioId) -> int:
         return 0
 
+    def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
+        return Decimal("100000.00")
+
 
 class _MissingReserveFake:
-    """Implements five of six members — `reserve` deliberately absent."""
+    """Implements six of seven members — `reserve` deliberately absent."""
 
     def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
         return Decimal("0")
@@ -121,9 +129,12 @@ class _MissingReserveFake:
     def open_position_count(self, portfolio_id: PortfolioId) -> int:
         return 0
 
+    def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
+        return Decimal("0")
+
 
 def test_protocol_is_runtime_checkable_and_fake_conforms():
-    """D-16: structural typing — a fake with all six methods passes isinstance."""
+    """D-16: structural typing — a fake with all seven methods passes isinstance."""
     assert isinstance(_ConformingFake(), PortfolioReadModel)
 
 
@@ -132,8 +143,8 @@ def test_object_missing_reserve_fails_isinstance():
     assert not isinstance(_MissingReserveFake(), PortfolioReadModel)
 
 
-def test_protocol_declares_exactly_six_methods():
-    """OQ1 resolution: four locked members + two admission-metadata members."""
+def test_protocol_declares_exactly_seven_methods():
+    """OQ1 + Plan 07-01: six original members + total_equity (RiskPercent input)."""
     expected = {
         "available_cash",
         "get_position",
@@ -141,6 +152,7 @@ def test_protocol_declares_exactly_six_methods():
         "release",
         "exchange_for",
         "open_position_count",
+        "total_equity",
     }
     declared = {
         name
@@ -242,3 +254,44 @@ def test_handler_reserve_and_release_round_trip(handler_with_portfolio):
     # Idempotent: releasing again is a silent no-op.
     handler.release(portfolio_id, order_id)
     assert handler.available_cash(portfolio_id) == Decimal("100000.00")
+
+
+# ---------------------------------------------------------------------------
+# total_equity (Plan 07-01 — RiskPercent input, RESEARCH Pitfall 8)
+# ---------------------------------------------------------------------------
+
+
+def test_handler_total_equity_cash_only_is_full_balance(handler_with_portfolio):
+    """Cash-only portfolio: total_equity equals the FULL ledger balance.
+
+    The full balance includes reservations (available cash + reservations) —
+    equity is a metrics figure, not buying power (contrast D-14's
+    available_cash).
+    """
+    handler, portfolio_id = handler_with_portfolio
+    equity = handler.total_equity(portfolio_id)
+    assert isinstance(equity, Decimal)
+    assert equity == Decimal("100000.00")
+
+
+def test_handler_total_equity_unchanged_by_reservation(handler_with_portfolio):
+    """A reservation reduces available_cash but NOT total_equity (full balance)."""
+    import uuid
+
+    handler, portfolio_id = handler_with_portfolio
+    order_id = OrderId(uuid.uuid4())
+    handler.reserve(portfolio_id, order_id, Decimal("500.00"))
+    assert handler.available_cash(portfolio_id) == Decimal("99500.00")
+    assert handler.total_equity(portfolio_id) == Decimal("100000.00")
+    handler.release(portfolio_id, order_id)
+
+
+def test_handler_total_equity_unknown_portfolio_raises(handler_with_portfolio):
+    """Unknown portfolio_id raises the same not-found error as sibling reads."""
+    import uuid
+
+    from itrader.core.exceptions import PortfolioNotFoundError
+
+    handler, _ = handler_with_portfolio
+    with pytest.raises(PortfolioNotFoundError):
+        handler.total_equity(PortfolioId(uuid.uuid4()))

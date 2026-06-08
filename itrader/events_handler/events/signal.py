@@ -6,10 +6,12 @@ on the event).
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
 
 from itrader.core.enums import EventType, OrderType, Side
 from itrader.core.ids import StrategyId
+# Pitfall 3 (cycle safety): the typed sizing vocabulary is imported from
+# itrader.core.sizing ONLY — NEVER from order_handler (which imports events).
+from itrader.core.sizing import SizingPolicy, SLTPPolicy, TradingDirection
 
 from .base import Event
 
@@ -46,8 +48,24 @@ class SignalEvent(Event):
         The ID of the strategy who generated the signal
     portfolio_id: `int`
         The ID of the portfolio where to transact the position
-    strategy_setting: `dict`
-        Strategy settings used to generate the signal.
+    sizing_policy: `SizingPolicy`
+        The strategy's DECLARED sizing policy (D-01) — the order layer's
+        resolver turns it into a per-portfolio quantity; strategies never
+        size. Typed vocabulary from ``itrader.core.sizing`` (D-02).
+    direction: `TradingDirection`
+        The strategy's declared trading direction (D-08 admission seam).
+    allow_increase: `bool`
+        Whether the strategy permits increasing an already-open position
+        (D-10 declaration; enforcement lands with the admission rules).
+    max_positions: `int`
+        Maximum concurrent open positions the strategy declares.
+    exit_fraction: `Decimal`
+        Fraction of the open position an exit closes, in (0, 1].
+        ``Decimal("1")`` (the default) is a full exit — resolved as a
+        structural no-op (D-07).
+    sltp_policy: `SLTPPolicy | None`
+        Optional percent-offset SL/TP bracket declaration (D-13);
+        explicit ``stop_loss``/``take_profit`` values take precedence.
     quantity: `Decimal | None`
         Quantity to trade. ``None`` (the default) means "the order/risk
         layer sizes me" (D-10 — the 0 sentinel is gone); an explicit
@@ -64,7 +82,15 @@ class SignalEvent(Event):
     # 02-05 carry-over: strategy_id carries a UUIDv7-backed StrategyId, not a raw int.
     strategy_id: StrategyId
     portfolio_id: int
-    strategy_setting: dict[str, Any]
+    # D-01: the untyped settings dict is DEAD — the signal carries the
+    # typed policy vocabulary instead (kw_only, so required fields may
+    # follow defaulted ones).
+    sizing_policy: SizingPolicy
+    direction: TradingDirection
+    allow_increase: bool = False
+    max_positions: int = 1
+    exit_fraction: Decimal = Decimal("1")
+    sltp_policy: SLTPPolicy | None = None
     quantity: Decimal | None = None
 
     def __str__(self) -> str:

@@ -105,15 +105,6 @@ ignore_errors = true
 module = [
     "itrader.strategy_handler.my_strategies.*",          # OUT — relocated to a separate repo (STATE.md)
     "itrader.order_handler.storage.postgresql_storage", # D-sql — live order persistence (sibling of sql_handler)
-    "itrader.reporting.statistics",                     # D-sql/reporting — concrete reporter coupled to sqlalchemy
-                                                        #   (self.engine/self.meta/_to_sql) with the documented-broken
-                                                        #   _prepare_data path (STATE.md 01-04). Never exercised on the
-                                                        #   backtest path (run(print_summary=False)); full clean-up is
-                                                        #   the reporting/_prepare_data rework deferred post-M2.
-    "itrader.reporting.engine_logger",                  # D-sql/reporting — sqlalchemy-coupled engine logger; not wired
-                                                        #   into the backtest path. Deferred with the reporting rework.
-    "itrader.reporting.plots",                          # D-reporting — plotly visualisation, only consumed by the
-                                                        #   deferred statistics reporter. Off the backtest path.
 ]
 ignore_errors = true
 

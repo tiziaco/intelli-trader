@@ -19,8 +19,7 @@ from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-from itrader.universe.dynamic import DynamicUniverse
-from itrader.reporting.statistics import StatisticsReporting
+from itrader.universe import derive_membership
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, TimeEvent, OrderEvent
@@ -108,7 +107,6 @@ class LiveTradingSystem:
         self.global_queue = queue.Queue()
         self.store = CsvPriceStore()
         self.feed = BacktestBarFeed(self.store, to_timedelta('1d'))
-        self.universe = DynamicUniverse(self.feed, self.global_queue)
         self.strategies_handler = StrategiesHandler(self.global_queue, self.feed)
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
@@ -149,17 +147,16 @@ class LiveTradingSystem:
 
         self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
                                           commission_estimator=_estimate_commission)
-        self.reporting = StatisticsReporting(
-            self.portfolio_handler,
-            self.store
-        )
+        # The TIME route's BarEvent source is the feed-owned factory
+        # (Plan 07-02, D-20) — mirrors the backtest wiring shape; a real
+        # live feed is owned by D-live.
         self.event_handler = EventHandler(
             self.strategies_handler,
             self.screeners_handler,
             self.portfolio_handler,
             self.order_handler,
             self.execution_handler,
-            self.universe,
+            self.feed.generate_bar_event,
             self.global_queue
         )
         
@@ -203,17 +200,20 @@ class LiveTradingSystem:
     
     def _initialize_live_session(self):
         """
-        Initialize the live trading session by setting up the universe
-        and other necessary components.
+        Initialize the live trading session by deriving membership and
+        binding the feed's BarEvent factory.
         """
         self.logger.info('Initializing live trading session')
 
         try:
-            # Initialize universe with strategies and screeners
-            self.universe.init_universe(
-                self.strategies_handler.get_strategies_universe(),
+            # Membership derived at wiring time (M5-08, D-20) — mirrors
+            # the backtest wiring shape (A4 minimal shim; D-live owns
+            # real behavior).
+            membership = derive_membership(
+                self.strategies_handler.strategies,
                 self.screeners_handler.get_screeners_universe()
             )
+            self.feed.bind(self.global_queue, membership)
 
             # Plan 06-05: the legacy set_symbols/set_timeframe calls died with
             # the price handler — the Store knows its symbols (store.symbols()).
@@ -448,12 +448,11 @@ class LiveTradingSystem:
         dict or None
             Trading statistics if available
         """
-        try:
-            self.reporting.calculate_statistics()
-            return self.reporting.get_statistics()  # Assuming this method exists
-        except Exception as e:
-            self.logger.error(f'Error getting statistics: {e}')
-            return None
+        # The legacy StatisticsReporting subsystem was deleted with the M5-07
+        # reporting rework (plan 07-03); live-mode statistics are D-live scope
+        # and gain no metrics printout here (A4 — keep the module importing).
+        self.logger.warning('Live statistics unavailable: legacy reporting deleted (D-live scope)')
+        return None
     
     def print_status(self):
         """

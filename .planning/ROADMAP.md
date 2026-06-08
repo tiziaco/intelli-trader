@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: M3 — Event & Dispatch Core** - Immutable events with linkage IDs, race-free dispatch registry, unified domain errors/logging (completed 2026-06-05)
 - [x] **Phase 5: M4 — Money & Transaction Correctness** - Cash through CashManager, atomic transactions, order facade layering, frozen execution DTOs (completed 2026-06-06)
 - [x] **Phase 6: M5a — Backtest Validity, Fills & Data Pipeline** - Look-ahead/fill realism, Bar struct, precomputed frames, fee/slippage, price-handler Provider/Store/Feed split (gap closure pending) (completed 2026-06-06)
-- [ ] **Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage** - Complete strategy-declared sizing, correct reporting/metrics, universe stub, strategy/data/reporting tests
+- [x] **Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage** - Complete strategy-declared sizing, correct reporting/metrics, universe stub, strategy/data/reporting tests (completed 2026-06-07)
 - [ ] **Phase 8: M5c — Cross-Validation & Final Oracle** - Cross-validate vs backtesting.py + backtrader; freeze the final numerical reference
 
 ## Phase Details
@@ -195,7 +195,34 @@ Plans:
   3. `universe/` collapses to a thin documented symbol-set stub (false "dynamic"/redundant copies removed)
   4. Strategy/data/reporting/universe paths gain test coverage (CSV price store, reporting/statistics, universe)
 
-**Plans**: TBD
+**Plans**: 8 plans (6 waves; structural-first — all inert workstreams byte-exact gated before the two owner-gated result-changing re-freezes)
+
+Plans:
+**Wave 1**
+
+- [x] 07-01-PLAN.md — Sizing vocabulary (core/sizing.py) + PortfolioReadModel.total_equity + SizingResolver (inert, M5-06)
+- [x] 07-02-PLAN.md — Universe collapse: membership stub + BarEvent factory into BarFeed + TIME-route rewire (inert, M5-08/M5-09)
+
+**Wave 2**
+
+- [x] 07-03-PLAN.md — Reporting: pure metrics.py + plots plotly-6 fix + legacy deletion + run_backtest metrics/slippage artifacts (inert, M5-07/M5-09)
+- [x] 07-04-PLAN.md — Strategy intent contract (generate_signal -> SignalIntent) + typed SignalEvent, strategy_setting dies (inert, M5-06/M5-09)
+
+**Wave 3**
+
+- [x] 07-05-PLAN.md — Resolver wired into OrderManager + zero-qty bypass + orphaned package deletion (inert byte-exact, M5-06)
+
+**Wave 4**
+
+- [x] 07-06-PLAN.md — SLTPPolicy fill-time resolution (PercentFromFill at parent fill, oracle-dark, M5-06)
+
+**Wave 5**
+
+- [x] 07-07-PLAN.md — Re-freeze 1: LONG_ONLY direction guard (D-08) + freeze metrics/slippage artifacts (RESULT-CHANGING, owner-gated, M5-06/M5-07)
+
+**Wave 6**
+
+- [x] 07-08-PLAN.md — Re-freeze 2: allow_increase + max_positions guards (D-10) + phase gate (RESULT-CHANGING, owner-gated, M5-06)
 
 ### Phase 8: M5c — Cross-Validation & Final Oracle
 
@@ -223,5 +250,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. M3 — Event & Dispatch Core | 8/8 | Complete   | 2026-06-05 |
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 8/8 | Complete   | 2026-06-06 |
-| 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 0/TBD | Not started | - |
+| 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 8/8 | Complete   | 2026-06-07 |
 | 8. M5c — Cross-Validation & Final Oracle | 0/TBD | Not started | - |

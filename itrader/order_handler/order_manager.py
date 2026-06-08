@@ -12,18 +12,43 @@ Provides the business logic layer between OrderHandler (interface)
 and order storage/execution systems.
 """
 
+from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, assert_never, cast
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
-from ..core.exceptions import InsufficientFundsError
-from ..core.ids import PortfolioId
+from ..core.exceptions import InsufficientFundsError, SizingPolicyViolation
+from ..core.ids import OrderId, PortfolioId, StrategyId
 from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
+from ..core.sizing import PercentFromDecision, PercentFromFill, SLTPPolicy, TradingDirection
 from .base import OrderStorage
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
+from .sizing_resolver import SizingResolver
+
+_ONE = Decimal("1")
+
+
+@dataclass(frozen=True)
+class _PendingBracket:
+	"""Context for a PercentFromFill bracket awaiting its parent's fill (D-13).
+
+	RESEARCH Pattern 5 Option B: the manager holds a map keyed by the
+	parent order id carrying the policy plus everything needed to build
+	the children at fill time — the children do not exist until the
+	parent EXECUTES, so a placeholder-priced child can never trigger
+	before its parent fills (T-07-14, structurally unreachable).
+	"""
+
+	policy: PercentFromFill
+	ticker: str
+	action: str
+	quantity: Decimal
+	exchange: str
+	strategy_id: StrategyId
+	portfolio_id: "PortfolioId | int"
 
 
 class OrderManager:
@@ -84,6 +109,19 @@ class OrderManager:
 		# Initialize validator if portfolio_handler is available
 		self.order_validator = EnhancedOrderValidator(portfolio_handler) if portfolio_handler else None
 
+		# The ONE sizing resolver (D-01, M5-06): dispatches on the signal's
+		# DECLARED SizingPolicy. Same optionality pattern as the read model —
+		# constructed only when a read model is present (resolution reads
+		# portfolio state exclusively through the Protocol).
+		self.sizing_resolver = SizingResolver(portfolio_handler) if portfolio_handler else None
+
+		# D-13 PercentFromFill pending brackets (RESEARCH Pattern 5 Option B):
+		# parent order id -> the context needed to create the fill-anchored
+		# children in on_fill. Entries are discarded when the parent reaches
+		# CANCELLED/REJECTED without executing (T-07-15 — no orphans possible:
+		# the children were never created).
+		self._pending_brackets: Dict[OrderId, _PendingBracket] = {}
+
 	def _estimate_commission(self, order: Order) -> Decimal:
 		"""Estimate the commission for an order's admission reservation (D-04).
 
@@ -108,16 +146,28 @@ class OrderManager:
 		-------
 		List[OrderEvent]
 			CANCEL OrderEvents for bracket children orphaned by a parent that
-			reached a terminal state without any fill (WR-05). The manager
-			never touches the queue (D-18) — the handler enqueues these.
+			reached a terminal state without any fill (WR-05), plus the
+			fill-anchored PercentFromFill children created on the parent's
+			EXECUTED fill (D-13, Pattern 5 Option B). The manager never
+			touches the queue (D-18) — the handler enqueues these.
 		"""
-		cancel_events: List[OrderEvent] = []
+		out_events: List[OrderEvent] = []
 		order_id = getattr(fill_event, 'order_id', None)
 		if order_id is None:
-			return cancel_events
+			return out_events
 		order = self.order_storage.get_order_by_id(order_id, fill_event.portfolio_id)
 		if order is None:
-			return cancel_events
+			return out_events
+		# WR-04: the terminal release MUST run even if the reconciliation body
+		# raises — a stuck BUY reservation corrupts buying power for the rest of
+		# the run (T-05-17). The release is therefore moved into a `finally`,
+		# gated by this flag so the early-return "unknown status" path (which
+		# intentionally holds the reservation) does not trigger it. The body is
+		# re-raised after logging (backtest fail-fast policy, matching the
+		# portfolio side of the same FILL via _on_handler_error) so a corrupted
+		# reconciliation aborts the run instead of producing silently-wrong
+		# numbers.
+		should_release = False
 		try:
 			applied = True
 			if fill_event.status == FillStatus.EXECUTED:
@@ -148,23 +198,16 @@ class OrderManager:
 				# reconciliation, so the reservation is intentionally held.)
 				self.logger.warning('Unhandled fill status %s for order %s; order left active',
 				                    fill_event.status, order_id)
-				return cancel_events
+				return out_events
+			# A terminal status was reached (EXECUTED/CANCELLED/REFUSED): arm the
+			# release before any further work so a raise below still releases.
+			should_release = True
 			# Reached for every terminal-status fill (EXECUTED/CANCELLED/
 			# REFUSED), whether or not the mirror transition applied.
 			# D-20: no deactivate step — the terminal status set above already
 			# removes the order from active queries via the is_active predicate.
 			if applied:
 				self.order_storage.update_order(order)
-			# D-01/OQ2 (Plan 05-06): the reserver owns the release — a uniform
-			# idempotent release on EVERY terminal reconciliation (FILLED/
-			# CANCELLED/REJECTED). Never-reserved orders (SELLs, bracket
-			# children) hit the silent no-op. Ordering vs the settlement debit
-			# is irrelevant: the 05-05 invariant guard checks balance, never
-			# available_balance, so a release-after-debit cannot false-positive
-			# (T-05-17: no stuck reservations corrupting buying power).
-			if self.portfolio_handler is not None:
-				self.portfolio_handler.release(
-					cast(PortfolioId, order.portfolio_id), order.id)
 			# WR-05: a parent that reaches a terminal state WITHOUT any fill
 			# (REFUSED/CANCELLED) leaves its protective SL/TP children resting
 			# on the exchange with no position to protect — when price later
@@ -181,10 +224,53 @@ class OrderManager:
 						cast(int, child_id), cast(int, order.portfolio_id),
 						reason=f"parent order {order.id} terminal without fill")
 					if child_result.success and child_result.order_events:
-						cancel_events.extend(child_result.order_events)
+						out_events.extend(child_result.order_events)
+			# D-13 PercentFromFill (RESEARCH Pattern 5 Option B): the parent's
+			# EXECUTED fill is the moment its policy-declared children come
+			# into existence — created, stored, linked and emitted priced from
+			# the ACTUAL fill (IB attached-order semantics). A parent that
+			# terminates WITHOUT executing (CANCELLED/REJECTED) discards its
+			# pending entry: the children were never created, so no orphan can
+			# exist and the WR-05 logic above is untouched (T-07-15).
+			if fill_event.status == FillStatus.EXECUTED:
+				pending = self._pending_brackets.pop(order_id, None)
+				# WR-03 (part 1): only anchor children when the mirror actually
+				# applied the fill. If add_fill was rejected (applied=False) the
+				# parent never moved, so creating fill-anchored children would
+				# link live SL/TP to a parent the engine still considers unfilled.
+				if pending is not None and applied:
+					out_events.extend(
+						self._create_fill_anchored_children(order, pending, fill_event))
+			else:
+				self._pending_brackets.pop(order_id, None)
 		except Exception as e:
-			self.logger.error('Error reconciling fill for order %s: %s', order_id, e)
-		return cancel_events
+			# WR-04: log with a stack trace and RE-RAISE — backtest fail-fast.
+			# A reconciliation that cannot complete leaves the mirror and/or
+			# reservation in an inconsistent state; continuing would produce
+			# silently-wrong numbers. The portfolio side of the same FILL is
+			# already fail-fast via _on_handler_error; the order side now
+			# matches. The `finally` below still releases a terminal fill's
+			# reservation before the exception propagates.
+			self.logger.error('Error reconciling fill for order %s: %s',
+			                  order_id, e, exc_info=True)
+			raise
+		finally:
+			# WR-04: a terminal fill ALWAYS releases its reservation, even when
+			# the reconciliation body raised after the terminal status was set
+			# (T-05-17: a stuck reservation corrupts buying power for the whole
+			# run). `should_release` is False on the non-terminal early-return
+			# path, which intentionally holds the reservation. The release is
+			# idempotent — never-reserved orders (SELLs, children) silently
+			# no-op. Failures inside the release itself are logged, never masked.
+			if should_release and self.portfolio_handler is not None:
+				try:
+					self.portfolio_handler.release(
+						cast(PortfolioId, order.portfolio_id), order.id)
+				except Exception:
+					self.logger.error(
+						'Failed to release reservation for order %s during fill reconciliation',
+						order.id, exc_info=True)
+		return out_events
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""
@@ -192,8 +278,19 @@ class OrderManager:
 		create-all-then-emit bracket assembly (D-11).
 
 		This method:
-		1. Resolves sizing BEFORE any entity creation (sizing failures
-		   short-circuit, DEF-01-B narrow gate preserved)
+		0. Enforces the strategy's DECLARED admission constraints BEFORE
+		   sizing — direction (D-08), then max_positions, then allow_increase
+		   (D-10). A LONG_ONLY unsized SELL with no open long is an audited
+		   REJECTED order (triggered_by="admission_direction"), never a
+		   short-opening fall-through (DEF-01-C dead structurally); an unsized
+		   BUY-while-long with allow_increase=False is audited REJECTED
+		   (triggered_by="admission_increase"); an unsized new-position BUY at
+		   the max_positions limit is audited REJECTED
+		   (triggered_by="admission_max_positions")
+		1. Resolves sizing via the SizingResolver dispatching on the
+		   signal's declared policy (D-01, M5-06); sizing failures store an
+		   audited REJECTED entity and short-circuit (D-06 — the DEF-01-B
+		   narrow gate preserved: no unsized order ever reaches validation)
 		2. Creates the primary Order entity (PENDING) immediately —
 		   the entity IS the pipeline state, the signal is never mutated
 		3. Validates the ENTITY; rejection transitions it PENDING→REJECTED
@@ -222,24 +319,43 @@ class OrderManager:
 		primary_emitted = False
 
 		try:
-			# 0. Resolve fraction-of-cash sizing BEFORE validation (D-08/D-09).
+			# 0. D-08 direction admission gate — BEFORE sizing. Enforces the
+			# strategy's DECLARED TradingDirection: an unsized LONG_ONLY SELL
+			# with no open long is an AUDITED rejection (Pitfall 4 — the exact
+			# fall-through that opened the 2 blessed golden shorts is gone).
+			gate_rejection = self._enforce_direction_admission(signal_event)
+			if gate_rejection is not None:
+				return [gate_rejection]
+
+			# 0b. D-10 increase gate + max_positions gate (plan 07-08) — the
+			# rest of step 0. Gate ordering: direction -> max_positions ->
+			# increase; the cases are disjoint by position state (the increase
+			# case is an OPEN ticker, the max_positions case is a NEW ticker)
+			# so a signal trips at most ONE gate.
+			gate_rejection = self._enforce_position_admission(signal_event)
+			if gate_rejection is not None:
+				return [gate_rejection]
+
+			# 1. Resolve the DECLARED sizing policy BEFORE validation (D-01/D-08/D-09).
 			# The strategy emits quantity=None (D-10); the order/risk layer resolves the
-			# per-portfolio quantity here. Sizing failures (invalid price) short-circuit
-			# BEFORE any entity is created — the narrow DEF-01-B gate: the running engine
-			# never presents an unsized order to the validator, while the validator's own
-			# zero-quantity rejection (test_zero_quantity_signal) is left intact.
+			# per-portfolio quantity through the SizingResolver dispatching on
+			# signal.sizing_policy (M5-06). Sizing failures are AUDITED (D-06): the
+			# entity is stored REJECTED with triggered_by="sizing_policy" inside the
+			# resolve step and a failure_result short-circuits here — the DEF-01-B
+			# narrow gate holds: the running engine never presents an unsized order
+			# to the validator (which now hard-rejects any non-positive quantity).
 			resolved = self._resolve_signal_quantity(signal_event)
 			if isinstance(resolved, OperationResult):
 				return [resolved]
 
 			exchange = self._get_signal_exchange(signal_event)
 
-			# 1. Entity-as-state (D-13): create the primary Order (PENDING) first.
+			# 2. Entity-as-state (D-13): create the primary Order (PENDING) first.
 			primary = self._build_primary_order(signal_event, exchange, resolved)
 			if isinstance(primary, OperationResult):
 				return [primary]
 
-			# 2. Validate the ENTITY, not the signal (D-13). Rejection becomes an
+			# 3. Validate the ENTITY, not the signal (D-13). Rejection becomes an
 			# auditable FIX/Nautilus-style state change persisted to storage —
 			# rejected signals no longer vanish.
 			if self.order_validator:
@@ -265,7 +381,7 @@ class OrderManager:
 					self.logger.warning('Signal validation warnings: %s',
 									   [msg.message for msg in validation_result.warnings])
 
-			# 2b. Admission cash-reservation gate (Plan 05-06, Critical #22 / M4-01).
+			# 3b. Admission cash-reservation gate (Plan 05-06, Critical #22 / M4-01).
 			# D-02: SYNCHRONOUS check-and-reserve — the only pre-trade gate. A
 			# queue-mediated reserve was explicitly rejected: it would open a
 			# TOCTOU window between the funds check and the order emit (T-05-14).
@@ -285,7 +401,7 @@ class OrderManager:
 					# add_state_change path and is persisted — rejected orders
 					# never vanish silently. Nothing is emitted (D-02).
 					error_msg = f"Cash reservation failed: {e}"
-					self.logger.error('%s for %s %s', error_msg,
+					self.logger.warning('%s for %s %s', error_msg,
 									signal_event.ticker, signal_event.action)
 					primary.add_state_change(
 						OrderStatus.REJECTED,
@@ -297,7 +413,7 @@ class OrderManager:
 						error_details=str(e),
 						operation_type="cash_reservation")]
 
-			# 3. Create-all-then-emit (D-11): assemble brackets, store, emit.
+			# 4. Create-all-then-emit (D-11): assemble brackets, store, emit.
 			assembled = self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
 			primary_emitted = any(
 				r.success and primary.id in (r.affected_order_ids or [])
@@ -445,6 +561,24 @@ class OrderManager:
 		OrderEvents parent-first (primary, stop-loss, take-profit) — the
 		queue arrival sequence is identical to the old emit-per-creation flow.
 
+		D-13 SLTP precedence: explicit stop_loss/take_profit levels are
+		PRIMARY — when either is present the declared sltp_policy is ignored
+		and this path behaves exactly as before. Only a signal with no
+		explicit level consults the policy: PercentFromDecision prices the
+		children from the signal's decision price at assembly time;
+		PercentFromFill defers them to the parent's fill.
+
+		CARVE-OUT: PercentFromFill children are created at parent fill
+		(IB attached-order semantics) — a documented exception to
+		create-all-then-emit (Phase 4 D-11). Until the parent EXECUTES the
+		children structurally do not exist (no placeholder-trigger hazard,
+		T-07-14); on_fill creates, stores, links and emits them priced from
+		the actual fill.
+
+		D-07 v1 limitation: bracket children are sized at entry and are NOT
+		resized by partial signal exits — a partial exit leaves the resting
+		SL/TP quantities at their entry size.
+
 		Parameters
 		----------
 		signal_event : SignalEvent
@@ -469,13 +603,47 @@ class OrderManager:
 			sl_order: Optional[Order] = None
 			tp_order: Optional[Order] = None
 
-			if signal_event.stop_loss > 0:
+			# D-13 SLTP dispatch with explicit precedence: explicit levels
+			# WIN whenever either is present (the truthy semantics below,
+			# preserved verbatim — even when an sltp_policy is also declared).
+			# Only a signal with NO explicit level consults the policy.
+			sl_price: Decimal = signal_event.stop_loss
+			tp_price: Decimal = signal_event.take_profit
+			sltp_policy = signal_event.sltp_policy
+			if not (sl_price > 0 or tp_price > 0) and sltp_policy is not None:
+				match sltp_policy:
+					case PercentFromDecision():
+						# Decision-time pricing: levels fixed from the
+						# signal's decision price (price ± pct for a BUY,
+						# mirrored for SELL) — Decimal arithmetic end-to-end
+						# (string-path constants enforced by the policy types).
+						sl_price, tp_price = self._bracket_levels(
+							sltp_policy, to_money(signal_event.price),
+							signal_event.action.value)
+					case PercentFromFill():
+						# CARVE-OUT to create-all-then-emit (Phase 4 D-11):
+						# NO children at assembly — record the pending bracket;
+						# on_fill creates them priced from the actual fill
+						# (IB attached-order semantics, Pattern 5 Option B).
+						self._pending_brackets[primary.id] = _PendingBracket(
+							policy=sltp_policy,
+							ticker=signal_event.ticker,
+							action=signal_event.action.value,
+							quantity=quantity,
+							exchange=exchange,
+							strategy_id=signal_event.strategy_id,
+							portfolio_id=signal_event.portfolio_id,
+						)
+					case _:
+						assert_never(sltp_policy)
+
+			if sl_price > 0:
 				sl_order = Order.new_stop_order(
 					time=signal_event.time,
 					ticker=signal_event.ticker,
 					# Invert on Side (D-05); the entity stores str until M4.
 					action='BUY' if signal_event.action is Side.SELL else 'SELL',
-					price=signal_event.stop_loss,
+					price=sl_price,
 					quantity=quantity,
 					exchange=exchange,
 					strategy_id=signal_event.strategy_id,
@@ -483,13 +651,13 @@ class OrderManager:
 				)
 				sl_order.parent_order_id = primary.id
 
-			if signal_event.take_profit > 0:
+			if tp_price > 0:
 				tp_order = Order.new_limit_order(
 					time=signal_event.time,
 					ticker=signal_event.ticker,
 					# Invert on Side (D-05); the entity stores str until M4.
 					action='BUY' if signal_event.action is Side.SELL else 'SELL',
-					price=signal_event.take_profit,
+					price=tp_price,
 					quantity=quantity,
 					exchange=exchange,
 					strategy_id=signal_event.strategy_id,
@@ -541,6 +709,12 @@ class OrderManager:
 			self.logger.debug(f'Created {success_count}/{len(results)} orders from signal: {signal_event.ticker} {signal_event.action}')
 
 		except Exception as e:
+			# WR-03 (part 2): the PercentFromFill pending entry is registered at
+			# assembly time (above) BEFORE add_order runs. If storage raises
+			# afterwards the primary never reaches the exchange, so no fill will
+			# ever consume the pending entry — disarm it here so a stale entry
+			# cannot later anchor children to a parent that was never emitted.
+			self._pending_brackets.pop(primary.id, None)
 			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
 			results.append(OperationResult.failure_result(
 				f"Failed to create orders from signal",
@@ -549,36 +723,268 @@ class OrderManager:
 			))
 
 		return results
-	
+
+	def _bracket_levels(self, policy: SLTPPolicy, anchor: Decimal,
+	                    action: str) -> "tuple[Decimal, Decimal]":
+		"""
+		Compute (stop_loss, take_profit) percent-offset levels from ``anchor``.
+
+		D-13: for a BUY parent the stop sits BELOW the anchor and the target
+		ABOVE — sl = anchor * (1 - sl_pct), tp = anchor * (1 + tp_pct);
+		mirrored for a SELL parent. The anchor is the decision price for
+		PercentFromDecision and the actual fill price for PercentFromFill —
+		identical ± pct math, different anchoring moment. Decimal end-to-end
+		(the policy types enforce string-path constants, Pitfall 1).
+		"""
+		if action == Side.SELL.value:
+			return anchor * (_ONE + policy.sl_pct), anchor * (_ONE - policy.tp_pct)
+		return anchor * (_ONE - policy.sl_pct), anchor * (_ONE + policy.tp_pct)
+
+	def _create_fill_anchored_children(self, parent: Order, pending: _PendingBracket,
+	                                   fill_event: FillEvent) -> List[OrderEvent]:
+		"""
+		Create, store, link and return the PercentFromFill children (D-13).
+
+		RESEARCH Pattern 5 Option B / IB attached-order semantics: invoked
+		from on_fill on the parent's EXECUTED fill — the children are priced
+		from the parent's ACTUAL fill price (the anchoring a strategy
+		structurally cannot express). Linkage mirrors the assembly path
+		exactly (parent_order_id on the children, child_order_ids on the
+		parent); entities are stored BEFORE the OrderEvents are returned.
+		The returned events ride the on_fill return list — the manager never
+		touches the queue (D-18); the handler enqueues them.
+
+		D-07 v1 limitation: the children carry the entry-sized quantity
+		recorded at assembly — partial signal exits do not resize them.
+		"""
+		anchor = to_money(fill_event.price)
+		sl_price, tp_price = self._bracket_levels(pending.policy, anchor, pending.action)
+		# Invert on the parent's action (D-05); the entity stores str until M4.
+		child_action = 'BUY' if pending.action == Side.SELL.value else 'SELL'
+		sl_order = Order.new_stop_order(
+			time=fill_event.time,
+			ticker=pending.ticker,
+			action=child_action,
+			price=sl_price,
+			quantity=pending.quantity,
+			exchange=pending.exchange,
+			strategy_id=pending.strategy_id,
+			portfolio_id=pending.portfolio_id
+		)
+		sl_order.parent_order_id = parent.id
+		tp_order = Order.new_limit_order(
+			time=fill_event.time,
+			ticker=pending.ticker,
+			action=child_action,
+			price=tp_price,
+			quantity=pending.quantity,
+			exchange=pending.exchange,
+			strategy_id=pending.strategy_id,
+			portfolio_id=pending.portfolio_id
+		)
+		tp_order.parent_order_id = parent.id
+		# Two-directional linkage, exactly as the assembly path does it.
+		parent.child_order_ids = [sl_order.id, tp_order.id]
+		# Store all, THEN emit (the D-11 ordering, preserved within the fill).
+		self.order_storage.add_order(sl_order)
+		self.order_storage.add_order(tp_order)
+		self.order_storage.update_order(parent)
+		self.logger.debug('Fill-anchored bracket created for parent %s: SL %s / TP %s',
+		                  parent.id, sl_order.price, tp_order.price)
+		return [OrderEvent.new_order_event(sl_order), OrderEvent.new_order_event(tp_order)]
+
+	def _enforce_direction_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+		"""
+		D-08 direction admission gate — step 0 of process_signal, BEFORE sizing.
+
+		Enforces the strategy's DECLARED TradingDirection at admission,
+		intercepting exactly the Pitfall-4 fall-through that opened the 2
+		blessed golden shorts: an unsized LONG_ONLY SELL with no open long
+		(no position, or net_quantity <= 0) previously fell through to entry
+		sizing and opened a short. Now it is an AUDITED rejection
+		(triggered_by="admission_direction") — DEF-01-C dies structurally.
+		SHORT_ONLY + BUY with no open short is rejected symmetrically
+		(oracle-dark: the golden strategy is LONG_ONLY).
+
+		Preserved paths the gate never blocks:
+		- Explicit-quantity signals (signal.quantity set) skip the gate —
+		  the live/manual path is untouched.
+		- LONG_SHORT passes: registration (strategies_handler), not
+		  admission, polices LONG_SHORT.
+		- LONG_ONLY SELL with an open long passes — the exit sizes as before.
+
+		Returns
+		-------
+		Optional[OperationResult]
+			A failure_result when the direction is violated (the audited
+			REJECTED entity is already persisted, Pitfall 5 option (a)),
+			or None when the signal passes the gate.
+		"""
+		if signal_event.quantity and signal_event.quantity > 0:
+			# Explicit caller-supplied quantity: the gate does not apply.
+			return None
+		if signal_event.direction is TradingDirection.LONG_SHORT:
+			return None
+		if self.portfolio_handler is None:
+			# No position truth to consult — an unsized signal without a
+			# read model fails loudly in the sizing step right after.
+			return None
+		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
+		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		open_position = self.portfolio_handler.get_position(
+			portfolio_id, signal_event.ticker)
+		if (signal_event.direction is TradingDirection.LONG_ONLY
+				and signal_event.action is Side.SELL
+				and (open_position is None or open_position.net_quantity <= 0)):
+			return self._reject_unsized_signal(
+				signal_event,
+				f"direction violation: LONG_ONLY strategy cannot open a short "
+				f"(SELL with no open long) for {signal_event.ticker}",
+				triggered_by="admission_direction",
+				operation_type="signal_admission",
+				error_prefix="Signal rejected at admission",
+			)
+		if (signal_event.direction is TradingDirection.SHORT_ONLY
+				and signal_event.action is Side.BUY
+				and (open_position is None or open_position.net_quantity >= 0)):
+			return self._reject_unsized_signal(
+				signal_event,
+				f"direction violation: SHORT_ONLY strategy cannot open a long "
+				f"(BUY with no open short) for {signal_event.ticker}",
+				triggered_by="admission_direction",
+				operation_type="signal_admission",
+				error_prefix="Signal rejected at admission",
+			)
+		return None
+
+	def _enforce_position_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+		"""
+		D-10 increase gate + max_positions gate — the rest of process_signal
+		step 0 (plan 07-08), running after the direction gate, BEFORE sizing.
+
+		Both gates police unsized BUYs only and dispatch on position state,
+		so a signal trips at most ONE gate (no double-gating):
+
+		* OPEN long for the ticker (net_quantity > 0) — the INCREASE case
+		  (D-10). ``allow_increase=False`` is an AUDITED rejection
+		  (triggered_by="admission_increase") — SMA_MACD's declared-but-
+		  ignored False, finally honest. ``allow_increase=True`` passes
+		  through to entry sizing: the resolver's FractionOfCash arm reads
+		  CURRENT available_cash, which IS "fraction of remaining available
+		  cash" semantics (the CONTEXT discretion clause — oracle-dark, the
+		  golden strategy declares False), and the existing check-and-reserve
+		  gate downstream covers the cash check (the literal M5-06 check_cash
+		  requirement — no new reservation code; insufficient funds still
+		  produces the audited cash_reservation rejection, T-07-21).
+		* NO open position for the ticker — the NEW-POSITION case. When the
+		  portfolio's open-position count has reached the strategy's declared
+		  ``max_positions``, the entry is an AUDITED rejection
+		  (triggered_by="admission_max_positions"). Oracle-dark: the golden
+		  run is single-ticker with max_positions=1 and at most one open
+		  position, so a new-entry BUY never trips it.
+		* OPEN short for the ticker (net_quantity < 0) — a BUY is a cover/
+		  exit; neither gate applies (short increases are out of v1 scope
+		  with the margin model, D-09).
+
+		Preserved paths the gates never block:
+		- First entries (no open position, count under the limit) size
+		  EXACTLY as before — byte-exactness of the post-07-07 reference
+		  depends on it when N=0.
+		- Explicit-quantity signals skip both gates (live/manual path).
+		- SELLs pass: exits are sized downstream; direction polices the rest.
+
+		Returns
+		-------
+		Optional[OperationResult]
+			A failure_result when a gate trips (the audited REJECTED entity
+			is already persisted, Pitfall 5 option (a)), or None when the
+			signal passes.
+		"""
+		if signal_event.quantity and signal_event.quantity > 0:
+			# Explicit caller-supplied quantity: the gates do not apply.
+			return None
+		if signal_event.action is not Side.BUY:
+			return None
+		if self.portfolio_handler is None:
+			# No position truth to consult — an unsized signal without a
+			# read model fails loudly in the sizing step right after.
+			return None
+		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
+		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		open_position = self.portfolio_handler.get_position(
+			portfolio_id, signal_event.ticker)
+		if open_position is not None and open_position.net_quantity > 0:
+			# INCREASE case (D-10): BUY for an already-open long.
+			if not signal_event.allow_increase:
+				return self._reject_unsized_signal(
+					signal_event,
+					f"position increase not allowed by strategy "
+					f"(allow_increase=False) for {signal_event.ticker}",
+					triggered_by="admission_increase",
+					operation_type="signal_admission",
+					error_prefix="Signal rejected at admission",
+				)
+			# allow_increase=True: fall through to entry sizing — the
+			# FractionOfCash arm reads CURRENT available_cash (remaining-cash
+			# semantics) and the check-and-reserve gate covers the cash check.
+			return None
+		if open_position is not None and open_position.net_quantity < 0:
+			# BUY against an open short is a cover/exit — neither gate applies.
+			return None
+		# NEW-POSITION case: no open position for the ticker (or a fully
+		# closed residual view). Enforce the declared concurrent-position cap.
+		if (self.portfolio_handler.open_position_count(portfolio_id)
+				>= signal_event.max_positions):
+			return self._reject_unsized_signal(
+				signal_event,
+				f"max positions reached: "
+				f"{self.portfolio_handler.open_position_count(portfolio_id)} open "
+				f">= max_positions={signal_event.max_positions}; "
+				f"new entry for {signal_event.ticker} not allowed by strategy",
+				triggered_by="admission_max_positions",
+				operation_type="signal_admission",
+				error_prefix="Signal rejected at admission",
+			)
+		return None
+
 	def _resolve_signal_quantity(self, signal_event: SignalEvent) -> "Decimal | OperationResult":
 		"""
-		Resolve the order quantity in the order/risk seam (D-08/D-09/D-13).
+		Resolve the order quantity in the order/risk seam (D-01/D-08/D-09/D-13, M5-06).
 
-		The strategy emits quantity=None (D-10); the order/risk layer — NOT the
-		strategy or position_sizer (D-09) — resolves the per-portfolio quantity.
-		The resolved Decimal is RETURNED and flows native onto the Order entity
-		(D-13) — the signal is never mutated (the WR-05 float coercion died with
-		the signal mutation). Two sizing cases, both keyed on the long-only
-		reference strategy (SMA_MACD: BUY enters a long, SELL exits it; the
-		short block is commented out):
+		The strategy DECLARES a SizingPolicy on the signal (D-01); the order/risk
+		layer — never the strategy — resolves the per-portfolio quantity through
+		the ONE SizingResolver. The resolved Decimal is RETURNED and flows native
+		onto the Order entity (D-13) — the signal is never mutated. Branch ORDER
+		preserves the M1 seam exactly (Pitfall 1 byte-exactness):
 
-		* EXIT (SELL with an open long position): size the order to the position's net
-		  quantity so the exit fully closes the long and a round-trip trade is recorded.
-		  Without this the exit SELL would be sized independently and never net the long to
-		  zero, so no position would ever close and the trade log would stay empty (M1-07).
-		* ENTRY (BUY, or a SELL with no open position): fraction-of-cash sizing,
-		  (0.95 * available_cash) / price — 95% buffer so float/rounding cannot overshoot a
-		  cash check; fractional BTC.
+		* EXPLICIT: a caller-supplied positive quantity bypasses policy sizing
+		  entirely (D-07 — the explicit partial-exit path, preserved verbatim).
+		* EXIT (SELL with an open long position): the resolver sizes the exit from
+		  the position's net_quantity and the signal's exit_fraction. The golden
+		  exit_fraction == Decimal("1") returns net_quantity structurally
+		  UNCHANGED (D-07 no-op — no multiplication artifact, identical bytes
+		  to the M1 seam) so the exit fully closes the long and a round-trip
+		  trade is recorded (M1-07).
+		* ENTRY (BUY, or a SELL with no open long): the resolver dispatches on
+		  signal.sizing_policy. The FractionOfCash arm reproduces
+		  (fraction * available_cash) / to_money(price) operand-for-operand —
+		  the golden Decimal("0.95") quantity is repr-identical to the deleted
+		  M1 expression. NOTE: a SELL with no open long can only reach this
+		  branch for a LONG_SHORT direction (a sanctioned short entry) — the
+		  D-08 admission gate in process_signal rejects the LONG_ONLY case
+		  upstream (the 2-shorts Pitfall-4 mechanism, removed at the 07-07
+		  owner-approved re-freeze).
 
-		An explicit caller-supplied positive quantity is entered into the money
-		domain unchanged (the same to_money entry the Order factories applied
-		to the float signal field before D-13).
+		Sizing failures (invalid price, SizingPolicyViolation) are AUDITED
+		rejections (D-06): the entity is built unsized, transitioned
+		PENDING→REJECTED with triggered_by="sizing_policy", and stored —
+		rejected signals never vanish (Pitfall 5, option (a)).
 
 		Returns
 		-------
 		Decimal | OperationResult
-			The resolved quantity, or a failure_result when the price is
-			invalid (cannot size) — BEFORE any entity creation.
+			The resolved quantity, or a failure_result when sizing fails
+			(the audited REJECTED entity is already persisted).
 		"""
 		if signal_event.quantity and signal_event.quantity > 0:
 			# Explicit caller-supplied quantity: preserved as-is.
@@ -586,11 +992,13 @@ class OrderManager:
 
 		price = signal_event.price
 		if not price or price <= 0:
-			return OperationResult.failure_result(
+			# Invalid-price guard: same verdict as the M1 seam, now routed
+			# through the audited D-06 rejection instead of a bare failure.
+			return self._reject_unsized_signal(
+				signal_event,
 				f"Cannot size order: invalid signal price {price!r} for {signal_event.ticker}",
-				operation_type="create_primary_order"
 			)
-		if self.portfolio_handler is None:
+		if self.portfolio_handler is None or self.sizing_resolver is None:
 			# The run path always wires a read model before sizing; a missing
 			# one previously surfaced as an AttributeError caught upstream —
 			# the typed failure result is the same verdict, made explicit.
@@ -603,30 +1011,80 @@ class OrderManager:
 		open_position = self.portfolio_handler.get_position(
 			portfolio_id, signal_event.ticker)
 		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
-			# Long-only exit: close the open long by selling its full quantity.
-			# net_quantity is Decimal (M2a entity money) — size in Decimal so the
-			# exit nets the long to exactly the position quantity (D-13: the
-			# Decimal flows native onto the Order entity, no float roundtrip).
-			# The read crosses the boundary as a frozen PositionView (D-15).
-			sized_qty: Decimal = open_position.net_quantity
-			return sized_qty
-		# Entry (or SELL with no open long): fraction-of-cash sizing.
-		# available_cash is the single trading-decision figure (D-14); it is
-		# Decimal on the ledger (M2-02) and — until plan 05-06 wires
-		# reservations onto the trade path — numerically identical to the old
-		# portfolio.cash read (available == total). Compute sizing in
-		# Decimal — (0.95 * cash) / price — keeping full Decimal precision
-		# through the intermediate (D-01: quantize ONLY at money boundaries,
-		# never on an intermediate). The sized quantity is NOT a money-ledger
-		# boundary — it is an in-flight intermediate the exchange consumes — so
-		# it is carried at full precision; since D-22 the Decimal rides the
-		# OrderEvent untouched and the exchange converts ONCE at its float
-		# matching boundary (the identical double the old float coercion saw).
-		# (Quantizing here to 8dp would both violate D-01 and shift the frozen
-		# numeric oracle past the D-15 tolerance — DEF-02-04-A: no re-baseline.)
-		available = self.portfolio_handler.available_cash(portfolio_id)
-		raw_qty: Decimal = (Decimal("0.95") * available) / to_money(price)
-		return raw_qty
+			# Long-only exit: the resolver sizes the exit from exchange truth
+			# (net_quantity is Decimal, M2a entity money; the read crosses the
+			# boundary as a frozen PositionView, D-15). The golden
+			# exit_fraction == Decimal("1") is the D-07 structural no-op:
+			# net_quantity is returned UNCHANGED — the Decimal flows native
+			# onto the Order entity, no float roundtrip (D-13), so the exit
+			# nets the long to exactly the position quantity.
+			return self.sizing_resolver.resolve_exit(
+				open_position.net_quantity,
+				signal_event.exit_fraction,
+				signal_event.sizing_policy.step_size,
+			)
+		# Entry (or a LONG_SHORT SELL with no open long — a sanctioned short
+		# entry; the D-08 gate rejected the LONG_ONLY case before sizing):
+		# dispatch on the DECLARED policy (D-01). The FractionOfCash
+		# arm computes (fraction * available_cash) / to_money(price) — same
+		# operands, same order as the M1 seam; available_cash is the single
+		# trading-decision figure (D-14), Decimal on the ledger (M2-02). Full
+		# Decimal precision rides through the intermediate (D-01: quantize ONLY
+		# via an explicit policy step_size — the golden policy carries None);
+		# since D-22 the Decimal rides the OrderEvent untouched and the exchange
+		# converts ONCE at its float matching boundary.
+		try:
+			return self.sizing_resolver.resolve_entry(
+				signal_event.sizing_policy,
+				portfolio_id,
+				price,
+				stop=signal_event.stop_loss or None,
+			)
+		except SizingPolicyViolation as e:
+			# D-06 fail-loud: the policy violation becomes an audited
+			# REJECTED order naming the policy — never a silent drop.
+			return self._reject_unsized_signal(signal_event, str(e))
+
+	def _reject_unsized_signal(self, signal_event: SignalEvent, reason: str, *,
+	                           triggered_by: str = "sizing_policy",
+	                           operation_type: str = "signal_sizing",
+	                           error_prefix: str = "Signal sizing failed") -> OperationResult:
+		"""
+		Audited admission/sizing rejection (D-06/D-08, Pitfall 5 option (a)).
+
+		Build the primary Order entity UNSIZED (quantity 0) via the existing
+		factory, transition it PENDING→REJECTED through the audited
+		add_state_change path — ``triggered_by`` identifies the gate
+		("sizing_policy" for D-06 sizing failures, "admission_direction" for
+		the D-08 direction gate) and the reason names the violation — and
+		persist it: rejected signals never vanish (the exact shape of the
+		validator-rejection template). The entity is REJECTED before
+		validation ever runs, so the validator's positive-quantity rule is
+		never consulted on it. Timestamps stay event-derived (M2-09 — never
+		wall clock: add_state_change defaults to the order's own event time).
+		"""
+		error_msg = f"{error_prefix}: {reason}"
+		self.logger.warning('%s for %s %s', error_msg,
+						signal_event.ticker, signal_event.action)
+		try:
+			exchange = self._get_signal_exchange(signal_event)
+			rejected = self._build_primary_order(signal_event, exchange, Decimal("0"))
+			if isinstance(rejected, OperationResult):
+				return rejected
+			rejected.add_state_change(
+				OrderStatus.REJECTED,
+				reason,
+				triggered_by=triggered_by,
+			)
+			self.order_storage.add_order(rejected)
+		except Exception as e:
+			# The audit entity could not be built (e.g. an unrepresentable
+			# price) — the rejection verdict stands; log the audit gap loudly.
+			self.logger.error('Failed to persist audited admission rejection: %s',
+							e, exc_info=True)
+		return OperationResult.failure_result(error_msg,
+			error_details=reason,
+			operation_type=operation_type)
 
 	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None,
 	                portfolio_id: Optional[int] = None, reason: str = "user modification") -> OperationResult:
@@ -684,9 +1142,19 @@ class OrderManager:
 				# Update in storage
 				self.order_storage.update_order(order)
 
+				# WR-03 (part 3): if this parent has an armed PercentFromFill
+				# pending bracket and the quantity changed, refresh the pending
+				# quantity so fill-anchored children are created at the CURRENT
+				# order quantity, not the stale assembly-time value.
+				if new_quantity is not None:
+					pending = self._pending_brackets.get(order.id)
+					if pending is not None:
+						self._pending_brackets[order.id] = replace(
+							pending, quantity=to_money(new_quantity))
+
 				# Generate OrderEvent
 				order_event = OrderEvent.new_order_event(order, command=OrderCommand.MODIFY)
-				
+
 				self.logger.info('Order %s modified successfully: %s', order_id, reason)
 				return OperationResult.success_result(
 					f"Order {order_id} modified successfully",
@@ -739,6 +1207,14 @@ class OrderManager:
 			if success:
 				# Update in storage
 				self.order_storage.update_order(order)
+
+				# WR-03 (part 1): a locally-cancelled PercentFromFill parent must
+				# disarm its pending entry. Otherwise a late EXECUTED fill for
+				# the same order would still anchor and emit SL/TP children
+				# against a CANCELLED parent (on_fill keys child creation off the
+				# fill, not the parent's live status). The pop is keyed by the
+				# parent's id; children/non-PercentFromFill orders no-op.
+				self._pending_brackets.pop(order.id, None)
 
 				# WR-04: the local terminal transition owns the release. The
 				# exchange only emits FillEvent(CANCELLED) for orders actually

@@ -1,197 +1,121 @@
-import numpy as np
+"""Optional presentation module — the minimal plotly figure set (M5-07, D-19).
+
+Presentation ONLY, split from computation (D-14): every figure consumes the SAME
+run-artifact frames as ``itrader.reporting.metrics`` — the equity ``pd.Series``
+(or a drawdown series derived from it) and the closed-trades ``pd.DataFrame``
+(``build_trade_log`` shape: ``exit_date`` + ``realised_pnl`` columns) — never
+portfolio/handler objects.
+
+Kept set (D-19): equity curve, drawdown, trade P/L scatter, and the 3-row
+composition. Verified plotly-6 idioms throughout: ``title=dict(text=...,
+font=dict(size=...))`` (``titlefont_size`` raises a hard ``ValueError`` on
+plotly 6.8.0) and ``add_trace(..., row=, col=)`` (``append_trace`` deprecated).
+Smoke-tested in ``tests/unit/reporting/test_plots_smoke.py``.
+"""
+
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-from itrader.core.enums import TransactionType
-
-
 
 CHART_THEME = 'plotly_dark'  # others include seaborn, ggplot2, plotly_dark, plotly_white
 
 
-def line_equity (portfolio_metrics):
+def line_equity(equity: pd.Series) -> go.Figure:
 	"""
-	Plot a line chart with the strategy returns.
+	Line chart of the equity curve (the run-artifact ``total_equity`` series).
 	"""
-	chart = go.Figure()  # generating a figure that will be updated in the following lines
-	chart.add_trace(go.Scatter(x=portfolio_metrics.index, y=portfolio_metrics.iloc[:],
-						mode='lines',  # you can also use "lines+markers", or just "markers"
-						name='Strategy Returns',
-						line = dict(color='green')))
-	chart.update_layout(template = CHART_THEME,
-						margin = dict(t=50, b=50, l=25, r=25),
+	chart = go.Figure()
+	chart.add_trace(go.Scatter(x=equity.index, y=equity,
+						mode='lines',
+						name='Equity',
+						line=dict(color='green')))
+	chart.update_layout(template=CHART_THEME,
+						margin=dict(t=50, b=50, l=25, r=25),
 						height=500,
-						plot_bgcolor= 'rgba(0, 0, 0, 0)',
-						paper_bgcolor= 'rgba(0, 0, 0, 0)')
-	#chart.update_layout(margin = dict(t=50, b=50, l=25, r=25))  # this will help you optimize the chart space
+						plot_bgcolor='rgba(0, 0, 0, 0)',
+						paper_bgcolor='rgba(0, 0, 0, 0)')
 	chart.update_layout(
-						xaxis_tickfont_size=12,
+						xaxis=dict(tickfont=dict(size=12)),
 						yaxis=dict(
-							title='[%]',
-							titlefont_size=14,
-							tickfont_size=12,
+							title=dict(text='Equity [$]', font=dict(size=14)),
+							tickfont=dict(size=12),
 							))
 	chart.update_layout(showlegend=True)
-	# chart.update_xaxes(rangeslider_visible=False)
-	# OK, FUNZIONA
 	return chart
 
 
-def line_drwdwn (df):
+def line_drwdwn(drawdown: pd.Series) -> go.Figure:
 	"""
-	Plot the Drawdown
+	Line chart of the drawdown series (``equity / equity.cummax() - 1``, <= 0).
 	"""
-	chart = go.Figure()  # generating a figure that will be updated in the following lines
-	chart.add_trace(go.Scatter(x=df.index, y=df.iloc[:],
-						mode='lines',  # you can also use "lines+markers", or just "markers"
+	chart = go.Figure()
+	chart.add_trace(go.Scatter(x=drawdown.index, y=drawdown,
+						mode='lines',
 						name='DrawDown',
-						line = dict(color='red'),
+						line=dict(color='red'),
 						fill='tozeroy'))
 	chart.layout.template = CHART_THEME
-	chart.layout.height=300
-	chart.update_layout(margin = dict(t=50, b=50, l=25, r=25))  # this will help you optimize the chart space
+	chart.layout.height = 300
+	chart.update_layout(margin=dict(t=50, b=50, l=25, r=25))
 	chart.update_layout(
-		xaxis_tickfont_size=12,
+		xaxis=dict(tickfont=dict(size=12)),
 		yaxis=dict(
-			title='[%]',
-			titlefont_size=14,
-			tickfont_size=12,
+			title=dict(text='[%]', font=dict(size=14)),
+			tickfont=dict(size=12),
 			))
 	chart.update_layout(showlegend=False)
-	# chart.update_xaxes(rangeslider_visible=False)
-	# OK, FUNZIONA
 	return chart
 
 
-def profit_loss_scatter(positions, index):
+def profit_loss_scatter(trades: pd.DataFrame) -> go.Figure:
 	"""
-	Scatter plot with the positions returns
+	Scatter of per-trade realised P/L at exit date (``build_trade_log`` frame:
+	``exit_date`` + ``realised_pnl`` columns).
 	"""
-	profit = positions[(positions["trade_return"] > 0)][['exit_date', 'trade_return']].set_index('exit_date').reindex(index)*100
-	loss = positions[(positions["trade_return"] <= 0)][['exit_date', 'trade_return']].set_index('exit_date').reindex(index)*100
-	profit = profit.reset_index()
-	loss = loss.reset_index()
+	profit = trades[trades['realised_pnl'] > 0]
+	loss = trades[trades['realised_pnl'] <= 0]
 
-	# Markers size
-	sizeref = 10*max(round(abs(positions['trade_return']),1))/(6**2)
-
-	chart = go.Figure()  # generating a figure that will be updated in the following lines
-	chart.add_trace(go.Scatter(x=profit.date, y=profit.trade_return,
-						mode='markers',  # you can also use "lines+markers", or just "markers"
+	chart = go.Figure()
+	chart.add_trace(go.Scatter(x=profit['exit_date'], y=profit['realised_pnl'],
+						mode='markers',
 						name='profit',
-						marker=dict(
-							size=list(round(abs(profit['trade_return'].fillna(0)),2)),
-							sizemode='area',
-							sizeref=sizeref,
-							sizemin=5),
-						marker_color = 'green',
-						marker_symbol='triangle-up'))
-	
-	chart.add_trace(go.Scatter(x=loss.date, y=loss.trade_return,
-						mode='markers',  # you can also use "lines+markers", or just "markers"
+						marker=dict(size=8, color='green', symbol='triangle-up')))
+	chart.add_trace(go.Scatter(x=loss['exit_date'], y=loss['realised_pnl'],
+						mode='markers',
 						name='loss',
-						marker=dict(
-							size=list(round(abs(loss['trade_return'].fillna(0)),2)),
-							sizemode='area',
-							sizeref=sizeref,
-							sizemin=5),
-						marker_color = 'red',
-						marker_symbol='triangle-down'))
-	
+						marker=dict(size=8, color='red', symbol='triangle-down')))
 	chart.layout.template = CHART_THEME
-	chart.layout.height=300
-	chart.update_layout(margin = dict(t=50, b=50, l=25, r=25))  # this will help you optimize the chart space
+	chart.layout.height = 300
+	chart.update_layout(margin=dict(t=50, b=50, l=25, r=25))
 	chart.update_layout(
-		xaxis_tickfont_size=12,
-		xaxis=dict(
-			showgrid=False),
+		xaxis=dict(tickfont=dict(size=12), showgrid=False),
 		yaxis=dict(
-			title='Profit / Loss [%]',
-			titlefont_size=14,
-			tickfont_size=12,
+			title=dict(text='Profit / Loss [$]', font=dict(size=14)),
+			tickfont=dict(size=12),
 			))
 	chart.update_layout(showlegend=False)
-	# chart.update_xaxes(rangeslider_visible=False)
-	# OK, FUNZIONA
-	return chart
-
-def signals_plot (price, transactions):
-	"""
-	Plot a line chart with the strategy signals.
-	"""
-	# Map actions to symbols and colors. The transactions frame is
-	# entity-derived (Transaction.to_dict writes type.name) — compare against
-	# the enum member's name, never a bare string literal.
-	symbol = np.where(transactions.action == TransactionType.BUY.name, 'triangle-up', 'triangle-down')
-	marker_color = np.where(transactions.action == TransactionType.BUY.name, 'green', 'red')
-	hover_text=[]
-	df_dict = transactions.to_dict('records')
-
-	for row in df_dict:
-		hover_text.append(('{date}<br>'+
-						'Action: {action}<br>'+
-						'Position: {position_id}<br>'+
-						'Price: {price}').format(date=row['time'].strftime("%Y/%m/%d, %H:%M"),
-													action = row['action'],
-													position_id = row['position_id'],
-													price=round(row['price'],2)
-													))
-	
-	chart = go.Figure()  # generating a figure that will be updated in the following lines
-	chart.add_trace(go.Scatter(x=price.index, y=price.close,
-						mode='lines',  # you can also use "lines+markers", or just "markers"
-						name='Close price',
-						hoverinfo='skip',
-						line = dict(color='lightgray')))
-	chart.add_trace(go.Scatter(x=transactions.time, y=transactions.price,
-						mode='markers',  # you can also use "lines+markers", or just "markers"
-						name='Signals',
-						text=hover_text,
-						hoverinfo='text',
-						marker=dict(size=10, color=marker_color, symbol=symbol)))
-
-	chart.update_layout(template = CHART_THEME,
-						margin = dict(t=50, b=50, l=25, r=25),
-						height=500,
-						plot_bgcolor= 'rgba(0, 0, 0, 0)',
-						paper_bgcolor= 'rgba(0, 0, 0, 0)')
-	#chart.update_layout(margin = dict(t=50, b=50, l=25, r=25))  # this will help you optimize the chart space
-	chart.update_layout(
-						xaxis_tickfont_size=12,
-						yaxis=dict(
-							title='Price [$]',
-							titlefont_size=14,
-							tickfont_size=12,
-							))
-	chart.update_layout(showlegend=True)
-	# chart.update_xaxes(rangeslider_visible=False)
-	# OK, FUNZIONA
 	return chart
 
 
-### Sub-plot Equity - Drawdown - Positions
-def sub_plots3(plt_1, plt_2, plt_3):
+def sub_plots3(plt_1: go.Figure, plt_2: go.Figure, plt_3: go.Figure) -> go.Figure:
+	"""
+	Compose equity / drawdown / trade P/L into one 3-row figure.
+	"""
 	chart = make_subplots(rows=3, cols=1,
 						  subplot_titles=('Equity Line', 'Drawdown', 'Profit / Loss'),
 						  row_heights=[0.6, 0.2, 0.2],
 						  shared_xaxes=True,
 						  vertical_spacing=0.05)
-	
-	chart.append_trace(plt_1['data'][0],
-					   row=1, col=1)
 
-	chart.append_trace(plt_2['data'][0],
-					   row=2, col=1)
-	
-	chart.append_trace(plt_3['data'][0],
-					   row=3, col=1)
-	chart.append_trace(plt_3['data'][1],
-					   row=3, col=1)
-	
+	chart.add_trace(plt_1['data'][0], row=1, col=1)
+	chart.add_trace(plt_2['data'][0], row=2, col=1)
+	for trace in plt_3['data']:
+		chart.add_trace(trace, row=3, col=1)
+
 	chart.update_yaxes(row=2, col=1, autorange='reversed')
-	chart.update_layout(template = CHART_THEME,
-						margin = dict(t=50, b=50, l=25, r=25),
+	chart.update_layout(template=CHART_THEME,
+						margin=dict(t=50, b=50, l=25, r=25),
 						height=1000,
-						plot_bgcolor= 'rgba(0, 0, 0, 0)',
-						paper_bgcolor= 'rgba(0, 0, 0, 0)')
+						plot_bgcolor='rgba(0, 0, 0, 0)',
+						paper_bgcolor='rgba(0, 0, 0, 0)')
 	return chart

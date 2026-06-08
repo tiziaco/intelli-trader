@@ -2,9 +2,12 @@ from datetime import timedelta
 from queue import Queue
 from typing import Any
 
+from itrader.core.enums import OrderType
+from itrader.core.money import to_money
+from itrader.core.sizing import TradingDirection
 from itrader.price_handler.feed.base import BarFeed
 from itrader.strategy_handler.base import Strategy
-from itrader.events_handler.events import BarEvent, PortfolioUpdateEvent
+from itrader.events_handler.events import BarEvent, SignalEvent
 from itrader.outils.time_parser import check_timeframe
 from itrader.logger import get_itrader_logger
 
@@ -37,8 +40,13 @@ class StrategiesHandler(object):
 		"""
 		Calculate the signal for every strategy to be traded.
 
-		Before generating the signal check if the actual time 
+		Before generating the signal check if the actual time
 		is a multiple of the strategy's timeframe.
+
+		The handler owns everything portfolio-shaped (D-12): it stamps
+		time/price from the bar event, attaches the strategy's declared
+		policy/direction, fans the intent out per subscribed portfolio,
+		and enqueues — the strategy is a pure alpha function.
 
 		Parameters
 		----------
@@ -49,54 +57,64 @@ class StrategiesHandler(object):
 			# Check if the strategy's timeframe is a multiple of the bar event time
 			if not check_timeframe(event.time, strategy.timeframe):
 				continue
-			# Calculate the signal for each ticker or pair traded from the strategy
-			strategy.last_event = event
+			# Calculate the signal for each ticker traded from the strategy
 			for ticker in strategy.tickers:
+				# WR-12 sparse-ticker guard (relocated from the legacy
+				# Strategy._generate_signal): the ticker is absent from the
+				# bar event (sparse universe, data gap) — no price means no
+				# signal. The BarEvent payload contract (M5-02) keeps a
+				# no-data ticker ABSENT from the dict. The guard precedes
+				# generate_signal because the handler stamps price from
+				# event.bars[ticker].close below.
+				bar = event.bars.get(ticker)
+				if bar is None:
+					self.logger.warning('No last close for %s — signal skipped (%s)',
+								ticker, strategy.strategy_id)
+					continue
 				# Push-based window delivery (D-20): asof comes ONLY from the
 				# event — strategies never choose the as-of time (T-06-18).
 				# Completed bars only; zero resample on this path (M5-03).
 				data = self.feed.window(ticker, strategy.timeframe, strategy.max_window, asof=event.time)
-				strategy.calculate_signal(ticker, data)
+				intent = strategy.generate_signal(ticker, data)
+				if intent is None:
+					continue
+				# Relocated SignalEvent construction (D-12): one event per
+				# subscribed portfolio. D-05 boundary parse: the strategy
+				# string order_type is converted to the enum HERE. D-22 money
+				# boundary: prices enter the Decimal domain HERE via to_money
+				# (the D-04 string path) — the bar close is ALREADY Decimal
+				# via the Bar struct (D-14): to_money(Decimal) is
+				# value-identity. Absent SL/TP preserves the legacy default
+				# exactly: to_money(0) == Decimal("0").
+				for portfolio_id in strategy.subscribed_portfolios:
+					signal = SignalEvent(
+						time=event.time,
+						order_type=OrderType(strategy.order_type),
+						ticker=ticker,
+						action=intent.action,
+						price=to_money(bar.close),
+						stop_loss=intent.stop_loss if intent.stop_loss is not None else to_money(0),
+						take_profit=intent.take_profit if intent.take_profit is not None else to_money(0),
+						strategy_id=strategy.strategy_id,
+						portfolio_id=portfolio_id,
+						sizing_policy=strategy.sizing_policy,
+						direction=strategy.direction,
+						allow_increase=strategy.allow_increase,
+						max_positions=strategy.max_positions,
+						exit_fraction=intent.exit_fraction,
+						# WR-01: honor an explicit caller-supplied quantity. The
+						# field is already Decimal | None (D-22 money domain) on
+						# both SignalIntent and SignalEvent — no boundary parse.
+						# None means "resolver decides" (the golden path).
+						quantity=intent.quantity,
+						# WR-06: read the typed declaration directly — sltp_policy
+						# is now a real Strategy attribute, not a getattr hole.
+						sltp_policy=strategy.sltp_policy,
+					)
+					self.global_queue.put(signal)
+				self.logger.debug('Strategy signal (%s - %s %s)',
+							strategy.strategy_id, ticker, intent.action)
 
-	# def on_portfolio_update(self, update_event: PortfolioUpdateEvent):
-	# 	"""
-	# 	Update the information relative to the active portfolios.
-	# 	"""
-	# 	self.portfolios = update_event.portfolios
-
-	def assign_symbol(self, signals: dict[str, Any]) -> None:
-		"""
-		Take the proposed symbols from the screener and assign it to the strategy.
-		If a proposed symbol is not in the strategy universe, remove it.
-
-		Parameters
-		----------
-		signals: `list of str`
-			List of the proposed symbol from the screener
-		"""
-		traded = self.strategies[0].tickers
-		# `settings` is a concrete-strategy attr (not on the base); screener flow
-		# is D-screener, so resolve dynamically to stay type-clean.
-		max_pos = getattr(self.strategies[0], 'settings')['max_positions']
-		
-		# TEMPORARY:
-		first_key = list(signals.keys())[0]
-		proposed = signals[first_key]
-
-		# Remove the symbols from the traded ones if not proposed by the screener
-		new_traded = [elem for elem in traded if elem in proposed]
-
-		# Remove the already traded symbols from the proposed ones
-		new_proposed = [elem for elem in proposed if elem not in traded]
-
-		# Assign the symbols to be traded to the strategy
-		new_traded.extend(new_proposed[0:(max_pos - len(new_traded))])
-		self.strategies[0].tickers = new_traded
-
-		if new_traded:
-			self.logger.info('Strategies Handler: new symbols for %s : %s', self.strategies[0].__str__(), str(new_traded))
-
-	
 	def get_strategies_universe(self) -> list[str]:
 		"""
 		Return a list with all the coins traded from the differents strategies.
@@ -129,9 +147,31 @@ class StrategiesHandler(object):
 		----------
 		strategy: `Strategy object`
 			Strategy to be executed by the trading system
+
+		Raises
+		------
+		ValueError
+			If the strategy declares any direction other than
+			``TradingDirection.LONG_ONLY`` (D-08/D-09): shorting (LONG_SHORT
+			and SHORT_ONLY alike) requires the margin/liquidation milestone.
+			Until it lands, registration rejects the capability loudly instead
+			of silently mis-handling un-margined shorts. SHORT_ONLY in
+			particular has no cover arm in ``_resolve_signal_quantity`` (CR-01):
+			a sanctioned BUY-cover would fall through to entry sizing and could
+			net a SHORT_ONLY book LONG — so it must not be reachable yet.
 		"""
+		# D-08/D-09 registration guard: only LONG_ONLY is admissible until the
+		# margin/liquidation milestone lands. This closes the SHORT_ONLY cover
+		# hole (CR-01) at the door — the smaller, oracle-dark change: the golden
+		# FractionOfCash/LONG_ONLY path is unaffected.
+		if strategy.direction is not TradingDirection.LONG_ONLY:
+			raise ValueError(
+				"Only LONG_ONLY is admissible until the margin/liquidation "
+				"milestone — shorting (LONG_SHORT / SHORT_ONLY) requires the "
+				"margin model (D-08/D-09)"
+			)
+
 		# Add the strategy in the strategies list
-		strategy.global_queue = self.global_queue
 		self.strategies.append(strategy)
 
 		# Find the minimum timeframe

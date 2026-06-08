@@ -41,7 +41,6 @@ _STUB_MODULES = {
         "itrader.order_handler.order_handler",
         "itrader.portfolio_handler.portfolio_handler",
         "itrader.execution_handler.execution_handler",
-        "itrader.universe.universe",
     ]
 }
 with patch.dict(sys.modules, _STUB_MODULES):
@@ -59,9 +58,9 @@ def wiring():
     portfolio = MagicMock()
     order = MagicMock()
     execution = MagicMock()
-    universe = MagicMock()
+    bar_event_source = MagicMock()
     handler = EventHandler(
-        strategies, screeners, portfolio, order, execution, universe, q
+        strategies, screeners, portfolio, order, execution, bar_event_source, q
     )
 
     def put(event_type):
@@ -73,7 +72,7 @@ def wiring():
     yield SimpleNamespace(
         q=q, handler=handler, put=put,
         strategies=strategies, screeners=screeners, portfolio=portfolio,
-        order=order, execution=execution, universe=universe,
+        order=order, execution=execution, bar_event_source=bar_event_source,
     )
 
     while not q.empty():
@@ -178,7 +177,7 @@ def test_update_event_dispatches_to_empty_route_without_raising(wiring):
         wiring.portfolio,
         wiring.order,
         wiring.execution,
-        wiring.universe,
+        wiring.bar_event_source,
     ):
         assert collaborator.mock_calls == []
     assert wiring.q.empty()

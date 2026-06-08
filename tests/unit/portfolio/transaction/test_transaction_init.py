@@ -6,6 +6,7 @@ import pytest
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
 from itrader.core.enums import OrderType, Side
+from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.order_handler.order import Order
 
 
@@ -24,7 +25,8 @@ def fill_event():
         take_profit=45000,
         strategy_id="test_strategy",
         portfolio_id="portfolio_id",
-        strategy_setting={},
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
     )
     order = Order.new_order(signal_event, "simulated")
     mkt_order_event = OrderEvent.new_order_event(order)

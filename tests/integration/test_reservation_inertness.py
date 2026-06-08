@@ -103,9 +103,15 @@ def traced_run(tmp_path_factory):
     portfolio = ptf_handler.get_portfolio(portfolio_id)
 
     # Round-trip the fresh trade log through CSV with the SAME pinned float
-    # format as the committed golden, so the identity comparison is repr-stable.
+    # format and column order as the committed golden, so the identity
+    # comparison is repr-stable. As of M5b re-freeze 1 (plan 07-07) the golden
+    # header carries the D-17 slippage columns — attach them post-hoc exactly
+    # as the generator's main() does, from the store's close series.
+    trades = module.build_trade_log(portfolio)
+    closes = system.store.read_bars(module.TICKER)["close"]
+    trades = module.attach_slippage(trades, closes)
     trades_path = tmp_path_factory.mktemp("inertness") / "trades.csv"
-    module.build_trade_log(portfolio).to_csv(
+    trades[module.TRADE_COLUMNS + module.SLIPPAGE_COLUMNS].to_csv(
         trades_path, index=False, float_format=module.FLOAT_FORMAT
     )
 
