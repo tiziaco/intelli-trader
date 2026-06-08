@@ -434,6 +434,17 @@ def run(prices=None, indicators=None):
     try-guard the same shape across all three engines.
     """
     if indicators is not None:
+        # IN-06: the run -> run_nautilus parameter remap is a two-layer indirection;
+        # fail fast with a clear error if the expected indicator columns are absent
+        # (e.g. if the shared compute_indicators column names ever change) rather
+        # than surfacing an opaque KeyError mid-remap.
+        required_cols = ("sma_short", "sma_long", "macd_hist")
+        missing = [c for c in required_cols if c not in indicators]
+        if missing:
+            raise RuntimeError(
+                f"nautilus run(): indicators missing expected columns {missing}; "
+                f"got {list(indicators)}"
+            )
         short = indicators["sma_short"]
         long = indicators["sma_long"]
         hist = indicators["macd_hist"]
