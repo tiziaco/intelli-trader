@@ -1,22 +1,11 @@
 """Aggregated config-model import home (M2-06).
 
 Single module re-exporting every Pydantic config model from the per-domain modules
-(``portfolio``/``trading``/``data``/``system``/``exchange``). Lets consumers and tests
-import any model from one place (``from itrader.config.models import PortfolioConfig``)
-without depending on the per-domain module layout.
+(``portfolio``/``system``/``exchange``). Lets consumers and tests import any model
+from one place (``from itrader.config.models import PortfolioConfig``) without
+depending on the per-domain module layout.
 """
 
-from itrader.config.data import (
-    DataConfig,
-    DataFeedConfig,
-    DataFrequency,
-    DataSource,
-    DataSourceConfig,
-    ProcessingConfig,
-    RealTimeConfig,
-    StorageConfig,
-    StorageType,
-)
 from itrader.config.exchange import (
     ConnectionSettings,
     ExchangeConfig,
@@ -48,29 +37,12 @@ from itrader.config.system import (
     PerformanceSettings,
     SystemConfig,
 )
-from itrader.config.trading import (
-    ConfigOrderType,
-    ExecutionMode,
-    ExecutionSettings,
-    FeeStructure,
-    OrderDefaults,
-    RiskControls,
-    StrategySettings,
-    TimeInForce,
-    TradingConfig,
-)
 
 __all__ = [
     # Portfolio
     "PortfolioConfig", "PortfolioType", "RiskLevel", "PortfolioLimits",
     "RiskManagement", "TradingRules", "ValidationSettings", "EventSettings",
     "get_portfolio_preset",
-    # Trading
-    "TradingConfig", "ConfigOrderType", "TimeInForce", "ExecutionMode", "OrderDefaults",
-    "ExecutionSettings", "RiskControls", "FeeStructure", "StrategySettings",
-    # Data
-    "DataConfig", "DataSource", "DataFrequency", "StorageType", "DataSourceConfig",
-    "DataFeedConfig", "StorageConfig", "ProcessingConfig", "RealTimeConfig",
     # System
     "SystemConfig", "Environment", "LogLevel", "PerformanceSettings",
     "MonitoringSettings",
