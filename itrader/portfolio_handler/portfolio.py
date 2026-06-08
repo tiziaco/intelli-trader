@@ -393,7 +393,9 @@ class Portfolio(object):
 		# M5-10: total_equity is now Decimal end-to-end. pos.market_value is
 		# Decimal (M2a entity money) — keep the ratio Decimal-native (no
 		# float/Decimal mix), then coerce only the final reporting ratio to float.
-		max_position_value = max(abs(Decimal(str(pos.market_value))) for pos in positions.values())
+		# IN-03: trust the Decimal source — no defensive Decimal(str(...)) wrap
+		# (which would silently mask a stray-float type regression).
+		max_position_value = max(abs(pos.market_value) for pos in positions.values())
 		return float(max_position_value / self.total_equity)
 	
 	# Enhanced Transaction Processing
