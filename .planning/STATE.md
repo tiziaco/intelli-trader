@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 08-02-PLAN.md
-last_updated: "2026-06-08T14:08:03.602Z"
+stopped_at: Completed 08-03-PLAN.md
+last_updated: "2026-06-08T14:22:08.832Z"
 last_activity: 2026-06-08
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 62
-  completed_plans: 55
-  percent: 88
+  completed_plans: 56
+  percent: 90
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
-Plan: 3 of 9
+Plan: 4 of 9
 Status: Ready to execute
 Last activity: 2026-06-08
 
-Progress: [█████████░] 89%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
@@ -80,6 +80,7 @@ Progress: [█████████░] 89%
 | Phase 03 P09 | 8 | 3 tasks | 4 files |
 | Phase 08 P01 | 7 | 3 tasks | 6 files |
 | Phase 08 P02 | 4 | 3 tasks | 2 files |
+| Phase 08 P03 | 13 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -128,6 +129,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 08-01: EXPECTED result-change (D-08) — equity-curve total_equity shifts at Decimal precision; behavioral oracle byte-identical, final_equity 46189.87730727451 unchanged; deferred to 08-03 REFREEZE-M5C-DECIMAL
 - [Phase ?]: Plan 08-02: 08-01 Decimal retype was inert at both cross-file consumers (mypy clean 151 files); sweep documented the Decimal->float serialization boundary in code
 - [Phase ?]: Plan 08-02: full suite 723 passed / 1 sanctioned design-failure (test_oracle_numeric_values, D-08 equity-curve precision shift); surfaced not fixed, deferred to 08-03 REFREEZE-M5C-DECIMAL; tests/golden untouched
+- [Phase ?]: Plan 08-03: M5c golden oracle re-frozen to clean Decimal numbers (branch a SHIFT, owner-approved D-08/D-11) — trades.csv byte-identical (134 trades), headline money byte-exact, only 19/3076 equity points + 3 ratio metrics moved ~1 ULP; REFREEZE-M5C-DECIMAL.md authored; oracle test green (D-08 numeric design-failure CLOSED); cross-validation baseline locked (D-07 gate satisfied)
 
 ### Pending Todos
 
@@ -161,6 +163,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-08T14:08:03.592Z
-Stopped at: Completed 08-02-PLAN.md
+Last session: 2026-06-08T14:22:03.661Z
+Stopped at: Completed 08-03-PLAN.md
 Resume file: None
