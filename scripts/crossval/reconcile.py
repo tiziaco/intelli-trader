@@ -54,6 +54,17 @@ def recompute_headline(equity: pd.Series, trades: pd.DataFrame) -> dict[str, flo
 
     Returns a dict keyed by ``HEADLINE_KEYS``. Empty inputs degrade to 0.0 via the
     underlying guarded metric functions.
+
+    CAVEAT (WR-04): the length-sensitive metrics (``cagr`` uses
+    ``years = len(equity) / PERIODS``; ``sharpe``/``sortino`` scale by
+    ``sqrt(periods)``) depend on each engine's equity-series LENGTH. The engines do
+    NOT all produce equal-length equity series (e.g. backtrader/nautilus record
+    from bar 0 including the warm-up window). A length delta therefore shifts CAGR
+    and the annualized ratios, so a flagged metric DIVERGE may be a harness artifact
+    (unequal series length) rather than a genuine engine-semantics divergence. These
+    length-sensitive metrics are INFORMATIONAL only — the D-02 trade-level table is
+    the primary gate. To make them strictly apples-to-apples, normalize every
+    engine's equity series to the same post-warm-up window/index before calling this.
     """
     final_equity = float(equity.iloc[-1]) if len(equity) else 0.0
     returns = compute_returns(equity)
@@ -138,7 +149,13 @@ def _norm_ts(value) -> pd.Timestamp | None:
     """Coerce a trade-date cell to a tz-naive UTC Timestamp for cross-engine compare."""
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return None
-    ts = pd.Timestamp(value)
+    # The normalized trade frames are harness-built with known dtypes, but a
+    # malformed/unparseable cell from a gating engine must not abort the whole
+    # report with a traceback (IN-02) — degrade to None instead.
+    try:
+        ts = pd.Timestamp(value)
+    except (ValueError, TypeError, pd.errors.OutOfBoundsDatetime):
+        return None
     if ts.tzinfo is not None:
         ts = ts.tz_convert("UTC").tz_localize(None)
     return ts
@@ -155,6 +172,14 @@ def align_trades(
     engine), ``{src}_entry``, ``{src}_exit``, ``{src}_side``. A ``{engine}_shift``
     column marks rows where an engine's entry/exit timing shifts vs iTrader or where
     the engine is missing the trade ('MISSING' / 'SHIFT' / '' for aligned).
+
+    CAVEAT (WR-05): alignment is purely POSITIONAL by index ``i``. A single
+    inserted/dropped trade early in an engine's run cascades every subsequent row
+    into a SHIFT — i.e. when trade counts differ, the downstream per-row SHIFT
+    flags are NOT reliable evidence of independent timing divergences; treat them
+    as one alignment artifact and lean on the trade-count divergence instead. A
+    date-anchored / sequence (LCS) alignment would localize the real divergence;
+    until then, consumers must read SHIFT rows in light of any count mismatch.
     """
     sources: dict[str, pd.DataFrame] = {"itrader": itrader_trades, **engine_trades}
     max_len = max((len(df) for df in sources.values()), default=0)
@@ -240,8 +265,12 @@ def build_trade_table(aligned: pd.DataFrame, max_rows: int = 0) -> str:
         lines.append("| " + " | ".join(cells) + " |")
 
     if max_rows and len(aligned) > len(body):
+        omitted = len(aligned) - len(body)
+        # Pad the footer to the full column width so the truncation row stays a
+        # well-formed N-column Markdown row in the committed evidence artifact.
+        pad = ["" for _ in range(cols - 2)]
         lines.append(
-            f"| ... | _{len(aligned) - len(body)} aligned rows omitted_ |"
+            "| ... | " + f"_{omitted} aligned rows omitted_" + " | " + " | ".join(pad) + " |"
         )
     return "\n".join(lines)
 
