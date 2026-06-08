@@ -401,7 +401,7 @@ class OrderManager:
 					# add_state_change path and is persisted — rejected orders
 					# never vanish silently. Nothing is emitted (D-02).
 					error_msg = f"Cash reservation failed: {e}"
-					self.logger.error('%s for %s %s', error_msg,
+					self.logger.warning('%s for %s %s', error_msg,
 									signal_event.ticker, signal_event.action)
 					primary.add_state_change(
 						OrderStatus.REJECTED,
@@ -1064,7 +1064,7 @@ class OrderManager:
 		wall clock: add_state_change defaults to the order's own event time).
 		"""
 		error_msg = f"{error_prefix}: {reason}"
-		self.logger.error('%s for %s %s', error_msg,
+		self.logger.warning('%s for %s %s', error_msg,
 						signal_event.ticker, signal_event.action)
 		try:
 			exchange = self._get_signal_exchange(signal_event)
