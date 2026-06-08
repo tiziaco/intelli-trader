@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 5: M4 — Money & Transaction Correctness** - Cash through CashManager, atomic transactions, order facade layering, frozen execution DTOs (completed 2026-06-06)
 - [x] **Phase 6: M5a — Backtest Validity, Fills & Data Pipeline** - Look-ahead/fill realism, Bar struct, precomputed frames, fee/slippage, price-handler Provider/Store/Feed split (gap closure pending) (completed 2026-06-06)
 - [x] **Phase 7: M5b — Sizing Policy, Metrics, Universe & Coverage** - Complete strategy-declared sizing, correct reporting/metrics, universe stub, strategy/data/reporting tests (completed 2026-06-07)
-- [ ] **Phase 8: M5c — Cross-Validation & Final Oracle** - Cross-validate vs backtesting.py + backtrader; freeze the final numerical reference
+- [x] **Phase 8: M5c — Cross-Validation & Final Oracle** - Cross-validate vs backtesting.py + backtrader; freeze the final numerical reference (completed 2026-06-08)
 
 ## Phase Details
 
@@ -245,7 +245,7 @@ Plans:
   - [x] 08-06-PLAN.md — Optional Nautilus non-gating module behind a try-guard; degrades gracefully, never stalls the freeze (D-12)
   - [x] 08-07-PLAN.md — scripts/cross_validate.py orchestrator + reconciliation table + committed tests/golden/CROSS-VALIDATION.md (D-02/D-04/D-10)
   - [x] 08-08-PLAN.md — Per-divergence root-cause + conditional bug-fix re-freeze (D-05); dispositions recorded in CROSS-VALIDATION.md
-  - [ ] 08-09-PLAN.md — Freeze final oracle + full D-13 definition-of-done gate (D-11/D-13)
+  - [x] 08-09-PLAN.md — Freeze final oracle + full D-13 definition-of-done gate (D-11/D-13)
 
 ## Progress
 
@@ -261,4 +261,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 5. M4 — Money & Transaction Correctness | 7/7 | Complete   | 2026-06-06 |
 | 6. M5a — Backtest Validity, Fills & Data Pipeline | 8/8 | Complete   | 2026-06-06 |
 | 7. M5b — Sizing Policy, Metrics, Universe & Coverage | 8/8 | Complete   | 2026-06-07 |
-| 8. M5c — Cross-Validation & Final Oracle | 8/9 | In Progress|  |
+| 8. M5c — Cross-Validation & Final Oracle | 9/9 | Complete   | 2026-06-08 |

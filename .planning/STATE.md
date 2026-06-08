@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-06-08T15:35:36.971Z"
+status: verifying
+stopped_at: Completed 08-09-PLAN.md — program CLOSED
+last_updated: "2026-06-08T15:42:30.790Z"
 last_activity: 2026-06-08
 progress:
   total_phases: 8
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 62
-  completed_plans: 61
-  percent: 88
+  completed_plans: 62
+  percent: 100
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 
 Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
 Plan: 9 of 9
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-08
 
-Progress: [██████████] 98%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -86,6 +86,7 @@ Progress: [██████████] 98%
 | Phase 08 P06 | 7min | 2 tasks | 3 files |
 | Phase 08 P07 | 6min | 2 tasks | 3 files |
 | Phase 08 P08 | 25min | 3 tasks | 1 files |
+| Phase 08 P09 | 6 | 3 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -139,6 +140,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 08-05: built scripts/crossval/ force-match harness — shared ta-indicator precompute (verbatim SMAIndicator/MACD calls + golden-CSV loader) + backtesting.py FractionalBacktest + backtrader custom-float-Sizer; both expose uniform run(prices=None,indicators=None)->(trade_log_df[entry_date,exit_date,side,realised_pnl],equity_series), consume IDENTICAL injected arrays (D-03), replicate filter-gates-both QUIRK + next-bar-open fills (D-01); both yield EXACTLY 134 trades (matches iTrader golden), backtrader final_equity 46189.8773 matches golden to ~10 decimals, backtesting.py 46027.30 within ~0.35%; engines script-only (D-10), 724-test suite collects clean
 - [Phase ?]: 08-06: Owner-directed Rule-4 deviation — installed nautilus-trader 1.227.0 by narrowing python to >=3.13,<3.14 (supersedes 08-04 D-12); real Nautilus force-match reconciles 134 trades / final_equity 46287.24 (~0.21% vs golden)
 - [Phase ?]: Plan 08-08: 0 BUG / 4 LEGITIMATE-DIFFERENCE cross-validation verdict (D-05) — no iTrader defect; iTrader's post-M5b numbers kept; NO re-freeze (owner-approved). 3x sortino = entry-bar equity-marking convention (134 differing bars == 134 entry bars, fully attributed); 1x nautilus win_rate = NETTING fill arithmetic on 2025 cluster, contradicted by both gating engines. Owner sign-off recorded as basis for 08-09 final oracle freeze.
+- [Phase ?]: Plan 08-09: owner APPROVED final oracle freeze at terminal checkpoint (2026-06-08); FINAL-ORACLE.md sign-off recorded; no re-freeze, golden artifacts byte-unchanged; program CLOSED. D-13 DoD GREEN on all 8 checks (134 trades / final_equity 46189.87730727451 / 3076 equity pts; mypy clean; 724 tests pass; integration gate byte-exact); M5-10 satisfied end-to-end
 
 ### Pending Todos
 
@@ -172,6 +174,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-08T15:35:31.744Z
-Stopped at: Completed 08-03-PLAN.md
+Last session: 2026-06-08T15:42:17.889Z
+Stopped at: Completed 08-09-PLAN.md — program CLOSED
 Resume file: None
