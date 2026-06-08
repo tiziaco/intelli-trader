@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready_to_plan
-stopped_at: Phase 07 complete (8/8) — ready to discuss Phase 8
-last_updated: 2026-06-07T22:37:42.505Z
-last_activity: 2026-06-07 -- Phase 07 execution started
+status: planning
+stopped_at: Phase 8 context gathered
+last_updated: "2026-06-08T05:58:05.816Z"
+last_activity: "2026-06-08 - Completed quick task 260608-a59: Demote by-design signal-rejection logs from error to warning"
 progress:
   total_phases: 8
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 53
   completed_plans: 53
-  percent: 75
+  percent: 88
 ---
 
 # Project State
@@ -155,6 +155,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-07T18:52:59.440Z
-Stopped at: Phase 7 context gathered
-Resume file: .planning/phases/07-m5b-sizing-policy-metrics-universe-coverage/07-CONTEXT.md
+Last session: 2026-06-08T05:58:05.807Z
+Stopped at: Phase 8 context gathered
+Resume file: .planning/phases/08-m5c-cross-validation-final-oracle/08-CONTEXT.md
