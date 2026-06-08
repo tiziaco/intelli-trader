@@ -524,12 +524,14 @@ class MetricsManager:
         # float only at the daily-return ratio computation).
         daily_returns = []
         for i in range(1, len(snapshots)):
-            prev_equity = float(snapshots[i-1].total_equity)
-            curr_equity = float(snapshots[i].total_equity)
-            
+            # total_equity is already Decimal; compute the ratio in Decimal so
+            # the canonical daily_returns (List[Decimal]) stays exact rather than
+            # baking a binary-float round-trip into a Decimal field.
+            prev_equity = snapshots[i-1].total_equity
+            curr_equity = snapshots[i].total_equity
+
             if prev_equity > 0:
-                daily_return = (curr_equity - prev_equity) / prev_equity
-                daily_returns.append(Decimal(str(daily_return)))
+                daily_returns.append((curr_equity - prev_equity) / prev_equity)
         
         # Basic return calculations
         initial_equity = float(snapshots[0].total_equity)
@@ -543,8 +545,8 @@ class MetricsManager:
         days = (end_date - start_date).days
         annualized_return = Decimal('0.00')
         if days > 0 and initial_equity > 0:
-            daily_return = float(total_return) / days
-            annualized_return = Decimal(str((1 + daily_return) ** 365 - 1))
+            # Geometric annualization of the period total return.
+            annualized_return = Decimal(str((1.0 + float(total_return)) ** (365.0 / days) - 1.0))
         
         # Volatility (standard deviation of returns)
         volatility = Decimal('0.00')
