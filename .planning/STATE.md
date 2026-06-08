@@ -4,14 +4,14 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 08-03-PLAN.md
-last_updated: "2026-06-08T14:22:08.832Z"
+last_updated: "2026-06-08T14:26:20.938Z"
 last_activity: 2026-06-08
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 62
-  completed_plans: 56
-  percent: 90
+  completed_plans: 57
+  percent: 88
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-04)
 ## Current Position
 
 Phase: 08 (m5c-cross-validation-final-oracle) — EXECUTING
-Plan: 4 of 9
+Plan: 5 of 9
 Status: Ready to execute
 Last activity: 2026-06-08
 
-Progress: [█████████░] 90%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -81,6 +81,7 @@ Progress: [█████████░] 90%
 | Phase 08 P01 | 7 | 3 tasks | 6 files |
 | Phase 08 P02 | 4 | 3 tasks | 2 files |
 | Phase 08 P03 | 13 | 3 tasks | 3 files |
+| Phase 08 P04 | 2 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -130,6 +131,7 @@ Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecti
 - [Phase ?]: Plan 08-02: 08-01 Decimal retype was inert at both cross-file consumers (mypy clean 151 files); sweep documented the Decimal->float serialization boundary in code
 - [Phase ?]: Plan 08-02: full suite 723 passed / 1 sanctioned design-failure (test_oracle_numeric_values, D-08 equity-curve precision shift); surfaced not fixed, deferred to 08-03 REFREEZE-M5C-DECIMAL; tests/golden untouched
 - [Phase ?]: Plan 08-03: M5c golden oracle re-frozen to clean Decimal numbers (branch a SHIFT, owner-approved D-08/D-11) — trades.csv byte-identical (134 trades), headline money byte-exact, only 19/3076 equity points + 3 ratio metrics moved ~1 ULP; REFREEZE-M5C-DECIMAL.md authored; oracle test green (D-08 numeric design-failure CLOSED); cross-validation baseline locked (D-07 gate satisfied)
+- [Phase ?]: Plan 08-04: pinned cross-validation reference engines EXACT in poetry dev group (D-10) — backtesting==0.6.5 + backtrader==1.9.78.123, locked in poetry.lock; smoke-gated clean on Python 3.13.1/numpy 2.2.6 (trivial Cerebro run end-to-end, NO fork/shim — research headline #1 confirmed); engines dev-group-only + absent from main deps + unimported by tests (filterwarnings=['error'] safe, 724 collect clean); nautilus-trader dropped (D-12 non-gating — its <3.15 python cap conflicts with repo ^3.13 resolution)
 
 ### Pending Todos
 
@@ -163,6 +165,6 @@ Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVE
 
 ## Session Continuity
 
-Last session: 2026-06-08T14:22:03.661Z
+Last session: 2026-06-08T14:26:02.787Z
 Stopped at: Completed 08-03-PLAN.md
 Resume file: None
