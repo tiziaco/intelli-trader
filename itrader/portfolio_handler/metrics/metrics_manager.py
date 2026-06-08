@@ -83,8 +83,10 @@ class MetricsManager:
         # D-19: lock removed — single-writer contract, see Portfolio docstring.
         self.logger = get_itrader_logger().bind(component="MetricsManager")
         
-        # Store initial portfolio equity as baseline for return calculations
-        self.initial_equity = Decimal(str(portfolio.total_equity))
+        # Store initial portfolio equity as baseline for return calculations.
+        # M5-10 (D-06): total_equity is Decimal on the golden path — coerce
+        # only for a lightweight test portfolio exposing a raw float.
+        self.initial_equity = self._as_decimal(portfolio.total_equity)
 
         # M2-08: metrics snapshots (append-only history) now live in the injected
         # state-storage seam. This manager no longer owns the container — it routes
@@ -190,15 +192,20 @@ class MetricsManager:
 
         latest_snapshot = self._storage.get_snapshots()[-1]
             
+        # M5-10 (D-06): money fields stay Decimal end-to-end — no float()
+        # coercion at this read boundary. The snapshot fields are already
+        # Decimal; pass them straight through. The float boundary belongs at
+        # the statistical-ratio metric inputs (drawdown/return-distribution/
+        # daily-return), not here.
         return {
             "timestamp": latest_snapshot.timestamp.isoformat(),
-            "total_equity": float(latest_snapshot.total_equity),
-            "cash_balance": float(latest_snapshot.cash_balance),
-            "positions_value": float(latest_snapshot.positions_value),
-            "unrealized_pnl": float(latest_snapshot.unrealized_pnl),
-            "realized_pnl": float(latest_snapshot.realized_pnl),
-            "total_pnl": float(latest_snapshot.total_pnl),
-            "portfolio_return": float(latest_snapshot.portfolio_return),
+            "total_equity": latest_snapshot.total_equity,
+            "cash_balance": latest_snapshot.cash_balance,
+            "positions_value": latest_snapshot.positions_value,
+            "unrealized_pnl": latest_snapshot.unrealized_pnl,
+            "realized_pnl": latest_snapshot.realized_pnl,
+            "total_pnl": latest_snapshot.total_pnl,
+            "portfolio_return": latest_snapshot.portfolio_return,
             "open_positions": latest_snapshot.open_positions_count
         }
     
@@ -275,7 +282,9 @@ class MetricsManager:
         if len(relevant_snapshots) < 2:
             return {"error": "Insufficient data for drawdown analysis"}
             
-        # Calculate running maximum and drawdowns
+        # Calculate running maximum and drawdowns.
+        # Statistical-ratio metric input boundary (D-06: money stays Decimal;
+        # float only at the running-max / drawdown ratio computation).
         equity_values = [float(s.total_equity) for s in relevant_snapshots]
         timestamps = [s.timestamp for s in relevant_snapshots]
             
@@ -320,7 +329,9 @@ class MetricsManager:
         if len(snaps) < period_days + 1:
             return {"error": "Insufficient data for return analysis"}
 
-        # Calculate period returns
+        # Calculate period returns.
+        # Statistical-ratio metric input boundary (D-06: money stays Decimal;
+        # float only at the period-return ratio computation).
         returns = []
         for i in range(period_days, len(snaps)):
             current_equity = float(snaps[i].total_equity)
@@ -417,34 +428,47 @@ class MetricsManager:
     
     # Private methods
     
+    @staticmethod
+    def _as_decimal(value: Any) -> Decimal:
+        """Coerce a money read to Decimal.
+
+        M5-10 (D-06): the real Portfolio's money properties now return Decimal,
+        so this is a pass-through for the golden path (no str round-trip). The
+        str() coercion only fires for a lightweight test portfolio that still
+        exposes raw float attributes — never for the production engine.
+        """
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+
     def _get_total_equity(self) -> Decimal:
-        """Get total portfolio equity."""
+        """Get total portfolio equity (Decimal end-to-end; M5-10)."""
         if hasattr(self.portfolio, 'total_equity'):
-            return Decimal(str(self.portfolio.total_equity))
+            return self._as_decimal(self.portfolio.total_equity)
         return Decimal('0.00')
-    
+
     def _get_cash_balance(self) -> Decimal:
-        """Get cash balance."""
+        """Get cash balance (Decimal end-to-end; M2-02)."""
         if hasattr(self.portfolio, 'cash'):
-            return Decimal(str(self.portfolio.cash))
+            return self._as_decimal(self.portfolio.cash)
         return Decimal('0.00')
-    
+
     def _get_positions_value(self) -> Decimal:
-        """Get total positions value."""
+        """Get total positions value (Decimal end-to-end; M5-10)."""
         if hasattr(self.portfolio, 'total_market_value'):
-            return Decimal(str(self.portfolio.total_market_value))
+            return self._as_decimal(self.portfolio.total_market_value)
         return Decimal('0.00')
-    
+
     def _get_unrealized_pnl(self) -> Decimal:
-        """Get unrealized P&L."""
+        """Get unrealized P&L (Decimal end-to-end; M5-10)."""
         if hasattr(self.portfolio, 'total_unrealised_pnl'):
-            return Decimal(str(self.portfolio.total_unrealised_pnl))
+            return self._as_decimal(self.portfolio.total_unrealised_pnl)
         return Decimal('0.00')
-    
+
     def _get_realized_pnl(self) -> Decimal:
-        """Get realized P&L."""
+        """Get realized P&L (Decimal end-to-end; M5-10)."""
         if hasattr(self.portfolio, 'total_realised_pnl'):
-            return Decimal(str(self.portfolio.total_realised_pnl))
+            return self._as_decimal(self.portfolio.total_realised_pnl)
         return Decimal('0.00')
     
     def _get_open_positions_count(self) -> int:
@@ -495,7 +519,9 @@ class MetricsManager:
                                         end_date: datetime, snapshots: List[PortfolioSnapshot]) -> PerformanceMetrics:
         """Calculate performance metrics from snapshots."""
         
-        # Calculate daily returns
+        # Calculate daily returns.
+        # Statistical-ratio metric input boundary (D-06: money stays Decimal;
+        # float only at the daily-return ratio computation).
         daily_returns = []
         for i in range(1, len(snapshots)):
             prev_equity = float(snapshots[i-1].total_equity)
