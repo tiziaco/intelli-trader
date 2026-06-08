@@ -7,7 +7,7 @@ import pandas as pd
 from itrader.core.enums import Side
 from itrader.core.ids import StrategyId
 from itrader.core.money import to_money
-from itrader.core.sizing import SignalIntent, SizingPolicy, TradingDirection
+from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingDirection
 from itrader.outils.time_parser import to_timedelta
 from itrader import idgen
 
@@ -28,7 +28,8 @@ class Strategy(ABC):
 				sizing_policy: SizingPolicy,
 				direction: TradingDirection = TradingDirection.LONG_ONLY,
 				allow_increase: bool = False,
-				max_positions: int = 1) -> None:
+				max_positions: int = 1,
+				sltp_policy: SLTPPolicy | None = None) -> None:
 		self.strategy_id: StrategyId = StrategyId(idgen.generate_strategy_id())
 		self.name = name
 		self.is_active = True
@@ -45,6 +46,12 @@ class Strategy(ABC):
 		self.direction: TradingDirection = direction
 		self.allow_increase = allow_increase
 		self.max_positions = max_positions
+		# WR-06: typed declaration seam for the engine-side SLTP feature (D-13).
+		# Previously the handler reached this via getattr(strategy,
+		# 'sltp_policy', None) — a stringly-typed hole mypy could not check and
+		# a typo silently turned into "no policy". Now it is a real constructor
+		# kwarg. None means the strategy declares no policy (the golden path).
+		self.sltp_policy: SLTPPolicy | None = sltp_policy
 		# Lookback window (bars) a concrete strategy needs before it can signal.
 		# Concrete strategies (e.g. SMA_MACD) override this in their __init__.
 		self.max_window: int = 0
@@ -61,6 +68,9 @@ class Strategy(ABC):
 			"direction" : self.direction.value,
 			"allow_increase" : self.allow_increase,
 			"max_positions" : self.max_positions,
+			# WR-06: the SLTP declaration is now a first-class typed kwarg, so it
+			# serializes alongside the other declarations (None when undeclared).
+			"sltp_policy" : repr(self.sltp_policy) if self.sltp_policy is not None else None,
 		}
 
 	@abstractmethod

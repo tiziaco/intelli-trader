@@ -107,7 +107,9 @@ class StrategiesHandler(object):
 						# both SignalIntent and SignalEvent — no boundary parse.
 						# None means "resolver decides" (the golden path).
 						quantity=intent.quantity,
-						sltp_policy=getattr(strategy, 'sltp_policy', None),
+						# WR-06: read the typed declaration directly — sltp_policy
+						# is now a real Strategy attribute, not a getattr hole.
+						sltp_policy=strategy.sltp_policy,
 					)
 					self.global_queue.put(signal)
 				self.logger.debug('Strategy signal (%s - %s %s)',
