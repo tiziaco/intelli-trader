@@ -202,3 +202,22 @@ correct and are kept**; **no `REFREEZE-M5C-<bug>.md` note is authored**; the gol
 `tests/golden/{trades.csv,equity.csv,summary.json}` are **unchanged**. Determinism is
 preserved (double-run of `scripts/run_backtest.py` is byte-identical and equals the frozen
 golden), and the full 724-test suite is green.
+
+## Owner Sign-Off (D-05 / Phase 6 D-21 / Phase 7 D-11)
+
+**Status: APPROVED** (2026-06-08, project owner). The owner accepts the per-divergence
+verdict — **0 BUG, 4 LEGITIMATE-DIFFERENCE; no iTrader defect; no re-freeze; iTrader's
+numbers are kept** — as the basis for the final oracle freeze in 08-09.
+
+During the blocking human-verify checkpoint the owner reviewed additional corroborating
+evidence: per-trade P&L on the three disputed nautilus trades (#121 / #124 / #126) was pulled
+live across all engines. **backtrader matched iTrader to the cent (Δ 0.00 on all three)** and
+**backtesting.py matched within a few dollars (Δ +1.91 to +7.20, never flipping sign)**; only
+nautilus flipped them (Δ −1510 / +2510 / −2516). This independently corroborates the
+LEGITIMATE-DIFFERENCE disposition on Divergence 4: iTrader's win_rate = 0.365672 (49 winners)
+is backed by BOTH gating engines, and the lone dissent is the non-gating nautilus NETTING fill
+model.
+
+No code change and no re-freeze were performed (zero BUG rows). The golden artifacts remain
+byte-identical to the 08-03 REFREEZE-M5C-DECIMAL freeze; this sign-off authorizes 08-09 to
+freeze the final oracle on the existing numbers.
