@@ -125,8 +125,6 @@ def run_nautilus_optional(prices, indicators):
 
 
 def build_report(
-    itrader_headline,
-    engine_metrics,
     trade_table,
     metric_table,
     divergences,
@@ -268,8 +266,6 @@ def main():
         "backtrader": _engine_version("backtrader"),
     }
     report = build_report(
-        itrader_headline,
-        engine_metrics,
         trade_table,
         metric_table,
         divergences,
