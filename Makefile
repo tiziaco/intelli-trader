@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-cov backtest normalize-data precommit typecheck
+.PHONY: init-env clean test test-unit test-integration test-e2e test-cov backtest normalize-data precommit typecheck
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -35,6 +35,10 @@ test-unit:
 test-integration:
 	@echo "🔗 Running integration tests..."
 	poetry run pytest tests/ -v -m "integration"
+
+test-e2e:
+	@echo "🎬 Running e2e scenario tests..."
+	poetry run pytest tests/ -v -m "e2e"
 
 test-portfolio:
 	@echo "📊 Running portfolio tests..."
