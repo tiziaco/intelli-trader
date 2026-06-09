@@ -164,8 +164,44 @@ class LiveTradingSystem:
             self.global_queue
         )
         
+        # WR-05: install the documented live error policy (publish-and-continue).
+        # The base _on_handler_error re-raises (backtest fail-fast); the live
+        # system is documented to override THIS method so _dispatch's existing
+        # error routing emits an ErrorEvent and keeps draining instead of
+        # aborting. Binding it here (rather than swallowing in the loop) means a
+        # failed handler queues an ErrorEvent for the ERROR-route / status
+        # consumers instead of becoming an invisible log line + counter.
+        self.event_handler._on_handler_error = self._publish_and_continue  # type: ignore[method-assign]
+
         self.logger.info('Live trading system initialized')
         self._update_status(SystemStatus.STOPPED)
+
+    def _publish_and_continue(self, event, handler) -> None:
+        """Live handler-failure policy (WR-05): publish an ErrorEvent, keep draining.
+
+        Overrides the base EventHandler._on_handler_error (fail-fast re-raise).
+        Invoked from EventHandler._dispatch when a handler raises; emits an
+        ErrorEvent onto the queue (consumed by the ERROR route) and returns so
+        the loop continues. Reads the active exception via sys.exc_info().
+        """
+        import sys
+        from itrader.events_handler.events import ErrorEvent
+
+        exc = sys.exc_info()[1]
+        handler_name = getattr(handler, '__qualname__', repr(handler))
+        self.logger.error(
+            f'Handler {handler_name} failed on {getattr(event, "type", "UNKNOWN")}: {exc}'
+        )
+        with self._stats_lock:
+            self._stats['errors_count'] += 1
+        self.global_queue.put(ErrorEvent(
+            time=getattr(event, 'time', datetime.now()),
+            source='live_trading_system',
+            error_type=type(exc).__name__ if exc is not None else 'UnknownError',
+            error_message=str(exc) if exc is not None else 'unknown handler failure',
+            operation=handler_name,
+            severity='ERROR',
+        ))
     
     def _update_status(self, new_status: SystemStatus, error_msg: str = None):
         """Update system status and notify via callback if available."""
