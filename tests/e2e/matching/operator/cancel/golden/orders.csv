@@ -1,0 +1,2 @@
+role,ticker,order_type,action,status,price,quantity,filled_quantity,time
+STANDALONE,BTCUSD,LIMIT,BUY,CANCELLED,80.0000000000,118.7500000000,0.0000000000,2020-01-02 01:00:00+01:00
