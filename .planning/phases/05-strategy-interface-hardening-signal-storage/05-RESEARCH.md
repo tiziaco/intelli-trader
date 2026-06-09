@@ -372,21 +372,28 @@ order_type=strategy.order_type,
 
 **A2 is RESOLVED (verified live). A1/A3/A4 are low-risk execution-time checks — none changes the locked decision set.**
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All three open questions were resolved during planning (Phase 5 plans `05-01`/`05-03`); the
+> chosen answers match the recommendations below and are low-risk (A1/A3/A4). Recorded here so
+> the resolution is traceable from the research artifact, not just implicit in the plans.
 
 1. **Should `BaseStrategyConfig` live in `strategy_handler/config.py` or under `itrader/config/`?**
    - What we know: CONTEXT.md marks the location as Claude's discretion (D-06 also leaves the `Timeframe` enum home open). The `config/` package is for *system/portfolio/exchange* domain config; strategy config is arguably a strategy-handler concern.
    - What's unclear: which import-cycle is cleaner — `config/` imports `core/sizing` (fine), but a strategy-config in `config/` would couple the config package to the strategy vocabulary.
    - Recommendation: put `BaseStrategyConfig` in `strategy_handler/` (e.g. `strategy_handler/config.py` or in `base.py`) to keep the strategy vocabulary co-located and avoid widening the `config/` package's dependency surface. Put `SMA_MACDConfig` next to its strategy in `strategies/`.
+   - **RESOLVED:** `BaseStrategyConfig` lands in `itrader/strategy_handler/config.py` (Plan `05-01`); `SMA_MACDConfig` co-locates with its relocated strategy under `strategies/` (Plan `05-02`).
 
 2. **Where does the `Timeframe` enum live and what is the exact vocabulary?**
    - What we know: D-06 supported set example is `1m/5m/15m/1h/4h/1d/1w`; conversion stays via `to_timedelta` which accepts `d/h/m/w` (case-insensitive) and rejects month.
    - What's unclear: whether to use a strict `Enum` or a `Literal[...]` — and whether to constrain to exactly the example set or all `to_timedelta`-parseable strings.
    - Recommendation: a `Timeframe` `Enum` in `core/enums/` (house pattern, with `_missing_` case-insensitive parse) constrained to the fixed-duration vocabulary; the base still calls `to_timedelta(config.timeframe.value)`. The golden run uses `"1d"` — keep `1d` valid and verify byte-exact.
+   - **RESOLVED:** `Timeframe` `Enum` in `itrader/core/enums/trading.py`, barrel-registered, with the fixed-duration vocabulary; base converts via `to_timedelta` unchanged; `1d` stays valid and byte-exact (Plan `05-01`).
 
 3. **Does `SignalRecord.action` use `Side` (BUY/SELL) like `SignalIntent`?**
    - What we know: `SignalIntent.action` is `Side`; SIG-01 says "action".
    - Recommendation: use `Side` for type-consistency with `SignalIntent`/`SignalEvent`.
+   - **RESOLVED:** `SignalRecord.action` is `Side`, matching `SignalIntent` (Plan `05-03`).
 
 ## Environment Availability
 
