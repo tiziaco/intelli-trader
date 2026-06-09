@@ -460,17 +460,15 @@ Not applicable — this is an internal-codebase coverage phase, not a library-se
 
 **Note:** All HIGH-impact claims (engine fill formulas, API signatures, supported-symbol gap, no-`ACTIVE`-status, UUID-keyed storage) are VERIFIED against read source, not assumed.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Does any MATCH leaf require a STOP-entry that is also a bracket parent?**
+1. **Does any MATCH leaf require a STOP-entry that is also a bracket parent?** — **RESOLVED: No.**
    - What we know: MATCH-03 is a STOP *entry* (standalone, `order_type=STOP`). MATCH-04/05/06 brackets typically use a MARKET entry + SL/TP children (D-03 confirms a MARKET-entry bracket works).
-   - What's unclear: whether the author wants any STOP-entry-with-bracket leaf.
-   - Recommendation: keep MATCH-03 as standalone STOP entries (trades golden) and brackets as MARKET-entry (snapshot golden) — cleanest separation, fewest moving parts per leaf (D-11).
+   - **Resolution:** Plans 03/04/05 use MARKET-entry brackets (snapshot golden) and Plan 02 keeps MATCH-03 as standalone STOP entries (trades golden). No leaf uses a STOP-entry that is also a bracket parent — cleanest separation, fewest moving parts per leaf (D-11).
 
-2. **MODIFY re-price vs re-size — one leaf or two?**
-   - What we know: D-06 discretion ("Whether MODIFY scenarios need separate re-price vs re-size leaves").
-   - What's unclear: the engine's `modify` handles both via `dataclasses.replace` (matching_engine.py:103); a single leaf could exercise both in one `actions` timeline, but D-11 favors one-shape-per-leaf.
-   - Recommendation: two leaves (re-price, re-size) per D-11 one-shape-per-leaf, plus one cancel leaf — three operator leaves total for MATCH-07.
+2. **MODIFY re-price vs re-size — one leaf or two?** — **RESOLVED: Two (plus one cancel) = three operator leaves.**
+   - What we know: D-06 discretion ("Whether MODIFY scenarios need separate re-price vs re-size leaves"). The engine's `modify` handles both via `dataclasses.replace` (matching_engine.py:103).
+   - **Resolution:** Plan 05 authors three operator leaves per D-11 one-shape-per-leaf — `cancel`, `modify_reprice`, `modify_resize` — each driven by its own `actions` timeline.
 
 ## GAP FINDINGS (highest-value for the planner)
 
