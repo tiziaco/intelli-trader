@@ -102,8 +102,12 @@ def is_active(spans: dict[str, Span], ticker: str, asof: datetime) -> bool:
         The ticker to test.
     asof : datetime
         The time T to test membership at. Must share tz-ness with the span
-        bounds (both naive or both tz-aware) — comparing a naive and a
-        tz-aware datetime raises ``TypeError``.
+        bounds (both naive or both tz-aware). A tz-naive/tz-aware mismatch
+        is rejected at the boundary with a ``ValueError`` (WR-01) rather
+        than allowed to surface as a raw ``TypeError`` deep inside the
+        comparison — this primitive is an explicit reusable seam (the
+        future v1.3 screener consumes it), so misuse must fail with an
+        intelligible message.
 
     Returns
     -------
@@ -113,11 +117,25 @@ def is_active(spans: dict[str, Span], ticker: str, asof: datetime) -> bool:
         A ticker absent from ``spans`` returns ``False`` (sparse contract:
         a ticker the store never loaded is simply not a member — mirrors the
         sparse-universe "absent, never None" guard).
+
+    Raises
+    ------
+    ValueError
+        If ``asof`` and the span bounds disagree on tz-ness (one naive, one
+        tz-aware). The golden feed path is safe by construction (spans are
+        seeded tz-aware from ``frame.index`` and ``asof`` is a tz-aware
+        ``pd.Timestamp``); this guard turns a future injection bug into a
+        legible failure instead of a raw comparison ``TypeError``.
     """
     span = spans.get(ticker)
     if span is None:
         return False
     first, last = span
+    if (first.tzinfo is None) != (asof.tzinfo is None):
+        raise ValueError(
+            f"is_active tz mismatch for {ticker}: span tz-aware="
+            f"{first.tzinfo is not None}, asof tz-aware={asof.tzinfo is not None}"
+        )
     return first <= asof <= last
 
 
