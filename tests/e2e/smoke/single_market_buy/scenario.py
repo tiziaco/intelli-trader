@@ -75,11 +75,19 @@ Final portfolio (single trade, no open position at run end):
   * final_equity = final_cash (no open positions) = 11_666.666…
   * trade_count = 1, total_realised_pnl = 1_666.666…
 
+Slippage columns (D-17 — also frozen in ``golden/trades.csv`` as 6.0 / 6.0):
+slippage = fill price − decision-bar close (the bar immediately before the fill).
+  * slippage_entry = bar2 open (120) − bar1 close (114) = 6.0
+  * slippage_exit  = bar4 open (140) − bar3 close (134) = 6.0
+These measure the overnight next-open gap; both legs are load-bearing frozen
+numbers, so they are hand-derived here alongside the fills/PnL.
+
 The metrics block (sharpe/sortino/cagr/max_drawdown/profit_factor/win_rate) is
 machine-computed by the shared ``itrader.reporting.metrics`` on this single-trade
 equity curve; profit_factor is +inf-guarded and win_rate = 1.0 (the one trade
 won). Those derived ratios are frozen as-written; the LOAD-BEARING hand-checked
-facts are the fill prices, the quantity, and the realised PnL above.
+facts are the fill prices, the quantity, the realised PnL, and the slippage
+columns above.
 
 ============================== END VERIFY =============================
 """
