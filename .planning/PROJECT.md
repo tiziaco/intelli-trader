@@ -162,6 +162,7 @@ must import, run, and yield trustworthy results.
 | v1.1: each E2E oracle hand-verified once, then regression-locked | A regression-lock proves *stability*, not *correctness*; tiny purpose-built scenarios are hand-computable, so verify expected fills/PnL once before freezing | ◷ v1.1 — external cross-val only where backtesting.py/backtrader can express it |
 | v1.1: normalize new data via committed script, not loader logic | Split date/time is an export quirk, not a recurring schema; CSV loading is backtest-only (live uses streaming providers) → no run-path generalization | ◷ v1.1 — `CsvPriceStore` unchanged |
 | v1.1: minimal real universe (not a workaround) | Heterogeneous data spans make "asset enters mid-backtest" a real scenario; build a minimal `membership`-from-availability primitive the production screener extends, never a throwaway skip | ◷ v1.1 — screener still deferred to v1.3 |
+| v1.1: opportunistic-cleanup standard (`.planning/codebase/CLEANUP-STANDARD.md`; fix-list at `.planning/codebase/FIX-LIST.md`) | Cleanup is cross-cutting along touched paths only — no big-bang refactor, no oracle re-baseline; a concrete 4-gate executor checklist (path / eligibility / golden-path / bookkeeping) every later-phase executor applies, verified at milestone close | ◷ v1.1 — ESTABLISHED Phase 1, VERIFIED at milestone close (CLAR-02) |
 
 ## Evolution
 
