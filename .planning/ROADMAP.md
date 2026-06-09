@@ -40,7 +40,9 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 ### Phase 1: Codebase Map & Clarity Baseline
 **Goal**: Produce the objective map of the codebase FIRST — yielding a committed, scoped fix-list (naming, visibility, seams) — so every later phase (harness shape, interface hardening, scenario design) builds on the map; and establish the opportunistic-cleanup standard that the rest of the milestone follows.
 
-> **NOTE — map already exists and is current (do NOT regenerate).** The `.planning/codebase/` docs (the 6 map files + `ARCHITECTURE-REVIEW.md`, `CONCERNS.md`) were generated at v1.0 close, *after* the last `itrader/` code commit (`017bf72`); no engine code has changed since. CLAR-01 is therefore **harvest the fix-list from the existing docs** (esp. `CONCERNS.md` + `ARCHITECTURE-REVIEW.md`), not a fresh `gsd-map-codebase` run. Only spot-check / selectively refresh if a doc looks stale against current code.
+> **NOTE — current map already exists (do NOT regenerate); one input is historical.** The `gsd-map-codebase` output — `CONCERNS.md` + the 6 map files (`ARCHITECTURE/STACK/STRUCTURE/CONVENTIONS/TESTING`) — was refreshed at v1.0 close (Analysis Date 2026-06-08), *after* the last `itrader/` commit (`017bf72`); no engine code has changed since, so it is current. CLAR-01 = **harvest the fix-list from `CONCERNS.md`** (it already records only concerns still present post-refactor) plus the fresh map files — NOT a new `gsd-map-codebase` run; spot-check only if a doc looks stale.
+> **Do NOT use `ARCHITECTURE-REVIEW.md` as a fix-list source** — it is a PRE-v1.0 historical snapshot (2026-06-04); most of its 40 findings were fixed in v1.0. Reference only, no finding-by-finding re-audit.
+> Also pull forward any items `COVERAGE-INDEX.md` tagged for the N+1 / map-codebase cleanup (e.g. #7/#37 — bare `raise ValueError` in `portfolio.py`, off the golden path).
 
 **Depends on**: Nothing (first phase — pure analysis, blocks nothing; informs all subsequent phases)
 **Requirements**: CLAR-01, CLAR-02
