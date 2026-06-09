@@ -50,7 +50,9 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   1. A committed, objective fix-list (naming, visibility, seam issues) is harvested from the existing `.planning/codebase/` map — no redundant regeneration of fresh docs.
   2. The opportunistic naming/visibility cleanup standard is established here as a CROSS-CUTTING practice — cleanup is applied only along paths a later phase already touches (no big-bang refactor) and is VERIFIED at milestone close, not in a standalone phase.
   3. No cleanup is performed in this phase itself (no paths are touched yet); the golden master is therefore unchanged here, and any later cleanup re-runs byte-exact — no oracle re-baseline.
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 01-01-PLAN.md — Harvest the objective FIX-LIST.md (FL-NN schema, eligible-in-phase tags) from the existing codebase map [CLAR-01]
+- [ ] 01-02-PLAN.md — Establish the opportunistic-cleanup standard (4-gate checklist + milestone-close audit) and record it in PROJECT.md [CLAR-02]
 
 ### Phase 2: Data Ingestion
 **Goal**: Bring three additional cryptos (ETH/SOL/AAVE) into the repo in the exact golden Binance-kline schema via a committed, re-runnable normalization script — so multi-ticker scenarios have real data — without touching the run-path loader.
@@ -144,7 +146,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Codebase Map & Clarity Baseline | v1.1 | 0/0 | Not started | - |
+| 1. Codebase Map & Clarity Baseline | v1.1 | 0/2 | Planned | - |
 | 2. Data Ingestion | v1.1 | 0/0 | Not started | - |
 | 3. Minimal Real Universe | v1.1 | 0/0 | Not started | - |
 | 4. E2E Harness & Framework | v1.1 | 0/0 | Not started | - |
