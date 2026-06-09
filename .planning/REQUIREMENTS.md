@@ -15,9 +15,9 @@
 ## v1.1 Requirements
 
 ### Data Ingestion (INGEST)
-- [ ] **INGEST-01**: A committed, re-runnable normalization script converts provider CSVs (split `date`+`time`, lowercase columns) into the golden Binance-kline schema (single tz-aware `Open time` + `Open/High/Low/Close/Volume`).
-- [ ] **INGEST-02**: ETHUSD, SOLUSD, AAVEUSD committed in the normalized golden schema alongside BTCUSD.
-- [ ] **INGEST-03**: `CsvPriceStore` loads all four datasets **unchanged** (no run-path schema-detection logic).
+- [x] **INGEST-01**: A committed, re-runnable normalization script converts provider CSVs (split `date`+`time`, lowercase columns) into the golden Binance-kline schema (single tz-aware `Open time` + `Open/High/Low/Close/Volume`).
+- [x] **INGEST-02**: ETHUSD, SOLUSD, AAVEUSD committed in the normalized golden schema alongside BTCUSD.
+- [x] **INGEST-03**: `CsvPriceStore` loads all four datasets **unchanged** (no run-path schema-detection logic).
 
 ### Minimal Universe (UNIV)
 - [ ] **UNIV-01**: A real `membership` primitive derives the set of active tickers at time T from data availability (replaces the stub). Screening/ranking explicitly excluded.
@@ -117,9 +117,9 @@
 |-------------|-------|--------|
 | CLAR-01 | Phase 1 | Pending |
 | CLAR-02 | Phase 1 | Pending |
-| INGEST-01 | Phase 2 | Pending |
-| INGEST-02 | Phase 2 | Pending |
-| INGEST-03 | Phase 2 | Pending |
+| INGEST-01 | Phase 2 | Complete |
+| INGEST-02 | Phase 2 | Complete |
+| INGEST-03 | Phase 2 | Complete |
 | UNIV-01 | Phase 3 | Pending |
 | UNIV-02 | Phase 3 | Pending |
 | E2E-01 | Phase 4 | Pending |
