@@ -2,6 +2,7 @@ import queue
 from datetime import datetime
 from decimal import Decimal
 from functools import reduce
+from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
@@ -48,6 +49,7 @@ class TradingSystem(object):
 		end_date: str = '',
 		to_sql: bool = False,
 		timeframe: str = '1d',
+		csv_paths: dict[str, str | Path] | None = None,
 	) -> None:
 		"""
 		Set up the backtest variables according to
@@ -81,7 +83,12 @@ class TradingSystem(object):
 		# read-model every market-data consumer queries per tick. Construction-
 		# time read-model injection, same style as the legacy price_handler arg:
 		# the CLAUDE.md queue-only rule governs handlers, the Feed is a read-model.
+		# Phase-3 multi-ticker injection seam (RESEARCH Pitfall 5 / Open Q2,
+		# option b): csv_paths passes straight through to CsvPriceStore. Default
+		# None makes the store fall back to its single-golden-ticker default —
+		# byte-identical to today (oracle-dark). Reusable by the Phase-9 E2E harness.
 		self.store = CsvPriceStore(
+			csv_paths=csv_paths,
 			start_date=start_date,
 			end_date=end_date or None)
 		self.feed = BacktestBarFeed(self.store, to_timedelta(timeframe))
