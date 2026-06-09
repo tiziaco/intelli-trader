@@ -1,10 +1,9 @@
-from decimal import Decimal
-
 import pandas as pd
 # import numpy as np
 
-from itrader.core.sizing import FractionOfCash, SignalIntent, TradingDirection
+from itrader.core.sizing import SignalIntent
 from itrader.strategy_handler.base import Strategy
+from itrader.strategy_handler.config import SMA_MACDConfig
 
 from ta import trend
 
@@ -18,53 +17,32 @@ class SMA_MACD_strategy(Strategy):
 	short_window - Lookback period for short moving average
 	long_window - Lookback period for long moving average
 	"""
-	def __init__(
-		self,
-		timeframe: str,
-		tickers: list[str] | None = None,
-		short_window: int = 50,
-		long_window: int = 100,
-		FAST: int = 6,
-		SLOW: int = 12,
-		WIN: int = 3,
-	) -> None:
-		# Golden declarations (D-03/D-08/D-10): FractionOfCash(Decimal("0.95"))
-		# is the string-path literal (Pitfall 1) reproducing the legacy M1
-		# sizing expression byte-exact once 07-05 wires the resolver;
-		# LONG_ONLY + allow_increase=False declare the admission settings —
-		# enforcement comes later.
-		# WR-05: never share a mutable default list across instances — default
-		# to None and build a fresh per-instance list so a future tickers
-		# mutation cannot bleed across instances or into derive_membership.
-		super().__init__(
-			"SMA_MACD", timeframe, list(tickers or []),
-			sizing_policy=FractionOfCash(Decimal("0.95")),
-			direction=TradingDirection.LONG_ONLY,
-			allow_increase=False,
-		)
+	def __init__(self, config: SMA_MACDConfig) -> None:
+		# D-01: single config-object constructor. The golden declarations
+		# (sizing_policy=FractionOfCash(Decimal("0.95")), LONG_ONLY,
+		# allow_increase=False) now live on the SMA_MACDConfig the caller
+		# builds (RESEARCH Pitfall 1 byte-exact string-path literal).
+		super().__init__("SMA_MACD", config)
 
-		# Strategy parameters
-		self.short_window = short_window
-		self.long_window = long_window
-		self.FAST = FAST
-		self.SLOW = SLOW
-		self.WIN = WIN
+		# Copy the per-strategy params onto the instance so generate_signal
+		# reads self.short_window (NOT self.config) — preserving the pure-alpha
+		# contract (D-12): no config reads inside generate_signal.
+		self.short_window = config.short_window
+		self.long_window = config.long_window
+		self.FAST = config.FAST
+		self.SLOW = config.SLOW
+		self.WIN = config.WIN
 
+		# Fetch width (bars) the handler requests from the feed window.
 		self.max_window = max([self.long_window, 100])
-	
-	def __str__(self) -> str:
-		return f'{self.name}_{self.timeframe}'
-
-	def __repr__(self) -> str:
-		return str(self)
-
-
+		# D-15: warmup threshold = the old in-strategy guard value. The handler
+		# short-circuits before generate_signal when len(data) < warmup, so the
+		# firing tick is byte-identical to the removed guard (HARD-04).
+		self.warmup = max([self.long_window, 100])
 
 	def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
-		# Check if enough bars to calculate the signal
-
-		if len(bars) < self.max_window:
-			return None
+		# Warmup gating now lives in the handler framework short-circuit (D-15);
+		# generate_signal assumes it is only called with enough bars.
 		# A2 (RESEARCH Pattern 4): bars.index[-1] replaces the legacy
 		# self.last_time() — value-identical on the golden run (the feed
 		# window's last completed bar at tick T is stamped T when

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: ready_to_plan
-last_updated: 2026-06-09T15:06:03.029Z
-last_activity: 2026-06-09
+last_updated: 2026-06-09T20:04:00.000Z
+last_activity: 2026-06-09 -- Phase 05 complete (3/3, verified, review loop closed)
 progress:
   total_phases: 12
-  completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
-  percent: 33
-stopped_at: Phase 04 complete (3/3) — ready to discuss Phase 999.2
+  completed_phases: 5
+  total_plans: 12
+  completed_plans: 15
+  percent: 42
+stopped_at: Phase 05 complete (3/3) — ready to plan Phase 6
 ---
 
 # Project State
@@ -21,20 +21,20 @@ stopped_at: Phase 04 complete (3/3) — ready to discuss Phase 999.2
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 6 — Order Matching Scenarios (next v1.1 phase; 999.x dirs are deferred N+2/N+3 buckets)
 
 ## Current Position
 
-Phase: 999.2 of 3 (nplus2 persistence and performance)
+Phase: 6
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-09
+Last activity: 2026-06-09 -- Phase 05 complete (HARD-01..04 + SIG-01/02 validated)
 
 ## Performance Metrics
 
 **Velocity (v1.1):**
 
-- Total plans completed: 12
+- Total plans completed: 15
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -94,10 +94,10 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 
 ## Session Continuity
 
-Last session: 2026-06-09T14:53:21.159Z
-Resume file: None
+Last session: 2026-06-09T16:21:48.712Z
+Resume file: .planning/phases/05-strategy-interface-hardening-signal-storage/05-CONTEXT.md
 
 ## Operator Next Steps
 
-- Phase 04 (e2e-harness-framework) is COMPLETE — the shared harness + e2e marker + the ONE hand-verified canary leaf are committed.
-- `/clear`, then `/gsd:plan-phase 5` — plan the next phase (the canary leaf is the copy-template for Phase 6-9 scenario authors).
+- Phase 05 (strategy-interface-hardening-signal-storage) is COMPLETE — verified (05-VERIFICATION.md passed) and the code-review loop is closed (05-REVIEW-FIX.iter3.md all_fixed). HARD-01..04 + SIG-01/02 validated.
+- `/clear`, then `/gsd:plan-phase 6` — plan Phase 6 (Order Matching Scenarios). The Phase 04 canary leaf remains the copy-template for Phase 6-9 scenario authors.

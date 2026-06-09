@@ -41,8 +41,12 @@ from itrader.reporting.summary import (
     build_metrics_block,
     build_summary,
 )
+from decimal import Decimal
+
+from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.trading_system.backtest_trading_system import TradingSystem
-from itrader.strategy_handler.SMA_MACD_strategy import SMA_MACD_strategy
+from itrader.strategy_handler.config import SMA_MACDConfig
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
 from itrader.logger import get_itrader_logger
 
 
@@ -69,7 +73,16 @@ def main():
     )
 
     # Reference strategy on the daily timeframe, subscribed to BTCUSD (D-03/D-06).
-    strategy = SMA_MACD_strategy(timeframe=TIMEFRAME, tickers=[TICKER])
+    # D-01: single config-object constructor. The golden sizing literal MUST be
+    # FractionOfCash(Decimal("0.95")) (string-path Decimal — byte-exact, Pitfall 1).
+    strategy_config = SMA_MACDConfig(
+        timeframe=TIMEFRAME,
+        tickers=[TICKER],
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
+        allow_increase=False,
+    )
+    strategy = SMA_MACD_strategy(strategy_config)
     system.strategies_handler.add_strategy(strategy)
 
     # Single long-only portfolio with $10k starting cash (D-04).

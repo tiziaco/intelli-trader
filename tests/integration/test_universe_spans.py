@@ -28,6 +28,7 @@ import pandas as pd
 
 from itrader.core.sizing import FixedQuantity, SignalIntent, TradingDirection
 from itrader.strategy_handler.base import Strategy
+from itrader.strategy_handler.config import BaseStrategyConfig
 from itrader.trading_system.backtest_trading_system import TradingSystem
 
 
@@ -81,13 +82,18 @@ class BuyEachTickerOnce(Strategy):
     """
 
     def __init__(self, timeframe: str, tickers: list[str]) -> None:
-        super().__init__(
-            "BuyEachTickerOnce", timeframe, list(tickers),
+        # D-01: config-object constructor (05-02 ripple).
+        config = BaseStrategyConfig(
+            timeframe=timeframe,
+            tickers=list(tickers),
             sizing_policy=FixedQuantity(qty=Decimal("1")),
             direction=TradingDirection.LONG_ONLY,
             allow_increase=False,
             max_positions=10,
         )
+        super().__init__("BuyEachTickerOnce", config)
+        # max_window=1 so the pushed window is non-empty; warmup stays 0 so the
+        # D-15 framework short-circuit never gates the first-bar fire.
         self.max_window = 1
         self._bought: set[str] = set()
 

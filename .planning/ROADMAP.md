@@ -29,7 +29,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 - [x] **Phase 2: Data Ingestion** — Committed normalization script produces ETH/SOL/AAVE in the golden Binance-kline schema; `CsvPriceStore` loads all four unchanged. (completed 2026-06-09)
 - [x] **Phase 3: Minimal Real Universe** — A `membership`-from-availability primitive replaces the stub; the engine handles mid-run listing / absent bars without crash or look-ahead. (completed 2026-06-09)
 - [x] **Phase 4: E2E Harness & Framework** — Dedicated `tests/e2e/` tree, registered `e2e` marker, `make test-e2e`, and a shared golden-compare harness every scenario phase builds on. (completed 2026-06-09)
-- [ ] **Phase 5: Strategy Interface Hardening & Signal Storage** — Pydantic `BaseStrategyConfig` + per-strategy params validators + `OrderType` enum end-to-end (byte-exact vs the SMA_MACD oracle); typed signal records persisted and queryable.
+- [x] **Phase 5: Strategy Interface Hardening & Signal Storage** — Pydantic `BaseStrategyConfig` + per-strategy params validators + `OrderType` enum end-to-end (byte-exact vs the SMA_MACD oracle); typed signal records persisted and queryable. (completed 2026-06-09)
 - [ ] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill.
 - [ ] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes.
 - [ ] **Phase 8: Admission, Position Management & Cash Edges** — E2E golden-locked coverage of scale-in (pyramiding), partial scale-out, `max_positions` rejection, exit-then-re-entry, and the cash reservation/release lifecycle.
@@ -101,7 +101,10 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   2. `order_type` is the `OrderType` enum end-to-end — the stringly-typed `"market"` is removed.
   3. Re-running the golden master after the refactor is byte-exact (134 trades / `final_equity 46189.87730727451`), proving zero drift; the pure-alpha D-12 contract is intact (pydantic at construction only, `generate_signal` stays pure pandas).
   4. Strategy-generated signals are persisted as typed records (strategy id, ticker, action, time, sizing/sltp declarations, config snapshot) and are queryable for post-run inspection and E2E assertions.
-**Plans**: TBD
+**Plans**: 3 plans
+- [x] 05-01-PLAN.md — Foundation primitives: SignalId + generate_signal_id (D-10), Timeframe enum (D-06), BaseStrategyConfig/SMA_MACDConfig/EmptyStrategyConfig + validators [HARD-01, HARD-02]
+- [x] 05-02-PLAN.md — Config-constructor refactor (D-01), order_type enum end-to-end + boundary-parse collapse (D-04/FL-04), framework warmup guard (D-15), base __str__/__repr__ (D-14), strategy relocation (D-13), call-site migration [HARD-03, HARD-04]
+- [x] 05-03-PLAN.md — SignalRecord entity + pluggable SignalStore seam (D-07/D-08), per-intent capture pre-fan-out (D-09), composition-root injection + post-run accessor (D-11/D-12), golden-run SIG-02 assertion [SIG-01, SIG-02]
 
 ### Phase 6: Order Matching Scenarios
 **Goal**: Give the resting-order book, bracket/OCO lifecycle, and trigger/gap matching their first end-to-end golden coverage — each a tiny hand-verified scenario then regression-locked.
@@ -157,7 +160,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 2. Data Ingestion | v1.1 | 1/1 | Complete   | 2026-06-09 |
 | 3. Minimal Real Universe | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 4. E2E Harness & Framework | v1.1 | 3/3 | Complete   | 2026-06-09 |
-| 5. Strategy Interface Hardening & Signal Storage | v1.1 | 0/0 | Not started | - |
+| 5. Strategy Interface Hardening & Signal Storage | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 6. Order Matching Scenarios | v1.1 | 0/0 | Not started | - |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 0/0 | Not started | - |
 | 8. Admission, Position Management & Cash Edges | v1.1 | 0/0 | Not started | - |

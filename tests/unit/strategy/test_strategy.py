@@ -37,7 +37,9 @@ from itrader.core.sizing import (
 )
 from itrader.events_handler.events import BarEvent, SignalEvent
 from itrader.strategy_handler.base import Strategy
-from itrader.strategy_handler.SMA_MACD_strategy import SMA_MACD_strategy
+from itrader.strategy_handler.config import BaseStrategyConfig, SMA_MACDConfig
+from itrader.strategy_handler.storage import InMemorySignalStore
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 
@@ -47,6 +49,17 @@ _PORTFOLIO_B = 2
 # Midnight-aligned, tz-aware 1d tick: the check_timeframe seam is
 # midnight-relative on the UTC grid and expects tz-aware times (D-06).
 _EVENT_TIME = datetime(2024, 1, 2, tzinfo=UTC)
+
+
+def _sma_config() -> SMA_MACDConfig:
+    """The golden SMA_MACD config used across the pure-function tests (D-01)."""
+    return SMA_MACDConfig(
+        timeframe="1d",
+        tickers=[_TICKER],
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
+        allow_increase=False,
+    )
 
 
 # --- synthetic frames (D-22: hand-engineered, construction documented) -------
@@ -84,7 +97,7 @@ def _short_frame() -> pd.DataFrame:
 
 def test_bullish_crossover_returns_buy_intent():
     """A synthetic bullish SMA/MACD crossover frame yields a BUY SignalIntent."""
-    strategy = SMA_MACD_strategy(timeframe="1d", tickers=[_TICKER])
+    strategy = SMA_MACD_strategy(_sma_config())
 
     intent = strategy.generate_signal(_TICKER, _bullish_crossover_frame())
 
@@ -99,16 +112,29 @@ def test_bullish_crossover_returns_buy_intent():
     assert intent.exit_fraction == Decimal("1")
 
 
-def test_too_short_frame_returns_none():
-    """A frame shorter than max_window yields no intent (pure no-op)."""
-    strategy = SMA_MACD_strategy(timeframe="1d", tickers=[_TICKER])
+def test_too_short_window_short_circuits_in_handler(handler_env):
+    """D-15: a window shorter than the strategy's warmup is gated by the handler.
 
-    assert strategy.generate_signal(_TICKER, _short_frame()) is None
+    The in-strategy ``if len(bars) < self.max_window: return None`` guard was
+    removed from SMA_MACD and relocated to the framework short-circuit in
+    ``StrategiesHandler.calculate_signals`` (guarding on ``strategy.warmup``).
+    A too-short window therefore means the handler skips ``generate_signal``
+    entirely — no SignalEvent is emitted (the byte-exact firing-tick behavior
+    the old guard produced, HARD-04).
+    """
+    handler, q = handler_env  # the stub feed returns the 10-bar _short_frame()
+    strategy = SMA_MACD_strategy(_sma_config())  # warmup == 100
+    strategy.subscribe_portfolio(_PORTFOLIO_A)
+    handler.add_strategy(strategy)
+
+    handler.calculate_signals(_bar_event())
+
+    assert q.empty()  # warmup short-circuit fired — no signal
 
 
 def test_golden_declarations_are_typed():
     """SMA_MACD declares the golden typed policy (D-03/D-08/D-10)."""
-    strategy = SMA_MACD_strategy(timeframe="1d", tickers=[_TICKER])
+    strategy = SMA_MACD_strategy(_sma_config())
 
     assert strategy.sizing_policy == FractionOfCash(Decimal("0.95"))
     assert strategy.direction is TradingDirection.LONG_ONLY
@@ -117,7 +143,7 @@ def test_golden_declarations_are_typed():
 
 def test_buy_sell_sugar_builds_intents():
     """buy()/sell() are thin sugar: SignalIntent only, to_money entry for SL/TP."""
-    strategy = SMA_MACD_strategy(timeframe="1d", tickers=[_TICKER])
+    strategy = SMA_MACD_strategy(_sma_config())
 
     buy = strategy.buy(_TICKER, sl=40.5, tp=50.25)
     sell = strategy.sell(_TICKER)
@@ -136,9 +162,21 @@ def test_buy_sell_sugar_builds_intents():
 class _AlwaysBuyStrategy(Strategy):
     """Minimal concrete strategy that always signals BUY (fan-out probe)."""
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("sizing_policy", FractionOfCash(Decimal("0.95")))
-        super().__init__("always_buy", "1d", [_TICKER], **kwargs)
+    def __init__(
+        self,
+        direction: TradingDirection = TradingDirection.LONG_ONLY,
+    ) -> None:
+        # D-01: build a config object then pass it to the base. Only the
+        # direction varies across the fan-out / registration-guard tests.
+        config = BaseStrategyConfig(
+            timeframe="1d",
+            tickers=[_TICKER],
+            sizing_policy=FractionOfCash(Decimal("0.95")),
+            direction=direction,
+        )
+        super().__init__("always_buy", config)
+        # max_window wide enough for the stub frame; warmup stays 0 (no gating)
+        # so the handler always reaches generate_signal in the fan-out tests.
         self.max_window = 1
 
     def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
@@ -170,7 +208,8 @@ def handler_env():
     bleeds across tests under ``filterwarnings=["error"]``.
     """
     q = Queue()
-    handler = StrategiesHandler(q, _StubFeed(_short_frame()))
+    # Plan 05-03: the handler now requires an injected signal store (sink).
+    handler = StrategiesHandler(q, _StubFeed(_short_frame()), InMemorySignalStore())
 
     yield handler, q
 
@@ -203,6 +242,9 @@ def test_fan_out_single_portfolio_stamps_event(handler_env):
     assert signal.allow_increase is False
     assert signal.exit_fraction == Decimal("1")
     assert signal.action is Side.BUY
+    # HARD-03 / D-04: order_type is an OrderType enum end-to-end (no stringly
+    # typed seam) — assert the type, not just the value.
+    assert isinstance(signal.order_type, OrderType)
     assert signal.order_type is OrderType.MARKET
     assert signal.ticker == _TICKER
     assert signal.portfolio_id == _PORTFOLIO_A

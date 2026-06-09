@@ -31,6 +31,7 @@ import pandas as pd
 
 from itrader.core.sizing import FractionOfCash, SignalIntent, TradingDirection
 from itrader.strategy_handler.base import Strategy
+from itrader.strategy_handler.config import BaseStrategyConfig
 
 
 class SingleMarketBuy(Strategy):
@@ -51,19 +52,27 @@ class SingleMarketBuy(Strategy):
 
     def __init__(self, timeframe: str, tickers: list[str], *,
                  fire_on_bar: int = 2, exit_on_bar: int = 4) -> None:
+        # D-01: build the golden config then pass it to the base. The phase
+        # adopts the e2e strategy now so Phase 6 authors inherit a clean
+        # config-contract template (Claude's-discretion resolved in plan 05-02).
         # FractionOfCash(Decimal("0.95")) is the string-path literal (Pitfall 1)
         # — the SAME golden sizing policy SMA_MACD declares — so the canary's
         # entry quantity is hand-derivable: 0.95 * available_cash / fill_price.
-        super().__init__(
-            "single_market_buy", timeframe, list(tickers),
+        config = BaseStrategyConfig(
+            timeframe=timeframe,
+            tickers=list(tickers),
             sizing_policy=FractionOfCash(Decimal("0.95")),
             direction=TradingDirection.LONG_ONLY,
             allow_increase=False,
         )
+        super().__init__("single_market_buy", config)
         self.fire_on_bar = fire_on_bar
         self.exit_on_bar = exit_on_bar
         # Wide enough to cover the contrived CSV so len(bars) == completed-bar
         # count (a 0-width window would always be empty — see module docstring).
+        # warmup stays 0 (no warmup gating) so the framework short-circuit
+        # never skips the count-based firing tick (D-15) — preserving the
+        # frozen e2e golden.
         self.max_window = 100
 
     def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:

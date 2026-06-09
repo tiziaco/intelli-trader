@@ -15,7 +15,11 @@ Carries the ``unit`` marker automatically via the ``test_smoke`` path (auto-mark
 in the root conftest) — do NOT hand-add markers.
 """
 
-from itrader.strategy_handler.SMA_MACD_strategy import SMA_MACD_strategy
+from decimal import Decimal
+
+from itrader.core.sizing import FractionOfCash, TradingDirection
+from itrader.strategy_handler.config import SMA_MACDConfig
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
 
 
 # Golden-run configuration (D-03/D-04/D-06).
@@ -38,7 +42,14 @@ def test_backtest_smoke_produces_nonzero_trade(backtest_engine):
     )
 
     # Add the reference strategy on the daily timeframe, subscribed to BTCUSD.
-    strategy = SMA_MACD_strategy(timeframe=TIMEFRAME, tickers=[TICKER])
+    # D-01: single config-object constructor.
+    strategy = SMA_MACD_strategy(SMA_MACDConfig(
+        timeframe=TIMEFRAME,
+        tickers=[TICKER],
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
+        allow_increase=False,
+    ))
     system.strategies_handler.add_strategy(strategy)
 
     # Add a single long-only portfolio with $10k starting cash.

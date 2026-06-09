@@ -236,3 +236,68 @@ def test_oracle_numeric_values(oracle_run):
         f"summary metrics drift: fresh={fresh_summary['metrics']} "
         f"golden={golden_summary['metrics']}"
     )
+
+
+# --- SIG-02: post-run signal store on the golden SMA_MACD run -----------------
+#
+# Additive assertion (Plan 05-03): the golden SMA_MACD run produces a NON-empty,
+# queryable SignalStore via the TradingSystem post-run accessor. This wires the
+# same golden config the oracle generator uses (scripts/run_backtest.py::main —
+# BTCUSD/1d/$10k/FractionOfCash(0.95)/LONG_ONLY over the pinned 2018->2026
+# window), but holds the TradingSystem reference so the post-run accessor can be
+# read. It does NOT touch the byte-exact oracle assertions above — capturing a
+# sink record is side-effect-only (oracle-dark, HARD-04). The store is read AFTER
+# the run (read-model sink, D-12) — the queue-only contract is preserved.
+
+from decimal import Decimal  # noqa: E402
+
+from itrader.core.sizing import FractionOfCash, TradingDirection  # noqa: E402
+from itrader.strategy_handler.config import SMA_MACDConfig  # noqa: E402
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import (  # noqa: E402
+    SMA_MACD_strategy,
+)
+from itrader.trading_system.backtest_trading_system import TradingSystem  # noqa: E402
+
+
+def test_golden_run_signal_store_is_non_empty_and_queryable():
+    """SIG-02: the golden SMA_MACD run yields a non-empty, queryable SignalStore.
+
+    Proves the post-run accessor returns >0 records, that the records are
+    filterable by ticker and by strategy id, and that each record carries a
+    ``config`` snapshot whose ``model_dump()`` is a dict (queryability +
+    snapshot serialization). The byte-exact oracle assertions live in the
+    sibling tests above and are NOT weakened here.
+    """
+    system = TradingSystem(
+        exchange="csv",
+        start_date="2018-01-01",
+        end_date="2026-06-03",
+    )
+    config = SMA_MACDConfig(
+        timeframe="1d",
+        tickers=["BTCUSD"],
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
+        allow_increase=False,
+    )
+    strategy = SMA_MACD_strategy(config)
+    system.strategies_handler.add_strategy(strategy)
+    portfolio_id = system.portfolio_handler.add_portfolio(
+        user_id=1, name="sig02_pf", exchange="csv", cash=10_000,
+    )
+    strategy.subscribe_portfolio(portfolio_id)
+
+    # Suppress the end-of-run metrics printout (display-only, oracle-inert).
+    system.run(print_summary=False)
+
+    # Post-run accessor: non-empty (SMA_MACD fires intents on the golden window).
+    records = system.get_signal_records()
+    assert len(records) > 0
+
+    # Queryable by ticker and by strategy id (no cross-strategy bleed, T-05-05).
+    store = system.get_signal_store()
+    assert len(store.by_ticker("BTCUSD")) > 0
+    assert len(store.by_strategy(strategy.strategy_id)) > 0
+
+    # Each record carries a serializable config snapshot (SIG-02 / D-11).
+    assert isinstance(records[0].config.model_dump(), dict)

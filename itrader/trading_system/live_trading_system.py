@@ -1,5 +1,6 @@
 import os
 import queue
+import sys
 import threading
 import time
 import json
@@ -13,6 +14,7 @@ from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
+from itrader.strategy_handler.storage import SignalStorageFactory
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
@@ -22,7 +24,7 @@ from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.universe import derive_membership
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.events import EventType, TimeEvent, OrderEvent
+from itrader.events_handler.events import EventType, TimeEvent, OrderEvent, ErrorEvent
 
 # Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
 # (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the
@@ -103,7 +105,14 @@ class LiveTradingSystem:
         self.global_queue = queue.Queue()
         self.store = CsvPriceStore()
         self.feed = BacktestBarFeed(self.store, to_timedelta('1d'))
-        self.strategies_handler = StrategiesHandler(self.global_queue, self.feed)
+        # Signal-store sink (Plan 05-03, D-07/D-12): no persistent backend in
+        # v1.1, so mirror the in-memory order-storage fallback above — captured
+        # signals will NOT survive a restart until a persistent backend lands.
+        # WR-03: retain the store on self and expose accessors (mirroring the
+        # backtest system) — a local variable would leave every captured
+        # SignalRecord permanently unreachable (a write-only accumulation).
+        self._signal_store = SignalStorageFactory.create('backtest')
+        self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, self._signal_store)
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
         
@@ -156,10 +165,49 @@ class LiveTradingSystem:
             self.global_queue
         )
         
+        # WR-05: install the documented live error policy (publish-and-continue).
+        # The base _on_handler_error re-raises (backtest fail-fast); the live
+        # system is documented to override THIS method so _dispatch's existing
+        # error routing emits an ErrorEvent and keeps draining instead of
+        # aborting. Binding it here (rather than swallowing in the loop) means a
+        # failed handler queues an ErrorEvent for the ERROR-route / status
+        # consumers instead of becoming an invisible log line + counter.
+        self.event_handler._on_handler_error = self._publish_and_continue  # type: ignore[method-assign]
+
         self.logger.info('Live trading system initialized')
         self._update_status(SystemStatus.STOPPED)
+
+    def _publish_and_continue(self, event, handler) -> None:
+        """Live handler-failure policy (WR-05): publish an ErrorEvent, keep draining.
+
+        Overrides the base EventHandler._on_handler_error (fail-fast re-raise).
+        Invoked from EventHandler._dispatch when a handler raises; emits an
+        ErrorEvent onto the queue (consumed by the ERROR route) and returns so
+        the loop continues. Reads the active exception via sys.exc_info().
+        """
+        # IN-01: sys and ErrorEvent are now module-level imports (top of file).
+        # The deferred-import rationale (keep the events package out of the
+        # dispatcher's import graph) does not apply to THIS module — it already
+        # imports EventType/TimeEvent/OrderEvent from the same package at module
+        # scope, so re-importing on every handler failure on the hot error path
+        # bought nothing.
+        exc = sys.exc_info()[1]
+        handler_name = getattr(handler, '__qualname__', repr(handler))
+        self.logger.error(
+            f'Handler {handler_name} failed on {getattr(event, "type", "UNKNOWN")}: {exc}'
+        )
+        with self._stats_lock:
+            self._stats['errors_count'] += 1
+        self.global_queue.put(ErrorEvent(
+            time=getattr(event, 'time', datetime.now()),
+            source='live_trading_system',
+            error_type=type(exc).__name__ if exc is not None else 'UnknownError',
+            error_message=str(exc) if exc is not None else 'unknown handler failure',
+            operation=handler_name,
+            severity='ERROR',
+        ))
     
-    def _update_status(self, new_status: SystemStatus, error_msg: str = None):
+    def _update_status(self, new_status: SystemStatus, error_msg: Optional[str] = None):
         """Update system status and notify via callback if available."""
         with self._status_lock:
             old_status = self._status
@@ -183,7 +231,7 @@ class LiveTradingSystem:
             except Exception as e:
                 self.logger.error(f'Error in status callback: {e}')
     
-    def _update_stats(self, event_type: str = None):
+    def _update_stats(self, event_type: Optional[str] = None):
         """Update internal statistics."""
         with self._stats_lock:
             if event_type:
@@ -408,6 +456,23 @@ class LiveTradingSystem:
         """
         return self.global_queue.qsize()
     
+    def get_signal_records(self):
+        """Return the signals captured during the live run (WR-03).
+
+        Mirrors ``TradingSystem.get_signal_records``: reads the injected
+        signal-store sink. A read-model sink read, NOT a cross-domain handler
+        call — the queue-only contract is preserved.
+        """
+        return self._signal_store.get_all()
+
+    def get_signal_store(self):
+        """Return the signal-store itself for filtered queries (WR-03).
+
+        Exposes ``by_strategy`` / ``by_ticker`` for inspection, mirroring
+        ``TradingSystem.get_signal_store``.
+        """
+        return self._signal_store
+
     def add_event(self, event):
         """
         Add an event to the global queue for processing.
