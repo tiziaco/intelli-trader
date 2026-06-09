@@ -66,6 +66,8 @@ def traced_run(tmp_path_factory):
 
     module = _load_run_backtest_module()
 
+    from itrader.core.sizing import FractionOfCash, TradingDirection
+    from itrader.strategy_handler.config import SMA_MACDConfig
     from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
     from itrader.trading_system.backtest_trading_system import TradingSystem
 
@@ -74,7 +76,14 @@ def traced_run(tmp_path_factory):
         start_date=module.START_DATE,
         end_date=module.END_DATE,
     )
-    strategy = SMA_MACD_strategy(timeframe=module.TIMEFRAME, tickers=[module.TICKER])
+    # D-01: single config-object constructor (same pins as run_backtest.py).
+    strategy = SMA_MACD_strategy(SMA_MACDConfig(
+        timeframe=module.TIMEFRAME,
+        tickers=[module.TICKER],
+        sizing_policy=FractionOfCash(Decimal("0.95")),
+        direction=TradingDirection.LONG_ONLY,
+        allow_increase=False,
+    ))
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
         user_id=1,
