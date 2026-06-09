@@ -92,22 +92,46 @@ Also retype `SignalEvent.portfolio_id` to `PortfolioId` so the whole seam is con
 
 ### WR-02: `unsubscribe_portfolio` raises an unguarded `ValueError` on an unknown id
 
-**File:** `itrader/strategy_handler/base.py:149-150`
-**Issue:** `self.subscribed_portfolios.remove(portfolio_id)` raises `ValueError` if the id is
-not subscribed. `subscribe_portfolio` does not guard against duplicate appends either, so the
-two are asymmetric: a double-subscribe silently creates two fan-out events for the same
-portfolio (duplicate `SignalEvent`s → duplicate orders), and an unsubscribe of an unknown id
-crashes the caller. Under the backtest fail-fast policy (`EventHandler._on_handler_error`
-re-raises) a stray unsubscribe would abort the run.
-**Fix:**
+**File:** `itrader/strategy_handler/base.py:146-150`
+**Issue:** Two asymmetric defects on the subscription pair:
+1. **Duplicate subscribe (priority).** `subscribe_portfolio` does an unguarded `append`, so a
+   double-subscribe silently registers the same portfolio twice → the fan-out loop
+   (`strategies_handler.py:131`) emits two `SignalEvent`s for one portfolio → duplicate orders.
+   This is the correctness half and the reason to fix WR-02 at all.
+2. **Unsubscribe crash.** `self.subscribed_portfolios.remove(portfolio_id)` raises a bare
+   `ValueError` on an unknown id; under the backtest fail-fast policy
+   (`EventHandler._on_handler_error` re-raises) a stray unsubscribe aborts the run.
+
+**Scope note:** `unsubscribe_portfolio` currently has **zero callers** (only `subscribe_portfolio`
+is invoked, once per portfolio at wiring time). `subscribed_portfolios` is iterated for the
+per-portfolio fan-out, so its order is determinism-load-bearing — it must stay an ordered
+`list`/`dict`, never a `set`.
+
+**Fix (recommended — symmetric idempotency).** The duplicate-subscribe bug *requires* an
+idempotent subscribe; the lowest-risk, set-semantics-consistent choice is an idempotent
+unsubscribe too. No new exception type. Also retypes `int → PortfolioId` (closes WR-01 on the
+same lines, and the `subscribed_portfolios` field annotation at `base.py:44`):
 ```python
 def subscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
-    if portfolio_id not in self.subscribed_portfolios:
+    if portfolio_id not in self.subscribed_portfolios:   # fixes duplicate-order bug
         self.subscribed_portfolios.append(portfolio_id)
 
 def unsubscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
-    if portfolio_id in self.subscribed_portfolios:
+    if portfolio_id in self.subscribed_portfolios:       # idempotent; no bare ValueError
         self.subscribed_portfolios.remove(portfolio_id)
+```
+
+**Alternative (strict unsubscribe).** Adopt *only* if a real `unsubscribe` caller appears where a
+mismatch is a genuine wiring bug worth aborting. Keep `subscribe` idempotent as above, but raise
+on unsubscribe-of-unknown — **reuse the existing `PortfolioNotFoundError`
+(`itrader/core/exceptions/portfolio.py:40`), do NOT define a new strategy-subscription
+exception** (speculative abstraction for a path with no consumer; the project convention is
+typed-over-bare, not grow-the-hierarchy-ahead-of-need):
+```python
+def unsubscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
+    if portfolio_id not in self.subscribed_portfolios:
+        raise PortfolioNotFoundError(portfolio_id)
+    self.subscribed_portfolios.remove(portfolio_id)
 ```
 
 ### WR-03: `SignalStorageFactory` lowercases `environment` then reports the lowercased value in the "unknown" error
