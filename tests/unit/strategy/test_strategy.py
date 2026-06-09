@@ -37,7 +37,7 @@ from itrader.core.sizing import (
 )
 from itrader.events_handler.events import BarEvent, SignalEvent
 from itrader.strategy_handler.base import Strategy
-from itrader.strategy_handler.SMA_MACD_strategy import SMA_MACD_strategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 

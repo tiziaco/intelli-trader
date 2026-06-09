@@ -2,7 +2,6 @@ from datetime import timedelta
 from queue import Queue
 from typing import Any
 
-from itrader.core.enums import OrderType
 from itrader.core.money import to_money
 from itrader.core.sizing import TradingDirection
 from itrader.price_handler.feed.base import BarFeed
@@ -78,6 +77,17 @@ class StrategiesHandler(object):
 				# event — strategies never choose the as-of time (T-06-18).
 				# Completed bars only; zero resample on this path (M5-03).
 				data = self.feed.window(ticker, strategy.timeframe, strategy.max_window, asof=event.time)
+				# D-15 framework warmup short-circuit: skip the tick when fewer
+				# than the strategy's declared warmup of completed bars are
+				# visible. This replaces the in-strategy guard removed from
+				# SMA_MACD (`if len(bars) < self.max_window: return None`). It
+				# guards on strategy.warmup (a dedicated threshold), NOT
+				# max_window (fetch width): SMA_MACD sets warmup == its old
+				# guard value so the firing tick is byte-identical (HARD-04,
+				# RESEARCH Pitfall 1), while count-based canaries keep warmup=0
+				# with a wide max_window.
+				if len(data) < strategy.warmup:
+					continue
 				intent = strategy.generate_signal(ticker, data)
 				if intent is None:
 					continue
@@ -92,7 +102,7 @@ class StrategiesHandler(object):
 				for portfolio_id in strategy.subscribed_portfolios:
 					signal = SignalEvent(
 						time=event.time,
-						order_type=OrderType(strategy.order_type),
+						order_type=strategy.order_type,
 						ticker=ticker,
 						action=intent.action,
 						price=to_money(bar.close),

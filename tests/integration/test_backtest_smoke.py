@@ -15,7 +15,7 @@ Carries the ``unit`` marker automatically via the ``test_smoke`` path (auto-mark
 in the root conftest) — do NOT hand-add markers.
 """
 
-from itrader.strategy_handler.SMA_MACD_strategy import SMA_MACD_strategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
 
 
 # Golden-run configuration (D-03/D-04/D-06).
