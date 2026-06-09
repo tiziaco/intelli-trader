@@ -101,7 +101,10 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   2. `order_type` is the `OrderType` enum end-to-end — the stringly-typed `"market"` is removed.
   3. Re-running the golden master after the refactor is byte-exact (134 trades / `final_equity 46189.87730727451`), proving zero drift; the pure-alpha D-12 contract is intact (pydantic at construction only, `generate_signal` stays pure pandas).
   4. Strategy-generated signals are persisted as typed records (strategy id, ticker, action, time, sizing/sltp declarations, config snapshot) and are queryable for post-run inspection and E2E assertions.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 05-01-PLAN.md — Foundation primitives: SignalId + generate_signal_id (D-10), Timeframe enum (D-06), BaseStrategyConfig/SMA_MACDConfig/EmptyStrategyConfig + validators [HARD-01, HARD-02]
+- [ ] 05-02-PLAN.md — Config-constructor refactor (D-01), order_type enum end-to-end + boundary-parse collapse (D-04/FL-04), framework warmup guard (D-15), base __str__/__repr__ (D-14), strategy relocation (D-13), call-site migration [HARD-03, HARD-04]
+- [ ] 05-03-PLAN.md — SignalRecord entity + pluggable SignalStore seam (D-07/D-08), per-intent capture pre-fan-out (D-09), composition-root injection + post-run accessor (D-11/D-12), golden-run SIG-02 assertion [SIG-01, SIG-02]
 
 ### Phase 6: Order Matching Scenarios
 **Goal**: Give the resting-order book, bracket/OCO lifecycle, and trigger/gap matching their first end-to-end golden coverage — each a tiny hand-verified scenario then regression-locked.
@@ -157,7 +160,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 2. Data Ingestion | v1.1 | 1/1 | Complete   | 2026-06-09 |
 | 3. Minimal Real Universe | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 4. E2E Harness & Framework | v1.1 | 3/3 | Complete   | 2026-06-09 |
-| 5. Strategy Interface Hardening & Signal Storage | v1.1 | 0/0 | Not started | - |
+| 5. Strategy Interface Hardening & Signal Storage | v1.1 | 0/3 | Planned    | - |
 | 6. Order Matching Scenarios | v1.1 | 0/0 | Not started | - |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 0/0 | Not started | - |
 | 8. Admission, Position Management & Cash Edges | v1.1 | 0/0 | Not started | - |
