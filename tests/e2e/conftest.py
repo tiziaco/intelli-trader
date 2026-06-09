@@ -178,6 +178,11 @@ def _build_and_run(spec):
     for strategy in spec.strategies:
         system.strategies_handler.add_strategy(strategy)
 
+    # IN-03: fail with an explanatory message (consistent with _load_spec's
+    # spec-shape failures) instead of a bare IndexError from portfolio_ids[0]
+    # below when a spec declares no portfolios.
+    assert spec.portfolios, "scenario spec must declare at least one portfolio"
+
     portfolio_ids = []
     for pf in spec.portfolios:
         pid = system.portfolio_handler.add_portfolio(
