@@ -24,7 +24,7 @@
 - [x] **UNIV-02**: The engine correctly handles a ticker that lists mid-backtest and assets with differing end dates — no crash, no look-ahead, absent bars produce no fill.
 
 ### E2E Test Framework (E2E)
-- [ ] **E2E-01**: Dedicated `tests/e2e/` tree, subsystem-grouped, with a registered `e2e` marker (in `pyproject.toml`), folder-derived auto-marking, and a `make test-e2e` target.
+- [x] **E2E-01**: Dedicated `tests/e2e/` tree, subsystem-grouped, with a registered `e2e` marker (in `pyproject.toml`), folder-derived auto-marking, and a `make test-e2e` target.
 - [x] **E2E-02**: A shared harness (`tests/e2e/conftest.py`) runs the full engine on a given `(strategy, data)` and diffs the result (trades/equity/summary) against that scenario's golden fixtures.
 - [x] **E2E-03**: Each scenario is a self-contained leaf folder: its purpose-built strategy + frozen golden fixtures, runnable warning-clean under `filterwarnings=["error"]`.
 - [x] **E2E-04**: Every scenario oracle is hand-verified for correctness once before it is frozen.
@@ -122,7 +122,7 @@
 | INGEST-03 | Phase 2 | Complete |
 | UNIV-01 | Phase 3 | Complete |
 | UNIV-02 | Phase 3 | Complete |
-| E2E-01 | Phase 4 | Pending |
+| E2E-01 | Phase 4 | Complete |
 | E2E-02 | Phase 4 | Complete |
 | E2E-03 | Phase 4 | Complete |
 | E2E-04 | Phase 4 | Complete |

@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: executing
-last_updated: "2026-06-09T14:53:21.167Z"
+status: ready_to_plan
+last_updated: 2026-06-09T15:06:03.029Z
 last_activity: 2026-06-09
 progress:
   total_phases: 12
@@ -11,6 +11,7 @@ progress:
   total_plans: 9
   completed_plans: 9
   percent: 33
+stopped_at: Phase 04 complete (3/3) — ready to discuss Phase 999.2
 ---
 
 # Project State
@@ -20,20 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 04 — e2e-harness-framework
+**Current focus:** Phase 999.2 — nplus2 persistence and performance
 
 ## Current Position
 
-Phase: 04 (e2e-harness-framework) — COMPLETE (3 of 3 plans)
-Plan: 3 of 3 complete
-Status: Phase 04 complete — ready to plan Phase 05
-Last activity: 2026-06-09 -- Completed 04-03 (canary E2E scenario, hand-verified golden lock)
+Phase: 999.2 of 3 (nplus2 persistence and performance)
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-09
 
 ## Performance Metrics
 
 **Velocity (v1.1):**
 
-- Total plans completed: 9
+- Total plans completed: 12
 - Average duration: — min
 - Total execution time: 0.0 hours
 
