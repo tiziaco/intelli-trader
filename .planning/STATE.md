@@ -73,7 +73,7 @@ Program-level items out of scope for v1.1, with their target milestone:
 | D-margin | Margin/liquidation model, shorts, leverage, levered Kelly, trailing stop, real pair trading | Deferred | v1.2 |
 | D-compliance | Compliance layer (long_only/short_only enforcement) | Deferred | v1.2 (with shorts) |
 | D-sql | SQL persistence backends (order/price/reporting/config) | Deferred | v1.3 |
-| D-screener | Production screener / ranking / rebalance loop (minimal `membership` IS in v1.1 Phase 3) | Deferred | v1.3 |
+| D-screener | Production screener / ranking / rebalance loop (minimal `membership` IS in v1.1 Phase 3) | Deferred | v1.4 |
 | D-live | Live mode (streaming, TradingInterface modify/cancel, live threading, secrets) | Deferred | v1.4 |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions (forex/equities/ETF) | Deferred | indefinite (crypto-first) |
 | D-oanda | OANDA + non-crypto adapters | Deferred | with D-multiasset |

@@ -42,7 +42,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 
 > **NOTE — current map already exists (do NOT regenerate); one input is historical.** The `gsd-map-codebase` output — `CONCERNS.md` + the 6 map files (`ARCHITECTURE/STACK/STRUCTURE/CONVENTIONS/TESTING`) — was refreshed at v1.0 close (Analysis Date 2026-06-08), *after* the last `itrader/` commit (`017bf72`); no engine code has changed since, so it is current. CLAR-01 = **harvest the fix-list from `CONCERNS.md`** (it already records only concerns still present post-refactor) plus the fresh map files — NOT a new `gsd-map-codebase` run; spot-check only if a doc looks stale.
 > **Do NOT use `ARCHITECTURE-REVIEW.md` as a fix-list source** — it is a PRE-v1.0 historical snapshot (2026-06-04); most of its 40 findings were fixed in v1.0. Reference only, no finding-by-finding re-audit.
-> Also pull forward any items `COVERAGE-INDEX.md` tagged for the N+1 / map-codebase cleanup (e.g. #7/#37 — bare `raise ValueError` in `portfolio.py`, off the golden path).
+> Also pull forward the residual cleanup items harvested from the archived `milestones/v1.0-COVERAGE-INDEX.md`: #7/#37 (bare `raise ValueError` in `portfolio.py`, off the golden path) and #10 (`portfolio_id: int` annotation carry-over on Signal/Order/Fill events — runtime-correct, annotation-only; may instead land in Phase 5 retype).
 
 **Depends on**: Nothing (first phase — pure analysis, blocks nothing; informs all subsequent phases)
 **Requirements**: CLAR-01, CLAR-02

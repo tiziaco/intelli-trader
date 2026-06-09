@@ -109,7 +109,7 @@ must import, run, and yield trustworthy results.
 
 - **Authoritative analysis already exists.** Do not re-derive requirements. The source of truth is
   four planning docs: `.planning/REFACTOR-BRIEF.md` (goal/scope/locked decisions/golden-master
-  discipline), `.planning/COVERAGE-INDEX.md` (all 105 items → milestone, the coverage contract),
+  discipline), `.planning/milestones/v1.0-COVERAGE-INDEX.md` (the v1.0 coverage ledger — all 105 items → milestone; archived/frozen, superseded by `REQUIREMENTS.md` for active v1.1 work),
   `.planning/codebase/ARCHITECTURE-REVIEW.md` (40 design findings #1–40), `.planning/codebase/CONCERNS.md`
   (65 concrete defects).
 - **Coverage contract.** Every Section A finding (#1–40) and Section B defect (TD/KB/SEC/PERF/FR/SL/DEP/MF/TC)
@@ -169,7 +169,7 @@ This document evolves at phase transitions and milestone boundaries.
 **After each phase transition** (via `/gsd-transition`):
 1. Requirements invalidated? → Move to Out of Scope with reason
 2. Requirements validated? → Move to Validated with phase reference
-3. New requirements emerged? → Add to Active (and log deltas in COVERAGE-INDEX §E)
+3. New requirements emerged? → Add to Active (track in `REQUIREMENTS.md`; the v1.0 COVERAGE-INDEX §E delta log is archived)
 4. Decisions to log? → Add to Key Decisions
 5. "What This Is" still accurate? → Update if drifted
 
