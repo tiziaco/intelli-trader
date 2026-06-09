@@ -62,7 +62,8 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   1. Running the committed normalization script converts a provider CSV (split `date`+`time`, lowercase columns) into the golden schema (single tz-aware `Open time` + `Open/High/Low/Close/Volume`) and is re-runnable to byte-identical output.
   2. ETHUSD, SOLUSD, and AAVEUSD datasets are committed in the normalized golden schema alongside BTCUSD.
   3. `CsvPriceStore` loads all four datasets with no code change (no run-path schema-detection branch added).
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 02-01-PLAN.md — Normalize ETH/SOL/AAVE to the golden schema (relocate raw inputs, committed re-runnable script + make target, generate & validate the 3 CSVs, prove CsvPriceStore round-trip) [INGEST-01, INGEST-02, INGEST-03]
 
 ### Phase 3: Minimal Real Universe
 **Goal**: Replace the membership stub with a real `membership`-from-availability primitive so the engine derives the active ticker set at time T from data, and prove it survives mid-run listings and differing end dates.
@@ -147,7 +148,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Codebase Map & Clarity Baseline | v1.1 | 2/2 | Complete   | 2026-06-09 |
-| 2. Data Ingestion | v1.1 | 0/0 | Not started | - |
+| 2. Data Ingestion | v1.1 | 0/1 | Planned | - |
 | 3. Minimal Real Universe | v1.1 | 0/0 | Not started | - |
 | 4. E2E Harness & Framework | v1.1 | 0/0 | Not started | - |
 | 5. Strategy Interface Hardening & Signal Storage | v1.1 | 0/0 | Not started | - |
