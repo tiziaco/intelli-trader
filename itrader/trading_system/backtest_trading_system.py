@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from functools import reduce
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
@@ -189,12 +189,20 @@ class TradingSystem(object):
 		for strategy in self.strategies_handler.strategies:
 			self.feed.precompute(strategy.tickers, strategy.timeframe)
 
-	def _run_backtest(self) -> None:
+	def _run_backtest(self, on_tick: Optional[Callable[["TradingSystem", Any], None]] = None) -> None:
 		"""
 		Carries out an for-loop that polls the
 		events queue and directs each event to either the
 		strategy component of the execution handler. The
-		loop continue until the time series is completed
+		loop continue until the time series is completed.
+
+		``on_tick`` (Phase 6, D-06) is an OPTIONAL per-bar callback the E2E
+		harness uses to play the OPERATOR (MODIFY/CANCEL a resting order via the
+		REAL ``order_handler`` API — D-05). It is invoked AFTER ``process_events``
+		+ ``record_metrics`` (post-bar) so an amendment lands BEFORE the next
+		bar's matching (Assumption A2). The default ``None`` invokes nothing and
+		changes ZERO bytes on the production path — ``scripts/run_backtest.py``
+		never passes it, so the BTCUSD oracle stays byte-exact (oracle-dark).
 		"""
 
 		self.logger.info('    RUNNING BACKTEST   ')
@@ -211,12 +219,17 @@ class TradingSystem(object):
 			self.event_handler.process_events()
 			for portfolio in self.portfolio_handler.get_active_portfolios():
 				portfolio.record_metrics(time_event.time)
+			# Phase 6 (D-06): post-bar operator hook. Default None = byte-exact
+			# (oracle-dark); only the E2E harness wires it from spec.actions.
+			if on_tick is not None:
+				on_tick(self, time_event)
 		self.logger.info('    BACKTEST COMPLETED   ')
 		end_time = datetime.now()  # Capture end time
 		duration = end_time - start_time
 		print("Backtest duration:", duration)
 
-	def run(self, print_summary: bool = True) -> None:
+	def run(self, print_summary: bool = True,
+	        on_tick: Optional[Callable[["TradingSystem", Any], None]] = None) -> None:
 		"""
 		Runs the backtest and, when ``print_summary`` is True (the default),
 		prints one formatted D-15 metrics block per registered portfolio at the
@@ -224,9 +237,13 @@ class TradingSystem(object):
 		ONLY: the engine writes NO files — artifact serialization remains
 		``scripts/run_backtest.py``'s job, and stdout printing changes no
 		``output/`` artifact bytes (oracle-inert).
+
+		``on_tick`` (Phase 6, D-06) forwards to ``_run_backtest`` — an OPTIONAL
+		per-bar operator hook for the E2E harness. Default ``None`` is byte-exact
+		(oracle-dark); ``scripts/run_backtest.py`` never passes it.
 		"""
 		self._initialise_backtest_session()
-		self._run_backtest()
+		self._run_backtest(on_tick=on_tick)
 
 		if print_summary:
 			self._print_metrics_summary()
