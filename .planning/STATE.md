@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: ready_to_plan
-last_updated: 2026-06-09T15:06:03.029Z
+status: planning
+last_updated: "2026-06-09T16:21:48.721Z"
 last_activity: 2026-06-09
 progress:
   total_phases: 12
@@ -11,7 +11,6 @@ progress:
   total_plans: 9
   completed_plans: 9
   percent: 33
-stopped_at: Phase 04 complete (3/3) — ready to discuss Phase 999.2
 ---
 
 # Project State
@@ -94,8 +93,8 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 
 ## Session Continuity
 
-Last session: 2026-06-09T14:53:21.159Z
-Resume file: None
+Last session: 2026-06-09T16:21:48.712Z
+Resume file: .planning/phases/05-strategy-interface-hardening-signal-storage/05-CONTEXT.md
 
 ## Operator Next Steps
 
