@@ -2,7 +2,7 @@
 phase: 05-strategy-interface-hardening-signal-storage
 reviewed: 2026-06-09T00:00:00Z
 depth: standard
-files_reviewed: 22
+files_reviewed: 26
 files_reviewed_list:
   - itrader/core/enums/__init__.py
   - itrader/core/enums/trading.py
@@ -22,216 +22,249 @@ files_reviewed_list:
   - itrader/trading_system/backtest_trading_system.py
   - itrader/trading_system/live_trading_system.py
   - scripts/run_backtest.py
+  - tests/e2e/strategies/single_market_buy.py
+  - tests/integration/test_backtest_oracle.py
+  - tests/integration/test_backtest_smoke.py
+  - tests/integration/test_reservation_inertness.py
+  - tests/integration/test_universe_spans.py
   - tests/unit/strategy/test_signal_store.py
   - tests/unit/strategy/test_strategy_config.py
   - tests/unit/strategy/test_strategy.py
 findings:
   critical: 0
-  warning: 4
+  warning: 5
   info: 6
-  total: 10
+  total: 11
 status: issues_found
 ---
 
-# Phase 5: Code Review Report
+# Phase 05: Code Review Report
 
-**Reviewed:** 2026-06-09
+**Reviewed:** 2026-06-09T00:00:00Z
 **Depth:** standard
-**Files Reviewed:** 22
+**Files Reviewed:** 26
 **Status:** issues_found
 
 ## Summary
 
-Phase 5 hardened the strategy interface (single pydantic config constructor, `OrderType`
-enum end-to-end, warmup guard relocated to the handler, strategies relocated to
-`strategies/`) and added a pluggable signal-storage seam. The architectural shape is sound:
-the config contract is frozen and validates loudly, the `SignalStore` seam mirrors the
-order-storage seam faithfully, per-intent pre-fan-out capture is implemented correctly
-(verified one-record-per-intent against the fan-out loop), and the warmup short-circuit is
-behaviorally equivalent to the removed in-strategy guard (`warmup == max_window == max(long_window, 100)`
-for SMA_MACD), so the golden byte-exactness claim holds for the result-bearing path.
+Phase 5 hardens the strategy interface (typed pydantic config, pure-alpha
+`generate_signal` contract, `OrderType`/`Timeframe`/`TradingDirection` enums)
+and adds the `SignalStore` capture seam mirroring the order-storage seam. The
+core money/Decimal discipline, frozen-config immutability, and the queue-only
+read-model boundary are correctly respected. The signal-store seam is clean and
+well-tested.
 
-No correctness defect that would alter the golden run was found, so there are **no
-BLOCKERs**. The defects found are type-contract violations that contradict `mypy --strict`
-(which covers `base.py` and `strategies_handler.py`) and the project's typed-ID discipline,
-plus dead imports and quality issues. The most material is the `int`-typed portfolio-id
-seam that at runtime always carries a `PortfolioId` (UUID) — a standing mismatch that the
-Phase 5 rewrite of `base.py` re-stamped rather than corrected.
+No BLOCKER-class correctness or security defects were found in the reviewed
+files. The findings below are robustness and quality issues. The most material
+ones are the subscription API asymmetry (`unsubscribe_portfolio` can raise on a
+benign double-call and `subscribe_portfolio` allows duplicate fan-out), a silent
+overwrite-on-collision in the in-memory store that contradicts the documented
+"insertion order" contract, the live system dropping the signal store on the
+floor (no `self` retention, no accessor — a write-only accumulation), and the
+live event loop bypassing the documented publish-and-continue error seam.
+
+The golden backtest path (`SMA_MACD` / `FractionOfCash(0.95)` / `LONG_ONLY`) is
+oracle-locked by `test_backtest_oracle.py`; the relocated SMA_MACD exit-branch
+logic is behavior-preserving and out of scope for change here, but one latent
+structural oddity is flagged for awareness (IN-05).
 
 ## Narrative Findings (AI reviewer)
 
 ## Warnings
 
-### WR-01: `subscribe_portfolio` / `subscribed_portfolios` typed `int` but always receives a `PortfolioId` (UUID) at runtime
-
-**File:** `itrader/strategy_handler/base.py:44,146-150`
-**Issue:** `self.subscribed_portfolios: list[int]` and `subscribe_portfolio(self, portfolio_id: int)`
-declare `int`, but every real call site subscribes the return of
-`PortfolioHandler.add_portfolio(...) -> PortfolioId` (a `uuid.UUID`) — see
-`scripts/run_backtest.py:89-95` (`portfolio_id = system.portfolio_handler.add_portfolio(...)`
-then `strategy.subscribe_portfolio(portfolio_id)`). The value then flows unchanged into
-`SignalEvent(portfolio_id=portfolio_id)` at `strategies_handler.py:141`, whose field is also
-`int` (`events/signal.py:84`). `base.py` is in scope for `mypy --strict` (only
-`strategy_handler.my_strategies.*` and `live_trading_system` are overridden). This is a real
-type-contract violation and undermines the D-12/D-13 single-UUID-ID discipline — the id is a
-nominal `PortfolioId`, not an `int`.
-**Fix:**
-```python
-from itrader.core.ids import PortfolioId
-
-# base.py
-self.subscribed_portfolios: list[PortfolioId] = []
-
-def subscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
-    self.subscribed_portfolios.append(portfolio_id)
-
-def unsubscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
-    self.subscribed_portfolios.remove(portfolio_id)
-```
-Also retype `SignalEvent.portfolio_id` to `PortfolioId` so the whole seam is consistent.
-
-### WR-02: `unsubscribe_portfolio` raises an unguarded `ValueError` on an unknown id
+### WR-01: `unsubscribe_portfolio` raises `ValueError` on an already-unsubscribed id; `subscribe_portfolio` allows duplicate fan-out
 
 **File:** `itrader/strategy_handler/base.py:146-150`
-**Issue:** Two asymmetric defects on the subscription pair:
-1. **Duplicate subscribe (priority).** `subscribe_portfolio` does an unguarded `append`, so a
-   double-subscribe silently registers the same portfolio twice → the fan-out loop
-   (`strategies_handler.py:131`) emits two `SignalEvent`s for one portfolio → duplicate orders.
-   This is the correctness half and the reason to fix WR-02 at all.
-2. **Unsubscribe crash.** `self.subscribed_portfolios.remove(portfolio_id)` raises a bare
-   `ValueError` on an unknown id; under the backtest fail-fast policy
-   (`EventHandler._on_handler_error` re-raises) a stray unsubscribe aborts the run.
-
-**Scope note:** `unsubscribe_portfolio` currently has **zero callers** (only `subscribe_portfolio`
-is invoked, once per portfolio at wiring time). `subscribed_portfolios` is iterated for the
-per-portfolio fan-out, so its order is determinism-load-bearing — it must stay an ordered
-`list`/`dict`, never a `set`.
-
-**Fix (recommended — symmetric idempotency).** The duplicate-subscribe bug *requires* an
-idempotent subscribe; the lowest-risk, set-semantics-consistent choice is an idempotent
-unsubscribe too. No new exception type. Also retypes `int → PortfolioId` (closes WR-01 on the
-same lines, and the `subscribed_portfolios` field annotation at `base.py:44`):
+**Issue:** The pair is asymmetric and fragile:
 ```python
-def subscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
-    if portfolio_id not in self.subscribed_portfolios:   # fixes duplicate-order bug
+def subscribe_portfolio(self, portfolio_id: int) -> None:
+    self.subscribed_portfolios.append(portfolio_id)   # no dedup
+def unsubscribe_portfolio(self, portfolio_id: int) -> None:
+    self.subscribed_portfolios.remove(portfolio_id)   # raises ValueError if absent
+```
+`list.append` allows the same `portfolio_id` to be subscribed twice — which
+fans a signal out to that portfolio TWICE in `calculate_signals` (the fan-out
+loops `for portfolio_id in strategy.subscribed_portfolios`), producing two
+`SignalEvent`s and two orders for one intent. Conversely `list.remove` raises
+`ValueError` on a double-unsubscribe or an unsubscribe of a never-subscribed id.
+In live mode (publish-and-continue) this surfaces as a noisy `ErrorEvent`; a
+defensive caller cannot make `unsubscribe` idempotent.
+**Fix:** Make both operations idempotent (or back the field with a set):
+```python
+def subscribe_portfolio(self, portfolio_id: int) -> None:
+    if portfolio_id not in self.subscribed_portfolios:
         self.subscribed_portfolios.append(portfolio_id)
 
-def unsubscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
-    if portfolio_id in self.subscribed_portfolios:       # idempotent; no bare ValueError
+def unsubscribe_portfolio(self, portfolio_id: int) -> None:
+    if portfolio_id in self.subscribed_portfolios:
         self.subscribed_portfolios.remove(portfolio_id)
 ```
 
-**Alternative (strict unsubscribe).** Adopt *only* if a real `unsubscribe` caller appears where a
-mismatch is a genuine wiring bug worth aborting. Keep `subscribe` idempotent as above, but raise
-on unsubscribe-of-unknown — **reuse the existing `PortfolioNotFoundError`
-(`itrader/core/exceptions/portfolio.py:40`), do NOT define a new strategy-subscription
-exception** (speculative abstraction for a path with no consumer; the project convention is
-typed-over-bare, not grow-the-hierarchy-ahead-of-need):
+### WR-02: `InMemorySignalStore.add` silently overwrites on `signal_id` key collision, breaking the documented "insertion order / one record per intent" contract
+
+**File:** `itrader/strategy_handler/storage/in_memory_storage.py:33-39`
+**Issue:** `add` is a bare dict write `self._by_id[record.signal_id] = record`.
+The class docstring and `base.py` promise `get_all()` returns records "in
+insertion order" and one record per intent (D-09). If a caller ever re-`add`s a
+`SignalRecord` whose `signal_id` already exists (e.g. a record constructed with
+an explicit `signal_id=` rather than the defaulted UUIDv7, or a replayed
+record), the dict write SILENTLY replaces the prior record AND moves it to the
+end of insertion order — corrupting both the count and the ordering invariant
+the tests rely on. The seam advertises a queryable append-only sink but
+implements a mutable upsert with no guard. (This is about idempotency of
+explicit ids, not RNG collision odds.)
+**Fix:** Reject a duplicate id, or document the upsert semantics honestly:
 ```python
-def unsubscribe_portfolio(self, portfolio_id: PortfolioId) -> None:
-    if portfolio_id not in self.subscribed_portfolios:
-        raise PortfolioNotFoundError(portfolio_id)
-    self.subscribed_portfolios.remove(portfolio_id)
+def add(self, record: SignalRecord) -> None:
+    if record.signal_id in self._by_id:
+        raise ValueError(f"duplicate signal_id: {record.signal_id!r}")
+    self._by_id[record.signal_id] = record
 ```
 
-### WR-03: `SignalStorageFactory` lowercases `environment` then reports the lowercased value in the "unknown" error
+### WR-03: Live system constructs a `SignalStore` but neither retains it on `self` nor exposes an accessor — captured signals are permanently unreachable
 
-**File:** `itrader/strategy_handler/storage/storage_factory.py:48,59-63`
-**Issue:** `environment = environment.lower()` mutates the parameter before the `else` branch
-builds the error message with the already-lowercased value. A caller who passes `"PROD"` gets
-`"Unknown environment: prod"`, which obscures what they actually typed and makes the loud
-error less useful for debugging a misconfiguration. The `'live'` branch has the same problem.
-**Fix:**
+**File:** `itrader/trading_system/live_trading_system.py:110-111`
+**Issue:**
 ```python
-normalized = environment.lower()
-if normalized in ('backtest', 'test'):
-    return InMemorySignalStore()
-elif normalized == 'live':
-    raise ConfigurationError("environment", environment, "...deferred...")
-else:
-    raise ConfigurationError(
-        "environment", environment,
-        f"Unknown environment: {environment!r}. Supported: 'backtest', 'test'")
+signal_store = SignalStorageFactory.create('backtest')
+self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, signal_store)
+```
+The store is a local variable. The backtest system holds it as
+`self._signal_store` and exposes `get_signal_records()` / `get_signal_store()`
+(backtest_trading_system.py:102, 234-257); the live system does neither. Every
+`SignalRecord` the handler captures during a live run accumulates in a heap
+object that nothing can ever read — a growing, write-only structure with no
+consumer (a slow, unbounded accumulation). A live integrator who expects
+symmetry with backtest will find no way to inspect captured signals. Either
+retain + expose it, or (if signal capture is genuinely backtest-only in v1.1)
+do not pay the capture cost in live mode.
+**Fix:** Retain and expose it, mirroring the backtest system:
+```python
+self._signal_store = SignalStorageFactory.create('backtest')
+self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, self._signal_store)
+...
+def get_signal_records(self):
+    return self._signal_store.get_all()
 ```
 
-### WR-04: Live system reaches across the boundary into the private `EventHandler._dispatch`
+### WR-04: `get_strategies_universe` shadows the builtin `tuple` and carries a dead-but-wrong pair branch inconsistent with the `list[str]` config contract
 
-**File:** `itrader/trading_system/live_trading_system.py:258`
-**Issue:** The processing loop calls `self.event_handler._dispatch(event)` — a private method —
-instead of the public `process_events()`. The WR-09 comment explains the intent (avoid the
-get→put-back→process re-ordering), but bypassing the public API means the loop no longer
-benefits from any draining/error-routing the public method may perform, and it couples the
-live loop to a private contract that can change without notice. `live_trading_system` is
-mypy-overridden (D-live), so this will not fail the gate, but it is a robustness/coupling
-defect in shipping code. Note also that `process_events()` exists precisely to drain the
-whole queue per tick; dispatching exactly one event per `get()` is correct for the live
-streaming model but should go through a public, documented entry point.
-**Fix:** Add a public single-event entry point to `EventHandler` (e.g. `dispatch_one(event)`)
-that wraps `_dispatch` with the same error seam, and call that from the live loop.
+**File:** `itrader/strategy_handler/strategies_handler.py:160-177`
+**Issue:** Two problems in one comprehension:
+```python
+if strategy.tickers and isinstance(strategy.tickers[0], tuple):
+    traded_tickers += [value for tuple in strategy.tickers for value in tuple]
+```
+(1) The loop variable `tuple` shadows the builtin `tuple` — a readability/quality
+defect that would break any later `tuple(...)` use in scope. (2) The pair/single
+decision is made SOLELY from `strategy.tickers[0]`: a mixed list (pair tuple at
+index 0, plain strings later) would iterate a `str` character-by-character. The
+declared contract in `config.py` is `tickers: list[str]` — tuples are not even
+representable under the declared type, so the `isinstance(..., tuple)` branch
+can never legitimately fire for a config-built strategy, yet it remains as a
+trap.
+**Fix:** Rename the loop variable and align with the declared `list[str]`
+contract:
+```python
+for strategy in self.strategies:
+    if strategy.tickers and isinstance(strategy.tickers[0], tuple):
+        traded_tickers += [sym for pair in strategy.tickers for sym in pair]
+    else:
+        traded_tickers += strategy.tickers
+```
+
+### WR-05: `LiveTradingSystem` event loop calls private `_dispatch` and swallows handler exceptions, bypassing the documented publish-and-continue `ErrorEvent` seam
+
+**File:** `itrader/trading_system/live_trading_system.py:258-287`
+**Issue:** The loop dispatches `self.event_handler._dispatch(event)` inside a
+broad `try/except Exception` that logs, increments `errors_count`, and
+`continue`s. The documented live error policy is publish-and-continue:
+`_on_handler_error` should emit an `ErrorEvent` and keep draining (CLAUDE.md).
+By calling the private `_dispatch` directly rather than the public
+`process_events()`, the loop never runs the `_on_handler_error` publication —
+a failed handler is reduced to a log line and a counter, and no `ErrorEvent` is
+queued for `status_callback`/ERROR-route consumers. A persistent per-event
+failure (e.g. an unrouted type hitting `_dispatch`'s `NotImplementedError`)
+becomes an invisible hot spin. Reaching into a private method is also an
+encapsulation break.
+**Fix:** Route through the public processing seam so `_on_handler_error` runs,
+or explicitly emit an `ErrorEvent` in the `except` block before `continue`. Stop
+calling the private `_dispatch`.
 
 ## Info
 
-### IN-01: Dead imports in `live_trading_system.py`
+### IN-01: `_update_status` / `_update_stats` annotate `str = None` defaults (type lie under the union)
 
-**File:** `itrader/trading_system/live_trading_system.py:4,5,26`
-**Issue:** `import time` (line 4), `import json` (line 5), and `TimeEvent` / `OrderEvent`
-(line 26) are never referenced. Only `EventType` from line 26 is used (line 267).
-**Fix:** Remove the unused imports: `import time`, `import json`, and reduce the events
-import to `from itrader.events_handler.events import EventType`.
-
-### IN-02: `_update_status` / `_update_stats` use `str = None` defaults instead of `Optional[str]`
-
-**File:** `itrader/trading_system/live_trading_system.py:167,191`
+**File:** `itrader/trading_system/live_trading_system.py:167, 191`
 **Issue:** `def _update_status(self, new_status, error_msg: str = None)` and
-`_update_stats(self, event_type: str = None)` annotate a non-optional `str` with a `None`
-default. The module is mypy-overridden so the gate stays green, but the annotation is
-incorrect and misleads readers/IDEs.
-**Fix:** `error_msg: Optional[str] = None` and `event_type: Optional[str] = None`.
+`def _update_stats(self, event_type: str = None)` declare a `str` parameter with
+a `None` default — the value can be `None` but the annotation forbids it. Masked
+only because the live module is in the mypy-deferred override set; the
+annotation still misleads a reader.
+**Fix:** `error_msg: Optional[str] = None` / `event_type: Optional[str] = None`.
 
-### IN-03: Loop variable shadows the `tuple` builtin
+### IN-02: `SignalStorageFactory` rejects deferred `'live'` with `ConfigurationError` while the order-storage path next to it uses `NotImplementedError` — divergent deferred-backend contract
 
-**File:** `itrader/strategy_handler/strategies_handler.py:173`
-**Issue:** `[value for tuple in strategy.tickers for value in tuple]` binds the comprehension
-variable to the name `tuple`, shadowing the builtin within the comprehension scope. Pre-existing,
-but it lives in a reviewed/modified file and is a readability/correctness hazard.
-**Fix:** Rename to `pair`: `[value for pair in strategy.tickers for value in pair]`.
+**File:** `itrader/strategy_handler/storage/storage_factory.py:52-57`, `itrader/trading_system/live_trading_system.py:124-131`
+**Issue:** The signal factory raises `ConfigurationError` for `'live'`, but the
+order-storage fallback (live system) catches only `NotImplementedError`. The two
+storage seams encode "not yet implemented" with different exception types. A
+future live wiring of the signal store would need to catch `ConfigurationError`
+for signals but `NotImplementedError` for orders — an inconsistency that invites
+an uncaught exception.
+**Fix:** Align the deferred-backend exception type across both storage
+factories, or document the divergence at the live call sites.
 
-### IN-04: Stale "string order_type" comment after the enum migration
+### IN-03: `to_dict()` serializes `strategy_id` (a `uuid.UUID`) without stringifying — JSON-unsafe
 
-**File:** `itrader/strategy_handler/strategies_handler.py:124-125`
-**Issue:** The comment block above the fan-out reads "D-05 boundary parse: the strategy
-string order_type is converted to the enum HERE" but Phase 5 made `order_type` an
-`OrderType` enum end-to-end (`base.py:41`, `config.py:50`), and the code now assigns
-`order_type=strategy.order_type` directly with no string conversion. The comment describes a
-seam that no longer exists and will mislead the next reader.
-**Fix:** Update the comment to state that `order_type` is already an `OrderType` enum read off
-the strategy; remove the "string ... converted to the enum HERE" claim.
+**File:** `itrader/strategy_handler/base.py:72-88`
+**Issue:** `to_dict` returns `"strategy_id": self.strategy_id` where
+`strategy_id` is a `StrategyId` (`uuid.UUID` at runtime). `order_type` /
+`direction` are correctly `.value`-serialized and policies are `repr`-ed, but
+the raw UUID is left as a `UUID` object, so `json.dumps(strategy.to_dict())`
+raises `TypeError: Object of type UUID is not JSON serializable`. The method
+name implies a serialization-edge dict.
+**Fix:** `"strategy_id": str(self.strategy_id)`.
 
-### IN-05: `signal_store` parameter is unused in the live system after construction
+### IN-04: `subscribed_portfolios` typed `list[int]` but the system's portfolio identity is `PortfolioId` (UUID)
 
-**File:** `itrader/trading_system/live_trading_system.py:110-111`
-**Issue:** `signal_store = SignalStorageFactory.create('backtest')` is constructed and injected
-into the handler, but unlike the backtest system (which holds `self._signal_store` and exposes
-`get_signal_records()` / `get_signal_store()`), the live system keeps no reference and offers
-no post-run accessor. Captured signals are therefore unreachable in live mode. This is
-consistent with the "D-live deferred" posture, but worth recording so the gap is intentional,
-not forgotten.
-**Fix:** When D-live lands, hold the store on `self._signal_store` and add accessors mirroring
-the backtest system; until then, a one-line comment noting the deliberate drop suffices.
+**File:** `itrader/strategy_handler/base.py:44, 146-150`
+**Issue:** `self.subscribed_portfolios: list[int]` and `subscribe_portfolio(...,
+portfolio_id: int)` declare integer portfolio ids, but `core/ids.py` defines
+`PortfolioId = NewType("PortfolioId", uuid.UUID)`. Tests pass plain ints, so the
+in-memory backtest works, but the type contract diverges from the canonical
+UUID scheme and will mismatch when the strategy layer is wired to real
+portfolio ids.
+**Fix:** Use `PortfolioId` (or document why the strategy layer keeps integer
+portfolio handles distinct from the UUID scheme).
 
-### IN-06: `List`/`Dict`/`Optional` typing imports could use builtin generics for consistency
+### IN-05: Relocated SMA_MACD exit branch (`sell`) is gated by the bullish trend filter — latent logic oddity (behavior-preserving, flagged for awareness)
 
-**File:** `itrader/strategy_handler/storage/base.py:11`, `in_memory_storage.py:12`, `storage_factory.py:11`
-**Issue:** The new storage modules use `typing.List` / `typing.Dict` / `typing.Optional` while
-the surrounding modern modules (`config.py`, `ids.py`, `base.py` strategy) use builtin
-generics (`list[...]`, `dict[...]`, `X | None`). Purely stylistic and consistent with the
-sibling `order_handler/storage/` modules they intentionally mirror, so no change is required —
-flagged only for consistency awareness.
-**Fix:** Optional: align with the modern `list[...]` / `X | None` style if the codebase is
-standardizing on it.
+**File:** `itrader/strategy_handler/strategies/SMA_MACD_strategy.py:66-72`
+**Issue:** The exit `elif` is nested under `if short_sma.iloc[-1] >=
+long_sma.iloc[-1]` (the bullish entry filter), so a long EXIT (`self.sell`) can
+ONLY fire while the short SMA is still above the long SMA. A bearish SMA cross
+that also flips the MACD histogram down would NOT exit the position. This is a
+pre-existing structure carried verbatim from the deleted `SMA_MACD_strategy.py`
+and is locked by `test_backtest_oracle.py`, so it MUST NOT be changed in this
+phase — but it is a genuine logic smell (the `# Exit` comment reads as if outside
+the filter while the code is inside it).
+**Fix:** No change now (oracle-locked). Revisit at a future re-baseline whether
+the exit should be filter-independent.
+
+### IN-06: `min_timeframe` seeded with a `timedelta(weeks=100)` magic sentinel that survives when no strategy is registered
+
+**File:** `itrader/strategy_handler/strategies_handler.py:40, 220`
+**Issue:** `self.min_timeframe = timedelta(weeks=100)` is an arbitrary
+large-sentinel so `min([self.min_timeframe, strategy.timeframe])` collapses to
+the first real strategy timeframe. If no strategy is ever added, `min_timeframe`
+stays at the meaningless 100-week value; a downstream consumer reading it gets
+silent garbage rather than a clear "no strategies" signal.
+**Fix:** Initialize to `None` and compute the min defensively, or compute
+`min_timeframe` lazily from `self.strategies` only when at least one exists.
 
 ---
 
-_Reviewed: 2026-06-09_
+_Reviewed: 2026-06-09T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
