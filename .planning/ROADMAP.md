@@ -73,7 +73,10 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   1. A `membership` primitive returns the set of active tickers at any time T derived solely from data availability (no screening/ranking logic).
   2. A backtest spanning a ticker that lists mid-run runs to completion with no crash and no look-ahead — bars before listing produce no fills.
   3. Assets with differing end dates are handled over the union window — an absent bar at T produces no fill for that ticker.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 03-01-PLAN.md — Add the `active_membership`/`is_active` span primitive beside `derive_membership` + barrel + UNIV-01 unit tests [UNIV-01]
+- [ ] 03-02-PLAN.md — Wire the span cache + span-aware warn loop (D-04) into the feed, strip the duplicate strategy-handler warning (D-05), invert the LATEUSD test [UNIV-02]
+- [ ] 03-03-PLAN.md — Add the oracle-dark `csv_paths` passthrough + the synthetic-fixture engine integration test (mid-run listing, differing ends, no look-ahead) [UNIV-02]
 
 ### Phase 4: E2E Harness & Framework
 **Goal**: Stand up the whole-system E2E testing apparatus — the dedicated tree, marker, make target, and shared golden-compare harness — that every scenario wave (Phases 6-9) depends on.
@@ -149,7 +152,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 |-------|-----------|----------------|--------|-----------|
 | 1. Codebase Map & Clarity Baseline | v1.1 | 2/2 | Complete   | 2026-06-09 |
 | 2. Data Ingestion | v1.1 | 1/1 | Complete   | 2026-06-09 |
-| 3. Minimal Real Universe | v1.1 | 0/0 | Not started | - |
+| 3. Minimal Real Universe | v1.1 | 0/3 | Planned | - |
 | 4. E2E Harness & Framework | v1.1 | 0/0 | Not started | - |
 | 5. Strategy Interface Hardening & Signal Storage | v1.1 | 0/0 | Not started | - |
 | 6. Order Matching Scenarios | v1.1 | 0/0 | Not started | - |
