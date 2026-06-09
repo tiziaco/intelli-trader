@@ -372,8 +372,26 @@ def run_scenario(request):
     own directory (``pathlib.Path(__file__).parent``). Under ``--freeze`` it WRITES
     the leaf's goldens; otherwise it DIFFS only the goldens present (D-05) with the
     oracle's exact no-tolerance mechanic (D-08) and fails on any drift (D-13).
+
+    Single-scenario freeze discipline (Pitfall 5) is mechanically enforced, not
+    just documented: ``--freeze`` is REFUSED when more than one test is selected
+    in the session, so a blind ``pytest tests/e2e --freeze`` sweep cannot
+    blind-overwrite every golden. Combine ``--freeze`` with a ``-k``/path selector
+    that narrows the session to exactly one hand-verified scenario.
     """
     freeze = request.config.getoption("--freeze")
+    if freeze:
+        # IN-02: enforce the "freeze ONE hand-verified scenario at a time"
+        # discipline mechanically. request.session.items is the full collected
+        # set for this run; refusing >1 prevents the blind multi-scenario sweep
+        # the docstring warns against (Pitfall 5).
+        selected = len(getattr(request.session, "items", []))
+        if selected > 1:
+            pytest.fail(
+                f"--freeze refuses to run with {selected} selected tests: freeze "
+                f"ONE hand-verified scenario at a time (Pitfall 5). Re-run with a "
+                f"-k/path selector that narrows the session to a single scenario."
+            )
 
     def _run(here):
         here = pathlib.Path(here)
