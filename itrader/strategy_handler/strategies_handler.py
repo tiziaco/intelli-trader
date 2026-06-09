@@ -37,7 +37,11 @@ class StrategiesHandler(object):
 		self.global_queue: "Queue[Any]" = global_queue
 		self.feed: BarFeed = feed
 		self.signal_store: SignalStore = signal_store
-		self.min_timeframe: timedelta = timedelta(weeks=100)
+		# IN-06: initialize to None rather than a 100-week magic sentinel. A
+		# downstream consumer reading min_timeframe before any strategy is
+		# registered gets a clear "no strategies" signal (None) instead of
+		# meaningless garbage. add_strategy computes the real min defensively.
+		self.min_timeframe: timedelta | None = None
 		#self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
 
@@ -168,9 +172,13 @@ class StrategiesHandler(object):
 		"""
 		traded_tickers: list[str] = []
 		for strategy in self.strategies:
-			# Check if the strategy is trading pairs
+			# Check if the strategy is trading pairs.
+			# WR-04: renamed the loop variable from `tuple` (which shadowed the
+			# builtin) to `pair`/`sym`. The declared config contract is
+			# `tickers: list[str]`, so the pair branch never legitimately fires
+			# for a config-built strategy — it remains only for legacy callers.
 			if strategy.tickers and isinstance(strategy.tickers[0], tuple):
-				traded_tickers += [value for tuple in strategy.tickers for value in tuple]
+				traded_tickers += [sym for pair in strategy.tickers for sym in pair]
 			else:
 				traded_tickers += strategy.tickers
 				
@@ -216,7 +224,11 @@ class StrategiesHandler(object):
 		# Add the strategy in the strategies list
 		self.strategies.append(strategy)
 
-		# Find the minimum timeframe
-		self.min_timeframe = min([self.min_timeframe, strategy.timeframe])
+		# Find the minimum timeframe (IN-06: defensive against the None seed —
+		# the first registered strategy establishes the baseline).
+		if self.min_timeframe is None:
+			self.min_timeframe = strategy.timeframe
+		else:
+			self.min_timeframe = min(self.min_timeframe, strategy.timeframe)
 
 		self.logger.info(f'New strategy added: {strategy.name}')
