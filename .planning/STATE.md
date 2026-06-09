@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: ready_to_plan
-last_updated: 2026-06-09T09:57:07.795Z
+last_updated: 2026-06-09T11:44:46.990Z
 last_activity: 2026-06-09
 progress:
   total_phases: 12
-  completed_phases: 2
-  total_plans: 3
-  completed_plans: 3
-  percent: 17
-stopped_at: Phase 02 complete (1/1) — ready to discuss Phase 999.2
+  completed_phases: 3
+  total_plans: 6
+  completed_plans: 6
+  percent: 25
+stopped_at: Phase 03 complete (3/3) — ready to discuss Phase 999.2
 ---
 
 # Project State
@@ -34,7 +34,7 @@ Last activity: 2026-06-09
 
 **Velocity (v1.1):**
 
-- Total plans completed: 3
+- Total plans completed: 6
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -52,6 +52,9 @@ Load-bearing program constraints still in force for v1.1:
 - IDs = single UUIDv7 scheme via `uuid-utils`.
 - v1.1 is **behavior-preserving** — the v1.0 final golden oracle (134 trades / `final_equity 46189.87730727451`) is NOT re-baselined; any result-changing finding is owner-gated, never silently folded in.
 - [Phase ?]: D-06 volume check relaxed to non-negative (NaN/negative still raise): zero-volume bars on SOLUSD(11)/AAVEUSD(35) are a provider missing-data sentinel, not true zeros; OHLC is real and bar volume is inert on the v1.1 run path
+- [Phase ?]: is_active/active_membership added alongside derive_membership (D-03); span model inclusive both ends (D-01); active_membership returns set[str]
+- [Phase ?]: [Phase 03 P02]: feed is the single span-aware observability owner (D-04) — silent for pre-listing/post-end, warns only on a true mid-life gap; span bounds cached as tz-aware pd.Timestamp; bar/fill path untouched (oracle-dark)
+- [Phase ?]: [Phase 03 P03]: optional csv_paths passthrough on TradingSystem.__init__ (default None = byte-identical golden behavior, oracle-dark); UNIV-02 engine-proven on synthetic fixtures (no crash, no look-ahead over the union window) — real ETH/SOL/AAVE E2E deferred to Phase 9 (D-06)
 
 ### Pending Todos
 
@@ -84,10 +87,13 @@ Program-level items out of scope for v1.1, with their target milestone:
 
 v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are recorded in `milestones/v1.0-MILESTONE-AUDIT.md`.
 | Phase 02 P01 | 2min | 3 tasks | 5 files |
+| Phase 03 P01 | 4 | 2 tasks | 3 files |
+| Phase 03 P02 | 4 | 3 tasks | 3 files |
+| Phase 03 P03 | 12min | 2 tasks | 2 files |
 
 ## Session Continuity
 
-Last session: 2026-06-09T09:48:24.444Z
+Last session: 2026-06-09T11:35:11.998Z
 Resume file: None
 
 ## Operator Next Steps

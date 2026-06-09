@@ -65,6 +65,7 @@ from itrader.core.exceptions import MissingPriceDataError
 from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.logger import get_itrader_logger
 from itrader.price_handler.store.base import PriceStore
+from itrader.universe import is_active
 
 from .base import BarFeed
 
@@ -149,8 +150,21 @@ class BacktestBarFeed(BarFeed):
         # timeframe string) — base frames from store.read_bars seed the
         # cache; resampled frames memoize on precompute()/first access.
         self._frames: dict[tuple[str, str], pd.DataFrame] = {}
+        # Per-ticker [first_bar, last_bar] availability span (D-01 span model),
+        # cached ONCE here from the SAME loaded frame the slice path reads
+        # (M5-03 compute-once — zero extra store reads). Reading index[-1] at
+        # wiring time is availability metadata (the listing/delisting calendar),
+        # NOT a decision-price look-ahead — the slice path is unchanged (the
+        # 7-rule contract above). Bounds are kept as the SAME tz-aware type the
+        # tick carries (pd.Timestamp), so is_active's <= comparison against the
+        # tz-aware TimeEvent.time never raises TypeError under
+        # filterwarnings=["error"] (RESEARCH Pitfall 2), mirroring how
+        # current_bars searchsorts against the tz-aware time.
+        self._spans: dict[str, tuple[datetime, datetime]] = {}
         for ticker in self._symbols:
-            self._frames[(ticker, self._base_alias)] = store.read_bars(ticker)
+            frame = store.read_bars(ticker)
+            self._frames[(ticker, self._base_alias)] = frame
+            self._spans[ticker] = (frame.index[0], frame.index[-1])
 
         # Run-path bindings for the BarEvent factory (Plan 07-02, D-20) —
         # set by the trading system at wiring time via ``bind``. The queue
@@ -244,9 +258,15 @@ class BacktestBarFeed(BarFeed):
         bars = self.current_bars(time_event.time)
 
         for ticker in self.membership:
-            if ticker not in bars:
+            # D-04: the feed is the SINGLE span-aware owner of absence
+            # observability. WARN only on a true mid-life gap (T inside the
+            # ticker's listed [first,last] span but no bar at T — a real
+            # data-quality anomaly); stay SILENT for expected absence
+            # (pre-listing / post-end — T outside the span). Log-only: bars,
+            # current_bars, and the BarEvent below are untouched (oracle-dark).
+            if ticker not in bars and is_active(self._spans, ticker, time_event.time):
                 self.logger.warning(
-                    'Bar feed: no bar for ticker %s at %s in the feed',
+                    'Bar feed: mid-life gap for %s at %s (active, no bar)',
                     ticker, str(time_event.time))
 
         bar_event = BarEvent(time=time_event.time, bars=bars)

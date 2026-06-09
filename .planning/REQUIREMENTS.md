@@ -20,8 +20,8 @@
 - [x] **INGEST-03**: `CsvPriceStore` loads all four datasets **unchanged** (no run-path schema-detection logic).
 
 ### Minimal Universe (UNIV)
-- [ ] **UNIV-01**: A real `membership` primitive derives the set of active tickers at time T from data availability (replaces the stub). Screening/ranking explicitly excluded.
-- [ ] **UNIV-02**: The engine correctly handles a ticker that lists mid-backtest and assets with differing end dates — no crash, no look-ahead, absent bars produce no fill.
+- [x] **UNIV-01**: A real `membership` primitive derives the set of active tickers at time T from data availability (replaces the stub). Screening/ranking explicitly excluded.
+- [x] **UNIV-02**: The engine correctly handles a ticker that lists mid-backtest and assets with differing end dates — no crash, no look-ahead, absent bars produce no fill.
 
 ### E2E Test Framework (E2E)
 - [ ] **E2E-01**: Dedicated `tests/e2e/` tree, subsystem-grouped, with a registered `e2e` marker (in `pyproject.toml`), folder-derived auto-marking, and a `make test-e2e` target.
@@ -120,8 +120,8 @@
 | INGEST-01 | Phase 2 | Complete |
 | INGEST-02 | Phase 2 | Complete |
 | INGEST-03 | Phase 2 | Complete |
-| UNIV-01 | Phase 3 | Pending |
-| UNIV-02 | Phase 3 | Pending |
+| UNIV-01 | Phase 3 | Complete |
+| UNIV-02 | Phase 3 | Complete |
 | E2E-01 | Phase 4 | Pending |
 | E2E-02 | Phase 4 | Pending |
 | E2E-03 | Phase 4 | Pending |
