@@ -1,7 +1,7 @@
 """
 Core identity types for the iTrader system.
 
-Eight ``NewType`` aliases over the stdlib ``uuid.UUID`` (D-12). Each alias is a
+Nine ``NewType`` aliases over the stdlib ``uuid.UUID`` (D-12). Each alias is a
 distinct nominal type to ``mypy`` (so an ``OrderId`` cannot be silently passed
 where a ``PortfolioId`` is expected) but is exactly ``uuid.UUID`` at runtime —
 ``OrderId(some_uuid)`` returns ``some_uuid`` unchanged.
@@ -22,6 +22,7 @@ StrategyId = NewType("StrategyId", uuid.UUID)
 ScreenerId = NewType("ScreenerId", uuid.UUID)
 FillId = NewType("FillId", uuid.UUID)
 EventId = NewType("EventId", uuid.UUID)
+SignalId = NewType("SignalId", uuid.UUID)
 
 __all__ = [
     "OrderId",
@@ -32,4 +33,5 @@ __all__ = [
     "ScreenerId",
     "FillId",
     "EventId",
+    "SignalId",
 ]

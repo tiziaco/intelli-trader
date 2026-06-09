@@ -44,7 +44,8 @@ from .order import (
 
 # Trading enums
 from .trading import (
-    TradingDirection
+    TradingDirection,
+    Timeframe
 )
 
 # System enums
@@ -85,6 +86,7 @@ __all__ = [
 
     # Trading enums
     'TradingDirection',
+    'Timeframe',
 
     # System enums
     'SystemStatus'
