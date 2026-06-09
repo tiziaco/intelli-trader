@@ -1,6 +1,6 @@
 from datetime import timedelta
 from queue import Queue
-from typing import Any
+from typing import Any, cast
 
 from itrader.core.money import to_money
 from itrader.core.sizing import TradingDirection
@@ -142,7 +142,14 @@ class StrategiesHandler(object):
 						stop_loss=intent.stop_loss if intent.stop_loss is not None else to_money(0),
 						take_profit=intent.take_profit if intent.take_profit is not None else to_money(0),
 						strategy_id=strategy.strategy_id,
-						portfolio_id=portfolio_id,
+						# WR-01 (re-review #2): subscribed_portfolios is the
+						# dual-handle PortfolioId | int seam. SignalEvent.portfolio_id
+						# is the documented int-declared event seam that already
+						# absorbs runtime UUIDs (the order layer casts it back to
+						# PortfolioId downstream). Bridge here with cast(int, ...) —
+						# the same idiom order_manager.py uses for this seam — so the
+						# honest base.py union does not widen the whole event chain.
+						portfolio_id=cast(int, portfolio_id),
 						sizing_policy=strategy.sizing_policy,
 						direction=strategy.direction,
 						allow_increase=strategy.allow_increase,

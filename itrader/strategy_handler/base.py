@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 
 from itrader.core.enums import OrderType, Side
-from itrader.core.ids import StrategyId
+from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.money import to_money
 from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingDirection
 from itrader.outils.time_parser import to_timedelta
@@ -41,14 +41,17 @@ class Strategy(ABC):
 		self.order_type: OrderType = config.order_type
 		# The handler reads this for per-portfolio fan-out — the strategy
 		# itself never iterates it (D-12).
-		# IN-04: the strategy layer deliberately keeps INTEGER portfolio handles,
-		# distinct from the canonical PortfolioId (UUID) scheme in core/ids.py.
-		# The backtest path (tests, oracle, integration) addresses portfolios by
-		# plain int, and the fan-out only needs an opaque, hashable handle — it
-		# never resolves a portfolio object here. When the strategy layer is
-		# wired to real UUID portfolio ids, switch this to list[PortfolioId] and
-		# update the subscribe/unsubscribe signatures together.
-		self.subscribed_portfolios: list[int] = []
+		# WR-01 (re-review #2): the strategy layer carries a DUAL-HANDLE
+		# portfolio id. Tests / oracle / canaries address portfolios by plain
+		# int (`_PORTFOLIO_A = 1`), while the real run path
+		# (scripts/run_backtest.py) subscribes the UUID PortfolioId that
+		# PortfolioHandler.add_portfolio returns. The fan-out only needs an
+		# opaque, hashable handle — it never resolves a portfolio object here —
+		# so both shapes are legal. The seam is typed `PortfolioId | int` (the
+		# same union order.py:55 / order_manager.py:51 already use) so the
+		# declaration stops lying about the production UUID path and a future
+		# int-assuming consumer (indexing / arithmetic) is caught at the gate.
+		self.subscribed_portfolios: list[PortfolioId | int] = []
 		# Typed declarations (D-01/D-08/D-10): the strategy DECLARES, the
 		# engine resolves. sizing_policy is REQUIRED — no default, honest
 		# contract (the old max_allocation float kwarg is dead).
@@ -161,14 +164,14 @@ class Strategy(ABC):
 			exit_fraction=exit_fraction,
 		)
 
-	def subscribe_portfolio(self, portfolio_id: int) -> None:
+	def subscribe_portfolio(self, portfolio_id: PortfolioId | int) -> None:
 		# WR-01: idempotent subscribe — a duplicate subscription would fan the
 		# same intent out to one portfolio TWICE in calculate_signals (two
 		# SignalEvents, two orders for one decision). Guard the append.
 		if portfolio_id not in self.subscribed_portfolios:
 			self.subscribed_portfolios.append(portfolio_id)
 
-	def unsubscribe_portfolio(self, portfolio_id: int) -> None:
+	def unsubscribe_portfolio(self, portfolio_id: PortfolioId | int) -> None:
 		# WR-01: idempotent unsubscribe — list.remove raises ValueError on a
 		# double-unsubscribe / never-subscribed id (a noisy ErrorEvent in live
 		# mode). Guard so a defensive caller can unsubscribe safely.
