@@ -41,17 +41,22 @@ class SignalStorageFactory:
 
         Raises
         ------
+        NotImplementedError
+            If the environment is 'live' (no persistent backend in v1.1).
         ConfigurationError
-            If the environment is 'live' (no persistent backend in v1.1) or
-            otherwise unknown.
+            If the environment is otherwise unknown.
         """
         environment = environment.lower()
 
         if environment in ('backtest', 'test'):
             return InMemorySignalStore()
         elif environment == 'live':
-            raise ConfigurationError(
-                "environment", environment,
+            # IN-02: align the deferred-backend exception type with
+            # OrderStorageFactory (which raises NotImplementedError for an
+            # unimplemented live backend). A future live wiring can then catch
+            # one exception type for both storage seams rather than catching
+            # ConfigurationError for signals and NotImplementedError for orders.
+            raise NotImplementedError(
                 "No persistent SignalStore backend in v1.1 — 'live' signal "
                 "storage is deferred to a later milestone"
             )
