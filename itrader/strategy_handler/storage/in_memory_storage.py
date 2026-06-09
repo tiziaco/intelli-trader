@@ -31,7 +31,15 @@ class InMemorySignalStore(SignalStore):
         self._by_id: Dict[uuid.UUID, SignalRecord] = {}
 
     def add(self, record: SignalRecord) -> None:
-        """Add a signal record (single flat-dict write keyed on its SignalId)."""
+        """Add a signal record (single flat-dict write keyed on its SignalId).
+
+        WR-02: reject a duplicate ``signal_id`` rather than silently overwriting.
+        A bare dict write would replace the prior record AND move it to the end
+        of insertion order, corrupting both the count and the documented
+        "insertion order / one record per intent" contract (D-09).
+        """
+        if record.signal_id in self._by_id:
+            raise ValueError(f"duplicate signal_id: {record.signal_id!r}")
         self._by_id[record.signal_id] = record
 
     def get_all(self) -> List[SignalRecord]:
