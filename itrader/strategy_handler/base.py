@@ -144,10 +144,18 @@ class Strategy(ABC):
 		)
 
 	def subscribe_portfolio(self, portfolio_id: int) -> None:
-		self.subscribed_portfolios.append(portfolio_id)
+		# WR-01: idempotent subscribe — a duplicate subscription would fan the
+		# same intent out to one portfolio TWICE in calculate_signals (two
+		# SignalEvents, two orders for one decision). Guard the append.
+		if portfolio_id not in self.subscribed_portfolios:
+			self.subscribed_portfolios.append(portfolio_id)
 
 	def unsubscribe_portfolio(self, portfolio_id: int) -> None:
-		self.subscribed_portfolios.remove(portfolio_id)
+		# WR-01: idempotent unsubscribe — list.remove raises ValueError on a
+		# double-unsubscribe / never-subscribed id (a noisy ErrorEvent in live
+		# mode). Guard so a defensive caller can unsubscribe safely.
+		if portfolio_id in self.subscribed_portfolios:
+			self.subscribed_portfolios.remove(portfolio_id)
 
 	def activate_strategy(self) -> None:
 		self.is_active = True
