@@ -1,144 +1,54 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: Backtest-Correctness Refactor
-status: Awaiting next milestone
-stopped_at: Milestone v1.0 archived + tagged
-last_updated: "2026-06-08T22:11:11.814Z"
-last_activity: 2026-06-08 — Milestone v1.0 completed and archived
+milestone: v1.1
+milestone_name: "Backtest Trustworthiness: Breadth"
+status: roadmapped
+last_updated: "2026-06-09T07:30:00.000Z"
+last_activity: 2026-06-09
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 62
-  completed_plans: 62
-  percent: 100
+  total_phases: 9
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-08)
+See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** v1.0 shipped — planning next milestone (N+1 candidate, see ROADMAP.md Backlog). Run `/gsd:new-milestone`.
+**Current focus:** v1.1 — Backtest Trustworthiness: Breadth. Roadmap defined (9 phases, 51 requirements mapped, 100% coverage); reordered so the codebase map leads. Next: `/gsd:plan-phase 1` (Codebase Map & Clarity Baseline).
 
 ## Current Position
 
-Phase: Milestone v1.0 complete
+Phase: 1 of 9 — Codebase Map & Clarity Baseline (not started)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-08 — Milestone v1.0 completed and archived
+Status: Roadmapped — awaiting first phase plan
+Last activity: 2026-06-09 — v1.1 roadmap reordered (codebase map moved to Phase 1; 9 phases, 51 reqs, 100% coverage)
 
 ## Performance Metrics
 
-**Velocity:**
+**Velocity (v1.1):**
 
-- Total plans completed: 45
+- Total plans completed: 0
 - Average duration: — min
 - Total execution time: 0.0 hours
 
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 01 | 5 | - | - |
-| 03 | 9 | - | - |
-| 04 | 8 | - | - |
-| 05 | 7 | - | - |
-| 06 | 8 | - | - |
-| 07 | 8 | - | - |
-
-**Recent Trend:**
-
-- Last 5 plans: —
-- Trend: —
-
-*Updated after each plan completion*
-| Phase 01 P01 | 12 | 3 tasks | 4 files |
-| Phase 01 P02 | 10 | 2 tasks | 1 files |
-| Phase 01 P03 | 13 | 3 tasks | 3 files |
-| Phase 01 P04 | 22 | 3 tasks | 8 files |
-| Phase 01 P05 | 18 | 3 tasks | 4 files |
-| Phase 02 P01 | 6 | 2 tasks | 6 files |
-| Phase 02 P02 | 4 | 4 tasks | 6 files |
-| Phase 02 P03 | 13 | 3 tasks | 11 files |
-| Phase 02 P05 | 22 | 3 tasks | 12 files |
-| Phase 02 P04 | 20 | 3 tasks | 9 files |
-| Phase 02 P06 | 8 | 3 tasks | 7 files |
-| Phase 02 P07 | 180 | 4 tasks | 5 files |
-| Phase 03 P01 | 3 | 3 tasks | 10 files |
-| Phase 03 P02 | 2 | 1 tasks | 4 files |
-| Phase 03 P03 | 5 | 2 tasks | 11 files |
-| Phase 03 P04 | 9 | 1 tasks | 2 files |
-| Phase 03 P05 | 90 | 3 tasks | 42 files |
-| Phase 03 P06 | 9 | 1 tasks | 15 files |
-| Phase 03 P07 | 18 | 2 tasks | 16 files |
-| Phase 03 P08 | 95 | 2 tasks | 51 files |
-| Phase 03 P09 | 8 | 3 tasks | 4 files |
-| Phase 08 P01 | 7 | 3 tasks | 6 files |
-| Phase 08 P02 | 4 | 3 tasks | 2 files |
-| Phase 08 P03 | 13 | 3 tasks | 3 files |
-| Phase 08 P04 | 2 | 2 tasks | 2 files |
-| Phase 08 P05 | 4 | 3 tasks | 4 files |
-| Phase 08 P06 | 7min | 2 tasks | 3 files |
-| Phase 08 P07 | 6min | 2 tasks | 3 files |
-| Phase 08 P08 | 25min | 3 tasks | 1 files |
-| Phase 08 P09 | 6 | 3 tasks | 1 files |
+*Updated after each plan completion. v1.0 velocity is archived in `milestones/v1.0-MILESTONE-AUDIT.md`.*
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table. Recent decisions affecting current work:
+Active decisions live in PROJECT.md Key Decisions (including the five v1.1 decisions: crypto-first; dedicated `tests/e2e/` + `e2e` marker; hand-verify-once-then-regression-lock; normalize data via committed script not loader logic; minimal real universe). v1.0 per-plan decisions are archived in `milestones/v1.0-MILESTONE-AUDIT.md` and the v1.0 phase records under `milestones/v1.0-phases/`.
 
-- Money = Decimal end-to-end (float money is a correctness defect)
-- IDs = single UUIDv7 scheme via `uuid-utils`
-- Golden-master two-layer oracle: behavioral oracle (trade timing) is law M2→M4; numerical oracle re-baselines only after M2 (Phase 3) and after M5 (Phase 8)
-- Position sizing: strategy declares policy + SL/TP, order/risk layer resolves per-portfolio quantity; M1 implements the minimal seam (Phase 1) so M5 extends rather than replaces it (Phase 7)
-- [Phase ?]: D-07: csv/offline feed lives inside PriceHandler, skips SqlHandler + CCXT (Phase 1 Plan 2)
-- Plan 01-04: oracle generator pins dataset/window/cash/params as literals; equity sourced from metrics snapshots (not the broken _prepare_data)
-- Plan 01-04: DEF-01-B(3) resolved as sizing-before-validation (narrow gate), preserving test_zero_quantity_signal; long-only SELL exit sizes to close the open long
-- Plan 01-04: DEF-01-A resolved with minimal float-coercion at the fill->transaction commission boundary (overlaps M4 #22 — reconcile at M4)
-- [Phase ?]: Plan 01-05: blessed BTCUSD SMA_MACD oracle frozen into committed test/golden/ and regression-locked by an exact (no-tolerance, D-13) run-path integration test; Phase 01 complete
-- [Phase ?]: Plan 01-05: DEF-01-C (no margin/liquidation model — un-liquidated short liability drives total_equity negative) BLESSED into the M1 oracle as current-behavior-to-preserve, deferred to M5
-- [Phase ?]: Plan 02-01: mypy --strict gate (make typecheck) stood up with deferral overrides for 7 D-live/D-sql/D-oanda/D-screener modules (D-05/D-06); gate runs but errors deferred to Plan 07
-- [Phase ?]: Plan 02-01: UUID Wave 0 scaffold lands red (asserts stdlib uuid.UUID type); money/clock scaffolds co-located with Plan 02 to avoid same-wave scaffold race
-- [Phase ?]: Plan 02-03: single UUIDv7 scheme via uuid_utils.compat.uuid7(); integer type-prefix scheme deleted (D-12/D-13/D-14)
-- [Phase ?]: Plan 02-03: InMemoryOrderStorage native-UUID keyed + flat Dict[uuid.UUID, Order] index for O(1) lookup (D-14, PERF2); nested dicts retained, scan elimination deferred to M4-06
-- [Phase ?]: Plan 02-03: removed int(portfolio_id) coercion in portfolio_handler.on_fill (Rule 1/3 deviation; file unowned by phase-02 plans) to keep suite green post UUID migration
-- [Phase ?]: Plan 02-05: 11 dead metaclass bases converted to 3 runtime_checkable Protocols + 8 real ABCs (D-07/D-08b)
-- [Phase ?]: Plan 02-05: minimal-conformance ABC carve-out — Universe.get_assets and AbstractStatistics methods left non-abstract (run-path subclasses don't implement them; deep rework deferred M5b #33/#38)
-- [Phase ?]: Plan 02-05: SimulatedExchange.configure added (Pitfall 3, D-08) delegating to update_config; conforms to AbstractExchange Protocol. Strategy.calculate_signal now @abstractmethod (#20 real enforcement)
-- [Phase ?]: Plan 02-05: mypy gate 316->906 is unmasked pre-existing untyped-def debt (not regression), deferred to Plan 07; SignalEvent.strategy_id int->StrategyId retype noted for Plan 07
-- [Phase ?]: Plan 02-04: money Decimal at entity boundaries; float execution+sizing untouched (M4)
-- [Phase ?]: Plan 02-04: portfolio.cash Decimal end-to-end (#17 round-trip removed); aggregate read-props kept float; cash via CashManager + Decimal aggregates deferred to M4 #22
-- [Phase ?]: Plan 02-04: DEF-02-04-A golden numeric oracle drift (behavioral oracle preserved, only numeric cols) deferred to Pattern E + owner-gated post-M2 numerical re-baseline
-- [Phase ?]: Plan 02-07: owner approved phase-close gate — D-15 numeric tolerance (rtol=1e-6, atol=5e-2 / 5c) accepted, identity+equity columns exact, time-boxed to M2b numerical re-freeze (Phase 3 SC4)
-- [Phase ?]: Plan 02-07: frozen=True/slots=True on PingEvent/BarEvent/PortfolioUpdateEvent/ScreenerEvent (M2-03); SignalEvent/FillEvent/OrderEvent left mutable (runtime mutation); make typecheck clean across D-05 in-scope package (Option 2 overrides for deferred subsystems)
-- [Phase 03]: Plan 03-01: D-17 inertness reference captured from unmodified M2a-end HEAD (final_equity 53229.685, 134 trades) — byte-exact baseline for the 03-09 oracle re-freeze gate
-- [Phase 03]: Plan 03-01: pydantic ^2.13 + pydantic-settings ^2.14 added as lockfile-tracked Poetry deps (unblocks config collapse 03-05)
-- [Phase 03]: Plan 03-01: 5 Wave-0 characterization stubs (M2-06..10) under current test/ tree, skip/importorskip-gated, move into tests/unit/... at 03-08; suite 300 pass / 11 skip / 1 xfail
-- [Phase ?]: Plan 03-02: four dead modules purged (legacy_config, outils/profiling, outils/strategy, events_handler/screener_event_handler) via D-13 mechanical-delete, zero importers re-verified; flat config.py shadow left for 03-05
-- [Phase ?]: Plan 03-03: FillStatus + 4 manager enums relocated to core/enums as class-based with _missing_ case-insensitive parse; string->enum maps deleted (D-04/D-05); OrderStatus/FillStatus/TransactionState kept DISTINCT; behavioral oracle byte-exact
-- [Phase 03]: Plan 03-04: check_timeframe epoch-aligned via a single replaceable _aligned seam (D-06/D-07); to_timedelta case-insensitive + week + month-specific raise + None-guard + raise-on-unknown (D-08); dead helpers deleted; behavioral oracle byte-exact (D-18)
-- [Phase ?]: Plan 03-05: config/ collapsed to Pydantic v2 (5 domain models + models.py aggregate) + pydantic-settings Settings with fail-loud required-no-default SecretStr database_url (M2-06); flat config.py shadow + importlib shim + getters/registry/provider/validator/schema deleted (D-01); FORBIDDEN_SYMBOLS concat bug fixed in core/constants.py; consumers construct models directly; behavioral oracle byte-exact, mypy --strict clean
-- [Phase ?]: Plan 03-06: portfolio_handler reorganized into position/ transaction/ cash/ metrics/ subdomain packages via history-preserving git mv (D-11); package __init__ re-exports + enum re-exports from core.enums keep consumer paths short; suite/typecheck/behavioral-oracle green, zero behavior change
-- [Phase ?]: Plan 03-08: test/ -> tests/ via history-preserving git mv split by TYPE (unit mirrors package, integration holds cascade/smoke/oracle); folder-derived TYPE markers in layered conftests, single registration home (pyproject markers)
-- [Phase ?]: Plan 03-08: 29 unittest.TestCase files converted to pytest one-file-per-commit at constant 346 collected; filterwarnings=['error'] intact (leaks fixed via yield-teardown queue drains); D-16/D-17 oracle numeric re-freeze deferred to 03-09
-- [Phase ?]: Plan 03-08: Rule 1 fix - Task 1 commit 33c3281 recorded git-mv renames but dropped tracked-file content edits (git add aborted on stale 'test' pathspec); corrected in 6a623ae so committed HEAD collects 346 on fresh checkout
-- [Phase ?]: Plan 03-09: numerical oracle re-frozen byte-exact at M2b end-state (final_equity 53229.68512642488, replacing stale M1 float 53229.75); D-15 tolerance + DEF-02-08-A xfail closed; numeric cols check_exact=True; behavioral identity unchanged (D-18); one of PROJECT.md's two sanctioned numeric re-baseline points
-- [Phase ?]: Plan 03-09: D-17 inertness gate byte-exact (behavioral AND numeric) vs M2A-INERTNESS-REF before re-freeze — M2b structural changes proven numerically inert, no time_parser firing shift
-- [Phase ?]: Plan 08-01: Portfolio.total_* money properties retyped to Decimal (D-06 closure on result-bearing path); float boundary moved to statistical-ratio metric inputs only; validator golden-path checks native Decimal
-- [Phase ?]: Plan 08-01: EXPECTED result-change (D-08) — equity-curve total_equity shifts at Decimal precision; behavioral oracle byte-identical, final_equity 46189.87730727451 unchanged; deferred to 08-03 REFREEZE-M5C-DECIMAL
-- [Phase ?]: Plan 08-02: 08-01 Decimal retype was inert at both cross-file consumers (mypy clean 151 files); sweep documented the Decimal->float serialization boundary in code
-- [Phase ?]: Plan 08-02: full suite 723 passed / 1 sanctioned design-failure (test_oracle_numeric_values, D-08 equity-curve precision shift); surfaced not fixed, deferred to 08-03 REFREEZE-M5C-DECIMAL; tests/golden untouched
-- [Phase ?]: Plan 08-03: M5c golden oracle re-frozen to clean Decimal numbers (branch a SHIFT, owner-approved D-08/D-11) — trades.csv byte-identical (134 trades), headline money byte-exact, only 19/3076 equity points + 3 ratio metrics moved ~1 ULP; REFREEZE-M5C-DECIMAL.md authored; oracle test green (D-08 numeric design-failure CLOSED); cross-validation baseline locked (D-07 gate satisfied)
-- [Phase ?]: Plan 08-04: pinned cross-validation reference engines EXACT in poetry dev group (D-10) — backtesting==0.6.5 + backtrader==1.9.78.123, locked in poetry.lock; smoke-gated clean on Python 3.13.1/numpy 2.2.6 (trivial Cerebro run end-to-end, NO fork/shim — research headline #1 confirmed); engines dev-group-only + absent from main deps + unimported by tests (filterwarnings=['error'] safe, 724 collect clean); nautilus-trader dropped (D-12 non-gating — its <3.15 python cap conflicts with repo ^3.13 resolution)
-- [Phase ?]: Plan 08-05: built scripts/crossval/ force-match harness — shared ta-indicator precompute (verbatim SMAIndicator/MACD calls + golden-CSV loader) + backtesting.py FractionalBacktest + backtrader custom-float-Sizer; both expose uniform run(prices=None,indicators=None)->(trade_log_df[entry_date,exit_date,side,realised_pnl],equity_series), consume IDENTICAL injected arrays (D-03), replicate filter-gates-both QUIRK + next-bar-open fills (D-01); both yield EXACTLY 134 trades (matches iTrader golden), backtrader final_equity 46189.8773 matches golden to ~10 decimals, backtesting.py 46027.30 within ~0.35%; engines script-only (D-10), 724-test suite collects clean
-- [Phase ?]: 08-06: Owner-directed Rule-4 deviation — installed nautilus-trader 1.227.0 by narrowing python to >=3.13,<3.14 (supersedes 08-04 D-12); real Nautilus force-match reconciles 134 trades / final_equity 46287.24 (~0.21% vs golden)
-- [Phase ?]: Plan 08-08: 0 BUG / 4 LEGITIMATE-DIFFERENCE cross-validation verdict (D-05) — no iTrader defect; iTrader's post-M5b numbers kept; NO re-freeze (owner-approved). 3x sortino = entry-bar equity-marking convention (134 differing bars == 134 entry bars, fully attributed); 1x nautilus win_rate = NETTING fill arithmetic on 2025 cluster, contradicted by both gating engines. Owner sign-off recorded as basis for 08-09 final oracle freeze.
-- [Phase ?]: Plan 08-09: owner APPROVED final oracle freeze at terminal checkpoint (2026-06-08); FINAL-ORACLE.md sign-off recorded; no re-freeze, golden artifacts byte-unchanged; program CLOSED. D-13 DoD GREEN on all 8 checks (134 trades / final_equity 46189.87730727451 / 3076 equity pts; mypy clean; 724 tests pass; integration gate byte-exact); M5-10 satisfied end-to-end
+Load-bearing program constraints still in force for v1.1:
+- Money = Decimal end-to-end; float money is a correctness defect.
+- IDs = single UUIDv7 scheme via `uuid-utils`.
+- v1.1 is **behavior-preserving** — the v1.0 final golden oracle (134 trades / `final_equity 46189.87730727451`) is NOT re-baselined; any result-changing finding is owner-gated, never silently folded in.
 
 ### Pending Todos
 
@@ -146,57 +56,36 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 1 first work is Critical #34: the run path does not import today (the only Critical that blocks execution). Everything downstream depends on resolving it, then capturing + committing the reference output.
-- Golden-master gates are hard phase-boundary criteria: end of Phase 3 (re-freeze numerical oracle), Phases 4–5 behavior/value-preserving, end of Phase 8 (cross-validate + freeze final oracle).
-- New issues found during execution go to COVERAGE-INDEX §E (delta log) with owner approval — never silently folded into the running phase.
+- **Behavior-preserving guardrail:** the Phase 5 strategy-interface refactor must re-run the SMA_MACD golden master byte-exact (zero drift). Phase 1 cleanup and all later phases must not re-baseline the oracle.
+- **E2E oracle discipline:** each new scenario's expected fills/PnL are hand-verified once, then frozen as a regression lock (a lock proves stability, not correctness — verification happens before the freeze).
+- New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not silently folded into a running phase.
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260605-ih3 | Fix WR-01 weekly/DST check_timeframe anchoring (midnight-relative, not epoch) + tests | 2026-06-05 | 85384c5 | [260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc](./quick/260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc/) |
-| 260608-a59 | Demote by-design signal-rejection logs from error to warning in order_manager.py (admission gates + cash reservation) | 2026-06-08 | c48810c | [260608-a59-demote-by-design-signal-rejection-logs-f](./quick/260608-a59-demote-by-design-signal-rejection-logs-f/) |
-| 260608-qe2 | Enum cleanup: relocate TradingDirection + SystemStatus into core/enums; resolve config name collisions (ExchangeType→ExchangeVenue, OrderType→ConfigOrderType) | 2026-06-08 | 6608300 | [260608-qe2-pre-milestone-close-enum-cleanup-move-tr](./quick/260608-qe2-pre-milestone-close-enum-cleanup-move-tr/) |
-| fast | Delete dead config-surface modules (config/trading.py, config/data.py) — fully unreferenced; kept PortfolioType/RiskLevel/Environment/LogLevel (live) | 2026-06-08 | db5354a | — |
+None this milestone. (v1.0 quick tasks archived in `milestones/v1.0-MILESTONE-AUDIT.md`.)
 
 ## Deferred Items
 
-Items explicitly out of this program's scope (see PROJECT.md Out of Scope / COVERAGE-INDEX §D):
+Program-level items out of scope for v1.1, with their target milestone:
 
-| Category | Item | Status | Deferred At |
-|----------|------|--------|-------------|
-| D-live | Live mode (Binance streaming, TradingInterface, live threading, secrets) | Deferred | Program start |
-| D-sql | SQL persistence backends (order/price/reporting/config) | Deferred | Program start |
-| D-screener | Screener / rebalance loop wiring | Deferred | Program start |
-| D-compliance | Compliance layer (long_only/short_only) | Deferred | Program start |
-| D-oanda | OANDA + Binance adapters | Deferred | Program start |
-| OUT | `my_strategies/*` (relocated to separate repo by user) | Out-of-band | Program start |
+| Category | Item | Status | Target |
+|----------|------|--------|--------|
+| D-margin | Margin/liquidation model, shorts, leverage, levered Kelly, trailing stop, real pair trading | Deferred | v1.2 |
+| D-compliance | Compliance layer (long_only/short_only enforcement) | Deferred | v1.2 (with shorts) |
+| D-sql | SQL persistence backends (order/price/reporting/config) | Deferred | v1.3 |
+| D-screener | Production screener / ranking / rebalance loop (minimal `membership` IS in v1.1 Phase 3) | Deferred | v1.4 |
+| D-live | Live mode (streaming, TradingInterface modify/cancel, live threading, secrets) | Deferred | v1.4 |
+| D-multiasset | Multi-currency accounting, trading calendars, corporate actions (forex/equities/ETF) | Deferred | indefinite (crypto-first) |
+| D-oanda | OANDA + non-crypto adapters | Deferred | with D-multiasset |
+| OUT | `my_strategies/*` (relocated to separate repo by user) | Out-of-band | — |
 
-### Acknowledged at v1.0 milestone close (2026-06-08)
-
-12 open artifact items acknowledged and deferred at milestone close (see `milestones/v1.0-MILESTONE-AUDIT.md`). All advisory, owner-deferred, or out-of-scope (live mode); none block the milestone.
-
-| Category | Item | Status |
-|----------|------|--------|
-| quick_task | 260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc | done (commit 85384c5); scanner-flagged missing |
-| quick_task | 260608-a59-demote-by-design-signal-rejection-logs-f | done (commit c48810c); scanner-flagged missing |
-| quick_task | 260608-qe2-pre-milestone-close-enum-cleanup-move-tr | done (commit 6608300); scanner-flagged missing |
-| uat_gap | 01-HUMAN-UAT.md | partial (2 open scenarios — DEF-01-C oracle blessing, advisory CR/WR) |
-| uat_gap | 05-HUMAN-UAT.md | partial (1 open — WR-09 live-mode smoke, D-live deferred) |
-| uat_gap | 07-HUMAN-UAT.md | partial (2 open — run-script output shape, refreeze-note ownership) |
-| verification_gap | 01-VERIFICATION.md | human_needed (must-haves 4/4 verified; advisory sign-off) |
-| verification_gap | 02-VERIFICATION.md | gaps_found → re-verified passed after 02-08 gap closure |
-| verification_gap | 05-VERIFICATION.md | human_needed (7/8; CR-01/CR-02 non-backtest-path) |
-| verification_gap | 07-VERIFICATION.md | human_needed (4/4 verified; advisory sign-off) |
-
-Substantive behavior deferrals (margin/liquidation, shorts, SHORT_ONLY cover-arm hole) → N+2 backlog.
+v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are recorded in `milestones/v1.0-MILESTONE-AUDIT.md`.
 
 ## Session Continuity
 
-Last session: 2026-06-08T15:42:17.889Z
-Stopped at: Completed 08-09-PLAN.md — program CLOSED
+Last session: 2026-06-09 — started milestone v1.1; defined requirements + roadmap (9 phases), reordered codebase map to Phase 1.
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- `/clear`, then `/gsd:plan-phase 1` — plan the Codebase Map & Clarity Baseline phase.

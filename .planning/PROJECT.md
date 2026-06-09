@@ -108,10 +108,11 @@ must import, run, and yield trustworthy results.
 ## Context
 
 - **Authoritative analysis already exists.** Do not re-derive requirements. The source of truth is
-  four planning docs: `.planning/REFACTOR-BRIEF.md` (goal/scope/locked decisions/golden-master
-  discipline), `.planning/COVERAGE-INDEX.md` (all 105 items → milestone, the coverage contract),
-  `.planning/codebase/ARCHITECTURE-REVIEW.md` (40 design findings #1–40), `.planning/codebase/CONCERNS.md`
-  (65 concrete defects).
+  four planning docs (the first three are v1.0 input artifacts, now archived under `milestones/`):
+  `.planning/milestones/v1.0-REFACTOR-BRIEF.md` (goal/scope/locked decisions/golden-master
+  discipline), `.planning/milestones/v1.0-COVERAGE-INDEX.md` (the v1.0 coverage ledger — all 105 items → milestone; superseded by `REQUIREMENTS.md` for active v1.1 work),
+  `.planning/milestones/v1.0-ARCHITECTURE-REVIEW.md` (40 design findings #1–40), and the still-current `.planning/codebase/CONCERNS.md`
+  (post-refactor concerns).
 - **Coverage contract.** Every Section A finding (#1–40) and Section B defect (TD/KB/SEC/PERF/FR/SL/DEP/MF/TC)
   maps to a milestone or a DEFERRED/OUT tag. No in-scope item may be left unmapped. Span items
   (`M1→M2`, `M1→M5`) start in one phase and complete in a later one.
@@ -156,6 +157,11 @@ must import, run, and yield trustworthy results.
 | Strategy declares sizing *policy* + SL/TP; order/risk layer resolves per-portfolio qty | Current sizing migration is stranded (qty=0); put the seam in the architecturally-correct place (#24, #31) | ✓ Good — SizingResolver shipped M5b (⚠️ SHORT_ONLY cover-arm hole, oracle-dark → N+2) |
 | Universe → documented thin stub | Collapse false "dynamic" complexity; screener wired later (#33) | ✓ Good — membership stub shipped M5b; screener → N+4 |
 | Golden-master two-layer oracle | Behavioral oracle (trade timing) law M2–M4; numerical oracle re-baselines only after M2 & M5 | ✓ Good — held byte-exact through M2–M4; re-baselined exactly at M2b & M5c; final oracle frozen + cross-validated |
+| v1.1: crypto-first asset focus | Crypto is USD-quoted + 24/7 → defers multi-currency accounting + trading-calendar/corporate-action work indefinitely | ◷ v1.1 — keeps breadth tractable |
+| v1.1: dedicated `tests/e2e/` + `e2e` marker | E2E = whole-system golden-master; needs run-as-a-bucket control + its own re-freeze discipline, distinct from cross-component integration tests | ◷ v1.1 — per-scenario golden fixtures, shared harness |
+| v1.1: each E2E oracle hand-verified once, then regression-locked | A regression-lock proves *stability*, not *correctness*; tiny purpose-built scenarios are hand-computable, so verify expected fills/PnL once before freezing | ◷ v1.1 — external cross-val only where backtesting.py/backtrader can express it |
+| v1.1: normalize new data via committed script, not loader logic | Split date/time is an export quirk, not a recurring schema; CSV loading is backtest-only (live uses streaming providers) → no run-path generalization | ◷ v1.1 — `CsvPriceStore` unchanged |
+| v1.1: minimal real universe (not a workaround) | Heterogeneous data spans make "asset enters mid-backtest" a real scenario; build a minimal `membership`-from-availability primitive the production screener extends, never a throwaway skip | ◷ v1.1 — screener still deferred to v1.3 |
 
 ## Evolution
 
@@ -164,7 +170,7 @@ This document evolves at phase transitions and milestone boundaries.
 **After each phase transition** (via `/gsd-transition`):
 1. Requirements invalidated? → Move to Out of Scope with reason
 2. Requirements validated? → Move to Validated with phase reference
-3. New requirements emerged? → Add to Active (and log deltas in COVERAGE-INDEX §E)
+3. New requirements emerged? → Add to Active (track in `REQUIREMENTS.md`; the v1.0 COVERAGE-INDEX §E delta log is archived)
 4. Decisions to log? → Add to Key Decisions
 5. "What This Is" still accurate? → Update if drifted
 
@@ -180,9 +186,20 @@ This document evolves at phase transitions and milestone boundaries.
 
 **Tech debt at close (non-blocking, tracked):** partial M3-03 exception migration (bare `ValueError`s in `portfolio.py`, off the golden path), `portfolio_id: int` annotation carry-over, 2 partial Nyquist phases (02, 08), and advisory/live-mode review findings. Substantive behavior deferrals (margin/liquidation, shorts, SHORT_ONLY cover-arm) → N+2. See `milestones/v1.0-MILESTONE-AUDIT.md`.
 
-## Next Milestone Goals
+## Current Milestone: v1.1 — Backtest Trustworthiness: Breadth
 
-**N+1 — Backtest Trustworthiness: Breadth** (candidate, see ROADMAP.md Backlog): multi-strategy/scenario coverage with new golden standards, strategy-signal storage, strategy-interface hardening (pydantic config validation on the base `Strategy`), and an opportunistic codebase-map cleanup pass. Promote via `/gsd:new-milestone`.
+**Goal:** Extend trustworthy, regression-locked backtest behavior across the engine's *entire* feature surface — exhaustively exercising the resting-order book, brackets/OCO, fee/slippage variants, SLTP policies, sizing, scale in/out, and multi-strategy/multi-ticker runs — without re-baselining the v1.0 golden numbers. The hardening gate before any margin/live work. **Asset focus: crypto-first** (locked 2026-06-08).
+
+**Target features:**
+- **Full E2E coverage matrix** (30 scenarios) for the engine's behavior, in a dedicated `tests/e2e/` tree (registered `e2e` marker, `make test-e2e`, subsystem-grouped, per-scenario golden fixtures, shared harness). v1.0 only exercised a thin slice (MARKET / LONG_ONLY / single-ticker / `FractionOfCash` / `max_positions=1`); the resting-order book, brackets, fee/slippage variants, and SLTP policies have unit tests but **zero end-to-end coverage**.
+- **Multi-entity breadth** (all LONG-ONLY): multi-strategy runs, one strategy trading two cryptos (multi-ticker), scale in/out on the same coin (`allow_increase=True` + partial `exit_fraction` — v1.0 only validated the *reject* direction).
+- **Strategy signal storage** — persist strategy-generated signals.
+- **Strategy interface hardening** — pydantic `BaseStrategyConfig` + per-strategy params model with validators; kill stringly-typed `order_type`; behavior-preserving vs the SMA_MACD oracle.
+- **Data ingestion** — committed normalization script → ETH/SOL/AAVE into the golden Binance-kline schema (join split date+time); `CsvPriceStore` unchanged.
+- **Minimal real universe** — `membership` from data availability (replaces the stub; production screener still deferred to v1.3).
+- **Codebase clarity (scoped)** — one `gsd-map-codebase` pass → objective fix-list + opportunistic cleanup. NO big-bang refactor.
+
+**Deferred to v1.2** (ROADMAP backlog): shorts, real long/short pair trading, margin/leverage, engine-native trailing stop.
 
 ---
-*Last updated: 2026-06-08 — v1.0 (Backtest-Correctness Refactor) milestone complete. All 8 phases shipped; final oracle frozen + cross-validated; 724 tests green, `mypy --strict` clean. Audit: tech_debt (45/45 requirements, 0 blockers). Next: define N+1 via `/gsd:new-milestone`.*
+*Last updated: 2026-06-09 — v1.1 (Backtest Trustworthiness: Breadth) milestone started; promoted from backlog seed 999.1. v1.0 phases archived to `milestones/v1.0-phases/`. Requirements + roadmap being defined.*
