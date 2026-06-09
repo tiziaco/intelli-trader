@@ -26,7 +26,6 @@ make test-execution    # test/test_execution_handler/
 make test-events       # test/test_events/
 make test-strategy     # test/test_strategy/
 make test-cov          # coverage -> opens htmlcov/index.html
-make test-watch        # pytest-watch
 ```
 
 Run a single test file / case:
@@ -170,8 +169,7 @@ must import, run, and yield trustworthy results.
 - No web framework — pure Python library/application
 - Custom in-house event queue built on `queue.Queue` (stdlib). Dispatch entry point: `itrader/events_handler/full_event_handler.py`
 - pytest ^8.4.2 - Test runner (`testpaths = ["tests"]`, `minversion = "8.0"`)
-- pytest-cov ^5.0.0 - Coverage reports (HTML at `htmlcov/`)
-- pytest-watch ^4.2.0 - File-watch mode (`make test-watch`)
+- pytest-cov ^7.1.0 - Coverage reports (HTML at `htmlcov/`)
 - pytest-html ^4.2.0 - HTML test reports
 - backtesting.py 0.6.5 - Gating cross-validation oracle (`tests/golden/CROSS-VALIDATION.md`)
 - backtrader 1.9.78.123 - Gating cross-validation oracle

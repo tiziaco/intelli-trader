@@ -61,10 +61,6 @@ test-cov:
 	poetry run pytest tests/ --cov=itrader --cov-report=html --cov-report=term-missing -v
 	open htmlcov/index.html
 
-test-watch:
-	@echo "👀 Running tests in watch mode..."
-	poetry run pytest-watch tests/ -- -v
-
 # Type-check the in-scope itrader package with mypy --strict (D-05/D-06).
 # Errors are expected until the strict-clean pass (Plan 07) — this gate must merely run.
 typecheck:
