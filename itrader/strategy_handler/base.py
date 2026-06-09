@@ -84,7 +84,14 @@ class Strategy(ABC):
 			# direction are already .value-serialized; align strategy_id.
 			"strategy_id" : str(self.strategy_id),
 			"strategy_name": self.name,
-			"subscribed_portfolios" : self.subscribed_portfolios,
+			# WR-01: subscribed_portfolios holds runtime PortfolioId handles that
+			# are uuid.UUID on every real run path (PortfolioHandler.add_portfolio
+			# returns a UUID). A raw UUID makes json.dumps(strategy.to_dict())
+			# raise "Object of type UUID is not JSON serializable" — the same
+			# defect class IN-03 closed for strategy_id. Stringify at the
+			# serialization edge; str() is safe for both int and UUID handles
+			# (str(1) == "1", str(uuid) == "019e...").
+			"subscribed_portfolios" : [str(pid) for pid in self.subscribed_portfolios],
 			# D-04: order_type is the OrderType enum now — serialize its value.
 			"order_type": self.order_type.value,
 			"is_active" : self.is_active,
