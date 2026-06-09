@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: executing
-last_updated: "2026-06-09T09:11:25.686Z"
-last_activity: 2026-06-09 -- Phase 02 planning complete
+status: verifying
+last_updated: "2026-06-09T09:48:34.031Z"
+last_activity: 2026-06-09
 progress:
   total_phases: 12
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 3
-  completed_plans: 2
-  percent: 8
+  completed_plans: 3
+  percent: 17
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 2 — Data Ingestion (next active v1.1 phase; ready to plan)
+**Current focus:** Phase 02 — data-ingestion
 
 ## Current Position
 
-Phase: 2 of 9 — Data Ingestion (not started)
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-09 -- Phase 02 planning complete
+Phase: 02 (data-ingestion) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-06-09
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ Load-bearing program constraints still in force for v1.1:
 - Money = Decimal end-to-end; float money is a correctness defect.
 - IDs = single UUIDv7 scheme via `uuid-utils`.
 - v1.1 is **behavior-preserving** — the v1.0 final golden oracle (134 trades / `final_equity 46189.87730727451`) is NOT re-baselined; any result-changing finding is owner-gated, never silently folded in.
+- [Phase ?]: D-06 volume check relaxed to non-negative (NaN/negative still raise): zero-volume bars on SOLUSD(11)/AAVEUSD(35) are a provider missing-data sentinel, not true zeros; OHLC is real and bar volume is inert on the v1.1 run path
 
 ### Pending Todos
 
@@ -81,11 +82,12 @@ Program-level items out of scope for v1.1, with their target milestone:
 | OUT | `my_strategies/*` (relocated to separate repo by user) | Out-of-band | — |
 
 v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are recorded in `milestones/v1.0-MILESTONE-AUDIT.md`.
+| Phase 02 P01 | 2min | 3 tasks | 5 files |
 
 ## Session Continuity
 
-Last session: 2026-06-09T08:56:29.774Z
-Resume file: .planning/phases/02-data-ingestion/02-CONTEXT.md
+Last session: 2026-06-09T09:48:24.444Z
+Resume file: None
 
 ## Operator Next Steps
 
