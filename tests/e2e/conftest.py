@@ -271,6 +271,17 @@ def _diff_summary(fresh_summary, golden_summary):
             f"summary metrics drift: fresh={fresh_summary.get('metrics')} "
             f"golden={golden_summary['metrics']}"
         )
+    # Scalar key-set equality FIRST so additive drift is caught too (WR-04): the
+    # key-by-key golden loop below only catches renamed/removed keys (golden key
+    # absent from fresh → None mismatch), not a SPURIOUS extra key emitted by a
+    # regressed build_summary. The harness is a no-tolerance regression lock, so
+    # an extra top-level key must fail just like a missing one.
+    fresh_scalar = {k for k in fresh_summary if k != "metrics"}
+    gold_scalar = {k for k in golden_summary if k != "metrics"}
+    assert fresh_scalar == gold_scalar, (
+        f"summary key drift: extra={fresh_scalar - gold_scalar} "
+        f"missing={gold_scalar - fresh_scalar}"
+    )
     # Every other scalar key in the golden, compared key-by-key EXACT.
     for key, gold_value in golden_summary.items():
         if key == "metrics":
