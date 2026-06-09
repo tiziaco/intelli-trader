@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: planning
-last_updated: "2026-06-09T06:37:29.933Z"
+status: roadmapped
+last_updated: "2026-06-09T07:30:00.000Z"
 last_activity: 2026-06-09
 progress:
-  total_phases: 0
+  total_phases: 9
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-08)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** v1.0 shipped — planning next milestone (N+1 candidate, see ROADMAP.md Backlog). Run `/gsd:new-milestone`.
+**Current focus:** v1.1 — Backtest Trustworthiness: Breadth. Roadmap defined (9 phases, 51 requirements mapped, 100% coverage); reordered so the codebase map leads. Next: `/gsd:plan-phase 1` (Codebase Map & Clarity Baseline).
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 1 of 9 — Codebase Map & Clarity Baseline (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-09 — Milestone v1.1 started
+Status: Roadmapped — awaiting first phase plan
+Last activity: 2026-06-09 — v1.1 roadmap reordered (codebase map moved to Phase 1; 9 phases, 51 reqs, 100% coverage)
 
 ## Performance Metrics
 

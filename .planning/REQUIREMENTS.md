@@ -113,4 +113,58 @@
 
 ## Traceability
 
-*(Filled by the roadmapper: REQ-ID → Phase.)*
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| CLAR-01 | Phase 1 | Pending |
+| CLAR-02 | Phase 1 | Pending |
+| INGEST-01 | Phase 2 | Pending |
+| INGEST-02 | Phase 2 | Pending |
+| INGEST-03 | Phase 2 | Pending |
+| UNIV-01 | Phase 3 | Pending |
+| UNIV-02 | Phase 3 | Pending |
+| E2E-01 | Phase 4 | Pending |
+| E2E-02 | Phase 4 | Pending |
+| E2E-03 | Phase 4 | Pending |
+| E2E-04 | Phase 4 | Pending |
+| HARD-01 | Phase 5 | Pending |
+| HARD-02 | Phase 5 | Pending |
+| HARD-03 | Phase 5 | Pending |
+| HARD-04 | Phase 5 | Pending |
+| SIG-01 | Phase 5 | Pending |
+| SIG-02 | Phase 5 | Pending |
+| MATCH-01 | Phase 6 | Pending |
+| MATCH-02 | Phase 6 | Pending |
+| MATCH-03 | Phase 6 | Pending |
+| MATCH-04 | Phase 6 | Pending |
+| MATCH-05 | Phase 6 | Pending |
+| MATCH-06 | Phase 6 | Pending |
+| MATCH-07 | Phase 6 | Pending |
+| MATCH-08 | Phase 6 | Pending |
+| COST-01 | Phase 7 | Pending |
+| COST-02 | Phase 7 | Pending |
+| COST-03 | Phase 7 | Pending |
+| COST-04 | Phase 7 | Pending |
+| COST-05 | Phase 7 | Pending |
+| COST-06 | Phase 7 | Pending |
+| SIZE-01 | Phase 7 | Pending |
+| SIZE-02 | Phase 7 | Pending |
+| SIZE-03 | Phase 7 | Pending |
+| SLTP-01 | Phase 7 | Pending |
+| SLTP-02 | Phase 7 | Pending |
+| SLTP-03 | Phase 7 | Pending |
+| ADMIT-01 | Phase 8 | Pending |
+| ADMIT-02 | Phase 8 | Pending |
+| ADMIT-03 | Phase 8 | Pending |
+| ADMIT-04 | Phase 8 | Pending |
+| CASH-01 | Phase 8 | Pending |
+| CASH-02 | Phase 8 | Pending |
+| MULTI-01 | Phase 9 | Pending |
+| MULTI-02 | Phase 9 | Pending |
+| MULTI-03 | Phase 9 | Pending |
+| MULTI-04 | Phase 9 | Pending |
+| ROBUST-01 | Phase 9 | Pending |
+| ROBUST-02 | Phase 9 | Pending |
+| ROBUST-03 | Phase 9 | Pending |
+| ROBUST-04 | Phase 9 | Pending |
+
+**Coverage:** 51/51 v1.1 requirements mapped — no orphans, no duplicates.
