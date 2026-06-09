@@ -31,7 +31,6 @@ pydantic-settings = "^2.14"
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"
 pytest-cov = "^7.1.0"
-pytest-watch = "^4.2.0"
 pytest-html = "^4.2.0"
 ipython = "^9.14.0"
 ipykernel = "^6.31.0"
