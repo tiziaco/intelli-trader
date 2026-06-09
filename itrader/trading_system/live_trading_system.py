@@ -13,6 +13,7 @@ from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
+from itrader.strategy_handler.storage import SignalStorageFactory
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
@@ -103,7 +104,11 @@ class LiveTradingSystem:
         self.global_queue = queue.Queue()
         self.store = CsvPriceStore()
         self.feed = BacktestBarFeed(self.store, to_timedelta('1d'))
-        self.strategies_handler = StrategiesHandler(self.global_queue, self.feed)
+        # Signal-store sink (Plan 05-03, D-07/D-12): no persistent backend in
+        # v1.1, so mirror the in-memory order-storage fallback above — captured
+        # signals will NOT survive a restart until a persistent backend lands.
+        signal_store = SignalStorageFactory.create('backtest')
+        self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, signal_store)
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
         

@@ -14,6 +14,8 @@ from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
+from itrader.strategy_handler.storage import SignalStorageFactory, SignalStore
+from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
@@ -92,7 +94,13 @@ class TradingSystem(object):
 			start_date=start_date,
 			end_date=end_date or None)
 		self.feed = BacktestBarFeed(self.store, to_timedelta(timeframe))
-		self.strategies_handler = StrategiesHandler(self.global_queue, self.feed)
+		# Signal-store sink (Plan 05-03, D-07/D-12): the in-memory backend
+		# captures one SignalRecord per non-None strategy intent for post-run
+		# inspection. Held on self so the post-run accessor can read it. This is
+		# a read-model sink — the queue-only contract is preserved (the handler
+		# writes locally, the composition root reads after the run).
+		self._signal_store = SignalStorageFactory.create('backtest')
+		self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, self._signal_store)
 		# ScreenersHandler is a deferred subsystem (D-screener, ignore_errors override)
 		# so its constructor is untyped to the gate.
 		self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)  # type: ignore[no-untyped-call]
@@ -222,6 +230,31 @@ class TradingSystem(object):
 
 		if print_summary:
 			self._print_metrics_summary()
+
+	def get_signal_records(self) -> list[SignalRecord]:
+		"""Return the signals captured during the run (Plan 05-03, SIG-02).
+
+		Post-run read-model accessor (D-12): reads the injected signal-store
+		sink AFTER the run completes. This is a sink read, NOT a cross-domain
+		handler call — the queue-only contract is preserved. The returned
+		``SignalRecord``s are queryable (each carries its strategy id, ticker,
+		time, action, sizing/SLTP declarations, and the config snapshot); use
+		``get_signal_store()`` for the predicate-filter query API.
+
+		Returns
+		-------
+		list[SignalRecord]
+			Every signal captured on the run, in insertion order.
+		"""
+		return self._signal_store.get_all()
+
+	def get_signal_store(self) -> SignalStore:
+		"""Return the signal-store itself for post-run filtered queries (SIG-02).
+
+		Exposes ``by_strategy`` / ``by_ticker`` for post-run inspection. Like
+		``get_signal_records``, this is a read-model sink read (D-12).
+		"""
+		return self._signal_store
 
 	def _print_metrics_summary(self) -> None:
 		"""
