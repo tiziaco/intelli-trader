@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: ready_to_plan
-last_updated: 2026-06-09T18:02:00.854Z
-last_activity: 2026-06-09 -- Phase 05 execution started
+last_updated: 2026-06-09T20:04:00.000Z
+last_activity: 2026-06-09 -- Phase 05 complete (3/3, verified, review loop closed)
 progress:
   total_phases: 12
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 12
-  completed_plans: 12
-  percent: 33
-stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 999.2
+  completed_plans: 15
+  percent: 42
+stopped_at: Phase 05 complete (3/3) — ready to plan Phase 6
 ---
 
 # Project State
@@ -99,5 +99,5 @@ Resume file: .planning/phases/05-strategy-interface-hardening-signal-storage/05-
 
 ## Operator Next Steps
 
-- Phase 04 (e2e-harness-framework) is COMPLETE — the shared harness + e2e marker + the ONE hand-verified canary leaf are committed.
-- `/clear`, then `/gsd:plan-phase 5` — plan the next phase (the canary leaf is the copy-template for Phase 6-9 scenario authors).
+- Phase 05 (strategy-interface-hardening-signal-storage) is COMPLETE — verified (05-VERIFICATION.md passed) and the code-review loop is closed (05-REVIEW-FIX.iter3.md all_fixed). HARD-01..04 + SIG-01/02 validated.
+- `/clear`, then `/gsd:plan-phase 6` — plan Phase 6 (Order Matching Scenarios). The Phase 04 canary leaf remains the copy-template for Phase 6-9 scenario authors.
