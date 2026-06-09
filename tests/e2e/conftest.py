@@ -51,6 +51,7 @@ Indentation: 4 spaces (matches ``tests/conftest.py``).
 """
 
 import importlib.util
+import io
 import json
 import pathlib
 
@@ -283,6 +284,25 @@ def _freeze(golden_dir, trades, equity, summary):
         )
 
 
+def _roundtrip(frame, columns):
+    """Serialize ``frame[columns]`` the SAME way ``_freeze`` writes a golden, then
+    reload it — so the diff compares apples-to-apples (D-08).
+
+    The in-memory fresh frame carries engine dtypes (tz-aware ``Timestamp`` dates,
+    full-precision ``Decimal``-as-object money); the committed golden is whatever
+    ``pd.read_csv`` produces from the ``float_format=FLOAT_FORMAT`` CSV (object dates,
+    float money). Round-tripping the fresh frame through the identical CSV serialization
+    (``to_csv(..., float_format=FLOAT_FORMAT)`` -> ``read_csv``) normalizes BOTH sides to
+    the same dtypes and the same 10-dp float repr, so ``assert_frame_equal`` compares the
+    frozen bytes — not engine-internal dtype/precision artifacts. This mirrors the oracle,
+    which reads BOTH fresh and golden from CSV (``test_backtest_oracle.py``).
+    """
+    buffer = io.StringIO()
+    frame[columns].to_csv(buffer, index=False, float_format=FLOAT_FORMAT)
+    buffer.seek(0)
+    return pd.read_csv(buffer)
+
+
 def _diff(golden_dir, trades, equity, summary):
     """DIFF ONLY the golden files PRESENT in the leaf (D-05: presence = assertion).
 
@@ -299,13 +319,13 @@ def _diff(golden_dir, trades, equity, summary):
         gold = pd.read_csv(trades_golden)
         # Serialize the fresh trades the SAME way the golden was written, then reload,
         # so the diff compares apples-to-apples (same float formatting, same columns).
-        fresh = trades[TRADE_COLUMNS + SLIPPAGE_COLUMNS]
+        fresh = _roundtrip(trades, TRADE_COLUMNS + SLIPPAGE_COLUMNS)
         _diff_frame(fresh, gold, _TRADE_IDENTITY_COLUMNS, _TRADE_SORT_KEYS)
 
     equity_golden = golden_dir / "equity.csv"
     if equity_golden.exists():
         gold = pd.read_csv(equity_golden)
-        fresh = equity[EQUITY_COLUMNS]
+        fresh = _roundtrip(equity, EQUITY_COLUMNS)
         _diff_frame(fresh, gold, _EQUITY_IDENTITY_COLUMNS, _EQUITY_SORT_KEYS)
 
     summary_golden = golden_dir / "summary.json"
