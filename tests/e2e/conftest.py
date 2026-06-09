@@ -10,8 +10,10 @@ What ``run_scenario`` does (the build→run→read→assemble→diff contract)
 ----------------------------------------------------------------------
 Given a leaf directory ``here`` it:
 
-1. imports the leaf's ``scenario.py`` ``ScenarioSpec`` (in-process, unique module
-   name per leaf so two leaves' ``scenario.py`` never shadow each other — Pitfall 4);
+1. imports the leaf's ``scenario.py`` ``ScenarioSpec`` (in-process, module name
+   derived from the FULL leaf path relative to ``tests/e2e/`` and registered in
+   ``sys.modules`` under that unique name so two leaves — even same-named ones in
+   different parents — never shadow each other — Pitfall 4);
 2. wires a real ``TradingSystem`` from the spec (the SAME engine the oracle uses —
    D-03: no parallel/reinvented config schema, the spec carries the real engine
    config objects: strategies, portfolios, window, data path);
@@ -54,6 +56,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import sys
 
 import pandas as pd
 import pandas.testing as pdt
@@ -105,18 +108,33 @@ def _load_spec(scenario_path):
     """Import a leaf's ``scenario.py`` in-process and return its ``SCENARIO`` spec.
 
     Generalizes the oracle's ``_load_run_backtest_module`` (Don't Hand-Roll). The
-    module name is derived from the leaf path so two leaves' ``scenario.py`` never
-    shadow each other in ``sys.modules`` (Pitfall 4).
+    module name is derived from the FULL leaf path (relative to ``tests/e2e/``) so
+    two leaves with the same folder name in different parents — e.g.
+    ``smoke/single_market_buy`` and a future ``regression/single_market_buy`` —
+    never collide, and the module is registered in ``sys.modules`` under that
+    unique name so the advertised collision-prevention is actually engaged
+    (Pitfall 4).
     """
     scenario_path = pathlib.Path(scenario_path)
     if not scenario_path.exists():
         pytest.fail(f"scenario spec missing: {scenario_path}")
-    # Unique module name per leaf: <leaf-folder-name>_scenario keeps two leaves'
-    # scenario.py from colliding in sys.modules (Pitfall 4).
-    module_name = f"e2e_scenario_{scenario_path.parent.name}"
+    # Unique module name per leaf: derive from the full leaf path relative to this
+    # conftest's directory (tests/e2e/) so two leaves with the same folder name in
+    # different parents produce DISTINCT module names (Pitfall 4). Fall back to the
+    # leaf folder name if the scenario lives outside the e2e tree.
+    try:
+        rel = scenario_path.parent.relative_to(pathlib.Path(__file__).parent)
+        suffix = "_".join(rel.parts)
+    except ValueError:
+        suffix = scenario_path.parent.name
+    module_name = f"e2e_scenario_{suffix}"
     spec = importlib.util.spec_from_file_location(module_name, scenario_path)
     assert spec is not None and spec.loader is not None, f"cannot load {scenario_path}"
     module = importlib.util.module_from_spec(spec)
+    # Register under the unique name BEFORE exec so dataclass pickling and any
+    # intra-scenario relative imports resolve to this module (Pitfall 4) — the
+    # mechanism the docstring/comments advertise is now actually engaged.
+    sys.modules[module_name] = module
     spec.loader.exec_module(module)
     # The leaf publishes its typed ScenarioSpec as ``SCENARIO`` (Plan 03 defines the
     # concrete class; the harness only reads its attributes — D-02 consuming contract).
