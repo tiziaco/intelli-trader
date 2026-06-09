@@ -15,7 +15,8 @@ golden fixtures (no run-path loader change — INGEST-03):
   * D-05  driver    : one committed, importable, all-tickers-by-default script with an
                      internal ticker->raw-path registry (no CLI ticker selection)
   * D-06  validation: validate-and-RAISE before each write (monotonic+unique dates,
-                     OHLC consistency, positive volume, no NaN) — never silently-wrong
+                     OHLC consistency, non-negative+non-NaN volume, no NaN) — never
+                     silently-wrong
   * D-07  determinism: fixed column order + rows sorted ascending by Open time +
                      float_format="%.10f" -> byte-identical re-runs (sha256 stable)
 
@@ -102,8 +103,26 @@ def validate_frame(out: pd.DataFrame, ticker: str) -> None:
     Trusted-but-verify, mirroring ``CsvPriceStore._load_csv``: a malformed bar must
     abort the run rather than silently enter a frozen golden fixture (threat
     T-02-01). Checks: dates monotonic-increasing AND unique; OHLC consistency
-    (low <= min(open,close) and max(open,close) <= high per row); volume strictly
-    positive; no NaN in any of the 6 columns.
+    (low <= min(open,close) and max(open,close) <= high per row); volume
+    non-negative AND non-NaN; no NaN in any of the 6 columns.
+
+    Volume check — non-negative, not strictly-positive (user decision, Option 1).
+    The provider data contains zero-volume bars (SOLUSD 11, AAVEUSD 35; ETHUSD 0,
+    BTCUSD golden 0). These are NOT genuine no-trade days: the OHLC on those dates
+    shows real intraday movement (e.g. SOLUSD 2024-08-27 open 157.15 / high 159.69
+    / low 145.14 / close 146.85, ~9% range) — price cannot move that far with zero
+    trades, so ``volume == 0`` here is a provider MISSING-DATA SENTINEL, not a true
+    zero. The OHLC prices are real and internally consistent and are the only thing
+    the v1.1 run path consumes: SMA_MACD_strategy.py reads no volume; the
+    execution/slippage/fee models track only ``_total_volume`` (executed-fill
+    notional), never the input bar volume; sizing/risk read no volume. The bar
+    volume field is therefore INERT on the v1.1 run path. Relaxing to ``>= 0``
+    preserves the real price data and the pinned row counts while keeping volume
+    guarded so genuinely-corrupt bars still raise: volume must be non-negative AND
+    non-NaN (negative or NaN volume still aborts the run). CAVEAT: volume on those
+    specific SOL/AAVE dates is KNOWN-UNRELIABLE — any future phase building a
+    volume-using scenario on SOL/AAVE must treat those dates as suspect and
+    re-verify before freezing.
 
     Parameters
     ----------
@@ -131,8 +150,13 @@ def validate_frame(out: pd.DataFrame, ticker: str) -> None:
     if not (open_close_max <= out["High"]).all():
         raise ValueError(f"{ticker}: OHLC inconsistency — max(Open, Close) > High")
 
-    if not (out["Volume"] > 0).all():
-        raise ValueError(f"{ticker}: non-positive Volume present")
+    # Volume non-negative AND non-NaN (user decision Option 1). Zero-volume bars
+    # are a provider missing-data sentinel, not a true zero, and volume is inert on
+    # the v1.1 run path (see docstring). Negative or NaN volume still raises.
+    if out["Volume"].isna().any():
+        raise ValueError(f"{ticker}: NaN Volume present")
+    if not (out["Volume"] >= 0).all():
+        raise ValueError(f"{ticker}: negative Volume present")
 
     if out[GOLDEN_COLUMNS].isna().any().any():
         raise ValueError(f"{ticker}: NaN present in one of {GOLDEN_COLUMNS}")
