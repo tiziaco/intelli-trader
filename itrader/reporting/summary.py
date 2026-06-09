@@ -57,8 +57,15 @@ def attach_slippage(trades: Any, closes: Any) -> Any:
     index = closes.index
 
     def decision_close(fill_time: Any) -> float:
+        # The decision bar is the store bar immediately BEFORE the fill bar.
+        # When the fill lands at or before the first store bar there is NO prior
+        # bar to attribute to; return a diff-stable 0.0 ("no overnight gap
+        # measurable") rather than NaN — NaN != NaN would break the harness's
+        # exact, no-tolerance diff for any future first-bar fill (WR-02).
         position = index.searchsorted(fill_time, side="left")
-        return float(closes.iloc[position - 1]) if position > 0 else float("nan")
+        if position <= 0:
+            return 0.0
+        return float(closes.iloc[position - 1])
 
     def entry_fill_price(row: Any) -> float:
         # LONG enters by buying; SHORT enters by selling.
