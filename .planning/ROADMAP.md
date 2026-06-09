@@ -88,7 +88,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   3. Each scenario is a self-contained leaf folder (purpose-built strategy + frozen golden fixtures) that runs warning-clean under `filterwarnings=["error"]`.
   4. The harness enforces the hand-verify-once-then-freeze discipline: a scenario's oracle is human-verified for correctness before it is committed as a golden fixture.
 **Plans**: 3 plans
-- [ ] 04-01-PLAN.md — D-16 oracle-dark reporting extraction (build_summary/build_metrics_block/attach_slippage → itrader.reporting.summary) + FL-03 dead-skip cleanup [E2E-02]
+- [x] 04-01-PLAN.md — D-16 oracle-dark reporting extraction (build_summary/build_metrics_block/attach_slippage → itrader.reporting.summary) + FL-03 dead-skip cleanup [E2E-02]
 - [ ] 04-02-PLAN.md — Shared framework: e2e marker + folder-derived auto-marking + make test-e2e, and the run_scenario harness + --freeze in tests/e2e/conftest.py [E2E-01, E2E-02, E2E-04]
 - [ ] 04-03-PLAN.md — The one contrived canary leaf (SingleMarketBuy strategy + scenario.py/test/bars.csv/golden) with hand-verify-once freeze [E2E-02, E2E-03, E2E-04]
 
@@ -156,7 +156,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 1. Codebase Map & Clarity Baseline | v1.1 | 2/2 | Complete   | 2026-06-09 |
 | 2. Data Ingestion | v1.1 | 1/1 | Complete   | 2026-06-09 |
 | 3. Minimal Real Universe | v1.1 | 3/3 | Complete   | 2026-06-09 |
-| 4. E2E Harness & Framework | v1.1 | 0/3 | Planned | - |
+| 4. E2E Harness & Framework | v1.1 | 1/3 | In Progress|  |
 | 5. Strategy Interface Hardening & Signal Storage | v1.1 | 0/0 | Not started | - |
 | 6. Order Matching Scenarios | v1.1 | 0/0 | Not started | - |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 0/0 | Not started | - |
