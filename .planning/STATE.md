@@ -4,14 +4,14 @@ milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: ready_to_plan
 last_updated: 2026-06-09T08:12:45.594Z
-last_activity: 2026-06-09 -- Phase 01 execution started
+last_activity: 2026-06-09 -- Phase 01 complete (2/2), verified
 progress:
-  total_phases: 12
-  completed_phases: 0
+  total_phases: 9
+  completed_phases: 1
   total_plans: 2
   completed_plans: 2
-  percent: 0
-stopped_at: Phase 01 complete (2/2) — ready to discuss Phase 999.2
+  percent: 11
+stopped_at: Phase 01 complete (2/2) — ready to discuss/plan Phase 2 (Data Ingestion)
 ---
 
 # Project State
@@ -21,14 +21,14 @@ stopped_at: Phase 01 complete (2/2) — ready to discuss Phase 999.2
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 2 — Data Ingestion (next active v1.1 phase; ready to plan)
 
 ## Current Position
 
-Phase: 999.2
+Phase: 2 of 9 — Data Ingestion (not started)
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-09
+Last activity: 2026-06-09 -- Phase 01 complete (2/2), verified
 
 ## Performance Metrics
 
