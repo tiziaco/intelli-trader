@@ -135,6 +135,12 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
     simulated._supported_symbols = set(simulated._supported_symbols) | {
         "EARLYUSD", "LATEUSD", "ENDSEARLYUSD",
     }
+    # WR-02: fail loudly at setup if the private attribute drifts (e.g. the
+    # supported-symbol set moves behind a config object). Without this, a
+    # rename would silently reject our orders, leaving positions empty so the
+    # downstream look-ahead asserts vacuously pass while `assert late_positions`
+    # fails with a misleading message far from the real cause.
+    assert {"EARLYUSD", "LATEUSD", "ENDSEARLYUSD"} <= simulated._supported_symbols
 
     strategy = BuyEachTickerOnce(
         timeframe="1d",
