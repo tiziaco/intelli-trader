@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: ready_to_plan
-last_updated: 2026-06-09T08:12:45.594Z
+status: planning
+last_updated: "2026-06-09T08:56:29.782Z"
 last_activity: 2026-06-09 -- Phase 01 complete (2/2), verified
 progress:
-  total_phases: 9
+  total_phases: 12
   completed_phases: 1
   total_plans: 2
   completed_plans: 2
-  percent: 11
-stopped_at: Phase 01 complete (2/2) — ready to discuss/plan Phase 2 (Data Ingestion)
+  percent: 8
 ---
 
 # Project State
@@ -85,8 +84,8 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 
 ## Session Continuity
 
-Last session: 2026-06-09 — started milestone v1.1; defined requirements + roadmap (9 phases), reordered codebase map to Phase 1.
-Resume file: None
+Last session: 2026-06-09T08:56:29.774Z
+Resume file: .planning/phases/02-data-ingestion/02-CONTEXT.md
 
 ## Operator Next Steps
 
