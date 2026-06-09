@@ -15,6 +15,15 @@ is locked (E2E-04): a regression-lock proves stability, not correctness.
 
 ================================ VERIFY ================================
 
+HAND-VERIFIED & LOCKED (E2E-04 / D-13): a human confirmed the frozen
+``golden/trades.csv`` + ``golden/summary.json`` MATCH the hand-derivation below
+(single LONG BTCUSD trade: buy @120 on 2020-01-03, sell @140 on 2020-01-05,
+realised_pnl 1_666.666…, final_equity 11_666.666…, trade_count 1) and that the
+harness diff demonstrably CATCHES drift (mutate-a-golden-cell → FAIL → revert →
+PASS, T-04-07). The goldens are now a regression-lock: they prove stability, NOT
+correctness — correctness was established here, once, before the freeze. Re-freeze
+ONLY via the deliberate ``--freeze`` flag after re-verifying this derivation.
+
 Contrived bars (``bars.csv`` — daily, tz-aware Open time, all prices round):
 
     bar  date         open   high   low    close
