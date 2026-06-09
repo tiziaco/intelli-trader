@@ -58,13 +58,25 @@ def attach_slippage(trades: Any, closes: Any) -> Any:
 
     def decision_close(fill_time: Any) -> float:
         # The decision bar is the store bar immediately BEFORE the fill bar.
-        # When the fill lands at or before the first store bar there is NO prior
-        # bar to attribute to; return a diff-stable 0.0 ("no overnight gap
-        # measurable") rather than NaN — NaN != NaN would break the harness's
-        # exact, no-tolerance diff for any future first-bar fill (WR-02).
+        # WR-03: ``searchsorted(side="left") - 1`` only identifies the correct
+        # decision bar when ``fill_time`` lands EXACTLY on a store-index bar. If
+        # the fill timestamp is drawn from a different grid (e.g. a resampled run
+        # timeframe vs the raw base store series), ``position - 1`` would silently
+        # attribute slippage to the WRONG bar and freeze a wrong number into a
+        # golden. Assert membership so a grid mismatch fails LOUDLY here rather
+        # than mis-attributing. Contract: ``attach_slippage`` requires fill
+        # timestamps drawn from the SAME grid as ``closes`` (the store index).
+        # The first store bar has no prior bar; return a diff-stable 0.0 ("no
+        # overnight gap measurable") rather than NaN, which would break the
+        # exact, no-tolerance diff (WR-02).
         position = index.searchsorted(fill_time, side="left")
         if position <= 0:
             return 0.0
+        assert fill_time in index, (
+            f"fill timestamp {fill_time!r} is not a store-index bar — "
+            f"attach_slippage requires fill timestamps drawn from the same grid "
+            f"as the close series (WR-03)"
+        )
         return float(closes.iloc[position - 1])
 
     def entry_fill_price(row: Any) -> float:
