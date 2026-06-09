@@ -21,14 +21,14 @@ stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 999.2
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 6 — Order Matching Scenarios (next v1.1 phase; 999.x dirs are deferred N+2/N+3 buckets)
 
 ## Current Position
 
-Phase: 999.2
+Phase: 6
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-09
+Last activity: 2026-06-09 -- Phase 05 complete (HARD-01..04 + SIG-01/02 validated)
 
 ## Performance Metrics
 
