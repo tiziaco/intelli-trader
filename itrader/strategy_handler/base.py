@@ -41,6 +41,13 @@ class Strategy(ABC):
 		self.order_type: OrderType = config.order_type
 		# The handler reads this for per-portfolio fan-out — the strategy
 		# itself never iterates it (D-12).
+		# IN-04: the strategy layer deliberately keeps INTEGER portfolio handles,
+		# distinct from the canonical PortfolioId (UUID) scheme in core/ids.py.
+		# The backtest path (tests, oracle, integration) addresses portfolios by
+		# plain int, and the fan-out only needs an opaque, hashable handle — it
+		# never resolves a portfolio object here. When the strategy layer is
+		# wired to real UUID portfolio ids, switch this to list[PortfolioId] and
+		# update the subscribe/unsubscribe signatures together.
 		self.subscribed_portfolios: list[int] = []
 		# Typed declarations (D-01/D-08/D-10): the strategy DECLARES, the
 		# engine resolves. sizing_policy is REQUIRED — no default, honest
@@ -71,7 +78,11 @@ class Strategy(ABC):
 
 	def to_dict(self) -> dict[str, Any]:
 		return {
-			"strategy_id" : self.strategy_id,
+			# IN-03: stringify the UUID — to_dict is a serialization-edge dict,
+			# and a raw uuid.UUID makes json.dumps(strategy.to_dict()) raise
+			# "Object of type UUID is not JSON serializable". order_type /
+			# direction are already .value-serialized; align strategy_id.
+			"strategy_id" : str(self.strategy_id),
 			"strategy_name": self.name,
 			"subscribed_portfolios" : self.subscribed_portfolios,
 			# D-04: order_type is the OrderType enum now — serialize its value.
