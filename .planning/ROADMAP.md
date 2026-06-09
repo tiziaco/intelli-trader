@@ -94,6 +94,9 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 
 ### Phase 6: Order Matching Scenarios
 **Goal**: Give the resting-order book, bracket/OCO lifecycle, and trigger/gap matching their first end-to-end golden coverage — each a tiny hand-verified scenario then regression-locked.
+
+> **REMINDER — enable `parallelization` HERE (the scenario waves 6–9 benefit; phases 1–5 do not).** Each scenario is an independent leaf folder, ideal for wave-parallel execution in isolated worktrees. Preconditions: (1) Phase 4 shared infra (`tests/e2e/conftest.py`, `pyproject.toml` `e2e` marker, `Makefile` target) MUST be committed first — parallel scenario plans must not edit shared files or they'll merge-conflict; (2) parallelize generation but hand-verify/freeze oracles in deliberate batches, not 12-at-once. Flip via `/gsd:settings` → `parallelization`.
+
 **Depends on**: Phase 4 (E2E harness)
 **Requirements**: MATCH-01, MATCH-02, MATCH-03, MATCH-04, MATCH-05, MATCH-06, MATCH-07, MATCH-08
 **Success Criteria** (what must be TRUE):
