@@ -1,5 +1,6 @@
 import os
 import queue
+import sys
 import threading
 import time
 import json
@@ -23,7 +24,7 @@ from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.universe import derive_membership
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.events import EventType, TimeEvent, OrderEvent
+from itrader.events_handler.events import EventType, TimeEvent, OrderEvent, ErrorEvent
 
 # Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
 # (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the
@@ -184,9 +185,12 @@ class LiveTradingSystem:
         ErrorEvent onto the queue (consumed by the ERROR route) and returns so
         the loop continues. Reads the active exception via sys.exc_info().
         """
-        import sys
-        from itrader.events_handler.events import ErrorEvent
-
+        # IN-01: sys and ErrorEvent are now module-level imports (top of file).
+        # The deferred-import rationale (keep the events package out of the
+        # dispatcher's import graph) does not apply to THIS module — it already
+        # imports EventType/TimeEvent/OrderEvent from the same package at module
+        # scope, so re-importing on every handler failure on the hot error path
+        # bought nothing.
         exc = sys.exc_info()[1]
         handler_name = getattr(handler, '__qualname__', repr(handler))
         self.logger.error(
