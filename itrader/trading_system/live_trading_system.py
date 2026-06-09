@@ -203,7 +203,7 @@ class LiveTradingSystem:
             severity='ERROR',
         ))
     
-    def _update_status(self, new_status: SystemStatus, error_msg: str = None):
+    def _update_status(self, new_status: SystemStatus, error_msg: Optional[str] = None):
         """Update system status and notify via callback if available."""
         with self._status_lock:
             old_status = self._status
@@ -227,7 +227,7 @@ class LiveTradingSystem:
             except Exception as e:
                 self.logger.error(f'Error in status callback: {e}')
     
-    def _update_stats(self, event_type: str = None):
+    def _update_stats(self, event_type: Optional[str] = None):
         """Update internal statistics."""
         with self._stats_lock:
             if event_type:
