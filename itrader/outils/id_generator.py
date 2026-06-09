@@ -6,7 +6,7 @@ import uuid_utils.compat as uuid_compat
 class IDGenerator:
 	"""
 	A class for generating unique UUIDv7 IDs for transactions,
-	portfolios, positions, orders, strategies, and screeners.
+	portfolios, positions, orders, strategies, screeners, and signals.
 
 	Single UUIDv7 scheme (D-12/D-13/D-14): every id is a stdlib ``uuid.UUID``
 	produced by ``uuid_utils.compat.uuid7()`` (the compat module returns the
@@ -45,4 +45,8 @@ class IDGenerator:
 
 	def generate_screener_id(self) -> uuid.UUID:
 		"""Generate unique screener ID."""
+		return self._uuid7()
+
+	def generate_signal_id(self) -> uuid.UUID:
+		"""Generate unique signal ID (D-10 — single UUIDv7 scheme)."""
 		return self._uuid7()
