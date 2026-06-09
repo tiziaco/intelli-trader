@@ -21,7 +21,7 @@ created: 2026-06-09
 | **Config file** | `pyproject.toml` `[tool.pytest.ini_options]` |
 | **Quick run command** | `make test-e2e` (`-m e2e`) |
 | **Full suite command** | `make test` |
-| **Estimated runtime** | ~{N} seconds (e2e scenarios are ~10 bars; fast) |
+| **Estimated runtime** | ~5–20 seconds (e2e scenarios are ~10 bars; the oracle-dark gate runs the full BTCUSD backtest, ~1–2 min) |
 
 ---
 
@@ -30,7 +30,7 @@ created: 2026-06-09
 - **After every task commit:** Run `make test-e2e` (and `poetry run pytest tests/integration/test_backtest_oracle.py` for any task touching the D-16 reporting extraction — oracle-dark guard)
 - **After every plan wave:** Run `make test`
 - **Before `/gsd:verify-work`:** Full suite must be green under `filterwarnings=["error"]`
-- **Max feedback latency:** {N} seconds
+- **Max feedback latency:** ~120 seconds (bounded by the oracle-dark full-backtest gate on Plan 01 Task 2)
 
 ---
 
@@ -38,14 +38,20 @@ created: 2026-06-09
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| {N}-01-01 | 01 | 1 | E2E-{XX} | — | N/A | integration | `{command}` | ❌ W0 | ⬜ pending |
+| 04-01-01 | 01 | 1 | E2E-02 | — | N/A | integration | `poetry run python -c "from itrader.reporting.summary import attach_slippage, build_metrics_block, build_summary, FLOAT_FORMAT, SLIPPAGE_COLUMNS"` | ❌ W0 | ⬜ pending |
+| 04-01-02 | 01 | 1 | E2E-02 | T-04 | Oracle-dark: BTCUSD golden byte-identical | integration | `make backtest && poetry run pytest tests/integration/test_backtest_oracle.py -x` | ✅ | ⬜ pending |
+| 04-01-03 | 01 | 1 | — | — | FL-03 dead-skip removed | unit | `poetry run pytest tests/unit/core/test_enums.py -x` | ✅ | ⬜ pending |
+| 04-02-01 | 02 | 2 | E2E-01 | — | e2e marker registered; in default `make test` | integration | `grep -q 'e2e:' pyproject.toml && grep -q '"e2e" in parts' tests/conftest.py && grep -q 'test-e2e' Makefile && poetry run pytest tests/ -m e2e --collect-only -q` | ❌ W0 | ⬜ pending |
+| 04-02-02 | 02 | 2 | E2E-02, E2E-04 | T-04 | Goldens never auto-heal; `--freeze` deliberate | integration | `poetry run pytest tests/e2e --collect-only -q` + run_scenario/pytest_addoption presence check | ❌ W0 | ⬜ pending |
+| 04-03-01 | 03 | 3 | E2E-02, E2E-03 | — | Canary warning-clean; deterministic | e2e | `poetry run pytest tests/e2e/smoke/single_market_buy -x -q` (run twice — idempotent) | ❌ W0 | ⬜ pending |
+| 04-03-02 | 03 | 3 | E2E-04 | T-04-06, T-04-07 | Hand-verify-once before freeze; diff catches drift | manual (checkpoint) | BLOCKING human-verify: VERIFY note matches frozen goldens; mutated golden makes test FAIL then reverts clean | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
-> Planner: populate one row per task. The defining oracle-dark assertion for any
-> D-16 reporting-extraction task is `tests/integration/test_backtest_oracle.py`
-> passing byte-identical (the meta-validation that the harness/extraction does
-> not perturb the frozen BTCUSD oracle).
+> The defining oracle-dark assertion is `tests/integration/test_backtest_oracle.py`
+> passing byte-identical (04-01-02) — the meta-validation that the D-16 extraction
+> and the new harness do not perturb the frozen BTCUSD oracle. `❌ W0` rows are
+> created during their wave (the e2e tree does not exist yet).
 
 ---
 
@@ -73,7 +79,7 @@ created: 2026-06-09
 - [ ] Sampling continuity: no 3 consecutive tasks without automated verify
 - [ ] Wave 0 covers all MISSING references
 - [ ] No watch-mode flags
-- [ ] Feedback latency < {N}s
+- [ ] Feedback latency < 120s
 - [ ] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** pending
