@@ -30,14 +30,14 @@
 - [x] **E2E-04**: Every scenario oracle is hand-verified for correctness once before it is frozen.
 
 ### Strategy Interface Hardening (HARD)
-- [ ] **HARD-01**: A pydantic `BaseStrategyConfig` validates engine-facing declarations (timeframe, tickers, order_type, direction, allow_increase, max_positions, sizing_policy, sltp_policy).
-- [ ] **HARD-02**: A per-strategy params model with validators (e.g. `short_window < long_window`, positivity) replaces unvalidated loose attributes.
-- [ ] **HARD-03**: `order_type` is the `OrderType` enum end-to-end (stringly-typed `"market"` removed).
-- [ ] **HARD-04**: The refactor is behavior-preserving — SMA_MACD golden master stays byte-exact (134 trades / `final_equity 46189.87730727451`); the golden test re-runs green proving zero drift. Pure-alpha D-12 contract intact (pydantic at construction only; `generate_signal` stays pure pandas).
+- [x] **HARD-01**: A pydantic `BaseStrategyConfig` validates engine-facing declarations (timeframe, tickers, order_type, direction, allow_increase, max_positions, sizing_policy, sltp_policy).
+- [x] **HARD-02**: A per-strategy params model with validators (e.g. `short_window < long_window`, positivity) replaces unvalidated loose attributes.
+- [x] **HARD-03**: `order_type` is the `OrderType` enum end-to-end (stringly-typed `"market"` removed).
+- [x] **HARD-04**: The refactor is behavior-preserving — SMA_MACD golden master stays byte-exact (134 trades / `final_equity 46189.87730727451`); the golden test re-runs green proving zero drift. Pure-alpha D-12 contract intact (pydantic at construction only; `generate_signal` stays pure pandas).
 
 ### Signal Storage (SIG)
-- [ ] **SIG-01**: Strategy-generated signals are persisted with a typed record (strategy id, ticker, action, time, sizing/sltp declarations, config snapshot).
-- [ ] **SIG-02**: Stored signals are queryable for post-run inspection and feed E2E assertions.
+- [x] **SIG-01**: Strategy-generated signals are persisted with a typed record (strategy id, ticker, action, time, sizing/sltp declarations, config snapshot).
+- [x] **SIG-02**: Stored signals are queryable for post-run inspection and feed E2E assertions.
 
 ### Order Types & Matching coverage (MATCH)
 - [ ] **MATCH-01**: MARKET next-bar-open fills (regression of the v1.0 path).
@@ -126,12 +126,12 @@
 | E2E-02 | Phase 4 | Complete |
 | E2E-03 | Phase 4 | Complete |
 | E2E-04 | Phase 4 | Complete |
-| HARD-01 | Phase 5 | Pending |
-| HARD-02 | Phase 5 | Pending |
-| HARD-03 | Phase 5 | Pending |
-| HARD-04 | Phase 5 | Pending |
-| SIG-01 | Phase 5 | Pending |
-| SIG-02 | Phase 5 | Pending |
+| HARD-01 | Phase 5 | Complete |
+| HARD-02 | Phase 5 | Complete |
+| HARD-03 | Phase 5 | Complete |
+| HARD-04 | Phase 5 | Complete |
+| SIG-01 | Phase 5 | Complete |
+| SIG-02 | Phase 5 | Complete |
 | MATCH-01 | Phase 6 | Pending |
 | MATCH-02 | Phase 6 | Pending |
 | MATCH-03 | Phase 6 | Pending |
