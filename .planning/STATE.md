@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: executing
-last_updated: "2026-06-09T11:08:02.866Z"
-last_activity: 2026-06-09 -- Phase 03 planning complete
+last_updated: "2026-06-09T11:20:29.706Z"
+last_activity: 2026-06-09
 progress:
   total_phases: 12
   completed_phases: 2
   total_plans: 6
-  completed_plans: 3
+  completed_plans: 4
   percent: 17
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 03 — minimal-real-universe
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
+Phase: 03 (minimal-real-universe) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-09 -- Phase 03 planning complete
+Last activity: 2026-06-09
 
 ## Performance Metrics
 
@@ -51,6 +51,7 @@ Load-bearing program constraints still in force for v1.1:
 - IDs = single UUIDv7 scheme via `uuid-utils`.
 - v1.1 is **behavior-preserving** — the v1.0 final golden oracle (134 trades / `final_equity 46189.87730727451`) is NOT re-baselined; any result-changing finding is owner-gated, never silently folded in.
 - [Phase ?]: D-06 volume check relaxed to non-negative (NaN/negative still raise): zero-volume bars on SOLUSD(11)/AAVEUSD(35) are a provider missing-data sentinel, not true zeros; OHLC is real and bar volume is inert on the v1.1 run path
+- [Phase ?]: is_active/active_membership added alongside derive_membership (D-03); span model inclusive both ends (D-01); active_membership returns set[str]
 
 ### Pending Todos
 
@@ -83,11 +84,12 @@ Program-level items out of scope for v1.1, with their target milestone:
 
 v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are recorded in `milestones/v1.0-MILESTONE-AUDIT.md`.
 | Phase 02 P01 | 2min | 3 tasks | 5 files |
+| Phase 03 P01 | 4 | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last session: 2026-06-09T10:39:38.396Z
-Resume file: .planning/phases/03-minimal-real-universe/03-CONTEXT.md
+Last session: 2026-06-09T11:20:29.698Z
+Resume file: None
 
 ## Operator Next Steps
 
