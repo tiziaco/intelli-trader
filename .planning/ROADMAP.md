@@ -28,7 +28,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 - [x] **Phase 1: Codebase Map & Clarity Baseline** — One read-only `gsd-map-codebase` pass → objective fix-list that informs every later phase; establishes the opportunistic-cleanup standard carried cross-cutting through the milestone. Blocks nothing; pure analysis. (completed 2026-06-09)
 - [x] **Phase 2: Data Ingestion** — Committed normalization script produces ETH/SOL/AAVE in the golden Binance-kline schema; `CsvPriceStore` loads all four unchanged. (completed 2026-06-09)
 - [x] **Phase 3: Minimal Real Universe** — A `membership`-from-availability primitive replaces the stub; the engine handles mid-run listing / absent bars without crash or look-ahead. (completed 2026-06-09)
-- [ ] **Phase 4: E2E Harness & Framework** — Dedicated `tests/e2e/` tree, registered `e2e` marker, `make test-e2e`, and a shared golden-compare harness every scenario phase builds on.
+- [x] **Phase 4: E2E Harness & Framework** — Dedicated `tests/e2e/` tree, registered `e2e` marker, `make test-e2e`, and a shared golden-compare harness every scenario phase builds on. (completed 2026-06-09)
 - [ ] **Phase 5: Strategy Interface Hardening & Signal Storage** — Pydantic `BaseStrategyConfig` + per-strategy params validators + `OrderType` enum end-to-end (byte-exact vs the SMA_MACD oracle); typed signal records persisted and queryable.
 - [ ] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill.
 - [ ] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes.
@@ -90,7 +90,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 **Plans**: 3 plans
 - [x] 04-01-PLAN.md — D-16 oracle-dark reporting extraction (build_summary/build_metrics_block/attach_slippage → itrader.reporting.summary) + FL-03 dead-skip cleanup [E2E-02]
 - [x] 04-02-PLAN.md — Shared framework: e2e marker + folder-derived auto-marking + make test-e2e, and the run_scenario harness + --freeze in tests/e2e/conftest.py [E2E-01, E2E-02, E2E-04]
-- [ ] 04-03-PLAN.md — The one contrived canary leaf (SingleMarketBuy strategy + scenario.py/test/bars.csv/golden) with hand-verify-once freeze [E2E-02, E2E-03, E2E-04]
+- [x] 04-03-PLAN.md — The one contrived canary leaf (SingleMarketBuy strategy + scenario.py/test/bars.csv/golden) with hand-verify-once freeze [E2E-02, E2E-03, E2E-04]
 
 ### Phase 5: Strategy Interface Hardening & Signal Storage
 **Goal**: Put a pydantic config contract on the strategy base class and persist typed signal records — done EARLY, before new scenario strategies are written against the base class, and informed by the Phase 1 codebase map — while staying byte-exact against the SMA_MACD golden master.
@@ -156,7 +156,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 1. Codebase Map & Clarity Baseline | v1.1 | 2/2 | Complete   | 2026-06-09 |
 | 2. Data Ingestion | v1.1 | 1/1 | Complete   | 2026-06-09 |
 | 3. Minimal Real Universe | v1.1 | 3/3 | Complete   | 2026-06-09 |
-| 4. E2E Harness & Framework | v1.1 | 2/3 | In Progress|  |
+| 4. E2E Harness & Framework | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 5. Strategy Interface Hardening & Signal Storage | v1.1 | 0/0 | Not started | - |
 | 6. Order Matching Scenarios | v1.1 | 0/0 | Not started | - |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 0/0 | Not started | - |
