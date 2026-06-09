@@ -236,6 +236,11 @@ class StrategiesHandler(object):
 		if self.min_timeframe is None:
 			self.min_timeframe = strategy.timeframe
 		else:
+			# IN-01: min_timeframe is guaranteed non-None here — the None seed
+			# (IN-06) is handled by the branch above. This `else` arm is the
+			# load-bearing non-None branch; moving min(...) out from under the
+			# `is None` guard would feed min() a None and raise TypeError at
+			# wiring time. Keep the guard and this arm coupled.
 			self.min_timeframe = min(self.min_timeframe, strategy.timeframe)
 
 		self.logger.info(f'New strategy added: {strategy.name}')
