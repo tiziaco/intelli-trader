@@ -1,9 +1,9 @@
 ---
 phase: 1
 slug: codebase-map-clarity-baseline
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-06-09
 ---
 
@@ -71,12 +71,12 @@ created: 2026-06-09
 
 ## Validation Sign-Off
 
-- [ ] All tasks have an automated artifact assertion or are listed as manual-only
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 5s
-- [ ] Golden-master no-drift guard included (proves no source touched)
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have an automated artifact assertion or are listed as manual-only
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (N/A — docs-only phase, no Wave 0 gap)
+- [x] No watch-mode flags
+- [x] Feedback latency < 5s
+- [x] Golden-master no-drift guard included (proves no source touched)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-06-09

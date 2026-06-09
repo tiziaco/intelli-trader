@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: roadmapped
-last_updated: "2026-06-09T07:30:00.000Z"
-last_activity: 2026-06-09
+status: executing
+last_updated: "2026-06-09T07:55:02.575Z"
+last_activity: 2026-06-09 -- Phase 1 planning complete
 progress:
-  total_phases: 9
+  total_phases: 12
   completed_phases: 0
-  total_plans: 0
+  total_plans: 2
   completed_plans: 0
   percent: 0
 ---
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 
 Phase: 1 of 9 — Codebase Map & Clarity Baseline (not started)
 Plan: —
-Status: Roadmapped — awaiting first phase plan
-Last activity: 2026-06-09 — v1.1 roadmap reordered (codebase map moved to Phase 1; 9 phases, 51 reqs, 100% coverage)
+Status: Ready to execute
+Last activity: 2026-06-09 -- Phase 1 planning complete
 
 ## Performance Metrics
 
@@ -46,6 +46,7 @@ Last activity: 2026-06-09 — v1.1 roadmap reordered (codebase map moved to Phas
 Active decisions live in PROJECT.md Key Decisions (including the five v1.1 decisions: crypto-first; dedicated `tests/e2e/` + `e2e` marker; hand-verify-once-then-regression-lock; normalize data via committed script not loader logic; minimal real universe). v1.0 per-plan decisions are archived in `milestones/v1.0-MILESTONE-AUDIT.md` and the v1.0 phase records under `milestones/v1.0-phases/`.
 
 Load-bearing program constraints still in force for v1.1:
+
 - Money = Decimal end-to-end; float money is a correctness defect.
 - IDs = single UUIDv7 scheme via `uuid-utils`.
 - v1.1 is **behavior-preserving** — the v1.0 final golden oracle (134 trades / `final_equity 46189.87730727451`) is NOT re-baselined; any result-changing finding is owner-gated, never silently folded in.

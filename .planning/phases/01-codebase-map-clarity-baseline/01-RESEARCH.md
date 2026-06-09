@@ -355,7 +355,11 @@ convention (`# FL-NN`) that *later* phases use, matching the existing decision-t
 | A3 | The naming/visibility violation surface is genuinely small post-refactor (no padding warranted) | Harvest Inventory | Low — based on CONVENTIONS.md recording conventions with no violations beyond carry-forwards; a deeper grep during planning could surface more, which the schema accommodates. |
 | A4 | Writing the standard into PROJECT.md Key Decisions makes it discoverable to every later phase | Cleanup Standard Design | Low — PROJECT.md is read at every phase plan; if the team prefers a dedicated file, the reference row still points there. |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Both questions were resolved during planning (Phase 1 plans 01-01 / 01-02):
+> - **Q1 RESOLVED:** the cleanup standard is a **separate `CLEANUP-STANDARD.md`** (Plan 01-02), with a PROJECT.md Key Decisions pointer row — chosen over embedding so the two plans keep clean, non-overlapping file ownership and run in parallel.
+> - **Q2 RESOLVED:** #10 is **pre-tagged `eligible-in-Phase-5`, status `open`** in FIX-LIST.md (Plan 01-01).
 
 1. **Stand-alone file vs. embedded standard.**
    - What we know: `commit_docs: true`; map artifacts live in `.planning/codebase/`.
