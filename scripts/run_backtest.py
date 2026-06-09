@@ -113,7 +113,7 @@ def main():
         OUTPUT_DIR / "trades.csv", index=False, float_format=FLOAT_FORMAT)
     equity[EQUITY_COLUMNS].to_csv(
         OUTPUT_DIR / "equity.csv", index=False, float_format=FLOAT_FORMAT)
-    with open(OUTPUT_DIR / "summary.json", "w") as handle:
+    with open(OUTPUT_DIR / "summary.json", "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
 
     logger.info(

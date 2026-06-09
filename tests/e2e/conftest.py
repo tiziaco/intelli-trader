@@ -308,7 +308,7 @@ def _freeze(golden_dir, trades, equity, summary):
     trades[TRADE_COLUMNS + SLIPPAGE_COLUMNS].to_csv(
         golden_dir / "trades.csv", index=False, float_format=FLOAT_FORMAT
     )
-    with open(golden_dir / "summary.json", "w") as handle:
+    with open(golden_dir / "summary.json", "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
 
     # equity.csv is opt-in (D-06): only refreshed if the leaf already froze it.
@@ -364,7 +364,7 @@ def _diff(golden_dir, trades, equity, summary):
 
     summary_golden = golden_dir / "summary.json"
     if summary_golden.exists():
-        with open(summary_golden) as handle:
+        with open(summary_golden, encoding="utf-8") as handle:
             gold_summary = json.load(handle)
         _diff_summary(summary, gold_summary)
 
