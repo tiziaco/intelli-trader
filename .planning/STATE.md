@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: executing
-last_updated: "2026-06-09T16:51:16.889Z"
-last_activity: 2026-06-09 -- Phase 05 planning complete
+last_updated: "2026-06-09T17:14:12.302Z"
+last_activity: 2026-06-09 -- Phase 05 execution started
 progress:
   total_phases: 12
   completed_phases: 4
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 05 — strategy-interface-hardening-signal-storage
 
 ## Current Position
 
-Phase: 999.2 of 3 (nplus2 persistence and performance)
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-09 -- Phase 05 planning complete
+Phase: 05 (strategy-interface-hardening-signal-storage) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 05
+Last activity: 2026-06-09 -- Phase 05 execution started
 
 ## Performance Metrics
 
