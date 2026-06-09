@@ -107,6 +107,18 @@ def duo_feed(tmp_path):
     return BacktestBarFeed(store, timedelta(days=1))
 
 
+@pytest.fixture
+def gappy_feed(tmp_path):
+    """Single-symbol feed whose span is [Jan 1, Jan 10] but is MISSING the
+    interior Jan 5 bar — the mid-life-gap case (D-04 WARN branch)."""
+    stamps = ([f'2020-01-{d:02d}' for d in range(1, 5)]      # Jan 1..4
+              + [f'2020-01-{d:02d}' for d in range(6, 11)])  # Jan 6..10
+    gappy = write_kline_csv(tmp_path / 'gappy.csv', stamps, base=100.0)
+    store = CsvPriceStore(csv_paths={'GAPPY': gappy},
+                          start_date='2020-01-01', end_date='2020-12-31')
+    return BacktestBarFeed(store, timedelta(days=1))
+
+
 # -- 1. M5-01 / D-02: look-ahead regression (contract rule 4) ------------------
 
 def test_look_ahead_forming_bucket_invisible(daily_feed):
@@ -300,17 +312,40 @@ def test_generate_bar_event_bound_queue_enqueues_and_returns_none(daily_feed):
     assert q.empty()
 
 
-def test_generate_bar_event_missing_membership_ticker_warns(duo_feed, caplog):
-    # The relocated missing-ticker warning (RESEARCH OQ4): a membership
-    # ticker ABSENT from the produced bars logs a warning naming the
-    # ticker and the tick time.
+def test_no_warn_before_listing(duo_feed, caplog):
+    # D-04 (inverted from the old warn-all behavior): LATEUSD lists in June,
+    # so at a January tick it is OUTSIDE its [first,last] span -> EXPECTED
+    # absence -> SILENT. The ticker is still sparse (absent, not None).
     duo_feed.bind(None, ['BTCUSD', 'LATEUSD'])
     with caplog.at_level(logging.WARNING):
         event = duo_feed.generate_bar_event(TimeEvent(time=ts('2020-01-03')))
     assert event is not None
     assert 'LATEUSD' not in event.bars  # sparse universe: absent, not None
-    assert 'LATEUSD' in caplog.text
-    assert '2020-01-03' in caplog.text
+    assert caplog.records == []  # pre-listing -> no noise (D-04)
+
+
+def test_no_warn_after_end(duo_feed, caplog):
+    # D-04 symmetry: a tick AFTER a ticker's last bar is expected absence
+    # (post-end) -> SILENT. LATEUSD ends 2020-06-07; a July tick is past it.
+    duo_feed.bind(None, ['BTCUSD', 'LATEUSD'])
+    with caplog.at_level(logging.WARNING):
+        event = duo_feed.generate_bar_event(TimeEvent(time=ts('2020-07-01')))
+    assert event is not None
+    assert 'LATEUSD' not in event.bars
+    assert caplog.records == []  # post-end -> no noise (D-04)
+
+
+def test_warn_on_mid_life_gap(gappy_feed, caplog):
+    # D-04: GAPPY is active across [Jan 1, Jan 10] but has NO bar at Jan 5
+    # (interior gap day inside its span) -> a true mid-life data gap -> WARN
+    # naming the ticker and the tick time.
+    gappy_feed.bind(None, ['GAPPY'])
+    with caplog.at_level(logging.WARNING):
+        event = gappy_feed.generate_bar_event(TimeEvent(time=ts('2020-01-05')))
+    assert event is not None
+    assert 'GAPPY' not in event.bars  # sparse: no bar at the gap day
+    assert 'GAPPY' in caplog.text
+    assert '2020-01-05' in caplog.text
 
 
 def test_generate_bar_event_no_warning_when_membership_covered(duo_feed, caplog):
@@ -318,3 +353,13 @@ def test_generate_bar_event_no_warning_when_membership_covered(duo_feed, caplog)
     with caplog.at_level(logging.WARNING):
         duo_feed.generate_bar_event(TimeEvent(time=ts('2020-01-03')))
     assert caplog.records == []
+
+
+def test_spans_cache_matches_loaded_frame(daily_store):
+    # UNIV-01: the feed caches each ticker's [first, last] span from the
+    # loaded frame's own index extent (index[0]/index[-1]), as the same
+    # tz-aware type the tick carries.
+    feed = BacktestBarFeed(daily_store, timedelta(days=1))
+    frame = daily_store.read_bars('BTCUSD')
+    assert feed._spans['BTCUSD'] == (frame.index[0], frame.index[-1])
+    assert feed._spans['BTCUSD'] == (ts('2020-01-01'), ts('2020-01-10'))
