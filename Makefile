@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-cov backtest precommit typecheck
+.PHONY: init-env clean test test-unit test-integration test-cov backtest normalize-data precommit typecheck
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -79,6 +79,11 @@ typecheck:
 backtest:
 	@echo "🚀 Running backtest oracle generator..."
 	poetry run python scripts/run_backtest.py
+
+# Normalize provider CSVs (data/raw/) into the golden schema (data/{TICKER}_1d_ohlcv.csv)
+normalize-data:
+	@echo "🧾 Normalizing provider data into the golden schema..."
+	poetry run python scripts/normalize_data.py
 
 precommit:
 	pre-commit run --all-files --hook-stage manual
