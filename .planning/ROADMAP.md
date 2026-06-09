@@ -38,11 +38,14 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 ## Phase Details
 
 ### Phase 1: Codebase Map & Clarity Baseline
-**Goal**: Produce the objective map of the codebase FIRST — one read-only `gsd-map-codebase` pass yielding a committed, scoped fix-list (naming, visibility, seams) — so every later phase (harness shape, interface hardening, scenario design) builds on the map; and establish the opportunistic-cleanup standard that the rest of the milestone follows.
+**Goal**: Produce the objective map of the codebase FIRST — yielding a committed, scoped fix-list (naming, visibility, seams) — so every later phase (harness shape, interface hardening, scenario design) builds on the map; and establish the opportunistic-cleanup standard that the rest of the milestone follows.
+
+> **NOTE — map already exists and is current (do NOT regenerate).** The `.planning/codebase/` docs (the 6 map files + `ARCHITECTURE-REVIEW.md`, `CONCERNS.md`) were generated at v1.0 close, *after* the last `itrader/` code commit (`017bf72`); no engine code has changed since. CLAR-01 is therefore **harvest the fix-list from the existing docs** (esp. `CONCERNS.md` + `ARCHITECTURE-REVIEW.md`), not a fresh `gsd-map-codebase` run. Only spot-check / selectively refresh if a doc looks stale against current code.
+
 **Depends on**: Nothing (first phase — pure analysis, blocks nothing; informs all subsequent phases)
 **Requirements**: CLAR-01, CLAR-02
 **Success Criteria** (what must be TRUE):
-  1. One `gsd-map-codebase` pass produces a committed, objective fix-list covering naming, visibility, and seam issues.
+  1. A committed, objective fix-list (naming, visibility, seam issues) is harvested from the existing `.planning/codebase/` map — no redundant regeneration of fresh docs.
   2. The opportunistic naming/visibility cleanup standard is established here as a CROSS-CUTTING practice — cleanup is applied only along paths a later phase already touches (no big-bang refactor) and is VERIFIED at milestone close, not in a standalone phase.
   3. No cleanup is performed in this phase itself (no paths are touched yet); the golden master is therefore unchanged here, and any later cleanup re-runs byte-exact — no oracle re-baseline.
 **Plans**: TBD
