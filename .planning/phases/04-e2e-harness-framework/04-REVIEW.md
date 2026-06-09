@@ -1,21 +1,20 @@
 ---
 phase: 04-e2e-harness-framework
-reviewed: 2026-06-09T15:05:00Z
+reviewed: 2026-06-09T00:00:00Z
 depth: standard
-files_reviewed: 13
+files_reviewed: 12
 files_reviewed_list:
   - itrader/reporting/summary.py
   - scripts/run_backtest.py
   - tests/conftest.py
+  - tests/e2e/__init__.py
   - tests/e2e/conftest.py
-  - tests/e2e/strategies/single_market_buy.py
+  - tests/e2e/smoke/__init__.py
+  - tests/e2e/smoke/single_market_buy/__init__.py
   - tests/e2e/smoke/single_market_buy/scenario.py
   - tests/e2e/smoke/single_market_buy/test_scenario.py
-  - tests/e2e/smoke/single_market_buy/bars.csv
-  - tests/e2e/smoke/single_market_buy/golden/trades.csv
-  - tests/e2e/smoke/single_market_buy/golden/summary.json
-  - pyproject.toml
-  - Makefile
+  - tests/e2e/strategies/__init__.py
+  - tests/e2e/strategies/single_market_buy.py
   - tests/unit/core/test_enums.py
 findings:
   critical: 0
@@ -25,279 +24,172 @@ findings:
 status: issues_found
 ---
 
-# Phase 4: Code Review Report
+# Phase 04: Code Review Report
 
-**Reviewed:** 2026-06-09T15:05:00Z
+**Reviewed:** 2026-06-09
 **Depth:** standard
-**Files Reviewed:** 13
+**Files Reviewed:** 12
 **Status:** issues_found
 
 ## Summary
 
-Phase 04 builds the shared E2E harness: a relocated serialization module
-(`itrader/reporting/summary.py`), a `run_scenario` fixture with golden-diff mechanics
-(`tests/e2e/conftest.py`), a contrived hand-verified canary scenario, and supporting
-config (`pyproject.toml` markers, `Makefile` `test-e2e` target).
+Reviewed the Phase 4 E2E harness: the shared `tests/e2e/conftest.py` `run_scenario`
+build→run→read→assemble→diff fixture, the relocated `itrader.reporting.summary`
+serialization path, the oracle generator `scripts/run_backtest.py`, the canary
+`single_market_buy` scenario + strategy, the root test conftest marker plumbing, and
+the `FillStatus` enum characterization test.
 
-I executed the canary test live: it **passes**, drift detection **works** (mutating a
-golden cell produces a FAIL), `--collect-only` is **clean** (deferred `TradingSystem`
-import), and `mypy` is **clean** on `summary.py`. The metrics functions are well-guarded
-against NaN, so the "compare the whole metrics dict with `==`" risk does not materialize
-for realistic flat/single-point equity curves.
+The harness wiring is coherent and the canary golden numbers reconcile with the VERIFY
+hand-derivation (entry @120, exit @140, realised_pnl 1666.66…, final_equity 11666.66…,
+slippage 6.0 each leg). No security issues exist in this test-infrastructure surface, and
+no money-as-float defect was found (`add_portfolio` enters Decimal via `to_money`; the
+single Decimal→float boundary in `build_summary` is preserved).
 
-No BLOCKER-class correctness or security defects were found in the canary path itself. The
-findings below are (a) a latent multi-ticker correctness bug in the shared harness that
-will silently bake wrong slippage numbers into Phase 6-9 goldens, (b) several
-documentation-vs-reality drifts where the code does not do what its load-bearing docstrings
-claim (these matter because the docstrings are the VERIFY contract and the freeze
-discipline depends on them being accurate), and (c) minor quality items.
+The defects are correctness-of-claim and robustness gaps that will bite the Phase 6-9
+scenario authors who clone this template: a documented "unique module name" invariant that
+does not hold and references a `sys.modules` mechanism the code never engages; a
+`decision_close` that silently emits `NaN` and breaks the exact-diff for any future fill on
+the first bar; a `searchsorted` decision-bar lookup that is only correct when fill timestamps
+land exactly on store-index bars; and an asymmetric summary diff that cannot catch spurious
+extra keys.
 
 ## Warnings
 
-### WR-01: `attach_slippage` uses a single ticker's closes for ALL trades — latent multi-ticker correctness bug in the shared harness
+### WR-01: "Unique module name per leaf" invariant is false for same-named leaves and references an unused `sys.modules` mechanism
 
-**File:** `tests/e2e/conftest.py:183-208` (`_assemble`), consuming `itrader/reporting/summary.py:42-75`
-
-**Issue:** `_assemble` computes the slippage-attribution close series from exactly one
-ticker:
-
+**File:** `tests/e2e/conftest.py:104-126`
+**Issue:** `_load_spec` derives the in-process module name from `scenario_path.parent.name`
+only (`f"e2e_scenario_{scenario_path.parent.name}"`). Two leaves with the same folder name in
+different parents — e.g. `e2e/smoke/single_market_buy/` and a future
+`e2e/regression/single_market_buy/` — produce the IDENTICAL module name
+`e2e_scenario_single_market_buy`. The docstring and inline comments (lines 108-109, 114-115)
+claim this keeps "two leaves' scenario.py from colliding in sys.modules (Pitfall 4)", but the
+code never assigns `sys.modules[module_name] = module`, so the stated collision-prevention
+mechanism is inoperative and the name is effectively cosmetic. The uniqueness invariant the
+comment advertises is also not satisfied. This is a documented-protection-vs-reality mismatch
+that will mislead the Phase 6-9 authors who treat this file as ground truth, and a latent
+collision if `sys.modules` registration is ever added (e.g. to support dataclass pickling or
+intra-scenario relative imports).
+**Fix:** Derive a name that is actually unique across the full leaf path, e.g.
 ```python
-closes = system.store.read_bars(spec.ticker)["close"]
-trades = attach_slippage(trades, closes)
+rel = scenario_path.parent.relative_to(pathlib.Path(__file__).parent)
+module_name = "e2e_scenario_" + "_".join(rel.parts)
 ```
+and either remove the `sys.modules` claim from the docstring/comments or register the module
+deliberately (`sys.modules[module_name] = module`) so the stated behavior matches the code.
 
-But `attach_slippage` applies that single series to EVERY row in the trades frame, and the
-trades frame carries a per-trade `pair` column (`position.to_dict()` →
-`'pair': self.ticker`). For the single-ticker canary this is correct. But this conftest is
-explicitly sold as "the SINGLE shared infrastructure every scenario phase (6-9)
-consume[s]" (module docstring lines 1-7), and a Phase 6-9 author "adds a scenario by
-editing ONLY their own leaf folder." The moment a scenario trades two tickers, every trade
-on the non-`spec.ticker` ticker gets `slippage_entry`/`slippage_exit` computed against the
-WRONG ticker's close series. Those wrong numbers are then frozen into `golden/trades.csv`
-via `--freeze` and lock in as a "verified" regression baseline. Because the harness diffs
-its own output against its own freeze, the bug is self-consistent and the diff will never
-catch it — the only line of defense is the human VERIFY step, which is exactly where a
-multi-ticker slippage error is easiest to miss.
-
-**Fix:** Compute slippage per-ticker by grouping the trades frame on `pair` and looking up
-each ticker's own close series. For example, replace the `_assemble` slippage block with a
-per-ticker dispatch, and have `attach_slippage` accept a `closes_by_ticker` mapping (or
-call it once per ticker group):
-
-```python
-# _assemble
-trades_parts = []
-for ticker, grp in trades.groupby("pair"):
-    closes = system.store.read_bars(ticker)["close"]
-    trades_parts.append(attach_slippage(grp.copy(), closes))
-trades = pd.concat(trades_parts).sort_index() if trades_parts else trades
-```
-
-(or pass `system.store` into `attach_slippage` and resolve `closes` per row from
-`row["pair"]`). At minimum, the harness must assert single-ticker until the multi-ticker
-path is implemented, so a Phase 6-9 author cannot silently freeze wrong numbers.
-
-### WR-02: `attach_slippage` `decision_close` is fragile when a fill time is not exactly on a store bar (off-by-one risk)
+### WR-02: `attach_slippage.decision_close` emits `NaN` for a fill on the first store bar, which breaks the exact no-tolerance diff
 
 **File:** `itrader/reporting/summary.py:59-61`
-
-**Issue:**
-
+**Issue:** `decision_close` returns `float("nan")` when `position == 0` (a fill whose timestamp
+is at or before the first store bar). `slippage_entry`/`slippage_exit` then become `NaN`,
+serialized into `trades.csv`. Because the harness diffs with `check_exact=True` and NO
+tolerance, and `NaN != NaN`, any future scenario whose entry or exit fills on the first store
+bar produces a column that cannot be compared meaningfully. The canary avoids this (fills on
+bars 2/4), so it is latent, but this function is the SHARED Phase 6-9 path explicitly
+advertised as a copy-template, and a first-bar fill is a realistic scenario shape.
+**Fix:** Decide the contract explicitly. Either guard against first-bar fills at the scenario
+level, or make the column deterministic when no decision bar exists, e.g. return `0.0`
+(meaning "no overnight gap measurable") rather than `NaN`:
 ```python
 def decision_close(fill_time: Any) -> float:
     position = index.searchsorted(fill_time, side="left")
-    return float(closes.iloc[position - 1]) if position > 0 else float("nan")
+    if position <= 0:
+        return 0.0  # no decision bar exists — diff-stable, document the semantics
+    return float(closes.iloc[position - 1])
 ```
+and document the chosen semantics in the docstring.
 
-This assumes `fill_time` lands EXACTLY on a store-index timestamp so that
-`searchsorted(..., side="left")` returns the index of the fill bar and `position - 1` is
-the decision bar. For the canary the fill dates (`entry_date`) coincide with bar
-timestamps, so it works. But if a fill is ever stamped at a time that is NOT an exact index
-member (e.g. an intrabar stop/limit fill timestamped between bars, or any resampled-feed
-scenario), `side="left"` returns the insertion point and `position - 1` silently selects
-the wrong "decision bar," producing a wrong-but-plausible slippage number with no error.
-This is the same class of silent-wrong-number risk the project's golden discipline exists
-to prevent. The relocation docstring asserts the body is "character-identical" to the
-oracle original, so this is inherited debt, but it is now reused by the harness across
-future scenario shapes the oracle never exercised.
+### WR-03: `decision_close` is only correct when fill timestamps coincide exactly with store-index bars
 
-**Fix:** Make the bar-membership assumption explicit and loud. Either assert membership, or
-distinguish "fill bar is an exact index member" from "fill time falls between bars":
+**File:** `itrader/reporting/summary.py:57-61, 71-74`
+**Issue:** `decision_close` computes the decision bar as
+`closes.iloc[index.searchsorted(fill_time, side="left") - 1]`, where `index` is the
+base-timeframe store index (`system.store.read_bars(ticker)["close"].index`). This assumes
+`fill_time` (the trade's `entry_date`/`exit_date`) lands EXACTLY on a store-index timestamp.
+For the canary (1d base = 1d run) this holds. But the harness threads `spec.timeframe` while
+`closes` is always the raw base store series; for any scenario where the run/fill timeframe
+differs from the base store grid (resampled bars), `searchsorted(side="left")` returns an
+insertion point that does not correspond to "the bar immediately before the fill", and
+`position - 1` silently attributes slippage to the wrong bar — a silently-wrong number frozen
+into a golden that "proves stability, not correctness". The `Any` duck-typing hides the
+mismatch from mypy.
+**Fix:** Either assert the fill timestamp is a member of the index (`assert fill_time in index`)
+so a mismatch fails loudly instead of mis-attributing, or pass the run-timeframe (resampled)
+close series rather than the raw store close series, and document that `attach_slippage`
+requires fill timestamps drawn from the same grid as `closes`.
 
+### WR-04: Summary diff is asymmetric — spurious extra top-level keys in a regressed summary are never caught
+
+**File:** `tests/e2e/conftest.py:248-263`
+**Issue:** `_diff_summary` iterates only over the GOLDEN's keys
+(`for key, gold_value in golden_summary.items()`). If a regression causes `build_summary` to
+emit an EXTRA top-level key, the scalar comparison silently ignores any fresh key absent from
+the golden. A renamed/removed key is caught (golden key → `None` in fresh → mismatch), but an
+additive drift is not. The harness is sold as a no-tolerance regression lock; this is a gap in
+that guarantee.
+**Fix:** After the key-by-key golden loop, assert scalar key-set equality:
 ```python
-def decision_close(fill_time: Any) -> float:
-    pos = index.searchsorted(fill_time, side="left")
-    if pos >= len(index) or index[pos] != fill_time:
-        # fill time is not an exact bar — the decision-bar mapping is undefined here
-        raise ValueError(f"fill_time {fill_time!r} is not an exact store-bar timestamp")
-    return float(closes.iloc[pos - 1]) if pos > 0 else float("nan")
-```
-
-If between-bar fills are a legitimate future case, the contract for what "decision bar"
-means must be written down rather than left to `searchsorted` side-effects.
-
-### WR-03: Summary diff is NOT round-tripped through JSON while trade/equity diffs ARE round-tripped through CSV — asymmetric precision gate contradicts the "no tolerance" contract
-
-**File:** `tests/e2e/conftest.py:248-263` (`_diff_summary`) vs `tests/e2e/conftest.py:287-303` (`_roundtrip`) and `306-335` (`_diff`)
-
-**Issue:** The harness goes to great lengths to normalize trade/equity frames before
-comparison: `_roundtrip` serializes the fresh frame through `to_csv(float_format="%.10f")`
-→ `read_csv` so "the diff compares the frozen bytes — not engine-internal dtype/precision
-artifacts" (docstring lines 287-298). But `_diff_summary` compares the **in-memory**
-fresh summary dict (full-precision Python floats straight from `float(Decimal)`) against
-the JSON-loaded golden, with no equivalent normalization. Two separate inconsistencies
-follow:
-
-1. **Different precision gates for the same underlying number.** A trade-log numeric is
-   compared at 10 decimal places (`%.10f`), so a drift below ~1e-10 is rounded away and
-   *invisible*. The same value in `summary.json` is compared at full float `repr`, so the
-   identical drift IS caught. This directly contradicts the repeated "NO float tolerance"
-   / "zero float tolerance" claims (conftest lines 79-80, 216-217): the trade path has an
-   implicit 1e-10 tolerance band; the summary path has none.
-2. **Reliance on `repr(float) == json.dumps(float)`.** The summary diff only passes because
-   Python's shortest-float-repr is identical between `json.dump` (golden write) and the
-   in-memory float — which I verified holds for the canary. But it is an undocumented
-   coincidence, not a normalized round-trip like the frames get.
-
-**Fix:** Round-trip the fresh summary through the SAME `json.dump`/`json.load` path the
-golden was written with before comparing, mirroring `_roundtrip` for frames:
-
-```python
-def _roundtrip_summary(summary):
-    return json.loads(json.dumps(summary, sort_keys=True))
-# in _diff:
-fresh_summary = _roundtrip_summary(summary)
-_diff_summary(fresh_summary, gold_summary)
-```
-
-Separately, document that the trade/equity gate is "exact to 10 dp by FLOAT_FORMAT pin,"
-not "zero tolerance," so the contract text matches the actual mechanic.
-
-### WR-04: Whole-`metrics`-dict `==` comparison will spuriously FAIL if any metric is ever NaN
-
-**File:** `tests/e2e/conftest.py:251-255`
-
-**Issue:**
-
-```python
-if "metrics" in golden_summary:
-    assert fresh_summary.get("metrics") == golden_summary["metrics"], (...)
-```
-
-Comparing two dicts with `==` returns `False` whenever any value is `NaN`, because
-`NaN != NaN`. So if a future scenario produces a `NaN` metric (e.g. a degenerate equity
-curve a guard misses, or a new metric added without a guard), the harness will FAIL even
-when fresh and golden are byte-identical — and the failure message will look like a real
-regression. I verified the current `metrics.py` functions are well-guarded (flat/single
--point equity all return `0.0`, not NaN), so this is latent rather than active, but the
-harness is the shared infra for 12+ future scenarios and a new metric is a likely
-addition. The `Infinity` token already present in the canary golden
-(`golden/summary.json:9`, `profit_factor: Infinity`) shows non-finite values DO flow
-through this path; `inf == inf` is `True` so it survives today, but `NaN` would not.
-
-**Fix:** Compare metrics key-by-key with explicit NaN handling instead of dict `==`:
-
-```python
-import math
-for key, gold in golden_summary.get("metrics", {}).items():
-    fresh = fresh_summary.get("metrics", {}).get(key)
-    if isinstance(gold, float) and math.isnan(gold):
-        assert isinstance(fresh, float) and math.isnan(fresh), f"metrics[{key}] NaN drift"
-    else:
-        assert fresh == gold, f"metrics[{key}] drift: fresh={fresh} golden={gold}"
+fresh_scalar = {k for k in fresh_summary if k != "metrics"}
+gold_scalar = {k for k in golden_summary if k != "metrics"}
+assert fresh_scalar == gold_scalar, (
+    f"summary key drift: extra={fresh_scalar - gold_scalar} missing={gold_scalar - fresh_scalar}")
 ```
 
 ## Info
 
-### IN-01: FLOAT_FORMAT docstring overstates its coverage — money columns bypass `%.10f` entirely
+### IN-01: Orphan `tests/e2e/data/` directory with `.gitkeep` is referenced nowhere
 
-**File:** `itrader/reporting/summary.py:34-35`, `tests/e2e/conftest.py:266-284` (`_freeze`)
+**File:** `tests/e2e/data/.gitkeep`
+**Issue:** The phase creates `tests/e2e/data/.gitkeep`, but no code under `tests/`, `itrader/`,
+or `scripts/` references `tests/e2e/data`. The canary keeps its `bars.csv` inside its own leaf
+folder (`scenario.py:144` → `HERE / "bars.csv"`), so the shared data dir is currently dead.
+**Fix:** Either wire the shared data dir into the harness contract (and document it in the
+`e2e/conftest.py` docstring) or remove it to avoid implying a convention authors should follow.
 
-**Issue:** `FLOAT_FORMAT = "%.10f"` is documented as the "pinned repr for cross-platform
-stability (T-04-01)" and the conftest leans on it as the normalization mechanic. But
-`pandas.to_csv(float_format=...)` only applies to genuine `float` columns. The money
-columns (`avg_bought`, `total_bought`, `realised_pnl`, `avg_sold`, `net_quantity`, ...) are
-`Decimal`-as-object, so they bypass `FLOAT_FORMAT` and serialize at full Decimal precision
-— visible directly in `golden/trades.csv` as `120.0000000000000000000000000` (25 dp) next
-to `slippage_entry,6.0000000000` (10 dp). Only the appended D-17 slippage columns are real
-floats and actually get the 10dp pin. The result is correct and stable (Decimal repr has no
-float artifacts), and the diff is symmetric because both sides read back through
-`read_csv` (which casts both to float64), so this is not a bug — but the docstring implies
-FLOAT_FORMAT governs the trade-log numbers, which it does not.
+### IN-02: `--freeze` writes goldens for EVERY collected e2e scenario, contradicting the "one scenario at a time" discipline
 
-**Fix:** Amend the FLOAT_FORMAT docstring to state it pins ONLY the genuine-float columns
-(the D-17 slippage columns + equity floats); the Decimal money columns serialize at full
-precision and are normalized to float64 only on `read_csv` at diff time.
+**File:** `tests/e2e/conftest.py:88-101, 347-359`
+**Issue:** The docstring repeatedly mandates freezing "ONE scenario at a time, after
+HAND-VERIFYING it" (Pitfall 5), but `--freeze` is a global pytest flag the `run_scenario`
+fixture honors for every collected leaf in the run. Nothing enforces single-scenario scope; a
+developer running `pytest tests/e2e --freeze` blind-overwrites all goldens — exactly the "blind
+12-scenario --freeze sweep" the docstring warns against.
+**Fix:** Document that `--freeze` MUST be combined with a `-k`/path selector, or have the
+fixture refuse to freeze when more than one e2e test is selected (e.g. inspect
+`request.session.items` count) so the discipline is mechanically enforced, not just documented.
 
-### IN-02: VERIFY note claims "zero-slippage golden run" but freezes non-zero slippage columns it never hand-derives
+### IN-03: `IndexError` on an empty-portfolio spec instead of a clear harness error
 
-**File:** `tests/e2e/smoke/single_market_buy/scenario.py:37-82`, `golden/trades.csv:2`
+**File:** `tests/e2e/conftest.py:163-180`
+**Issue:** `_build_and_run` does `portfolio = ... get_portfolio(portfolio_ids[0])`. A spec with
+`portfolios=[]` raises a bare `IndexError` with no context, unlike the other spec-shape
+failures which `pytest.fail` with an explanatory message (`_load_spec`).
+**Fix:** Guard with a clear assertion before the loop:
+`assert spec.portfolios, "scenario spec must declare at least one portfolio"`.
 
-**Issue:** The VERIFY note says "exchange = None (zero-fee / no-slippage ...)" and ends with
-"the LOAD-BEARING hand-checked facts are the fill prices, the quantity, and the realised
-PnL above." But the frozen `golden/trades.csv` carries `slippage_entry=6.0` and
-`slippage_exit=6.0`, and the VERIFY derivation never states what those columns SHOULD be.
-The numbers are in fact correct (next-bar-open gap: fill 120 − decision close 114 = 6, and
-140 − 134 = 6, per the `attach_slippage` docstring), but the hand-verification — the thing
-the freeze discipline says proves correctness "once, before the freeze" — does not actually
-cover two of the frozen columns. A reviewer of the VERIFY note cannot confirm the slippage
-cells without re-deriving them independently.
+### IN-04: Canary VERIFY note does not derive the frozen `slippage_entry`/`slippage_exit` columns
 
-**Fix:** Add one line to the VERIFY note deriving the expected slippage columns:
-`slippage_entry = entry_fill(120) − decision_close(bar1 close 114) = 6`;
-`slippage_exit = exit_fill(140) − decision_close(bar3 close 134) = 6`.
+**File:** `tests/e2e/smoke/single_market_buy/scenario.py:16-84`
+**Issue:** The VERIFY block claims a human confirmed `golden/trades.csv` matches the
+hand-derivation, but the derivation never mentions the `slippage_entry`/`slippage_exit` columns
+(both frozen as `6.0` in the golden). These are load-bearing frozen numbers; the note states the
+load-bearing facts are "the fill prices, the quantity, and the realised PnL" and is silent on
+the slippage columns it also locks.
+**Fix:** Add the one-line derivation: entry slippage = bar2 open(120) − bar1 close(114) = 6.0;
+exit slippage = bar4 open(140) − bar3 close(134) = 6.0.
 
-### IN-03: Engine emits verbose INFO logs to stdout during `run_scenario`, despite `print_summary=False`
+### IN-05: `open()` calls for golden/summary serialization omit explicit `encoding`
 
-**File:** `tests/e2e/conftest.py:175`
-
-**Issue:** `system.run(print_summary=False)` suppresses the summary printout, but the engine
-still emits per-event INFO logs (position created, transaction recorded, position closed,
-"BACKTEST COMPLETED", etc.) to stdout/stderr on every scenario run — confirmed in the live
-run output. With 12+ future e2e scenarios in the default `make test` suite (D-15: e2e is
-NOT slow, stays in the default run), this is meaningful noise that can also slow collection
-and bury real failures. The harness owns the build/run contract and is the right place to
-quiet the run.
-
-**Fix:** Have `run_scenario` raise the log level for the duration of the run (e.g. a
-`caplog`/`logging`-level context manager set to WARNING around `_build_and_run`), or set the
-engine log level via config in the harness. Tests should run quiet by default.
-
-### IN-04: `pyproject.toml` pins `pytest = "^9.0.3"` but `CLAUDE.md`/stack notes say `pytest ^8.4.2`
-
-**File:** `pyproject.toml:32`
-
-**Issue:** The project tech-stack documentation states "pytest ^8.4.2," and
-`minversion = "8.0"`, but the actual dev dependency is `pytest = "^9.0.3"` (and the live run
-reports pytest-9.0.3). This is documentation drift, not a code defect, but pytest 9 dropped
-some long-deprecated APIs; anything relying on the documented 8.x baseline should be
-re-checked. Not in this phase's changed surface beyond the pin itself.
-
-**Fix:** Reconcile the documented pytest version with the actual `^9.0.3` pin (update the
-stack docs), and confirm nothing in the suite relied on pytest-8-only behavior.
-
-### IN-05: `_diff_summary` silently ignores EXTRA keys present in fresh but absent in golden — schema additions go undetected
-
-**File:** `tests/e2e/conftest.py:256-263`
-
-**Issue:** `_diff_summary` iterates over `golden_summary.items()` only. If the engine starts
-emitting a NEW summary field (a schema addition or an accidental volatile field like a
-wall-clock timestamp leaking into the summary), the golden has no such key, the loop never
-checks it, and the diff passes. The D-12 contract explicitly excludes volatile fields from
-serialization to keep the oracle deterministic; a regression that re-introduces one would
-slip past this harness. This is partly by-design ("presence = assertion," D-05) but the
-asymmetry is worth a guard given the determinism stakes.
-
-**Fix:** When not freezing, assert the fresh summary key set is a subset of (or equal to)
-the golden key set, so a newly-appearing field forces a deliberate re-freeze + re-verify:
-
-```python
-extra = set(fresh_summary) - set(golden_summary)
-assert not extra, f"fresh summary has unfrozen keys {extra} — re-verify and re-freeze"
-```
+**File:** `scripts/run_backtest.py:116`; `tests/e2e/conftest.py:277, 333`
+**Issue:** `open(..., "w")` / `open(...)` for `summary.json` rely on the platform default
+encoding. The content is currently ASCII (numeric metrics + ASCII keys), so byte-stability is
+not affected today, but the harness's whole value is byte-exact golden reproducibility across
+platforms; a future non-ASCII ticker/name would diverge silently.
+**Fix:** Pass `encoding="utf-8"` to every `open()` that reads or writes a committed golden.
 
 ---
 
-_Reviewed: 2026-06-09T15:05:00Z_
+_Reviewed: 2026-06-09_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
