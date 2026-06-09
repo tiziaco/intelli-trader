@@ -18,6 +18,7 @@ A test's marker is derived from its FOLDER, not its domain:
 
 * a file under ``tests/unit/``        -> ``unit``
 * a file under ``tests/integration/`` -> ``integration`` (+ ``slow``)
+* a file under ``tests/e2e/``         -> ``e2e`` (NOT ``slow`` — D-15)
 
 This fixes the M1 gap where directory-DOMAIN markers (portfolio/orders/...) were
 applied but neither ``unit`` nor ``integration`` reliably was. The boundary (D-15):
@@ -54,6 +55,10 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.integration)
             # Integration tests run the full engine — also slow.
             item.add_marker(pytest.mark.slow)
+        if "e2e" in parts:
+            # D-15: e2e scenarios are tiny (~10-bar) full-engine runs — its OWN
+            # marker, NOT slow, so it stays in the default ``make test`` suite.
+            item.add_marker(pytest.mark.e2e)
 
 
 # --- Cross-cutting fixtures -------------------------------------------------
