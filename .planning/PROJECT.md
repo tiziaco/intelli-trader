@@ -108,10 +108,11 @@ must import, run, and yield trustworthy results.
 ## Context
 
 - **Authoritative analysis already exists.** Do not re-derive requirements. The source of truth is
-  four planning docs: `.planning/REFACTOR-BRIEF.md` (goal/scope/locked decisions/golden-master
-  discipline), `.planning/milestones/v1.0-COVERAGE-INDEX.md` (the v1.0 coverage ledger — all 105 items → milestone; archived/frozen, superseded by `REQUIREMENTS.md` for active v1.1 work),
-  `.planning/codebase/ARCHITECTURE-REVIEW.md` (40 design findings #1–40), `.planning/codebase/CONCERNS.md`
-  (65 concrete defects).
+  four planning docs (the first three are v1.0 input artifacts, now archived under `milestones/`):
+  `.planning/milestones/v1.0-REFACTOR-BRIEF.md` (goal/scope/locked decisions/golden-master
+  discipline), `.planning/milestones/v1.0-COVERAGE-INDEX.md` (the v1.0 coverage ledger — all 105 items → milestone; superseded by `REQUIREMENTS.md` for active v1.1 work),
+  `.planning/milestones/v1.0-ARCHITECTURE-REVIEW.md` (40 design findings #1–40), and the still-current `.planning/codebase/CONCERNS.md`
+  (post-refactor concerns).
 - **Coverage contract.** Every Section A finding (#1–40) and Section B defect (TD/KB/SEC/PERF/FR/SL/DEP/MF/TC)
   maps to a milestone or a DEFERRED/OUT tag. No in-scope item may be left unmapped. Span items
   (`M1→M2`, `M1→M5`) start in one phase and complete in a later one.

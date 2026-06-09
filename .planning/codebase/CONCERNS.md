@@ -5,7 +5,7 @@
 > **Context:** This framework just completed an 8-phase backtest-correctness refactor
 > (all milestones M1–M5c done, 725 tests collected, `mypy --strict` clean across 151
 > files). The historical pre-refactor catalog lives in
-> `.planning/codebase/ARCHITECTURE-REVIEW.md` — **most of those 40 items were resolved
+> `../milestones/v1.0-ARCHITECTURE-REVIEW.md` (archived) — **most of those 40 items were resolved
 > across Phases 1–8**. This document records only concerns that are **still present in
 > the current tree**. The dominant theme: the **backtest path is hardened and locked**,
 > but the **live-trading and data-ingestion paths were explicitly out of refactor scope**
