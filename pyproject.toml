@@ -62,6 +62,7 @@ markers = [
     "unit: Unit test — drives ONE collaborating component (tests/unit/)",
     "integration: Integration test — asserts cross-component interaction (tests/integration/)",
     "slow: Slow running test (the full-engine integration runs)",
+    "e2e: End-to-end scenario — full engine on a (strategy, data) pair vs frozen goldens (tests/e2e/)",
 ]
 
 # Minimum version

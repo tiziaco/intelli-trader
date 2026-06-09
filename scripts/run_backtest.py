@@ -28,22 +28,18 @@ Run via ``make backtest`` or ``poetry run python scripts/run_backtest.py``.
 import json
 import pathlib
 
-import pandas as pd
-
 from itrader.reporting.frames import (
     EQUITY_COLUMNS,
     TRADE_COLUMNS,
     build_equity_curve,
     build_trade_log,
 )
-from itrader.reporting.metrics import (
-    cagr,
-    compute_returns,
-    max_drawdown,
-    profit_factor,
-    sharpe,
-    sortino,
-    win_rate,
+from itrader.reporting.summary import (
+    SLIPPAGE_COLUMNS,
+    FLOAT_FORMAT,
+    attach_slippage,
+    build_metrics_block,
+    build_summary,
 )
 from itrader.trading_system.backtest_trading_system import TradingSystem
 from itrader.strategy_handler.SMA_MACD_strategy import SMA_MACD_strategy
@@ -60,95 +56,6 @@ TICKER = "BTCUSD"                                 # D-06
 TIMEFRAME = "1d"                                  # D-06
 
 OUTPUT_DIR = pathlib.Path("output")              # D-10 / D-11 (gitignored)
-FLOAT_FORMAT = "%.10f"                            # pinned repr for cross-platform stability (T-04-01)
-
-# D-17 slippage-attribution columns appended to the serialized trade log (after
-# the relocated TRADE_COLUMNS) — float columns, so the FLOAT_FORMAT pin applies.
-SLIPPAGE_COLUMNS = ["slippage_entry", "slippage_exit"]
-
-
-def attach_slippage(trades, closes):
-    """Attach the D-17 per-trade slippage columns — post-hoc, engine-inert (Pattern 3).
-
-    Under the Phase 6 next-bar-open fill convention, a fill at bar ``T`` was decided
-    at the bar immediately BEFORE ``T`` in the store index; the attribution is
-    ``fill price - decision-bar close`` for the entry and exit fills separately.
-    In the zero-slippage golden run these columns measure the overnight next-open
-    gap introduced by Phase 6 fill realism. Computed purely from the store's
-    per-ticker close series + the trades frame — no engine/event/entity change.
-    """
-    if trades.empty:
-        trades["slippage_entry"] = pd.Series(dtype=float)
-        trades["slippage_exit"] = pd.Series(dtype=float)
-        return trades
-
-    index = closes.index
-
-    def decision_close(fill_time):
-        position = index.searchsorted(fill_time, side="left")
-        return float(closes.iloc[position - 1]) if position > 0 else float("nan")
-
-    def entry_fill_price(row):
-        # LONG enters by buying; SHORT enters by selling.
-        return float(row["avg_bought"] if row["side"] == "LONG" else row["avg_sold"])
-
-    def exit_fill_price(row):
-        # LONG exits by selling; SHORT exits by buying back.
-        return float(row["avg_sold"] if row["side"] == "LONG" else row["avg_bought"])
-
-    trades["slippage_entry"] = trades.apply(
-        lambda row: entry_fill_price(row) - decision_close(row["entry_date"]), axis=1)
-    trades["slippage_exit"] = trades.apply(
-        lambda row: exit_fill_price(row) - decision_close(row["exit_date"]), axis=1)
-    return trades
-
-
-def build_metrics_block(equity, trades):
-    """Build the nested D-15 derived-metrics dict for ``summary.json``.
-
-    Computed by the pure ``itrader.reporting.metrics`` functions on the equity
-    curve + trades frame — the SAME formula source the engine's end-of-run
-    printout uses (one formula source, two consumers). All values are plain
-    floats, deterministic; the block freezes at the plan 07-07 re-freeze.
-    """
-    equity_series = equity["total_equity"].astype(float)
-    returns = compute_returns(equity_series)
-    return {
-        "sharpe": float(sharpe(returns)),
-        "sortino": float(sortino(returns)),
-        "cagr": float(cagr(equity_series)),
-        "max_drawdown": float(max_drawdown(equity_series)),
-        "profit_factor": float(profit_factor(trades)),
-        "win_rate": float(win_rate(trades)),
-    }
-
-
-def build_summary(portfolio, trades):
-    """Build a minimal deterministic summary dict (D-12).
-
-    Final cash + a minimal deterministic metric set (trade count, total realised PnL,
-    final equity). The derived ratios live in the nested ``metrics`` block added by
-    ``build_metrics_block`` (D-15 — the M5-owned carve-out is closed this phase).
-    """
-    # total_realised_pnl reads the already-float trades-frame column (build_trade_log
-    # casts money to float at the frame edge) — a frame read, not a Portfolio property.
-    total_realised_pnl = float(trades["realised_pnl"].sum()) if not trades.empty else 0.0
-    # Decimal->float at the serialization edge: portfolio.cash and
-    # portfolio.total_equity are Decimal end-to-end (08-01 retype); float()
-    # narrows them HERE, at the summary.json serialization boundary, with no
-    # arithmetic on the Decimal beforehand (direct reads). This is the single
-    # money Decimal->float boundary for summary.json.
-    return {
-        "ticker": TICKER,
-        "timeframe": TIMEFRAME,
-        "start_date": START_DATE,
-        "end_date": END_DATE,
-        "starting_cash": float(CASH),
-        "final_cash": float(portfolio.cash),
-        "final_equity": float(portfolio.total_equity),
-        "trade_count": int(len(trades)),
-        "total_realised_pnl": total_realised_pnl,
-    }
 
 
 def main():
@@ -188,7 +95,15 @@ def main():
     closes = system.store.read_bars(TICKER)["close"]
     trades = attach_slippage(trades, closes)
 
-    summary = build_summary(portfolio, trades)
+    summary = build_summary(
+        portfolio,
+        trades,
+        ticker=TICKER,
+        timeframe=TIMEFRAME,
+        start_date=START_DATE,
+        end_date=END_DATE,
+        starting_cash=CASH,
+    )
     # D-15: nested derived-metrics block — produced every run, frozen at 07-07.
     summary["metrics"] = build_metrics_block(equity, trades)
 
@@ -198,7 +113,7 @@ def main():
         OUTPUT_DIR / "trades.csv", index=False, float_format=FLOAT_FORMAT)
     equity[EQUITY_COLUMNS].to_csv(
         OUTPUT_DIR / "equity.csv", index=False, float_format=FLOAT_FORMAT)
-    with open(OUTPUT_DIR / "summary.json", "w") as handle:
+    with open(OUTPUT_DIR / "summary.json", "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
 
     logger.info(
