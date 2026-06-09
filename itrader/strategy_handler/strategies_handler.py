@@ -6,6 +6,8 @@ from itrader.core.money import to_money
 from itrader.core.sizing import TradingDirection
 from itrader.price_handler.feed.base import BarFeed
 from itrader.strategy_handler.base import Strategy
+from itrader.strategy_handler.signal_record import SignalRecord
+from itrader.strategy_handler.storage import SignalStore
 from itrader.events_handler.events import BarEvent, SignalEvent
 from itrader.outils.time_parser import check_timeframe
 from itrader.logger import get_itrader_logger
@@ -16,7 +18,7 @@ class StrategiesHandler(object):
 	Manage all the strategies of the trading system.
 	"""
 
-	def __init__(self, global_queue: "Queue[Any]", feed: BarFeed) -> None:
+	def __init__(self, global_queue: "Queue[Any]", feed: BarFeed, signal_store: SignalStore) -> None:
 		"""
 		Parameters
 		----------
@@ -25,9 +27,16 @@ class StrategiesHandler(object):
 		feed: `BarFeed`
 			The look-ahead-safe market-data read model the strategy
 			windows are served from (D-20).
+		signal_store: `SignalStore`
+			The injected signal-record sink (D-07/D-12). The handler captures
+			one ``SignalRecord`` per non-None intent BEFORE the per-portfolio
+			fan-out (D-09); the store is read post-run via the TradingSystem
+			accessor. It is a sink/read-model — NOT a cross-domain handler call,
+			so the queue-only contract is preserved.
 		"""
 		self.global_queue: "Queue[Any]" = global_queue
 		self.feed: BarFeed = feed
+		self.signal_store: SignalStore = signal_store
 		self.min_timeframe: timedelta = timedelta(weeks=100)
 		#self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
@@ -91,6 +100,26 @@ class StrategiesHandler(object):
 				intent = strategy.generate_signal(ticker, data)
 				if intent is None:
 					continue
+				# D-09 per-intent, pre-fan-out capture: write EXACTLY ONE
+				# SignalRecord per non-None intent, BEFORE the per-portfolio
+				# fan-out below — a signal is a single strategy decision, not a
+				# per-portfolio order, so the record carries NO portfolio_id. The
+				# store is a sink/read-model (D-12): this is a local method call
+				# on an injected dependency, NOT a cross-domain handler call, so
+				# the queue-only contract holds. D-11: config is the strategy's
+				# frozen config, snapshotted by reference. Side-effect-only — it
+				# never influences fills or the fan-out (oracle-dark, HARD-04).
+				self.signal_store.add(SignalRecord(
+					strategy_id=strategy.strategy_id,
+					ticker=ticker,
+					time=event.time,
+					action=intent.action,
+					stop_loss=intent.stop_loss,
+					take_profit=intent.take_profit,
+					exit_fraction=intent.exit_fraction,
+					quantity=intent.quantity,
+					config=strategy.config,
+				))
 				# Relocated SignalEvent construction (D-12): one event per
 				# subscribed portfolio. D-05 boundary parse: the strategy
 				# string order_type is converted to the enum HERE. D-22 money
