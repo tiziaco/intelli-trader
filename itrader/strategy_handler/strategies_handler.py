@@ -65,11 +65,14 @@ class StrategiesHandler(object):
 				# signal. The BarEvent payload contract (M5-02) keeps a
 				# no-data ticker ABSENT from the dict. The guard precedes
 				# generate_signal because the handler stamps price from
-				# event.bars[ticker].close below.
+				# event.bars[ticker].close below. D-05: the duplicate absence
+				# warning was removed — the feed's generate_bar_event is the
+				# single span-aware observability owner (D-04); the strategy
+				# handler is a pure consumer (missing bar = nothing to do this
+				# tick). The skip below is LOAD-BEARING (price is stamped from
+				# bar.close).
 				bar = event.bars.get(ticker)
 				if bar is None:
-					self.logger.warning('No last close for %s — signal skipped (%s)',
-								ticker, strategy.strategy_id)
 					continue
 				# Push-based window delivery (D-20): asof comes ONLY from the
 				# event — strategies never choose the as-of time (T-06-18).
