@@ -203,4 +203,4 @@ This document evolves at phase transitions and milestone boundaries.
 **Deferred to v1.2** (ROADMAP backlog): shorts, real long/short pair trading, margin/leverage, engine-native trailing stop.
 
 ---
-*Last updated: 2026-06-09 — v1.1 (Backtest Trustworthiness: Breadth) milestone started; promoted from backlog seed 999.1. v1.0 phases archived to `milestones/v1.0-phases/`. Requirements + roadmap being defined.*
+*Last updated: 2026-06-09 — v1.1 (Backtest Trustworthiness: Breadth): Phase 1 (Codebase Map & Clarity Baseline) complete — CLAR-01/CLAR-02 validated; objective FIX-LIST.md harvested and the opportunistic-cleanup standard established (see Key Decisions). Golden master untouched. v1.0 phases archived to `milestones/v1.0-phases/`.*
