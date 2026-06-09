@@ -72,11 +72,12 @@ def attach_slippage(trades: Any, closes: Any) -> Any:
         position = index.searchsorted(fill_time, side="left")
         if position <= 0:
             return 0.0
-        assert fill_time in index, (
-            f"fill timestamp {fill_time!r} is not a store-index bar — "
-            f"attach_slippage requires fill timestamps drawn from the same grid "
-            f"as the close series (WR-03)"
-        )
+        if fill_time not in index:
+            raise ValueError(
+                f"fill timestamp {fill_time!r} is not a store-index bar — "
+                f"attach_slippage requires fill timestamps drawn from the same grid "
+                f"as the close series (WR-03)"
+            )
         return float(closes.iloc[position - 1])
 
     def entry_fill_price(row: Any) -> float:
