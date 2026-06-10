@@ -11,7 +11,7 @@ progress:
   total_plans: 21
   completed_plans: 21
   percent: 58
-stopped_at: Phase 07 complete (4/4) — ready to discuss Phase 999.2
+stopped_at: Phase 07 complete (4/4) — ready to discuss Phase 8
 ---
 
 # Project State
@@ -21,13 +21,13 @@ stopped_at: Phase 07 complete (4/4) — ready to discuss Phase 999.2
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 8 — Admission, Position Management & Cash Edges
 
 ## Current Position
 
-Phase: 999.2
+Phase: 8
 Plan: Not started
-Status: Ready to plan
+Status: Ready to discuss
 Last activity: 2026-06-10
 
 ## Performance Metrics
@@ -114,5 +114,6 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Phase 05 (strategy-interface-hardening-signal-storage) is COMPLETE — verified (05-VERIFICATION.md passed) and the code-review loop is closed (05-REVIEW-FIX.iter3.md all_fixed). HARD-01..04 + SIG-01/02 validated.
-- `/clear`, then `/gsd:plan-phase 6` — plan Phase 6 (Order Matching Scenarios). The Phase 04 canary leaf remains the copy-template for Phase 6-9 scenario authors.
+- Phase 07 (cost-sizing-sltp-scenarios) is COMPLETE — verified (07-VERIFICATION.md passed, 14/14 must-haves) and code-reviewed (07-REVIEW.md: 0 blocker / 3 warning / 2 info, advisory). COST-01..06 + SIZE-01..03 + SLTP-01..03 validated. Full suite 777 pass (30 e2e); BTCUSD oracle byte-exact; `mypy --strict` clean (160 files).
+- `/clear`, then `/gsd:discuss-phase 8` — discuss Phase 8 (Admission, Position Management & Cash Edges) before planning. It is not yet scaffolded (no phase directory). The existing `tests/e2e/{cost,sizing,sltp}` leaves remain copy-templates for Phase 8-9 scenario authors.
+- Note: `gsd-sdk` phase ordering auto-advanced to the backlog phase 999.2 (N+3 Persistence) after Phase 07; the active milestone next is Phase 8. The 999.x directories are v1.2+ backlog, not v1.1 work.
