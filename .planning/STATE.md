@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: executing
-last_updated: "2026-06-10T17:21:52.255Z"
+last_updated: "2026-06-10T17:31:20.431Z"
 last_activity: 2026-06-10
 progress:
   total_phases: 13
   completed_phases: 8
   total_plans: 28
-  completed_plans: 26
+  completed_plans: 27
   percent: 62
 ---
 
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 ## Current Position
 
 Phase: 09 (multi-entity-robustness-metrics-edges) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-06-10
 
@@ -75,6 +75,8 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase 09]: [P02]: MULTI cluster breadth complete — MULTI-01 two_tickers (one emitter, two tickers, trades.csv spans both via pair, PnL 200 each), MULTI-02 two_strategies (two emitters, one portfolio, both fill — clean contrast to MULTI-04), MULTI-04 contended_cash (D-02 registration-order: strategies[0] reserves 9500 first and round-trips PnL 1900, strategies[1] cash_reservation REJECTED sized-50, no orphan) hand-verified and frozen
 - [Phase 09]: [P02]: MULTI-04 spec.ticker=LOSER ticker (BTCUSD) scopes orders.csv to the ONE REJECTED row; WINNER on ETHUSDT lands in portfolio-wide trades.csv + cash_operations.csv (RESERVATION 9500/RELEASE/DEBIT/CREDIT 11400, loser no orphan row)
 - [Phase 09]: [P02]: Rule-3 conftest fix — commission-merge key gains 'pair' (Position.ticker) so the one_to_one merge survives the first multi-ticker round-trip in one trades.csv; backward-compatible + oracle-dark (BTCUSD oracle byte-exact, 41 prior e2e green)
+- [Phase 09]: [P03]: ROBUST span leaves on REAL sliced data — ROBUST-01 sparse_bar (SOL 2023-06-24/25 gap, position live across the absent bars, no fill no crash; ETH loaded data-only as the dense co-asset keeping the union ping grid ticking across the gap) and ROBUST-02 union_window (AAVE 2021-07-15 mid-run listing, pre-listing BUY 07-12 STRUCTURALLY unfillable — no AAVE bar -> generate_signal not called, listing-day BUY fills 07-16 no look-ahead, BTC trades throughout) hand-verified and frozen
+- [Phase 09]: [P03]: Rule-3 conftest seam — register spec.data tickers on simulated._supported_symbols (additive superset union, mirrors test_universe_spans.py:140-149 wiring) so non-default tickers SOLUSD/AAVEUSD are admitted; never re-derives/wipes (PATTERNS A2 BTCUSD-admission concern N/A), oracle-dark + all prior leaves no-op (BTCUSD oracle byte-exact, 49 e2e green)
 
 ### Pending Todos
 
@@ -120,10 +122,11 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 08 P08-03 | 25min | 2 tasks | 21 files |
 | Phase 09 P01 | 4 | 3 tasks | 12 files |
 | Phase 09 P02 | 5 | 3 tasks | 24 files |
+| Phase 09 P03 | 8min | 2 tasks | 15 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T17:21:27.993Z
+Last session: 2026-06-10T17:30:02.135Z
 Resume file: None
 
 ## Operator Next Steps
