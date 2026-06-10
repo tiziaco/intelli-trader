@@ -1,4 +1,5 @@
 ---
+status: complete
 phase: quick-260605-ih3
 plan: 01
 subsystem: outils/time_parser

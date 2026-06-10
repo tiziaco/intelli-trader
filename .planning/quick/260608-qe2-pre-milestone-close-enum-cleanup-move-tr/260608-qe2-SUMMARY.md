@@ -1,4 +1,5 @@
 ---
+status: complete
 phase: quick-260608-qe2
 plan: 01
 subsystem: core-enums, config

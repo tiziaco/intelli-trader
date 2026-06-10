@@ -2,33 +2,32 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: ready_to_plan
-last_updated: 2026-06-10T17:52:23.248Z
-last_activity: 2026-06-10
+status: Awaiting next milestone
+last_updated: "2026-06-10T19:42:49.505Z"
+last_activity: 2026-06-10 — Milestone v1.1 completed and archived
 progress:
-  total_phases: 13
+  total_phases: 9
   completed_phases: 9
   total_plans: 28
   completed_plans: 28
-  percent: 69
-stopped_at: Phase 09 complete (4/4) — ready to discuss Phase 999.2
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-09)
+See: .planning/PROJECT.md (updated 2026-06-10 after v1.1 close)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
+**Current focus:** Planning next milestone — v1.2 Engine Surface Completion is the candidate (signal-contract completion, composition/config interface, declared-indicator framework, order-lifecycle/TIF). Promote ahead of N+2 (margin/shorts) with `/gsd:new-milestone` or `/gsd:review-backlog`.
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-10
+Phase: Milestone v1.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-10 — Milestone v1.1 completed and archived
 
 ## Performance Metrics
 
@@ -93,7 +92,11 @@ None yet.
 
 ### Quick Tasks Completed
 
-None this milestone. (v1.0 quick tasks archived in `milestones/v1.0-MILESTONE-AUDIT.md`.)
+(v1.0 quick tasks archived in `milestones/v1.0-MILESTONE-AUDIT.md`.)
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 
 ## Deferred Items
 
@@ -111,6 +114,25 @@ Program-level items out of scope for v1.1, with their target milestone:
 | OUT | `my_strategies/*` (relocated to separate repo by user) | Out-of-band | — |
 
 v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are recorded in `milestones/v1.0-MILESTONE-AUDIT.md`.
+
+### v1.1 milestone-close acknowledgments (2026-06-10)
+
+The pre-close artifact audit flagged 4 items that were verified **already complete** and are
+recorded here as accepted at close. The repo is canonically clean (bundled `audit.cjs` → 0 open);
+these remain flagged **only** by a `gsd-sdk` v1.42.3 SDK-port bug — that port reads a literal
+`SUMMARY.md` and so cannot see the mandated `${quick_id}-SUMMARY.md` files (the canonical scanner
+handles both). Each carries `status: complete` frontmatter.
+
+| Category | Item | Status |
+|----------|------|--------|
+| quick_task | 260605-ih3 — fix WR-01 weekly/DST check_timeframe anchoring | complete (SDK-port false positive) |
+| quick_task | 260608-a59 — demote by-design signal-rejection logs to warning | complete (SDK-port false positive) |
+| quick_task | 260608-qe2 — pre-close enum cleanup (TradingDirection/SystemStatus canonical homes) | complete (SDK-port false positive) |
+| quick_task | 260610-sjp — close FL-01 & FL-02 + reconcile FIX-LIST | complete (SDK-port false positive) |
+
+Optional tracked hygiene (non-blocking): formal Nyquist Wave-0 incomplete on phases 3,4,5,6,7,9 /
+absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,5,7,9. See
+`milestones/v1.1-MILESTONE-AUDIT.md`.
 | Phase 02 P01 | 2min | 3 tasks | 5 files |
 | Phase 03 P01 | 4 | 2 tasks | 3 files |
 | Phase 03 P02 | 4 | 3 tasks | 3 files |
@@ -135,6 +157,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Phase 07 (cost-sizing-sltp-scenarios) is COMPLETE — verified (07-VERIFICATION.md passed, 14/14 must-haves) and code-reviewed (07-REVIEW.md: 0 blocker / 3 warning / 2 info, advisory). COST-01..06 + SIZE-01..03 + SLTP-01..03 validated. Full suite 777 pass (30 e2e); BTCUSD oracle byte-exact; `mypy --strict` clean (160 files).
-- `/clear`, then `/gsd:discuss-phase 8` — discuss Phase 8 (Admission, Position Management & Cash Edges) before planning. It is not yet scaffolded (no phase directory). The existing `tests/e2e/{cost,sizing,sltp}` leaves remain copy-templates for Phase 8-9 scenario authors.
-- Note: `gsd-sdk` phase ordering auto-advanced to the backlog phase 999.2 (N+3 Persistence) after Phase 07; the active milestone next is Phase 8. The 999.x directories are v1.2+ backlog, not v1.1 work.
+- Start the next milestone with /gsd-new-milestone

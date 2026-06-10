@@ -50,9 +50,9 @@ class Order:
 	quantity: Decimal
 	exchange: str
 	strategy_id: StrategyId
-	# 02-05 carry-over: SignalEvent carries an int portfolio_id; accept both until
-	# the portfolio_id migration completes (not mandated by Task 2).
-	portfolio_id: "PortfolioId | int"
+	# FL-02: portfolio_id is a UUIDv7-backed PortfolioId — the event-field retype
+	# (#10 carry-forward) is complete, so the entity tightens to PortfolioId.
+	portfolio_id: PortfolioId
 	id: OrderId = field(default_factory=lambda: OrderId(idgen.generate_order_id()))
 
 	# Enhanced lifecycle tracking fields

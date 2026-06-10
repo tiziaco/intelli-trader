@@ -265,7 +265,7 @@ class OrderManager:
 			if should_release and self.portfolio_handler is not None:
 				try:
 					self.portfolio_handler.release(
-						cast(PortfolioId, order.portfolio_id), order.id)
+						order.portfolio_id, order.id)
 				except Exception:
 					self.logger.error(
 						'Failed to release reservation for order %s during fill reconciliation',
@@ -394,7 +394,7 @@ class OrderManager:
 				cost = primary.price * primary.quantity + self._estimate_commission(primary)
 				try:
 					self.portfolio_handler.reserve(
-						cast(PortfolioId, primary.portfolio_id), primary.id, cost)
+						primary.portfolio_id, primary.id, cost)
 					reserved_primary = primary
 				except InsufficientFundsError as e:
 					# T-05-16: the failure goes through the Phase 4 audited
@@ -425,7 +425,7 @@ class OrderManager:
 				# OrderEvent reaches the exchange, so no terminal fill will
 				# ever drive the on_fill release. Release here (idempotent).
 				self.portfolio_handler.release(
-					cast(PortfolioId, reserved_primary.portfolio_id),
+					reserved_primary.portfolio_id,
 					reserved_primary.id)
 			results.extend(assembled)
 
@@ -441,7 +441,7 @@ class OrderManager:
 				# between the successful reserve and the primary emit.
 				try:
 					self.portfolio_handler.release(
-						cast(PortfolioId, reserved_primary.portfolio_id),
+						reserved_primary.portfolio_id,
 						reserved_primary.id)
 				except Exception:
 					self.logger.error('Failed to release orphaned reservation for order %s',
@@ -499,11 +499,9 @@ class OrderManager:
 	def _get_signal_exchange(self, signal_event: SignalEvent) -> str:
 		"""Resolve the exchange the signal's portfolio trades on (Protocol read, D-16)."""
 		if self.portfolio_handler:
-			# 02-05 carry-over: events still declare portfolio_id as int while
-			# the runtime value is a native UUID — cast bridges until the
-			# event-field retype lands (deferred, not mandated by this plan).
+			# FL-02: events now declare portfolio_id as PortfolioId (#10 carry-forward).
 			return self.portfolio_handler.exchange_for(
-				cast(PortfolioId, signal_event.portfolio_id))
+				signal_event.portfolio_id)
 		return "default"  # Fallback
 
 	def _build_primary_order(self, signal_event: SignalEvent, exchange: str,
@@ -829,8 +827,8 @@ class OrderManager:
 			# No position truth to consult — an unsized signal without a
 			# read model fails loudly in the sizing step right after.
 			return None
-		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
-		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		# FL-02: events now declare portfolio_id as PortfolioId (#10 carry-forward).
+		portfolio_id = signal_event.portfolio_id
 		open_position = self.portfolio_handler.get_position(
 			portfolio_id, signal_event.ticker)
 		if (signal_event.direction is TradingDirection.LONG_ONLY
@@ -909,8 +907,8 @@ class OrderManager:
 			# No position truth to consult — an unsized signal without a
 			# read model fails loudly in the sizing step right after.
 			return None
-		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
-		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		# FL-02: events now declare portfolio_id as PortfolioId (#10 carry-forward).
+		portfolio_id = signal_event.portfolio_id
 		open_position = self.portfolio_handler.get_position(
 			portfolio_id, signal_event.ticker)
 		if open_position is not None and open_position.net_quantity > 0:
@@ -1006,8 +1004,8 @@ class OrderManager:
 				f"Cannot size order: no portfolio read model available for {signal_event.ticker}",
 				operation_type="create_primary_order"
 			)
-		# 02-05 carry-over: events declare portfolio_id as int; runtime is UUID.
-		portfolio_id = cast(PortfolioId, signal_event.portfolio_id)
+		# FL-02: events now declare portfolio_id as PortfolioId (#10 carry-forward).
+		portfolio_id = signal_event.portfolio_id
 		open_position = self.portfolio_handler.get_position(
 			portfolio_id, signal_event.ticker)
 		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
@@ -1224,7 +1222,7 @@ class OrderManager:
 				# CANCELLED fill re-releasing is a silent no-op.
 				if self.portfolio_handler is not None:
 					self.portfolio_handler.release(
-						cast(PortfolioId, order.portfolio_id), order.id)
+						order.portfolio_id, order.id)
 
 				# Generate OrderEvent for cancelled order
 				order_event = OrderEvent.new_order_event(order, command=OrderCommand.CANCEL)

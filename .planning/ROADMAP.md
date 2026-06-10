@@ -3,184 +3,65 @@
 ## Milestones
 
 - ✅ **v1.0 — Backtest-Correctness Refactor** — Phases 1-8 (shipped 2026-06-08)
-- 🚧 **v1.1 — Backtest Trustworthiness: Breadth** — Phases 1-9 (in progress)
+- ✅ **v1.1 — Backtest Trustworthiness: Breadth** — Phases 1-9 (shipped 2026-06-10)
+- 📋 **v1.2 — Engine Surface Completion** — Backlog (planned, promote ahead of N+2)
 - 📋 **N+2 — Margin, Leverage, Shorts & Trailing Stops** — Backlog (planned)
 - 📋 **N+3 — Persistence & Performance** — Backlog (planned)
 - 📋 **N+4 — Live Trading Readiness** — Backlog (planned)
 
-Full v1.0 detail (phase goals, success criteria, per-plan breakdown) is archived in
-[`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md); requirements in
-[`milestones/v1.0-REQUIREMENTS.md`](./milestones/v1.0-REQUIREMENTS.md); audit in
-[`milestones/v1.0-MILESTONE-AUDIT.md`](./milestones/v1.0-MILESTONE-AUDIT.md).
-v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
+Full milestone detail (phase goals, success criteria, per-plan breakdown) is archived per milestone:
+v1.0 — [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md) ·
+[`v1.0-REQUIREMENTS.md`](./milestones/v1.0-REQUIREMENTS.md) ·
+[`v1.0-MILESTONE-AUDIT.md`](./milestones/v1.0-MILESTONE-AUDIT.md);
+v1.1 — [`milestones/v1.1-ROADMAP.md`](./milestones/v1.1-ROADMAP.md) ·
+[`v1.1-REQUIREMENTS.md`](./milestones/v1.1-REQUIREMENTS.md) ·
+[`v1.1-MILESTONE-AUDIT.md`](./milestones/v1.1-MILESTONE-AUDIT.md).
+v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 phase dirs remain under `phases/` (archive retroactively with `/gsd:cleanup`).
 
 ## Phases
 
-> **Active milestone: v1.1 — Backtest Trustworthiness: Breadth.** Phase numbering is RESET
-> to start at Phase 1 (v1.0 phase dirs archived). The spine is dependency-ordered: the
-> codebase map comes FIRST so every later phase builds on it → data → universe → E2E
-> framework → interface hardening → scenario waves. Every E2E scenario phase depends on the
-> harness (Phase 4). LONG-ONLY throughout; shorts are gated to N+2. The v1.0 golden numbers
-> are NOT re-baselined — v1.1 is behavior-preserving; any result-changing finding is
-> owner-gated. Opportunistic cleanup (CLAR-02) is a cross-cutting practice carried through
-> every later phase and verified at milestone close — not a standalone phase.
+<details>
+<summary>✅ v1.0 — Backtest-Correctness Refactor (Phases 1-8) — SHIPPED 2026-06-08</summary>
 
-- [x] **Phase 1: Codebase Map & Clarity Baseline** — One read-only `gsd-map-codebase` pass → objective fix-list that informs every later phase; establishes the opportunistic-cleanup standard carried cross-cutting through the milestone. Blocks nothing; pure analysis. (completed 2026-06-09)
-- [x] **Phase 2: Data Ingestion** — Committed normalization script produces ETH/SOL/AAVE in the golden Binance-kline schema; `CsvPriceStore` loads all four unchanged. (completed 2026-06-09)
-- [x] **Phase 3: Minimal Real Universe** — A `membership`-from-availability primitive replaces the stub; the engine handles mid-run listing / absent bars without crash or look-ahead. (completed 2026-06-09)
-- [x] **Phase 4: E2E Harness & Framework** — Dedicated `tests/e2e/` tree, registered `e2e` marker, `make test-e2e`, and a shared golden-compare harness every scenario phase builds on. (completed 2026-06-09)
-- [x] **Phase 5: Strategy Interface Hardening & Signal Storage** — Pydantic `BaseStrategyConfig` + per-strategy params validators + `OrderType` enum end-to-end (byte-exact vs the SMA_MACD oracle); typed signal records persisted and queryable. (completed 2026-06-09)
-- [x] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill. (completed 2026-06-09)
-- [x] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes. (completed 2026-06-10)
-- [x] **Phase 8: Admission, Position Management & Cash Edges** — E2E golden-locked coverage of scale-in (pyramiding), partial scale-out, `max_positions` rejection, exit-then-re-entry, and the cash reservation/release lifecycle. (completed 2026-06-10)
-- [x] **Phase 9: Multi-Entity, Robustness & Metrics Edges** — E2E golden-locked coverage of multi-ticker, multi-strategy, multi-portfolio cash isolation, contended cash, heterogeneous date spans, degenerate-run metrics, and cross-scenario determinism. (completed 2026-06-10)
+8 phases (M1 → M5c), 62 plans. `SMA_MACD` runs end-to-end producing correct, deterministic,
+cross-validated numbers (134 trades / `final_equity 46189.87730727451`). Full detail in
+[`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md).
 
-## Phase Details
+</details>
 
-### Phase 1: Codebase Map & Clarity Baseline
-**Goal**: Produce the objective map of the codebase FIRST — yielding a committed, scoped fix-list (naming, visibility, seams) — so every later phase (harness shape, interface hardening, scenario design) builds on the map; and establish the opportunistic-cleanup standard that the rest of the milestone follows.
+<details>
+<summary>✅ v1.1 — Backtest Trustworthiness: Breadth (Phases 1-9) — SHIPPED 2026-06-10</summary>
 
-> **NOTE — current map already exists (do NOT regenerate); one input is historical.** The `gsd-map-codebase` output — `CONCERNS.md` + the 6 map files (`ARCHITECTURE/STACK/STRUCTURE/CONVENTIONS/TESTING`) — was refreshed at v1.0 close (Analysis Date 2026-06-08), *after* the last `itrader/` commit (`017bf72`); no engine code has changed since, so it is current. CLAR-01 = **harvest the fix-list from `CONCERNS.md`** (it already records only concerns still present post-refactor) plus the fresh map files — NOT a new `gsd-map-codebase` run; spot-check only if a doc looks stale.
-> **Do NOT use the architecture review as a fix-list source** — `milestones/v1.0-ARCHITECTURE-REVIEW.md` is a PRE-v1.0 historical snapshot (2026-06-04); most of its 40 findings were fixed in v1.0. Reference only, no finding-by-finding re-audit.
-> Also pull forward the residual cleanup items harvested from the archived `milestones/v1.0-COVERAGE-INDEX.md`: #7/#37 (bare `raise ValueError` in `portfolio.py`, off the golden path) and #10 (`portfolio_id: int` annotation carry-over on Signal/Order/Fill events — runtime-correct, annotation-only; may instead land in Phase 5 retype).
+Phase numbering reset to Phase 1 for v1.1. Spine: codebase map → data → universe → E2E
+framework → interface hardening → scenario waves. LONG-ONLY throughout; behavior-preserving
+(v1.0 golden numbers NOT re-baselined). Full detail in
+[`milestones/v1.1-ROADMAP.md`](./milestones/v1.1-ROADMAP.md).
 
-**Depends on**: Nothing (first phase — pure analysis, blocks nothing; informs all subsequent phases)
-**Requirements**: CLAR-01, CLAR-02
-**Success Criteria** (what must be TRUE):
-  1. A committed, objective fix-list (naming, visibility, seam issues) is harvested from the existing `.planning/codebase/` map — no redundant regeneration of fresh docs.
-  2. The opportunistic naming/visibility cleanup standard is established here as a CROSS-CUTTING practice — cleanup is applied only along paths a later phase already touches (no big-bang refactor) and is VERIFIED at milestone close, not in a standalone phase.
-  3. No cleanup is performed in this phase itself (no paths are touched yet); the golden master is therefore unchanged here, and any later cleanup re-runs byte-exact — no oracle re-baseline.
-**Plans**: 2 plans
-- [x] 01-01-PLAN.md — Harvest the objective FIX-LIST.md (FL-NN schema, eligible-in-phase tags) from the existing codebase map [CLAR-01]
-- [x] 01-02-PLAN.md — Establish the opportunistic-cleanup standard (4-gate checklist + milestone-close audit) and record it in PROJECT.md [CLAR-02]
+- [x] Phase 1: Codebase Map & Clarity Baseline (2/2 plans) — completed 2026-06-09
+- [x] Phase 2: Data Ingestion (1/1 plan) — completed 2026-06-09
+- [x] Phase 3: Minimal Real Universe (3/3 plans) — completed 2026-06-09
+- [x] Phase 4: E2E Harness & Framework (3/3 plans) — completed 2026-06-09
+- [x] Phase 5: Strategy Interface Hardening & Signal Storage (3/3 plans) — completed 2026-06-09
+- [x] Phase 6: Order Matching Scenarios (5/5 plans) — completed 2026-06-09
+- [x] Phase 7: Cost, Sizing & SLTP Scenarios (4/4 plans) — completed 2026-06-10
+- [x] Phase 8: Admission, Position Management & Cash Edges (3/3 plans) — completed 2026-06-10
+- [x] Phase 9: Multi-Entity, Robustness & Metrics Edges (4/4 plans) — completed 2026-06-10
 
-### Phase 2: Data Ingestion
-**Goal**: Bring three additional cryptos (ETH/SOL/AAVE) into the repo in the exact golden Binance-kline schema via a committed, re-runnable normalization script — so multi-ticker scenarios have real data — without touching the run-path loader.
-**Depends on**: Phase 1 (the codebase map informs where the ingestion script and store boundaries sit)
-**Requirements**: INGEST-01, INGEST-02, INGEST-03
-**Success Criteria** (what must be TRUE):
-  1. Running the committed normalization script converts a provider CSV (split `date`+`time`, lowercase columns) into the golden schema (single tz-aware `Open time` + `Open/High/Low/Close/Volume`) and is re-runnable to byte-identical output.
-  2. ETHUSD, SOLUSD, and AAVEUSD datasets are committed in the normalized golden schema alongside BTCUSD.
-  3. `CsvPriceStore` loads all four datasets with no code change (no run-path schema-detection branch added).
-**Plans**: 1 plan
-- [x] 02-01-PLAN.md — Normalize ETH/SOL/AAVE to the golden schema (relocate raw inputs, committed re-runnable script + make target, generate & validate the 3 CSVs, prove CsvPriceStore round-trip) [INGEST-01, INGEST-02, INGEST-03]
-
-### Phase 3: Minimal Real Universe
-**Goal**: Replace the membership stub with a real `membership`-from-availability primitive so the engine derives the active ticker set at time T from data, and prove it survives mid-run listings and differing end dates.
-**Depends on**: Phase 2 (needs the multi-ticker datasets to exercise heterogeneous spans)
-**Requirements**: UNIV-01, UNIV-02
-**Success Criteria** (what must be TRUE):
-  1. A `membership` primitive returns the set of active tickers at any time T derived solely from data availability (no screening/ranking logic).
-  2. A backtest spanning a ticker that lists mid-run runs to completion with no crash and no look-ahead — bars before listing produce no fills.
-  3. Assets with differing end dates are handled over the union window — an absent bar at T produces no fill for that ticker.
-**Plans**: 3 plans
-- [x] 03-01-PLAN.md — Add the `active_membership`/`is_active` span primitive beside `derive_membership` + barrel + UNIV-01 unit tests [UNIV-01]
-- [x] 03-02-PLAN.md — Wire the span cache + span-aware warn loop (D-04) into the feed, strip the duplicate strategy-handler warning (D-05), invert the LATEUSD test [UNIV-02]
-- [x] 03-03-PLAN.md — Add the oracle-dark `csv_paths` passthrough + the synthetic-fixture engine integration test (mid-run listing, differing ends, no look-ahead) [UNIV-02]
-
-### Phase 4: E2E Harness & Framework
-**Goal**: Stand up the whole-system E2E testing apparatus — the dedicated tree, marker, make target, and shared golden-compare harness — that every scenario wave (Phases 6-9) depends on.
-**Depends on**: Phase 3 (membership primitive lets scenarios pin real ticker sets)
-**Requirements**: E2E-01, E2E-02, E2E-03, E2E-04
-**Success Criteria** (what must be TRUE):
-  1. A dedicated `tests/e2e/` tree exists, subsystem-grouped, with an `e2e` marker registered in `pyproject.toml`, folder-derived auto-marking, and a working `make test-e2e` target.
-  2. A shared harness (`tests/e2e/conftest.py`) runs the full engine on a given `(strategy, data)` pair and diffs trades/equity/summary against that scenario's golden fixtures.
-  3. Each scenario is a self-contained leaf folder (purpose-built strategy + frozen golden fixtures) that runs warning-clean under `filterwarnings=["error"]`.
-  4. The harness enforces the hand-verify-once-then-freeze discipline: a scenario's oracle is human-verified for correctness before it is committed as a golden fixture.
-**Plans**: 3 plans
-- [x] 04-01-PLAN.md — D-16 oracle-dark reporting extraction (build_summary/build_metrics_block/attach_slippage → itrader.reporting.summary) + FL-03 dead-skip cleanup [E2E-02]
-- [x] 04-02-PLAN.md — Shared framework: e2e marker + folder-derived auto-marking + make test-e2e, and the run_scenario harness + --freeze in tests/e2e/conftest.py [E2E-01, E2E-02, E2E-04]
-- [x] 04-03-PLAN.md — The one contrived canary leaf (SingleMarketBuy strategy + scenario.py/test/bars.csv/golden) with hand-verify-once freeze [E2E-02, E2E-03, E2E-04]
-
-### Phase 5: Strategy Interface Hardening & Signal Storage
-**Goal**: Put a pydantic config contract on the strategy base class and persist typed signal records — done EARLY, before new scenario strategies are written against the base class, and informed by the Phase 1 codebase map — while staying byte-exact against the SMA_MACD golden master.
-**Depends on**: Phase 4 (so the hardened base class and signal store can be regression-checked through the E2E harness); informed by the Phase 1 map
-**Requirements**: HARD-01, HARD-02, HARD-03, HARD-04, SIG-01, SIG-02
-**Success Criteria** (what must be TRUE):
-  1. A pydantic `BaseStrategyConfig` validates engine-facing declarations (timeframe, tickers, order_type, direction, allow_increase, max_positions, sizing_policy, sltp_policy), and a per-strategy params model with validators (e.g. `short_window < long_window`, positivity) replaces loose unvalidated attributes.
-  2. `order_type` is the `OrderType` enum end-to-end — the stringly-typed `"market"` is removed.
-  3. Re-running the golden master after the refactor is byte-exact (134 trades / `final_equity 46189.87730727451`), proving zero drift; the pure-alpha D-12 contract is intact (pydantic at construction only, `generate_signal` stays pure pandas).
-  4. Strategy-generated signals are persisted as typed records (strategy id, ticker, action, time, sizing/sltp declarations, config snapshot) and are queryable for post-run inspection and E2E assertions.
-**Plans**: 3 plans
-- [x] 05-01-PLAN.md — Foundation primitives: SignalId + generate_signal_id (D-10), Timeframe enum (D-06), BaseStrategyConfig/SMA_MACDConfig/EmptyStrategyConfig + validators [HARD-01, HARD-02]
-- [x] 05-02-PLAN.md — Config-constructor refactor (D-01), order_type enum end-to-end + boundary-parse collapse (D-04/FL-04), framework warmup guard (D-15), base __str__/__repr__ (D-14), strategy relocation (D-13), call-site migration [HARD-03, HARD-04]
-- [x] 05-03-PLAN.md — SignalRecord entity + pluggable SignalStore seam (D-07/D-08), per-intent capture pre-fan-out (D-09), composition-root injection + post-run accessor (D-11/D-12), golden-run SIG-02 assertion [SIG-01, SIG-02]
-
-### Phase 6: Order Matching Scenarios
-**Goal**: Give the resting-order book, bracket/OCO lifecycle, and trigger/gap matching their first end-to-end golden coverage — each a tiny hand-verified scenario then regression-locked.
-
-> **REMINDER — enable `parallelization` HERE (the scenario waves 6–9 benefit; phases 1–5 do not).** Each scenario is an independent leaf folder, ideal for wave-parallel execution in isolated worktrees. Preconditions: (1) Phase 4 shared infra (`tests/e2e/conftest.py`, `pyproject.toml` `e2e` marker, `Makefile` target) MUST be committed first — parallel scenario plans must not edit shared files or they'll merge-conflict; (2) parallelize generation but hand-verify/freeze oracles in deliberate batches, not 12-at-once. Flip via `/gsd:settings` → `parallelization`.
-
-**Depends on**: Phase 4 (E2E harness)
-**Requirements**: MATCH-01, MATCH-02, MATCH-03, MATCH-04, MATCH-05, MATCH-06, MATCH-07, MATCH-08
-**Success Criteria** (what must be TRUE):
-  1. MARKET next-bar-open fills, LIMIT in-bar-touch vs favorable-gap-through fills, and STOP pessimistic gap-down/gap-up fills each have a hand-verified, frozen E2E golden scenario.
-  2. A full bracket (entry + SL + TP) OCO lifecycle is covered: children dormant while parent rests, arm on parent fill, sibling OCO-cancel on fill.
-  3. Same-bar double trigger resolves by STOP-beats-LIMIT priority, and gap-clean-through (including a gap past both bracket legs) fills as specified.
-  4. MODIFY (re-price/re-size) and CANCEL round-trips, plus a far-from-market limit that never fills, are handled and golden-locked.
-**Plans**: 5 plans (Wave 1: foundational shared infra + MATCH-01 proof; Wave 2: 4 parallel scenario-leaf plans)
-- [x] 06-01-PLAN.md — Foundational shared infra (date-keyed ScriptedEmitter, shared ScenarioSpec/Action, oracle-inert on_tick hook, orders-snapshot serializer + opt-in diff wiring) + MATCH-01 market next-bar-open proof; re-runs the oracle gate byte-exact [MATCH-01]
-- [x] 06-02-PLAN.md — Entry fill-shapes: limit_touch, limit_gap_through, stop_gap_down, stop_gap_up (4 leaves, trades+summary goldens) [MATCH-02, MATCH-03]
-- [x] 06-03-PLAN.md — Bracket lifecycle: oco_lifecycle, stop_beats_limit (2 leaves, +orders.csv snapshot) [MATCH-04, MATCH-05]
-- [x] 06-04-PLAN.md — Gap clean-through: clean_through_stop, clean_through_limit, gap_past_both_legs (3 leaves, +orders.csv) [MATCH-06]
-- [x] 06-05-PLAN.md — Operator + never-fill: operator/cancel, operator/modify_reprice, operator/modify_resize (actions timeline), never_fill (4 leaves, +orders.csv) [MATCH-07, MATCH-08]
-
-### Phase 7: Cost, Sizing & SLTP Scenarios
-**Goal**: Give fee models, slippage models, sizing policies, and SL/TP policies their first end-to-end golden coverage with cash math verified to the cent.
-**Depends on**: Phase 4 (E2E harness); Phase 6 (reuses matching scenarios as the substrate for cost/SLTP fills)
-**Requirements**: COST-01, COST-02, COST-03, COST-04, COST-05, COST-06, SIZE-01, SIZE-02, SIZE-03, SLTP-01, SLTP-02, SLTP-03
-**Success Criteria** (what must be TRUE):
-  1. percent and maker_taker fee models are covered end-to-end (maker vs taker distinguished on limit vs market), and a combined fee+slippage round-trip's cash math is verified to the cent.
-  2. fixed and linear slippage models are covered, and slippage is proven NOT applied to limit fills.
-  3. `FixedQuantity` and `RiskPercent` (off stop distance) sizing produce hand-verified fills, and over-cash sizing produces the audited insufficient-funds rejection.
-  4. `PercentFromDecision` (priced at assembly) and `PercentFromFill` (anchored to the actual fill) SL/TP are each covered, exercising SL-hit, TP-hit, and held-to-end exit outcomes.
-**Plans**: 4 plans (Wave 1: foundational shared scaffolding + COST-01 canary + 15-golden re-freeze + oracle gate; Wave 2: 3 parallel scenario-leaf clusters COST/SIZE/SLTP)
-- [x] 07-01-PLAN.md — Foundational: commission golden column (D-07/D-08), ScriptedEmitter.sltp_policy (D-12), exchange-config seam fix (D-14), COST-01 percent-fee canary, re-freeze 15 existing E2E goldens (commission=0.00), re-run BTCUSD oracle byte-exact [COST-01]
-- [x] 07-02-PLAN.md — COST cluster: maker_taker (maker+taker in one leaf), fixed_slippage, linear_slippage, limit_no_slip, combined_roundtrip (5 leaves) [COST-02, COST-03, COST-04, COST-05, COST-06]
-- [x] 07-03-PLAN.md — SIZE cluster: fixed_quantity, risk_percent (off decision-time stop), over_cash_reject (orders-snapshot REJECTED) (3 leaves) [SIZE-01, SIZE-02, SIZE-03]
-- [x] 07-04-PLAN.md — SLTP cluster: PercentFromDecision and PercentFromFill each × {SL-hit, TP-hit, held-to-end} (6 leaves) [SLTP-01, SLTP-02, SLTP-03]
-
-### Phase 8: Admission, Position Management & Cash Edges
-**Goal**: Give the LONG-ONLY position-management directions v1.0 never exercised end-to-end — scale-in, partial scale-out, max-positions rejection, re-entry — plus the cash reservation/release lifecycle, their first golden coverage.
-**Depends on**: Phase 4 (E2E harness); Phase 7 (sizing/SLTP scenarios feed multi-fill position management)
-**Requirements**: ADMIT-01, ADMIT-02, ADMIT-03, ADMIT-04, CASH-01, CASH-02
-**Success Criteria** (what must be TRUE):
-  1. `allow_increase=True` scale-in (pyramiding) works end-to-end (v1.0 only validated the reject direction), and partial scale-out via `exit_fraction < 1` across multiple sells is golden-locked.
-  2. Reaching `max_positions` produces the audited new-entry rejection, and a full exit followed by re-entry on the same ticker is covered.
-  3. Insufficient funds produces the audited `cash_reservation` rejection, and the reservation is released on every terminal state (CANCELLED / REJECTED / REFUSED).
-**Plans**: 3 plans (Wave 1: foundational shared infra + scale_in canary + oracle gate; Wave 2: 2 parallel scenario-leaf clusters ADMISSION / CASH)
-- [x] 08-01-PLAN.md — Foundational: cash-ledger snapshot serializer (D-02) + opt-in conftest wiring + ScriptedEmitter allow_increase/max_positions (D-06) + scale_in canary; re-runs the BTCUSD oracle byte-exact [ADMIT-01, CASH-01]
-- [x] 08-02-PLAN.md — ADMISSION cluster: scale_out (ADMIT-02), max_positions REJECTED (ADMIT-03), re_entry (ADMIT-04) (3 leaves) [ADMIT-02, ADMIT-03, ADMIT-04]
-- [x] 08-03-PLAN.md — CASH cluster: release_cancelled + release_refused (positive release) + release_rejected (honest negative no-orphan) (3 leaves) [CASH-02]
-
-### Phase 9: Multi-Entity, Robustness & Metrics Edges
-**Goal**: Close the breadth matrix with multi-ticker / multi-strategy / multi-portfolio runs and the robustness + degenerate-metrics edges, and prove determinism across every new scenario.
-**Depends on**: Phase 2 (multi-ticker data), Phase 3 (membership), Phase 5 (config), Phase 4 (E2E harness); composite — sits at the end of the scenario waves
-**Requirements**: MULTI-01, MULTI-02, MULTI-03, MULTI-04, ROBUST-01, ROBUST-02, ROBUST-03, ROBUST-04
-**Success Criteria** (what must be TRUE):
-  1. One strategy trading two cryptos (multi-ticker) and multiple strategies running simultaneously each have a hand-verified, frozen E2E scenario.
-  2. A strategy fanned out to >1 portfolio shows per-portfolio cash isolation, and two strategies competing for the same portfolio's cash resolve correctly.
-  3. A sparse/absent bar produces no fill and no crash, and heterogeneous date spans (asset enters mid-run; differing end dates) are handled over a union window.
-  4. No-trade / flat / losing runs produce valid metrics (no NaN, no div-by-zero in Sharpe/drawdown/profit-factor), and a double-run is byte-identical across all new scenarios.
-**Plans**: 4 plans (Wave 1: foundational shared infra + MULTI-03 fanout canary + oracle gate; Wave 2: 3 parallel scenario-leaf plans MULTI / ROBUST-spans / ROBUST-degenerate)
-- [x] 09-01-PLAN.md — Foundational: per-portfolio summary snapshot serializer + opt-in portfolios.csv wiring (D-01), parametrized in-process double-run determinism scaffold (D-04), no-NaN/no-inf guard helper (D-05), MULTI-03 fanout_portfolios canary (asymmetric cash), BTCUSD oracle byte-exact re-run (D-06) [MULTI-03, ROBUST-04]
-- [x] 09-02-PLAN.md — MULTI cluster: two_tickers (one strategy/two tickers, rides trades.csv pair column), two_strategies (two emitters/one portfolio), contended_cash (registration-order contention → loser cash_reservation REJECTED) [MULTI-01, MULTI-02, MULTI-04]
-- [x] 09-03-PLAN.md — ROBUST spans (real sliced data): sparse_bar (SOL 2023-06-24/25 absent bar, position live across gap → no fill/no crash), union_window (AAVE 2021-07-15 mid-run listing over the union window) [ROBUST-01, ROBUST-02]
-- [x] 09-04-PLAN.md — ROBUST degenerate + determinism: no_trade / flat / losing finite-metrics leaves + explicit assert_metrics_finite (D-05), full nine-leaf double-run determinism confirmation (D-04) [ROBUST-03, ROBUST-04]
+</details>
 
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Codebase Map & Clarity Baseline | v1.1 | 2/2 | Complete   | 2026-06-09 |
-| 2. Data Ingestion | v1.1 | 1/1 | Complete   | 2026-06-09 |
-| 3. Minimal Real Universe | v1.1 | 3/3 | Complete   | 2026-06-09 |
-| 4. E2E Harness & Framework | v1.1 | 3/3 | Complete   | 2026-06-09 |
-| 5. Strategy Interface Hardening & Signal Storage | v1.1 | 3/3 | Complete   | 2026-06-09 |
-| 6. Order Matching Scenarios | v1.1 | 5/5 | Complete   | 2026-06-09 |
-| 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete   | 2026-06-10 |
-| 8. Admission, Position Management & Cash Edges | v1.1 | 3/3 | Complete   | 2026-06-10 |
-| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 4/4 | Complete   | 2026-06-10 |
+| 1. Codebase Map & Clarity Baseline | v1.1 | 2/2 | Complete | 2026-06-09 |
+| 2. Data Ingestion | v1.1 | 1/1 | Complete | 2026-06-09 |
+| 3. Minimal Real Universe | v1.1 | 3/3 | Complete | 2026-06-09 |
+| 4. E2E Harness & Framework | v1.1 | 3/3 | Complete | 2026-06-09 |
+| 5. Strategy Interface Hardening & Signal Storage | v1.1 | 3/3 | Complete | 2026-06-09 |
+| 6. Order Matching Scenarios | v1.1 | 5/5 | Complete | 2026-06-09 |
+| 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete | 2026-06-10 |
+| 8. Admission, Position Management & Cash Edges | v1.1 | 3/3 | Complete | 2026-06-10 |
+| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 4/4 | Complete | 2026-06-10 |
 
 ## Backlog
 
