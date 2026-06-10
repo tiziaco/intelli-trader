@@ -119,6 +119,12 @@ _ORDERS_SORT_KEYS = ["role", "order_type", "action", "price", "time"]
 # TRAILING sort key for a stable tiebreak when correlation + operation_type
 # collide (e.g. two RESERVATIONs on the same derived order — deterministic order).
 _CASH_OPS_IDENTITY_COLUMNS = ["correlation", "operation_type"]
+# IN-04: the serializer (reporting/cash_operations.py) already imposes a TOTAL
+# order via a source-appearance ``_seq`` tiebreak that it drops before returning,
+# so the harness sort intentionally mirrors ONLY the business keys. Do NOT add
+# ``_seq`` here — it is not a column on the returned frame and would crash; the
+# diff cannot diverge on a residual tie because both fresh and golden flow through
+# the same serializer and are re-sorted identically by this key set.
 _CASH_OPS_SORT_KEYS = ["correlation", "operation_type", "amount"]
 
 
