@@ -77,6 +77,15 @@ the DISTINGUISHING fact is the SHAPE: ``spec.strategies`` holds TWO emitter
 instances here, ONE in MULTI-01.) The metrics block is machine-computed and frozen
 as-written; the load-bearing facts are the two fills and the per-strategy PnL.
 
+``profit_factor: Infinity`` is INTENDED here (WR-02 carve-out). Both round-trips are
+winners (no losing trade), so gross losses = 0 and ``metrics.py`` returns the all-WIN
+``inf`` branch — a legitimate, hand-derivable value for a clean all-win multi-entity
+leaf, NOT a degenerate-metrics smell. The ROBUST-03 finite guard
+(``_assert_finite.py`` / ``test_metrics_finite.py``) is opt-in and deliberately NOT
+applied here; a future ``--freeze`` re-verifier should keep ``Infinity`` frozen
+rather than treat it as drift. (``json.dump`` emits the non-standard token
+``Infinity``; that is the expected serialization at this edge.)
+
 ============================== END VERIFY =============================
 """
 

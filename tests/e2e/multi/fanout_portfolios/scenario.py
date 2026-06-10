@@ -70,6 +70,15 @@ and realised_pnl (1_666.666… vs 833.333…) — exactly the 2:1 cash-asymmetry
 because each portfolio's CashManager reserves/settles its OWN cash. That asymmetry
 is the cash-isolation proof.
 
+``profit_factor: Infinity`` is INTENDED here (WR-02 carve-out). Both portfolios'
+round-trips are winners (no losing trade), so gross losses = 0 and ``metrics.py``
+returns the all-WIN ``inf`` branch — a legitimate, hand-derivable value for a clean
+all-win multi-entity leaf, NOT a degenerate-metrics smell. The ROBUST-03 finite guard
+(``_assert_finite.py`` / ``test_metrics_finite.py``) is opt-in and deliberately NOT
+applied here; a future ``--freeze`` re-verifier should keep ``Infinity`` frozen rather
+than treat it as drift. (``json.dump`` emits the non-standard token ``Infinity``; that
+is the expected serialization at this edge.)
+
 ============================== END VERIFY =============================
 
 Indentation: 4 spaces (matches ``tests/conftest.py`` / the e2e package house style).

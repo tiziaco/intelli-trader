@@ -115,6 +115,15 @@ summary.json ``ticker`` = spec.ticker = BTCUSD (the label only). The metrics blo
 machine-computed and frozen as-written; the load-bearing hand-checked facts are the
 winner fill/PnL, the loser REJECTED row (sized 50), and the no-orphan cash ledger.
 
+``profit_factor: Infinity`` is INTENDED here (WR-02 carve-out). The single closed
+round-trip is a winner and the loser never opens a position, so gross losses = 0 and
+``metrics.py`` returns the all-WIN ``inf`` branch — a legitimate, hand-derivable value
+for a clean all-win multi-entity leaf, NOT a degenerate-metrics smell. The ROBUST-03
+finite guard (``_assert_finite.py`` / ``test_metrics_finite.py``) is opt-in and
+deliberately NOT applied here; a future ``--freeze`` re-verifier should keep
+``Infinity`` frozen rather than treat it as drift. (``json.dump`` emits the
+non-standard token ``Infinity``; that is the expected serialization at this edge.)
+
 ============================== END VERIFY =============================
 """
 

@@ -522,7 +522,18 @@ def _diff_frame(fresh, gold, identity_columns, sort_keys):
 
 
 def _diff_summary(fresh_summary, golden_summary):
-    """Diff the summary EXACT — whole ``metrics`` dict + key-by-key scalar compare."""
+    """Diff the summary EXACT — whole ``metrics`` dict + key-by-key scalar compare.
+
+    WR-02 carve-out: a frozen ``profit_factor: Infinity`` is INTENDED for clean
+    all-WIN multi-entity leaves (two_tickers / two_strategies / fanout_portfolios /
+    contended_cash). ``metrics.py`` returns ``inf`` only when gross losses == 0; those
+    leaves author naturally all-win PnL, so ``inf == inf`` diffs cleanly here and the
+    value is hand-derivable in each leaf's VERIFY note. The ROBUST-03 finite guard
+    (``_assert_finite.py`` / ``test_metrics_finite.py``) is OPT-IN and is deliberately
+    NOT enforced framework-wide — making ``inf`` a hard failure here would break those
+    four legitimately-frozen, passing goldens. A future re-verifier should keep
+    ``Infinity`` frozen for an all-win leaf, not treat it as a guard that leaked off.
+    """
     # The whole derived-metrics block as one exact dict comparison (D-15 discipline).
     if "metrics" in golden_summary:
         assert fresh_summary.get("metrics") == golden_summary["metrics"], (

@@ -87,6 +87,15 @@ spans both). The machine-computed metrics block is frozen as-written; the
 LOAD-BEARING hand-checked facts are the per-ticker fills, quantities, PnL and the
 two ``pair`` rows spanning both tickers.
 
+``profit_factor: Infinity`` is INTENDED here (WR-02 carve-out). Both round-trips are
+winners (no losing trade), so gross losses = 0 and ``metrics.py`` returns the all-WIN
+``inf`` branch — this is a legitimate, hand-derivable value for a clean all-win
+multi-entity leaf, NOT a degenerate-metrics smell or a guard that leaked off. The
+ROBUST-03 finite guard (``_assert_finite.py`` / ``test_metrics_finite.py``) is opt-in
+and deliberately NOT applied to this leaf; a future ``--freeze`` re-verifier should
+keep ``Infinity`` frozen rather than treat it as drift. (``json.dump`` emits the
+non-standard token ``Infinity``; that is the expected serialization at this edge.)
+
 ============================== END VERIFY =============================
 """
 
