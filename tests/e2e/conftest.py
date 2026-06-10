@@ -62,11 +62,16 @@ import pandas as pd
 import pandas.testing as pdt
 import pytest
 
+from itrader.core.enums.order import OrderStatus
 from itrader.reporting.frames import (
     EQUITY_COLUMNS,
     TRADE_COLUMNS,
     build_equity_curve,
     build_trade_log,
+)
+from itrader.reporting.orders import (
+    ORDER_SNAPSHOT_COLUMNS,
+    build_orders_snapshot,
 )
 from itrader.reporting.summary import (
     FLOAT_FORMAT,
@@ -83,9 +88,17 @@ from itrader.reporting.summary import (
 # tolerance would mask real regressions (T-04-04 / the oracle abandoned tolerance).
 _TRADE_IDENTITY_COLUMNS = ["entry_date", "exit_date", "side", "pair"]
 _EQUITY_IDENTITY_COLUMNS = ["timestamp"]
+# Orders-snapshot identity (Phase 6, D-08): which logical order on which ticker.
+_ORDERS_IDENTITY_COLUMNS = ["role", "ticker", "order_type", "action"]
 # Sort keys used before comparing (stable order, independent of insertion order).
 _TRADE_SORT_KEYS = ["entry_date", "exit_date", "side"]
 _EQUITY_SORT_KEYS = ["timestamp", "total_equity"]
+# IN-02: ``time`` is a frozen golden identity column but is omitted from the
+# identity/sort keys above; append it as a TRAILING sort key so row alignment is
+# fully determined even when role/order_type/action/price collide on the same
+# ticker (otherwise the tiebreak is non-deterministic and the row-aligned diff
+# could spuriously fail).
+_ORDERS_SORT_KEYS = ["role", "order_type", "action", "price", "time"]
 
 
 def pytest_addoption(parser):
@@ -144,6 +157,71 @@ def _load_spec(scenario_path):
     return module.SCENARIO
 
 
+def _make_on_tick(spec, portfolio_id):
+    """Translate ``spec.actions`` into an oracle-inert ``on_tick`` operator hook (D-06/D-07).
+
+    Returns ``None`` when ``spec.actions`` is empty — no hook is wired, so the run
+    stays byte-identical to today (oracle-dark). Otherwise returns an
+    ``on_tick(system, time_event)`` that, on a scheduled bar-date hit, resolves the
+    target by PREDICATE (ticker + the sole resting/PENDING order — D-07) and calls
+    the REAL ``OrderHandler.modify_order``/``cancel_order`` round-trip (D-05). The
+    resolved ``order.id`` (a UUIDv7) is passed — NEVER a literal int (GAP #2).
+    """
+    actions = getattr(spec, "actions", ())
+    if not actions:
+        return None  # oracle-inert: no actions → no hook wired (D-06)
+
+    by_date: dict[str, list] = {}
+    for action in actions:
+        by_date.setdefault(action.bar_date, []).append(action)
+
+    def on_tick(system, time_event):
+        # WR-03: anchor the date key to a FIXED frame (UTC), independent of the
+        # Settings.timezone default. csv_store localizes the bar index to TIMEZONE
+        # (Europe/Paris), so a naive strftime would couple action.bar_date to that
+        # default and roll to the wrong day near a boundary. tz_convert("UTC") here
+        # and the matching conversion in ScriptedEmitter keep both producers and the
+        # hand-authored action.bar_date strings anchored to the same UTC frame.
+        key = time_event.time.tz_convert("UTC").strftime("%Y-%m-%d")
+        for action in by_date.get(key, []):
+            candidates = system.order_handler.get_orders_by_ticker(
+                action.ticker, portfolio_id)
+            resting = [o for o in candidates if o.status == OrderStatus.PENDING]
+            # WR-01/WR-02: this is test infra, so a silently-skipped or
+            # silently-failed operator round-trip must be a HARD failure — a green
+            # test that never ran the scheduled action would defeat the operator
+            # leaves. Assert exactly ONE PENDING order to honor the "sole resting
+            # order" predicate (D-07) instead of arbitrarily picking the first.
+            assert resting, (
+                f"operator action {action.kind} on {action.ticker} @ {key}: "
+                f"no PENDING order to target (check bar_date/ticker)")
+            if len(resting) != 1:
+                pytest.fail(
+                    f"operator predicate expected exactly ONE PENDING "
+                    f"{action.ticker} order @ {key}, found {len(resting)} — the "
+                    f"'sole resting order' contract (D-07) is violated")
+            order = resting[0]  # "the sole resting order" predicate (D-07)
+            if action.kind == "cancel":
+                ok = system.order_handler.cancel_order(order.id, portfolio_id)
+            elif action.kind == "modify":
+                ok = system.order_handler.modify_order(
+                    order.id,
+                    new_price=action.new_price,
+                    new_quantity=action.new_quantity,
+                    portfolio_id=portfolio_id,
+                )
+            else:
+                raise ValueError(f"unknown action.kind: {action.kind!r}")
+            # WR-01: both cancel_order/modify_order return result.success and can
+            # return False (not found, validation/transition failure) WITHOUT
+            # raising — surface that as a hard failure so a broken round-trip can't
+            # masquerade as a passing test.
+            assert ok, (
+                f"operator {action.kind} round-trip failed for {order.id}")
+
+    return on_tick
+
+
 def _build_and_run(spec):
     """Wire a ``TradingSystem`` from ``spec``, run it, and read state AFTER the run.
 
@@ -195,18 +273,26 @@ def _build_and_run(spec):
         for strategy in spec.strategies:
             strategy.subscribe_portfolio(pid)
 
-    system.run(print_summary=False)
+    # Phase 6 (D-06): build the operator hook from spec.actions. Empty actions →
+    # _make_on_tick returns None → byte-exact run (oracle-dark).
+    system.run(print_summary=False, on_tick=_make_on_tick(spec, portfolio_ids[0]))
 
     # Read portfolio state AFTER the run (queue-only — D-07). The canary scenarios
-    # are single-portfolio; the assembled summary pins from portfolios[0].
+    # are single-portfolio; the assembled summary pins from portfolios[0]. The
+    # portfolio_id is threaded out so _assemble can query the order mirror.
     portfolio = system.portfolio_handler.get_portfolio(portfolio_ids[0])
-    return system, portfolio
+    return system, portfolio, portfolio_ids[0]
 
 
-def _assemble(spec, system, portfolio):
-    """Assemble trades / equity / summary via the SHARED reporting path (D-16)."""
+def _assemble(spec, system, portfolio, portfolio_id):
+    """Assemble trades / equity / summary / orders via the SHARED reporting path (D-16)."""
     trades = build_trade_log(portfolio)
     equity = build_equity_curve(portfolio)
+
+    # Phase 6 (D-08): the order-mirror snapshot for the opt-in orders.csv golden.
+    # Queried AFTER the run (queue-only — D-07) for the spec's ticker + portfolio.
+    orders = build_orders_snapshot(
+        system.order_handler.get_orders_by_ticker(spec.ticker, portfolio_id))
 
     # D-17: post-hoc slippage attribution from the store's close series.
     closes = system.store.read_bars(spec.ticker)["close"]
@@ -228,7 +314,7 @@ def _assemble(spec, system, portfolio):
     )
     # D-15: nested derived-metrics block — produced every run.
     summary["metrics"] = build_metrics_block(equity, trades)
-    return trades, equity, summary
+    return trades, equity, summary, orders
 
 
 def _diff_frame(fresh, gold, identity_columns, sort_keys):
@@ -297,11 +383,12 @@ def _diff_summary(fresh_summary, golden_summary):
         )
 
 
-def _freeze(golden_dir, trades, equity, summary):
+def _freeze(golden_dir, trades, equity, summary, orders):
     """WRITE goldens using the SAME serialization as the oracle generator (D-06).
 
-    Default freeze = trades.csv + summary.json (always). equity.csv is opt-in (D-06):
-    only (re)written when an equity.csv already exists in the leaf's golden/.
+    Default freeze = trades.csv + summary.json (always). equity.csv AND orders.csv
+    are opt-in (D-06/D-09): only (re)written when one already exists in the leaf's
+    golden/. A pure-fill scenario (MATCH-01/02/03) never freezes orders.csv.
     """
     golden_dir.mkdir(parents=True, exist_ok=True)
 
@@ -315,6 +402,13 @@ def _freeze(golden_dir, trades, equity, summary):
     if (golden_dir / "equity.csv").exists():
         equity[EQUITY_COLUMNS].to_csv(
             golden_dir / "equity.csv", index=False, float_format=FLOAT_FORMAT
+        )
+
+    # orders.csv is opt-in (D-09): only refreshed if the leaf already froze it
+    # (matching scenarios whose assertion is the final order-mirror state).
+    if (golden_dir / "orders.csv").exists():
+        orders[ORDER_SNAPSHOT_COLUMNS].to_csv(
+            golden_dir / "orders.csv", index=False, float_format=FLOAT_FORMAT
         )
 
 
@@ -337,11 +431,12 @@ def _roundtrip(frame, columns):
     return pd.read_csv(buffer)
 
 
-def _diff(golden_dir, trades, equity, summary):
+def _diff(golden_dir, trades, equity, summary, orders):
     """DIFF ONLY the golden files PRESENT in the leaf (D-05: presence = assertion).
 
-    A leaf that froze only trades.csv + summary.json asserts only those; an equity.csv
-    is diffed only if the leaf committed one. Goldens never auto-heal here (D-13).
+    A leaf that froze only trades.csv + summary.json asserts only those; equity.csv
+    and orders.csv are diffed only if the leaf committed one. Goldens never
+    auto-heal here (D-13).
     """
     assert golden_dir.exists(), (
         f"no golden/ in {golden_dir.parent} — run with --freeze first after "
@@ -361,6 +456,12 @@ def _diff(golden_dir, trades, equity, summary):
         gold = pd.read_csv(equity_golden)
         fresh = _roundtrip(equity, EQUITY_COLUMNS)
         _diff_frame(fresh, gold, _EQUITY_IDENTITY_COLUMNS, _EQUITY_SORT_KEYS)
+
+    orders_golden = golden_dir / "orders.csv"
+    if orders_golden.exists():
+        gold = pd.read_csv(orders_golden)
+        fresh = _roundtrip(orders, ORDER_SNAPSHOT_COLUMNS)
+        _diff_frame(fresh, gold, _ORDERS_IDENTITY_COLUMNS, _ORDERS_SORT_KEYS)
 
     summary_golden = golden_dir / "summary.json"
     if summary_golden.exists():
@@ -401,13 +502,13 @@ def run_scenario(request):
     def _run(here):
         here = pathlib.Path(here)
         spec = _load_spec(here / "scenario.py")
-        system, portfolio = _build_and_run(spec)
-        trades, equity, summary = _assemble(spec, system, portfolio)
+        system, portfolio, portfolio_id = _build_and_run(spec)
+        trades, equity, summary, orders = _assemble(spec, system, portfolio, portfolio_id)
 
         golden_dir = here / "golden"
         if freeze:
-            _freeze(golden_dir, trades, equity, summary)
+            _freeze(golden_dir, trades, equity, summary, orders)
         else:
-            _diff(golden_dir, trades, equity, summary)
+            _diff(golden_dir, trades, equity, summary, orders)
 
     return _run

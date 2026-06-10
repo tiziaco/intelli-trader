@@ -30,7 +30,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 - [x] **Phase 3: Minimal Real Universe** — A `membership`-from-availability primitive replaces the stub; the engine handles mid-run listing / absent bars without crash or look-ahead. (completed 2026-06-09)
 - [x] **Phase 4: E2E Harness & Framework** — Dedicated `tests/e2e/` tree, registered `e2e` marker, `make test-e2e`, and a shared golden-compare harness every scenario phase builds on. (completed 2026-06-09)
 - [x] **Phase 5: Strategy Interface Hardening & Signal Storage** — Pydantic `BaseStrategyConfig` + per-strategy params validators + `OrderType` enum end-to-end (byte-exact vs the SMA_MACD oracle); typed signal records persisted and queryable. (completed 2026-06-09)
-- [ ] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill.
+- [x] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill. (completed 2026-06-09)
 - [ ] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes.
 - [ ] **Phase 8: Admission, Position Management & Cash Edges** — E2E golden-locked coverage of scale-in (pyramiding), partial scale-out, `max_positions` rejection, exit-then-re-entry, and the cash reservation/release lifecycle.
 - [ ] **Phase 9: Multi-Entity, Robustness & Metrics Edges** — E2E golden-locked coverage of multi-ticker, multi-strategy, multi-portfolio cash isolation, contended cash, heterogeneous date spans, degenerate-run metrics, and cross-scenario determinism.
@@ -118,7 +118,12 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   2. A full bracket (entry + SL + TP) OCO lifecycle is covered: children dormant while parent rests, arm on parent fill, sibling OCO-cancel on fill.
   3. Same-bar double trigger resolves by STOP-beats-LIMIT priority, and gap-clean-through (including a gap past both bracket legs) fills as specified.
   4. MODIFY (re-price/re-size) and CANCEL round-trips, plus a far-from-market limit that never fills, are handled and golden-locked.
-**Plans**: TBD
+**Plans**: 5 plans (Wave 1: foundational shared infra + MATCH-01 proof; Wave 2: 4 parallel scenario-leaf plans)
+- [x] 06-01-PLAN.md — Foundational shared infra (date-keyed ScriptedEmitter, shared ScenarioSpec/Action, oracle-inert on_tick hook, orders-snapshot serializer + opt-in diff wiring) + MATCH-01 market next-bar-open proof; re-runs the oracle gate byte-exact [MATCH-01]
+- [x] 06-02-PLAN.md — Entry fill-shapes: limit_touch, limit_gap_through, stop_gap_down, stop_gap_up (4 leaves, trades+summary goldens) [MATCH-02, MATCH-03]
+- [x] 06-03-PLAN.md — Bracket lifecycle: oco_lifecycle, stop_beats_limit (2 leaves, +orders.csv snapshot) [MATCH-04, MATCH-05]
+- [x] 06-04-PLAN.md — Gap clean-through: clean_through_stop, clean_through_limit, gap_past_both_legs (3 leaves, +orders.csv) [MATCH-06]
+- [x] 06-05-PLAN.md — Operator + never-fill: operator/cancel, operator/modify_reprice, operator/modify_resize (actions timeline), never_fill (4 leaves, +orders.csv) [MATCH-07, MATCH-08]
 
 ### Phase 7: Cost, Sizing & SLTP Scenarios
 **Goal**: Give fee models, slippage models, sizing policies, and SL/TP policies their first end-to-end golden coverage with cash math verified to the cent.
@@ -161,7 +166,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 3. Minimal Real Universe | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 4. E2E Harness & Framework | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 5. Strategy Interface Hardening & Signal Storage | v1.1 | 3/3 | Complete   | 2026-06-09 |
-| 6. Order Matching Scenarios | v1.1 | 0/0 | Not started | - |
+| 6. Order Matching Scenarios | v1.1 | 5/5 | Complete   | 2026-06-09 |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 0/0 | Not started | - |
 | 8. Admission, Position Management & Cash Edges | v1.1 | 0/0 | Not started | - |
 | 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 0/0 | Not started | - |

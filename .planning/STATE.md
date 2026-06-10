@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: ready_to_plan
-last_updated: 2026-06-09T20:04:00.000Z
-last_activity: 2026-06-09 -- Phase 05 complete (3/3, verified, review loop closed)
+last_updated: 2026-06-09T22:55:52.468Z
+last_activity: 2026-06-09 -- Phase 06 execution started
 progress:
   total_phases: 12
   completed_phases: 5
-  total_plans: 12
-  completed_plans: 15
+  total_plans: 17
+  completed_plans: 17
   percent: 42
-stopped_at: Phase 05 complete (3/3) — ready to plan Phase 6
+stopped_at: Phase 06 complete (5/5) — ready to discuss Phase 999.2
 ---
 
 # Project State
@@ -21,20 +21,20 @@ stopped_at: Phase 05 complete (3/3) — ready to plan Phase 6
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 6 — Order Matching Scenarios (next v1.1 phase; 999.x dirs are deferred N+2/N+3 buckets)
+**Current focus:** Phase 999.2 — nplus2 persistence and performance
 
 ## Current Position
 
-Phase: 6
+Phase: 999.2
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-09 -- Phase 05 complete (HARD-01..04 + SIG-01/02 validated)
+Last activity: 2026-06-09
 
 ## Performance Metrics
 
 **Velocity (v1.1):**
 
-- Total plans completed: 15
+- Total plans completed: 20
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -94,8 +94,8 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 
 ## Session Continuity
 
-Last session: 2026-06-09T16:21:48.712Z
-Resume file: .planning/phases/05-strategy-interface-hardening-signal-storage/05-CONTEXT.md
+Last session: 2026-06-09T21:10:02.972Z
+Resume file: .planning/phases/06-order-matching-scenarios/06-CONTEXT.md
 
 ## Operator Next Steps
 

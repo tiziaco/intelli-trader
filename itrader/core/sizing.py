@@ -240,6 +240,7 @@ class SignalIntent:
     take_profit: Decimal | None = None
     exit_fraction: Decimal = Decimal("1")
     quantity: Decimal | None = None
+    # TODO add order_type and entry_price for stop/limit orders 
 
     def __post_init__(self) -> None:
         _require_unit_interval("SignalIntent", "exit_fraction", self.exit_fraction)
