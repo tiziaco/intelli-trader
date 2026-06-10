@@ -68,10 +68,10 @@
 - [x] **SLTP-03**: SL-hit, TP-hit, and held-to-end (neither) exit outcomes.
 
 ### Admission & Position Management (ADMIT)
-- [ ] **ADMIT-01**: `allow_increase=True` scale-in (pyramiding) **works** end-to-end (v1.0 only validated the reject direction).
-- [ ] **ADMIT-02**: partial scale-out via `exit_fraction < 1` across multiple sells.
-- [ ] **ADMIT-03**: reaching `max_positions` produces the audited new-entry rejection.
-- [ ] **ADMIT-04**: full exit followed by re-entry on the same ticker.
+- [x] **ADMIT-01**: `allow_increase=True` scale-in (pyramiding) **works** end-to-end (v1.0 only validated the reject direction).
+- [x] **ADMIT-02**: partial scale-out via `exit_fraction < 1` across multiple sells.
+- [x] **ADMIT-03**: reaching `max_positions` produces the audited new-entry rejection.
+- [x] **ADMIT-04**: full exit followed by re-entry on the same ticker.
 
 ### Multi-Entity (MULTI)
 - [ ] **MULTI-01**: one strategy trading two cryptos (multi-ticker) end-to-end.
@@ -80,8 +80,8 @@
 - [ ] **MULTI-04**: two strategies competing for the same portfolio's cash.
 
 ### Cash & Accounting edges (CASH)
-- [ ] **CASH-01**: insufficient funds → audited `cash_reservation` rejection.
-- [ ] **CASH-02**: reservation release on every terminal state (CANCELLED / REJECTED / REFUSED).
+- [x] **CASH-01**: insufficient funds → audited `cash_reservation` rejection.
+- [x] **CASH-02**: reservation release on every terminal state (CANCELLED / REJECTED / REFUSED).
 
 ### Robustness & Metrics edges (ROBUST)
 - [ ] **ROBUST-01**: sparse/absent bar for a ticker at T produces no fill and no crash.
@@ -152,12 +152,12 @@
 | SLTP-01 | Phase 7 | Complete |
 | SLTP-02 | Phase 7 | Complete |
 | SLTP-03 | Phase 7 | Complete |
-| ADMIT-01 | Phase 8 | Pending |
-| ADMIT-02 | Phase 8 | Pending |
-| ADMIT-03 | Phase 8 | Pending |
-| ADMIT-04 | Phase 8 | Pending |
-| CASH-01 | Phase 8 | Pending |
-| CASH-02 | Phase 8 | Pending |
+| ADMIT-01 | Phase 8 | Complete |
+| ADMIT-02 | Phase 8 | Complete |
+| ADMIT-03 | Phase 8 | Complete |
+| ADMIT-04 | Phase 8 | Complete |
+| CASH-01 | Phase 8 | Complete |
+| CASH-02 | Phase 8 | Complete |
 | MULTI-01 | Phase 9 | Pending |
 | MULTI-02 | Phase 9 | Pending |
 | MULTI-03 | Phase 9 | Pending |

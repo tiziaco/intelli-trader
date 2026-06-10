@@ -32,7 +32,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 - [x] **Phase 5: Strategy Interface Hardening & Signal Storage** — Pydantic `BaseStrategyConfig` + per-strategy params validators + `OrderType` enum end-to-end (byte-exact vs the SMA_MACD oracle); typed signal records persisted and queryable. (completed 2026-06-09)
 - [x] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill. (completed 2026-06-09)
 - [x] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes. (completed 2026-06-10)
-- [ ] **Phase 8: Admission, Position Management & Cash Edges** — E2E golden-locked coverage of scale-in (pyramiding), partial scale-out, `max_positions` rejection, exit-then-re-entry, and the cash reservation/release lifecycle.
+- [x] **Phase 8: Admission, Position Management & Cash Edges** — E2E golden-locked coverage of scale-in (pyramiding), partial scale-out, `max_positions` rejection, exit-then-re-entry, and the cash reservation/release lifecycle. (completed 2026-06-10)
 - [ ] **Phase 9: Multi-Entity, Robustness & Metrics Edges** — E2E golden-locked coverage of multi-ticker, multi-strategy, multi-portfolio cash isolation, contended cash, heterogeneous date spans, degenerate-run metrics, and cross-scenario determinism.
 
 ## Phase Details
@@ -148,7 +148,10 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   1. `allow_increase=True` scale-in (pyramiding) works end-to-end (v1.0 only validated the reject direction), and partial scale-out via `exit_fraction < 1` across multiple sells is golden-locked.
   2. Reaching `max_positions` produces the audited new-entry rejection, and a full exit followed by re-entry on the same ticker is covered.
   3. Insufficient funds produces the audited `cash_reservation` rejection, and the reservation is released on every terminal state (CANCELLED / REJECTED / REFUSED).
-**Plans**: TBD
+**Plans**: 3 plans (Wave 1: foundational shared infra + scale_in canary + oracle gate; Wave 2: 2 parallel scenario-leaf clusters ADMISSION / CASH)
+- [x] 08-01-PLAN.md — Foundational: cash-ledger snapshot serializer (D-02) + opt-in conftest wiring + ScriptedEmitter allow_increase/max_positions (D-06) + scale_in canary; re-runs the BTCUSD oracle byte-exact [ADMIT-01, CASH-01]
+- [x] 08-02-PLAN.md — ADMISSION cluster: scale_out (ADMIT-02), max_positions REJECTED (ADMIT-03), re_entry (ADMIT-04) (3 leaves) [ADMIT-02, ADMIT-03, ADMIT-04]
+- [x] 08-03-PLAN.md — CASH cluster: release_cancelled + release_refused (positive release) + release_rejected (honest negative no-orphan) (3 leaves) [CASH-02]
 
 ### Phase 9: Multi-Entity, Robustness & Metrics Edges
 **Goal**: Close the breadth matrix with multi-ticker / multi-strategy / multi-portfolio runs and the robustness + degenerate-metrics edges, and prove determinism across every new scenario.
@@ -172,7 +175,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 5. Strategy Interface Hardening & Signal Storage | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 6. Order Matching Scenarios | v1.1 | 5/5 | Complete   | 2026-06-09 |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete   | 2026-06-10 |
-| 8. Admission, Position Management & Cash Edges | v1.1 | 0/0 | Not started | - |
+| 8. Admission, Position Management & Cash Edges | v1.1 | 3/3 | Complete   | 2026-06-10 |
 | 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 0/0 | Not started | - |
 
 ## Backlog
