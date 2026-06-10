@@ -182,18 +182,37 @@ def _make_on_tick(spec, portfolio_id):
             candidates = system.order_handler.get_orders_by_ticker(
                 action.ticker, portfolio_id)
             resting = [o for o in candidates if o.status == OrderStatus.PENDING]
-            if not resting:
-                continue
+            # WR-01/WR-02: this is test infra, so a silently-skipped or
+            # silently-failed operator round-trip must be a HARD failure — a green
+            # test that never ran the scheduled action would defeat the operator
+            # leaves. Assert exactly ONE PENDING order to honor the "sole resting
+            # order" predicate (D-07) instead of arbitrarily picking the first.
+            assert resting, (
+                f"operator action {action.kind} on {action.ticker} @ {key}: "
+                f"no PENDING order to target (check bar_date/ticker)")
+            if len(resting) != 1:
+                pytest.fail(
+                    f"operator predicate expected exactly ONE PENDING "
+                    f"{action.ticker} order @ {key}, found {len(resting)} — the "
+                    f"'sole resting order' contract (D-07) is violated")
             order = resting[0]  # "the sole resting order" predicate (D-07)
             if action.kind == "cancel":
-                system.order_handler.cancel_order(order.id, portfolio_id)
+                ok = system.order_handler.cancel_order(order.id, portfolio_id)
             elif action.kind == "modify":
-                system.order_handler.modify_order(
+                ok = system.order_handler.modify_order(
                     order.id,
                     new_price=action.new_price,
                     new_quantity=action.new_quantity,
                     portfolio_id=portfolio_id,
                 )
+            else:
+                raise ValueError(f"unknown action.kind: {action.kind!r}")
+            # WR-01: both cancel_order/modify_order return result.success and can
+            # return False (not found, validation/transition failure) WITHOUT
+            # raising — surface that as a hard failure so a broken round-trip can't
+            # masquerade as a passing test.
+            assert ok, (
+                f"operator {action.kind} round-trip failed for {order.id}")
 
     return on_tick
 
