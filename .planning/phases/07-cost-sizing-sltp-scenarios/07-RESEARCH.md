@@ -560,9 +560,13 @@ in-repo files. A1 (the RiskPercent stop-threading call site) was VERIFIED during
 (`order_manager.py:1037-1042`) and removed from this log. A2 (zero-fee re-freeze purity) is the only
 remaining item needing implementer confirmation — LOW risk.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Exact commission-attach mechanic (merge vs zip).**
+> Both questions below carry concrete recommendations that are encoded directly into
+> 07-01 Task 1's action (key-merge attach; `commission` placed last after
+> `SLIPPAGE_COLUMNS`). No execution-blocking ambiguity remains.
+
+1. **Exact commission-attach mechanic (merge vs zip).** RESOLVED — key-merge.
    - What we know: `build_trade_log` and `closed_positions` both sort by `(entry_date, exit_date, side)`;
      `attach_slippage` is the append precedent.
    - What's unclear: whether a positional zip is safe or a key-merge is required (duplicate
