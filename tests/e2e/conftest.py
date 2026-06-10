@@ -30,6 +30,16 @@ Given a leaf directory ``here`` it:
 Results stay in memory (D-07) — there is no ``output/`` folder in a leaf. Any disk
 debugging uses pytest ``tmp_path`` only, never the committed ``golden/``.
 
+Cross-module citation caveat (IN-04)
+------------------------------------
+Several load-bearing ``D-NN`` / ``WR-NN`` / ``Pitfall N`` comments below cite OTHER
+modules by FILE:LINE (e.g. ``simulated.py:99-100``, ``cash_manager.py:393-410``).
+Line numbers DRIFT silently as those files change — a reader trusting a stale line
+number could be misled. The SYMBOL named alongside each citation (e.g.
+``SimulatedExchange.update_config``, ``CashManager``) is the durable anchor; treat
+the trailing ``:line`` as an approximate hint, not an exact address, and prefer the
+symbol when navigating. New cross-module citations should lead with the symbol.
+
 The ``--freeze`` regen discipline (E2E-04 / D-13 — read before using)
 ---------------------------------------------------------------------
 Without ``--freeze`` the harness DIFFS and FAILS on any drift — goldens NEVER
@@ -501,6 +511,15 @@ def _assemble(spec, system, portfolio, portfolio_id, portfolio_ids):
     # production change. spec.portfolios[i] aligns with portfolio_ids[i] by the
     # _build_and_run construction order. Keyed on the STABLE PortfolioSpec.name
     # (NEVER the UUIDv7 PortfolioId — Pitfall 2).
+    #
+    # IN-02 (tracking note): this loop rebuilds build_trade_log + build_summary per
+    # portfolio EVERY run, even for the eight single-portfolio Phase-9 leaves where it
+    # duplicates the top-level summary already built above (lines ~480-490) and is then
+    # discarded unless the leaf commits portfolios.csv. The always-on rebuild is
+    # deliberate (uniform, oracle-dark) and is NOT a correctness issue; an optional
+    # perf optimization — skip the loop when ``len(spec.portfolios) == 1`` and reuse the
+    # top-level summary — is intentionally deferred to avoid two code paths that could
+    # drift from the shared reporting builders.
     portfolio_rows = []
     for spec_pf, pid in zip(spec.portfolios, portfolio_ids):
         pf = system.portfolio_handler.get_portfolio(pid)
@@ -626,6 +645,16 @@ def _freeze(golden_dir, trades, equity, summary, orders, cash_ops, portfolios_fr
     make the 10-dp contract reach Decimal columns too, cast money columns to float
     before ``to_csv`` (or apply ``FLOAT_FORMAT`` via an explicit per-column map);
     deferred here because it would re-freeze inherited Phase-4 trade goldens.
+
+    IN-01 (cross-artifact float rendering): ``summary.json`` is written with raw
+    ``json.dump`` (full Python ``repr`` of each float, e.g.
+    ``11666.666666666666``), whereas every CSV golden — including ``portfolios.csv`` —
+    is written with ``float_format=FLOAT_FORMAT`` (10 dp, e.g. ``11666.6666666667``).
+    So the SAME quantity (e.g. ``fanout_portfolios`` ``pf_a.final_cash``) is rendered
+    DIFFERENTLY in ``summary.json`` vs ``portfolios.csv``. Each golden is internally
+    consistent against its own diff path, so no test fails; but cross-reading the two
+    artifacts by STRING will mislead. Cross-artifact equality here is BY-VALUE, NOT
+    by-string — compare the parsed floats, not the rendered digits.
     """
     golden_dir.mkdir(parents=True, exist_ok=True)
 
