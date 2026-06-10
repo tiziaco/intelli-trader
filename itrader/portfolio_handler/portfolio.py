@@ -19,6 +19,8 @@ from itrader.portfolio_handler.storage import (
 	PortfolioStateStorageFactory,
 )
 from itrader.core.ids import PortfolioId
+from itrader.core.exceptions.base import ValidationError, StateError, ConfigurationError
+from itrader.core.exceptions.portfolio import PortfolioError
 
 from itrader import idgen
 
@@ -98,9 +100,13 @@ class Portfolio(object):
 	def _validate_initial_state(self) -> None:
 		"""Validate initial portfolio state."""
 		if self.cash_manager.balance < 0:
-			raise ValueError("Portfolio cannot start with negative cash")
+			# FL-01: input validation on the cash field at construction (not a
+			# transaction funds-shortfall — InsufficientFundsError's
+			# (required, available) shape does not fit a negative starting balance).
+			raise ValidationError("cash", str(self.cash_manager.balance), "Portfolio cannot start with negative cash")
 		if not self.name.strip():
-			raise ValueError("Portfolio name cannot be empty")
+			# FL-01: input validation on the name field at construction.
+			raise ValidationError("name", message="Portfolio name cannot be empty")
 
 	def __str__(self) -> str:
 		return f"Portfolio-{self.portfolio_id}[{self._state.value}]"
@@ -121,7 +127,9 @@ class Portfolio(object):
 			
 		# Validate state transition
 		if not self._is_valid_state_transition(self._state, new_state):
-			raise ValueError(f"Invalid state transition from {self._state} to {new_state}")
+			# FL-01: state-machine transition violation. self.portfolio_id is a
+			# PortfolioId (uuid.UUID) satisfying StateError's entity_id type.
+			raise StateError(self.portfolio_id, self._state.value, required_state=new_state.value, operation="set_state")
 			
 		old_state = self._state
 		self._state = new_state
@@ -180,7 +188,8 @@ class Portfolio(object):
 			elif hasattr(self.config, key):
 				setattr(self.config, key, value)
 			else:
-				raise ValueError(f"Unknown configuration key: {key}")
+				# FL-01: unknown configuration key on the config seam.
+				raise ConfigurationError(config_key=key, reason="Unknown configuration key")
 	
 	def get_config_dict(self) -> Dict[str, Any]:
 		"""Get configuration as dictionary."""
@@ -407,7 +416,8 @@ class Portfolio(object):
 		"""
 		# Validate portfolio can trade
 		if not self.can_trade():
-			raise ValueError(f"Portfolio {self.portfolio_id} cannot trade in state {self.state}")
+			# FL-01: cannot trade in the current state — state-machine guard.
+			raise StateError(self.portfolio_id, self.state.value, required_state=PortfolioState.ACTIVE.value, operation="transact_shares")
 
 		# Validate against configuration
 		if self.config.validation.validate_transactions:
@@ -428,12 +438,14 @@ class Portfolio(object):
 		# Check position limits
 		if transaction.quantity > 0:  # Buy transaction
 			if self.n_open_positions >= self.config.limits.max_positions:
-				raise ValueError(f"Maximum positions limit reached: {self.config.limits.max_positions}")
-			
+				# FL-01: domain limit breach (not state/field validation) — PortfolioError base.
+				raise PortfolioError(f"Maximum positions limit reached: {self.config.limits.max_positions}")
+
 			# Check position value limits
 			transaction_value = abs(transaction.quantity * transaction.price)
 			if transaction_value > self.config.limits.max_position_value:
-				raise ValueError(f"Transaction value {transaction_value} exceeds limit {self.config.limits.max_position_value}")
+				# FL-01: domain limit breach — PortfolioError base.
+				raise PortfolioError(f"Transaction value {transaction_value} exceeds limit {self.config.limits.max_position_value}")
 	
 	# Enhanced Market Value Update
 	def update_market_value_of_portfolio(self, prices: Mapping[str, float | Decimal]) -> None:
