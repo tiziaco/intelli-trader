@@ -20,24 +20,25 @@ Tests (all run through Poetry):
 make test              # full suite
 make test-unit         # only -m "unit"
 make test-integration  # only -m "integration"
-make test-portfolio    # test/test_portfolio_handler/
-make test-orders       # test/test_order_handler/
-make test-execution    # test/test_execution_handler/
-make test-events       # test/test_events/
-make test-strategy     # test/test_strategy/
+make test-e2e          # only -m "e2e"
+make test-portfolio    # tests/unit/portfolio/
+make test-orders       # tests/unit/order/
+make test-execution    # tests/unit/execution/
+make test-events       # tests/unit/events/
+make test-strategy     # tests/unit/strategy/
 make test-cov          # coverage -> opens htmlcov/index.html
 ```
 
 Run a single test file / case:
 
 ```bash
-poetry run pytest test/test_order_handler/test_order.py -v
-poetry run pytest test/test_order_handler/test_order.py -k "test_name" -v
+poetry run pytest tests/unit/order/test_order.py -v
+poetry run pytest tests/unit/order/test_order.py -k "test_name" -v
 ```
 
-`run_tests.py` is an alternative runner (`python run_tests.py unit -x`, etc.).
+The test root is `tests/` (NOT `test/`), with type-grouped subtrees — `tests/unit/<domain>/`, `tests/integration/`, `tests/e2e/`, `tests/golden/`. `conftest.py` auto-applies the type marker (`unit`/`integration`/`e2e`) from the folder location; the domain-specific `make` targets are just path shortcuts, not marker selectors.
 
-**Test gotcha:** `pyproject.toml` sets `filterwarnings = ["error", ...]` and `--strict-markers`/`--strict-config`. Any unexpected warning fails the test, and every marker used must be declared in the `markers` list (unit, integration, slow, portfolio, events, orders, execution, strategy).
+**Test gotcha:** `pyproject.toml` sets `filterwarnings = ["error", ...]` and `--strict-markers`/`--strict-config`. Any unexpected warning fails the test, and every marker used must be declared in the `markers` list — only **`unit`, `integration`, `slow`, `e2e`** are registered.
 
 ## Architecture
 
@@ -81,8 +82,8 @@ Both wire up the identical component graph around one shared queue in their `__i
 - **order_handler/** — `OrderHandler` is a thin interface layer; order *management* logic (signal-to-order, lifecycle, modify/cancel, bracket declaration) lives in `OrderManager`. It does **not** match orders: it declares brackets via `parent_order_id`/`child_order_ids` (the exchange enforces OCO) and reconciles the stored order mirror against exchange truth in `on_fill` (EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED). Validation via `EnhancedOrderValidator`. Persistence is pluggable through `OrderStorageFactory` (`in_memory` for backtest, `postgresql` for live) under `order_handler/storage/`.
 - **portfolio_handler/** — `PortfolioHandler` manages portfolio lifecycle and routes `on_fill`; it structurally satisfies the `PortfolioReadModel` Protocol. Each `Portfolio` delegates to four managers, each now in its own subdir: `cash/`, `position/`, `transaction/`, `metrics/`. In live mode individual portfolios use `threading.RLock`; the collection lock was removed in backtest (D-19 single-writer contract).
 - **execution_handler/** — `ExecutionHandler` with pluggable `fee_model/` (`zero`/`percent`/`maker_taker`), `slippage_model/` (`zero`/`fixed`/`linear`), and `exchanges/` (e.g. `simulated`). Routes `on_order` and `on_market_data` to the exchange, turning `OrderEvent`/`BarEvent` into `FillEvent`s. The `SimulatedExchange` composes a pure `MatchingEngine` (`matching_engine.py`) that holds the resting-order book and evaluates stop/limit triggers against intrabar high/low with gap-aware fills and same-bar OCO priority; the exchange then applies fee/slippage and emits the fill.
-- **strategy_handler/** — `StrategiesHandler` runs strategies; each combines a `position_sizer/` and `risk_manager/`. The reference strategy is `strategy_handler/SMA_MACD_strategy.py`; other concrete strategies live in `strategy_handler/my_strategies/`.
-- **price_handler/** — the data engine, reorganized into `store/` (`CsvPriceStore`, `SqlPriceStore` — read-only on the run path), `feed/` (`BacktestBarFeed` + the look-ahead-safety **bar-timing contract** in `feed/bar_feed.py`), and `providers/` (CCXT, OANDA, Binance stream).
+- **strategy_handler/** — `StrategiesHandler` runs strategies. Concrete strategies live under `strategy_handler/strategies/`; the reference strategy is `strategy_handler/strategies/SMA_MACD_strategy.py` (alongside `empty_strategy.py`). User-supplied strategies go in `strategy_handler/my_strategies/`. The handler also owns `strategies/` registration, signal recording (`signal_record.py`), per-strategy `config.py`, and a `storage/` backend.
+- **price_handler/** — the data engine, reorganized into `store/` (`CsvPriceStore`, `SqlHandler` in `sql_store.py` — read-only on the run path), `feed/` (`BacktestBarFeed` + the look-ahead-safety **bar-timing contract** in `feed/bar_feed.py`), and `providers/` (CCXT, OANDA, Binance stream).
 - **screeners_handler/** & **universe/** — dynamic market screening (deferred subsystem) and membership derivation (`universe/membership.py`).
 - **reporting/** — pure builders for run artifacts (`frames.py`) and derived metrics (`metrics.py`); plotting in `plots.py`.
 
@@ -212,7 +213,7 @@ must import, run, and yield trustworthy results.
 - Process-wide singletons (`config`, `logger`, `idgen`) initialized in `itrader/__init__.py` on import
 - `pyproject.toml` - Single source of truth for dependencies, pytest config, and mypy config
 - `Makefile` - All developer commands
-- `pyproject.toml::[tool.pytest.ini_options]` sets `filterwarnings = ["error", ...]`, `--strict-markers`, `--strict-config`. Only `unit`, `integration`, `slow` markers are declared (folder-derived in `tests/conftest.py`).
+- `pyproject.toml::[tool.pytest.ini_options]` sets `filterwarnings = ["error", ...]`, `--strict-markers`, `--strict-config`. Only `unit`, `integration`, `slow`, `e2e` markers are declared (type marker folder-derived in `tests/conftest.py`).
 
 ## Platform Requirements
 
@@ -279,7 +280,7 @@ must import, run, and yield trustworthy results.
 
 - Root: `ITraderError` (`base.py`).
 - Base categories: `ValidationError`, `ConfigurationError`, `StateError`, `ConcurrencyError`, `NotFoundError`.
-- Domain-specific: `itrader/core/exceptions/portfolio.py` (`PortfolioError`, `InsufficientFundsError`, `PortfolioNotFoundError`), `itrader/core/exceptions/execution.py` (`ExecutionError`, `ExchangeConnectionError`, `OrderExecutionError`).
+- Domain-specific: `itrader/core/exceptions/portfolio.py` (`PortfolioError`, `InsufficientFundsError`, `PortfolioNotFoundError`), `itrader/core/exceptions/order.py` (`OrderError`, `UnsizedSignalError`, `SizingPolicyViolation`), `itrader/core/exceptions/data.py` (`DataError`, `MalformedDataError`, `MissingPriceDataError`). Execution failures flow as `FillEvent(REFUSED)` events, not exceptions; execution error codes live in `core/enums/execution.py::ExecutionErrorCode`.
 - Exceptions carry structured fields and build their message in `__init__` (e.g. `ValidationError(field, value, message)`, `StateError(entity_id, current_state, ...)`).
 - Raise typed exceptions, not bare `Exception` or boolean returns. Fee/validation models raise `ValidationError` rather than returning `False` (see `fee_model`).
 - Handlers catch-and-log at the event boundary and do NOT re-raise — `ExecutionHandler.on_order`/`on_market_data` swallow per-exchange exceptions to prevent queue stalls.
@@ -380,7 +381,7 @@ must import, run, and yield trustworthy results.
 - Used by: `EventHandler`.
 - Purpose: Look-ahead-safe price storage and per-tick bar windows; `BarEvent` production.
 - Location: `itrader/price_handler/store/`, `itrader/price_handler/feed/`, `itrader/price_handler/providers/`.
-- Contains: `CsvPriceStore`, `SqlPriceStore`, `BacktestBarFeed`, CCXT/OANDA/Binance providers.
+- Contains: `CsvPriceStore`, `SqlHandler`, `BacktestBarFeed`, CCXT/OANDA/Binance providers.
 - Depends on: `pandas`; stores are read-only on the run path.
 - Used by: `StrategiesHandler`, `ScreenersHandler`, and the TIME route's `generate_bar_event` factory.
 - Purpose: Cross-cutting enums, exceptions, ids, money, clock, read-model protocols.
@@ -416,7 +417,7 @@ must import, run, and yield trustworthy results.
 - Examples: `itrader/events_handler/events/` — `TimeEvent`, `BarEvent`, `SignalEvent`, `OrderEvent`, `FillEvent`, `ScreenerEvent`, `PortfolioUpdateEvent`, `ErrorEvent`/`PortfolioErrorEvent`.
 - Pattern: `@dataclass(frozen=True, slots=True, kw_only=True)` subclass of `Event`; `type` pinned via `field(default=EventType.X, init=False)`; factory class methods for safe construction.
 - Purpose: Base for all trading strategies.
-- Examples: `itrader/strategy_handler/base.py`; concrete `itrader/strategy_handler/SMA_MACD_strategy.py`, `itrader/strategy_handler/my_strategies/`.
+- Examples: `itrader/strategy_handler/base.py`; concrete `itrader/strategy_handler/strategies/SMA_MACD_strategy.py`, `itrader/strategy_handler/my_strategies/`.
 - Pattern: Subclass implements `calculate_signal(...)`; emits a `SignalEvent` onto `global_queue`.
 - Purpose: Pluggable exchange interface.
 - Examples: `itrader/execution_handler/exchanges/base.py`; concrete `SimulatedExchange`.
