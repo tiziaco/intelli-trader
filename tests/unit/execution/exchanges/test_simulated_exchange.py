@@ -254,10 +254,17 @@ class TestSimulatedExchangeOrderExecution:
 
     def test_order_execution_with_slippage(self, make_bar):
         """Slippage applies to the next-bar-open fill price."""
-        # Configure for linear slippage
+        # Configure a COMPLETE linear slippage model. The default preset leaves
+        # max_slippage_pct=Decimal("0") (an unused knob while model_type=NONE); a
+        # 0 cap clamps ALL slippage to zero, so flipping only the model type +
+        # base_slippage_pct yields NO slippage. Set the cap (and size-impact) too.
+        # base_slippage_pct=0 zeros the RNG noise term (uniform(-0,0)=0), leaving a
+        # deterministic, hand-derivable size-impact slippage (mirrors COST-04).
+        self.exchange.config.slippage_model.size_impact_factor = Decimal("0.0001")
+        self.exchange.config.slippage_model.max_slippage_pct = Decimal("50")
         self.exchange.update_config(
             slippage_model_type=SlippageModelType.LINEAR,
-            base_slippage_pct=0.01
+            base_slippage_pct=Decimal("0"),
         )
 
         order = self.create_test_order(price=100.0)
