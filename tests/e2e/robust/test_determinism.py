@@ -17,11 +17,11 @@ sync with the extended signature and forwards it straight into ``_assemble``.
 
 Collection discipline
 ----------------------
-``PHASE9_LEAVES`` is a static list of Path objects, so the file COLLECTS clean even
-before the parallel-wave leaves (Plans 02-04) exist — no filesystem access at
-parametrize time. At RUN time a leaf whose ``scenario.py`` is not yet authored is
-SKIPPED (it will turn green automatically once its wave lands); at this plan's wave
-the ``fanout_portfolios`` canary is present and runs for real.
+``PHASE9_LEAVES`` is a static list of Path objects (no filesystem access at
+parametrize time). All nine Phase 9 leaves are now authored (Plans 02-04 complete),
+so the parametrization runs the FULL nine-leaf set UNCONDITIONALLY — the Plan-01
+not-yet-authored skip guard has been removed (a missing ``scenario.py`` now
+``_load_spec``-fails loudly, which is correct once every leaf is expected to exist).
 
 Indentation: 4 spaces (matches ``tests/conftest.py`` / the e2e package house style).
 """
@@ -35,8 +35,8 @@ from tests.e2e.conftest import _load_spec, _build_and_run, _assemble
 
 _E2E_ROOT = pathlib.Path(__file__).resolve().parents[1]  # tests/e2e/
 
-# The nine Phase 9 leaves (multi-entity + robustness). Static Path objects — no
-# filesystem access here, so this file collects clean before the wave leaves exist.
+# The nine Phase 9 leaves (multi-entity + robustness). All authored (Plans 02-04
+# complete) — static Path objects, no filesystem access here.
 PHASE9_LEAVES = [
     _E2E_ROOT / "multi" / "two_tickers",
     _E2E_ROOT / "multi" / "two_strategies",
@@ -54,11 +54,6 @@ PHASE9_LEAVES = [
 def test_double_run_identical(leaf_dir):
     """Run ``leaf_dir`` twice in-process; assert the raw outputs are identical (ROBUST-04)."""
     scenario_path = leaf_dir / "scenario.py"
-    if not scenario_path.exists():
-        # Not-yet-authored parallel-wave leaf (Plans 02-04): skip until it lands.
-        # This file COLLECTS clean today; only the present fanout_portfolios canary
-        # runs for real at this plan's wave.
-        pytest.skip(f"leaf not yet authored: {leaf_dir.name}")
 
     def once():
         spec = _load_spec(scenario_path)
