@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: executing
-last_updated: "2026-06-10T17:02:57.773Z"
-last_activity: 2026-06-10 -- Phase 9 planning complete
+last_updated: "2026-06-10T17:12:15.329Z"
+last_activity: 2026-06-10
 progress:
   total_phases: 13
   completed_phases: 8
   total_plans: 28
-  completed_plans: 24
+  completed_plans: 25
   percent: 62
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 09 — multi-entity-robustness-metrics-edges
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
+Phase: 09 (multi-entity-robustness-metrics-edges) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-06-10 -- Phase 9 planning complete
+Last activity: 2026-06-10
 
 ## Performance Metrics
 
@@ -71,6 +71,7 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase 08]: [P02]: ADMIT-02/03/04 cluster frozen — partial scale_out (exit_fraction<1 keeps position open between sells), max_positions REJECTED, full-exit-then-re-entry; first multi-ticker single-portfolio leaf (ETHUSDT occupier + BTCUSD over-cap entry via two co-subscribed ScriptedEmitters, D-04; multi-portfolio cash isolation deferred to Phase 9)
 - [Phase 08]: [P03]: CASH-02 cluster complete — release_cancelled (CANCELLED positive), release_refused (REFUSED positive via deterministic max_order_size D-03), release_rejected (REJECTED honest negative no-orphan) hand-verified and frozen; cash-ledger lens (D-02) shows the explicit RESERVATION->RELEASE_RESERVATION pair (positive) or the explicit no-orphan empty ledger (negative)
 - [Phase 08]: [P03]: no-orphan contrast — ADMIT-03 max_positions gate-before-sizing (REJECTED qty=0, never reserves) vs CASH-02 cash_reservation reserve-raises-before-recording (REJECTED qty=1000 SIZED, InsufficientFundsError before add_reservation); both leave NO orphan reservation. conftest seam (Rule 3) re-derives cached _min/_max_order_size from spec.exchange so validate_order honors the per-scenario REFUSED lever; _supported_symbols untouched (PATTERNS A2), oracle-dark
+- [Phase ?]: [Phase 09 P01]: per-portfolio portfolios.csv snapshot is harness-LOCAL, keyed on stable PortfolioSpec.name (Pitfall 2), opt-in via exists() gate, NEVER in TRADE_COLUMNS (oracle-dark, D-01); determinism test imports harness internals from tests.e2e.conftest (D-04); MULTI-03 canary proves cash isolation via asymmetric 10k/5k portfolios -> 2:1 portfolios.csv rows; BTCUSD oracle byte-exact (D-06)
 
 ### Pending Todos
 
@@ -114,6 +115,7 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 08 P08-01 | 13min | 3 tasks | 9 files |
 | Phase 08 P02 | 6min | 2 tasks | 17 files |
 | Phase 08 P08-03 | 25min | 2 tasks | 21 files |
+| Phase 09 P01 | 4 | 3 tasks | 12 files |
 
 ## Session Continuity
 

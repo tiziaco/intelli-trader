@@ -163,7 +163,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   3. A sparse/absent bar produces no fill and no crash, and heterogeneous date spans (asset enters mid-run; differing end dates) are handled over a union window.
   4. No-trade / flat / losing runs produce valid metrics (no NaN, no div-by-zero in Sharpe/drawdown/profit-factor), and a double-run is byte-identical across all new scenarios.
 **Plans**: 4 plans (Wave 1: foundational shared infra + MULTI-03 fanout canary + oracle gate; Wave 2: 3 parallel scenario-leaf plans MULTI / ROBUST-spans / ROBUST-degenerate)
-- [ ] 09-01-PLAN.md — Foundational: per-portfolio summary snapshot serializer + opt-in portfolios.csv wiring (D-01), parametrized in-process double-run determinism scaffold (D-04), no-NaN/no-inf guard helper (D-05), MULTI-03 fanout_portfolios canary (asymmetric cash), BTCUSD oracle byte-exact re-run (D-06) [MULTI-03, ROBUST-04]
+- [x] 09-01-PLAN.md — Foundational: per-portfolio summary snapshot serializer + opt-in portfolios.csv wiring (D-01), parametrized in-process double-run determinism scaffold (D-04), no-NaN/no-inf guard helper (D-05), MULTI-03 fanout_portfolios canary (asymmetric cash), BTCUSD oracle byte-exact re-run (D-06) [MULTI-03, ROBUST-04]
 - [ ] 09-02-PLAN.md — MULTI cluster: two_tickers (one strategy/two tickers, rides trades.csv pair column), two_strategies (two emitters/one portfolio), contended_cash (registration-order contention → loser cash_reservation REJECTED) [MULTI-01, MULTI-02, MULTI-04]
 - [ ] 09-03-PLAN.md — ROBUST spans (real sliced data): sparse_bar (SOL 2023-06-24/25 absent bar, position live across gap → no fill/no crash), union_window (AAVE 2021-07-15 mid-run listing over the union window) [ROBUST-01, ROBUST-02]
 - [ ] 09-04-PLAN.md — ROBUST degenerate + determinism: no_trade / flat / losing finite-metrics leaves + explicit assert_metrics_finite (D-05), full nine-leaf double-run determinism confirmation (D-04) [ROBUST-03, ROBUST-04]
@@ -180,7 +180,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 6. Order Matching Scenarios | v1.1 | 5/5 | Complete   | 2026-06-09 |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete   | 2026-06-10 |
 | 8. Admission, Position Management & Cash Edges | v1.1 | 3/3 | Complete   | 2026-06-10 |
-| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 0/4 | Planned | - |
+| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 1/4 | In Progress|  |
 
 ## Backlog
 
