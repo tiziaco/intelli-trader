@@ -1,10 +1,11 @@
 ---
 phase: 09-multi-entity-robustness-metrics-edges
 verified: 2026-06-10T00:00:00Z
-status: human_needed
+status: passed
 score: 4/4 must-haves verified
 overrides_applied: 0
-human_verification:
+human_verification_status: resolved  # 2026-06-10 (audit v1.1): WR-01 fixed in code (commit 9c56162 — determinism test now asserts all 6 frames, 9/9 pass); WR-02 ratified as the documented Infinity carve-out (already implemented in 09-REVIEW-FIX.md commit d0293a9). See .planning/v1.1-MILESTONE-AUDIT.md.
+human_verification:  # historical record of what was needed — both items now resolved (see human_verification_status)
   - test: "Confirm WR-01 does not undermine ROBUST-04 correctness claim"
     expected: "The determinism test in test_determinism.py asserts byte-identity on trades/equity/summary (indices 0-2) but NOT on orders (index 3), cash_ops (index 4), or portfolios_frame (index 5). For the MULTI-04 contended_cash and MULTI-03 fanout_portfolios leaves, non-determinism in the winner/loser split or per-portfolio snapshot ordering would pass this test green."
     why_human: "The observable behaviour (all 9 leaves pass the double-run test) is real. Whether the untested frames (orders/cash_ops/portfolios) could exhibit non-determinism in practice requires a judgment call: the engine is synchronous and single-threaded in backtest mode, and the registration-order D-02 contract makes the winner/loser split deterministic. The question is whether the project considers the WR-01 gap an acceptable contractual narrowing or a must-fix before the phase is closed."
@@ -17,7 +18,15 @@ human_verification:
 
 **Phase Goal:** Close the breadth matrix with multi-ticker / multi-strategy / multi-portfolio runs and the robustness + degenerate-metrics edges, and prove determinism across every new scenario.
 **Verified:** 2026-06-10T00:00:00Z
-**Status:** human_needed
+**Status:** passed (human_verification resolved 2026-06-10 — see banner below)
+
+> **Resolution (2026-06-10, v1.1 audit):** Both human-verification items are resolved.
+> **WR-01** was fixed in code (commit `9c56162`) — `test_determinism.py` now asserts byte-identity
+> on all six `_assemble` frames (orders/cash_ops/portfolios added); 9/9 leaves pass.
+> **WR-02** was ratified as the documented `profit_factor: Infinity` carve-out (already implemented
+> in `09-REVIEW-FIX.md`, commit `d0293a9`): `inf` is mathematically correct for a genuinely all-win
+> run (gross losses = 0), and the finiteness guard is intentionally scoped to the degenerate
+> ROBUST-03 leaves only. Owner decision recorded in `.planning/v1.1-MILESTONE-AUDIT.md`.
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
