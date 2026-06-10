@@ -134,7 +134,11 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   2. fixed and linear slippage models are covered, and slippage is proven NOT applied to limit fills.
   3. `FixedQuantity` and `RiskPercent` (off stop distance) sizing produce hand-verified fills, and over-cash sizing produces the audited insufficient-funds rejection.
   4. `PercentFromDecision` (priced at assembly) and `PercentFromFill` (anchored to the actual fill) SL/TP are each covered, exercising SL-hit, TP-hit, and held-to-end exit outcomes.
-**Plans**: TBD
+**Plans**: 4 plans (Wave 1: foundational shared scaffolding + COST-01 canary + 15-golden re-freeze + oracle gate; Wave 2: 3 parallel scenario-leaf clusters COST/SIZE/SLTP)
+- [ ] 07-01-PLAN.md — Foundational: commission golden column (D-07/D-08), ScriptedEmitter.sltp_policy (D-12), exchange-config seam fix (D-14), COST-01 percent-fee canary, re-freeze 15 existing E2E goldens (commission=0.00), re-run BTCUSD oracle byte-exact [COST-01]
+- [ ] 07-02-PLAN.md — COST cluster: maker_taker (maker+taker in one leaf), fixed_slippage, linear_slippage, limit_no_slip, combined_roundtrip (5 leaves) [COST-02, COST-03, COST-04, COST-05, COST-06]
+- [ ] 07-03-PLAN.md — SIZE cluster: fixed_quantity, risk_percent (off decision-time stop), over_cash_reject (orders-snapshot REJECTED) (3 leaves) [SIZE-01, SIZE-02, SIZE-03]
+- [ ] 07-04-PLAN.md — SLTP cluster: PercentFromDecision and PercentFromFill each × {SL-hit, TP-hit, held-to-end} (6 leaves) [SLTP-01, SLTP-02, SLTP-03]
 
 ### Phase 8: Admission, Position Management & Cash Edges
 **Goal**: Give the LONG-ONLY position-management directions v1.0 never exercised end-to-end — scale-in, partial scale-out, max-positions rejection, re-entry — plus the cash reservation/release lifecycle, their first golden coverage.
