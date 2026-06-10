@@ -52,7 +52,10 @@ Lifecycle: there is NO next-bar fill — the order never reaches the exchange. T
 run completes cleanly over all four bars. The order mirror holds exactly ONE order
 at status REJECTED; ZERO positions open; ZERO trades close.
 
-Final order-mirror snapshot (``golden/orders.csv`` — the D-15 assertion):
+Final order-mirror snapshot (``golden/orders.csv`` — the D-15 assertion). The
+illustrative table below abbreviates to the load-bearing columns; the real golden
+also pins the leading ``ticker`` (BTCUSD) and the trailing deterministic ``time``
+identity column per ``ORDER_SNAPSHOT_COLUMNS`` (reporting/orders.py:39-49):
 
     role        order_type  action  status     price  quantity  filled_quantity
     STANDALONE  MARKET      BUY     REJECTED   100    1000      0

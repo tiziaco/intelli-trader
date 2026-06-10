@@ -69,7 +69,10 @@ from linkage flags, statuses PENDING/FILLED, NEVER ACTIVE). NOTE: the ENTRY orde
 ``price`` column is the DECISION price (100 — the price stamped on the MARKET parent
 at assembly), NOT the bar2-open fill price (90). The fill price (90) is what anchors
 the fill-anchored CHILDREN (SL=81, TP=108) — see the trade ``avg_bought`` in the
-SL/TP-hit siblings. The children prices (81, 108) ARE the visible SLTP-02 evidence:
+SL/TP-hit siblings. The children prices (81, 108) ARE the visible SLTP-02 evidence.
+The illustrative table below abbreviates to the load-bearing columns; the real
+golden also pins the leading ``ticker`` (BTCUSD) and the trailing deterministic
+``time`` identity column per ``ORDER_SNAPSHOT_COLUMNS`` (reporting/orders.py:39-49):
 
     role   order_type  action  status   price  quantity  filled_quantity
     ENTRY  MARKET      BUY     FILLED   100    95        95     (price = decision price)
