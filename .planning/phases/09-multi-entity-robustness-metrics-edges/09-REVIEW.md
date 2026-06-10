@@ -28,9 +28,9 @@ files_reviewed_list:
   - tests/e2e/robust/losing/test_scenario.py
 findings:
   critical: 0
-  warning: 5
+  warning: 6
   info: 4
-  total: 9
+  total: 10
 status: issues_found
 ---
 
@@ -54,17 +54,20 @@ No BLOCKER defects were found: the harness changes are additive and correctly sc
 (the `_supported_symbols` union is a per-instance superset mutation that cannot leak
 across runs because each `TradingSystem()` builds a fresh exchange; the `pair` merge
 key is backward-compatible because single-ticker leaves keep a unique key). The
-goldens cross-check against the hand-derivations.
+goldens cross-check against the hand-derivations. The `e2e` marker is correctly
+declared in `pyproject.toml` (satisfies `--strict-markers`), and money narrows to
+`float` only at the documented CSV/JSON serialization edge.
 
 However, several WARNINGs concern the harness's ability to **silently mask wrong
 goldens** — the exact threat this phase was told to guard. The most material:
-(1) the no-tolerance summary diff accepts a JSON `Infinity` `profit_factor` with no
-gate, so an all-win leaf can freeze and lock `inf` while the project's own
-ROBUST-03 contract treats `inf` as a degenerate-metrics smell; (2) the determinism
-test silently does NOT compare the per-portfolio / orders / cash_ops frames between
-the two runs, so non-determinism in exactly the new MULTI-04 / fanout vehicles is
-not caught by ROBUST-04; (3) a documented-vs-frozen slippage attribution mismatch
-in `union_window` that a future re-verifier could rubber-stamp.
+(1) the determinism test silently does NOT compare the per-portfolio / orders /
+cash_ops frames between the two runs, so non-determinism in exactly the new MULTI-04 /
+fanout vehicles is not caught by ROBUST-04; (2) the no-tolerance summary diff accepts a
+JSON `Infinity` `profit_factor` with no gate, so an all-win leaf can freeze and lock
+`inf` while the project's own ROBUST-03 contract treats `inf` as a degenerate-metrics
+smell; (3) a documented-vs-frozen slippage attribution mismatch in `union_window` that
+a future re-verifier could rubber-stamp; (4) the commission-attribution merge key is
+not provably unique for same-ticker same-bar re-entries.
 
 ## Warnings
 
@@ -112,6 +115,12 @@ pdt.assert_frame_equal(a[5], b[5])   # portfolios
 **Issue:** `decision_close` raises `ValueError` when a fill timestamp is `> 0` in `searchsorted` but not actually a member of the close index. In multi-ticker leaves the harness attributes EVERY trade row (all tickers) against the single `spec.ticker` close series. This works for the Phase-9 leaves because the co-loaded tickers share identical date grids (BTC/ETH same dates; SOL/ETH same window; AAVE within BTC's window via the `position <= 0` early-return). But the guard is fragile: any future leaf where a non-`spec.ticker` fill lands on a date present in that ticker's grid but absent from `spec.ticker`'s grid (e.g. differing end dates — explicitly called out as out-of-scope in `union_window/scenario.py:16-18`) would raise here and abort the entire scenario with a `ValueError`, not a clean diff failure. The harness's correctness now depends on an undocumented invariant ("every traded ticker's fill dates ⊆ spec.ticker's date grid") that no assertion enforces at the harness boundary.
 **Fix:** Document the invariant at the `_assemble` slippage call site (conftest.py:390-393) — "all traded tickers must share spec.ticker's fill-date grid, else attach_slippage raises" — or make the harness attribute slippage per-ticker against each row's own `pair` close series so the single-series coupling is removed. At minimum add a comment so the next multi-ticker author knows the constraint before authoring a differing-end-date leaf.
 
+### WR-06: Commission merge key not provably unique — same-ticker same-bar re-entries trip the `one_to_one` guard
+
+**File:** `tests/e2e/conftest.py:427-430`
+**Issue:** Commission attribution merges on `["pair", "entry_date", "exit_date", "side"]` with `validate="one_to_one"`. The Phase-9 comment correctly explains `pair` was added to disambiguate MULTI-01/02 (two round-trips sharing `(entry_date, exit_date, side)` across DIFFERENT tickers). But the key is still not guaranteed unique within a single ticker: a leaf that closes TWO round-trips on the SAME `pair` with the SAME entry/exit bars and side — e.g. two same-ticker positions opened and closed on identical bars, or a future scale-in/scale-out shape — produces a non-unique key and `validate="one_to_one"` raises `MergeError`, aborting the scenario as a confusing pandas merge error rather than a clean diff failure. This is the documented hard-failure intent (better than silent many-to-many duplication), so it is not a correctness bug for the current leaves, but it is an unflagged authoring constraint that converts a legitimate future scenario shape into a harness crash. The merge-key uniqueness precondition is asserted only implicitly by `one_to_one`.
+**Fix:** Document the precondition at the merge site ("the trade-frame key (pair, entry_date, exit_date, side) MUST be unique per leaf; two same-ticker same-bar round-trips are unsupported by commission attribution"), or strengthen the key with a per-position discriminator (e.g. `total_bought` / `net_quantity`) so genuinely distinct same-bar same-ticker round-trips merge correctly instead of tripping the guard.
+
 ## Info
 
 ### IN-01: summary.json and portfolios.csv disagree on float precision for the same value
@@ -129,8 +138,8 @@ pdt.assert_frame_equal(a[5], b[5])   # portfolios
 ### IN-03: `_assert_finite.py` type hint claims `dict[str, float]` but is not enforced
 
 **File:** `tests/e2e/robust/_assert_finite.py:18,25`
-**Issue:** `assert_metrics_finite(metrics: dict[str, float])` calls `math.isfinite(v)` on every value. `build_metrics_block` (summary.py:108-115) casts every metric to `float`, so this is safe today. But if a future metric value were a non-float (e.g. `None`, or a `Decimal`), `math.isfinite` raises `TypeError` instead of producing the intended diagnostic. The guard trusts the upstream `float()` cast it does not control.
-**Fix:** Optional defensiveness — coerce or skip non-numeric values with a clear message, or assert `isinstance(v, (int, float))` first so a type drift fails with a readable error rather than a raw `TypeError`.
+**Issue:** `assert_metrics_finite(metrics: dict[str, float])` calls `math.isfinite(v)` on every value. `build_metrics_block` (summary.py:108-115) casts every metric to `float`, so this is safe today. But if a future metric value were a non-float (e.g. `None`, or a `Decimal`), `math.isfinite` raises `TypeError` instead of producing the intended diagnostic. The guard trusts the upstream `float()` cast it does not control. Additionally, the docstring/hint should note the helper is only valid on the ROBUST-03 finite leaves — an all-WIN leaf legitimately produces `profit_factor=inf` and must not be passed here.
+**Fix:** Optional defensiveness — coerce or skip non-numeric values with a clear message, or assert `isinstance(v, (int, float))` first so a type drift fails with a readable error rather than a raw `TypeError`. Add one docstring line scoping the helper to the degenerate-metrics leaves.
 
 ### IN-04: Heavy reliance on decision-tag prose comments that cannot be machine-verified against the harness
 
