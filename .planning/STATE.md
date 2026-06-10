@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: ready_to_plan
-last_updated: 2026-06-10T12:25:07.577Z
+status: Ready to discuss
+last_updated: "2026-06-10T13:11:55.946Z"
 last_activity: 2026-06-10
 progress:
   total_phases: 12
@@ -11,7 +11,6 @@ progress:
   total_plans: 21
   completed_plans: 21
   percent: 58
-stopped_at: Phase 07 complete (4/4) — ready to discuss Phase 8
 ---
 
 # Project State
@@ -109,8 +108,8 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 
 ## Session Continuity
 
-Last session: 2026-06-10T12:07:33.150Z
-Resume file: None
+Last session: 2026-06-10T13:11:55.935Z
+Resume file: .planning/phases/08-admission-position-management-cash-edges/08-CONTEXT.md
 
 ## Operator Next Steps
 
