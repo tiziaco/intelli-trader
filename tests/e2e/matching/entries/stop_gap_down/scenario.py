@@ -7,13 +7,13 @@ Exercises the SELL STOP gap-down fill formula:
     the trigger on a gap).
 
 AUTHORING PATH (per the PLAN NOTE + Open Q1, v1.1 LONG-ONLY guard):
-v1.1 gates shorting to the margin/liquidation milestone — ``StrategiesHandler.
-add_strategy`` REJECTS any non-LONG_ONLY direction (strategies_handler.py:225), so
-a STANDALONE short SELL-STOP *entry* cannot be admitted. The PLAN's explicit
+v1.1 gates shorting to the margin/liquidation milestone — the LONG_ONLY guard in
+``StrategiesHandler.add_strategy`` (D-08/D-09) REJECTS any non-LONG_ONLY direction,
+so a STANDALONE short SELL-STOP *entry* cannot be admitted. The PLAN's explicit
 fallback is therefore used: the SELL STOP is the **stop-LOSS EXIT leg of an open
 long**. A MARKET BUY entry opens a long with an attached stop-loss (``sl``); the
-bracket assembler builds that ``sl`` as a SELL STOP child (order_manager.py:641,
-``new_stop_order``, action inverted to SELL). The following bars gap the price
+bracket assembler in ``OrderManager._assemble_bracket_and_emit`` (D-11) builds that
+``sl`` as a SELL STOP child via ``Order.new_stop_order`` (action inverted to SELL). The following bars gap the price
 DOWN through the stop so the SELL STOP fills PESSIMISTICALLY at its (lower) open —
 the MATCH-03 ``MIN(open, trigger)`` formula, exercised within LONG-ONLY. The SL
 child carries the entry quantity, so it nets the long to exactly zero and a LONG
@@ -114,8 +114,9 @@ _SCRIPT = {
 }
 
 # order_type defaults to MARKET, direction defaults to LONG_ONLY (the v1.1 guard
-# permits ONLY LONG_ONLY — strategies_handler.py:225). The SELL STOP stop-loss is
-# exercised as the long's EXIT leg, not as a standalone short entry.
+# permits ONLY LONG_ONLY — the LONG_ONLY check in StrategiesHandler.add_strategy,
+# D-08/D-09). The SELL STOP stop-loss is exercised as the long's EXIT leg, not as a
+# standalone short entry.
 SCENARIO = ScenarioSpec(
     start="2020-01-01",
     end="2020-01-06",
