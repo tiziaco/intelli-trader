@@ -171,7 +171,13 @@ def _make_on_tick(spec, portfolio_id):
         by_date.setdefault(action.bar_date, []).append(action)
 
     def on_tick(system, time_event):
-        key = time_event.time.strftime("%Y-%m-%d")
+        # WR-03: anchor the date key to a FIXED frame (UTC), independent of the
+        # Settings.timezone default. csv_store localizes the bar index to TIMEZONE
+        # (Europe/Paris), so a naive strftime would couple action.bar_date to that
+        # default and roll to the wrong day near a boundary. tz_convert("UTC") here
+        # and the matching conversion in ScriptedEmitter keep both producers and the
+        # hand-authored action.bar_date strings anchored to the same UTC frame.
+        key = time_event.time.tz_convert("UTC").strftime("%Y-%m-%d")
         for action in by_date.get(key, []):
             candidates = system.order_handler.get_orders_by_ticker(
                 action.ticker, portfolio_id)

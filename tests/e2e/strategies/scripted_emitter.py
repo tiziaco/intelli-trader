@@ -101,7 +101,13 @@ class ScriptedEmitter(Strategy):
         if bars.empty:
             return None
         # D-04: key off the CURRENT (decision) bar's date, not len(bars).
-        decision_date = bars.index[-1].strftime("%Y-%m-%d")
+        # WR-03: anchor the date key to a FIXED frame (UTC), independent of the
+        # Settings.timezone default, consistent with _make_on_tick in conftest.py.
+        # csv_store localizes the bar index to TIMEZONE (Europe/Paris); converting
+        # back to UTC here keeps the emitter's date key and the operator hook's key
+        # in the same frame so scripted firings and operator actions agree on a
+        # boundary-safe date independent of the config default.
+        decision_date = bars.index[-1].tz_convert("UTC").strftime("%Y-%m-%d")
         action = self.script.get(decision_date)
         if action is None:
             return None
