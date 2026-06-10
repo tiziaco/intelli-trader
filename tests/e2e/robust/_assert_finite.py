@@ -21,7 +21,25 @@ def assert_metrics_finite(metrics: dict[str, float]) -> None:
     Uses stdlib ``math.isfinite`` over the tiny derived-metrics dict
     (sharpe/sortino/cagr/max_drawdown/profit_factor/win_rate). Collects any
     non-finite entries so the failure message names exactly which metric drifted.
+
+    SCOPE (IN-03): this helper is ONLY valid on the ROBUST-03 degenerate-metrics
+    leaves (no_trade / flat / losing), which author naturally-finite PnL. An all-WIN
+    leaf legitimately produces ``profit_factor = inf`` (WR-02 carve-out) and must NOT
+    be passed here — it would (correctly) fail the finiteness assert.
+
+    ``build_metrics_block`` (summary.py) casts every metric to ``float``, so values
+    are floats today. The ``isinstance`` guard below is defensive against a FUTURE
+    metric drifting to a non-float (e.g. ``None`` or ``Decimal``): without it,
+    ``math.isfinite`` would raise a raw ``TypeError`` instead of the intended
+    finiteness diagnostic. The guard turns type drift into a readable failure.
     """
+    non_numeric = {
+        k: v for k, v in metrics.items() if not isinstance(v, (int, float))
+    }
+    assert not non_numeric, (
+        f"ROBUST-03: metrics must be numeric (int/float) for the finiteness check, "
+        f"got non-numeric {non_numeric}"
+    )
     bad = {k: v for k, v in metrics.items() if not math.isfinite(v)}
     assert not bad, (
         f"ROBUST-03: degenerate metrics must be finite (no NaN/inf), got {bad}"
