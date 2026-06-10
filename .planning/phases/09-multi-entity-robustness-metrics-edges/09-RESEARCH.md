@@ -402,7 +402,7 @@ codebase grep/read]` or `[VERIFIED: pandas inspection of committed CSVs]` — re
 session. The three items above are forward-looking authoring assumptions for the planner, not
 unverified facts.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Where to expose the harness build/assemble trio for the double-run test (D-04)?**
    - What we know: `_build_and_run`/`_assemble`/`_load_spec` are private `conftest.py` functions.
