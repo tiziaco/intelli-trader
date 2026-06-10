@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: executing
-last_updated: "2026-06-10T13:31:47.415Z"
-last_activity: 2026-06-10 -- Phase 08 planning complete
+last_updated: "2026-06-10T13:53:49.235Z"
+last_activity: 2026-06-10
 progress:
   total_phases: 12
   completed_phases: 7
   total_plans: 24
-  completed_plans: 21
+  completed_plans: 22
   percent: 58
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 8 — Admission, Position Management & Cash Edges
+**Current focus:** Phase 08 — admission-position-management-cash-edges
 
 ## Current Position
 
-Phase: 8
-Plan: Not started
+Phase: 08 (admission-position-management-cash-edges) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-10 -- Phase 08 planning complete
+Last activity: 2026-06-10
 
 ## Performance Metrics
 
@@ -65,6 +65,8 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase ?]: [Phase 07 P03]: SIZE-03 over-cash REJECTED via the opt-in orders.csv (D-15); empty-placeholder opt-in vehicle; reserve() InsufficientFundsError -> audited PENDING->REJECTED (triggered_by=cash_reservation)
 - [Phase 07]: [Phase 07 P04]: SLTP cluster complete — 6 leaves (PercentFromDecision/PercentFromFill x SL-hit/TP-hit/held) hand-verified to the cent and frozen; Decision anchor (decision close) vs Fill anchor (next-bar open) produce DISTINCT SL/TP levels for the same percentages
 - [Phase 07]: [Phase 07 P04]: PercentFromFill cash-reservation contract — the admission gate sizes/reserves off the DECISION close, so the fill anchor must keep entry notional within that reservation; authored the next-bar open BELOW the decision close (90 < 100) to satisfy both the distinct-anchor requirement AND the funds invariant (no engine change)
+- [Phase ?]: [Phase 08 P01]: cash_operations.py ledger serializer (D-02) clones orders.py — allowlist EXCLUDES UUIDv7 operation_id, raw reference_id, wall-clock RESERVATION/RELEASE timestamp; correlation derived per-reference ordinal so RESERVATION matches RELEASE deterministically; fires opt-in behind cash_operations.csv exists() gate (oracle-dark)
+- [Phase ?]: [Phase 08 P01]: scale_in canary (D-04 leaf 1) proves ADMIT-01 (successful pyramiding via allow_increase=True fall-through) + CASH-01 (over-cash add: RESERVATION never commits, available_cash intact, no orphan) via the cash-ledger no-commit lens — distinct trigger+lens from Phase 7 SIZE-03 order-mirror REJECTED (D-01); BTCUSD oracle byte-exact
 
 ### Pending Todos
 
@@ -105,11 +107,12 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 07 P02 | 15min | 3 tasks | 35 files |
 | Phase 07 P03 | 6min | 2 tasks | 19 files |
 | Phase 07 P04 | 12min | 2 tasks | 39 files |
+| Phase 08 P08-01 | 13min | 3 tasks | 9 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T13:11:55.935Z
-Resume file: .planning/phases/08-admission-position-management-cash-edges/08-CONTEXT.md
+Last session: 2026-06-10T13:53:49.227Z
+Resume file: None
 
 ## Operator Next Steps
 
