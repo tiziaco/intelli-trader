@@ -64,6 +64,16 @@ def test_double_run_identical(leaf_dir):
 
     a = once()
     b = once()
+    # _assemble returns a 6-tuple (trades, equity, summary, orders, cash_ops,
+    # portfolios_frame). WR-01: assert identity on ALL SIX artifacts, not just the
+    # first three. The three new Phase-9 frames — orders (MULTI-04 REJECTED loser),
+    # cash_ops (MULTI-04 no-orphan ledger), portfolios_frame (MULTI-03 cash
+    # isolation) — are the parts most exposed to non-determinism (registration-order
+    # winner/loser split, dict iteration over portfolios). Discarding them here let a
+    # flaky winner/loser split or unstable per-portfolio snapshot order pass green.
     pdt.assert_frame_equal(a[0], b[0])  # trades
     pdt.assert_frame_equal(a[1], b[1])  # equity
     assert a[2] == b[2]                 # summary dict incl. metrics block
+    pdt.assert_frame_equal(a[3], b[3])  # orders (MULTI-04 order mirror)
+    pdt.assert_frame_equal(a[4], b[4])  # cash_ops (MULTI-04 cash ledger)
+    pdt.assert_frame_equal(a[5], b[5])  # portfolios_frame (MULTI-03 per-pf snapshot)
