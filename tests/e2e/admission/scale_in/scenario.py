@@ -87,7 +87,7 @@ PnL-neutral), trade_count = 1.
 
 Cash-ledger snapshot (``golden/cash_operations.csv`` — the CASH-01 + ADMIT-01 lens,
 D-02). The DERIVED ``correlation`` collapses each raw UUIDv7 ``reference_id`` to a
-stable ORDER-{n} ordinal in FIRST-APPEARANCE order so a RESERVATION matches its
+stable ORDER-{n:03d} ordinal in FIRST-APPEARANCE order so a RESERVATION matches its
 RELEASE without leaking the id; ``operation_id`` / raw ``reference_id`` / wall-clock
 ``timestamp`` are EXCLUDED (determinism contract). The reserve/release lifecycle and
 the fill settlement use DIFFERENT reference ids (the reservation is keyed by the
@@ -96,13 +96,13 @@ cash_manager.py:226-276), so each gets its OWN ordinal. The frozen rows (sorted 
 correlation, operation_type, amount):
 
     correlation  operation_type        amount    balance_before  balance_after
-    ORDER-1      RELEASE_RESERVATION    4000.00   6000.00         6000.00   <- BUY#1 reservation released on fill
-    ORDER-1      RESERVATION            4000.00  10000.00        10000.00   <- BUY#1 reserve commits at admission
-    ORDER-2      TRANSACTION_DEBIT     -4000.00  10000.00         6000.00   <- BUY#1 fill debits the principal
-    ORDER-3      RELEASE_RESERVATION    4000.00   2000.00         2000.00   <- BUY#2 reservation released on fill
-    ORDER-3      RESERVATION            4000.00   6000.00         6000.00   <- BUY#2 reserve commits at admission
-    ORDER-4      TRANSACTION_DEBIT     -4000.00   6000.00         2000.00   <- BUY#2 fill debits the principal
-    ORDER-5      TRANSACTION_CREDIT     8000.00   2000.00        10000.00   <- SELL fill credits the 80-unit close
+    ORDER-001    RELEASE_RESERVATION    4000.00   6000.00         6000.00   <- BUY#1 reservation released on fill
+    ORDER-001    RESERVATION            4000.00  10000.00        10000.00   <- BUY#1 reserve commits at admission
+    ORDER-002    TRANSACTION_DEBIT     -4000.00  10000.00         6000.00   <- BUY#1 fill debits the principal
+    ORDER-003    RELEASE_RESERVATION    4000.00   2000.00         2000.00   <- BUY#2 reservation released on fill
+    ORDER-003    RESERVATION            4000.00   6000.00         6000.00   <- BUY#2 reserve commits at admission
+    ORDER-004    TRANSACTION_DEBIT     -4000.00   6000.00         2000.00   <- BUY#2 fill debits the principal
+    ORDER-005    TRANSACTION_CREDIT     8000.00   2000.00        10000.00   <- SELL fill credits the 80-unit close
 
 The LOAD-BEARING CASH-01 + ADMIT-01 facts:
   * ADMIT-01 — the TWO filled adds each show a RESERVATION (4_000) that COMMITS and

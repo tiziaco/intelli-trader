@@ -71,17 +71,17 @@ Lifecycle: ZERO positions ever open (the limit never matched), ZERO trades close
 
 Cash-ledger snapshot (``golden/cash_operations.csv`` — the CASH-02 CANCELLED lens,
 D-02). The derived ``correlation`` collapses the raw UUIDv7 ``reference_id`` to a
-stable ORDER-{n} ordinal in first-appearance order so the RESERVATION matches its
+stable ORDER-{n:03d} ordinal in first-appearance order so the RESERVATION matches its
 RELEASE without leaking the id; ``operation_id`` / raw ``reference_id`` / wall-clock
 ``timestamp`` are EXCLUDED (determinism contract). The reservation and its release
 are keyed by the SAME order id, so they share ONE correlation ordinal. The frozen
 rows (sorted by correlation, operation_type, amount):
 
     correlation  operation_type        amount    balance_before  balance_after
-    ORDER-1      RELEASE_RESERVATION    3200.00   10000.00        10000.00   <- operator cancel releases
-    ORDER-1      RESERVATION            3200.00   10000.00        10000.00   <- admission reserves the resting limit
+    ORDER-001    RELEASE_RESERVATION    3200.00   10000.00        10000.00   <- operator cancel releases
+    ORDER-001    RESERVATION            3200.00   10000.00        10000.00   <- admission reserves the resting limit
 
-The LOAD-BEARING CASH-02 CANCELLED fact: the SAME ORDER-1 shows a RESERVATION
+The LOAD-BEARING CASH-02 CANCELLED fact: the SAME ORDER-001 shows a RESERVATION
 (3_200) that COMMITS at admission and is later RELEASED (RELEASE_RESERVATION 3_200,
 matching amount, POSITIVE) by the operator cancel — proving the reservation was held
 while the limit rested and the cancel actually FIRED its release. There is NO
