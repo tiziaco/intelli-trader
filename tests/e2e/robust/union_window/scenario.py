@@ -98,6 +98,23 @@ real prices above):
     the full union window, not just AAVE's span.
   * trade_count = 2 (one BTC, one AAVE round-trip).
 
+Slippage attribution (the post-hoc ``attach_slippage`` lens, conftest.py): WR-03 —
+the harness reads ONE close series, ``spec.ticker`` = AAVEUSD, and attributes it to
+EVERY trade row regardless of the row's own ticker. ``slippage = fill_price −
+decision_close``, where ``decision_close`` is read off the AAVE close index:
+  * BTCUSD row: the BTC fills (entry 2021-07-11, exit 2021-07-14) land BEFORE AAVE's
+    FIRST bar (2021-07-15), so they precede the AAVE close index. ``decision_close``
+    returns 0.0 via the ``position <= 0`` early-return guard (summary.py), so
+    ``slippage = fill_price − 0`` and the slippage columns EQUAL the raw BTC fill
+    prices: slippage_entry = 33502.87 − 0 = 33502.87 ; slippage_exit = 32729.12 − 0
+    = 32729.12. This is the documented single-close-series harness behavior, NOT a
+    per-ticker BTC slippage — it is hand-checkable here so a re-freezer is not
+    trusting a machine number.
+  * AAVEUSD row: measured against the AAVE close series proper. Entry fill 271.03
+    (07-16 open) vs the BUY decision-bar (07-15) close 270.75 -> slippage_entry =
+    271.03 − 270.75 = 0.28. Exit fill 254.06 (07-19 open) vs the SELL decision-bar
+    (07-18) close 256.32 -> slippage_exit = 254.06 − 256.32 = −2.26.
+
 The metrics block is machine-computed by ``itrader.reporting.metrics`` and frozen
 as-written; both trades are net LOSSES so profit_factor is 0.0 (the all-loss
 branch — finite, not the all-win +inf branch).
