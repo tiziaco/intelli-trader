@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: executing
-last_updated: "2026-06-10T11:13:25.449Z"
-last_activity: 2026-06-10 -- Phase 07 planning complete
+last_updated: "2026-06-10T11:31:07.560Z"
+last_activity: 2026-06-10
 progress:
   total_phases: 12
   completed_phases: 6
   total_plans: 21
-  completed_plans: 17
+  completed_plans: 18
   percent: 50
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 07 — cost-sizing-sltp-scenarios
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-10 -- Phase 07 planning complete
+Phase: 07 (cost-sizing-sltp-scenarios) — EXECUTING
+Plan: 2 of 4
+Status: Plan 07-01 complete — scaffolding seams installed, COST-01 canary frozen
+Last activity: 2026-06-10 -- Completed 07-01 (commission column + D-14 seam + sltp_policy kwarg + COST-01 canary)
 
 ## Performance Metrics
 
@@ -54,6 +54,9 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase ?]: is_active/active_membership added alongside derive_membership (D-03); span model inclusive both ends (D-01); active_membership returns set[str]
 - [Phase ?]: [Phase 03 P02]: feed is the single span-aware observability owner (D-04) — silent for pre-listing/post-end, warns only on a true mid-life gap; span bounds cached as tz-aware pd.Timestamp; bar/fill path untouched (oracle-dark)
 - [Phase ?]: [Phase 03 P03]: optional csv_paths passthrough on TradingSystem.__init__ (default None = byte-identical golden behavior, oracle-dark); UNIV-02 engine-proven on synthetic fixtures (no crash, no look-ahead over the union window) — real ETH/SOL/AAVE E2E deferred to Phase 9 (D-06)
+- [Phase ?]: [Phase 07 P01]: commission golden column is conftest-LOCAL + oracle-dark (D-07/D-08), sourced from real Position.commission, kept out of itrader/reporting so the BTCUSD oracle stays byte-exact
+- [Phase ?]: [Phase 07 P01]: D-14 exchange seam re-inits fee/slippage from spec.exchange via the constructor path, NEVER touching _supported_symbols (re-deriving it would wipe BTCUSD admission and silently REFUSE every order)
+- [Phase ?]: [Phase 07 P01]: COST-01 canary commission=285.00 / final_cash=19215.00 hand-verified to the cent; 15 pre-existing goldens re-frozen additively (commission=0.00, no other value drift)
 
 ### Pending Todos
 
@@ -90,11 +93,12 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 03 P02 | 4 | 3 tasks | 3 files |
 | Phase 03 P03 | 12min | 2 tasks | 2 files |
 | Phase 04 P03 | 25min | 2 tasks | 11 files |
+| Phase 07 P01 | 5min | 4 tasks | 24 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T10:41:59.247Z
-Resume file: .planning/phases/07-cost-sizing-sltp-scenarios/07-CONTEXT.md
+Last session: 2026-06-10T11:31:07.552Z
+Resume file: None
 
 ## Operator Next Steps
 

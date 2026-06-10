@@ -50,7 +50,7 @@
 - [ ] **MATCH-08**: A limit far from market never fills and is handled at run end.
 
 ### Fees & Slippage coverage (COST)
-- [ ] **COST-01**: percent fee model on a round-trip.
+- [x] **COST-01**: percent fee model on a round-trip.
 - [ ] **COST-02**: maker_taker fee model — maker vs taker distinguished (limit vs market).
 - [ ] **COST-03**: fixed slippage model.
 - [ ] **COST-04**: linear slippage model.
@@ -140,7 +140,7 @@
 | MATCH-06 | Phase 6 | Pending |
 | MATCH-07 | Phase 6 | Pending |
 | MATCH-08 | Phase 6 | Pending |
-| COST-01 | Phase 7 | Pending |
+| COST-01 | Phase 7 | Complete |
 | COST-02 | Phase 7 | Pending |
 | COST-03 | Phase 7 | Pending |
 | COST-04 | Phase 7 | Pending |
