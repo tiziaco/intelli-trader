@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: executing
-last_updated: "2026-06-10T14:32:52.548Z"
+status: verifying
+last_updated: "2026-06-10T14:58:15.482Z"
 last_activity: 2026-06-10
 progress:
   total_phases: 12
   completed_phases: 7
   total_plans: 24
-  completed_plans: 23
-  percent: 58
+  completed_plans: 24
+  percent: 67
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 
 Phase: 08 (admission-position-management-cash-edges) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: All plans complete — awaiting phase verification (orchestrator)
 Last activity: 2026-06-10
 
 ## Performance Metrics
@@ -69,6 +69,8 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase ?]: [Phase 08 P01]: scale_in canary (D-04 leaf 1) proves ADMIT-01 (successful pyramiding via allow_increase=True fall-through) + CASH-01 (over-cash add: RESERVATION never commits, available_cash intact, no orphan) via the cash-ledger no-commit lens — distinct trigger+lens from Phase 7 SIZE-03 order-mirror REJECTED (D-01); BTCUSD oracle byte-exact
 - [Phase 08]: [P02]: ADMIT-03 gate-before-sizing — the max_positions gate fires in step 0 BEFORE _resolve_signal_quantity, so the audited REJECTED row is UNSIZED (quantity=0, not FixedQuantity 40) and takes NO cash reservation (available_cash intact 6000, no orphan); genuine semantic difference from Phase 7 SIZE-03 which rejects AFTER sizing and freezes the sized quantity; BTCUSD oracle byte-exact
 - [Phase 08]: [P02]: ADMIT-02/03/04 cluster frozen — partial scale_out (exit_fraction<1 keeps position open between sells), max_positions REJECTED, full-exit-then-re-entry; first multi-ticker single-portfolio leaf (ETHUSDT occupier + BTCUSD over-cap entry via two co-subscribed ScriptedEmitters, D-04; multi-portfolio cash isolation deferred to Phase 9)
+- [Phase 08]: [P03]: CASH-02 cluster complete — release_cancelled (CANCELLED positive), release_refused (REFUSED positive via deterministic max_order_size D-03), release_rejected (REJECTED honest negative no-orphan) hand-verified and frozen; cash-ledger lens (D-02) shows the explicit RESERVATION->RELEASE_RESERVATION pair (positive) or the explicit no-orphan empty ledger (negative)
+- [Phase 08]: [P03]: no-orphan contrast — ADMIT-03 max_positions gate-before-sizing (REJECTED qty=0, never reserves) vs CASH-02 cash_reservation reserve-raises-before-recording (REJECTED qty=1000 SIZED, InsufficientFundsError before add_reservation); both leave NO orphan reservation. conftest seam (Rule 3) re-derives cached _min/_max_order_size from spec.exchange so validate_order honors the per-scenario REFUSED lever; _supported_symbols untouched (PATTERNS A2), oracle-dark
 
 ### Pending Todos
 
@@ -111,10 +113,11 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 07 P04 | 12min | 2 tasks | 39 files |
 | Phase 08 P08-01 | 13min | 3 tasks | 9 files |
 | Phase 08 P02 | 6min | 2 tasks | 17 files |
+| Phase 08 P08-03 | 25min | 2 tasks | 21 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T14:31:29.235Z
+Last session: 2026-06-10T14:58:11.825Z
 Resume file: None
 
 ## Operator Next Steps

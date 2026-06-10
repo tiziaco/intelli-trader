@@ -81,7 +81,7 @@
 
 ### Cash & Accounting edges (CASH)
 - [x] **CASH-01**: insufficient funds → audited `cash_reservation` rejection.
-- [ ] **CASH-02**: reservation release on every terminal state (CANCELLED / REJECTED / REFUSED).
+- [x] **CASH-02**: reservation release on every terminal state (CANCELLED / REJECTED / REFUSED).
 
 ### Robustness & Metrics edges (ROBUST)
 - [ ] **ROBUST-01**: sparse/absent bar for a ticker at T produces no fill and no crash.
@@ -157,7 +157,7 @@
 | ADMIT-03 | Phase 8 | Complete |
 | ADMIT-04 | Phase 8 | Complete |
 | CASH-01 | Phase 8 | Complete |
-| CASH-02 | Phase 8 | Pending |
+| CASH-02 | Phase 8 | Complete |
 | MULTI-01 | Phase 9 | Pending |
 | MULTI-02 | Phase 9 | Pending |
 | MULTI-03 | Phase 9 | Pending |
