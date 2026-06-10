@@ -74,20 +74,20 @@
 - [x] **ADMIT-04**: full exit followed by re-entry on the same ticker.
 
 ### Multi-Entity (MULTI)
-- [ ] **MULTI-01**: one strategy trading two cryptos (multi-ticker) end-to-end.
-- [ ] **MULTI-02**: multiple strategies running simultaneously.
-- [ ] **MULTI-03**: a strategy fanned out to >1 portfolio, with per-portfolio cash isolation.
-- [ ] **MULTI-04**: two strategies competing for the same portfolio's cash.
+- [x] **MULTI-01**: one strategy trading two cryptos (multi-ticker) end-to-end.
+- [x] **MULTI-02**: multiple strategies running simultaneously.
+- [x] **MULTI-03**: a strategy fanned out to >1 portfolio, with per-portfolio cash isolation.
+- [x] **MULTI-04**: two strategies competing for the same portfolio's cash.
 
 ### Cash & Accounting edges (CASH)
 - [x] **CASH-01**: insufficient funds → audited `cash_reservation` rejection.
 - [x] **CASH-02**: reservation release on every terminal state (CANCELLED / REJECTED / REFUSED).
 
 ### Robustness & Metrics edges (ROBUST)
-- [ ] **ROBUST-01**: sparse/absent bar for a ticker at T produces no fill and no crash.
-- [ ] **ROBUST-02**: heterogeneous date spans (asset enters mid-run; differing end dates) handled over a union window.
-- [ ] **ROBUST-03**: no-trade / flat / losing runs produce valid metrics (no NaN, no div-by-zero in Sharpe/drawdown/profit-factor).
-- [ ] **ROBUST-04**: determinism — double-run byte-identical across all new scenarios.
+- [x] **ROBUST-01**: sparse/absent bar for a ticker at T produces no fill and no crash.
+- [x] **ROBUST-02**: heterogeneous date spans (asset enters mid-run; differing end dates) handled over a union window.
+- [x] **ROBUST-03**: no-trade / flat / losing runs produce valid metrics (no NaN, no div-by-zero in Sharpe/drawdown/profit-factor).
+- [x] **ROBUST-04**: determinism — double-run byte-identical across all new scenarios.
 
 ### Codebase Clarity (CLAR)
 - [ ] **CLAR-01**: one `gsd-map-codebase` pass produces an objective fix-list (naming, visibility, seams).
@@ -158,13 +158,13 @@
 | ADMIT-04 | Phase 8 | Complete |
 | CASH-01 | Phase 8 | Complete |
 | CASH-02 | Phase 8 | Complete |
-| MULTI-01 | Phase 9 | Pending |
-| MULTI-02 | Phase 9 | Pending |
-| MULTI-03 | Phase 9 | Pending |
-| MULTI-04 | Phase 9 | Pending |
-| ROBUST-01 | Phase 9 | Pending |
-| ROBUST-02 | Phase 9 | Pending |
-| ROBUST-03 | Phase 9 | Pending |
-| ROBUST-04 | Phase 9 | Pending |
+| MULTI-01 | Phase 9 | Complete |
+| MULTI-02 | Phase 9 | Complete |
+| MULTI-03 | Phase 9 | Complete |
+| MULTI-04 | Phase 9 | Complete |
+| ROBUST-01 | Phase 9 | Complete |
+| ROBUST-02 | Phase 9 | Complete |
+| ROBUST-03 | Phase 9 | Complete |
+| ROBUST-04 | Phase 9 | Complete |
 
 **Coverage:** 51/51 v1.1 requirements mapped — no orphans, no duplicates.

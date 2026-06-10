@@ -33,7 +33,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 - [x] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill. (completed 2026-06-09)
 - [x] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes. (completed 2026-06-10)
 - [x] **Phase 8: Admission, Position Management & Cash Edges** — E2E golden-locked coverage of scale-in (pyramiding), partial scale-out, `max_positions` rejection, exit-then-re-entry, and the cash reservation/release lifecycle. (completed 2026-06-10)
-- [ ] **Phase 9: Multi-Entity, Robustness & Metrics Edges** — E2E golden-locked coverage of multi-ticker, multi-strategy, multi-portfolio cash isolation, contended cash, heterogeneous date spans, degenerate-run metrics, and cross-scenario determinism.
+- [x] **Phase 9: Multi-Entity, Robustness & Metrics Edges** — E2E golden-locked coverage of multi-ticker, multi-strategy, multi-portfolio cash isolation, contended cash, heterogeneous date spans, degenerate-run metrics, and cross-scenario determinism. (completed 2026-06-10)
 
 ## Phase Details
 
@@ -162,7 +162,11 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   2. A strategy fanned out to >1 portfolio shows per-portfolio cash isolation, and two strategies competing for the same portfolio's cash resolve correctly.
   3. A sparse/absent bar produces no fill and no crash, and heterogeneous date spans (asset enters mid-run; differing end dates) are handled over a union window.
   4. No-trade / flat / losing runs produce valid metrics (no NaN, no div-by-zero in Sharpe/drawdown/profit-factor), and a double-run is byte-identical across all new scenarios.
-**Plans**: TBD
+**Plans**: 4 plans (Wave 1: foundational shared infra + MULTI-03 fanout canary + oracle gate; Wave 2: 3 parallel scenario-leaf plans MULTI / ROBUST-spans / ROBUST-degenerate)
+- [x] 09-01-PLAN.md — Foundational: per-portfolio summary snapshot serializer + opt-in portfolios.csv wiring (D-01), parametrized in-process double-run determinism scaffold (D-04), no-NaN/no-inf guard helper (D-05), MULTI-03 fanout_portfolios canary (asymmetric cash), BTCUSD oracle byte-exact re-run (D-06) [MULTI-03, ROBUST-04]
+- [x] 09-02-PLAN.md — MULTI cluster: two_tickers (one strategy/two tickers, rides trades.csv pair column), two_strategies (two emitters/one portfolio), contended_cash (registration-order contention → loser cash_reservation REJECTED) [MULTI-01, MULTI-02, MULTI-04]
+- [x] 09-03-PLAN.md — ROBUST spans (real sliced data): sparse_bar (SOL 2023-06-24/25 absent bar, position live across gap → no fill/no crash), union_window (AAVE 2021-07-15 mid-run listing over the union window) [ROBUST-01, ROBUST-02]
+- [x] 09-04-PLAN.md — ROBUST degenerate + determinism: no_trade / flat / losing finite-metrics leaves + explicit assert_metrics_finite (D-05), full nine-leaf double-run determinism confirmation (D-04) [ROBUST-03, ROBUST-04]
 
 ## Progress
 
@@ -176,16 +180,16 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 6. Order Matching Scenarios | v1.1 | 5/5 | Complete   | 2026-06-09 |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete   | 2026-06-10 |
 | 8. Admission, Position Management & Cash Edges | v1.1 | 3/3 | Complete   | 2026-06-10 |
-| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 0/0 | Not started | - |
+| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 4/4 | Complete   | 2026-06-10 |
 
 ## Backlog
 
 > Future **milestone-level** seeds — intent + rationale only, NOT detailed plans.
-> **Logical promotion order: N+1 → N+2 → N+3 → N+4** (the `N+x` labels carry the
-> dependency order; the `999.x` decimals are just stable IDs and need not match the
-> order). Promote one at a time with `/gsd:review-backlog` (or start it via
-> `/gsd:new-milestone`); defer detailed planning until promotion so each milestone's
-> findings can reshape the next.
+> **Logical promotion order: N+1 → Engine Surface Completion (999.5) → N+2 → N+3 → N+4**
+> (the `N+x` labels carry the dependency order; the `999.x` decimals are just stable IDs
+> and need not match the order). Promote one at a time with `/gsd:review-backlog` (or
+> start it via `/gsd:new-milestone`); defer detailed planning until promotion so each
+> milestone's findings can reshape the next.
 >
 > **Asset focus: crypto-first** (locked 2026-06-08). Crypto is USD-quoted and 24/7, so
 > multi-currency accounting and trading-calendar / corporate-action work are deferred
@@ -194,6 +198,60 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 > **N+1 (Backtest Trustworthiness: Breadth) was promoted to active milestone v1.1 on
 > 2026-06-09** — see the `## Phases` section above. Its former backlog seed (Phase 999.1)
 > is retired.
+
+### Phase 999.5: v1.2 — Engine Surface Completion (BACKLOG)
+
+**Goal:** Consolidate the missing engine-surface features and deferred fixes that surfaced
+during v1.1 execution into one milestone — complete the signal/order contracts, give the
+system a real composition/config interface, and land the indicator abstraction — BEFORE
+N+2 builds margin/shorts on top of these same surfaces.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Scope (intent only — consolidated from the v1.1 capture registers):
+
+- **(a) Signal contract completion** — explicit per-intent limit/stop ENTRY price and
+  per-intent `order_type` on the signal contract (`SignalIntent` → `SignalEvent` →
+  `Order.new_limit_order`/`new_stop_order`). Captured in Phase 6 + 7 CONTEXT deferred
+  sections as *"a real missing PRODUCTION feature"*: strategies cannot place a limit/stop
+  entry at an arbitrary price (hardwired to the decision-bar close), and `order_type` is
+  fixed per strategy instance. Owner-gated (result-risky). Includes the Phase 8 carryover
+  per-bar `order_type` override left unwired in the e2e emitter.
+- **(b) System composition/config interface** — promote the `tests/e2e/scenario_spec.py`
+  `ScenarioSpec` shape into an engine-level composition API: declarative multi-strategy /
+  multi-portfolio wiring, faithful construction-time `ExchangeConfig` threading through
+  `TradingSystem` → `ExecutionHandler` → `SimulatedExchange` (replacing the Phase 7 D-14
+  post-construction conftest re-init seam / Phase 4 Open Q1), and formalization of the
+  `csv_paths` manual passthrough (Phase 3). Today this interface exists only as a
+  test-harness workaround.
+- **(c) Declared-indicator framework** — indicator abstraction on the strategy base with
+  auto-derived warmup (à la nautilus `register_indicator_for_bars` / LEAN `SetWarmUp` /
+  backtrader auto-min-period), so authors stop hand-setting `max_window`. Captured in
+  05-CONTEXT.md deferred ideas; note it is a genuine model shift (stateless
+  recompute-from-window → optionally stateful incremental) — design carefully against the
+  pure-alpha D-12 contract.
+- **(d) Order lifecycle completion** — wire run-end resting-order disposition /
+  time-in-force (`Order.expire_order()` + `OrderStatus.EXPIRED` exist but are unwired on
+  the backtest path; orders currently remain PENDING at run end — result-changing,
+  owner-gated). Plus the v1.1 fix-list stragglers that slipped their eligible phases:
+  FL-01 (7 bare `raise ValueError` sites in `portfolio_handler/portfolio.py` — tagged
+  eligible Phase 8, not fixed) and FL-02 (`portfolio_id: int` annotation carry-over on
+  Signal/Order/Fill events — tagged eligible Phase 5, not fixed).
+
+Sources: `phases/05-…/05-CONTEXT.md`, `phases/06-…/06-CONTEXT.md`,
+`phases/07-…/07-CONTEXT.md` `<deferred>` sections; `codebase/FIX-LIST.md` (FL-01/FL-02);
+Phase 4 RESEARCH Open Q1; Phase 8 DISCUSSION-LOG carryovers.
+
+Rationale: v1.1 proved these gaps empirically — every E2E scenario phase had to work
+around the hardwired entry price, the fixed per-strategy order type, and the missing
+composition interface (ScenarioSpec is the evidence). N+2 (margin/leverage/shorts/trailing
+stops) extends exactly these signal/order/composition surfaces, so completing them first
+avoids building new behavior on known-incomplete contracts. Promote AHEAD of N+2.
+Result-changing items ((a), (d) TIF) follow the established owner-gated re-baseline
+discipline; (b)/(c) should stay byte-exact against the full v1.1 E2E golden suite.
+
+Plans:
+- [ ] TBD (promote with /gsd:review-backlog when ready)
 
 ### Phase 999.4: N+2 — Margin, Leverage, Shorts & Trailing Stops (crypto) (BACKLOG)
 

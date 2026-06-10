@@ -1,0 +1,19 @@
+{
+  "end_date": "2023-06-28",
+  "final_cash": 9794.672024903335,
+  "final_equity": 9794.672024903335,
+  "metrics": {
+    "cagr": -0.6610094832008644,
+    "max_drawdown": -0.020532797509666523,
+    "profit_factor": 0.0,
+    "sharpe": -7.22537921288309,
+    "sortino": -7.22475328314589,
+    "win_rate": 0.0
+  },
+  "start_date": "2023-06-22",
+  "starting_cash": 10000.0,
+  "ticker": "SOLUSD",
+  "timeframe": "1d",
+  "total_realised_pnl": -205.32797509666537,
+  "trade_count": 1
+}

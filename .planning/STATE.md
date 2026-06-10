@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: ready_to_plan
-last_updated: 2026-06-10T15:14:09.804Z
+last_updated: 2026-06-10T17:52:23.248Z
 last_activity: 2026-06-10
 progress:
-  total_phases: 12
-  completed_phases: 7
-  total_plans: 24
-  completed_plans: 24
-  percent: 58
-stopped_at: Phase 08 complete (3/3) — ready to discuss Phase 999.2
+  total_phases: 13
+  completed_phases: 9
+  total_plans: 28
+  completed_plans: 28
+  percent: 69
+stopped_at: Phase 09 complete (4/4) — ready to discuss Phase 999.2
 ---
 
 # Project State
@@ -34,7 +34,7 @@ Last activity: 2026-06-10
 
 **Velocity (v1.1):**
 
-- Total plans completed: 27
+- Total plans completed: 31
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -72,6 +72,14 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase 08]: [P02]: ADMIT-02/03/04 cluster frozen — partial scale_out (exit_fraction<1 keeps position open between sells), max_positions REJECTED, full-exit-then-re-entry; first multi-ticker single-portfolio leaf (ETHUSDT occupier + BTCUSD over-cap entry via two co-subscribed ScriptedEmitters, D-04; multi-portfolio cash isolation deferred to Phase 9)
 - [Phase 08]: [P03]: CASH-02 cluster complete — release_cancelled (CANCELLED positive), release_refused (REFUSED positive via deterministic max_order_size D-03), release_rejected (REJECTED honest negative no-orphan) hand-verified and frozen; cash-ledger lens (D-02) shows the explicit RESERVATION->RELEASE_RESERVATION pair (positive) or the explicit no-orphan empty ledger (negative)
 - [Phase 08]: [P03]: no-orphan contrast — ADMIT-03 max_positions gate-before-sizing (REJECTED qty=0, never reserves) vs CASH-02 cash_reservation reserve-raises-before-recording (REJECTED qty=1000 SIZED, InsufficientFundsError before add_reservation); both leave NO orphan reservation. conftest seam (Rule 3) re-derives cached _min/_max_order_size from spec.exchange so validate_order honors the per-scenario REFUSED lever; _supported_symbols untouched (PATTERNS A2), oracle-dark
+- [Phase ?]: [Phase 09 P01]: per-portfolio portfolios.csv snapshot is harness-LOCAL, keyed on stable PortfolioSpec.name (Pitfall 2), opt-in via exists() gate, NEVER in TRADE_COLUMNS (oracle-dark, D-01); determinism test imports harness internals from tests.e2e.conftest (D-04); MULTI-03 canary proves cash isolation via asymmetric 10k/5k portfolios -> 2:1 portfolios.csv rows; BTCUSD oracle byte-exact (D-06)
+- [Phase 09]: [P02]: MULTI cluster breadth complete — MULTI-01 two_tickers (one emitter, two tickers, trades.csv spans both via pair, PnL 200 each), MULTI-02 two_strategies (two emitters, one portfolio, both fill — clean contrast to MULTI-04), MULTI-04 contended_cash (D-02 registration-order: strategies[0] reserves 9500 first and round-trips PnL 1900, strategies[1] cash_reservation REJECTED sized-50, no orphan) hand-verified and frozen
+- [Phase 09]: [P02]: MULTI-04 spec.ticker=LOSER ticker (BTCUSD) scopes orders.csv to the ONE REJECTED row; WINNER on ETHUSDT lands in portfolio-wide trades.csv + cash_operations.csv (RESERVATION 9500/RELEASE/DEBIT/CREDIT 11400, loser no orphan row)
+- [Phase 09]: [P02]: Rule-3 conftest fix — commission-merge key gains 'pair' (Position.ticker) so the one_to_one merge survives the first multi-ticker round-trip in one trades.csv; backward-compatible + oracle-dark (BTCUSD oracle byte-exact, 41 prior e2e green)
+- [Phase 09]: [P03]: ROBUST span leaves on REAL sliced data — ROBUST-01 sparse_bar (SOL 2023-06-24/25 gap, position live across the absent bars, no fill no crash; ETH loaded data-only as the dense co-asset keeping the union ping grid ticking across the gap) and ROBUST-02 union_window (AAVE 2021-07-15 mid-run listing, pre-listing BUY 07-12 STRUCTURALLY unfillable — no AAVE bar -> generate_signal not called, listing-day BUY fills 07-16 no look-ahead, BTC trades throughout) hand-verified and frozen
+- [Phase 09]: [P03]: Rule-3 conftest seam — register spec.data tickers on simulated._supported_symbols (additive superset union, mirrors test_universe_spans.py:140-149 wiring) so non-default tickers SOLUSD/AAVEUSD are admitted; never re-derives/wipes (PATTERNS A2 BTCUSD-admission concern N/A), oracle-dark + all prior leaves no-op (BTCUSD oracle byte-exact, 49 e2e green)
+- [Phase 09]: [P04]: ROBUST-03 degenerate-metrics leaves frozen — no_trade (empty ScriptedEmitter script -> zero trades, all metrics 0.0 finite, profit_factor 0.0 empty-frame), flat (+10 win / -10 loss round-trips net zero, profit_factor 1.0 FINITE not all-win inf, win_rate 0.5), losing (single -10 round-trip, profit_factor 0.0 all-loss finite); FixedQuantity(1) integer-exact PnL; explicit assert_metrics_finite (D-05) layered on the exact golden diff catches a NaN a hand-verifier might silently freeze (Pitfall 5)
+- [Phase 09]: [P04]: ROBUST-04 finalized across all nine Phase 9 leaves — Plan-01 not-yet-authored skip guard removed, full nine-leaf double-run runs unconditionally (9 passed); full e2e tree 58 passed (was 49+3 skipped); BTCUSD oracle byte-exact (12 passed); leaves oracle-dark
 
 ### Pending Todos
 
@@ -115,10 +123,14 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 08 P08-01 | 13min | 3 tasks | 9 files |
 | Phase 08 P02 | 6min | 2 tasks | 17 files |
 | Phase 08 P08-03 | 25min | 2 tasks | 21 files |
+| Phase 09 P01 | 4 | 3 tasks | 12 files |
+| Phase 09 P02 | 5 | 3 tasks | 24 files |
+| Phase 09 P03 | 8min | 2 tasks | 15 files |
+| Phase 09 P04 | 6 | 3 tasks | 20 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T14:58:11.825Z
+Last session: 2026-06-10T17:38:01.341Z
 Resume file: None
 
 ## Operator Next Steps

@@ -1,0 +1,19 @@
+{
+  "end_date": "2021-07-20",
+  "final_cash": 999056.55,
+  "final_equity": 999056.55,
+  "metrics": {
+    "cagr": -0.030834767635413263,
+    "max_drawdown": -0.0009476500000000776,
+    "profit_factor": 0.0,
+    "sharpe": -10.340351824597347,
+    "sortino": -9.441662115126926,
+    "win_rate": 0.0
+  },
+  "start_date": "2021-07-10",
+  "starting_cash": 1000000.0,
+  "ticker": "AAVEUSD",
+  "timeframe": "1d",
+  "total_realised_pnl": -943.45,
+  "trade_count": 2
+}
