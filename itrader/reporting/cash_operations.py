@@ -26,9 +26,11 @@ label from linkage flags instead of a raw UUID: each distinct ``reference_id`` i
 assigned a stable ordinal in first-appearance order and labelled ``ORDER-{n}`` (a
 ``None`` reference — e.g. a DEPOSIT seed — maps to a single ``ACCOUNT`` label).
 ``operation_type`` serializes via ``op.operation_type.name`` (mirrors orders.py
-``o.status.name``). Rows are sorted by a stable business key (the derived
-correlation, then operation_type, then amount as a tiebreak) so order is
-reproducible across runs.
+``o.status.name``). Rows are sorted by a TOTAL business key (the derived
+correlation, then operation_type, then amount, then a source-appearance index as
+the final tiebreak — IN-01) so order is reproducible across runs even when two
+operations share correlation + operation_type + amount. The source-appearance
+index is dropped before the frame is returned (it is not a business column).
 
 Indentation: 4 spaces (reporting package house style).
 """
@@ -126,6 +128,17 @@ def build_cash_operations(operations: Any) -> pd.DataFrame:
     rows = [_row(op) for op in operations]
     frame = pd.DataFrame(rows, columns=CASH_OPERATION_COLUMNS)
     if not frame.empty:
+        # IN-01: (correlation, operation_type, amount) is NOT a total order —
+        # two operations sharing all three (e.g. two equal-amount RESERVATIONs
+        # on the same derived order) would otherwise tiebreak only by pandas'
+        # stable mergesort preserving upstream insertion order. That upstream
+        # order IS deterministic in single-threaded backtest, but relying on it
+        # leaves the documented "stable business key" key non-total. Carry the
+        # source-appearance index as the FINAL tiebreak so the key is total and
+        # reproducible regardless of the sort algorithm, then drop it (it is not
+        # a business column and never reaches the golden).
+        frame["_seq"] = range(len(frame))
         frame = frame.sort_values(
-            ["correlation", "operation_type", "amount"]).reset_index(drop=True)
+            ["correlation", "operation_type", "amount", "_seq"]
+        ).drop(columns="_seq").reset_index(drop=True)
     return frame
