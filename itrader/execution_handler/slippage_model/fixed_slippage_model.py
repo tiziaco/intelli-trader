@@ -24,7 +24,7 @@ class FixedSlippageModel(SlippageModel):
     enters the Decimal domain exactly once via ``to_money``.
     """
 
-    def __init__(self, slippage_pct: float = 0.01,
+    def __init__(self, slippage_pct: float | Decimal = 0.01,
                  random_variation: bool = True,
                  rng: random.Random | None = None):
         """
@@ -32,8 +32,10 @@ class FixedSlippageModel(SlippageModel):
 
         Parameters
         ----------
-        slippage_pct : float
-            Fixed slippage percentage to apply
+        slippage_pct : float | Decimal
+            Fixed slippage percentage to apply; a configured Decimal is accepted
+            unchanged and enters the Decimal domain via ``to_money`` (WR-02:
+            avoids the Decimal->float->Decimal repr-artifact round-trip).
         random_variation : bool
             Whether to apply random variation around the fixed rate
         rng : random.Random | None
@@ -78,7 +80,10 @@ class FixedSlippageModel(SlippageModel):
         # Calculate slippage
         if self.random_variation:
             # Seeded float jitter (D-11 seam) enters Decimal ONCE via to_money.
-            jitter = self._rng.uniform(-self.slippage_pct, self.slippage_pct)
+            # The RNG jitter bound is the float seam itself (not money), so
+            # coercing the stored rate to float here is correct, not a round-trip.
+            jitter_pct = float(self.slippage_pct)
+            jitter = self._rng.uniform(-jitter_pct, jitter_pct)
             slippage = to_money(jitter) / Decimal("100")
         else:
             # Use fixed rate with direction based on order side

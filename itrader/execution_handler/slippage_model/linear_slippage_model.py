@@ -25,20 +25,22 @@ class LinearSlippageModel(SlippageModel):
     and capping arithmetic is pure Decimal.
     """
 
-    def __init__(self, base_slippage_pct: float = 0.01,
-                 size_impact_factor: float = 0.00001,
-                 max_slippage_pct: float = 0.1,
+    def __init__(self, base_slippage_pct: float | Decimal = 0.01,
+                 size_impact_factor: float | Decimal = 0.00001,
+                 max_slippage_pct: float | Decimal = 0.1,
                  rng: random.Random | None = None):
         """
         Initialize the linear slippage model.
 
         Parameters
         ----------
-        base_slippage_pct : float
-            Base slippage percentage (random component)
-        size_impact_factor : float
+        base_slippage_pct : float | Decimal
+            Base slippage percentage (random component); a configured Decimal is
+            accepted unchanged and enters the Decimal domain via ``to_money``
+            (WR-02: avoids the Decimal->float->Decimal repr-artifact round-trip).
+        size_impact_factor : float | Decimal
             Factor for size impact calculation
-        max_slippage_pct : float
+        max_slippage_pct : float | Decimal
             Maximum slippage percentage cap
         rng : random.Random | None
             Injected seeded RNG for deterministic slippage jitter (D-11). When
@@ -81,8 +83,10 @@ class LinearSlippageModel(SlippageModel):
         self.validate_inputs(quantity, price, side, order_type)
 
         # Base slippage — seeded float noise (D-11 seam) enters Decimal ONCE
-        # via to_money.
-        noise = self._rng.uniform(-self.base_slippage_pct, self.base_slippage_pct)
+        # via to_money. The RNG jitter bound is the float seam itself (not money),
+        # so coercing the stored rate to float here is correct, not a money round-trip.
+        base_pct = float(self.base_slippage_pct)
+        noise = self._rng.uniform(-base_pct, base_pct)
         base_slippage = to_money(noise) / Decimal("100")
 
         # Size impact — proportional to order value, pure Decimal.
