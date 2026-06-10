@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 Phase: 999.2
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-10
+Last activity: 2026-06-10 - Completed quick task 260610-sjp: Close FL-01 & FL-02 + reconcile FIX-LIST.md
 
 ## Performance Metrics
 
@@ -93,7 +93,11 @@ None yet.
 
 ### Quick Tasks Completed
 
-None this milestone. (v1.0 quick tasks archived in `milestones/v1.0-MILESTONE-AUDIT.md`.)
+(v1.0 quick tasks archived in `milestones/v1.0-MILESTONE-AUDIT.md`.)
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 
 ## Deferred Items
 
