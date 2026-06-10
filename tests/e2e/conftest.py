@@ -385,6 +385,7 @@ def _assemble(spec, system, portfolio, portfolio_id, portfolio_ids):
     if not trades.empty:
         commission_rows = [
             {
+                "pair": p.ticker,
                 "entry_date": p.entry_date,
                 "exit_date": p.exit_date,
                 "side": p.side.name,
@@ -394,16 +395,21 @@ def _assemble(spec, system, portfolio, portfolio_id, portfolio_ids):
         ]
         commission_frame = pd.DataFrame(
             commission_rows,
-            columns=["entry_date", "exit_date", "side", "commission"],
+            columns=["pair", "entry_date", "exit_date", "side", "commission"],
         )
-        # WR-03: validate=one_to_one so a non-unique (entry_date, exit_date, side)
-        # key (e.g. two round-trips opening/closing on the same bars) raises a
-        # pandas MergeError instead of silently many-to-many duplicating trade rows
-        # or mis-attributing commission. Converts a confusing golden-diff into a
-        # hard, diagnosable failure for future multi-trade leaves.
+        # WR-03: validate=one_to_one so a non-unique merge key raises a pandas
+        # MergeError instead of silently many-to-many duplicating trade rows or
+        # mis-attributing commission. Converts a confusing golden-diff into a hard,
+        # diagnosable failure. MULTI-01 (Phase 9): the key MUST include ``pair`` —
+        # the first multi-ticker leaf where TWO round-trips share an identical
+        # (entry_date, exit_date, side) across DIFFERENT tickers (BTCUSD+ETHUSDT
+        # both LONG, same entry/exit bars). Without ``pair`` the key is non-unique
+        # there and one_to_one trips. ``pair`` is the trade frame's ticker column
+        # (frames.py:35, Position.to_dict :264) so adding it is backward-compatible:
+        # single-ticker leaves keep a unique key and an identical merged column.
         trades = trades.merge(
-            commission_frame, on=["entry_date", "exit_date", "side"], how="left",
-            validate="one_to_one"
+            commission_frame, on=["pair", "entry_date", "exit_date", "side"],
+            how="left", validate="one_to_one"
         )
         trades["commission"] = trades["commission"].fillna(0.0)
     else:
