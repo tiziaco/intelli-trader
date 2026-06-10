@@ -63,9 +63,9 @@
 - [x] **SIZE-03**: over-cash sizing produces the audited insufficient-funds rejection.
 
 ### SL/TP Policy coverage (SLTP)
-- [ ] **SLTP-01**: `PercentFromDecision` — SL/TP priced at signal assembly.
-- [ ] **SLTP-02**: `PercentFromFill` — SL/TP anchored to the actual fill price in `on_fill`.
-- [ ] **SLTP-03**: SL-hit, TP-hit, and held-to-end (neither) exit outcomes.
+- [x] **SLTP-01**: `PercentFromDecision` — SL/TP priced at signal assembly.
+- [x] **SLTP-02**: `PercentFromFill` — SL/TP anchored to the actual fill price in `on_fill`.
+- [x] **SLTP-03**: SL-hit, TP-hit, and held-to-end (neither) exit outcomes.
 
 ### Admission & Position Management (ADMIT)
 - [ ] **ADMIT-01**: `allow_increase=True` scale-in (pyramiding) **works** end-to-end (v1.0 only validated the reject direction).
@@ -149,9 +149,9 @@
 | SIZE-01 | Phase 7 | Complete |
 | SIZE-02 | Phase 7 | Complete |
 | SIZE-03 | Phase 7 | Complete |
-| SLTP-01 | Phase 7 | Pending |
-| SLTP-02 | Phase 7 | Pending |
-| SLTP-03 | Phase 7 | Pending |
+| SLTP-01 | Phase 7 | Complete |
+| SLTP-02 | Phase 7 | Complete |
+| SLTP-03 | Phase 7 | Complete |
 | ADMIT-01 | Phase 8 | Pending |
 | ADMIT-02 | Phase 8 | Pending |
 | ADMIT-03 | Phase 8 | Pending |
