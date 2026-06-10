@@ -58,9 +58,9 @@
 - [x] **COST-06**: combined fee+slippage round-trip cash math verified to the cent.
 
 ### Sizing coverage (SIZE)
-- [ ] **SIZE-01**: `FixedQuantity` sizing.
-- [ ] **SIZE-02**: `RiskPercent` sizing off stop distance.
-- [ ] **SIZE-03**: over-cash sizing produces the audited insufficient-funds rejection.
+- [x] **SIZE-01**: `FixedQuantity` sizing.
+- [x] **SIZE-02**: `RiskPercent` sizing off stop distance.
+- [x] **SIZE-03**: over-cash sizing produces the audited insufficient-funds rejection.
 
 ### SL/TP Policy coverage (SLTP)
 - [ ] **SLTP-01**: `PercentFromDecision` — SL/TP priced at signal assembly.
@@ -146,9 +146,9 @@
 | COST-04 | Phase 7 | Complete |
 | COST-05 | Phase 7 | Complete |
 | COST-06 | Phase 7 | Complete |
-| SIZE-01 | Phase 7 | Pending |
-| SIZE-02 | Phase 7 | Pending |
-| SIZE-03 | Phase 7 | Pending |
+| SIZE-01 | Phase 7 | Complete |
+| SIZE-02 | Phase 7 | Complete |
+| SIZE-03 | Phase 7 | Complete |
 | SLTP-01 | Phase 7 | Pending |
 | SLTP-02 | Phase 7 | Pending |
 | SLTP-03 | Phase 7 | Pending |

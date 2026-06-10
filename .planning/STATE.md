@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: executing
-last_updated: "2026-06-10T11:44:37.868Z"
+last_updated: "2026-06-10T11:53:40.686Z"
 last_activity: 2026-06-10
 progress:
   total_phases: 12
   completed_phases: 6
   total_plans: 21
-  completed_plans: 19
+  completed_plans: 20
   percent: 50
 ---
 
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 ## Current Position
 
 Phase: 07 (cost-sizing-sltp-scenarios) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-06-10
 
@@ -60,6 +60,9 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase ?]: [Phase 07 P02]: COST cluster complete — 5 leaves (COST-02..06) hand-verified to the cent and frozen; maker/taker contrast via two emitter instances (LIMIT=maker / MARKET=taker) on non-overlapping windows (D-11)
 - [Phase ?]: [Phase 07 P02]: engine fix — _init_fee_model/_init_slippage_model use 'is not None' not 'or' so a configured Decimal(0) determinism knob (COST-04 base_slippage_pct=0) is honored; oracle-safe (oracle runs Zero* models, byte-exact)
 - [Phase ?]: [Phase 07 P02]: engine truth — percent fee is charged on the BASE/un-slipped notional (fee_model called before executed_price = price*slippage_factor); fee and slippage are independent deductions, verified cent-exact in COST-06
+- [Phase ?]: [Phase 07 P03]: SIZE cluster complete — SIZE-01/02/03 hand-verified to the cent and frozen; no engine change (SizingResolver + admission gate already wired, PR #12/05-06)
+- [Phase ?]: [Phase 07 P03]: SIZE-02 RiskPercent sizes off a decision-time stop (D-13): the same explicit sl both sizes qty=(equity*risk_pct)/|price-stop| AND becomes the STOP child that closes the trade (pnl -200 = 2% risk) — a CLOSED TRADE, not REJECTED (T-07-09)
+- [Phase ?]: [Phase 07 P03]: SIZE-03 over-cash REJECTED via the opt-in orders.csv (D-15); empty-placeholder opt-in vehicle; reserve() InsufficientFundsError -> audited PENDING->REJECTED (triggered_by=cash_reservation)
 
 ### Pending Todos
 
@@ -98,10 +101,11 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 04 P03 | 25min | 2 tasks | 11 files |
 | Phase 07 P01 | 5min | 4 tasks | 24 files |
 | Phase 07 P02 | 15min | 3 tasks | 35 files |
+| Phase 07 P03 | 6min | 2 tasks | 19 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T11:44:14.862Z
+Last session: 2026-06-10T11:52:28.982Z
 Resume file: None
 
 ## Operator Next Steps
