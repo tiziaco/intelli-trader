@@ -150,7 +150,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   3. Insufficient funds produces the audited `cash_reservation` rejection, and the reservation is released on every terminal state (CANCELLED / REJECTED / REFUSED).
 **Plans**: 3 plans (Wave 1: foundational shared infra + scale_in canary + oracle gate; Wave 2: 2 parallel scenario-leaf clusters ADMISSION / CASH)
 - [x] 08-01-PLAN.md — Foundational: cash-ledger snapshot serializer (D-02) + opt-in conftest wiring + ScriptedEmitter allow_increase/max_positions (D-06) + scale_in canary; re-runs the BTCUSD oracle byte-exact [ADMIT-01, CASH-01]
-- [ ] 08-02-PLAN.md — ADMISSION cluster: scale_out (ADMIT-02), max_positions REJECTED (ADMIT-03), re_entry (ADMIT-04) (3 leaves) [ADMIT-02, ADMIT-03, ADMIT-04]
+- [x] 08-02-PLAN.md — ADMISSION cluster: scale_out (ADMIT-02), max_positions REJECTED (ADMIT-03), re_entry (ADMIT-04) (3 leaves) [ADMIT-02, ADMIT-03, ADMIT-04]
 - [ ] 08-03-PLAN.md — CASH cluster: release_cancelled + release_refused (positive release) + release_rejected (honest negative no-orphan) (3 leaves) [CASH-02]
 
 ### Phase 9: Multi-Entity, Robustness & Metrics Edges
@@ -175,7 +175,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 5. Strategy Interface Hardening & Signal Storage | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 6. Order Matching Scenarios | v1.1 | 5/5 | Complete   | 2026-06-09 |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete   | 2026-06-10 |
-| 8. Admission, Position Management & Cash Edges | v1.1 | 1/3 | In Progress|  |
+| 8. Admission, Position Management & Cash Edges | v1.1 | 2/3 | In Progress|  |
 | 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 0/0 | Not started | - |
 
 ## Backlog

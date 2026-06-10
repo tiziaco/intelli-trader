@@ -69,9 +69,9 @@
 
 ### Admission & Position Management (ADMIT)
 - [x] **ADMIT-01**: `allow_increase=True` scale-in (pyramiding) **works** end-to-end (v1.0 only validated the reject direction).
-- [ ] **ADMIT-02**: partial scale-out via `exit_fraction < 1` across multiple sells.
-- [ ] **ADMIT-03**: reaching `max_positions` produces the audited new-entry rejection.
-- [ ] **ADMIT-04**: full exit followed by re-entry on the same ticker.
+- [x] **ADMIT-02**: partial scale-out via `exit_fraction < 1` across multiple sells.
+- [x] **ADMIT-03**: reaching `max_positions` produces the audited new-entry rejection.
+- [x] **ADMIT-04**: full exit followed by re-entry on the same ticker.
 
 ### Multi-Entity (MULTI)
 - [ ] **MULTI-01**: one strategy trading two cryptos (multi-ticker) end-to-end.
@@ -153,9 +153,9 @@
 | SLTP-02 | Phase 7 | Complete |
 | SLTP-03 | Phase 7 | Complete |
 | ADMIT-01 | Phase 8 | Complete |
-| ADMIT-02 | Phase 8 | Pending |
-| ADMIT-03 | Phase 8 | Pending |
-| ADMIT-04 | Phase 8 | Pending |
+| ADMIT-02 | Phase 8 | Complete |
+| ADMIT-03 | Phase 8 | Complete |
+| ADMIT-04 | Phase 8 | Complete |
 | CASH-01 | Phase 8 | Complete |
 | CASH-02 | Phase 8 | Pending |
 | MULTI-01 | Phase 9 | Pending |

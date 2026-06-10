@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: executing
-last_updated: "2026-06-10T13:53:49.235Z"
+last_updated: "2026-06-10T14:32:52.548Z"
 last_activity: 2026-06-10
 progress:
   total_phases: 12
   completed_phases: 7
   total_plans: 24
-  completed_plans: 22
+  completed_plans: 23
   percent: 58
 ---
 
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 ## Current Position
 
 Phase: 08 (admission-position-management-cash-edges) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-06-10
 
@@ -67,6 +67,8 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase 07]: [Phase 07 P04]: PercentFromFill cash-reservation contract — the admission gate sizes/reserves off the DECISION close, so the fill anchor must keep entry notional within that reservation; authored the next-bar open BELOW the decision close (90 < 100) to satisfy both the distinct-anchor requirement AND the funds invariant (no engine change)
 - [Phase ?]: [Phase 08 P01]: cash_operations.py ledger serializer (D-02) clones orders.py — allowlist EXCLUDES UUIDv7 operation_id, raw reference_id, wall-clock RESERVATION/RELEASE timestamp; correlation derived per-reference ordinal so RESERVATION matches RELEASE deterministically; fires opt-in behind cash_operations.csv exists() gate (oracle-dark)
 - [Phase ?]: [Phase 08 P01]: scale_in canary (D-04 leaf 1) proves ADMIT-01 (successful pyramiding via allow_increase=True fall-through) + CASH-01 (over-cash add: RESERVATION never commits, available_cash intact, no orphan) via the cash-ledger no-commit lens — distinct trigger+lens from Phase 7 SIZE-03 order-mirror REJECTED (D-01); BTCUSD oracle byte-exact
+- [Phase 08]: [P02]: ADMIT-03 gate-before-sizing — the max_positions gate fires in step 0 BEFORE _resolve_signal_quantity, so the audited REJECTED row is UNSIZED (quantity=0, not FixedQuantity 40) and takes NO cash reservation (available_cash intact 6000, no orphan); genuine semantic difference from Phase 7 SIZE-03 which rejects AFTER sizing and freezes the sized quantity; BTCUSD oracle byte-exact
+- [Phase 08]: [P02]: ADMIT-02/03/04 cluster frozen — partial scale_out (exit_fraction<1 keeps position open between sells), max_positions REJECTED, full-exit-then-re-entry; first multi-ticker single-portfolio leaf (ETHUSDT occupier + BTCUSD over-cap entry via two co-subscribed ScriptedEmitters, D-04; multi-portfolio cash isolation deferred to Phase 9)
 
 ### Pending Todos
 
@@ -108,10 +110,11 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 07 P03 | 6min | 2 tasks | 19 files |
 | Phase 07 P04 | 12min | 2 tasks | 39 files |
 | Phase 08 P08-01 | 13min | 3 tasks | 9 files |
+| Phase 08 P02 | 6min | 2 tasks | 17 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T13:53:49.227Z
+Last session: 2026-06-10T14:31:29.235Z
 Resume file: None
 
 ## Operator Next Steps
