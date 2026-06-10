@@ -18,7 +18,7 @@ from itrader.portfolio_handler.portfolio import Portfolio, Position
 from itrader.core.enums import PortfolioState, PositionSide
 from itrader.config import PortfolioConfig
 from itrader.core.exceptions import (
-    PortfolioNotFoundError, PortfolioValidationError,
+    PortfolioNotFoundError, PortfolioValidationError, StateError,
 )
 from itrader.events_handler.events import FillEvent, PortfolioErrorEvent
 from itrader.core.enums import FillStatus, Side
@@ -163,7 +163,8 @@ def test_portfolio_state_management(env):
     assert portfolio.state == PortfolioState.ARCHIVED
 
     # Test that archived portfolios cannot transition
-    with pytest.raises(ValueError):
+    # FL-01: set_state now raises the typed StateError (was bare ValueError).
+    with pytest.raises(StateError):
         portfolio.set_state(PortfolioState.ACTIVE, "Cannot reactivate archived")
 
 
@@ -304,7 +305,9 @@ def test_fill_event_processing_inactive_portfolio(env):
     fill_event = _fill_event("AAPL", Side.BUY, 150.0, 100, 1.0, portfolio_id,
                              time=datetime.now(UTC))
 
-    with pytest.raises(ValueError):
+    # FL-01: transact on an inactive portfolio now raises the typed StateError
+    # (was bare ValueError).
+    with pytest.raises(StateError):
         env.handler.on_fill(fill_event)
 
 
