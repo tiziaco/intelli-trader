@@ -1,0 +1,2 @@
+role,ticker,order_type,action,status,price,quantity,filled_quantity,time
+STANDALONE,BTCUSD,MARKET,BUY,REJECTED,100.0000000000,50.0000000000,0.0000000000,2020-01-02 01:00:00+01:00
