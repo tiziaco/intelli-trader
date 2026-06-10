@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
 status: ready_to_plan
-last_updated: 2026-06-09T22:55:52.468Z
-last_activity: 2026-06-09 -- Phase 06 execution started
+last_updated: 2026-06-10T12:25:07.577Z
+last_activity: 2026-06-10
 progress:
   total_phases: 12
-  completed_phases: 5
-  total_plans: 17
-  completed_plans: 17
-  percent: 42
-stopped_at: Phase 06 complete (5/5) — ready to discuss Phase 999.2
+  completed_phases: 7
+  total_plans: 21
+  completed_plans: 21
+  percent: 58
+stopped_at: Phase 07 complete (4/4) — ready to discuss Phase 8
 ---
 
 # Project State
@@ -21,20 +21,20 @@ stopped_at: Phase 06 complete (5/5) — ready to discuss Phase 999.2
 See: .planning/PROJECT.md (updated 2026-06-09)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — the backtest path must import, run, and yield trustworthy results.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 8 — Admission, Position Management & Cash Edges
 
 ## Current Position
 
-Phase: 999.2
+Phase: 8
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-09
+Status: Ready to discuss
+Last activity: 2026-06-10
 
 ## Performance Metrics
 
 **Velocity (v1.1):**
 
-- Total plans completed: 20
+- Total plans completed: 24
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -55,6 +55,17 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase ?]: is_active/active_membership added alongside derive_membership (D-03); span model inclusive both ends (D-01); active_membership returns set[str]
 - [Phase ?]: [Phase 03 P02]: feed is the single span-aware observability owner (D-04) — silent for pre-listing/post-end, warns only on a true mid-life gap; span bounds cached as tz-aware pd.Timestamp; bar/fill path untouched (oracle-dark)
 - [Phase ?]: [Phase 03 P03]: optional csv_paths passthrough on TradingSystem.__init__ (default None = byte-identical golden behavior, oracle-dark); UNIV-02 engine-proven on synthetic fixtures (no crash, no look-ahead over the union window) — real ETH/SOL/AAVE E2E deferred to Phase 9 (D-06)
+- [Phase ?]: [Phase 07 P01]: commission golden column is conftest-LOCAL + oracle-dark (D-07/D-08), sourced from real Position.commission, kept out of itrader/reporting so the BTCUSD oracle stays byte-exact
+- [Phase ?]: [Phase 07 P01]: D-14 exchange seam re-inits fee/slippage from spec.exchange via the constructor path, NEVER touching _supported_symbols (re-deriving it would wipe BTCUSD admission and silently REFUSE every order)
+- [Phase ?]: [Phase 07 P01]: COST-01 canary commission=285.00 / final_cash=19215.00 hand-verified to the cent; 15 pre-existing goldens re-frozen additively (commission=0.00, no other value drift)
+- [Phase ?]: [Phase 07 P02]: COST cluster complete — 5 leaves (COST-02..06) hand-verified to the cent and frozen; maker/taker contrast via two emitter instances (LIMIT=maker / MARKET=taker) on non-overlapping windows (D-11)
+- [Phase ?]: [Phase 07 P02]: engine fix — _init_fee_model/_init_slippage_model use 'is not None' not 'or' so a configured Decimal(0) determinism knob (COST-04 base_slippage_pct=0) is honored; oracle-safe (oracle runs Zero* models, byte-exact)
+- [Phase ?]: [Phase 07 P02]: engine truth — percent fee is charged on the BASE/un-slipped notional (fee_model called before executed_price = price*slippage_factor); fee and slippage are independent deductions, verified cent-exact in COST-06
+- [Phase ?]: [Phase 07 P03]: SIZE cluster complete — SIZE-01/02/03 hand-verified to the cent and frozen; no engine change (SizingResolver + admission gate already wired, PR #12/05-06)
+- [Phase ?]: [Phase 07 P03]: SIZE-02 RiskPercent sizes off a decision-time stop (D-13): the same explicit sl both sizes qty=(equity*risk_pct)/|price-stop| AND becomes the STOP child that closes the trade (pnl -200 = 2% risk) — a CLOSED TRADE, not REJECTED (T-07-09)
+- [Phase ?]: [Phase 07 P03]: SIZE-03 over-cash REJECTED via the opt-in orders.csv (D-15); empty-placeholder opt-in vehicle; reserve() InsufficientFundsError -> audited PENDING->REJECTED (triggered_by=cash_reservation)
+- [Phase 07]: [Phase 07 P04]: SLTP cluster complete — 6 leaves (PercentFromDecision/PercentFromFill x SL-hit/TP-hit/held) hand-verified to the cent and frozen; Decision anchor (decision close) vs Fill anchor (next-bar open) produce DISTINCT SL/TP levels for the same percentages
+- [Phase 07]: [Phase 07 P04]: PercentFromFill cash-reservation contract — the admission gate sizes/reserves off the DECISION close, so the fill anchor must keep entry notional within that reservation; authored the next-bar open BELOW the decision close (90 < 100) to satisfy both the distinct-anchor requirement AND the funds invariant (no engine change)
 
 ### Pending Todos
 
@@ -91,13 +102,18 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 03 P02 | 4 | 3 tasks | 3 files |
 | Phase 03 P03 | 12min | 2 tasks | 2 files |
 | Phase 04 P03 | 25min | 2 tasks | 11 files |
+| Phase 07 P01 | 5min | 4 tasks | 24 files |
+| Phase 07 P02 | 15min | 3 tasks | 35 files |
+| Phase 07 P03 | 6min | 2 tasks | 19 files |
+| Phase 07 P04 | 12min | 2 tasks | 39 files |
 
 ## Session Continuity
 
-Last session: 2026-06-09T21:10:02.972Z
-Resume file: .planning/phases/06-order-matching-scenarios/06-CONTEXT.md
+Last session: 2026-06-10T12:07:33.150Z
+Resume file: None
 
 ## Operator Next Steps
 
-- Phase 05 (strategy-interface-hardening-signal-storage) is COMPLETE — verified (05-VERIFICATION.md passed) and the code-review loop is closed (05-REVIEW-FIX.iter3.md all_fixed). HARD-01..04 + SIG-01/02 validated.
-- `/clear`, then `/gsd:plan-phase 6` — plan Phase 6 (Order Matching Scenarios). The Phase 04 canary leaf remains the copy-template for Phase 6-9 scenario authors.
+- Phase 07 (cost-sizing-sltp-scenarios) is COMPLETE — verified (07-VERIFICATION.md passed, 14/14 must-haves) and code-reviewed (07-REVIEW.md: 0 blocker / 3 warning / 2 info, advisory). COST-01..06 + SIZE-01..03 + SLTP-01..03 validated. Full suite 777 pass (30 e2e); BTCUSD oracle byte-exact; `mypy --strict` clean (160 files).
+- `/clear`, then `/gsd:discuss-phase 8` — discuss Phase 8 (Admission, Position Management & Cash Edges) before planning. It is not yet scaffolded (no phase directory). The existing `tests/e2e/{cost,sizing,sltp}` leaves remain copy-templates for Phase 8-9 scenario authors.
+- Note: `gsd-sdk` phase ordering auto-advanced to the backlog phase 999.2 (N+3 Persistence) after Phase 07; the active milestone next is Phase 8. The 999.x directories are v1.2+ backlog, not v1.1 work.

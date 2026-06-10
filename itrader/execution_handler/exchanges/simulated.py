@@ -483,14 +483,26 @@ class SimulatedExchange(AbstractExchange):
 		"""Create fee model from configuration."""
 		config = self.config.fee_model
 
+		# T-07-06 (07-02): use ``is not None`` not ``or`` so a LEGITIMATE zero
+		# config value (e.g. a zeroed determinism knob) is honored verbatim
+		# instead of being silently overridden by the default. ``Decimal("0")``
+		# is falsy, so ``config.x or <default>`` swallows an intentional 0 and
+		# makes the configured cost non-hand-derivable. Oracle-safe: the oracle
+		# runs ZeroFeeModel/ZeroSlippageModel (exchange="csv", fees/slippage 0)
+		# and never reaches these percent/maker_taker/fixed/linear branches.
 		if config.model_type.value in ['no_fee', 'zero']:
 			return ZeroFeeModel()
 		elif config.model_type.value == 'percent':
-			return PercentFeeModel(fee_rate=float(config.fee_rate or 0.001))
+			# T-07-06 (07-02, WR-02): pass the configured Decimal through unchanged.
+			# PercentFeeModel accepts ``float | Decimal`` and enters the Decimal
+			# domain once via ``to_money``; routing through ``float()`` would risk a
+			# binary-float repr artifact (CLAUDE.md money policy: never Decimal(float)).
+			return PercentFeeModel(
+				fee_rate=config.fee_rate if config.fee_rate is not None else Decimal("0.001"))
 		elif config.model_type.value == 'maker_taker':
 			return MakerTakerFeeModel(
-				maker_rate=float(config.maker_rate or 0.001),
-				taker_rate=float(config.taker_rate or 0.001)
+				maker_rate=config.maker_rate if config.maker_rate is not None else Decimal("0.001"),
+				taker_rate=config.taker_rate if config.taker_rate is not None else Decimal("0.001")
 			)
 		else:
 			self.logger.warning('Unknown fee model %s, defaulting to no_fee', config.model_type.value)
@@ -500,18 +512,28 @@ class SimulatedExchange(AbstractExchange):
 		"""Create slippage model from configuration."""
 		config = self.config.slippage_model
 
+		# T-07-06 (07-02): ``is not None`` not ``or`` — a configured 0 (e.g.
+		# base_slippage_pct=Decimal("0") to zero the RNG base-noise so the fill
+		# is hand-derivable to the cent) must be honored, not overridden by the
+		# default. Oracle-safe (the oracle never reaches the linear/fixed branch).
 		if config.model_type.value in ['none', 'zero']:
 			return ZeroSlippageModel()
 		elif config.model_type.value == 'linear':
+			# WR-02: pass configured Decimal rates through unchanged; the model
+			# accepts ``float | Decimal`` and enters Decimal once via ``to_money``.
 			return LinearSlippageModel(
-				base_slippage_pct=float(config.base_slippage_pct or 0.01),
-				size_impact_factor=float(config.size_impact_factor or 0.00001),
-				max_slippage_pct=float(config.max_slippage_pct or 0.1),
+				base_slippage_pct=(
+					config.base_slippage_pct if config.base_slippage_pct is not None else Decimal("0.01")),
+				size_impact_factor=(
+					config.size_impact_factor if config.size_impact_factor is not None else Decimal("0.00001")),
+				max_slippage_pct=(
+					config.max_slippage_pct if config.max_slippage_pct is not None else Decimal("0.1")),
 				rng=self._rng
 			)
 		elif config.model_type.value == 'fixed':
 			return FixedSlippageModel(
-				slippage_pct=float(config.slippage_pct or 0.01),
+				slippage_pct=(
+					config.slippage_pct if config.slippage_pct is not None else Decimal("0.01")),
 				random_variation=config.random_variation if config.random_variation is not None else True,
 				rng=self._rng
 			)

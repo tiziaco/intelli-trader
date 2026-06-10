@@ -44,7 +44,13 @@ from decimal import Decimal
 import pandas as pd
 
 from itrader.core.enums.order import OrderType
-from itrader.core.sizing import FractionOfCash, SignalIntent, SizingPolicy, TradingDirection
+from itrader.core.sizing import (
+    FractionOfCash,
+    SignalIntent,
+    SizingPolicy,
+    SLTPPolicy,
+    TradingDirection,
+)
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.config import BaseStrategyConfig
 
@@ -76,12 +82,17 @@ class ScriptedEmitter(Strategy):
                  script: dict[str, dict],
                  order_type: OrderType = OrderType.MARKET,
                  direction: TradingDirection = TradingDirection.LONG_ONLY,
-                 sizing_policy: SizingPolicy | None = None) -> None:
+                 sizing_policy: SizingPolicy | None = None,
+                 sltp_policy: "SLTPPolicy | None" = None) -> None:
         # D-03 (Pitfall 3): order_type is a per-INSTANCE config field — this is HOW
         # MATCH-02/03 select a LIMIT/STOP entry. The per-bar script only picks
         # action + sl/tp/exit_fraction.
         if sizing_policy is None:
             sizing_policy = FractionOfCash(Decimal("0.95"))
+        # D-12: sltp_policy threads through BaseStrategyConfig identically to
+        # sizing_policy, reusing the existing kwarg→config→SignalEvent plumbing
+        # (config.py:55 → base.py:67 → strategies_handler.py:165). No default
+        # substitution — None is the correct default (no engine-side SLTP policy).
         config = BaseStrategyConfig(
             timeframe=timeframe,
             tickers=list(tickers),
@@ -89,6 +100,7 @@ class ScriptedEmitter(Strategy):
             direction=direction,
             allow_increase=False,
             order_type=order_type,
+            sltp_policy=sltp_policy,
         )
         super().__init__("scripted_emitter", config)
         self.script = script

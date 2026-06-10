@@ -50,22 +50,22 @@
 - [ ] **MATCH-08**: A limit far from market never fills and is handled at run end.
 
 ### Fees & Slippage coverage (COST)
-- [ ] **COST-01**: percent fee model on a round-trip.
-- [ ] **COST-02**: maker_taker fee model — maker vs taker distinguished (limit vs market).
-- [ ] **COST-03**: fixed slippage model.
-- [ ] **COST-04**: linear slippage model.
-- [ ] **COST-05**: slippage is **not** applied to limit fills.
-- [ ] **COST-06**: combined fee+slippage round-trip cash math verified to the cent.
+- [x] **COST-01**: percent fee model on a round-trip.
+- [x] **COST-02**: maker_taker fee model — maker vs taker distinguished (limit vs market).
+- [x] **COST-03**: fixed slippage model.
+- [x] **COST-04**: linear slippage model.
+- [x] **COST-05**: slippage is **not** applied to limit fills.
+- [x] **COST-06**: combined fee+slippage round-trip cash math verified to the cent.
 
 ### Sizing coverage (SIZE)
-- [ ] **SIZE-01**: `FixedQuantity` sizing.
-- [ ] **SIZE-02**: `RiskPercent` sizing off stop distance.
-- [ ] **SIZE-03**: over-cash sizing produces the audited insufficient-funds rejection.
+- [x] **SIZE-01**: `FixedQuantity` sizing.
+- [x] **SIZE-02**: `RiskPercent` sizing off stop distance.
+- [x] **SIZE-03**: over-cash sizing produces the audited insufficient-funds rejection.
 
 ### SL/TP Policy coverage (SLTP)
-- [ ] **SLTP-01**: `PercentFromDecision` — SL/TP priced at signal assembly.
-- [ ] **SLTP-02**: `PercentFromFill` — SL/TP anchored to the actual fill price in `on_fill`.
-- [ ] **SLTP-03**: SL-hit, TP-hit, and held-to-end (neither) exit outcomes.
+- [x] **SLTP-01**: `PercentFromDecision` — SL/TP priced at signal assembly.
+- [x] **SLTP-02**: `PercentFromFill` — SL/TP anchored to the actual fill price in `on_fill`.
+- [x] **SLTP-03**: SL-hit, TP-hit, and held-to-end (neither) exit outcomes.
 
 ### Admission & Position Management (ADMIT)
 - [ ] **ADMIT-01**: `allow_increase=True` scale-in (pyramiding) **works** end-to-end (v1.0 only validated the reject direction).
@@ -140,18 +140,18 @@
 | MATCH-06 | Phase 6 | Pending |
 | MATCH-07 | Phase 6 | Pending |
 | MATCH-08 | Phase 6 | Pending |
-| COST-01 | Phase 7 | Pending |
-| COST-02 | Phase 7 | Pending |
-| COST-03 | Phase 7 | Pending |
-| COST-04 | Phase 7 | Pending |
-| COST-05 | Phase 7 | Pending |
-| COST-06 | Phase 7 | Pending |
-| SIZE-01 | Phase 7 | Pending |
-| SIZE-02 | Phase 7 | Pending |
-| SIZE-03 | Phase 7 | Pending |
-| SLTP-01 | Phase 7 | Pending |
-| SLTP-02 | Phase 7 | Pending |
-| SLTP-03 | Phase 7 | Pending |
+| COST-01 | Phase 7 | Complete |
+| COST-02 | Phase 7 | Complete |
+| COST-03 | Phase 7 | Complete |
+| COST-04 | Phase 7 | Complete |
+| COST-05 | Phase 7 | Complete |
+| COST-06 | Phase 7 | Complete |
+| SIZE-01 | Phase 7 | Complete |
+| SIZE-02 | Phase 7 | Complete |
+| SIZE-03 | Phase 7 | Complete |
+| SLTP-01 | Phase 7 | Complete |
+| SLTP-02 | Phase 7 | Complete |
+| SLTP-03 | Phase 7 | Complete |
 | ADMIT-01 | Phase 8 | Pending |
 | ADMIT-02 | Phase 8 | Pending |
 | ADMIT-03 | Phase 8 | Pending |

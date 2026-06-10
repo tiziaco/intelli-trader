@@ -31,7 +31,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 - [x] **Phase 4: E2E Harness & Framework** — Dedicated `tests/e2e/` tree, registered `e2e` marker, `make test-e2e`, and a shared golden-compare harness every scenario phase builds on. (completed 2026-06-09)
 - [x] **Phase 5: Strategy Interface Hardening & Signal Storage** — Pydantic `BaseStrategyConfig` + per-strategy params validators + `OrderType` enum end-to-end (byte-exact vs the SMA_MACD oracle); typed signal records persisted and queryable. (completed 2026-06-09)
 - [x] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill. (completed 2026-06-09)
-- [ ] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes.
+- [x] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes. (completed 2026-06-10)
 - [ ] **Phase 8: Admission, Position Management & Cash Edges** — E2E golden-locked coverage of scale-in (pyramiding), partial scale-out, `max_positions` rejection, exit-then-re-entry, and the cash reservation/release lifecycle.
 - [ ] **Phase 9: Multi-Entity, Robustness & Metrics Edges** — E2E golden-locked coverage of multi-ticker, multi-strategy, multi-portfolio cash isolation, contended cash, heterogeneous date spans, degenerate-run metrics, and cross-scenario determinism.
 
@@ -134,7 +134,11 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
   2. fixed and linear slippage models are covered, and slippage is proven NOT applied to limit fills.
   3. `FixedQuantity` and `RiskPercent` (off stop distance) sizing produce hand-verified fills, and over-cash sizing produces the audited insufficient-funds rejection.
   4. `PercentFromDecision` (priced at assembly) and `PercentFromFill` (anchored to the actual fill) SL/TP are each covered, exercising SL-hit, TP-hit, and held-to-end exit outcomes.
-**Plans**: TBD
+**Plans**: 4 plans (Wave 1: foundational shared scaffolding + COST-01 canary + 15-golden re-freeze + oracle gate; Wave 2: 3 parallel scenario-leaf clusters COST/SIZE/SLTP)
+- [x] 07-01-PLAN.md — Foundational: commission golden column (D-07/D-08), ScriptedEmitter.sltp_policy (D-12), exchange-config seam fix (D-14), COST-01 percent-fee canary, re-freeze 15 existing E2E goldens (commission=0.00), re-run BTCUSD oracle byte-exact [COST-01]
+- [x] 07-02-PLAN.md — COST cluster: maker_taker (maker+taker in one leaf), fixed_slippage, linear_slippage, limit_no_slip, combined_roundtrip (5 leaves) [COST-02, COST-03, COST-04, COST-05, COST-06]
+- [x] 07-03-PLAN.md — SIZE cluster: fixed_quantity, risk_percent (off decision-time stop), over_cash_reject (orders-snapshot REJECTED) (3 leaves) [SIZE-01, SIZE-02, SIZE-03]
+- [x] 07-04-PLAN.md — SLTP cluster: PercentFromDecision and PercentFromFill each × {SL-hit, TP-hit, held-to-end} (6 leaves) [SLTP-01, SLTP-02, SLTP-03]
 
 ### Phase 8: Admission, Position Management & Cash Edges
 **Goal**: Give the LONG-ONLY position-management directions v1.0 never exercised end-to-end — scale-in, partial scale-out, max-positions rejection, re-entry — plus the cash reservation/release lifecycle, their first golden coverage.
@@ -167,7 +171,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 4. E2E Harness & Framework | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 5. Strategy Interface Hardening & Signal Storage | v1.1 | 3/3 | Complete   | 2026-06-09 |
 | 6. Order Matching Scenarios | v1.1 | 5/5 | Complete   | 2026-06-09 |
-| 7. Cost, Sizing & SLTP Scenarios | v1.1 | 0/0 | Not started | - |
+| 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete   | 2026-06-10 |
 | 8. Admission, Position Management & Cash Edges | v1.1 | 0/0 | Not started | - |
 | 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 0/0 | Not started | - |
 
