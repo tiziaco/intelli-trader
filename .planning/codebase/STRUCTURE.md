@@ -1,189 +1,190 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-06-08
+**Analysis Date:** 2026-06-10
 
 ## Directory Layout
 
 ```
 intelli-trader/
-├── itrader/                      # Application package
-│   ├── __init__.py               # Process singletons: config, logger, idgen
-│   ├── logger.py                 # structlog setup (init_logger, get_itrader_logger)
-│   ├── trading_system/           # Composition roots + run loops
-│   │   ├── backtest_trading_system.py   # TradingSystem (backtest for-loop)
-│   │   ├── live_trading_system.py       # LiveTradingSystem (threaded)
-│   │   ├── trading_interface.py         # API bridge
-│   │   └── simulation/                  # SimulationEngine base + TimeGenerator
-│   ├── events_handler/           # Queue dispatch + event facts
-│   │   ├── full_event_handler.py        # EventHandler._routes dispatch
-│   │   └── events/                      # Frozen event dataclasses by domain
-│   │       ├── base.py, market.py, signal.py, order.py, fill.py, error.py
-│   ├── order_handler/            # Order domain (thin handler + fat manager)
-│   │   ├── order_handler.py, order_manager.py, order.py, base.py
-│   │   ├── order_validator.py, sizing_resolver.py, operation_result.py
-│   │   └── storage/                     # in_memory / postgresql + factory
-│   ├── execution_handler/        # Execution + matching
-│   │   ├── execution_handler.py, matching_engine.py, result_objects.py, base.py
-│   │   ├── exchanges/                   # base.py, simulated.py
-│   │   ├── fee_model/                   # zero / percent / maker_taker
-│   │   └── slippage_model/              # zero / fixed / linear
-│   ├── portfolio_handler/        # Portfolio + sub-managers
-│   │   ├── portfolio_handler.py, portfolio.py, base.py, validators.py
-│   │   ├── cash/, position/, transaction/, metrics/   # one manager each
-│   │   └── storage/                     # in_memory + factory
-│   ├── strategy_handler/         # Strategies + sizing/risk
-│   │   ├── strategies_handler.py, base.py, SMA_MACD_strategy.py, empty_strategy.py
-│   │   ├── position_sizer/, risk_manager/
-│   │   └── my_strategies/               # concrete strategies (trend/momentum/...)
-│   ├── screeners_handler/        # Market screening (deferred subsystem)
-│   │   └── screeners/                   # BestScreener, cointegrated_pairs, ...
-│   ├── price_handler/            # Data engine
-│   │   ├── ingestion.py
-│   │   ├── store/                       # CsvPriceStore, SqlPriceStore + base
-│   │   ├── feed/                        # BacktestBarFeed + base (bar-timing contract)
-│   │   └── providers/                   # CCXT, OANDA, Binance stream
-│   ├── universe/                 # membership.py (derive_membership)
-│   ├── reporting/                # frames.py, metrics.py, plots.py
-│   ├── config/                   # Pydantic config models (SystemConfig.default())
-│   ├── core/                     # Shared cross-cutting types
-│   │   ├── enums/ (event, order, execution, portfolio)
-│   │   ├── exceptions/ (base, order, portfolio, data)
-│   │   ├── clock.py, ids.py, money.py, bar.py, sizing.py
-│   │   ├── constants.py, portfolio_read_model.py
-│   └── outils/                   # id_generator.py, time_parser.py
-├── tests/                        # unit/, integration/, golden/, conftest.py
-├── scripts/                      # run_backtest.py, cross_validate.py, crossval/
-├── settings/                     # YAML config (gitignored in prod) + domains/
-├── data/                         # Golden CSV dataset (BTCUSD_1d_ohlcv_2018_2026.csv)
-├── output/                       # Backtest artifacts (trades/equity/summary)
-├── notebooks/                    # Exploratory notebooks
-├── docs/                         # Documentation
-├── pyproject.toml                # Deps, test config, package metadata
-├── poetry.lock                   # Committed lockfile
-├── Makefile                      # Developer commands (loads .env)
-└── CLAUDE.md                     # Project instructions
+├── itrader/                  # Application package (event-driven trading framework)
+│   ├── __init__.py          # Singleton init on import: config, logger, idgen
+│   ├── logger.py            # structlog init + get_itrader_logger()
+│   ├── config/              # Pydantic config system (SystemConfig.default())
+│   ├── core/                # Shared primitives — depends on nothing in itrader
+│   │   ├── enums/           # OrderType, OrderStatus, EventType, Side, ...
+│   │   └── exceptions/      # ITraderError hierarchy by domain
+│   ├── events_handler/      # Dispatcher + event dataclasses
+│   │   └── events/          # Frozen event dataclasses (split by domain)
+│   ├── trading_system/      # Composition roots + run loops
+│   │   └── simulation/      # TimeGenerator (TimeEvent grid)
+│   ├── strategy_handler/    # Strategies + sizing/risk; signal store
+│   │   ├── strategies/      # SMA_MACD (reference), empty_strategy
+│   │   ├── my_strategies/   # Concrete strategy library + indicators/filters
+│   │   └── storage/         # Signal store backends
+│   ├── order_handler/       # OrderHandler (thin) + OrderManager (logic)
+│   │   └── storage/         # Order-mirror persistence (in_memory/postgresql)
+│   ├── execution_handler/   # ExecutionHandler + matching + cost models
+│   │   ├── exchanges/       # AbstractExchange + SimulatedExchange
+│   │   ├── fee_model/       # zero / percent / maker_taker
+│   │   └── slippage_model/  # zero / fixed / linear
+│   ├── portfolio_handler/   # PortfolioHandler + Portfolio + 4 managers
+│   │   ├── cash/            # CashManager
+│   │   ├── position/        # PositionManager + Position
+│   │   ├── transaction/     # TransactionManager + Transaction
+│   │   ├── metrics/         # MetricsManager
+│   │   └── storage/         # Portfolio state storage
+│   ├── price_handler/       # Data engine
+│   │   ├── store/           # CsvPriceStore, SqlPriceStore (read-only on run path)
+│   │   ├── feed/            # BacktestBarFeed + bar-timing contract
+│   │   └── providers/       # CCXT, OANDA, Binance stream
+│   ├── screeners_handler/   # Dynamic market screening (deferred subsystem)
+│   │   └── screeners/       # Concrete screeners
+│   ├── universe/            # Membership derivation
+│   ├── reporting/           # Pure run-artifact builders + metrics + plots
+│   └── outils/              # IDGenerator, time_parser
+├── scripts/                 # run_backtest.py (oracle), cross_validate.py, crossval/
+├── tests/                   # pytest suite (unit / integration / e2e / golden)
+│   ├── unit/                # Per-module tests, mirror source layout
+│   ├── integration/         # Run-path wiring + oracle smoke
+│   ├── e2e/                 # Scenario-based golden-master harness
+│   └── golden/              # Frozen oracle artifacts + cross-validation docs
+├── settings/                # YAML config overrides (defaults under domains/)
+├── data/                    # Golden OHLCV CSVs (+ raw/)
+├── docs/                    # Handler docs + planning notes
+├── notebooks/               # Jupyter exploration
+├── output/                  # Generated run artifacts (gitignored)
+├── pyproject.toml           # Deps, pytest config, mypy config (single source)
+├── Makefile                 # All developer commands
+├── poetry.lock              # Committed lockfile
+└── CLAUDE.md                # Project instructions
 ```
 
 ## Directory Purposes
 
-**`itrader/trading_system/`:**
-- Purpose: Composition roots that wire the component graph around one `global_queue`, plus run loops.
-- Key files: `backtest_trading_system.py`, `live_trading_system.py`, `trading_interface.py`, `simulation/time_generator.py`.
+**`itrader/core/`:**
+- Purpose: Cross-cutting primitives; depends on nothing else inside `itrader`.
+- Contains: enums, exceptions, money/ids/clock/bar/sizing primitives, read-model Protocol.
+- Key files: `core/money.py`, `core/ids.py`, `core/clock.py`, `core/portfolio_read_model.py`, `core/sizing.py`, `core/enums/__init__.py`.
 
 **`itrader/events_handler/`:**
-- Purpose: Queue dispatch and the frozen event-fact dataclasses.
-- Key files: `full_event_handler.py`; `events/base.py` (frozen `Event` base) and per-domain event modules.
+- Purpose: The dispatcher and the event vocabulary.
+- Contains: `full_event_handler.py` (the `EventHandler` + `_routes` literal) and the `events/` package.
+- Key files: `events_handler/full_event_handler.py`, `events_handler/events/base.py`, `events/market.py`, `events/signal.py`, `events/order.py`, `events/fill.py`, `events/error.py`.
+
+**`itrader/trading_system/`:**
+- Purpose: Composition roots that wire the component graph and drive runs.
+- Contains: `backtest_trading_system.py`, `live_trading_system.py`, `trading_interface.py`, `simulation/time_generator.py`.
 
 **`itrader/<domain>_handler/`:**
-- Purpose: One domain each (order, execution, portfolio, strategy, screeners, price). Thin `<Domain>Handler` interface + fat `<Domain>Manager` / sub-components.
-- Pattern: handler receives `global_queue`, delegates logic, emits events.
+- Purpose: One domain each; thin `<Domain>Handler` (queue interface) + fat `<Domain>Manager` (logic).
+- Contains: handler, manager, validators, pluggable sub-models, `storage/` backends.
 
-**`itrader/core/`:**
-- Purpose: Cross-cutting enums, exceptions, ids, money, clock, read-model protocols. Depends on nothing inside `itrader`.
-
-**`itrader/config/`:**
-- Purpose: Pydantic config models; `SystemConfig.default()` is constructed directly (registry/provider getters removed).
+**`itrader/price_handler/`:**
+- Purpose: Look-ahead-safe data access and `BarEvent` production.
+- Key files: `price_handler/feed/bar_feed.py` (bar-timing contract), `price_handler/store/csv_store.py`, `price_handler/store/sql_store.py`.
 
 **`itrader/reporting/`:**
-- Purpose: Pure builders for run artifacts (`frames.py`) and derived metrics (`metrics.py`); plotting in `plots.py`.
-
-**`tests/`:**
-- Purpose: `unit/` mirrors source tree; `integration/` holds run-path/wiring tests; `golden/` holds the frozen numerical oracle (`trades.csv`, `equity.csv`, `summary.json`) and re-freeze records.
+- Purpose: Pure builders for run artifacts and derived metrics (no queue access).
+- Key files: `reporting/frames.py`, `reporting/metrics.py`, `reporting/summary.py`, `reporting/plots.py`.
 
 ## Key File Locations
 
 **Entry Points:**
-- `itrader/trading_system/backtest_trading_system.py`: `TradingSystem.run()` — backtest.
-- `itrader/trading_system/live_trading_system.py`: `LiveTradingSystem.start()` — live.
-- `scripts/run_backtest.py`: reproducible oracle generator (`make backtest`).
+- `scripts/run_backtest.py`: Reproducible oracle generator (`make backtest`).
+- `itrader/trading_system/backtest_trading_system.py`: `TradingSystem.run()` (backtest composition root + loop).
+- `itrader/trading_system/live_trading_system.py`: `LiveTradingSystem.start()` (live).
+- `itrader/trading_system/trading_interface.py`: web/API order injection bridge.
 
 **Configuration:**
-- `itrader/__init__.py`: process singletons (`config`, `logger`, `idgen`).
-- `itrader/config/system.py`: `SystemConfig`, `PerformanceSettings` (`rng_seed` default 42).
-- `pyproject.toml`: deps + pytest config (`filterwarnings=["error"]`, strict markers).
-- `settings/`: YAML overrides (gitignored in prod), defaults under `settings/domains/`.
+- `pyproject.toml`: dependencies, pytest config (`filterwarnings=["error"]`, strict markers), mypy `--strict`.
+- `itrader/config/system.py`: `SystemConfig.default()`.
+- `itrader/config/settings.py`: `Settings(BaseSettings)`, env prefix `ITRADER_`.
+- `settings/domains/*.default.yaml`: tracked default YAML overrides.
+- `.env`: DB URLs and exchange credentials (present; never read contents).
 
 **Core Logic:**
-- `itrader/events_handler/full_event_handler.py`: dispatch registry.
+- `itrader/events_handler/full_event_handler.py`: dispatch registry `_routes`.
 - `itrader/order_handler/order_manager.py`: order business logic.
 - `itrader/execution_handler/matching_engine.py`: resting-order matching.
-- `itrader/price_handler/feed/bar_feed.py`: bar-timing contract.
-- `itrader/portfolio_handler/portfolio.py`: per-portfolio state.
+- `itrader/portfolio_handler/portfolio.py`: per-portfolio state + 4 managers.
 
 **Testing:**
-- `tests/conftest.py`, `tests/unit/conftest.py`, `tests/integration/conftest.py`: fixtures.
-- `tests/golden/`: frozen oracle + cross-validation docs.
+- `tests/unit/`: per-module unit tests (mirror source).
+- `tests/integration/`: run-path wiring + oracle smoke.
+- `tests/e2e/`: scenario-based golden-master harness (`scenario_spec.py`, `conftest.py`).
+- `tests/golden/`: frozen oracle artifacts (`summary.json`, `trades.csv`, `equity.csv`) + cross-validation docs.
 
 ## Naming Conventions
 
 **Files:**
-- `snake_case.py` throughout. Handlers: `<domain>_handler.py`. Managers: `<domain>_manager.py`. Storage: `<backend>_storage.py`. Tests mirror source: `test_<module>.py`.
-- A few legacy strategy/screener files use other casing (`SMA_MACD_strategy.py`, `BestScreener.py`).
+- `snake_case.py` throughout — no exceptions.
+- Handlers: `<domain>_handler.py` (`order_handler.py`, `execution_handler.py`).
+- Managers: `<domain>_manager.py` (`order_manager.py`, `cash_manager.py`).
+- Abstract bases: `base.py` inside each domain package.
+- Storage backends: `<backend>_storage.py` (`in_memory_storage.py`, `postgresql_storage.py`).
+- Cost models: `<kind>_<model>.py` (`zero_fee_model.py`, `linear_slippage_model.py`).
+- Strategy classes use mixed-case filenames (`SMA_MACD_strategy.py`, `RSI_scalping_strategy.py`) under `strategies/` and `my_strategies/`.
+- Tests mirror source: `test_<module>.py`.
 
 **Directories:**
-- Domains: `<domain>_handler/`. Pluggable families get their own subdir (`fee_model/`, `slippage_model/`, `exchanges/`, `storage/`, `providers/`, `store/`, `feed/`).
-- Portfolio sub-managers each get a subdir: `cash/`, `position/`, `transaction/`, `metrics/`.
-
-**Classes:**
-- `PascalCase`. Handlers `<Domain>Handler`; managers `<Domain>Manager`; abstract bases `Abstract<Name>`; config `<Domain>Config`; exceptions `<Specific><Category>Error`.
-
-**Methods / attributes:**
-- `snake_case`. Event callbacks `on_<event>()`; factories `new_<object>()`; booleans `is_<state>`; getters `get_<thing>()`; private `_<name>`.
-- Queue attr: `global_queue` (or `events_queue`); logger: `self.logger`; config: `self.config`.
-
-**Enums:**
-- `PascalCase` names, `UPPER_CASE` members; string-to-enum maps `<domain>_<type>_map`.
+- `<domain>_handler/` for each handler domain.
+- Sub-managers split into their own subdir: `cash/`, `position/`, `transaction/`, `metrics/`.
+- E2E scenarios: one folder per scenario with `scenario.py`, `test_scenario.py`, `bars.csv`, `golden/`.
 
 ## Where to Add New Code
 
 **New event type:**
-- Define dataclass under `itrader/events_handler/events/<domain>.py` (subclass frozen `Event`).
-- Add member to `itrader/core/enums/event.py::EventType`.
-- Add a branch to `EventHandler._routes` in `itrader/events_handler/full_event_handler.py`.
+- Dataclass: `itrader/events_handler/events/<domain>.py` (frozen, subclass `Event`).
+- Enum member: `itrader/core/enums/event.py::EventType`.
+- Route branch: `itrader/events_handler/full_event_handler.py::EventHandler._routes`.
 
 **New strategy:**
-- Implementation: `itrader/strategy_handler/my_strategies/<category>/` (subclass `strategy_handler/base.py::Strategy`).
-- Tests: `tests/unit/strategy/`.
+- Reference-style strategy: `itrader/strategy_handler/strategies/`.
+- Library/experimental strategy: `itrader/strategy_handler/my_strategies/<category>/`.
+- Config: extend `itrader/strategy_handler/config.py`; register via `strategies_handler.add_strategy(...)`.
 
-**New exchange / fee / slippage model:**
-- Exchange: `itrader/execution_handler/exchanges/<name>.py` implementing `exchanges/base.py::AbstractExchange`.
-- Fee/slippage: `itrader/execution_handler/fee_model/<name>_fee_model.py` / `slippage_model/<name>_slippage_model.py`.
+**New exchange / cost model:**
+- Exchange: `itrader/execution_handler/exchanges/` (implement `exchanges/base.py`).
+- Fee model: `itrader/execution_handler/fee_model/` (implement `fee_model/base.py`).
+- Slippage model: `itrader/execution_handler/slippage_model/` (implement `slippage_model/base.py`).
 
-**New order-storage backend:**
-- `itrader/order_handler/storage/<backend>_storage.py`; register in `storage_factory.py`.
+**New order/portfolio storage backend:**
+- Order: `itrader/order_handler/storage/<backend>_storage.py` + register in `storage_factory.py`.
+- Portfolio: `itrader/portfolio_handler/storage/`.
 
-**New price provider / store:**
-- Provider: `itrader/price_handler/providers/<name>_provider.py` (base in `providers/base.py`).
-- Store: `itrader/price_handler/store/<name>_store.py` (base in `store/base.py`).
+**New reporting metric/frame:**
+- Pure builders only: `itrader/reporting/metrics.py` or `itrader/reporting/frames.py` (no queue access).
 
-**Shared types / utilities:**
-- Cross-cutting enums/exceptions/ids: `itrader/core/`.
-- Small helpers: `itrader/outils/`.
-- Reporting metrics/frames: `itrader/reporting/`.
+**New tests:**
+- Unit: `tests/unit/<domain>/test_<module>.py` (mirror source path).
+- E2E scenario: new folder under `tests/e2e/<group>/<scenario>/` with `scenario.py`, `test_scenario.py`, `bars.csv`, `golden/`.
 
-**Tests:**
-- Unit tests mirror the source tree under `tests/unit/<domain>/`.
-- Run-path / wiring tests under `tests/integration/`.
-- Every pytest marker must be declared in `pyproject.toml` (`--strict-markers`).
+**Utilities:**
+- Shared helpers: `itrader/outils/` (IDs, time parsing) or `itrader/core/` (primitives).
 
 ## Special Directories
 
+**`output/`:**
+- Purpose: Generated run artifacts (`trades.csv`, `equity.csv`, `summary.json`).
+- Generated: Yes (by `scripts/run_backtest.py`).
+- Committed: No (gitignored).
+
 **`tests/golden/`:**
-- Purpose: Frozen numerical oracle (`trades.csv`, `equity.csv`, `summary.json`) + re-freeze/cross-validation records.
-- Generated: Yes (by `scripts/run_backtest.py`). Committed: Yes — changed only at named re-freeze points.
+- Purpose: Frozen numerical oracle + cross-validation reference docs.
+- Generated: Yes (re-frozen only at named D-11 re-freeze points).
+- Committed: Yes.
 
 **`settings/`:**
-- Purpose: YAML config + `domains/` defaults. Committed: production YAML is gitignored; `*.default.yaml` defaults are tracked.
-
-**`output/`:**
-- Purpose: Backtest artifact output target. Generated: Yes. Committed: typically gitignored.
+- Purpose: YAML config overrides. `*.default.yaml` (and `domains/*.default.yaml`) are tracked defaults; runtime overrides are gitignored in prod. `backups/` holds timestamped snapshots.
+- Committed: defaults only.
 
 **`data/`:**
-- Purpose: Golden OHLCV dataset (`BTCUSD_1d_ohlcv_2018_2026.csv`). Committed: Yes.
+- Purpose: Golden OHLCV CSVs (`BTCUSD_1d_ohlcv_2018_2026.csv` is the canonical golden dataset; `raw/` holds pre-normalized inputs).
+- Committed: Yes.
 
-**`htmlcov/`, `.mypy_cache/`, `.pytest_cache/`, `__pycache__/`:**
-- Purpose: Generated tooling artifacts. Committed: No.
+**`htmlcov/`, `.mypy_cache/`, `.pytest_cache/`, `.venv/`:**
+- Generated tooling caches/output; not source. `.venv/` is in-project (Poetry).
 
 ---
 
-*Structure analysis: 2026-06-08*
+*Structure analysis: 2026-06-10*
