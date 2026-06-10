@@ -97,6 +97,26 @@ from itrader.reporting.summary import (
 COMMISSION_COLUMN = ["commission"]
 
 
+# --- Per-portfolio summary snapshot columns (D-01, MULTI-03, oracle-dark) ----
+# A conftest-LOCAL column set: one row per portfolio in a multi-portfolio
+# scenario, keyed on the STABLE PortfolioSpec.name (NEVER the UUIDv7 PortfolioId,
+# which is non-deterministic — Pitfall 2). final_cash/final_equity/trade_count/
+# realised_pnl are sourced from the EXISTING build_summary dict per portfolio
+# (total_realised_pnl → realised_pnl). Like COMMISSION_COLUMN, this is
+# DELIBERATELY harness-local and must NEVER be merged into
+# itrader.reporting.frames.TRADE_COLUMNS — that pin feeds scripts/run_backtest.py
+# + the BTCUSD oracle (test_backtest_oracle.py), which must stay byte-exact
+# (oracle-dark, Pitfall 3). The frame is built ALWAYS in _assemble but only
+# frozen/diffed behind the portfolios.csv exists() gate (opt-in, D-01).
+PORTFOLIO_SNAPSHOT_COLUMNS = [
+    "portfolio",
+    "final_cash",
+    "final_equity",
+    "trade_count",
+    "realised_pnl",
+]
+
+
 # --- Exact-diff column contract (reused VERBATIM from the oracle, D-08) ------
 # Identity columns are the behavioral law (which trade, which bar); the remaining
 # columns are auto-derived numeric and diffed EXACT. NO float tolerance — a
@@ -126,6 +146,11 @@ _CASH_OPS_IDENTITY_COLUMNS = ["correlation", "operation_type"]
 # diff cannot diverge on a residual tie because both fresh and golden flow through
 # the same serializer and are re-sorted identically by this key set.
 _CASH_OPS_SORT_KEYS = ["correlation", "operation_type", "amount"]
+# Per-portfolio snapshot identity (Phase 9, D-01): which portfolio (the stable
+# PortfolioSpec.name key — NEVER the UUIDv7 PortfolioId, Pitfall 2). The name is
+# also the only sort key — names are author-chosen distinct per scenario.
+_PORTFOLIO_IDENTITY_COLUMNS = ["portfolio"]
+_PORTFOLIO_SORT_KEYS = ["portfolio"]
 
 
 def pytest_addoption(parser):
@@ -323,12 +348,14 @@ def _build_and_run(spec):
     # Read portfolio state AFTER the run (queue-only — D-07). The canary scenarios
     # are single-portfolio; the assembled summary pins from portfolios[0]. The
     # portfolio_id is threaded out so _assemble can query the order mirror.
+    # The FULL portfolio_ids list is ALSO threaded out (D-01) so _assemble can
+    # build the per-portfolio snapshot for every portfolio, not just [0].
     portfolio = system.portfolio_handler.get_portfolio(portfolio_ids[0])
-    return system, portfolio, portfolio_ids[0]
+    return system, portfolio, portfolio_ids[0], portfolio_ids
 
 
-def _assemble(spec, system, portfolio, portfolio_id):
-    """Assemble trades / equity / summary / orders / cash_ops via the SHARED reporting path (D-16)."""
+def _assemble(spec, system, portfolio, portfolio_id, portfolio_ids):
+    """Assemble trades / equity / summary / orders / cash_ops / portfolios via the SHARED reporting path (D-16)."""
     trades = build_trade_log(portfolio)
     equity = build_equity_curve(portfolio)
 
@@ -398,7 +425,40 @@ def _assemble(spec, system, portfolio, portfolio_id):
     )
     # D-15: nested derived-metrics block — produced every run.
     summary["metrics"] = build_metrics_block(equity, trades)
-    return trades, equity, summary, orders, cash_ops
+
+    # Phase 9 (D-01, MULTI-03): the per-portfolio summary snapshot for the opt-in
+    # portfolios.csv golden. Built ALWAYS (oracle-dark via the _freeze/_diff
+    # exists() gate). Reuses ONLY the existing read surface — get_portfolio
+    # (portfolio_handler.py:168) + build_trade_log/build_summary — with NO
+    # production change. spec.portfolios[i] aligns with portfolio_ids[i] by the
+    # _build_and_run construction order. Keyed on the STABLE PortfolioSpec.name
+    # (NEVER the UUIDv7 PortfolioId — Pitfall 2).
+    portfolio_rows = []
+    for spec_pf, pid in zip(spec.portfolios, portfolio_ids):
+        pf = system.portfolio_handler.get_portfolio(pid)
+        pf_trades = build_trade_log(pf)
+        pf_summary = build_summary(
+            pf,
+            pf_trades,
+            ticker=spec.ticker,
+            timeframe=spec.timeframe,
+            start_date=spec.start,
+            end_date=spec.end,
+            starting_cash=spec_pf.cash,
+        )
+        portfolio_rows.append(
+            {
+                "portfolio": spec_pf.name,
+                "final_cash": pf_summary["final_cash"],
+                "final_equity": pf_summary["final_equity"],
+                "trade_count": pf_summary["trade_count"],
+                "realised_pnl": pf_summary["total_realised_pnl"],
+            }
+        )
+    portfolios_frame = pd.DataFrame(
+        portfolio_rows, columns=PORTFOLIO_SNAPSHOT_COLUMNS)
+
+    return trades, equity, summary, orders, cash_ops, portfolios_frame
 
 
 def _diff_frame(fresh, gold, identity_columns, sort_keys):
@@ -467,7 +527,7 @@ def _diff_summary(fresh_summary, golden_summary):
         )
 
 
-def _freeze(golden_dir, trades, equity, summary, orders, cash_ops):
+def _freeze(golden_dir, trades, equity, summary, orders, cash_ops, portfolios_frame):
     """WRITE goldens using the SAME serialization as the oracle generator (D-06).
 
     Default freeze = trades.csv + summary.json (always). equity.csv, orders.csv AND
@@ -518,6 +578,15 @@ def _freeze(golden_dir, trades, equity, summary, orders, cash_ops):
             golden_dir / "cash_operations.csv", index=False, float_format=FLOAT_FORMAT
         )
 
+    # portfolios.csv is opt-in (D-01): only refreshed if the leaf already froze it
+    # (multi-portfolio scenarios whose assertion is per-portfolio cash isolation).
+    # This keeps the per-portfolio snapshot serializer ORACLE-DARK — it
+    # materializes only when a leaf commits the placeholder golden file.
+    if (golden_dir / "portfolios.csv").exists():
+        portfolios_frame[PORTFOLIO_SNAPSHOT_COLUMNS].to_csv(
+            golden_dir / "portfolios.csv", index=False, float_format=FLOAT_FORMAT
+        )
+
 
 def _roundtrip(frame, columns):
     """Serialize ``frame[columns]`` the SAME way ``_freeze`` writes a golden, then
@@ -538,7 +607,7 @@ def _roundtrip(frame, columns):
     return pd.read_csv(buffer)
 
 
-def _diff(golden_dir, trades, equity, summary, orders, cash_ops):
+def _diff(golden_dir, trades, equity, summary, orders, cash_ops, portfolios_frame):
     """DIFF ONLY the golden files PRESENT in the leaf (D-05: presence = assertion).
 
     A leaf that froze only trades.csv + summary.json asserts only those; equity.csv,
@@ -575,6 +644,12 @@ def _diff(golden_dir, trades, equity, summary, orders, cash_ops):
         gold = pd.read_csv(cash_ops_golden)
         fresh = _roundtrip(cash_ops, CASH_OPERATION_COLUMNS)
         _diff_frame(fresh, gold, _CASH_OPS_IDENTITY_COLUMNS, _CASH_OPS_SORT_KEYS)
+
+    portfolios_golden = golden_dir / "portfolios.csv"
+    if portfolios_golden.exists():
+        gold = pd.read_csv(portfolios_golden)
+        fresh = _roundtrip(portfolios_frame, PORTFOLIO_SNAPSHOT_COLUMNS)
+        _diff_frame(fresh, gold, _PORTFOLIO_IDENTITY_COLUMNS, _PORTFOLIO_SORT_KEYS)
 
     summary_golden = golden_dir / "summary.json"
     if summary_golden.exists():
@@ -615,14 +690,16 @@ def run_scenario(request):
     def _run(here):
         here = pathlib.Path(here)
         spec = _load_spec(here / "scenario.py")
-        system, portfolio, portfolio_id = _build_and_run(spec)
-        trades, equity, summary, orders, cash_ops = _assemble(
-            spec, system, portfolio, portfolio_id)
+        system, portfolio, portfolio_id, portfolio_ids = _build_and_run(spec)
+        trades, equity, summary, orders, cash_ops, portfolios_frame = _assemble(
+            spec, system, portfolio, portfolio_id, portfolio_ids)
 
         golden_dir = here / "golden"
         if freeze:
-            _freeze(golden_dir, trades, equity, summary, orders, cash_ops)
+            _freeze(golden_dir, trades, equity, summary, orders, cash_ops,
+                    portfolios_frame)
         else:
-            _diff(golden_dir, trades, equity, summary, orders, cash_ops)
+            _diff(golden_dir, trades, equity, summary, orders, cash_ops,
+                  portfolios_frame)
 
     return _run
