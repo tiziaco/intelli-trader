@@ -1,6 +1,6 @@
 from datetime import datetime, time
 from decimal import Decimal
-from typing import Optional, List, Dict, Any, cast
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
@@ -11,13 +11,13 @@ from ..core.portfolio_read_model import PortfolioReadModel
 
 
 def _portfolio_id(order: Order) -> PortfolioId:
-    """Bridge the entity's ``PortfolioId | int`` field to the Protocol type.
+    """Return the order's PortfolioId for Protocol reads.
 
-    02-05 carry-over: the Order entity still declares ``portfolio_id`` as
-    ``PortfolioId | int`` while the runtime value is a native UUID — the cast
-    bridges until the entity-field retype lands (deferred, not this plan).
+    FL-02: the Order entity now declares ``portfolio_id`` as ``PortfolioId``
+    (#10 carry-forward complete), so this is a direct pass-through — the
+    former bridging cast is no longer needed.
     """
-    return cast(PortfolioId, order.portfolio_id)
+    return order.portfolio_id
 
 
 class ValidationLevel(Enum):

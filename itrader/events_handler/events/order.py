@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Any
 
 from itrader.core.enums import EventType, OrderCommand, OrderType, Side
-from itrader.core.ids import OrderId, StrategyId
+from itrader.core.ids import OrderId, PortfolioId, StrategyId
 
 from .base import Event
 
@@ -49,7 +49,8 @@ class OrderEvent(Event):
     quantity: Decimal
     exchange: str
     strategy_id: StrategyId
-    portfolio_id: int
+    # FL-02: portfolio_id carries a UUIDv7-backed PortfolioId (#10 carry-forward).
+    portfolio_id: PortfolioId
     order_type: OrderType
     # D-12: required linkage — ids are UUIDv7-backed since M2; an OrderEvent
     # without its entity id is malformed by construction (TypeError).

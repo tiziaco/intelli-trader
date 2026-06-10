@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from itrader.core.enums import EventType, OrderType, Side
-from itrader.core.ids import StrategyId
+from itrader.core.ids import PortfolioId, StrategyId
 # Pitfall 3 (cycle safety): the typed sizing vocabulary is imported from
 # itrader.core.sizing ONLY — NEVER from order_handler (which imports events).
 from itrader.core.sizing import SizingPolicy, SLTPPolicy, TradingDirection
@@ -46,8 +46,8 @@ class SignalEvent(Event):
         Take profit price for the instrument (Decimal, D-22)
     strategy_id: `StrategyId`
         The ID of the strategy who generated the signal
-    portfolio_id: `int`
-        The ID of the portfolio where to transact the position
+    portfolio_id: `PortfolioId`
+        The UUIDv7-backed identity of the portfolio where to transact the position
     sizing_policy: `SizingPolicy`
         The strategy's DECLARED sizing policy (D-01) — the order layer's
         resolver turns it into a per-portfolio quantity; strategies never
@@ -81,7 +81,8 @@ class SignalEvent(Event):
     take_profit: Decimal
     # 02-05 carry-over: strategy_id carries a UUIDv7-backed StrategyId, not a raw int.
     strategy_id: StrategyId
-    portfolio_id: int
+    # FL-02: portfolio_id carries a UUIDv7-backed PortfolioId (#10 carry-forward).
+    portfolio_id: PortfolioId
     # D-01: the untyped settings dict is DEAD — the signal carries the
     # typed policy vocabulary instead (kw_only, so required fields may
     # follow defaulted ones).
