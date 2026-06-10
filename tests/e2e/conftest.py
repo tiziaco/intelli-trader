@@ -360,6 +360,23 @@ def _build_and_run(spec):
 
     # Phase 6 (D-06): build the operator hook from spec.actions. Empty actions →
     # _make_on_tick returns None → byte-exact run (oracle-dark).
+    #
+    # WR-04: _make_on_tick hard-binds every operator MODIFY/CANCEL action to the FIRST
+    # portfolio (portfolio_ids[0]) and resolves the target against THAT portfolio's
+    # order book only. Phase 9 introduces the first multi-portfolio specs (e.g.
+    # fanout_portfolios with pf_a/pf_b), but NONE of the Phase-9 leaves carry actions,
+    # so the single-portfolio assumption is latent today. Make it an EXPLICIT,
+    # enforced precondition rather than a silent assumption: operator actions are only
+    # supported for single-portfolio specs. A future multi-portfolio operator leaf
+    # must thread a target portfolio onto Action (e.g. a `portfolio: str | None` field
+    # resolved by name) and pass the full portfolio_ids map into _make_on_tick before
+    # this guard can be relaxed — otherwise a pf_b-intended action would silently
+    # target pf_a's book.
+    assert not getattr(spec, "actions", ()) or len(spec.portfolios) == 1, (
+        "operator actions are only supported with single-portfolio specs (WR-04): "
+        "_make_on_tick binds to portfolio_ids[0] only. A multi-portfolio operator "
+        "leaf must add a per-action target portfolio before this is safe."
+    )
     system.run(print_summary=False, on_tick=_make_on_tick(spec, portfolio_ids[0]))
 
     # Read portfolio state AFTER the run (queue-only — D-07). The canary scenarios
@@ -388,6 +405,21 @@ def _assemble(spec, system, portfolio, portfolio_id, portfolio_ids):
     cash_ops = build_cash_operations(portfolio.cash_manager.get_cash_operations())
 
     # D-17: post-hoc slippage attribution from the store's close series.
+    #
+    # WR-05 INVARIANT: the harness reads ONE close series (spec.ticker) and attributes
+    # it to EVERY trade row, regardless of the row's own ticker. attach_slippage ->
+    # decision_close (summary.py) raises ValueError when a fill timestamp lands AFTER
+    # spec.ticker's first bar (searchsorted index > 0) but is NOT an actual member of
+    # spec.ticker's close index. So EVERY traded ticker's fill dates MUST be a subset
+    # of spec.ticker's date grid, OR fall entirely before its first bar (then the
+    # `position <= 0` early-return yields decision_close = 0.0 — see union_window's BTC
+    # row). The Phase-9 leaves satisfy this (co-loaded tickers share identical date
+    # grids; AAVE fills sit within BTC's window via the early-return). A FUTURE leaf
+    # where a non-spec.ticker fill lands on a date present in that ticker's grid but
+    # ABSENT from spec.ticker's grid (e.g. the differing-END-date shape explicitly
+    # out-of-scope in union_window/scenario.py) would raise here and ABORT the run with
+    # a ValueError, not a clean diff failure. Such a leaf must attribute slippage
+    # per-ticker against each row's own `pair` close series before it can be authored.
     closes = system.store.read_bars(spec.ticker)["close"]
     trades = attach_slippage(trades, closes)
 
@@ -424,6 +456,19 @@ def _assemble(spec, system, portfolio, portfolio_id, portfolio_ids):
         # there and one_to_one trips. ``pair`` is the trade frame's ticker column
         # (frames.py:35, Position.to_dict :264) so adding it is backward-compatible:
         # single-ticker leaves keep a unique key and an identical merged column.
+        #
+        # WR-06 PRECONDITION: the trade-frame key (pair, entry_date, exit_date, side)
+        # MUST be unique per leaf. `pair` disambiguates DIFFERENT-ticker round-trips
+        # sharing identical (entry_date, exit_date, side), but it does NOT make the key
+        # unique WITHIN a single ticker: two same-ticker round-trips closing on the SAME
+        # entry/exit bars with the same side (e.g. a future scale-in/scale-out shape, or
+        # two identical same-bar positions) produce a non-unique key and validate=
+        # "one_to_one" raises a pandas MergeError — aborting the scenario as a confusing
+        # merge error rather than a clean diff. That hard-failure is INTENDED (better
+        # than silent many-to-many commission duplication), but it is an authoring
+        # constraint: two same-ticker same-bar round-trips are UNSUPPORTED by commission
+        # attribution. Such a leaf must strengthen the key with a per-position
+        # discriminator (e.g. net_quantity / total_bought) before it can be authored.
         trades = trades.merge(
             commission_frame, on=["pair", "entry_date", "exit_date", "side"],
             how="left", validate="one_to_one"
