@@ -1,5 +1,5 @@
 ---
-status: passed
+status: complete
 phase: 09-multi-entity-robustness-metrics-edges
 source: [09-VERIFICATION.md, 09-REVIEW.md]
 started: 2026-06-10T00:00:00Z

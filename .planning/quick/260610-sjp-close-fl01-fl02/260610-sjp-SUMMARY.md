@@ -1,4 +1,5 @@
 ---
+status: complete
 phase: quick-260610-sjp
 plan: 01
 subsystem: portfolio-handler / events / order-handler
