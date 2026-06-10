@@ -468,6 +468,19 @@ def _freeze(golden_dir, trades, equity, summary, orders, cash_ops):
     cash_operations.csv are opt-in (D-06/D-09/D-02): only (re)written when one
     already exists in the leaf's golden/. A pure-fill scenario (MATCH-01/02/03)
     never freezes orders.csv; only the cash-edge leaves freeze cash_operations.csv.
+
+    IN-02 (tracking note, inherited Phase-4 harness behavior): ``float_format`` is
+    SILENTLY INERT on columns whose cells are ``Decimal`` objects (object dtype) —
+    pandas only formats genuine float cells. A money column that stays ``Decimal``
+    on both sides (e.g. ``trades.avg_sold``, frozen as the full Decimal repr
+    ``135.000000000000000000000`` while sibling float columns are ``135.0000000000``
+    at 10 dp) therefore compares full-precision strings, which the round-trip in
+    ``_roundtrip`` survives only because ``read_csv`` re-parses BOTH sides to
+    identical floats. The cash serializer is UNAFFECTED — it casts ``float(op.amount)``
+    at the edge so its columns are genuine floats and DO get 10-dp normalized. To
+    make the 10-dp contract reach Decimal columns too, cast money columns to float
+    before ``to_csv`` (or apply ``FLOAT_FORMAT`` via an explicit per-column map);
+    deferred here because it would re-freeze inherited Phase-4 trade goldens.
     """
     golden_dir.mkdir(parents=True, exist_ok=True)
 
