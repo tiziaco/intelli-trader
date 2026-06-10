@@ -2,6 +2,7 @@
 phase: 08-admission-position-management-cash-edges
 reviewed: 2026-06-10T00:00:00Z
 depth: standard
+iteration: 3
 files_reviewed: 14
 files_reviewed_list:
   - itrader/reporting/cash_operations.py
@@ -20,140 +21,84 @@ files_reviewed_list:
   - tests/e2e/cash/release_rejected/scenario.py
 findings:
   critical: 0
-  warning: 2
-  info: 3
-  total: 5
-status: issues_found
+  warning: 0
+  info: 0
+  total: 0
+status: clean
 ---
 
 # Phase 08: Code Review Report
 
 **Reviewed:** 2026-06-10
 **Depth:** standard
+**Iteration:** 3 (final --auto re-review after fixes for WR-03, IN-04)
 **Files Reviewed:** 14
-**Status:** issues_found
+**Status:** clean
 
 ## Summary
 
-This phase adds a determinism-safe cash-ledger snapshot serializer
-(`itrader/reporting/cash_operations.py`), the full E2E scenario harness
-(`tests/e2e/conftest.py` — wholly new in this diff range), the generic
-`ScriptedEmitter` strategy fixture, and seven regression-lock scenario leaves
-(four admission, three cash-edge). I ran the suite: all 7 scenarios pass and the
-committed goldens are internally self-consistent and match their hand-derived
-VERIFY notes.
+This is the iteration-3 (final) re-review. It confirms the two iteration-2 fixes
+(WR-03 VERIFY-table padding sync, IN-04 conftest comment) landed correctly and hunts
+adversarially for any regression they introduced. The phase suite is green: `7 passed
+in 0.23s` over `tests/e2e/admission` + `tests/e2e/cash`. No open findings remain.
 
-Code quality is high — heavy decision-anchored documentation, Decimal kept internal
-with `float()` only at the serialization edge, no float-money defects, no secrets,
-no dangerous calls. My adversarial focus was therefore on (a) whether the goldens
-actually catch the regressions they claim to lock, and (b) latent correctness traps
-in the serializer/diff machinery that the current small fixtures do not exercise. No
-BLOCKERs surfaced. The findings below are robustness gaps that do not bite the
-committed fixtures but will produce silent wrong behavior or spurious failures as
-soon as a future leaf crosses a boundary the current ones do not.
+**Iteration-2 fixes — confirmed applied and correct:**
 
-## Warnings
+- **WR-03 (VERIFY tables out of sync with re-frozen goldens):** RESOLVED. A targeted
+  grep across all phase `scenario.py` docstrings finds ZERO unpadded `ORDER-<digit>`
+  labels remaining; every VERIFY hand-derivation table now prints the padded
+  `ORDER-001`..`ORDER-005` form. I diffed each table against its frozen golden byte
+  set:
+  - `scale_in/scenario.py:99-105` matches `scale_in/golden/cash_operations.csv`
+    (`ORDER-001` x2, `ORDER-002`, `ORDER-003` x2, `ORDER-004`, `ORDER-005`; amounts,
+    balance_before, balance_after all reconcile).
+  - `release_cancelled/scenario.py:81-82` and `release_refused/scenario.py:84-85`
+    match their goldens (`ORDER-001` RESERVATION/RELEASE_RESERVATION pair, 3200 and
+    4000 respectively). Surrounding prose (`ORDER-{n}` / "SAME ORDER-001") is
+    consistent.
+  The note-vs-golden contradiction that motivated WR-03 is gone; the load-bearing
+  human-oracle audit trail is internally consistent again.
 
-### WR-01: `correlation` ordinal uses string sort — ORDER-10 sorts before ORDER-2
+- **IN-04 (serializer `_seq` tiebreak asymmetry vs harness sort):** RESOLVED. The
+  forestalling comment is present at `conftest.py:122-127`, explaining that the
+  serializer already imposes a total order via the dropped `_seq` and that adding
+  `_seq` to `_CASH_OPS_SORT_KEYS` would crash (it is not a column on the returned
+  frame). This matches the recommended fix exactly. I re-confirmed the underlying
+  behavior is benign: `_diff_frame` re-sorts fresh and golden by the identical key
+  set on identical row content, so any residual `(correlation, operation_type,
+  amount)` tie resolves deterministically and identically on both sides.
 
-**File:** `itrader/reporting/cash_operations.py:83,94-95` and `tests/e2e/conftest.py:122,558`
-**Issue:** The derived correlation label is `f"ORDER-{n}"` (a string), and both the
-serializer's internal sort (`sort_values(["correlation", ...])`, line 94) and the
-harness diff sort (`_CASH_OPS_SORT_KEYS = ["correlation", "operation_type",
-"amount"]`, conftest:122 consumed at conftest:558) sort it lexicographically. With
-ten or more distinct references the row order becomes `ORDER-1, ORDER-10, ORDER-11,
-..., ORDER-2`, not numeric order. Because fresh and golden sort identically the diff
-will not spuriously fail, but the frozen golden row order stops tracking
-first-appearance/chronological order, which silently defeats the human-readability
-contract the serializer docstring sells ("a RESERVATION matchable to its RELEASE",
-lines 22-31) and makes any future hand-verification of a 10+-order cash ledger
-error-prone. The committed leaves top out at ORDER-5 (scale_in), so this is latent
-today.
-**Fix:** Zero-pad the ordinal so lexical sort equals numeric sort:
-```python
-return f"ORDER-{self._ordinals[ref]:03d}"
-```
-or sort on a numeric key extracted from the ordinal rather than the raw label, and
-apply the same change wherever `_CASH_OPS_SORT_KEYS` is consumed so both producers
-agree.
+**Regression hunt — none found.** I specifically checked the surfaces the two fixes
+touched:
 
-### WR-02: `build_cash_operations` reads duck-typed attributes with no guard — shape drift fails opaquely
+- The WR-03 edits are docstring-only; they cannot alter runtime behavior, and the
+  suite still passes with byte-exact goldens. No golden was re-frozen this iteration
+  (the committed CSVs already carried the padded form from iteration 1's WR-01
+  re-freeze).
+- The IN-04 edit is a comment-only addition to `conftest.py`; no executable code
+  changed.
 
-**File:** `itrader/reporting/cash_operations.py:85-91`
-**Issue:** The row comprehension reads `op.reference_id`, `op.operation_type.name`,
-`op.amount`, `op.balance_before`, `op.balance_after` directly on a deliberately
-duck-typed input ("`CashOperation`-shaped objects, NO handler import", docstring
-lines 6-9). If `CashOperation` ever drops/renames a field, or `operation_type` is
-ever a plain string instead of an enum (no `.name`), every cash-edge leaf fails with
-a bare `AttributeError` deep inside a list comprehension, with no indication of which
-field or which operation is malformed — the opposite of the explanatory
-hard-failure discipline the harness applies elsewhere (conftest:299 portfolio
-assertion, conftest:216-223 operator predicate). For a test-infra serializer whose
-whole job is to make cash-ledger regressions diagnosable, an opaque attribute crash
-is a quality gap.
-**Fix:** Pin the contract or fail with a field-naming message, e.g.
-```python
-required = ("reference_id", "operation_type", "amount",
-            "balance_before", "balance_after")
-for op in operations:
-    missing = [a for a in required if not hasattr(op, a)]
-    if missing:
-        raise TypeError(f"cash operation {op!r} missing fields {missing}")
-```
-At minimum assert `operation_type` exposes `.name` so the failure names the cause.
+**Independent re-verification of earlier fixes (still holding):**
 
-## Info
+- `cash_operations.py:93` emits `f"ORDER-{_ordinals[ref]:03d}"` (WR-01); the
+  duck-typed field/enum guard (`cash_operations.py:102-119`, WR-02) fires only on
+  shape drift; the `_seq` total-order tiebreak (`cash_operations.py:140-143`, IN-01)
+  is dropped before return so the frame columns equal `CASH_OPERATION_COLUMNS`.
+- The WR-03 UTC date-frame anchoring is consistent across BOTH producers
+  (`conftest.py:212` `_make_on_tick` and `scripted_emitter.py:132` `generate_signal`),
+  and the committed bar CSVs are UTC-stamped, so the operator-hook date key and the
+  emitter decision-date key agree — verified against `max_positions/bars.csv` and
+  `bars_eth.csv`.
+- Cross-validation of goldens against their VERIFY derivations holds end-to-end:
+  `scale_out` `avg_sold=135` / `slippage_exit=-25.0`; `re_entry` two round-trips at
+  `realised_pnl=400` each; `release_rejected` REJECTED row `quantity=1000`;
+  `max_positions` REJECTED row `quantity=0` (gate-before-sizing). All numbers
+  reconcile.
 
-### IN-01: `amount` is the only tiebreak after (correlation, operation_type) — relies on a stable sort, not a unique key
-
-**File:** `itrader/reporting/cash_operations.py:94-95`, `tests/e2e/conftest.py:122`
-**Issue:** Rows are ordered by `(correlation, operation_type, amount)`. Two
-operations sharing all three (e.g. two equal-amount RESERVATIONs on the same derived
-order) have no deterministic tiebreak beyond pandas' stable mergesort preserving the
-upstream `get_cash_operations()` insertion order. That upstream order is
-deterministic in single-threaded backtest, so the goldens are reproducible today,
-but the sort key is not a total order while the docstring oversells it as "a stable
-business key so order is reproducible across runs" (lines 29-31).
-**Fix:** Document the stable-sort + deterministic-source dependency, or carry a
-source index as the final tiebreak: `frame["_seq"] = range(len(frame))`, sort with
-`_seq` last, then drop it — making the key total.
-
-### IN-02: `float_format=FLOAT_FORMAT` is silently inert on Decimal-object columns
-
-**File:** `tests/e2e/conftest.py:474-475,517` (interacts with frozen `trades.csv`
-goldens, e.g. `tests/e2e/admission/scale_out/golden/trades.csv`)
-**Issue:** `_freeze`/`_roundtrip` pass `float_format=FLOAT_FORMAT` to `to_csv`, but
-the engine emits money columns as `Decimal` objects (object dtype), and pandas'
-`float_format` only formats genuine float cells. The scale_out golden shows the
-artifact directly — `avg_sold` is frozen as `135.000000000000000000000` (full
-Decimal repr) while sibling float columns are `135.0000000000` (10 dp). The diff
-survives only because `read_csv` re-parses both sides to identical floats. This is a
-pre-existing harness property (Phase 4) now carried over the cash columns; it works
-but is fragile — a money column that stays Decimal on both sides would compare
-full-precision strings, masking or fabricating sub-10dp drift the FLOAT_FORMAT
-contract intends to normalize.
-**Fix:** Out of this phase's strict scope (inherited harness behavior) but worth a
-tracking note: cast money columns to float before `to_csv`, or apply `FLOAT_FORMAT`
-via an explicit map so the 10-dp normalization the docstring promises
-(conftest:509-514) actually reaches Decimal columns.
-
-### IN-03: `release_refused` VERIFY note understates the harness seam it depends on
-
-**File:** `tests/e2e/cash/release_refused/scenario.py:48-52`
-**Issue:** The note says `min_order_size` is "left at its small default" and only
-`max_order_size` is the lever. That is true of the `ExchangeConfig`, but the harness
-seam (conftest:290-291) re-derives BOTH `_min_order_size` and `_max_order_size` from
-the spec config whenever `spec.exchange is not None`. This leaf is safe (default min
-0.001, qty 40), but the note implies only `max_order_size` is threaded, which
-misrepresents the seam a future cash-edge author will copy from this leaf — a
-min-driven REFUSED scenario authored from this note would not realize the min cache
-is also live.
-**Fix:** Add one line: "the harness re-derives both `_min_order_size` and
-`_max_order_size` from `spec.exchange` (conftest:290-291); this leaf relies on the
-default min (0.001) and only moves `max_order_size`."
+All reviewed files meet quality standards. No issues found.
 
 ---
 
 _Reviewed: 2026-06-10_
 _Reviewer: Claude (gsd-code-reviewer)_
-_Depth: standard_
+_Depth: standard (iteration 3, --auto re-review, final)_
