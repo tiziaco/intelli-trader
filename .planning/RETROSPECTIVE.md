@@ -41,6 +41,44 @@
 
 ---
 
+## Milestone: v1.1 — Backtest Trustworthiness: Breadth
+
+**Shipped:** 2026-06-10
+**Phases:** 9 (Phases 1–9) | **Plans:** 28 | **Tasks:** 53
+
+### What Was Built
+- A 58-leaf frozen golden E2E matrix exercising the engine's *entire* feature surface — resting-order book, brackets/OCO, fee/slippage variants, sizing, SLTP policies, scale in/out, admission/cash edges, multi-ticker/multi-strategy/multi-portfolio, robustness/degenerate-metrics, determinism — all behavior-preserving (BTCUSD oracle byte-exact: 134 trades / `final_equity 46189.87730727451`).
+- New testing apparatus: dedicated `tests/e2e/` tree, registered `e2e` marker + folder-derived auto-marking, `make test-e2e`, and a shared golden-compare harness driving the real `TradingSystem` (no mocks) with a hand-verify-once-then-freeze discipline.
+- New production surface: ETH/SOL/AAVE data ingestion (committed normalization script, `CsvPriceStore` unchanged); a real `membership`-from-availability primitive replacing the stub; pydantic `BaseStrategyConfig` + per-strategy validators + `OrderType` enum end-to-end; a typed, queryable `SignalRecord` store.
+
+### What Worked
+- **Oracle-dark opt-in instrumentation.** Every new observability artifact (`orders.csv`, `cash_operations.csv`, `portfolios.csv`) is an opt-in serializer gated by file-existence and NEVER added to `TRADE_COLUMNS` — so rich per-scenario state assertions landed without ever touching the byte-exact golden path.
+- **Shared-infra-first, then parallel leaves.** Each scenario wave (Phases 6–9) committed shared infra (ScriptedEmitter, ScenarioSpec, serializers, conftest wiring) in Plan 01, then authored independent self-contained leaf folders — parallel-safe, no shared-file merge conflicts, each leaf hand-verified in a VERIFY note before `--freeze`.
+- **Behavior-preserving breadth was cheap.** Because new artifacts were additive/oracle-dark, 8 phases of new coverage landed with the v1.0 oracle byte-exact throughout and zero owner-gated re-baselines — the inverse of v1.0's re-freeze-heavy profile.
+
+### What Was Inefficient
+- **Planning-metadata drift recurred (the v1.0 lesson repeated).** CLAR-01/02 and MATCH-01..08 traceability + checkboxes were stale at close (showed Pending despite passing verification); `requirements_completed` SUMMARY frontmatter was left empty on phases 1/4/5/7/9. Reconciled during the audit — again — because nothing *enforced* it during execution.
+- **Test-harness workarounds accreted as real debt.** `ScenarioSpec`, the post-construction `ExchangeConfig` re-init conftest seam (Phase 7 D-14), and the `csv_paths` passthrough are all test-only stand-ins for a missing engine composition/config interface — now the headline of the v1.2 backlog. Captured, not silently absorbed (good), but they signal a contract gap the scenarios kept hitting.
+- **Per-phase code-review warnings deferred wholesale.** Every phase's review (0 blockers, several warnings each) was logged advisory-unfixed rather than addressed inline (e.g. the dormant `ORDER-{n}` lexicographic sort). Cheap individually; an accumulating backlog at scale.
+
+### Patterns Established
+- **Opt-in oracle-dark CSV snapshot serializers** (`build_orders_snapshot`, `cash_operations`, per-portfolio snapshot) — file-exists-gated, business-columns-only, no UUIDs/wall-clock, stable `ORDER-{n}` ordinals — as the standard lens for freezing internal state without oracle risk.
+- **`ScriptedEmitter` + `ScenarioSpec` as the scenario-authoring substrate** — date-keyed deterministic signal scripting + declarative portfolio/exchange/data wiring, driving the real engine via an oracle-inert `on_tick` hook.
+- **Rule-3 conftest seams** — additive, backward-compatible test-infra extensions (commission-merge `pair` key, `spec.data` ticker registration, fee/slippage re-init) that never re-derive/wipe production state.
+
+### Key Lessons
+1. **Metadata drift is a process bug, not a discipline bug — it recurred verbatim from v1.0.** Re-reconciling checkboxes/traceability/frontmatter at the milestone audit is the symptom; the fix is *enforcement at execution* (a gate that fails a phase close when SUMMARY `requirements_completed` is empty or traceability lags verification), not another manual reconciliation pass.
+2. **When every scenario works around the same missing interface, that's a product requirement surfacing through tests.** The ScenarioSpec/config-reinit workarounds became the v1.2 "Engine Surface Completion" milestone — capture harness workarounds as backlog the moment the second scenario needs the same hack.
+3. **Additive, opt-in, oracle-dark is the cheapest way to add breadth under a regression oracle** — it inverted v1.0's expensive re-freeze profile into a zero-re-baseline milestone.
+4. **Tooling you depend on can lie at the boundary** — the `gsd-sdk` SDK-port audit reported 4 false-positive "missing" quick tasks (filename bug vs the canonical scanner); verify flags against the canonical source before treating them as real work.
+
+### Cost Observations
+- Model mix: not instrumented this milestone.
+- Sessions: phases 2–9 each shipped as one PR (#18–#26); Phase 1 + the FL-stragglers committed directly. ~2 calendar days (2026-06-09 → 2026-06-10).
+- Notable: near-zero re-work on the golden path — the oracle-dark/opt-in pattern meant leaves landed green against the oracle on the first attempt; the expensive part was hand-verifying each leaf's expected fills/PnL before freezing.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -48,13 +86,16 @@
 | Milestone | Phases | Plans | Key Change |
 |-----------|--------|-------|------------|
 | v1.0 | 8 | 62 | Established two-layer golden-master + inert-first + owner-gated re-freeze discipline |
+| v1.1 | 9 | 28 | Breadth via additive opt-in oracle-dark E2E leaves — zero re-baselines; shared-infra-first then parallel scenario leaves |
 
 ### Cumulative Quality
 
 | Milestone | Tests | mypy | Float money |
 |-----------|-------|------|-------------|
 | v1.0 | 724 pass | --strict clean | none on result path |
+| v1.1 | 58 e2e + 12 integration green (full suite ~800+) | --strict clean (161 files) | none on result path |
 
 ### Top Lessons (Verified Across Milestones)
 
-1. (To be confirmed by v1.1+) Golden-master gating with minimal sanctioned re-baselines keeps refactors trustworthy.
+1. **Golden-master gating with minimal sanctioned re-baselines keeps refactors trustworthy** — confirmed across v1.0 (two owner-gated re-freezes) and v1.1 (zero re-baselines via additive oracle-dark leaves).
+2. **Planning-metadata drift is a recurring process gap** — stale checkboxes/traceability/empty SUMMARY frontmatter required manual reconciliation at close in BOTH v1.0 and v1.1. Enforce frontmatter/traceability at phase close, not at milestone audit.
