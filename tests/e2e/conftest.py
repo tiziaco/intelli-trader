@@ -82,6 +82,17 @@ from itrader.reporting.summary import (
 )
 
 
+# --- Commission golden column (D-07/D-08, oracle-dark, ALWAYS-ON) ------------
+# A conftest-LOCAL column: the per-trade commission sourced from the real
+# Position.commission property (buy_commission + sell_commission, position.py:131).
+# It is appended after SLIPPAGE_COLUMNS in the E2E trade goldens ONLY — it is
+# DELIBERATELY NOT added to itrader.reporting.frames.TRADE_COLUMNS, because that
+# pin feeds scripts/run_backtest.py + the BTCUSD oracle (test_backtest_oracle.py),
+# which must stay byte-exact (oracle-dark, D-08). Always-on: written for every
+# leaf, including zero-fee exchange=None leaves (commission=0.00).
+COMMISSION_COLUMN = ["commission"]
+
+
 # --- Exact-diff column contract (reused VERBATIM from the oracle, D-08) ------
 # Identity columns are the behavioral law (which trade, which bar); the remaining
 # columns are auto-derived numeric and diffed EXACT. NO float tolerance — a
@@ -241,17 +252,22 @@ def _build_and_run(spec):
         csv_paths=spec.data,
     )
 
-    # OPEN Q1 — fee/slippage seam (deferred to Phase 7). Canary's spec.exchange is
-    # None → no-op. A non-None ExchangeConfig is applied post-construction, pre-run.
+    # D-14 — fee/slippage seam (Phase 7). Canary leaves with spec.exchange = None
+    # skip this block entirely → byte-identical to today (oracle-dark). A non-None
+    # ExchangeConfig is applied post-construction, pre-run by re-running the EXACT
+    # constructor path SimulatedExchange.__init__ uses (simulated.py:70-74): assign
+    # the config object, then re-init the fee/slippage models from it. CRITICAL
+    # (PATTERNS A2): do NOT touch simulated._supported_symbols — execution_handler
+    # (L104-109) added BTCUSD to the instance set POST-construction, and the default
+    # ExchangeConfig.limits has no BTCUSD; re-deriving the symbol set would WIPE that
+    # admission and every order would silently REFUSE. The two model re-inits are the
+    # entire fix and nothing more.
     exchange_config = getattr(spec, "exchange", None)
     if exchange_config is not None:
         simulated = system.execution_handler.exchanges["simulated"]
-        # Pydantic ExchangeConfig → kwargs for update_config (simulated.py:539).
-        if hasattr(exchange_config, "model_dump"):
-            fields = exchange_config.model_dump()
-        else:
-            fields = dict(exchange_config)
-        simulated.update_config(**fields)
+        simulated.config = exchange_config
+        simulated.fee_model = simulated._init_fee_model()
+        simulated.slippage_model = simulated._init_slippage_model()
 
     for strategy in spec.strategies:
         system.strategies_handler.add_strategy(strategy)
@@ -297,6 +313,35 @@ def _assemble(spec, system, portfolio, portfolio_id):
     # D-17: post-hoc slippage attribution from the store's close series.
     closes = system.store.read_bars(spec.ticker)["close"]
     trades = attach_slippage(trades, closes)
+
+    # D-07/D-08: attach the always-on commission column from the REAL
+    # Position.commission property (buy_commission + sell_commission). It cannot
+    # ride build_trade_log (that frame restricts to TRADE_COLUMNS, and
+    # Position.to_dict() emits no commission key), so attach it here exactly like
+    # attach_slippage. Order-INDEPENDENT key-merge on (entry_date, exit_date, side)
+    # — never a positional zip (RESEARCH Open Q1). float(p.commission) narrows the
+    # Decimal at this CSV edge only. For leaves with no closed positions the merged
+    # column is absent, so default it to 0.00 to keep the schema uniform (D-08).
+    if not trades.empty:
+        commission_rows = [
+            {
+                "entry_date": p.entry_date,
+                "exit_date": p.exit_date,
+                "side": p.side.name,
+                "commission": float(p.commission),
+            }
+            for p in portfolio.closed_positions
+        ]
+        commission_frame = pd.DataFrame(
+            commission_rows,
+            columns=["entry_date", "exit_date", "side", "commission"],
+        )
+        trades = trades.merge(
+            commission_frame, on=["entry_date", "exit_date", "side"], how="left"
+        )
+        trades["commission"] = trades["commission"].fillna(0.0)
+    else:
+        trades["commission"] = pd.Series(dtype=float)
 
     # The summary pins the starting cash from the spec (or fall back to portfolios[0]).
     starting_cash = getattr(spec, "starting_cash", None)
@@ -392,7 +437,7 @@ def _freeze(golden_dir, trades, equity, summary, orders):
     """
     golden_dir.mkdir(parents=True, exist_ok=True)
 
-    trades[TRADE_COLUMNS + SLIPPAGE_COLUMNS].to_csv(
+    trades[TRADE_COLUMNS + SLIPPAGE_COLUMNS + COMMISSION_COLUMN].to_csv(
         golden_dir / "trades.csv", index=False, float_format=FLOAT_FORMAT
     )
     with open(golden_dir / "summary.json", "w", encoding="utf-8") as handle:
@@ -448,7 +493,7 @@ def _diff(golden_dir, trades, equity, summary, orders):
         gold = pd.read_csv(trades_golden)
         # Serialize the fresh trades the SAME way the golden was written, then reload,
         # so the diff compares apples-to-apples (same float formatting, same columns).
-        fresh = _roundtrip(trades, TRADE_COLUMNS + SLIPPAGE_COLUMNS)
+        fresh = _roundtrip(trades, TRADE_COLUMNS + SLIPPAGE_COLUMNS + COMMISSION_COLUMN)
         _diff_frame(fresh, gold, _TRADE_IDENTITY_COLUMNS, _TRADE_SORT_KEYS)
 
     equity_golden = golden_dir / "equity.csv"
