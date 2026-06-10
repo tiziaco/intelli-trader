@@ -74,10 +74,10 @@
 - [x] **ADMIT-04**: full exit followed by re-entry on the same ticker.
 
 ### Multi-Entity (MULTI)
-- [ ] **MULTI-01**: one strategy trading two cryptos (multi-ticker) end-to-end.
-- [ ] **MULTI-02**: multiple strategies running simultaneously.
+- [x] **MULTI-01**: one strategy trading two cryptos (multi-ticker) end-to-end.
+- [x] **MULTI-02**: multiple strategies running simultaneously.
 - [x] **MULTI-03**: a strategy fanned out to >1 portfolio, with per-portfolio cash isolation.
-- [ ] **MULTI-04**: two strategies competing for the same portfolio's cash.
+- [x] **MULTI-04**: two strategies competing for the same portfolio's cash.
 
 ### Cash & Accounting edges (CASH)
 - [x] **CASH-01**: insufficient funds → audited `cash_reservation` rejection.
@@ -158,10 +158,10 @@
 | ADMIT-04 | Phase 8 | Complete |
 | CASH-01 | Phase 8 | Complete |
 | CASH-02 | Phase 8 | Complete |
-| MULTI-01 | Phase 9 | Pending |
-| MULTI-02 | Phase 9 | Pending |
+| MULTI-01 | Phase 9 | Complete |
+| MULTI-02 | Phase 9 | Complete |
 | MULTI-03 | Phase 9 | Complete |
-| MULTI-04 | Phase 9 | Pending |
+| MULTI-04 | Phase 9 | Complete |
 | ROBUST-01 | Phase 9 | Pending |
 | ROBUST-02 | Phase 9 | Pending |
 | ROBUST-03 | Phase 9 | Pending |
