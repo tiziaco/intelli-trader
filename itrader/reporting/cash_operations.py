@@ -90,13 +90,40 @@ def build_cash_operations(operations: Any) -> pd.DataFrame:
         # padding keeps both producers in agreement.
         return f"ORDER-{_ordinals[ref]:03d}"
 
-    rows = [{
-        "correlation": _correlation(op.reference_id),
-        "operation_type": op.operation_type.name,
-        "amount": float(op.amount),
-        "balance_before": _float_or_none(op.balance_before),
-        "balance_after": _float_or_none(op.balance_after),
-    } for op in operations]
+    # WR-02: the input is DELIBERATELY duck-typed (CashOperation-shaped, NO
+    # handler import), so a future field drop/rename — or an operation_type that
+    # is a plain string instead of an enum — would otherwise crash with a bare
+    # AttributeError deep inside the comprehension below, naming neither the field
+    # nor the offending operation. Pin the contract up front and fail with an
+    # explanatory message, matching the explanatory hard-failure discipline the
+    # harness applies elsewhere.
+    _required = (
+        "reference_id", "operation_type", "amount",
+        "balance_before", "balance_after",
+    )
+
+    def _row(op: Any) -> dict[str, Any]:
+        missing = [a for a in _required if not hasattr(op, a)]
+        if missing:
+            raise TypeError(
+                f"cash operation {op!r} missing fields {missing} "
+                f"(expected CashOperation-shaped object with {list(_required)})"
+            )
+        if not hasattr(op.operation_type, "name"):
+            raise TypeError(
+                f"cash operation {op!r} has operation_type "
+                f"{op.operation_type!r} without a .name attribute "
+                "(expected an OperationType enum member)"
+            )
+        return {
+            "correlation": _correlation(op.reference_id),
+            "operation_type": op.operation_type.name,
+            "amount": float(op.amount),
+            "balance_before": _float_or_none(op.balance_before),
+            "balance_after": _float_or_none(op.balance_after),
+        }
+
+    rows = [_row(op) for op in operations]
     frame = pd.DataFrame(rows, columns=CASH_OPERATION_COLUMNS)
     if not frame.empty:
         frame = frame.sort_values(
