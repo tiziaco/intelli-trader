@@ -93,7 +93,12 @@ _ORDERS_IDENTITY_COLUMNS = ["role", "ticker", "order_type", "action"]
 # Sort keys used before comparing (stable order, independent of insertion order).
 _TRADE_SORT_KEYS = ["entry_date", "exit_date", "side"]
 _EQUITY_SORT_KEYS = ["timestamp", "total_equity"]
-_ORDERS_SORT_KEYS = ["role", "order_type", "action", "price"]
+# IN-02: ``time`` is a frozen golden identity column but is omitted from the
+# identity/sort keys above; append it as a TRAILING sort key so row alignment is
+# fully determined even when role/order_type/action/price collide on the same
+# ticker (otherwise the tiebreak is non-deterministic and the row-aligned diff
+# could spuriously fail).
+_ORDERS_SORT_KEYS = ["role", "order_type", "action", "price", "time"]
 
 
 def pytest_addoption(parser):
