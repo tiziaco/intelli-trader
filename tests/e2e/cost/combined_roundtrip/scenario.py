@@ -105,8 +105,9 @@ _SCRIPT = {
 
 # COST-06: BOTH a PERCENT fee (1%) AND a deterministic FIXED slippage (2%,
 # random_variation=False — Pitfall 1). Decimal string-path (Pitfall 6). The fee is
-# charged on the slipped notional, so both costs compound in one round-trip and the
-# cash math is verified to the cent.
+# charged on the BASE (un-slipped) notional (simulated.py:196-205 computes commission
+# before executed_price = price * factor), while the position settles at the slipped
+# price — the two costs do NOT compound. The cash math is verified to the cent.
 _EXCHANGE = ExchangeConfig(
     exchange_name="cost06_cr",
     fee_model=FeeModelConfig(model_type=FeeModelType.PERCENT, fee_rate=Decimal("0.01")),
