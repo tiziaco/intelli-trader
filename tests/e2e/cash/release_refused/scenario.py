@@ -46,7 +46,11 @@ reservation, to exercise the terminal release).
 ``spec.exchange`` (NOT None — the D-03 REFUSED lever): an ``ExchangeConfig`` with
 ``limits.max_order_size = Decimal("10")`` (and ``min_order_size`` left at its small
 default). The harness applies it post-construction, pre-run, re-deriving the cached
-``_max_order_size`` the exchange's ``validate_order`` reads. Fee/slippage stay at the
+``_max_order_size`` the exchange's ``validate_order`` reads. IN-03: the seam
+re-derives BOTH ``_min_order_size`` AND ``_max_order_size`` from ``spec.exchange``
+(conftest:290-291) — this leaf relies on the default min (0.001) and only moves
+``max_order_size``, but a future min-driven REFUSED leaf can lean on the same live
+min cache. Fee/slippage stay at the
 zero defaults so the cash math is exactly the principal — the refusal, not costs, is
 the only moving part. ``supported_symbols`` is left untouched by the harness seam, so
 BTCUSD stays admitted (PATTERNS A2).
