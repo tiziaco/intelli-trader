@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: "Backtest Trustworthiness: Breadth"
-status: executing
-last_updated: "2026-06-10T17:31:20.431Z"
+status: verifying
+last_updated: "2026-06-10T17:39:17.458Z"
 last_activity: 2026-06-10
 progress:
   total_phases: 13
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 28
-  completed_plans: 27
-  percent: 62
+  completed_plans: 28
+  percent: 69
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-09)
 
 Phase: 09 (multi-entity-robustness-metrics-edges) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-10
 
 ## Performance Metrics
@@ -77,6 +77,8 @@ Load-bearing program constraints still in force for v1.1:
 - [Phase 09]: [P02]: Rule-3 conftest fix — commission-merge key gains 'pair' (Position.ticker) so the one_to_one merge survives the first multi-ticker round-trip in one trades.csv; backward-compatible + oracle-dark (BTCUSD oracle byte-exact, 41 prior e2e green)
 - [Phase 09]: [P03]: ROBUST span leaves on REAL sliced data — ROBUST-01 sparse_bar (SOL 2023-06-24/25 gap, position live across the absent bars, no fill no crash; ETH loaded data-only as the dense co-asset keeping the union ping grid ticking across the gap) and ROBUST-02 union_window (AAVE 2021-07-15 mid-run listing, pre-listing BUY 07-12 STRUCTURALLY unfillable — no AAVE bar -> generate_signal not called, listing-day BUY fills 07-16 no look-ahead, BTC trades throughout) hand-verified and frozen
 - [Phase 09]: [P03]: Rule-3 conftest seam — register spec.data tickers on simulated._supported_symbols (additive superset union, mirrors test_universe_spans.py:140-149 wiring) so non-default tickers SOLUSD/AAVEUSD are admitted; never re-derives/wipes (PATTERNS A2 BTCUSD-admission concern N/A), oracle-dark + all prior leaves no-op (BTCUSD oracle byte-exact, 49 e2e green)
+- [Phase 09]: [P04]: ROBUST-03 degenerate-metrics leaves frozen — no_trade (empty ScriptedEmitter script -> zero trades, all metrics 0.0 finite, profit_factor 0.0 empty-frame), flat (+10 win / -10 loss round-trips net zero, profit_factor 1.0 FINITE not all-win inf, win_rate 0.5), losing (single -10 round-trip, profit_factor 0.0 all-loss finite); FixedQuantity(1) integer-exact PnL; explicit assert_metrics_finite (D-05) layered on the exact golden diff catches a NaN a hand-verifier might silently freeze (Pitfall 5)
+- [Phase 09]: [P04]: ROBUST-04 finalized across all nine Phase 9 leaves — Plan-01 not-yet-authored skip guard removed, full nine-leaf double-run runs unconditionally (9 passed); full e2e tree 58 passed (was 49+3 skipped); BTCUSD oracle byte-exact (12 passed); leaves oracle-dark
 
 ### Pending Todos
 
@@ -123,10 +125,11 @@ v1.0 milestone-close acknowledgments (12 advisory/UAT/verification items) are re
 | Phase 09 P01 | 4 | 3 tasks | 12 files |
 | Phase 09 P02 | 5 | 3 tasks | 24 files |
 | Phase 09 P03 | 8min | 2 tasks | 15 files |
+| Phase 09 P04 | 6 | 3 tasks | 20 files |
 
 ## Session Continuity
 
-Last session: 2026-06-10T17:30:02.135Z
+Last session: 2026-06-10T17:38:01.341Z
 Resume file: None
 
 ## Operator Next Steps

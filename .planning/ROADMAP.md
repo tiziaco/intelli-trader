@@ -33,7 +33,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 - [x] **Phase 6: Order Matching Scenarios** — E2E golden-locked coverage of MARKET/LIMIT/STOP fills, bracket OCO lifecycle, same-bar double-trigger priority, gap-through, modify/cancel, and far-from-market no-fill. (completed 2026-06-09)
 - [x] **Phase 7: Cost, Sizing & SLTP Scenarios** — E2E golden-locked coverage of fee models, slippage models (incl. not-on-limit), combined cash math, `FixedQuantity`/`RiskPercent`/over-cash sizing, and `PercentFromDecision`/`PercentFromFill` SL/TP exit outcomes. (completed 2026-06-10)
 - [x] **Phase 8: Admission, Position Management & Cash Edges** — E2E golden-locked coverage of scale-in (pyramiding), partial scale-out, `max_positions` rejection, exit-then-re-entry, and the cash reservation/release lifecycle. (completed 2026-06-10)
-- [ ] **Phase 9: Multi-Entity, Robustness & Metrics Edges** — E2E golden-locked coverage of multi-ticker, multi-strategy, multi-portfolio cash isolation, contended cash, heterogeneous date spans, degenerate-run metrics, and cross-scenario determinism.
+- [x] **Phase 9: Multi-Entity, Robustness & Metrics Edges** — E2E golden-locked coverage of multi-ticker, multi-strategy, multi-portfolio cash isolation, contended cash, heterogeneous date spans, degenerate-run metrics, and cross-scenario determinism. (completed 2026-06-10)
 
 ## Phase Details
 
@@ -166,7 +166,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 - [x] 09-01-PLAN.md — Foundational: per-portfolio summary snapshot serializer + opt-in portfolios.csv wiring (D-01), parametrized in-process double-run determinism scaffold (D-04), no-NaN/no-inf guard helper (D-05), MULTI-03 fanout_portfolios canary (asymmetric cash), BTCUSD oracle byte-exact re-run (D-06) [MULTI-03, ROBUST-04]
 - [x] 09-02-PLAN.md — MULTI cluster: two_tickers (one strategy/two tickers, rides trades.csv pair column), two_strategies (two emitters/one portfolio), contended_cash (registration-order contention → loser cash_reservation REJECTED) [MULTI-01, MULTI-02, MULTI-04]
 - [x] 09-03-PLAN.md — ROBUST spans (real sliced data): sparse_bar (SOL 2023-06-24/25 absent bar, position live across gap → no fill/no crash), union_window (AAVE 2021-07-15 mid-run listing over the union window) [ROBUST-01, ROBUST-02]
-- [ ] 09-04-PLAN.md — ROBUST degenerate + determinism: no_trade / flat / losing finite-metrics leaves + explicit assert_metrics_finite (D-05), full nine-leaf double-run determinism confirmation (D-04) [ROBUST-03, ROBUST-04]
+- [x] 09-04-PLAN.md — ROBUST degenerate + determinism: no_trade / flat / losing finite-metrics leaves + explicit assert_metrics_finite (D-05), full nine-leaf double-run determinism confirmation (D-04) [ROBUST-03, ROBUST-04]
 
 ## Progress
 
@@ -180,7 +180,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`.
 | 6. Order Matching Scenarios | v1.1 | 5/5 | Complete   | 2026-06-09 |
 | 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete   | 2026-06-10 |
 | 8. Admission, Position Management & Cash Edges | v1.1 | 3/3 | Complete   | 2026-06-10 |
-| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 3/4 | In Progress|  |
+| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 4/4 | Complete   | 2026-06-10 |
 
 ## Backlog
 

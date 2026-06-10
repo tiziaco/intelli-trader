@@ -86,7 +86,7 @@
 ### Robustness & Metrics edges (ROBUST)
 - [x] **ROBUST-01**: sparse/absent bar for a ticker at T produces no fill and no crash.
 - [x] **ROBUST-02**: heterogeneous date spans (asset enters mid-run; differing end dates) handled over a union window.
-- [ ] **ROBUST-03**: no-trade / flat / losing runs produce valid metrics (no NaN, no div-by-zero in Sharpe/drawdown/profit-factor).
+- [x] **ROBUST-03**: no-trade / flat / losing runs produce valid metrics (no NaN, no div-by-zero in Sharpe/drawdown/profit-factor).
 - [x] **ROBUST-04**: determinism — double-run byte-identical across all new scenarios.
 
 ### Codebase Clarity (CLAR)
@@ -164,7 +164,7 @@
 | MULTI-04 | Phase 9 | Complete |
 | ROBUST-01 | Phase 9 | Complete |
 | ROBUST-02 | Phase 9 | Complete |
-| ROBUST-03 | Phase 9 | Pending |
+| ROBUST-03 | Phase 9 | Complete |
 | ROBUST-04 | Phase 9 | Complete |
 
 **Coverage:** 51/51 v1.1 requirements mapped — no orphans, no duplicates.
