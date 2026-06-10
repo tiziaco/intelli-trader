@@ -1,0 +1,3 @@
+entry_date,exit_date,side,net_quantity,avg_price,avg_bought,avg_sold,total_bought,total_sold,realised_pnl,pair,slippage_entry,slippage_exit,commission
+2020-01-02 01:00:00+01:00,2020-01-03 01:00:00+01:00,LONG,0,100.0,100.0,110.0,100.0,110.0,10.0,BTCUSD,0.0000000000,10.0000000000,0.0000000000
+2020-01-05 01:00:00+01:00,2020-01-06 01:00:00+01:00,LONG,0,110.0,110.0,100.0,110.0,100.0,-10.0,BTCUSD,0.0000000000,-10.0000000000,0.0000000000

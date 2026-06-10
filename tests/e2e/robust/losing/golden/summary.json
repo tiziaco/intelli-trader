@@ -1,0 +1,19 @@
+{
+  "end_date": "2020-01-04",
+  "final_cash": 9990.0,
+  "final_equity": 9990.0,
+  "metrics": {
+    "cagr": -0.08725218785283606,
+    "max_drawdown": -0.0010000000000000009,
+    "profit_factor": 0.0,
+    "sharpe": -9.5524865872714,
+    "sortino": -9.5524865872714,
+    "win_rate": 0.0
+  },
+  "start_date": "2020-01-01",
+  "starting_cash": 10000.0,
+  "ticker": "BTCUSD",
+  "timeframe": "1d",
+  "total_realised_pnl": -10.0,
+  "trade_count": 1
+}
