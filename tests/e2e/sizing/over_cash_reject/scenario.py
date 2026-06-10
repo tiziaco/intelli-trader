@@ -2,7 +2,8 @@
 
 The audited no-trade outcome for over-cash sizing. A BUY declaring a
 ``FixedQuantity`` whose notional EXCEEDS available cash is REJECTED at the
-synchronous admission cash-reservation gate (``order_manager.py:393-414``): the
+synchronous admission cash-reservation gate (``OrderManager`` admission path,
+D-15 — anchored to the decision tag, not a drift-prone line range): the
 BUY's ``reserve()`` raises ``InsufficientFundsError``, the primary order is
 transitioned PENDING->REJECTED through the audited ``add_state_change`` path
 (``triggered_by="cash_reservation"``) and PERSISTED — rejected orders never vanish
@@ -36,7 +37,8 @@ a single MARKET BUY on the 2020-01-02 decision bar. NO SELL.
 ``sizing_policy = FixedQuantity(qty=Decimal("1000"))`` — a deliberately OVER-CASH
 fixed quantity.
 
-Sizing + the cash-reservation rejection (D-15 / order_manager.py:393-414):
+Sizing + the cash-reservation rejection (D-15 — the ``OrderManager`` admission
+cash-reservation gate; anchored to the decision tag, not a drift-prone line range):
   * decision price = bar1 close = 100 (strategies_handler.py:141 stamps the price).
   * FixedQuantity is a pass-through (sizing_resolver.py:113-114): qty = 1000 — the
     sizing itself SUCCEEDS (FixedQuantity has no cash check; that is the admission
