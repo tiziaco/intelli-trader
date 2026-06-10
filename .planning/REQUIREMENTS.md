@@ -51,11 +51,11 @@
 
 ### Fees & Slippage coverage (COST)
 - [x] **COST-01**: percent fee model on a round-trip.
-- [ ] **COST-02**: maker_taker fee model — maker vs taker distinguished (limit vs market).
-- [ ] **COST-03**: fixed slippage model.
-- [ ] **COST-04**: linear slippage model.
-- [ ] **COST-05**: slippage is **not** applied to limit fills.
-- [ ] **COST-06**: combined fee+slippage round-trip cash math verified to the cent.
+- [x] **COST-02**: maker_taker fee model — maker vs taker distinguished (limit vs market).
+- [x] **COST-03**: fixed slippage model.
+- [x] **COST-04**: linear slippage model.
+- [x] **COST-05**: slippage is **not** applied to limit fills.
+- [x] **COST-06**: combined fee+slippage round-trip cash math verified to the cent.
 
 ### Sizing coverage (SIZE)
 - [ ] **SIZE-01**: `FixedQuantity` sizing.
@@ -141,11 +141,11 @@
 | MATCH-07 | Phase 6 | Pending |
 | MATCH-08 | Phase 6 | Pending |
 | COST-01 | Phase 7 | Complete |
-| COST-02 | Phase 7 | Pending |
-| COST-03 | Phase 7 | Pending |
-| COST-04 | Phase 7 | Pending |
-| COST-05 | Phase 7 | Pending |
-| COST-06 | Phase 7 | Pending |
+| COST-02 | Phase 7 | Complete |
+| COST-03 | Phase 7 | Complete |
+| COST-04 | Phase 7 | Complete |
+| COST-05 | Phase 7 | Complete |
+| COST-06 | Phase 7 | Complete |
 | SIZE-01 | Phase 7 | Pending |
 | SIZE-02 | Phase 7 | Pending |
 | SIZE-03 | Phase 7 | Pending |
