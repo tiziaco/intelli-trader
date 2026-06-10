@@ -171,8 +171,36 @@ bracket shape the assembler produces, but it silently mislabels any child whose 
 is neither (e.g. a MARKET child, or a future trailing-stop variant) as `"TP"` rather
 than failing or labelling it explicitly. Low risk given the current assembler, but
 the role is a load-bearing identity column in the orders golden.
-**Fix:** Consider being explicit about the LIMIT case and surfacing the unexpected:
-`return "SL" if order.type is OrderType.STOP else "TP" if order.type is OrderType.LIMIT else "CHILD"` — or assert the child type is STOP/LIMIT.
+**Fix (preferred — fail loud, not relabel):** `role` is a load-bearing identity
+column in a *trusted regression baseline*. A `"CHILD"`/catch-all fallback trades one
+silent mislabel for another — the placeholder row passes silently into the snapshot
+and gets frozen as the expected golden. For a golden serializer the right move is to
+surface the unexpected child type explicitly so the generating/comparing test fails
+at a located point instead of baking a wrong row. Map STOP→SL and LIMIT→TP
+explicitly and `raise` on anything else; annotate the return as a `Literal` so mypy
+verifies every branch produces a valid label without inventing a domain enum (the
+value is a serialization-edge string, like the sibling `.name` columns):
+
+```python
+from typing import Any, Literal
+
+OrderRole = Literal["ENTRY", "STANDALONE", "SL", "TP"]
+
+def _order_role(order: Any) -> OrderRole:
+    if order.parent_order_id is None:
+        return "ENTRY" if order.child_order_ids else "STANDALONE"
+    if order.type is OrderType.STOP:
+        return "SL"
+    if order.type is OrderType.LIMIT:
+        return "TP"
+    raise ValueError(
+        f"Unexpected child order type {order.type!r} for bracket role (id={order.id})")
+```
+
+Rationale: a child can only be STOP or LIMIT today (both bracket paths use
+`Order.new_stop_order`/`new_limit_order` — `order_manager.py:641,655,764,775`), so
+the `raise` is unreachable now and only fires the day a new bracket leg type is
+added — exactly when a loud, located failure beats a silently-frozen golden.
 
 ### IN-02: `time` is a golden identity column but excluded from the orders identity/sort keys
 
