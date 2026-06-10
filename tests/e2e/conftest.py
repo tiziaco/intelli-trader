@@ -321,6 +321,23 @@ def _build_and_run(spec):
         simulated._min_order_size = float(simulated.config.limits.min_order_size)
         simulated._max_order_size = float(simulated.config.limits.max_order_size)
 
+    # Phase 9 (ROBUST-01/02, Rule-3 seam): register the spec's data tickers with
+    # the simulated exchange's supported-symbol set so non-default tickers (e.g.
+    # SOLUSD / AAVEUSD — the real sliced-data leaves) are admitted by
+    # validate_symbol. init_exchanges only adds BTCUSD; the default preset lists
+    # the *USDT majors. This MIRRORS the integration-test wiring
+    # (test_universe_spans.py:140-149) which does the identical instance-set
+    # mutation. It is strictly ADDITIVE (a superset union — never re-derives /
+    # wipes the set, contrast the PATTERNS A2 warning about re-deriving from
+    # config), so every prior leaf is unaffected: their tickers (BTCUSD already
+    # added, ETHUSDT already in the default set) re-add as a no-op. Oracle-dark:
+    # the BTCUSD oracle runs its own TradingSystem (scripts/run_backtest.py), not
+    # this harness.
+    simulated = system.execution_handler.exchanges["simulated"]
+    simulated._supported_symbols = set(simulated._supported_symbols) | {
+        ticker.upper() for ticker in spec.data
+    }
+
     for strategy in spec.strategies:
         system.strategies_handler.add_strategy(strategy)
 
