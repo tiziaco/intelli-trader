@@ -73,6 +73,10 @@ from itrader.reporting.orders import (
     ORDER_SNAPSHOT_COLUMNS,
     build_orders_snapshot,
 )
+from itrader.reporting.cash_operations import (
+    CASH_OPERATION_COLUMNS,
+    build_cash_operations,
+)
 from itrader.reporting.summary import (
     FLOAT_FORMAT,
     SLIPPAGE_COLUMNS,
@@ -110,6 +114,12 @@ _EQUITY_SORT_KEYS = ["timestamp", "total_equity"]
 # ticker (otherwise the tiebreak is non-deterministic and the row-aligned diff
 # could spuriously fail).
 _ORDERS_SORT_KEYS = ["role", "order_type", "action", "price", "time"]
+# Cash-ledger snapshot identity (Phase 8, D-02): which logical order's operation
+# (the derived ORDER-{n} correlation) and which operation kind. ``amount`` is a
+# TRAILING sort key for a stable tiebreak when correlation + operation_type
+# collide (e.g. two RESERVATIONs on the same derived order — deterministic order).
+_CASH_OPS_IDENTITY_COLUMNS = ["correlation", "operation_type"]
+_CASH_OPS_SORT_KEYS = ["correlation", "operation_type", "amount"]
 
 
 def pytest_addoption(parser):
@@ -301,7 +311,7 @@ def _build_and_run(spec):
 
 
 def _assemble(spec, system, portfolio, portfolio_id):
-    """Assemble trades / equity / summary / orders via the SHARED reporting path (D-16)."""
+    """Assemble trades / equity / summary / orders / cash_ops via the SHARED reporting path (D-16)."""
     trades = build_trade_log(portfolio)
     equity = build_equity_curve(portfolio)
 
@@ -309,6 +319,12 @@ def _assemble(spec, system, portfolio, portfolio_id):
     # Queried AFTER the run (queue-only — D-07) for the spec's ticker + portfolio.
     orders = build_orders_snapshot(
         system.order_handler.get_orders_by_ticker(spec.ticker, portfolio_id))
+
+    # Phase 8 (D-02): the cash-operation ledger snapshot for the opt-in
+    # cash_operations.csv golden. Queried AFTER the run (queue-only — D-07) from the
+    # portfolio's cash manager. Oracle-dark: the serializer only materializes when a
+    # leaf commits the placeholder golden file (the exists() gate in _freeze/_diff).
+    cash_ops = build_cash_operations(portfolio.cash_manager.get_cash_operations())
 
     # D-17: post-hoc slippage attribution from the store's close series.
     closes = system.store.read_bars(spec.ticker)["close"]
@@ -365,7 +381,7 @@ def _assemble(spec, system, portfolio, portfolio_id):
     )
     # D-15: nested derived-metrics block — produced every run.
     summary["metrics"] = build_metrics_block(equity, trades)
-    return trades, equity, summary, orders
+    return trades, equity, summary, orders, cash_ops
 
 
 def _diff_frame(fresh, gold, identity_columns, sort_keys):
@@ -434,12 +450,13 @@ def _diff_summary(fresh_summary, golden_summary):
         )
 
 
-def _freeze(golden_dir, trades, equity, summary, orders):
+def _freeze(golden_dir, trades, equity, summary, orders, cash_ops):
     """WRITE goldens using the SAME serialization as the oracle generator (D-06).
 
-    Default freeze = trades.csv + summary.json (always). equity.csv AND orders.csv
-    are opt-in (D-06/D-09): only (re)written when one already exists in the leaf's
-    golden/. A pure-fill scenario (MATCH-01/02/03) never freezes orders.csv.
+    Default freeze = trades.csv + summary.json (always). equity.csv, orders.csv AND
+    cash_operations.csv are opt-in (D-06/D-09/D-02): only (re)written when one
+    already exists in the leaf's golden/. A pure-fill scenario (MATCH-01/02/03)
+    never freezes orders.csv; only the cash-edge leaves freeze cash_operations.csv.
     """
     golden_dir.mkdir(parents=True, exist_ok=True)
 
@@ -462,6 +479,15 @@ def _freeze(golden_dir, trades, equity, summary, orders):
             golden_dir / "orders.csv", index=False, float_format=FLOAT_FORMAT
         )
 
+    # cash_operations.csv is opt-in (D-02): only refreshed if the leaf already froze
+    # it (cash-edge scenarios whose assertion is the reserve/release ledger trail).
+    # This keeps the cash-ledger serializer ORACLE-DARK — it materializes only when
+    # a leaf commits the placeholder golden file.
+    if (golden_dir / "cash_operations.csv").exists():
+        cash_ops[CASH_OPERATION_COLUMNS].to_csv(
+            golden_dir / "cash_operations.csv", index=False, float_format=FLOAT_FORMAT
+        )
+
 
 def _roundtrip(frame, columns):
     """Serialize ``frame[columns]`` the SAME way ``_freeze`` writes a golden, then
@@ -482,12 +508,12 @@ def _roundtrip(frame, columns):
     return pd.read_csv(buffer)
 
 
-def _diff(golden_dir, trades, equity, summary, orders):
+def _diff(golden_dir, trades, equity, summary, orders, cash_ops):
     """DIFF ONLY the golden files PRESENT in the leaf (D-05: presence = assertion).
 
-    A leaf that froze only trades.csv + summary.json asserts only those; equity.csv
-    and orders.csv are diffed only if the leaf committed one. Goldens never
-    auto-heal here (D-13).
+    A leaf that froze only trades.csv + summary.json asserts only those; equity.csv,
+    orders.csv and cash_operations.csv are diffed only if the leaf committed one.
+    Goldens never auto-heal here (D-13).
     """
     assert golden_dir.exists(), (
         f"no golden/ in {golden_dir.parent} — run with --freeze first after "
@@ -513,6 +539,12 @@ def _diff(golden_dir, trades, equity, summary, orders):
         gold = pd.read_csv(orders_golden)
         fresh = _roundtrip(orders, ORDER_SNAPSHOT_COLUMNS)
         _diff_frame(fresh, gold, _ORDERS_IDENTITY_COLUMNS, _ORDERS_SORT_KEYS)
+
+    cash_ops_golden = golden_dir / "cash_operations.csv"
+    if cash_ops_golden.exists():
+        gold = pd.read_csv(cash_ops_golden)
+        fresh = _roundtrip(cash_ops, CASH_OPERATION_COLUMNS)
+        _diff_frame(fresh, gold, _CASH_OPS_IDENTITY_COLUMNS, _CASH_OPS_SORT_KEYS)
 
     summary_golden = golden_dir / "summary.json"
     if summary_golden.exists():
@@ -554,12 +586,13 @@ def run_scenario(request):
         here = pathlib.Path(here)
         spec = _load_spec(here / "scenario.py")
         system, portfolio, portfolio_id = _build_and_run(spec)
-        trades, equity, summary, orders = _assemble(spec, system, portfolio, portfolio_id)
+        trades, equity, summary, orders, cash_ops = _assemble(
+            spec, system, portfolio, portfolio_id)
 
         golden_dir = here / "golden"
         if freeze:
-            _freeze(golden_dir, trades, equity, summary, orders)
+            _freeze(golden_dir, trades, equity, summary, orders, cash_ops)
         else:
-            _diff(golden_dir, trades, equity, summary, orders)
+            _diff(golden_dir, trades, equity, summary, orders, cash_ops)
 
     return _run

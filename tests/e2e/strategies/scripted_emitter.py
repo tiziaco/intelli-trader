@@ -83,7 +83,9 @@ class ScriptedEmitter(Strategy):
                  order_type: OrderType = OrderType.MARKET,
                  direction: TradingDirection = TradingDirection.LONG_ONLY,
                  sizing_policy: SizingPolicy | None = None,
-                 sltp_policy: "SLTPPolicy | None" = None) -> None:
+                 sltp_policy: "SLTPPolicy | None" = None,
+                 allow_increase: bool = False,
+                 max_positions: int = 1) -> None:
         # D-03 (Pitfall 3): order_type is a per-INSTANCE config field — this is HOW
         # MATCH-02/03 select a LIMIT/STOP entry. The per-bar script only picks
         # action + sl/tp/exit_fraction.
@@ -93,12 +95,20 @@ class ScriptedEmitter(Strategy):
         # sizing_policy, reusing the existing kwarg→config→SignalEvent plumbing
         # (config.py:55 → base.py:67 → strategies_handler.py:165). No default
         # substitution — None is the correct default (no engine-side SLTP policy).
+        # D-06 (Phase 8): allow_increase + max_positions thread through
+        # BaseStrategyConfig identically to sizing_policy/sltp_policy, reusing the
+        # already-wired kwarg→config→SignalEvent plumbing (config.py:52-53 →
+        # base.py:60-61 → strategies_handler.py:155-156 → signal.py:90-91 →
+        # order_manager._enforce_position_admission). Per-INSTANCE (not per-bar).
+        # Defaults (allow_increase=False, max_positions=1) preserve every existing
+        # leaf's behavior — D-06 explicit constraint.
         config = BaseStrategyConfig(
             timeframe=timeframe,
             tickers=list(tickers),
             sizing_policy=sizing_policy,
             direction=direction,
-            allow_increase=False,
+            allow_increase=allow_increase,
+            max_positions=max_positions,
             order_type=order_type,
             sltp_policy=sltp_policy,
         )
