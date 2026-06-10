@@ -23,11 +23,16 @@ must write ``PENDING``, never ``ACTIVE``.
 Indentation: 4 spaces (reporting package house style).
 """
 
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
 from itrader.core.enums.order import OrderType
+
+# IN-01: load-bearing identity label for the orders golden — a serialization-edge
+# string (like the sibling ``.name`` columns), not a domain enum. Annotated as a
+# Literal so mypy verifies every branch of ``_order_role`` produces a valid label.
+OrderRole = Literal["ENTRY", "STANDALONE", "SL", "TP"]
 
 # Deterministic order-snapshot columns (D-08) — business fields only, NO UUID,
 # NO wall-clock. ``role`` is the logical bracket linkage (ENTRY/SL/TP/STANDALONE).
@@ -44,16 +49,29 @@ ORDER_SNAPSHOT_COLUMNS = [
 ]
 
 
-def _order_role(order: Any) -> str:
+def _order_role(order: Any) -> OrderRole:
     """Derive the logical bracket role from linkage flags (D-08).
 
     A parentless order is an ``ENTRY`` when it declares children (a bracket
     parent) or ``STANDALONE`` otherwise; a child order is the ``SL`` (STOP leg) or
-    ``TP`` (the other leg). Uses linkage FLAGS, never the raw UUIDs.
+    ``TP`` (LIMIT leg). Uses linkage FLAGS, never the raw UUIDs.
+
+    IN-01: ``role`` is a load-bearing identity column in a TRUSTED regression
+    baseline. A child can only be STOP or LIMIT today (both bracket paths use
+    ``Order.new_stop_order``/``new_limit_order``), so we map STOP→SL, LIMIT→TP
+    explicitly and ``raise`` on anything else — a loud, located failure beats
+    silently relabelling an unexpected child type (e.g. a future trailing-stop
+    leg) as ``"TP"`` and freezing a wrong row into the golden.
     """
     if order.parent_order_id is None:
         return "ENTRY" if order.child_order_ids else "STANDALONE"
-    return "SL" if order.type is OrderType.STOP else "TP"
+    if order.type is OrderType.STOP:
+        return "SL"
+    if order.type is OrderType.LIMIT:
+        return "TP"
+    raise ValueError(
+        f"Unexpected child order type {order.type!r} for bracket role "
+        f"(id={order.id})")
 
 
 def build_orders_snapshot(orders: Any) -> pd.DataFrame:
