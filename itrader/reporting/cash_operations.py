@@ -80,7 +80,15 @@ def build_cash_operations(operations: Any) -> pd.DataFrame:
         ref = str(reference_id)
         if ref not in _ordinals:
             _ordinals[ref] = len(_ordinals) + 1
-        return f"ORDER-{_ordinals[ref]}"
+        # WR-01: zero-pad the ordinal (3 digits) so a LEXICAL sort on the
+        # ``correlation`` label equals NUMERIC order. Without padding, ten or
+        # more distinct references sort ``ORDER-1, ORDER-10, ..., ORDER-2``,
+        # silently defeating the first-appearance/chronological human-readability
+        # contract and making any hand-verification of a 10+-order cash ledger
+        # error-prone. Both the serializer sort (below) and the harness diff sort
+        # (conftest ``_CASH_OPS_SORT_KEYS``) consume this same string column, so
+        # padding keeps both producers in agreement.
+        return f"ORDER-{_ordinals[ref]:03d}"
 
     rows = [{
         "correlation": _correlation(op.reference_id),
