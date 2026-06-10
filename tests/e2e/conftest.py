@@ -336,8 +336,14 @@ def _assemble(spec, system, portfolio, portfolio_id):
             commission_rows,
             columns=["entry_date", "exit_date", "side", "commission"],
         )
+        # WR-03: validate=one_to_one so a non-unique (entry_date, exit_date, side)
+        # key (e.g. two round-trips opening/closing on the same bars) raises a
+        # pandas MergeError instead of silently many-to-many duplicating trade rows
+        # or mis-attributing commission. Converts a confusing golden-diff into a
+        # hard, diagnosable failure for future multi-trade leaves.
         trades = trades.merge(
-            commission_frame, on=["entry_date", "exit_date", "side"], how="left"
+            commission_frame, on=["entry_date", "exit_date", "side"], how="left",
+            validate="one_to_one"
         )
         trades["commission"] = trades["commission"].fillna(0.0)
     else:
