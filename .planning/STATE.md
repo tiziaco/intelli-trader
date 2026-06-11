@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
-status: verifying
-last_updated: "2026-06-11T21:29:45.761Z"
+status: ready_to_plan
+last_updated: 2026-06-11T21:41:56.678Z
 last_activity: 2026-06-11
 progress:
   total_phases: 10
@@ -11,6 +11,7 @@ progress:
   total_plans: 23
   completed_plans: 23
   percent: 60
+stopped_at: Phase 06 complete (5/5) — ready to discuss Phase 999.2
 ---
 
 # Project State
@@ -20,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** Phase 06 — order-manager-decomposition
+**Current focus:** Phase 999.2 — nplus2 persistence and performance
 
 ## Current Position
 
-Phase: 06 (order-manager-decomposition) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
+Phase: 999.2
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-11
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
@@ -60,7 +61,7 @@ Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from V1.2-CLEANUP-REVI
 
 **Velocity (v1.1):**
 
-- Total plans completed: 49
+- Total plans completed: 54
 - Average duration: — min
 - Total execution time: 0.0 hours
 
