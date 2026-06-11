@@ -12,17 +12,24 @@ Locks Plan 04-08 Task 1:
   applications or pytest.
 """
 
+import json
 import logging
 import os
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
 import structlog
 
 import itrader
-from itrader.logger import _env_json_logs, _env_log_level, init_logger
+from itrader.logger import (
+    _env_json_logs,
+    _env_log_level,
+    _json_default,
+    init_logger,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -106,6 +113,44 @@ def test_setup_twice_does_not_stack_handlers(monkeypatch, clean_root_logger):
     init_logger()
 
     assert len(_itrader_handlers(clean_root_logger)) == 1
+
+
+def test_json_default_stringifies_uuid():
+    """WR-01: _json_default stringifies uuid.UUID rather than raising."""
+    cid = uuid.uuid4()
+    assert _json_default(cid) == str(cid)
+
+
+def test_json_default_rejects_other_types():
+    """WR-01: _json_default still raises TypeError for unknown types."""
+    with pytest.raises(TypeError):
+        _json_default(object())
+
+
+def test_json_renderer_serializes_uuid_correlation_id(monkeypatch, clean_root_logger):
+    """WR-01: the JSON renderer serializes uuid.UUID log context without raising.
+
+    The single-UUIDv7 scheme (DEC-03) flows uuid.UUID correlation_id /
+    portfolio_id values into the ERROR-route log context. A bare JSONRenderer
+    would raise ``TypeError: Object of type UUID is not JSON serializable``;
+    the UUID-aware serializer must render them as strings.
+    """
+    monkeypatch.delenv("ITRADER_LOG_LEVEL", raising=False)
+    monkeypatch.setenv("ITRADER_JSON_LOGS", "true")
+
+    init_logger()
+    handlers = _itrader_handlers(clean_root_logger)
+    assert len(handlers) == 1
+    formatter = handlers[0].formatter
+    renderer = next(
+        p for p in formatter.processors
+        if isinstance(p, structlog.processors.JSONRenderer)
+    )
+
+    cid = uuid.uuid4()
+    rendered = renderer(None, "error", {"event": "boom", "correlation_id": cid})
+    payload = json.loads(rendered)
+    assert payload["correlation_id"] == str(cid)
 
 
 def test_init_does_not_clobber_foreign_handlers(monkeypatch, clean_root_logger):
