@@ -647,7 +647,7 @@ class MetricsManager:
             losing_trades=len(negative_returns)
         )
     
-    def _calculate_drawdown_duration(self, drawdowns: List[float], max_dd_index: int) -> int:
+    def _calculate_drawdown_duration(self, drawdowns: List[Decimal], max_dd_index: int) -> int:
         """Calculate drawdown duration in days."""
         # Simple implementation - find consecutive negative periods around max drawdown
         duration = 1
