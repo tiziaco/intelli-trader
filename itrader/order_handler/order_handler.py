@@ -5,7 +5,8 @@ from typing import Any, Callable, List, Dict, Optional
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from .base import OrderStorage
 from .order import Order
-from ..core.enums import OrderStatus
+from ..core.enums import OrderStatus, MarketExecution
+from ..core.ids import OrderId, PortfolioId
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
 from ..events_handler.events import SignalEvent, OrderEvent, FillEvent, PortfolioUpdateEvent
@@ -37,7 +38,7 @@ class OrderHandler:
 	- Validation and state management
 	"""
 	def __init__(self, events_queue: "Queue[Any]", portfolio_handler: PortfolioReadModel,
-	             order_storage: Optional[OrderStorage] = None, market_execution: str = "immediate",
+	             order_storage: Optional[OrderStorage] = None, market_execution: "str | MarketExecution" = "immediate",
 	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
 		"""
 		Parameters
@@ -49,8 +50,9 @@ class OrderHandler:
 			PortfolioHandler satisfies this Protocol structurally)
 		order_storage: `OrderStorage`, optional
 			The order storage for storage operations. If None, uses InMemoryOrderStorage.
-		market_execution: str, optional
-			Market order execution timing. Options:
+		market_execution: str | MarketExecution, optional
+			Market order execution timing (passed through to OrderManager,
+			which coerces to the enum at its ctor boundary, D-06). Options:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Queue market orders for next bar execution (realistic backtesting)
 		commission_estimator: Callable[[Decimal, Decimal], Decimal], optional
@@ -118,8 +120,8 @@ class OrderHandler:
 			self.events_queue.put(order_event)
 			self.logger.debug('Orphaned-child cancel event sent to execution handler: %s', order_event)
 
-	def modify_order(self, order_id: int, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
-	                portfolio_id: Optional[Any] = None, reason: str = "user modification") -> bool:
+	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
+	                portfolio_id: Optional[PortfolioId] = None, reason: str = "user modification") -> bool:
 		"""
 		Modify an active order through OrderManager and generate OrderEvent.
 		
@@ -155,7 +157,7 @@ class OrderHandler:
 		
 		return result.success
 	
-	def cancel_order(self, order_id: int, portfolio_id: Optional[Any] = None, reason: str = "user cancellation") -> bool:
+	def cancel_order(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None, reason: str = "user cancellation") -> bool:
 		"""
 		Cancel an active order through OrderManager and generate OrderEvent.
 		
@@ -219,7 +221,7 @@ class OrderHandler:
 		
 		return success
 	
-	def get_order_by_id(self, order_id: int, portfolio_id: Optional[Any] = None) -> Optional[Order]:
+	def get_order_by_id(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None) -> Optional[Order]:
 		"""
 		Get an order by its ID.
 
@@ -237,7 +239,7 @@ class OrderHandler:
 		"""
 		return self.order_manager.get_order_by_id(order_id, portfolio_id)
 	
-	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""
 		Get orders by their status.
 
@@ -255,7 +257,7 @@ class OrderHandler:
 		"""
 		return self.order_manager.get_orders_by_status(status, portfolio_id)
 	
-	def get_active_orders(self, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_active_orders(self, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""
 		Get all active orders (PENDING and PARTIALLY_FILLED).
 
@@ -271,7 +273,7 @@ class OrderHandler:
 		"""
 		return self.order_manager.get_active_orders(portfolio_id)
 	
-	def get_order_history(self, order_id: int) -> List[Dict[str, Any]]:
+	def get_order_history(self, order_id: OrderId) -> List[Dict[str, Any]]:
 		"""
 		Get the state change history for an order.
 
@@ -287,7 +289,7 @@ class OrderHandler:
 		"""
 		return self.order_manager.get_order_history(order_id)
 	
-	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""
 		Get all orders for a specific ticker.
 
@@ -305,7 +307,7 @@ class OrderHandler:
 		"""
 		return self.order_manager.get_orders_by_ticker(ticker, portfolio_id)
 	
-	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[Any] = None) -> List[Order]:
+	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""
 		Search orders based on criteria.
 
@@ -323,7 +325,7 @@ class OrderHandler:
 		"""
 		return self.order_manager.search_orders(criteria, portfolio_id)
 	
-	def get_orders_summary(self, portfolio_id: Optional[Any] = None) -> Dict[str, int]:
+	def get_orders_summary(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
 		"""
 		Get a summary of orders by status.
 

@@ -141,6 +141,33 @@ class OrderOperationType(Enum):
 		raise ValueError(f"Unknown OrderOperationType: {value!r}")
 
 
+class MarketExecution(Enum):
+	"""Market-order execution timing mode (D-06).
+
+	Class-based with explicit string values EQUAL to the exact current
+	literals (``immediate``/``next_bar``) and a case-insensitive
+	``_missing_`` (OrderType house pattern). The carrier type at the
+	``OrderManager`` ctor boundary changes (``str`` -> enum), the ``.value``
+	does not — coercing ``MarketExecution(market_execution)`` parses a string
+	(``_missing_``) and is a no-op on an existing member, so the stored
+	configuration stays byte-identical.
+
+	Per SYN-05 only the enum lands here; the ``OrderConfig`` model + threading
+	is deferred to 999.5-(b).
+	"""
+	IMMEDIATE = "immediate"
+	NEXT_BAR = "next_bar"
+
+	@classmethod
+	def _missing_(cls, value: object) -> "MarketExecution":
+		"""Case-insensitive string parse; raise a clear f-string error."""
+		if isinstance(value, str):
+			for member in cls:
+				if member.value.upper() == value.upper():
+					return member
+		raise ValueError(f"Unknown MarketExecution: {value!r}")
+
+
 class OrderTriggerSource(Enum):
 	"""Who/what triggered an order state change (D-04).
 

@@ -21,6 +21,7 @@ from itrader.core.enums import (
     OrderCommand,
     OrderOperationType,
     OrderTriggerSource,
+    MarketExecution,
     order_status_map,
     order_command_map,
 )
@@ -168,3 +169,28 @@ def test_order_trigger_source_parses_case_insensitively():
         OrderTriggerSource("not_a_source")
     assert "not_a_source" in str(exc_info.value)
     assert "('Value %s'" not in str(exc_info.value)
+
+
+# --- D-06: MarketExecution (value-equal "immediate"/"next_bar", ctor-coerced) ---
+
+
+def test_market_execution_member_values_equal_literals():
+    """D-06: each MarketExecution member's .value equals its exact literal."""
+    assert MarketExecution.IMMEDIATE.value == "immediate"
+    assert MarketExecution.NEXT_BAR.value == "next_bar"
+
+
+def test_market_execution_parses_case_insensitively():
+    """D-06: MarketExecution('next_bar') → NEXT_BAR (case-insensitive parse)."""
+    assert MarketExecution("next_bar") is MarketExecution.NEXT_BAR
+    assert MarketExecution("NEXT_BAR") is MarketExecution.NEXT_BAR
+    assert MarketExecution("immediate") is MarketExecution.IMMEDIATE
+
+
+def test_market_execution_unknown_value_raises_clear_error():
+    """D-06: an unknown value raises a clear f-string error (not the printf-tuple form)."""
+    with pytest.raises(ValueError) as exc_info:
+        MarketExecution("not_a_mode")
+    message = str(exc_info.value)
+    assert "not_a_mode" in message
+    assert "('Value %s'" not in message
