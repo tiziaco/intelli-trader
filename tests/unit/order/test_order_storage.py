@@ -21,9 +21,10 @@ def store():
     """In-memory storage seeded with three native-UUID orders.
 
     Storage keys by native ``uuid.UUID`` (D-14) and holds a SINGLE flat
-    ``{order_id: order}`` dict (``_by_id``, D-20/PERF3) — no nested
-    per-portfolio dicts exist. "Active" is purely an entity predicate
-    (``order.is_active``); queries scan-and-filter the flat dict.
+    ``{order_id: order}`` dict (D-20/PERF3) — no nested per-portfolio dicts
+    exist. "Active" is purely an entity predicate (``order.is_active``);
+    queries scan-and-filter the flat dict. Tests assert this through the
+    public ``get_order_by_id`` query API, not the private storage shape.
     """
     storage = InMemoryOrderStorage()
 
@@ -68,18 +69,22 @@ def test_add_order(store):
 
 
 def test_flat_dict_is_sole_container(store):
-    """D-20/PERF3: the flat ``_by_id`` dict is the ONLY instance container.
+    """D-20/PERF3: a single flat container is the ONLY instance container.
 
     The nested per-portfolio dicts (active / all / archived) are deleted —
     M4-06 scan elimination. Order classes are predicates on the entity, not
-    separate containers.
+    separate containers. We assert the deletion of the nested containers (no
+    public surface exposes their absence) and confirm the single added order
+    is the only one resolvable through the public ``get_order_by_id`` query.
     """
     storage = store.storage
     assert not hasattr(storage, "active_orders")
     assert not hasattr(storage, "all_orders")
     assert not hasattr(storage, "archived_orders")
     storage.add_order(store.order1)
-    assert storage._by_id == {store.oid1: store.order1}
+    assert storage.get_order_by_id(store.oid1) == store.order1
+    assert storage.get_order_by_id(store.oid2) is None
+    assert storage.get_order_by_id(store.oid3) is None
 
 
 def test_filled_order_leaves_active_queries_via_predicate(store):
@@ -148,12 +153,11 @@ def test_get_order_by_id(store):
     assert store.storage.get_order_by_id(uuid.uuid4()) is None
 
 
-def test_get_order_by_id_uses_flat_index(store):
-    """The flat ``_by_id`` index resolves a lookup with no portfolio scan."""
+def test_get_order_by_id_resolves_without_portfolio(store):
+    """The flat index resolves a lookup with no portfolio_id / portfolio scan."""
     store.storage.add_order(store.order1)
 
-    assert store.oid1 in store.storage._by_id
-    assert store.storage._by_id[store.oid1] == store.order1
+    assert store.storage.get_order_by_id(store.oid1) is not None
     assert store.storage.get_order_by_id(store.oid1) == store.order1
 
 
@@ -167,11 +171,11 @@ def test_remove_order(store):
 
     # Check it's gone (and pruned from the flat index)
     assert store.storage.get_order_by_id(store.oid1, store.pid1) is None
-    assert store.oid1 not in store.storage._by_id
+    assert store.storage.get_order_by_id(store.oid1) is None
 
     # Remove without portfolio_id
     assert store.storage.remove_order(store.oid2)
-    assert store.oid2 not in store.storage._by_id
+    assert store.storage.get_order_by_id(store.oid2) is None
 
     # Try to remove non-existent order
     assert not store.storage.remove_order(uuid.uuid4())
@@ -221,10 +225,10 @@ def test_update_order(store):
 
     assert store.storage.update_order(updated_order)
 
-    # Check the update (flat index reflects the new instance)
+    # Check the update (the public query reflects the new instance)
     found_order = store.storage.get_order_by_id(store.oid1, store.pid1)
     assert found_order.price == 41000.0
-    assert store.storage._by_id[store.oid1].price == 41000.0
+    assert store.storage.get_order_by_id(store.oid1).price == 41000.0
 
 
 def test_clear_portfolio_orders(store):
@@ -363,5 +367,5 @@ def test_handler_reads_delegate_through_manager(handler_env):
     assert handler.get_active_orders(pid) == [order]
     assert handler.get_orders_by_ticker("BTCUSDT", pid) == [order]
     assert handler.search_orders({"ticker": "BTCUSDT"}, pid) == [order]
-    assert handler.get_orders_summary(pid) == {"PENDING": 1}
+    assert handler.count_orders_by_status(pid) == {"PENDING": 1}
     assert handler.get_order_history(oid) == []
