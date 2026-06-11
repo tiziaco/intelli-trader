@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
 status: executing
-last_updated: "2026-06-11T07:44:14.895Z"
-last_activity: 2026-06-11 -- Phase 01 planning complete
+last_updated: "2026-06-11T07:50:40.094Z"
+last_activity: 2026-06-11
 progress:
   total_phases: 10
   completed_phases: 0
   total_plans: 2
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** v1.2 Consolidation roadmap created and **renumbered to Phases 1-6** (numbering reset for v1.2, matching v1.1). A **behavior-preserving cleanup** milestone — clear the V1.2-CLEANUP-REVIEW backlog + CONCERNS.md debt, byte-exact against the golden master, leaving a clean/decomposed foundation. Next: plan Phase 1 (Dead Code & Doc Hygiene) with `/gsd:plan-phase 1`.
+**Current focus:** Phase 01 — dead-code-doc-hygiene
 
 ## Current Position
 
-Phase: 1 — Dead Code & Doc Hygiene (not started)
-Plan: —
+Phase: 01 (dead-code-doc-hygiene) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-06-11 -- Phase 01 planning complete
+Last activity: 2026-06-11
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
 
@@ -101,6 +101,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
+| Phase 01 P01 | 2 | 3 tasks | 5 files |
 
 ## Bookkeeping
 
@@ -147,8 +148,8 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T07:30:03.421Z
-Resume file: .planning/phases/01-dead-code-doc-hygiene/01-CONTEXT.md
+Last session: 2026-06-11T07:50:35.452Z
+Resume file: None
 
 ## Operator Next Steps
 

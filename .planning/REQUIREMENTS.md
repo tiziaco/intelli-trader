@@ -26,7 +26,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Dead Code & Doc Hygiene (DEAD)
 
-- [ ] **DEAD-01**: The dead ABCs (`AbstractPortfolioHandler`/`AbstractPortfolio`/`AbstractPosition`
+- [x] **DEAD-01**: The dead ABCs (`AbstractPortfolioHandler`/`AbstractPortfolio`/`AbstractPosition`
   + orphan `get_last_close`), the unused `OrderBase`, and the dead `import numpy as np` in
   `portfolio.py` are deleted with no importer breakage. [W3-11, W3-09, W4-10]
 - [ ] **DEAD-02**: Stale docs are corrected and conventions documented — CONCERNS.md
@@ -152,7 +152,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEAD-01 | Phase 1 | Pending |
+| DEAD-01 | Phase 1 | Complete |
 | DEAD-02 | Phase 1 | Pending |
 | DEC-01 | Phase 2 | Pending |
 | DEC-02 | Phase 2 | Pending |

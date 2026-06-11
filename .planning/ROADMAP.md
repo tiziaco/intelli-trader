@@ -104,7 +104,7 @@ deferred out of v1.2 Consolidation. Promote after v1.2, ahead of N+2. See Backlo
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md (01-code-deletions) — delete 3 dead ABCs + OrderBase + dead numpy import; importer sweep; oracle byte-exact (DEAD-01)
+- [x] 01-01-PLAN.md (01-code-deletions) — delete 3 dead ABCs + OrderBase + dead numpy import; importer sweep; oracle byte-exact (DEAD-01)
 - [ ] 01-02-PLAN.md (02-doc-hygiene) — trim stale CONCERNS/ROADMAP entries; document 4 conventions in CONVENTIONS/CLAUDE (DEAD-02)
 
 ### Phase 2: Locked-Decision Conformance
@@ -187,7 +187,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Dead Code & Doc Hygiene | v1.2 | 0/TBD | Not started | - |
+| 1. Dead Code & Doc Hygiene | v1.2 | 1/2 | In Progress|  |
 | 2. Locked-Decision Conformance | v1.2 | 0/TBD | Not started | - |
 | 3. Hot-Path Performance | v1.2 | 0/TBD | Not started | - |
 | 4. Type Modeling | v1.2 | 0/TBD | Not started | - |
