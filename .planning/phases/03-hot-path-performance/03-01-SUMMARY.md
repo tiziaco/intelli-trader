@@ -138,3 +138,10 @@ seam. No new network endpoints, auth paths, file access, schema changes, or depe
 threat register's only `mitigate` disposition (T-03-01, silent state corruption from dropping the
 copy) is satisfied: D-19 single-writer is the precondition, the byte-exact oracle is the integrity
 net, and the D-05 caller+test audit confirms no caller mutates a returned container.
+
+## Self-Check: PASSED
+
+- `03-01-SUMMARY.md` — FOUND
+- Commit `8ccc7ed` (Task 1) — FOUND
+- Commit `d6bf9df` (Task 2) — FOUND
+- Commit `df568f6` (SUMMARY) — FOUND
