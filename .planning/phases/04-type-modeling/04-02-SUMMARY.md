@@ -139,6 +139,12 @@ None — the plan's threat register dispositions held. The single `mitigate` ite
 - TYPE-02 / TYPE-03 boundary defects closed; remaining Phase 4 type-modeling plans (order-domain id retypes, dataclass freezing, BaseStrategyConfig relocation) are unblocked.
 - No blockers introduced. Pre-existing `test_position_manager.py` collection error tracked for a later hygiene pass.
 
+## Self-Check: PASSED
+
+- Created files exist: `itrader/core/enums/severity.py`, `04-02-SUMMARY.md`, `deferred-items.md`.
+- Task commits exist: `39b91dc`, `ff966f9`, `7f05547` + metadata `3515a12`.
+- STATE.md / ROADMAP.md untouched (orchestrator-owned).
+
 ---
 *Phase: 04-type-modeling*
 *Completed: 2026-06-11*
