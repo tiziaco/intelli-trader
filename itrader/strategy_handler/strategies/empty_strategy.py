@@ -2,9 +2,14 @@ import pandas as pd
 # import numpy as np
 # from ta import trend
 
+from itrader.config import BaseStrategyConfig
 from itrader.core.sizing import SignalIntent
 from itrader.strategy_handler.base import Strategy
-from itrader.strategy_handler.config import EmptyStrategyConfig
+
+
+class EmptyStrategyConfig(BaseStrategyConfig):
+	"""No-extra-params config for the relocated Empty_strategy (co-located, D-14)."""
+
 
 class Empty_strategy(Strategy):
 	"""
