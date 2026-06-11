@@ -18,7 +18,7 @@ in the root conftest) — do NOT hand-add markers.
 from decimal import Decimal
 
 from itrader.core.sizing import FractionOfCash, TradingDirection
-from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig, SMA_MACD_strategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig, SMAMACDStrategy
 
 
 # Golden-run configuration (D-03/D-04/D-06).
@@ -42,7 +42,7 @@ def test_backtest_smoke_produces_nonzero_trade(backtest_engine):
 
     # Add the reference strategy on the daily timeframe, subscribed to BTCUSD.
     # D-01: single config-object constructor.
-    strategy = SMA_MACD_strategy(SMA_MACDConfig(
+    strategy = SMAMACDStrategy(SMA_MACDConfig(
         timeframe=TIMEFRAME,
         tickers=[TICKER],
         sizing_policy=FractionOfCash(Decimal("0.95")),

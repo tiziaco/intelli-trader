@@ -5,7 +5,7 @@ This committed driver pins every oracle-defining decision so a run is bit-reprod
 
   * D-01  dataset  : data/BTCUSD_1d_ohlcv_2018_2026.csv (the golden CSV feed)
   * D-02  window   : 2018-01-01 -> 2026-06-03 (pinned explicitly below)
-  * D-03  params   : SMA_MACD code defaults (short=50/long=100/FAST=6/SLOW=12/WIN=3)
+  * D-03  params   : SMA_MACD code defaults (short=50/long=100/fast_window=6/slow_window=12/signal_window=3)
   * D-04  capital  : starting cash $10,000, fees 0, slippage 0
   * D-06  ticker   : BTCUSD on the 1d timeframe
   * D-10  output   : output/trades.csv + output/equity.csv + output/summary.json
@@ -45,7 +45,7 @@ from decimal import Decimal
 
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.trading_system.backtest_trading_system import TradingSystem
-from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig, SMA_MACD_strategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig, SMAMACDStrategy
 from itrader.logger import get_itrader_logger
 
 
@@ -81,7 +81,7 @@ def main():
         direction=TradingDirection.LONG_ONLY,
         allow_increase=False,
     )
-    strategy = SMA_MACD_strategy(strategy_config)
+    strategy = SMAMACDStrategy(strategy_config)
     system.strategies_handler.add_strategy(strategy)
 
     # Single long-only portfolio with $10k starting cash (D-04).
