@@ -434,10 +434,32 @@ class PortfolioHandler:
     # handler holds a single validated Pydantic ``PortfolioConfig`` (``config_data``).
     # ``update_config`` merges + re-validates via the model (Pydantic raises on bad
     # input); the per-portfolio variants were never wired on the backtest path.
+    @staticmethod
+    def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively merge ``updates`` into ``base`` without mutating either.
+
+        WR-04: a plain ``{**base, **updates}`` is a SHALLOW merge — passing a
+        partial nested submodel (e.g. ``{"limits": {"max_portfolios": 50}}``)
+        would REPLACE the whole ``limits`` dict, silently resetting sibling
+        fields like ``max_positions``. Recursing into nested dicts preserves
+        the sibling fields a caller did not intend to change.
+        """
+        merged = dict(base)
+        for key, value in updates.items():
+            existing = merged.get(key)
+            if isinstance(existing, dict) and isinstance(value, dict):
+                merged[key] = PortfolioHandler._deep_merge(existing, value)
+            else:
+                merged[key] = value
+        return merged
+
     def update_config(self, updates: Dict[str, Any]) -> bool:
         """Update PortfolioHandler configuration at runtime (merge + re-validate)."""
         try:
-            merged = {**self.config_data.model_dump(), **updates}
+            # WR-04: deep-merge so a partial nested update (e.g. a single limits
+            # field) preserves the other fields of that submodel instead of
+            # replacing the whole submodel via a shallow `{**a, **b}`.
+            merged = self._deep_merge(self.config_data.model_dump(), updates)
             self.config_data = PortfolioConfig.model_validate(merged)
             self.max_portfolios = self.config_data.limits.max_portfolios
             self.logger.info("Configuration updated successfully", updates=updates)

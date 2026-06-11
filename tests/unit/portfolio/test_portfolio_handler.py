@@ -491,6 +491,31 @@ def test_thread_safety_concurrent_access(env):
 
 
 # ===================
+# Handler configuration management
+# ===================
+
+
+def test_update_config_partial_nested_preserves_siblings(env):
+    """WR-04: a partial nested update must preserve sibling fields.
+
+    A shallow `{**base, **updates}` merge would REPLACE the whole `limits`
+    submodel, silently resetting siblings like `max_positions`. The deep merge
+    must keep them.
+    """
+    handler = env.handler
+    before_max_positions = handler.config_data.limits.max_positions
+
+    ok = handler.update_config({"limits": {"max_portfolios": 7}})
+
+    assert ok is True
+    # The intended field changed...
+    assert handler.config_data.limits.max_portfolios == 7
+    assert handler.max_portfolios == 7
+    # ...and the sibling field was NOT reset by the partial update.
+    assert handler.config_data.limits.max_positions == before_max_positions
+
+
+# ===================
 # Individual portfolio enhancements
 # ===================
 
