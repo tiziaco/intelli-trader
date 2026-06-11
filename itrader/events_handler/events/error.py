@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from itrader.core.enums import ErrorSeverity, EventType
-from itrader.core.ids import CorrelationId
+from itrader.core.ids import CorrelationId, PortfolioId
 
 from .base import Event
 
@@ -75,7 +75,7 @@ class PortfolioErrorEvent(ErrorEvent):
     """
 
     source: str = "portfolio"
-    portfolio_id: Any | None = None
+    portfolio_id: PortfolioId | None = None
 
     def __str__(self) -> str:
         base = f"{self.type} ({self.source}): {self.error_type} - {self.error_message}"

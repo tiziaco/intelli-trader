@@ -21,7 +21,7 @@ import pytest
 # Pre-import the real enum module BEFORE the stubbed import below (same
 # trick as tests/integration/test_event_wiring.py) so full_event_handler
 # reuses the same cached EventType enum.
-from itrader.core.enums import EventType  # noqa: E402  (must precede stub import)
+from itrader.core.enums import ErrorSeverity, EventType  # noqa: E402  (must precede stub import)
 
 # Pre-import the events package OUTSIDE the stub block too: it pulls
 # pandas at runtime, and patch.dict would otherwise EVICT freshly-imported
@@ -111,7 +111,7 @@ def test_error_event_severity_maps_to_warning_level(wiring):
         source="portfolio",
         error_type="ValueError",
         error_message="soft failure",
-        severity="WARNING",
+        severity=ErrorSeverity.WARNING,
     )
     wiring.q.put(err)
     wiring.handler.process_events()

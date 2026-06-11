@@ -7,7 +7,7 @@ factories (``PortfolioConfig.default()`` / ``get_portfolio_preset(name)``).
 
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -105,7 +105,10 @@ class PortfolioConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    portfolio_id: Optional[int] = None
+    # D-10/D-11: the legacy ``portfolio_id: Optional[int] = None`` field was a
+    # false affordance + a stray int id — never read (the entity mints a fresh
+    # UUIDv7), so it is removed entirely. With ``extra="forbid"`` any caller
+    # still passing ``portfolio_id=`` now fails loudly at construction.
     name: str = "Default Portfolio"
     description: str = ""
     portfolio_type: PortfolioType = PortfolioType.EQUITY
@@ -121,7 +124,12 @@ class PortfolioConfig(BaseModel):
     enable_analytics: bool = True
     enable_notifications: bool = True
     auto_rebalance: bool = False
-    rebalance_frequency: str = "monthly"
+    # D-09: closed-vocabulary validation at the Pydantic boundary — an
+    # out-of-vocab string (e.g. "not_a_real_freq") now raises a pydantic
+    # ValidationError at construction instead of being silently accepted.
+    rebalance_frequency: Literal[
+        "daily", "weekly", "monthly", "quarterly", "yearly"
+    ] = "monthly"
 
     @classmethod
     def default(cls) -> "PortfolioConfig":
