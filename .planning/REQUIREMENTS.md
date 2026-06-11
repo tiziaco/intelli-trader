@@ -98,7 +98,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   `_routes`); `SimulatedExchange` exposes `register_symbol()` + a complete `update_config` seam,
   and production code no longer mutates `_supported_symbols`/`_min_order_size` directly. [W3-08,
   W3-04]
-- [ ] **NAME-04**: Tests assert through public query APIs, not `_by_id`/`_storage`/`_routes`/
+- [x] **NAME-04**: Tests assert through public query APIs, not `_by_id`/`_storage`/`_routes`/
   `_generate_correlation_id` internals (unblocks backend swaps). [W3-05, W3-07, W3-06]
 
 ### Order-Manager Decomposition (MOD)
@@ -174,7 +174,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | NAME-01 | Phase 5 | Complete |
 | NAME-02 | Phase 5 | Complete |
 | NAME-03 | Phase 5 | Complete |
-| NAME-04 | Phase 5 | Pending |
+| NAME-04 | Phase 5 | Complete |
 | MOD-01 | Phase 6 | Pending |
 
 **Coverage:**
