@@ -1,4 +1,3 @@
-import numpy as np
 from datetime import datetime, UTC
 from typing import Optional, Dict, List, Any, Mapping
 from decimal import Decimal
