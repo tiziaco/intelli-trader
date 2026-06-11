@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
 status: planning
-last_updated: "2026-06-11T08:00:00.000Z"
-last_activity: 2026-06-11
+last_updated: "2026-06-11T07:30:03.428Z"
+last_activity: 2026-06-11 — v1.2 Consolidation roadmap renumbered to Phases 1-6 (numbering reset for v1.2, matching v1.1; previously drafted as Phases 10-15); 18/18 requirements mapped. The v1.1 phase working dirs were archived to `.planning/milestones/v1.1-phases/` (no directory collision).
 progress:
-  total_phases: 6
+  total_phases: 10
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -147,8 +147,8 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T08:00:00.000Z
-Resume file: None
+Last session: 2026-06-11T07:30:03.421Z
+Resume file: .planning/phases/01-dead-code-doc-hygiene/01-CONTEXT.md
 
 ## Operator Next Steps
 
