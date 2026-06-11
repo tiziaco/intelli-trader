@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
 status: ready_to_plan
-last_updated: 2026-06-11T18:56:46.625Z
+last_updated: 2026-06-11T21:41:56.678Z
 last_activity: 2026-06-11
 progress:
   total_phases: 10
-  completed_phases: 5
-  total_plans: 18
-  completed_plans: 18
-  percent: 50
-stopped_at: Phase 05 complete (4/4) — ready to discuss Phase 6 (Order-Manager Decomposition)
+  completed_phases: 6
+  total_plans: 23
+  completed_plans: 23
+  percent: 60
+stopped_at: Phase 06 complete (5/5) — ready to discuss Phase 999.2
 ---
 
 # Project State
@@ -21,11 +21,11 @@ stopped_at: Phase 05 complete (4/4) — ready to discuss Phase 6 (Order-Manager 
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** Phase 6 — Order-Manager Decomposition (MOD-01, FRAGILE, isolated, LAST)
+**Current focus:** Phase 999.2 — nplus2 persistence and performance
 
 ## Current Position
 
-Phase: 6
+Phase: 999.2
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-06-11
@@ -61,7 +61,7 @@ Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from V1.2-CLEANUP-REVI
 
 **Velocity (v1.1):**
 
-- Total plans completed: 49
+- Total plans completed: 54
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -90,6 +90,11 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase 05]: Phase 05 NAME-03: D-06 _routes->routes plain public field (no property/get_routes); D-07 SimulatedExchange.register_symbol() closes the execution_handler.py:109 direct-mutation gap (byte-identical set-union, no float); D-08 update_config confirmed complete (no field reachable solely by direct mutation) — oracle-dark, byte-exact, mypy strict clean
 - [Phase ?]: Phase 05 NAME-02: D-03 strategy PascalCase (SMAMACDStrategy/EmptyStrategy) + SMA_MACDConfig FAST/SLOW/WIN->fast_window/slow_window/signal_window (defaults 6/12/3, value-equal); D-04 all run-path importers updated, no alias; module filenames + SMA_MACDConfig class name kept; load-bearing golden re-run byte-exact (134/46189.87730727451), e2e 58/58, mypy strict clean
 - [Phase ?]: Phase 05 NAME-04: rewrote 6 private-internals test consumers to public query APIs (routes / get_order_by_id / count_orders_by_status / emitted PortfolioErrorEvent.correlation_id / register_symbol+get_supported_symbols); correlation-id test adjudicated to observable-effect (not white-box, D-09); cash_manager white-box writes untouched; golden byte-exact, e2e 58/58, mypy strict clean
+- [Phase ?]: [Phase 06 / 06-01] D-10 step 1: BracketBook introduced IN PLACE as single owner of the pending-bracket map (D-04/D-05); _PendingBracket moved verbatim to brackets/bracket_book.py (D-03, action str kept); all 8 _pending_brackets sites routed through arm/get/consume/refresh_quantity; dict-compat dunders + read-only _pending_brackets property keep test_sltp_policy.py untouched (Pitfall 2 option a); NO collaborator code moved; golden byte-exact (134/46189.87730727451), e2e 58/58, mypy strict clean.
+- [Phase 06 / 06-02]: D-10 step 2: extracted brackets/ — _bracket_levels + _ONE moved to stateless brackets/levels.py (D-08, imported by BOTH the assembly path and the fill-anchored path so neither admission nor reconcile needs a brackets-collaborator ref); BracketManager (TAB, no queue) owns _assemble_bracket_and_emit + _create_fill_anchored_children, constructed once in OrderManager.__init__ with the injected coordinator-owned BracketBook (D-04 star), 3 call sites delegate; now-dead imports removed move-inherently (SLTPPolicy/assert_never/PercentFromDecision/PercentFromFill/_PendingBracket); golden byte-exact (134/46189.87730727451), e2e 58/58, mypy strict clean; order_handler.py + order_handler/__init__.py byte-unchanged.
+- [Phase 06 / 06-03]: D-10 step 3: extracted admission/ — AdmissionManager (TAB, no queue) owns the 9-method signal→order pipeline (process_signal + create_orders_from_signal INTACT per D-07, plus _estimate_commission/_get_signal_exchange/_build_primary_order/_enforce_direction_admission/_enforce_position_admission/_resolve_signal_quantity/_reject_unsized_signal), constructed once in OrderManager.__init__ with the injected coordinator-owned BracketBook + BracketManager (D-04 star, D-08 — no reconcile/lifecycle ref); the two public entry points are 1-line delegations (public surface + external ctor unchanged); move-inherent dead imports removed (OrderType/Side/OrderTriggerSource/InsufficientFundsError/SizingPolicyViolation/TradingDirection); test_admission_rules white-box commission_estimator injection retargeted to order_manager.admission_manager (new home); golden byte-exact (134/46189.87730727451), e2e 58/58, unit 152, mypy strict (168 files); order_handler.py + order_handler/__init__.py byte-unchanged.
+- [Phase ?]: [Phase 06 / 06-04]: D-10 step 4: extracted lifecycle/ — LifecycleManager (TAB, no queue) owns modify_order + cancel_order moved VERBATIM (D-07), constructed once in OrderManager.__init__ with the injected coordinator-owned BracketBook (D-04 star, D-08 — no reconcile/admission ref); the two verbs are 1-line delegations (public surface + external ctor unchanged); on_fill's WR-05 orphaned-child cancel routes through the delegation unchanged (reconcile->lifecycle seam deferred to plan 05); move-inherent dead imports removed (OrderCommand/OrderOperationType); golden byte-exact (134/46189.87730727451), e2e 58/58, unit 152, mypy strict (170 files); order_handler.py + barrel byte-unchanged. LAST extraction before the FRAGILE reconcile step.
+- [Phase 06 / 06-05]: D-10 step 5 (FRAGILE, LAST): extracted reconcile/ — ReconcileManager (TAB, no queue) owns on_fill moved VERBATIM as ONE indivisible intact unit (D-07, criterion 2); should_release/try/finally/release-in-finally interplay byte-for-byte unchanged (T-05-17, WR-03/WR-04); the two cross-bucket seams rewired with NO sibling edge — WR-05 orphaned-child cancel via self.cancel_order coordinator callback (D-04 star, no LifecycleManager ref, no circular import), fill-anchored children via injected coordinator-owned BracketManager (D-08, BracketManager type under TYPE_CHECKING only); on_fill a 1-line delegation (public surface + external ctor unchanged); move-inherent dead imports removed (to_money/FillStatus); golden byte-exact (134/46189.87730727451), e2e 58/58, determinism double-run byte-identical (D-11), unit 152, full suite 851, mypy strict (172 files); order_handler.py + barrel byte-unchanged. All 5 D-01 buckets extracted — order_manager.py is the thin coordinator (__init__ + 5 entry delegations + 7 read delegators).
 
 ### Pending Todos
 
@@ -116,6 +121,11 @@ None yet.
 | Phase 05 P02 | 8 | 3 tasks | 3 files |
 | Phase 05 P03 | 6 | 3 tasks | 8 files |
 | Phase 05 P04 | 10 | 3 tasks | 6 files |
+| Phase 06 P01 | 3 | 2 tasks | 4 files |
+| Phase 06 P02 | 6 | 2 tasks | 4 files |
+| Phase 06 P03 | 9 | 2 tasks | 4 files |
+| Phase 06 P04 | 6 | 2 tasks | 3 files |
+| Phase 06 P05 | 9 | 2 tasks | 3 files |
 
 ## Bookkeeping
 
@@ -162,7 +172,7 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T18:45:52.692Z
+Last session: 2026-06-11T21:29:45.753Z
 Resume file: None
 
 ## Operator Next Steps

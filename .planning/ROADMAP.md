@@ -83,7 +83,7 @@ items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog
 - [x] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD (completed 2026-06-11)
 - [x] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/` (completed 2026-06-11)
 - [x] **Phase 5: Naming & Encapsulation** - `events_queue→global_queue`; strategy PascalCase + `*_window`; publicize `routes`; `register_symbol()` API; test hygiene through public APIs (completed 2026-06-11)
-- [ ] **Phase 6: Order-Manager Decomposition** - Split the 1279-line `order_manager.py` god-module into `admission/`/`brackets/`/`reconcile/` collaborators — pure code-motion, isolated, byte-exact (FRAGILE)
+- [x] **Phase 6: Order-Manager Decomposition** - Split the 1279-line `order_manager.py` god-module into `admission/`/`brackets/`/`reconcile/` collaborators — pure code-motion, isolated, byte-exact (FRAGILE) (completed 2026-06-11)
 
 ### 📋 Engine Surface Completion (Planned — Backlog Phase 999.5)
 
@@ -229,11 +229,15 @@ Plans:
   3. This is the sole change in the phase — no enum, naming, perf, or doc change rides along (FRAGILE-zone isolation rule).
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green; determinism double-run byte-identical.
 
-**Plans**: TBD
+**Plans**: 5 plans
 
-Plans:
+Plans (SEQUENTIAL — one per D-10 extraction step, waves 1→5, reconcile LAST):
 
-- [ ] TBD (decompose with /gsd:plan-phase 6)
+- [x] 06-01-PLAN.md (01-bracketbook-in-place) — introduce BracketBook wrapping _pending_brackets at all 8 sites + dict-compat dunders so test_sltp_policy survives untouched + lean BracketBook unit test; no code moved (D-10 step 1) (MOD-01)
+- [x] 06-02-PLAN.md (02-extract-brackets) — extract brackets/: BracketManager (_assemble_bracket_and_emit, _create_fill_anchored_children) + stateless levels.py (_bracket_levels, _ONE); wire into OrderManager.__init__ (D-10 step 2) (MOD-01)
+- [x] 06-03-PLAN.md (03-extract-admission) — extract admission/: AdmissionManager (process_signal, create_orders_from_signal + 7 helpers, intact); process_signal/create_orders_from_signal become 1-line delegations (D-10 step 3) (MOD-01)
+- [x] 06-04-PLAN.md (04-extract-lifecycle) — extract lifecycle/ (D-01 4th bucket): LifecycleManager (modify_order, cancel_order); 1-line delegations (D-10 step 4) (MOD-01)
+- [x] 06-05-PLAN.md (05-extract-reconcile-FRAGILE) — extract reconcile/ LAST: ReconcileManager (on_fill moved as ONE intact unit, should_release/finally byte-for-byte unchanged); cross-bucket seams via coordinator callback + injected BracketManager; +determinism double-run (D-10 step 5) (MOD-01)
 
 ## Progress
 
@@ -248,7 +252,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 | 3. Hot-Path Performance | v1.2 | 4/4 | Complete   | 2026-06-11 |
 | 4. Type Modeling | v1.2 | 5/5 | Complete   | 2026-06-11 |
 | 5. Naming & Encapsulation | v1.2 | 4/4 | Complete   | 2026-06-11 |
-| 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
+| 6. Order-Manager Decomposition | v1.2 | 5/5 | Complete   | 2026-06-11 |
 
 ## Backlog
 

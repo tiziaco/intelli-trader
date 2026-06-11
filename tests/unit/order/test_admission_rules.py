@@ -312,8 +312,11 @@ def test_increase_with_insufficient_funds_yields_cash_reservation_rejection(harn
     check-and-reserve gate, never bypassing it (T-07-21)."""
     harness.open_long(quantity=2.5, price=40.0)
     # Inflate the estimated commission so reserve = price*qty + commission
-    # exceeds available cash (FractionOfCash <= 1 alone always fits).
-    harness.order_handler.order_manager.commission_estimator = (
+    # exceeds available cash (FractionOfCash <= 1 alone always fits). The
+    # signal→order pipeline (and its _estimate_commission consumer) lives on
+    # AdmissionManager since 06-03, so inject the fake estimator at its
+    # canonical post-construction home.
+    harness.order_handler.order_manager.admission_manager.commission_estimator = (
         lambda quantity, price: Decimal("1000000")
     )
 

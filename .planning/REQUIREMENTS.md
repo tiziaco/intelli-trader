@@ -103,7 +103,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Order-Manager Decomposition (MOD)
 
-- [ ] **MOD-01**: `order_manager.py` (1279-line god-module) is decomposed into `admission/`,
+- [x] **MOD-01**: `order_manager.py` (1279-line god-module) is decomposed into `admission/`,
   `brackets/`, and `reconcile/` collaborators under `order_handler/` (mirroring the
   `portfolio_handler/` manager layout), as **pure code-motion with no semantics change**; the
   terminal-status / `should_release` / `finally`-release interplay is unchanged; golden master
@@ -175,7 +175,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | NAME-02 | Phase 5 | Complete |
 | NAME-03 | Phase 5 | Complete |
 | NAME-04 | Phase 5 | Complete |
-| MOD-01 | Phase 6 | Pending |
+| MOD-01 | Phase 6 | Complete |
 
 **Coverage:**
 - v1.2 requirements: 18 total
