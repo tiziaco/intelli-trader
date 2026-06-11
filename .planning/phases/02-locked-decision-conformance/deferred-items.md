@@ -18,6 +18,8 @@ only auto-fix issues DIRECTLY caused by the current plan's changes).
   `order_manager.py`, and `tests/unit/order/test_order_manager.py` — none in the
   portfolio/ids/events surface. Left untouched per the scope boundary; plan 02-03's own
   verification owns this fix.
-- **Status:** Open — expected to clear when plan 02-03 completes its verification task. If it
-  remains red at phase close, plan 02-03 must update the assertion (e.g. to validate the
-  CorrelationId/UUID shape, dropping the obsolete `ph_` prefix expectation).
+- **Status:** RESOLVED (2026-06-11) by plan 02-03 commit `57ad3df` "test(02-03): assert
+  correlation id is a uuid.UUID instead of ph_ prefix" — the assertion at
+  `test_portfolio_handler.py:433` was swapped from `.startswith("ph_")` to
+  `isinstance(id1, uuid.UUID)`. Test passes; full suite 811 green at phase close. No action
+  required.
