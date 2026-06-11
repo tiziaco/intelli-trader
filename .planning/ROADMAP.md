@@ -116,10 +116,12 @@ Plans:
   2. `_min/_max_order_size` are carried as `Decimal` end-to-end and the latent `Decimal < float` `TypeError` on the below-minimum validation path is removed; the golden run is confirmed never to route through the broken comparison and the oracle is byte-exact.
   3. Correlation IDs use the single UUIDv7 `idgen` scheme (or a deterministic counter); `uuid.uuid4()` is gone from the run path (single ID scheme restored, no non-deterministic crypto RNG).
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD (decompose with /gsd:plan-phase 2)
+- [ ] 02-01-PLAN.md (01-decimal-money-api) — retype modify_order/cancel_order money params Optional[float]→Optional[Decimal] (facade + manager); Decimal boundary callers (DEC-01)
+- [ ] 02-02-PLAN.md (02-decimal-order-size) — drop float() wraps on _min/_max_order_size (Decimal end-to-end); reframe/correct the D-07 "latent TypeError" misdiagnosis; below-minimum REFUSED branch test (DEC-02)
+- [ ] 02-03-PLAN.md (03-uuidv7-correlation-id) — retire uuid4() correlation id → single UUIDv7 idgen scheme; CorrelationId NewType + generate_correlation_id; CorrelationId|None event field (DEC-03)
 
 ### Phase 3: Hot-Path Performance
 **Goal**: Eliminate the dominant per-tick perf costs — defensive storage copies, redundant Decimal re-wraps, duplicated per-tick work, and per-tick Bar/MACD churn — with bit-identical values.
