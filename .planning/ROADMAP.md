@@ -204,11 +204,18 @@ Plans:
   4. Tests assert through public query APIs, not `_by_id`/`_storage`/`_routes`/`_generate_correlation_id` internals.
   5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
 
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
+**Wave 1** *(parallel — no shared files; oracle-dark + the load-bearing strategy re-run)*
 
-- [ ] TBD (decompose with /gsd:plan-phase 5)
+- [ ] 05-01-PLAN.md — NAME-01: queue events_queue→global_queue (D-02) + canonical count_orders_by_status across façade/manager/Protocol/2 backends (D-01)
+- [ ] 05-02-PLAN.md — NAME-03: public routes field rename (D-06) + register_symbol() seam closing the _supported_symbols direct-mutation gap + update_config completeness audit (D-07/D-08)
+- [ ] 05-03-PLAN.md — NAME-02: PascalCase SMAMACDStrategy/EmptyStrategy + fast_window/slow_window/signal_window config (defaults 6/12/3); all run-path importers updated; load-bearing golden re-run (D-03/D-04)
+
+**Wave 2** *(test hygiene — depends on the renamed public surfaces from 05-01 + 05-02)*
+
+- [ ] 05-04-PLAN.md — NAME-04: tests assert through public APIs (routes / get_order_by_id / count_orders_by_status / emitted correlation_id / register_symbol), not _routes/_by_id/_generate_correlation_id/_supported_symbols internals (D-09)
 
 ### Phase 6: Order-Manager Decomposition
 
