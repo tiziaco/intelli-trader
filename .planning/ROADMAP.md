@@ -179,9 +179,9 @@ Plans:
 Plans:
 **Wave 1** *(parallel — no shared files)*
 
-- [ ] 04-01-PLAN.md — TYPE-01: freeze FillDecision/CancelDecision + OperationResult/SignalProcessingResult (tuple fields) (D-07)
-- [ ] 04-02-PLAN.md — TYPE-02/03: ErrorSeverity enum; enum-member fee/slippage dispatch (assert_never); rebalance_frequency validation; portfolio_id removal; portfolio/events/validators id NewTypes (D-05/08/09/10/11/12/13)
-- [ ] 04-03-PLAN.md — TYPE-05: relocate BaseStrategyConfig to config/strategy.py; co-locate concrete configs (tab re-indent); update D-16 importers (D-14/15/16)
+- [x] 04-01-PLAN.md — TYPE-01: freeze FillDecision/CancelDecision + OperationResult/SignalProcessingResult (tuple fields) (D-07)
+- [x] 04-02-PLAN.md — TYPE-02/03: ErrorSeverity enum; enum-member fee/slippage dispatch (assert_never); rebalance_frequency validation; portfolio_id removal; portfolio/events/validators id NewTypes (D-05/08/09/10/11/12/13)
+- [x] 04-03-PLAN.md — TYPE-05: relocate BaseStrategyConfig to config/strategy.py; co-locate concrete configs (tab re-indent); update D-16 importers (D-14/15/16)
 
 **Wave 2** *(FRAGILE order-domain core; blocked on Wave 1)*
 
@@ -239,7 +239,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 | 1. Dead Code & Doc Hygiene | v1.2 | 2/2 | Complete   | 2026-06-11 |
 | 2. Locked-Decision Conformance | v1.2 | 3/3 | Complete   | 2026-06-11 |
 | 3. Hot-Path Performance | v1.2 | 4/4 | Complete   | 2026-06-11 |
-| 4. Type Modeling | v1.2 | 0/TBD | Not started | - |
+| 4. Type Modeling | v1.2 | 3/5 | In Progress|  |
 | 5. Naming & Encapsulation | v1.2 | 0/TBD | Not started | - |
 | 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
 
