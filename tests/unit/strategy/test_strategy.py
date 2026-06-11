@@ -40,7 +40,7 @@ from itrader.strategy_handler.base import Strategy
 from itrader.config import BaseStrategyConfig
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig
 from itrader.strategy_handler.storage import InMemorySignalStore
-from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 
 
@@ -98,7 +98,7 @@ def _short_frame() -> pd.DataFrame:
 
 def test_bullish_crossover_returns_buy_intent():
     """A synthetic bullish SMA/MACD crossover frame yields a BUY SignalIntent."""
-    strategy = SMA_MACD_strategy(_sma_config())
+    strategy = SMAMACDStrategy(_sma_config())
 
     intent = strategy.generate_signal(_TICKER, _bullish_crossover_frame())
 
@@ -124,7 +124,7 @@ def test_too_short_window_short_circuits_in_handler(handler_env):
     the old guard produced, HARD-04).
     """
     handler, q = handler_env  # the stub feed returns the 10-bar _short_frame()
-    strategy = SMA_MACD_strategy(_sma_config())  # warmup == 100
+    strategy = SMAMACDStrategy(_sma_config())  # warmup == 100
     strategy.subscribe_portfolio(_PORTFOLIO_A)
     handler.add_strategy(strategy)
 
@@ -135,7 +135,7 @@ def test_too_short_window_short_circuits_in_handler(handler_env):
 
 def test_golden_declarations_are_typed():
     """SMA_MACD declares the golden typed policy (D-03/D-08/D-10)."""
-    strategy = SMA_MACD_strategy(_sma_config())
+    strategy = SMAMACDStrategy(_sma_config())
 
     assert strategy.sizing_policy == FractionOfCash(Decimal("0.95"))
     assert strategy.direction is TradingDirection.LONG_ONLY
@@ -144,7 +144,7 @@ def test_golden_declarations_are_typed():
 
 def test_buy_sell_sugar_builds_intents():
     """buy()/sell() are thin sugar: SignalIntent only, to_money entry for SL/TP."""
-    strategy = SMA_MACD_strategy(_sma_config())
+    strategy = SMAMACDStrategy(_sma_config())
 
     buy = strategy.buy(_TICKER, sl=40.5, tp=50.25)
     sell = strategy.sell(_TICKER)

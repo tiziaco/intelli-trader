@@ -35,9 +35,9 @@ def test_sma_macd_config_defaults_construct() -> None:
     assert cfg.timeframe is Timeframe.D1
     assert cfg.short_window == 50
     assert cfg.long_window == 100
-    assert cfg.FAST == 6
-    assert cfg.SLOW == 12
-    assert cfg.WIN == 3
+    assert cfg.fast_window == 6
+    assert cfg.slow_window == 12
+    assert cfg.signal_window == 3
     assert cfg.order_type is OrderType.MARKET
     assert cfg.direction is TradingDirection.LONG_ONLY
     assert cfg.allow_increase is False
