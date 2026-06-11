@@ -171,6 +171,7 @@ class OrderManager:
 		# reconciliation aborts the run instead of producing silently-wrong
 		# numbers.
 		should_release = False
+		body_raised = False
 		try:
 			applied = True
 			if fill_event.status == FillStatus.EXECUTED:
@@ -256,6 +257,7 @@ class OrderManager:
 			# reservation before the exception propagates.
 			self.logger.error('Error reconciling fill for order %s: %s',
 			                  order_id, e, exc_info=True)
+			body_raised = True
 			raise
 		finally:
 			# WR-04: a terminal fill ALWAYS releases its reservation, even when
@@ -264,15 +266,24 @@ class OrderManager:
 			# run). `should_release` is False on the non-terminal early-return
 			# path, which intentionally holds the reservation. The release is
 			# idempotent — never-reserved orders (SELLs, children) silently
-			# no-op. Failures inside the release itself are logged, never masked.
+			# no-op.
 			if should_release and self.portfolio_handler is not None:
 				try:
 					self.portfolio_handler.release(
 						order.portfolio_id, order.id)
 				except Exception:
+					# WR-03: distinguish "body raised" from "release raised".
+					# If the body already raised, that ORIGINAL exception is the
+					# one propagating out of the finally — re-raising the release
+					# failure here would mask it, so we only log. But if the body
+					# succeeded and the release itself fails, a silently-unreleased
+					# reservation IS the buying-power-corruption class WR-04
+					# defends against, so it must reach the fail-fast seam.
 					self.logger.error(
 						'Failed to release reservation for order %s during fill reconciliation',
 						order.id, exc_info=True)
+					if not body_raised:
+						raise
 		return out_events
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
