@@ -287,21 +287,25 @@ class PortfolioHandler:
         rather than producing corrupted numbers).
         """
 
+        # W1-07: hoist the non-EXECUTED no-op guard ABOVE the operation-context /
+        # correlation-id allocation. A non-EXECUTED fill is a pure no-op on
+        # portfolio state, so it returns early WITHOUT entering _operation_context
+        # (no correlation-id allocated, no active-operation tracked). The EXECUTED
+        # path below is unchanged — it still enters the context and processes.
+        if fill_event.status != FillStatus.EXECUTED:
+            self.logger.debug(
+                "Ignoring non-executed fill",
+                status=str(fill_event.status),
+                ticker=fill_event.ticker,
+            )
+            return
+
         with self._operation_context("on_fill") as correlation_id:
             try:
                 # Portfolio ids are native uuid.UUID (D-13/D-14); the dict is keyed
                 # directly by the UUID — no int/str coercion (the integer scheme is gone).
                 portfolio_id = fill_event.portfolio_id
                 portfolio = self.get_portfolio(portfolio_id)
-
-                if fill_event.status != FillStatus.EXECUTED:
-                    self.logger.debug(
-                        "Ignoring non-executed fill",
-                        status=str(fill_event.status),
-                        ticker=fill_event.ticker,
-                        correlation_id=correlation_id,
-                    )
-                    return
 
                 # Portfolio handles its own validation and processing.
                 # D-05 boundary map: events carry Side; Portfolio maps

@@ -931,12 +931,14 @@ class OrderManager:
 			return None
 		# NEW-POSITION case: no open position for the ticker (or a fully
 		# closed residual view). Enforce the declared concurrent-position cap.
-		if (self.portfolio_handler.open_position_count(portfolio_id)
-				>= signal_event.max_positions):
+		# W1-03: cache open_position_count once — it was called twice (the
+		# guard comparison + the rejection message) in the same branch.
+		open_count = self.portfolio_handler.open_position_count(portfolio_id)
+		if open_count >= signal_event.max_positions:
 			return self._reject_unsized_signal(
 				signal_event,
 				f"max positions reached: "
-				f"{self.portfolio_handler.open_position_count(portfolio_id)} open "
+				f"{open_count} open "
 				f">= max_positions={signal_event.max_positions}; "
 				f"new entry for {signal_event.ticker} not allowed by strategy",
 				triggered_by="admission_max_positions",
