@@ -24,11 +24,7 @@
 
 ## Known Bugs
 
-**Dead `screener_event_handler` with a latent `AttributeError`:**
-- Symptoms: The module references `self.universe` which is never set in `__init__`, so any instantiation/use would `AttributeError` at runtime.
-- Files: `itrader/events_handler/screener_event_handler.py` (documented in `pyproject.toml` mypy overrides, lines ~95-97)
-- Trigger: Not reachable — the module is not imported anywhere (`grep` confirms zero importers) and is superseded by `full_event_handler.py`.
-- Workaround: None needed; it is dead code. Recommended action: delete the file rather than carry a documented broken module.
+(none currently open)
 
 ## Security Considerations
 

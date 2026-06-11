@@ -263,8 +263,7 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   time-in-force (`Order.expire_order()` + `OrderStatus.EXPIRED` exist but are unwired on
   the backtest path; orders currently remain PENDING at run end — result-changing,
   owner-gated). Includes the `create_order` second-path gating decision (V1.2-CLEANUP-REVIEW
-  **W4-09**). The v1.1 fix-list stragglers FL-01/FL-02 were marked **done** (quick
-  260610-sjp) — their stale ROADMAP text is corrected in v1.2 Phase 1 / DEAD-02.
+  **W4-09**). FL-01/FL-02 closed in v1.1 (quick 260610-sjp).
 
 Sources: `phases/05-…/05-CONTEXT.md`, `phases/06-…/06-CONTEXT.md`,
 `phases/07-…/07-CONTEXT.md` `<deferred>` sections; `codebase/FIX-LIST.md` (FL-01/FL-02);
