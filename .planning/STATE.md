@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
-status: executing
-last_updated: "2026-06-11T07:50:40.094Z"
+status: verifying
+last_updated: "2026-06-11T07:54:34.641Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 10
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
-  percent: 0
+  completed_plans: 2
+  percent: 10
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation s
 
 Phase: 01 (dead-code-doc-hygiene) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-11
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
@@ -82,6 +82,9 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 
 (v1.1 per-plan decisions are archived in `milestones/v1.1-ROADMAP.md` and the phase records under `milestones/v1.1-phases/`.)
 
+- [Phase ?]: D-03 trim-to-truth: removed obsolete screener_event_handler Known-Bug from CONCERNS.md; trimmed ROADMAP 999.5-(d) to one FL-01/FL-02 closure line (net reduction, 260610-sjp kept)
+- [Phase ?]: D-01/D-02: four conventions documented in CONVENTIONS.md + CLAUDE.md pointer; W4-04 validator overlap documented justified-by-decision (code NOT removed)
+
 ### Pending Todos
 
 None yet.
@@ -102,6 +105,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 | Phase 01 P01 | 2 | 3 tasks | 5 files |
+| Phase 01 P02 | 2 | 3 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -148,7 +152,7 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T07:50:35.452Z
+Last session: 2026-06-11T07:54:23.186Z
 Resume file: None
 
 ## Operator Next Steps

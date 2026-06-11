@@ -77,7 +77,7 @@ items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog
   requires the golden-master re-run; the terminal-status / `should_release` / `finally`-release
   interplay must never change.
 
-- [ ] **Phase 1: Dead Code & Doc Hygiene** - Delete dead ABCs / `OrderBase` / dead numpy import; correct stale CONCERNS/ROADMAP notes; document the config-enum / run-mode / indentation conventions
+- [x] **Phase 1: Dead Code & Doc Hygiene** - Delete dead ABCs / `OrderBase` / dead numpy import; correct stale CONCERNS/ROADMAP notes; document the config-enum / run-mode / indentation conventions (completed 2026-06-11)
 - [ ] **Phase 2: Locked-Decision Conformance** - `Optional[Decimal]` money API; Decimal `_min/_max_order_size` (latent-TypeError fix); retire the `uuid4()` second ID scheme
 - [ ] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD
 - [ ] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/`
@@ -105,7 +105,7 @@ deferred out of v1.2 Consolidation. Promote after v1.2, ahead of N+2. See Backlo
 
 Plans:
 - [x] 01-01-PLAN.md (01-code-deletions) — delete 3 dead ABCs + OrderBase + dead numpy import; importer sweep; oracle byte-exact (DEAD-01)
-- [ ] 01-02-PLAN.md (02-doc-hygiene) — trim stale CONCERNS/ROADMAP entries; document 4 conventions in CONVENTIONS/CLAUDE (DEAD-02)
+- [x] 01-02-PLAN.md (02-doc-hygiene) — trim stale CONCERNS/ROADMAP entries; document 4 conventions in CONVENTIONS/CLAUDE (DEAD-02)
 
 ### Phase 2: Locked-Decision Conformance
 **Goal**: Close the three bounded locked-decision violations (float money at the API boundary, the latent Decimal/float TypeError, the second `uuid4()` ID scheme) without changing results.
@@ -187,7 +187,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Dead Code & Doc Hygiene | v1.2 | 1/2 | In Progress|  |
+| 1. Dead Code & Doc Hygiene | v1.2 | 2/2 | Complete   | 2026-06-11 |
 | 2. Locked-Decision Conformance | v1.2 | 0/TBD | Not started | - |
 | 3. Hot-Path Performance | v1.2 | 0/TBD | Not started | - |
 | 4. Type Modeling | v1.2 | 0/TBD | Not started | - |

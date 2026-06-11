@@ -29,7 +29,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 - [x] **DEAD-01**: The dead ABCs (`AbstractPortfolioHandler`/`AbstractPortfolio`/`AbstractPosition`
   + orphan `get_last_close`), the unused `OrderBase`, and the dead `import numpy as np` in
   `portfolio.py` are deleted with no importer breakage. [W3-11, W3-09, W4-10]
-- [ ] **DEAD-02**: Stale docs are corrected and conventions documented — CONCERNS.md
+- [x] **DEAD-02**: Stale docs are corrected and conventions documented — CONCERNS.md
   `screener_event_handler` item closed (file already deleted); ROADMAP 999.5-(d) FL-01/FL-02 text
   updated to "done"; the config-enum-in-`config/` exception, the broad-`except` run-mode policy
   (backtest fail-fast vs live publish-and-continue), and the tab/space indentation hazard are
@@ -153,7 +153,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | DEAD-01 | Phase 1 | Complete |
-| DEAD-02 | Phase 1 | Pending |
+| DEAD-02 | Phase 1 | Complete |
 | DEC-01 | Phase 2 | Pending |
 | DEC-02 | Phase 2 | Pending |
 | DEC-03 | Phase 2 | Pending |
