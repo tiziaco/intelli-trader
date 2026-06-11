@@ -21,15 +21,14 @@ from ..core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ..core.ids import OrderId, PortfolioId, StrategyId
 from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
-from ..core.sizing import PercentFromDecision, PercentFromFill, SLTPPolicy, TradingDirection
+from ..core.sizing import PercentFromDecision, PercentFromFill, TradingDirection
 from .base import OrderStorage
 from .brackets import BracketBook
 from .brackets.bracket_book import _PendingBracket
+from .brackets.levels import _bracket_levels
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 from .sizing_resolver import SizingResolver
-
-_ONE = Decimal("1")
 
 
 class OrderManager:
@@ -622,7 +621,7 @@ class OrderManager:
 						# signal's decision price (price ± pct for a BUY,
 						# mirrored for SELL) — Decimal arithmetic end-to-end
 						# (string-path constants enforced by the policy types).
-						sl_price, tp_price = self._bracket_levels(
+						sl_price, tp_price = _bracket_levels(
 							sltp_policy, to_money(signal_event.price),
 							signal_event.action.value)
 					case PercentFromFill():
@@ -729,22 +728,6 @@ class OrderManager:
 
 		return results
 
-	def _bracket_levels(self, policy: SLTPPolicy, anchor: Decimal,
-	                    action: str) -> "tuple[Decimal, Decimal]":
-		"""
-		Compute (stop_loss, take_profit) percent-offset levels from ``anchor``.
-
-		D-13: for a BUY parent the stop sits BELOW the anchor and the target
-		ABOVE — sl = anchor * (1 - sl_pct), tp = anchor * (1 + tp_pct);
-		mirrored for a SELL parent. The anchor is the decision price for
-		PercentFromDecision and the actual fill price for PercentFromFill —
-		identical ± pct math, different anchoring moment. Decimal end-to-end
-		(the policy types enforce string-path constants, Pitfall 1).
-		"""
-		if action == Side.SELL.value:
-			return anchor * (_ONE + policy.sl_pct), anchor * (_ONE - policy.tp_pct)
-		return anchor * (_ONE - policy.sl_pct), anchor * (_ONE + policy.tp_pct)
-
 	def _create_fill_anchored_children(self, parent: Order, pending: _PendingBracket,
 	                                   fill_event: FillEvent) -> List[OrderEvent]:
 		"""
@@ -763,7 +746,7 @@ class OrderManager:
 		recorded at assembly — partial signal exits do not resize them.
 		"""
 		anchor = to_money(fill_event.price)
-		sl_price, tp_price = self._bracket_levels(pending.policy, anchor, pending.action)
+		sl_price, tp_price = _bracket_levels(pending.policy, anchor, pending.action)
 		# Invert on the parent's action (D-05); the entity stores str until M4.
 		child_action = 'BUY' if pending.action == Side.SELL.value else 'SELL'
 		sl_order = Order.new_stop_order(
