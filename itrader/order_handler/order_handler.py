@@ -325,9 +325,9 @@ class OrderHandler:
 		"""
 		return self.order_manager.search_orders(criteria, portfolio_id)
 	
-	def get_orders_summary(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
+	def count_orders_by_status(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
 		"""
-		Get a summary of orders by status.
+		Count orders by status (status name -> count).
 
 		Parameters
 		----------
@@ -339,4 +339,4 @@ class OrderHandler:
 		Dict[str, int]
 			Dictionary with status names as keys and counts as values
 		"""
-		return self.order_manager.get_orders_summary(portfolio_id)
+		return self.order_manager.count_orders_by_status(portfolio_id)

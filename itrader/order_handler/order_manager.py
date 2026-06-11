@@ -1290,6 +1290,6 @@ class OrderManager:
 		"""Search orders based on criteria."""
 		return self.order_storage.search_orders(criteria, portfolio_id)
 
-	def get_orders_summary(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
-		"""Get a summary of orders by status."""
-		return self.order_storage.get_orders_count_by_status(portfolio_id)
+	def count_orders_by_status(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
+		"""Count orders by status (status name -> count)."""
+		return self.order_storage.count_orders_by_status(portfolio_id)

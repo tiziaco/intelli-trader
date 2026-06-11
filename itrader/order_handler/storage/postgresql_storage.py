@@ -50,7 +50,7 @@ class PostgreSQLOrderStorage(OrderStorage):
     def get_orders_by_time_range(self, start_time, end_time, portfolio_id=None):
         raise NotImplementedError("To be implemented in Phase 2")
     
-    def get_orders_count_by_status(self, portfolio_id=None):
+    def count_orders_by_status(self, portfolio_id=None):
         raise NotImplementedError("To be implemented in Phase 2")
     
     def search_orders(self, criteria, portfolio_id=None):
