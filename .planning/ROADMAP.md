@@ -101,10 +101,11 @@ deferred out of v1.2 Consolidation. Promote after v1.2, ahead of N+2. See Backlo
   2. Stale docs are corrected: the CONCERNS.md `screener_event_handler` item is closed (file already gone), and ROADMAP 999.5-(d) FL-01/FL-02 text reads "done".
   3. CONVENTIONS/CLAUDE documents the config-enum-in-`config/` exception, the broad-`except` run-mode policy (backtest fail-fast vs live publish-and-continue), the tab/space indentation hazard, and the dual-layer validator overlap as justified-by-decision (not removed).
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] TBD (decompose with /gsd:plan-phase 1)
+- [ ] 01-01-PLAN.md (01-code-deletions) — delete 3 dead ABCs + OrderBase + dead numpy import; importer sweep; oracle byte-exact (DEAD-01)
+- [ ] 01-02-PLAN.md (02-doc-hygiene) — trim stale CONCERNS/ROADMAP entries; document 4 conventions in CONVENTIONS/CLAUDE (DEAD-02)
 
 ### Phase 2: Locked-Decision Conformance
 **Goal**: Close the three bounded locked-decision violations (float money at the API boundary, the latent Decimal/float TypeError, the second `uuid4()` ID scheme) without changing results.
