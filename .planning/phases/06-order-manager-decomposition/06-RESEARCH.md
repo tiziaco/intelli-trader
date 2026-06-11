@@ -371,19 +371,21 @@ Not applicable — no external technology, library, or API is involved. This is 
 
 **Note:** All factual codebase claims (line numbers, indentation counts, call graph, test access sites, dep imports) are `[VERIFIED]` via grep/read this session — they are NOT assumptions. Only the three design-judgment items above are assumed and flagged for the planner.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+All three locked during planning (see 06-01-PLAN.md / 06-05-PLAN.md); recorded here for traceability.
 
 1. **reconcile→lifecycle `cancel_order` wiring (the WR-05 orphaned-child cancel at line 227).**
    - What we know: `on_fill` (reconcile) calls `self.cancel_order` (lifecycle). After the split this is a cross-bucket edge in the FRAGILE unit.
    - What's unclear: coordinator-callback vs injected-lifecycle-ref vs keep-`cancel_order`-reachable-on-coordinator.
-   - Recommendation: route through the coordinator (`OrderManager`) to preserve the D-04 star and avoid a circular import. Decide in the planning of step (5).
+   - **RESOLVED (Plan 06-05):** route through the coordinator (`OrderManager`) via a coordinator callback — preserves the D-04 star, avoids a circular import, no sibling-class ref.
 
 2. **`_create_fill_anchored_children` placement (brackets, called from reconcile).**
    - What we know: D-08 says reconcile imports pure helpers from `brackets/` rather than holding a brackets ref; this method builds children (a bracket concern) but is invoked from `on_fill`.
    - What's unclear: module function vs `BracketManager` method.
-   - Recommendation: a module-level function in `brackets/` (or on `BracketBook`/a stateless helper) taking `order_storage`/`logger`/`levels` as args, imported by reconcile — avoids the sibling-class edge.
+   - **RESOLVED (Plan 06-05):** the coordinator-owned `BracketManager` is injected into `ReconcileManager` (constructor injection, D-04/D-09 star) — not a sibling-class import. The brackets type is referenced under a `TYPE_CHECKING`-guarded / string annotation so no runtime sibling import exists (asserted in Plan 06-05 acceptance criteria).
 
-3. **`BracketBook` test-compat: dunders vs test edit (Pitfall 2).** Recommendation: dunders (option a) — keeps the test untouched and gives the D-15 unit test more surface to assert. Planner confirms in step (1).
+3. **`BracketBook` test-compat: dunders vs test edit (Pitfall 2).** **RESOLVED (Plan 06-01):** dunders (option a) — `__eq__`/`__contains__`/`__len__` keep `test_sltp_policy.py` untouched and give the D-15 unit test more surface to assert.
 
 ## Environment Availability
 
