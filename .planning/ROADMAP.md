@@ -174,11 +174,22 @@ Plans:
   4. The `BaseStrategyConfig` base contract lives in `itrader/config/strategy.py` (re-exported via `config/__init__.py`), consistent with `ExchangeConfig`/`PortfolioConfig`/`SystemConfig`; all importers updated.
   5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
 
-**Plans**: TBD
+**Plans**: 5 plans
 
 Plans:
+**Wave 1** *(parallel — no shared files)*
 
-- [ ] TBD (decompose with /gsd:plan-phase 4)
+- [ ] 04-01-PLAN.md — TYPE-01: freeze FillDecision/CancelDecision + OperationResult/SignalProcessingResult (tuple fields) (D-07)
+- [ ] 04-02-PLAN.md — TYPE-02/03: ErrorSeverity enum; enum-member fee/slippage dispatch (assert_never); rebalance_frequency validation; portfolio_id removal; portfolio/events/validators id NewTypes (D-05/08/09/10/11/12/13)
+- [ ] 04-03-PLAN.md — TYPE-05: relocate BaseStrategyConfig to config/strategy.py; co-locate concrete configs (tab re-indent); update D-16 importers (D-14/15/16)
+
+**Wave 2** *(FRAGILE order-domain core; blocked on Wave 1)*
+
+- [ ] 04-04-PLAN.md — TYPE-04/03/01: class-based OrderStatus/OrderCommand + D-02 .name audit; OrderOperationType/OrderTriggerSource value-equal swap; frozen _PendingBracket (D-01/02/03/04/07)
+
+**Wave 3** *(shares order_manager.py/order.py with Wave 2; blocked on 04-04)*
+
+- [ ] 04-05-PLAN.md — TYPE-03/02: market_execution enum (ctor-coerced, no OrderConfig); order-domain id NewType retypes (D-06/12/13)
 
 ### Phase 5: Naming & Encapsulation
 
