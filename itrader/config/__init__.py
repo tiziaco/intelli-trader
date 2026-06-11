@@ -53,6 +53,7 @@ from .exchange import (
     get_exchange_preset,
     list_available_exchange_presets,
 )
+from .strategy import BaseStrategyConfig
 
 # Module-level TIMEZONE constant (value 'Europe/Paris' by default). Read from the
 # Settings field default rather than instantiating Settings (which requires the
@@ -95,4 +96,6 @@ __all__ = [
     "ConnectionSettings",
     "get_exchange_preset",
     "list_available_exchange_presets",
+    # Strategy domain
+    "BaseStrategyConfig",
 ]

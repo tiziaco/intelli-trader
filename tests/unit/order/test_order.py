@@ -13,8 +13,8 @@ from itrader.order_handler.order import (
     Order, OrderStateChange
 )
 from itrader.core.enums import (
-    OrderStatus, OrderType, VALID_ORDER_TRANSITIONS, 
-    order_status_map, order_type_map
+    OrderStatus, OrderType, VALID_ORDER_TRANSITIONS,
+    order_status_map, order_type_map, OrderTriggerSource
 )
 
 
@@ -146,7 +146,7 @@ class TestOrderLifecycle:
 
         assert order.add_state_change(
             OrderStatus.REJECTED, "Financial risk validation failed",
-            triggered_by="validator",
+            triggered_by=OrderTriggerSource.VALIDATOR,
         )
 
         assert order.status == OrderStatus.REJECTED
@@ -156,7 +156,7 @@ class TestOrderLifecycle:
         last_change = order.get_latest_state_change()
         assert last_change.from_status == OrderStatus.PENDING
         assert last_change.to_status == OrderStatus.REJECTED
-        assert last_change.triggered_by == "validator"
+        assert last_change.triggered_by is OrderTriggerSource.VALIDATOR
         assert last_change.reason == "Financial risk validation failed"
         # Event-derived timestamp: defaults to the order's own event time
         assert last_change.timestamp == self.base_time

@@ -7,6 +7,7 @@ from typing import Union, Optional
 from datetime import datetime
 
 from itrader.core.exceptions import InvalidTransactionError, PortfolioError
+from itrader.core.ids import TransactionId
 
 # Use Decimal for financial calculations to avoid floating point precision issues
 DECIMAL_PRECISION = decimal.Decimal('0.00000001')  # 8 decimal places for crypto
@@ -80,7 +81,7 @@ class PortfolioValidator:
     def validate_sufficient_funds(
         required_cash: decimal.Decimal,
         available_cash: decimal.Decimal,
-        transaction_id: Optional[int] = None
+        transaction_id: Optional[TransactionId] = None
     ) -> None:
         """
         Validate sufficient funds for a transaction.
@@ -91,9 +92,13 @@ class PortfolioValidator:
         from itrader.core.exceptions import InsufficientFundsError
         
         if available_cash < required_cash:
+            # WR-04: pass Decimal money straight through — the exception now
+            # stores Decimal structured fields and formats to float only inside
+            # its message. The prior float() round-trip introduced a binary-float
+            # repr artifact in a money figure consumed programmatically.
             raise InsufficientFundsError(
-                float(required_cash), 
-                float(available_cash), 
+                required_cash,
+                available_cash,
                 transaction_id
             )
     

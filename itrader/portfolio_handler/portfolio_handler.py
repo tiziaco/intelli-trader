@@ -164,13 +164,13 @@ class PortfolioHandler:
                 self._publish_error_event(e, "add_portfolio", correlation_id)
                 raise
     
-    def get_portfolio(self, portfolio_id: Any) -> Portfolio:
+    def get_portfolio(self, portfolio_id: PortfolioId) -> Portfolio:
         """Get portfolio instance."""
         if portfolio_id not in self._portfolios:
             raise PortfolioNotFoundError(portfolio_id)
         return self._portfolios[portfolio_id]
     
-    def delete_portfolio(self, portfolio_id: Any, force: bool = False) -> bool:
+    def delete_portfolio(self, portfolio_id: PortfolioId, force: bool = False) -> bool:
         """Delete a portfolio with validation."""
         
         with self._operation_context("delete_portfolio") as correlation_id:
@@ -492,7 +492,7 @@ class PortfolioHandler:
             self.logger.error("Failed to rollback configuration", error=str(e))
             return False
 
-    def update_portfolio_config(self, portfolio_id: Any, updates: Dict[str, Any]) -> bool:
+    def update_portfolio_config(self, portfolio_id: PortfolioId, updates: Dict[str, Any]) -> bool:
         """Update configuration for a specific portfolio (not wired — D-live).
 
         Per-portfolio config mutation was a dormant provider method never wired on the
@@ -504,7 +504,7 @@ class PortfolioHandler:
         )
         return False
 
-    def get_portfolio_config(self, portfolio_id: Any) -> Optional[Dict[str, Any]]:
+    def get_portfolio_config(self, portfolio_id: PortfolioId) -> Optional[Dict[str, Any]]:
         """Get configuration for a specific portfolio (not wired — D-live)."""
         self.logger.warning(
             "get_portfolio_config is not wired (deferred to D-live)",

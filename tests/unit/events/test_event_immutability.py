@@ -30,7 +30,7 @@ import pytest
 import uuid_utils.compat as uuid_compat
 
 from itrader.core.bar import Bar
-from itrader.core.enums import EventType, FillStatus, OrderType, Side
+from itrader.core.enums import ErrorSeverity, EventType, FillStatus, OrderType, Side
 from itrader.core.ids import OrderId, StrategyId
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.events_handler.events import (
@@ -281,7 +281,7 @@ def test_portfolio_error_event_is_an_error_event() -> None:
 def test_error_event_is_concrete_and_instantiable() -> None:
     event = _error()
     assert event.type is EventType.ERROR
-    assert event.severity == "ERROR"
+    assert event.severity is ErrorSeverity.ERROR
 
 
 # ---------------------------------------------------------------------------

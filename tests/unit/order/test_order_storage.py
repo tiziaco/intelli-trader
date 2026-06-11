@@ -7,7 +7,7 @@ import pytest
 
 from itrader.order_handler.storage import InMemoryOrderStorage, OrderStorageFactory
 from itrader.order_handler.order import Order
-from itrader.core.enums import OrderType, OrderStatus
+from itrader.core.enums import OrderType, OrderStatus, OrderTriggerSource
 from itrader.core.exceptions import ConfigurationError
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
@@ -259,7 +259,7 @@ def test_add_rejected_order_persists_without_entering_active_book(store):
         exchange="binance", strategy_id=1, portfolio_id=store.pid1,
     )
     assert rejected.add_state_change(
-        OrderStatus.REJECTED, "validation failed", triggered_by="validator"
+        OrderStatus.REJECTED, "validation failed", triggered_by=OrderTriggerSource.VALIDATOR
     )
 
     store.storage.add_order(store.order1)   # active PENDING order

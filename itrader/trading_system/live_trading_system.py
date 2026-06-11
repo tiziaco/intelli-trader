@@ -4,11 +4,11 @@ import sys
 import threading
 import time
 import json
-from datetime import datetime
+from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
 
-from itrader.core.enums import SystemStatus
+from itrader.core.enums import ErrorSeverity, SystemStatus
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
@@ -199,12 +199,15 @@ class LiveTradingSystem:
         with self._stats_lock:
             self._stats['errors_count'] += 1
         self.global_queue.put(ErrorEvent(
-            time=getattr(event, 'time', datetime.now()),
+            # WR-05: prefer the event's own business time; fall back to a
+            # tz-aware UTC wall clock (never naive) to stay consistent with the
+            # datetime.now(UTC) convention used by the portfolio handler.
+            time=getattr(event, 'time', datetime.now(UTC)),
             source='live_trading_system',
             error_type=type(exc).__name__ if exc is not None else 'UnknownError',
             error_message=str(exc) if exc is not None else 'unknown handler failure',
             operation=handler_name,
-            severity='ERROR',
+            severity=ErrorSeverity.ERROR,
         ))
     
     def _update_status(self, new_status: SystemStatus, error_msg: Optional[str] = None):
@@ -224,7 +227,7 @@ class LiveTradingSystem:
                     'status': new_status.value,
                     'exchange': self.exchange,
                     'queue_size': self.get_queue_size(),
-                    'timestamp': datetime.now().isoformat(),
+                    'timestamp': datetime.now(UTC).isoformat(),
                     'error': error_msg
                 }
                 self.status_callback(new_status, status_data)
@@ -236,7 +239,7 @@ class LiveTradingSystem:
         with self._stats_lock:
             if event_type:
                 self._stats['events_processed'] += 1
-                self._stats['last_event_time'] = datetime.now().isoformat()
+                self._stats['last_event_time'] = datetime.now(UTC).isoformat()
                 
                 # TODO: Add more specific event type handling if needed like 'ORDER_FILLED' 'ORDER_CREATED' etc...
                 if event_type == 'ORDER':
@@ -279,16 +282,16 @@ class LiveTradingSystem:
         self._update_status(SystemStatus.RUNNING)
         
         with self._stats_lock:
-            self._stats['uptime_start'] = datetime.now().isoformat()
+            self._stats['uptime_start'] = datetime.now(UTC).isoformat()
         
-        last_event_time = datetime.now()
-        
+        last_event_time = datetime.now(UTC)
+
         while not self._stop_event.is_set():
             try:
                 # Check for events in the queue with timeout
                 try:
                     event = self.global_queue.get(timeout=self.queue_timeout)
-                    last_event_time = datetime.now()
+                    last_event_time = datetime.now(UTC)
 
                     # WR-09: dispatch the dequeued event DIRECTLY through the
                     # event handler's routing. The previous get -> put-back ->
@@ -313,7 +316,7 @@ class LiveTradingSystem:
 
                 except queue.Empty:
                     # No events in queue, check if we've been idle too long
-                    current_time = datetime.now()
+                    current_time = datetime.now(UTC)
                     idle_time = (current_time - last_event_time).total_seconds()
                     
                     if idle_time > self.max_idle_time:
@@ -428,7 +431,10 @@ class LiveTradingSystem:
             uptime = None
             if self._stats['uptime_start'] and self._status == SystemStatus.RUNNING:
                 start_time = datetime.fromisoformat(self._stats['uptime_start'])
-                uptime = (datetime.now() - start_time).total_seconds()
+                # WR-05: uptime_start is now stored tz-aware (datetime.now(UTC)),
+                # so the comparand must also be tz-aware or this subtraction
+                # raises "can't subtract offset-naive and offset-aware datetimes".
+                uptime = (datetime.now(UTC) - start_time).total_seconds()
             
             return {
                 'status': self._status.value,
@@ -442,7 +448,7 @@ class LiveTradingSystem:
                     **self._stats,
                     'uptime_seconds': uptime
                 },
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now(UTC).isoformat()
             }
     
     def get_queue_size(self) -> int:

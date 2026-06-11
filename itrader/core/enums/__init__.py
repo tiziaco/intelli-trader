@@ -36,6 +36,9 @@ from .order import (
     OrderType,
     OrderStatus,
     OrderCommand,
+    OrderOperationType,
+    OrderTriggerSource,
+    MarketExecution,
     order_type_map,
     order_status_map,
     order_command_map,
@@ -51,6 +54,11 @@ from .trading import (
 # System enums
 from .system import (
     SystemStatus
+)
+
+# Error-severity enum
+from .severity import (
+    ErrorSeverity
 )
 
 __all__ = [
@@ -79,6 +87,9 @@ __all__ = [
     'OrderType',
     'OrderStatus',
     'OrderCommand',
+    'OrderOperationType',
+    'OrderTriggerSource',
+    'MarketExecution',
     'order_type_map',
     'order_status_map',
     'order_command_map',
@@ -89,5 +100,8 @@ __all__ = [
     'Timeframe',
 
     # System enums
-    'SystemStatus'
+    'SystemStatus',
+
+    # Error-severity enum
+    'ErrorSeverity'
 ]

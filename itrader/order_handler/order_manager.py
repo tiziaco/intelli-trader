@@ -14,10 +14,10 @@ and order storage/execution systems.
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional, assert_never, cast
+from typing import Any, Callable, Dict, List, Optional, assert_never
 from .order import Order
 from .operation_result import OperationResult
-from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side
+from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side, OrderOperationType, OrderTriggerSource, MarketExecution
 from ..core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ..core.ids import OrderId, PortfolioId, StrategyId
 from ..core.money import to_money
@@ -31,7 +31,7 @@ from .sizing_resolver import SizingResolver
 _ONE = Decimal("1")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _PendingBracket:
 	"""Context for a PercentFromFill bracket awaiting its parent's fill (D-13).
 
@@ -48,7 +48,7 @@ class _PendingBracket:
 	quantity: Decimal
 	exchange: str
 	strategy_id: StrategyId
-	portfolio_id: "PortfolioId | int"
+	portfolio_id: PortfolioId
 
 
 class OrderManager:
@@ -67,7 +67,7 @@ class OrderManager:
 	"""
 	
 	def __init__(self, order_storage: OrderStorage, logger: Any,
-	             market_execution: str = "immediate",
+	             market_execution: "str | MarketExecution" = "immediate",
 	             portfolio_handler: Optional[PortfolioReadModel] = None,
 	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
 		"""
@@ -85,8 +85,9 @@ class OrderManager:
 			Storage interface for order operations (manager-owned, D-18)
 		logger : Logger
 			Logger instance for order processing events
-		market_execution : str
-			Market order execution mode:
+		market_execution : str | MarketExecution
+			Market order execution mode (coerced to MarketExecution at this
+			ctor boundary; accepts a str for backward-compat, D-06):
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Execute market orders on next bar (realistic backtesting)
 		portfolio_handler : PortfolioReadModel, optional
@@ -102,7 +103,9 @@ class OrderManager:
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
-		self.market_execution = market_execution
+		# D-06: coerce at the ctor boundary — store the enum member (a str is
+		# parsed via MarketExecution._missing_; an enum member is a no-op).
+		self.market_execution = MarketExecution(market_execution)
 		self.portfolio_handler = portfolio_handler
 		self.commission_estimator = commission_estimator
 
@@ -168,6 +171,7 @@ class OrderManager:
 		# reconciliation aborts the run instead of producing silently-wrong
 		# numbers.
 		should_release = False
+		body_raised = False
 		try:
 			applied = True
 			if fill_event.status == FillStatus.EXECUTED:
@@ -217,11 +221,11 @@ class OrderManager:
 			if (fill_event.status in (FillStatus.CANCELLED, FillStatus.REFUSED)
 					and order.child_order_ids and order.filled_quantity == 0):
 				for child_id in order.child_order_ids:
-					# 02-05 carry-over: the cancel_order API still declares int
-					# ids while runtime ids are UUIDv7 — cast bridges until the
-					# id-annotation retype lands (IN-06, deferred).
+					# D-12: cancel_order now declares OrderId/PortfolioId; child_id
+					# is an OrderId and order.portfolio_id a PortfolioId, so the
+					# prior cast(int, ...) bridge (IN-06) is gone.
 					child_result = self.cancel_order(
-						cast(int, child_id), cast(int, order.portfolio_id),
+						child_id, order.portfolio_id,
 						reason=f"parent order {order.id} terminal without fill")
 					if child_result.success and child_result.order_events:
 						out_events.extend(child_result.order_events)
@@ -253,6 +257,7 @@ class OrderManager:
 			# reservation before the exception propagates.
 			self.logger.error('Error reconciling fill for order %s: %s',
 			                  order_id, e, exc_info=True)
+			body_raised = True
 			raise
 		finally:
 			# WR-04: a terminal fill ALWAYS releases its reservation, even when
@@ -261,15 +266,24 @@ class OrderManager:
 			# run). `should_release` is False on the non-terminal early-return
 			# path, which intentionally holds the reservation. The release is
 			# idempotent — never-reserved orders (SELLs, children) silently
-			# no-op. Failures inside the release itself are logged, never masked.
+			# no-op.
 			if should_release and self.portfolio_handler is not None:
 				try:
 					self.portfolio_handler.release(
 						order.portfolio_id, order.id)
 				except Exception:
+					# WR-03: distinguish "body raised" from "release raised".
+					# If the body already raised, that ORIGINAL exception is the
+					# one propagating out of the finally — re-raising the release
+					# failure here would mask it, so we only log. But if the body
+					# succeeded and the release itself fails, a silently-unreleased
+					# reservation IS the buying-power-corruption class WR-04
+					# defends against, so it must reach the fail-fast seam.
 					self.logger.error(
 						'Failed to release reservation for order %s during fill reconciliation',
 						order.id, exc_info=True)
+					if not body_raised:
+						raise
 		return out_events
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
@@ -281,12 +295,12 @@ class OrderManager:
 		0. Enforces the strategy's DECLARED admission constraints BEFORE
 		   sizing — direction (D-08), then max_positions, then allow_increase
 		   (D-10). A LONG_ONLY unsized SELL with no open long is an audited
-		   REJECTED order (triggered_by="admission_direction"), never a
+		   REJECTED order (triggered_by=OrderTriggerSource.ADMISSION_DIRECTION), never a
 		   short-opening fall-through (DEF-01-C dead structurally); an unsized
 		   BUY-while-long with allow_increase=False is audited REJECTED
-		   (triggered_by="admission_increase"); an unsized new-position BUY at
+		   (triggered_by=OrderTriggerSource.ADMISSION_INCREASE); an unsized new-position BUY at
 		   the max_positions limit is audited REJECTED
-		   (triggered_by="admission_max_positions")
+		   (triggered_by=OrderTriggerSource.ADMISSION_MAX_POSITIONS)
 		1. Resolves sizing via the SizingResolver dispatching on the
 		   signal's declared policy (D-01, M5-06); sizing failures store an
 		   audited REJECTED entity and short-circuit (D-06 — the DEF-01-B
@@ -340,7 +354,7 @@ class OrderManager:
 			# The strategy emits quantity=None (D-10); the order/risk layer resolves the
 			# per-portfolio quantity through the SizingResolver dispatching on
 			# signal.sizing_policy (M5-06). Sizing failures are AUDITED (D-06): the
-			# entity is stored REJECTED with triggered_by="sizing_policy" inside the
+			# entity is stored REJECTED with triggered_by=OrderTriggerSource.SIZING_POLICY inside the
 			# resolve step and a failure_result short-circuits here — the DEF-01-B
 			# narrow gate holds: the running engine never presents an unsized order
 			# to the validator (which now hard-rejects any non-positive quantity).
@@ -369,12 +383,12 @@ class OrderManager:
 					primary.add_state_change(
 						OrderStatus.REJECTED,
 						validation_result.summary,
-						triggered_by="validator",
+						triggered_by=OrderTriggerSource.VALIDATOR,
 					)
 					self.order_storage.add_order(primary)
 					return [OperationResult.failure_result(error_msg,
 						error_details=str(validation_result.errors),
-						operation_type="signal_validation")]
+						operation_type=OrderOperationType.SIGNAL_VALIDATION)]
 
 				# Log warnings if any
 				if validation_result.has_warnings:
@@ -406,12 +420,12 @@ class OrderManager:
 					primary.add_state_change(
 						OrderStatus.REJECTED,
 						str(e),
-						triggered_by="cash_reservation",
+						triggered_by=OrderTriggerSource.CASH_RESERVATION,
 					)
 					self.order_storage.add_order(primary)
 					return [OperationResult.failure_result(error_msg,
 						error_details=str(e),
-						operation_type="cash_reservation")]
+						operation_type=OrderOperationType.CASH_RESERVATION)]
 
 			# 4. Create-all-then-emit (D-11): assemble brackets, store, emit.
 			assembled = self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
@@ -447,7 +461,7 @@ class OrderManager:
 					self.logger.error('Failed to release orphaned reservation for order %s',
 									reserved_primary.id, exc_info=True)
 			results.append(OperationResult.failure_result(error_msg,
-				error_details=str(e), operation_type="signal_processing"))
+				error_details=str(e), operation_type=OrderOperationType.SIGNAL_PROCESSING))
 
 		return results
 
@@ -493,7 +507,7 @@ class OrderManager:
 			return [OperationResult.failure_result(
 				f"Failed to create orders from signal",
 				error_details=str(e),
-				operation_type="create_orders_from_signal"
+				operation_type=OrderOperationType.CREATE_ORDERS_FROM_SIGNAL
 			)]
 
 	def _get_signal_exchange(self, signal_event: SignalEvent) -> str:
@@ -548,7 +562,7 @@ class OrderManager:
 			)
 		return OperationResult.failure_result(
 			f"Unsupported order type: {signal_event.order_type}",
-			operation_type="create_primary_order"
+			operation_type=OrderOperationType.CREATE_PRIMARY_ORDER
 		)
 
 	def _assemble_bracket_and_emit(self, signal_event: SignalEvent, exchange: str,
@@ -681,7 +695,7 @@ class OrderManager:
 			results.append(OperationResult.success_result(
 				f"{primary.type.name} order created: {primary.ticker} {primary.action} at {primary.price}",
 				order_events=[OrderEvent.new_order_event(primary)],
-				operation_type="create_primary_order",
+				operation_type=OrderOperationType.CREATE_PRIMARY_ORDER,
 				affected_order_ids=[primary.id]
 			))
 
@@ -690,7 +704,7 @@ class OrderManager:
 				results.append(OperationResult.success_result(
 					f"Stop-loss order created: {sl_order.ticker} at {sl_order.price}",
 					order_events=[OrderEvent.new_order_event(sl_order)],
-					operation_type="create_stop_loss",
+					operation_type=OrderOperationType.CREATE_STOP_LOSS,
 					affected_order_ids=[sl_order.id]
 				))
 
@@ -699,7 +713,7 @@ class OrderManager:
 				results.append(OperationResult.success_result(
 					f"Take-profit order created: {tp_order.ticker} at {tp_order.price}",
 					order_events=[OrderEvent.new_order_event(tp_order)],
-					operation_type="create_take_profit",
+					operation_type=OrderOperationType.CREATE_TAKE_PROFIT,
 					affected_order_ids=[tp_order.id]
 				))
 
@@ -717,7 +731,7 @@ class OrderManager:
 			results.append(OperationResult.failure_result(
 				f"Failed to create orders from signal",
 				error_details=str(e),
-				operation_type="create_orders_from_signal"
+				operation_type=OrderOperationType.CREATE_ORDERS_FROM_SIGNAL
 			))
 
 		return results
@@ -800,7 +814,7 @@ class OrderManager:
 		blessed golden shorts: an unsized LONG_ONLY SELL with no open long
 		(no position, or net_quantity <= 0) previously fell through to entry
 		sizing and opened a short. Now it is an AUDITED rejection
-		(triggered_by="admission_direction") — DEF-01-C dies structurally.
+		(triggered_by=OrderTriggerSource.ADMISSION_DIRECTION) — DEF-01-C dies structurally.
 		SHORT_ONLY + BUY with no open short is rejected symmetrically
 		(oracle-dark: the golden strategy is LONG_ONLY).
 
@@ -838,8 +852,8 @@ class OrderManager:
 				signal_event,
 				f"direction violation: LONG_ONLY strategy cannot open a short "
 				f"(SELL with no open long) for {signal_event.ticker}",
-				triggered_by="admission_direction",
-				operation_type="signal_admission",
+				triggered_by=OrderTriggerSource.ADMISSION_DIRECTION,
+				operation_type=OrderOperationType.SIGNAL_ADMISSION,
 				error_prefix="Signal rejected at admission",
 			)
 		if (signal_event.direction is TradingDirection.SHORT_ONLY
@@ -849,8 +863,8 @@ class OrderManager:
 				signal_event,
 				f"direction violation: SHORT_ONLY strategy cannot open a long "
 				f"(BUY with no open short) for {signal_event.ticker}",
-				triggered_by="admission_direction",
-				operation_type="signal_admission",
+				triggered_by=OrderTriggerSource.ADMISSION_DIRECTION,
+				operation_type=OrderOperationType.SIGNAL_ADMISSION,
 				error_prefix="Signal rejected at admission",
 			)
 		return None
@@ -865,7 +879,7 @@ class OrderManager:
 
 		* OPEN long for the ticker (net_quantity > 0) — the INCREASE case
 		  (D-10). ``allow_increase=False`` is an AUDITED rejection
-		  (triggered_by="admission_increase") — SMA_MACD's declared-but-
+		  (triggered_by=OrderTriggerSource.ADMISSION_INCREASE) — SMA_MACD's declared-but-
 		  ignored False, finally honest. ``allow_increase=True`` passes
 		  through to entry sizing: the resolver's FractionOfCash arm reads
 		  CURRENT available_cash, which IS "fraction of remaining available
@@ -877,7 +891,7 @@ class OrderManager:
 		* NO open position for the ticker — the NEW-POSITION case. When the
 		  portfolio's open-position count has reached the strategy's declared
 		  ``max_positions``, the entry is an AUDITED rejection
-		  (triggered_by="admission_max_positions"). Oracle-dark: the golden
+		  (triggered_by=OrderTriggerSource.ADMISSION_MAX_POSITIONS). Oracle-dark: the golden
 		  run is single-ticker with max_positions=1 and at most one open
 		  position, so a new-entry BUY never trips it.
 		* OPEN short for the ticker (net_quantity < 0) — a BUY is a cover/
@@ -918,8 +932,8 @@ class OrderManager:
 					signal_event,
 					f"position increase not allowed by strategy "
 					f"(allow_increase=False) for {signal_event.ticker}",
-					triggered_by="admission_increase",
-					operation_type="signal_admission",
+					triggered_by=OrderTriggerSource.ADMISSION_INCREASE,
+					operation_type=OrderOperationType.SIGNAL_ADMISSION,
 					error_prefix="Signal rejected at admission",
 				)
 			# allow_increase=True: fall through to entry sizing — the
@@ -941,8 +955,8 @@ class OrderManager:
 				f"{open_count} open "
 				f">= max_positions={signal_event.max_positions}; "
 				f"new entry for {signal_event.ticker} not allowed by strategy",
-				triggered_by="admission_max_positions",
-				operation_type="signal_admission",
+				triggered_by=OrderTriggerSource.ADMISSION_MAX_POSITIONS,
+				operation_type=OrderOperationType.SIGNAL_ADMISSION,
 				error_prefix="Signal rejected at admission",
 			)
 		return None
@@ -977,7 +991,7 @@ class OrderManager:
 
 		Sizing failures (invalid price, SizingPolicyViolation) are AUDITED
 		rejections (D-06): the entity is built unsized, transitioned
-		PENDING→REJECTED with triggered_by="sizing_policy", and stored —
+		PENDING→REJECTED with triggered_by=OrderTriggerSource.SIZING_POLICY, and stored —
 		rejected signals never vanish (Pitfall 5, option (a)).
 
 		Returns
@@ -1004,7 +1018,7 @@ class OrderManager:
 			# the typed failure result is the same verdict, made explicit.
 			return OperationResult.failure_result(
 				f"Cannot size order: no portfolio read model available for {signal_event.ticker}",
-				operation_type="create_primary_order"
+				operation_type=OrderOperationType.CREATE_PRIMARY_ORDER
 			)
 		# FL-02: events now declare portfolio_id as PortfolioId (#10 carry-forward).
 		portfolio_id = signal_event.portfolio_id
@@ -1046,8 +1060,8 @@ class OrderManager:
 			return self._reject_unsized_signal(signal_event, str(e))
 
 	def _reject_unsized_signal(self, signal_event: SignalEvent, reason: str, *,
-	                           triggered_by: str = "sizing_policy",
-	                           operation_type: str = "signal_sizing",
+	                           triggered_by: OrderTriggerSource = OrderTriggerSource.SIZING_POLICY,
+	                           operation_type: OrderOperationType = OrderOperationType.SIGNAL_SIZING,
 	                           error_prefix: str = "Signal sizing failed") -> OperationResult:
 		"""
 		Audited admission/sizing rejection (D-06/D-08, Pitfall 5 option (a)).
@@ -1086,8 +1100,8 @@ class OrderManager:
 			error_details=reason,
 			operation_type=operation_type)
 
-	def modify_order(self, order_id: int, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
-	                portfolio_id: Optional[int] = None, reason: str = "user modification") -> OperationResult:
+	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
+	                portfolio_id: Optional[PortfolioId] = None, reason: str = "user modification") -> OperationResult:
 		"""
 		Modify an existing order and generate OrderEvent.
 		
@@ -1115,7 +1129,7 @@ class OrderManager:
 			if not order:
 				return OperationResult.failure_result(
 					f"Order {order_id} not found for modification",
-					operation_type="modify_order"
+					operation_type=OrderOperationType.MODIFY_ORDER
 				)
 			
 			# Validate the modification
@@ -1129,7 +1143,7 @@ class OrderManager:
 					return OperationResult.failure_result(
 						"Order modification validation failed",
 						error_details=str([msg.message for msg in error_messages]),
-						operation_type="modify_order"
+						operation_type=OrderOperationType.MODIFY_ORDER
 					)
 			
 			# Apply the modification. Order money is Decimal (M2a); normalize the
@@ -1159,22 +1173,22 @@ class OrderManager:
 				return OperationResult.success_result(
 					f"Order {order_id} modified successfully",
 					order_events=[order_event],
-					operation_type="modify_order",
+					operation_type=OrderOperationType.MODIFY_ORDER,
 					affected_order_ids=[order_id]
 				)
 			else:
 				return OperationResult.failure_result(
 					f"Failed to modify order {order_id}",
-					operation_type="modify_order"
+					operation_type=OrderOperationType.MODIFY_ORDER
 				)
 				
 		except Exception as e:
 			error_msg = f"Error modifying order {order_id}: {e}"
 			self.logger.error(error_msg, exc_info=True)
 			return OperationResult.failure_result(error_msg, 
-				error_details=str(e), operation_type="modify_order")
+				error_details=str(e), operation_type=OrderOperationType.MODIFY_ORDER)
 	
-	def cancel_order(self, order_id: int, portfolio_id: Optional[int] = None, 
+	def cancel_order(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None,
 	                reason: str = "user cancellation") -> OperationResult:
 		"""
 		Cancel an existing order and generate OrderEvent.
@@ -1199,7 +1213,7 @@ class OrderManager:
 			if not order:
 				return OperationResult.failure_result(
 					f"Order {order_id} not found for cancellation",
-					operation_type="cancel_order"
+					operation_type=OrderOperationType.CANCEL_ORDER
 				)
 			
 			# Cancel the order
@@ -1233,49 +1247,49 @@ class OrderManager:
 				return OperationResult.success_result(
 					f"Order {order_id} cancelled: {reason}",
 					order_events=[order_event],
-					operation_type="cancel_order",
+					operation_type=OrderOperationType.CANCEL_ORDER,
 					affected_order_ids=[order_id]
 				)
 			else:
 				return OperationResult.failure_result(
 					f"Failed to cancel order {order_id} (status: {order.status.name})",
-					operation_type="cancel_order"
+					operation_type=OrderOperationType.CANCEL_ORDER
 				)
 				
 		except Exception as e:
 			error_msg = f"Error cancelling order {order_id}: {e}"
 			self.logger.error(error_msg, exc_info=True)
 			return OperationResult.failure_result(error_msg,
-				error_details=str(e), operation_type="cancel_order")
+				error_details=str(e), operation_type=OrderOperationType.CANCEL_ORDER)
 
 	# --- Read interface (D-18) -------------------------------------------------
 	# The manager owns the storage; OrderHandler read methods delegate here.
 	# Pure pass-through layer: same names, same signatures as the facade.
 
-	def get_order_by_id(self, order_id: int, portfolio_id: Optional[Any] = None) -> Optional[Order]:
+	def get_order_by_id(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None) -> Optional[Order]:
 		"""Get an order by its ID from the manager-owned storage."""
 		return self.order_storage.get_order_by_id(order_id, portfolio_id)
 
-	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""Get orders by their status from the manager-owned storage."""
 		return self.order_storage.get_orders_by_status(status, portfolio_id)
 
-	def get_active_orders(self, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_active_orders(self, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""Get all active orders (PENDING and PARTIALLY_FILLED)."""
 		return self.order_storage.get_active_orders(portfolio_id)
 
-	def get_order_history(self, order_id: int) -> List[Dict[str, Any]]:
+	def get_order_history(self, order_id: OrderId) -> List[Dict[str, Any]]:
 		"""Get the state change history for an order."""
 		return self.order_storage.get_order_history(order_id)
 
-	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""Get all orders for a specific ticker."""
 		return self.order_storage.get_orders_by_ticker(ticker, portfolio_id)
 
-	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[Any] = None) -> List[Order]:
+	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""Search orders based on criteria."""
 		return self.order_storage.search_orders(criteria, portfolio_id)
 
-	def get_orders_summary(self, portfolio_id: Optional[Any] = None) -> Dict[str, int]:
+	def get_orders_summary(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
 		"""Get a summary of orders by status."""
 		return self.order_storage.get_orders_count_by_status(portfolio_id)

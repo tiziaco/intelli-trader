@@ -48,7 +48,7 @@ encodes margin.
 
 import dataclasses
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Tuple
 
 from itrader.core.ids import OrderId
@@ -57,7 +57,7 @@ from itrader.events_handler.events import OrderEvent, BarEvent
 from itrader.core.enums import OrderType, Side
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FillDecision:
     """One resting order has matched and should be filled.
 
@@ -72,7 +72,7 @@ class FillDecision:
     reason: str
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CancelDecision:
     """One resting order should be cancelled (OCO sibling of a fill)."""
     order_event: OrderEvent
@@ -216,9 +216,12 @@ class MatchingEngine:
                 continue                            # children belong to pass 2
             try:
                 price = self._evaluate(order, bar)
-            except (TypeError, ValueError, KeyError):
+            except (TypeError, ValueError, KeyError, InvalidOperation):
                 # A single malformed resting order (e.g. price=None, missing bar
-                # field) must not drop the whole bar. Programming errors
+                # field, NaN/sNaN Decimal trigger) must not drop the whole bar.
+                # decimal.InvalidOperation is an ArithmeticError, NOT a
+                # ValueError, so it must be named explicitly for the
+                # Decimal-end-to-end matching domain (CR-01). Programming errors
                 # (AttributeError, etc.) are NOT swallowed — they propagate.
                 continue
             if price is not None and order.order_id is not None:
@@ -243,8 +246,8 @@ class MatchingEngine:
                 continue
             try:
                 price = self._evaluate(order, bar)
-            except (TypeError, ValueError, KeyError):
-                continue                            # same malformed-order semantics
+            except (TypeError, ValueError, KeyError, InvalidOperation):
+                continue                            # same malformed-order semantics (incl. NaN Decimal, CR-01)
             if price is not None and order.order_id is not None:
                 candidates[order.order_id] = price
 
@@ -286,7 +289,8 @@ class MatchingEngine:
                 if (sibling.parent_order_id == bracket
                         and sibling.order_id != order_id
                         and sibling.order_id not in cancelled_ids):
-                    cancels.append(CancelDecision(sibling, "OCO - sibling filled"))
+                    cancels.append(CancelDecision(
+                        order_event=sibling, reason="OCO - sibling filled"))
                     cancelled_ids.add(sibling.order_id)
 
         # 4. Remove filled + cancelled children from the book (pass-1 fills

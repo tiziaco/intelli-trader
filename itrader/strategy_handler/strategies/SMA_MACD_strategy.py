@@ -1,14 +1,40 @@
 import pandas as pd
 # import numpy as np
 
+from pydantic import Field, model_validator
+
+from itrader.config import BaseStrategyConfig
 from itrader.core.sizing import SignalIntent
 from itrader.strategy_handler.base import Strategy
-from itrader.strategy_handler.config import SMA_MACDConfig
 
 from ta import trend
 
 from itrader.logger import get_itrader_logger
 logger = get_itrader_logger().bind(component="SMA_MACD_strategy")
+
+
+class SMA_MACDConfig(BaseStrategyConfig):
+	"""Per-strategy params for the reference SMA_MACD strategy (D-02).
+
+	Golden defaults mirror ``SMA_MACD_strategy.__init__``: short=50, long=100,
+	FAST=6, SLOW=12, WIN=3. The ``_short_lt_long`` cross-field rule (HARD-02)
+	rejects ``short_window >= long_window`` at construction. Co-located here
+	(D-14) and re-indented to TABS (D-15) to match this strategy file.
+	"""
+
+	short_window: int = Field(default=50, gt=0)
+	long_window: int = Field(default=100, gt=0)
+	FAST: int = Field(default=6, gt=0)
+	SLOW: int = Field(default=12, gt=0)
+	WIN: int = Field(default=3, gt=0)
+
+	@model_validator(mode="after")
+	def _short_lt_long(self) -> "SMA_MACDConfig":
+		"""HARD-02 cross-field rule: short_window must be strictly < long_window."""
+		if self.short_window >= self.long_window:
+			raise ValueError("short_window must be < long_window")
+		return self
+
 
 class SMA_MACD_strategy(Strategy):
 	"""

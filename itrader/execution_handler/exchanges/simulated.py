@@ -1,7 +1,7 @@
 from queue import Queue
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, assert_never
 import random
 
 from .base import AbstractExchange
@@ -20,7 +20,7 @@ from itrader.core.enums import OrderType, OrderCommand
 from itrader.core.money import to_money
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
-from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation
+from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation, FeeModelType, SlippageModelType
 
 class SimulatedExchange(AbstractExchange):
 	"""
@@ -410,17 +410,47 @@ class SimulatedExchange(AbstractExchange):
 		error_message = None
 		
 		if not is_valid:
-			if "Invalid symbol" in failed_checks[0]:
-				error_code = ExecutionErrorCode.SYMBOL_NOT_FOUND
-			elif "quantity" in failed_checks[0].lower():
-				error_code = ExecutionErrorCode.ORDER_SIZE_TOO_SMALL if "below minimum" in failed_checks[0] else ExecutionErrorCode.ORDER_SIZE_TOO_LARGE
-			elif "price" in failed_checks[0].lower():
-				error_code = ExecutionErrorCode.INVALID_PRICE
-			elif "not connected" in failed_checks[0]:
-				error_code = ExecutionErrorCode.NETWORK_ERROR
-			else:
-				error_code = ExecutionErrorCode.INVALID_ORDER
-			
+			# WR-02: derive error_code from a priority-ordered scan of the FULL
+			# failed_checks list, not failed_checks[0]. The quantity and price
+			# blocks above are independent `if`s, so an order can fail both at
+			# once; first-wins on append order silently dropped one distinct
+			# failure from the structured (programmatically consumed) error_code.
+			# error_message still joins every failed check for completeness.
+			def _classify(check: str) -> "ExecutionErrorCode":
+				lowered = check.lower()
+				if "invalid symbol" in lowered:
+					return ExecutionErrorCode.SYMBOL_NOT_FOUND
+				if "quantity" in lowered:
+					# WR-06: a non-positive quantity ("must be positive", emitted for
+					# quantity <= 0) is an invalid order, not a too-large size bound.
+					# Classify it explicitly before the size split so the structured
+					# error_code is not semantically backwards (TOO_LARGE for a
+					# zero/negative quantity).
+					if "must be positive" in lowered:
+						return ExecutionErrorCode.INVALID_ORDER
+					return (ExecutionErrorCode.ORDER_SIZE_TOO_SMALL
+						if "below minimum" in lowered
+						else ExecutionErrorCode.ORDER_SIZE_TOO_LARGE)
+				if "price" in lowered:
+					return ExecutionErrorCode.INVALID_PRICE
+				if "not connected" in lowered:
+					return ExecutionErrorCode.NETWORK_ERROR
+				return ExecutionErrorCode.INVALID_ORDER
+
+			# Priority order: symbol > price > quantity > connection > generic.
+			# A symbol/price defect is more fundamental than a sizing defect,
+			# so it wins the single error_code slot regardless of append order.
+			_priority = [
+				ExecutionErrorCode.SYMBOL_NOT_FOUND,
+				ExecutionErrorCode.INVALID_PRICE,
+				ExecutionErrorCode.ORDER_SIZE_TOO_SMALL,
+				ExecutionErrorCode.ORDER_SIZE_TOO_LARGE,
+				ExecutionErrorCode.NETWORK_ERROR,
+				ExecutionErrorCode.INVALID_ORDER,
+			]
+			present = {_classify(check) for check in failed_checks}
+			error_code = next(code for code in _priority if code in present)
+
 			error_message = "; ".join(failed_checks)
 		
 		return OrderPreflightResult(
@@ -482,42 +512,56 @@ class SimulatedExchange(AbstractExchange):
 		"""Create fee model from configuration."""
 		config = self.config.fee_model
 
+		# D-08: dispatch on enum MEMBERS via ``is`` (not ``.value`` strings),
+		# closing with ``assert_never`` so mypy proves the branch set is
+		# exhaustive over FeeModelType — the runtime warning fallthrough is gone
+		# (mypy is the gate). Oracle-safe: the oracle runs ZeroFeeModel
+		# (exchange="csv", fees 0) and never reaches percent/maker_taker/tiered.
+		model_type = config.model_type
 		# T-07-06 (07-02): use ``is not None`` not ``or`` so a LEGITIMATE zero
 		# config value (e.g. a zeroed determinism knob) is honored verbatim
 		# instead of being silently overridden by the default. ``Decimal("0")``
 		# is falsy, so ``config.x or <default>`` swallows an intentional 0 and
-		# makes the configured cost non-hand-derivable. Oracle-safe: the oracle
-		# runs ZeroFeeModel/ZeroSlippageModel (exchange="csv", fees/slippage 0)
-		# and never reaches these percent/maker_taker/fixed/linear branches.
-		if config.model_type.value in ['no_fee', 'zero']:
+		# makes the configured cost non-hand-derivable.
+		if model_type is FeeModelType.ZERO or model_type is FeeModelType.NO_FEE:
 			return ZeroFeeModel()
-		elif config.model_type.value == 'percent':
+		elif model_type is FeeModelType.PERCENT:
 			# T-07-06 (07-02, WR-02): pass the configured Decimal through unchanged.
 			# PercentFeeModel accepts ``float | Decimal`` and enters the Decimal
 			# domain once via ``to_money``; routing through ``float()`` would risk a
 			# binary-float repr artifact (CLAUDE.md money policy: never Decimal(float)).
 			return PercentFeeModel(
 				fee_rate=config.fee_rate if config.fee_rate is not None else Decimal("0.001"))
-		elif config.model_type.value == 'maker_taker':
+		elif model_type is FeeModelType.MAKER_TAKER:
 			return MakerTakerFeeModel(
 				maker_rate=config.maker_rate if config.maker_rate is not None else Decimal("0.001"),
 				taker_rate=config.taker_rate if config.taker_rate is not None else Decimal("0.001")
 			)
+		elif model_type is FeeModelType.TIERED:
+			# TIERED is a declared config vocabulary member with no backing
+			# model class (none ever shipped). Previously it fell through the
+			# silent ``else`` to ZeroFeeModel; with member dispatch it is raised
+			# LOUDLY rather than silently mis-priced. Oracle never selects it.
+			raise NotImplementedError(
+				f"FeeModelType.TIERED has no fee-model implementation: {model_type!r}")
 		else:
-			self.logger.warning('Unknown fee model %s, defaulting to no_fee', config.model_type.value)
-			return ZeroFeeModel()
+			assert_never(model_type)
 
 	def _init_slippage_model(self) -> SlippageModel:
 		"""Create slippage model from configuration."""
 		config = self.config.slippage_model
 
+		# D-08: dispatch on enum MEMBERS via ``is`` closing with ``assert_never``
+		# (mypy proves exhaustiveness over SlippageModelType; runtime warning
+		# fallthrough removed). Oracle-safe (the oracle never reaches linear/fixed).
+		model_type = config.model_type
 		# T-07-06 (07-02): ``is not None`` not ``or`` — a configured 0 (e.g.
 		# base_slippage_pct=Decimal("0") to zero the RNG base-noise so the fill
 		# is hand-derivable to the cent) must be honored, not overridden by the
-		# default. Oracle-safe (the oracle never reaches the linear/fixed branch).
-		if config.model_type.value in ['none', 'zero']:
+		# default.
+		if model_type is SlippageModelType.NONE or model_type is SlippageModelType.ZERO:
 			return ZeroSlippageModel()
-		elif config.model_type.value == 'linear':
+		elif model_type is SlippageModelType.LINEAR:
 			# WR-02: pass configured Decimal rates through unchanged; the model
 			# accepts ``float | Decimal`` and enters Decimal once via ``to_money``.
 			return LinearSlippageModel(
@@ -529,7 +573,7 @@ class SimulatedExchange(AbstractExchange):
 					config.max_slippage_pct if config.max_slippage_pct is not None else Decimal("0.1")),
 				rng=self._rng
 			)
-		elif config.model_type.value == 'fixed':
+		elif model_type is SlippageModelType.FIXED:
 			return FixedSlippageModel(
 				slippage_pct=(
 					config.slippage_pct if config.slippage_pct is not None else Decimal("0.01")),
@@ -537,8 +581,7 @@ class SimulatedExchange(AbstractExchange):
 				rng=self._rng
 			)
 		else:
-			self.logger.warning('Unknown slippage model %s, defaulting to none', config.model_type.value)
-			return ZeroSlippageModel()
+			assert_never(model_type)
 
 	# Configuration Management (following Portfolio pattern)
 	def configure(self, config: Dict[str, Any]) -> bool:
