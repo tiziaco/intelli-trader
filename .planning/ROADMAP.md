@@ -149,9 +149,9 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — PERF-01: storage copy-drop + read-only-view ABC contract + snapshot accessors (D-03/D-04/D-06)
-- [ ] 03-02-PLAN.md — PERF-03: eager-prebuild Bars in BacktestBarFeed; current_bars() dict lookup, no per-tick Bar.from_row (D-07/08/09)
-- [ ] 03-03-PLAN.md — PERF-02: mechanical transforms (W1-08/03/14/07/09; W1-13 descoped per D-10)
+- [x] 03-01-PLAN.md — PERF-01: storage copy-drop + read-only-view ABC contract + snapshot accessors (D-03/D-04/D-06)
+- [x] 03-02-PLAN.md — PERF-03: eager-prebuild Bars in BacktestBarFeed; current_bars() dict lookup, no per-tick Bar.from_row (D-07/08/09)
+- [x] 03-03-PLAN.md — PERF-02: mechanical transforms (W1-08/03/14/07/09; W1-13 descoped per D-10)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -227,7 +227,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 |-------|-----------|----------------|--------|-----------|
 | 1. Dead Code & Doc Hygiene | v1.2 | 2/2 | Complete   | 2026-06-11 |
 | 2. Locked-Decision Conformance | v1.2 | 3/3 | Complete   | 2026-06-11 |
-| 3. Hot-Path Performance | v1.2 | 0/TBD | Not started | - |
+| 3. Hot-Path Performance | v1.2 | 3/4 | In Progress|  |
 | 4. Type Modeling | v1.2 | 0/TBD | Not started | - |
 | 5. Naming & Encapsulation | v1.2 | 0/TBD | Not started | - |
 | 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
