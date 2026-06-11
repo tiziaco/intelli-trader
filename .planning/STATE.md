@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
-status: ready_to_plan
-last_updated: 2026-06-11T18:56:46.625Z
+status: planning
+last_updated: "2026-06-11T20:21:13.289Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 10
@@ -11,7 +11,6 @@ progress:
   total_plans: 18
   completed_plans: 18
   percent: 50
-stopped_at: Phase 05 complete (4/4) — ready to discuss Phase 6 (Order-Manager Decomposition)
 ---
 
 # Project State
@@ -162,8 +161,8 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T18:45:52.692Z
-Resume file: None
+Last session: 2026-06-11T20:21:13.279Z
+Resume file: .planning/phases/06-order-manager-decomposition/06-CONTEXT.md
 
 ## Operator Next Steps
 
