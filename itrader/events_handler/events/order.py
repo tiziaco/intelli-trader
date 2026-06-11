@@ -83,11 +83,26 @@ class OrderEvent(Event):
 
         Money (D-22): the entity's Decimal ``price``/``quantity`` pass
         through EXACTLY — the former M2a float() boundary coercion is gone.
+
+        Side boundary (WR-01): the Order entity stores ``action`` as a ``str``
+        until the M4 cutover, so ``Side(order.action)`` re-parses it here.
+        ``Side`` already supplies a case-insensitive ``_missing_`` parser, but
+        a non-Side value (typo in a hand-built bracket literal) still raises a
+        bare ``ValueError`` with no order context under the fail-fast seam. Wrap
+        it so the failing ticker/order_id/action are surfaced for debugging.
         """
+        try:
+            action = Side(order.action)
+        except ValueError as exc:
+            raise ValueError(
+                f"Cannot build OrderEvent for ticker={order.ticker!r} "
+                f"order_id={getattr(order, 'id', None)!r}: "
+                f"invalid action {order.action!r}"
+            ) from exc
         return cls(
             time=order.time,
             ticker=order.ticker,
-            action=Side(order.action),
+            action=action,
             price=order.price,
             quantity=order.quantity,
             exchange=order.exchange,
