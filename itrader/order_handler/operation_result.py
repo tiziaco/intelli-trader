@@ -7,6 +7,7 @@ ensuring consistent error handling and event generation.
 
 from dataclasses import dataclass
 from typing import Any, List, Optional
+from ..core.enums import OrderOperationType
 from ..events_handler.events import OrderEvent
 
 
@@ -20,14 +21,15 @@ class OperationResult:
 	"""
 	success: bool
 	message: str
+	operation_type: OrderOperationType
 	order_events: tuple[OrderEvent, ...] = ()
 	error_details: Optional[str] = None
-	operation_type: str = ""
 	affected_order_ids: tuple[Any, ...] = ()
 
 	@classmethod
-	def success_result(cls, message: str, order_events: Optional[List[OrderEvent]] = None,
-	                  operation_type: str = "", affected_order_ids: Optional[List[Any]] = None) -> "OperationResult":
+	def success_result(cls, message: str, operation_type: OrderOperationType,
+	                  order_events: Optional[List[OrderEvent]] = None,
+	                  affected_order_ids: Optional[List[Any]] = None) -> "OperationResult":
 		"""Create a successful operation result."""
 		return cls(
 			success=True,
@@ -38,8 +40,8 @@ class OperationResult:
 		)
 	
 	@classmethod
-	def failure_result(cls, message: str, error_details: Optional[str] = None,
-	                  operation_type: str = "") -> "OperationResult":
+	def failure_result(cls, message: str, operation_type: OrderOperationType,
+	                  error_details: Optional[str] = None) -> "OperationResult":
 		"""Create a failed operation result."""
 		return cls(
 			success=False,

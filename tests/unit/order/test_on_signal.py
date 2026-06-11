@@ -8,7 +8,7 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
-from itrader.core.enums import OrderType, OrderStatus, Side
+from itrader.core.enums import OrderType, OrderStatus, Side, OrderTriggerSource
 from itrader.core.money import to_money
 from itrader.core.sizing import (
     FixedQuantity,
@@ -208,7 +208,7 @@ def test_rejected_signal_persists_audited_rejected_order(harness):
     last_change = rejected.get_latest_state_change()
     assert last_change.from_status == OrderStatus.PENDING
     assert last_change.to_status == OrderStatus.REJECTED
-    assert last_change.triggered_by == "validator"
+    assert last_change.triggered_by is OrderTriggerSource.VALIDATOR
     assert last_change.timestamp == signal.time
 
 
@@ -283,7 +283,7 @@ def test_risk_percent_without_stop_is_audited_sizing_rejection(harness):
     last_change = rejected.get_latest_state_change()
     assert last_change.from_status == OrderStatus.PENDING
     assert last_change.to_status == OrderStatus.REJECTED
-    assert last_change.triggered_by == "sizing_policy"
+    assert last_change.triggered_by is OrderTriggerSource.SIZING_POLICY
     assert "RiskPercent" in last_change.reason
     assert last_change.timestamp == signal.time
 

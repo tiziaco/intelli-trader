@@ -109,3 +109,62 @@ order_command_map = {
 	"CANCEL": OrderCommand.CANCEL,
 	"MODIFY": OrderCommand.MODIFY
 }
+
+
+class OrderOperationType(Enum):
+	"""Order-management operation type (D-04).
+
+	Closed vocabulary for ``OperationResult.operation_type``. Each member's
+	``.value`` is EQUAL to the exact current string literal — the carrier type
+	changes, the value does not (value-equal swap), so audit records and logs
+	stay byte-identical.
+	"""
+	CANCEL_ORDER = "cancel_order"
+	CASH_RESERVATION = "cash_reservation"
+	CREATE_ORDERS_FROM_SIGNAL = "create_orders_from_signal"
+	CREATE_PRIMARY_ORDER = "create_primary_order"
+	CREATE_STOP_LOSS = "create_stop_loss"
+	CREATE_TAKE_PROFIT = "create_take_profit"
+	MODIFY_ORDER = "modify_order"
+	SIGNAL_ADMISSION = "signal_admission"
+	SIGNAL_PROCESSING = "signal_processing"
+	SIGNAL_SIZING = "signal_sizing"
+	SIGNAL_VALIDATION = "signal_validation"
+
+	@classmethod
+	def _missing_(cls, value: object) -> "OrderOperationType":
+		"""Case-insensitive string parse; raise a clear f-string error."""
+		if isinstance(value, str):
+			for member in cls:
+				if member.value.upper() == value.upper():
+					return member
+		raise ValueError(f"Unknown OrderOperationType: {value!r}")
+
+
+class OrderTriggerSource(Enum):
+	"""Who/what triggered an order state change (D-04).
+
+	Closed vocabulary for ``OrderStateChange.triggered_by``. Each member's
+	``.value`` is EQUAL to the exact current string literal (value-equal swap).
+	Includes the defaults (``system``) and every distinct literal actually
+	passed to ``add_state_change`` (``strategy``, ``exchange``, …).
+	"""
+	SYSTEM = "system"
+	STRATEGY = "strategy"
+	USER = "user"
+	EXCHANGE = "exchange"
+	VALIDATOR = "validator"
+	CASH_RESERVATION = "cash_reservation"
+	SIZING_POLICY = "sizing_policy"
+	ADMISSION_DIRECTION = "admission_direction"
+	ADMISSION_INCREASE = "admission_increase"
+	ADMISSION_MAX_POSITIONS = "admission_max_positions"
+
+	@classmethod
+	def _missing_(cls, value: object) -> "OrderTriggerSource":
+		"""Case-insensitive string parse; raise a clear f-string error."""
+		if isinstance(value, str):
+			for member in cls:
+				if member.value.upper() == value.upper():
+					return member
+		raise ValueError(f"Unknown OrderTriggerSource: {value!r}")

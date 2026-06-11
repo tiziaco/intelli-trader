@@ -155,7 +155,7 @@ class InMemoryOrderStorage(OrderStorage):
                 'to_status': change.to_status.name,
                 'timestamp': change.timestamp.isoformat(),
                 'reason': change.reason,
-                'triggered_by': change.triggered_by,
+                'triggered_by': change.triggered_by.value,
                 'additional_data': change.additional_data
             }
             for change in order.state_changes
