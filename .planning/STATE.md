@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
-status: planning
-last_updated: "2026-06-11T20:21:13.289Z"
+status: executing
+last_updated: "2026-06-11T21:00:04.281Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 10
   completed_phases: 5
-  total_plans: 18
-  completed_plans: 18
+  total_plans: 23
+  completed_plans: 19
   percent: 50
 ---
 
@@ -20,13 +20,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** Phase 6 — Order-Manager Decomposition (MOD-01, FRAGILE, isolated, LAST)
+**Current focus:** Phase 06 — order-manager-decomposition
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
-Status: Ready to plan
+Phase: 06 (order-manager-decomposition) — EXECUTING
+Plan: 2 of 5
+Status: Ready to execute
 Last activity: 2026-06-11
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
@@ -89,6 +89,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase 05]: Phase 05 NAME-03: D-06 _routes->routes plain public field (no property/get_routes); D-07 SimulatedExchange.register_symbol() closes the execution_handler.py:109 direct-mutation gap (byte-identical set-union, no float); D-08 update_config confirmed complete (no field reachable solely by direct mutation) — oracle-dark, byte-exact, mypy strict clean
 - [Phase ?]: Phase 05 NAME-02: D-03 strategy PascalCase (SMAMACDStrategy/EmptyStrategy) + SMA_MACDConfig FAST/SLOW/WIN->fast_window/slow_window/signal_window (defaults 6/12/3, value-equal); D-04 all run-path importers updated, no alias; module filenames + SMA_MACDConfig class name kept; load-bearing golden re-run byte-exact (134/46189.87730727451), e2e 58/58, mypy strict clean
 - [Phase ?]: Phase 05 NAME-04: rewrote 6 private-internals test consumers to public query APIs (routes / get_order_by_id / count_orders_by_status / emitted PortfolioErrorEvent.correlation_id / register_symbol+get_supported_symbols); correlation-id test adjudicated to observable-effect (not white-box, D-09); cash_manager white-box writes untouched; golden byte-exact, e2e 58/58, mypy strict clean
+- [Phase ?]: [Phase 06 / 06-01] D-10 step 1: BracketBook introduced IN PLACE as single owner of the pending-bracket map (D-04/D-05); _PendingBracket moved verbatim to brackets/bracket_book.py (D-03, action str kept); all 8 _pending_brackets sites routed through arm/get/consume/refresh_quantity; dict-compat dunders + read-only _pending_brackets property keep test_sltp_policy.py untouched (Pitfall 2 option a); NO collaborator code moved; golden byte-exact (134/46189.87730727451), e2e 58/58, mypy strict clean.
 
 ### Pending Todos
 
@@ -115,6 +116,7 @@ None yet.
 | Phase 05 P02 | 8 | 3 tasks | 3 files |
 | Phase 05 P03 | 6 | 3 tasks | 8 files |
 | Phase 05 P04 | 10 | 3 tasks | 6 files |
+| Phase 06 P01 | 3 | 2 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -161,8 +163,8 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T20:21:13.279Z
-Resume file: .planning/phases/06-order-manager-decomposition/06-CONTEXT.md
+Last session: 2026-06-11T21:00:04.273Z
+Resume file: None
 
 ## Operator Next Steps
 
