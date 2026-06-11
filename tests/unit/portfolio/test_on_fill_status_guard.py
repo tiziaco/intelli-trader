@@ -61,3 +61,37 @@ def test_executed_fill_is_processed(env):
     portfolio = env.ptf.get_portfolio(env.pid)
     assert len(portfolio.positions) == 1
     assert len(portfolio.transactions) == 1
+
+
+# W1-07: the non-EXECUTED guard is hoisted ABOVE the _operation_context /
+# correlation-id allocation. This is the one PERF-02 item with an observable
+# side-effect the byte-exact oracle does NOT see, so pin it directly: a
+# non-EXECUTED fill must NOT enter the operation context (no correlation-id
+# allocated), while the EXECUTED path still does.
+@pytest.mark.parametrize("status", ["CANCELLED", "REFUSED"])
+def test_non_executed_fill_skips_operation_context(env, monkeypatch, status):
+    calls = []
+    original = env.ptf._operation_context
+
+    def spy(operation_name):
+        calls.append(operation_name)
+        return original(operation_name)
+
+    monkeypatch.setattr(env.ptf, "_operation_context", spy)
+
+    assert env.ptf.on_fill(env.fill(status)) is None
+    assert calls == []  # guard hoisted above the context — never entered
+
+
+def test_executed_fill_enters_operation_context(env, monkeypatch):
+    calls = []
+    original = env.ptf._operation_context
+
+    def spy(operation_name):
+        calls.append(operation_name)
+        return original(operation_name)
+
+    monkeypatch.setattr(env.ptf, "_operation_context", spy)
+
+    assert env.ptf.on_fill(env.fill("EXECUTED")) is None
+    assert calls == ["on_fill"]  # EXECUTED path still enters the context
