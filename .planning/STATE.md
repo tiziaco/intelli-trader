@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
 status: executing
-last_updated: "2026-06-11T21:17:39.139Z"
+last_updated: "2026-06-11T21:23:01.322Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 23
-  completed_plans: 21
+  completed_plans: 22
   percent: 50
 ---
 
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation s
 ## Current Position
 
 Phase: 06 (order-manager-decomposition) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-06-11
 
@@ -92,6 +92,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase ?]: [Phase 06 / 06-01] D-10 step 1: BracketBook introduced IN PLACE as single owner of the pending-bracket map (D-04/D-05); _PendingBracket moved verbatim to brackets/bracket_book.py (D-03, action str kept); all 8 _pending_brackets sites routed through arm/get/consume/refresh_quantity; dict-compat dunders + read-only _pending_brackets property keep test_sltp_policy.py untouched (Pitfall 2 option a); NO collaborator code moved; golden byte-exact (134/46189.87730727451), e2e 58/58, mypy strict clean.
 - [Phase 06 / 06-02]: D-10 step 2: extracted brackets/ — _bracket_levels + _ONE moved to stateless brackets/levels.py (D-08, imported by BOTH the assembly path and the fill-anchored path so neither admission nor reconcile needs a brackets-collaborator ref); BracketManager (TAB, no queue) owns _assemble_bracket_and_emit + _create_fill_anchored_children, constructed once in OrderManager.__init__ with the injected coordinator-owned BracketBook (D-04 star), 3 call sites delegate; now-dead imports removed move-inherently (SLTPPolicy/assert_never/PercentFromDecision/PercentFromFill/_PendingBracket); golden byte-exact (134/46189.87730727451), e2e 58/58, mypy strict clean; order_handler.py + order_handler/__init__.py byte-unchanged.
 - [Phase 06 / 06-03]: D-10 step 3: extracted admission/ — AdmissionManager (TAB, no queue) owns the 9-method signal→order pipeline (process_signal + create_orders_from_signal INTACT per D-07, plus _estimate_commission/_get_signal_exchange/_build_primary_order/_enforce_direction_admission/_enforce_position_admission/_resolve_signal_quantity/_reject_unsized_signal), constructed once in OrderManager.__init__ with the injected coordinator-owned BracketBook + BracketManager (D-04 star, D-08 — no reconcile/lifecycle ref); the two public entry points are 1-line delegations (public surface + external ctor unchanged); move-inherent dead imports removed (OrderType/Side/OrderTriggerSource/InsufficientFundsError/SizingPolicyViolation/TradingDirection); test_admission_rules white-box commission_estimator injection retargeted to order_manager.admission_manager (new home); golden byte-exact (134/46189.87730727451), e2e 58/58, unit 152, mypy strict (168 files); order_handler.py + order_handler/__init__.py byte-unchanged.
+- [Phase ?]: [Phase 06 / 06-04]: D-10 step 4: extracted lifecycle/ — LifecycleManager (TAB, no queue) owns modify_order + cancel_order moved VERBATIM (D-07), constructed once in OrderManager.__init__ with the injected coordinator-owned BracketBook (D-04 star, D-08 — no reconcile/admission ref); the two verbs are 1-line delegations (public surface + external ctor unchanged); on_fill's WR-05 orphaned-child cancel routes through the delegation unchanged (reconcile->lifecycle seam deferred to plan 05); move-inherent dead imports removed (OrderCommand/OrderOperationType); golden byte-exact (134/46189.87730727451), e2e 58/58, unit 152, mypy strict (170 files); order_handler.py + barrel byte-unchanged. LAST extraction before the FRAGILE reconcile step.
 
 ### Pending Todos
 
@@ -121,6 +122,7 @@ None yet.
 | Phase 06 P01 | 3 | 2 tasks | 4 files |
 | Phase 06 P02 | 6 | 2 tasks | 4 files |
 | Phase 06 P03 | 9 | 2 tasks | 4 files |
+| Phase 06 P04 | 6 | 2 tasks | 3 files |
 
 ## Bookkeeping
 
@@ -167,7 +169,7 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T21:17:39.132Z
+Last session: 2026-06-11T21:23:01.314Z
 Resume file: None
 
 ## Operator Next Steps

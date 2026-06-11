@@ -236,7 +236,7 @@ Plans (SEQUENTIAL — one per D-10 extraction step, waves 1→5, reconcile LAST)
 - [x] 06-01-PLAN.md (01-bracketbook-in-place) — introduce BracketBook wrapping _pending_brackets at all 8 sites + dict-compat dunders so test_sltp_policy survives untouched + lean BracketBook unit test; no code moved (D-10 step 1) (MOD-01)
 - [x] 06-02-PLAN.md (02-extract-brackets) — extract brackets/: BracketManager (_assemble_bracket_and_emit, _create_fill_anchored_children) + stateless levels.py (_bracket_levels, _ONE); wire into OrderManager.__init__ (D-10 step 2) (MOD-01)
 - [x] 06-03-PLAN.md (03-extract-admission) — extract admission/: AdmissionManager (process_signal, create_orders_from_signal + 7 helpers, intact); process_signal/create_orders_from_signal become 1-line delegations (D-10 step 3) (MOD-01)
-- [ ] 06-04-PLAN.md (04-extract-lifecycle) — extract lifecycle/ (D-01 4th bucket): LifecycleManager (modify_order, cancel_order); 1-line delegations (D-10 step 4) (MOD-01)
+- [x] 06-04-PLAN.md (04-extract-lifecycle) — extract lifecycle/ (D-01 4th bucket): LifecycleManager (modify_order, cancel_order); 1-line delegations (D-10 step 4) (MOD-01)
 - [ ] 06-05-PLAN.md (05-extract-reconcile-FRAGILE) — extract reconcile/ LAST: ReconcileManager (on_fill moved as ONE intact unit, should_release/finally byte-for-byte unchanged); cross-bucket seams via coordinator callback + injected BracketManager; +determinism double-run (D-10 step 5) (MOD-01)
 
 ## Progress
@@ -252,7 +252,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 | 3. Hot-Path Performance | v1.2 | 4/4 | Complete   | 2026-06-11 |
 | 4. Type Modeling | v1.2 | 5/5 | Complete   | 2026-06-11 |
 | 5. Naming & Encapsulation | v1.2 | 4/4 | Complete   | 2026-06-11 |
-| 6. Order-Manager Decomposition | v1.2 | 3/5 | In Progress|  |
+| 6. Order-Manager Decomposition | v1.2 | 4/5 | In Progress|  |
 
 ## Backlog
 
