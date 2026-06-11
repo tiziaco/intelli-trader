@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
 status: ready_to_plan
-last_updated: 2026-06-11T16:52:58.513Z
-last_activity: 2026-06-11 -- Phase 04 execution started
+last_updated: 2026-06-11T18:56:46.625Z
+last_activity: 2026-06-11
 progress:
   total_phases: 10
-  completed_phases: 4
-  total_plans: 14
-  completed_plans: 14
-  percent: 40
-stopped_at: Phase 04 complete (5/5) — ready to discuss Phase 5
+  completed_phases: 5
+  total_plans: 18
+  completed_plans: 18
+  percent: 50
+stopped_at: Phase 05 complete (4/4) — ready to discuss Phase 6 (Order-Manager Decomposition)
 ---
 
 # Project State
@@ -21,11 +21,11 @@ stopped_at: Phase 04 complete (5/5) — ready to discuss Phase 5
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** Phase 5 — Naming & Encapsulation
+**Current focus:** Phase 6 — Order-Manager Decomposition (MOD-01, FRAGILE, isolated, LAST)
 
 ## Current Position
 
-Phase: 5
+Phase: 6
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-06-11
@@ -61,7 +61,7 @@ Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from V1.2-CLEANUP-REVI
 
 **Velocity (v1.1):**
 
-- Total plans completed: 45
+- Total plans completed: 49
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -86,6 +86,10 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase ?]: D-03 trim-to-truth: removed obsolete screener_event_handler Known-Bug from CONCERNS.md; trimmed ROADMAP 999.5-(d) to one FL-01/FL-02 closure line (net reduction, 260610-sjp kept)
 - [Phase ?]: D-01/D-02: four conventions documented in CONVENTIONS.md + CLAUDE.md pointer; W4-04 validator overlap documented justified-by-decision (code NOT removed)
 - [Phase 02 / 2026-06-11] D-07 gap-discovery delta (owner-flagged, bounded, NOT silently folded): the W2-10/DEC-02/SC-2 "latent `Decimal < float` TypeError" on the below-minimum validation path was a MISDIAGNOSIS — Decimal-vs-float COMPARISON works in Py3; only arithmetic raises and there is none on `_min/_max_order_size`. DEC-02 reframed as float-for-money consistency; SC-2 (ROADMAP) + DEC-02 (REQUIREMENTS) wording corrected. Evidence: the green `tests/e2e/cash/release_refused` leaf (Decimal-vs-float `> _max` REFUSED).
+- [Phase ?]: Phase 05 NAME-01: events_queue to global_queue (D-02) + canonical count_orders_by_status across 5 sites (D-01); oracle-dark, byte-exact, mypy strict clean
+- [Phase 05]: Phase 05 NAME-03: D-06 _routes->routes plain public field (no property/get_routes); D-07 SimulatedExchange.register_symbol() closes the execution_handler.py:109 direct-mutation gap (byte-identical set-union, no float); D-08 update_config confirmed complete (no field reachable solely by direct mutation) — oracle-dark, byte-exact, mypy strict clean
+- [Phase ?]: Phase 05 NAME-02: D-03 strategy PascalCase (SMAMACDStrategy/EmptyStrategy) + SMA_MACDConfig FAST/SLOW/WIN->fast_window/slow_window/signal_window (defaults 6/12/3, value-equal); D-04 all run-path importers updated, no alias; module filenames + SMA_MACDConfig class name kept; load-bearing golden re-run byte-exact (134/46189.87730727451), e2e 58/58, mypy strict clean
+- [Phase ?]: Phase 05 NAME-04: rewrote 6 private-internals test consumers to public query APIs (routes / get_order_by_id / count_orders_by_status / emitted PortfolioErrorEvent.correlation_id / register_symbol+get_supported_symbols); correlation-id test adjudicated to observable-effect (not white-box, D-09); cash_manager white-box writes untouched; golden byte-exact, e2e 58/58, mypy strict clean
 
 ### Pending Todos
 
@@ -108,6 +112,10 @@ None yet.
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 | Phase 01 P01 | 2 | 3 tasks | 5 files |
 | Phase 01 P02 | 2 | 3 tasks | 4 files |
+| Phase 05 P01 | 2 | 3 tasks | 5 files |
+| Phase 05 P02 | 8 | 3 tasks | 3 files |
+| Phase 05 P03 | 6 | 3 tasks | 8 files |
+| Phase 05 P04 | 10 | 3 tasks | 6 files |
 
 ## Bookkeeping
 
@@ -154,9 +162,9 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T14:22:02.320Z
-Resume file: .planning/phases/04-type-modeling/04-CONTEXT.md
+Last session: 2026-06-11T18:45:52.692Z
+Resume file: None
 
 ## Operator Next Steps
 
-- Plan the first v1.2 phase with `/gsd:plan-phase 1` (Dead Code & Doc Hygiene).
+- Phases 1–5 complete. Plan the final v1.2 phase with `/gsd:discuss-phase 6` (Order-Manager Decomposition — MOD-01, FRAGILE, isolated, LAST).

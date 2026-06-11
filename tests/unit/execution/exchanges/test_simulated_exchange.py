@@ -145,7 +145,7 @@ class TestSimulatedExchangeConfiguration:
         assert self.exchange.config.limits.supported_symbols == new_symbols
         assert float(self.exchange.config.limits.min_order_size) == 10.0
         assert float(self.exchange.config.limits.max_order_size) == 10000.0
-        assert self.exchange._supported_symbols == new_symbols
+        assert self.exchange.get_supported_symbols() == new_symbols
 
     def test_update_config_fee_model(self):
         """Test updating fee model configuration."""

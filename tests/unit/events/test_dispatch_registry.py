@@ -1,7 +1,7 @@
 """
 D-23 group 1 — the dispatch registry asserted AS DATA (Plan 04-06).
 
-``EventHandler._routes`` IS the documented execution order (D-14/D-17):
+``EventHandler.routes`` IS the documented execution order (D-14/D-17):
 BAR runs mark-to-market -> resting-order matching -> new signals; FILL
 runs positions/cash -> order-mirror reconciliation. These tests lock that
 order as literal data (no engine run needed), the explicit empty
@@ -78,7 +78,7 @@ def wiring():
 
 def test_bar_route_order_is_data(wiring):
     """BAR order is LAW: mark-to-market -> resting-order matching -> new signals."""
-    assert wiring.handler._routes[EventType.BAR] == [
+    assert wiring.handler.routes[EventType.BAR] == [
         wiring.portfolio.update_portfolios_market_value,
         wiring.execution.on_market_data,
         wiring.strategies.calculate_signals,
@@ -87,7 +87,7 @@ def test_bar_route_order_is_data(wiring):
 
 def test_fill_route_order_is_data(wiring):
     """FILL order is LAW: positions/cash -> order-mirror reconciliation."""
-    assert wiring.handler._routes[EventType.FILL] == [
+    assert wiring.handler.routes[EventType.FILL] == [
         wiring.portfolio.on_fill,
         wiring.order.on_fill,
     ]
@@ -96,23 +96,23 @@ def test_fill_route_order_is_data(wiring):
 def test_time_signal_order_routes_are_data(wiring):
     # TIME runs screening then the feed-backed BarEvent source (Plan 07-02,
     # D-20: the injected bar_event_source IS the feed's factory callable).
-    assert wiring.handler._routes[EventType.TIME] == [
+    assert wiring.handler.routes[EventType.TIME] == [
         wiring.screeners.screen_markets,
         wiring.bar_event_source,
     ]
-    assert wiring.handler._routes[EventType.SIGNAL] == [wiring.order.on_signal]
-    assert wiring.handler._routes[EventType.ORDER] == [wiring.execution.on_order]
+    assert wiring.handler.routes[EventType.SIGNAL] == [wiring.order.on_signal]
+    assert wiring.handler.routes[EventType.ORDER] == [wiring.execution.on_order]
 
 
 def test_screener_and_update_routes_are_explicit_empty(wiring):
     """SCREENER (D-screener) and UPDATE (D-live) are explicit empty routes."""
-    assert wiring.handler._routes[EventType.SCREENER] == []
-    assert wiring.handler._routes[EventType.UPDATE] == []
+    assert wiring.handler.routes[EventType.SCREENER] == []
+    assert wiring.handler.routes[EventType.UPDATE] == []
 
 
 def test_registry_covers_every_event_type(wiring):
     """Every EventType member has an explicit route — no silent gaps."""
-    assert set(wiring.handler._routes) == set(EventType)
+    assert set(wiring.handler.routes) == set(EventType)
 
 
 # --- Drain semantics (D-15) -------------------------------------------------

@@ -106,7 +106,9 @@ class ExecutionHandler(AbstractExecutionHandler):
 		# *USDT symbols. Add BTCUSD to this instance's supported set so validate_symbol
 		# admits the golden ticker for the offline run (DEF-01-B, Plan 01-04). Mutating the
 		# instance set (not the shared preset) keeps other exchanges/tests unaffected.
-		simulated._supported_symbols = set(simulated._supported_symbols) | {'BTCUSD'}
+		# D-07: routed through the public register_symbol() seam — no direct _supported_symbols
+		# mutation in production code (the set-union is byte-identical to the old line).
+		simulated.register_symbol('BTCUSD')
 		exchanges: dict[str, Optional[AbstractExchange]] = {
 			'simulated': simulated,
 			# Backtest portfolios use exchange="csv" (offline golden feed). Orders carry the

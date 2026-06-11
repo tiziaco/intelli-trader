@@ -425,10 +425,31 @@ def test_no_concurrency_limiting_single_writer(env):
 
 
 def test_correlation_id_generation(env):
-    """Test correlation ID generation."""
-    id1 = env.handler._generate_correlation_id()
-    id2 = env.handler._generate_correlation_id()
+    """Each operation emits a fresh, unique correlation id (public observable).
 
+    The correlation id is observable on the emitted ``PortfolioErrorEvent`` —
+    we assert that OBSERVABLE EFFECT through a public path rather than the
+    private id-generation helper (D-09 encapsulation hygiene). Driving
+    ``on_fill`` twice with an unknown portfolio runs two operation scopes,
+    each generating its own correlation id, so the two emitted ids are
+    distinct UUIDs.
+    """
+    while not env.global_queue.empty():
+        env.global_queue.get()
+
+    correlation_ids = []
+    for _ in range(2):
+        fill_event = _fill_event("AAPL", Side.BUY, 150.0, 100, 1.0, "99999",
+                                 time=datetime.now(UTC))
+        try:
+            env.handler.on_fill(fill_event)
+        except PortfolioNotFoundError:
+            pass
+        error_event = env.global_queue.get()
+        assert isinstance(error_event, PortfolioErrorEvent)
+        correlation_ids.append(error_event.correlation_id)
+
+    id1, id2 = correlation_ids
     assert id1 != id2
     assert isinstance(id1, uuid.UUID)
     assert isinstance(id2, uuid.UUID)

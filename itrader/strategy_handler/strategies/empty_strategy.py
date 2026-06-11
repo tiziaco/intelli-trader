@@ -8,10 +8,10 @@ from itrader.strategy_handler.base import Strategy
 
 
 class EmptyStrategyConfig(BaseStrategyConfig):
-	"""No-extra-params config for the relocated Empty_strategy (co-located, D-14)."""
+	"""No-extra-params config for the relocated EmptyStrategy (co-located, D-14)."""
 
 
-class Empty_strategy(Strategy):
+class EmptyStrategy(Strategy):
 	"""
 	Minimal no-op strategy: never signals. Used by tests to exercise the
 	shared base behaviour (pure-alpha contract, D-12).

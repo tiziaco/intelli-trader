@@ -255,9 +255,9 @@ class OrderStorage(ABC):
         pass
     
     @abstractmethod
-    def get_orders_count_by_status(self, portfolio_id: Optional[IdLike] = None) -> Dict[str, int]:
+    def count_orders_by_status(self, portfolio_id: Optional[IdLike] = None) -> Dict[str, int]:
         """
-        Get count of orders by status.
+        Count orders by status (status name -> count).
         
         Parameters
         ----------

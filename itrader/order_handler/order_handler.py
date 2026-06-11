@@ -37,13 +37,13 @@ class OrderHandler:
 	- Position-aware operations (when portfolio_handler is available)
 	- Validation and state management
 	"""
-	def __init__(self, events_queue: "Queue[Any]", portfolio_handler: PortfolioReadModel,
+	def __init__(self, global_queue: "Queue[Any]", portfolio_handler: PortfolioReadModel,
 	             order_storage: Optional[OrderStorage] = None, market_execution: "str | MarketExecution" = "immediate",
 	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
 		"""
 		Parameters
 		----------
-		events_queue: `Queue object`
+		global_queue: `Queue object`
 			The events queue of the trading system
 		portfolio_handler: `PortfolioReadModel`
 			The narrow portfolio read boundary (D-16: the concrete
@@ -60,7 +60,7 @@ class OrderHandler:
 			OrderManager's admission reservation gate (Plan 05-06, D-04).
 			None -> zero estimate (golden run pins fees 0).
 		"""
-		self.events_queue = events_queue
+		self.global_queue = global_queue
 		self.portfolio_handler = portfolio_handler
 		self.market_execution = market_execution
 
@@ -104,7 +104,7 @@ class OrderHandler:
 		for result in operation_results:
 			if result.order_events:
 				for order_event in result.order_events:
-					self.events_queue.put(order_event)
+					self.global_queue.put(order_event)
 					self.logger.debug('OrderEvent sent to execution handler: %s', order_event)
 
 	
@@ -117,7 +117,7 @@ class OrderHandler:
 		and the handler enqueues them for the execution handler.
 		"""
 		for order_event in self.order_manager.on_fill(fill_event):
-			self.events_queue.put(order_event)
+			self.global_queue.put(order_event)
 			self.logger.debug('Orphaned-child cancel event sent to execution handler: %s', order_event)
 
 	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
@@ -152,7 +152,7 @@ class OrderHandler:
 		# Generate OrderEvent if modification was successful
 		if result.success and result.order_events:
 			for order_event in result.order_events:
-				self.events_queue.put(order_event)
+				self.global_queue.put(order_event)
 				self.logger.debug('Order modification event sent to execution handler: %s', order_event)
 		
 		return result.success
@@ -184,7 +184,7 @@ class OrderHandler:
 		# Generate OrderEvent if cancellation was successful
 		if result.success and result.order_events:
 			for order_event in result.order_events:
-				self.events_queue.put(order_event)
+				self.global_queue.put(order_event)
 				self.logger.debug('Order cancellation event sent to execution handler: %s', order_event)
 		
 		return result.success
@@ -216,7 +216,7 @@ class OrderHandler:
 				success = True
 			if result.order_events:
 				for order_event in result.order_events:
-					self.events_queue.put(order_event)
+					self.global_queue.put(order_event)
 					self.logger.debug('Order creation event sent to execution handler: %s', order_event)
 		
 		return success
@@ -325,9 +325,9 @@ class OrderHandler:
 		"""
 		return self.order_manager.search_orders(criteria, portfolio_id)
 	
-	def get_orders_summary(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
+	def count_orders_by_status(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
 		"""
-		Get a summary of orders by status.
+		Count orders by status (status name -> count).
 
 		Parameters
 		----------
@@ -339,4 +339,4 @@ class OrderHandler:
 		Dict[str, int]
 			Dictionary with status names as keys and counts as values
 		"""
-		return self.order_manager.get_orders_summary(portfolio_id)
+		return self.order_manager.count_orders_by_status(portfolio_id)

@@ -174,8 +174,8 @@ class InMemoryOrderStorage(OrderStorage):
                 orders.append(order)
         return orders
 
-    def get_orders_count_by_status(self, portfolio_id: Optional[IdLike] = None) -> Dict[str, int]:
-        """Get count of orders by status."""
+    def count_orders_by_status(self, portfolio_id: Optional[IdLike] = None) -> Dict[str, int]:
+        """Count orders by status (status name -> count)."""
         status_counts: Dict[str, int] = {}
         for order in self._orders(portfolio_id):
             status_name = order.status.name

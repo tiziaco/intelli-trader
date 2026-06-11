@@ -82,7 +82,7 @@ items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog
 - [x] **Phase 2: Locked-Decision Conformance** - `Optional[Decimal]` money API; Decimal `_min/_max_order_size` (float-for-money fix); retire the `uuid4()` second ID scheme (completed 2026-06-11)
 - [x] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD (completed 2026-06-11)
 - [x] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/` (completed 2026-06-11)
-- [ ] **Phase 5: Naming & Encapsulation** - `events_queue→global_queue`; strategy PascalCase + `*_window`; publicize `routes`; `register_symbol()` API; test hygiene through public APIs
+- [x] **Phase 5: Naming & Encapsulation** - `events_queue→global_queue`; strategy PascalCase + `*_window`; publicize `routes`; `register_symbol()` API; test hygiene through public APIs (completed 2026-06-11)
 - [ ] **Phase 6: Order-Manager Decomposition** - Split the 1279-line `order_manager.py` god-module into `admission/`/`brackets/`/`reconcile/` collaborators — pure code-motion, isolated, byte-exact (FRAGILE)
 
 ### 📋 Engine Surface Completion (Planned — Backlog Phase 999.5)
@@ -204,11 +204,18 @@ Plans:
   4. Tests assert through public query APIs, not `_by_id`/`_storage`/`_routes`/`_generate_correlation_id` internals.
   5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
 
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
+**Wave 1** *(parallel — no shared files; oracle-dark + the load-bearing strategy re-run)*
 
-- [ ] TBD (decompose with /gsd:plan-phase 5)
+- [x] 05-01-PLAN.md — NAME-01: queue events_queue→global_queue (D-02) + canonical count_orders_by_status across façade/manager/Protocol/2 backends (D-01)
+- [x] 05-02-PLAN.md — NAME-03: public routes field rename (D-06) + register_symbol() seam closing the _supported_symbols direct-mutation gap + update_config completeness audit (D-07/D-08)
+- [x] 05-03-PLAN.md — NAME-02: PascalCase SMAMACDStrategy/EmptyStrategy + fast_window/slow_window/signal_window config (defaults 6/12/3); all run-path importers updated; load-bearing golden re-run (D-03/D-04)
+
+**Wave 2** *(test hygiene — depends on the renamed public surfaces from 05-01 + 05-02)*
+
+- [x] 05-04-PLAN.md — NAME-04: tests assert through public APIs (routes / get_order_by_id / count_orders_by_status / emitted correlation_id / register_symbol), not _routes/_by_id/_generate_correlation_id/_supported_symbols internals (D-09)
 
 ### Phase 6: Order-Manager Decomposition
 
@@ -240,7 +247,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 | 2. Locked-Decision Conformance | v1.2 | 3/3 | Complete   | 2026-06-11 |
 | 3. Hot-Path Performance | v1.2 | 4/4 | Complete   | 2026-06-11 |
 | 4. Type Modeling | v1.2 | 5/5 | Complete   | 2026-06-11 |
-| 5. Naming & Encapsulation | v1.2 | 0/TBD | Not started | - |
+| 5. Naming & Encapsulation | v1.2 | 4/4 | Complete   | 2026-06-11 |
 | 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
 
 ## Backlog

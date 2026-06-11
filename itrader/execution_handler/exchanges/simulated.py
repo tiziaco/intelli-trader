@@ -470,6 +470,25 @@ class SimulatedExchange(AbstractExchange):
 		"""Get set of supported trading symbols."""
 		return self._supported_symbols.copy()
 
+	def register_symbol(self, symbol: str) -> None:
+		"""Add `symbol` to this instance's supported set (D-07).
+
+		Encapsulates the direct `_supported_symbols` mutation. Per-instance
+		(not the shared preset) and idempotent (set union), so re-registering
+		is a no-op. `_supported_symbols` is written only via __init__, this
+		method, and the update_config re-derivation block (no float()).
+
+		Durability boundary (WR-01): `update_config` with any of
+		`supported_symbols` / `min_order_size` / `max_order_size` re-derives
+		`_supported_symbols` from `config.limits` by *replacement*, so a symbol
+		added here does NOT survive a subsequent limits reconfigure. That
+		replace-on-reconfigure is intentional (it lets `update_config` narrow or
+		swap the symbol universe — see `test_update_config_limits` and
+		`test_rejected_market_order_emits_refused_fill`); re-register after such
+		an update if the symbol must persist.
+		"""
+		self._supported_symbols = set(self._supported_symbols) | {symbol}
+
 	def get_exchange_info(self) -> Dict[str, Any]:
 		"""Get comprehensive exchange information."""
 		return {

@@ -254,7 +254,7 @@ from decimal import Decimal  # noqa: E402
 from itrader.core.sizing import FractionOfCash, TradingDirection  # noqa: E402
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import (  # noqa: E402
     SMA_MACDConfig,
-    SMA_MACD_strategy,
+    SMAMACDStrategy,
 )
 from itrader.trading_system.backtest_trading_system import TradingSystem  # noqa: E402
 
@@ -280,7 +280,7 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
         direction=TradingDirection.LONG_ONLY,
         allow_increase=False,
     )
-    strategy = SMA_MACD_strategy(config)
+    strategy = SMAMACDStrategy(config)
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
         user_id=1, name="sig02_pf", exchange="csv", cash=10_000,
