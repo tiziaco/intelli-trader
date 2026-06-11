@@ -16,13 +16,14 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
 from .order import Order
 from .operation_result import OperationResult
-from ..core.enums import OrderCommand, OrderStatus, FillStatus, OrderOperationType, MarketExecution
+from ..core.enums import OrderStatus, FillStatus, MarketExecution
 from ..core.ids import OrderId, PortfolioId, StrategyId
 from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
 from .base import OrderStorage
 from .brackets import BracketBook, BracketManager
 from .admission import AdmissionManager
+from .lifecycle import LifecycleManager
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 from .sizing_resolver import SizingResolver
@@ -117,6 +118,18 @@ class OrderManager:
 			order_storage, logger, self.order_validator, self.sizing_resolver,
 			portfolio_handler, commission_estimator, self._brackets,
 			self.bracket_manager)
+
+		# D-04/D-09 coordinator-owned star: construct the modify/cancel lifecycle
+		# collaborator ONCE, injecting the dep subset (order_storage, logger,
+		# order_validator, portfolio_handler for release) plus the shared
+		# BracketBook. modify_order / cancel_order below delegate into it (D-07).
+		# It holds NO sibling reconcile/admission ref (D-08); on_fill's terminal
+		# orphaned-child cancel routes through the OrderManager.cancel_order
+		# delegation (preserving the star; the reconcile→lifecycle seam is wired
+		# through the coordinator in plan 05, not via a direct sibling edge).
+		self.lifecycle_manager = LifecycleManager(
+			order_storage, logger, self.order_validator, portfolio_handler,
+			self._brackets)
 
 	@property
 	def _pending_brackets(self) -> BracketBook:
@@ -290,162 +303,13 @@ class OrderManager:
 
 	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
 	                portfolio_id: Optional[PortfolioId] = None, reason: str = "user modification") -> OperationResult:
-		"""
-		Modify an existing order and generate OrderEvent.
-		
-		Parameters
-		----------
-		order_id : int
-			The ID of the order to modify
-		new_price : Decimal, optional
-			New price for the order
-		new_quantity : Decimal, optional
-			New quantity for the order
-		portfolio_id : int, optional
-			Portfolio ID for faster lookup
-		reason : str, optional
-			Reason for the modification
+		"""Delegate order modification to LifecycleManager (D-07)."""
+		return self.lifecycle_manager.modify_order(order_id, new_price, new_quantity, portfolio_id, reason)
 
-		Returns
-		-------
-		OperationResult
-			Result of the modification operation
-		"""
-		try:
-			# Get the order
-			order = self.order_storage.get_order_by_id(order_id, portfolio_id)
-			if not order:
-				return OperationResult.failure_result(
-					f"Order {order_id} not found for modification",
-					operation_type=OrderOperationType.MODIFY_ORDER
-				)
-			
-			# Validate the modification
-			if self.order_validator:
-				validation_messages = self.order_validator.validate_order_modification(
-					order, new_price=new_price, new_quantity=new_quantity
-				)
-				
-				if not self.order_validator.is_valid(validation_messages):
-					error_messages = self.order_validator.get_errors(validation_messages)
-					return OperationResult.failure_result(
-						"Order modification validation failed",
-						error_details=str([msg.message for msg in error_messages]),
-						operation_type=OrderOperationType.MODIFY_ORDER
-					)
-			
-			# Apply the modification. Order money is Decimal (M2a); normalize the
-			# Decimal modify args through the money entry point at this boundary.
-			success = order.modify_order(
-				to_money(new_price) if new_price is not None else None,
-				to_money(new_quantity) if new_quantity is not None else None,
-				reason)
-			if success:
-				# Update in storage
-				self.order_storage.update_order(order)
-
-				# WR-03 (part 3): if this parent has an armed PercentFromFill
-				# pending bracket and the quantity changed, refresh the pending
-				# quantity so fill-anchored children are created at the CURRENT
-				# order quantity, not the stale assembly-time value.
-				if new_quantity is not None:
-					self._brackets.refresh_quantity(order.id, to_money(new_quantity))
-
-				# Generate OrderEvent
-				order_event = OrderEvent.new_order_event(order, command=OrderCommand.MODIFY)
-
-				self.logger.info('Order %s modified successfully: %s', order_id, reason)
-				return OperationResult.success_result(
-					f"Order {order_id} modified successfully",
-					order_events=[order_event],
-					operation_type=OrderOperationType.MODIFY_ORDER,
-					affected_order_ids=[order_id]
-				)
-			else:
-				return OperationResult.failure_result(
-					f"Failed to modify order {order_id}",
-					operation_type=OrderOperationType.MODIFY_ORDER
-				)
-				
-		except Exception as e:
-			error_msg = f"Error modifying order {order_id}: {e}"
-			self.logger.error(error_msg, exc_info=True)
-			return OperationResult.failure_result(error_msg, 
-				error_details=str(e), operation_type=OrderOperationType.MODIFY_ORDER)
-	
 	def cancel_order(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None,
 	                reason: str = "user cancellation") -> OperationResult:
-		"""
-		Cancel an existing order and generate OrderEvent.
-		
-		Parameters
-		----------
-		order_id : int
-			The ID of the order to cancel
-		portfolio_id : int, optional
-			Portfolio ID for faster lookup
-		reason : str, optional
-			Reason for cancellation
-			
-		Returns
-		-------
-		OperationResult
-			Result of the cancellation operation
-		"""
-		try:
-			# Get the order
-			order = self.order_storage.get_order_by_id(order_id, portfolio_id)
-			if not order:
-				return OperationResult.failure_result(
-					f"Order {order_id} not found for cancellation",
-					operation_type=OrderOperationType.CANCEL_ORDER
-				)
-			
-			# Cancel the order
-			success = order.cancel_order(reason)
-			if success:
-				# Update in storage
-				self.order_storage.update_order(order)
-
-				# WR-03 (part 1): a locally-cancelled PercentFromFill parent must
-				# disarm its pending entry. Otherwise a late EXECUTED fill for
-				# the same order would still anchor and emit SL/TP children
-				# against a CANCELLED parent (on_fill keys child creation off the
-				# fill, not the parent's live status). The pop is keyed by the
-				# parent's id; children/non-PercentFromFill orders no-op.
-				self._brackets.consume(order.id)
-
-				# WR-04: the local terminal transition owns the release. The
-				# exchange only emits FillEvent(CANCELLED) for orders actually
-				# resting in its matching engine, so a cancel it never
-				# acknowledges would otherwise hold the BUY's reservation
-				# forever. The release is idempotent — a later exchange
-				# CANCELLED fill re-releasing is a silent no-op.
-				if self.portfolio_handler is not None:
-					self.portfolio_handler.release(
-						order.portfolio_id, order.id)
-
-				# Generate OrderEvent for cancelled order
-				order_event = OrderEvent.new_order_event(order, command=OrderCommand.CANCEL)
-				
-				self.logger.info('Order %s cancelled: %s', order_id, reason)
-				return OperationResult.success_result(
-					f"Order {order_id} cancelled: {reason}",
-					order_events=[order_event],
-					operation_type=OrderOperationType.CANCEL_ORDER,
-					affected_order_ids=[order_id]
-				)
-			else:
-				return OperationResult.failure_result(
-					f"Failed to cancel order {order_id} (status: {order.status.name})",
-					operation_type=OrderOperationType.CANCEL_ORDER
-				)
-				
-		except Exception as e:
-			error_msg = f"Error cancelling order {order_id}: {e}"
-			self.logger.error(error_msg, exc_info=True)
-			return OperationResult.failure_result(error_msg,
-				error_details=str(e), operation_type=OrderOperationType.CANCEL_ORDER)
+		"""Delegate order cancellation to LifecycleManager (D-07)."""
+		return self.lifecycle_manager.cancel_order(order_id, portfolio_id, reason)
 
 	# --- Read interface (D-18) -------------------------------------------------
 	# The manager owns the storage; OrderHandler read methods delegate here.
