@@ -120,22 +120,18 @@ class SimulatedExchange(AbstractExchange):
 		admission_time = datetime.now()
 
 		try:
-			# Pre-trade validation
+			# Pre-trade validation — W1-14: validate_order() is the ONE
+			# authoritative connection check (it appends "Exchange not connected"
+			# to failed_checks → NETWORK_ERROR). The previously-duplicated
+			# is_connected() guard right after this block was redundant: a
+			# disconnected exchange already fails validation here and exits
+			# REFUSED, so the repeat could never fire. Removed.
 			validation_result = self.validate_order(event)
 			if not validation_result.is_valid:
 				self._orders_failed += 1
 				self._last_error = validation_result.error_message
 				self._last_error_time = admission_time
 				self._emit_rejection(event, validation_result.error_message or "validation failed")
-				return False
-
-			# Check connection status
-			if not self.is_connected():
-				self._orders_failed += 1
-				error_msg = "Exchange not connected"
-				self._last_error = error_msg
-				self._last_error_time = admission_time
-				self._emit_rejection(event, "exchange not connected")
 				return False
 
 			# Simulate random failures if enabled
