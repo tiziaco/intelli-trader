@@ -9,7 +9,7 @@ from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.money import to_money
 from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingDirection
 from itrader.outils.time_parser import to_timedelta
-from itrader.strategy_handler.config import BaseStrategyConfig
+from itrader.config import BaseStrategyConfig
 from itrader import idgen
 
 class Strategy(ABC):

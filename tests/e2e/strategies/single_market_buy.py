@@ -31,7 +31,7 @@ import pandas as pd
 
 from itrader.core.sizing import FractionOfCash, SignalIntent, TradingDirection
 from itrader.strategy_handler.base import Strategy
-from itrader.strategy_handler.config import BaseStrategyConfig
+from itrader.config import BaseStrategyConfig
 
 
 class SingleMarketBuy(Strategy):
