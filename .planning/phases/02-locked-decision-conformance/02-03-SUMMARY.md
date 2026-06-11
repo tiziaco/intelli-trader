@@ -122,6 +122,11 @@ At execution start the working tree already contained uncommitted modifications 
 - `CorrelationId` is available for downstream typed correlation-id usage.
 - No blockers.
 
+## Self-Check: PASSED
+
+- `02-03-SUMMARY.md` exists.
+- Commits verified present: `04269dd`, `eacc0a0`, `57ad3df`, `b1720a3`.
+
 ---
 *Phase: 02-locked-decision-conformance*
 *Completed: 2026-06-11*
