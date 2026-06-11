@@ -460,8 +460,8 @@ class SimulatedExchange(AbstractExchange):
 				'order_validation'
 			],
 			'limits': {
-				'min_order_size': self._min_order_size,
-				'max_order_size': self._max_order_size
+				'min_order_size': float(self._min_order_size),
+				'max_order_size': float(self._max_order_size)
 			},
 			'models': {
 				'fee_model': self.fee_model.get_fee_info(),
