@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
 status: executing
-last_updated: "2026-06-11T18:25:43.252Z"
+last_updated: "2026-06-11T18:31:12.890Z"
 last_activity: 2026-06-11
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 18
-  completed_plans: 15
+  completed_plans: 16
   percent: 40
 ---
 
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation s
 ## Current Position
 
 Phase: 05 (naming-encapsulation) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-06-11
 
@@ -86,6 +86,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase ?]: D-01/D-02: four conventions documented in CONVENTIONS.md + CLAUDE.md pointer; W4-04 validator overlap documented justified-by-decision (code NOT removed)
 - [Phase 02 / 2026-06-11] D-07 gap-discovery delta (owner-flagged, bounded, NOT silently folded): the W2-10/DEC-02/SC-2 "latent `Decimal < float` TypeError" on the below-minimum validation path was a MISDIAGNOSIS — Decimal-vs-float COMPARISON works in Py3; only arithmetic raises and there is none on `_min/_max_order_size`. DEC-02 reframed as float-for-money consistency; SC-2 (ROADMAP) + DEC-02 (REQUIREMENTS) wording corrected. Evidence: the green `tests/e2e/cash/release_refused` leaf (Decimal-vs-float `> _max` REFUSED).
 - [Phase ?]: Phase 05 NAME-01: events_queue to global_queue (D-02) + canonical count_orders_by_status across 5 sites (D-01); oracle-dark, byte-exact, mypy strict clean
+- [Phase 05]: Phase 05 NAME-03: D-06 _routes->routes plain public field (no property/get_routes); D-07 SimulatedExchange.register_symbol() closes the execution_handler.py:109 direct-mutation gap (byte-identical set-union, no float); D-08 update_config confirmed complete (no field reachable solely by direct mutation) — oracle-dark, byte-exact, mypy strict clean
 
 ### Pending Todos
 
@@ -109,6 +110,7 @@ None yet.
 | Phase 01 P01 | 2 | 3 tasks | 5 files |
 | Phase 01 P02 | 2 | 3 tasks | 4 files |
 | Phase 05 P01 | 2 | 3 tasks | 5 files |
+| Phase 05 P02 | 8 | 3 tasks | 3 files |
 
 ## Bookkeeping
 
@@ -155,7 +157,7 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T18:25:43.244Z
+Last session: 2026-06-11T18:31:12.877Z
 Resume file: None
 
 ## Operator Next Steps

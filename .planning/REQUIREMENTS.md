@@ -94,7 +94,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 - [ ] **NAME-02**: Strategy classes are PascalCase (`SMAMACDStrategy` / `EmptyStrategy`) and
   strategy-config windows are `fast_window`/`slow_window`/`signal_window` (not `FAST`/`SLOW`/`WIN`);
   all importers (scripts/tests/crossval/e2e) updated; golden byte-exact. [W3-01, W3-02]
-- [ ] **NAME-03**: `EventHandler` routes are reachable through a public name/accessor (not
+- [x] **NAME-03**: `EventHandler` routes are reachable through a public name/accessor (not
   `_routes`); `SimulatedExchange` exposes `register_symbol()` + a complete `update_config` seam,
   and production code no longer mutates `_supported_symbols`/`_min_order_size` directly. [W3-08,
   W3-04]
@@ -173,7 +173,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | TYPE-05 | Phase 4 | Pending |
 | NAME-01 | Phase 5 | Complete |
 | NAME-02 | Phase 5 | Pending |
-| NAME-03 | Phase 5 | Pending |
+| NAME-03 | Phase 5 | Complete |
 | NAME-04 | Phase 5 | Pending |
 | MOD-01 | Phase 6 | Pending |
 
