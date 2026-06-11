@@ -92,9 +92,13 @@ class PortfolioValidator:
         from itrader.core.exceptions import InsufficientFundsError
         
         if available_cash < required_cash:
+            # WR-04: pass Decimal money straight through — the exception now
+            # stores Decimal structured fields and formats to float only inside
+            # its message. The prior float() round-trip introduced a binary-float
+            # repr artifact in a money figure consumed programmatically.
             raise InsufficientFundsError(
-                float(required_cash), 
-                float(available_cash), 
+                required_cash,
+                available_cash,
                 transaction_id
             )
     

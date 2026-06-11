@@ -2,6 +2,7 @@
 Portfolio-specific exceptions for the iTrader system.
 """
 
+from decimal import Decimal
 from typing import Any, Optional, Union
 
 from .base import ITraderError, ValidationError, ConfigurationError, StateError, NotFoundError
@@ -18,14 +19,32 @@ class PortfolioError(ITraderError):
 
 
 class InsufficientFundsError(PortfolioError):
-    """Raised when attempting to execute a transaction with insufficient funds."""
-    
-    def __init__(self, required_cash: float, available_cash: float, transaction_id: "Optional[TransactionId | int]" = None):
-        self.required_cash = required_cash
-        self.available_cash = available_cash
+    """Raised when attempting to execute a transaction with insufficient funds.
+
+    WR-04: money fields are stored as ``Decimal`` so callers reading
+    ``required_cash``/``available_cash`` programmatically get exact money, not a
+    binary-float repr artifact. ``float`` formatting happens ONLY in the message
+    (a logging/serialization edge). Callers may still pass ``float``/``int`` for
+    backward compatibility — values enter the Decimal domain via ``Decimal(str(x))``
+    (never ``Decimal(float)``) per the money policy.
+    """
+
+    def __init__(
+        self,
+        required_cash: "Decimal | float | int",
+        available_cash: "Decimal | float | int",
+        transaction_id: "Optional[TransactionId | int]" = None,
+    ):
+        self.required_cash: Decimal = (
+            required_cash if isinstance(required_cash, Decimal) else Decimal(str(required_cash))
+        )
+        self.available_cash: Decimal = (
+            available_cash if isinstance(available_cash, Decimal) else Decimal(str(available_cash))
+        )
         self.transaction_id = transaction_id
         super().__init__(
-            f"Insufficient funds: Required ${required_cash:.2f}, Available ${available_cash:.2f}"
+            f"Insufficient funds: Required ${float(self.required_cash):.2f}, "
+            f"Available ${float(self.available_cash):.2f}"
         )
 
 
