@@ -410,17 +410,40 @@ class SimulatedExchange(AbstractExchange):
 		error_message = None
 		
 		if not is_valid:
-			if "Invalid symbol" in failed_checks[0]:
-				error_code = ExecutionErrorCode.SYMBOL_NOT_FOUND
-			elif "quantity" in failed_checks[0].lower():
-				error_code = ExecutionErrorCode.ORDER_SIZE_TOO_SMALL if "below minimum" in failed_checks[0] else ExecutionErrorCode.ORDER_SIZE_TOO_LARGE
-			elif "price" in failed_checks[0].lower():
-				error_code = ExecutionErrorCode.INVALID_PRICE
-			elif "not connected" in failed_checks[0]:
-				error_code = ExecutionErrorCode.NETWORK_ERROR
-			else:
-				error_code = ExecutionErrorCode.INVALID_ORDER
-			
+			# WR-02: derive error_code from a priority-ordered scan of the FULL
+			# failed_checks list, not failed_checks[0]. The quantity and price
+			# blocks above are independent `if`s, so an order can fail both at
+			# once; first-wins on append order silently dropped one distinct
+			# failure from the structured (programmatically consumed) error_code.
+			# error_message still joins every failed check for completeness.
+			def _classify(check: str) -> "ExecutionErrorCode":
+				lowered = check.lower()
+				if "invalid symbol" in lowered:
+					return ExecutionErrorCode.SYMBOL_NOT_FOUND
+				if "quantity" in lowered:
+					return (ExecutionErrorCode.ORDER_SIZE_TOO_SMALL
+						if "below minimum" in check
+						else ExecutionErrorCode.ORDER_SIZE_TOO_LARGE)
+				if "price" in lowered:
+					return ExecutionErrorCode.INVALID_PRICE
+				if "not connected" in lowered:
+					return ExecutionErrorCode.NETWORK_ERROR
+				return ExecutionErrorCode.INVALID_ORDER
+
+			# Priority order: symbol > price > quantity > connection > generic.
+			# A symbol/price defect is more fundamental than a sizing defect,
+			# so it wins the single error_code slot regardless of append order.
+			_priority = [
+				ExecutionErrorCode.SYMBOL_NOT_FOUND,
+				ExecutionErrorCode.INVALID_PRICE,
+				ExecutionErrorCode.ORDER_SIZE_TOO_SMALL,
+				ExecutionErrorCode.ORDER_SIZE_TOO_LARGE,
+				ExecutionErrorCode.NETWORK_ERROR,
+				ExecutionErrorCode.INVALID_ORDER,
+			]
+			present = {_classify(check) for check in failed_checks}
+			error_code = next(code for code in _priority if code in present)
+
 			error_message = "; ".join(failed_checks)
 		
 		return OrderPreflightResult(
