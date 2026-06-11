@@ -40,9 +40,12 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 - [ ] **DEC-01**: `modify_order`/`cancel_order` public API price/quantity params are typed
   `Optional[Decimal]`, not `Optional[float]` — no float-for-money at a domain boundary. [W4-01]
-- [ ] **DEC-02**: `_min/_max_order_size` are carried as `Decimal` end-to-end; the latent
-  `Decimal < float` `TypeError` on the below-minimum validation path is removed; golden run
-  byte-exact. [W2-10]
+- [ ] **DEC-02**: `_min/_max_order_size` are carried as `Decimal` end-to-end (float-for-money
+  consistency at the exchange size-limit boundary — the `float()` wraps at the cached-attribute
+  init/update_config sites are dropped, so `validate_order` runs `Decimal`-vs-`Decimal`); the
+  symmetric below-minimum REFUSED branch is regression-covered (D-08); golden run byte-exact.
+  (D-07: the earlier comparison-crash claim was a misdiagnosis — Decimal-vs-float COMPARISON works
+  in Py3; only arithmetic raises and there is none.) [W2-10]
 - [ ] **DEC-03**: Correlation IDs use the single UUIDv7 `idgen` scheme (or a deterministic
   counter); `uuid.uuid4()` is removed from the run path. [W4-08 / W1-06]
 
