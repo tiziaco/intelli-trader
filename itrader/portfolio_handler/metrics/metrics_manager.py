@@ -322,24 +322,29 @@ class MetricsManager:
             return {"error": "Insufficient data for drawdown analysis"}
             
         # Calculate running maximum and drawdowns.
-        # Statistical-ratio metric input boundary (D-06: money stays Decimal;
-        # float only at the running-max / drawdown ratio computation).
-        equity_values = [float(s.total_equity) for s in relevant_snapshots]
+        # WR-02: max_drawdown / current_drawdown are reported, money-derived
+        # figures the project promises are trustworthy/cross-validated, so they
+        # stay Decimal end-to-end (no binary-float round-trip). total_equity is
+        # already Decimal; the drawdown ratio is computed in Decimal.
+        equity_values = [s.total_equity for s in relevant_snapshots]
         timestamps = [s.timestamp for s in relevant_snapshots]
-            
+
+        _ZERO = Decimal('0')
         running_max = []
         drawdowns = []
         current_max = equity_values[0]
-            
+
         for value in equity_values:
             current_max = max(current_max, value)
             running_max.append(current_max)
-                
-            drawdown = (value - current_max) / current_max if current_max > 0 else 0
+
+            # WR-02: uniform Decimal sentinel (not bare int 0) so the return
+            # contract is consistent between flat-equity and real-drawdown cases.
+            drawdown = (value - current_max) / current_max if current_max > 0 else _ZERO
             drawdowns.append(drawdown)
-            
+
         # Find maximum drawdown
-        max_drawdown = min(drawdowns) if drawdowns else 0
+        max_drawdown = min(drawdowns) if drawdowns else _ZERO
         max_dd_index = drawdowns.index(max_drawdown) if max_drawdown < 0 else 0
             
         # Calculate drawdown duration
@@ -350,8 +355,8 @@ class MetricsManager:
             "max_drawdown_date": timestamps[max_dd_index].isoformat(),
             "max_drawdown_duration_days": max_dd_duration,
             "current_drawdown": drawdowns[-1],
-            "drawdown_periods": len([d for d in drawdowns if d < -0.01]),  # Periods > 1% drawdown
-            "recovery_periods": len([i for i, d in enumerate(drawdowns) if d == 0 and i > 0])
+            "drawdown_periods": len([d for d in drawdowns if d < Decimal('-0.01')]),  # Periods > 1% drawdown
+            "recovery_periods": len([i for i, d in enumerate(drawdowns) if d == _ZERO and i > 0])
         }
     
     def get_return_distribution(self, period_days: int = 1) -> Dict[str, Any]:
@@ -580,14 +585,19 @@ class MetricsManager:
             if prev_equity > 0:
                 daily_returns.append((curr_equity - prev_equity) / prev_equity)
         
-        # Basic return calculations
-        initial_equity = float(snapshots[0].total_equity)
-        final_equity = float(snapshots[-1].total_equity)
-        
+        # Basic return calculations.
+        # WR-02: total_return is a reported, money-derived figure the project
+        # promises is trustworthy/cross-validated. total_equity is already
+        # Decimal; compute total_return in Decimal so no binary-float round-trip
+        # is baked into the Decimal field. The float cast is reserved strictly
+        # for the math.pow annualization exponent below.
+        initial_equity = snapshots[0].total_equity
+        final_equity = snapshots[-1].total_equity
+
         total_return = Decimal('0.00')
         if initial_equity > 0:
-            total_return = Decimal(str((final_equity - initial_equity) / initial_equity))
-        
+            total_return = (final_equity - initial_equity) / initial_equity
+
         # Annualized return
         days = (end_date - start_date).days
         annualized_return = Decimal('0.00')
