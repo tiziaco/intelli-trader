@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
-status: verifying
-last_updated: "2026-06-11T18:45:58.683Z"
+status: ready_to_plan
+last_updated: 2026-06-11T18:56:46.625Z
 last_activity: 2026-06-11
 progress:
   total_phases: 10
@@ -11,6 +11,7 @@ progress:
   total_plans: 18
   completed_plans: 18
   percent: 50
+stopped_at: Phase 05 complete (4/4) — ready to discuss Phase 6 (Order-Manager Decomposition)
 ---
 
 # Project State
@@ -20,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** Phase 05 — naming-encapsulation
+**Current focus:** Phase 6 — Order-Manager Decomposition (MOD-01, FRAGILE, isolated, LAST)
 
 ## Current Position
 
-Phase: 05 (naming-encapsulation) — EXECUTING
-Plan: 4 of 4
-Status: Phase complete — ready for verification
+Phase: 6
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-11
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
@@ -60,7 +61,7 @@ Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from V1.2-CLEANUP-REVI
 
 **Velocity (v1.1):**
 
-- Total plans completed: 45
+- Total plans completed: 49
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -166,4 +167,4 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Plan the first v1.2 phase with `/gsd:plan-phase 1` (Dead Code & Doc Hygiene).
+- Phases 1–5 complete. Plan the final v1.2 phase with `/gsd:discuss-phase 6` (Order-Manager Decomposition — MOD-01, FRAGILE, isolated, LAST).
