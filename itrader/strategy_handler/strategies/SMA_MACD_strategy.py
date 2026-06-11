@@ -16,17 +16,17 @@ logger = get_itrader_logger().bind(component="SMA_MACD_strategy")
 class SMA_MACDConfig(BaseStrategyConfig):
 	"""Per-strategy params for the reference SMA_MACD strategy (D-02).
 
-	Golden defaults mirror ``SMA_MACD_strategy.__init__``: short=50, long=100,
-	FAST=6, SLOW=12, WIN=3. The ``_short_lt_long`` cross-field rule (HARD-02)
+	Golden defaults mirror ``SMAMACDStrategy.__init__``: short=50, long=100,
+	fast_window=6, slow_window=12, signal_window=3. The ``_short_lt_long`` cross-field rule (HARD-02)
 	rejects ``short_window >= long_window`` at construction. Co-located here
 	(D-14) and re-indented to TABS (D-15) to match this strategy file.
 	"""
 
 	short_window: int = Field(default=50, gt=0)
 	long_window: int = Field(default=100, gt=0)
-	FAST: int = Field(default=6, gt=0)
-	SLOW: int = Field(default=12, gt=0)
-	WIN: int = Field(default=3, gt=0)
+	fast_window: int = Field(default=6, gt=0)
+	slow_window: int = Field(default=12, gt=0)
+	signal_window: int = Field(default=3, gt=0)
 
 	@model_validator(mode="after")
 	def _short_lt_long(self) -> "SMA_MACDConfig":
@@ -36,7 +36,7 @@ class SMA_MACDConfig(BaseStrategyConfig):
 		return self
 
 
-class SMA_MACD_strategy(Strategy):
+class SMAMACDStrategy(Strategy):
 	"""
 	Requires:
 	ticker - The ticker symbol being used for moving averages
@@ -55,9 +55,9 @@ class SMA_MACD_strategy(Strategy):
 		# contract (D-12): no config reads inside generate_signal.
 		self.short_window = config.short_window
 		self.long_window = config.long_window
-		self.FAST = config.FAST
-		self.SLOW = config.SLOW
-		self.WIN = config.WIN
+		self.fast_window = config.fast_window
+		self.slow_window = config.slow_window
+		self.signal_window = config.signal_window
 
 		# Fetch width (bars) the handler requests from the feed window.
 		self.max_window = max([self.long_window, 100])
@@ -89,7 +89,7 @@ class SMA_MACD_strategy(Strategy):
 			# ticks where the SMA filter holds. The firing tick is byte-identical
 			# (same MACD value, just computed lazily); per D-02 this reorder is
 			# proven by code review + the byte-exact oracle ONLY, NO new SMA_MACD test.)
-			MACD_Indicator = trend.MACD(bars.close, window_fast=self.FAST, window_slow=self.SLOW, window_sign=self.WIN, fillna=False)
+			MACD_Indicator = trend.MACD(bars.close, window_fast=self.fast_window, window_slow=self.slow_window, window_sign=self.signal_window, fillna=False)
 			MACDhist = MACD_Indicator.macd_diff().dropna()
 			if ((MACDhist.iloc[-1] >= 0) and (MACDhist.iloc[-2] < 0)): # Buy trigger
 				return self.buy(ticker)
