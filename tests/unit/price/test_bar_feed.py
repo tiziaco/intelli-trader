@@ -226,6 +226,24 @@ def test_current_bars_decimal_fields_and_sparse_absence(duo_feed):
     assert bars['ETHUSD'].close == Decimal(str(207.0))
 
 
+def test_current_bars_serves_prebuilt_no_from_row_per_tick(duo_feed, monkeypatch):
+    # PERF-03 / D-07: current_bars() serves the prebuilt {time: Bar} map via a
+    # pure dict lookup, so it must NOT call Bar.from_row on the per-tick path
+    # (the prebuild front-loaded every Bar to __init__). A sentinel patched
+    # onto Bar.from_row raises if it is ever called per tick. This is a
+    # regression-LOCK that PASSES against the landed prebuild — not a
+    # test-first RED (TDD_MODE OFF). Bar.from_row IS a classmethod, so the
+    # sentinel is patched as one (mirrors the resample-count idiom above).
+    import itrader.core.bar as bar_mod
+
+    def _boom(*a, **k):
+        raise AssertionError("Bar.from_row called per tick — prebuild not serving")
+
+    monkeypatch.setattr(bar_mod.Bar, 'from_row', classmethod(_boom))
+    bars = duo_feed.current_bars(ts('2020-01-03'))  # must NOT call from_row
+    assert isinstance(bars['BTCUSD'], Bar)
+
+
 def test_current_bar_close_is_the_equity_mark(daily_feed, daily_base_frame):
     # Rule 6 (D-05): the close of current_bars(T)[ticker] is the value the
     # portfolio marks equity with at tick T.
