@@ -15,11 +15,9 @@ from pydantic import ValidationError
 
 from itrader.core.enums import OrderType, TradingDirection, Timeframe
 from itrader.core.sizing import FractionOfCash
-from itrader.strategy_handler.config import (
-    BaseStrategyConfig,
-    EmptyStrategyConfig,
-    SMA_MACDConfig,
-)
+from itrader.config import BaseStrategyConfig
+from itrader.strategy_handler.strategies.empty_strategy import EmptyStrategyConfig
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig
 
 
 def _golden_sizing() -> FractionOfCash:

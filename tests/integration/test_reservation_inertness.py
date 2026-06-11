@@ -67,8 +67,7 @@ def traced_run(tmp_path_factory):
     module = _load_run_backtest_module()
 
     from itrader.core.sizing import FractionOfCash, TradingDirection
-    from itrader.strategy_handler.config import SMA_MACDConfig
-    from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
+    from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig, SMA_MACD_strategy
     from itrader.trading_system.backtest_trading_system import TradingSystem
 
     system = TradingSystem(

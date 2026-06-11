@@ -27,7 +27,7 @@ from itrader.core.sizing import (
 )
 from itrader.events_handler.events import BarEvent
 from itrader.strategy_handler.base import Strategy
-from itrader.strategy_handler.config import BaseStrategyConfig
+from itrader.config import BaseStrategyConfig
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler

@@ -32,7 +32,7 @@ from decimal import Decimal
 from itrader import idgen
 from itrader.core.enums import Side
 from itrader.core.ids import SignalId, StrategyId
-from itrader.strategy_handler.config import BaseStrategyConfig
+from itrader.config import BaseStrategyConfig
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

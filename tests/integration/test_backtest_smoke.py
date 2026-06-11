@@ -18,8 +18,7 @@ in the root conftest) — do NOT hand-add markers.
 from decimal import Decimal
 
 from itrader.core.sizing import FractionOfCash, TradingDirection
-from itrader.strategy_handler.config import SMA_MACDConfig
-from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACD_strategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig, SMA_MACD_strategy
 
 
 # Golden-run configuration (D-03/D-04/D-06).

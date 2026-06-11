@@ -252,8 +252,8 @@ def test_oracle_numeric_values(oracle_run):
 from decimal import Decimal  # noqa: E402
 
 from itrader.core.sizing import FractionOfCash, TradingDirection  # noqa: E402
-from itrader.strategy_handler.config import SMA_MACDConfig  # noqa: E402
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import (  # noqa: E402
+    SMA_MACDConfig,
     SMA_MACD_strategy,
 )
 from itrader.trading_system.backtest_trading_system import TradingSystem  # noqa: E402
