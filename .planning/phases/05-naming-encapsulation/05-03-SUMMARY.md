@@ -112,6 +112,11 @@ None - no external service configuration required.
 - Remaining Phase 5 plan: 05-04 (NAME-04 test-hygiene + any remaining encapsulation). Phase 6 (MOD-01, order_manager split) stays the isolated LAST phase.
 - Milestone gate held: golden byte-exact (134 / 46189.87730727451), e2e 58/58, mypy --strict clean — no oracle re-baseline.
 
+## Self-Check: PASSED
+
+- Files verified present: `SMA_MACD_strategy.py` (SMAMACDStrategy), `empty_strategy.py` (EmptyStrategy), `05-03-SUMMARY.md`
+- Commits verified in git log: `395d6f6` (RED), `12f0b1f` (GREEN), `ce13e98` (refactor), `6c3c622` (docs)
+
 ---
 *Phase: 05-naming-encapsulation*
 *Completed: 2026-06-11*

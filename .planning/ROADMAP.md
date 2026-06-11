@@ -211,7 +211,7 @@ Plans:
 
 - [x] 05-01-PLAN.md — NAME-01: queue events_queue→global_queue (D-02) + canonical count_orders_by_status across façade/manager/Protocol/2 backends (D-01)
 - [x] 05-02-PLAN.md — NAME-03: public routes field rename (D-06) + register_symbol() seam closing the _supported_symbols direct-mutation gap + update_config completeness audit (D-07/D-08)
-- [ ] 05-03-PLAN.md — NAME-02: PascalCase SMAMACDStrategy/EmptyStrategy + fast_window/slow_window/signal_window config (defaults 6/12/3); all run-path importers updated; load-bearing golden re-run (D-03/D-04)
+- [x] 05-03-PLAN.md — NAME-02: PascalCase SMAMACDStrategy/EmptyStrategy + fast_window/slow_window/signal_window config (defaults 6/12/3); all run-path importers updated; load-bearing golden re-run (D-03/D-04)
 
 **Wave 2** *(test hygiene — depends on the renamed public surfaces from 05-01 + 05-02)*
 
@@ -247,7 +247,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 | 2. Locked-Decision Conformance | v1.2 | 3/3 | Complete   | 2026-06-11 |
 | 3. Hot-Path Performance | v1.2 | 4/4 | Complete   | 2026-06-11 |
 | 4. Type Modeling | v1.2 | 5/5 | Complete   | 2026-06-11 |
-| 5. Naming & Encapsulation | v1.2 | 2/4 | In Progress|  |
+| 5. Naming & Encapsulation | v1.2 | 3/4 | In Progress|  |
 | 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
 
 ## Backlog

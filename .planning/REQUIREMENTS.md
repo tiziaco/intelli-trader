@@ -91,7 +91,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 - [x] **NAME-01**: `OrderHandler` names its queue `global_queue` (constructor param + attribute),
   not `events_queue`; the count-by-status operation has a single precise name across façade and
   storage. [W3-03, W3-10]
-- [ ] **NAME-02**: Strategy classes are PascalCase (`SMAMACDStrategy` / `EmptyStrategy`) and
+- [x] **NAME-02**: Strategy classes are PascalCase (`SMAMACDStrategy` / `EmptyStrategy`) and
   strategy-config windows are `fast_window`/`slow_window`/`signal_window` (not `FAST`/`SLOW`/`WIN`);
   all importers (scripts/tests/crossval/e2e) updated; golden byte-exact. [W3-01, W3-02]
 - [x] **NAME-03**: `EventHandler` routes are reachable through a public name/accessor (not
@@ -172,7 +172,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | TYPE-04 | Phase 4 | Pending |
 | TYPE-05 | Phase 4 | Pending |
 | NAME-01 | Phase 5 | Complete |
-| NAME-02 | Phase 5 | Pending |
+| NAME-02 | Phase 5 | Complete |
 | NAME-03 | Phase 5 | Complete |
 | NAME-04 | Phase 5 | Pending |
 | MOD-01 | Phase 6 | Pending |
