@@ -139,8 +139,8 @@ Plans:
 **Requirements**: PERF-01, PERF-02, PERF-03
 **Success Criteria** (what must be TRUE):
 
-  1. In-memory portfolio storage no longer copies the snapshot list / position dicts per tick under the D-19 single-writer contract; `snapshot_count()` / `get_latest_snapshot()` accessors replace the never-firing per-tick trim copy, and live-backend copies stay behind an explicit `*_snapshot()` variant.
-  2. Redundant `Decimal(str(Decimal))` re-wraps on the mark-to-market/equity path and duplicated per-tick work (`open_position_count` ×2, `is_connected` ×2–3, active-portfolio recompute, premature `on_fill` guard allocation, load-time copy) are eliminated.
+  1. In-memory portfolio storage no longer copies the snapshot list / position dicts per tick under the D-19 single-writer contract; `snapshot_count()` / `get_latest_snapshot()` accessors replace the never-firing per-tick trim copy. (D-04: the `*_snapshot()` variant is declined — a query-based live backend is copy-safe for free, so no speculative API was added.)
+  2. Redundant `Decimal(str(Decimal))` re-wraps on the mark-to-market/equity path and duplicated per-tick work (`open_position_count` ×2, `is_connected` ×2–3, premature `on_fill` guard allocation, load-time copy) are eliminated.
   3. MACD is computed inside the SMA guard (not unconditionally before it), and `BacktestBarFeed` serves prebuilt `Bar`s instead of 5 `Decimal(str(...))` conversions per symbol per tick; values bit-identical.
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
 
