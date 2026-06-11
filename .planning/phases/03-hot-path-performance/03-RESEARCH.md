@@ -284,17 +284,19 @@ def test_current_bars_serves_prebuilt_no_from_row_per_tick(monkeypatch):
 
 **All other claims in this research are VERIFIED against the cited source line in this session.**
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Exact denominator of "58/58 e2e"**
    - What we know: 48 e2e `test_` functions, 46 scenario dirs; integration adds the oracle tests.
    - What's unclear: which collection sums to 58.
    - Recommendation: Planner states the phase gate as "full e2e + integration suite green (no regressions vs Phase-2 baseline)" rather than pinning the literal count; the executor reads the actual count from the run.
+   - **RESOLVED:** Plan 04's phase gate (Task 3) phrases the gate as "full e2e suite green" + "full unit+integration suite green" and reads the count from the run rather than pinning a magic number — the literal "58" is never asserted. The denominator is therefore not load-bearing on any plan.
 
 2. **Whether any portfolio unit test currently mutates a getter result (D-05 executor task)**
    - What we know: D-05 audited *production* callers (safe). Tests were explicitly left to the executor.
    - What's unclear: whether such a test exists.
    - Recommendation: Make "grep `tests/unit/portfolio/` for mutate-then-assert-storage patterns and migrate" an explicit task line under PERF-01.
+   - **RESOLVED:** Plan 01 Task 3 carries the explicit D-05 audit task line — grep `tests/unit/portfolio/` for any mutate-then-assert-storage pattern and migrate any hit (caller `.copy()`s locally), recording the result ("none found" or "migrated test X") in the 03-01 SUMMARY.
 
 ## Environment Availability
 
