@@ -186,7 +186,7 @@ requires the concise pointer in CLAUDE.md (survives per-session context).
     config-enum exception and the validator-overlap justification are at least named with a pointer.
   </action>
   <verify>
-    <automated>grep -qi "config-enum\|config/.*enum\|enum.*config/" .planning/codebase/CONVENTIONS.md && grep -qi "justified-by-decision\|defense-in-depth\|defence-in-depth" .planning/codebase/CONVENTIONS.md && grep -qi "CONVENTIONS" CLAUDE.md && echo OK</automated>
+    <automated>grep -qi "config-enum\|config/.*enum\|enum.*config/" .planning/codebase/CONVENTIONS.md && grep -qi "justified-by-decision\|defense-in-depth\|defence-in-depth" .planning/codebase/CONVENTIONS.md && grep -qi "config-enum\|config/.*enum" CLAUDE.md && echo OK</automated>
   </verify>
   <acceptance_criteria>
     - CONVENTIONS.md documents the config-enum-in-`config/` exception (W2-13) with the core→config-inversion rationale

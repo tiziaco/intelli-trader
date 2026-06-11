@@ -198,7 +198,7 @@ Verified during planning (so the executor does NOT over-delete imports):
     134 trades and final_equity 46189.87730727451, and e2e reports 58/58 green.
   </action>
   <verify>
-    <automated>poetry run mypy --strict && poetry run pytest tests/integration tests/e2e -m e2e -q</automated>
+    <automated>poetry run mypy --strict && make test && poetry run pytest tests/integration tests/e2e -m e2e -q</automated>
   </verify>
   <acceptance_criteria>
     - `poetry run mypy --strict` exits 0 (clean across all source files)

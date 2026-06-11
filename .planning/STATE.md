@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
-status: planning
-last_updated: "2026-06-11T07:30:03.428Z"
-last_activity: 2026-06-11 — v1.2 Consolidation roadmap renumbered to Phases 1-6 (numbering reset for v1.2, matching v1.1; previously drafted as Phases 10-15); 18/18 requirements mapped. The v1.1 phase working dirs were archived to `.planning/milestones/v1.1-phases/` (no directory collision).
+status: executing
+last_updated: "2026-06-11T07:44:14.895Z"
+last_activity: 2026-06-11 -- Phase 01 planning complete
 progress:
   total_phases: 10
   completed_phases: 0
-  total_plans: 0
+  total_plans: 2
   completed_plans: 0
   percent: 0
 ---
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation s
 
 Phase: 1 — Dead Code & Doc Hygiene (not started)
 Plan: —
-Status: Roadmap created — ready to plan Phase 1
-Last activity: 2026-06-11 — v1.2 Consolidation roadmap renumbered to Phases 1-6 (numbering reset for v1.2, matching v1.1; previously drafted as Phases 10-15); 18/18 requirements mapped. The v1.1 phase working dirs were archived to `.planning/milestones/v1.1-phases/` (no directory collision).
+Status: Ready to execute
+Last activity: 2026-06-11 -- Phase 01 planning complete
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
 
