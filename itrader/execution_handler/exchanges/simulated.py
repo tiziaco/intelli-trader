@@ -470,6 +470,16 @@ class SimulatedExchange(AbstractExchange):
 		"""Get set of supported trading symbols."""
 		return self._supported_symbols.copy()
 
+	def register_symbol(self, symbol: str) -> None:
+		"""Add `symbol` to this instance's supported set (D-07).
+
+		Encapsulates the direct `_supported_symbols` mutation. Per-instance
+		(not the shared preset) and idempotent (set union), so re-registering
+		is a no-op. Keeps `_supported_symbols` written only via __init__,
+		this method, and the update_config re-derivation block (no float()).
+		"""
+		self._supported_symbols = set(self._supported_symbols) | {symbol}
+
 	def get_exchange_info(self) -> Dict[str, Any]:
 		"""Get comprehensive exchange information."""
 		return {
