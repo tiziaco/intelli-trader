@@ -81,7 +81,7 @@ items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog
 - [x] **Phase 1: Dead Code & Doc Hygiene** - Delete dead ABCs / `OrderBase` / dead numpy import; correct stale CONCERNS/ROADMAP notes; document the config-enum / run-mode / indentation conventions (completed 2026-06-11)
 - [x] **Phase 2: Locked-Decision Conformance** - `Optional[Decimal]` money API; Decimal `_min/_max_order_size` (float-for-money fix); retire the `uuid4()` second ID scheme (completed 2026-06-11)
 - [x] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD (completed 2026-06-11)
-- [ ] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/`
+- [x] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/` (completed 2026-06-11)
 - [ ] **Phase 5: Naming & Encapsulation** - `events_queue→global_queue`; strategy PascalCase + `*_window`; publicize `routes`; `register_symbol()` API; test hygiene through public APIs
 - [ ] **Phase 6: Order-Manager Decomposition** - Split the 1279-line `order_manager.py` god-module into `admission/`/`brackets/`/`reconcile/` collaborators — pure code-motion, isolated, byte-exact (FRAGILE)
 
@@ -189,7 +189,7 @@ Plans:
 
 **Wave 3** *(shares order_manager.py/order.py with Wave 2; blocked on 04-04)*
 
-- [ ] 04-05-PLAN.md — TYPE-03/02: market_execution enum (ctor-coerced, no OrderConfig); order-domain id NewType retypes (D-06/12/13)
+- [x] 04-05-PLAN.md — TYPE-03/02: market_execution enum (ctor-coerced, no OrderConfig); order-domain id NewType retypes (D-06/12/13)
 
 ### Phase 5: Naming & Encapsulation
 
@@ -239,7 +239,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 | 1. Dead Code & Doc Hygiene | v1.2 | 2/2 | Complete   | 2026-06-11 |
 | 2. Locked-Decision Conformance | v1.2 | 3/3 | Complete   | 2026-06-11 |
 | 3. Hot-Path Performance | v1.2 | 4/4 | Complete   | 2026-06-11 |
-| 4. Type Modeling | v1.2 | 4/5 | In Progress|  |
+| 4. Type Modeling | v1.2 | 5/5 | Complete   | 2026-06-11 |
 | 5. Naming & Encapsulation | v1.2 | 0/TBD | Not started | - |
 | 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
 
