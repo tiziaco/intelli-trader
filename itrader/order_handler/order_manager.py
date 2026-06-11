@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, List, Optional
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderStatus, MarketExecution
-from ..core.ids import OrderId, PortfolioId, StrategyId
+from ..core.ids import OrderId, PortfolioId
 from ..core.portfolio_read_model import PortfolioReadModel
 from .base import OrderStorage
 from .brackets import BracketBook, BracketManager
