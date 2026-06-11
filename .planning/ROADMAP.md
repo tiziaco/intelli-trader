@@ -104,7 +104,14 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   `TradingSystem` → `ExecutionHandler` → `SimulatedExchange` (replacing the Phase 7 D-14
   post-construction conftest re-init seam / Phase 4 Open Q1), and formalization of the
   `csv_paths` manual passthrough (Phase 3). Today this interface exists only as a
-  test-harness workaround.
+  test-harness workaround. Also includes a **uniform per-handler runtime config-update
+  surface** (owner-noted 2026-06-11, V1.2-CLEANUP-REVIEW SYN-03): today only
+  `PortfolioHandler.update_config` / `Portfolio.update_config` /
+  `SimulatedExchange.update_config` exist, with inconsistent signatures (`Dict` updates vs
+  `**kwargs`); `OrderHandler`/`OrderManager`, `StrategiesHandler`, `ExecutionHandler`, and
+  the feed have none. Related cleanup item: `BaseStrategyConfig` relocation from
+  `strategy_handler/config.py` to `itrader/config/` (SYN-02 — cleanup-eligible, coordinate
+  here only if (b) lands first).
 - **(c) Declared-indicator framework** — indicator abstraction on the strategy base with
   auto-derived warmup (à la nautilus `register_indicator_for_bars` / LEAN `SetWarmUp` /
   backtrader auto-min-period), so authors stop hand-setting `max_window`. Captured in
