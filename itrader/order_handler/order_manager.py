@@ -14,7 +14,7 @@ and order storage/execution systems.
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional, assert_never, cast
+from typing import Any, Callable, Dict, List, Optional, assert_never
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side, OrderOperationType, OrderTriggerSource, MarketExecution
@@ -48,7 +48,7 @@ class _PendingBracket:
 	quantity: Decimal
 	exchange: str
 	strategy_id: StrategyId
-	portfolio_id: "PortfolioId | int"
+	portfolio_id: PortfolioId
 
 
 class OrderManager:
@@ -220,11 +220,11 @@ class OrderManager:
 			if (fill_event.status in (FillStatus.CANCELLED, FillStatus.REFUSED)
 					and order.child_order_ids and order.filled_quantity == 0):
 				for child_id in order.child_order_ids:
-					# 02-05 carry-over: the cancel_order API still declares int
-					# ids while runtime ids are UUIDv7 — cast bridges until the
-					# id-annotation retype lands (IN-06, deferred).
+					# D-12: cancel_order now declares OrderId/PortfolioId; child_id
+					# is an OrderId and order.portfolio_id a PortfolioId, so the
+					# prior cast(int, ...) bridge (IN-06) is gone.
 					child_result = self.cancel_order(
-						cast(int, child_id), cast(int, order.portfolio_id),
+						child_id, order.portfolio_id,
 						reason=f"parent order {order.id} terminal without fill")
 					if child_result.success and child_result.order_events:
 						out_events.extend(child_result.order_events)
@@ -1089,8 +1089,8 @@ class OrderManager:
 			error_details=reason,
 			operation_type=operation_type)
 
-	def modify_order(self, order_id: int, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
-	                portfolio_id: Optional[int] = None, reason: str = "user modification") -> OperationResult:
+	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
+	                portfolio_id: Optional[PortfolioId] = None, reason: str = "user modification") -> OperationResult:
 		"""
 		Modify an existing order and generate OrderEvent.
 		
@@ -1177,7 +1177,7 @@ class OrderManager:
 			return OperationResult.failure_result(error_msg, 
 				error_details=str(e), operation_type=OrderOperationType.MODIFY_ORDER)
 	
-	def cancel_order(self, order_id: int, portfolio_id: Optional[int] = None, 
+	def cancel_order(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None,
 	                reason: str = "user cancellation") -> OperationResult:
 		"""
 		Cancel an existing order and generate OrderEvent.
@@ -1255,30 +1255,30 @@ class OrderManager:
 	# The manager owns the storage; OrderHandler read methods delegate here.
 	# Pure pass-through layer: same names, same signatures as the facade.
 
-	def get_order_by_id(self, order_id: int, portfolio_id: Optional[Any] = None) -> Optional[Order]:
+	def get_order_by_id(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None) -> Optional[Order]:
 		"""Get an order by its ID from the manager-owned storage."""
 		return self.order_storage.get_order_by_id(order_id, portfolio_id)
 
-	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_orders_by_status(self, status: OrderStatus, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""Get orders by their status from the manager-owned storage."""
 		return self.order_storage.get_orders_by_status(status, portfolio_id)
 
-	def get_active_orders(self, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_active_orders(self, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""Get all active orders (PENDING and PARTIALLY_FILLED)."""
 		return self.order_storage.get_active_orders(portfolio_id)
 
-	def get_order_history(self, order_id: int) -> List[Dict[str, Any]]:
+	def get_order_history(self, order_id: OrderId) -> List[Dict[str, Any]]:
 		"""Get the state change history for an order."""
 		return self.order_storage.get_order_history(order_id)
 
-	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[Any] = None) -> List[Order]:
+	def get_orders_by_ticker(self, ticker: str, portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""Get all orders for a specific ticker."""
 		return self.order_storage.get_orders_by_ticker(ticker, portfolio_id)
 
-	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[Any] = None) -> List[Order]:
+	def search_orders(self, criteria: Dict[str, Any], portfolio_id: Optional[PortfolioId] = None) -> List[Order]:
 		"""Search orders based on criteria."""
 		return self.order_storage.search_orders(criteria, portfolio_id)
 
-	def get_orders_summary(self, portfolio_id: Optional[Any] = None) -> Dict[str, int]:
+	def get_orders_summary(self, portfolio_id: Optional[PortfolioId] = None) -> Dict[str, int]:
 		"""Get a summary of orders by status."""
 		return self.order_storage.get_orders_count_by_status(portfolio_id)

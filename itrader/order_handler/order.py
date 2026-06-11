@@ -197,7 +197,7 @@ class Order:
 	
 	@classmethod
 	def new_stop_order(cls, time: datetime, ticker: str, action: str, price: Any, quantity: Any, exchange: str,
-					strategy_id: Any, portfolio_id: Any) -> "Order":
+					strategy_id: StrategyId, portfolio_id: PortfolioId) -> "Order":
 		"""
 		Generate a new Stop Order object.
 
@@ -230,7 +230,7 @@ class Order:
 	
 	@classmethod
 	def new_limit_order(cls, time: datetime, ticker: str, action: str, price: Any, quantity: Any, exchange: str,
-					strategy_id: Any, portfolio_id: Any) -> "Order":
+					strategy_id: StrategyId, portfolio_id: PortfolioId) -> "Order":
 		"""
 		Generate a new Limit Order object.
 
