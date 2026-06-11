@@ -19,6 +19,41 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
+## Current Milestone: v1.2 Consolidation
+
+**Goal:** Put the engine in order — clear the v1.1 cleanup-review backlog
+(`.planning/codebase/V1.2-CLEANUP-REVIEW.md`, 46 findings) and the CONCERNS.md
+dead/fragile/tangled debt, **byte-exact against the golden master** — so the next
+milestone's engine-surface features build on a clean, decomposed foundation.
+
+**Target features:**
+- **Dead code & doc corrections** — delete dead ABCs / `OrderBase` / dead numpy import;
+  close stale CONCERNS/ROADMAP notes (`screener_event_handler` already gone; FL-01/02
+  already done per SYN-01); document the config-enum exception in CONVENTIONS.
+- **Locked-decision conformance (bounded fixes)** — `Optional[Decimal]` money API (W4-01);
+  Decimal `_min/_max_order_size` latent-TypeError fix (W2-10); retire the `uuid4()` second
+  ID scheme (W4-08).
+- **Hot-path perf** — eliminate per-tick storage `.copy()`s, add snapshot accessors, drop
+  `Decimal(str(Decimal))` re-wraps, prebuild `Bar` lookups.
+- **Type modeling** — freeze decision/result dataclasses; add `core/enums` (`ErrorSeverity`,
+  `OrderOperationType`, `OrderTriggerSource`, class-based `OrderStatus`/`OrderCommand`,
+  `market_execution`); enum-member dispatch.
+- **Naming & encapsulation** — `events_queue→global_queue`, strategy PascalCase,
+  `FAST/SLOW/WIN→*_window`, publicize `routes`, `register_symbol()` API, test hygiene;
+  relocate `BaseStrategyConfig` to `config/`.
+- **`order_manager.py` god-module split** — dedicated late, isolated, FRAGILE phase: extract
+  `admission/`/`brackets/`/`reconcile/` collaborators under `order_handler/`, pure
+  code-motion, byte-exact gated.
+
+**Key context:**
+- **Behavior-preserving** — byte-exact vs the golden master (134 trades / `final_equity
+  46189.87730727451`) throughout; result-changing items are deferred.
+- **Deferred to the next milestone (Engine Surface Completion):** 999.5-(a) signal entry
+  price + `Order.action→Side`; (b) composition/config API; (c) declared-indicator framework;
+  (d) TIF/expire disposition + `create_order` gating.
+- **Explicitly OUT:** PostgreSQL order storage; the "da modificare / da testare / da spostare"
+  Italian TODOs in deferred subsystems.
+
 ## Requirements
 
 ### Validated
@@ -98,9 +133,20 @@ must import, run, and yield trustworthy results.
      v1.1 (Backtest Trustworthiness: Breadth) SHIPPED 2026-06-10 — 51 requirements.
      Both fully validated above. No active requirements until the next milestone is defined. -->
 
-**None — v1.0 and v1.1 complete.** The backtest-correctness program (v1.0, M1→M5c, 45 reqs) and the breadth-hardening program (v1.1, Phases 1–9, 51 reqs) both shipped and are recorded in the Validated section above and in `milestones/v1.0-*` / `milestones/v1.1-*`.
+**Active: v1.2 — Consolidation** (started 2026-06-11). A cleanup/consolidation milestone — the
+v1.1 cleanup-review backlog (`.planning/codebase/V1.2-CLEANUP-REVIEW.md`) + the CONCERNS.md
+dead/fragile/tangled debt, held **byte-exact** against the golden master. See the
+`## Current Milestone` section above and `REQUIREMENTS.md` for the scoped requirements. v1.0
+(45 reqs) and v1.1 (51 reqs) shipped and are recorded in the Validated section above and in
+`milestones/v1.0-*` / `milestones/v1.1-*`.
 
-**Next milestone candidate:** v1.2 — Engine Surface Completion (signal-contract completion — per-intent limit/stop entry price + order_type; a real system composition/config interface promoting `ScenarioSpec`; a declared-indicator framework with auto-warmup; order-lifecycle completion incl. run-end resting-order disposition / TIF; plus FL-stragglers). Promote AHEAD of N+2 (margin/shorts), since N+2 builds on exactly these signal/order/composition surfaces. See ROADMAP.md Backlog (Phase 999.5). Promote with `/gsd:new-milestone` (or `/gsd:review-backlog`), which defines fresh requirements.
+**Following milestone candidate:** Engine Surface Completion — signal-contract completion
+(per-intent limit/stop entry price + order_type); a real system composition/config interface
+promoting `ScenarioSpec`; a declared-indicator framework with auto-warmup; order-lifecycle
+completion incl. run-end resting-order disposition / TIF. These are the **result-changing /
+new-framework** items deferred out of v1.2 so the cleanup foundation lands first. Promote AHEAD
+of N+2 (margin/shorts), since N+2 builds on exactly these signal/order/composition surfaces.
+See ROADMAP.md Backlog (Phase 999.5).
 
 ### Out of Scope
 
@@ -207,9 +253,14 @@ This document evolves at phase transitions and milestone boundaries.
 
 **Tech debt at v1.1 close (non-blocking, tracked):** 4 completed quick tasks flagged only by a `gsd-sdk` v1.42.3 SDK-port filename bug (canonically clean); formal Nyquist Wave-0 incomplete on 6 phases / absent on 2 (strong behavioral coverage via the 58-leaf matrix); empty `requirements_completed` SUMMARY frontmatter on phases 1/4/5/7/9 (cosmetic). Per-phase code reviews left advisory warnings unfixed (e.g. `ORDER-{n}` lexicographic sort at ≥10 refs, dormant). See `milestones/v1.1-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
-## Next Milestone Goals: v1.2 — Engine Surface Completion
+## Following Milestone Goals: Engine Surface Completion (post-v1.2)
 
-**Candidate (promote ahead of N+2 — see ROADMAP.md Phase 999.5).** v1.1 proved empirically where the engine's contracts are still incomplete: every E2E scenario phase had to work around the hardwired entry price, the fixed per-strategy order type, and the missing composition interface (`ScenarioSpec` is the evidence). v1.2 consolidates these before margin/shorts (N+2) builds on the same surfaces:
+**Candidate (promote after v1.2 Consolidation, ahead of N+2 — see ROADMAP.md Phase 999.5).**
+v1.1 proved empirically where the engine's contracts are still incomplete: every E2E scenario
+phase had to work around the hardwired entry price, the fixed per-strategy order type, and the
+missing composition interface (`ScenarioSpec` is the evidence). v1.2 Consolidation cleans the
+foundation first (byte-exact); this milestone then completes the contracts before margin/shorts
+(N+2) builds on the same surfaces:
 
 - **Signal contract completion** — explicit per-intent limit/stop ENTRY price + per-intent `order_type` on the signal contract (`SignalIntent` → `SignalEvent` → `Order.new_limit_order`/`new_stop_order`). Result-risky → owner-gated re-baseline discipline.
 - **System composition/config interface** — promote the `ScenarioSpec` shape into an engine-level composition API (declarative multi-strategy/multi-portfolio wiring; faithful construction-time `ExchangeConfig` threading, replacing the Phase 7 D-14 post-construction conftest seam; formalize the `csv_paths` passthrough). Should stay byte-exact vs the v1.1 E2E suite.
@@ -219,4 +270,4 @@ This document evolves at phase transitions and milestone boundaries.
 **Then N+2** (ROADMAP backlog): margin/liquidation model → shorts (remove the D-08/D-09 LONG_ONLY guard + fix the CR-01 cover-arm hole) → leverage / levered Kelly → perp funding → engine-native trailing stop → real long/short pair trading. Promote one at a time with `/gsd:review-backlog` or start with `/gsd:new-milestone`.
 
 ---
-*Last updated: 2026-06-10 — after v1.1 (Backtest Trustworthiness: Breadth) milestone close. Full per-phase v1.1 detail is archived in `milestones/v1.1-ROADMAP.md`; requirements in `milestones/v1.1-REQUIREMENTS.md`; audit in `milestones/v1.1-MILESTONE-AUDIT.md`. v1.0 and v1.1 both shipped; next candidate is v1.2 (Engine Surface Completion).*
+*Last updated: 2026-06-11 — started milestone v1.2 (Consolidation). v1.2 is a behavior-preserving cleanup milestone (cleanup-review + CONCERNS debt, byte-exact); the Engine Surface Completion feature work was deferred to the following milestone. Full per-phase v1.1 detail is archived in `milestones/v1.1-ROADMAP.md`; requirements in `milestones/v1.1-REQUIREMENTS.md`; audit in `milestones/v1.1-MILESTONE-AUDIT.md`.*
