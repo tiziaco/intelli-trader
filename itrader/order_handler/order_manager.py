@@ -12,7 +12,6 @@ Provides the business logic layer between OrderHandler (interface)
 and order storage/execution systems.
 """
 
-from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, assert_never
 from .order import Order
@@ -24,31 +23,13 @@ from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
 from ..core.sizing import PercentFromDecision, PercentFromFill, SLTPPolicy, TradingDirection
 from .base import OrderStorage
+from .brackets import BracketBook
+from .brackets.bracket_book import _PendingBracket
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 from .sizing_resolver import SizingResolver
 
 _ONE = Decimal("1")
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _PendingBracket:
-	"""Context for a PercentFromFill bracket awaiting its parent's fill (D-13).
-
-	RESEARCH Pattern 5 Option B: the manager holds a map keyed by the
-	parent order id carrying the policy plus everything needed to build
-	the children at fill time — the children do not exist until the
-	parent EXECUTES, so a placeholder-priced child can never trigger
-	before its parent fills (T-07-14, structurally unreachable).
-	"""
-
-	policy: PercentFromFill
-	ticker: str
-	action: str
-	quantity: Decimal
-	exchange: str
-	strategy_id: StrategyId
-	portfolio_id: PortfolioId
 
 
 class OrderManager:
@@ -123,7 +104,19 @@ class OrderManager:
 		# children in on_fill. Entries are discarded when the parent reaches
 		# CANCELLED/REJECTED without executing (T-07-15 — no orphans possible:
 		# the children were never created).
-		self._pending_brackets: Dict[OrderId, _PendingBracket] = {}
+		self._brackets = BracketBook()
+
+	@property
+	def _pending_brackets(self) -> BracketBook:
+		"""Read-only accessor for the pending-bracket owner (D-05).
+
+		Exposes the BracketBook under the legacy attribute name so the
+		internal-attribute-coupled test_sltp_policy.py reaches it unchanged;
+		the book's dict-compat dunders make its `== {}` / `in` assertions
+		pass byte-equal (Pitfall 2 option a). Single owner — no second raw
+		dict is kept alongside (Pitfall 2 option c forbidden, D-05).
+		"""
+		return self._brackets
 
 	def _estimate_commission(self, order: Order) -> Decimal:
 		"""Estimate the commission for an order's admission reservation (D-04).
@@ -237,7 +230,7 @@ class OrderManager:
 			# pending entry: the children were never created, so no orphan can
 			# exist and the WR-05 logic above is untouched (T-07-15).
 			if fill_event.status == FillStatus.EXECUTED:
-				pending = self._pending_brackets.pop(order_id, None)
+				pending = self._brackets.consume(order_id)
 				# WR-03 (part 1): only anchor children when the mirror actually
 				# applied the fill. If add_fill was rejected (applied=False) the
 				# parent never moved, so creating fill-anchored children would
@@ -246,7 +239,7 @@ class OrderManager:
 					out_events.extend(
 						self._create_fill_anchored_children(order, pending, fill_event))
 			else:
-				self._pending_brackets.pop(order_id, None)
+				self._brackets.consume(order_id)
 		except Exception as e:
 			# WR-04: log with a stack trace and RE-RAISE — backtest fail-fast.
 			# A reconciliation that cannot complete leaves the mirror and/or
@@ -637,7 +630,7 @@ class OrderManager:
 						# NO children at assembly — record the pending bracket;
 						# on_fill creates them priced from the actual fill
 						# (IB attached-order semantics, Pattern 5 Option B).
-						self._pending_brackets[primary.id] = _PendingBracket(
+						self._brackets.arm(primary.id, _PendingBracket(
 							policy=sltp_policy,
 							ticker=signal_event.ticker,
 							action=signal_event.action.value,
@@ -645,7 +638,7 @@ class OrderManager:
 							exchange=exchange,
 							strategy_id=signal_event.strategy_id,
 							portfolio_id=signal_event.portfolio_id,
-						)
+						))
 					case _:
 						assert_never(sltp_policy)
 
@@ -726,7 +719,7 @@ class OrderManager:
 			# afterwards the primary never reaches the exchange, so no fill will
 			# ever consume the pending entry — disarm it here so a stale entry
 			# cannot later anchor children to a parent that was never emitted.
-			self._pending_brackets.pop(primary.id, None)
+			self._brackets.consume(primary.id)
 			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
 			results.append(OperationResult.failure_result(
 				f"Failed to create orders from signal",
@@ -1161,10 +1154,7 @@ class OrderManager:
 				# quantity so fill-anchored children are created at the CURRENT
 				# order quantity, not the stale assembly-time value.
 				if new_quantity is not None:
-					pending = self._pending_brackets.get(order.id)
-					if pending is not None:
-						self._pending_brackets[order.id] = replace(
-							pending, quantity=to_money(new_quantity))
+					self._brackets.refresh_quantity(order.id, to_money(new_quantity))
 
 				# Generate OrderEvent
 				order_event = OrderEvent.new_order_event(order, command=OrderCommand.MODIFY)
@@ -1228,7 +1218,7 @@ class OrderManager:
 				# against a CANCELLED parent (on_fill keys child creation off the
 				# fill, not the parent's live status). The pop is keyed by the
 				# parent's id; children/non-PercentFromFill orders no-op.
-				self._pending_brackets.pop(order.id, None)
+				self._brackets.consume(order.id)
 
 				# WR-04: the local terminal transition owns the release. The
 				# exchange only emits FillEvent(CANCELLED) for orders actually
