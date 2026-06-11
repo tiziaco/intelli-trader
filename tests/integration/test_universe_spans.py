@@ -135,18 +135,18 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
 
     # Register the synthetic tickers with the simulated exchange's supported set.
     # The default preset only admits the golden BTCUSD (execution_handler.py:109);
-    # the same instance-set mutation lets validate_symbol admit our fixtures.
+    # registering each ticker via the public register_symbol seam (D-07) lets
+    # validate_symbol admit our fixtures.
     # Test-only wiring — the Phase-9 E2E harness will own a richer symbol setup.
     simulated = system.execution_handler.exchanges["simulated"]
-    simulated._supported_symbols = set(simulated._supported_symbols) | {
-        "EARLYUSD", "LATEUSD", "ENDSEARLYUSD",
-    }
-    # WR-02: fail loudly at setup if the private attribute drifts (e.g. the
-    # supported-symbol set moves behind a config object). Without this, a
-    # rename would silently reject our orders, leaving positions empty so the
-    # downstream look-ahead asserts vacuously pass while `assert late_positions`
-    # fails with a misleading message far from the real cause.
-    assert {"EARLYUSD", "LATEUSD", "ENDSEARLYUSD"} <= simulated._supported_symbols
+    for ticker in ("EARLYUSD", "LATEUSD", "ENDSEARLYUSD"):
+        simulated.register_symbol(ticker)
+    # WR-02: fail loudly at setup if the supported-symbol set drifts. Without
+    # this, a regression would silently reject our orders, leaving positions
+    # empty so the downstream look-ahead asserts vacuously pass while
+    # `assert late_positions` fails with a misleading message far from the
+    # real cause.
+    assert {"EARLYUSD", "LATEUSD", "ENDSEARLYUSD"} <= simulated.get_supported_symbols()
 
     strategy = BuyEachTickerOnce(
         timeframe="1d",

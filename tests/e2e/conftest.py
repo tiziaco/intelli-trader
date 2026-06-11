@@ -345,9 +345,8 @@ def _build_and_run(spec):
     # the BTCUSD oracle runs its own TradingSystem (scripts/run_backtest.py), not
     # this harness.
     simulated = system.execution_handler.exchanges["simulated"]
-    simulated._supported_symbols = set(simulated._supported_symbols) | {
-        ticker.upper() for ticker in spec.data
-    }
+    for ticker in spec.data:
+        simulated.register_symbol(ticker.upper())
 
     for strategy in spec.strategies:
         system.strategies_handler.add_strategy(strategy)
