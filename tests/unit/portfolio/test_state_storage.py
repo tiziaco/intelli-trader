@@ -135,6 +135,67 @@ def test_snapshots_replaceable_for_size_trim():
 
 
 # ---------------------------------------------------------------------------
+# PERF-01 / D-01 / D-03: copy-free getters (object-identity regression locks)
+# ---------------------------------------------------------------------------
+# Each getter now returns the LIVE internal container (no per-tick .copy())
+# under the D-19 single-writer contract. The deterministic proof is object
+# identity: two calls return the SAME object — which would be False if the
+# getter still copied. No wall-clock benchmark (D-01 rejects benchmarks).
+
+
+def test_get_positions_returns_live_container_no_copy():
+    """D-03: get_positions() returns the live dict (identity) — no .copy()."""
+    backend = InMemoryPortfolioStateStorage()
+    backend.set_position("BTCUSD", object())
+    assert backend.get_positions() is backend.get_positions()
+
+
+def test_get_closed_positions_returns_live_container_no_copy():
+    """D-03: get_closed_positions() returns the live list (identity) — no .copy()."""
+    backend = InMemoryPortfolioStateStorage()
+    backend.add_closed_position(object())
+    assert backend.get_closed_positions() is backend.get_closed_positions()
+
+
+def test_get_transaction_history_returns_live_container_no_copy():
+    """D-03: get_transaction_history() returns the live list (identity) — no .copy()."""
+    backend = InMemoryPortfolioStateStorage()
+    backend.add_transaction(object())
+    assert backend.get_transaction_history() is backend.get_transaction_history()
+
+
+def test_get_cash_operations_returns_live_container_no_copy():
+    """D-03: get_cash_operations() returns the live list (identity) — no .copy()."""
+    backend = InMemoryPortfolioStateStorage()
+    backend.add_cash_operation(object())
+    assert backend.get_cash_operations() is backend.get_cash_operations()
+
+
+def test_get_snapshots_returns_live_container_no_copy():
+    """D-03: get_snapshots() returns the live list (identity) — no .copy()."""
+    backend = InMemoryPortfolioStateStorage()
+    backend.add_snapshot(object())
+    assert backend.get_snapshots() is backend.get_snapshots()
+
+
+def test_snapshot_count_and_latest():
+    """D-06: count-only / last-only accessors replace the per-tick whole-list copy.
+
+    Empty state: snapshot_count() == 0, get_latest_snapshot() is None.
+    Two-element state: snapshot_count() == 2, get_latest_snapshot() is the last.
+    """
+    backend = InMemoryPortfolioStateStorage()
+    assert backend.snapshot_count() == 0
+    assert backend.get_latest_snapshot() is None
+
+    s1, s2 = object(), object()
+    backend.add_snapshot(s1)
+    backend.add_snapshot(s2)
+    assert backend.snapshot_count() == 2
+    assert backend.get_latest_snapshot() is s2  # last-only, no whole-list copy
+
+
+# ---------------------------------------------------------------------------
 # Managers no longer own their containers — they route through the seam
 # ---------------------------------------------------------------------------
 

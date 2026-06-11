@@ -167,10 +167,14 @@ class MetricsManager:
         # Store snapshot (via the seam)
         self._storage.add_snapshot(snapshot)
 
-        # Manage snapshot history size
-        snapshots = self._storage.get_snapshots()
-        if len(snapshots) > self.max_snapshots:
-            self._storage.set_snapshots(snapshots[-self.max_snapshots:])
+        # Manage snapshot history size.
+        # D-06: count-only guard — check the size without copying the whole
+        # list on the per-tick path. The trim still never fires on the golden
+        # run, but no longer pays the per-tick whole-list copy.
+        if self._storage.snapshot_count() > self.max_snapshots:
+            self._storage.set_snapshots(
+                self._storage.get_snapshots()[-self.max_snapshots:]
+            )
             
         # Invalidate cache when new data is added
         self._cache_timestamp.clear()
@@ -186,12 +190,18 @@ class MetricsManager:
     def get_current_metrics(self) -> Dict[str, Any]:
         """Get current portfolio metrics."""
         
-        if not self._storage.get_snapshots():
+        # D-06: count-only / last-only accessors on the per-tick read path —
+        # the empty-guard and the latest-read never copy the whole list.
+        if self._storage.snapshot_count() == 0:
             # Create initial snapshot if none exists
             self.record_snapshot()
 
-        latest_snapshot = self._storage.get_snapshots()[-1]
-            
+        latest_snapshot = self._storage.get_latest_snapshot()
+        # Invariant: the empty-guard above guarantees at least one snapshot, so
+        # get_latest_snapshot() is non-None here. Narrow for mypy (get_latest_snapshot
+        # is Optional on the ABC because an empty backend returns None).
+        assert latest_snapshot is not None
+
         # M5-10 (D-06): money fields stay Decimal end-to-end — no float()
         # coercion at this read boundary. The snapshot fields are already
         # Decimal; pass them straight through. The float boundary belongs at
