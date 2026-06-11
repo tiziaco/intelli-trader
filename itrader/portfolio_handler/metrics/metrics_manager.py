@@ -3,15 +3,14 @@ Metrics Manager for portfolio performance tracking and analytics.
 Handles portfolio metrics calculation, historical tracking, and reporting.
 """
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Tuple, Any
-from dataclasses import dataclass, asdict
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
 import statistics
 import math
 
 from itrader.core.enums import MetricsPeriod
-from itrader.core.exceptions import InvalidTransactionError
 from itrader.logger import get_itrader_logger
 
 
@@ -136,9 +135,17 @@ class MetricsManager:
         Returns:
             PortfolioSnapshot: The recorded snapshot
         """
+        # WR-01: do NOT silently fall back to wall clock. The locked
+        # determinism contract is "business time, never wall clock" (CLAUDE.md).
+        # Stamping a snapshot with datetime.now() would make the snapshot grid
+        # and downstream period filtering non-reproducible. Require an explicit
+        # business timestamp on every snapshot-creating path.
         if timestamp is None:
-            timestamp = datetime.now()
-        
+            raise ValueError(
+                "record_snapshot requires an explicit business timestamp; "
+                "wall-clock fallback would break determinism (WR-01)"
+            )
+
         # Calculate current portfolio metrics
         total_equity = self._get_total_equity()
         cash_balance = self._get_cash_balance()
@@ -167,12 +174,21 @@ class MetricsManager:
         # Store snapshot (via the seam)
         self._storage.add_snapshot(snapshot)
 
-        # Manage snapshot history size
-        snapshots = self._storage.get_snapshots()
-        if len(snapshots) > self.max_snapshots:
-            self._storage.set_snapshots(snapshots[-self.max_snapshots:])
+        # Manage snapshot history size.
+        # D-06: count-only guard — check the size without copying the whole
+        # list on the per-tick path. The trim still never fires on the golden
+        # run, but no longer pays the per-tick whole-list copy.
+        if self._storage.snapshot_count() > self.max_snapshots:
+            self._storage.set_snapshots(
+                self._storage.get_snapshots()[-self.max_snapshots:]
+            )
             
-        # Invalidate cache when new data is added
+        # Invalidate cache when new data is added.
+        # WR-03: clear both dicts together so cached PerformanceMetrics entries
+        # (each holding a daily_returns list) are freed, not just made
+        # unreadable. Clearing only the timestamp left _metrics_cache growing
+        # unbounded over a long run with many distinct (period, date) keys.
+        self._metrics_cache.clear()
         self._cache_timestamp.clear()
             
         self.logger.debug("Portfolio snapshot recorded",
@@ -183,15 +199,29 @@ class MetricsManager:
             
         return snapshot
     
-    def get_current_metrics(self) -> Dict[str, Any]:
-        """Get current portfolio metrics."""
-        
-        if not self._storage.get_snapshots():
-            # Create initial snapshot if none exists
-            self.record_snapshot()
+    def get_current_metrics(self, timestamp: Optional[datetime] = None) -> Dict[str, Any]:
+        """Get current portfolio metrics.
 
-        latest_snapshot = self._storage.get_snapshots()[-1]
-            
+        Args:
+            timestamp: Business time to stamp the initial snapshot with if none
+                exists yet. WR-01: required (no wall-clock fallback) when the
+                snapshot history is empty, so this read path stays deterministic.
+        """
+
+        # D-06: count-only / last-only accessors on the per-tick read path —
+        # the empty-guard and the latest-read never copy the whole list.
+        if self._storage.snapshot_count() == 0:
+            # Create initial snapshot if none exists. WR-01: pass the supplied
+            # business time through; record_snapshot raises if it is None rather
+            # than reaching wall clock.
+            self.record_snapshot(timestamp)
+
+        latest_snapshot = self._storage.get_latest_snapshot()
+        # Invariant: the empty-guard above guarantees at least one snapshot, so
+        # get_latest_snapshot() is non-None here. Narrow for mypy (get_latest_snapshot
+        # is Optional on the ABC because an empty backend returns None).
+        assert latest_snapshot is not None
+
         # M5-10 (D-06): money fields stay Decimal end-to-end — no float()
         # coercion at this read boundary. The snapshot fields are already
         # Decimal; pass them straight through. The float boundary belongs at
@@ -228,7 +258,15 @@ class MetricsManager:
             if _snaps:
                 end_date = _snaps[-1].timestamp
             else:
-                end_date = datetime.now()
+                # WR-01: with no snapshots there is no business time to anchor
+                # the period on, and a wall-clock end_date would make the
+                # snapshot grid / period filtering non-reproducible. Caller must
+                # supply an explicit business end_date in this case.
+                raise ValueError(
+                    "calculate_performance_metrics requires an explicit end_date "
+                    "when no snapshots exist; wall-clock fallback would break "
+                    "determinism (WR-01)"
+                )
         
         cache_key = f"{period.name}_{end_date.date()}"
         
@@ -283,24 +321,29 @@ class MetricsManager:
             return {"error": "Insufficient data for drawdown analysis"}
             
         # Calculate running maximum and drawdowns.
-        # Statistical-ratio metric input boundary (D-06: money stays Decimal;
-        # float only at the running-max / drawdown ratio computation).
-        equity_values = [float(s.total_equity) for s in relevant_snapshots]
+        # WR-02: max_drawdown / current_drawdown are reported, money-derived
+        # figures the project promises are trustworthy/cross-validated, so they
+        # stay Decimal end-to-end (no binary-float round-trip). total_equity is
+        # already Decimal; the drawdown ratio is computed in Decimal.
+        equity_values = [s.total_equity for s in relevant_snapshots]
         timestamps = [s.timestamp for s in relevant_snapshots]
-            
+
+        _ZERO = Decimal('0')
         running_max = []
         drawdowns = []
         current_max = equity_values[0]
-            
+
         for value in equity_values:
             current_max = max(current_max, value)
             running_max.append(current_max)
-                
-            drawdown = (value - current_max) / current_max if current_max > 0 else 0
+
+            # WR-02: uniform Decimal sentinel (not bare int 0) so the return
+            # contract is consistent between flat-equity and real-drawdown cases.
+            drawdown = (value - current_max) / current_max if current_max > 0 else _ZERO
             drawdowns.append(drawdown)
-            
+
         # Find maximum drawdown
-        max_drawdown = min(drawdowns) if drawdowns else 0
+        max_drawdown = min(drawdowns) if drawdowns else _ZERO
         max_dd_index = drawdowns.index(max_drawdown) if max_drawdown < 0 else 0
             
         # Calculate drawdown duration
@@ -311,8 +354,8 @@ class MetricsManager:
             "max_drawdown_date": timestamps[max_dd_index].isoformat(),
             "max_drawdown_duration_days": max_dd_duration,
             "current_drawdown": drawdowns[-1],
-            "drawdown_periods": len([d for d in drawdowns if d < -0.01]),  # Periods > 1% drawdown
-            "recovery_periods": len([i for i, d in enumerate(drawdowns) if d == 0 and i > 0])
+            "drawdown_periods": len([d for d in drawdowns if d < Decimal('-0.01')]),  # Periods > 1% drawdown
+            "recovery_periods": len([i for i, d in enumerate(drawdowns) if d == _ZERO and i > 0])
         }
     
     def get_return_distribution(self, period_days: int = 1) -> Dict[str, Any]:
@@ -400,7 +443,15 @@ class MetricsManager:
     
     def export_metrics_to_dict(self, period: MetricsPeriod) -> Optional[Dict[str, Any]]:
         """Export performance metrics to dictionary format."""
-        
+
+        # WR-01: with no snapshots there is no business time to anchor the
+        # period on; calculate_performance_metrics now raises rather than
+        # reaching wall clock. That is genuinely insufficient data for an
+        # export, so short-circuit to None (preserving the prior contract)
+        # instead of propagating the determinism guard.
+        if self._storage.snapshot_count() == 0:
+            return None
+
         metrics = self.calculate_performance_metrics(period)
         if not metrics:
             return None
@@ -533,14 +584,19 @@ class MetricsManager:
             if prev_equity > 0:
                 daily_returns.append((curr_equity - prev_equity) / prev_equity)
         
-        # Basic return calculations
-        initial_equity = float(snapshots[0].total_equity)
-        final_equity = float(snapshots[-1].total_equity)
-        
+        # Basic return calculations.
+        # WR-02: total_return is a reported, money-derived figure the project
+        # promises is trustworthy/cross-validated. total_equity is already
+        # Decimal; compute total_return in Decimal so no binary-float round-trip
+        # is baked into the Decimal field. The float cast is reserved strictly
+        # for the math.pow annualization exponent below.
+        initial_equity = snapshots[0].total_equity
+        final_equity = snapshots[-1].total_equity
+
         total_return = Decimal('0.00')
         if initial_equity > 0:
-            total_return = Decimal(str((final_equity - initial_equity) / initial_equity))
-        
+            total_return = (final_equity - initial_equity) / initial_equity
+
         # Annualized return
         days = (end_date - start_date).days
         annualized_return = Decimal('0.00')
@@ -590,7 +646,7 @@ class MetricsManager:
             losing_trades=len(negative_returns)
         )
     
-    def _calculate_drawdown_duration(self, drawdowns: List[float], max_dd_index: int) -> int:
+    def _calculate_drawdown_duration(self, drawdowns: List[Decimal], max_dd_index: int) -> int:
         """Calculate drawdown duration in days."""
         # Simple implementation - find consecutive negative periods around max drawdown
         duration = 1

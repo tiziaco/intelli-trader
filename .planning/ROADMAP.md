@@ -69,6 +69,7 @@ conformance → hot-path perf → type modeling → naming/encapsulation → the
 items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog Phase 999.5).
 
 **Milestone-wide gate (applies to EVERY phase):**
+
 - `pytest tests/integration` byte-exact oracle held — **134 trades / `final_equity 46189.87730727451`** (no re-baseline)
 - `pytest tests/e2e -m e2e` **58/58 green** (no leaf re-baselined); full suite green
 - **`mypy --strict` clean** across all source files
@@ -79,7 +80,7 @@ items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog
 
 - [x] **Phase 1: Dead Code & Doc Hygiene** - Delete dead ABCs / `OrderBase` / dead numpy import; correct stale CONCERNS/ROADMAP notes; document the config-enum / run-mode / indentation conventions (completed 2026-06-11)
 - [x] **Phase 2: Locked-Decision Conformance** - `Optional[Decimal]` money API; Decimal `_min/_max_order_size` (float-for-money fix); retire the `uuid4()` second ID scheme (completed 2026-06-11)
-- [ ] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD
+- [x] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD (completed 2026-06-11)
 - [ ] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/`
 - [ ] **Phase 5: Naming & Encapsulation** - `events_queue→global_queue`; strategy PascalCase + `*_window`; publicize `routes`; `register_symbol()` API; test hygiene through public APIs
 - [ ] **Phase 6: Order-Manager Decomposition** - Split the 1279-line `order_manager.py` god-module into `admission/`/`brackets/`/`reconcile/` collaborators — pure code-motion, isolated, byte-exact (FRAGILE)
@@ -93,92 +94,127 @@ deferred out of v1.2 Consolidation. Promote after v1.2, ahead of N+2. See Backlo
 ## Phase Details
 
 ### Phase 1: Dead Code & Doc Hygiene
+
 **Goal**: Remove dead code and correct stale documentation so the tree and the planning docs tell the truth — oracle-dark, pure deletions plus doc edits.
 **Depends on**: v1.1 shipped (Phase 9, now archived)
 **Requirements**: DEAD-01, DEAD-02
 **Success Criteria** (what must be TRUE):
+
   1. The dead ABCs (`AbstractPortfolioHandler`/`AbstractPortfolio`/`AbstractPosition` + orphan `get_last_close`), the unused `OrderBase`, and the dead `import numpy as np` in `portfolio.py` are deleted with zero importer breakage; full suite green.
   2. Stale docs are corrected: the CONCERNS.md `screener_event_handler` item is closed (file already gone), and ROADMAP 999.5-(d) FL-01/FL-02 text reads "done".
   3. CONVENTIONS/CLAUDE documents the config-enum-in-`config/` exception, the broad-`except` run-mode policy (backtest fail-fast vs live publish-and-continue), the tab/space indentation hazard, and the dual-layer validator overlap as justified-by-decision (not removed).
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
+
 **Plans**: 2 plans
 
 Plans:
+
 - [x] 01-01-PLAN.md (01-code-deletions) — delete 3 dead ABCs + OrderBase + dead numpy import; importer sweep; oracle byte-exact (DEAD-01)
 - [x] 01-02-PLAN.md (02-doc-hygiene) — trim stale CONCERNS/ROADMAP entries; document 4 conventions in CONVENTIONS/CLAUDE (DEAD-02)
 
 ### Phase 2: Locked-Decision Conformance
+
 **Goal**: Close the three bounded locked-decision violations (float money at the API boundary, the float-for-money inconsistency at the order-size boundary, the second `uuid4()` ID scheme) without changing results.
 **Depends on**: Phase 1
 **Requirements**: DEC-01, DEC-02, DEC-03
 **Success Criteria** (what must be TRUE):
+
   1. `modify_order`/`cancel_order` public API price/quantity params are typed `Optional[Decimal]`, not `Optional[float]` — no float-for-money at a domain boundary.
   2. `_min/_max_order_size` are carried as `Decimal` end-to-end (no float-for-money inconsistency at the exchange size-limit boundary); `validate_order` runs `Decimal`-vs-`Decimal` on the golden path (via `_admit_order` — it is NOT bypassed); the symmetric `< _min` below-minimum REFUSED branch is regression-covered (D-08); and the oracle is byte-exact. (D-07: the earlier comparison-crash framing was a misdiagnosis — Decimal-vs-float COMPARISON works in Py3, only arithmetic raises and there is none; the fix is float-for-money consistency, not a crash fix.)
   3. Correlation IDs use the single UUIDv7 `idgen` scheme (or a deterministic counter); `uuid.uuid4()` is gone from the run path (single ID scheme restored, no non-deterministic crypto RNG).
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green; determinism double-run byte-identical.
+
 **Plans**: 3 plans
 
 Plans:
+
 - [x] 02-01-PLAN.md (01-decimal-money-api) — retype modify_order/cancel_order money params Optional[float]→Optional[Decimal] (facade + manager); Decimal boundary callers (DEC-01)
 - [x] 02-02-PLAN.md (02-decimal-order-size) — drop float() wraps on _min/_max_order_size (Decimal end-to-end); reframe/correct the D-07 "latent TypeError" misdiagnosis; below-minimum REFUSED branch test (DEC-02)
 - [x] 02-03-PLAN.md (03-uuidv7-correlation-id) — retire uuid4() correlation id → single UUIDv7 idgen scheme; CorrelationId NewType + generate_correlation_id; CorrelationId|None event field (DEC-03)
 
 ### Phase 3: Hot-Path Performance
+
 **Goal**: Eliminate the dominant per-tick perf costs — defensive storage copies, redundant Decimal re-wraps, duplicated per-tick work, and per-tick Bar/MACD churn — with bit-identical values.
 **Depends on**: Phase 2
 **Requirements**: PERF-01, PERF-02, PERF-03
 **Success Criteria** (what must be TRUE):
-  1. In-memory portfolio storage no longer copies the snapshot list / position dicts per tick under the D-19 single-writer contract; `snapshot_count()` / `get_latest_snapshot()` accessors replace the never-firing per-tick trim copy, and live-backend copies stay behind an explicit `*_snapshot()` variant.
-  2. Redundant `Decimal(str(Decimal))` re-wraps on the mark-to-market/equity path and duplicated per-tick work (`open_position_count` ×2, `is_connected` ×2–3, active-portfolio recompute, premature `on_fill` guard allocation, load-time copy) are eliminated.
+
+  1. In-memory portfolio storage no longer copies the snapshot list / position dicts per tick under the D-19 single-writer contract; `snapshot_count()` / `get_latest_snapshot()` accessors replace the never-firing per-tick trim copy. (D-04: the `*_snapshot()` variant is declined — a query-based live backend is copy-safe for free, so no speculative API was added.)
+  2. Redundant `Decimal(str(Decimal))` re-wraps on the mark-to-market/equity path and duplicated per-tick work (`open_position_count` ×2, `is_connected` ×2–3, premature `on_fill` guard allocation, load-time copy) are eliminated.
   3. MACD is computed inside the SMA guard (not unconditionally before it), and `BacktestBarFeed` serves prebuilt `Bar`s instead of 5 `Decimal(str(...))` conversions per symbol per tick; values bit-identical.
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
-**Plans**: TBD
+
+**Plans**: 4 plans
 
 Plans:
-- [ ] TBD (decompose with /gsd:plan-phase 3)
+**Wave 1**
+
+- [x] 03-01-PLAN.md — PERF-01: storage copy-drop + read-only-view ABC contract + snapshot accessors (D-03/D-04/D-06)
+- [x] 03-02-PLAN.md — PERF-03: eager-prebuild Bars in BacktestBarFeed; current_bars() dict lookup, no per-tick Bar.from_row (D-07/08/09)
+- [x] 03-03-PLAN.md — PERF-02: mechanical transforms (W1-08/03/14/07/09; W1-13 descoped per D-10)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 03-04-PLAN.md — PERF-03 W1-12 MACD-guard reorder (oracle-only, D-02) + doc corrections + byte-exact phase gate
+
+**Cross-cutting constraints:**
+
+- Golden master stays byte-exact: 134 trades / final_equity 46189.87730727451
 
 ### Phase 4: Type Modeling
+
 **Goal**: Make closed vocabularies enums and decision/result objects frozen facts — bring `OrderStatus`/`OrderCommand` and four new vocabularies onto the canonical class-based enum form, freeze the engine's decision DTOs, harden config-boundary validation, and co-locate the strategy config base.
 **Depends on**: Phase 3
 **Requirements**: TYPE-01, TYPE-02, TYPE-03, TYPE-04, TYPE-05
 **Success Criteria** (what must be TRUE):
+
   1. `FillDecision`, `CancelDecision`, `OperationResult`, `SignalProcessingResult`, and `_PendingBracket` are `frozen=True, slots=True, kw_only=True` facts.
   2. Fee/slippage model dispatch compares enum members with `assert_never` exhaustiveness (not `.value` strings); `rebalance_frequency` is validated at the Pydantic boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented; and the `OrderHandler`/`OrderManager` public-API `order_id: int` / `portfolio_id: int` method-parameter annotations are retyped to `OrderId` / `PortfolioId` (single-UUIDv7 conformance; carried over from Phase 2 DEF-02-03).
   3. `ErrorSeverity`, `OrderOperationType`, `OrderTriggerSource`, and `market_execution` are class-based string-valued enums in `core/enums/` (with `_missing_` + `<domain>_<type>_map` where they cross a boundary), and `OrderStatus`/`OrderCommand` are converted to the same canonical form with working `order_status_map` `.value` lookups (int→string value change audited against serialization/tests).
   4. The `BaseStrategyConfig` base contract lives in `itrader/config/strategy.py` (re-exported via `config/__init__.py`), consistent with `ExchangeConfig`/`PortfolioConfig`/`SystemConfig`; all importers updated.
   5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
+
 **Plans**: TBD
 
 Plans:
+
 - [ ] TBD (decompose with /gsd:plan-phase 4)
 
 ### Phase 5: Naming & Encapsulation
+
 **Goal**: Make names consistent and close the encapsulation gaps — uniform `global_queue`/count-by-status naming, PascalCase strategies with `*_window` config, a public `routes` accessor, a real `register_symbol()`/`update_config` exchange seam, and tests that assert through public APIs.
 **Depends on**: Phase 4
 **Requirements**: NAME-01, NAME-02, NAME-03, NAME-04
 **Success Criteria** (what must be TRUE):
+
   1. `OrderHandler` names its queue `global_queue` (constructor param + attribute), not `events_queue`, and the count-by-status operation has a single precise name across façade and storage.
   2. Strategy classes are PascalCase (`SMAMACDStrategy` / `EmptyStrategy`) and strategy-config windows are `fast_window`/`slow_window`/`signal_window` (not `FAST`/`SLOW`/`WIN`); all importers (scripts/tests/crossval/e2e) are updated.
   3. `EventHandler` routes are reachable through a public name/accessor (not `_routes`); `SimulatedExchange` exposes `register_symbol()` + a complete `update_config` seam, and production code no longer mutates `_supported_symbols`/`_min_order_size` directly.
   4. Tests assert through public query APIs, not `_by_id`/`_storage`/`_routes`/`_generate_correlation_id` internals.
   5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
+
 **Plans**: TBD
 
 Plans:
+
 - [ ] TBD (decompose with /gsd:plan-phase 5)
 
 ### Phase 6: Order-Manager Decomposition
+
 **Goal**: Decompose the 1279-line `order_manager.py` god-module into focused collaborators under `order_handler/` (mirroring the `portfolio_handler/` manager layout) — pure code-motion, no semantics change, dedicated and isolated as the LAST phase so the FRAGILE fill-reconciliation / reservation-release path is never bundled with behavior fixes.
 **Depends on**: Phase 5 (and ALL other v1.2 phases — this is the dedicated late, isolated phase; nothing else ships in it)
 **Requirements**: MOD-01
 **Success Criteria** (what must be TRUE):
+
   1. `order_manager.py` is decomposed into `admission/`, `brackets/`, and `reconcile/` collaborators under `order_handler/`, mirroring the `portfolio_handler/` manager layout — as pure code-motion with no semantics change.
   2. The terminal-status / `should_release` / `finally`-release interplay (CONCERNS.md Fragile Areas) is byte-for-byte unchanged in behavior; `release` idempotency preserved.
   3. This is the sole change in the phase — no enum, naming, perf, or doc change rides along (FRAGILE-zone isolation rule).
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green; determinism double-run byte-identical.
+
 **Plans**: TBD
 
 Plans:
+
 - [ ] TBD (decompose with /gsd:plan-phase 6)
 
 ## Progress
@@ -191,7 +227,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 |-------|-----------|----------------|--------|-----------|
 | 1. Dead Code & Doc Hygiene | v1.2 | 2/2 | Complete   | 2026-06-11 |
 | 2. Locked-Decision Conformance | v1.2 | 3/3 | Complete   | 2026-06-11 |
-| 3. Hot-Path Performance | v1.2 | 0/TBD | Not started | - |
+| 3. Hot-Path Performance | v1.2 | 4/4 | Complete   | 2026-06-11 |
 | 4. Type Modeling | v1.2 | 0/TBD | Not started | - |
 | 5. Naming & Encapsulation | v1.2 | 0/TBD | Not started | - |
 | 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
@@ -237,6 +273,7 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   `str`→`Side`) and **W1-11** (position-snapshot threading through admission→sizing), both
   FRAGILE and coupled to this contract; and **W4-04** validator-overlap documentation if the
   validator path is touched here.
+
 - **(b) System composition/config interface** — promote the `tests/e2e/scenario_spec.py`
   `ScenarioSpec` shape into an engine-level composition API: declarative multi-strategy /
   multi-portfolio wiring, faithful construction-time `ExchangeConfig` threading through
@@ -254,6 +291,7 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   here alongside `ExchangeConfig`. Folds the V1.2-CLEANUP-REVIEW composition-root deferrals
   **W4-02/03/05/06/07**. (Note: `BaseStrategyConfig` relocation — SYN-02 — was pulled FORWARD
   into v1.2 Consolidation Phase 4 / TYPE-05, so it is no longer pending here.)
+
 - **(c) Declared-indicator framework** — indicator abstraction on the strategy base with
   auto-derived warmup (à la nautilus `register_indicator_for_bars` / LEAN `SetWarmUp` /
   backtrader auto-min-period), so authors stop hand-setting `max_window`. Captured in
@@ -261,6 +299,7 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   recompute-from-window → optionally stateful incremental) — design carefully against the
   pure-alpha D-12 contract. Folds the V1.2-CLEANUP-REVIEW deferral **W1-05** (incremental
   SMA/MACD state); the W1-12 control-flow reorder was pulled forward into v1.2 Phase 3.
+
 - **(d) Order lifecycle completion** — wire run-end resting-order disposition /
   time-in-force (`Order.expire_order()` + `OrderStatus.EXPIRED` exist but are unwired on
   the backtest path; orders currently remain PENDING at run end — result-changing,
@@ -281,6 +320,7 @@ Result-changing items ((a), (d) TIF) follow the established owner-gated re-basel
 discipline; (b)/(c) should stay byte-exact against the full v1.1 E2E golden suite.
 
 Plans:
+
 - [ ] TBD (promote with /gsd:review-backlog when ready)
 
 ### Phase 999.4: N+2 — Margin, Leverage, Shorts & Trailing Stops (crypto) (BACKLOG)
@@ -294,21 +334,27 @@ cross-validation, like M5.
 **Plans:** 0 plans
 
 Scope (intent only):
+
 - **Margin / liquidation model** in `MatchingEngine` + cash/position accounting — today
   there is NO liquidation model (DEF-01-C): an un-liquidated short can drive equity
   negative. Add maintenance margin + liquidation.
+
 - **Unblock shorts** — remove the `LONG_ONLY`-only guard in `StrategiesHandler.add_strategy`
   AND fix the CR-01 cover-arm hole (`_resolve_signal_quantity` has no BUY-to-cover arm for
   a `SHORT_ONLY` book — a cover would fall through to entry sizing and flip the book long).
+
 - **Leverage** + **levered Kelly** (fraction > 1 becomes expressible once margin exists).
 - **Funding/carry** — crypto perp funding-rate accounting (the crypto-first analogue of
   forex swap / equity borrow).
+
 - **Engine-native trailing stop** — new `TRAILING_STOP` `OrderType` + `MatchingEngine`
   ratchet logic (track running extreme, move the resting stop per bar). For the
   risk-management-heavy strategies. Look-ahead-safe per the `bar_feed.py` contract. Levered
   Kelly (>1) also unlocks here once margin exists.
+
 - Config hooks already exist and are currently off: `allow_short_selling`, `enable_margin`
   (`config/portfolio.py`).
+
 - **Real long/short PAIR TRADING** (flagship validation) — market-neutral cointegration/spread
   strategy: long one leg, short the other. Deferred here from v1.1 because it inherently needs
   shorts; it is the natural first real use of the short side once the guard is removed. (v1.1
@@ -324,26 +370,32 @@ DO have `TRAIL`; many smaller venues / DEXs have none; ccxt coverage is spotty a
 vary — absolute vs % vs callback-rate, trigger basis last/mark/index). So make trailing a
 **declared intent + an exchange capability**, decided in the execution layer (NOT the
 strategy):
+
 - Add a capability seam to `AbstractExchange` (e.g. `supports(OrderType.TRAILING_STOP)`).
   **Native-first** (survives client disconnect, lower latency, no rate-limit churn);
   **synthetic-fallback** otherwise.
+
 - **Synthetic = always keep a REAL resting stop server-side; only the *ratchet* is
   client-side.** Place a normal STOP, recompute the trail each bar (ratchet favorable-only),
   and `MODIFY` the resting stop when the move exceeds a step threshold (rides the existing
   `OrderHandler.modify_order` → `OrderEvent(MODIFY)` round-trip). The venue fills the plain
   stop natively — the engine is NOT in the trigger path.
+
 - Safety property: engine downtime ⇒ trail freezes but the last stop still protects. NEVER
   do the naive version (no resting stop; engine watches price and fires a market order on
   trigger) — downtime = zero protection.
+
 - Risks to handle: modify churn vs rate limits (step threshold); cancel-replace gap on
   venues w/o atomic modify (place-new-then-cancel-old); overnight/weekend gaps (stop-limit
   caps fill price but risks no fill); venue min-distance rules.
+
 - Backtest (`MatchingEngine`) models the IDEAL engine-native trail; synthetic-live has
   modify latency / step / gap behavior → backtest is slightly optimistic (a known sim-to-live
   gap to flag at N+4). Backtest and live should SHARE the trail-computation logic; only "how
   the stop rests" differs.
 
 Plans:
+
 - [ ] TBD (promote with /gsd:review-backlog when ready)
 
 ### Phase 999.2: N+3 — Persistence & Performance (BACKLOG)
@@ -355,8 +407,10 @@ unvalidated behavior.
 **Plans:** 0 plans
 
 Scope (intent only):
+
 - **#4 permanent PostgreSQL storage** (orders, signals, fills, equity).
   `PostgreSQLOrderStorage` is currently a `NotImplementedError` placeholder.
+
 - **#5 profiler-guided performance pass** (profiler already used to spot hotspots).
 - **#1 continued** — structural cleanup that the live-mode transition specifically demands.
 
@@ -364,6 +418,7 @@ Rationale: persistence + performance are cross-cutting infra, cleaner done toget
 bolted on during the live push.
 
 Plans:
+
 - [ ] TBD (promote with /gsd:review-backlog when ready)
 
 ### Phase 999.3: N+4 — Live Trading Readiness (capstone) (BACKLOG)
@@ -375,11 +430,13 @@ validated multi-scenario behavior (N+1), the margin model (N+2), durable storage
 **Plans:** 0 plans
 
 Scope (intent only):
+
 - **#6 real-time data engine** ready for live.
 - **#2 live execution engine.**
 - **#7 production-ready universe / screener.**
 
 Plans:
+
 - [ ] TBD (promote with /gsd:review-backlog when ready)
 
 > **Deferred: multi-asset (forex / equities / ETF).** Crypto-first (locked 2026-06-08)

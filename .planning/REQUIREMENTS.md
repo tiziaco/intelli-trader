@@ -53,12 +53,12 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 - [ ] **PERF-01**: In-memory portfolio storage no longer copies the snapshot list / position
   dicts per tick under the D-19 single-writer contract; `snapshot_count()` / `get_latest_snapshot()`
-  accessors replace the never-firing per-tick trim copy; copies for a future live backend stay
-  behind an explicit `*_snapshot()` variant. [W1-15, W1-02, W1-01]
+  accessors replace the never-firing per-tick trim copy. (D-04: the `*_snapshot()` variant is
+  declined — a query-based live backend is copy-safe for free; no speculative API added.) [W1-15, W1-02, W1-01]
 - [ ] **PERF-02**: Redundant `Decimal(str(Decimal))` re-wraps on the mark-to-market/equity path
-  and duplicated per-tick work (`open_position_count` ×2, `is_connected` ×2–3, active-portfolio
-  recompute, premature `on_fill` guard allocation, load-time copy) are eliminated. [W1-08, W1-03,
-  W1-14, W1-13, W1-07, W1-09]
+  and duplicated per-tick work (`open_position_count` ×2, `is_connected` ×2–3, premature `on_fill`
+  guard allocation, load-time copy) are eliminated (W1-13 descoped — D-10). [W1-08, W1-03,
+  W1-14, W1-07, W1-09]
 - [ ] **PERF-03**: MACD is computed inside the SMA guard (not unconditionally before it), and
   `BacktestBarFeed` serves prebuilt `Bar`s instead of 5 `Decimal(str(...))` conversions per symbol
   per tick; values bit-identical, oracle byte-exact. (Incremental/stateful indicators are NOT in

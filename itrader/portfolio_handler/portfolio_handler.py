@@ -287,21 +287,25 @@ class PortfolioHandler:
         rather than producing corrupted numbers).
         """
 
+        # W1-07: hoist the non-EXECUTED no-op guard ABOVE the operation-context /
+        # correlation-id allocation. A non-EXECUTED fill is a pure no-op on
+        # portfolio state, so it returns early WITHOUT entering _operation_context
+        # (no correlation-id allocated, no active-operation tracked). The EXECUTED
+        # path below is unchanged — it still enters the context and processes.
+        if fill_event.status != FillStatus.EXECUTED:
+            self.logger.debug(
+                "Ignoring non-executed fill",
+                status=str(fill_event.status),
+                ticker=fill_event.ticker,
+            )
+            return
+
         with self._operation_context("on_fill") as correlation_id:
             try:
                 # Portfolio ids are native uuid.UUID (D-13/D-14); the dict is keyed
                 # directly by the UUID — no int/str coercion (the integer scheme is gone).
                 portfolio_id = fill_event.portfolio_id
                 portfolio = self.get_portfolio(portfolio_id)
-
-                if fill_event.status != FillStatus.EXECUTED:
-                    self.logger.debug(
-                        "Ignoring non-executed fill",
-                        status=str(fill_event.status),
-                        ticker=fill_event.ticker,
-                        correlation_id=correlation_id,
-                    )
-                    return
 
                 # Portfolio handles its own validation and processing.
                 # D-05 boundary map: events carry Side; Portfolio maps
@@ -430,10 +434,32 @@ class PortfolioHandler:
     # handler holds a single validated Pydantic ``PortfolioConfig`` (``config_data``).
     # ``update_config`` merges + re-validates via the model (Pydantic raises on bad
     # input); the per-portfolio variants were never wired on the backtest path.
+    @staticmethod
+    def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively merge ``updates`` into ``base`` without mutating either.
+
+        WR-04: a plain ``{**base, **updates}`` is a SHALLOW merge — passing a
+        partial nested submodel (e.g. ``{"limits": {"max_portfolios": 50}}``)
+        would REPLACE the whole ``limits`` dict, silently resetting sibling
+        fields like ``max_positions``. Recursing into nested dicts preserves
+        the sibling fields a caller did not intend to change.
+        """
+        merged = dict(base)
+        for key, value in updates.items():
+            existing = merged.get(key)
+            if isinstance(existing, dict) and isinstance(value, dict):
+                merged[key] = PortfolioHandler._deep_merge(existing, value)
+            else:
+                merged[key] = value
+        return merged
+
     def update_config(self, updates: Dict[str, Any]) -> bool:
         """Update PortfolioHandler configuration at runtime (merge + re-validate)."""
         try:
-            merged = {**self.config_data.model_dump(), **updates}
+            # WR-04: deep-merge so a partial nested update (e.g. a single limits
+            # field) preserves the other fields of that submodel instead of
+            # replacing the whole submodel via a shallow `{**a, **b}`.
+            merged = self._deep_merge(self.config_data.model_dump(), updates)
             self.config_data = PortfolioConfig.model_validate(merged)
             self.max_portfolios = self.config_data.limits.max_portfolios
             self.logger.info("Configuration updated successfully", updates=updates)

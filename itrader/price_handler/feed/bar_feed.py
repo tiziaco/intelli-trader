@@ -161,10 +161,31 @@ class BacktestBarFeed(BarFeed):
         # filterwarnings=["error"] (RESEARCH Pitfall 2), mirroring how
         # current_bars searchsorts against the tz-aware time.
         self._spans: dict[str, tuple[datetime, datetime]] = {}
+        # Eager-materialized {ticker: {time: Bar}} map (D-07) — every base
+        # row's Bar is built ONCE here at construction via the UNCHANGED
+        # Bar.from_row, alongside _frames/_spans, over the SAME loaded frame
+        # the slice path reads (mirrors the already-blessed _spans precompute:
+        # batch transform at init, not a per-tick cost). current_bars(time)
+        # below is then a pure dict lookup — no per-tick searchsorted/iloc/
+        # Bar.from_row.
+        #
+        # HONEST D-09 rationale: the win is "structural hot-loop de-pandas,
+        # bit-identical" — it removes pandas iloc/searchsorted + per-tick Bar
+        # object churn from the hot loop and front-loads Bar.from_row to init.
+        # It does NOT reduce the Decimal-conversion count: each (ticker, time)
+        # row is converted exactly once across the run either way, so this
+        # front-loads the SAME conversions, it does not eliminate them. No
+        # lazy memoization (D-08): each (ticker, time) is queried exactly once,
+        # so a cache would serve zero hits.
+        self._prebuilt: dict[str, dict[datetime, Bar]] = {}
         for ticker in self._symbols:
             frame = store.read_bars(ticker)
             self._frames[(ticker, self._base_alias)] = frame
             self._spans[ticker] = (frame.index[0], frame.index[-1])
+            self._prebuilt[ticker] = {
+                ts: Bar.from_row(ts, row)
+                for ts, row in frame.iterrows()
+            }
 
         # Run-path bindings for the BarEvent factory (Plan 07-02, D-20) —
         # set by the trading system at wiring time via ``bind``. The queue
@@ -281,18 +302,24 @@ class BacktestBarFeed(BarFeed):
     def current_bars(self, time: datetime) -> dict[str, Bar]:
         """Return the ``Bar`` facts stamped exactly ``time``, keyed by ticker.
 
-        Builds each ``Bar`` via ``Bar.from_row`` (Decimal string path, D-14)
-        from the base-frame row stamped exactly ``time``; tickers with no
-        bar at ``time`` are ABSENT from the dict (sparse universe, D-15).
+        Pure dict lookup into the prebuilt ``{ticker: {time: Bar}}`` map (D-07
+        — built once in ``__init__`` via the UNCHANGED ``Bar.from_row``, Decimal
+        string path, D-14): NO per-tick ``searchsorted``/``iloc``/``Bar.from_row``.
+        Tickers with no bar stamped exactly ``time`` are ABSENT from the dict
+        (sparse universe, D-15) — the same exact-stamp existence semantics the
+        old ``index[pos] == time`` guard enforced, now ``time in prebuilt``.
         The close of the returned ``Bar`` is the value the portfolio marks
         equity with at the tick (rule 6).
+
+        D-09: this is "structural hot-loop de-pandas, bit-identical" — the Bar
+        values are identical to the old per-tick ``Bar.from_row`` path; the
+        conversions were front-loaded to ``__init__``, not eliminated.
         """
         bars: dict[str, Bar] = {}
         for ticker in self._symbols:
-            base = self._frames[(ticker, self._base_alias)]
-            pos = int(base.index.searchsorted(time, side="left"))
-            if pos < len(base.index) and base.index[pos] == time:
-                bars[ticker] = Bar.from_row(time, base.iloc[pos])
+            bar = self._prebuilt[ticker].get(time)
+            if bar is not None:
+                bars[ticker] = bar
         return bars
 
     # -- History windows (strategy push path, D-20) ---------------------------
