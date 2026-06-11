@@ -193,7 +193,9 @@ def test_trim_uses_snapshot_accessors(env, monkeypatch):
 def test_get_current_metrics(env):
     """Test getting current portfolio metrics."""
     mm = env.metrics_manager
-    mm.record_snapshot()
+    # WR-01: record_snapshot now requires an explicit business timestamp
+    # (no wall-clock fallback) to preserve determinism.
+    mm.record_snapshot(datetime(2024, 1, 1))
 
     current_metrics = mm.get_current_metrics()
 
@@ -215,7 +217,8 @@ def test_get_current_metrics_money_fields_are_decimal(env):
     metric inputs (drawdown/return-distribution/daily-return) narrow to float.
     """
     mm = env.metrics_manager
-    mm.record_snapshot()
+    # WR-01: explicit business timestamp required (no wall-clock fallback).
+    mm.record_snapshot(datetime(2024, 1, 1))
 
     current_metrics = mm.get_current_metrics()
 
@@ -237,7 +240,9 @@ def test_get_current_metrics_auto_snapshot(env):
     mm = env.metrics_manager
     assert len(mm._storage.get_snapshots()) == 0
 
-    current_metrics = mm.get_current_metrics()
+    # WR-01: the auto-snapshot path now requires an explicit business time
+    # rather than reaching wall clock; pass it through get_current_metrics.
+    current_metrics = mm.get_current_metrics(datetime(2024, 1, 1))
 
     # Should automatically create a snapshot
     assert len(mm._storage.get_snapshots()) == 1
@@ -246,7 +251,11 @@ def test_get_current_metrics_auto_snapshot(env):
 
 def test_calculate_performance_metrics_insufficient_data(env):
     """Test performance metrics with insufficient data."""
-    metrics = env.metrics_manager.calculate_performance_metrics(MetricsPeriod.DAILY)
+    # WR-01: with no snapshots, an explicit end_date is required (no wall-clock
+    # fallback). The insufficient-data path still returns None.
+    metrics = env.metrics_manager.calculate_performance_metrics(
+        MetricsPeriod.DAILY, end_date=datetime(2024, 1, 1)
+    )
     assert metrics is None
 
 

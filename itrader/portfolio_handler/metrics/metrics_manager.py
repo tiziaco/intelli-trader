@@ -136,9 +136,17 @@ class MetricsManager:
         Returns:
             PortfolioSnapshot: The recorded snapshot
         """
+        # WR-01: do NOT silently fall back to wall clock. The locked
+        # determinism contract is "business time, never wall clock" (CLAUDE.md).
+        # Stamping a snapshot with datetime.now() would make the snapshot grid
+        # and downstream period filtering non-reproducible. Require an explicit
+        # business timestamp on every snapshot-creating path.
         if timestamp is None:
-            timestamp = datetime.now()
-        
+            raise ValueError(
+                "record_snapshot requires an explicit business timestamp; "
+                "wall-clock fallback would break determinism (WR-01)"
+            )
+
         # Calculate current portfolio metrics
         total_equity = self._get_total_equity()
         cash_balance = self._get_cash_balance()
@@ -176,7 +184,12 @@ class MetricsManager:
                 self._storage.get_snapshots()[-self.max_snapshots:]
             )
             
-        # Invalidate cache when new data is added
+        # Invalidate cache when new data is added.
+        # WR-03: clear both dicts together so cached PerformanceMetrics entries
+        # (each holding a daily_returns list) are freed, not just made
+        # unreadable. Clearing only the timestamp left _metrics_cache growing
+        # unbounded over a long run with many distinct (period, date) keys.
+        self._metrics_cache.clear()
         self._cache_timestamp.clear()
             
         self.logger.debug("Portfolio snapshot recorded",
@@ -187,14 +200,22 @@ class MetricsManager:
             
         return snapshot
     
-    def get_current_metrics(self) -> Dict[str, Any]:
-        """Get current portfolio metrics."""
-        
+    def get_current_metrics(self, timestamp: Optional[datetime] = None) -> Dict[str, Any]:
+        """Get current portfolio metrics.
+
+        Args:
+            timestamp: Business time to stamp the initial snapshot with if none
+                exists yet. WR-01: required (no wall-clock fallback) when the
+                snapshot history is empty, so this read path stays deterministic.
+        """
+
         # D-06: count-only / last-only accessors on the per-tick read path —
         # the empty-guard and the latest-read never copy the whole list.
         if self._storage.snapshot_count() == 0:
-            # Create initial snapshot if none exists
-            self.record_snapshot()
+            # Create initial snapshot if none exists. WR-01: pass the supplied
+            # business time through; record_snapshot raises if it is None rather
+            # than reaching wall clock.
+            self.record_snapshot(timestamp)
 
         latest_snapshot = self._storage.get_latest_snapshot()
         # Invariant: the empty-guard above guarantees at least one snapshot, so
@@ -238,7 +259,15 @@ class MetricsManager:
             if _snaps:
                 end_date = _snaps[-1].timestamp
             else:
-                end_date = datetime.now()
+                # WR-01: with no snapshots there is no business time to anchor
+                # the period on, and a wall-clock end_date would make the
+                # snapshot grid / period filtering non-reproducible. Caller must
+                # supply an explicit business end_date in this case.
+                raise ValueError(
+                    "calculate_performance_metrics requires an explicit end_date "
+                    "when no snapshots exist; wall-clock fallback would break "
+                    "determinism (WR-01)"
+                )
         
         cache_key = f"{period.name}_{end_date.date()}"
         
@@ -410,7 +439,15 @@ class MetricsManager:
     
     def export_metrics_to_dict(self, period: MetricsPeriod) -> Optional[Dict[str, Any]]:
         """Export performance metrics to dictionary format."""
-        
+
+        # WR-01: with no snapshots there is no business time to anchor the
+        # period on; calculate_performance_metrics now raises rather than
+        # reaching wall clock. That is genuinely insufficient data for an
+        # export, so short-circuit to None (preserving the prior contract)
+        # instead of propagating the determinism guard.
+        if self._storage.snapshot_count() == 0:
+            return None
+
         metrics = self.calculate_performance_metrics(period)
         if not metrics:
             return None
