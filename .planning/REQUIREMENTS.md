@@ -88,7 +88,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Naming & Encapsulation (NAME)
 
-- [ ] **NAME-01**: `OrderHandler` names its queue `global_queue` (constructor param + attribute),
+- [x] **NAME-01**: `OrderHandler` names its queue `global_queue` (constructor param + attribute),
   not `events_queue`; the count-by-status operation has a single precise name across façade and
   storage. [W3-03, W3-10]
 - [ ] **NAME-02**: Strategy classes are PascalCase (`SMAMACDStrategy` / `EmptyStrategy`) and
@@ -171,7 +171,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | TYPE-03 | Phase 4 | Pending |
 | TYPE-04 | Phase 4 | Pending |
 | TYPE-05 | Phase 4 | Pending |
-| NAME-01 | Phase 5 | Pending |
+| NAME-01 | Phase 5 | Complete |
 | NAME-02 | Phase 5 | Pending |
 | NAME-03 | Phase 5 | Pending |
 | NAME-04 | Phase 5 | Pending |

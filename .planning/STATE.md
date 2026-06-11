@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
 status: executing
-last_updated: "2026-06-11T18:16:30.082Z"
-last_activity: 2026-06-11 -- Phase 05 planning complete
+last_updated: "2026-06-11T18:25:43.252Z"
+last_activity: 2026-06-11
 progress:
   total_phases: 10
   completed_phases: 4
   total_plans: 18
-  completed_plans: 14
+  completed_plans: 15
   percent: 40
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** Phase 5 — Naming & Encapsulation
+**Current focus:** Phase 05 — naming-encapsulation
 
 ## Current Position
 
-Phase: 5
-Plan: Not started
+Phase: 05 (naming-encapsulation) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-06-11 -- Phase 05 planning complete
+Last activity: 2026-06-11
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
 
@@ -85,6 +85,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase ?]: D-03 trim-to-truth: removed obsolete screener_event_handler Known-Bug from CONCERNS.md; trimmed ROADMAP 999.5-(d) to one FL-01/FL-02 closure line (net reduction, 260610-sjp kept)
 - [Phase ?]: D-01/D-02: four conventions documented in CONVENTIONS.md + CLAUDE.md pointer; W4-04 validator overlap documented justified-by-decision (code NOT removed)
 - [Phase 02 / 2026-06-11] D-07 gap-discovery delta (owner-flagged, bounded, NOT silently folded): the W2-10/DEC-02/SC-2 "latent `Decimal < float` TypeError" on the below-minimum validation path was a MISDIAGNOSIS — Decimal-vs-float COMPARISON works in Py3; only arithmetic raises and there is none on `_min/_max_order_size`. DEC-02 reframed as float-for-money consistency; SC-2 (ROADMAP) + DEC-02 (REQUIREMENTS) wording corrected. Evidence: the green `tests/e2e/cash/release_refused` leaf (Decimal-vs-float `> _max` REFUSED).
+- [Phase ?]: Phase 05 NAME-01: events_queue to global_queue (D-02) + canonical count_orders_by_status across 5 sites (D-01); oracle-dark, byte-exact, mypy strict clean
 
 ### Pending Todos
 
@@ -107,6 +108,7 @@ None yet.
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 | Phase 01 P01 | 2 | 3 tasks | 5 files |
 | Phase 01 P02 | 2 | 3 tasks | 4 files |
+| Phase 05 P01 | 2 | 3 tasks | 5 files |
 
 ## Bookkeeping
 
@@ -153,8 +155,8 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T17:39:02.406Z
-Resume file: .planning/phases/05-naming-encapsulation/05-CONTEXT.md
+Last session: 2026-06-11T18:25:43.244Z
+Resume file: None
 
 ## Operator Next Steps
 
