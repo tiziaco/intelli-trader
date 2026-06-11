@@ -16,14 +16,14 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
 from .order import Order
 from .operation_result import OperationResult
-from ..core.enums import OrderStatus, FillStatus, MarketExecution
+from ..core.enums import OrderStatus, MarketExecution
 from ..core.ids import OrderId, PortfolioId, StrategyId
-from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
 from .base import OrderStorage
 from .brackets import BracketBook, BracketManager
 from .admission import AdmissionManager
 from .lifecycle import LifecycleManager
+from .reconcile import ReconcileManager
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 from .sizing_resolver import SizingResolver
@@ -131,6 +131,18 @@ class OrderManager:
 			order_storage, logger, self.order_validator, portfolio_handler,
 			self._brackets)
 
+		# D-04/D-09 coordinator-owned star: construct the FRAGILE fill-reconcile
+		# collaborator ONCE — AFTER self.bracket_manager and self.cancel_order
+		# (the plan-04 lifecycle delegation) resolve. on_fill's two cross-bucket
+		# calls route through the injected coordinator-owned BracketManager
+		# (fill-anchored children) and the self.cancel_order coordinator callback
+		# (WR-05 orphaned-child cancel), preserving the D-04 star with NO sibling
+		# reconcile→lifecycle/brackets edge and no circular import (D-08). on_fill
+		# below is a 1-line delegation into it (D-07).
+		self.reconcile_manager = ReconcileManager(
+			order_storage, logger, portfolio_handler, self._brackets,
+			self.bracket_manager, self.cancel_order)
+
 	@property
 	def _pending_brackets(self) -> BracketBook:
 		"""Read-only accessor for the pending-bracket owner (D-05).
@@ -144,154 +156,8 @@ class OrderManager:
 		return self._brackets
 
 	def on_fill(self, fill_event: FillEvent) -> List[OrderEvent]:
-		"""
-		Reconcile the order mirror against an exchange fill.
-
-		EXECUTED -> mark the order FILLED; CANCELLED -> mark CANCELLED;
-		REFUSED -> mark REJECTED. The terminal status change alone moves the
-		order out of active queries (D-20: "active" is an entity predicate,
-		not a container) — the order stays in storage for the audit trail.
-
-		Returns
-		-------
-		List[OrderEvent]
-			CANCEL OrderEvents for bracket children orphaned by a parent that
-			reached a terminal state without any fill (WR-05), plus the
-			fill-anchored PercentFromFill children created on the parent's
-			EXECUTED fill (D-13, Pattern 5 Option B). The manager never
-			touches the queue (D-18) — the handler enqueues these.
-		"""
-		out_events: List[OrderEvent] = []
-		order_id = getattr(fill_event, 'order_id', None)
-		if order_id is None:
-			return out_events
-		order = self.order_storage.get_order_by_id(order_id, fill_event.portfolio_id)
-		if order is None:
-			return out_events
-		# WR-04: the terminal release MUST run even if the reconciliation body
-		# raises — a stuck BUY reservation corrupts buying power for the rest of
-		# the run (T-05-17). The release is therefore moved into a `finally`,
-		# gated by this flag so the early-return "unknown status" path (which
-		# intentionally holds the reservation) does not trigger it. The body is
-		# re-raised after logging (backtest fail-fast policy, matching the
-		# portfolio side of the same FILL via _on_handler_error) so a corrupted
-		# reconciliation aborts the run instead of producing silently-wrong
-		# numbers.
-		should_release = False
-		body_raised = False
-		try:
-			applied = True
-			if fill_event.status == FillStatus.EXECUTED:
-				# D-22: fill_event.price is Decimal — to_money is an identity
-				# normalization at this domain entry (kept deliberately: the
-				# mirror never trusts an unnormalized money input).
-				# Full-quantity contract (D-06, plan 06-04): matching is
-				# Decimal-native end-to-end, so the exchange-truth fill
-				# quantity passes straight through — the float-roundtrip
-				# clamp that defended the old D-22 boundary is gone.
-				if not order.add_fill(to_money(fill_event.quantity),
-				                      to_money(fill_event.price),
-				                      fill_event.time, "exchange fill"):
-					# WR-02: do NOT early-return — the portfolio has already
-					# settled this fill (FILL dispatches portfolio-first), so
-					# the uniform terminal release below must still run or the
-					# BUY's reservation is stuck forever (T-05-17). Only the
-					# mirror update is skipped.
-					self.logger.warning('add_fill rejected for order %s; mirror left unchanged', order_id)
-					applied = False
-			elif fill_event.status == FillStatus.CANCELLED:
-				order.cancel_order("exchange cancellation")
-			elif fill_event.status == FillStatus.REFUSED:
-				order.reject_order("exchange rejection")
-			else:
-				# Truly unknown status: leave the order active and alert.
-				# (No release either — an unknown status is not a terminal
-				# reconciliation, so the reservation is intentionally held.)
-				self.logger.warning('Unhandled fill status %s for order %s; order left active',
-				                    fill_event.status, order_id)
-				return out_events
-			# A terminal status was reached (EXECUTED/CANCELLED/REFUSED): arm the
-			# release before any further work so a raise below still releases.
-			should_release = True
-			# Reached for every terminal-status fill (EXECUTED/CANCELLED/
-			# REFUSED), whether or not the mirror transition applied.
-			# D-20: no deactivate step — the terminal status set above already
-			# removes the order from active queries via the is_active predicate.
-			if applied:
-				self.order_storage.update_order(order)
-			# WR-05: a parent that reaches a terminal state WITHOUT any fill
-			# (REFUSED/CANCELLED) leaves its protective SL/TP children resting
-			# on the exchange with no position to protect — when price later
-			# crosses them they would fill against a flat portfolio. Cancel
-			# the children locally and return their CANCEL OrderEvents so the
-			# exchange removes the resting orders too.
-			if (fill_event.status in (FillStatus.CANCELLED, FillStatus.REFUSED)
-					and order.child_order_ids and order.filled_quantity == 0):
-				for child_id in order.child_order_ids:
-					# D-12: cancel_order now declares OrderId/PortfolioId; child_id
-					# is an OrderId and order.portfolio_id a PortfolioId, so the
-					# prior cast(int, ...) bridge (IN-06) is gone.
-					child_result = self.cancel_order(
-						child_id, order.portfolio_id,
-						reason=f"parent order {order.id} terminal without fill")
-					if child_result.success and child_result.order_events:
-						out_events.extend(child_result.order_events)
-			# D-13 PercentFromFill (RESEARCH Pattern 5 Option B): the parent's
-			# EXECUTED fill is the moment its policy-declared children come
-			# into existence — created, stored, linked and emitted priced from
-			# the ACTUAL fill (IB attached-order semantics). A parent that
-			# terminates WITHOUT executing (CANCELLED/REJECTED) discards its
-			# pending entry: the children were never created, so no orphan can
-			# exist and the WR-05 logic above is untouched (T-07-15).
-			if fill_event.status == FillStatus.EXECUTED:
-				pending = self._brackets.consume(order_id)
-				# WR-03 (part 1): only anchor children when the mirror actually
-				# applied the fill. If add_fill was rejected (applied=False) the
-				# parent never moved, so creating fill-anchored children would
-				# link live SL/TP to a parent the engine still considers unfilled.
-				if pending is not None and applied:
-					out_events.extend(
-						self.bracket_manager._create_fill_anchored_children(order, pending, fill_event))
-			else:
-				self._brackets.consume(order_id)
-		except Exception as e:
-			# WR-04: log with a stack trace and RE-RAISE — backtest fail-fast.
-			# A reconciliation that cannot complete leaves the mirror and/or
-			# reservation in an inconsistent state; continuing would produce
-			# silently-wrong numbers. The portfolio side of the same FILL is
-			# already fail-fast via _on_handler_error; the order side now
-			# matches. The `finally` below still releases a terminal fill's
-			# reservation before the exception propagates.
-			self.logger.error('Error reconciling fill for order %s: %s',
-			                  order_id, e, exc_info=True)
-			body_raised = True
-			raise
-		finally:
-			# WR-04: a terminal fill ALWAYS releases its reservation, even when
-			# the reconciliation body raised after the terminal status was set
-			# (T-05-17: a stuck reservation corrupts buying power for the whole
-			# run). `should_release` is False on the non-terminal early-return
-			# path, which intentionally holds the reservation. The release is
-			# idempotent — never-reserved orders (SELLs, children) silently
-			# no-op.
-			if should_release and self.portfolio_handler is not None:
-				try:
-					self.portfolio_handler.release(
-						order.portfolio_id, order.id)
-				except Exception:
-					# WR-03: distinguish "body raised" from "release raised".
-					# If the body already raised, that ORIGINAL exception is the
-					# one propagating out of the finally — re-raising the release
-					# failure here would mask it, so we only log. But if the body
-					# succeeded and the release itself fails, a silently-unreleased
-					# reservation IS the buying-power-corruption class WR-04
-					# defends against, so it must reach the fail-fast seam.
-					self.logger.error(
-						'Failed to release reservation for order %s during fill reconciliation',
-						order.id, exc_info=True)
-					if not body_raised:
-						raise
-		return out_events
+		"""Delegate fill reconciliation to ReconcileManager (D-07)."""
+		return self.reconcile_manager.on_fill(fill_event)
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""Delegate the signal→order pipeline to AdmissionManager (D-07)."""
