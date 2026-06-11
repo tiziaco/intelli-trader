@@ -6,7 +6,6 @@ engine thread; queue.Queue is the thread boundary — other threads only put
 events. Composite reads are consistent because nothing mutates concurrently.
 Live cross-thread reads are a D-live design item.
 """
-import uuid
 from queue import Queue
 from datetime import datetime, UTC
 from decimal import Decimal
@@ -19,7 +18,7 @@ from itrader.core.exceptions import (
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
 )
 from itrader.core.enums import PortfolioState, TransactionType, FillStatus, Side
-from itrader.core.ids import OrderId, PortfolioId, TransactionId
+from itrader.core.ids import OrderId, PortfolioId, TransactionId, CorrelationId
 from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money
 from itrader.portfolio_handler.transaction import Transaction
@@ -83,11 +82,11 @@ class PortfolioHandler:
             max_portfolios=self.max_portfolios
         )
 
-    def _generate_correlation_id(self) -> str:
-        """Generate unique correlation ID for operation tracking."""
-        return f"ph_{uuid.uuid4().hex[:12]}"
-    
-    def _publish_error_event(self, error: Exception, operation: str, correlation_id: str, portfolio_id: Optional[Any] = None) -> None:
+    def _generate_correlation_id(self) -> CorrelationId:
+        """Generate unique correlation ID for operation tracking (D-01/D-02 — single UUIDv7 idgen scheme)."""
+        return CorrelationId(idgen.generate_correlation_id())
+
+    def _publish_error_event(self, error: Exception, operation: str, correlation_id: CorrelationId, portfolio_id: Optional[Any] = None) -> None:
         """Publish error event if enabled."""
         if not self.publish_error_events:
             return
@@ -109,7 +108,7 @@ class PortfolioHandler:
         self.global_queue.put(error_event)
     
     @contextmanager
-    def _operation_context(self, operation_name: str) -> Generator[str, None, None]:
+    def _operation_context(self, operation_name: str) -> Generator[CorrelationId, None, None]:
         """Context manager providing a correlation ID for operation tracking.
 
         D-19: the concurrency-limiting machinery (_operations_lock /

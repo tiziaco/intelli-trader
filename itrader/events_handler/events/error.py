@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from itrader.core.enums import EventType
+from itrader.core.ids import CorrelationId
 
 from .base import Event
 
@@ -35,8 +36,8 @@ class ErrorEvent(Event):
         Human-readable failure description.
     operation: `str | None`
         The operation that failed, if known.
-    correlation_id: `str | None`
-        Operation-tracking correlation id, if any.
+    correlation_id: `CorrelationId | None`
+        Operation-tracking correlation id (UUIDv7), if any.
     severity: `str`
         One of 'ERROR', 'CRITICAL', 'WARNING'.
     details: `dict | None`
@@ -48,7 +49,7 @@ class ErrorEvent(Event):
     error_type: str
     error_message: str
     operation: str | None = None
-    correlation_id: str | None = None
+    correlation_id: CorrelationId | None = None
     severity: str = "ERROR"  # ERROR, CRITICAL, WARNING
     details: dict[str, Any] | None = None
 
