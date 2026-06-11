@@ -25,7 +25,7 @@ from itrader.order_handler.storage import OrderStorageFactory
 from itrader.order_handler.storage.in_memory_storage import InMemoryOrderStorage
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
-from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side
+from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side, OrderTriggerSource
 from itrader.core.exceptions import InsufficientFundsError
 from itrader.core.sizing import FractionOfCash, TradingDirection
 
@@ -176,7 +176,7 @@ def test_modify_price_only_on_partially_filled_order(harness):
     order = harness.rest_a_stop()
     order.filled_quantity = Decimal("0.5")
     assert order.add_state_change(
-        OrderStatus.PARTIALLY_FILLED, "staged partial state", "test",
+        OrderStatus.PARTIALLY_FILLED, "staged partial state", OrderTriggerSource.SYSTEM,
         time=_dt.datetime(2024, 1, 2),
     )
     harness.storage.update_order(order)
@@ -363,7 +363,7 @@ def test_buy_reserve_failure_is_audited_rejected_and_emits_nothing():
     last_change = rejected[0].get_latest_state_change()
     assert last_change is not None
     assert last_change.to_status == OrderStatus.REJECTED
-    assert last_change.triggered_by == "cash_reservation"
+    assert last_change.triggered_by is OrderTriggerSource.CASH_RESERVATION
 
 
 def test_sell_signal_reserves_nothing():

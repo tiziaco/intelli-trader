@@ -38,7 +38,7 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
-from itrader.core.enums import OrderType, OrderStatus, Side
+from itrader.core.enums import OrderType, OrderStatus, Side, OrderTriggerSource
 from itrader.core.money import to_money
 from itrader.core.sizing import FractionOfCash, TradingDirection
 
@@ -132,7 +132,7 @@ def _assert_audited_admission_rejection(harness, signal):
     last_change = rejected.get_latest_state_change()
     assert last_change.from_status == OrderStatus.PENDING
     assert last_change.to_status == OrderStatus.REJECTED
-    assert last_change.triggered_by == "admission_direction"
+    assert last_change.triggered_by is OrderTriggerSource.ADMISSION_DIRECTION
     assert "direction violation" in last_change.reason
     assert last_change.timestamp == signal.time
     return last_change
@@ -172,7 +172,7 @@ def test_long_only_unsized_sell_after_position_closed_is_rejected(harness):
     ]
     assert len(rejected) == 1
     last_change = rejected[0].get_latest_state_change()
-    assert last_change.triggered_by == "admission_direction"
+    assert last_change.triggered_by is OrderTriggerSource.ADMISSION_DIRECTION
     assert "LONG_ONLY" in last_change.reason
     assert last_change.timestamp == sell.time
 
@@ -277,7 +277,7 @@ def test_allow_increase_false_unsized_buy_while_long_is_rejected(harness):
     last_change = _get_single_rejection(harness, "BTCUSDT")
     assert last_change.from_status == OrderStatus.PENDING
     assert last_change.to_status == OrderStatus.REJECTED
-    assert last_change.triggered_by == "admission_increase"
+    assert last_change.triggered_by is OrderTriggerSource.ADMISSION_INCREASE
     assert "position increase not allowed by strategy" in last_change.reason
     # Event-derived timestamp — never the wall clock (M2-09).
     assert last_change.timestamp == signal.time
@@ -323,7 +323,7 @@ def test_increase_with_insufficient_funds_yields_cash_reservation_rejection(harn
     assert harness.queue.empty()
     last_change = _get_single_rejection(harness, "BTCUSDT")
     assert last_change.to_status == OrderStatus.REJECTED
-    assert last_change.triggered_by == "cash_reservation"
+    assert last_change.triggered_by is OrderTriggerSource.CASH_RESERVATION
 
 
 def test_first_entry_is_untouched_by_the_new_gates(harness):
@@ -355,7 +355,7 @@ def test_max_positions_rejects_new_ticker_entry_at_the_limit(harness):
     last_change = _get_single_rejection(harness, "ETHUSDT")
     assert last_change.from_status == OrderStatus.PENDING
     assert last_change.to_status == OrderStatus.REJECTED
-    assert last_change.triggered_by == "admission_max_positions"
+    assert last_change.triggered_by is OrderTriggerSource.ADMISSION_MAX_POSITIONS
     assert last_change.timestamp == signal.time
 
 
@@ -384,7 +384,7 @@ def test_buy_for_open_ticker_is_the_increase_case_not_max_positions(harness):
 
     assert harness.queue.empty()
     last_change = _get_single_rejection(harness, "BTCUSDT")
-    assert last_change.triggered_by == "admission_increase"
+    assert last_change.triggered_by is OrderTriggerSource.ADMISSION_INCREASE
 
 
 def test_explicit_quantity_buy_skips_increase_and_max_positions_gates(harness):

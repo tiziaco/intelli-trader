@@ -11,6 +11,7 @@ from itrader.core.exceptions import UnsizedSignalError
 from itrader.core.money import to_money
 from ..core.enums import (
     OrderType, OrderStatus,
+    OrderTriggerSource,
     VALID_ORDER_TRANSITIONS
 )
 
@@ -24,7 +25,7 @@ class OrderStateChange:
 	to_status: OrderStatus
 	timestamp: datetime
 	reason: str
-	triggered_by: str = "system"  # system, user, exchange, etc.
+	triggered_by: OrderTriggerSource = OrderTriggerSource.SYSTEM  # D-04: closed vocabulary
 	additional_data: Optional[dict[str, Any]] = None
 
 	def __str__(self) -> str:
@@ -187,9 +188,9 @@ class Order:
 		
 		# Add initial state change
 		order.add_state_change(
-			OrderStatus.PENDING, 
-			f"Order created from strategy {signal.strategy_id}", 
-			"strategy"
+			OrderStatus.PENDING,
+			f"Order created from strategy {signal.strategy_id}",
+			OrderTriggerSource.STRATEGY
 		)
 		
 		return order
@@ -222,7 +223,7 @@ class Order:
 		order.add_state_change(
 			OrderStatus.PENDING,
 			f"Stop order created for {ticker}",
-			"system"
+			OrderTriggerSource.SYSTEM
 		)
 		
 		return order
@@ -255,13 +256,13 @@ class Order:
 		order.add_state_change(
 			OrderStatus.PENDING,
 			f"Limit order created for {ticker}",
-			"system"
+			OrderTriggerSource.SYSTEM
 		)
 		
 		return order
 	
 	def add_state_change(self, new_status: OrderStatus, reason: str,
-	                    triggered_by: str = "system", additional_data: Optional[dict[str, Any]] = None,
+	                    triggered_by: OrderTriggerSource = OrderTriggerSource.SYSTEM, additional_data: Optional[dict[str, Any]] = None,
 	                    time: Optional[datetime] = None, allow_same_status: bool = False) -> bool:
 		"""
 		Add a state change to the order with validation.
@@ -382,7 +383,7 @@ class Order:
 
 		# Thread the real fill_time into the recorded transition timestamp (D-12):
 		# the transition is stamped with the fill time, not the wall clock.
-		return self.add_state_change(OrderStatus.FILLED, reason, "exchange", additional_data, time=fill_time)
+		return self.add_state_change(OrderStatus.FILLED, reason, OrderTriggerSource.EXCHANGE, additional_data, time=fill_time)
 	
 	def cancel_order(self, reason: str = "user cancellation") -> bool:
 		"""
@@ -402,7 +403,7 @@ class Order:
 			return False
 		
 		self.rejection_reason = reason
-		return self.add_state_change(OrderStatus.CANCELLED, reason, "user")
+		return self.add_state_change(OrderStatus.CANCELLED, reason, OrderTriggerSource.USER)
 	
 	def reject_order(self, reason: str) -> bool:
 		"""
@@ -419,7 +420,7 @@ class Order:
 			True if order was successfully rejected
 		"""
 		self.rejection_reason = reason
-		return self.add_state_change(OrderStatus.REJECTED, reason, "system")
+		return self.add_state_change(OrderStatus.REJECTED, reason, OrderTriggerSource.SYSTEM)
 	
 	def expire_order(self, reason: str = "order expired") -> bool:
 		"""
@@ -435,7 +436,7 @@ class Order:
 		bool
 			True if order was successfully expired
 		"""
-		return self.add_state_change(OrderStatus.EXPIRED, reason, "system")
+		return self.add_state_change(OrderStatus.EXPIRED, reason, OrderTriggerSource.SYSTEM)
 	
 	def modify_order(self, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
 					reason: str = "order modification", time: Optional[datetime] = None) -> bool:
@@ -495,7 +496,7 @@ class Order:
 			return self.add_state_change(
 				self.status,
 				reason,
-				triggered_by="user",
+				triggered_by=OrderTriggerSource.USER,
 				additional_data=changes,
 				time=event_time,
 				allow_same_status=True,
