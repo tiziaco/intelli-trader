@@ -320,16 +320,17 @@ def _build_and_run(spec):
         simulated.fee_model = simulated._init_fee_model()
         simulated.slippage_model = simulated._init_slippage_model()
         # Phase 8 (CASH-02 REFUSED, D-03): validate_order reads the CACHED
-        # _min_order_size / _max_order_size floats (simulated.py:99-100), NOT
-        # simulated.config — so a spec carrying a tiny limits.max_order_size (the
-        # deterministic REFUSED lever) only bites if we re-derive those caches here,
-        # exactly as SimulatedExchange.update_config does (simulated.py:603-606).
+        # _min_order_size / _max_order_size Decimals (simulated.py:99-100, Decimal
+        # end-to-end per DEC-02/D-06 — no float()), NOT simulated.config — so a spec
+        # carrying a tiny limits.max_order_size (the deterministic REFUSED lever) only
+        # bites if we re-derive those caches here, exactly as
+        # SimulatedExchange.update_config does (simulated.py:603-606).
         # _supported_symbols is STILL left untouched (PATTERNS A2): execution_handler
         # added BTCUSD to the instance set post-construction and the default
         # ExchangeConfig.limits omits it, so re-deriving the symbol set would WIPE
         # that admission and silently REFUSE every order. Only the size caches move.
-        simulated._min_order_size = float(simulated.config.limits.min_order_size)
-        simulated._max_order_size = float(simulated.config.limits.max_order_size)
+        simulated._min_order_size = simulated.config.limits.min_order_size
+        simulated._max_order_size = simulated.config.limits.max_order_size
 
     # Phase 9 (ROBUST-01/02, Rule-3 seam): register the spec's data tickers with
     # the simulated exchange's supported-symbol set so non-default tickers (e.g.

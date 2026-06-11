@@ -141,7 +141,7 @@ def test_cancel_emits_cancel_command(harness):
 
 def test_modify_emits_modify_command(harness):
     order = harness.rest_a_stop()
-    ok = harness.handler.modify_order(order.id, new_price=28.0, portfolio_id=harness.portfolio_id)
+    ok = harness.handler.modify_order(order.id, new_price=Decimal("28.0"), portfolio_id=harness.portfolio_id)
     assert ok
     events = [harness.queue.get() for _ in range(harness.queue.qsize())]
     order_events = [e for e in events if e.type.name == "ORDER"]
@@ -154,7 +154,7 @@ def test_modify_quantity_only_succeeds(harness):
     TypeError inside validate_order_modification's `new_price <= 0` check."""
     order = harness.rest_a_stop()
     ok = harness.handler.modify_order(
-        order.id, new_quantity=2.0, portfolio_id=harness.portfolio_id
+        order.id, new_quantity=Decimal("2.0"), portfolio_id=harness.portfolio_id
     )
     assert ok
     events = [harness.queue.get() for _ in range(harness.queue.qsize())]
@@ -182,7 +182,7 @@ def test_modify_price_only_on_partially_filled_order(harness):
     harness.storage.update_order(order)
     assert order.status == OrderStatus.PARTIALLY_FILLED
     ok = harness.handler.modify_order(
-        order.id, new_price=28.0, portfolio_id=harness.portfolio_id
+        order.id, new_price=Decimal("28.0"), portfolio_id=harness.portfolio_id
     )
     assert ok
     stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)

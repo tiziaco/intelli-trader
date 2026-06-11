@@ -1,6 +1,8 @@
+import json
 import logging
 import os
 import sys
+import uuid
 from typing import Any
 
 import structlog
@@ -38,6 +40,41 @@ def _env_json_logs() -> bool:
     """Resolve JSON rendering from ``ITRADER_JSON_LOGS`` (default off)."""
     raw = os.environ.get("ITRADER_JSON_LOGS", "false")
     return raw.strip().lower() in ("1", "true", "yes")
+
+
+def _json_default(obj: object) -> str:
+    """Fallback serializer for ``JSONRenderer`` (WR-01).
+
+    The single-UUIDv7 scheme (DEC-03) flows ``uuid.UUID`` values such as
+    ``correlation_id`` / ``portfolio_id`` into the ERROR-route log context.
+    ``json.dumps`` cannot serialize ``uuid.UUID`` natively, so stringify it
+    at the serialization edge — never revert the UUID type at the call site.
+    """
+    if isinstance(obj, uuid.UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _uuid_safe_json_serializer(obj: Any, **kw: Any) -> str:
+    """``JSONRenderer`` serializer that tolerates ``uuid.UUID`` (WR-01).
+
+    ``structlog.processors.JSONRenderer`` injects its own ``default`` handler
+    into ``kw``. Pop it and chain it after ``_json_default`` so both the
+    UUID coercion and structlog's native fallback keep working — passing our
+    own ``default`` alongside structlog's would raise a duplicate-kwarg
+    ``TypeError``.
+    """
+    structlog_default = kw.pop("default", None)
+
+    def _default(value: object) -> str:
+        try:
+            return _json_default(value)
+        except TypeError:
+            if structlog_default is not None:
+                return structlog_default(value)  # type: ignore[no-any-return]
+            raise
+
+    return json.dumps(obj, default=_default, **kw)
 
 
 def drop_color_message_key(_: Any, __: str, event_dict: EventDict) -> EventDict:
@@ -107,7 +144,11 @@ def setup_logging(json_logs: bool = False, log_level: str = "INFO") -> None:
     # Set up the formatter - this is the key part that makes logger names work
     log_renderer: Processor
     if json_logs:
-        log_renderer = structlog.processors.JSONRenderer()
+        # UUID-safe serializer (WR-01): keep the single-UUIDv7 scheme intact
+        # and stringify uuid.UUID values only at the JSON serialization edge.
+        log_renderer = structlog.processors.JSONRenderer(
+            serializer=_uuid_safe_json_serializer
+        )
     else:
         log_renderer = structlog.dev.ConsoleRenderer(
             colors=True,

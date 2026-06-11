@@ -40,9 +40,12 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 - [ ] **DEC-01**: `modify_order`/`cancel_order` public API price/quantity params are typed
   `Optional[Decimal]`, not `Optional[float]` — no float-for-money at a domain boundary. [W4-01]
-- [ ] **DEC-02**: `_min/_max_order_size` are carried as `Decimal` end-to-end; the latent
-  `Decimal < float` `TypeError` on the below-minimum validation path is removed; golden run
-  byte-exact. [W2-10]
+- [ ] **DEC-02**: `_min/_max_order_size` are carried as `Decimal` end-to-end (float-for-money
+  consistency at the exchange size-limit boundary — the `float()` wraps at the cached-attribute
+  init/update_config sites are dropped, so `validate_order` runs `Decimal`-vs-`Decimal`); the
+  symmetric below-minimum REFUSED branch is regression-covered (D-08); golden run byte-exact.
+  (D-07: the earlier comparison-crash claim was a misdiagnosis — Decimal-vs-float COMPARISON works
+  in Py3; only arithmetic raises and there is none.) [W2-10]
 - [ ] **DEC-03**: Correlation IDs use the single UUIDv7 `idgen` scheme (or a deterministic
   counter); `uuid.uuid4()` is removed from the run path. [W4-08 / W1-06]
 
@@ -67,8 +70,11 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   and `_PendingBracket` are `frozen=True, slots=True, kw_only=True` facts. [W2-03, W2-04, W2-12]
 - [ ] **TYPE-02**: Fee/slippage model dispatch compares enum members with `assert_never`
   exhaustiveness (not `.value` strings); `rebalance_frequency` is validated at the Pydantic
-  boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented. [W2-08,
-  W2-09, W2-11]
+  boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented; and the
+  `OrderHandler`/`OrderManager` public-API `order_id: int` / `portfolio_id: int` method-parameter
+  annotations are retyped to the `OrderId` / `PortfolioId` NewTypes (`core/ids.py`), consistent with
+  the single-UUIDv7 scheme — UUIDs already flow through these methods at runtime. [W2-08, W2-09,
+  W2-11, DEF-02-03]
 - [ ] **TYPE-03**: Closed string vocabularies become enums in `core/enums/` — `ErrorSeverity`,
   `OrderOperationType`, `OrderTriggerSource`, and `market_execution` — with the canonical
   class-based form (`_missing_` + `<domain>_<type>_map` where they cross a boundary). [W2-07,

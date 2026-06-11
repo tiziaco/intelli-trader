@@ -50,3 +50,7 @@ class IDGenerator:
 	def generate_signal_id(self) -> uuid.UUID:
 		"""Generate unique signal ID (D-10 — single UUIDv7 scheme)."""
 		return self._uuid7()
+
+	def generate_correlation_id(self) -> uuid.UUID:
+		"""Generate unique correlation ID (D-01/D-02 — single UUIDv7 scheme)."""
+		return self._uuid7()

@@ -96,8 +96,11 @@ class SimulatedExchange(AbstractExchange):
 		
 		# Exchange limits and settings
 		self._supported_symbols = self.config.limits.supported_symbols
-		self._min_order_size = float(self.config.limits.min_order_size)
-		self._max_order_size = float(self.config.limits.max_order_size)
+		# DEC-02 / D-06: size limits carried as Decimal end-to-end (no float() — float money
+		# is a correctness defect). config.limits.* are already Decimal (Pydantic ExchangeLimits);
+		# the validate_order comparisons run Decimal-vs-Decimal.
+		self._min_order_size = self.config.limits.min_order_size
+		self._max_order_size = self.config.limits.max_order_size
 		self._exchange_name = self.config.exchange_name
 		
 		self.logger.info('Simulated Exchange initialized: %s', self.config.exchange_name)
@@ -457,8 +460,8 @@ class SimulatedExchange(AbstractExchange):
 				'order_validation'
 			],
 			'limits': {
-				'min_order_size': self._min_order_size,
-				'max_order_size': self._max_order_size
+				'min_order_size': float(self._min_order_size),
+				'max_order_size': float(self._max_order_size)
 			},
 			'models': {
 				'fee_model': self.fee_model.get_fee_info(),
@@ -602,8 +605,9 @@ class SimulatedExchange(AbstractExchange):
 		# Update internal state for limits
 		if any(k in ['supported_symbols', 'min_order_size', 'max_order_size'] for k in kwargs):
 			self._supported_symbols = self.config.limits.supported_symbols
-			self._min_order_size = float(self.config.limits.min_order_size)
-			self._max_order_size = float(self.config.limits.max_order_size)
+			# DEC-02 / D-06: re-derived as Decimal (no float() — mirror init, Decimal end-to-end).
+			self._min_order_size = self.config.limits.min_order_size
+			self._max_order_size = self.config.limits.max_order_size
 			
 		# Update exchange name if changed
 		if 'exchange_name' in kwargs:

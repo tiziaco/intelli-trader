@@ -78,7 +78,7 @@ items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog
   interplay must never change.
 
 - [x] **Phase 1: Dead Code & Doc Hygiene** - Delete dead ABCs / `OrderBase` / dead numpy import; correct stale CONCERNS/ROADMAP notes; document the config-enum / run-mode / indentation conventions (completed 2026-06-11)
-- [ ] **Phase 2: Locked-Decision Conformance** - `Optional[Decimal]` money API; Decimal `_min/_max_order_size` (latent-TypeError fix); retire the `uuid4()` second ID scheme
+- [x] **Phase 2: Locked-Decision Conformance** - `Optional[Decimal]` money API; Decimal `_min/_max_order_size` (float-for-money fix); retire the `uuid4()` second ID scheme (completed 2026-06-11)
 - [ ] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD
 - [ ] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/`
 - [ ] **Phase 5: Naming & Encapsulation** - `events_queue→global_queue`; strategy PascalCase + `*_window`; publicize `routes`; `register_symbol()` API; test hygiene through public APIs
@@ -108,18 +108,20 @@ Plans:
 - [x] 01-02-PLAN.md (02-doc-hygiene) — trim stale CONCERNS/ROADMAP entries; document 4 conventions in CONVENTIONS/CLAUDE (DEAD-02)
 
 ### Phase 2: Locked-Decision Conformance
-**Goal**: Close the three bounded locked-decision violations (float money at the API boundary, the latent Decimal/float TypeError, the second `uuid4()` ID scheme) without changing results.
+**Goal**: Close the three bounded locked-decision violations (float money at the API boundary, the float-for-money inconsistency at the order-size boundary, the second `uuid4()` ID scheme) without changing results.
 **Depends on**: Phase 1
 **Requirements**: DEC-01, DEC-02, DEC-03
 **Success Criteria** (what must be TRUE):
   1. `modify_order`/`cancel_order` public API price/quantity params are typed `Optional[Decimal]`, not `Optional[float]` — no float-for-money at a domain boundary.
-  2. `_min/_max_order_size` are carried as `Decimal` end-to-end and the latent `Decimal < float` `TypeError` on the below-minimum validation path is removed; the golden run is confirmed never to route through the broken comparison and the oracle is byte-exact.
+  2. `_min/_max_order_size` are carried as `Decimal` end-to-end (no float-for-money inconsistency at the exchange size-limit boundary); `validate_order` runs `Decimal`-vs-`Decimal` on the golden path (via `_admit_order` — it is NOT bypassed); the symmetric `< _min` below-minimum REFUSED branch is regression-covered (D-08); and the oracle is byte-exact. (D-07: the earlier comparison-crash framing was a misdiagnosis — Decimal-vs-float COMPARISON works in Py3, only arithmetic raises and there is none; the fix is float-for-money consistency, not a crash fix.)
   3. Correlation IDs use the single UUIDv7 `idgen` scheme (or a deterministic counter); `uuid.uuid4()` is gone from the run path (single ID scheme restored, no non-deterministic crypto RNG).
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] TBD (decompose with /gsd:plan-phase 2)
+- [x] 02-01-PLAN.md (01-decimal-money-api) — retype modify_order/cancel_order money params Optional[float]→Optional[Decimal] (facade + manager); Decimal boundary callers (DEC-01)
+- [x] 02-02-PLAN.md (02-decimal-order-size) — drop float() wraps on _min/_max_order_size (Decimal end-to-end); reframe/correct the D-07 "latent TypeError" misdiagnosis; below-minimum REFUSED branch test (DEC-02)
+- [x] 02-03-PLAN.md (03-uuidv7-correlation-id) — retire uuid4() correlation id → single UUIDv7 idgen scheme; CorrelationId NewType + generate_correlation_id; CorrelationId|None event field (DEC-03)
 
 ### Phase 3: Hot-Path Performance
 **Goal**: Eliminate the dominant per-tick perf costs — defensive storage copies, redundant Decimal re-wraps, duplicated per-tick work, and per-tick Bar/MACD churn — with bit-identical values.
@@ -141,7 +143,7 @@ Plans:
 **Requirements**: TYPE-01, TYPE-02, TYPE-03, TYPE-04, TYPE-05
 **Success Criteria** (what must be TRUE):
   1. `FillDecision`, `CancelDecision`, `OperationResult`, `SignalProcessingResult`, and `_PendingBracket` are `frozen=True, slots=True, kw_only=True` facts.
-  2. Fee/slippage model dispatch compares enum members with `assert_never` exhaustiveness (not `.value` strings); `rebalance_frequency` is validated at the Pydantic boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented.
+  2. Fee/slippage model dispatch compares enum members with `assert_never` exhaustiveness (not `.value` strings); `rebalance_frequency` is validated at the Pydantic boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented; and the `OrderHandler`/`OrderManager` public-API `order_id: int` / `portfolio_id: int` method-parameter annotations are retyped to `OrderId` / `PortfolioId` (single-UUIDv7 conformance; carried over from Phase 2 DEF-02-03).
   3. `ErrorSeverity`, `OrderOperationType`, `OrderTriggerSource`, and `market_execution` are class-based string-valued enums in `core/enums/` (with `_missing_` + `<domain>_<type>_map` where they cross a boundary), and `OrderStatus`/`OrderCommand` are converted to the same canonical form with working `order_status_map` `.value` lookups (int→string value change audited against serialization/tests).
   4. The `BaseStrategyConfig` base contract lives in `itrader/config/strategy.py` (re-exported via `config/__init__.py`), consistent with `ExchangeConfig`/`PortfolioConfig`/`SystemConfig`; all importers updated.
   5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
@@ -188,7 +190,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Dead Code & Doc Hygiene | v1.2 | 2/2 | Complete   | 2026-06-11 |
-| 2. Locked-Decision Conformance | v1.2 | 0/TBD | Not started | - |
+| 2. Locked-Decision Conformance | v1.2 | 3/3 | Complete   | 2026-06-11 |
 | 3. Hot-Path Performance | v1.2 | 0/TBD | Not started | - |
 | 4. Type Modeling | v1.2 | 0/TBD | Not started | - |
 | 5. Naming & Encapsulation | v1.2 | 0/TBD | Not started | - |
