@@ -13,7 +13,7 @@ and order storage/execution systems.
 """
 
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional, assert_never
+from typing import Any, Callable, Dict, List, Optional
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side, OrderOperationType, OrderTriggerSource, MarketExecution
@@ -21,11 +21,9 @@ from ..core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ..core.ids import OrderId, PortfolioId, StrategyId
 from ..core.money import to_money
 from ..core.portfolio_read_model import PortfolioReadModel
-from ..core.sizing import PercentFromDecision, PercentFromFill, TradingDirection
+from ..core.sizing import TradingDirection
 from .base import OrderStorage
-from .brackets import BracketBook
-from .brackets.bracket_book import _PendingBracket
-from .brackets.levels import _bracket_levels
+from .brackets import BracketBook, BracketManager
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 from .sizing_resolver import SizingResolver
@@ -104,6 +102,12 @@ class OrderManager:
 		# CANCELLED/REJECTED without executing (T-07-15 — no orphans possible:
 		# the children were never created).
 		self._brackets = BracketBook()
+
+		# D-04/D-09 coordinator-owned star: construct the bracket-assembly
+		# collaborator ONCE, injecting the dep subset (order_storage, logger)
+		# plus the shared BracketBook. The assembly/fill-anchored call sites
+		# below delegate into it (mirror portfolio._init_managers).
+		self.bracket_manager = BracketManager(order_storage, logger, self._brackets)
 
 	@property
 	def _pending_brackets(self) -> BracketBook:
@@ -236,7 +240,7 @@ class OrderManager:
 				# link live SL/TP to a parent the engine still considers unfilled.
 				if pending is not None and applied:
 					out_events.extend(
-						self._create_fill_anchored_children(order, pending, fill_event))
+						self.bracket_manager._create_fill_anchored_children(order, pending, fill_event))
 			else:
 				self._brackets.consume(order_id)
 		except Exception as e:
@@ -420,7 +424,7 @@ class OrderManager:
 						operation_type=OrderOperationType.CASH_RESERVATION)]
 
 			# 4. Create-all-then-emit (D-11): assemble brackets, store, emit.
-			assembled = self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
+			assembled = self.bracket_manager._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
 			primary_emitted = any(
 				r.success and primary.id in (r.affected_order_ids or [])
 				for r in assembled
@@ -492,7 +496,7 @@ class OrderManager:
 			if isinstance(primary, OperationResult):
 				return [primary]
 
-			return self._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
+			return self.bracket_manager._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
 
 		except Exception as e:
 			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
@@ -556,230 +560,6 @@ class OrderManager:
 			f"Unsupported order type: {signal_event.order_type}",
 			operation_type=OrderOperationType.CREATE_PRIMARY_ORDER
 		)
-
-	def _assemble_bracket_and_emit(self, signal_event: SignalEvent, exchange: str,
-	                               quantity: Decimal, primary: Order) -> List[OperationResult]:
-		"""
-		Create-all-then-emit (D-11): build every bracket entity first, link
-		parent and children two-directionally, store all, THEN emit
-		OrderEvents parent-first (primary, stop-loss, take-profit) — the
-		queue arrival sequence is identical to the old emit-per-creation flow.
-
-		D-13 SLTP precedence: explicit stop_loss/take_profit levels are
-		PRIMARY — when either is present the declared sltp_policy is ignored
-		and this path behaves exactly as before. Only a signal with no
-		explicit level consults the policy: PercentFromDecision prices the
-		children from the signal's decision price at assembly time;
-		PercentFromFill defers them to the parent's fill.
-
-		CARVE-OUT: PercentFromFill children are created at parent fill
-		(IB attached-order semantics) — a documented exception to
-		create-all-then-emit (Phase 4 D-11). Until the parent EXECUTES the
-		children structurally do not exist (no placeholder-trigger hazard,
-		T-07-14); on_fill creates, stores, links and emits them priced from
-		the actual fill.
-
-		D-07 v1 limitation: bracket children are sized at entry and are NOT
-		resized by partial signal exits — a partial exit leaves the resting
-		SL/TP quantities at their entry size.
-
-		Parameters
-		----------
-		signal_event : SignalEvent
-			The originating signal (SL/TP prices read from it).
-		exchange : str
-			Exchange for the orders.
-		quantity : Decimal
-			The resolved order quantity (shared by all bracket legs).
-		primary : Order
-			The already-built (and validated) primary order entity.
-
-		Returns
-		-------
-		List[OperationResult]
-			One success result per created order, parent-first.
-		"""
-		results: List[OperationResult] = []
-
-		try:
-			# Build ALL bracket entities first — every UUIDv7 id exists
-			# before anything is stored or emitted (D-11).
-			sl_order: Optional[Order] = None
-			tp_order: Optional[Order] = None
-
-			# D-13 SLTP dispatch with explicit precedence: explicit levels
-			# WIN whenever either is present (the truthy semantics below,
-			# preserved verbatim — even when an sltp_policy is also declared).
-			# Only a signal with NO explicit level consults the policy.
-			sl_price: Decimal = signal_event.stop_loss
-			tp_price: Decimal = signal_event.take_profit
-			sltp_policy = signal_event.sltp_policy
-			if not (sl_price > 0 or tp_price > 0) and sltp_policy is not None:
-				match sltp_policy:
-					case PercentFromDecision():
-						# Decision-time pricing: levels fixed from the
-						# signal's decision price (price ± pct for a BUY,
-						# mirrored for SELL) — Decimal arithmetic end-to-end
-						# (string-path constants enforced by the policy types).
-						sl_price, tp_price = _bracket_levels(
-							sltp_policy, to_money(signal_event.price),
-							signal_event.action.value)
-					case PercentFromFill():
-						# CARVE-OUT to create-all-then-emit (Phase 4 D-11):
-						# NO children at assembly — record the pending bracket;
-						# on_fill creates them priced from the actual fill
-						# (IB attached-order semantics, Pattern 5 Option B).
-						self._brackets.arm(primary.id, _PendingBracket(
-							policy=sltp_policy,
-							ticker=signal_event.ticker,
-							action=signal_event.action.value,
-							quantity=quantity,
-							exchange=exchange,
-							strategy_id=signal_event.strategy_id,
-							portfolio_id=signal_event.portfolio_id,
-						))
-					case _:
-						assert_never(sltp_policy)
-
-			if sl_price > 0:
-				sl_order = Order.new_stop_order(
-					time=signal_event.time,
-					ticker=signal_event.ticker,
-					# Invert on Side (D-05); the entity stores str until M4.
-					action='BUY' if signal_event.action is Side.SELL else 'SELL',
-					price=sl_price,
-					quantity=quantity,
-					exchange=exchange,
-					strategy_id=signal_event.strategy_id,
-					portfolio_id=signal_event.portfolio_id
-				)
-				sl_order.parent_order_id = primary.id
-
-			if tp_price > 0:
-				tp_order = Order.new_limit_order(
-					time=signal_event.time,
-					ticker=signal_event.ticker,
-					# Invert on Side (D-05); the entity stores str until M4.
-					action='BUY' if signal_event.action is Side.SELL else 'SELL',
-					price=tp_price,
-					quantity=quantity,
-					exchange=exchange,
-					strategy_id=signal_event.strategy_id,
-					portfolio_id=signal_event.portfolio_id
-				)
-				tp_order.parent_order_id = primary.id
-
-			# Two-directional linkage: the parent carries its children's ids
-			# (order.py child_order_ids — declared since M2, populated here).
-			primary.child_order_ids = [
-				child.id for child in (sl_order, tp_order) if child is not None
-			]
-
-			# Store all, THEN emit — the primary OrderEvent below already
-			# carries the complete child linkage.
-			self.order_storage.add_order(primary)
-			if sl_order is not None:
-				self.order_storage.add_order(sl_order)
-			if tp_order is not None:
-				self.order_storage.add_order(tp_order)
-
-			# Emit parent-first: primary, stop-loss, take-profit.
-			results.append(OperationResult.success_result(
-				f"{primary.type.name} order created: {primary.ticker} {primary.action} at {primary.price}",
-				order_events=[OrderEvent.new_order_event(primary)],
-				operation_type=OrderOperationType.CREATE_PRIMARY_ORDER,
-				affected_order_ids=[primary.id]
-			))
-
-			if sl_order is not None:
-				self.logger.debug(f'Stop-loss order created: {sl_order.ticker} at {sl_order.price}')
-				results.append(OperationResult.success_result(
-					f"Stop-loss order created: {sl_order.ticker} at {sl_order.price}",
-					order_events=[OrderEvent.new_order_event(sl_order)],
-					operation_type=OrderOperationType.CREATE_STOP_LOSS,
-					affected_order_ids=[sl_order.id]
-				))
-
-			if tp_order is not None:
-				self.logger.debug(f'Take-profit order created: {tp_order.ticker} at {tp_order.price}')
-				results.append(OperationResult.success_result(
-					f"Take-profit order created: {tp_order.ticker} at {tp_order.price}",
-					order_events=[OrderEvent.new_order_event(tp_order)],
-					operation_type=OrderOperationType.CREATE_TAKE_PROFIT,
-					affected_order_ids=[tp_order.id]
-				))
-
-			success_count = sum(1 for r in results if r.success)
-			self.logger.debug(f'Created {success_count}/{len(results)} orders from signal: {signal_event.ticker} {signal_event.action}')
-
-		except Exception as e:
-			# WR-03 (part 2): the PercentFromFill pending entry is registered at
-			# assembly time (above) BEFORE add_order runs. If storage raises
-			# afterwards the primary never reaches the exchange, so no fill will
-			# ever consume the pending entry — disarm it here so a stale entry
-			# cannot later anchor children to a parent that was never emitted.
-			self._brackets.consume(primary.id)
-			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
-			results.append(OperationResult.failure_result(
-				f"Failed to create orders from signal",
-				error_details=str(e),
-				operation_type=OrderOperationType.CREATE_ORDERS_FROM_SIGNAL
-			))
-
-		return results
-
-	def _create_fill_anchored_children(self, parent: Order, pending: _PendingBracket,
-	                                   fill_event: FillEvent) -> List[OrderEvent]:
-		"""
-		Create, store, link and return the PercentFromFill children (D-13).
-
-		RESEARCH Pattern 5 Option B / IB attached-order semantics: invoked
-		from on_fill on the parent's EXECUTED fill — the children are priced
-		from the parent's ACTUAL fill price (the anchoring a strategy
-		structurally cannot express). Linkage mirrors the assembly path
-		exactly (parent_order_id on the children, child_order_ids on the
-		parent); entities are stored BEFORE the OrderEvents are returned.
-		The returned events ride the on_fill return list — the manager never
-		touches the queue (D-18); the handler enqueues them.
-
-		D-07 v1 limitation: the children carry the entry-sized quantity
-		recorded at assembly — partial signal exits do not resize them.
-		"""
-		anchor = to_money(fill_event.price)
-		sl_price, tp_price = _bracket_levels(pending.policy, anchor, pending.action)
-		# Invert on the parent's action (D-05); the entity stores str until M4.
-		child_action = 'BUY' if pending.action == Side.SELL.value else 'SELL'
-		sl_order = Order.new_stop_order(
-			time=fill_event.time,
-			ticker=pending.ticker,
-			action=child_action,
-			price=sl_price,
-			quantity=pending.quantity,
-			exchange=pending.exchange,
-			strategy_id=pending.strategy_id,
-			portfolio_id=pending.portfolio_id
-		)
-		sl_order.parent_order_id = parent.id
-		tp_order = Order.new_limit_order(
-			time=fill_event.time,
-			ticker=pending.ticker,
-			action=child_action,
-			price=tp_price,
-			quantity=pending.quantity,
-			exchange=pending.exchange,
-			strategy_id=pending.strategy_id,
-			portfolio_id=pending.portfolio_id
-		)
-		tp_order.parent_order_id = parent.id
-		# Two-directional linkage, exactly as the assembly path does it.
-		parent.child_order_ids = [sl_order.id, tp_order.id]
-		# Store all, THEN emit (the D-11 ordering, preserved within the fill).
-		self.order_storage.add_order(sl_order)
-		self.order_storage.add_order(tp_order)
-		self.order_storage.update_order(parent)
-		self.logger.debug('Fill-anchored bracket created for parent %s: SL %s / TP %s',
-		                  parent.id, sl_order.price, tp_order.price)
-		return [OrderEvent.new_order_event(sl_order), OrderEvent.new_order_event(tp_order)]
 
 	def _enforce_direction_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
 		"""
