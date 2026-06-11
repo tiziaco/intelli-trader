@@ -104,8 +104,9 @@ Both wire up the identical component graph around one shared queue in their `__i
 
 ## Conventions
 
-- **Indentation:** handler modules use **tabs**; `config/`, `core/`, `price_handler/feed/`, and the `events_handler/events/` package use **4 spaces** — match the file you edit.
+- **Indentation:** handler modules use **tabs**; `config/`, `core/`, `price_handler/feed/`, and the `events_handler/events/` package use **4 spaces** — match the file you edit, never normalize (a mixed-indentation diff breaks a tab file).
 - Components are constructed with the `global_queue` as a constructor argument and never call each other directly across domains — emit an event instead (read-only cross-domain access goes through an injected read-model).
+- **Documented conventions (authoritative home: `.planning/codebase/CONVENTIONS.md`).** Four established conventions are pinned there so they are not re-litigated: (1) the **config-enum exception** — the seven `str, Enum` config-domain enums (`FeeModelType`, `SlippageModelType`, `PortfolioType`, …) live in `config/` not `core/enums/` by design (relocating inverts the core→config dependency); (2) the **broad-`except` run-mode policy** — backtest fail-fast vs live publish-and-continue is intentional, not an inconsistency; (3) the **tab/space indentation hazard** above; (4) the **dual-layer order-validator overlap** (`order_validator.py` / `simulated.py`) is justified-by-decision (defense-in-depth — `create_order`/live paths bypass the domain validator), so it is documented and the code is NOT removed.
 
 <!-- GSD:project-start source:PROJECT.md -->
 

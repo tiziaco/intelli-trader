@@ -77,7 +77,7 @@ items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog
   requires the golden-master re-run; the terminal-status / `should_release` / `finally`-release
   interplay must never change.
 
-- [ ] **Phase 1: Dead Code & Doc Hygiene** - Delete dead ABCs / `OrderBase` / dead numpy import; correct stale CONCERNS/ROADMAP notes; document the config-enum / run-mode / indentation conventions
+- [x] **Phase 1: Dead Code & Doc Hygiene** - Delete dead ABCs / `OrderBase` / dead numpy import; correct stale CONCERNS/ROADMAP notes; document the config-enum / run-mode / indentation conventions (completed 2026-06-11)
 - [ ] **Phase 2: Locked-Decision Conformance** - `Optional[Decimal]` money API; Decimal `_min/_max_order_size` (latent-TypeError fix); retire the `uuid4()` second ID scheme
 - [ ] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD
 - [ ] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/`
@@ -101,10 +101,11 @@ deferred out of v1.2 Consolidation. Promote after v1.2, ahead of N+2. See Backlo
   2. Stale docs are corrected: the CONCERNS.md `screener_event_handler` item is closed (file already gone), and ROADMAP 999.5-(d) FL-01/FL-02 text reads "done".
   3. CONVENTIONS/CLAUDE documents the config-enum-in-`config/` exception, the broad-`except` run-mode policy (backtest fail-fast vs live publish-and-continue), the tab/space indentation hazard, and the dual-layer validator overlap as justified-by-decision (not removed).
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] TBD (decompose with /gsd:plan-phase 1)
+- [x] 01-01-PLAN.md (01-code-deletions) — delete 3 dead ABCs + OrderBase + dead numpy import; importer sweep; oracle byte-exact (DEAD-01)
+- [x] 01-02-PLAN.md (02-doc-hygiene) — trim stale CONCERNS/ROADMAP entries; document 4 conventions in CONVENTIONS/CLAUDE (DEAD-02)
 
 ### Phase 2: Locked-Decision Conformance
 **Goal**: Close the three bounded locked-decision violations (float money at the API boundary, the latent Decimal/float TypeError, the second `uuid4()` ID scheme) without changing results.
@@ -186,7 +187,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Dead Code & Doc Hygiene | v1.2 | 0/TBD | Not started | - |
+| 1. Dead Code & Doc Hygiene | v1.2 | 2/2 | Complete   | 2026-06-11 |
 | 2. Locked-Decision Conformance | v1.2 | 0/TBD | Not started | - |
 | 3. Hot-Path Performance | v1.2 | 0/TBD | Not started | - |
 | 4. Type Modeling | v1.2 | 0/TBD | Not started | - |
@@ -262,8 +263,7 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   time-in-force (`Order.expire_order()` + `OrderStatus.EXPIRED` exist but are unwired on
   the backtest path; orders currently remain PENDING at run end — result-changing,
   owner-gated). Includes the `create_order` second-path gating decision (V1.2-CLEANUP-REVIEW
-  **W4-09**). The v1.1 fix-list stragglers FL-01/FL-02 were marked **done** (quick
-  260610-sjp) — their stale ROADMAP text is corrected in v1.2 Phase 1 / DEAD-02.
+  **W4-09**). FL-01/FL-02 closed in v1.1 (quick 260610-sjp).
 
 Sources: `phases/05-…/05-CONTEXT.md`, `phases/06-…/06-CONTEXT.md`,
 `phases/07-…/07-CONTEXT.md` `<deferred>` sections; `codebase/FIX-LIST.md` (FL-01/FL-02);

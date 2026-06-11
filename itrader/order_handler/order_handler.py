@@ -3,7 +3,7 @@ from queue import Queue
 from typing import Any, Callable, List, Dict, Optional
 
 from itrader.core.portfolio_read_model import PortfolioReadModel
-from .base import OrderBase, OrderStorage
+from .base import OrderStorage
 from .order import Order
 from ..core.enums import OrderStatus
 from .order_validator import EnhancedOrderValidator
@@ -14,7 +14,7 @@ from .storage import OrderStorageFactory
 from itrader.logger import get_itrader_logger
 
 
-class OrderHandler(OrderBase):
+class OrderHandler:
 	"""
 	The OrderHandler serves as the interface layer for order management operations.
 	

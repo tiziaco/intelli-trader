@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
-status: planning
-last_updated: "2026-06-11T08:00:00.000Z"
+status: ready_to_plan
+last_updated: 2026-06-11T08:02:27.693Z
 last_activity: 2026-06-11
 progress:
-  total_phases: 6
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 10
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
+  percent: 10
+stopped_at: Phase 01 complete (2/2) — ready to discuss Phase 999.2
 ---
 
 # Project State
@@ -20,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** v1.2 Consolidation roadmap created and **renumbered to Phases 1-6** (numbering reset for v1.2, matching v1.1). A **behavior-preserving cleanup** milestone — clear the V1.2-CLEANUP-REVIEW backlog + CONCERNS.md debt, byte-exact against the golden master, leaving a clean/decomposed foundation. Next: plan Phase 1 (Dead Code & Doc Hygiene) with `/gsd:plan-phase 1`.
+**Current focus:** Phase 999.2 — nplus2 persistence and performance
 
 ## Current Position
 
-Phase: 1 — Dead Code & Doc Hygiene (not started)
-Plan: —
-Status: Roadmap created — ready to plan Phase 1
-Last activity: 2026-06-11 — v1.2 Consolidation roadmap renumbered to Phases 1-6 (numbering reset for v1.2, matching v1.1; previously drafted as Phases 10-15); 18/18 requirements mapped. The v1.1 phase working dirs were archived to `.planning/milestones/v1.1-phases/` (no directory collision).
+Phase: 999.2
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-11
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
 
@@ -60,7 +61,7 @@ Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from V1.2-CLEANUP-REVI
 
 **Velocity (v1.1):**
 
-- Total plans completed: 31
+- Total plans completed: 33
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -82,6 +83,9 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 
 (v1.1 per-plan decisions are archived in `milestones/v1.1-ROADMAP.md` and the phase records under `milestones/v1.1-phases/`.)
 
+- [Phase ?]: D-03 trim-to-truth: removed obsolete screener_event_handler Known-Bug from CONCERNS.md; trimmed ROADMAP 999.5-(d) to one FL-01/FL-02 closure line (net reduction, 260610-sjp kept)
+- [Phase ?]: D-01/D-02: four conventions documented in CONVENTIONS.md + CLAUDE.md pointer; W4-04 validator overlap documented justified-by-decision (code NOT removed)
+
 ### Pending Todos
 
 None yet.
@@ -101,6 +105,8 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
+| Phase 01 P01 | 2 | 3 tasks | 5 files |
+| Phase 01 P02 | 2 | 3 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -147,7 +153,7 @@ absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,
 
 ## Session Continuity
 
-Last session: 2026-06-11T08:00:00.000Z
+Last session: 2026-06-11T07:54:23.186Z
 Resume file: None
 
 ## Operator Next Steps

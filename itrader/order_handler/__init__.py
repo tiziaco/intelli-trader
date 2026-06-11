@@ -8,7 +8,7 @@ storage backends (in-memory for backtesting, PostgreSQL for live trading).
 from .order_handler import OrderHandler
 from .order import Order
 from ..core.enums import OrderType, OrderStatus
-from .base import OrderBase, OrderStorage
+from .base import OrderStorage
 from .storage import InMemoryOrderStorage, OrderStorageFactory
 
 __all__ = [
@@ -16,7 +16,6 @@ __all__ = [
     'Order',
     'OrderType', 
     'OrderStatus',
-    'OrderBase',
     'OrderStorage',
     'InMemoryOrderStorage',
     'OrderStorageFactory'

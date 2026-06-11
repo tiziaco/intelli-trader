@@ -44,7 +44,9 @@
 - **Indentation is file-dependent — ALWAYS match the file being edited; do not normalize:**
   - **Tabs:** most handler/manager modules under `itrader/` — `order_handler/`, `portfolio_handler/`, `execution_handler/`, `strategy_handler/`.
   - **4 spaces:** newer refactored modules — `itrader/config/`, `itrader/core/` (`money.py`, `bar.py`, `ids.py`, `clock.py`), `itrader/price_handler/feed/`, the `itrader/events_handler/events/` package, and ALL test files under `tests/`.
-- A mixed-indentation diff in a tab file will break the file.
+- A mixed-indentation diff in a tab file will break the file. **Rule: match the file, never
+  normalize** — this is a load-bearing convention (no autoformatter guards it), not an
+  inconsistency to be "cleaned up". Editing a tab module with spaces (or vice versa) is a defect.
 
 **Linting:**
 - No standalone linter config (`.flake8`, `.pylintrc`, `ruff.toml`, `.pre-commit-config.yaml`, `setup.cfg` all absent).
@@ -58,6 +60,17 @@
 - `typing` imports used where needed: `Any`, `Optional`, `Callable`, `cast`, `assert_never`.
 - Queue parameters are annotated `"Queue[Any]"` (string form) in handler constructors.
 - Python target is 3.13 (`python_version = "3.13"`).
+
+**Enum placement — `str, Enum` config-domain exception (W2-13, documented):**
+- The seven `str, Enum` config-domain enums live in `config/` (`FeeModelType`,
+  `SlippageModelType` in `config/exchange.py`; `PortfolioType` in `config/portfolio.py`;
+  the remainder in `config/system.py`), NOT in `core/enums/` — **by design**, adjudicated
+  acceptable (W2-13). They are consumed **only** by their co-located Pydantic config models,
+  never by events/handlers directly; relocating them to `core/` would invert the core→config
+  dependency (`core/` depends on nothing inside `itrader`) and gain nothing, while losing the
+  Pydantic string-serialization the `str` base provides. Domain enums consumed across handlers
+  still belong in `core/enums/`; this exception is scoped to closed sets owned by a single
+  Pydantic config model.
 
 ## Import Organization
 
@@ -88,6 +101,25 @@
 - Rejections flow as events, not exceptions: `SimulatedExchange.execute_order()` returns an `ExecutionResult(success=False, ...)` and emits a `FillEvent(REFUSED)` so the order mirror reconciles.
 - `PortfolioHandler._operation_context()` tracks active operations and publishes `PortfolioErrorEvent` on failure.
 - Backtest error policy is **fail-fast** (`EventHandler._on_handler_error` re-raises); live mode overrides this with publish-and-continue (emit `ErrorEvent`, keep draining).
+
+**Broad-`except` run-mode policy — INTENTIONAL, not an inconsistency:**
+- The split above is a deliberate per-run-mode policy, not a defect. Backtest is **fail-fast**
+  (`EventHandler._on_handler_error` re-raises so a handler failure aborts the run rather than
+  silently corrupting results); live is **publish-and-continue** (`LiveTradingSystem` overrides
+  the seam to emit an `ErrorEvent` and keep draining the queue). The `ExecutionHandler.on_order` /
+  `on_market_data` catch-and-log (no re-raise) is its own deliberate exception — it prevents a
+  single exchange error from stalling the queue. **Before editing a broad `except` in any handler,
+  verify the file's run-mode policy; do not copy a live `except` onto a backtest path** (that would
+  silently swallow a defect the backtest is supposed to surface).
+
+**Dual-layer order validation overlap — JUSTIFIED-BY-DECISION (W4-04), do NOT remove:**
+- The price/qty validation in `order_handler/order_validator.py` (the domain validator) and
+  `execution_handler/exchanges/simulated.py` (the exchange) overlaps **by design** —
+  defense-in-depth. The exchange must validate independently because `create_order` and the live
+  order path bypass the domain validator entirely; the exchange is the last line that sees every
+  order regardless of entry path. This overlap is adjudicated acceptable (W4-04). **DOCUMENT it;
+  do NOT remove either layer** — deleting the exchange-side checks would leave the bypass paths
+  unvalidated. (Refactored only if a future phase deliberately touches that surface — 999.5-(a).)
 
 ## Money Policy (correctness-critical)
 

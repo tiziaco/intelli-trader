@@ -11,17 +11,6 @@ if TYPE_CHECKING:
     from ..core.enums import OrderStatus
 
 
-class OrderBase(object):
-	"""
-	The OrderBase class offer basic order handler functionalities
-	like keeping track of the portfolio updates, check the limit
-	orders and fill them. 
-	"""
-
-	def __init__(self, events_queue: Any, portfolios: Optional[Dict[Any, Any]] = None) -> None:
-		self.portfolios = portfolios if portfolios is not None else {}
-
-
 class OrderStorage(ABC):
     """
     Abstract base class for order storage implementations.
