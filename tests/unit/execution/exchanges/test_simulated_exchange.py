@@ -487,10 +487,34 @@ class TestSimulatedExchangeOrderValidation:
             order_id=1,
         )
         result = self.exchange.validate_order(order)
-        
+
         assert result.is_valid is False
         # Check that quantity error is mentioned somewhere in the validation result
         assert "quantity must be positive" in result.error_message or any("quantity must be positive" in check for check in (result.failed_checks or []))
+        # WR-06: a non-positive quantity is an INVALID_ORDER, not a size bound.
+        assert result.error_code == ExecutionErrorCode.INVALID_ORDER
+
+    def test_non_positive_quantity_classified_invalid_order(self):
+        """WR-06: quantity <= 0 maps to INVALID_ORDER, not ORDER_SIZE_TOO_LARGE.
+
+        Pins the structured error_code for the most basic quantity-failure case.
+        Before the WR-06 fix, `_classify` fell through to ORDER_SIZE_TOO_LARGE for
+        any "quantity" check lacking "below minimum" — so a zero/negative quantity
+        ("must be positive") was reported as too-large, which is semantically
+        backwards. Covers both zero and negative quantities.
+        """
+        for bad_qty in (0.0, -100.0):
+            order = OrderEvent(
+                time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
+                price=150.0, quantity=bad_qty, exchange='simulated',
+                strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
+            )
+            result = self.exchange.validate_order(order)
+            assert result.is_valid is False
+            assert result.error_code == ExecutionErrorCode.INVALID_ORDER, (
+                f"quantity={bad_qty} should classify as INVALID_ORDER, "
+                f"got {result.error_code}"
+            )
 
     def test_quantity_limits_validation(self):
         """Test validation of order quantity limits."""

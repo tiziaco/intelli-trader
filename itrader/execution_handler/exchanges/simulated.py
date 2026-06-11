@@ -421,8 +421,15 @@ class SimulatedExchange(AbstractExchange):
 				if "invalid symbol" in lowered:
 					return ExecutionErrorCode.SYMBOL_NOT_FOUND
 				if "quantity" in lowered:
+					# WR-06: a non-positive quantity ("must be positive", emitted for
+					# quantity <= 0) is an invalid order, not a too-large size bound.
+					# Classify it explicitly before the size split so the structured
+					# error_code is not semantically backwards (TOO_LARGE for a
+					# zero/negative quantity).
+					if "must be positive" in lowered:
+						return ExecutionErrorCode.INVALID_ORDER
 					return (ExecutionErrorCode.ORDER_SIZE_TOO_SMALL
-						if "below minimum" in check
+						if "below minimum" in lowered
 						else ExecutionErrorCode.ORDER_SIZE_TOO_LARGE)
 				if "price" in lowered:
 					return ExecutionErrorCode.INVALID_PRICE
