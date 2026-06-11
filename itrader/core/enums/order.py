@@ -29,8 +29,31 @@ class OrderType(Enum):
 					return member
 		raise ValueError(f"Unknown OrderType: {value!r}")
 
-# Order Status Enum  
-OrderStatus = Enum("OrderStatus", "PENDING PARTIALLY_FILLED FILLED CANCELLED REJECTED EXPIRED")
+# Order Status Enum
+class OrderStatus(Enum):
+	"""Order lifecycle status (D-01).
+
+	Class-based with explicit string values (member name == ``.value``) and a
+	case-insensitive ``_missing_`` (OrderType house pattern) so an unknown
+	string raises a clear ``ValueError`` instead of silently coercing. The
+	int->string ``.value`` flip is byte-inert: status serializes via ``.name``,
+	never ``.value`` (D-02 audit).
+	"""
+	PENDING = "PENDING"
+	PARTIALLY_FILLED = "PARTIALLY_FILLED"
+	FILLED = "FILLED"
+	CANCELLED = "CANCELLED"
+	REJECTED = "REJECTED"
+	EXPIRED = "EXPIRED"
+
+	@classmethod
+	def _missing_(cls, value: object) -> "OrderStatus":
+		"""Case-insensitive string parse; raise a clear f-string error."""
+		if isinstance(value, str):
+			for member in cls:
+				if member.value.upper() == value.upper():
+					return member
+		raise ValueError(f"Unknown OrderStatus: {value!r}")
 
 # Order Type Mapping
 order_type_map = {
@@ -61,7 +84,24 @@ VALID_ORDER_TRANSITIONS = {
 }
 
 # Order Command Enum (NEW order, CANCEL resting order, MODIFY resting order)
-OrderCommand = Enum("OrderCommand", "NEW CANCEL MODIFY")
+class OrderCommand(Enum):
+	"""Order command verb (D-01).
+
+	Class-based with explicit string values (member name == ``.value``) and a
+	case-insensitive ``_missing_`` (OrderType house pattern).
+	"""
+	NEW = "NEW"
+	CANCEL = "CANCEL"
+	MODIFY = "MODIFY"
+
+	@classmethod
+	def _missing_(cls, value: object) -> "OrderCommand":
+		"""Case-insensitive string parse; raise a clear f-string error."""
+		if isinstance(value, str):
+			for member in cls:
+				if member.value.upper() == value.upper():
+					return member
+		raise ValueError(f"Unknown OrderCommand: {value!r}")
 
 # Order Command Mapping
 order_command_map = {
