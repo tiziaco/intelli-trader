@@ -13,12 +13,11 @@ import uuid_utils.compat as uuid_compat
 
 from itrader.portfolio_handler.position.position_manager import (
     PositionManager,
-    PositionEvent,
     PositionMetrics,
 )
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction
-from itrader.core.enums import PositionSide, TransactionType
+from itrader.core.enums import PositionSide, TransactionType, PositionEvent
 from itrader.core.exceptions import (
     InvalidTransactionError,
     PositionCalculationError,
