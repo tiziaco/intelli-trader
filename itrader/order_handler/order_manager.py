@@ -1130,8 +1130,8 @@ class OrderManager:
 						operation_type="modify_order"
 					)
 			
-			# Apply the modification. Order money is Decimal (M2a); coerce the
-			# float modify args at this boundary.
+			# Apply the modification. Order money is Decimal (M2a); normalize the
+			# Decimal modify args through the money entry point at this boundary.
 			success = order.modify_order(
 				to_money(new_price) if new_price is not None else None,
 				to_money(new_quantity) if new_quantity is not None else None,
