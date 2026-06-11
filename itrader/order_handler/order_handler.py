@@ -5,7 +5,8 @@ from typing import Any, Callable, List, Dict, Optional
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from .base import OrderStorage
 from .order import Order
-from ..core.enums import OrderStatus
+from ..core.enums import OrderStatus, MarketExecution
+from ..core.ids import OrderId, PortfolioId
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
 from ..events_handler.events import SignalEvent, OrderEvent, FillEvent, PortfolioUpdateEvent
@@ -37,7 +38,7 @@ class OrderHandler:
 	- Validation and state management
 	"""
 	def __init__(self, events_queue: "Queue[Any]", portfolio_handler: PortfolioReadModel,
-	             order_storage: Optional[OrderStorage] = None, market_execution: str = "immediate",
+	             order_storage: Optional[OrderStorage] = None, market_execution: "str | MarketExecution" = "immediate",
 	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
 		"""
 		Parameters
@@ -49,8 +50,9 @@ class OrderHandler:
 			PortfolioHandler satisfies this Protocol structurally)
 		order_storage: `OrderStorage`, optional
 			The order storage for storage operations. If None, uses InMemoryOrderStorage.
-		market_execution: str, optional
-			Market order execution timing. Options:
+		market_execution: str | MarketExecution, optional
+			Market order execution timing (passed through to OrderManager,
+			which coerces to the enum at its ctor boundary, D-06). Options:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Queue market orders for next bar execution (realistic backtesting)
 		commission_estimator: Callable[[Decimal, Decimal], Decimal], optional

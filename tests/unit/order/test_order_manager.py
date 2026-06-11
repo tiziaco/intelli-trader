@@ -25,7 +25,7 @@ from itrader.order_handler.storage import OrderStorageFactory
 from itrader.order_handler.storage.in_memory_storage import InMemoryOrderStorage
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.events_handler.events import SignalEvent, OrderEvent, FillEvent
-from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side, OrderTriggerSource
+from itrader.core.enums import OrderType, OrderCommand, OrderStatus, Side, OrderTriggerSource, MarketExecution
 from itrader.core.exceptions import InsufficientFundsError
 from itrader.core.sizing import FractionOfCash, TradingDirection
 
@@ -49,8 +49,10 @@ def test_order_manager_initialization():
         order_storage, logger, market_execution="next_bar"
     )
 
-    assert order_manager_immediate.market_execution == "immediate"
-    assert order_manager_next_bar.market_execution == "next_bar"
+    # D-06: market_execution is coerced to the enum at the OrderManager ctor
+    # boundary (str in, enum stored). The .value stays the byte-identical literal.
+    assert order_manager_immediate.market_execution is MarketExecution.IMMEDIATE
+    assert order_manager_next_bar.market_execution is MarketExecution.NEXT_BAR
     assert order_manager_immediate.order_storage == order_storage
     assert order_manager_immediate.logger == logger
     # No back-reference to the handler exists (D-18)

@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, assert_never, cast
 from .order import Order
 from .operation_result import OperationResult
-from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side, OrderOperationType, OrderTriggerSource
+from ..core.enums import OrderCommand, OrderStatus, OrderType, FillStatus, Side, OrderOperationType, OrderTriggerSource, MarketExecution
 from ..core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ..core.ids import OrderId, PortfolioId, StrategyId
 from ..core.money import to_money
@@ -67,7 +67,7 @@ class OrderManager:
 	"""
 	
 	def __init__(self, order_storage: OrderStorage, logger: Any,
-	             market_execution: str = "immediate",
+	             market_execution: "str | MarketExecution" = "immediate",
 	             portfolio_handler: Optional[PortfolioReadModel] = None,
 	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
 		"""
@@ -85,8 +85,9 @@ class OrderManager:
 			Storage interface for order operations (manager-owned, D-18)
 		logger : Logger
 			Logger instance for order processing events
-		market_execution : str
-			Market order execution mode:
+		market_execution : str | MarketExecution
+			Market order execution mode (coerced to MarketExecution at this
+			ctor boundary; accepts a str for backward-compat, D-06):
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Execute market orders on next bar (realistic backtesting)
 		portfolio_handler : PortfolioReadModel, optional
@@ -102,7 +103,9 @@ class OrderManager:
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
-		self.market_execution = market_execution
+		# D-06: coerce at the ctor boundary — store the enum member (a str is
+		# parsed via MarketExecution._missing_; an enum member is a no-op).
+		self.market_execution = MarketExecution(market_execution)
 		self.portfolio_handler = portfolio_handler
 		self.commission_estimator = commission_estimator
 
