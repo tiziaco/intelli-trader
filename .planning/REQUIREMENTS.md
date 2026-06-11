@@ -70,8 +70,11 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   and `_PendingBracket` are `frozen=True, slots=True, kw_only=True` facts. [W2-03, W2-04, W2-12]
 - [ ] **TYPE-02**: Fee/slippage model dispatch compares enum members with `assert_never`
   exhaustiveness (not `.value` strings); `rebalance_frequency` is validated at the Pydantic
-  boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented. [W2-08,
-  W2-09, W2-11]
+  boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented; and the
+  `OrderHandler`/`OrderManager` public-API `order_id: int` / `portfolio_id: int` method-parameter
+  annotations are retyped to the `OrderId` / `PortfolioId` NewTypes (`core/ids.py`), consistent with
+  the single-UUIDv7 scheme — UUIDs already flow through these methods at runtime. [W2-08, W2-09,
+  W2-11, DEF-02-03]
 - [ ] **TYPE-03**: Closed string vocabularies become enums in `core/enums/` — `ErrorSeverity`,
   `OrderOperationType`, `OrderTriggerSource`, and `market_execution` — with the canonical
   class-based form (`_missing_` + `<domain>_<type>_map` where they cross a boundary). [W2-07,

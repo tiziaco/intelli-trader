@@ -143,7 +143,7 @@ Plans:
 **Requirements**: TYPE-01, TYPE-02, TYPE-03, TYPE-04, TYPE-05
 **Success Criteria** (what must be TRUE):
   1. `FillDecision`, `CancelDecision`, `OperationResult`, `SignalProcessingResult`, and `_PendingBracket` are `frozen=True, slots=True, kw_only=True` facts.
-  2. Fee/slippage model dispatch compares enum members with `assert_never` exhaustiveness (not `.value` strings); `rebalance_frequency` is validated at the Pydantic boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented.
+  2. Fee/slippage model dispatch compares enum members with `assert_never` exhaustiveness (not `.value` strings); `rebalance_frequency` is validated at the Pydantic boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented; and the `OrderHandler`/`OrderManager` public-API `order_id: int` / `portfolio_id: int` method-parameter annotations are retyped to `OrderId` / `PortfolioId` (single-UUIDv7 conformance; carried over from Phase 2 DEF-02-03).
   3. `ErrorSeverity`, `OrderOperationType`, `OrderTriggerSource`, and `market_execution` are class-based string-valued enums in `core/enums/` (with `_missing_` + `<domain>_<type>_map` where they cross a boundary), and `OrderStatus`/`OrderCommand` are converted to the same canonical form with working `order_status_map` `.value` lookups (int→string value change audited against serialization/tests).
   4. The `BaseStrategyConfig` base contract lives in `itrader/config/strategy.py` (re-exported via `config/__init__.py`), consistent with `ExchangeConfig`/`PortfolioConfig`/`SystemConfig`; all importers updated.
   5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
