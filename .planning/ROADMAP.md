@@ -109,9 +109,12 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   `PortfolioHandler.update_config` / `Portfolio.update_config` /
   `SimulatedExchange.update_config` exist, with inconsistent signatures (`Dict` updates vs
   `**kwargs`); `OrderHandler`/`OrderManager`, `StrategiesHandler`, `ExecutionHandler`, and
-  the feed have none. Related cleanup item: `BaseStrategyConfig` relocation from
-  `strategy_handler/config.py` to `itrader/config/` (SYN-02 — cleanup-eligible, coordinate
-  here only if (b) lands first).
+  the feed have none. Related: the order domain has **no Pydantic config model at all**
+  (no `config/order.py`; `OrderManager` takes loose ctor params incl. stringly-typed
+  `market_execution` — V1.2-CLEANUP-REVIEW SYN-05) — create `OrderConfig` and thread it
+  here alongside `ExchangeConfig`. Related cleanup item: `BaseStrategyConfig` relocation
+  from `strategy_handler/config.py` to `itrader/config/` (SYN-02 — cleanup-eligible,
+  coordinate here only if (b) lands first).
 - **(c) Declared-indicator framework** — indicator abstraction on the strategy base with
   auto-derived warmup (à la nautilus `register_indicator_for_bars` / LEAN `SetWarmUp` /
   backtrader auto-min-period), so authors stop hand-setting `max_window`. Captured in
