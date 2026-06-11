@@ -430,8 +430,8 @@ def test_correlation_id_generation(env):
     id2 = env.handler._generate_correlation_id()
 
     assert id1 != id2
-    assert id1.startswith("ph_")
-    assert id2.startswith("ph_")
+    assert isinstance(id1, uuid.UUID)
+    assert isinstance(id2, uuid.UUID)
 
 
 def test_thread_safety_concurrent_creation(env):
