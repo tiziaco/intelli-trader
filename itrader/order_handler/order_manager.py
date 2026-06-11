@@ -31,7 +31,7 @@ from .sizing_resolver import SizingResolver
 _ONE = Decimal("1")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _PendingBracket:
 	"""Context for a PercentFromFill bracket awaiting its parent's fill (D-13).
 
