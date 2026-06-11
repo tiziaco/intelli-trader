@@ -26,7 +26,7 @@ class EventHandler(object):
 	and position sizer), the portfolio handler and the execution handler
 	(with its transaction cost model).
 
-	Routing is data: ``self._routes`` maps each ``EventType`` to the list
+	Routing is data: ``self.routes`` maps each ``EventType`` to the list
 	of handler callables that consume it — LIST ORDER IS EXECUTION ORDER
 	(D-14). Handlers stay passive: there is no registration API; the
 	registry is one reviewable literal owned by this class.
@@ -65,7 +65,7 @@ class EventHandler(object):
 		# One reviewable literal — change routing here and nowhere else.
 		# Return type is Any: the dispatcher ignores handler return values
 		# (some collaborators return status values for their own callers).
-		self._routes: dict[EventType, list[Callable[[Any], Any]]] = {
+		self.routes: dict[EventType, list[Callable[[Any], Any]]] = {
 			EventType.TIME: [
 				self.screeners_handler.screen_markets,
 				self.bar_event_source,
@@ -115,7 +115,7 @@ class EventHandler(object):
 			# D-21: per-tick flow log demoted from INFO to DEBUG.
 			self.logger.debug(f"TIME EVENT: {event.time}")
 		try:
-			handlers = self._routes[event.type]
+			handlers = self.routes[event.type]
 		except KeyError:
 			raise NotImplementedError(
 				f"EventHandler: unsupported event type {event.type!r}"
