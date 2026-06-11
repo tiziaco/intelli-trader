@@ -130,6 +130,66 @@ def test_snapshot_history_limit(env):
     assert first_snapshot.total_equity == Decimal("105000.0")
 
 
+def test_trim_uses_snapshot_accessors(env, monkeypatch):
+    """PERF-01 / D-06 consumer-side regression lock (GREEN, not test-first).
+
+    Proves the per-tick snapshot path in MetricsManager consumes the count-only /
+    last-only accessors (snapshot_count() / get_latest_snapshot()) and does NOT
+    call the whole-list-copying get_snapshots() on the trim/empty/last branches.
+    Also proves the never-firing trim still does not fire (no set_snapshots call
+    on the exercised per-tick path).
+
+    Idiom analog: test_bar_feed.py::test_zero_resample_calls_on_per_tick_path —
+    monkeypatch a method to detect call-presence on the hot path.
+    """
+    mm = env.metrics_manager
+    storage = mm._storage
+
+    # Sentinel: get_snapshots() MUST NOT be called on the per-tick path.
+    def _boom(*a, **k):
+        raise AssertionError(
+            "get_snapshots called on per-tick path — accessors not consumed (D-06)"
+        )
+
+    monkeypatch.setattr(storage, "get_snapshots", _boom)
+
+    # Counting spies on the consumed accessors + the trim setter.
+    counts = {"snapshot_count": 0, "get_latest_snapshot": 0, "set_snapshots": 0}
+    orig_count = storage.snapshot_count
+    orig_latest = storage.get_latest_snapshot
+    orig_set = storage.set_snapshots
+
+    def _count(*a, **k):
+        counts["snapshot_count"] += 1
+        return orig_count(*a, **k)
+
+    def _latest(*a, **k):
+        counts["get_latest_snapshot"] += 1
+        return orig_latest(*a, **k)
+
+    def _set(*a, **k):
+        counts["set_snapshots"] += 1
+        return orig_set(*a, **k)
+
+    monkeypatch.setattr(storage, "snapshot_count", _count)
+    monkeypatch.setattr(storage, "get_latest_snapshot", _latest)
+    monkeypatch.setattr(storage, "set_snapshots", _set)
+
+    # Drive the per-tick paths: record_snapshot (trim guard) + get_current_metrics
+    # (empty-guard + latest-read). With max_snapshots at its default, the trim
+    # never fires — exactly the golden-run condition.
+    mm.record_snapshot(datetime.now())
+    current = mm.get_current_metrics()
+
+    # Completed without invoking get_snapshots() (the _boom sentinel never fired).
+    assert "total_equity" in current
+    # The count-only / last-only accessors WERE exercised on the per-tick path.
+    assert counts["snapshot_count"] > 0, "snapshot_count() not consumed on per-tick path"
+    assert counts["get_latest_snapshot"] > 0, "get_latest_snapshot() not consumed on per-tick path"
+    # The never-firing trim still does not fire (no whole-list set_snapshots).
+    assert counts["set_snapshots"] == 0, "trim fired unexpectedly on the per-tick path"
+
+
 def test_get_current_metrics(env):
     """Test getting current portfolio metrics."""
     mm = env.metrics_manager
