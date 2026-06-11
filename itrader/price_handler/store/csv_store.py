@@ -162,7 +162,11 @@ class CsvPriceStore(PriceStore):
         # Map Open time->date, Open/High/Low/Close/Volume->lowercase, drop the
         # trailing Binance-kline columns (Close time, Quote asset volume,
         # Number of trades, Taker buy base/quote, Ignore).
-        data = raw[expected_cols].copy()
+        # W1-09: no defensive .copy() — `data.columns =` only relabels (no value
+        # write under pandas CoW) and `.set_index`/`.astype` below build a fresh
+        # frame, so the column-select view is never mutated in place; the copy
+        # was redundant on the load path.
+        data = raw[expected_cols]
         data.columns = ['date', 'open', 'high', 'low', 'close', 'volume']
 
         # Format index exactly like the legacy csv path: tz-aware then convert

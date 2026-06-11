@@ -274,8 +274,9 @@ class PositionManager:
         total_value = Decimal('0.00')
 
         for position in self._storage.get_positions().values():
-            market_value = Decimal(str(position.market_value))
-            total_value += market_value
+            # W1-08: position.market_value is already -> Decimal at source
+            # (position.py:70); the Decimal(str(...)) re-wrap was a no-op.
+            total_value += position.market_value
 
         return total_value
 
@@ -284,8 +285,8 @@ class PositionManager:
         total_pnl = Decimal('0.00')
 
         for position in self._storage.get_positions().values():
-            unrealized_pnl = Decimal(str(position.unrealised_pnl))
-            total_pnl += unrealized_pnl
+            # W1-08: position.unrealised_pnl is already -> Decimal at source.
+            total_pnl += position.unrealised_pnl
 
         return total_pnl
 
@@ -294,14 +295,13 @@ class PositionManager:
         total_pnl = Decimal('0.00')
 
         # Add realized P&L from open positions
+        # W1-08: position.realised_pnl is already -> Decimal at source.
         for position in self._storage.get_positions().values():
-            realized_pnl = Decimal(str(position.realised_pnl))
-            total_pnl += realized_pnl
+            total_pnl += position.realised_pnl
 
         # Add realized P&L from closed positions
         for position in self._storage.get_closed_positions():
-            realized_pnl = Decimal(str(position.realised_pnl))
-            total_pnl += realized_pnl
+            total_pnl += position.realised_pnl
 
         return total_pnl
     
