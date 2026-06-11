@@ -1084,7 +1084,7 @@ class OrderManager:
 			error_details=reason,
 			operation_type=operation_type)
 
-	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None,
+	def modify_order(self, order_id: int, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
 	                portfolio_id: Optional[int] = None, reason: str = "user modification") -> OperationResult:
 		"""
 		Modify an existing order and generate OrderEvent.
@@ -1093,15 +1093,15 @@ class OrderManager:
 		----------
 		order_id : int
 			The ID of the order to modify
-		new_price : float, optional
+		new_price : Decimal, optional
 			New price for the order
-		new_quantity : float, optional
+		new_quantity : Decimal, optional
 			New quantity for the order
 		portfolio_id : int, optional
 			Portfolio ID for faster lookup
 		reason : str, optional
 			Reason for the modification
-			
+
 		Returns
 		-------
 		OperationResult

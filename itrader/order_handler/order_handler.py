@@ -118,7 +118,7 @@ class OrderHandler:
 			self.events_queue.put(order_event)
 			self.logger.debug('Orphaned-child cancel event sent to execution handler: %s', order_event)
 
-	def modify_order(self, order_id: int, new_price: Optional[float] = None, new_quantity: Optional[float] = None, 
+	def modify_order(self, order_id: int, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
 	                portfolio_id: Optional[Any] = None, reason: str = "user modification") -> bool:
 		"""
 		Modify an active order through OrderManager and generate OrderEvent.
@@ -130,9 +130,9 @@ class OrderHandler:
 		----------
 		order_id : int
 			The ID of the order to modify
-		new_price : float, optional
+		new_price : Decimal, optional
 			New price for the order
-		new_quantity : float, optional
+		new_quantity : Decimal, optional
 			New quantity for the order
 		portfolio_id : int, optional
 			Portfolio ID for faster lookup
