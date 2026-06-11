@@ -57,7 +57,7 @@ from itrader.events_handler.events import OrderEvent, BarEvent
 from itrader.core.enums import OrderType, Side
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FillDecision:
     """One resting order has matched and should be filled.
 
@@ -72,7 +72,7 @@ class FillDecision:
     reason: str
 
 
-@dataclass
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CancelDecision:
     """One resting order should be cancelled (OCO sibling of a fill)."""
     order_event: OrderEvent
@@ -286,7 +286,8 @@ class MatchingEngine:
                 if (sibling.parent_order_id == bracket
                         and sibling.order_id != order_id
                         and sibling.order_id not in cancelled_ids):
-                    cancels.append(CancelDecision(sibling, "OCO - sibling filled"))
+                    cancels.append(CancelDecision(
+                        order_event=sibling, reason="OCO - sibling filled"))
                     cancelled_ids.add(sibling.order_id)
 
         # 4. Remove filled + cancelled children from the book (pass-1 fills
