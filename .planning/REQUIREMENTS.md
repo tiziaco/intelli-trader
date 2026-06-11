@@ -152,30 +152,38 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEAD-01 | TBD | Pending |
-| DEAD-02 | TBD | Pending |
-| DEC-01 | TBD | Pending |
-| DEC-02 | TBD | Pending |
-| DEC-03 | TBD | Pending |
-| PERF-01 | TBD | Pending |
-| PERF-02 | TBD | Pending |
-| PERF-03 | TBD | Pending |
-| TYPE-01 | TBD | Pending |
-| TYPE-02 | TBD | Pending |
-| TYPE-03 | TBD | Pending |
-| TYPE-04 | TBD | Pending |
-| TYPE-05 | TBD | Pending |
-| NAME-01 | TBD | Pending |
-| NAME-02 | TBD | Pending |
-| NAME-03 | TBD | Pending |
-| NAME-04 | TBD | Pending |
-| MOD-01 | TBD | Pending |
+| DEAD-01 | Phase 1 | Pending |
+| DEAD-02 | Phase 1 | Pending |
+| DEC-01 | Phase 2 | Pending |
+| DEC-02 | Phase 2 | Pending |
+| DEC-03 | Phase 2 | Pending |
+| PERF-01 | Phase 3 | Pending |
+| PERF-02 | Phase 3 | Pending |
+| PERF-03 | Phase 3 | Pending |
+| TYPE-01 | Phase 4 | Pending |
+| TYPE-02 | Phase 4 | Pending |
+| TYPE-03 | Phase 4 | Pending |
+| TYPE-04 | Phase 4 | Pending |
+| TYPE-05 | Phase 4 | Pending |
+| NAME-01 | Phase 5 | Pending |
+| NAME-02 | Phase 5 | Pending |
+| NAME-03 | Phase 5 | Pending |
+| NAME-04 | Phase 5 | Pending |
+| MOD-01 | Phase 6 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 18 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 18 ⚠️ (resolved by roadmap)
+- Mapped to phases: 18 ✓ (Phases 1-6; each requirement maps to exactly one phase)
+- Unmapped: 0 ✓
+
+**Phase rollup:**
+- Phase 1 — Dead Code & Doc Hygiene: DEAD-01, DEAD-02 (2)
+- Phase 2 — Locked-Decision Conformance: DEC-01, DEC-02, DEC-03 (3)
+- Phase 3 — Hot-Path Performance: PERF-01, PERF-02, PERF-03 (3)
+- Phase 4 — Type Modeling: TYPE-01, TYPE-02, TYPE-03, TYPE-04, TYPE-05 (5)
+- Phase 5 — Naming & Encapsulation: NAME-01, NAME-02, NAME-03, NAME-04 (4)
+- Phase 6 — Order-Manager Decomposition: MOD-01 (1) — dedicated, isolated, last phase
 
 ---
 *Requirements defined: 2026-06-11*
-*Last updated: 2026-06-11 after initial definition (v1.2 Consolidation)*
+*Last updated: 2026-06-11 — roadmap renumbered (v1.2 Consolidation, Phases 1-6; numbering reset matching v1.1); 18/18 requirements mapped*

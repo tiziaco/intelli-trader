@@ -4,7 +4,8 @@
 
 - ✅ **v1.0 — Backtest-Correctness Refactor** — Phases 1-8 (shipped 2026-06-08)
 - ✅ **v1.1 — Backtest Trustworthiness: Breadth** — Phases 1-9 (shipped 2026-06-10)
-- 📋 **v1.2 — Engine Surface Completion** — Backlog (planned, promote ahead of N+2)
+- 🚧 **v1.2 — Consolidation** — Phases 1-6 (in progress, started 2026-06-11; numbering reset for v1.2, matching v1.1)
+- 📋 **Engine Surface Completion** — Backlog Phase 999.5 (planned, promote next, ahead of N+2)
 - 📋 **N+2 — Margin, Leverage, Shorts & Trailing Stops** — Backlog (planned)
 - 📋 **N+3 — Persistence & Performance** — Backlog (planned)
 - 📋 **N+4 — Live Trading Readiness** — Backlog (planned)
@@ -16,7 +17,12 @@ v1.0 — [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md) ·
 v1.1 — [`milestones/v1.1-ROADMAP.md`](./milestones/v1.1-ROADMAP.md) ·
 [`v1.1-REQUIREMENTS.md`](./milestones/v1.1-REQUIREMENTS.md) ·
 [`v1.1-MILESTONE-AUDIT.md`](./milestones/v1.1-MILESTONE-AUDIT.md).
-v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 phase dirs remain under `phases/` (archive retroactively with `/gsd:cleanup`).
+v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 phase dirs are archived under `milestones/v1.1-phases/`.
+
+> **Note on milestone naming:** the **active v1.2 is _Consolidation_** — a behavior-preserving
+> cleanup milestone (this roadmap, Phases 1-6). The feature work formerly seeded as
+> "v1.2 — Engine Surface Completion" was **deferred** to the next milestone and remains in the
+> Backlog as Phase 999.5; it will be promoted after v1.2 Consolidation ships, ahead of N+2.
 
 ## Phases
 
@@ -49,24 +55,148 @@ framework → interface hardening → scenario waves. LONG-ONLY throughout; beha
 
 </details>
 
+### 🚧 v1.2 — Consolidation (In Progress)
+
+**Milestone Goal:** Put the engine in order — clear the v1.1 cleanup-review backlog
+(`.planning/codebase/V1.2-CLEANUP-REVIEW.md`, 46 findings) and the `CONCERNS.md` dead/fragile/
+tangled debt — **byte-exact against the golden master** — so the next milestone's engine-surface
+features build on a clean, decomposed foundation. **Behavior-preserving: re-baselines NOTHING.**
+
+Phase numbering starts at Phase 1 (numbering reset for v1.2, matching v1.1). Phases follow the
+V1.2-CLEANUP-REVIEW §6 oracle-checkable batch sequence: dead-code/docs → locked-decision
+conformance → hot-path perf → type modeling → naming/encapsulation → the isolated
+`order_manager.py` god-module split (last, FRAGILE, dedicated). Result-changing / new-framework
+items (SIG/COMP/IND/LIFE) are explicitly deferred to the next milestone (Backlog Phase 999.5).
+
+**Milestone-wide gate (applies to EVERY phase):**
+- `pytest tests/integration` byte-exact oracle held — **134 trades / `final_equity 46189.87730727451`** (no re-baseline)
+- `pytest tests/e2e -m e2e` **58/58 green** (no leaf re-baselined); full suite green
+- **`mypy --strict` clean** across all source files
+- No new float-for-money; single UUIDv7 ID scheme (no second `uuid4()` on the run path)
+- **FRAGILE-zone rule:** any touch of `order_manager.py` fill-reconciliation / reservation-release
+  requires the golden-master re-run; the terminal-status / `should_release` / `finally`-release
+  interplay must never change.
+
+- [ ] **Phase 1: Dead Code & Doc Hygiene** - Delete dead ABCs / `OrderBase` / dead numpy import; correct stale CONCERNS/ROADMAP notes; document the config-enum / run-mode / indentation conventions
+- [ ] **Phase 2: Locked-Decision Conformance** - `Optional[Decimal]` money API; Decimal `_min/_max_order_size` (latent-TypeError fix); retire the `uuid4()` second ID scheme
+- [ ] **Phase 3: Hot-Path Performance** - Eliminate per-tick storage copies + add snapshot accessors; drop `Decimal(str(Decimal))` re-wraps + duplicated per-tick work; prebuilt `Bar` lookups + guarded MACD
+- [ ] **Phase 4: Type Modeling** - Freeze decision/result dataclasses; class-based `OrderStatus`/`OrderCommand` + new `core/enums`; enum-member dispatch; relocate `BaseStrategyConfig` to `config/`
+- [ ] **Phase 5: Naming & Encapsulation** - `events_queue→global_queue`; strategy PascalCase + `*_window`; publicize `routes`; `register_symbol()` API; test hygiene through public APIs
+- [ ] **Phase 6: Order-Manager Decomposition** - Split the 1279-line `order_manager.py` god-module into `admission/`/`brackets/`/`reconcile/` collaborators — pure code-motion, isolated, byte-exact (FRAGILE)
+
+### 📋 Engine Surface Completion (Planned — Backlog Phase 999.5)
+
+**Milestone Goal:** Complete the signal/order contracts, the composition/config interface, the
+declared-indicator framework, and order-lifecycle/TIF — the result-changing / new-framework items
+deferred out of v1.2 Consolidation. Promote after v1.2, ahead of N+2. See Backlog Phase 999.5.
+
+## Phase Details
+
+### Phase 1: Dead Code & Doc Hygiene
+**Goal**: Remove dead code and correct stale documentation so the tree and the planning docs tell the truth — oracle-dark, pure deletions plus doc edits.
+**Depends on**: v1.1 shipped (Phase 9, now archived)
+**Requirements**: DEAD-01, DEAD-02
+**Success Criteria** (what must be TRUE):
+  1. The dead ABCs (`AbstractPortfolioHandler`/`AbstractPortfolio`/`AbstractPosition` + orphan `get_last_close`), the unused `OrderBase`, and the dead `import numpy as np` in `portfolio.py` are deleted with zero importer breakage; full suite green.
+  2. Stale docs are corrected: the CONCERNS.md `screener_event_handler` item is closed (file already gone), and ROADMAP 999.5-(d) FL-01/FL-02 text reads "done".
+  3. CONVENTIONS/CLAUDE documents the config-enum-in-`config/` exception, the broad-`except` run-mode policy (backtest fail-fast vs live publish-and-continue), the tab/space indentation hazard, and the dual-layer validator overlap as justified-by-decision (not removed).
+  4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (decompose with /gsd:plan-phase 1)
+
+### Phase 2: Locked-Decision Conformance
+**Goal**: Close the three bounded locked-decision violations (float money at the API boundary, the latent Decimal/float TypeError, the second `uuid4()` ID scheme) without changing results.
+**Depends on**: Phase 1
+**Requirements**: DEC-01, DEC-02, DEC-03
+**Success Criteria** (what must be TRUE):
+  1. `modify_order`/`cancel_order` public API price/quantity params are typed `Optional[Decimal]`, not `Optional[float]` — no float-for-money at a domain boundary.
+  2. `_min/_max_order_size` are carried as `Decimal` end-to-end and the latent `Decimal < float` `TypeError` on the below-minimum validation path is removed; the golden run is confirmed never to route through the broken comparison and the oracle is byte-exact.
+  3. Correlation IDs use the single UUIDv7 `idgen` scheme (or a deterministic counter); `uuid.uuid4()` is gone from the run path (single ID scheme restored, no non-deterministic crypto RNG).
+  4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green; determinism double-run byte-identical.
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (decompose with /gsd:plan-phase 2)
+
+### Phase 3: Hot-Path Performance
+**Goal**: Eliminate the dominant per-tick perf costs — defensive storage copies, redundant Decimal re-wraps, duplicated per-tick work, and per-tick Bar/MACD churn — with bit-identical values.
+**Depends on**: Phase 2
+**Requirements**: PERF-01, PERF-02, PERF-03
+**Success Criteria** (what must be TRUE):
+  1. In-memory portfolio storage no longer copies the snapshot list / position dicts per tick under the D-19 single-writer contract; `snapshot_count()` / `get_latest_snapshot()` accessors replace the never-firing per-tick trim copy, and live-backend copies stay behind an explicit `*_snapshot()` variant.
+  2. Redundant `Decimal(str(Decimal))` re-wraps on the mark-to-market/equity path and duplicated per-tick work (`open_position_count` ×2, `is_connected` ×2–3, active-portfolio recompute, premature `on_fill` guard allocation, load-time copy) are eliminated.
+  3. MACD is computed inside the SMA guard (not unconditionally before it), and `BacktestBarFeed` serves prebuilt `Bar`s instead of 5 `Decimal(str(...))` conversions per symbol per tick; values bit-identical.
+  4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (decompose with /gsd:plan-phase 3)
+
+### Phase 4: Type Modeling
+**Goal**: Make closed vocabularies enums and decision/result objects frozen facts — bring `OrderStatus`/`OrderCommand` and four new vocabularies onto the canonical class-based enum form, freeze the engine's decision DTOs, harden config-boundary validation, and co-locate the strategy config base.
+**Depends on**: Phase 3
+**Requirements**: TYPE-01, TYPE-02, TYPE-03, TYPE-04, TYPE-05
+**Success Criteria** (what must be TRUE):
+  1. `FillDecision`, `CancelDecision`, `OperationResult`, `SignalProcessingResult`, and `_PendingBracket` are `frozen=True, slots=True, kw_only=True` facts.
+  2. Fee/slippage model dispatch compares enum members with `assert_never` exhaustiveness (not `.value` strings); `rebalance_frequency` is validated at the Pydantic boundary; the `PortfolioConfig.portfolio_id` false affordance is removed or documented.
+  3. `ErrorSeverity`, `OrderOperationType`, `OrderTriggerSource`, and `market_execution` are class-based string-valued enums in `core/enums/` (with `_missing_` + `<domain>_<type>_map` where they cross a boundary), and `OrderStatus`/`OrderCommand` are converted to the same canonical form with working `order_status_map` `.value` lookups (int→string value change audited against serialization/tests).
+  4. The `BaseStrategyConfig` base contract lives in `itrader/config/strategy.py` (re-exported via `config/__init__.py`), consistent with `ExchangeConfig`/`PortfolioConfig`/`SystemConfig`; all importers updated.
+  5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (decompose with /gsd:plan-phase 4)
+
+### Phase 5: Naming & Encapsulation
+**Goal**: Make names consistent and close the encapsulation gaps — uniform `global_queue`/count-by-status naming, PascalCase strategies with `*_window` config, a public `routes` accessor, a real `register_symbol()`/`update_config` exchange seam, and tests that assert through public APIs.
+**Depends on**: Phase 4
+**Requirements**: NAME-01, NAME-02, NAME-03, NAME-04
+**Success Criteria** (what must be TRUE):
+  1. `OrderHandler` names its queue `global_queue` (constructor param + attribute), not `events_queue`, and the count-by-status operation has a single precise name across façade and storage.
+  2. Strategy classes are PascalCase (`SMAMACDStrategy` / `EmptyStrategy`) and strategy-config windows are `fast_window`/`slow_window`/`signal_window` (not `FAST`/`SLOW`/`WIN`); all importers (scripts/tests/crossval/e2e) are updated.
+  3. `EventHandler` routes are reachable through a public name/accessor (not `_routes`); `SimulatedExchange` exposes `register_symbol()` + a complete `update_config` seam, and production code no longer mutates `_supported_symbols`/`_min_order_size` directly.
+  4. Tests assert through public query APIs, not `_by_id`/`_storage`/`_routes`/`_generate_correlation_id` internals.
+  5. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (decompose with /gsd:plan-phase 5)
+
+### Phase 6: Order-Manager Decomposition
+**Goal**: Decompose the 1279-line `order_manager.py` god-module into focused collaborators under `order_handler/` (mirroring the `portfolio_handler/` manager layout) — pure code-motion, no semantics change, dedicated and isolated as the LAST phase so the FRAGILE fill-reconciliation / reservation-release path is never bundled with behavior fixes.
+**Depends on**: Phase 5 (and ALL other v1.2 phases — this is the dedicated late, isolated phase; nothing else ships in it)
+**Requirements**: MOD-01
+**Success Criteria** (what must be TRUE):
+  1. `order_manager.py` is decomposed into `admission/`, `brackets/`, and `reconcile/` collaborators under `order_handler/`, mirroring the `portfolio_handler/` manager layout — as pure code-motion with no semantics change.
+  2. The terminal-status / `should_release` / `finally`-release interplay (CONCERNS.md Fragile Areas) is byte-for-byte unchanged in behavior; `release` idempotency preserved.
+  3. This is the sole change in the phase — no enum, naming, perf, or doc change rides along (FRAGILE-zone isolation rule).
+  4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green; determinism double-run byte-identical.
+**Plans**: TBD
+
+Plans:
+- [ ] TBD (decompose with /gsd:plan-phase 6)
+
 ## Progress
+
+**Execution Order:**
+v1.2 phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 (Phase 6 is the dedicated,
+isolated, LAST phase — the `order_manager.py` god-module split).
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Codebase Map & Clarity Baseline | v1.1 | 2/2 | Complete | 2026-06-09 |
-| 2. Data Ingestion | v1.1 | 1/1 | Complete | 2026-06-09 |
-| 3. Minimal Real Universe | v1.1 | 3/3 | Complete | 2026-06-09 |
-| 4. E2E Harness & Framework | v1.1 | 3/3 | Complete | 2026-06-09 |
-| 5. Strategy Interface Hardening & Signal Storage | v1.1 | 3/3 | Complete | 2026-06-09 |
-| 6. Order Matching Scenarios | v1.1 | 5/5 | Complete | 2026-06-09 |
-| 7. Cost, Sizing & SLTP Scenarios | v1.1 | 4/4 | Complete | 2026-06-10 |
-| 8. Admission, Position Management & Cash Edges | v1.1 | 3/3 | Complete | 2026-06-10 |
-| 9. Multi-Entity, Robustness & Metrics Edges | v1.1 | 4/4 | Complete | 2026-06-10 |
+| 1. Dead Code & Doc Hygiene | v1.2 | 0/TBD | Not started | - |
+| 2. Locked-Decision Conformance | v1.2 | 0/TBD | Not started | - |
+| 3. Hot-Path Performance | v1.2 | 0/TBD | Not started | - |
+| 4. Type Modeling | v1.2 | 0/TBD | Not started | - |
+| 5. Naming & Encapsulation | v1.2 | 0/TBD | Not started | - |
+| 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
 
 ## Backlog
 
 > Future **milestone-level** seeds — intent + rationale only, NOT detailed plans.
-> **Logical promotion order: N+1 → Engine Surface Completion (999.5) → N+2 → N+3 → N+4**
+> **Logical promotion order: Engine Surface Completion (999.5) → N+2 → N+3 → N+4**
 > (the `N+x` labels carry the dependency order; the `999.x` decimals are just stable IDs
 > and need not match the order). Promote one at a time with `/gsd:review-backlog` (or
 > start it via `/gsd:new-milestone`); defer detailed planning until promotion so each
@@ -76,17 +206,19 @@ framework → interface hardening → scenario waves. LONG-ONLY throughout; beha
 > multi-currency accounting and trading-calendar / corporate-action work are deferred
 > indefinitely — see the "Deferred: multi-asset" note at the end.
 >
-> **N+1 (Backtest Trustworthiness: Breadth) was promoted to active milestone v1.1 on
-> 2026-06-09** — see the `## Phases` section above. Its former backlog seed (Phase 999.1)
-> is retired.
+> **N+1 (Backtest Trustworthiness: Breadth) was promoted to milestone v1.1 (shipped
+> 2026-06-10).** **v1.2 — Consolidation** (cleanup, Phases 1-6) is now the active milestone —
+> see the `## Phases` section above. The Engine Surface Completion feature work (Phase 999.5
+> below) was deferred out of v1.2 and is the next milestone to promote.
 
-### Phase 999.5: v1.2 — Engine Surface Completion (BACKLOG)
+### Phase 999.5: Engine Surface Completion (BACKLOG — promote next, after v1.2 Consolidation)
 
 **Goal:** Consolidate the missing engine-surface features and deferred fixes that surfaced
 during v1.1 execution into one milestone — complete the signal/order contracts, give the
 system a real composition/config interface, and land the indicator abstraction — BEFORE
-N+2 builds margin/shorts on top of these same surfaces.
-**Requirements:** TBD
+N+2 builds margin/shorts on top of these same surfaces. (These are the **result-changing /
+new-framework** items deferred out of v1.2 Consolidation so the cleanup foundation lands first.)
+**Requirements:** SIG-01, SIG-02, COMP-01, IND-01, LIFE-01 (see `REQUIREMENTS.md` v-next section)
 **Plans:** 0 plans
 
 Scope (intent only — consolidated from the v1.1 capture registers):
@@ -97,7 +229,11 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   sections as *"a real missing PRODUCTION feature"*: strategies cannot place a limit/stop
   entry at an arbitrary price (hardwired to the decision-bar close), and `order_type` is
   fixed per strategy instance. Owner-gated (result-risky). Includes the Phase 8 carryover
-  per-bar `order_type` override left unwired in the e2e emitter.
+  per-bar `order_type` override left unwired in the e2e emitter. Also folds the
+  V1.2-CLEANUP-REVIEW deferrals **W2-02** (`Order.action`/`_PendingBracket.action`
+  `str`→`Side`) and **W1-11** (position-snapshot threading through admission→sizing), both
+  FRAGILE and coupled to this contract; and **W4-04** validator-overlap documentation if the
+  validator path is touched here.
 - **(b) System composition/config interface** — promote the `tests/e2e/scenario_spec.py`
   `ScenarioSpec` shape into an engine-level composition API: declarative multi-strategy /
   multi-portfolio wiring, faithful construction-time `ExchangeConfig` threading through
@@ -112,26 +248,27 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   the feed have none. Related: the order domain has **no Pydantic config model at all**
   (no `config/order.py`; `OrderManager` takes loose ctor params incl. stringly-typed
   `market_execution` — V1.2-CLEANUP-REVIEW SYN-05) — create `OrderConfig` and thread it
-  here alongside `ExchangeConfig`. Related cleanup item: `BaseStrategyConfig` relocation
-  from `strategy_handler/config.py` to `itrader/config/` (SYN-02 — cleanup-eligible,
-  coordinate here only if (b) lands first).
+  here alongside `ExchangeConfig`. Folds the V1.2-CLEANUP-REVIEW composition-root deferrals
+  **W4-02/03/05/06/07**. (Note: `BaseStrategyConfig` relocation — SYN-02 — was pulled FORWARD
+  into v1.2 Consolidation Phase 4 / TYPE-05, so it is no longer pending here.)
 - **(c) Declared-indicator framework** — indicator abstraction on the strategy base with
   auto-derived warmup (à la nautilus `register_indicator_for_bars` / LEAN `SetWarmUp` /
   backtrader auto-min-period), so authors stop hand-setting `max_window`. Captured in
   05-CONTEXT.md deferred ideas; note it is a genuine model shift (stateless
   recompute-from-window → optionally stateful incremental) — design carefully against the
-  pure-alpha D-12 contract.
+  pure-alpha D-12 contract. Folds the V1.2-CLEANUP-REVIEW deferral **W1-05** (incremental
+  SMA/MACD state); the W1-12 control-flow reorder was pulled forward into v1.2 Phase 3.
 - **(d) Order lifecycle completion** — wire run-end resting-order disposition /
   time-in-force (`Order.expire_order()` + `OrderStatus.EXPIRED` exist but are unwired on
   the backtest path; orders currently remain PENDING at run end — result-changing,
-  owner-gated). Plus the v1.1 fix-list stragglers that slipped their eligible phases:
-  FL-01 (7 bare `raise ValueError` sites in `portfolio_handler/portfolio.py` — tagged
-  eligible Phase 8, not fixed) and FL-02 (`portfolio_id: int` annotation carry-over on
-  Signal/Order/Fill events — tagged eligible Phase 5, not fixed).
+  owner-gated). Includes the `create_order` second-path gating decision (V1.2-CLEANUP-REVIEW
+  **W4-09**). The v1.1 fix-list stragglers FL-01/FL-02 were marked **done** (quick
+  260610-sjp) — their stale ROADMAP text is corrected in v1.2 Phase 1 / DEAD-02.
 
 Sources: `phases/05-…/05-CONTEXT.md`, `phases/06-…/06-CONTEXT.md`,
 `phases/07-…/07-CONTEXT.md` `<deferred>` sections; `codebase/FIX-LIST.md` (FL-01/FL-02);
-Phase 4 RESEARCH Open Q1; Phase 8 DISCUSSION-LOG carryovers.
+`codebase/V1.2-CLEANUP-REVIEW.md` §6 "Deferred to 999.5"; Phase 4 RESEARCH Open Q1;
+Phase 8 DISCUSSION-LOG carryovers.
 
 Rationale: v1.1 proved these gaps empirically — every E2E scenario phase had to work
 around the hardwired entry price, the fixed per-strategy order type, and the missing
