@@ -132,10 +132,13 @@ Plans:
   2. Redundant `Decimal(str(Decimal))` re-wraps on the mark-to-market/equity path and duplicated per-tick work (`open_position_count` ×2, `is_connected` ×2–3, active-portfolio recompute, premature `on_fill` guard allocation, load-time copy) are eliminated.
   3. MACD is computed inside the SMA guard (not unconditionally before it), and `BacktestBarFeed` serves prebuilt `Bar`s instead of 5 `Decimal(str(...))` conversions per symbol per tick; values bit-identical.
   4. Golden master byte-exact (134 trades / `final_equity 46189.87730727451`); `mypy --strict` clean; 58/58 e2e green.
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] TBD (decompose with /gsd:plan-phase 3)
+- [ ] 03-01-PLAN.md — PERF-01: storage copy-drop + read-only-view ABC contract + snapshot accessors (D-03/D-04/D-06)
+- [ ] 03-02-PLAN.md — PERF-03: eager-prebuild Bars in BacktestBarFeed; current_bars() dict lookup, no per-tick Bar.from_row (D-07/08/09)
+- [ ] 03-03-PLAN.md — PERF-02: mechanical transforms (W1-08/03/14/07/09; W1-13 descoped per D-10)
+- [ ] 03-04-PLAN.md — PERF-03 W1-12 MACD-guard reorder (oracle-only, D-02) + doc corrections + byte-exact phase gate
 
 ### Phase 4: Type Modeling
 **Goal**: Make closed vocabularies enums and decision/result objects frozen facts — bring `OrderStatus`/`OrderCommand` and four new vocabularies onto the canonical class-based enum form, freeze the engine's decision DTOs, harden config-boundary validation, and co-locate the strategy config base.
