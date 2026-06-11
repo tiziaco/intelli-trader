@@ -3,15 +3,14 @@ Metrics Manager for portfolio performance tracking and analytics.
 Handles portfolio metrics calculation, historical tracking, and reporting.
 """
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Tuple, Any
-from dataclasses import dataclass, asdict
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
 import statistics
 import math
 
 from itrader.core.enums import MetricsPeriod
-from itrader.core.exceptions import InvalidTransactionError
 from itrader.logger import get_itrader_logger
 
 

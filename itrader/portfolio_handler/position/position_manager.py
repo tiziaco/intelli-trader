@@ -3,15 +3,15 @@ Position Manager for portfolio operations.
 Handles position lifecycle, calculations, and risk management.
 """
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from datetime import datetime
-from typing import Any, Optional, List, Dict, Tuple, Mapping
+from typing import Any, Optional, List, Dict, Mapping
 from dataclasses import dataclass
 import numpy as np
 
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction
-from itrader.core.enums import PositionSide, TransactionType, PositionEvent
+from itrader.core.enums import PositionSide, TransactionType
 from itrader.core.ids import PositionId
 from itrader.core.exceptions import (
     InvalidTransactionError,
