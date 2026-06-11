@@ -8,7 +8,7 @@ from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
-from itrader.core.enums import EventType
+from itrader.core.enums import ErrorSeverity, EventType
 
 from itrader.logger import get_itrader_logger
 
@@ -152,8 +152,8 @@ class EventHandler(object):
 		Never logs secrets — only the declared ErrorEvent fields.
 		"""
 		log_method = {
-			"WARNING": self.logger.warning,
-			"CRITICAL": self.logger.critical,
+			ErrorSeverity.WARNING: self.logger.warning,
+			ErrorSeverity.CRITICAL: self.logger.critical,
 		}.get(event.severity, self.logger.error)
 		context: dict[str, Any] = {
 			"source": event.source,

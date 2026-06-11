@@ -53,6 +53,11 @@ from .system import (
     SystemStatus
 )
 
+# Error-severity enum
+from .severity import (
+    ErrorSeverity
+)
+
 __all__ = [
     # Portfolio enums
     'PortfolioState',
@@ -89,5 +94,8 @@ __all__ = [
     'Timeframe',
 
     # System enums
-    'SystemStatus'
+    'SystemStatus',
+
+    # Error-severity enum
+    'ErrorSeverity'
 ]
