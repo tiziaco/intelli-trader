@@ -49,7 +49,8 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         return self._positions.get(ticker)
 
     def get_positions(self) -> Dict[str, 'Position']:
-        return self._positions.copy()
+        # D-03/D-19: live read-only view, no per-tick copy (single-writer contract).
+        return self._positions
 
     def remove_position(self, ticker: str) -> None:
         self._positions.pop(ticker, None)
@@ -58,7 +59,8 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         self._closed_positions.append(position)
 
     def get_closed_positions(self) -> List['Position']:
-        return self._closed_positions.copy()
+        # D-03/D-19: live read-only view, no per-tick copy (single-writer contract).
+        return self._closed_positions
 
     # -- Transactions (append-only history; pending state died with the saga,
     # Plan 05-05 D-11) -------------------------------------------------------
@@ -67,7 +69,8 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         self._transaction_history.append(transaction)
 
     def get_transaction_history(self) -> List['Transaction']:
-        return self._transaction_history.copy()
+        # D-03/D-19: live read-only view, no per-tick copy (single-writer contract).
+        return self._transaction_history
 
     # -- Cash ----------------------------------------------------------------
 
@@ -84,7 +87,8 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         self._cash_operations.append(operation)
 
     def get_cash_operations(self) -> List[Any]:
-        return self._cash_operations.copy()
+        # D-03/D-19: live read-only view, no per-tick copy (single-writer contract).
+        return self._cash_operations
 
     # -- Metrics snapshots ---------------------------------------------------
 
@@ -92,7 +96,18 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         self._snapshots.append(snapshot)
 
     def get_snapshots(self) -> List[Any]:
-        return self._snapshots.copy()
+        # D-03/D-19: live read-only view, no per-tick copy (single-writer contract).
+        return self._snapshots
 
     def set_snapshots(self, snapshots: List[Any]) -> None:
         self._snapshots = list(snapshots)
+
+    def snapshot_count(self) -> int:
+        # D-06: count-only accessor — lets the metrics-manager per-tick trim guard
+        # check the size without copying the whole list.
+        return len(self._snapshots)
+
+    def get_latest_snapshot(self) -> Optional[Any]:
+        # D-06: last-only accessor — the metrics-manager per-tick read needs only
+        # the most-recent snapshot, never the whole copied list.
+        return self._snapshots[-1] if self._snapshots else None

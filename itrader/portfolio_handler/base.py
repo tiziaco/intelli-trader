@@ -65,12 +65,18 @@ class PortfolioStateStorage(ABC):
 
     @abstractmethod
     def get_positions(self) -> Dict[str, 'Position']:
-        """Return a shallow copy of all open positions keyed by ticker.
+        """Return a read-only view of all open positions keyed by ticker
+        (callers MUST NOT mutate — D-19 single-writer; copy yourself if you
+        need ownership).
+
+        D-03: the backtest backend returns the live internal container (no
+        per-tick copy) — the defensive copy never protected correctness under
+        the single-writer contract, it only added per-tick cost.
 
         Returns
         -------
         Dict[str, Position]
-            All currently open positions.
+            All currently open positions (read-only view).
         """
         pass
 
@@ -98,12 +104,17 @@ class PortfolioStateStorage(ABC):
 
     @abstractmethod
     def get_closed_positions(self) -> List['Position']:
-        """Return a shallow copy of the closed-positions history.
+        """Return a read-only view of the closed-positions history (callers
+        MUST NOT mutate — D-19 single-writer; copy yourself if you need
+        ownership).
+
+        D-03: the backtest backend returns the live internal container (no
+        per-tick copy).
 
         Returns
         -------
         List[Position]
-            All closed positions, in close order.
+            All closed positions, in close order (read-only view).
         """
         pass
 
@@ -125,12 +136,16 @@ class PortfolioStateStorage(ABC):
 
     @abstractmethod
     def get_transaction_history(self) -> List['Transaction']:
-        """Return a shallow copy of the transaction history.
+        """Return a read-only view of the transaction history (callers MUST
+        NOT mutate — D-19 single-writer; copy yourself if you need ownership).
+
+        D-03: the backtest backend returns the live internal container (no
+        per-tick copy).
 
         Returns
         -------
         List[Transaction]
-            All recorded transactions, in execution order.
+            All recorded transactions, in execution order (read-only view).
         """
         pass
 
@@ -197,12 +212,17 @@ class PortfolioStateStorage(ABC):
 
     @abstractmethod
     def get_cash_operations(self) -> List[Any]:
-        """Return a shallow copy of the cash-operation audit trail.
+        """Return a read-only view of the cash-operation audit trail (callers
+        MUST NOT mutate — D-19 single-writer; copy yourself if you need
+        ownership).
+
+        D-03: the backtest backend returns the live internal container (no
+        per-tick copy).
 
         Returns
         -------
         List[Any]
-            All recorded cash operations, in order.
+            All recorded cash operations, in order (read-only view).
         """
         pass
 
@@ -221,12 +241,19 @@ class PortfolioStateStorage(ABC):
 
     @abstractmethod
     def get_snapshots(self) -> List[Any]:
-        """Return a shallow copy of the metrics-snapshot history.
+        """Return a read-only view of the metrics-snapshot history (callers
+        MUST NOT mutate — D-19 single-writer; copy yourself if you need
+        ownership).
+
+        D-03: the backtest backend returns the live internal container (no
+        per-tick copy). D-06: the per-tick trim/last reads in
+        ``MetricsManager`` consume ``snapshot_count()`` / ``get_latest_snapshot()``
+        instead of this whole-list accessor.
 
         Returns
         -------
         List[Any]
-            All recorded snapshots, in record order.
+            All recorded snapshots, in record order (read-only view).
         """
         pass
 
@@ -238,6 +265,36 @@ class PortfolioStateStorage(ABC):
         ----------
         snapshots : List[Any]
             The replacement snapshot list.
+        """
+        pass
+
+    @abstractmethod
+    def snapshot_count(self) -> int:
+        """Return the number of recorded metrics snapshots (count-only — no copy).
+
+        D-06: the ``MetricsManager`` per-tick trim guard checks the snapshot
+        count without copying the whole list (the never-firing trim no longer
+        pays the per-tick copy cost).
+
+        Returns
+        -------
+        int
+            The number of recorded snapshots.
+        """
+        pass
+
+    @abstractmethod
+    def get_latest_snapshot(self) -> Optional[Any]:
+        """Return the most-recent snapshot, or ``None`` if none recorded
+        (last-only — no copy).
+
+        D-06: the ``MetricsManager`` per-tick read needs only the latest
+        snapshot, not the whole copied list.
+
+        Returns
+        -------
+        Optional[Any]
+            The most-recent snapshot, or ``None`` if no snapshot is recorded.
         """
         pass
 	
