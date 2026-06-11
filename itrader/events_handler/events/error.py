@@ -12,7 +12,7 @@ mixing frozen/non-frozen in one inheritance chain is a stdlib TypeError.
 from dataclasses import dataclass, field
 from typing import Any
 
-from itrader.core.enums import EventType
+from itrader.core.enums import ErrorSeverity, EventType
 from itrader.core.ids import CorrelationId
 
 from .base import Event
@@ -38,8 +38,8 @@ class ErrorEvent(Event):
         The operation that failed, if known.
     correlation_id: `CorrelationId | None`
         Operation-tracking correlation id (UUIDv7), if any.
-    severity: `str`
-        One of 'ERROR', 'CRITICAL', 'WARNING'.
+    severity: `ErrorSeverity`
+        One of ErrorSeverity.ERROR/CRITICAL/WARNING.
     details: `dict | None`
         Optional structured extra context.
     """
@@ -50,7 +50,7 @@ class ErrorEvent(Event):
     error_message: str
     operation: str | None = None
     correlation_id: CorrelationId | None = None
-    severity: str = "ERROR"  # ERROR, CRITICAL, WARNING
+    severity: ErrorSeverity = ErrorSeverity.ERROR
     details: dict[str, Any] | None = None
 
     def __str__(self) -> str:

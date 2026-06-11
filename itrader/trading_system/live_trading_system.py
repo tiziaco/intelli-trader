@@ -8,7 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
 
-from itrader.core.enums import SystemStatus
+from itrader.core.enums import ErrorSeverity, SystemStatus
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
@@ -204,7 +204,7 @@ class LiveTradingSystem:
             error_type=type(exc).__name__ if exc is not None else 'UnknownError',
             error_message=str(exc) if exc is not None else 'unknown handler failure',
             operation=handler_name,
-            severity='ERROR',
+            severity=ErrorSeverity.ERROR,
         ))
     
     def _update_status(self, new_status: SystemStatus, error_msg: Optional[str] = None):
