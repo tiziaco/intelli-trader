@@ -11,7 +11,7 @@ progress:
   total_plans: 9
   completed_plans: 9
   percent: 20
-stopped_at: Phase 03 complete (4/4) — ready to discuss Phase 999.2
+stopped_at: Phase 03 complete (4/4) — ready to discuss Phase 4 (Type Modeling)
 ---
 
 # Project State
@@ -21,13 +21,13 @@ stopped_at: Phase 03 complete (4/4) — ready to discuss Phase 999.2
 See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 4 — Type Modeling (next in v1.2 Consolidation)
 
 ## Current Position
 
-Phase: 999.2
+Phase: 4 — Type Modeling
 Plan: Not started
-Status: Ready to plan
+Status: Ready to discuss
 Last activity: 2026-06-11
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
