@@ -185,7 +185,7 @@ Plans:
 
 **Wave 2** *(FRAGILE order-domain core; blocked on Wave 1)*
 
-- [ ] 04-04-PLAN.md — TYPE-04/03/01: class-based OrderStatus/OrderCommand + D-02 .name audit; OrderOperationType/OrderTriggerSource value-equal swap; frozen _PendingBracket (D-01/02/03/04/07)
+- [x] 04-04-PLAN.md — TYPE-04/03/01: class-based OrderStatus/OrderCommand + D-02 .name audit; OrderOperationType/OrderTriggerSource value-equal swap; frozen _PendingBracket (D-01/02/03/04/07)
 
 **Wave 3** *(shares order_manager.py/order.py with Wave 2; blocked on 04-04)*
 
@@ -239,7 +239,7 @@ isolated, LAST phase — the `order_manager.py` god-module split).
 | 1. Dead Code & Doc Hygiene | v1.2 | 2/2 | Complete   | 2026-06-11 |
 | 2. Locked-Decision Conformance | v1.2 | 3/3 | Complete   | 2026-06-11 |
 | 3. Hot-Path Performance | v1.2 | 4/4 | Complete   | 2026-06-11 |
-| 4. Type Modeling | v1.2 | 3/5 | In Progress|  |
+| 4. Type Modeling | v1.2 | 4/5 | In Progress|  |
 | 5. Naming & Encapsulation | v1.2 | 0/TBD | Not started | - |
 | 6. Order-Manager Decomposition | v1.2 | 0/TBD | Not started | - |
 
