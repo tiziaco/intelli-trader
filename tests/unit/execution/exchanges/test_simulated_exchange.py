@@ -517,6 +517,44 @@ class TestSimulatedExchangeOrderValidation:
         assert result.is_valid is False
         assert "exceeds maximum" in result.error_message
 
+    def test_below_minimum_quantity_refused_decimal(self):
+        """D-08: below-minimum REFUSED branch as genuine Decimal-vs-Decimal.
+
+        Closes the symmetric `event.quantity < _min_order_size` branch that no
+        E2E leaf exercises today (release_refused covers only the > _max branch).
+
+        This asserts CORRECT REFUSED behavior on the < _min branch — NOT that a
+        TypeError is gone (per D-07 there was none: Decimal-vs-float COMPARISON
+        works in Py3; only arithmetic raises, and there is none on these fields).
+
+        Limits are configured with Decimal LITERALS, not floats: ExchangeLimits
+        has extra="forbid" but NO validate_assignment=True, so update_config's
+        setattr BYPASSES the field validator — a float literal would be stored AS
+        a float and the re-derived _min_order_size would carry that float, breaking
+        the DEC-02 Decimal-carry assertion below. Decimal literals keep the field
+        genuinely Decimal AND make the comparison Decimal-vs-Decimal.
+        """
+        self.exchange.update_config(
+            min_order_size=Decimal("50"), max_order_size=Decimal("500")
+        )
+
+        # DEC-02 regression lock: _min_order_size is carried as Decimal end-to-end.
+        # Would have FAILED under the old float() wraps; would also fail if limits
+        # were updated with float literals (setattr-bypass). With Task 1's fix +
+        # the Decimal-literal update above, it passes.
+        assert isinstance(self.exchange._min_order_size, Decimal)
+
+        # Decimal below-minimum quantity: Decimal("0.0001") < Decimal("50") -> True
+        # (Decimal-vs-Decimal) -> REFUSED.
+        order = OrderEvent(
+            time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
+            price=Decimal("150"), quantity=Decimal("0.0001"), exchange='simulated',
+            strategy_id=1, portfolio_id=1, order_type=OrderType.MARKET, order_id=1,
+        )
+        result = self.exchange.validate_order(order)
+        assert result.is_valid is False
+        assert "below minimum" in result.error_message
+
     def test_invalid_price_validation(self):
         """Test validation of order with invalid price."""
         # Use positive quantity to isolate the price validation issue
