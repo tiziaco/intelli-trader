@@ -56,14 +56,15 @@ class SMA_MACD_strategy(Strategy):
 		long_sma = trend.SMAIndicator(bars[start_dt:].close, self.long_window, True).sma_indicator().dropna()
 
 
-		# Calculate the MACD
-		MACD_Indicator = trend.MACD(bars.close, window_fast=self.FAST, window_slow=self.SLOW, window_sign=self.WIN, fillna=False)
-		MACDhist = MACD_Indicator.macd_diff().dropna()
-
-
 		### LONG signals
 		# Entry
 		if short_sma.iloc[-1] >= long_sma.iloc[-1]: # Filter
+			# Calculate the MACD (W1-12: computed INSIDE the SMA guard — only on
+			# ticks where the SMA filter holds. The firing tick is byte-identical
+			# (same MACD value, just computed lazily); per D-02 this reorder is
+			# proven by code review + the byte-exact oracle ONLY, NO new SMA_MACD test.)
+			MACD_Indicator = trend.MACD(bars.close, window_fast=self.FAST, window_slow=self.SLOW, window_sign=self.WIN, fillna=False)
+			MACDhist = MACD_Indicator.macd_diff().dropna()
 			if ((MACDhist.iloc[-1] >= 0) and (MACDhist.iloc[-2] < 0)): # Buy trigger
 				return self.buy(ticker)
 		# Exit
