@@ -52,7 +52,13 @@ class IndicatorHandle:
 
 	def __getitem__(self, idx: int) -> float:
 		"""Positional read ([-1]/[-2]); ``float`` at the read edge (D-03)."""
-		assert self._values is not None, "repopulate() before reading the handle"
+		# WR-01: a real runtime ordering contract (read-before-repopulate) must
+		# raise unconditionally — an `assert` is stripped under `-O`/PYTHONOPTIMIZE,
+		# turning the violation into a confusing `'NoneType' has no attribute
+		# 'iloc'` far from the cause. Raise explicitly so the contract holds at
+		# every optimization level.
+		if self._values is None:
+			raise RuntimeError("repopulate() must run before reading the handle")
 		return float(self._values.iloc[idx])
 
 	def __len__(self) -> int:
