@@ -40,6 +40,9 @@ from .system import (
     PerformanceSettings,
     SystemConfig,
 )
+from .order import (
+    OrderConfig,
+)
 from .exchange import (
     ConnectionSettings,
     ExchangeConfig,
@@ -77,6 +80,8 @@ __all__ = [
     "ValidationSettings",
     "EventSettings",
     "get_portfolio_preset",
+    # Order domain
+    "OrderConfig",
     # System domain
     "SystemConfig",
     "Environment",

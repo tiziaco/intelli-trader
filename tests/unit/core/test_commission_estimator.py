@@ -60,3 +60,58 @@ def test_protocol_is_runtime_checkable():
     # would raise TypeError rather than returning a bool.
     result = isinstance(_ConformingEstimator(), CommissionEstimator)
     assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Wave 2 (04-02 Task 2): D-15 LATE-BINDING correctness test.
+#
+# This is the SINGLE oracle-dark correctness check for D-15 — the golden run
+# pins fees at 0 (ZeroFeeModel), so the byte-exact gate can NEVER catch a
+# stale-fee regression. The FeeModelCommissionEstimator adapter must read
+# `exchange.fee_model` inside __call__ (late binding), NEVER capture it at
+# __init__. We prove this by hot-swapping the fee model AFTER constructing the
+# adapter and asserting the estimate reflects the NEW model.
+# ---------------------------------------------------------------------------
+
+from queue import Queue
+
+from itrader.trading_system.compose import FeeModelCommissionEstimator
+from itrader.execution_handler.exchanges.simulated import SimulatedExchange
+from itrader.config import FeeModelType
+
+
+def _make_default_exchange() -> SimulatedExchange:
+    """A SimulatedExchange on the default preset — its fee_model is ZeroFeeModel."""
+    return SimulatedExchange(Queue())
+
+
+def test_fee_model_commission_estimator_zero_before_swap():
+    """On the default ZeroFeeModel the adapter estimates exactly 0."""
+    exchange = _make_default_exchange()
+    adapter = FeeModelCommissionEstimator(exchange)
+    assert adapter(Decimal("1"), Decimal("1000")) == Decimal("0")
+
+
+def test_fee_model_commission_estimator_late_binding_after_fee_swap():
+    """D-15 LATE BINDING: after a fee-model hot-swap the adapter returns the NEW
+    model's non-zero estimate — proving it reads exchange.fee_model in __call__
+    and never captured the original ZeroFeeModel at __init__."""
+    exchange = _make_default_exchange()
+    adapter = FeeModelCommissionEstimator(exchange)
+    # Before the swap: ZeroFeeModel → 0.
+    assert adapter(Decimal("1"), Decimal("1000")) == Decimal("0")
+    # Hot-swap to a percent fee model (re-inits self.fee_model on the exchange).
+    # NOTE: the swap drives the LIVE SimulatedExchange.update_config API (enum +
+    # rate). The dict/model_validate canonical contract that coerces a string
+    # "percent" lands in Wave 3 (04-03); the D-15 LATE-BINDING property under
+    # test is independent of how the swap is expressed.
+    exchange.update_config(fee_model_type=FeeModelType.PERCENT, fee_rate=Decimal("0.001"))
+    # After the swap: the NEW PercentFeeModel applies — a non-zero estimate.
+    assert adapter(Decimal("1"), Decimal("1000")) > Decimal("0")
+
+
+def test_fee_model_commission_estimator_conforms_to_protocol():
+    """The adapter structurally satisfies the runtime_checkable CommissionEstimator."""
+    exchange = _make_default_exchange()
+    adapter = FeeModelCommissionEstimator(exchange)
+    assert isinstance(adapter, CommissionEstimator)

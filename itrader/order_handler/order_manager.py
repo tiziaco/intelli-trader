@@ -18,7 +18,9 @@ from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderStatus, MarketExecution
 from ..core.ids import OrderId, PortfolioId
+from ..core.commission_estimator import CommissionEstimator
 from ..core.portfolio_read_model import PortfolioReadModel
+from ..config import OrderConfig
 from .base import OrderStorage
 from .brackets import BracketBook, BracketManager
 from .admission import AdmissionManager
@@ -45,9 +47,10 @@ class OrderManager:
 	"""
 	
 	def __init__(self, order_storage: OrderStorage, logger: Any,
-	             market_execution: "str | MarketExecution" = "immediate",
+	             market_execution: "str | MarketExecution | None" = None,
 	             portfolio_handler: Optional[PortfolioReadModel] = None,
-	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
+	             commission_estimator: Optional[CommissionEstimator] = None,
+	             order_config: Optional[OrderConfig] = None) -> None:
 		"""
 		Initialize the OrderManager.
 
@@ -63,27 +66,43 @@ class OrderManager:
 			Storage interface for order operations (manager-owned, D-18)
 		logger : Logger
 			Logger instance for order processing events
-		market_execution : str | MarketExecution
-			Market order execution mode (coerced to MarketExecution at this
-			ctor boundary; accepts a str for backward-compat, D-06):
+		order_config : OrderConfig, optional
+			Order-domain config (D-05) carrying ``market_execution``. The
+			str->enum coercion now lives in ``OrderConfig`` validation
+			(``model_validate`` on a plain Enum field), replacing the loose
+			ctor-boundary ``MarketExecution(market_execution)`` parse. None
+			defaults to ``OrderConfig.default()`` ("immediate").
+		market_execution : str | MarketExecution, optional
+			DEPRECATED backward-compat override (D-05): when provided it builds
+			an ``OrderConfig`` with this ``market_execution`` (still coerced via
+			OrderConfig validation), so existing ``market_execution=`` callers
+			keep working until Wave 4 migrates them to ``order_config``:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Execute market orders on next bar (realistic backtesting)
 		portfolio_handler : PortfolioReadModel, optional
 			Narrow portfolio read boundary for position-aware operations
 			(D-16: the concrete handler conforms structurally)
-		commission_estimator : Callable[[Decimal, Decimal], Decimal], optional
+		commission_estimator : CommissionEstimator, optional
 			Estimates the commission for an order as f(quantity, price) ->
 			Decimal, feeding the admission reservation amount (Plan 05-06,
-			D-04). INJECTED at wiring time — order_manager never imports
-			across the execution boundary (RESEARCH Pattern 1). None means a
-			zero estimate, which reproduces the pre-reservation funds-check
-			math exactly (mode-agnostic; the golden run pins fees 0).
+			D-04/D-15). INJECTED at wiring time as a typed read-model seam —
+			order_manager never imports across the execution boundary (RESEARCH
+			Pattern 1). None means a zero estimate, which reproduces the
+			pre-reservation funds-check math exactly (the golden run pins fees 0).
 		"""
 		self.order_storage = order_storage
 		self.logger = logger
-		# D-06: coerce at the ctor boundary — store the enum member (a str is
-		# parsed via MarketExecution._missing_; an enum member is a no-op).
-		self.market_execution = MarketExecution(market_execution)
+		# D-05: the str->enum coercion lives in OrderConfig validation now. A
+		# loose market_execution= override (backward-compat) builds an OrderConfig
+		# from it; otherwise order_config (default "immediate") is used. The
+		# stored member is byte-identical to the old MarketExecution() ctor parse.
+		if order_config is None:
+			order_config = (
+				OrderConfig(market_execution=MarketExecution(market_execution))
+				if market_execution is not None
+				else OrderConfig.default())
+		self.order_config = order_config
+		self.market_execution = order_config.market_execution
 		self.portfolio_handler = portfolio_handler
 		self.commission_estimator = commission_estimator
 
