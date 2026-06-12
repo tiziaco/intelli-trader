@@ -35,6 +35,12 @@ from .order import (
     UnsizedSignalError
 )
 
+# Strategy exceptions
+from .strategy import (
+    UnknownParamError,
+    MissingParamError
+)
+
 # Data exceptions
 from .data import (
     DataError,
@@ -66,6 +72,10 @@ __all__ = [
     'OrderError',
     'SizingPolicyViolation',
     'UnsizedSignalError',
+
+    # Strategy exceptions
+    'UnknownParamError',
+    'MissingParamError',
 
     # Data exceptions
     'DataError',
