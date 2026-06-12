@@ -98,7 +98,12 @@ only after explicit owner sign-off + external cross-validation.
   2. A new `OrderConfig` Pydantic model is threaded into `OrderManager` (no more loose stringly-typed ctor params), folding the composition-root cleanups W4-02/03/05/06/07.
   3. Every handler/manager — `OrderHandler`/`OrderManager`, `StrategiesHandler`, `ExecutionHandler`, `PortfolioHandler`, `SimulatedExchange`, `BacktestBarFeed` — exposes a uniform `update_config` with one consistent signature (merge → `model_validate` → atomic-swap, unified return/error contract); for `StrategiesHandler` it re-validates → re-runs `init()` → re-derives warmup (consuming Phase 2's idempotent `init()`).
   4. Composition + config changes are byte-exact against the v1.1 E2E golden suite + BTCUSD oracle (134 trades / `final_equity 46189.87730727451`); e2e 58/58, `mypy --strict` clean — no result change, applied between event cycles never mid-cycle.
-**Plans**: TBD
+**Plans**: 5 plans (4 waves — Wave 1: foundational primitives; Wave 2: composition-root collapse (byte-exact-risk heart); Wave 3: update_config rollout (parallel); Wave 4: e2e collapse + byte-exact gate)
+  - [ ] 04-01-PLAN.md — CommissionEstimator Protocol (D-15) + OrderConfig (D-05) + SystemSpec promotion (D-01/D-02) + Wave-0 coercion/conformance tests (Wave 1, standalone)
+  - [ ] 04-02-PLAN.md — compose_engine + BacktestRunner + thin BacktestTradingSystem holder + build_backtest_system factory (D-03/D-04/D-14/D-14a); rng dedup (D-16); construction-time ExchangeConfig threading + symbol seeding (D-13); FeeModelCommissionEstimator late-binding (D-06/D-15); reporting lift (W4-07) (Wave 2)
+  - [ ] 04-03-PLAN.md — shared deep_merge + canonical update_config on the 5 config-model handlers (Portfolio/PortfolioHandler/SimulatedExchange/ExecutionHandler/OrderManager-OrderHandler) + configure() fix (D-07/D-08/D-09/D-11) (Wave 3)
+  - [ ] 04-04-PLAN.md — StrategiesHandler.update_config (re-validate→init()→warmup, D-09) + BacktestBarFeed.update_config raise-only interface-conformance (D-10/D-17) (Wave 3, parallel with 04-03)
+  - [ ] 04-05-PLAN.md — e2e _build_and_run collapse onto build_backtest_system(spec) (D-01/D-13/D-14) + construction-site rename migration + byte-exact PHASE GATE (oracle 134/46189.87730727451, e2e 58/58, mypy --strict, determinism double-run) (Wave 4)
 
 ### Phase 5: Signal Contract & Reconcile (FRAGILE)
 **Goal**: Complete the signal/order contract — a strategy specifies per-intent ENTRY price and `order_type`, action becomes `Side`-typed with the position snapshot threaded once — AND streamline the `on_fill` reconciliation / `should_release` flow, touching the FRAGILE `reconcile/` path once under a single owner-gated re-baseline + external cross-validation.
@@ -187,7 +192,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
 | 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
 | 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
-| 4. Composition & Config Interface | 0/TBD | Not started | - |
+| 4. Composition & Config Interface | 0/5 | Planned | - |
 | 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
 
