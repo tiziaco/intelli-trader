@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
 status: executing
-last_updated: "2026-06-12T15:12:20.700Z"
-last_activity: 2026-06-12 -- Phase 03 planning complete
+last_updated: "2026-06-12T15:37:36.772Z"
+last_activity: 2026-06-12 -- Phase 03 Plan 01 complete
 progress:
   total_phases: 9
   completed_phases: 2
   total_plans: 7
-  completed_plans: 4
+  completed_plans: 5
   percent: 22
 ---
 
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 3 — Declared-Indicator Framework (IND-01, byte-exact; depends on Phase 2)
+**Current focus:** Phase 03 — declared-indicator-framework
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-12 -- Phase 03 planning complete
+Phase: 03 (declared-indicator-framework) — EXECUTING
+Plan: 2 of 3
+Status: Plan 01 complete (indicators/ package + primitives.py landed, byte-exact); ready to execute Plan 02
+Last activity: 2026-06-12 -- Phase 03 Plan 01 complete
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -105,6 +105,8 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [v1.3 Phase 02 / 02-01]: `core/exceptions/strategy.py` added — `UnknownParamError`/`MissingParamError` subclass the house `ValidationError` (never bare `ValueError`, RESEARCH §Don't Hand-Roll); engine call-shapes `UnknownParamError(sorted(kwargs))` (stores `self.names`, `field="strategy_params"`) and `MissingParamError(name)` (stores `self.name`, `field=name`) are satisfiable. Re-exported via the barrel. Zero run-path touch — byte-exact (oracle 134/46189.87730727451, e2e 58/58). Plan-02 engine imports these symbols.
 - **[LOCKED → Phase 3 / IND-01] Framework-derived warmup (owner directive, closes 02-REVIEW WR-03):** Phase 3's declared-indicator framework MUST auto-derive `warmup`/`max_window` from the declared indicators' lookbacks (`max` over each) and REPLACE the hand-set `warmup`/`max_window` class attrs on `SMAMACDStrategy` — removing the WR-03 footgun (an author can currently set `warmup=0`, the handler short-circuit then under-gates, and `generate_signal` hits `IndexError` on a sub-warmup frame, aborting the fail-fast run). HARD byte-exact constraint: the derived value for `SMAMACDStrategy` MUST equal exactly **100** (= `max(long_window=100, slow_window+signal_window≈15)`), or the oracle drifts off `46189.87730727451`. This is BLOCKED until indicators are declared (can't derive from inline `ta.SMAIndicator`/`ta.MACD` calls in `generate_signal`) — which is precisely why IND-01 owns it. The interim defensive guard was deliberately NOT added in Phase 2 (keeps D-15 handler-side gating clean); WR-03 is deferred from the Phase-2 `--fix` and resolved structurally in Phase 3.
 
+- [v1.3 Phase 03 / 03-01]: Standalone `indicators/` package + flat `primitives.py` landed (D-03/04/05/07/08). `catalog.py` ships SMA/MACDHist/EMA/RSI singleton adapters typed against an `IndicatorAdapter` Protocol, each with `compute(...)` + `min_period(params)`; `[BYTE-EXACT]` SMA sliced input (`bars[start_dt:][col]`, `start_dt = now - timeframe*window`, `fillna=True` — Pitfall 1) and MACDHist full-window (`fillna=False`, no slice). D-08 min_period is first-valid only (SMA/EMA/RSI→w; MACDHist→slow+signal==15 ⇒ reference `max(50,100,15)==100`). `handle.py` holds `IndicatorHandle` (moved OUT of `base.py`, NO base import — one-directional `base → indicators`, no cycle): `[-1]`/`[-2]`→float via `.iloc`, `__len__==0` pre-repopulate, `repopulate`→`adapter.compute`, `min_period()` delegates. `primitives.py` (flat sibling): crossover/crossunder/is_above/is_below with D-02 inclusive-on-current-bar semantics + scalar broadcast via `_at`. Zero run-path touch — byte-exact (oracle 134/46189.87730727451, e2e 58/58, mypy --strict 176 files, 35 new unit tests). Plan 02 imports these symbols and base.py auto-warmup derives from `handle.min_period()`.
+
 (v1.2 per-plan decisions are archived in `milestones/v1.2-ROADMAP.md` and the phase records under `milestones/v1.2-phases/`. The v1.2 Phase-6 decomposition decisions below are retained because Phase 5 of v1.3 builds directly on the `reconcile/` collaborator they created.)
 
 - [v1.2 Phase 06 / 06-05]: D-10 step 5 (FRAGILE, LAST): extracted reconcile/ — ReconcileManager (TAB, no queue) owns on_fill moved VERBATIM as ONE indivisible intact unit; should_release/try/finally/release-in-finally interplay byte-for-byte unchanged; the two cross-bucket seams rewired with NO sibling edge — WR-05 orphaned-child cancel via self.cancel_order coordinator callback, fill-anchored children via injected coordinator-owned BracketManager; golden byte-exact (134/46189.87730727451), determinism double-run byte-identical. This is the clean, bounded enabling surface v1.3 RECON-01 was designed to refactor.
@@ -136,6 +138,7 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 | Phase 02 P02 | ~25 min | 3 tasks | 7 files |
 | Phase 02 P03 | ~20 min | 3 tasks | 10 files |
+| Phase 03 P01 | ~15 min | 2 tasks | 6 files |
 
 ## Bookkeeping
 
@@ -175,8 +178,9 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12T14:39:36.212Z
-Resume file: .planning/phases/03-declared-indicator-framework/03-CONTEXT.md
+Last session: 2026-06-12T15:37:36.764Z
+Stopped at: Completed 03-01-PLAN.md
+Resume file: .planning/phases/03-declared-indicator-framework/03-02-PLAN.md
 
 ## Operator Next Steps
 
