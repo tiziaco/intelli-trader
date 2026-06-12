@@ -364,16 +364,16 @@ No external state-of-the-art shift applies — this is an internal refactor on a
 | A3 | Reading `config.performance.rng_seed` from the singleton yields the same value (42) as `SystemConfig.default().performance.rng_seed` in all paths (including any YAML override). | Trap 3 / D-16 | LOW — a `settings/system.yaml` override would apply to BOTH the singleton and a fresh `.default()` (same construction). If an override exists and differs, the singleton read is the MORE correct one (single source). No golden-run override is present (seed 42 holds). |
 | A4 | No external/OS/datastore state references the string "TradingSystem" (rename is in-process only). | Runtime State Inventory | LOW — verified by grep across the repo; backtest has no persistence of the class name. A missed import site is caught by `mypy --strict` + the suite. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does any e2e leaf with `spec.exchange is not None` rely on the EXACT post-construction re-init ordering that the collapse removes?**
    - What we know: `_build_and_run` re-inits fee/slippage models + size caches AFTER construction (`conftest.py:316-333`); the collapse moves this to construction-time via `compose_engine`.
    - What's unclear: whether constructing the exchange with the spec config (vs. default-then-reassign) produces a byte-identical fee/slippage/limits state for every Phase-7/8 leaf.
-   - Recommendation: Plan a wave that runs the FULL e2e suite immediately after the `compose_engine` exchange-config threading lands, BEFORE the `update_config` migration — isolate any fee/slippage/limits diff to the construction-time change.
+   - **RESOLVED:** Plan 04-05 Task 2 is the isolation point — the full e2e suite (`make test-e2e`, 58/58) runs against the collapsed `build_backtest_system(spec)` construction-time config threading, BEFORE no `update_config` fires in the golden run. Any fee/slippage/limits divergence from the default-then-reassign → construct-with-spec change surfaces there and only there. The byte-exact gate (oracle 134 / `46189.87730727451`) is the decisive check; if a leaf diverges, the construction-time `ExchangeConfig` threading (04-02) is the sole suspect.
 
 2. **Where does `csv_paths`-keys → tickers derivation live (spec field vs factory)?** (Claude's discretion, D-13.)
    - What we know: today `csv_paths` passes straight to `CsvPriceStore` (`backtest_trading_system.py:92-95`); the e2e harness derives tickers from `spec.data` keys (`conftest.py:348`).
-   - Recommendation: Derive the symbol set in the FACTORY from `spec.data`/`csv_paths` keys (upper-cased) ∪ default-preset symbols ∪ `{BTCUSD}` for the oracle path, fold into `ExchangeConfig.limits.supported_symbols`, pass the seeded config into `compose_engine`. Keeps `compose_engine` mode-agnostic (D-14a) and the spec serializable.
+   - **RESOLVED:** Derive in the **FACTORY** (`build_backtest_system`), per Plan 04-02 Task 2/3: the symbol set = `spec.data`/`csv_paths` keys (upper-cased) ∪ default-preset symbols ∪ `{BTCUSD}` (oracle path), folded into `ExchangeConfig.limits.supported_symbols` and passed into `compose_engine` already-seeded. Keeps `compose_engine` mode-agnostic (D-14a) and the spec serializable. `compose_engine` never derives symbols itself.
 
 ## Environment Availability
 
