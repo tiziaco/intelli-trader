@@ -1,9 +1,9 @@
 """Thin backtest holder + the ``build_backtest_system`` factory (D-03/D-04).
 
 D-03: ``TradingSystem`` is renamed ``BacktestTradingSystem`` (symmetry with
-``LiveTradingSystem``, matches the filename). A backward-compat ``TradingSystem``
-alias is retained so existing import sites (oracle/integration/conftest/scripts)
-keep working until Wave 4 (04-05) migrates them.
+``LiveTradingSystem``, matches the filename). Wave 4 (04-05) migrated all
+existing import sites to the new name, so no backward-compat ``TradingSystem``
+alias is exported from this module.
 
 D-04: the factory builds, the class is a thin holder. ``build_backtest_system(spec)``
 selects the mode-specific backends (``OrderStorageFactory.create('backtest')`` +
