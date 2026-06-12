@@ -6,12 +6,12 @@ status: ready_to_plan
 last_updated: 2026-06-12T11:21:24.082Z
 last_activity: 2026-06-12 -- Phase 01 execution started
 progress:
-  total_phases: 9
-  completed_phases: 0
+  total_phases: 6
+  completed_phases: 1
   total_plans: 1
   completed_plans: 1
-  percent: 0
-stopped_at: Phase 01 complete (1/1) — ready to discuss Phase 999.2
+  percent: 17
+stopped_at: Phase 01 complete (1/1) — ready to discuss Phase 2 (Strategy Authoring Surface)
 ---
 
 # Project State
@@ -21,11 +21,11 @@ stopped_at: Phase 01 complete (1/1) — ready to discuss Phase 999.2
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 2 — Strategy Authoring Surface
 
 ## Current Position
 
-Phase: 999.2
+Phase: 2
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-06-12
