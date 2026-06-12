@@ -155,6 +155,20 @@ class Strategy(ABC):
 			setattr(self, nm, val)
 		if kwargs:
 			raise UnknownParamError(sorted(kwargs))
+		# IN-02: reject a malformed-but-present `tickers`. A bare `str` is
+		# iterable char-by-char, so `for ticker in strategy.tickers` would
+		# silently request windows for "B", "T", … (producing nothing) rather
+		# than failing loudly; an empty list trades nothing. Extend the engine's
+		# "reject loudly" philosophy from unknown/missing to malformed values.
+		# Checked against the resolved instance value so it covers both the
+		# kwarg and class-attr-default paths.
+		tickers = getattr(self, "tickers", _MISSING)
+		if tickers is not _MISSING:
+			if isinstance(tickers, str) or not isinstance(tickers, list) \
+					or not tickers or not all(isinstance(t, str) for t in tickers):
+				raise ValueError(
+					"tickers must be a non-empty list[str] (a bare str is rejected)"
+				)
 		# Pitfall 1 (the #1 oracle trap): self.timeframe is consumed as a
 		# TIMEDELTA by check_timeframe / min_timeframe and SMA's
 		# `last_time - self.timeframe * self.short_window`. The coerced
