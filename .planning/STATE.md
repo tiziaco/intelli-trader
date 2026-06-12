@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-06-12T18:18:58.716Z"
-last_activity: 2026-06-12 -- Phase 04 planning complete
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-06-12T19:29:17.586Z"
+last_activity: 2026-06-12
 progress:
   total_phases: 9
   completed_phases: 3
   total_plans: 12
-  completed_plans: 7
+  completed_plans: 8
   percent: 33
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 4 — Composition & Config Interface
+**Current focus:** Phase 04 — composition-config-interface
 
 ## Current Position
 
-Phase: 4
-Plan: Not started
+Phase: 04 (composition-config-interface) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-06-12 -- Phase 04 planning complete
+Last activity: 2026-06-12
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -118,6 +118,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase ?]: [v1.3 Phase 02 / 02-03]: All strategy construction sites migrated from (name, config) to the kwargs class-attr surface (D-05, no shim); strategy unit tests rewritten for the class-attr engine (unknown/missing/override/coerce/no-coerce/validate/idempotent/reconfigure/dict-snapshot). Byte-exact gate GREEN: oracle 134/46189.87730727451, e2e 58/58, mypy --strict clean (172 files), full suite 853 green, determinism double-run identical. missing-required tested via EmptyStrategy (SMA pins sizing_policy); non-coercion via max_positions (short_window collides with validate()). Zero re-baseline.
 - [v1.3 Phase 03 / 03-02]: Strategy-base framework landed + full run/test path migrated (D-06/D-08, one lockstep). `base.py` owns `self.indicator(adapter, input, *params) -> IndicatorHandle` (imported from `indicators/`, one-directional, no cycle), the `evaluate(ticker, window)` seam (stashes `self.bars`/`self.now = window.index[-1]`, repopulates handles, dispatches `generate_signal(ticker)`), and `_run_init` (resets `_handles` before `init()`, idempotent — re-run by `reconfigure`). `generate_signal` dropped `bars` (D-06); the `StrategiesHandler.calculate_signals` call-site swapped to `strategy.evaluate(ticker, data)`. `SMAMACDStrategy` is fully primitive-driven (`is_above`/`crossover`/`crossunder` over handles), hand-set `warmup`/`max_window` DELETED -> auto-derived `warmup == max_window == 100`. **DEVIATION from the must_have prose:** `warmup` is UNCONDITIONALLY derived from handle `min_period` (the WR-03 footgun fix — the real D-08 goal), but `max_window = max(derived, type(self).max_window)` — the literal "zero-handle overwrite to 0" claim BREAKS the byte-exact e2e/integration golden (`feed.window(..., max_window=0, ...)` returns `frame.iloc[pos:pos]` = empty against a REAL feed, so count/date-keyed fixtures never fire and `evaluate`'s `window.index[-1]` raises). The fetch width therefore never shrinks below a hand-set value; `evaluate()` also guards an empty window (`self.now = None`, skip repopulate). Byte-exact gate HELD: oracle 134/46189.87730727451, e2e 58/58, full suite 890 green, mypy --strict 176 files, determinism double-run identical.
 - [Phase 03]: [v1.3 Phase 03 / 03-03]: Byte-exact phase gate LOCKED with ZERO re-baseline — migrated declared-indicator SMAMACDStrategy is byte-exact against the frozen BTCUSD oracle (134 trades / final_equity 46189.87730727451, EXACT, no tolerance via pdt.assert_frame_equal + exact summary-dict). Pitfall 1 (per-indicator SMA slice) + Pitfall 2 (eager-vs-lazy MACD reorder) proven correct — the oracle is the ONLY proof (no SMA_MACD unit test guards the MACD value). Determinism double-run byte-identical; e2e 58/58; full suite 890 green under filterwarnings=[error]; mypy --strict clean (176 files). Both plan tasks were VERIFICATION-ONLY: Task 1 confirmed to_dict()/SignalRecord.config still carries auto-derived max_window/warmup==100 (get_type_hints introspection; signal_record.py NOT edited, no data migration); Task 2 conditional fix-forward scope (indicators/catalog.py SMA slice, handle.py IndicatorHandle, base.py imports) NEVER triggered — steady-state touched no source. Phase 3 declared-indicator framework (Plans 01-03) complete and numerically trustworthy; ROADMAP Success Criterion 4 satisfied.
+- [v1.3 Phase 04 / 04-01]: Three standalone COMP-01 contracts landed (byte-exact-inert, ZERO run-path import — Wave 2 consumes them). **D-15 CommissionEstimator** (`core/commission_estimator.py`, 4 spaces): `@runtime_checkable` Protocol with the primitive `__call__(self, quantity: Decimal, price: Decimal) -> Decimal`, ZERO `itrader` imports (mirrors `portfolio_read_model.py`); structural conformance tested + written append-ready for the Wave-2 (04-02 Task 2) D-15 LATE-BINDING test (post-fee-swap non-zero estimate — adapter doesn't exist yet). **D-05 OrderConfig** (`config/order.py`, 4 spaces): thin Pydantic model, `ConfigDict(extra="forbid")`, `market_execution: MarketExecution = IMMEDIATE`, `default()`. **A1 CONFIRMED TRUE** — pydantic v2 coerces the string `"immediate"` to the `MarketExecution.IMMEDIATE` MEMBER with NO custom validator (Trap 5 coercion-equivalence byte-identical to today's ctor `MarketExecution(market_execution)`); `use_enum_values` deliberately NOT used (would store the str). `MarketExecution` stays in `core/enums/` (config-enum exception). **D-01/D-02 SystemSpec** (`trading_system/system_spec.py`, TABS): `ScenarioSpec`/`PortfolioSpec`/`Action` promoted field-for-field, run-mode-agnostic name (NOT `BacktestSpec`), fields match the e2e harness by name; `actions`+`Action` kept for a single-spec Wave-4 collapse; NOT yet wired into any run path. `mypy --strict` clean 176->179 files; 10 new unit tests green; oracle (134/46189.87730727451) + e2e 58/58 untouched (no run-path touch). COMP-01 remains OPEN (this plan lands only the foundational primitives; the composition-root collapse is Wave 2+).
 
 ### Pending Todos
 
@@ -144,6 +145,7 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 | Phase 03 P01 | ~15 min | 2 tasks | 6 files |
 | Phase 03 P02 | ~40 min | 3 tasks | 9 files |
 | Phase 03 P03 | ~10 min | 2 tasks | 0 files |
+| Phase 04 P01 | 12 | 3 tasks | 5 files |
 
 ## Bookkeeping
 
@@ -183,9 +185,9 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12T17:31:15.976Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-composition-config-interface/04-CONTEXT.md
+Last session: 2026-06-12T19:29:17.579Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: None
 
 ## Operator Next Steps
 
