@@ -34,13 +34,11 @@ from typing import assert_never
 
 from itrader.core.exceptions import SizingPolicyViolation
 from itrader.core.ids import PortfolioId
-from itrader.core.money import to_money
+from itrader.core.money import ONE, to_money
 from itrader.core.portfolio_read_model import PortfolioReadModel
 from itrader.core.sizing import FixedQuantity, FractionOfCash, RiskPercent, SizingPolicy
 
 __all__ = ["SizingResolver"]
-
-_ONE = Decimal("1")
 
 
 def _quantize_to_step(qty: Decimal, step: Decimal) -> Decimal:
@@ -158,7 +156,7 @@ class SizingResolver:
             with the dust guard: when the post-exit remainder would drop
             below ``step_size``, the exit takes the full position.
         """
-        if exit_fraction == _ONE:
+        if exit_fraction == ONE:
             # D-07/Pitfall 1: structural no-op — return the exact object, no
             # multiplication artifact (net * 1 could change the exponent).
             return net_quantity
