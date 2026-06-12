@@ -264,10 +264,17 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 
 	portfolio_ids = []
 	for portfolio_spec in spec.portfolios:
+		# Backtest portfolios use exchange="csv" (the offline golden venue). The
+		# portfolio's exchange string is carried onto its orders, and the order
+		# router resolves the 'csv' alias to the simulated matching engine
+		# (DEF-01-B, CLAUDE.md). Using spec.ticker here would route orders to an
+		# unregistered venue → Unknown exchange → no fills (byte-exact break);
+		# every other construction site (oracle/integration/scripts + the former
+		# e2e _build_and_run) uses "csv", so the factory must too.
 		pid = engine.portfolio_handler.add_portfolio(
 			user_id=portfolio_spec.user_id,
 			name=portfolio_spec.name,
-			exchange=spec.ticker if spec.ticker else 'csv',
+			exchange='csv',
 			cash=portfolio_spec.cash,
 		)
 		portfolio_ids.append(pid)
