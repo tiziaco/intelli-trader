@@ -15,6 +15,12 @@ from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingD
 from itrader.outils.time_parser import to_timedelta
 from itrader import idgen
 
+# D-03/D-05 (amended): the IndicatorHandle and the typed adapter Protocol live in
+# the first-party indicators/ subsystem (NOT here) — base imports them, the
+# dependency is one-directional base -> indicators (no cycle; handle.py never
+# imports base.py).
+from .indicators import IndicatorAdapter, IndicatorHandle
+
 # D-07: sentinel distinguishing a bare (required) annotation — a class attr
 # with NO value — from a class attr whose default happens to be None.
 _MISSING = object()
@@ -80,8 +86,9 @@ class Strategy(ABC):
 		self._apply_params(**kwargs)
 		# D-09: cross-field validation hook (no-op by default).
 		self.validate()
-		# D-10: idempotent lifecycle hook (no-op by default).
-		self.init()
+		# D-03/D-08: register declared indicators (init() calls self.indicator())
+		# then auto-derive warmup/max_window from the registered handles.
+		self._run_init()
 
 	def _apply_params(self, **kwargs: Any) -> None:
 		"""Apply ``**kwargs`` over the declared class-attr surface (D-06/D-07/D-08).
@@ -168,9 +175,64 @@ class Strategy(ABC):
 		"""Overridable idempotent lifecycle hook (D-10/D-11).
 
 		Called at the end of construction and on every ``reconfigure``. No-op by
-		default; calling it twice leaves identical state.
+		default; calling it twice leaves identical state. A concrete strategy
+		registers its declared indicators here via ``self.indicator(...)``.
 		"""
 		...
+
+	def indicator(
+		self, adapter: IndicatorAdapter, input_col: str, *params: int
+	) -> IndicatorHandle:
+		"""Register a declared indicator and return its handle (D-03).
+
+		Mirrors the ``backtesting.py`` ``self.I()`` shape: constructs an
+		``IndicatorHandle`` over the typed ``adapter`` (imported from the
+		``indicators`` package), appends it to ``self._handles``, and returns the
+		handle so the author binds it to a named attr
+		(``self.short_sma = self.indicator(SMA, "close", self.short_window)``).
+		The base re-populates the SAME handle each tick in ``evaluate``; the
+		auto-warmup post-pass derives ``warmup``/``max_window`` from
+		``handle.min_period()`` (D-08).
+		"""
+		handle = IndicatorHandle(adapter, input_col, tuple(params))
+		self._handles.append(handle)
+		return handle
+
+	def _run_init(self) -> None:
+		"""Reset handles, run ``init()``, then auto-derive warmup (D-08/D-10).
+
+		Resetting ``self._handles`` BEFORE ``self.init()`` keeps a re-run
+		idempotent (calling init() twice leaves identical state — D-10). The
+		post-``init()`` pass UNCONDITIONALLY assigns
+		``self.warmup = self.max_window = max(min_period across handles)``
+		(Warning 1 — an assignment, not a default): any hand-set
+		``max_window``/``warmup`` is overwritten, and a zero-handle strategy ends
+		at ``warmup == max_window == 0`` (benign — stub feeds ignore max_window
+		and warmup=0 never gates). Called from both ``__init__`` and
+		``reconfigure``.
+		"""
+		self._handles: list[IndicatorHandle] = []
+		self.init()
+		self.warmup = self.max_window = max(
+			(h.min_period() for h in self._handles), default=0
+		)
+
+	def evaluate(self, ticker: str, window: pd.DataFrame) -> SignalIntent | None:
+		"""Orchestration seam: stash the window, repopulate handles, dispatch (D-06).
+
+		The handler calls this (NOT ``generate_signal`` directly). It stashes the
+		pushed completed-bar window on ``self.bars`` and the decision anchor on
+		``self.now`` (``window.index[-1]`` — Pitfall 4, the SAME anchor the legacy
+		``last_time`` used, so the SMA ``start_dt`` arithmetic is unchanged), then
+		re-populates every registered handle BEFORE dispatching to
+		``generate_signal``. For an indicator-free strategy ``self._handles`` is
+		empty so the repopulate loop is a no-op (Pitfall 6 — no AttributeError).
+		"""
+		self.bars: pd.DataFrame = window
+		self.now = window.index[-1]
+		for handle in self._handles:
+			handle.repopulate(self.bars, self.now, self.timeframe)
+		return self.generate_signal(ticker)
 
 	def reconfigure(self, **kwargs: Any) -> None:
 		"""Re-apply + re-coerce kwargs, re-validate, re-run init() (D-12/D-13).
@@ -189,7 +251,8 @@ class Strategy(ABC):
 		"""
 		self._apply_params(**kwargs)
 		self.validate()
-		self.init()
+		# D-08/D-10: re-register handles + re-derive warmup (idempotent).
+		self._run_init()
 
 	def to_dict(self) -> dict[str, Any]:
 		# WR-02: a faithful "params snapshot" (SIG-02 queryability) must capture
@@ -257,14 +320,17 @@ class Strategy(ABC):
 		return str(self)
 
 	@abstractmethod
-	def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
+	def generate_signal(self, ticker: str) -> SignalIntent | None:
 		"""
 		Evaluate market data for ``ticker`` and return a trading intent.
 
-		The pure-alpha contract (D-12, M5-06): given the pushed history
-		window, return a ``SignalIntent`` (typically via the ``buy()`` /
-		``sell()`` sugar) or ``None`` when there is nothing to do. No queue,
-		no event construction, no portfolio knowledge.
+		The pure-alpha contract (D-06/D-12, M5-06): the ``bars`` param is dropped
+		— ``evaluate`` has already stashed the pushed completed-bar window on
+		``self.bars`` (and ``self.now`` = ``window.index[-1]``) and re-populated
+		every declared indicator handle. A concrete strategy reads its handles
+		(``self.short_sma[-1]``) and ``self.bars``, and returns a ``SignalIntent``
+		(typically via the ``buy()`` / ``sell()`` sugar) or ``None`` when there is
+		nothing to do. No queue, no event construction, no portfolio knowledge.
 		"""
 		raise NotImplementedError("Should implement generate_signal()")
 
