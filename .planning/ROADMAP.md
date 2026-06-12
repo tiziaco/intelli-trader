@@ -20,7 +20,7 @@ v1.1 — [`milestones/v1.1-ROADMAP.md`](./milestones/v1.1-ROADMAP.md) ·
 v1.2 — [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md) ·
 [`v1.2-REQUIREMENTS.md`](./milestones/v1.2-REQUIREMENTS.md) ·
 [`v1.2-MILESTONE-AUDIT.md`](./milestones/v1.2-MILESTONE-AUDIT.md).
-v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 phase dirs are archived under `milestones/v1.1-phases/`.
+v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 under `milestones/v1.1-phases/`; v1.2 under `milestones/v1.2-phases/`.
 
 > **Note on milestone naming:** **v1.2 _Consolidation_** (shipped 2026-06-12) was a
 > behavior-preserving cleanup milestone (Phases 1-6). The feature work formerly seeded as

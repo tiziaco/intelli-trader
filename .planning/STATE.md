@@ -132,6 +132,9 @@ None yet.
 - **v1.1 phase dirs archived:** the v1.1 phase working directories were moved to
   `.planning/milestones/v1.1-phases/` (done before the v1.2 phase-number reset, so renumbering
   v1.2 to Phases 1-6 produced no directory collision).
+- **v1.2 phase dirs archived (2026-06-12, at milestone close):** the six v1.2 phase working
+  directories (`01`–`06`) were moved to `.planning/milestones/v1.2-phases/`. Only the `999.x`
+  backlog seed dirs remain in `.planning/phases/`.
 
 ## Deferred Items
 
