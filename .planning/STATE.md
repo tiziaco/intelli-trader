@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: ready_to_plan
-last_updated: 2026-06-12T12:59:28.768Z
-last_activity: 2026-06-12 -- 02-03 complete (all strategy construction sites migrated to **kwargs; unit tests rewritten; byte-exact gate GREEN: oracle 134/46189.87730727451, e2e 58/58, mypy --strict clean, full suite 853 green, determinism identical). Phase 2 complete — ready for verification.
+status: planning
+last_updated: "2026-06-12T14:39:36.221Z"
+last_activity: 2026-06-12 -- Phase 2 complete (verification passed); next is Phase 3 (next_phase=999.2 from phase.complete was a backlog-dir scan artifact, corrected to v1.3 Phase 3)
 progress:
   total_phases: 9
   completed_phases: 2
   total_plans: 4
   completed_plans: 4
   percent: 22
-stopped_at: Phase 02 complete (3/3) — ready to discuss Phase 3 (Declared-Indicator Framework)
 ---
 
 # Project State
@@ -176,8 +175,8 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12T12:46:56.340Z
-Resume file: None
+Last session: 2026-06-12T14:39:36.212Z
+Resume file: .planning/phases/03-declared-indicator-framework/03-CONTEXT.md
 
 ## Operator Next Steps
 
