@@ -116,6 +116,15 @@ At minimum add `timeframe_alias` and `tickers` to the returned dict.
 
 ### WR-03: `generate_signal` precondition crash — relocated warmup guard leaves the pure function fragile
 
+> **Status: DEFERRED → Phase 3 (IND-01) — DO NOT FIX IN THE PHASE-2 `--fix` PASS.** Owner directive
+> (recorded in STATE.md Decisions): the structural fix is **framework-derived warmup** — Phase 3's
+> declared-indicator framework auto-derives `warmup`/`max_window` from declared indicator lookbacks
+> (`max` over each) and replaces the hand-set class attrs, eliminating the `warmup=0` footgun.
+> Blocked until indicators are declared (can't derive from the inline `ta.*` calls in this method).
+> The interim defensive guard was intentionally NOT taken (keeps D-15 handler-side gating clean).
+> HARD byte-exact constraint for the Phase-3 implementer: derived warmup for `SMAMACDStrategy` MUST
+> equal exactly **100** or the oracle drifts off `46189.87730727451`.
+
 **File:** `itrader/strategy_handler/strategies/SMA_MACD_strategy.py:52-95`
 **Issue:** The in-strategy guard `if len(bars) < self.max_window: return None` was removed (D-15)
 and relocated to the handler's `strategy.warmup` short-circuit. `generate_signal` now assumes it
