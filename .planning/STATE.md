@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
 status: executing
-last_updated: "2026-06-12T12:18:20.226Z"
-last_activity: 2026-06-12 -- Phase 02 planning complete
+last_updated: "2026-06-12T12:24:57.050Z"
+last_activity: 2026-06-12 -- 02-01 complete (strategy exceptions foundation; UnknownParamError/MissingParamError, byte-exact)
 progress:
   total_phases: 9
   completed_phases: 1
   total_plans: 4
-  completed_plans: 1
-  percent: 11
+  completed_plans: 2
+  percent: 50
 ---
 
 # Project State
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 2 — Strategy Authoring Surface
+**Current focus:** Phase 02 — strategy-authoring-surface
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (strategy-authoring-surface) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-12 -- Phase 02 planning complete
+Last activity: 2026-06-12 -- 02-01 complete (strategy exceptions foundation; UnknownParamError/MissingParamError, byte-exact)
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -102,6 +102,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - **Sequencing seam:** STRAT-01 (P2) before COMP-02 (P4) — the re-runnable idempotent `init()` is what `StrategiesHandler.update_config` consumes (re-validate → re-run `init()` → re-derive warmup).
 - **Phase numbering reset to 1 for v1.3** (matching v1.1/v1.2). The v1.2 phase working dirs were archived to `.planning/milestones/v1.2-phases/`, so there is no directory collision. The `999.x` backlog entries are FUTURE milestones (N+2/N+3/N+4), left intact in ROADMAP.md `## Backlog`.
 - **Deferred OUT of v1.3:** FL-13 (live-system test coverage) → 999.3; FL-06 (SQL injection) → 999.2. Both pushed down to their owning milestone (live/persistence), not the backtest engine surface.
+- [v1.3 Phase 02 / 02-01]: `core/exceptions/strategy.py` added — `UnknownParamError`/`MissingParamError` subclass the house `ValidationError` (never bare `ValueError`, RESEARCH §Don't Hand-Roll); engine call-shapes `UnknownParamError(sorted(kwargs))` (stores `self.names`, `field="strategy_params"`) and `MissingParamError(name)` (stores `self.name`, `field=name`) are satisfiable. Re-exported via the barrel. Zero run-path touch — byte-exact (oracle 134/46189.87730727451, e2e 58/58). Plan-02 engine imports these symbols.
 
 (v1.2 per-plan decisions are archived in `milestones/v1.2-ROADMAP.md` and the phase records under `milestones/v1.2-phases/`. The v1.2 Phase-6 decomposition decisions below are retained because Phase 5 of v1.3 builds directly on the `reconcile/` collaborator they created.)
 
@@ -169,8 +170,8 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12T11:50:56.853Z
-Resume file: .planning/phases/02-strategy-authoring-surface/02-CONTEXT.md
+Last session: 2026-06-12T12:24:57.043Z
+Resume file: None
 
 ## Operator Next Steps
 

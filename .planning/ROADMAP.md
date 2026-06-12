@@ -70,7 +70,7 @@ only after explicit owner sign-off + external cross-validation.
   3. `generate_signal` reads real typed instance attrs (`self.short_window`) — the pure-alpha D-12 contract is preserved; the dropped frozen-config mutation guard is replaced by a sanctioned-reconfigure-method-only discipline.
   4. The reference `SMAMACDStrategy` runs through the new authoring surface byte-exact against the BTCUSD oracle (134 trades / `final_equity 46189.87730727451`); e2e 58/58, `mypy --strict` clean (declared params are real annotated attrs mypy sees).
 **Plans**: 3 plans (3 waves — all-or-broken lockstep: source migration lands then construction sites + tests migrate together, then the byte-exact gate)
-  - [ ] 02-01-PLAN.md — New `core/exceptions/strategy.py` (`UnknownParamError`/`MissingParamError` subclassing `ValidationError`) + barrel re-export (Wave 1, standalone)
+  - [x] 02-01-PLAN.md — New `core/exceptions/strategy.py` (`UnknownParamError`/`MissingParamError` subclassing `ValidationError`) + barrel re-export (Wave 1, standalone)
   - [ ] 02-02-PLAN.md — Core source migration: `base.py` introspection engine + `init`/`validate`/`reconfigure` hooks (timeframe→timedelta Pitfall 1), `SMAMACDStrategy`/`EmptyStrategy` class-attr declarations, `SignalRecord.config` dict snapshot + handler capture, full pydantic config-layer delete (Wave 2)
   - [ ] 02-03-PLAN.md — All construction-site migration (e2e fixtures, oracle script, integration sites) + strategy unit-test rewrite/extend (unknown/missing/override/coerce/no-coerce/idempotent/reconfigure/dict-snapshot) + the byte-exact phase gate (Wave 3)
 **UI hint**: yes
@@ -182,7 +182,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
-| 2. Strategy Authoring Surface | 0/3 | Planned | - |
+| 2. Strategy Authoring Surface | 1/3 | In Progress|  |
 | 3. Declared-Indicator Framework | 0/TBD | Not started | - |
 | 4. Composition & Config Interface | 0/TBD | Not started | - |
 | 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |
