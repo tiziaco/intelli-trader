@@ -72,7 +72,7 @@ only after explicit owner sign-off + external cross-validation.
 **Plans**: 3 plans (3 waves — all-or-broken lockstep: source migration lands then construction sites + tests migrate together, then the byte-exact gate)
   - [x] 02-01-PLAN.md — New `core/exceptions/strategy.py` (`UnknownParamError`/`MissingParamError` subclassing `ValidationError`) + barrel re-export (Wave 1, standalone)
   - [x] 02-02-PLAN.md — Core source migration: `base.py` introspection engine + `init`/`validate`/`reconfigure` hooks (timeframe→timedelta Pitfall 1), `SMAMACDStrategy`/`EmptyStrategy` class-attr declarations, `SignalRecord.config` dict snapshot + handler capture, full pydantic config-layer delete (Wave 2)
-  - [ ] 02-03-PLAN.md — All construction-site migration (e2e fixtures, oracle script, integration sites) + strategy unit-test rewrite/extend (unknown/missing/override/coerce/no-coerce/idempotent/reconfigure/dict-snapshot) + the byte-exact phase gate (Wave 3)
+  - [x] 02-03-PLAN.md — All construction-site migration (e2e fixtures, oracle script, integration sites) + strategy unit-test rewrite/extend (unknown/missing/override/coerce/no-coerce/idempotent/reconfigure/dict-snapshot) + the byte-exact phase gate (Wave 3)
 **UI hint**: yes
 
 ### Phase 3: Declared-Indicator Framework
@@ -182,7 +182,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
-| 2. Strategy Authoring Surface | 2/3 | In Progress|  |
+| 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
 | 3. Declared-Indicator Framework | 0/TBD | Not started | - |
 | 4. Composition & Config Interface | 0/TBD | Not started | - |
 | 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |

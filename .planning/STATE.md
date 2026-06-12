@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: executing
-last_updated: "2026-06-12T12:35:37.739Z"
-last_activity: 2026-06-12 -- 02-02 complete (strategy authoring surface: kwargs engine + hooks; config layer deleted; suite intentionally RED pending 02-03)
+status: verifying
+last_updated: "2026-06-12T12:46:56.347Z"
+last_activity: 2026-06-12 -- 02-03 complete (all strategy construction sites migrated to **kwargs; unit tests rewritten; byte-exact gate GREEN: oracle 134/46189.87730727451, e2e 58/58, mypy --strict clean, full suite 853 green, determinism identical). Phase 2 complete — ready for verification.
 progress:
   total_phases: 9
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
-  percent: 75
+  completed_plans: 4
+  percent: 22
 ---
 
 # Project State
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface 
 
 Phase: 02 (strategy-authoring-surface) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute (02-03 migrates test/script construction sites in lockstep + runs the byte-exact gate)
-Last activity: 2026-06-12 -- 02-02 complete (kwargs introspection engine + init/validate/reconfigure hooks; SMAMACDStrategy/EmptyStrategy migrated to class attrs; config/strategy.py deleted; SignalRecord.config -> dict; mypy --strict itrader/ clean; suite intentionally RED pending 02-03)
+Status: Phase complete — ready for verification
+Last activity: 2026-06-12
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -111,6 +111,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [v1.2 Phase 06 / 06-01]: BracketBook is single owner of the pending-bracket map; _PendingBracket moved to brackets/bracket_book.py with action kept `str` — v1.3 SIG-03 retypes `_PendingBracket.action` to `Side` here.
 - [v1.2 Phase 02 / 2026-06-11] D-07 gap-discovery delta: the W2-10/DEC-02 "latent `Decimal < float` TypeError" on the below-minimum validation path was a MISDIAGNOSIS — Decimal-vs-float COMPARISON works in Py3; only arithmetic raises and there is none on `_min/_max_order_size`. (Retained as standing context for any v1.3 validator-path touch in SIG-03 / W4-04.)
 - [Phase ?]: [v1.3 Phase 02 / 02-02]: Strategy authoring surface landed — base Strategy __init__ is now (**kwargs) with a stdlib get_type_hints introspection engine, a 3-entry _COERCE enum table (timeframe/order_type/direction), and init()/validate()/reconfigure() hooks (D-02/D-06/D-09/D-10/D-12). ALL engine knobs MUST be annotated (get_type_hints returns only annotated names; deviation from the RESEARCH skeleton). reconfigure falls back to prior INSTANCE value for omitted required fields (OQ1). Pydantic config layer (config/strategy.py, BaseStrategyConfig) fully deleted (D-01); SignalRecord.config retyped to dict (D-04). Suite intentionally RED at 10 construction sites pending 02-03 (all-or-broken D-05); mypy --strict itrader/ clean.
+- [Phase ?]: [v1.3 Phase 02 / 02-03]: All strategy construction sites migrated from (name, config) to the kwargs class-attr surface (D-05, no shim); strategy unit tests rewritten for the class-attr engine (unknown/missing/override/coerce/no-coerce/validate/idempotent/reconfigure/dict-snapshot). Byte-exact gate GREEN: oracle 134/46189.87730727451, e2e 58/58, mypy --strict clean (172 files), full suite 853 green, determinism double-run identical. missing-required tested via EmptyStrategy (SMA pins sizing_policy); non-coercion via max_positions (short_window collides with validate()). Zero re-baseline.
 
 ### Pending Todos
 
@@ -133,6 +134,7 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 | Phase 02 P02 | ~25 min | 3 tasks | 7 files |
+| Phase 02 P03 | ~20 min | 3 tasks | 10 files |
 
 ## Bookkeeping
 
@@ -172,7 +174,7 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12T12:35:16.570Z
+Last session: 2026-06-12T12:46:56.340Z
 Resume file: None
 
 ## Operator Next Steps
