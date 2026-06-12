@@ -1,111 +1,105 @@
-"""HARD-01 / HARD-02 strategy-config validation tests (Plan 05-01, D-01..D-06).
+"""Class-attribute authoring-surface tests (Plan 02-03, D-05..D-08).
 
-Covers the engine-facing declaration contract (BaseStrategyConfig) and the
-per-strategy params subclass (SMA_MACDConfig): fail-loud pydantic validation at
-construction (positivity, cross-field short<long, timeframe vocabulary), frozen
-immutability (D-03), and the queryable snapshot under arbitrary_types_allowed
-(D-05 / SIG-02). These are leaf contracts — nothing is wired into base.py or the
-handler yet (Plan 02), so the oracle is dark.
+The pydantic strategy-config layer is DELETED (D-01,
+Plan 02-02). A strategy now DECLARES its params as class attributes and the base
+engine (``_apply_params``) applies ``**kwargs`` over them: kwargs override a
+class-attr default; an unknown kwarg raises ``UnknownParamError``; a missing
+required base attr raises ``MissingParamError``; the three ``_COERCE`` enum
+fields (timeframe / order_type / direction) coerce a str off their annotation,
+while every other knob is left as supplied (never silently int()-ed). 4-space
+indentation (tests house style).
 """
 
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-from pydantic import ValidationError
 
-from itrader.core.enums import OrderType, TradingDirection, Timeframe
+from itrader.core.enums import Timeframe, TradingDirection
+from itrader.core.exceptions.strategy import MissingParamError, UnknownParamError
 from itrader.core.sizing import FractionOfCash
-from itrader.config import BaseStrategyConfig
-from itrader.strategy_handler.strategies.empty_strategy import EmptyStrategyConfig
-from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig
+from itrader.strategy_handler.strategies.empty_strategy import EmptyStrategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 
 
 def _golden_sizing() -> FractionOfCash:
-    """The golden string-path Decimal literal (Pitfall 1 — byte-exact)."""
+    """The golden string-path Decimal literal (Pitfall 4 — byte-exact)."""
     return FractionOfCash(Decimal("0.95"))
 
 
-def test_sma_macd_config_defaults_construct() -> None:
-    """SMA_MACDConfig with default params carries the golden declarations."""
-    cfg = SMA_MACDConfig(
-        timeframe="1d",
-        tickers=["BTCUSD"],
-        sizing_policy=_golden_sizing(),
-    )
-    assert cfg.timeframe is Timeframe.D1
-    assert cfg.short_window == 50
-    assert cfg.long_window == 100
-    assert cfg.fast_window == 6
-    assert cfg.slow_window == 12
-    assert cfg.signal_window == 3
-    assert cfg.order_type is OrderType.MARKET
-    assert cfg.direction is TradingDirection.LONG_ONLY
-    assert cfg.allow_increase is False
-    assert cfg.sizing_policy == FractionOfCash(Decimal("0.95"))
-
-
-def test_short_window_ge_long_window_raises() -> None:
-    """short_window >= long_window is a cross-field violation (HARD-02)."""
-    with pytest.raises(ValidationError):
-        SMA_MACDConfig(
+def test_reject_unknown_kwarg_raises() -> None:
+    """An unknown construction kwarg is rejected loudly (D-06, T-02-01)."""
+    with pytest.raises(UnknownParamError):
+        SMAMACDStrategy(
             timeframe="1d",
             tickers=["BTCUSD"],
             sizing_policy=_golden_sizing(),
-            short_window=100,
-            long_window=50,
+            not_a_real_param=123,
         )
 
 
-def test_non_positive_window_raises() -> None:
-    """A zero/negative window violates Field(gt=0) positivity (HARD-02)."""
-    with pytest.raises(ValidationError):
-        SMA_MACDConfig(
+def test_missing_required_param_raises() -> None:
+    """Omitting a required base attr (sizing_policy) is rejected (D-07, T-02-02).
+
+    ``EmptyStrategy`` does NOT pin ``sizing_policy``/``tickers`` as class attrs
+    (unlike ``SMAMACDStrategy``), so omitting ``sizing_policy`` leaves the bare
+    base annotation with no value/no prior — the engine raises ``MissingParamError``.
+    """
+    with pytest.raises(MissingParamError):
+        EmptyStrategy(
             timeframe="1d",
             tickers=["BTCUSD"],
-            sizing_policy=_golden_sizing(),
-            short_window=0,
         )
 
 
-def test_invalid_timeframe_raises() -> None:
-    """An unsupported timeframe string is rejected at the boundary (HARD-01)."""
-    with pytest.raises(ValidationError):
-        BaseStrategyConfig(
-            timeframe="3mo",
-            tickers=["BTCUSD"],
-            sizing_policy=_golden_sizing(),
-        )
+def test_kwargs_override_class_attr_default() -> None:
+    """A kwarg overrides a class-attr default (D-05)."""
+    strategy = SMAMACDStrategy(
+        timeframe="1d",
+        tickers=["BTCUSD"],
+        sizing_policy=_golden_sizing(),
+        short_window=30,
+    )
+    assert strategy.short_window == 30
 
 
-def test_config_is_frozen() -> None:
-    """A constructed config is immutable (frozen=True, D-03)."""
-    cfg = SMA_MACDConfig(
+def test_timeframe_str_coerces_to_timedelta_on_instance() -> None:
+    """``timeframe="1d"`` coerces to an enum, then resolves to a timedelta (D-08, Pitfall 1)."""
+    strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],
         sizing_policy=_golden_sizing(),
     )
-    with pytest.raises(ValidationError):
-        cfg.short_window = 10  # type: ignore[misc]
+    # self.timeframe is the RESOLVED consumer type (timedelta), not the enum.
+    assert isinstance(strategy.timeframe, timedelta)
+    # The stashed enum/alias remain available for serialization.
+    assert strategy._timeframe is Timeframe.D1
+    assert strategy.timeframe_alias == "1d"
 
 
-def test_model_dump_recurses_into_sizing() -> None:
-    """model_dump() recurses into the frozen sizing dataclass (SIG-02 snapshot)."""
-    cfg = SMA_MACDConfig(
+def test_non_enum_knob_not_coerced_to_int() -> None:
+    """A non-enum knob (max_positions="3") is NOT int-coerced — stays a str (D-08).
+
+    Only the three ``_COERCE`` enum fields (timeframe/order_type/direction) coerce.
+    ``max_positions`` is a plain base knob: a str kwarg is applied verbatim, never
+    silently ``int()``-ed (the engine does not guess types off the annotation).
+    """
+    strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],
         sizing_policy=_golden_sizing(),
+        max_positions="3",
     )
-    dumped = cfg.model_dump()
-    assert isinstance(dumped["sizing_policy"], dict)
-    assert dumped["sizing_policy"]["fraction"] == Decimal("0.95")
+    assert strategy.max_positions == "3"
+    assert isinstance(strategy.max_positions, str)
 
 
-def test_empty_strategy_config_constructs() -> None:
-    """EmptyStrategyConfig is a no-extra-params BaseStrategyConfig subclass."""
-    cfg = EmptyStrategyConfig(
+def test_str_direction_coerces_to_enum() -> None:
+    """The ``direction`` knob is a _COERCE field — a str coerces to the enum (D-08)."""
+    strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],
         sizing_policy=_golden_sizing(),
+        direction="long_only",
     )
-    assert isinstance(cfg, BaseStrategyConfig)
-    assert cfg.timeframe is Timeframe.D1
+    assert strategy.direction is TradingDirection.LONG_ONLY

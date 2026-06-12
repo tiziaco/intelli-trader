@@ -27,7 +27,6 @@ from itrader.core.sizing import (
 )
 from itrader.events_handler.events import BarEvent
 from itrader.strategy_handler.base import Strategy
-from itrader.config import BaseStrategyConfig
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
@@ -60,16 +59,18 @@ class _StubFeed:
 class _AlwaysBuyStrategy(Strategy):
     """Minimal concrete strategy that always signals BUY (capture probe)."""
 
+    name = "always_buy"
+    # warmup=0 (no gating); wide-enough max_window for the stub frame.
+    max_window: int = 1
+
     def __init__(self, ticker: str = _TICKER) -> None:
-        config = BaseStrategyConfig(
+        # D-05: pass params straight through to the **kwargs surface (no shim).
+        super().__init__(
             timeframe="1d",
             tickers=[ticker],
             sizing_policy=FractionOfCash(Decimal("0.95")),
             direction=TradingDirection.LONG_ONLY,
         )
-        super().__init__("always_buy", config)
-        # warmup=0 (no gating); wide-enough max_window for the stub frame.
-        self.max_window = 1
 
     def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
         return self.buy(ticker)
@@ -78,15 +79,17 @@ class _AlwaysBuyStrategy(Strategy):
 class _NeverSignalStrategy(Strategy):
     """Minimal concrete strategy that never signals (None-intent probe)."""
 
+    name = "never_signal"
+    max_window: int = 1
+
     def __init__(self, ticker: str = _TICKER) -> None:
-        config = BaseStrategyConfig(
+        # D-05: pass params straight through to the **kwargs surface (no shim).
+        super().__init__(
             timeframe="1d",
             tickers=[ticker],
             sizing_policy=FractionOfCash(Decimal("0.95")),
             direction=TradingDirection.LONG_ONLY,
         )
-        super().__init__("never_signal", config)
-        self.max_window = 1
 
     def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
         return None
@@ -167,10 +170,12 @@ def test_record_fields_mirror_intent_and_event(store_env):
     assert record.ticker == _TICKER
     assert record.time == event.time
     assert record.action is Side.BUY
-    # D-11: config is the strategy's frozen config, stored by reference.
-    assert record.config is strategy.config
-    # SIG-02: the snapshot is serializable to a dict at the read edge.
-    assert isinstance(record.config.model_dump(), dict)
+    # D-04: config is the strategy's params snapshot dict (strategy.to_dict()),
+    # captured by value — to_dict() returns a FRESH dict each call, so assert
+    # with `==` (dict-shape equality), NOT identity `is`.
+    assert record.config == strategy.to_dict()
+    # SIG-02: the snapshot is already a plain dict at the read edge.
+    assert isinstance(record.config, dict)
     # A fresh SignalId was defaulted (D-10).
     assert record.signal_id is not None
 
