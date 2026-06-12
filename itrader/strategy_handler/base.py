@@ -132,12 +132,21 @@ class Strategy(ABC):
 				# it (no MissingParamError on an omitted-but-already-set field).
 				val = getattr(self, nm)
 			elif default is not _MISSING:
-				# WR-01: copy mutable class-attr defaults so a declared
-				# `list`/`dict`/`set` default is not ALIASED across every
-				# instance constructed without that kwarg (the classic
-				# mutable-default bug, re-expressed through class attributes —
-				# `a.tickers.append(...)` would otherwise leak into `b.tickers`).
-				val = copy.deepcopy(default) if isinstance(default, (list, dict, set)) else default
+				# WR-01/IN-01: copy mutable class-attr defaults so a declared
+				# default is not ALIASED across every instance constructed without
+				# that kwarg (the classic mutable-default bug, re-expressed through
+				# class attributes — `a.tickers.append(...)` would otherwise leak
+				# into `b.tickers`). IN-01: the guard is now mutability-based, not a
+				# `list`/`dict`/`set` whitelist — any default that is NOT a known
+				# immutable scalar (str/int/float/bool/None/Enum) is deep-copied, so
+				# a declared default of a deque / numpy array / custom mutable object
+				# is alias-safe too. Deep-copying an effectively-immutable declared
+				# policy (FractionOfCash, etc.) yields an equal fresh copy — harmless.
+				val = (
+					default
+					if default is None or isinstance(default, (str, int, float, bool, Enum))
+					else copy.deepcopy(default)
+				)
 			else:
 				raise MissingParamError(nm)
 			coerce = _COERCE.get(nm)
