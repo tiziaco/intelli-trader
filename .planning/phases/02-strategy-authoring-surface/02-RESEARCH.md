@@ -413,14 +413,18 @@ Ranked by likelihood of perturbing the BTCUSD oracle (134 trades / `final_equity
 | A2 | `get_type_hints(type(self))` returns the full merged-MRO dict with subclass-overrides applied | Pattern 1 | LOW — VERIFIED by live stdlib probe this session on representative class shapes. |
 | A3 | The three coercion-target enums (`Timeframe`/`OrderType`/`TradingDirection`) are the ONLY fields needing str→enum coercion | Pattern 2, _COERCE table | LOW — VERIFIED against current `BaseStrategyConfig` fields; `sizing_policy`/`sltp_policy` are dataclass values (passed as objects, not strings), `tickers`/`allow_increase`/`max_positions` are native types. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **`reconfigure` re-resolving `timeframe` without a `timeframe` kwarg.**
+> Both questions are resolved and pinned in the Phase 2 plans: Q1 in `02-02-PLAN.md` Task 1
+> `<action>` (the `self._timeframe` enum-stash + instance-fallback order); Q2 in `02-02-PLAN.md`
+> Task 3 `<action>` (snapshot captured from `to_dict()`; no separate `params_snapshot()`).
+
+1. **`reconfigure` re-resolving `timeframe` without a `timeframe` kwarg.** *(RESOLVED — 02-02 Task 1)*
    - What we know: `_apply_params` overwrites `self.timeframe` (enum→timedelta). On a second call (`reconfigure(short_window=30)`) the `timeframe` default is read via `getattr(type(self), "timeframe", ...)` — which returns the *class* attr (annotation-only on base = `_MISSING` unless the subclass pins it), NOT the already-resolved instance timedelta.
    - What's unclear: how to make the re-resolve idempotent when `timeframe` was supplied only at first construction via kwargs (so there's no class-attr default to fall back to).
    - Recommendation: store the coerced **enum** on a stable attr (e.g. `self._timeframe`) and derive `self.timeframe` (timedelta) + `self.timeframe_alias` from it on every `_apply_params` pass; when no `timeframe` kwarg arrives in a reconfigure, fall back to `getattr(self, "_timeframe", default)` (instance, not class). This makes `reconfigure(short_window=30)` keep the prior timeframe. The planner should pin this exact fallback order in a task. (This is a real mechanic the design note left to spec-time.)
 
-2. **`params_snapshot()` vs `to_dict()` — one method or two?**
+2. **`params_snapshot()` vs `to_dict()` — one method or two?** *(RESOLVED — 02-02 Task 3: reuse `to_dict()`)*
    - What we know: D-04 says "e.g. `strategy.to_dict()` / `params_snapshot()`". The current `to_dict()` has a specific 10-key serialization shape (stringified UUIDs, `.value` enums, `repr()` policies).
    - What's unclear: whether the SignalRecord snapshot should reuse `to_dict()` (the serialization-edge shape) or a new `params_snapshot()` (raw declared attrs).
    - Recommendation: keep `to_dict()` as the JSON-safe serialization edge (preserve its key set), and capture the SignalRecord snapshot from `to_dict()` directly so the migrated `model_dump()`→dict callers get a stable shape. Claude's discretion per D-04 — the planner picks one and pins the key set.
