@@ -25,7 +25,7 @@ class _StopLimitHarness:
         self.execution = ExecutionHandler(self.queue)
         exchange = self.execution.exchanges["simulated"]
         exchange.connect()
-        exchange.update_config(supported_symbols={"BTCUSDT"})
+        exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})
         self.pid = self.ptf.add_portfolio(1, "p", "simulated", 100000)
 
     def signal(self, action, order_type="MARKET", price=40.0, stop_loss=0.0, take_profit=0.0):

@@ -78,7 +78,8 @@ def test_seeded_set_is_replacement_safe_against_update_config():
     system = build_backtest_system(_btcusd_spec())
     exchange = system.execution_handler.exchanges["simulated"]
     expected = _DEFAULT_PRESET | {"BTCUSD"}
-    # A fee-only reconfigure re-runs the limits re-derivation path off config.limits.
-    exchange.update_config(supported_symbols=exchange.config.limits.supported_symbols)
+    # A reconfigure that re-runs the limits re-derivation path off config.limits.
+    exchange.update_config(
+        {"limits": {"supported_symbols": exchange.config.limits.supported_symbols}})
     assert exchange._supported_symbols == expected
     assert "BTCUSD" in exchange._supported_symbols

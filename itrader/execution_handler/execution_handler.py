@@ -1,6 +1,6 @@
 import random
 from queue import Queue
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
@@ -8,6 +8,7 @@ from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
 from itrader.config import ExchangeConfig, get_exchange_preset
+from itrader.core.exceptions.base import ConfigurationError
 from itrader.logger import get_itrader_logger
 
 class ExecutionHandler(AbstractExecutionHandler):
@@ -79,6 +80,23 @@ class ExecutionHandler(AbstractExecutionHandler):
 		"""
 		from itrader import config
 		return int(config.performance.rng_seed)
+
+	def update_config(self, updates: Dict[str, Any]) -> None:
+		"""Update execution configuration at runtime (D-07/D-08/D-09).
+
+		The handler owns no Pydantic config model of its own; the execution
+		config lives on the exchange. So the uniform ``update_config`` routes the
+		partial update to the simulated exchange's canonical ``update_config``
+		(deep_merge -> model_validate -> atomic-swap -> ConfigurationError),
+		keeping the single web-catchable raise contract. Returns ``None``; raises
+		``ConfigurationError`` on failure (including when no exchange is wired).
+		"""
+		exchange = self.exchanges.get('simulated')
+		if not isinstance(exchange, SimulatedExchange):
+			raise ConfigurationError(
+				config_key='simulated',
+				reason='no simulated exchange wired to update')
+		exchange.update_config(updates)
 
 
 	def on_order(self, event: OrderEvent) -> None:

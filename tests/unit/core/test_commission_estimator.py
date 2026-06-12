@@ -101,11 +101,11 @@ def test_fee_model_commission_estimator_late_binding_after_fee_swap():
     # Before the swap: ZeroFeeModel → 0.
     assert adapter(Decimal("1"), Decimal("1000")) == Decimal("0")
     # Hot-swap to a percent fee model (re-inits self.fee_model on the exchange).
-    # NOTE: the swap drives the LIVE SimulatedExchange.update_config API (enum +
-    # rate). The dict/model_validate canonical contract that coerces a string
-    # "percent" lands in Wave 3 (04-03); the D-15 LATE-BINDING property under
-    # test is independent of how the swap is expressed.
-    exchange.update_config(fee_model_type=FeeModelType.PERCENT, fee_rate=Decimal("0.001"))
+    # Drives the canonical dict/model_validate update_config contract (Wave 3,
+    # 04-03). The D-15 LATE-BINDING property under test is independent of how the
+    # swap is expressed.
+    exchange.update_config(
+        {"fee_model": {"model_type": FeeModelType.PERCENT.value, "fee_rate": "0.001"}})
     # After the swap: the NEW PercentFeeModel applies — a non-zero estimate.
     assert adapter(Decimal("1"), Decimal("1000")) > Decimal("0")
 
