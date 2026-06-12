@@ -124,3 +124,8 @@ None.
 ## Threat Flags
 
 None — no new trust boundary, input, auth/crypto, IO, or persistence surface introduced.
+
+## Self-Check: PASSED
+
+- `01-01-SUMMARY.md` exists.
+- Commits 32dd8f5, 69faa97, aa178ce, 832a07e all present in history.
