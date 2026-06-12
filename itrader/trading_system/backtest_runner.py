@@ -108,7 +108,7 @@ class BacktestRunner:
 		self.logger.info('    BACKTEST COMPLETED   ')
 		end_time = datetime.now()  # Capture end time
 		duration = end_time - start_time
-		print("Backtest duration:", duration)
+		self.logger.info('Backtest completed', duration_seconds=duration.total_seconds())
 
 	def run(self, on_tick: Optional[Callable[[Any, Any], None]] = None) -> None:
 		"""Initialise the session (ORDER-SENSITIVE) then drive the for-loop."""
