@@ -200,6 +200,24 @@ def test_init_is_idempotent():
     assert before == after
 
 
+def test_to_dict_is_json_serializable():
+    """WR-04: to_dict() honours the documented json.dumps(...) contract.
+
+    to_dict() exists to capture the FULL declared surface via introspection;
+    its IN-03 docstring cites ``json.dumps(strategy.to_dict())`` as the
+    serialization-edge contract. The generic introspection loop now coerces any
+    non-JSON-native declared value to repr() at the edge, so the snapshot stays
+    round-trippable regardless of the declared attr's type. Regression-lock it.
+    """
+    import json
+
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+
+    # Must not raise "Object of type ... is not JSON serializable".
+    dumped = json.dumps(strategy.to_dict())
+    assert isinstance(dumped, str)
+
+
 def test_reconfigure_reapplies_and_revalidates():
     """D-12: reconfigure(**kwargs) re-applies + re-validates + preserves timeframe."""
     strategy = SMAMACDStrategy(**_sma_kwargs())

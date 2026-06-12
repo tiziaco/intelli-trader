@@ -25,6 +25,15 @@ from .indicators import IndicatorAdapter, IndicatorHandle
 # with NO value — from a class attr whose default happens to be None.
 _MISSING = object()
 
+# WR-04: JSON-native types the to_dict() introspection loop may emit as-is.
+# Anything else (Decimal/datetime/custom object) is coerced to repr() at the
+# serialization edge so json.dumps(strategy.to_dict()) never raises.
+def _is_json_native(val: Any) -> bool:
+	# `bool` is a subclass of `int`, so it is already covered; list/dict are
+	# the JSON container types (their scalar declared contents are themselves
+	# native on the declared surface). `None` is JSON null.
+	return val is None or isinstance(val, (str, int, float, list, dict))
+
 # D-08: ONLY these three engine fields coerce a str off their annotation to an
 # enum (via the enum's case-insensitive _missing_). Every other knob is left as
 # supplied — e.g. short_window="50" stays a str, never silently int()-ed.
@@ -299,6 +308,15 @@ class Strategy(ABC):
 			if isinstance(val, Enum):
 				val = val.value
 			elif isinstance(val, (SizingPolicy, SLTPPolicy)):
+				val = repr(val)
+			elif not _is_json_native(val):
+				# WR-04: the introspection loop is the whole point of to_dict
+				# (capture the FULL declared surface), but it must honour the
+				# documented `json.dumps(strategy.to_dict())` contract (IN-03). A
+				# declared attr whose value is e.g. a Decimal / datetime / custom
+				# object is NOT JSON-native — coerce it at the serialization edge
+				# (repr), mirroring how the bespoke policy fields are handled, so
+				# the snapshot stays round-trippable.
 				val = repr(val)
 			snapshot[nm] = val
 		# Identity/runtime fields + bespoke serializations (override declared).
