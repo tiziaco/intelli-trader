@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Consolidation
-status: milestone_complete
-last_updated: 2026-06-12T08:00:00.000Z
+milestone: v1.3
+milestone_name: Engine Surface Completion
+status: planning
+last_updated: "2026-06-12T10:12:12.581Z"
 last_activity: 2026-06-12
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 23
-  completed_plans: 23
-  percent: 100
-stopped_at: v1.2 Consolidation SHIPPED 2026-06-12 (tagged v1.2) — no active milestone; next candidate Engine Surface Completion (Backlog 999.5)
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.2 Consolidation s
 
 ## Current Position
 
-Phase: none (v1.2 shipped)
+Phase: Not started (defining requirements)
 Plan: —
-Status: Milestone complete — awaiting next milestone definition
-Last activity: 2026-06-12
+Status: Defining requirements
+Last activity: 2026-06-12 — Milestone v1.3 started
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
 
@@ -132,6 +131,7 @@ None yet.
 - **v1.1 phase dirs archived:** the v1.1 phase working directories were moved to
   `.planning/milestones/v1.1-phases/` (done before the v1.2 phase-number reset, so renumbering
   v1.2 to Phases 1-6 produced no directory collision).
+
 - **v1.2 phase dirs archived (2026-06-12, at milestone close):** the six v1.2 phase working
   directories (`01`–`06`) were moved to `.planning/milestones/v1.2-phases/`. Only the `999.x`
   backlog seed dirs remain in `.planning/phases/`.

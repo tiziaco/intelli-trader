@@ -19,25 +19,51 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
-## Current Milestone: none active — v1.2 Consolidation shipped 2026-06-12
+## Current Milestone: v1.3 Engine Surface Completion
 
-**v1.2 Consolidation — SHIPPED 2026-06-12** (6 phases, 23 plans, 18/18 requirements validated).
-A behavior-preserving cleanup milestone: cleared the v1.1 cleanup-review backlog
-(`V1.2-CLEANUP-REVIEW.md`, 46 findings) + the CONCERNS.md dead/fragile/tangled debt **byte-exact
-against the golden master** (134 trades / `final_equity 46189.87730727451`), re-baselining nothing —
-so the next milestone's engine-surface features build on a clean, decomposed foundation. The
-headline: `order_manager.py` decomposed 1279 → 210-line coordinator + `admission/`/`brackets/`/
-`lifecycle/`/`reconcile/` collaborators as pure code-motion, FRAGILE path byte-for-byte unchanged.
-See the Validated section (v1.2) below, the Current State section, and
-`milestones/v1.2-ROADMAP.md` for full per-phase detail.
+**Goal:** Complete the signal/order contracts, give the system a real composition/config
+interface, and land the declared-indicator + strategy-authoring abstraction — BEFORE N+2 builds
+margin/shorts on top of these same surfaces. Promotes Backlog Phase 999.5. Phase numbering resets
+to Phase 1 (matching the v1.1/v1.2 pattern; v1.2 phase dirs archived to `milestones/v1.2-phases/`).
 
-**Next milestone candidate — Engine Surface Completion** (promote with `/gsd:new-milestone`, ahead
-of N+2): the result-changing / new-framework items deferred out of v1.2 — signal-contract
-completion (per-intent limit/stop entry price + `order_type`; `Order.action→Side`), a real
-composition/config interface (promote `ScenarioSpec`; `OrderConfig`; uniform `update_config`), a
-declared-indicator framework with auto-warmup, and order-lifecycle/TIF (run-end resting-order
-disposition; `create_order` gating). See the "Following Milestone Goals" section and ROADMAP.md
-Backlog (Phase 999.5).
+**Target workstreams:**
+- **(a) Signal contract completion** — explicit per-intent limit/stop ENTRY price + per-intent
+  `order_type` on the signal contract (`SignalIntent` → `SignalEvent` →
+  `Order.new_limit_order`/`new_stop_order`); folds W2-02 (`Order.action`/`_PendingBracket.action`
+  `str`→`Side`) and W1-11 (position-snapshot threading); W4-04 validator-overlap doc if touched.
+  **Owner-gated re-baseline** (result-changing).
+- **(b) System composition/config interface** — promote `ScenarioSpec` to an engine-level
+  composition API (declarative multi-strategy/portfolio wiring; faithful construction-time
+  `ExchangeConfig` threading replacing the Phase 7 D-14 conftest seam; `csv_paths` passthrough);
+  new `OrderConfig` model + threading (SYN-05); folds W4-02/03/05/06/07. **Plus COMP-02 — a uniform
+  runtime `update_config` surface on EVERY handler** (`OrderHandler`/`OrderManager`,
+  `StrategiesHandler`, `ExecutionHandler`, `PortfolioHandler`, `SimulatedExchange`,
+  `BacktestBarFeed`) with ONE consistent signature (merge→validate→atomic-swap per SYN-03), so
+  config can change at runtime in a **live scenario** — applied between event cycles, thread-safe,
+  not a mid-cycle attribute poke. Today only 3 modules have it with 2 inconsistent signatures.
+  **Byte-exact.**
+- **(c) Declared-indicator framework + strategy authoring surface** — IND-01 + STRAT-01:
+  class-attribute authoring surface (engine-facing names on the base, alpha knobs on the subclass,
+  overridable at construction, reject-unknown-kwargs), re-runnable/idempotent `init()` hook,
+  auto-derived `warmup`/`max_window`, model-B pre-eval reads (`self.sma[-1]`), free-function
+  `crossover`/`crossunder`. The re-runnable `init()` is the seam COMP-02 needs for `StrategiesHandler`
+  runtime reconfig. Folds W1-05 as declaration-only (stateless recompute stays byte-exact;
+  incremental opt-in later). STRAT-01 separable — may ship first as a smaller slice. Full design:
+  `notes/strategy-authoring-surface-999.5c.md`. **Byte-exact.**
+- **(d) Order lifecycle completion** — wire run-end resting-order disposition / time-in-force
+  (`Order.expire_order()` + `OrderStatus.EXPIRED` exist but unwired on the backtest path; orders
+  stay PENDING at run end); `create_order` second-path gating (W4-09). **Owner-gated re-baseline**
+  (result-changing).
+- **Engine Hygiene slice** (net-new, from `notes/v1.3-concerns-triage.md` §B items 1–4) —
+  `test_position_manager` private `_storage` asserts (W3-07, owed from v1.2 NAME-04, MISSED); stale
+  mypy override for deleted `screener_event_handler.py`; dead `TOLERANCE = 1e-3` float constant;
+  `PortfolioValidator.validate_transaction_data` accepts `float`. All SAFE, no golden re-run. One
+  short phase.
+
+**Re-baseline discipline:** (b)/(c) stay byte-exact against the v1.1 E2E golden suite
+(134 trades / `final_equity 46189.87730727451`); (a) and (d)-TIF are owner-gated result-changing
+re-baselines. **Deferred OUT of v1.3:** FL-13 live-system coverage → 999.3; FL-06 SQL injection →
+999.2. Full fold-in/defer decisions in `notes/v1.3-concerns-triage.md`.
 
 ## Requirements
 
@@ -128,19 +154,18 @@ clean (172 files); e2e 58/58; full suite 851; 18/18 requirements verified at mil
 <!-- v1.0 (Backtest-Correctness Refactor) SHIPPED 2026-06-08 — 45 requirements.
      v1.1 (Backtest Trustworthiness: Breadth) SHIPPED 2026-06-10 — 51 requirements.
      v1.2 (Consolidation) SHIPPED 2026-06-12 — 18 requirements.
-     All fully validated above. No active requirements until the next milestone is defined. -->
+     v1.3 (Engine Surface Completion) ACTIVE from 2026-06-12 — see REQUIREMENTS.md. -->
 
-**No active milestone.** v1.0 (45 reqs), v1.1 (51 reqs), and v1.2 (18 reqs) have shipped and are
-recorded in the Validated section above and in `milestones/v1.0-*` / `milestones/v1.1-*` /
-`milestones/v1.2-*`. Define the next milestone with `/gsd:new-milestone`.
+**v1.3 — Engine Surface Completion (ACTIVE).** Promotes Backlog Phase 999.5. Requirements are
+defined in `.planning/REQUIREMENTS.md` (SIG-01/SIG-02 signal contract; COMP-01 composition API +
+COMP-02 uniform live `update_config`; IND-01 indicator framework + STRAT-01 authoring surface;
+LIFE-01 order lifecycle/TIF; HYG-01 engine-hygiene slice). v1.0 (45 reqs), v1.1 (51 reqs), and
+v1.2 (18 reqs) shipped and are recorded in the Validated section above and under `milestones/`.
 
-**Following milestone candidate:** Engine Surface Completion — signal-contract completion
-(per-intent limit/stop entry price + order_type); a real system composition/config interface
-promoting `ScenarioSpec`; a declared-indicator framework with auto-warmup; order-lifecycle
-completion incl. run-end resting-order disposition / TIF. These are the **result-changing /
-new-framework** items deferred out of v1.2 so the cleanup foundation lands first. Promote AHEAD
-of N+2 (margin/shorts), since N+2 builds on exactly these signal/order/composition surfaces.
-See ROADMAP.md Backlog (Phase 999.5).
+**Following milestone (N+2 — Backlog 999.4):** Margin/liquidation model → shorts (remove the
+D-08/D-09 LONG_ONLY guard + fix the CR-01 cover-arm hole) → leverage / levered Kelly → perp
+funding → engine-native trailing stop → real long/short pair trading. N+2 extends exactly the
+signal/order/composition surfaces v1.3 completes, which is why v1.3 lands first.
 
 ### Out of Scope
 
@@ -271,4 +296,4 @@ foundation first (byte-exact); this milestone then completes the contracts befor
 **Then N+2** (ROADMAP backlog): margin/liquidation model → shorts (remove the D-08/D-09 LONG_ONLY guard + fix the CR-01 cover-arm hole) → leverage / levered Kelly → perp funding → engine-native trailing stop → real long/short pair trading. Promote one at a time with `/gsd:review-backlog` or start with `/gsd:new-milestone`.
 
 ---
-*Last updated: 2026-06-12 after v1.2 milestone. v1.2 (Consolidation) SHIPPED — behavior-preserving cleanup, golden byte-exact, `order_manager.py` decomposed; 18/18 requirements validated. No active milestone — next candidate is Engine Surface Completion (promote with `/gsd:new-milestone`, ahead of N+2). Full per-phase v1.2 detail archived in `milestones/v1.2-ROADMAP.md`; requirements in `milestones/v1.2-REQUIREMENTS.md`; audit in `milestones/v1.2-MILESTONE-AUDIT.md`.*
+*Last updated: 2026-06-12 — milestone v1.3 Engine Surface Completion STARTED (promotes Backlog 999.5; phase numbering reset to 1). Scope: signal-contract completion (a, owner-gated), composition/config interface + uniform live `update_config` (b, byte-exact), declared-indicator framework + strategy authoring surface (c, byte-exact), order lifecycle/TIF (d, owner-gated), and a net-new engine-hygiene slice. FL-13→999.3, FL-06→999.2. Requirements in `.planning/REQUIREMENTS.md`; triage in `notes/v1.3-concerns-triage.md`; (c) design in `notes/strategy-authoring-surface-999.5c.md`. v1.2 (Consolidation) SHIPPED — archived under `milestones/v1.2-*`.*
