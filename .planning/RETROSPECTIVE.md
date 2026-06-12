@@ -79,6 +79,44 @@
 
 ---
 
+## Milestone: v1.2 — Consolidation
+
+**Shipped:** 2026-06-12
+**Phases:** 6 (Phases 1–6) | **Plans:** 23 | **Tasks:** ~36
+
+### What Was Built
+- The engine put in order — the v1.1 cleanup-review backlog (`V1.2-CLEANUP-REVIEW.md`, 46 findings) + the `CONCERNS.md` dead/fragile/tangled debt cleared **byte-exact against the golden master** (134 trades / `final_equity 46189.87730727451`), re-baselining nothing.
+- `order_manager.py` decomposed from a 1279-line god-module into a 210-line thin coordinator + `admission/`/`brackets/`/`lifecycle/`/`reconcile/` collaborators (mirroring `portfolio_handler/`) as pure code-motion — the FRAGILE fill-reconciliation / `should_release`/`finally` path byte-for-byte unchanged, `on_fill` moved as one indivisible unit, cross-bucket seams rewired via coordinator callback + injected `BracketManager` (no sibling edges, no circular import).
+- Locked-decision conformance (Decimal money API + Decimal `_min/_max_order_size`; single UUIDv7, `uuid4()` retired); hot-path per-tick copies/re-wraps/Bar-MACD churn eliminated bit-identically; closed vocabularies → class-based enums + frozen decision DTOs + `OrderId`/`PortfolioId` NewTypes; consistent naming (`global_queue`, PascalCase strategies, `*_window`) + public seams (`routes`, `register_symbol()`).
+
+### What Worked
+- **Isolating the FRAGILE refactor as a dedicated, sequential, LAST phase.** Phase 6 shipped MOD-01 alone, one D-10 extraction step per plan (BracketBook in-place → brackets → admission → lifecycle → reconcile LAST), each golden-gated. Moving `on_fill` as one intact unit with `should_release`/`finally` byte-for-byte unchanged meant the highest-risk change in the milestone landed byte-exact with zero behavior drift — the isolation rule paid off exactly as designed.
+- **Pure code-motion under a regression oracle is nearly free.** Every Phase 6 plan re-ran the golden master + e2e + mypy and landed byte-exact on the first attempt; the decomposition added zero numerical risk because nothing but structure moved.
+- **Owner-flagged gap deltas instead of silent folding.** The D-07 re-adjudication (the W2-10 "latent TypeError" was a misdiagnosis — Decimal-vs-float comparison works in Py3) was surfaced as a bounded, owner-visible delta with the REQUIREMENTS/SC wording corrected, not quietly absorbed into a running phase. The established gap-discovery discipline held.
+- **Sequencing cleanup so the decomposition came last.** Naming/encapsulation (Phase 5) made the public seams consistent *before* the god-module split, so Phase 6 extracted collaborators against already-clean names.
+
+### What Was Inefficient
+- **Planning-metadata drift recurred for the third milestone running.** DEC/PERF/TYPE REQUIREMENTS checkboxes + 11 traceability rows were stale (Pending/`[ ]`) at audit despite passing verification — the phase verifiers deferred these orchestrator-owned edits, and the milestone audit reconciled them *again*. SUMMARY `requirements-completed` frontmatter still omits 6 REQ-IDs. The v1.0/v1.1 lesson ("enforce at phase close, not at audit") remains unimplemented — it is now a verified three-milestone pattern.
+- **The same `gsd-sdk` SDK-port false-positive recurred at close.** The 4 completed quick tasks flagged "missing" by the SDK-port filename bug had to be re-adjudicated and re-acknowledged exactly as in v1.1 — a known tooling lie that still costs a manual verification pass each milestone.
+- **Nyquist validation was discovery-only again** (not auto-run); the behavioral safety net came entirely from the oracle + 58 e2e + mypy strict. Acceptable for a behavior-preserving milestone, but the formal validation coverage gap persists across milestones.
+
+### Patterns Established
+- **God-module decomposition as a sequenced, golden-gated, single-requirement LAST phase** — one collaborator extraction per plan, FRAGILE unit (`on_fill`) moved intact and last, cross-bucket seams via coordinator callback + injection (never sibling references), facade + barrel byte-unchanged. The reusable template for safely splitting any fragile god-module under a regression oracle.
+- **Coordinator-owned shared collaborators injected into sub-managers** (the `BracketBook`/`BracketManager` "D-04 star" pattern) — sub-managers hold no queue and no sibling refs; the thin coordinator owns shared state and wires it in, so extraction never introduces a cross-manager edge or circular import.
+
+### Key Lessons
+1. **Isolate the fragile change and move it intact, last.** The single most fragile path in the codebase (fill-reconciliation / reservation-release) was refactored with zero drift specifically because Phase 6 carried *only* MOD-01, extracted one step at a time, and moved `on_fill` as one indivisible unit. Bundling it with any behavior fix would have made a regression unattributable.
+2. **Pure code-motion under a byte-exact oracle is the cheapest large structural change available** — 1279→210 lines landed byte-exact on first attempt every plan. When the oracle proves "nothing changed," aggressive decomposition is low-risk.
+3. **Metadata drift is now a confirmed three-milestone process bug.** It is no longer a discipline lapse to coach away — it needs a *mechanical* phase-close gate (fail the close when `requirements-completed` is empty or traceability lags VERIFICATION.md). Manual reconciliation at audit has been paid three times.
+4. **A tool that lied last milestone will lie again** — the `gsd-sdk` SDK-port quick-task false positive recurred verbatim. Either fix/replace the boundary tool or script the canonical-scanner check, rather than re-adjudicating by hand each close.
+
+### Cost Observations
+- Model mix: not instrumented this milestone.
+- Sessions: phases shipped as PRs (#32–#34 visible in recent git log: type-modeling, naming, order-handler refactor); Phases 1–3 + finalization committed directly. ~1–2 calendar days (2026-06-10 → 2026-06-11, finalized 2026-06-12).
+- Notable: near-zero re-work on the golden path — behavior-preserving + pure-code-motion meant plans landed byte-exact on the first attempt; the only real cost was careful sequencing/verification of the FRAGILE Phase 6 extractions.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -87,6 +125,7 @@
 |-----------|--------|-------|------------|
 | v1.0 | 8 | 62 | Established two-layer golden-master + inert-first + owner-gated re-freeze discipline |
 | v1.1 | 9 | 28 | Breadth via additive opt-in oracle-dark E2E leaves — zero re-baselines; shared-infra-first then parallel scenario leaves |
+| v1.2 | 6 | 23 | Consolidation via pure code-motion under the oracle — god-module split as a sequenced, isolated, LAST phase; zero re-baselines |
 
 ### Cumulative Quality
 
@@ -94,8 +133,11 @@
 |-----------|-------|------|-------------|
 | v1.0 | 724 pass | --strict clean | none on result path |
 | v1.1 | 58 e2e + 12 integration green (full suite ~800+) | --strict clean (161 files) | none on result path |
+| v1.2 | 58 e2e + 3 integration oracle green (full suite 851) | --strict clean (172 files) | none on result path |
 
 ### Top Lessons (Verified Across Milestones)
 
-1. **Golden-master gating with minimal sanctioned re-baselines keeps refactors trustworthy** — confirmed across v1.0 (two owner-gated re-freezes) and v1.1 (zero re-baselines via additive oracle-dark leaves).
-2. **Planning-metadata drift is a recurring process gap** — stale checkboxes/traceability/empty SUMMARY frontmatter required manual reconciliation at close in BOTH v1.0 and v1.1. Enforce frontmatter/traceability at phase close, not at milestone audit.
+1. **Golden-master gating with minimal sanctioned re-baselines keeps refactors trustworthy** — confirmed across v1.0 (two owner-gated re-freezes), v1.1 (zero re-baselines via additive oracle-dark leaves), and v1.2 (zero re-baselines via pure code-motion). Under a byte-exact oracle, even a 1279-line god-module split lands on first attempt.
+2. **Planning-metadata drift is a recurring process gap — now confirmed across THREE milestones** — stale checkboxes/traceability/empty SUMMARY frontmatter required manual reconciliation at close in v1.0, v1.1, AND v1.2. This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty or traceability lags VERIFICATION.md.
+3. **Isolate the fragile change, move it intact, ship it last and alone** — v1.2 Phase 6 refactored the codebase's most fragile path (fill-reconciliation / reservation-release) with zero drift precisely because it carried only MOD-01, one extraction per plan, `on_fill` moved as one indivisible unit. The template for any future god-module split.
+4. **Boundary tooling that lied once will lie again** — the `gsd-sdk` SDK-port quick-task false positive recurred verbatim in v1.1 and v1.2; verify flags against the canonical scanner, don't re-adjudicate by hand each close.
