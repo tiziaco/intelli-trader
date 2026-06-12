@@ -28,7 +28,6 @@ import pandas as pd
 
 from itrader.core.sizing import FixedQuantity, SignalIntent, TradingDirection
 from itrader.strategy_handler.base import Strategy
-from itrader.config import BaseStrategyConfig
 from itrader.trading_system.backtest_trading_system import TradingSystem
 
 
@@ -81,9 +80,14 @@ class BuyEachTickerOnce(Strategy):
     needing real warm-up history.
     """
 
+    name = "BuyEachTickerOnce"
+    # max_window=1 so the pushed window is non-empty; warmup stays 0 so the
+    # D-15 framework short-circuit never gates the first-bar fire.
+    max_window: int = 1
+
     def __init__(self, timeframe: str, tickers: list[str]) -> None:
-        # D-01: config-object constructor (05-02 ripple).
-        config = BaseStrategyConfig(
+        # D-05 (Plan 02-03): base **kwargs surface (no config layer).
+        super().__init__(
             timeframe=timeframe,
             tickers=list(tickers),
             sizing_policy=FixedQuantity(qty=Decimal("1")),
@@ -91,10 +95,6 @@ class BuyEachTickerOnce(Strategy):
             allow_increase=False,
             max_positions=10,
         )
-        super().__init__("BuyEachTickerOnce", config)
-        # max_window=1 so the pushed window is non-empty; warmup stays 0 so the
-        # D-15 framework short-circuit never gates the first-bar fire.
-        self.max_window = 1
         self._bought: set[str] = set()
 
     def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:

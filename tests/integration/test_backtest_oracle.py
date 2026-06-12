@@ -253,7 +253,6 @@ from decimal import Decimal  # noqa: E402
 
 from itrader.core.sizing import FractionOfCash, TradingDirection  # noqa: E402
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import (  # noqa: E402
-    SMA_MACDConfig,
     SMAMACDStrategy,
 )
 from itrader.trading_system.backtest_trading_system import TradingSystem  # noqa: E402
@@ -264,23 +263,23 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
 
     Proves the post-run accessor returns >0 records, that the records are
     filterable by ticker and by strategy id, and that each record carries a
-    ``config`` snapshot whose ``model_dump()`` is a dict (queryability +
-    snapshot serialization). The byte-exact oracle assertions live in the
-    sibling tests above and are NOT weakened here.
+    ``config`` snapshot dict (queryability + snapshot serialization). The
+    byte-exact oracle assertions live in the sibling tests above and are NOT
+    weakened here.
     """
     system = TradingSystem(
         exchange="csv",
         start_date="2018-01-01",
         end_date="2026-06-03",
     )
-    config = SMA_MACDConfig(
+    # D-05 (Plan 02-03): construct via the base **kwargs surface (no config layer).
+    strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],
         sizing_policy=FractionOfCash(Decimal("0.95")),
         direction=TradingDirection.LONG_ONLY,
         allow_increase=False,
     )
-    strategy = SMAMACDStrategy(config)
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
         user_id=1, name="sig02_pf", exchange="csv", cash=10_000,
@@ -299,5 +298,7 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
     assert len(store.by_ticker("BTCUSD")) > 0
     assert len(store.by_strategy(strategy.strategy_id)) > 0
 
-    # Each record carries a serializable config snapshot (SIG-02 / D-11).
-    assert isinstance(records[0].config.model_dump(), dict)
+    # Each record carries a plain params-snapshot dict (SIG-02 / D-04 — the
+    # pydantic config layer is deleted; config is strategy.to_dict()).
+    assert isinstance(records[0].config, dict)
+    assert records[0].config == strategy.to_dict()

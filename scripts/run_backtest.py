@@ -45,7 +45,7 @@ from decimal import Decimal
 
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.trading_system.backtest_trading_system import TradingSystem
-from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig, SMAMACDStrategy
+from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.logger import get_itrader_logger
 
 
@@ -72,16 +72,18 @@ def main():
     )
 
     # Reference strategy on the daily timeframe, subscribed to BTCUSD (D-03/D-06).
-    # D-01: single config-object constructor. The golden sizing literal MUST be
-    # FractionOfCash(Decimal("0.95")) (string-path Decimal — byte-exact, Pitfall 1).
-    strategy_config = SMA_MACDConfig(
+    # D-05 (Plan 02-03): the byte-exact oracle generator constructs via the base
+    # **kwargs surface (the pydantic config layer is deleted, no shim). The golden
+    # sizing literal MUST be FractionOfCash(Decimal("0.95")) (string-path Decimal —
+    # byte-exact, Pitfall 4). Every value is verbatim — the constructed strategy
+    # behavior is identical (134 trades / final_equity 46189.87730727451).
+    strategy = SMAMACDStrategy(
         timeframe=TIMEFRAME,
         tickers=[TICKER],
         sizing_policy=FractionOfCash(Decimal("0.95")),
         direction=TradingDirection.LONG_ONLY,
         allow_increase=False,
     )
-    strategy = SMAMACDStrategy(strategy_config)
     system.strategies_handler.add_strategy(strategy)
 
     # Single long-only portfolio with $10k starting cash (D-04).
