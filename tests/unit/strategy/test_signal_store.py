@@ -72,7 +72,7 @@ class _AlwaysBuyStrategy(Strategy):
             direction=TradingDirection.LONG_ONLY,
         )
 
-    def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
         return self.buy(ticker)
 
 
@@ -91,7 +91,7 @@ class _NeverSignalStrategy(Strategy):
             direction=TradingDirection.LONG_ONLY,
         )
 
-    def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
         return None
 
 

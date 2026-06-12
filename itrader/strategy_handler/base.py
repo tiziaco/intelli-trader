@@ -15,9 +15,47 @@ from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingD
 from itrader.outils.time_parser import to_timedelta
 from itrader import idgen
 
+# D-03/D-05 (amended): the IndicatorHandle and the typed adapter Protocol live in
+# the first-party indicators/ subsystem (NOT here) — base imports them, the
+# dependency is one-directional base -> indicators (no cycle; handle.py never
+# imports base.py).
+from .indicators import IndicatorAdapter, IndicatorHandle
+
 # D-07: sentinel distinguishing a bare (required) annotation — a class attr
 # with NO value — from a class attr whose default happens to be None.
 _MISSING = object()
+
+# WR-04: JSON-native types the to_dict() introspection loop may emit as-is.
+# Anything else (Decimal/datetime/custom object) is coerced to repr() at the
+# serialization edge so json.dumps(strategy.to_dict()) never raises.
+def _is_json_native(val: Any) -> bool:
+	# `bool` is a subclass of `int`, so it is already covered; `None` is JSON
+	# null. NOTE: list/dict are intentionally NOT treated as unconditionally
+	# native here — a container is only JSON-safe if its CONTENTS are native
+	# too (a `list[Decimal]` / `dict[str, datetime]` would otherwise still break
+	# `json.dumps`). The recursive `_json_safe` walk below is the structural
+	# guarantee; this scalar predicate only classifies leaves.
+	return val is None or isinstance(val, (str, int, float))
+
+
+def _json_safe(val: Any) -> Any:
+	# WR-01 (iter-2): the WR-04 fix only repr-coerced a SCALAR non-native value,
+	# but classified a top-level `list`/`dict` as native by container type alone.
+	# A declared attr holding e.g. `list[Decimal]` / `dict[str, datetime]`
+	# therefore slipped through and `json.dumps(to_dict())` still raised. Make the
+	# coercion RECURSIVE: a list/dict is native only if every element/value is
+	# native; otherwise repr-coerce the offending leaves. This makes the
+	# `json.dumps(strategy.to_dict())` contract structural, not type-list-based.
+	if _is_json_native(val):
+		return val
+	if isinstance(val, list):
+		return [_json_safe(x) for x in val]
+	if isinstance(val, tuple):
+		# tuples serialize to JSON arrays — preserve the JSON-array shape.
+		return [_json_safe(x) for x in val]
+	if isinstance(val, dict):
+		return {str(k): _json_safe(x) for k, x in val.items()}
+	return repr(val)
 
 # D-08: ONLY these three engine fields coerce a str off their annotation to an
 # enum (via the enum's case-insensitive _missing_). Every other knob is left as
@@ -80,8 +118,9 @@ class Strategy(ABC):
 		self._apply_params(**kwargs)
 		# D-09: cross-field validation hook (no-op by default).
 		self.validate()
-		# D-10: idempotent lifecycle hook (no-op by default).
-		self.init()
+		# D-03/D-08: register declared indicators (init() calls self.indicator())
+		# then auto-derive warmup/max_window from the registered handles.
+		self._run_init()
 
 	def _apply_params(self, **kwargs: Any) -> None:
 		"""Apply ``**kwargs`` over the declared class-attr surface (D-06/D-07/D-08).
@@ -116,12 +155,21 @@ class Strategy(ABC):
 				# it (no MissingParamError on an omitted-but-already-set field).
 				val = getattr(self, nm)
 			elif default is not _MISSING:
-				# WR-01: copy mutable class-attr defaults so a declared
-				# `list`/`dict`/`set` default is not ALIASED across every
-				# instance constructed without that kwarg (the classic
-				# mutable-default bug, re-expressed through class attributes —
-				# `a.tickers.append(...)` would otherwise leak into `b.tickers`).
-				val = copy.deepcopy(default) if isinstance(default, (list, dict, set)) else default
+				# WR-01/IN-01: copy mutable class-attr defaults so a declared
+				# default is not ALIASED across every instance constructed without
+				# that kwarg (the classic mutable-default bug, re-expressed through
+				# class attributes — `a.tickers.append(...)` would otherwise leak
+				# into `b.tickers`). IN-01: the guard is now mutability-based, not a
+				# `list`/`dict`/`set` whitelist — any default that is NOT a known
+				# immutable scalar (str/int/float/bool/None/Enum) is deep-copied, so
+				# a declared default of a deque / numpy array / custom mutable object
+				# is alias-safe too. Deep-copying an effectively-immutable declared
+				# policy (FractionOfCash, etc.) yields an equal fresh copy — harmless.
+				val = (
+					default
+					if default is None or isinstance(default, (str, int, float, bool, Enum))
+					else copy.deepcopy(default)
+				)
 			else:
 				raise MissingParamError(nm)
 			coerce = _COERCE.get(nm)
@@ -130,6 +178,20 @@ class Strategy(ABC):
 			setattr(self, nm, val)
 		if kwargs:
 			raise UnknownParamError(sorted(kwargs))
+		# IN-02: reject a malformed-but-present `tickers`. A bare `str` is
+		# iterable char-by-char, so `for ticker in strategy.tickers` would
+		# silently request windows for "B", "T", … (producing nothing) rather
+		# than failing loudly; an empty list trades nothing. Extend the engine's
+		# "reject loudly" philosophy from unknown/missing to malformed values.
+		# Checked against the resolved instance value so it covers both the
+		# kwarg and class-attr-default paths.
+		tickers = getattr(self, "tickers", _MISSING)
+		if tickers is not _MISSING:
+			if isinstance(tickers, str) or not isinstance(tickers, list) \
+					or not tickers or not all(isinstance(t, str) for t in tickers):
+				raise ValueError(
+					"tickers must be a non-empty list[str] (a bare str is rejected)"
+				)
 		# Pitfall 1 (the #1 oracle trap): self.timeframe is consumed as a
 		# TIMEDELTA by check_timeframe / min_timeframe and SMA's
 		# `last_time - self.timeframe * self.short_window`. The coerced
@@ -168,9 +230,95 @@ class Strategy(ABC):
 		"""Overridable idempotent lifecycle hook (D-10/D-11).
 
 		Called at the end of construction and on every ``reconfigure``. No-op by
-		default; calling it twice leaves identical state.
+		default; calling it twice leaves identical state. A concrete strategy
+		registers its declared indicators here via ``self.indicator(...)``.
 		"""
 		...
+
+	def indicator(
+		self, adapter: IndicatorAdapter, input_col: str, *params: int
+	) -> IndicatorHandle:
+		"""Register a declared indicator and return its handle (D-03).
+
+		Mirrors the ``backtesting.py`` ``self.I()`` shape: constructs an
+		``IndicatorHandle`` over the typed ``adapter`` (imported from the
+		``indicators`` package), appends it to ``self._handles``, and returns the
+		handle so the author binds it to a named attr
+		(``self.short_sma = self.indicator(SMA, "close", self.short_window)``).
+		The base re-populates the SAME handle each tick in ``evaluate``; the
+		auto-warmup post-pass derives ``warmup``/``max_window`` from
+		``handle.min_period()`` (D-08).
+		"""
+		handle = IndicatorHandle(adapter, input_col, tuple(params))
+		self._handles.append(handle)
+		return handle
+
+	def _run_init(self) -> None:
+		"""Reset handles, run ``init()``, then auto-derive warmup (D-08/D-10).
+
+		Resetting ``self._handles`` BEFORE ``self.init()`` keeps a re-run
+		idempotent (calling init() twice leaves identical state — D-10).
+
+		The post-``init()`` pass auto-derives BOTH thresholds from the declared
+		handles' ``min_period``:
+
+		- ``warmup`` is UNCONDITIONALLY overwritten to ``max(min_period, default=0)``
+		  — this is the WR-03 footgun fix (D-08): an author can no longer hand-set
+		  ``warmup`` too LOW and under-gate the handler short-circuit. The reference
+		  ends at ``warmup == 100`` (``max(SMA50->50, SMA100->100, MACDHist->15)``);
+		  a zero-handle strategy ends at ``warmup == 0`` (no gating, as before).
+
+		- ``max_window`` is the FETCH WIDTH the handler requests from the feed
+		  (``feed.window(..., max_window, ...)``), NOT a gating threshold. It is
+		  ``max(handle-derived, hand-set class value)`` so a zero-handle COUNT/DATE
+		  -keyed fixture (SingleMarketBuy/ScriptedEmitter/BuyEachTickerOnce) keeps
+		  the wide window its logic needs (a 0-width window is always empty against
+		  a REAL feed — ``frame.iloc[pos:pos]`` — which would break its firing and
+		  the e2e/integration golden). For the reference the hand-set value is
+		  deleted (class default 0), so ``max_window == 100`` (handle-derived). The
+		  assertion ``warmup == max_window == 100`` therefore still holds.
+
+		Called from both ``__init__`` and ``reconfigure``.
+		"""
+		self._handles: list[IndicatorHandle] = []
+		self.init()
+		derived = max((h.min_period() for h in self._handles), default=0)
+		self.warmup = derived
+		# Fetch width: never shrink below a hand-set class value (preserve the
+		# fixtures' wide window; the reference's deleted hand-set is 0 -> derived).
+		self.max_window = max(derived, type(self).max_window)
+
+	def evaluate(self, ticker: str, window: pd.DataFrame) -> SignalIntent | None:
+		"""Orchestration seam: stash the window, repopulate handles, dispatch (D-06).
+
+		IN-03: ``evaluate`` is NOT re-entrant. It mutates shared instance state
+		(``self.bars``/``self.now`` and the registered handles) before dispatch,
+		so a single ``Strategy`` instance must be evaluated by one writer at a time
+		(the single-writer contract — the backtest loop is synchronous and live
+		mode processes on one daemon thread). Concurrent/re-entrant evaluation of
+		the same instance would race on this shared mutable state.
+
+		The handler calls this (NOT ``generate_signal`` directly). It stashes the
+		pushed completed-bar window on ``self.bars`` and the decision anchor on
+		``self.now`` (``window.index[-1]`` — Pitfall 4, the SAME anchor the legacy
+		``last_time`` used, so the SMA ``start_dt`` arithmetic is unchanged), then
+		re-populates every registered handle BEFORE dispatching to
+		``generate_signal``. For an indicator-free strategy ``self._handles`` is
+		empty so the repopulate loop is a no-op (Pitfall 6 — no AttributeError).
+
+		Empty-window guard: a zero-warmup strategy can be dispatched with an empty
+		window (``feed.window`` returns ``frame.iloc[pos:pos]`` when max_window is
+		small and the cutoff is at the frame start). ``window.index[-1]`` would
+		raise ``IndexError`` on a size-0 frame, so when the window is empty we
+		leave ``self.now`` as ``None`` and skip the repopulate loop — the strategy
+		still runs (count/date fixtures guard on ``self.bars.empty`` / ``len``).
+		"""
+		self.bars: pd.DataFrame = window
+		self.now = window.index[-1] if len(window) else None
+		if self.now is not None:
+			for handle in self._handles:
+				handle.repopulate(self.bars, self.now, self.timeframe)
+		return self.generate_signal(ticker)
 
 	def reconfigure(self, **kwargs: Any) -> None:
 		"""Re-apply + re-coerce kwargs, re-validate, re-run init() (D-12/D-13).
@@ -189,7 +337,8 @@ class Strategy(ABC):
 		"""
 		self._apply_params(**kwargs)
 		self.validate()
-		self.init()
+		# D-08/D-10: re-register handles + re-derive warmup (idempotent).
+		self._run_init()
 
 	def to_dict(self) -> dict[str, Any]:
 		# WR-02: a faithful "params snapshot" (SIG-02 queryability) must capture
@@ -213,6 +362,17 @@ class Strategy(ABC):
 				val = val.value
 			elif isinstance(val, (SizingPolicy, SLTPPolicy)):
 				val = repr(val)
+			else:
+				# WR-04 / WR-01 (iter-2): the introspection loop is the whole point
+				# of to_dict (capture the FULL declared surface), but it must honour
+				# the documented `json.dumps(strategy.to_dict())` contract (IN-03). A
+				# declared attr whose value is e.g. a Decimal / datetime / custom
+				# object — OR a list/dict CONTAINING such non-native leaves — is not
+				# JSON-safe. `_json_safe` recursively walks containers and repr-
+				# coerces non-native leaves at the serialization edge (mirroring how
+				# the bespoke policy fields are handled), so the snapshot stays
+				# round-trippable structurally, not by top-level container type.
+				val = _json_safe(val)
 			snapshot[nm] = val
 		# Identity/runtime fields + bespoke serializations (override declared).
 		snapshot.update({
@@ -257,14 +417,17 @@ class Strategy(ABC):
 		return str(self)
 
 	@abstractmethod
-	def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
+	def generate_signal(self, ticker: str) -> SignalIntent | None:
 		"""
 		Evaluate market data for ``ticker`` and return a trading intent.
 
-		The pure-alpha contract (D-12, M5-06): given the pushed history
-		window, return a ``SignalIntent`` (typically via the ``buy()`` /
-		``sell()`` sugar) or ``None`` when there is nothing to do. No queue,
-		no event construction, no portfolio knowledge.
+		The pure-alpha contract (D-06/D-12, M5-06): the ``bars`` param is dropped
+		— ``evaluate`` has already stashed the pushed completed-bar window on
+		``self.bars`` (and ``self.now`` = ``window.index[-1]``) and re-populated
+		every declared indicator handle. A concrete strategy reads its handles
+		(``self.short_sma[-1]``) and ``self.bars``, and returns a ``SignalIntent``
+		(typically via the ``buy()`` / ``sell()`` sugar) or ``None`` when there is
+		nothing to do. No queue, no event construction, no portfolio knowledge.
 		"""
 		raise NotImplementedError("Should implement generate_signal()")
 

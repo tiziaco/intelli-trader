@@ -102,7 +102,10 @@ class StrategiesHandler(object):
 				# with a wide max_window.
 				if len(data) < strategy.warmup:
 					continue
-				intent = strategy.generate_signal(ticker, data)
+				# D-06: dispatch through the evaluate() orchestration seam — it
+				# stashes self.bars/self.now and repopulates the declared handles
+				# before calling generate_signal(ticker) (the bars param is dropped).
+				intent = strategy.evaluate(ticker, data)
 				if intent is None:
 					continue
 				# D-09 per-intent, pre-fan-out capture: write EXACTLY ONE

@@ -1,13 +1,10 @@
 from decimal import Decimal
 
-import pandas as pd
-# import numpy as np
-
 from itrader.core.enums import TradingDirection
 from itrader.core.sizing import FractionOfCash, SignalIntent
 from itrader.strategy_handler.base import Strategy
-
-from ta import trend
+from itrader.strategy_handler.indicators import SMA, MACDHist
+from itrader.strategy_handler.primitives import crossover, crossunder, is_above
 
 from itrader.logger import get_itrader_logger
 logger = get_itrader_logger().bind(component="SMA_MACD_strategy")
@@ -34,10 +31,9 @@ class SMAMACDStrategy(Strategy):
 	fast_window: int = 6
 	slow_window: int = 12
 	signal_window: int = 3
-	# Fetch width (bars) the handler requests from the feed window, and the
-	# warmup threshold the handler short-circuits on — both == max([100, 100]).
-	max_window: int = 100
-	warmup: int = 100
+	# D-08: max_window/warmup are NO LONGER hand-set — the base auto-derives both
+	# from the declared indicators' min_period (max(SMA50->50, SMA100->100,
+	# MACDHist->15) == 100), removing the WR-03 footgun.
 
 	def validate(self) -> None:
 		# HARD-02 cross-field rule (was the pydantic @model_validator, D-09):
@@ -46,51 +42,40 @@ class SMAMACDStrategy(Strategy):
 			raise ValueError("short_window must be < long_window")
 
 	def init(self) -> None:
-		# No-op in Phase 2 (D-10) — indicators stay inline in generate_signal.
-		...
+		# D-03: declare the indicators as recipes — the base constructs an
+		# IndicatorHandle per call, re-populates it each tick (evaluate), and
+		# auto-derives warmup/max_window from their min_period (D-08).
+		# [BYTE-EXACT] SMA slices `bars[start_dt:][close]` (Pitfall 1, owned by
+		# the SMA adapter); MACDHist uses the full window.
+		self.short_sma = self.indicator(SMA, "close", self.short_window)
+		self.long_sma = self.indicator(SMA, "close", self.long_window)
+		self.macd_hist = self.indicator(
+			MACDHist, "close", self.fast_window, self.slow_window, self.signal_window
+		)
 
-	def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
-		# Warmup gating now lives in the handler framework short-circuit (D-15);
-		# generate_signal assumes it is only called with enough bars.
-		# A2 (RESEARCH Pattern 4): bars.index[-1] replaces the legacy
-		# self.last_time() — value-identical on the golden run (the feed
-		# window's last completed bar at tick T is stamped T when
-		# timeframe == base timeframe).
-		last_time = bars.index[-1]
-		# Calculate the SMA
-		start_dt = last_time - self.timeframe * self.short_window
-		short_sma = trend.SMAIndicator(bars[start_dt:].close, self.short_window, True).sma_indicator().dropna()
-
-		start_dt = last_time - self.timeframe * self.long_window
-		long_sma = trend.SMAIndicator(bars[start_dt:].close, self.long_window, True).sma_indicator().dropna()
-
+	def generate_signal(self, ticker: str) -> SignalIntent | None:
+		# D-06: bars dropped — evaluate() stashed self.bars/self.now and
+		# repopulated the handles. D-01: read entirely through handles +
+		# primitives. [BYTE-EXACT] the MACD eager-vs-lazy reorder (now both SMAs
+		# AND MACDHist are repopulated every tick, whereas the legacy code
+		# computed MACD lazily inside the SMA guard) is value-identical — the
+		# firing tick reads the same handle values; proven by the oracle in Plan 03.
 
 		### LONG signals
 		# Entry
-		if short_sma.iloc[-1] >= long_sma.iloc[-1]: # Filter
-			# Calculate the MACD (W1-12: computed INSIDE the SMA guard — only on
-			# ticks where the SMA filter holds. The firing tick is byte-identical
-			# (same MACD value, just computed lazily); per D-02 this reorder is
-			# proven by code review + the byte-exact oracle ONLY, NO new SMA_MACD test.)
-			MACD_Indicator = trend.MACD(bars.close, window_fast=self.fast_window, window_slow=self.slow_window, window_sign=self.signal_window, fillna=False)
-			MACDhist = MACD_Indicator.macd_diff().dropna()
-			if ((MACDhist.iloc[-1] >= 0) and (MACDhist.iloc[-2] < 0)): # Buy trigger
+		if is_above(self.short_sma, self.long_sma):  # Filter
+			if crossover(self.macd_hist, 0):  # Buy trigger
 				return self.buy(ticker)
-		# Exit
-			elif ((MACDhist.iloc[-1] <= 0) and (MACDhist.iloc[-2] > 0)):
-				#Sell trigger
+			# Exit
+			if crossunder(self.macd_hist, 0):  # Sell trigger
 				return self.sell(ticker)
 
-
-		### SHORT signals
-		# Entry
-		# if short_sma[-1] <= long_sma[-1]: # Filter
-		# 	if ((MACDhist[-1] <= 0) and (MACDhist[-2] > 0)): # Short trigger
-		# 		self.sell(ticker)
-
-		# # Exit
-		# 	elif ((MACDhist.iloc[-1] >= 0) and (MACDhist.iloc[-2] < 0)):
-		# 		self.buy(ticker)
+		### SHORT signals (deferred to the margin/shorts milestone)
+		# if is_below(self.short_sma, self.long_sma):  # Filter
+		# 	if crossunder(self.macd_hist, 0):  # Short trigger
+		# 		return self.sell(ticker)
+		# 	if crossover(self.macd_hist, 0):  # Exit
+		# 		return self.buy(ticker)
 
 		return None
 

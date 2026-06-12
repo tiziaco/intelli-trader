@@ -63,7 +63,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Indicator Framework & Strategy Authoring (IND / STRAT)
 
-- [ ] **IND-01**: A **declared-indicator framework** on the strategy base — indicators registered
+- [x] **IND-01**: A **declared-indicator framework** on the strategy base — indicators registered
   in `init()` (declaration only: `func + input + params`), evaluated lazily per-tick from the
   pushed window using the same `ta` calls as today, with **auto-derived `warmup`/`max_window`**
   (base inspects registered recipes; authors stop hand-setting `max_window`). Declaration-only:
@@ -138,7 +138,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 |-------------|-------|--------|
 | HYG-01 | Phase 1 — Engine Hygiene | Pending |
 | STRAT-01 | Phase 2 — Strategy Authoring Surface | Complete |
-| IND-01 | Phase 3 — Declared-Indicator Framework | Pending |
+| IND-01 | Phase 3 — Declared-Indicator Framework | Complete |
 | COMP-01 | Phase 4 — Composition & Config Interface | Pending |
 | COMP-02 | Phase 4 — Composition & Config Interface | Pending |
 | SIG-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |

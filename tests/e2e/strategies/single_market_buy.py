@@ -27,8 +27,6 @@ no resampling and no alpha; it is a pinned-bar canary, not SMA_MACD.
 
 from decimal import Decimal
 
-import pandas as pd
-
 from itrader.core.sizing import FractionOfCash, SignalIntent, TradingDirection
 from itrader.strategy_handler.base import Strategy
 
@@ -74,9 +72,12 @@ class SingleMarketBuy(Strategy):
         self.fire_on_bar = fire_on_bar
         self.exit_on_bar = exit_on_bar
 
-    def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
-        if len(bars) == self.fire_on_bar:
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
+        # D-06: bars dropped — evaluate() stashed the window on self.bars. No
+        # indicators registered, so evaluate's repopulate loop is a no-op
+        # (Pitfall 6); the count-based fire/exit logic is unchanged.
+        if len(self.bars) == self.fire_on_bar:
             return self.buy(ticker)
-        if len(bars) == self.exit_on_bar:
+        if len(self.bars) == self.exit_on_bar:
             return self.sell(ticker)
         return None

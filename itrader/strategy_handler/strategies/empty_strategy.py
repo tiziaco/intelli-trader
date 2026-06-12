@@ -1,7 +1,3 @@
-import pandas as pd
-# import numpy as np
-# from ta import trend
-
 from itrader.core.sizing import SignalIntent
 from itrader.strategy_handler.base import Strategy
 
@@ -19,5 +15,5 @@ class EmptyStrategy(Strategy):
 	# Fetch width (bars); warmup stays 0 (no warmup gating, D-15).
 	max_window: int = 1
 
-	def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
+	def generate_signal(self, ticker: str) -> SignalIntent | None:
 		return None

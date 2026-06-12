@@ -103,7 +103,9 @@ def test_bullish_crossover_returns_buy_intent():
     """A synthetic bullish SMA/MACD crossover frame yields a BUY SignalIntent."""
     strategy = SMAMACDStrategy(**_sma_kwargs())
 
-    intent = strategy.generate_signal(_TICKER, _bullish_crossover_frame())
+    # Go through the evaluate() seam (D-06): it stashes self.bars/self.now and
+    # repopulates the handles, which generate_signal(ticker) now reads.
+    intent = strategy.evaluate(_TICKER, _bullish_crossover_frame())
 
     assert isinstance(intent, SignalIntent)
     assert intent.action is Side.BUY
@@ -145,6 +147,20 @@ def test_golden_declarations_are_typed():
     assert strategy.allow_increase is False
 
 
+def test_auto_derived_warmup_equals_max_window_100():
+    """D-08 / Pitfall 3: the base auto-derives warmup == max_window == 100.
+
+    The hand-set ``max_window: int = 100`` / ``warmup: int = 100`` class attrs
+    were DELETED from SMAMACDStrategy; the post-init() pass derives both from the
+    declared handles' min_period: ``max(SMA50->50, SMA100->100, MACDHist->15)``
+    == 100. This is the HARD byte-exact anchor — drift here drifts the oracle off
+    46189.87730727451. Selectable with ``-k warmup``.
+    """
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+
+    assert strategy.warmup == strategy.max_window == 100
+
+
 def test_buy_sell_sugar_builds_intents():
     """buy()/sell() are thin sugar: SignalIntent only, to_money entry for SL/TP."""
     strategy = SMAMACDStrategy(**_sma_kwargs())
@@ -182,6 +198,66 @@ def test_init_is_idempotent():
     after = strategy.to_dict()
 
     assert before == after
+
+
+def test_to_dict_is_json_serializable():
+    """WR-04: to_dict() honours the documented json.dumps(...) contract.
+
+    to_dict() exists to capture the FULL declared surface via introspection;
+    its IN-03 docstring cites ``json.dumps(strategy.to_dict())`` as the
+    serialization-edge contract. The generic introspection loop now coerces any
+    non-JSON-native declared value to repr() at the edge, so the snapshot stays
+    round-trippable regardless of the declared attr's type. Regression-lock it.
+    """
+    import json
+
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+
+    # Must not raise "Object of type ... is not JSON serializable".
+    dumped = json.dumps(strategy.to_dict())
+    assert isinstance(dumped, str)
+
+
+def test_to_dict_json_safe_for_nested_non_native_containers():
+    """WR-01 (iter-2): json.dumps(to_dict()) survives nested non-native leaves.
+
+    The original WR-04 fix only repr-coerced a SCALAR non-native value and
+    classified a top-level ``list``/``dict`` as native by container type alone.
+    A declared attr holding a ``list[Decimal]`` / ``dict[str, datetime]`` thus
+    slipped past the gate and ``json.dumps(to_dict())`` still raised
+    ``TypeError: Object of type Decimal/datetime is not JSON serializable``.
+    The recursive ``_json_safe`` walk repr-coerces the offending LEAVES, so the
+    contract is structural. Lock the nested case with a synthetic strategy that
+    declares a ``list``-of-``Decimal`` and a ``dict``-of-``datetime`` attr.
+    """
+    import json
+
+    class _NestedDeclaredStrategy(Strategy):
+        # Declared (annotated) attrs whose CONTENTS are non-JSON-native — these
+        # are exactly the case the top-level-container check missed.
+        decimal_levels: list[Decimal] = [Decimal("1.5"), Decimal("2.5")]
+        dated_map: dict[str, datetime] = {"start": datetime(2024, 1, 1, tzinfo=UTC)}
+
+        def generate_signal(self, ticker: str):
+            return None
+
+    kwargs = _sma_kwargs()
+    # Carry over only the required base params; drop SMA-specific knobs the
+    # synthetic strategy does not declare (would raise UnknownParamError).
+    strategy = _NestedDeclaredStrategy(
+        timeframe=kwargs["timeframe"],
+        tickers=kwargs["tickers"],
+        sizing_policy=kwargs["sizing_policy"],
+    )
+
+    snapshot = strategy.to_dict()
+    # The declared nested attrs are present and recursively repr-coerced.
+    assert snapshot["decimal_levels"] == [repr(Decimal("1.5")), repr(Decimal("2.5"))]
+    assert snapshot["dated_map"] == {"start": repr(datetime(2024, 1, 1, tzinfo=UTC))}
+
+    # The whole snapshot must round-trip through json without raising.
+    dumped = json.dumps(snapshot)
+    assert isinstance(dumped, str)
 
 
 def test_reconfigure_reapplies_and_revalidates():
@@ -257,7 +333,7 @@ class _AlwaysBuyStrategy(Strategy):
             direction=direction,
         )
 
-    def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
         return self.buy(ticker)
 
 

@@ -41,7 +41,7 @@ only after explicit owner sign-off + external cross-validation.
 
 - [x] **Phase 1: Engine Hygiene** — SAFE byte-exact cleanup slice (no run-path touch): private-storage test asserts, stale mypy override, dead float constants, validator retype, three v1.2 Phase-6 review residues. (completed 2026-06-12)
 - [x] **Phase 2: Strategy Authoring Surface** — class-attribute authoring surface replacing the frozen-config + manual field-copy; re-runnable idempotent `init()` hook; reject-unknown-kwargs. (completed 2026-06-12)
-- [ ] **Phase 3: Declared-Indicator Framework** — declared indicators with auto-derived `warmup`/`max_window`; lazy per-tick recompute; free-function `crossover`/`crossunder`.
+- [x] **Phase 3: Declared-Indicator Framework** — declared indicators with auto-derived `warmup`/`max_window`; lazy per-tick recompute; free-function `crossover`/`crossunder`. (completed 2026-06-12)
 - [ ] **Phase 4: Composition & Config Interface** — engine-level composition API + `OrderConfig`; uniform runtime `update_config` on every handler (consumes Phase 2's re-runnable `init()`).
 - [ ] **Phase 5: Signal Contract & Reconcile (FRAGILE)** — per-intent entry price + `order_type`, `Side`-typed action + snapshot threading, `on_fill`/`should_release` streamline; ONE owner-gated re-baseline.
 - [ ] **Phase 6: Order Lifecycle & Time-in-Force** — run-end resting-order disposition / TIF (`expire_order` + `EXPIRED` wired) + `create_order` second-path gating; owner-gated re-baseline.
@@ -84,7 +84,10 @@ only after explicit owner sign-off + external cross-validation.
   2. After `init()` runs, the base inspects registered recipes and auto-derives `self.max_window` / `self.warmup = max(min-periods)`; the hand-set `max_window`/`warmup` lines are gone from the reference strategy.
   3. Free functions `crossover(a, b)` / `crossunder(a, b)` over series are available and look-ahead-safe by construction (reading "previous" from the completed-bars window only).
   4. The reference `SMAMACDStrategy` migrated onto the framework is byte-exact against the BTCUSD oracle (134 trades / `final_equity 46189.87730727451`); e2e 58/58, `mypy --strict` clean — stateless recompute, incremental opt-in deferred (W1-05).
-**Plans**: TBD
+**Plans**: 3 plans (3 waves — Wave 1: standalone catalog+primitives modules; Wave 2: base framework + all-or-broken run/test-path migration; Wave 3: byte-exact gate)
+  - [x] 03-01-PLAN.md — NEW indicators.py typed adapter catalog (SMA/MACDHist/EMA/RSI, D-04/D-07/D-08) + NEW primitives.py (crossover/crossunder/is_above/is_below, D-01/D-02) + their Wave-0 unit tests (Wave 1, standalone)
+  - [x] 03-02-PLAN.md — base.py framework (IndicatorHandle, self.indicator(), evaluate() seam, auto-warmup, D-03/D-06/D-08) + full lockstep migration of SMAMACDStrategy/EmptyStrategy/e2e fixtures/handler call-site + warmup==100 assertion (Wave 2)
+  - [x] 03-03-PLAN.md — byte-exact phase gate: BTCUSD oracle (134/46189.87730727451 EXACT), e2e 58/58, full suite, mypy --strict, determinism double-run + signal_record snapshot verify (Wave 3)
 
 ### Phase 4: Composition & Config Interface
 **Goal**: The system is composed through an engine-level composition API (declarative multi-strategy/multi-portfolio wiring, construction-time `ExchangeConfig` threading, a new `OrderConfig`), and every handler exposes a uniform runtime `update_config` so config can change at runtime in a live scenario — applied between event cycles, thread-safe.
@@ -183,7 +186,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 |-------|----------------|--------|-----------|
 | 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
 | 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
-| 3. Declared-Indicator Framework | 0/TBD | Not started | - |
+| 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
 | 4. Composition & Config Interface | 0/TBD | Not started | - |
 | 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
