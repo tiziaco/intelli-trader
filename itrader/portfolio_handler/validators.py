@@ -1,5 +1,16 @@
 """
 Validation utilities for portfolio handler components.
+
+NOTE (WR-02): this module is a NOT-YET-WIRED seam. ``PortfolioValidator`` and
+``PositionValidator`` currently have zero importers across ``itrader/`` and
+``tests/`` — every method here is unreachable on the live run path. It is kept
+as a planned future validation seam, not dead-stripped, per HYG-01's strict
+no-deletion scope (D-07). Be aware that the module mixes a Decimal-strict
+``validate_transaction_data`` (retyped this phase) with still-``float``-typed
+siblings (``validate_portfolio_data(cash: float)``, ``PositionValidator``,
+``to_decimal``); the inconsistency is deliberate-by-scope, not an oversight —
+a uniform retype is deferred until the seam is actually wired in. Do not assume
+this module is live when reading it.
 """
 
 import decimal
