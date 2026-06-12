@@ -24,32 +24,24 @@ Markers: ``integration`` + ``slow`` arrive AUTOMATICALLY via the
 they are NOT hand-added here (strict-markers).
 """
 
-import importlib.util
-import pathlib
 from decimal import Decimal
 
 import pandas as pd
 import pandas.testing as pdt
 import pytest
 
-# Repo layout: this file lives at <repo>/tests/integration/, so the repo root is
-# two parents up — same anchoring as test_backtest_oracle.py.
-_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-_RUN_BACKTEST = _REPO_ROOT / "scripts" / "run_backtest.py"
-_GOLDEN_DIR = _REPO_ROOT / "tests" / "golden"
+# IN-03: repo-root / golden-dir path constants and the importlib loader are
+# shared with test_backtest_oracle.py via a single harness module so the two
+# copies cannot drift. The loader takes a distinct module name so the two
+# in-process copies of run_backtest do not collide in sys.modules.
+from tests.integration._oracle_harness import _GOLDEN_DIR, load_run_backtest_module
 
 _TRADE_KEY_COLUMNS = ["entry_date", "exit_date", "side"]
 
 
 def _load_run_backtest_module():
-    """Import scripts/run_backtest.py as a module (it is not on the package path)."""
-    if not _RUN_BACKTEST.exists():
-        pytest.fail(f"oracle generator missing: {_RUN_BACKTEST}")
-    spec = importlib.util.spec_from_file_location("run_backtest_inertness", _RUN_BACKTEST)
-    assert spec is not None and spec.loader is not None, f"cannot load {_RUN_BACKTEST}"
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """Import scripts/run_backtest.py under a distinct module name (IN-03 shim)."""
+    return load_run_backtest_module("run_backtest_inertness")
 
 
 @pytest.fixture(scope="module")
@@ -67,7 +59,7 @@ def traced_run(tmp_path_factory):
     module = _load_run_backtest_module()
 
     from itrader.core.sizing import FractionOfCash, TradingDirection
-    from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig, SMAMACDStrategy
+    from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
     from itrader.trading_system.backtest_trading_system import TradingSystem
 
     system = TradingSystem(
@@ -75,14 +67,14 @@ def traced_run(tmp_path_factory):
         start_date=module.START_DATE,
         end_date=module.END_DATE,
     )
-    # D-01: single config-object constructor (same pins as run_backtest.py).
-    strategy = SMAMACDStrategy(SMA_MACDConfig(
+    # D-05 (Plan 02-03): base **kwargs surface (same pins as run_backtest.py).
+    strategy = SMAMACDStrategy(
         timeframe=module.TIMEFRAME,
         tickers=[module.TICKER],
         sizing_policy=FractionOfCash(Decimal("0.95")),
         direction=TradingDirection.LONG_ONLY,
         allow_increase=False,
-    ))
+    )
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
         user_id=1,

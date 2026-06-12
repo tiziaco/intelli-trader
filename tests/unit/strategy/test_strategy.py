@@ -37,8 +37,6 @@ from itrader.core.sizing import (
 )
 from itrader.events_handler.events import BarEvent, SignalEvent
 from itrader.strategy_handler.base import Strategy
-from itrader.config import BaseStrategyConfig
-from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMA_MACDConfig
 from itrader.strategy_handler.storage import InMemorySignalStore
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
@@ -52,9 +50,14 @@ _PORTFOLIO_B = 2
 _EVENT_TIME = datetime(2024, 1, 2, tzinfo=UTC)
 
 
-def _sma_config() -> SMA_MACDConfig:
-    """The golden SMA_MACD config used across the pure-function tests (D-01)."""
-    return SMA_MACDConfig(
+def _sma_kwargs() -> dict:
+    """The golden SMA_MACD construction kwargs used across the pure-function tests.
+
+    Migrated from the deleted pydantic config (D-05, no shim) — the **kwargs
+    surface passes every param straight through to the base engine, byte-exact
+    (``FractionOfCash(Decimal("0.95"))`` string-path verbatim).
+    """
+    return dict(
         timeframe="1d",
         tickers=[_TICKER],
         sizing_policy=FractionOfCash(Decimal("0.95")),
@@ -98,7 +101,7 @@ def _short_frame() -> pd.DataFrame:
 
 def test_bullish_crossover_returns_buy_intent():
     """A synthetic bullish SMA/MACD crossover frame yields a BUY SignalIntent."""
-    strategy = SMAMACDStrategy(_sma_config())
+    strategy = SMAMACDStrategy(**_sma_kwargs())
 
     intent = strategy.generate_signal(_TICKER, _bullish_crossover_frame())
 
@@ -124,7 +127,7 @@ def test_too_short_window_short_circuits_in_handler(handler_env):
     the old guard produced, HARD-04).
     """
     handler, q = handler_env  # the stub feed returns the 10-bar _short_frame()
-    strategy = SMAMACDStrategy(_sma_config())  # warmup == 100
+    strategy = SMAMACDStrategy(**_sma_kwargs())  # warmup == 100
     strategy.subscribe_portfolio(_PORTFOLIO_A)
     handler.add_strategy(strategy)
 
@@ -135,7 +138,7 @@ def test_too_short_window_short_circuits_in_handler(handler_env):
 
 def test_golden_declarations_are_typed():
     """SMA_MACD declares the golden typed policy (D-03/D-08/D-10)."""
-    strategy = SMAMACDStrategy(_sma_config())
+    strategy = SMAMACDStrategy(**_sma_kwargs())
 
     assert strategy.sizing_policy == FractionOfCash(Decimal("0.95"))
     assert strategy.direction is TradingDirection.LONG_ONLY
@@ -144,7 +147,7 @@ def test_golden_declarations_are_typed():
 
 def test_buy_sell_sugar_builds_intents():
     """buy()/sell() are thin sugar: SignalIntent only, to_money entry for SL/TP."""
-    strategy = SMAMACDStrategy(_sma_config())
+    strategy = SMAMACDStrategy(**_sma_kwargs())
 
     buy = strategy.buy(_TICKER, sl=40.5, tp=50.25)
     sell = strategy.sell(_TICKER)
@@ -157,28 +160,102 @@ def test_buy_sell_sugar_builds_intents():
     assert sell.stop_loss is None and sell.take_profit is None
 
 
+def test_validate_short_lt_long_rejection():
+    """validate() rejects short_window >= long_window (HARD-02, D-09).
+
+    Migrated from the pydantic ``test_short_window_ge_long_window_raises``:
+    the cross-field rule now lives in the ``validate()`` hook and raises a
+    plain ``ValueError`` (not a pydantic ``ValidationError``).
+    """
+    kwargs = _sma_kwargs()
+    kwargs.update(short_window=100, long_window=50)
+    with pytest.raises(ValueError, match="short_window must be < long_window"):
+        SMAMACDStrategy(**kwargs)
+
+
+def test_init_is_idempotent():
+    """D-11: calling init() again leaves identical state (to_dict() ==)."""
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+
+    before = strategy.to_dict()
+    strategy.init()
+    after = strategy.to_dict()
+
+    assert before == after
+
+
+def test_reconfigure_reapplies_and_revalidates():
+    """D-12: reconfigure(**kwargs) re-applies + re-validates + preserves timeframe."""
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+    prior_timeframe = strategy.timeframe
+    prior_alias = strategy.timeframe_alias
+
+    strategy.reconfigure(short_window=30)
+
+    # The kwarg was re-applied.
+    assert strategy.short_window == 30
+    # validate() re-ran (30 < 100 holds, no raise) and the prior timeframe is
+    # preserved (no timeframe kwarg supplied — falls back to the prior enum).
+    assert strategy.timeframe == prior_timeframe
+    assert strategy.timeframe_alias == prior_alias
+
+    # A reconfigure that violates the cross-field rule re-raises through validate().
+    with pytest.raises(ValueError, match="short_window must be < long_window"):
+        strategy.reconfigure(short_window=200)
+
+
+def test_reconfigure_omitted_field_keeps_prior_not_default():
+    """WR-04: an OMITTED kwarg on reconfigure keeps the PRIOR value, not the default.
+
+    RESEARCH Open Question 1 — the fallback is asymmetric: an explicitly-supplied
+    kwarg overrides, but OMISSION freezes the last value and never resets to the
+    class default. There is no way through an omitted kwarg to clear an optional
+    field back to its default; the caller must pass it explicitly (e.g.
+    ``reconfigure(sltp_policy=None)``). This pins that footgun so a future author
+    who expects "omitted == default" sees it documented and tested.
+    """
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+    # The class default for short_window is NOT 30 — supply 30, then reconfigure
+    # WITHOUT it: the prior 30 must survive (not snap back to the class default).
+    strategy.reconfigure(short_window=30)
+    assert strategy.short_window == 30
+
+    # Omit short_window entirely — change an unrelated field instead.
+    strategy.reconfigure(allow_increase=True)
+
+    # Omission keeps the PRIOR value (30), it is NOT reset to the class default.
+    assert strategy.short_window == 30
+    assert strategy.allow_increase is True
+
+    # Resettability is only available via an EXPLICIT kwarg (the documented path).
+    default_short = type(strategy).short_window
+    strategy.reconfigure(short_window=default_short)
+    assert strategy.short_window == default_short
+
+
 # --- handler-side fan-out (real StrategiesHandler + queue + stub feed) -------
 
 
 class _AlwaysBuyStrategy(Strategy):
     """Minimal concrete strategy that always signals BUY (fan-out probe)."""
 
+    name = "always_buy"
+    # max_window wide enough for the stub frame; warmup stays 0 (no gating)
+    # so the handler always reaches generate_signal in the fan-out tests.
+    max_window: int = 1
+
     def __init__(
         self,
         direction: TradingDirection = TradingDirection.LONG_ONLY,
     ) -> None:
-        # D-01: build a config object then pass it to the base. Only the
-        # direction varies across the fan-out / registration-guard tests.
-        config = BaseStrategyConfig(
+        # D-05: pass params straight through to the **kwargs surface (no shim).
+        # Only the direction varies across the fan-out / registration-guard tests.
+        super().__init__(
             timeframe="1d",
             tickers=[_TICKER],
             sizing_policy=FractionOfCash(Decimal("0.95")),
             direction=direction,
         )
-        super().__init__("always_buy", config)
-        # max_window wide enough for the stub frame; warmup stays 0 (no gating)
-        # so the handler always reaches generate_signal in the fan-out tests.
-        self.max_window = 1
 
     def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
         return self.buy(ticker)

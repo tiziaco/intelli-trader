@@ -40,7 +40,7 @@ Re-baseline discipline runs per-phase: byte-exact phases (1-4) must hold the v1.
 only after explicit owner sign-off + external cross-validation.
 
 - [x] **Phase 1: Engine Hygiene** — SAFE byte-exact cleanup slice (no run-path touch): private-storage test asserts, stale mypy override, dead float constants, validator retype, three v1.2 Phase-6 review residues. (completed 2026-06-12)
-- [ ] **Phase 2: Strategy Authoring Surface** — class-attribute authoring surface replacing the frozen-config + manual field-copy; re-runnable idempotent `init()` hook; reject-unknown-kwargs.
+- [x] **Phase 2: Strategy Authoring Surface** — class-attribute authoring surface replacing the frozen-config + manual field-copy; re-runnable idempotent `init()` hook; reject-unknown-kwargs. (completed 2026-06-12)
 - [ ] **Phase 3: Declared-Indicator Framework** — declared indicators with auto-derived `warmup`/`max_window`; lazy per-tick recompute; free-function `crossover`/`crossunder`.
 - [ ] **Phase 4: Composition & Config Interface** — engine-level composition API + `OrderConfig`; uniform runtime `update_config` on every handler (consumes Phase 2's re-runnable `init()`).
 - [ ] **Phase 5: Signal Contract & Reconcile (FRAGILE)** — per-intent entry price + `order_type`, `Side`-typed action + snapshot threading, `on_fill`/`should_release` streamline; ONE owner-gated re-baseline.
@@ -69,7 +69,10 @@ only after explicit owner sign-off + external cross-validation.
   2. Constructing a strategy with an unknown kwarg raises `UnknownParamError` loudly; a missing required attr (e.g. `sizing_policy`) is rejected; enum-typed fields (e.g. `timeframe` str) are coerced.
   3. `generate_signal` reads real typed instance attrs (`self.short_window`) — the pure-alpha D-12 contract is preserved; the dropped frozen-config mutation guard is replaced by a sanctioned-reconfigure-method-only discipline.
   4. The reference `SMAMACDStrategy` runs through the new authoring surface byte-exact against the BTCUSD oracle (134 trades / `final_equity 46189.87730727451`); e2e 58/58, `mypy --strict` clean (declared params are real annotated attrs mypy sees).
-**Plans**: TBD
+**Plans**: 3 plans (3 waves — all-or-broken lockstep: source migration lands then construction sites + tests migrate together, then the byte-exact gate)
+  - [x] 02-01-PLAN.md — New `core/exceptions/strategy.py` (`UnknownParamError`/`MissingParamError` subclassing `ValidationError`) + barrel re-export (Wave 1, standalone)
+  - [x] 02-02-PLAN.md — Core source migration: `base.py` introspection engine + `init`/`validate`/`reconfigure` hooks (timeframe→timedelta Pitfall 1), `SMAMACDStrategy`/`EmptyStrategy` class-attr declarations, `SignalRecord.config` dict snapshot + handler capture, full pydantic config-layer delete (Wave 2)
+  - [x] 02-03-PLAN.md — All construction-site migration (e2e fixtures, oracle script, integration sites) + strategy unit-test rewrite/extend (unknown/missing/override/coerce/no-coerce/idempotent/reconfigure/dict-snapshot) + the byte-exact phase gate (Wave 3)
 **UI hint**: yes
 
 ### Phase 3: Declared-Indicator Framework
@@ -179,13 +182,13 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
-| 2. Strategy Authoring Surface | 0/TBD | Not started | - |
+| 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
 | 3. Declared-Indicator Framework | 0/TBD | Not started | - |
 | 4. Composition & Config Interface | 0/TBD | Not started | - |
 | 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
 
-**Next:** Plan Phase 1 with `/gsd:plan-phase 1`.
+**Next:** Execute Phase 2 with `/gsd:execute-phase 2`.
 
 ## Backlog
 
@@ -337,5 +340,3 @@ Plans:
 > **Cross-cutting tooling note:** do NOT add third-party graphify / Understand-Anything
 > tools — use the native `gsd-map-codebase` + `gsd-graphify`, which write artifacts into
 > `.planning/` that integrate with the workflow and that Claude can read directly.
-</content>
-</invoke>

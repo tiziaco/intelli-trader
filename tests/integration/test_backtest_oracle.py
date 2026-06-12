@@ -19,20 +19,20 @@ markers are NOT hand-added here.
 It is RED until ``tests/golden/`` is frozen — that is expected.
 """
 
-import importlib.util
 import json
-import pathlib
 
 import pandas as pd
 import pandas.testing as pdt
 import pytest
 
-
-# Repo layout: this file lives at <repo>/tests/integration/, so the repo root is
-# two parents up. The oracle generator and its output dir are anchored from there.
-_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-_RUN_BACKTEST = _REPO_ROOT / "scripts" / "run_backtest.py"
-_OUTPUT_DIR = _REPO_ROOT / "output"
+# IN-03: repo-root / oracle-generator path constants and the importlib loader
+# are shared with test_reservation_inertness.py via a single harness module so
+# the two copies cannot drift.
+from tests.integration._oracle_harness import (
+    _OUTPUT_DIR,
+    _REPO_ROOT,
+    load_run_backtest_module,
+)
 
 # Deterministic columns to diff (D-12). Trades identified by (entry_date, exit_date, side);
 # the remaining numeric columns are diffed EXACT (D-16 — M2b re-freeze, no tolerance).
@@ -69,17 +69,8 @@ _TRADE_SLIPPAGE_COLUMNS = ("slippage_entry", "slippage_exit")
 
 
 def _load_run_backtest_module():
-    """Import scripts/run_backtest.py as a module (it is not on the package path)."""
-    # WR-05: fail loudly with a clear message if the oracle generator moved or
-    # spec_from_file_location could not resolve a loader, rather than dying with
-    # an opaque AttributeError on None.
-    if not _RUN_BACKTEST.exists():
-        pytest.fail(f"oracle generator missing: {_RUN_BACKTEST}")
-    spec = importlib.util.spec_from_file_location("run_backtest", _RUN_BACKTEST)
-    assert spec is not None and spec.loader is not None, f"cannot load {_RUN_BACKTEST}"
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """Import scripts/run_backtest.py as a module (IN-03 shim over the harness)."""
+    return load_run_backtest_module("run_backtest")
 
 
 def _run_full_backtest():
@@ -253,7 +244,6 @@ from decimal import Decimal  # noqa: E402
 
 from itrader.core.sizing import FractionOfCash, TradingDirection  # noqa: E402
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import (  # noqa: E402
-    SMA_MACDConfig,
     SMAMACDStrategy,
 )
 from itrader.trading_system.backtest_trading_system import TradingSystem  # noqa: E402
@@ -264,23 +254,23 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
 
     Proves the post-run accessor returns >0 records, that the records are
     filterable by ticker and by strategy id, and that each record carries a
-    ``config`` snapshot whose ``model_dump()`` is a dict (queryability +
-    snapshot serialization). The byte-exact oracle assertions live in the
-    sibling tests above and are NOT weakened here.
+    ``config`` snapshot dict (queryability + snapshot serialization). The
+    byte-exact oracle assertions live in the sibling tests above and are NOT
+    weakened here.
     """
     system = TradingSystem(
         exchange="csv",
         start_date="2018-01-01",
         end_date="2026-06-03",
     )
-    config = SMA_MACDConfig(
+    # D-05 (Plan 02-03): construct via the base **kwargs surface (no config layer).
+    strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],
         sizing_policy=FractionOfCash(Decimal("0.95")),
         direction=TradingDirection.LONG_ONLY,
         allow_increase=False,
     )
-    strategy = SMAMACDStrategy(config)
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
         user_id=1, name="sig02_pf", exchange="csv", cash=10_000,
@@ -299,5 +289,18 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
     assert len(store.by_ticker("BTCUSD")) > 0
     assert len(store.by_strategy(strategy.strategy_id)) > 0
 
-    # Each record carries a serializable config snapshot (SIG-02 / D-11).
-    assert isinstance(records[0].config.model_dump(), dict)
+    # Each record carries a plain params-snapshot dict (SIG-02 / D-04 — the
+    # pydantic config layer is deleted; config is strategy.to_dict()).
+    assert isinstance(records[0].config, dict)
+    # IN-02: assert the snapshot against the SPECIFIC params that matter rather
+    # than a re-derived to_dict() (which only proves self-consistency on an
+    # immutable strategy, not that the intended params were captured).
+    config = records[0].config
+    assert config["strategy_name"] == "SMA_MACD"
+    assert config["direction"] == TradingDirection.LONG_ONLY.value
+    assert config["sizing_policy"] == repr(FractionOfCash(Decimal("0.95")))
+    # WR-02: the snapshot now carries which timeframe / tickers / windows fired.
+    assert config["timeframe_alias"] == "1d"
+    assert config["tickers"] == ["BTCUSD"]
+    assert config["short_window"] == 50
+    assert config["long_window"] == 100

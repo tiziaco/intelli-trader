@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
 status: ready_to_plan
-last_updated: 2026-06-12T11:21:24.082Z
-last_activity: 2026-06-12 -- Phase 01 execution started
+last_updated: 2026-06-12T12:59:28.768Z
+last_activity: 2026-06-12 -- 02-03 complete (all strategy construction sites migrated to **kwargs; unit tests rewritten; byte-exact gate GREEN: oracle 134/46189.87730727451, e2e 58/58, mypy --strict clean, full suite 853 green, determinism identical). Phase 2 complete — ready for verification.
 progress:
-  total_phases: 6
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 17
-stopped_at: Phase 01 complete (1/1) — ready to discuss Phase 2 (Strategy Authoring Surface)
+  total_phases: 9
+  completed_phases: 2
+  total_plans: 4
+  completed_plans: 4
+  percent: 22
+stopped_at: Phase 02 complete (3/3) — ready to discuss Phase 3 (Declared-Indicator Framework)
 ---
 
 # Project State
@@ -21,14 +21,14 @@ stopped_at: Phase 01 complete (1/1) — ready to discuss Phase 2 (Strategy Autho
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 2 — Strategy Authoring Surface
+**Current focus:** Phase 3 — Declared-Indicator Framework (IND-01, byte-exact; depends on Phase 2)
 
 ## Current Position
 
-Phase: 2
+Phase: 3
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-12
+Last activity: 2026-06-12 -- Phase 2 complete (verification passed); next is Phase 3 (next_phase=999.2 from phase.complete was a backlog-dir scan artifact, corrected to v1.3 Phase 3)
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -84,7 +84,7 @@ surfaces, which is why v1.3 lands first.
 
 **Velocity (v1.2):**
 
-- Total plans completed: 24
+- Total plans completed: 27
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -103,6 +103,8 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - **Sequencing seam:** STRAT-01 (P2) before COMP-02 (P4) — the re-runnable idempotent `init()` is what `StrategiesHandler.update_config` consumes (re-validate → re-run `init()` → re-derive warmup).
 - **Phase numbering reset to 1 for v1.3** (matching v1.1/v1.2). The v1.2 phase working dirs were archived to `.planning/milestones/v1.2-phases/`, so there is no directory collision. The `999.x` backlog entries are FUTURE milestones (N+2/N+3/N+4), left intact in ROADMAP.md `## Backlog`.
 - **Deferred OUT of v1.3:** FL-13 (live-system test coverage) → 999.3; FL-06 (SQL injection) → 999.2. Both pushed down to their owning milestone (live/persistence), not the backtest engine surface.
+- [v1.3 Phase 02 / 02-01]: `core/exceptions/strategy.py` added — `UnknownParamError`/`MissingParamError` subclass the house `ValidationError` (never bare `ValueError`, RESEARCH §Don't Hand-Roll); engine call-shapes `UnknownParamError(sorted(kwargs))` (stores `self.names`, `field="strategy_params"`) and `MissingParamError(name)` (stores `self.name`, `field=name`) are satisfiable. Re-exported via the barrel. Zero run-path touch — byte-exact (oracle 134/46189.87730727451, e2e 58/58). Plan-02 engine imports these symbols.
+- **[LOCKED → Phase 3 / IND-01] Framework-derived warmup (owner directive, closes 02-REVIEW WR-03):** Phase 3's declared-indicator framework MUST auto-derive `warmup`/`max_window` from the declared indicators' lookbacks (`max` over each) and REPLACE the hand-set `warmup`/`max_window` class attrs on `SMAMACDStrategy` — removing the WR-03 footgun (an author can currently set `warmup=0`, the handler short-circuit then under-gates, and `generate_signal` hits `IndexError` on a sub-warmup frame, aborting the fail-fast run). HARD byte-exact constraint: the derived value for `SMAMACDStrategy` MUST equal exactly **100** (= `max(long_window=100, slow_window+signal_window≈15)`), or the oracle drifts off `46189.87730727451`. This is BLOCKED until indicators are declared (can't derive from inline `ta.SMAIndicator`/`ta.MACD` calls in `generate_signal`) — which is precisely why IND-01 owns it. The interim defensive guard was deliberately NOT added in Phase 2 (keeps D-15 handler-side gating clean); WR-03 is deferred from the Phase-2 `--fix` and resolved structurally in Phase 3.
 
 (v1.2 per-plan decisions are archived in `milestones/v1.2-ROADMAP.md` and the phase records under `milestones/v1.2-phases/`. The v1.2 Phase-6 decomposition decisions below are retained because Phase 5 of v1.3 builds directly on the `reconcile/` collaborator they created.)
 
@@ -110,6 +112,8 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [v1.2 Phase 06 / 06-03]: AdmissionManager owns the 9-method signal→order pipeline (process_signal + create_orders_from_signal INTACT, plus _estimate_commission/_get_signal_exchange/_build_primary_order/_enforce_direction_admission/_enforce_position_admission/_resolve_signal_quantity/_reject_unsized_signal) — the surface v1.3 SIG-01/02/03 + W1-11 snapshot threading touch.
 - [v1.2 Phase 06 / 06-01]: BracketBook is single owner of the pending-bracket map; _PendingBracket moved to brackets/bracket_book.py with action kept `str` — v1.3 SIG-03 retypes `_PendingBracket.action` to `Side` here.
 - [v1.2 Phase 02 / 2026-06-11] D-07 gap-discovery delta: the W2-10/DEC-02 "latent `Decimal < float` TypeError" on the below-minimum validation path was a MISDIAGNOSIS — Decimal-vs-float COMPARISON works in Py3; only arithmetic raises and there is none on `_min/_max_order_size`. (Retained as standing context for any v1.3 validator-path touch in SIG-03 / W4-04.)
+- [Phase ?]: [v1.3 Phase 02 / 02-02]: Strategy authoring surface landed — base Strategy __init__ is now (**kwargs) with a stdlib get_type_hints introspection engine, a 3-entry _COERCE enum table (timeframe/order_type/direction), and init()/validate()/reconfigure() hooks (D-02/D-06/D-09/D-10/D-12). ALL engine knobs MUST be annotated (get_type_hints returns only annotated names; deviation from the RESEARCH skeleton). reconfigure falls back to prior INSTANCE value for omitted required fields (OQ1). Pydantic config layer (config/strategy.py, BaseStrategyConfig) fully deleted (D-01); SignalRecord.config retyped to dict (D-04). Suite intentionally RED at 10 construction sites pending 02-03 (all-or-broken D-05); mypy --strict itrader/ clean.
+- [Phase ?]: [v1.3 Phase 02 / 02-03]: All strategy construction sites migrated from (name, config) to the kwargs class-attr surface (D-05, no shim); strategy unit tests rewritten for the class-attr engine (unknown/missing/override/coerce/no-coerce/validate/idempotent/reconfigure/dict-snapshot). Byte-exact gate GREEN: oracle 134/46189.87730727451, e2e 58/58, mypy --strict clean (172 files), full suite 853 green, determinism double-run identical. missing-required tested via EmptyStrategy (SMA pins sizing_policy); non-coercion via max_positions (short_window collides with validate()). Zero re-baseline.
 
 ### Pending Todos
 
@@ -131,6 +135,8 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
+| Phase 02 P02 | ~25 min | 3 tasks | 7 files |
+| Phase 02 P03 | ~20 min | 3 tasks | 10 files |
 
 ## Bookkeeping
 
@@ -170,8 +176,8 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12T10:42:10.905Z
-Resume file: .planning/phases/01-engine-hygiene/01-CONTEXT.md
+Last session: 2026-06-12T12:46:56.340Z
+Resume file: None
 
 ## Operator Next Steps
 

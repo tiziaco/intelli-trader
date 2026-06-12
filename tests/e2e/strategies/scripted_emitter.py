@@ -52,7 +52,6 @@ from itrader.core.sizing import (
     TradingDirection,
 )
 from itrader.strategy_handler.base import Strategy
-from itrader.config import BaseStrategyConfig
 
 
 class ScriptedEmitter(Strategy):
@@ -78,6 +77,12 @@ class ScriptedEmitter(Strategy):
         policy SMA_MACD declares, so entry quantity is hand-derivable.
     """
 
+    name = "scripted_emitter"
+    # Wide window so the pushed window is never 0-width (a 0-width window has no
+    # decision bar). Under date-keying the width does NOT gate firing; warmup 0
+    # keeps the handler short-circuit from skipping a scripted firing tick.
+    max_window: int = 100
+
     def __init__(self, timeframe: str, tickers: list[str], *,
                  script: dict[str, dict],
                  order_type: OrderType = OrderType.MARKET,
@@ -91,18 +96,13 @@ class ScriptedEmitter(Strategy):
         # action + sl/tp/exit_fraction.
         if sizing_policy is None:
             sizing_policy = FractionOfCash(Decimal("0.95"))
-        # D-12: sltp_policy threads through BaseStrategyConfig identically to
-        # sizing_policy, reusing the existing kwarg→config→SignalEvent plumbing
-        # (config.py:55 → base.py:67 → strategies_handler.py:165). No default
-        # substitution — None is the correct default (no engine-side SLTP policy).
-        # D-06 (Phase 8): allow_increase + max_positions thread through
-        # BaseStrategyConfig identically to sizing_policy/sltp_policy, reusing the
-        # already-wired kwarg→config→SignalEvent plumbing (config.py:52-53 →
-        # base.py:60-61 → strategies_handler.py:155-156 → signal.py:90-91 →
-        # order_manager._enforce_position_admission). Per-INSTANCE (not per-bar).
-        # Defaults (allow_increase=False, max_positions=1) preserve every existing
-        # leaf's behavior — D-06 explicit constraint.
-        config = BaseStrategyConfig(
+        # D-05 (Plan 02-03): every param threads straight through the base
+        # **kwargs surface (no pydantic config layer) — kwarg→setattr→SignalEvent.
+        # sltp_policy default None is correct (no engine-side SLTP policy);
+        # allow_increase=False / max_positions=1 preserve every existing leaf's
+        # behavior. Per-INSTANCE (not per-bar). FractionOfCash(Decimal("0.95"))
+        # is the string-path literal (Pitfall 4 — byte-exact).
+        super().__init__(
             timeframe=timeframe,
             tickers=list(tickers),
             sizing_policy=sizing_policy,
@@ -112,12 +112,7 @@ class ScriptedEmitter(Strategy):
             order_type=order_type,
             sltp_policy=sltp_policy,
         )
-        super().__init__("scripted_emitter", config)
         self.script = script
-        # Wide window so the pushed window is never 0-width (a 0-width window has no
-        # decision bar). Under date-keying the width does NOT gate firing; warmup 0
-        # keeps the handler short-circuit from skipping a scripted firing tick.
-        self.max_window = 100
 
     def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
         if bars.empty:

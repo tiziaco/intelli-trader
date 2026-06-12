@@ -1,10 +1,10 @@
+from decimal import Decimal
+
 import pandas as pd
 # import numpy as np
 
-from pydantic import Field, model_validator
-
-from itrader.config import BaseStrategyConfig
-from itrader.core.sizing import SignalIntent
+from itrader.core.enums import TradingDirection
+from itrader.core.sizing import FractionOfCash, SignalIntent
 from itrader.strategy_handler.base import Strategy
 
 from ta import trend
@@ -13,58 +13,41 @@ from itrader.logger import get_itrader_logger
 logger = get_itrader_logger().bind(component="SMA_MACD_strategy")
 
 
-class SMA_MACDConfig(BaseStrategyConfig):
-	"""Per-strategy params for the reference SMA_MACD strategy (D-02).
-
-	Golden defaults mirror ``SMAMACDStrategy.__init__``: short=50, long=100,
-	fast_window=6, slow_window=12, signal_window=3. The ``_short_lt_long`` cross-field rule (HARD-02)
-	rejects ``short_window >= long_window`` at construction. Co-located here
-	(D-14) and re-indented to TABS (D-15) to match this strategy file.
-	"""
-
-	short_window: int = Field(default=50, gt=0)
-	long_window: int = Field(default=100, gt=0)
-	fast_window: int = Field(default=6, gt=0)
-	slow_window: int = Field(default=12, gt=0)
-	signal_window: int = Field(default=3, gt=0)
-
-	@model_validator(mode="after")
-	def _short_lt_long(self) -> "SMA_MACDConfig":
-		"""HARD-02 cross-field rule: short_window must be strictly < long_window."""
-		if self.short_window >= self.long_window:
-			raise ValueError("short_window must be < long_window")
-		return self
-
-
 class SMAMACDStrategy(Strategy):
 	"""
 	Requires:
 	ticker - The ticker symbol being used for moving averages
 	short_window - Lookback period for short moving average
 	long_window - Lookback period for long moving average
+
+	Class-attr authoring surface (D-02): the golden declarations live as class
+	attributes; the base engine applies kwargs over them. These defaults are
+	ORACLE-VISIBLE — any drift breaks 134 trades / 46189.87730727451.
 	"""
-	def __init__(self, config: SMA_MACDConfig) -> None:
-		# D-01: single config-object constructor. The golden declarations
-		# (sizing_policy=FractionOfCash(Decimal("0.95")), LONG_ONLY,
-		# allow_increase=False) now live on the SMA_MACDConfig the caller
-		# builds (RESEARCH Pitfall 1 byte-exact string-path literal).
-		super().__init__("SMA_MACD", config)
 
-		# Copy the per-strategy params onto the instance so generate_signal
-		# reads self.short_window (NOT self.config) — preserving the pure-alpha
-		# contract (D-12): no config reads inside generate_signal.
-		self.short_window = config.short_window
-		self.long_window = config.long_window
-		self.fast_window = config.fast_window
-		self.slow_window = config.slow_window
-		self.signal_window = config.signal_window
+	name = "SMA_MACD"
+	# Pitfall 4: Decimal string-path literal only — never the binary-float path.
+	sizing_policy = FractionOfCash(Decimal("0.95"))
+	direction = TradingDirection.LONG_ONLY
+	short_window: int = 50
+	long_window: int = 100
+	fast_window: int = 6
+	slow_window: int = 12
+	signal_window: int = 3
+	# Fetch width (bars) the handler requests from the feed window, and the
+	# warmup threshold the handler short-circuits on — both == max([100, 100]).
+	max_window: int = 100
+	warmup: int = 100
 
-		# Fetch width (bars) the handler requests from the feed window.
-		self.max_window = max([self.long_window, 100])
-		# D-15: warmup threshold = the old in-strategy guard value. The handler
-		# short-circuits before generate_signal when len(data) < warmup, so the
-		# firing tick is byte-identical to the removed guard (HARD-04).
-		self.warmup = max([self.long_window, 100])
+	def validate(self) -> None:
+		# HARD-02 cross-field rule (was the pydantic @model_validator, D-09):
+		# short_window must be strictly < long_window.
+		if self.short_window >= self.long_window:
+			raise ValueError("short_window must be < long_window")
+
+	def init(self) -> None:
+		# No-op in Phase 2 (D-10) — indicators stay inline in generate_signal.
+		...
 
 	def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
 		# Warmup gating now lives in the handler framework short-circuit (D-15);

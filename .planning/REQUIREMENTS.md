@@ -70,7 +70,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   stateless recompute stays **byte-exact by construction**; incremental/stateful is opt-in *later*
   behind the stable interface. Free-function `crossover`/`crossunder` over series (look-ahead-safe).
   *Byte-exact.* [999.5-(c), W1-05]
-- [ ] **STRAT-01**: A **class-attribute strategy authoring surface** replacing the per-strategy
+- [x] **STRAT-01**: A **class-attribute strategy authoring surface** replacing the per-strategy
   frozen pydantic config + manual field-copy: engine-facing names with defaults on the base
   (`timeframe`, `tickers`, `sizing_policy`, `order_type`, `direction`, `allow_increase`,
   `max_positions`, `sltp_policy`), alpha knobs as annotated class attrs on the subclass, **all
@@ -137,7 +137,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | HYG-01 | Phase 1 — Engine Hygiene | Pending |
-| STRAT-01 | Phase 2 — Strategy Authoring Surface | Pending |
+| STRAT-01 | Phase 2 — Strategy Authoring Surface | Complete |
 | IND-01 | Phase 3 — Declared-Indicator Framework | Pending |
 | COMP-01 | Phase 4 — Composition & Config Interface | Pending |
 | COMP-02 | Phase 4 — Composition & Config Interface | Pending |
