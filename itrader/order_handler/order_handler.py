@@ -92,6 +92,18 @@ class OrderHandler:
 
 		self.logger.info(f'Order Handler initialized with market_execution={self.market_execution})')
 
+	def update_config(self, updates: Dict[str, Any]) -> None:
+		"""Update order-domain configuration at runtime (D-05/D-07/D-09).
+
+		Thin facade: delegates to ``OrderManager.update_config`` (the business
+		logic owner) per the CLAUDE.md handler/manager split — no business logic
+		in the handler. Returns ``None``; raises ``ConfigurationError`` on
+		failure. The handler's cached ``market_execution`` mirror is re-synced
+		from the manager after the swap.
+		"""
+		self.order_manager.update_config(updates)
+		self.market_execution = self.order_manager.market_execution
+
 	def on_signal(self, signal_event: SignalEvent) -> None:
 		"""
 		Process signal event through OrderManager and generate OrderEvents.

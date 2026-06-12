@@ -14,13 +14,17 @@ and order storage/execution systems.
 
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
+
+import pydantic
+
 from .order import Order
 from .operation_result import OperationResult
 from ..core.enums import OrderStatus, MarketExecution
 from ..core.ids import OrderId, PortfolioId
 from ..core.commission_estimator import CommissionEstimator
 from ..core.portfolio_read_model import PortfolioReadModel
-from ..config import OrderConfig
+from ..core.exceptions.base import ConfigurationError
+from ..config import OrderConfig, deep_merge
 from .base import OrderStorage
 from .brackets import BracketBook, BracketManager
 from .admission import AdmissionManager
@@ -173,6 +177,23 @@ class OrderManager:
 		dict is kept alongside (Pitfall 2 option c forbidden, D-05).
 		"""
 		return self._brackets
+
+	def update_config(self, updates: dict[str, Any]) -> None:
+		"""Update order-domain configuration at runtime (D-05/D-07/D-08/D-09).
+
+		Canonical contract over ``OrderConfig``: deep_merge -> model_validate ->
+		atomic-swap, wrapping pydantic ``ValidationError`` (which also rejects
+		unknown keys via ``extra="forbid"``) into ``ConfigurationError``. Returns
+		``None`` and RAISES on failure. After the swap the cached
+		``self.market_execution`` is re-derived from the new config (Pitfall 1).
+		"""
+		merged = deep_merge(self.order_config.model_dump(), updates)
+		try:
+			new_config = OrderConfig.model_validate(merged)
+		except pydantic.ValidationError as e:
+			raise ConfigurationError(reason=str(e)) from e
+		self.order_config = new_config  # atomic GIL-safe reference swap (D-11)
+		self.market_execution = self.order_config.market_execution
 
 	def on_fill(self, fill_event: FillEvent) -> List[OrderEvent]:
 		"""Delegate fill reconciliation to ReconcileManager (D-07)."""
