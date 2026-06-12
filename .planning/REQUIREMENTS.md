@@ -136,26 +136,40 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SIG-01 | TBD | Pending |
-| SIG-02 | TBD | Pending |
-| SIG-03 | TBD | Pending |
-| RECON-01 | TBD | Pending |
-| COMP-01 | TBD | Pending |
-| COMP-02 | TBD | Pending |
-| IND-01 | TBD | Pending |
-| STRAT-01 | TBD | Pending |
-| LIFE-01 | TBD | Pending |
-| HYG-01 | TBD | Pending |
+| HYG-01 | Phase 1 — Engine Hygiene | Pending |
+| STRAT-01 | Phase 2 — Strategy Authoring Surface | Pending |
+| IND-01 | Phase 3 — Declared-Indicator Framework | Pending |
+| COMP-01 | Phase 4 — Composition & Config Interface | Pending |
+| COMP-02 | Phase 4 — Composition & Config Interface | Pending |
+| SIG-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
+| SIG-02 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
+| SIG-03 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
+| RECON-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
+| LIFE-01 | Phase 6 — Order Lifecycle & Time-in-Force | Pending |
 
 **Coverage:**
 - v1 requirements: 10 total
-- Mapped to phases: 0 (roadmapper populates)
-- Unmapped: 10 ⚠️ (resolved at roadmap creation)
+- Mapped to phases: 10 ✓ (all mapped; no orphans, no duplicates)
+- Unmapped: 0 ✓
 
-**Co-phasing note for the roadmapper:** SIG-01/02/03 + **RECON-01** must land in **one FRAGILE
-reconcile phase** under a single owner-gated re-baseline + cross-validation pass (`reconcile/` is
-touched once, not twice).
+**Phase grouping rationale:**
+- **Byte-exact phases (1-4):** HYG-01 (1), STRAT-01 (2), IND-01 (3), COMP-01/COMP-02 (4) — each
+  holds the v1.1 E2E golden suite + BTCUSD oracle byte-exact; a clean pass/fail golden gate.
+- **Owner-gated phases (5-6):** SIG-01/02/03 + RECON-01 (5), LIFE-01 (6) — result-changing; each
+  owns its re-baseline (owner sign-off + cross-validation), kept SEPARATE from the byte-exact
+  phases so each golden gate is unambiguous.
+
+**Co-phasing note (HONORED):** SIG-01/02/03 + **RECON-01** land in **one FRAGILE reconcile phase**
+(Phase 5) under a single owner-gated re-baseline + cross-validation pass — `reconcile/` is touched
+once, not twice. SIG-03 (`action`→`Side` + snapshot threading) and RECON-01 (`on_fill`/`should_release`
+streamline) both touch the FRAGILE fill-reconciliation / reservation-release path, so they are NOT split.
+
+**Sequencing rationale:** STRAT-01 (Phase 2) ships before COMP-02 (Phase 4) because STRAT-01's
+re-runnable idempotent `init()` is the seam `StrategiesHandler.update_config` consumes; IND-01
+(Phase 3) sits between them (auto-warmup is re-derived on `init()` re-run). The FRAGILE signal/reconcile
+core (Phase 5) lands after the composition/config infra (Phase 4) is in place; LIFE-01 (Phase 6) is
+self-contained and last. N+2 (margin/shorts) builds on the completed SIG/COMP surfaces.
 
 ---
 *Requirements defined: 2026-06-12 after milestone v1.3 scoping (promotes Backlog 999.5).*
-*Last updated: 2026-06-12 after initial definition.*
+*Last updated: 2026-06-12 — Traceability populated at roadmap creation; all 10 requirements mapped to 6 phases.*
