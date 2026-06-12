@@ -192,13 +192,39 @@ class Strategy(ABC):
 		self.init()
 
 	def to_dict(self) -> dict[str, Any]:
-		return {
+		# WR-02: a faithful "params snapshot" (SIG-02 queryability) must capture
+		# the FULL declared surface — timeframe / tickers / max_window / warmup
+		# AND every subclass tuning knob (short_window, long_window, …) — not a
+		# hand-listed subset. Introspect get_type_hints(type(self)) so the
+		# snapshot can interpret a signal (which timeframe, which tickers, which
+		# windows). The identity/runtime fields below (strategy_id,
+		# strategy_name, is_active, subscribed_portfolios) and the bespoke
+		# serializations (enum .value, policy repr, timeframe_alias instead of
+		# the timedelta) take precedence over the raw declared value.
+		snapshot: dict[str, Any] = {}
+		for nm in get_type_hints(type(self)):
+			# `timeframe` resolves to a timedelta at runtime — skip it here and
+			# serialize via the stable `timeframe_alias` below (the str the
+			# snapshot can round-trip). `name` is surfaced as `strategy_name`.
+			if nm in ("timeframe", "name"):
+				continue
+			val = getattr(self, nm, None)
+			if isinstance(val, Enum):
+				val = val.value
+			elif isinstance(val, (SizingPolicy, SLTPPolicy)):
+				val = repr(val)
+			snapshot[nm] = val
+		# Identity/runtime fields + bespoke serializations (override declared).
+		snapshot.update({
 			# IN-03: stringify the UUID — to_dict is a serialization-edge dict,
 			# and a raw uuid.UUID makes json.dumps(strategy.to_dict()) raise
 			# "Object of type UUID is not JSON serializable". order_type /
 			# direction are already .value-serialized; align strategy_id.
 			"strategy_id" : str(self.strategy_id),
 			"strategy_name": self.name,
+			# WR-02: the timeframe is a timedelta on self — serialize the stashed
+			# alias so the snapshot records WHICH timeframe (the #1 missing knob).
+			"timeframe_alias" : self.timeframe_alias,
 			# WR-01: subscribed_portfolios holds runtime PortfolioId handles that
 			# are uuid.UUID on every real run path (PortfolioHandler.add_portfolio
 			# returns a UUID). A raw UUID makes json.dumps(strategy.to_dict())
@@ -218,7 +244,8 @@ class Strategy(ABC):
 			# WR-06: the SLTP declaration is now a first-class typed kwarg, so it
 			# serializes alongside the other declarations (None when undeclared).
 			"sltp_policy" : repr(self.sltp_policy) if self.sltp_policy is not None else None,
-		}
+		})
+		return snapshot
 
 	def __str__(self) -> str:
 		# D-14: generalize the per-strategy shape (was f'{self.name}_{self.timeframe}'
