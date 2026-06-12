@@ -178,6 +178,14 @@ class Strategy(ABC):
 		Single-strategy-scope reconfiguration replacing the dropped frozen-config
 		mutation guard. No ``__setattr__`` guard exists (D-13) — sanctioned
 		reconfiguration goes through here so validate() + init() always re-run.
+
+		WR-04 — asymmetric fallback (RESEARCH Open Question 1): a field OMITTED
+		from ``kwargs`` keeps its PRIOR INSTANCE VALUE, NOT the class default.
+		Omission is therefore NOT a reset: there is no way through an omitted
+		kwarg to clear an optional field back to its class default. To reset a
+		field you MUST pass it explicitly (e.g. ``reconfigure(sltp_policy=None)``
+		restores ``None``); a caller who expects "omitted == default" will be
+		surprised. Only an explicitly-supplied kwarg overrides the prior value.
 		"""
 		self._apply_params(**kwargs)
 		self.validate()

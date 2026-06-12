@@ -204,6 +204,35 @@ def test_reconfigure_reapplies_and_revalidates():
         strategy.reconfigure(short_window=200)
 
 
+def test_reconfigure_omitted_field_keeps_prior_not_default():
+    """WR-04: an OMITTED kwarg on reconfigure keeps the PRIOR value, not the default.
+
+    RESEARCH Open Question 1 — the fallback is asymmetric: an explicitly-supplied
+    kwarg overrides, but OMISSION freezes the last value and never resets to the
+    class default. There is no way through an omitted kwarg to clear an optional
+    field back to its default; the caller must pass it explicitly (e.g.
+    ``reconfigure(sltp_policy=None)``). This pins that footgun so a future author
+    who expects "omitted == default" sees it documented and tested.
+    """
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+    # The class default for short_window is NOT 30 — supply 30, then reconfigure
+    # WITHOUT it: the prior 30 must survive (not snap back to the class default).
+    strategy.reconfigure(short_window=30)
+    assert strategy.short_window == 30
+
+    # Omit short_window entirely — change an unrelated field instead.
+    strategy.reconfigure(allow_increase=True)
+
+    # Omission keeps the PRIOR value (30), it is NOT reset to the class default.
+    assert strategy.short_window == 30
+    assert strategy.allow_increase is True
+
+    # Resettability is only available via an EXPLICIT kwarg (the documented path).
+    default_short = type(strategy).short_window
+    strategy.reconfigure(short_window=default_short)
+    assert strategy.short_window == default_short
+
+
 # --- handler-side fan-out (real StrategiesHandler + queue + stub feed) -------
 
 
