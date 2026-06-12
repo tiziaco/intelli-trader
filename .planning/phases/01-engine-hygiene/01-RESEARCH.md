@@ -355,14 +355,14 @@ Not applicable — no evolving technology in scope. The only "old vs new" releva
 
 **This table is empty: every claim in this research was verified against the working tree (grep/sed/git/pytest/mypy) or cited from a committed artifact (06-REVIEW.md, CONVENTIONS.md, CONTEXT.md). No user confirmation needed.** The only judgment calls left open are the two CONTEXT-designated discretion items (exact public-method choice for item 1 — recommended `get_all_positions`; exact softened wording for item 7 — intent specified), which are the planner's to finalize, not assumptions about facts.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Plan granularity (1 plan vs 2).**
+1. **Plan granularity (1 plan vs 2).** — RESOLVED: the planner chose one byte-exact plan (01-01) with a single shared verification gate, as recommended.
    - What we know: seven items, all small; item 1 is test-only, items 2-7 touch source/config.
    - What's unclear: whether the planner wants a single byte-exact plan or a test-only/source split.
    - Recommendation: one plan is fine given the tiny surface and single shared verification gate; split only if the executor benefits from committing the test-only change (item 1) independently. Either way, ONE byte-exact gate at the end.
 
-2. **Item 5 representation in success-criteria mapping.**
+2. **Item 5 representation in success-criteria mapping.** — RESOLVED: the plan records item 5 as a verify-only task citing commit 2ffbeb8 (no edit), as recommended.
    - What we know: criterion 3 lists "dead `StrategyId` import dropped" — already true.
    - What's unclear: whether to record it as "satisfied by prior work (commit 2ffbeb8)" vs a live task.
    - Recommendation: record as verify-only with the commit citation so the milestone audit isn't confused by a no-op edit.
