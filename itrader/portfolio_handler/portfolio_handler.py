@@ -481,7 +481,7 @@ class PortfolioHandler:
             self.logger.error("Configuration validation failed", error=str(e))
             return False
 
-    def rollback_config(self, steps: int = 1) -> bool:
+    def rollback_config(self) -> bool:
         """Reset PortfolioHandler configuration to the default preset."""
         try:
             self.config_data = get_portfolio_preset('default')
