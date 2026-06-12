@@ -160,19 +160,25 @@ class ExecutionHandler(AbstractExecutionHandler):
 			'ccxt': None  # Placeholder for live exchange implementation
 		}
 		
-		# Connect to exchanges that support it
+		# Connect to exchanges that support it. Dedup by instance identity:
+		# venue aliases (e.g. 'simulated' and 'csv') may point to the same
+		# exchange object; connecting it once avoids a misleading second
+		# "Successfully connected" log for the idempotent no-op call (IN-03).
+		seen_connect: set[int] = set()
 		for exchange_name, exchange in exchanges.items():
-			if exchange is not None:
-				try:
-					connection_result = exchange.connect()
-					if connection_result.success:
-						self.logger.info('Successfully connected to %s exchange', exchange_name)
-					else:
-						self.logger.warning('Failed to connect to %s exchange: %s', 
-										   exchange_name, connection_result.error_message)
-				except AttributeError:
-					# Exchange doesn't support connection management (backward compatibility)
-					self.logger.debug('Exchange %s does not support connection management', exchange_name)
+			if exchange is None or id(exchange) in seen_connect:
+				continue
+			seen_connect.add(id(exchange))
+			try:
+				connection_result = exchange.connect()
+				if connection_result.success:
+					self.logger.info('Successfully connected to %s exchange', exchange_name)
+				else:
+					self.logger.warning('Failed to connect to %s exchange: %s',
+									   exchange_name, connection_result.error_message)
+			except AttributeError:
+				# Exchange doesn't support connection management (backward compatibility)
+				self.logger.debug('Exchange %s does not support connection management', exchange_name)
 		
 		return exchanges
 
