@@ -232,10 +232,10 @@ def test_oracle_numeric_values(oracle_run):
 # --- SIG-02: post-run signal store on the golden SMA_MACD run -----------------
 #
 # Additive assertion (Plan 05-03): the golden SMA_MACD run produces a NON-empty,
-# queryable SignalStore via the TradingSystem post-run accessor. This wires the
+# queryable SignalStore via the BacktestTradingSystem post-run accessor. This wires the
 # same golden config the oracle generator uses (scripts/run_backtest.py::main —
 # BTCUSD/1d/$10k/FractionOfCash(0.95)/LONG_ONLY over the pinned 2018->2026
-# window), but holds the TradingSystem reference so the post-run accessor can be
+# window), but holds the BacktestTradingSystem reference so the post-run accessor can be
 # read. It does NOT touch the byte-exact oracle assertions above — capturing a
 # sink record is side-effect-only (oracle-dark, HARD-04). The store is read AFTER
 # the run (read-model sink, D-12) — the queue-only contract is preserved.
@@ -246,7 +246,7 @@ from itrader.core.sizing import FractionOfCash, TradingDirection  # noqa: E402
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import (  # noqa: E402
     SMAMACDStrategy,
 )
-from itrader.trading_system.backtest_trading_system import TradingSystem  # noqa: E402
+from itrader.trading_system.backtest_trading_system import BacktestTradingSystem  # noqa: E402
 
 
 def test_golden_run_signal_store_is_non_empty_and_queryable():
@@ -258,7 +258,7 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
     byte-exact oracle assertions live in the sibling tests above and are NOT
     weakened here.
     """
-    system = TradingSystem(
+    system = BacktestTradingSystem(
         exchange="csv",
         start_date="2018-01-01",
         end_date="2026-06-03",

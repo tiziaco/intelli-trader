@@ -60,9 +60,9 @@ def traced_run(tmp_path_factory):
 
     from itrader.core.sizing import FractionOfCash, TradingDirection
     from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
-    from itrader.trading_system.backtest_trading_system import TradingSystem
+    from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 
-    system = TradingSystem(
+    system = BacktestTradingSystem(
         exchange="csv",
         start_date=module.START_DATE,
         end_date=module.END_DATE,

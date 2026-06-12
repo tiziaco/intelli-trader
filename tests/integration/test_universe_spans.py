@@ -28,7 +28,7 @@ import pandas as pd
 
 from itrader.core.sizing import FixedQuantity, SignalIntent, TradingDirection
 from itrader.strategy_handler.base import Strategy
-from itrader.trading_system.backtest_trading_system import TradingSystem
+from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 
 
 KLINE_HEADER = (
@@ -130,18 +130,18 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
     late = write_kline_csv(tmp_path / "late.csv", LATE_DAYS, base=200.0)
     ends = write_kline_csv(tmp_path / "ends.csv", ENDSEARLY_DAYS, base=300.0)
 
-    system = TradingSystem(
+    system = BacktestTradingSystem(
         exchange="csv",
         csv_paths={"EARLYUSD": early, "LATEUSD": late, "ENDSEARLYUSD": ends},
         start_date=WINDOW_START,
         end_date=WINDOW_END,
     )
 
-    # Register the synthetic tickers with the simulated exchange's supported set.
-    # The default preset only admits the golden BTCUSD (execution_handler.py:109);
-    # registering each ticker via the public register_symbol seam (D-07) lets
-    # validate_symbol admit our fixtures.
-    # Test-only wiring — the Phase-9 E2E harness will own a richer symbol setup.
+    # The direct-construction BacktestTradingSystem seeds the COMPLETE supported set
+    # at construction from the csv_paths keys (default preset ∪ {BTCUSD} ∪ tickers,
+    # D-13/Trap 1), so these synthetic tickers are already admitted. Re-registering
+    # each via the public register_symbol seam (D-07) is therefore a no-op union here
+    # — kept to exercise that the seam stays additive (never wipes the seeded set).
     simulated = system.execution_handler.exchanges["simulated"]
     for ticker in ("EARLYUSD", "LATEUSD", "ENDSEARLYUSD"):
         simulated.register_symbol(ticker)

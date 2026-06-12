@@ -104,11 +104,17 @@ class BacktestTradingSystem(object):
 			self._signal_store = signal_store or engine.signal_store
 		else:
 			# Legacy direct-construction mode: build the engine+runner here using
-			# the shared seam. exchange_config=None lets the ExecutionHandler build
-			# the TEMPORARY default-preset ∪ {BTCUSD} backward-compat config so the
-			# direct-construction symbol set stays byte-exact (Trap 1).
+			# the shared seam. The COMPLETE supported-symbol set is seeded into a
+			# construction-time ExchangeConfig (default preset ∪ {BTCUSD} ∪ the
+			# csv_paths tickers, upper-cased) via the same _seed_supported_symbols
+			# path the factory uses — replacement-safe (D-13/Trap 1). csv_paths=None
+			# is the single-golden-ticker default, so the seeded set is the preset ∪
+			# {BTCUSD}, byte-identical to the old ExecutionHandler no-config fallback.
 			order_storage = OrderStorageFactory.create('backtest')
 			self._signal_store = SignalStorageFactory.create('backtest')
+			tickers = {str(t).upper() for t in (csv_paths or {}).keys()}
+			exchange_config = _seed_supported_symbols(
+				get_exchange_preset('default'), tickers)
 			self.engine = compose_engine(
 				order_storage=order_storage,
 				signal_store=self._signal_store,
@@ -116,7 +122,7 @@ class BacktestTradingSystem(object):
 				start_date=start_date,
 				end_date=end_date or None,
 				timeframe=timeframe,
-				exchange_config=None,
+				exchange_config=exchange_config,
 				order_config=OrderConfig.default(),
 			)
 			self.runner = BacktestRunner(self.engine)
@@ -272,10 +278,3 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 
 	return BacktestTradingSystem(
 		engine=engine, runner=runner, signal_store=signal_store)
-
-
-#: Backward-compat alias (D-03). Existing import sites
-#: (``from ...backtest_trading_system import TradingSystem``) keep working until
-#: Wave 4 (04-05) migrates them to ``BacktestTradingSystem`` /
-#: ``build_backtest_system``.
-TradingSystem = BacktestTradingSystem
