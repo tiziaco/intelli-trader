@@ -87,7 +87,7 @@ only after explicit owner sign-off + external cross-validation.
 **Plans**: 3 plans (3 waves — Wave 1: standalone catalog+primitives modules; Wave 2: base framework + all-or-broken run/test-path migration; Wave 3: byte-exact gate)
   - [x] 03-01-PLAN.md — NEW indicators.py typed adapter catalog (SMA/MACDHist/EMA/RSI, D-04/D-07/D-08) + NEW primitives.py (crossover/crossunder/is_above/is_below, D-01/D-02) + their Wave-0 unit tests (Wave 1, standalone)
   - [x] 03-02-PLAN.md — base.py framework (IndicatorHandle, self.indicator(), evaluate() seam, auto-warmup, D-03/D-06/D-08) + full lockstep migration of SMAMACDStrategy/EmptyStrategy/e2e fixtures/handler call-site + warmup==100 assertion (Wave 2)
-  - [ ] 03-03-PLAN.md — byte-exact phase gate: BTCUSD oracle (134/46189.87730727451 EXACT), e2e 58/58, full suite, mypy --strict, determinism double-run + signal_record snapshot verify (Wave 3)
+  - [x] 03-03-PLAN.md — byte-exact phase gate: BTCUSD oracle (134/46189.87730727451 EXACT), e2e 58/58, full suite, mypy --strict, determinism double-run + signal_record snapshot verify (Wave 3)
 
 ### Phase 4: Composition & Config Interface
 **Goal**: The system is composed through an engine-level composition API (declarative multi-strategy/multi-portfolio wiring, construction-time `ExchangeConfig` threading, a new `OrderConfig`), and every handler exposes a uniform runtime `update_config` so config can change at runtime in a live scenario — applied between event cycles, thread-safe.
@@ -186,7 +186,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 |-------|----------------|--------|-----------|
 | 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
 | 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
-| 3. Declared-Indicator Framework | 2/3 | In Progress|  |
+| 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
 | 4. Composition & Config Interface | 0/TBD | Not started | - |
 | 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
