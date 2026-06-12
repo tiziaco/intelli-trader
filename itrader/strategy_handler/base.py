@@ -51,13 +51,18 @@ class Strategy(ABC):
 	# `last_time - self.timeframe * self.short_window`). The annotation reflects
 	# the resolved consumer type; the bare annotation (no value) still marks it
 	# REQUIRED for get_type_hints-driven detection (D-07).
+	# EVERY engine-facing knob is ANNOTATED — `_apply_params` iterates
+	# `get_type_hints(type(self))`, which returns ONLY annotated names, so an
+	# unannotated class attr would be invisible to the engine (un-overridable by
+	# kwarg, and its enum coercion would never fire). The three bare annotations
+	# (no value) are REQUIRED (D-07); the rest carry defaults.
 	timeframe: timedelta          # required — no class-attr value
 	tickers: list[str]            # required
 	sizing_policy: SizingPolicy   # required
-	order_type = OrderType.MARKET
-	direction = TradingDirection.LONG_ONLY
-	allow_increase = False
-	max_positions = 1
+	order_type: OrderType = OrderType.MARKET
+	direction: TradingDirection = TradingDirection.LONG_ONLY
+	allow_increase: bool = False
+	max_positions: int = 1
 	sltp_policy: SLTPPolicy | None = None
 	max_window: int = 0
 	warmup: int = 0
@@ -82,21 +87,33 @@ class Strategy(ABC):
 
 		``get_type_hints(type(self))`` merges the full MRO so the base-owned
 		names and the subclass's params are introspected together. For each
-		declared name: take the kwarg if present, else the class-attr default;
-		a bare annotation with no default (``_MISSING``) is a required param and
-		raises ``MissingParamError``. The three ``_COERCE`` enum fields coerce a
-		str off their annotation (the enum's ``_missing_``); any leftover kwarg
-		is an unknown param and raises ``UnknownParamError`` (loud rejection, no
-		silent drop — T-02-01/T-02-02/T-02-04).
+		declared name, resolution order is: the kwarg if present, else the prior
+		INSTANCE value on a reconfigure (RESEARCH Open Question 1 — a partial
+		reconfigure keeps the prior value), else the class-attr default; a bare
+		annotation with no default and no prior value (``_MISSING``) is a
+		required param and raises ``MissingParamError``. The three ``_COERCE``
+		enum fields coerce a str off their annotation (the enum's ``_missing_``);
+		any leftover kwarg is an unknown param and raises ``UnknownParamError``
+		(loud rejection, no silent drop — T-02-01/T-02-02/T-02-04).
 		"""
 		# Record whether the caller supplied a `timeframe` kwarg BEFORE the loop
 		# pops it (RESEARCH Open Question 1 — the reconfigure fallback order).
 		timeframe_supplied = "timeframe" in kwargs
+		# Has _apply_params run before? (reconfigure path — fall back to instance)
+		reconfiguring = hasattr(self, "_timeframe")
 		hints = get_type_hints(type(self))
 		for nm in hints:
 			default = getattr(type(self), nm, _MISSING)
 			if nm in kwargs:
 				val = kwargs.pop(nm)
+			elif nm == "timeframe" and reconfiguring:
+				# self.timeframe is a timedelta after the first pass — fall back
+				# to the stashed ENUM so the prior timeframe is preserved.
+				val = self._timeframe
+			elif nm != "timeframe" and reconfiguring and hasattr(self, nm):
+				# Reconfigure: a required field with a prior instance value keeps
+				# it (no MissingParamError on an omitted-but-already-set field).
+				val = getattr(self, nm)
 			elif default is not _MISSING:
 				val = default
 			else:
