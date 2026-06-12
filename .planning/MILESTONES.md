@@ -1,5 +1,67 @@
 # Milestones
 
+## v1.2 — Consolidation (Shipped: 2026-06-12)
+
+**Scope:** 6 phases (Phases 1–6, numbering reset from v1.1), 23 plans, ~36 tasks. A
+behavior-preserving cleanup milestone — the 999.x backlog phases (Engine Surface Completion + N+2…N+4)
+remain future milestones.
+
+**Delivered:** The engine put in order — the v1.1 cleanup-review backlog
+(`V1.2-CLEANUP-REVIEW.md`, 46 findings) and the `CONCERNS.md` dead/fragile/tangled debt cleared
+**byte-exact against the golden master** (134 trades / `final_equity 46189.87730727451`), so the
+next milestone's engine-surface features build on a clean, decomposed foundation. Re-baselined
+nothing. The headline: `order_manager.py` decomposed from a 1279-line god-module into a 210-line
+coordinator + `admission/`/`brackets/`/`lifecycle/`/`reconcile/` collaborators as pure code-motion,
+with the FRAGILE fill-reconciliation / reservation-release path byte-for-byte unchanged.
+
+**Definition of done — achieved:** `pytest tests/integration` byte-exact oracle held (134 /
+46189.87730727451) · `pytest tests/e2e -m e2e` 58/58 green (no leaf re-baselined) · full suite
+green (851) · `mypy --strict` clean across 172 source files · no new float-for-money; single UUIDv7
+ID scheme (zero `uuid4()` on the run path) · `order_manager.py` decomposed with no semantics change ·
+determinism double-run byte-identical.
+
+**Key accomplishments:**
+
+- **Golden master held byte-exact through the entire milestone** — 134 trades /
+  `final_equity 46189.87730727451`, oracle 3/3, e2e 58/58, `mypy --strict` clean (172 files). The
+  behavior-preserving guarantee never broke across 6 phases / 23 plans.
+- **`order_manager.py` god-module decomposed (MOD-01, Phase 6 — FRAGILE, isolated, LAST):**
+  1279 → 210-line thin coordinator into `admission/`/`brackets/`/`lifecycle/`/`reconcile/`
+  collaborators as pure code-motion; `on_fill` moved as one indivisible intact unit; the
+  terminal-status / `should_release` / `finally`-release interplay byte-for-byte unchanged; cross-bucket
+  seams rewired via coordinator callback + injected `BracketManager` (no sibling edges, no circular import).
+- **Locked-decision conformance closed (Phase 2):** `Optional[Decimal]` money API + Decimal
+  `_min/_max_order_size` end-to-end (no float-for-money at boundaries); retired the lingering
+  `uuid4()` second ID scheme to single UUIDv7 (`CorrelationId` NewType). The W2-10 "latent TypeError"
+  was re-adjudicated as a misdiagnosis (D-07) — comparison works in Py3; DEC-02 reframed as
+  consistency, not a crash fix.
+- **Hot-path performance (Phase 3):** eliminated per-tick storage copies (D-19 single-writer) with
+  `snapshot_count()`/`get_latest_snapshot()` accessors, redundant `Decimal(str(Decimal))` re-wraps,
+  duplicated per-tick work, and per-tick Bar/MACD churn (prebuilt Bars + MACD-in-guard) — all
+  bit-identical.
+- **Type modeling hardened (Phase 4):** frozen/slots decision DTOs; class-based string enums
+  (`OrderStatus`/`OrderCommand` + `ErrorSeverity`/`OrderOperationType`/`OrderTriggerSource`/`market_execution`)
+  with `assert_never` dispatch; `OrderId`/`PortfolioId` NewTypes on public APIs; `BaseStrategyConfig`
+  co-located in `config/`.
+- **Naming & encapsulation (Phase 5):** `events_queue→global_queue`, PascalCase strategies +
+  `*_window` config, public `routes` accessor + `register_symbol()`/`update_config` seam, six tests
+  re-asserted through public query APIs (unblocks backend swaps).
+
+**Audit:** `passed` status — 18/18 requirements satisfied (3-source cross-validated), 6/6 phases
+verified, 18/18 cross-phase integration seams wired, 1/1 E2E flow complete, 0 blockers. See
+`milestones/v1.2-MILESTONE-AUDIT.md`.
+
+**Known deferred items at close: 4** (the 4 completed v1.2 quick tasks — canonically complete,
+flagged only by the `gsd-sdk` SDK-port filename bug, same as v1.1; each carries `status: complete`
+frontmatter; see STATE.md → Deferred Items). Non-blocking tech debt: DEF-02-02 (raw `Decimal` in
+`simulated.py` diagnostic dicts — cosmetic), SUMMARY frontmatter omits 6 REQ-IDs (bookkeeping only),
+Nyquist Wave-0 not run (behavioral net = oracle + 58 e2e + mypy strict). Result-changing /
+new-framework work (SIG/COMP/IND/LIFE) deferred to Engine Surface Completion (Backlog 999.5).
+
+**Archived:** `milestones/v1.2-ROADMAP.md`, `milestones/v1.2-REQUIREMENTS.md`, `milestones/v1.2-MILESTONE-AUDIT.md`.
+
+---
+
 ## v1.1 — Backtest Trustworthiness: Breadth (Shipped: 2026-06-10)
 
 **Scope:** 9 phases (Phases 1–9, numbering reset from v1.0), 28 plans, 53 tasks. The 999.x backlog phases (N+2…N+4, plus the v1.2 Engine Surface Completion seed) are future milestones, not part of v1.1.

@@ -2,33 +2,33 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Consolidation
-status: ready_to_plan
-last_updated: 2026-06-11T21:41:56.678Z
-last_activity: 2026-06-11
+status: milestone_complete
+last_updated: 2026-06-12T08:00:00.000Z
+last_activity: 2026-06-12
 progress:
-  total_phases: 10
+  total_phases: 6
   completed_phases: 6
   total_plans: 23
   completed_plans: 23
-  percent: 60
-stopped_at: Phase 06 complete (5/5) — ready to discuss Phase 999.2
+  percent: 100
+stopped_at: v1.2 Consolidation SHIPPED 2026-06-12 (tagged v1.2) — no active milestone; next candidate Engine Surface Completion (Backlog 999.5)
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-11 — milestone v1.2 Consolidation started)
+See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.2 Consolidation shipped)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended to a trustworthy, regression-locked engine across the *entire* feature surface (v1.1 shipped).
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now on a clean, decomposed engine after the v1.2 consolidation (cleanup-review + CONCERNS debt cleared byte-exact).
+**Current focus:** No active milestone. Next candidate: Engine Surface Completion (Backlog 999.5) — promote with `/gsd:new-milestone`.
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-11
+Phase: none (v1.2 shipped)
+Plan: —
+Status: Milestone complete — awaiting next milestone definition
+Last activity: 2026-06-12
 
 ## Milestone Gate (v1.2 — applies to EVERY phase)
 
@@ -170,6 +170,28 @@ Optional tracked hygiene (non-blocking): formal Nyquist Wave-0 incomplete on pha
 absent on 2,8; empty `requirements_completed` SUMMARY frontmatter on phases 1,4,5,7,9. See
 `milestones/v1.1-MILESTONE-AUDIT.md`.
 
+### v1.2 milestone-close acknowledgments (2026-06-12)
+
+The pre-close artifact audit flagged 4 quick tasks that were verified **already complete** (each
+carries `status: complete` frontmatter, with a real `${quick_id}-SUMMARY.md`). They are flagged
+**only** by the same `gsd-sdk` SDK-port filename bug recorded at the v1.1 close — it reads a literal
+`SUMMARY.md` and cannot see the mandated `${quick_id}-SUMMARY.md` files. Acknowledged and accepted at
+v1.2 close; no open work.
+
+| Category | Item | Status |
+|----------|------|--------|
+| quick_task | 260605-ih3 — fix WR-01 weekly/DST `check_timeframe` anchoring | complete (SDK-port false positive) |
+| quick_task | 260608-a59 — demote by-design signal-rejection logs to warning | complete (SDK-port false positive) |
+| quick_task | 260608-qe2 — pre-close enum cleanup (`TradingDirection`/`SystemStatus` canonical homes; config `ExchangeVenue`/`ConfigOrderType` renames) | complete (SDK-port false positive) |
+| quick_task | 260610-sjp — close FL-01 & FL-02 + reconcile FIX-LIST | complete (SDK-port false positive) |
+
+Non-blocking tech debt carried forward: **DEF-02-02** (`simulated.py` diagnostic dicts emit raw
+`Decimal` instead of serialization-edge `float()` — cosmetic, no consumer breaks; fold into any
+future touch of the exchange serialization helpers); SUMMARY `requirements-completed` frontmatter
+omits 6 REQ-IDs (DEAD-01/02, PERF-01/03, NAME-01, MOD-01 — bookkeeping only, coverage intact);
+Nyquist Wave-0 not run for v1.2 (behavioral net = golden oracle + 58 e2e + mypy strict). See
+`milestones/v1.2-MILESTONE-AUDIT.md`.
+
 ## Session Continuity
 
 Last session: 2026-06-11T21:29:45.753Z
@@ -177,4 +199,5 @@ Resume file: None
 
 ## Operator Next Steps
 
-- Phases 1–5 complete. Plan the final v1.2 phase with `/gsd:discuss-phase 6` (Order-Manager Decomposition — MOD-01, FRAGILE, isolated, LAST).
+- **v1.2 Consolidation SHIPPED 2026-06-12** (all 6 phases, 23 plans, 18/18 requirements; tagged `v1.2`).
+- No active milestone. Start the next one with `/clear` then `/gsd:new-milestone` — the next candidate is **Engine Surface Completion** (Backlog Phase 999.5: SIG/COMP/IND/LIFE), to be promoted ahead of N+2.
