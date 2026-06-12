@@ -78,6 +78,11 @@ class SimulatedExchange(AbstractExchange):
 		
 		# Operational parameters
 		self.simulate_failures = self.config.failure_simulation.simulate_failures
+		# failure_rate is a probability, NOT money — the Decimal-first policy
+		# does not apply here. It is cached as float because it is compared
+		# directly against self._rng.random() (a native float) at the call
+		# site; this is an intentional probability-boundary edge analogous to
+		# the float() serialization edges elsewhere in the codebase.
 		self.failure_rate = float(self.config.failure_simulation.failure_rate)
 		
 		# D-19: config lock removed — single-writer contract, see class docstring.
@@ -645,6 +650,7 @@ class SimulatedExchange(AbstractExchange):
 		self.fee_model = self._init_fee_model()
 		self.slippage_model = self._init_slippage_model()
 		self.simulate_failures = self.config.failure_simulation.simulate_failures
+		# float cache: probability boundary, compared against rng float — see __init__.
 		self.failure_rate = float(self.config.failure_simulation.failure_rate)
 		# Trap 1 (REPLACEMENT): _supported_symbols is re-derived wholesale from
 		# config.limits — construction must seed the COMPLETE set (D-13). The
