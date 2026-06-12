@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: verifying
-last_updated: "2026-06-12T12:46:56.347Z"
+status: ready_to_plan
+last_updated: 2026-06-12T12:59:28.768Z
 last_activity: 2026-06-12 -- 02-03 complete (all strategy construction sites migrated to **kwargs; unit tests rewritten; byte-exact gate GREEN: oracle 134/46189.87730727451, e2e 58/58, mypy --strict clean, full suite 853 green, determinism identical). Phase 2 complete — ready for verification.
 progress:
   total_phases: 9
@@ -11,6 +11,7 @@ progress:
   total_plans: 4
   completed_plans: 4
   percent: 22
+stopped_at: Phase 02 complete (3/3) — ready to discuss Phase 3 (Declared-Indicator Framework)
 ---
 
 # Project State
@@ -20,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 02 — strategy-authoring-surface
+**Current focus:** Phase 3 — Declared-Indicator Framework (IND-01, byte-exact; depends on Phase 2)
 
 ## Current Position
 
-Phase: 02 (strategy-authoring-surface) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-06-12
+Phase: 3
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-12 -- Phase 2 complete (verification passed); next is Phase 3 (next_phase=999.2 from phase.complete was a backlog-dir scan artifact, corrected to v1.3 Phase 3)
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -83,7 +84,7 @@ surfaces, which is why v1.3 lands first.
 
 **Velocity (v1.2):**
 
-- Total plans completed: 24
+- Total plans completed: 27
 - Average duration: — min
 - Total execution time: 0.0 hours
 
