@@ -24,6 +24,12 @@ deferred (the golden dataset is BTCUSD-only).
 
 from decimal import Decimal, ROUND_HALF_UP
 
+# IN-01 — pin the intended public surface explicitly, matching the __all__
+# convention used in core/sizing.py and sizing_resolver.py. ONE is now a
+# documented shared primitive; relying on implicit export was inconsistent
+# with this module's "single canonical public money primitive" framing.
+__all__ = ["ONE", "to_money", "quantize"]
+
 # D-02 — public because it is now shared cross-module (core/sizing.py,
 # order_handler/sizing_resolver.py, order_handler/brackets/levels.py all import
 # this single canonical constant). D-04 string-path literal, never Decimal(1.0).
