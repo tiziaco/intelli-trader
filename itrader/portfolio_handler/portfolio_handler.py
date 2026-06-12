@@ -23,7 +23,10 @@ from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
-from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+from itrader.core.exceptions.base import ConfigurationError
+
+import pydantic
 
 from itrader import idgen
 from itrader.logger import get_itrader_logger
@@ -436,37 +439,34 @@ class PortfolioHandler:
     # input); the per-portfolio variants were never wired on the backtest path.
     @staticmethod
     def _deep_merge(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
-        """Recursively merge ``updates`` into ``base`` without mutating either.
+        """Thin delegate to the shared ``config.deep_merge`` helper (WR-04).
 
-        WR-04: a plain ``{**base, **updates}`` is a SHALLOW merge — passing a
-        partial nested submodel (e.g. ``{"limits": {"max_portfolios": 50}}``)
-        would REPLACE the whole ``limits`` dict, silently resetting sibling
-        fields like ``max_positions``. Recursing into nested dicts preserves
-        the sibling fields a caller did not intend to change.
+        Kept as a static method so any existing caller keeps working; the
+        recursion now lives in ``itrader/config/merge.py`` (promoted to a single
+        shared helper — do NOT re-derive a fresh merge per handler).
         """
-        merged = dict(base)
-        for key, value in updates.items():
-            existing = merged.get(key)
-            if isinstance(existing, dict) and isinstance(value, dict):
-                merged[key] = PortfolioHandler._deep_merge(existing, value)
-            else:
-                merged[key] = value
-        return merged
+        return deep_merge(base, updates)
 
-    def update_config(self, updates: Dict[str, Any]) -> bool:
-        """Update PortfolioHandler configuration at runtime (merge + re-validate)."""
+    def update_config(self, updates: Dict[str, Any]) -> None:
+        """Update PortfolioHandler configuration at runtime (D-07/D-08/D-09).
+
+        Canonical contract: deep_merge -> model_validate -> atomic-swap, wrapping
+        pydantic ``ValidationError`` (which also rejects unknown keys via
+        ``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
+        RAISES on failure (no longer returns ``bool``). After the swap the
+        cached ``max_portfolios`` is re-derived (Pitfall 1).
+        """
+        # WR-04: deep-merge so a partial nested update (e.g. a single limits
+        # field) preserves the other fields of that submodel instead of
+        # replacing the whole submodel via a shallow `{**a, **b}`.
+        merged = deep_merge(self.config_data.model_dump(), updates)
         try:
-            # WR-04: deep-merge so a partial nested update (e.g. a single limits
-            # field) preserves the other fields of that submodel instead of
-            # replacing the whole submodel via a shallow `{**a, **b}`.
-            merged = self._deep_merge(self.config_data.model_dump(), updates)
-            self.config_data = PortfolioConfig.model_validate(merged)
-            self.max_portfolios = self.config_data.limits.max_portfolios
-            self.logger.info("Configuration updated successfully", updates=updates)
-            return True
-        except Exception as e:
-            self.logger.error("Failed to update configuration", error=str(e))
-            return False
+            new_config = PortfolioConfig.model_validate(merged)
+        except pydantic.ValidationError as e:
+            raise ConfigurationError(reason=str(e)) from e
+        self.config_data = new_config  # atomic GIL-safe reference swap (D-11)
+        self.max_portfolios = self.config_data.limits.max_portfolios
+        self.logger.info("Configuration updated successfully", updates=updates)
 
     def get_config(self) -> Dict[str, Any]:
         """Get current PortfolioHandler configuration as a dict."""
