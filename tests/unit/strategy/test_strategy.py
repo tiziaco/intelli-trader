@@ -103,7 +103,9 @@ def test_bullish_crossover_returns_buy_intent():
     """A synthetic bullish SMA/MACD crossover frame yields a BUY SignalIntent."""
     strategy = SMAMACDStrategy(**_sma_kwargs())
 
-    intent = strategy.generate_signal(_TICKER, _bullish_crossover_frame())
+    # Go through the evaluate() seam (D-06): it stashes self.bars/self.now and
+    # repopulates the handles, which generate_signal(ticker) now reads.
+    intent = strategy.evaluate(_TICKER, _bullish_crossover_frame())
 
     assert isinstance(intent, SignalIntent)
     assert intent.action is Side.BUY
@@ -143,6 +145,20 @@ def test_golden_declarations_are_typed():
     assert strategy.sizing_policy == FractionOfCash(Decimal("0.95"))
     assert strategy.direction is TradingDirection.LONG_ONLY
     assert strategy.allow_increase is False
+
+
+def test_auto_derived_warmup_equals_max_window_100():
+    """D-08 / Pitfall 3: the base auto-derives warmup == max_window == 100.
+
+    The hand-set ``max_window: int = 100`` / ``warmup: int = 100`` class attrs
+    were DELETED from SMAMACDStrategy; the post-init() pass derives both from the
+    declared handles' min_period: ``max(SMA50->50, SMA100->100, MACDHist->15)``
+    == 100. This is the HARD byte-exact anchor — drift here drifts the oracle off
+    46189.87730727451. Selectable with ``-k warmup``.
+    """
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+
+    assert strategy.warmup == strategy.max_window == 100
 
 
 def test_buy_sell_sugar_builds_intents():
@@ -257,7 +273,7 @@ class _AlwaysBuyStrategy(Strategy):
             direction=direction,
         )
 
-    def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
         return self.buy(ticker)
 
 

@@ -202,20 +202,36 @@ class Strategy(ABC):
 		"""Reset handles, run ``init()``, then auto-derive warmup (D-08/D-10).
 
 		Resetting ``self._handles`` BEFORE ``self.init()`` keeps a re-run
-		idempotent (calling init() twice leaves identical state — D-10). The
-		post-``init()`` pass UNCONDITIONALLY assigns
-		``self.warmup = self.max_window = max(min_period across handles)``
-		(Warning 1 — an assignment, not a default): any hand-set
-		``max_window``/``warmup`` is overwritten, and a zero-handle strategy ends
-		at ``warmup == max_window == 0`` (benign — stub feeds ignore max_window
-		and warmup=0 never gates). Called from both ``__init__`` and
-		``reconfigure``.
+		idempotent (calling init() twice leaves identical state — D-10).
+
+		The post-``init()`` pass auto-derives BOTH thresholds from the declared
+		handles' ``min_period``:
+
+		- ``warmup`` is UNCONDITIONALLY overwritten to ``max(min_period, default=0)``
+		  — this is the WR-03 footgun fix (D-08): an author can no longer hand-set
+		  ``warmup`` too LOW and under-gate the handler short-circuit. The reference
+		  ends at ``warmup == 100`` (``max(SMA50->50, SMA100->100, MACDHist->15)``);
+		  a zero-handle strategy ends at ``warmup == 0`` (no gating, as before).
+
+		- ``max_window`` is the FETCH WIDTH the handler requests from the feed
+		  (``feed.window(..., max_window, ...)``), NOT a gating threshold. It is
+		  ``max(handle-derived, hand-set class value)`` so a zero-handle COUNT/DATE
+		  -keyed fixture (SingleMarketBuy/ScriptedEmitter/BuyEachTickerOnce) keeps
+		  the wide window its logic needs (a 0-width window is always empty against
+		  a REAL feed — ``frame.iloc[pos:pos]`` — which would break its firing and
+		  the e2e/integration golden). For the reference the hand-set value is
+		  deleted (class default 0), so ``max_window == 100`` (handle-derived). The
+		  assertion ``warmup == max_window == 100`` therefore still holds.
+
+		Called from both ``__init__`` and ``reconfigure``.
 		"""
 		self._handles: list[IndicatorHandle] = []
 		self.init()
-		self.warmup = self.max_window = max(
-			(h.min_period() for h in self._handles), default=0
-		)
+		derived = max((h.min_period() for h in self._handles), default=0)
+		self.warmup = derived
+		# Fetch width: never shrink below a hand-set class value (preserve the
+		# fixtures' wide window; the reference's deleted hand-set is 0 -> derived).
+		self.max_window = max(derived, type(self).max_window)
 
 	def evaluate(self, ticker: str, window: pd.DataFrame) -> SignalIntent | None:
 		"""Orchestration seam: stash the window, repopulate handles, dispatch (D-06).
@@ -227,11 +243,19 @@ class Strategy(ABC):
 		re-populates every registered handle BEFORE dispatching to
 		``generate_signal``. For an indicator-free strategy ``self._handles`` is
 		empty so the repopulate loop is a no-op (Pitfall 6 — no AttributeError).
+
+		Empty-window guard: a zero-warmup strategy can be dispatched with an empty
+		window (``feed.window`` returns ``frame.iloc[pos:pos]`` when max_window is
+		small and the cutoff is at the frame start). ``window.index[-1]`` would
+		raise ``IndexError`` on a size-0 frame, so when the window is empty we
+		leave ``self.now`` as ``None`` and skip the repopulate loop — the strategy
+		still runs (count/date fixtures guard on ``self.bars.empty`` / ``len``).
 		"""
 		self.bars: pd.DataFrame = window
-		self.now = window.index[-1]
-		for handle in self._handles:
-			handle.repopulate(self.bars, self.now, self.timeframe)
+		self.now = window.index[-1] if len(window) else None
+		if self.now is not None:
+			for handle in self._handles:
+				handle.repopulate(self.bars, self.now, self.timeframe)
 		return self.generate_signal(ticker)
 
 	def reconfigure(self, **kwargs: Any) -> None:
