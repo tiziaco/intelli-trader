@@ -24,6 +24,11 @@ deferred (the golden dataset is BTCUSD-only).
 
 from decimal import Decimal, ROUND_HALF_UP
 
+# D-02 — public because it is now shared cross-module (core/sizing.py,
+# order_handler/sizing_resolver.py, order_handler/brackets/levels.py all import
+# this single canonical constant). D-04 string-path literal, never Decimal(1.0).
+ONE = Decimal("1")
+
 _DEFAULT_SCALES: dict[str, Decimal] = {
     "price": Decimal("0.01"),
     "quantity": Decimal("0.00000001"),

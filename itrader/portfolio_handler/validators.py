@@ -18,10 +18,10 @@ class PortfolioValidator:
     
     @staticmethod
     def validate_transaction_data(
-        ticker: str, 
-        price: float, 
-        quantity: float, 
-        commission: float,
+        ticker: str,
+        price: decimal.Decimal,
+        quantity: decimal.Decimal,
+        commission: decimal.Decimal,
         transaction_type: str
     ) -> None:
         """
@@ -33,13 +33,13 @@ class PortfolioValidator:
         if not ticker or not isinstance(ticker, str):
             raise InvalidTransactionError("Ticker must be a non-empty string")
         
-        if not isinstance(price, (int, float)) or price <= 0:
+        if not isinstance(price, decimal.Decimal) or price <= 0:
             raise InvalidTransactionError(f"Price must be positive, got {price}")
-        
-        if not isinstance(quantity, (int, float)) or quantity <= 0:
+
+        if not isinstance(quantity, decimal.Decimal) or quantity <= 0:
             raise InvalidTransactionError(f"Quantity must be positive, got {quantity}")
-        
-        if not isinstance(commission, (int, float)) or commission < 0:
+
+        if not isinstance(commission, decimal.Decimal) or commission < 0:
             raise InvalidTransactionError(f"Commission must be non-negative, got {commission}")
         
         if transaction_type not in ['BUY', 'SELL']:
