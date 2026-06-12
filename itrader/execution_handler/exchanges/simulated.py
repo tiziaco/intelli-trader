@@ -409,7 +409,7 @@ class SimulatedExchange(AbstractExchange):
 		
 		# Order value validation
 		order_value = event.quantity * event.price
-		if order_value < 1.0:  # Minimum order value
+		if order_value < Decimal("1"):  # Minimum order value
 			warnings.append(f"Order value ${order_value:.2f} is very small")
 		
 		# Determine overall validation result
