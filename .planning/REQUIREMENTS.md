@@ -45,7 +45,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Composition / Config Interface (COMP)
 
-- [ ] **COMP-01**: The system is composed through an **engine-level composition API** (promote the
+- [x] **COMP-01**: The system is composed through an **engine-level composition API** (promote the
   `tests/e2e/scenario_spec.py` `ScenarioSpec` shape): declarative multi-strategy / multi-portfolio
   wiring, faithful **construction-time `ExchangeConfig` threading** (`TradingSystem` →
   `ExecutionHandler` → `SimulatedExchange`, replacing the Phase 7 D-14 post-construction conftest
@@ -139,7 +139,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | HYG-01 | Phase 1 — Engine Hygiene | Pending |
 | STRAT-01 | Phase 2 — Strategy Authoring Surface | Complete |
 | IND-01 | Phase 3 — Declared-Indicator Framework | Complete |
-| COMP-01 | Phase 4 — Composition & Config Interface | Pending |
+| COMP-01 | Phase 4 — Composition & Config Interface | Complete |
 | COMP-02 | Phase 4 — Composition & Config Interface | Pending |
 | SIG-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
 | SIG-02 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |

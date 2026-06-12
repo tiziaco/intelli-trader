@@ -100,7 +100,7 @@ only after explicit owner sign-off + external cross-validation.
   4. Composition + config changes are byte-exact against the v1.1 E2E golden suite + BTCUSD oracle (134 trades / `final_equity 46189.87730727451`); e2e 58/58, `mypy --strict` clean — no result change, applied between event cycles never mid-cycle.
 **Plans**: 5 plans (4 waves — Wave 1: foundational primitives; Wave 2: composition-root collapse (byte-exact-risk heart); Wave 3: update_config rollout (parallel); Wave 4: e2e collapse + byte-exact gate)
   - [x] 04-01-PLAN.md — CommissionEstimator Protocol (D-15) + OrderConfig (D-05) + SystemSpec promotion (D-01/D-02) + Wave-0 coercion/conformance tests (Wave 1, standalone)
-  - [ ] 04-02-PLAN.md — compose_engine + BacktestRunner + thin BacktestTradingSystem holder + build_backtest_system factory (D-03/D-04/D-14/D-14a); rng dedup (D-16); construction-time ExchangeConfig threading + symbol seeding (D-13); FeeModelCommissionEstimator late-binding (D-06/D-15); reporting lift (W4-07) (Wave 2)
+  - [x] 04-02-PLAN.md — compose_engine + BacktestRunner + thin BacktestTradingSystem holder + build_backtest_system factory (D-03/D-04/D-14/D-14a); rng dedup (D-16); construction-time ExchangeConfig threading + symbol seeding (D-13); FeeModelCommissionEstimator late-binding (D-06/D-15); reporting lift (W4-07) (Wave 2)
   - [ ] 04-03-PLAN.md — shared deep_merge + canonical update_config on the 5 config-model handlers (Portfolio/PortfolioHandler/SimulatedExchange/ExecutionHandler/OrderManager-OrderHandler) + configure() fix (D-07/D-08/D-09/D-11) (Wave 3)
   - [ ] 04-04-PLAN.md — StrategiesHandler.update_config (re-validate→init()→warmup, D-09) + BacktestBarFeed.update_config raise-only interface-conformance (D-10/D-17) (Wave 3, parallel with 04-03)
   - [ ] 04-05-PLAN.md — e2e _build_and_run collapse onto build_backtest_system(spec) (D-01/D-13/D-14) + construction-site rename migration + byte-exact PHASE GATE (oracle 134/46189.87730727451, e2e 58/58, mypy --strict, determinism double-run) (Wave 4)
@@ -192,7 +192,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
 | 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
 | 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
-| 4. Composition & Config Interface | 1/5 | In Progress|  |
+| 4. Composition & Config Interface | 2/5 | In Progress|  |
 | 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
 
