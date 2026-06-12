@@ -170,10 +170,19 @@ def test_record_fields_mirror_intent_and_event(store_env):
     assert record.ticker == _TICKER
     assert record.time == event.time
     assert record.action is Side.BUY
-    # D-04: config is the strategy's params snapshot dict (strategy.to_dict()),
-    # captured by value — to_dict() returns a FRESH dict each call, so assert
-    # with `==` (dict-shape equality), NOT identity `is`.
-    assert record.config == strategy.to_dict()
+    # IN-02: assert the snapshot against the SPECIFIC params that matter,
+    # independent of a re-derived to_dict() — `record.config == strategy.to_dict()`
+    # only proves self-consistency (to_dict() is deterministic on an immutable
+    # strategy), not that the snapshot captured the INTENDED params. Pin the
+    # fields the snapshot exists to carry (SIG-02 queryability): identity,
+    # direction, the sizing policy, and — post WR-02 — which timeframe/tickers.
+    config = record.config
+    assert config["strategy_name"] == "always_buy"
+    assert config["direction"] == TradingDirection.LONG_ONLY.value
+    assert config["sizing_policy"] == repr(FractionOfCash(Decimal("0.95")))
+    # WR-02: timeframe + tickers are now in the snapshot (were silently omitted).
+    assert config["timeframe_alias"] == "1d"
+    assert config["tickers"] == [_TICKER]
     # SIG-02: the snapshot is already a plain dict at the read edge.
     assert isinstance(record.config, dict)
     # A fresh SignalId was defaulted (D-10).

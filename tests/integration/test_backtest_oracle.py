@@ -301,4 +301,15 @@ def test_golden_run_signal_store_is_non_empty_and_queryable():
     # Each record carries a plain params-snapshot dict (SIG-02 / D-04 — the
     # pydantic config layer is deleted; config is strategy.to_dict()).
     assert isinstance(records[0].config, dict)
-    assert records[0].config == strategy.to_dict()
+    # IN-02: assert the snapshot against the SPECIFIC params that matter rather
+    # than a re-derived to_dict() (which only proves self-consistency on an
+    # immutable strategy, not that the intended params were captured).
+    config = records[0].config
+    assert config["strategy_name"] == "SMA_MACD"
+    assert config["direction"] == TradingDirection.LONG_ONLY.value
+    assert config["sizing_policy"] == repr(FractionOfCash(Decimal("0.95")))
+    # WR-02: the snapshot now carries which timeframe / tickers / windows fired.
+    assert config["timeframe_alias"] == "1d"
+    assert config["tickers"] == ["BTCUSD"]
+    assert config["short_window"] == 50
+    assert config["long_window"] == 100
