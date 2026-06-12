@@ -15,7 +15,6 @@ this module is live when reading it.
 
 import decimal
 from typing import Union, Optional
-from datetime import datetime
 
 from itrader.core.exceptions import InvalidTransactionError, PortfolioError
 from itrader.core.ids import TransactionId
