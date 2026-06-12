@@ -1,279 +1,313 @@
-<!-- refreshed: 2026-06-10 -->
+<!-- refreshed: 2026-06-12 -->
 # Architecture
 
-**Analysis Date:** 2026-06-10
+**Analysis Date:** 2026-06-12
 
 ## System Overview
 
 ```text
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          Composition / Run Layer                          │
-├──────────────────────────┬──────────────────────────┬────────────────────┤
-│      TradingSystem        │    LiveTradingSystem      │  TradingInterface  │
-│ `trading_system/          │ `trading_system/          │ `trading_system/   │
-│  backtest_trading_        │  live_trading_            │  trading_          │
-│  system.py`               │  system.py`               │  interface.py`     │
-│ (synchronous for-loop)    │ (background daemon thread)│ (web/API bridge)   │
-└────────────┬──────────────┴────────────┬─────────────┴──────────┬─────────┘
-             │     all wire one shared    │   global_queue          │
-             ▼              ▼              ▼                         │
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       EventHandler (dispatcher)                           │
-│  `events_handler/full_event_handler.py`                                   │
-│  Drains global_queue; routes each event via `self._routes`                │
-│  (dict[EventType, list[Callable]]; LIST ORDER IS EXECUTION ORDER)         │
-└──┬──────────┬──────────┬──────────┬──────────┬──────────┬─────────────────┘
-   │ TIME     │ BAR      │ SIGNAL   │ ORDER    │ FILL     │ ERROR
-   ▼          ▼          ▼          ▼          ▼          ▼
-┌──────────┐┌──────────┐┌─────────┐┌─────────┐┌─────────────────┐┌────────┐
-│screeners ││portfolio ││ order   ││execution││ portfolio_h.    ││ _log_  │
-│ + feed   ││ + exec   ││ handler ││ handler ││ on_fill         ││ error_ │
-│(BarEvent)││ + strats ││on_signal││on_order ││ + order_h.      ││ event  │
-│          ││          ││         ││         ││ on_fill         ││        │
-└────┬─────┘└────┬─────┘└────┬────┘└────┬────┘└────────┬────────┘└────────┘
-     │           │           │          │              │
-     ▼           ▼           ▼          ▼              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          Domain Handlers / Managers                       │
-│  strategy_handler/   order_handler/   execution_handler/  portfolio_h/    │
-│  screeners_handler/  universe/        reporting/                          │
-└─────────────────────────────┬─────────────────────────────────────────────┘
-                              │ read-model seams (NOT queue)
-                              ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│   price_handler/ (store + feed + providers)   core/ (enums/money/ids/...) │
-│   `price_handler/store/csv_store.py`          `core/portfolio_read_       │
-│   `price_handler/feed/bar_feed.py`             model.py`                   │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    Composition Root / Run Loop                            │
+│   TradingSystem (backtest)          LiveTradingSystem (live)              │
+│   `itrader/trading_system/          `itrader/trading_system/              │
+│    backtest_trading_system.py`       live_trading_system.py`              │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │  global_queue (queue.Queue)
+                               ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        EventHandler                                       │
+│          `itrader/events_handler/full_event_handler.py`                   │
+│   self._routes: dict[EventType, list[Callable]]  (list order = exec order)│
+└───┬──────────┬──────────────┬──────────────┬──────────────┬──────────────┘
+    │TIME      │BAR           │SIGNAL        │ORDER         │FILL
+    ▼          ▼              ▼              ▼              ▼
+┌──────────┐ ┌─────────────┐ ┌────────────┐ ┌───────────┐ ┌──────────────┐
+│Screeners │ │Portfolio    │ │Order       │ │Execution  │ │Portfolio     │
+│Handler   │ │Handler      │ │Handler     │ │Handler    │ │Handler       │
+│+BarFeed  │ │(mark-to-mkt)│ │(on_signal) │ │(on_order) │ │(on_fill)     │
+│(generate │ │+Execution   │ │            │ │           │ │+Order Handler│
+│_bar_event│ │(on_market   │ │            │ │           │ │(on_fill      │
+│)         │ │_data)       │ │            │ │           │ │ reconcile)   │
+│          │ │+Strategies  │ │            │ │           │ │              │
+│          │ │(calc_signals│ │            │ │           │ │              │
+└──────────┘ └─────────────┘ └────────────┘ └───────────┘ └──────────────┘
+                                                │FillEvent
+                                                ▼
+                                       ┌─────────────────┐
+                                       │SimulatedExchange │
+                                       │(MatchingEngine + │
+                                       │fee/slippage)     │
+                                       └─────────────────┘
 ```
 
 ## Component Responsibilities
 
 | Component | Responsibility | File |
 |-----------|----------------|------|
-| `EventHandler` | Drain `global_queue`; dispatch each event through `self._routes` (list order = execution order); fail-fast/publish error seam | `itrader/events_handler/full_event_handler.py` |
-| `TradingSystem` | Backtest composition root + synchronous `for`-loop over `TimeGenerator`; in-memory storage; prints metrics | `itrader/trading_system/backtest_trading_system.py` |
-| `LiveTradingSystem` | Live composition root; background daemon processing thread + start/stop/status lifecycle; publish-and-continue error seam | `itrader/trading_system/live_trading_system.py` |
-| `TradingInterface` | Bridge between external/web API and `LiveTradingSystem` (order creation, validation, status) | `itrader/trading_system/trading_interface.py` |
-| `TimeGenerator` | Yield `TimeEvent`s across a pinned bar-date grid | `itrader/trading_system/simulation/time_generator.py` |
-| `StrategiesHandler` | Run all strategies per BAR; emit `SignalEvent`s; sink to signal store | `itrader/strategy_handler/strategies_handler.py` |
-| `ScreenersHandler` | Dynamic market screening on TIME (deferred subsystem) | `itrader/screeners_handler/screeners_handler.py` |
-| `OrderHandler` | Thin event interface: `on_signal` → orders, `on_fill` mirror reconcile; delegates to `OrderManager` | `itrader/order_handler/order_handler.py` |
-| `OrderManager` | All order business logic; admission/sizing; bracket declaration; no queue access | `itrader/order_handler/order_manager.py` |
-| `ExecutionHandler` | Route `OrderEvent`s to exchanges; drive resting-order matching on each BAR (`on_market_data`) | `itrader/execution_handler/execution_handler.py` |
+| `EventHandler` | Drain queue; dispatch through `self.routes` (list order = execution order); fail-fast error seam | `itrader/events_handler/full_event_handler.py` |
+| `TradingSystem` | Backtest composition root; synchronous for-loop over `TimeGenerator`; wires all components | `itrader/trading_system/backtest_trading_system.py` |
+| `LiveTradingSystem` | Live composition root; background daemon thread; start/stop/status lifecycle | `itrader/trading_system/live_trading_system.py` |
+| `TradingInterface` | Bridge between external/web API and `LiveTradingSystem` | `itrader/trading_system/trading_interface.py` |
+| `TimeGenerator` | Yields `TimeEvent`s across a pinned bar-date grid derived from the store index | `itrader/trading_system/simulation/time_generator.py` |
+| `StrategiesHandler` | Fan-out strategies per BAR tick; stamps time/price; emits `SignalEvent`s; records to signal store | `itrader/strategy_handler/strategies_handler.py` |
+| `ScreenersHandler` | Dynamic market screening on TIME (deferred subsystem, `ignore_errors` mypy override) | `itrader/screeners_handler/screeners_handler.py` |
+| `OrderHandler` | Thin event interface: `on_signal` → orders via `OrderManager`; `on_fill` → mirror reconcile; API surface | `itrader/order_handler/order_handler.py` |
+| `OrderManager` | All order business logic: signal processing, admission/sizing, bracket declaration, lifecycle | `itrader/order_handler/order_manager.py` |
+| `AdmissionManager` | Signal admission gate: cash reservation, position limits, sizing validation | `itrader/order_handler/admission/admission_manager.py` |
+| `BracketManager` | Bracket (SL/TP) declaration and OCO sibling tracking | `itrader/order_handler/brackets/bracket_manager.py` |
+| `LifecycleManager` | Order state machine transitions (PENDING → FILLED/CANCELLED/REJECTED) | `itrader/order_handler/lifecycle/lifecycle_manager.py` |
+| `ReconcileManager` | Reconcile order mirror against exchange `FillEvent`s | `itrader/order_handler/reconcile/reconcile_manager.py` |
+| `ExecutionHandler` | Route `OrderEvent`s to exchanges; drive resting-order matching on each BAR | `itrader/execution_handler/execution_handler.py` |
 | `SimulatedExchange` | Fill market orders; rest stop/limit; apply fee/slippage; emit `FillEvent` | `itrader/execution_handler/exchanges/simulated.py` |
-| `MatchingEngine` | Pure resting-order book; intrabar trigger/OCO evaluation | `itrader/execution_handler/matching_engine.py` |
-| `PortfolioHandler` | Portfolio lifecycle; `on_fill` routing; `update_portfolios_market_value`; implements `PortfolioReadModel` Protocol | `itrader/portfolio_handler/portfolio_handler.py` |
-| `Portfolio` | Per-portfolio state; delegates to cash/position/transaction/metrics managers | `itrader/portfolio_handler/portfolio.py` |
+| `MatchingEngine` | Pure resting-order book; intrabar trigger/OCO evaluation; no queue/logging/fee deps | `itrader/execution_handler/matching_engine.py` |
+| `PortfolioHandler` | Portfolio lifecycle; `on_fill` routing; satisfies `PortfolioReadModel` Protocol structurally | `itrader/portfolio_handler/portfolio_handler.py` |
+| `Portfolio` | Per-portfolio state; delegates to four sub-managers (cash, position, transaction, metrics) | `itrader/portfolio_handler/portfolio.py` |
+| `CashManager` | Cash balance, reservations, ledger writes | `itrader/portfolio_handler/cash/cash_manager.py` |
+| `PositionManager` | Open/close positions; P&L calculation | `itrader/portfolio_handler/position/position_manager.py` |
+| `MetricsManager` | Equity snapshots per tick; `PortfolioSnapshot` records | `itrader/portfolio_handler/metrics/metrics_manager.py` |
 | `BacktestBarFeed` | Look-ahead-safe per-tick bar window read-model; `generate_bar_event` factory | `itrader/price_handler/feed/bar_feed.py` |
-| `CsvPriceStore` | Eager-load committed golden CSV; offline read-only store | `itrader/price_handler/store/csv_store.py` |
-| `BacktestClock` | Injected deterministic clock (determinism seam) | `itrader/core/clock.py` |
+| `CsvPriceStore` | Eager-load committed CSV(s); offline read-only store | `itrader/price_handler/store/csv_store.py` |
+| `BacktestClock` | Injected deterministic clock seam; `set_time` advanced each tick | `itrader/core/clock.py` |
 
 ## Pattern Overview
 
-**Overall:** Event-driven architecture with a single FIFO `global_queue` and data-driven dispatch.
+**Overall:** Event-driven Domain Handler Architecture with data-driven dispatch.
 
 **Key Characteristics:**
-- **Queue-only cross-domain communication.** Handlers receive `global_queue` in the constructor and emit events; they never call other handlers' methods directly across domains.
-- **Data-driven dispatch.** `EventHandler._routes` is a single `dict[EventType, list[Callable]]` literal in `itrader/events_handler/full_event_handler.py`. List order IS execution order (D-14). Adding or changing routing happens only there.
-- **Handler/Manager split.** Each domain pairs a thin `<Domain>Handler` (queue interface, no business logic) with a fat `<Domain>Manager` (business logic, no queue access).
-- **Frozen event facts.** Every event subclasses `Event` (`@dataclass(frozen=True, slots=True, kw_only=True)`) carrying a UUIDv7 `event_id` and a business `time` (never wall clock).
-- **Read-model seams instead of cross-domain reads.** `PortfolioReadModel` (Protocol, `itrader/core/portfolio_read_model.py`) and `BacktestBarFeed` are injected read-models; the queue-only rule governs handler-to-handler *writes*, not injected *reads*.
-- **Decimal end-to-end for money.** Float for money is a correctness defect; `float()` appears only at the serialization/logging edge.
-- **Determinism.** One shared seeded `random.Random` injected at wiring (`performance.rng_seed`, default 42); an injected `BacktestClock` staged on the determinism seam.
+- **Queue-only cross-domain communication.** Handlers receive `global_queue` as a constructor argument and emit events; they never call other handler methods directly across domains. Read-only access goes through injected read-model Protocols, not handler imports.
+- **Data-driven dispatch.** `EventHandler._routes` is a single `dict[EventType, list[Callable]]` literal. List order IS execution order. Adding/changing routing happens ONLY in that dict.
+- **Frozen event facts.** Every event subclasses `Event` (`frozen=True, slots=True, kw_only=True`) carrying a UUIDv7 `event_id` and business `time` (never wall clock).
+- **Handler/Manager split.** `<Domain>Handler` is a thin interface; `<Domain>Manager` owns business logic with NO queue access and NO back-reference to its handler.
+- **Decimal end-to-end.** Float for money is a locked correctness defect. `float()` appears only at serialization/logging edges.
+- **Determinism.** One shared seeded `random.Random` injected at wiring (`performance.rng_seed`, default 42); an injected `BacktestClock` seam is advanced each tick.
+- **Structural Protocol conformance.** `PortfolioHandler` satisfies `PortfolioReadModel` Protocol without inheritance; enforced by `mypy --strict`.
 
 ## Layers
 
 **Composition / Run Layer:**
 - Purpose: Wire all components around one `global_queue`; drive the run.
 - Location: `itrader/trading_system/`
-- Contains: `TradingSystem` (backtest for-loop), `LiveTradingSystem` (threaded), `TradingInterface`, `TimeGenerator` (`simulation/`).
-- Depends on: All handlers, `EventHandler`, `BacktestBarFeed`/`CsvPriceStore`, `reporting`, `universe`.
-- Used by: `scripts/run_backtest.py`, notebooks, external/web callers, the E2E harness.
+- Contains: `TradingSystem` (backtest for-loop), `LiveTradingSystem` (threaded), `TradingInterface`, `TimeGenerator`.
+- Depends on: All handlers, `EventHandler`, `BacktestBarFeed`, `CsvPriceStore`, `reporting`.
+- Used by: `scripts/run_backtest.py`, notebooks, external/web callers.
 
 **Dispatch Layer:**
-- Purpose: Drain the queue and route each event to its registered handler callables in list order.
+- Purpose: Drain the queue and route each event to its registered handler callables.
 - Location: `itrader/events_handler/full_event_handler.py`
 - Contains: `EventHandler.process_events()`, `_dispatch()`, `_on_handler_error()`, `_log_error_event()`.
 - Depends on: All handlers, `core/enums.EventType`.
 - Used by: Both run loops.
 
-**Domain Handler Layer:**
-- Purpose: Encapsulate domain logic (strategies, orders, execution, portfolios, screeners).
+**Handler Layer:**
+- Purpose: Encapsulate domain event handling (strategy, order, execution, portfolio, screener).
 - Location: `itrader/strategy_handler/`, `itrader/order_handler/`, `itrader/execution_handler/`, `itrader/portfolio_handler/`, `itrader/screeners_handler/`.
-- Contains: Thin handler classes + fat managers/sub-components.
+- Contains: Thin handler classes (`on_<event>` methods) + fat managers/sub-components owning business logic.
 - Depends on: `events_handler/events/`, `core/`, the shared `global_queue`.
 - Used by: `EventHandler`.
 
-**Data / Read-Model Layer:**
+**Price / Feed Layer:**
 - Purpose: Look-ahead-safe price storage and per-tick bar windows; `BarEvent` production.
 - Location: `itrader/price_handler/store/`, `itrader/price_handler/feed/`, `itrader/price_handler/providers/`.
-- Contains: `CsvPriceStore`, `SqlPriceStore`, `BacktestBarFeed`, CCXT/OANDA/Binance providers.
+- Contains: `CsvPriceStore`, `SqlHandler`, `BacktestBarFeed` (zero per-tick resample via precomputed frames + `searchsorted`), CCXT/OANDA/Binance providers.
 - Depends on: `pandas`; stores are read-only on the run path.
 - Used by: `StrategiesHandler`, `ScreenersHandler`, and the TIME route's `generate_bar_event` factory.
 
-**Shared Core Layer:**
-- Purpose: Cross-cutting enums, exceptions, ids, money, clock, read-model protocols.
-- Location: `itrader/core/` (`enums/`, `exceptions/`, `ids.py`, `money.py`, `clock.py`, `portfolio_read_model.py`, `bar.py`, `sizing.py`, `constants.py`), `itrader/outils/`.
-- Contains: `OrderType`, `OrderStatus`, `VALID_ORDER_TRANSITIONS`, `EventType`, `Side`, `IDGenerator`, `PortfolioReadModel`.
-- Depends on: Nothing inside `itrader`.
-- Used by: All handlers.
+**Core Layer:**
+- Purpose: Cross-cutting enums, exceptions, IDs, money utilities, clock, read-model protocols.
+- Location: `itrader/core/` (`enums/`, `exceptions/`, `ids.py`, `money.py`, `clock.py`, `portfolio_read_model.py`, `bar.py`, `sizing.py`).
+- Contains: `OrderType`, `OrderStatus`, `VALID_ORDER_TRANSITIONS`, `EventType`, `Side`, `IDGenerator`, `PortfolioReadModel`, `SizingPolicy` types.
+- Depends on: Nothing inside `itrader`. This is the dependency root.
+- Used by: All handlers and the config layer.
 
 **Config Layer:**
 - Purpose: Pydantic-modelled system configuration.
 - Location: `itrader/config/`
-- Contains: `SystemConfig` (+ `PerformanceSettings`, `MonitoringSettings`), `PortfolioConfig` (`portfolio.py`), `ExchangeConfig` (`exchange.py`), `Settings` env-var layer (`settings.py`), domain models (`models.py`). The registry/provider getters were removed (M2-06); `SystemConfig.default()` is constructed directly.
+- Contains: `SystemConfig` (+ `PerformanceSettings`, `MonitoringSettings`), `PortfolioConfig`, `ExchangeConfig`, `BaseStrategyConfig`. `SystemConfig.default()` is constructed directly; no registry/provider getters exist.
 - Depends on: `pydantic`, `pydantic-settings`, optional YAML in `settings/`.
-- Used by: `itrader/__init__.py`, `ExecutionHandler`, `PortfolioHandler`.
+- Used by: `itrader/__init__.py`, `ExecutionHandler`, `PortfolioHandler`, strategies.
 
-**Singletons (import side effects):**
+**Reporting Layer:**
+- Purpose: Pure builders for run artifacts and derived metrics; no handler imports.
+- Location: `itrader/reporting/`
+- Contains: `frames.py` (trade log + equity curve builders), `metrics.py` (CAGR, Sharpe, etc.), `plots.py` (Plotly charts), `summary.py`, `orders.py`, `cash_operations.py`.
+- Depends on: `pandas`, `scipy`, stdlib only.
+- Used by: `TradingSystem._print_metrics_summary()`, `scripts/run_backtest.py`.
+
+**Process-level Singletons:**
 - Location: `itrader/__init__.py`
-- Initialised on import: `config = SystemConfig.default()`, `logger = init_logger(config)`, `idgen = IDGenerator()`.
-- Import idiom: `from itrader import config, idgen` / `from itrader import logger`.
+- Initialized on import: `config = SystemConfig.default()`, `logger = init_logger(config)`, `idgen = IDGenerator()`.
+- Import idiom: `from itrader import config, idgen`, `from itrader.logger import get_itrader_logger`.
+- Warning: importing anything from `itrader` triggers this singleton initialization; do not import `itrader` in fixtures without understanding this.
 
 ## Data Flow
 
 ### Primary Backtest Request Path
 
-1. `TradingSystem.run()` calls `_initialise_backtest_session()` then `_run_backtest()` (`itrader/trading_system/backtest_trading_system.py:231`).
-2. The for-loop pulls each `TimeEvent` from `TimeGenerator` and puts it on `global_queue` (`backtest_trading_system.py:211`).
-3. `EventHandler.process_events()` drains the queue, dispatching via `_routes` (`itrader/events_handler/full_event_handler.py:91`).
-4. **TIME** → `screeners_handler.screen_markets` + `feed.generate_bar_event` (produces `BarEvent`) (`full_event_handler.py:69`).
-5. **BAR** → `portfolio_handler.update_portfolios_market_value` (mark-to-market) → `execution_handler.on_market_data` (resting-order matching → `FillEvent`) → `strategies_handler.calculate_signals` (`full_event_handler.py:73`).
-6. **SIGNAL** → `order_handler.on_signal` (validate + size → `OrderEvent`) (`itrader/order_handler/order_handler.py:82`).
-7. **ORDER** → `execution_handler.on_order` (exchange fills/rests → `FillEvent`) (`itrader/execution_handler/execution_handler.py:65`).
-8. **FILL** → `portfolio_handler.on_fill` (EXECUTED only: update positions/cash) → `order_handler.on_fill` (reconcile order mirror) (`full_event_handler.py:80`).
-9. After each tick, every active portfolio records metrics via `portfolio.record_metrics(time_event.time)` (`backtest_trading_system.py:221`).
+1. `TradingSystem.run()` calls `_initialise_backtest_session()` — derives membership, binds `BacktestBarFeed`, sets ping grid, precomputes resampled frames per strategy. (`itrader/trading_system/backtest_trading_system.py:152`)
+2. `_run_backtest()` for-loops over `TimeGenerator` — yields `TimeEvent` per tick. (`itrader/trading_system/simulation/time_generator.py`)
+3. Each `TimeEvent` is put on `global_queue`; `EventHandler.process_events()` drains.
+4. **TIME route** (dispatch order matters):
+   - `ScreenersHandler.screen_markets` (deferred subsystem)
+   - `BacktestBarFeed.generate_bar_event` → puts `BarEvent` for each active ticker. (`itrader/price_handler/feed/bar_feed.py`)
+5. **BAR route** (dispatch order matters):
+   - `PortfolioHandler.update_portfolios_market_value` — mark-to-market positions at current close. (`itrader/portfolio_handler/portfolio_handler.py`)
+   - `ExecutionHandler.on_market_data` — `MatchingEngine` evaluates resting stop/limit against bar high/low; fills become `FillEvent`s. (`itrader/execution_handler/matching_engine.py`)
+   - `StrategiesHandler.calculate_signals` — strategies run against look-ahead-safe bar windows; emit `SignalEvent`s. (`itrader/strategy_handler/strategies_handler.py`)
+6. **SIGNAL route**: `OrderHandler.on_signal` → `OrderManager.process_signal` → admission checks → `BracketManager` for SL/TP → `OrderEvent`s put on queue. (`itrader/order_handler/order_handler.py`)
+7. **ORDER route**: `ExecutionHandler.on_order` → routed to `SimulatedExchange.on_order` → market fills immediately or rests in `MatchingEngine`. (`itrader/execution_handler/exchanges/simulated.py`)
+8. **FILL route** (dispatch order matters):
+   - `PortfolioHandler.on_fill` — only EXECUTED fills update positions/cash via sub-managers. (`itrader/portfolio_handler/portfolio_handler.py`)
+   - `OrderHandler.on_fill` → `ReconcileManager` reconciles order mirror (FILLED/CANCELLED/REJECTED). (`itrader/order_handler/reconcile/reconcile_manager.py`)
+9. After `process_events()`, `portfolio.record_metrics(time_event.time)` snapshots equity. (`itrader/portfolio_handler/portfolio.py`)
 
 ### Bracket / Resting-Order Flow
 
-1. `OrderManager` declares brackets via `parent_order_id`/`child_order_ids` on entry; it never matches orders.
-2. `SimulatedExchange` composes `MatchingEngine`, which holds the resting-order book (`MatchingEngine._resting`) and evaluates stop/limit triggers against intrabar high/low with gap-aware fills and same-bar OCO priority.
-3. On each BAR, `execution_handler.on_market_data` drives matching; the exchange applies fee/slippage and emits `FillEvent`s (EXECUTED, CANCELLED via OCO, or REFUSED).
-4. `order_handler.on_fill` reconciles the stored mirror (EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED).
+1. Strategy emits `SignalEvent` with `sltp_policy` or explicit `stop_loss`/`take_profit`.
+2. `OrderManager` via `BracketManager` declares bracket children linked by `parent_order_id`/`child_order_ids`.
+3. `MatchingEngine` enforces OCO: when one child fills, the sibling is cancelled (same-bar priority: STOP beats LIMIT).
+4. `ReconcileManager` on subsequent `FillEvent`s orphan-cancels any children whose parent hit a terminal state.
 
-### Live Trading Path
+### Live Path
 
-1. `LiveTradingSystem.start()` launches a background daemon thread that drains `global_queue` (`itrader/trading_system/live_trading_system.py`).
-2. `TradingInterface` validates running state and enqueues `OrderEvent`s from the web/external API.
-3. The same handler graph processes events, but `_on_handler_error` is overridden to publish-and-continue (emit `ErrorEvent`, keep draining).
+1. `LiveTradingSystem.start()` launches a daemon processing thread.
+2. External events (tick data, user orders via `TradingInterface`) arrive on `global_queue`.
+3. `EventHandler.process_events()` runs on the daemon thread; `_on_handler_error` is overridden to emit `ErrorEvent` and continue (publish-and-continue vs backtest fail-fast).
 
-**State Management:**
-- Portfolio positions/cash: owned by each `Portfolio`; sub-managers in `cash/`, `position/`, `transaction/`, `metrics/`.
-- Order mirror: `OrderManager` over a pluggable `OrderStorage` (`in_memory` / `postgresql`).
-- Signal record sink: `SignalStore` (in-memory for backtest) injected into `StrategiesHandler`.
-- Resting-order book: `MatchingEngine._resting`, one per `SimulatedExchange`.
-- Live run status: `LiveTradingSystem._status_lock` + `threading.Event`.
+**State Storage:**
+- Portfolio positions/cash: owned by each `Portfolio`'s sub-managers in `cash/`, `position/`, `transaction/`, `metrics/`.
+- Order mirror: `OrderManager` over pluggable `OrderStorage` (`in_memory_storage.py` for backtest, `postgresql_storage.py` placeholder for live).
+- Resting-order book: `MatchingEngine._resting`, one per `SimulatedExchange` instance.
+- Signal records: `SignalStore` (in-memory) injected into `StrategiesHandler`; read post-run via `TradingSystem.get_signal_records()`.
 
 ## Key Abstractions
 
-**Event (frozen dataclass):**
-- Purpose: All inter-component messages; immutable.
-- Examples: `itrader/events_handler/events/` — `TimeEvent`/`BarEvent` (`market.py`), `SignalEvent` (`signal.py`), `OrderEvent` (`order.py`), `FillEvent` (`fill.py`), `ErrorEvent`/`PortfolioErrorEvent` (`error.py`).
-- Pattern: `@dataclass(frozen=True, slots=True, kw_only=True)` subclass of `Event` (`base.py`); `type` pinned via `field(default=EventType.X, init=False)`; factory class methods (`new_fill`) for safe construction.
+**Events (`itrader/events_handler/events/`):**
+- Purpose: All inter-component messages; immutable facts.
+- Examples: `TimeEvent`, `BarEvent`, `SignalEvent`, `OrderEvent`, `FillEvent`, `ScreenerEvent`, `PortfolioUpdateEvent`, `ErrorEvent`, `PortfolioErrorEvent`.
+- Pattern: `@dataclass(frozen=True, slots=True, kw_only=True)` subclass of `Event`; `type` pinned via `field(default=EventType.X, init=False)`; factory class methods (`Order.new_order()`, `FillEvent.new_fill()`). UUIDv7 `event_id` auto-generated; business `time` is the simulation clock, never wall clock.
 
-**Strategy base:**
-- Purpose: Base for all trading strategies.
-- Examples: `itrader/strategy_handler/base.py`; concrete `itrader/strategy_handler/strategies/SMA_MACD_strategy.py`, `itrader/strategy_handler/my_strategies/`.
-- Pattern: Subclass implements `calculate_signal(...)`; emits a `SignalEvent` onto `global_queue`.
+**Strategy Base (`itrader/strategy_handler/base.py`):**
+- Purpose: Abstract base for all concrete strategies. Pure function of market data.
+- Pattern: Subclass implements `generate_signal(ticker, bars) -> SignalIntent | None`. Declares `sizing_policy`, `direction`, `subscribed_portfolios`, `tickers`, `timeframe` at construction. Never touches the queue; `StrategiesHandler` owns fan-out and event emission.
 
-**Exchange (abstract):**
+**AbstractExchange (`itrader/execution_handler/exchanges/base.py`):**
 - Purpose: Pluggable exchange interface.
-- Examples: `itrader/execution_handler/exchanges/base.py`; concrete `SimulatedExchange` (`simulated.py`).
-- Pattern: Implements `on_order`, `on_market_data`, `connect`/`disconnect`/`health_check`/`validate_order`.
+- Pattern: Implements `on_order`, `on_market_data`, `connect/disconnect/health_check/validate_order`. Concrete: `SimulatedExchange`.
 
-**PortfolioReadModel (Protocol):**
-- Purpose: Narrow read boundary so `OrderManager`/`OrderHandler` query portfolios without importing the handler.
-- Examples: `itrader/core/portfolio_read_model.py` — `available_cash`, `get_position`, `reserve`, `release`, `total_equity`, `open_position_count`.
-- Pattern: `PortfolioHandler` satisfies the Protocol structurally.
+**PortfolioReadModel (`itrader/core/portfolio_read_model.py`):**
+- Purpose: Narrow read boundary for order-domain reads of portfolio state (D-13..D-17).
+- Pattern: `runtime_checkable` Protocol with six members: `available_cash`, `get_position`, `reserve`, `release`, `exchange_for`, `open_position_count`, `total_equity`. `PortfolioHandler` satisfies it structurally. `get_position` returns a frozen `PositionView` snapshot, never the live `Position`.
 
-**Store + Feed (read-models):**
-- Purpose: Look-ahead-safe data access.
-- Examples: `itrader/price_handler/store/base.py`, `itrader/price_handler/feed/base.py`; concrete `CsvPriceStore`, `BacktestBarFeed`.
-- Pattern: Store loads frames; feed slices per-tick windows (precompute once, `searchsorted` per tick — zero per-tick resample).
+**PriceStore / BarFeed (`itrader/price_handler/store/base.py`, `itrader/price_handler/feed/base.py`):**
+- Purpose: Look-ahead-safe data access seam.
+- Pattern: Store loads OHLCV frames eagerly; feed slices per-tick windows via `searchsorted` (precompute once at session init, zero per-tick resample). Seven bar-timing rules enforced in `bar_feed.py`, never in strategies.
 
-**Pluggable cost/storage models:**
-- Fee: `itrader/execution_handler/fee_model/` (`zero`, `percent`, `maker_taker`).
-- Slippage: `itrader/execution_handler/slippage_model/` (`zero`, `fixed`, `linear`).
-- Order mirror: `itrader/order_handler/storage/` (`in_memory_storage.py`, `postgresql_storage.py`) via `OrderStorageFactory`.
+**OrderStorage (`itrader/order_handler/storage/`):**
+- Purpose: Pluggable order-mirror persistence.
+- Pattern: Interface in `base.py`; concrete `in_memory_storage.py` (backtest), `postgresql_storage.py` (live placeholder); selected via `OrderStorageFactory.create('backtest'|'postgresql')`.
+
+**SizingPolicy (`itrader/core/sizing.py`):**
+- Purpose: Typed sizing vocabulary. Strategy DECLARES, engine RESOLVES.
+- Pattern: Three frozen dataclass policy kinds — `FractionOfCash`, `FixedQuantity`, `RiskPercent` — plus `SLTPPolicy` subtypes (`PercentFromFill`, `PercentFromDecision`). `SizingResolver` in `itrader/order_handler/sizing_resolver.py` match-dispatches on the kind.
+
+**Fee/Slippage Models (`itrader/execution_handler/fee_model/`, `itrader/execution_handler/slippage_model/`):**
+- Purpose: Pluggable execution cost.
+- Pattern: Abstract base + three concrete implementations each: fee (`zero`, `percent`, `maker_taker`); slippage (`zero`, `fixed`, `linear`). `SimulatedExchange` composes one of each.
+
+**ID Types (`itrader/core/ids.py`):**
+- Purpose: Ten `NewType` aliases over `uuid.UUID` for compile-time type safety.
+- Examples: `OrderId`, `PortfolioId`, `StrategyId`, `FillId`, `TransactionId`, etc. All UUIDv7 via `idgen` singleton.
 
 ## Entry Points
 
-**Backtest run:**
+**Backtest Entry Point:**
 - Location: `itrader/trading_system/backtest_trading_system.py` — `TradingSystem.run()`
-- Triggers: `scripts/run_backtest.py` (`make backtest`), notebooks, `tests/e2e/` harness.
-- Responsibilities: Wire components, derive membership + ping grid, precompute resampled frames, drive the for-loop, print/record metrics.
+- Triggers: `scripts/run_backtest.py` (`make backtest`), notebooks, E2E test harness.
+- Responsibilities: Wire components, init session (derive membership + ping grid, precompute resampled frames), drive the for-loop, print/record metrics.
 
-**Live run:**
+**Live Entry Point:**
 - Location: `itrader/trading_system/live_trading_system.py` — `LiveTradingSystem.start()`
 - Triggers: External caller / web API.
-- Responsibilities: Wire components, launch daemon processing thread, manage start/stop/status lifecycle.
+- Responsibilities: Wire components, launch processing thread, manage lifecycle.
 
-**External order injection:**
+**Trading Interface:**
 - Location: `itrader/trading_system/trading_interface.py`
 - Triggers: Web API / external caller.
 - Responsibilities: Validate running state; construct and enqueue `OrderEvent`s.
 
-**Strategy signal emission:**
-- Location: `itrader/strategy_handler/base.py` — strategy `calculate_signal` → `SignalEvent`.
-- Triggers: `StrategiesHandler.calculate_signals` per BAR (`itrader/strategy_handler/strategies_handler.py:52`).
+**Strategy Signal:**
+- Location: `itrader/strategy_handler/base.py` — `generate_signal(ticker, bars) -> SignalIntent | None`
+- Triggers: `StrategiesHandler.calculate_signals` per BAR event.
+- Reference implementation: `itrader/strategy_handler/strategies/SMA_MACD_strategy.py`
+
+**Data Ingestion:**
+- Location: `itrader/price_handler/ingestion.py`
+- Triggers: `scripts/normalize_data.py`, `scripts/cross_validate.py`
 
 ## Architectural Constraints
 
-- **Threading (backtest):** Single-threaded synchronous for-loop; no locking needed for correctness. `PortfolioHandler` removed its collection lock (D-19 single-writer contract).
-- **Threading (live):** Event processing runs on one daemon thread; individual portfolios use `threading.RLock`; `SimulatedExchange` uses `threading.RLock` for config updates.
-- **Global state:** `config`, `logger`, `idgen` are module-level singletons in `itrader/__init__.py`, initialised at import time. `MatchingEngine._resting` is instance-level.
-- **Import side effects:** importing anything from `itrader` triggers singleton init. Do not import `itrader` in fixtures without understanding this.
-- **Circular imports:** `OrderHandler` ↔ `OrderManager` resolved by constructor injection, not module imports. Avoid new module-level cross-imports between handlers.
-- **Bar-timing contract:** the seven rules in `itrader/price_handler/feed/bar_feed.py` are the single written home of look-ahead safety; enforced in the window slice, never in strategies.
-- **Money:** Decimal end-to-end; `float()` only at serialization/logging edges.
-- **Determinism:** one shared seeded `random.Random` injected at wiring; injected `BacktestClock` (`core/clock.py`).
-- **Indentation:** handler modules use tabs; `config/`, `core/`, `price_handler/feed/`, and the `events_handler/events/` package use 4 spaces — match the file.
+- **Threading (backtest):** Single-threaded synchronous for-loop; no locking needed. `PortfolioHandler` collection lock was removed (D-19 single-writer contract).
+- **Threading (live):** Event processing runs on one daemon thread; individual `Portfolio` instances use `threading.RLock`; `SimulatedExchange` uses `threading.RLock` for config updates.
+- **Global state:** `config`, `logger`, `idgen` are module-level singletons in `itrader/__init__.py`, initialized at import time. `MatchingEngine._resting` is instance-level per exchange.
+- **Import side effects:** importing anything from `itrader` triggers singleton init. Do not import `itrader` in test fixtures without accounting for this.
+- **Circular imports:** `OrderHandler` ↔ `OrderManager` resolved by constructor injection, not module imports. The facade → manager → storage layering is strictly one-directional (D-18).
+- **Bar-timing contract:** The seven rules in `itrader/price_handler/feed/bar_feed.py` are the single enforcement point for look-ahead safety; enforced in the window slice, never in strategies.
+- **Money:** Decimal end-to-end; `float()` only at serialization/logging edges. Enter Decimal domain via `to_money(x)` → `Decimal(str(x))` in `itrader/core/money.py`. NEVER `Decimal(float_val)`.
+- **Determinism:** One shared seeded `random.Random` injected at wiring; injected `BacktestClock` advanced per tick.
+- **Indentation:** Handler modules (`order_handler/`, `portfolio_handler/`, `execution_handler/`, `strategy_handler/`) use **tabs**; `config/`, `core/money.py`, `core/bar.py`, `core/ids.py`, events package use **4 spaces**. Always match the file being edited; never normalize.
 
 ## Anti-Patterns
 
 ### Calling handlers directly across domains
 
-**What happens:** A handler imports another handler and calls its method directly instead of emitting an event.
-**Why it's wrong:** Breaks the queue-only contract; ordering and error policy bypass `EventHandler._routes` and `_on_handler_error`.
-**Do this instead:** Emit the appropriate event onto `global_queue`. For reads, inject a read-model (`PortfolioReadModel` in `itrader/core/portfolio_read_model.py`, or `BacktestBarFeed`).
+**What happens:** Importing and calling `PortfolioHandler.get_portfolio()` from inside `OrderManager`.
+**Why it's wrong:** Bypasses the queue contract; creates hidden coupling; breaks the threading model.
+**Do this instead:** Inject `PortfolioReadModel` (Protocol) into the manager constructor. All state reads go through the protocol; all state WRITES go through queue events.
 
 ### Adding a new event type without registering it
 
-**What happens:** A new event subclass is defined but no branch is added to `EventHandler._routes`.
-**Why it's wrong:** `_dispatch` raises `NotImplementedError` on an unrouted type (silent drops are a tampering risk).
-**Do this instead:** Define the frozen dataclass under `events_handler/events/<domain>.py`, add the member to `core/enums/event.py::EventType`, and add a branch to `_routes` in `itrader/events_handler/full_event_handler.py`.
+**What happens:** Adding a new `EventType` member and a new `Event` dataclass but forgetting to add a branch in `EventHandler._routes`.
+**Why it's wrong:** `_dispatch()` raises `NotImplementedError` on an unrouted type — silent drops are explicitly prohibited (KB1/T-04-18).
+**Do this instead:** Define the frozen dataclass under `itrader/events_handler/events/<domain>.py`, add the member to `itrader/core/enums/event.py::EventType`, add a branch to `EventHandler._routes` in `full_event_handler.py`.
 
 ### Matching orders inside OrderHandler / OrderManager
 
-**What happens:** Order-fill matching logic creeps into the order layer.
-**Why it's wrong:** Matching is the execution layer's job; the exchange holds the resting-order book and is the source of truth for fills.
-**Do this instead:** `OrderManager` declares brackets (`parent_order_id`/`child_order_ids`) and reconciles its mirror from `FillEvent`s in `order_handler.on_fill`. Matching lives in `itrader/execution_handler/matching_engine.py`.
+**What happens:** Writing trigger evaluation logic (stop/limit price checks) in `OrderManager.on_fill` or `OrderHandler`.
+**Why it's wrong:** The exchange is the sole source of truth for fills. `MatchingEngine` in the execution layer owns the resting-order book and trigger evaluation.
+**Do this instead:** Let `MatchingEngine.on_bar` handle trigger evaluation; `OrderManager.on_fill` only reconciles the mirror from the `FillEvent` the exchange emits.
 
 ### Float arithmetic on money
 
-**What happens:** Money computed with `float`, or `Decimal(float_value)` called directly.
-**Why it's wrong:** Float-for-money is a locked correctness defect; `Decimal(float)` carries binary-float repr artifacts.
-**Do this instead:** Enter the Decimal domain via `to_money(x)` (`itrader/core/money.py`); `quantize` only at money boundaries. `float()` only at the serialization/logging edge.
+**What happens:** `total = float(price) * float(quantity)` inside a cash or position calculation.
+**Why it's wrong:** Binary-float representation artifacts corrupt ledger values and break byte-exact oracle gates.
+**Do this instead:** Enter Decimal via `to_money(x)` (`itrader/core/money.py`). Use `quantize(value, instrument, kind)` only at ledger-write/serialization boundaries, never inside intermediate math.
 
 ## Error Handling
 
-**Strategy:** Typed exceptions raised in domain logic; caught-and-logged at the event boundary; rejections flow as events, not exceptions.
+**Backtest policy — fail-fast:** `EventHandler._on_handler_error` re-raises the active exception (`raise`). A handler failure aborts the run rather than silently corrupting state (`itrader/events_handler/full_event_handler.py:144`).
 
-**Patterns:**
-- `EventHandler._on_handler_error` is the policy seam: backtest re-raises (fail-fast); live overrides to publish-and-continue.
-- `EventHandler._log_error_event` is the ERROR-route consumer (structured log sink, severity-mapped).
-- `PortfolioHandler._operation_context()` tracks active operations and publishes `PortfolioErrorEvent` on failure.
-- `SimulatedExchange` emits `FillEvent(REFUSED)` on rejection so the order mirror reconciles.
-- `ExecutionHandler.on_order` / `on_market_data` catch per-exchange exceptions and log without re-raising (prevents queue stalls).
-- Domain exceptions live in `itrader/core/exceptions/` (`base.py`, `order.py`, `portfolio.py`, `data.py`).
+**Live policy — publish-and-continue:** `LiveTradingSystem` overrides `_on_handler_error` to emit an `ErrorEvent` onto the queue and keep draining. `ExecutionHandler.on_order` / `on_market_data` additionally catch per-exchange exceptions and log without re-raising (prevents queue stalls).
+
+**Rejection flow:** `SimulatedExchange.execute_order()` returns `ExecutionResult(success=False)` and emits `FillEvent(REFUSED)` so the order mirror reconciles without raising an exception.
+
+**Portfolio errors:** `PortfolioHandler._operation_context()` (context manager) tracks active operations and publishes `PortfolioErrorEvent` on failure.
+
+**Domain exception hierarchy (`itrader/core/exceptions/`):**
+- Root: `ITraderError`
+- Base categories: `ValidationError`, `ConfigurationError`, `StateError`, `ConcurrencyError`, `NotFoundError`
+- Domain-specific: `PortfolioError`, `InsufficientFundsError`, `PortfolioNotFoundError` (`portfolio.py`); `OrderError`, `UnsizedSignalError`, `SizingPolicyViolation` (`order.py`); `DataError`, `MalformedDataError`, `MissingPriceDataError` (`data.py`)
+- Execution failures flow as `FillEvent(REFUSED)` events, not exceptions; error codes in `core/enums/execution.py::ExecutionErrorCode`.
 
 ## Cross-Cutting Concerns
 
-**Logging:** structlog via `get_itrader_logger().bind(component="ClassName")`; bound at construction. Levels: `info` for ops/init, `warning` for non-fatal, `error` with `exc_info=True` for caught exceptions.
-**Validation:** `EnhancedOrderValidator` (`itrader/order_handler/order_validator.py`); fee/validation models raise `ValidationError` rather than returning `False`. Config validated by Pydantic models in `itrader/config/`.
-**Authentication:** Not applicable to the backtest path; live providers read credentials from `.env` / `oanda.cfg` (see INTEGRATIONS.md).
+**Logging:** structlog (`itrader/logger.py`). Bind a component context: `self.logger = get_itrader_logger().bind(component="ClassName")`. Levels: `info` for successful ops/init; `warning` for non-fatal issues; `error` with `exc_info=True` for caught exceptions; `debug` rarely.
+
+**Validation:** `EnhancedOrderValidator` (`itrader/order_handler/order_validator.py`) validates orders at the `create_order`/live path; `SimulatedExchange` has an internal second validation layer (defense-in-depth — justified by decision; see CONVENTIONS.md). Fee/validation models raise `ValidationError`, never return `False`.
+
+**Authentication/API Keys:** Loaded from `.env` at repo root (never committed); read by `pydantic-settings` `Settings` with `env_prefix="ITRADER_"` (`itrader/config/settings.py`).
+
+**Determinism seam:** `BacktestClock` is constructed in `TradingSystem.__init__` and `clock.set_time(time_event.time)` is called each iteration (`itrader/trading_system/backtest_trading_system.py:217`). The clock has no domain consumer yet (domain timestamps still use wall clock on some paths); consumer-wiring is a future phase (D-09/D-10).
 
 ---
 
-*Architecture analysis: 2026-06-10*
+*Architecture analysis: 2026-06-12*
