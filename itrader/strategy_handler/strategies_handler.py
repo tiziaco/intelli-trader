@@ -178,16 +178,14 @@ class StrategiesHandler(object):
 		"""
 		traded_tickers: list[str] = []
 		for strategy in self.strategies:
-			# Check if the strategy is trading pairs.
-			# WR-04: renamed the loop variable from `tuple` (which shadowed the
-			# builtin) to `pair`/`sym`. The declared config contract is
-			# `tickers: list[str]`, so the pair branch never legitimately fires
-			# for a config-built strategy — it remains only for legacy callers.
-			if strategy.tickers and isinstance(strategy.tickers[0], tuple):
-				traded_tickers += [sym for pair in strategy.tickers for sym in pair]
-			else:
-				traded_tickers += strategy.tickers
-				
+			# IN-01: the declared config contract is `tickers: list[str]`, so
+			# `tickers[0]` is always a `str` — the legacy pairs-trading branch
+			# (`isinstance(tickers[0], tuple)`) was dead on every supported path
+			# and has been removed. A typed pairs API will replace it if/when
+			# pairs trading is reintroduced, rather than runtime isinstance
+			# sniffing on the first element.
+			traded_tickers += strategy.tickers
+
 		return list(set(traded_tickers))
 
 	
