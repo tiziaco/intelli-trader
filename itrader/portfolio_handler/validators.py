@@ -24,6 +24,12 @@ from itrader.core.ids import TransactionId
 DECIMAL_PRECISION = decimal.Decimal('0.00000001')  # 8 decimal places for crypto
 MIN_CASH_BALANCE = decimal.Decimal('0.00')
 
+# IN-03 — named Decimal sanity bounds so the upper-bound checks compare
+# Decimal-against-Decimal and the thresholds are documented rather than bare
+# int magic numbers inside the (Decimal-strict) validate_transaction_data.
+_MAX_REASONABLE_PRICE = decimal.Decimal('1000000')     # $1M per unit
+_MAX_REASONABLE_QUANTITY = decimal.Decimal('1000000')  # 1M units
+
 class PortfolioValidator:
     """Validates portfolio operations and data integrity."""
     
@@ -62,10 +68,10 @@ class PortfolioValidator:
             raise InvalidTransactionError(f"Invalid transaction type: {transaction_type}")
         
         # Check for reasonable limits
-        if price > 1_000_000:  # $1M per unit seems unreasonable
+        if price > _MAX_REASONABLE_PRICE:
             raise InvalidTransactionError(f"Price {price} seems unreasonably high")
-        
-        if quantity > 1_000_000:  # 1M units seems unreasonable
+
+        if quantity > _MAX_REASONABLE_QUANTITY:
             raise InvalidTransactionError(f"Quantity {quantity} seems unreasonably high")
     
     @staticmethod
