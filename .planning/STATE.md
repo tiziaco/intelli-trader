@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
 status: planning
-last_updated: "2026-06-12T10:12:12.581Z"
-last_activity: 2026-06-12
+last_updated: "2026-06-12T10:42:10.914Z"
+last_activity: 2026-06-12 — v1.3 roadmap created, all 10 requirements mapped to 6 phases
 progress:
-  total_phases: 6
+  total_phases: 9
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -53,6 +53,7 @@ clean and determinism double-run byte-identical still hold.
   touched **once** under a single re-baseline + cross-validation, not twice. The idempotent
   release-on-every-terminal-reconciliation invariant must hold (EXECUTED→FILLED, CANCELLED→CANCELLED,
   REFUSED→REJECTED).
+
 - **Re-baseline separation:** owner-gated (result-changing) and byte-exact requirements are kept in
   SEPARATE phases so a byte-exact phase's golden gate is a clean pass/fail and each result-changing
   phase owns its re-baseline.
@@ -168,8 +169,8 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12 — v1.3 roadmap created
-Resume file: None
+Last session: 2026-06-12T10:42:10.905Z
+Resume file: .planning/phases/01-engine-hygiene/01-CONTEXT.md
 
 ## Operator Next Steps
 
