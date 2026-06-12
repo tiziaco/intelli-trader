@@ -268,6 +268,13 @@ class Strategy(ABC):
 	def evaluate(self, ticker: str, window: pd.DataFrame) -> SignalIntent | None:
 		"""Orchestration seam: stash the window, repopulate handles, dispatch (D-06).
 
+		IN-03: ``evaluate`` is NOT re-entrant. It mutates shared instance state
+		(``self.bars``/``self.now`` and the registered handles) before dispatch,
+		so a single ``Strategy`` instance must be evaluated by one writer at a time
+		(the single-writer contract — the backtest loop is synchronous and live
+		mode processes on one daemon thread). Concurrent/re-entrant evaluation of
+		the same instance would race on this shared mutable state.
+
 		The handler calls this (NOT ``generate_signal`` directly). It stashes the
 		pushed completed-bar window on ``self.bars`` and the decision anchor on
 		``self.now`` (``window.index[-1]`` — Pitfall 4, the SAME anchor the legacy
