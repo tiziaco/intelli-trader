@@ -22,8 +22,11 @@ they are wired with NO sibling-collaborator ref:
   sibling ref, so there is no circular import;
 - the fill-anchored PercentFromFill children are created via the injected
   coordinator-owned `BracketManager` (`self.bracket_manager`) — ReconcileManager
-  holds no BracketManager *as a sibling edge* beyond that injected object (the
-  type is imported only under `TYPE_CHECKING`).
+  holds no BracketManager *as a sibling edge* beyond that injected object. The
+  `BracketManager` type is imported only under `TYPE_CHECKING`; this keeps the
+  annotation NAME off the module's runtime name bindings only — it does NOT avoid
+  loading the class, which the runtime `from ..brackets import BracketBook` import
+  (line 41) already pulls in transitively (harmless — no import cycle).
 
 The collaborator receives its dep subset by injection (D-09): `order_storage`,
 `logger`, `portfolio_handler` (read-model, for `release`), the coordinator-owned

@@ -93,9 +93,6 @@ module = [
     "itrader.price_handler.providers.exchange_base",     # D-oanda — legacy provider ABC the adapters import
     "itrader.price_handler.providers.binance_stream",    # D-live
     "itrader.screeners_handler.*",                       # D-screener
-    "itrader.events_handler.screener_event_handler",     # D-screener — dead, superseded by full_event_handler;
-                                                         #   references self.universe never set in __init__ (latent
-                                                         #   AttributeError). Not imported anywhere. Wiring is D-screener.
 ]
 ignore_errors = true
 
