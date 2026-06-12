@@ -57,7 +57,8 @@ only after explicit owner sign-off + external cross-validation.
   2. The stale `screener_event_handler.py` mypy override is gone from `pyproject.toml`, the dead `TOLERANCE = 1e-3` float constant is deleted from `portfolio_handler/portfolio.py`, and `PortfolioValidator.validate_transaction_data` no longer accepts `float` (Decimal-money policy honored).
   3. The three v1.2 Phase-6 review residues are resolved: the dead `StrategyId` import dropped (`order_manager.py:20`), the duplicated `_ONE = Decimal("1")` consolidated or documented (`brackets/levels.py` + `sizing_resolver.py`), and the misleading `TYPE_CHECKING` guard doc softened (`reconcile/reconcile_manager.py`).
   4. The golden master is byte-exact (134 trades / `final_equity 46189.87730727451`), e2e 58/58, full suite green, `mypy --strict` clean — no run-path touch, no golden re-run needed.
-**Plans**: TBD
+**Plans**: 1 plan
+  - [ ] 01-01-PLAN.md — All 7 HYG-01 hygiene items (test asserts to public API, stale mypy override, dead TOLERANCE, strict-Decimal validator, _ONE consolidation, reconcile doc; StrategyId verify-only)
 
 ### Phase 2: Strategy Authoring Surface
 **Goal**: A strategy author declares params as real annotated class attributes (no frozen-config subclass, no manual field-copy), overridable at construction, with the base rejecting unknown kwargs loudly — and a re-runnable idempotent `init()` hook that later phases build on.
