@@ -119,7 +119,7 @@ during v1.1 execution into one milestone — complete the signal/order contracts
 system a real composition/config interface, and land the indicator abstraction — BEFORE
 N+2 builds margin/shorts on top of these same surfaces. (These are the **result-changing /
 new-framework** items deferred out of v1.2 Consolidation so the cleanup foundation lands first.)
-**Requirements:** SIG-01, SIG-02, COMP-01, IND-01, LIFE-01 (see `REQUIREMENTS.md` v-next section)
+**Requirements:** SIG-01, SIG-02, COMP-01, IND-01, STRAT-01, LIFE-01 (see `REQUIREMENTS.md` v-next section)
 **Plans:** 0 plans
 
 Scope (intent only — consolidated from the v1.1 capture registers):
@@ -154,13 +154,25 @@ Scope (intent only — consolidated from the v1.1 capture registers):
   **W4-02/03/05/06/07**. (Note: `BaseStrategyConfig` relocation — SYN-02 — was pulled FORWARD
   into v1.2 Consolidation Phase 4 / TYPE-05, so it is no longer pending here.)
 
-- **(c) Declared-indicator framework** — indicator abstraction on the strategy base with
-  auto-derived warmup (à la nautilus `register_indicator_for_bars` / LEAN `SetWarmUp` /
-  backtrader auto-min-period), so authors stop hand-setting `max_window`. Captured in
-  05-CONTEXT.md deferred ideas; note it is a genuine model shift (stateless
-  recompute-from-window → optionally stateful incremental) — design carefully against the
-  pure-alpha D-12 contract. Folds the V1.2-CLEANUP-REVIEW deferral **W1-05** (incremental
-  SMA/MACD state); the W1-12 control-flow reorder was pulled forward into v1.2 Phase 3.
+- **(c) Declared-indicator framework + strategy authoring surface** — **(IND-01 + STRAT-01)**.
+  Indicator abstraction on the strategy base with auto-derived warmup (à la nautilus
+  `register_indicator_for_bars` / LEAN `SetWarmUp` / backtrader auto-min-period), so authors
+  stop hand-setting `max_window`. Captured in 05-CONTEXT.md deferred ideas; it is a genuine
+  model shift — but the `/gsd:explore` session (2026-06-12) **decoupled declaration from
+  compute**, so the model shift is deferred, not taken: stateless recompute stays (byte-exact
+  by construction), incremental is opt-in *later* behind a stable indicator interface (**W1-05**
+  folds in as "declaration layer only"). The session also surfaced a **new strategy-facing edge
+  (STRAT-01)** — replace the per-strategy frozen pydantic config + manual field-copy with a
+  **class-attribute authoring surface** (engine-facing names on the base, alpha knobs on the
+  subclass, overridable at construction, reject-unknown-kwargs). Converged decisions: `init()`
+  hook (re-runnable/idempotent), auto-`warmup`/`max_window`, model-B pre-eval reads
+  (`self.sma[-1]`), free-function `crossover`/`crossunder`. The re-runnable `init()` is the seam
+  COMP-01 (part b) needs for runtime strategy reconfiguration (web-driven param/timeframe
+  changes). **Full converged design + prior-art verdicts + parked spec-time decisions:
+  `notes/strategy-authoring-surface-999.5c.md`** (ready for `/gsd:spec-phase`). STRAT-01 and
+  IND-01 are separable — STRAT-01 may ship first as a smaller byte-exact slice. Folds the
+  V1.2-CLEANUP-REVIEW deferral **W1-05** (incremental SMA/MACD state); the W1-12 control-flow
+  reorder was pulled forward into v1.2 Phase 3.
 
 - **(d) Order lifecycle completion** — wire run-end resting-order disposition /
   time-in-force (`Order.expire_order()` + `OrderStatus.EXPIRED` exist but are unwired on
