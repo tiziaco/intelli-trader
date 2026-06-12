@@ -142,6 +142,17 @@ re-derivation (Phase 3 D-08) that `StrategiesHandler.update_config` consumes.
   Tidy the `feed.precompute` run-setup orchestration (W4-03). **Do NOT modify `LiveTradingSystem`
   this phase** (unverified by the byte-exact suite; live error-policy/threading/storage differences).
   → fast-follow: `LiveTradingSystem` adopts `compose_engine`.
+- **D-14a:** **`compose_engine`-vs-factory boundary — mode-specific backend SELECTION lives in the
+  FACTORY, not the shared seam.** Because `compose_engine` is shared with live, it must NOT hardcode
+  `'backtest'`. The mode-specific factory selects the mode-specific concrete backends and passes them
+  in: `build_backtest_system` picks `OrderStorageFactory.create('backtest')` (in-memory), a future
+  `build_live_system` picks `'postgresql'`; the selected `OrderStorage` is passed into
+  `compose_engine(spec, order_storage=...)`, which wires the graph mode-agnostically. Same DI rationale
+  as today's `order_storage = OrderStorageFactory.create('backtest')` living in the composition root
+  (NOT inside `OrderHandler` — the handler depends on the `OrderStorage` abstraction and must stay
+  run-mode-agnostic). This generalizes to other mode-specific concretes (e.g. exchange backend) and
+  mirrors the injected `CommissionEstimator` (D-15) / `PortfolioReadModel` pattern. Planner: do NOT
+  bake a backend string into `compose_engine`.
 - **D-15:** **Promote the inline `_estimate_commission` closure to a typed `CommissionEstimator`
   read-model seam** (mirroring `PortfolioReadModel`). Define a `CommissionEstimator` **`Protocol`**
   in `core/` (primitive `(Decimal, Decimal) -> Decimal` signature → zero `itrader` deps, honors
