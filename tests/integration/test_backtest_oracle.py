@@ -19,20 +19,20 @@ markers are NOT hand-added here.
 It is RED until ``tests/golden/`` is frozen — that is expected.
 """
 
-import importlib.util
 import json
-import pathlib
 
 import pandas as pd
 import pandas.testing as pdt
 import pytest
 
-
-# Repo layout: this file lives at <repo>/tests/integration/, so the repo root is
-# two parents up. The oracle generator and its output dir are anchored from there.
-_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
-_RUN_BACKTEST = _REPO_ROOT / "scripts" / "run_backtest.py"
-_OUTPUT_DIR = _REPO_ROOT / "output"
+# IN-03: repo-root / oracle-generator path constants and the importlib loader
+# are shared with test_reservation_inertness.py via a single harness module so
+# the two copies cannot drift.
+from tests.integration._oracle_harness import (
+    _OUTPUT_DIR,
+    _REPO_ROOT,
+    load_run_backtest_module,
+)
 
 # Deterministic columns to diff (D-12). Trades identified by (entry_date, exit_date, side);
 # the remaining numeric columns are diffed EXACT (D-16 — M2b re-freeze, no tolerance).
@@ -69,17 +69,8 @@ _TRADE_SLIPPAGE_COLUMNS = ("slippage_entry", "slippage_exit")
 
 
 def _load_run_backtest_module():
-    """Import scripts/run_backtest.py as a module (it is not on the package path)."""
-    # WR-05: fail loudly with a clear message if the oracle generator moved or
-    # spec_from_file_location could not resolve a loader, rather than dying with
-    # an opaque AttributeError on None.
-    if not _RUN_BACKTEST.exists():
-        pytest.fail(f"oracle generator missing: {_RUN_BACKTEST}")
-    spec = importlib.util.spec_from_file_location("run_backtest", _RUN_BACKTEST)
-    assert spec is not None and spec.loader is not None, f"cannot load {_RUN_BACKTEST}"
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    """Import scripts/run_backtest.py as a module (IN-03 shim over the harness)."""
+    return load_run_backtest_module("run_backtest")
 
 
 def _run_full_backtest():
