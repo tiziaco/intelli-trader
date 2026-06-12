@@ -123,7 +123,7 @@ class StrategiesHandler(object):
 					take_profit=intent.take_profit,
 					exit_fraction=intent.exit_fraction,
 					quantity=intent.quantity,
-					config=strategy.config,
+					config=strategy.to_dict(),
 				))
 				# Relocated SignalEvent construction (D-12): one event per
 				# subscribed portfolio. D-05 boundary parse: the strategy

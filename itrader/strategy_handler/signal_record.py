@@ -17,9 +17,9 @@ Design decisions:
 - **D-10 — own SignalId.** Each record defaults a fresh UUIDv7 ``SignalId`` via
   ``idgen.generate_signal_id()`` (the single id scheme), mirroring how ``Order``
   defaults its ``OrderId``.
-- **D-11 — config snapshot by reference.** ``config`` holds the strategy's frozen
-  ``BaseStrategyConfig`` directly (it is immutable, so no copy is needed);
-  serialization is ``config.model_dump()`` at the edge, never on write.
+- **D-04 — config snapshot as a plain dict.** ``config`` holds a plain params
+  snapshot ``dict`` captured from the strategy's declared attrs (``strategy.to_dict()``),
+  not a frozen pydantic config — the pydantic config layer was deleted (D-01).
 
 4-space indentation (co-located with the storage-seam house style, RESEARCH
 Pitfall 6).
@@ -28,11 +28,11 @@ Pitfall 6).
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from itrader import idgen
 from itrader.core.enums import Side
 from itrader.core.ids import SignalId, StrategyId
-from itrader.config import BaseStrategyConfig
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -64,9 +64,10 @@ class SignalRecord:
         Fraction of the open position an exit closes, in (0, 1].
     quantity : Decimal | None
         Explicit caller-supplied quantity; None means "resolver decides".
-    config : BaseStrategyConfig
-        The strategy's frozen config, stored by reference (D-11). Serialize
-        via ``config.model_dump()`` at the read edge (SIG-02 queryability).
+    config : dict[str, Any]
+        A plain params snapshot dict captured from the strategy's declared
+        attrs (``strategy.to_dict()``, D-04) — the pydantic config layer was
+        deleted. Already serialization-ready (SIG-02 queryability).
     """
 
     signal_id: SignalId = field(
@@ -80,4 +81,4 @@ class SignalRecord:
     take_profit: Decimal | None = None
     exit_fraction: Decimal = Decimal("1")
     quantity: Decimal | None = None
-    config: BaseStrategyConfig
+    config: dict[str, Any]
