@@ -103,7 +103,7 @@ only after explicit owner sign-off + external cross-validation.
   - [x] 04-02-PLAN.md — compose_engine + BacktestRunner + thin BacktestTradingSystem holder + build_backtest_system factory (D-03/D-04/D-14/D-14a); rng dedup (D-16); construction-time ExchangeConfig threading + symbol seeding (D-13); FeeModelCommissionEstimator late-binding (D-06/D-15); reporting lift (W4-07) (Wave 2)
   - [x] 04-03-PLAN.md — shared deep_merge + canonical update_config on the 5 config-model handlers (Portfolio/PortfolioHandler/SimulatedExchange/ExecutionHandler/OrderManager-OrderHandler) + configure() fix (D-07/D-08/D-09/D-11) (Wave 3)
   - [x] 04-04-PLAN.md — StrategiesHandler.update_config (re-validate→init()→warmup, D-09) + BacktestBarFeed.update_config raise-only interface-conformance (D-10/D-17) (Wave 3, parallel with 04-03)
-  - [ ] 04-05-PLAN.md — e2e _build_and_run collapse onto build_backtest_system(spec) (D-01/D-13/D-14) + construction-site rename migration + byte-exact PHASE GATE (oracle 134/46189.87730727451, e2e 58/58, mypy --strict, determinism double-run) (Wave 4)
+  - [x] 04-05-PLAN.md — e2e _build_and_run collapse onto build_backtest_system(spec) (D-01/D-13/D-14) + construction-site rename migration + byte-exact PHASE GATE (oracle 134/46189.87730727451, e2e 58/58, mypy --strict, determinism double-run) (Wave 4)
 
 ### Phase 5: Signal Contract & Reconcile (FRAGILE)
 **Goal**: Complete the signal/order contract — a strategy specifies per-intent ENTRY price and `order_type`, action becomes `Side`-typed with the position snapshot threaded once — AND streamline the `on_fill` reconciliation / `should_release` flow, touching the FRAGILE `reconcile/` path once under a single owner-gated re-baseline + external cross-validation.
@@ -192,7 +192,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
 | 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
 | 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
-| 4. Composition & Config Interface | 4/5 | In Progress|  |
+| 4. Composition & Config Interface | 5/5 | Complete   | 2026-06-12 |
 | 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
 

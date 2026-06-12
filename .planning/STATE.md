@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: executing
+status: verifying
 stopped_at: Completed 04-04-PLAN.md
-last_updated: "2026-06-12T20:05:47.402Z"
+last_updated: "2026-06-12T20:15:23.741Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 9
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 12
-  completed_plans: 11
-  percent: 33
+  completed_plans: 12
+  percent: 44
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface 
 
 Phase: 04 (composition-config-interface) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-12
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
@@ -122,6 +122,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase ?]: [v1.3 Phase 04 / 04-02]: Composition-root collapse landed byte-exact. compose_engine (trading_system/compose.py) is the shared mode-agnostic wiring seam — order_storage + signal_store backends injected by the FACTORY (grep "'backtest'"==0, D-14a). FeeModelCommissionEstimator holds the exchange ref, reads fee_model in __call__ (D-15 late binding); the oracle-dark post-fee-swap non-zero test pins it (swap via the LIVE update_config enum API — string coercion is Wave 3). BacktestRunner owns the fail-fast loop, post-bar record_metrics DIRECT call preserved (Trap 4). TradingSystem renamed BacktestTradingSystem (thin holder) + build_backtest_system(spec) factory (D-04); a TradingSystem alias + legacy __init__ + engine-delegating properties keep oracle/integration/e2e/scripts byte-exact by rename only until Wave 4. D-13/Trap 1: hardcoded register_symbol('BTCUSD') removed; COMPLETE set (default preset ∪ {BTCUSD} ∪ spec tickers) seeded into ExchangeConfig.limits at construction (replacement-safe); TEMPORARY no-config fallback unions {BTCUSD} (asserted, Wave 4 removes it). D-16/Trap 3: _resolve_rng_seed reads config.performance.rng_seed off the singleton (seed 42). OrderConfig threaded + commission_estimator retyped (D-05). print_metrics_summary lifted into reporting/summary.py (W4-07). GATE: oracle 134/46189.87730727451 exact, e2e 58/58, mypy --strict 181 files, full suite 854 green, determinism double-run identical.
 - [Phase ?]: 04-03: canonical update_config(dict)->None on all 5 config-model handlers; shared config/merge.py deep_merge; pydantic ValidationError wrapped into ConfigurationError; oracle-dark byte-exact held
 - [Phase ?]: 04-04: non-config-model update_config landed — StrategiesHandler name-keyed reconfigure delegation (D-09) + BacktestBarFeed raise-only interface-conformance (D-10); both match the core.ConfigurationError single-catch contract; oracle-dark byte-exact (134/46189.87730727451, e2e 58/58, mypy 182)
+- [Phase 04 / 04-05]: BYTE-EXACT PROOF WAVE — phase 4 PROVEN byte-exact (COMP-01 + COMP-02 complete). e2e _build_and_run COLLAPSED onto build_backtest_system(spec): the D-14 post-construction fee/slippage re-init seam + the additive register_symbol loop REMOVED (subsumed by construction-time ExchangeConfig threading + complete symbol seeding, D-01/D-13/D-14). scenario_spec.py UNIFIED onto the promoted SystemSpec (ScenarioSpec = SystemSpec alias + PortfolioSpec/Action re-export — no leaf edited). All scripts/integration TradingSystem sites migrated to BacktestTradingSystem (D-03); the Wave-2 TradingSystem alias REMOVED; the legacy direct-construction __init__ now seeds its own complete ExchangeConfig (routes the backtest path off the ExecutionHandler no-config fallback, which STAYS for the out-of-scope live + unit direct-construction consumers). [Rule 1] Fixed a latent Wave-2 factory bug: add_portfolio used exchange=spec.ticker (unregistered venue → no fills) → corrected to 'csv'; only activated once the e2e path ran through the factory. D-12 scope fence HELD (no ReconfigureEvent / TradingInterface reconfigure bridge; LiveTradingSystem untouched). GATE: oracle 134/46189.87730727451 EXACT, determinism double-run byte-identical, e2e 58/58, full suite 946 green under filterwarnings=[error], mypy --strict clean (182 files). Zero re-baseline.
 
 ### Pending Todos
 
@@ -152,6 +153,7 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 | Phase 04 P02 | 35 | 3 tasks | 11 files |
 | Phase 04 P03 | 40min | 3 tasks | 17 files |
 | Phase 04 P04 | 15 | 2 tasks | 4 files |
+| Phase 04 P05 | 30 | 3 tasks | 10 files |
 
 ## Bookkeeping
 
@@ -191,8 +193,8 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12T20:05:47.395Z
-Stopped at: Completed 04-04-PLAN.md
+Last session: 2026-06-12T20:15:23.732Z
+Stopped at: Completed 04-05-PLAN.md (Phase 4 byte-exact proof wave — phase complete, ready for verification)
 Resume file: None
 
 ## Operator Next Steps
