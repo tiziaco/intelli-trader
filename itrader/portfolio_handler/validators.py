@@ -33,14 +33,19 @@ class PortfolioValidator:
         if not ticker or not isinstance(ticker, str):
             raise InvalidTransactionError("Ticker must be a non-empty string")
         
+        # NOTE (WR-01): the isinstance guards below are intentionally
+        # strict-Decimal-only — plain int/float are rejected by design.
+        # Money is Decimal end-to-end (HYG-01 success-criterion #2); callers
+        # must enter the Decimal domain via to_money() before validation.
+        # Do NOT re-widen these to accept (int, float).
         if not isinstance(price, decimal.Decimal) or price <= 0:
-            raise InvalidTransactionError(f"Price must be positive, got {price}")
+            raise InvalidTransactionError(f"Price must be a positive Decimal, got {price!r}")
 
         if not isinstance(quantity, decimal.Decimal) or quantity <= 0:
-            raise InvalidTransactionError(f"Quantity must be positive, got {quantity}")
+            raise InvalidTransactionError(f"Quantity must be a positive Decimal, got {quantity!r}")
 
         if not isinstance(commission, decimal.Decimal) or commission < 0:
-            raise InvalidTransactionError(f"Commission must be non-negative, got {commission}")
+            raise InvalidTransactionError(f"Commission must be a non-negative Decimal, got {commission!r}")
         
         if transaction_type not in ['BUY', 'SELL']:
             raise InvalidTransactionError(f"Invalid transaction type: {transaction_type}")
