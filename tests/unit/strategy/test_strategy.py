@@ -218,6 +218,48 @@ def test_to_dict_is_json_serializable():
     assert isinstance(dumped, str)
 
 
+def test_to_dict_json_safe_for_nested_non_native_containers():
+    """WR-01 (iter-2): json.dumps(to_dict()) survives nested non-native leaves.
+
+    The original WR-04 fix only repr-coerced a SCALAR non-native value and
+    classified a top-level ``list``/``dict`` as native by container type alone.
+    A declared attr holding a ``list[Decimal]`` / ``dict[str, datetime]`` thus
+    slipped past the gate and ``json.dumps(to_dict())`` still raised
+    ``TypeError: Object of type Decimal/datetime is not JSON serializable``.
+    The recursive ``_json_safe`` walk repr-coerces the offending LEAVES, so the
+    contract is structural. Lock the nested case with a synthetic strategy that
+    declares a ``list``-of-``Decimal`` and a ``dict``-of-``datetime`` attr.
+    """
+    import json
+
+    class _NestedDeclaredStrategy(Strategy):
+        # Declared (annotated) attrs whose CONTENTS are non-JSON-native — these
+        # are exactly the case the top-level-container check missed.
+        decimal_levels: list[Decimal] = [Decimal("1.5"), Decimal("2.5")]
+        dated_map: dict[str, datetime] = {"start": datetime(2024, 1, 1, tzinfo=UTC)}
+
+        def generate_signal(self, ticker: str):
+            return None
+
+    kwargs = _sma_kwargs()
+    # Carry over only the required base params; drop SMA-specific knobs the
+    # synthetic strategy does not declare (would raise UnknownParamError).
+    strategy = _NestedDeclaredStrategy(
+        timeframe=kwargs["timeframe"],
+        tickers=kwargs["tickers"],
+        sizing_policy=kwargs["sizing_policy"],
+    )
+
+    snapshot = strategy.to_dict()
+    # The declared nested attrs are present and recursively repr-coerced.
+    assert snapshot["decimal_levels"] == [repr(Decimal("1.5")), repr(Decimal("2.5"))]
+    assert snapshot["dated_map"] == {"start": repr(datetime(2024, 1, 1, tzinfo=UTC))}
+
+    # The whole snapshot must round-trip through json without raising.
+    dumped = json.dumps(snapshot)
+    assert isinstance(dumped, str)
+
+
 def test_reconfigure_reapplies_and_revalidates():
     """D-12: reconfigure(**kwargs) re-applies + re-validates + preserves timeframe."""
     strategy = SMAMACDStrategy(**_sma_kwargs())

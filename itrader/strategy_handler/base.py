@@ -29,10 +29,33 @@ _MISSING = object()
 # Anything else (Decimal/datetime/custom object) is coerced to repr() at the
 # serialization edge so json.dumps(strategy.to_dict()) never raises.
 def _is_json_native(val: Any) -> bool:
-	# `bool` is a subclass of `int`, so it is already covered; list/dict are
-	# the JSON container types (their scalar declared contents are themselves
-	# native on the declared surface). `None` is JSON null.
-	return val is None or isinstance(val, (str, int, float, list, dict))
+	# `bool` is a subclass of `int`, so it is already covered; `None` is JSON
+	# null. NOTE: list/dict are intentionally NOT treated as unconditionally
+	# native here — a container is only JSON-safe if its CONTENTS are native
+	# too (a `list[Decimal]` / `dict[str, datetime]` would otherwise still break
+	# `json.dumps`). The recursive `_json_safe` walk below is the structural
+	# guarantee; this scalar predicate only classifies leaves.
+	return val is None or isinstance(val, (str, int, float))
+
+
+def _json_safe(val: Any) -> Any:
+	# WR-01 (iter-2): the WR-04 fix only repr-coerced a SCALAR non-native value,
+	# but classified a top-level `list`/`dict` as native by container type alone.
+	# A declared attr holding e.g. `list[Decimal]` / `dict[str, datetime]`
+	# therefore slipped through and `json.dumps(to_dict())` still raised. Make the
+	# coercion RECURSIVE: a list/dict is native only if every element/value is
+	# native; otherwise repr-coerce the offending leaves. This makes the
+	# `json.dumps(strategy.to_dict())` contract structural, not type-list-based.
+	if _is_json_native(val):
+		return val
+	if isinstance(val, list):
+		return [_json_safe(x) for x in val]
+	if isinstance(val, tuple):
+		# tuples serialize to JSON arrays — preserve the JSON-array shape.
+		return [_json_safe(x) for x in val]
+	if isinstance(val, dict):
+		return {str(k): _json_safe(x) for k, x in val.items()}
+	return repr(val)
 
 # D-08: ONLY these three engine fields coerce a str off their annotation to an
 # enum (via the enum's case-insensitive _missing_). Every other knob is left as
@@ -339,15 +362,17 @@ class Strategy(ABC):
 				val = val.value
 			elif isinstance(val, (SizingPolicy, SLTPPolicy)):
 				val = repr(val)
-			elif not _is_json_native(val):
-				# WR-04: the introspection loop is the whole point of to_dict
-				# (capture the FULL declared surface), but it must honour the
-				# documented `json.dumps(strategy.to_dict())` contract (IN-03). A
+			else:
+				# WR-04 / WR-01 (iter-2): the introspection loop is the whole point
+				# of to_dict (capture the FULL declared surface), but it must honour
+				# the documented `json.dumps(strategy.to_dict())` contract (IN-03). A
 				# declared attr whose value is e.g. a Decimal / datetime / custom
-				# object is NOT JSON-native — coerce it at the serialization edge
-				# (repr), mirroring how the bespoke policy fields are handled, so
-				# the snapshot stays round-trippable.
-				val = repr(val)
+				# object — OR a list/dict CONTAINING such non-native leaves — is not
+				# JSON-safe. `_json_safe` recursively walks containers and repr-
+				# coerces non-native leaves at the serialization edge (mirroring how
+				# the bespoke policy fields are handled), so the snapshot stays
+				# round-trippable structurally, not by top-level container type.
+				val = _json_safe(val)
 			snapshot[nm] = val
 		# Identity/runtime fields + bespoke serializations (override declared).
 		snapshot.update({
