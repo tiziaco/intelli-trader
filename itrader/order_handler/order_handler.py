@@ -90,7 +90,7 @@ class OrderHandler:
 
 		self.order_validator = EnhancedOrderValidator(portfolio_handler)
 
-		self.logger.info(f'Order Handler initialized with market_execution={self.market_execution})')
+		self.logger.info('Order Handler initialized', market_execution=self.market_execution)
 
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update order-domain configuration at runtime (D-05/D-07/D-09).
