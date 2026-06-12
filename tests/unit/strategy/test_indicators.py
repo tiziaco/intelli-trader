@@ -14,6 +14,7 @@ TAB-indented (D-05 / plan instruction).
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+import pytest
 from ta import momentum, trend
 
 from itrader.strategy_handler.indicators import (
@@ -156,3 +157,15 @@ def test_handle_repopulate_is_re_runnable():
 	first = handle[-1]
 	handle.repopulate(frame, now, tf)
 	assert handle[-1] == first
+
+
+def test_handle_getitem_before_repopulate_raises():
+	# WR-01 (orig): the read-before-repopulate contract must raise UNCONDITIONALLY
+	# (it was an `assert`, stripped under `-O`/PYTHONOPTIMIZE — turning the
+	# violation into a confusing 'NoneType' has no attribute 'iloc'). A fresh
+	# handle (never repopulated) must raise RuntimeError on __getitem__, not
+	# AttributeError. `__len__` stays 0 (covered separately); this locks the
+	# `[idx]` guard.
+	handle = IndicatorHandle(SMA, "close", (50,))
+	with pytest.raises(RuntimeError):
+		_ = handle[-1]

@@ -12,6 +12,9 @@ The 2nd arg accepts a scalar (``crossover(macd_hist, 0)``) broadcast as
 ``b[-1] == b[-2] == scalar``. TAB-indented (D-05 / plan instruction).
 """
 
+import numpy as np
+import pytest
+
 from itrader.strategy_handler.primitives import (
 	crossover,
 	crossunder,
@@ -149,3 +152,29 @@ def test_macd_hist_sell_trigger_mirrors_sma_macd():
 	# SMA_MACD SELL: MACDhist[-1] <= 0 and MACDhist[-2] > 0 -> crossunder(hist, 0)
 	macd_hist = _series([0.3, 0.0])
 	assert crossunder(macd_hist, 0) is True
+
+
+# --- runtime-hardening regression locks (iter-2 WR-02) ---------------------
+# These lock the iteration-1 source fixes in `_at` so a future refactor cannot
+# silently revert them with the suite still green.
+
+def test_crossover_rejects_bool_threshold():
+	# WR-03 (orig): `bool` subclasses `int` (and is a numbers.Number), so a
+	# `True`/`False` threshold would otherwise be silently coerced to 1.0/0.0 —
+	# almost certainly an author error (a comparison result passed as a level).
+	# `_at` must reject it loudly with TypeError BEFORE the scalar check.
+	with pytest.raises(TypeError):
+		crossover(_series([1.0, 2.0]), True)
+	with pytest.raises(TypeError):
+		crossunder(_series([2.0, 1.0]), False)
+
+
+def test_crossover_numpy_scalar_threshold_broadcasts():
+	# WR-02 (orig): a numpy scalar (np.float64/np.int64, the common
+	# series.mean() / arr[i] producer) is a numbers.Number, so `_at` treats it
+	# as a broadcast scalar (b[-1] == b[-2] == scalar) — NOT the positional
+	# index path. crossover([-1, 1], np.float64(0.0)) crosses 0.0.
+	assert crossover(_series([-1.0, 1.0]), np.float64(0.0)) is True
+	assert crossover(_series([-1.0, 1.0]), np.int64(0)) is True
+	# A numpy scalar threshold that is NOT crossed stays False.
+	assert crossover(_series([0.1, 0.2]), np.float64(0.0)) is False
