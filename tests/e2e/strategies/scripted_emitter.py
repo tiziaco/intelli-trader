@@ -41,8 +41,6 @@ exit). Indentation: 4 spaces (matches ``tests/conftest.py``).
 
 from decimal import Decimal
 
-import pandas as pd
-
 from itrader.core.enums.order import OrderType
 from itrader.core.sizing import (
     FractionOfCash,
@@ -114,8 +112,11 @@ class ScriptedEmitter(Strategy):
         )
         self.script = script
 
-    def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
-        if bars.empty:
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
+        # D-06: bars dropped — evaluate() stashed the window on self.bars. This
+        # fixture registers no indicators, so evaluate's repopulate loop is a
+        # no-op (Pitfall 6); the date-keyed script logic is unchanged.
+        if self.bars.empty:
             return None
         # D-04: key off the CURRENT (decision) bar's date, not len(bars).
         # WR-03: anchor the date key to a FIXED frame (UTC), independent of the
@@ -124,7 +125,7 @@ class ScriptedEmitter(Strategy):
         # back to UTC here keeps the emitter's date key and the operator hook's key
         # in the same frame so scripted firings and operator actions agree on a
         # boundary-safe date independent of the config default.
-        decision_date = bars.index[-1].tz_convert("UTC").strftime("%Y-%m-%d")
+        decision_date = self.bars.index[-1].tz_convert("UTC").strftime("%Y-%m-%d")
         action = self.script.get(decision_date)
         if action is None:
             return None

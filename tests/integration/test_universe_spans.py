@@ -97,7 +97,11 @@ class BuyEachTickerOnce(Strategy):
         )
         self._bought: set[str] = set()
 
-    def generate_signal(self, ticker: str, bars: pd.DataFrame) -> SignalIntent | None:
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
+        # D-06: bars dropped (active-path fixture driven via system.run()) — the
+        # handler now dispatches through evaluate(ticker, data). Registers no
+        # indicators, so evaluate's repopulate loop is a no-op (Pitfall 6); the
+        # body never read bars (only self._bought), so this is signature-only.
         # The handler only calls this when a bar for ``ticker`` exists at T
         # (sparse-dict guard), so the first call is the ticker's first delivered
         # bar — i.e. on/after its listing date, never before.
