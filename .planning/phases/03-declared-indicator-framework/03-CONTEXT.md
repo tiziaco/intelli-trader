@@ -81,11 +81,26 @@ built in Phase 2.
   exposes a `min_period(params)` so the base auto-derives warmup. Extensible (new indicators
   behind the same interface) and strategy-decoupled (a future indicator-based SL/TP can consume
   the same recipe).
-- **D-05:** **Split module layout:** a new `itrader/strategy_handler/indicators.py` holds the
-  adapter catalog; the free-function primitives (`crossover`/`crossunder`/`is_above`/`is_below`)
-  live in a **sibling** module (name Claude's discretion — `primitives.py` recommended; avoid
-  `signals.py`, which collides with `SignalEvent`/`SignalIntent`). Both under `strategy_handler/`,
-  **tab** indentation. Two imports for authors (recipes vs comparisons).
+- **D-05:** **Package module layout (amended 2026-06-12).** A new `itrader/strategy_handler/indicators/`
+  **package** holds the adapter catalog **and** the handle wrapper — matching the codebase's
+  established pluggable-catalog convention (`execution_handler/fee_model/`, `slippage_model/`,
+  `exchanges/` are all folder packages, not flat files):
+  - `indicators/__init__.py` — barrel re-exporting the adapter symbols (`SMA`/`MACDHist`/`EMA`/`RSI`)
+    and `IndicatorHandle`, so authors do `from itrader.strategy_handler.indicators import SMA, MACDHist`.
+  - `indicators/catalog.py` — the four typed adapters.
+  - `indicators/handle.py` — `IndicatorHandle` (moved **out of** `base.py`; it belongs to the
+    indicator subsystem, not the `Strategy` ABC). Optionally also the `IndicatorAdapter` Protocol.
+
+  The free-function primitives (`crossover`/`crossunder`/`is_above`/`is_below`) live in a **flat
+  sibling** module `primitives.py` — they are a handful of pure free functions (the `core/sizing.py`
+  free-function-module analog), **not** a catalog, so they stay a flat file, not a package (avoid
+  `signals.py`, which collides with `SignalEvent`/`SignalIntent`). All under `strategy_handler/`,
+  **tab** indentation. Two imports for authors (recipes from `indicators`, comparisons from
+  `primitives`). `base.py` imports `IndicatorHandle` + adapter symbols from the `indicators` package
+  (one-directional `base → indicators`; no cycle).
+  *(Supersedes the original flat-`indicators.py` + `IndicatorHandle`-in-`base.py` form. The
+  catalog-is-a-folder shape is more consistent with the codebase's other typed-model catalogs and
+  keeps `base.py` to the `Strategy` ABC.)*
 
 ### generate_signal signature & per-tick context
 - **D-06:** `generate_signal(self, ticker)` — **the `bars` parameter is dropped.** Before each
@@ -172,7 +187,8 @@ built in Phase 2.
   still captures the (now auto-derived) `max_window`/`warmup`.
 - `tests/e2e/strategies/scripted_emitter.py`, `tests/e2e/strategies/single_market_buy.py` — e2e
   fixture strategies; `generate_signal` signature migrates (byte-exact, **e2e 58/58**).
-- NEW: `itrader/strategy_handler/indicators.py` (catalog) + sibling primitives module.
+- NEW: `itrader/strategy_handler/indicators/` package (`__init__.py` barrel, `catalog.py` adapters,
+  `handle.py` IndicatorHandle) + flat sibling `primitives.py` (D-05 amended — package layout).
 
 ### Conventions (must respect)
 - `CLAUDE.md` — pure-alpha D-12 contract; **tabs** in `strategy_handler/` modules (4 spaces in
