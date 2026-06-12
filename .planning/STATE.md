@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: verifying
-stopped_at: Completed 03-02-PLAN.md
-last_updated: "2026-06-12T15:56:39.817Z"
+status: ready_to_plan
+stopped_at: Phase 03 complete (3/3) — ready to discuss Phase 4
+last_updated: 2026-06-12T16:06:56.696Z
 last_activity: 2026-06-12
 progress:
   total_phases: 9
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 03 — declared-indicator-framework
+**Current focus:** Phase 4 — Composition & Config Interface
 
 ## Current Position
 
-Phase: 03 (declared-indicator-framework) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 4
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-12
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
@@ -84,7 +84,7 @@ surfaces, which is why v1.3 lands first.
 
 **Velocity (v1.2):**
 
-- Total plans completed: 27
+- Total plans completed: 30
 - Average duration: — min
 - Total execution time: 0.0 hours
 
