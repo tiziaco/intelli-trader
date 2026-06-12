@@ -7,7 +7,7 @@ from .exchanges.base import AbstractExchange
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
-from itrader.config import SystemConfig
+from itrader.config import ExchangeConfig, get_exchange_preset
 from itrader.logger import get_itrader_logger
 
 class ExecutionHandler(AbstractExecutionHandler):
@@ -25,17 +25,32 @@ class ExecutionHandler(AbstractExecutionHandler):
 	while maintaining backward compatibility with existing systems.
 	"""
 
-	def __init__(self, global_queue: "Queue[Any]") -> None:
+	def __init__(self, global_queue: "Queue[Any]",
+				exchange_config: Optional[ExchangeConfig] = None) -> None:
 		"""
 		Parameters
 		----------
 		global_queue: `Queue object`
 			The events queue of the trading system
+		exchange_config: `ExchangeConfig`, optional
+			Construction-time exchange configuration threaded to the
+			SimulatedExchange (D-13, COMP-01). When provided the FACTORY has
+			already folded the COMPLETE supported_symbols set
+			(default preset ∪ {BTCUSD} ∪ spec tickers) into
+			``exchange_config.limits.supported_symbols`` — replacement-safe so a
+			later ``update_config`` re-derivation never wipes a symbol
+			(PATTERNS-A2 Trap 1). When None a TEMPORARY backward-compat default
+			is built that unions ``{BTCUSD}`` into the preset, so the
+			direct-construction oracle/integration sites (still calling
+			``ExecutionHandler(global_queue)`` until Wave 4) keep BTCUSD
+			admitted byte-exactly. Wave 4 (04-05) removes the None fallback once
+			every site migrates to the spec-driven factory.
 		"""
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="ExecutionHandler")
 
 		self.global_queue = global_queue
+		self._exchange_config = exchange_config
 
 		# Determinism seam (D-11): construct a SINGLE seeded random.Random at engine
 		# wiring and inject it into every stochastic component (SimulatedExchange +
@@ -52,14 +67,18 @@ class ExecutionHandler(AbstractExecutionHandler):
 		self.logger.info('Execution Handler initialized (rng_seed=%s)', self._rng_seed)
 
 	def _resolve_rng_seed(self) -> int:
-		"""Resolve the determinism seed from the system config (D-11).
+		"""Resolve the determinism seed from the process-wide config singleton (D-16/W4-06).
 
-		The config registry/provider getters were deleted in the M2-06 collapse
-		(D-01); construct the Pydantic ``SystemConfig`` directly. The documented
-		``PerformanceSettings.rng_seed`` default (42) drives deterministic backtests.
+		Reads ``config.performance.rng_seed`` off the single process-wide
+		``SystemConfig`` initialised in ``itrader/__init__.py`` — NOT a second
+		duplicate ``SystemConfig`` construction (the W4-06 duplication this fix
+		removes). One run-wide determinism setting (default 42); a settings YAML
+		override applies to the singleton, making this read byte-identical or
+		strictly more correct (RESEARCH Trap 3 / A3). Seed stays 42 → the single
+		shared ``random.Random(42)`` is unchanged → byte-exact.
 		"""
-		system_config = SystemConfig.default()
-		return int(system_config.performance.rng_seed)
+		from itrader import config
+		return int(config.performance.rng_seed)
 
 
 	def on_order(self, event: OrderEvent) -> None:
@@ -95,20 +114,25 @@ class ExecutionHandler(AbstractExecutionHandler):
 	def init_exchanges(self) -> dict[str, Optional[AbstractExchange]]:
 		"""
 		Initialize configured exchanges.
-		
+
 		Creates exchange instances using their default configurations.
 		Each exchange manages its own fee models, slippage simulation, etc.
 		"""
+		# D-13/Trap 1: thread the construction-time ExchangeConfig into the
+		# SimulatedExchange so the COMPLETE supported_symbols set is seeded at
+		# construction (replacement-safe) instead of an additive post-construction
+		# register_symbol. When the factory supplies a config it has already folded
+		# default preset ∪ {BTCUSD} ∪ spec tickers into limits.supported_symbols.
+		#
+		# TEMPORARY backward-compat (Wave 4 / 04-05 removes this): when no config is
+		# supplied (direct-construction oracle/integration sites still calling
+		# ExecutionHandler(global_queue)), build a default-preset config that UNIONS
+		# {BTCUSD} so the golden ticker stays admitted byte-exactly — replacing the
+		# removed hardcoded BTCUSD registration without an additive mutation.
+		exchange_config = self._exchange_config or self._default_backcompat_config()
 		# Inject the single seeded Random (D-11) so the exchange + its slippage
 		# model share one deterministic RNG instance for the whole backtest run.
-		simulated = SimulatedExchange(self.global_queue, rng=self._rng)
-		# The golden backtest trades BTCUSD, but the default exchange preset only lists
-		# *USDT symbols. Add BTCUSD to this instance's supported set so validate_symbol
-		# admits the golden ticker for the offline run (DEF-01-B, Plan 01-04). Mutating the
-		# instance set (not the shared preset) keeps other exchanges/tests unaffected.
-		# D-07: routed through the public register_symbol() seam — no direct _supported_symbols
-		# mutation in production code (the set-union is byte-identical to the old line).
-		simulated.register_symbol('BTCUSD')
+		simulated = SimulatedExchange(self.global_queue, config=exchange_config, rng=self._rng)
 		exchanges: dict[str, Optional[AbstractExchange]] = {
 			'simulated': simulated,
 			# Backtest portfolios use exchange="csv" (offline golden feed). Orders carry the
@@ -133,6 +157,22 @@ class ExecutionHandler(AbstractExecutionHandler):
 					self.logger.debug('Exchange %s does not support connection management', exchange_name)
 		
 		return exchanges
+
+	@staticmethod
+	def _default_backcompat_config() -> ExchangeConfig:
+		"""Build the TEMPORARY no-config default exchange config (D-13, Trap 1).
+
+		Reproduces today's direct-construction symbol set byte-exactly: the
+		default preset symbols UNION ``{BTCUSD}`` (the union the removed
+		hardcoded BTCUSD registration used to produce). Seeded at
+		construction so it is replacement-safe — a later ``update_config`` that
+		re-derives ``_supported_symbols`` from ``config.limits`` can never wipe
+		BTCUSD. Wave 4 (04-05) removes this fallback once every construction site
+		passes a spec-derived config through the factory.
+		"""
+		config = get_exchange_preset('default')
+		config.limits.supported_symbols = set(config.limits.supported_symbols) | {'BTCUSD'}
+		return config
 
 	def get_exchange_health(self, exchange_name: Optional[str] = None) -> dict[str, Any]:
 		"""

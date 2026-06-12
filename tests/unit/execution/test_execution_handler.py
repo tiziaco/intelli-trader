@@ -69,3 +69,20 @@ def test_execution_handler_implements_both_hooks(env):
     """The concrete ExecutionHandler satisfies the ABC contract."""
     _queue, execution_handler, _order_event = env
     assert isinstance(execution_handler, AbstractExecutionHandler)
+
+
+def test_no_config_construction_admits_btcusd(env):
+    """TEMPORARY BTCUSD backward-compat fallback (D-13, Trap 1; Wave 4 removes it).
+
+    With NO ``exchange_config`` supplied, ``ExecutionHandler(global_queue)`` must
+    still seed the COMPLETE default-preset ∪ {BTCUSD} set at construction so the
+    direct-construction oracle/integration path (which lost the removed hardcoded
+    ``register_symbol('BTCUSD')`` line) stays byte-exact. Seeding the complete set
+    at construction is replacement-safe: a later ``update_config`` re-derivation
+    can never silently wipe BTCUSD.
+    """
+    _queue, execution_handler, _order_event = env
+    exchange = execution_handler.exchanges['simulated']
+    assert 'BTCUSD' in exchange._supported_symbols
+    # The default preset symbols must remain admitted (the union, not a replacement).
+    assert {'BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'DOTUSDT', 'SOLUSDT'} <= exchange._supported_symbols
