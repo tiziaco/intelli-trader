@@ -23,8 +23,6 @@ from itrader.core.exceptions.portfolio import PortfolioError
 
 from itrader import idgen
 
-TOLERANCE = 1e-3
-
 
 class Portfolio(object):
 	"""

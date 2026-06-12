@@ -8,19 +8,19 @@ imported by BOTH the bracket-assembly path (`_assemble_bracket_and_emit`) AND th
 fill-anchored path (`_create_fill_anchored_children`) so neither admission nor
 reconcile needs a brackets-collaborator ref (D-08).
 
-`_ONE = Decimal("1")` is the module-private constant used ONLY by
-`_bracket_levels`; it travels here with its sole consumer. Decimal end-to-end
-(the policy types enforce string-path constants, Pitfall 1).
+The `ONE` constant used by `_bracket_levels` now lives in `core/money.py` as the
+single canonical public money primitive (D-01/D-03) and is imported here; the
+former module-private copy was removed. Decimal end-to-end (the policy
+types enforce string-path constants, Pitfall 1).
 
-This module mirrors the `core/money.py` shape — a pure-function module plus a
-leading-underscore module-level constant, no class, no state.
+This module mirrors the `core/money.py` shape — a pure-function module, no class,
+no state.
 """
 
 from decimal import Decimal
 from ...core.enums import Side
+from ...core.money import ONE
 from ...core.sizing import SLTPPolicy
-
-_ONE = Decimal("1")
 
 
 def _bracket_levels(policy: SLTPPolicy, anchor: Decimal,
@@ -36,5 +36,5 @@ def _bracket_levels(policy: SLTPPolicy, anchor: Decimal,
 	(the policy types enforce string-path constants, Pitfall 1).
 	"""
 	if action == Side.SELL.value:
-		return anchor * (_ONE + policy.sl_pct), anchor * (_ONE - policy.tp_pct)
-	return anchor * (_ONE - policy.sl_pct), anchor * (_ONE + policy.tp_pct)
+		return anchor * (ONE + policy.sl_pct), anchor * (ONE - policy.tp_pct)
+	return anchor * (ONE - policy.sl_pct), anchor * (ONE + policy.tp_pct)

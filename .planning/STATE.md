@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: planning
-last_updated: "2026-06-12T10:12:12.581Z"
-last_activity: 2026-06-12
+status: ready_to_plan
+last_updated: 2026-06-12T11:21:24.082Z
+last_activity: 2026-06-12 -- Phase 01 execution started
 progress:
   total_phases: 6
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 17
+stopped_at: Phase 01 complete (1/1) — ready to discuss Phase 2 (Strategy Authoring Surface)
 ---
 
 # Project State
@@ -20,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** v1.3 Engine Surface Completion (Phases 1-6, numbering reset; promotes Backlog 999.5). Roadmap created; plan Phase 1 (Engine Hygiene) with `/gsd:plan-phase 1`.
+**Current focus:** Phase 2 — Strategy Authoring Surface
 
 ## Current Position
 
-Phase: 1 — Engine Hygiene (not started — roadmap created, awaiting planning)
-Plan: —
-Status: Roadmap created; ready to plan Phase 1
-Last activity: 2026-06-12 — v1.3 roadmap created, all 10 requirements mapped to 6 phases
+Phase: 2
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-12
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -53,6 +54,7 @@ clean and determinism double-run byte-identical still hold.
   touched **once** under a single re-baseline + cross-validation, not twice. The idempotent
   release-on-every-terminal-reconciliation invariant must hold (EXECUTED→FILLED, CANCELLED→CANCELLED,
   REFUSED→REJECTED).
+
 - **Re-baseline separation:** owner-gated (result-changing) and byte-exact requirements are kept in
   SEPARATE phases so a byte-exact phase's golden gate is a clean pass/fail and each result-changing
   phase owns its re-baseline.
@@ -82,7 +84,7 @@ surfaces, which is why v1.3 lands first.
 
 **Velocity (v1.2):**
 
-- Total plans completed: 23
+- Total plans completed: 24
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -168,8 +170,8 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12 — v1.3 roadmap created
-Resume file: None
+Last session: 2026-06-12T10:42:10.905Z
+Resume file: .planning/phases/01-engine-hygiene/01-CONTEXT.md
 
 ## Operator Next Steps
 

@@ -42,6 +42,7 @@ from decimal import Decimal
 
 from itrader.core.enums import Side, TradingDirection
 from itrader.core.exceptions import SizingPolicyViolation
+from itrader.core.money import ONE
 
 __all__ = [
     "FixedQuantity",
@@ -56,7 +57,6 @@ __all__ = [
 ]
 
 _ZERO = Decimal("0")
-_ONE = Decimal("1")
 
 
 def _require_positive(kind: str, field: str, value: Decimal) -> None:
@@ -69,7 +69,7 @@ def _require_positive(kind: str, field: str, value: Decimal) -> None:
 
 def _require_unit_interval(kind: str, field: str, value: Decimal) -> None:
     """D-06 fail-loud: ``value`` must lie in (0, 1]."""
-    if not (_ZERO < value <= _ONE):
+    if not (_ZERO < value <= ONE):
         raise SizingPolicyViolation(
             f"{kind}.{field} must be in (0, 1]: got {value!r}"
         )

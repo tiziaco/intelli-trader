@@ -1,10 +1,20 @@
 """
 Validation utilities for portfolio handler components.
+
+NOTE (WR-02): this module is a NOT-YET-WIRED seam. ``PortfolioValidator`` and
+``PositionValidator`` currently have zero importers across ``itrader/`` and
+``tests/`` — every method here is unreachable on the live run path. It is kept
+as a planned future validation seam, not dead-stripped, per HYG-01's strict
+no-deletion scope (D-07). Be aware that the module mixes a Decimal-strict
+``validate_transaction_data`` (retyped this phase) with still-``float``-typed
+siblings (``validate_portfolio_data(cash: float)``, ``PositionValidator``,
+``to_decimal``); the inconsistency is deliberate-by-scope, not an oversight —
+a uniform retype is deferred until the seam is actually wired in. Do not assume
+this module is live when reading it.
 """
 
 import decimal
 from typing import Union, Optional
-from datetime import datetime
 
 from itrader.core.exceptions import InvalidTransactionError, PortfolioError
 from itrader.core.ids import TransactionId
@@ -13,15 +23,21 @@ from itrader.core.ids import TransactionId
 DECIMAL_PRECISION = decimal.Decimal('0.00000001')  # 8 decimal places for crypto
 MIN_CASH_BALANCE = decimal.Decimal('0.00')
 
+# IN-03 — named Decimal sanity bounds so the upper-bound checks compare
+# Decimal-against-Decimal and the thresholds are documented rather than bare
+# int magic numbers inside the (Decimal-strict) validate_transaction_data.
+_MAX_REASONABLE_PRICE = decimal.Decimal('1000000')     # $1M per unit
+_MAX_REASONABLE_QUANTITY = decimal.Decimal('1000000')  # 1M units
+
 class PortfolioValidator:
     """Validates portfolio operations and data integrity."""
     
     @staticmethod
     def validate_transaction_data(
-        ticker: str, 
-        price: float, 
-        quantity: float, 
-        commission: float,
+        ticker: str,
+        price: decimal.Decimal,
+        quantity: decimal.Decimal,
+        commission: decimal.Decimal,
         transaction_type: str
     ) -> None:
         """
@@ -33,23 +49,28 @@ class PortfolioValidator:
         if not ticker or not isinstance(ticker, str):
             raise InvalidTransactionError("Ticker must be a non-empty string")
         
-        if not isinstance(price, (int, float)) or price <= 0:
-            raise InvalidTransactionError(f"Price must be positive, got {price}")
-        
-        if not isinstance(quantity, (int, float)) or quantity <= 0:
-            raise InvalidTransactionError(f"Quantity must be positive, got {quantity}")
-        
-        if not isinstance(commission, (int, float)) or commission < 0:
-            raise InvalidTransactionError(f"Commission must be non-negative, got {commission}")
+        # NOTE (WR-01): the isinstance guards below are intentionally
+        # strict-Decimal-only — plain int/float are rejected by design.
+        # Money is Decimal end-to-end (HYG-01 success-criterion #2); callers
+        # must enter the Decimal domain via to_money() before validation.
+        # Do NOT re-widen these to accept (int, float).
+        if not isinstance(price, decimal.Decimal) or price <= 0:
+            raise InvalidTransactionError(f"Price must be a positive Decimal, got {price!r}")
+
+        if not isinstance(quantity, decimal.Decimal) or quantity <= 0:
+            raise InvalidTransactionError(f"Quantity must be a positive Decimal, got {quantity!r}")
+
+        if not isinstance(commission, decimal.Decimal) or commission < 0:
+            raise InvalidTransactionError(f"Commission must be a non-negative Decimal, got {commission!r}")
         
         if transaction_type not in ['BUY', 'SELL']:
             raise InvalidTransactionError(f"Invalid transaction type: {transaction_type}")
         
         # Check for reasonable limits
-        if price > 1_000_000:  # $1M per unit seems unreasonable
+        if price > _MAX_REASONABLE_PRICE:
             raise InvalidTransactionError(f"Price {price} seems unreasonably high")
-        
-        if quantity > 1_000_000:  # 1M units seems unreasonable
+
+        if quantity > _MAX_REASONABLE_QUANTITY:
             raise InvalidTransactionError(f"Quantity {quantity} seems unreasonably high")
     
     @staticmethod

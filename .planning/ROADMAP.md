@@ -39,7 +39,7 @@ Re-baseline discipline runs per-phase: byte-exact phases (1-4) must hold the v1.
 + BTCUSD oracle (134 trades / `final_equity 46189.87730727451`); owner-gated phases (5-6) re-baseline
 only after explicit owner sign-off + external cross-validation.
 
-- [ ] **Phase 1: Engine Hygiene** — SAFE byte-exact cleanup slice (no run-path touch): private-storage test asserts, stale mypy override, dead float constants, validator retype, three v1.2 Phase-6 review residues.
+- [x] **Phase 1: Engine Hygiene** — SAFE byte-exact cleanup slice (no run-path touch): private-storage test asserts, stale mypy override, dead float constants, validator retype, three v1.2 Phase-6 review residues. (completed 2026-06-12)
 - [ ] **Phase 2: Strategy Authoring Surface** — class-attribute authoring surface replacing the frozen-config + manual field-copy; re-runnable idempotent `init()` hook; reject-unknown-kwargs.
 - [ ] **Phase 3: Declared-Indicator Framework** — declared indicators with auto-derived `warmup`/`max_window`; lazy per-tick recompute; free-function `crossover`/`crossunder`.
 - [ ] **Phase 4: Composition & Config Interface** — engine-level composition API + `OrderConfig`; uniform runtime `update_config` on every handler (consumes Phase 2's re-runnable `init()`).
@@ -57,7 +57,8 @@ only after explicit owner sign-off + external cross-validation.
   2. The stale `screener_event_handler.py` mypy override is gone from `pyproject.toml`, the dead `TOLERANCE = 1e-3` float constant is deleted from `portfolio_handler/portfolio.py`, and `PortfolioValidator.validate_transaction_data` no longer accepts `float` (Decimal-money policy honored).
   3. The three v1.2 Phase-6 review residues are resolved: the dead `StrategyId` import dropped (`order_manager.py:20`), the duplicated `_ONE = Decimal("1")` consolidated or documented (`brackets/levels.py` + `sizing_resolver.py`), and the misleading `TYPE_CHECKING` guard doc softened (`reconcile/reconcile_manager.py`).
   4. The golden master is byte-exact (134 trades / `final_equity 46189.87730727451`), e2e 58/58, full suite green, `mypy --strict` clean — no run-path touch, no golden re-run needed.
-**Plans**: TBD
+**Plans**: 1 plan
+  - [x] 01-01-PLAN.md — All 7 HYG-01 hygiene items (test asserts to public API, stale mypy override, dead TOLERANCE, strict-Decimal validator, _ONE consolidation, reconcile doc; StrategyId verify-only)
 
 ### Phase 2: Strategy Authoring Surface
 **Goal**: A strategy author declares params as real annotated class attributes (no frozen-config subclass, no manual field-copy), overridable at construction, with the base rejecting unknown kwargs loudly — and a re-runnable idempotent `init()` hook that later phases build on.
@@ -177,7 +178,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Engine Hygiene | 0/TBD | Not started | - |
+| 1. Engine Hygiene | 1/1 | Complete   | 2026-06-12 |
 | 2. Strategy Authoring Surface | 0/TBD | Not started | - |
 | 3. Declared-Indicator Framework | 0/TBD | Not started | - |
 | 4. Composition & Config Interface | 0/TBD | Not started | - |
