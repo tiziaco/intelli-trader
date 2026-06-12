@@ -21,9 +21,11 @@ from typing import Any
 
 import pandas as pd
 
+from itrader.reporting.frames import build_equity_curve, build_trade_log
 from itrader.reporting.metrics import (
     cagr,
     compute_returns,
+    format_metrics,
     max_drawdown,
     profit_factor,
     sharpe,
@@ -150,3 +152,52 @@ def build_summary(
         "trade_count": int(len(trades)),
         "total_realised_pnl": total_realised_pnl,
     }
+
+
+def print_metrics_summary(portfolios: Any, logger: Any) -> None:
+    """End-of-run metrics printout lifted from the composition root (W4-07/D-14).
+
+    Relocated VERBATIM from ``BacktestTradingSystem._print_metrics_summary``: for
+    each portfolio, build the run-artifact frames via the pure
+    ``reporting.frames`` builders, compute the D-15 metric set via
+    ``reporting.metrics``, print the ``format_metrics`` block, and emit a
+    structlog summary line. The holder's ``run()`` calls this after the runner
+    finishes. Display ONLY — the engine writes NO files (artifact serialization
+    stays ``scripts/run_backtest.py``'s job). Empty runs are safe: guarded
+    denominators return 0.0 instead of raising.
+
+    The ``portfolio`` objects stay DUCK-TYPED (``name`` / ``total_equity`` plus
+    the frame-builder duck-typing) — zero handler imports (purity contract).
+
+    Parameters
+    ----------
+    portfolios : iterable of Portfolio
+        The active portfolios to summarize, in iteration order.
+    logger : structlog logger
+        Bound logger for the per-portfolio ``Backtest summary`` line.
+    """
+    for portfolio in portfolios:
+        trades = build_trade_log(portfolio)
+        equity_frame = build_equity_curve(portfolio)
+        # astype(float) keeps the empty-run path warning-free (an empty
+        # frame's column is object-dtype); populated frames are float already.
+        equity = equity_frame["total_equity"].astype(float)
+        returns = compute_returns(equity)
+        metrics: dict[str, float] = {
+            "sharpe": sharpe(returns),
+            "sortino": sortino(returns),
+            "cagr": cagr(equity),
+            "max_drawdown": max_drawdown(equity),
+            "profit_factor": profit_factor(trades),
+            "win_rate": win_rate(trades),
+        }
+        print(format_metrics(metrics, title=f"Backtest metrics — {portfolio.name}"))
+        # Decimal->float at the serialization/logging edge: portfolio.total_equity
+        # is Decimal end-to-end (08-01 retype); float() narrows it for the
+        # structlog kwarg only — a presentation edge, never money arithmetic.
+        logger.info(
+            'Backtest summary',
+            portfolio=portfolio.name,
+            final_equity=float(portfolio.total_equity),
+            trade_count=len(trades),
+        )
