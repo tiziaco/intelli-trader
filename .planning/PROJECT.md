@@ -31,6 +31,9 @@ to Phase 1 (matching the v1.1/v1.2 pattern; v1.2 phase dirs archived to `milesto
   `order_type` on the signal contract (`SignalIntent` → `SignalEvent` →
   `Order.new_limit_order`/`new_stop_order`); folds W2-02 (`Order.action`/`_PendingBracket.action`
   `str`→`Side`) and W1-11 (position-snapshot threading); W4-04 validator-overlap doc if touched.
+  **Co-phased with RECON-01** — the `on_fill` reconciliation / `should_release` streamline the v1.2
+  Phase-6 decomposition was built to enable (06-CONTEXT Deferred Ideas) — so the FRAGILE `reconcile/`
+  path is touched once under a single re-baseline + cross-validation, not twice.
   **Owner-gated re-baseline** (result-changing).
 - **(b) System composition/config interface** — promote `ScenarioSpec` to an engine-level
   composition API (declarative multi-strategy/portfolio wiring; faithful construction-time
@@ -157,9 +160,10 @@ clean (172 files); e2e 58/58; full suite 851; 18/18 requirements verified at mil
      v1.3 (Engine Surface Completion) ACTIVE from 2026-06-12 — see REQUIREMENTS.md. -->
 
 **v1.3 — Engine Surface Completion (ACTIVE).** Promotes Backlog Phase 999.5. Requirements are
-defined in `.planning/REQUIREMENTS.md` (SIG-01/SIG-02 signal contract; COMP-01 composition API +
-COMP-02 uniform live `update_config`; IND-01 indicator framework + STRAT-01 authoring surface;
-LIFE-01 order lifecycle/TIF; HYG-01 engine-hygiene slice). v1.0 (45 reqs), v1.1 (51 reqs), and
+defined in `.planning/REQUIREMENTS.md` (SIG-01/02/03 signal contract; RECON-01 on_fill streamline,
+co-phased with SIG-03; COMP-01 composition API + COMP-02 uniform live `update_config`; IND-01
+indicator framework + STRAT-01 authoring surface; LIFE-01 order lifecycle/TIF; HYG-01 engine-hygiene
+slice). v1.0 (45 reqs), v1.1 (51 reqs), and
 v1.2 (18 reqs) shipped and are recorded in the Validated section above and under `milestones/`.
 
 **Following milestone (N+2 — Backlog 999.4):** Margin/liquidation model → shorts (remove the
