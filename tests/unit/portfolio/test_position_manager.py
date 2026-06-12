@@ -59,8 +59,8 @@ def env():
 def test_position_manager_initialization(env):
     """Test PositionManager initialization."""
     pm = env.position_manager
-    assert len(pm._storage.get_positions()) == 0
-    assert len(pm._storage.get_closed_positions()) == 0
+    assert len(pm.get_all_positions()) == 0
+    assert len(pm.get_closed_positions()) == 0
     assert pm.max_total_positions == 100
     assert pm.max_position_value == Decimal("1000000.00")
 
@@ -76,8 +76,8 @@ def test_create_new_position_buy(env):
     assert position.net_quantity == 1.0
     assert position.avg_price == 50025.0  # Price + commission per unit
 
-    assert len(pm._storage.get_positions()) == 1
-    assert "BTCUSDT" in pm._storage.get_positions()
+    assert len(pm.get_all_positions()) == 1
+    assert "BTCUSDT" in pm.get_all_positions()
 
 
 def test_create_new_position_sell(env):
@@ -115,7 +115,7 @@ def test_update_existing_position(env):
     # net_quantity is Decimal end-to-end (M2a); add Decimal, not float.
     assert updated_position.net_quantity == initial_quantity + Decimal("0.5")
 
-    assert len(pm._storage.get_positions()) == 1
+    assert len(pm.get_all_positions()) == 1
 
 
 def test_close_position_exact_match(env):
@@ -132,8 +132,8 @@ def test_close_position_exact_match(env):
     position = pm.process_position_update(close_transaction)
 
     assert not position.is_open
-    assert len(pm._storage.get_positions()) == 0
-    assert len(pm._storage.get_closed_positions()) == 1
+    assert len(pm.get_all_positions()) == 0
+    assert len(pm.get_closed_positions()) == 1
 
 
 def test_partial_position_close(env):
@@ -145,8 +145,8 @@ def test_partial_position_close(env):
 
     assert position.is_open
     assert position.net_quantity == 0.5  # 1.0 - 0.5
-    assert len(pm._storage.get_positions()) == 1
-    assert len(pm._storage.get_closed_positions()) == 0
+    assert len(pm.get_all_positions()) == 1
+    assert len(pm.get_closed_positions()) == 0
 
 
 def test_position_value_limits(env):
@@ -351,15 +351,15 @@ def test_close_all_positions(env):
         )
         pm.process_position_update(transaction)
 
-    assert len(pm._storage.get_positions()) == 3
+    assert len(pm.get_all_positions()) == 3
 
     current_prices = {"BTCUSDT": 52000.0, "ETHUSDT": 3200.0, "ADAUSDT": 1.1}
 
     closed_positions = pm.close_all_positions(current_prices, datetime.now())
 
     assert len(closed_positions) == 3
-    assert len(pm._storage.get_positions()) == 0
-    assert len(pm._storage.get_closed_positions()) == 3
+    assert len(pm.get_all_positions()) == 0
+    assert len(pm.get_closed_positions()) == 3
 
 
 def test_concurrent_position_updates(env):
@@ -390,7 +390,7 @@ def test_concurrent_position_updates(env):
 
     assert len(errors) == 0, f"Concurrent update errors: {errors}"
     assert len(results) == 10
-    assert len(pm._storage.get_positions()) == 10
+    assert len(pm.get_all_positions()) == 10
 
 
 def test_concurrent_same_ticker_updates(env):
@@ -423,7 +423,7 @@ def test_concurrent_same_ticker_updates(env):
     assert len(results) == 5
 
     # Should have only one position for the ticker
-    assert len(pm._storage.get_positions()) == 1
+    assert len(pm.get_all_positions()) == 1
 
     # Position should have accumulated quantity
     position = pm.get_position("TESTTICKER")
