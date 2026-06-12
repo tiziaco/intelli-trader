@@ -1,16 +1,31 @@
 from abc import ABC, abstractmethod
 from decimal import Decimal
-from typing import Any
+from datetime import timedelta
+from enum import Enum
+from typing import Any, cast, get_type_hints
 
 import pandas as pd
 
-from itrader.core.enums import OrderType, Side
+from itrader.core.enums import OrderType, Side, Timeframe
+from itrader.core.exceptions.strategy import UnknownParamError, MissingParamError
 from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.money import to_money
 from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingDirection
 from itrader.outils.time_parser import to_timedelta
-from itrader.config import BaseStrategyConfig
 from itrader import idgen
+
+# D-07: sentinel distinguishing a bare (required) annotation — a class attr
+# with NO value — from a class attr whose default happens to be None.
+_MISSING = object()
+
+# D-08: ONLY these three engine fields coerce a str off their annotation to an
+# enum (via the enum's case-insensitive _missing_). Every other knob is left as
+# supplied — e.g. short_window="50" stays a str, never silently int()-ed.
+_COERCE: dict[str, type[Enum]] = {
+	"timeframe": Timeframe,
+	"order_type": OrderType,
+	"direction": TradingDirection,
+}
 
 class Strategy(ABC):
 	"""
@@ -18,66 +33,132 @@ class Strategy(ABC):
 
 	A concrete strategy is a pure function of market data: it implements
 	``generate_signal(ticker, bars) -> SignalIntent | None`` and DECLARES
-	its sizing policy, trading direction, and admission settings at
-	construction (D-01/D-03/D-08/D-10). It never touches the events queue,
-	never stamps time or price, and never knows anything portfolio-shaped —
-	``StrategiesHandler`` owns stamping, policy attachment, per-portfolio
-	fan-out, and enqueueing (the #24 boundary).
+	its sizing policy, trading direction, and admission settings as CLASS
+	ATTRIBUTES (D-02/D-06); the base introspects its own + the subclass's
+	annotations and applies ``**kwargs`` over them, coercing the three enum
+	fields and rejecting unknown/missing-required loudly (D-06/D-07/D-08).
+	It never touches the events queue, never stamps time or price, and never
+	knows anything portfolio-shaped — ``StrategiesHandler`` owns stamping,
+	policy attachment, per-portfolio fan-out, and enqueueing (the #24 boundary).
 	"""
-	def __init__(self, name: str, config: BaseStrategyConfig) -> None:
-		# D-01: single config object is the source of truth. The strategy
-		# DECLARES its engine-facing settings as a frozen pydantic config;
-		# the base reads them onto the instance for the engine to query.
-		self.config: BaseStrategyConfig = config
+
+	# Base-owned engine-facing names. A BARE annotation (no value) marks a
+	# REQUIRED param (D-07): timeframe / tickers / sizing_policy must be either
+	# pinned by a subclass class-attr or passed as a kwarg, else MissingParamError.
+	# Pitfall 1: the kwarg arrives as a "1d" str / Timeframe enum (coerced by
+	# _COERCE), but the RESOLVED runtime value on self.timeframe is a timedelta
+	# (consumed by check_timeframe / min_timeframe and SMA's
+	# `last_time - self.timeframe * self.short_window`). The annotation reflects
+	# the resolved consumer type; the bare annotation (no value) still marks it
+	# REQUIRED for get_type_hints-driven detection (D-07).
+	timeframe: timedelta          # required — no class-attr value
+	tickers: list[str]            # required
+	sizing_policy: SizingPolicy   # required
+	order_type = OrderType.MARKET
+	direction = TradingDirection.LONG_ONLY
+	allow_increase = False
+	max_positions = 1
+	sltp_policy: SLTPPolicy | None = None
+	max_window: int = 0
+	warmup: int = 0
+	name: str = "strategy"        # D-03 discretion: default name (a subclass pins it)
+
+	def __init__(self, **kwargs: Any) -> None:
+		# WR-01: portfolio-id handle is opaque (PortfolioId | int) — the
+		# fan-out never resolves a portfolio object here, so both shapes are
+		# legal. Mint a fresh UUIDv7 strategy_id per construction (KEEP).
 		self.strategy_id: StrategyId = StrategyId(idgen.generate_strategy_id())
-		self.name = name
 		self.is_active = True
-		# D-06: Timeframe is an enum on the config — pass its .value alias to
-		# the legacy string-based to_timedelta converter.
-		self.timeframe = to_timedelta(config.timeframe.value)
-		self.tickers = config.tickers
-		# D-04 / HARD-03: order_type is the OrderType ENUM end-to-end, read
-		# straight off the config — the old stringly-typed seam is gone.
-		self.order_type: OrderType = config.order_type
-		# The handler reads this for per-portfolio fan-out — the strategy
-		# itself never iterates it (D-12).
-		# WR-01 (re-review #2): the strategy layer carries a DUAL-HANDLE
-		# portfolio id. Tests / oracle / canaries address portfolios by plain
-		# int (`_PORTFOLIO_A = 1`), while the real run path
-		# (scripts/run_backtest.py) subscribes the UUID PortfolioId that
-		# PortfolioHandler.add_portfolio returns. The fan-out only needs an
-		# opaque, hashable handle — it never resolves a portfolio object here —
-		# so both shapes are legal. The seam is typed `PortfolioId | int` (the
-		# same union order.py:55 / order_manager.py:51 already use) so the
-		# declaration stops lying about the production UUID path and a future
-		# int-assuming consumer (indexing / arithmetic) is caught at the gate.
 		self.subscribed_portfolios: list[PortfolioId | int] = []
-		# Typed declarations (D-01/D-08/D-10): the strategy DECLARES, the
-		# engine resolves. sizing_policy is REQUIRED — no default, honest
-		# contract (the old max_allocation float kwarg is dead).
-		self.sizing_policy: SizingPolicy = config.sizing_policy
-		self.direction: TradingDirection = config.direction
-		self.allow_increase = config.allow_increase
-		self.max_positions = config.max_positions
-		# WR-06: typed declaration seam for the engine-side SLTP feature (D-13).
-		# Previously the handler reached this via getattr(strategy,
-		# 'sltp_policy', None) — a stringly-typed hole mypy could not check and
-		# a typo silently turned into "no policy". Now it is read off the typed
-		# config. None means the strategy declares no policy (the golden path).
-		self.sltp_policy: SLTPPolicy | None = config.sltp_policy
-		# MUTABLE runtime state stays on the instance, NEVER on the frozen
-		# config (RESEARCH Pitfall 2).
-		# Fetch width (bars) a concrete strategy needs available in its window.
-		# Concrete strategies (e.g. SMA_MACD) override this in their __init__.
-		self.max_window: int = 0
-		# D-15: minimum completed bars required before the framework invokes
-		# generate_signal — a DEDICATED warmup threshold, distinct from
-		# max_window (fetch width). The handler short-circuits on this. Default
-		# 0 means no warmup gating; SMA_MACD overrides it to its indicator
-		# warmup. Disambiguating warmup from max_window preserves both the
-		# SMA byte-exact firing tick (HARD-04) and count-based canaries that
-		# need a wide max_window but no warmup gate.
-		self.warmup: int = 0
+		# D-06/D-07/D-08: required/unknown detection + enum coercion + setattr.
+		self._apply_params(**kwargs)
+		# D-09: cross-field validation hook (no-op by default).
+		self.validate()
+		# D-10: idempotent lifecycle hook (no-op by default).
+		self.init()
+
+	def _apply_params(self, **kwargs: Any) -> None:
+		"""Apply ``**kwargs`` over the declared class-attr surface (D-06/D-07/D-08).
+
+		``get_type_hints(type(self))`` merges the full MRO so the base-owned
+		names and the subclass's params are introspected together. For each
+		declared name: take the kwarg if present, else the class-attr default;
+		a bare annotation with no default (``_MISSING``) is a required param and
+		raises ``MissingParamError``. The three ``_COERCE`` enum fields coerce a
+		str off their annotation (the enum's ``_missing_``); any leftover kwarg
+		is an unknown param and raises ``UnknownParamError`` (loud rejection, no
+		silent drop — T-02-01/T-02-02/T-02-04).
+		"""
+		# Record whether the caller supplied a `timeframe` kwarg BEFORE the loop
+		# pops it (RESEARCH Open Question 1 — the reconfigure fallback order).
+		timeframe_supplied = "timeframe" in kwargs
+		hints = get_type_hints(type(self))
+		for nm in hints:
+			default = getattr(type(self), nm, _MISSING)
+			if nm in kwargs:
+				val = kwargs.pop(nm)
+			elif default is not _MISSING:
+				val = default
+			else:
+				raise MissingParamError(nm)
+			coerce = _COERCE.get(nm)
+			if coerce is not None and not isinstance(val, coerce):
+				val = coerce(val)  # enum _missing_ (str -> enum); raises on bogus
+			setattr(self, nm, val)
+		if kwargs:
+			raise UnknownParamError(sorted(kwargs))
+		# Pitfall 1 (the #1 oracle trap): self.timeframe is consumed as a
+		# TIMEDELTA by check_timeframe / min_timeframe and SMA's
+		# `last_time - self.timeframe * self.short_window`. The coerced
+		# Timeframe enum was just setattr'd onto self.timeframe by the loop —
+		# stash it on a stable instance attr, then resolve BOTH the timedelta
+		# and the serialization alias on EVERY pass. On a reconfigure with no
+		# `timeframe` kwarg the loop already restored the enum from the class
+		# default; per RESEARCH Open Question 1 we re-read the INSTANCE enum
+		# stashed below (not the class attr) so a partial reconfigure keeps the
+		# prior timeframe.
+		if timeframe_supplied:
+			# A `timeframe` kwarg arrived: the loop placed the coerced Timeframe
+			# enum on self.timeframe (the annotation says timedelta, but at this
+			# point the value is still the enum) — stash it as the instance enum.
+			self._timeframe: Timeframe = cast(Timeframe, self.timeframe)
+		else:
+			# Reconfigure with no timeframe kwarg: fall back to the prior
+			# INSTANCE enum (not the class attr), keeping the prior timeframe.
+			# On first construction with no kwarg, the loop applied the class
+			# default (a Timeframe enum or a required miss already raised).
+			self._timeframe = getattr(self, "_timeframe", cast(Timeframe, self.timeframe))
+		self.timeframe_alias: str = self._timeframe.value
+		# Resolve the enum to the timedelta the engine consumers read.
+		self.timeframe = to_timedelta(self._timeframe.value)
+
+	def validate(self) -> None:
+		"""Overridable cross-field validation hook (D-09).
+
+		Run after ``_apply_params`` (kwargs applied + enums coerced) on every
+		construction and reconfigure. No-op by default; ``SMAMACDStrategy``
+		expresses ``short_window < long_window`` through it.
+		"""
+		...
+
+	def init(self) -> None:
+		"""Overridable idempotent lifecycle hook (D-10/D-11).
+
+		Called at the end of construction and on every ``reconfigure``. No-op by
+		default; calling it twice leaves identical state.
+		"""
+		...
+
+	def reconfigure(self, **kwargs: Any) -> None:
+		"""Re-apply + re-coerce kwargs, re-validate, re-run init() (D-12/D-13).
+
+		Single-strategy-scope reconfiguration replacing the dropped frozen-config
+		mutation guard. No ``__setattr__`` guard exists (D-13) — sanctioned
+		reconfiguration goes through here so validate() + init() always re-run.
+		"""
+		self._apply_params(**kwargs)
+		self.validate()
+		self.init()
 
 	def to_dict(self) -> dict[str, Any]:
 		return {
@@ -110,8 +191,9 @@ class Strategy(ABC):
 
 	def __str__(self) -> str:
 		# D-14: generalize the per-strategy shape (was f'{self.name}_{self.timeframe}'
-		# on SMA_MACD) onto the base. Use the stable config timeframe alias.
-		return f'{self.name}_{self.config.timeframe.value}'
+		# on SMA_MACD) onto the base. Pitfall 5: read the stashed serialization
+		# alias (self.timeframe is now a timedelta), NOT self.config (deleted).
+		return f'{self.name}_{self.timeframe_alias}'
 
 	def __repr__(self) -> str:
 		return str(self)
