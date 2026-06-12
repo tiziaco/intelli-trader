@@ -23,7 +23,8 @@ the ``ta`` compute domain's ``float64``, NOT money (do NOT route them through
 ``to_money``).
 """
 
-from typing import Any
+import numbers
+from typing import Any, cast
 
 __all__ = [
 	"crossover",
@@ -35,8 +36,22 @@ __all__ = [
 
 def _at(series_or_scalar: Any, idx: int) -> float:
 	"""D-02 scalar broadcast: a scalar reads as ``b[-1] == b[-2] == scalar``."""
-	if isinstance(series_or_scalar, (int, float)):
-		return float(series_or_scalar)
+	# WR-03: reject `bool` BEFORE the scalar check. `bool` subclasses `int`
+	# (and is a `numbers.Number`), so `crossover(hist, True)` would otherwise be
+	# silently coerced to the scalar `1.0` — almost certainly an author error
+	# (a comparison result passed where a level was meant). Fail loudly instead.
+	if isinstance(series_or_scalar, bool):
+		raise TypeError("bool is not a valid scalar threshold; pass a numeric level")
+	# WR-02: detect scalars via `numbers.Number` (covers numpy scalars like
+	# numpy.float64/numpy.int64 produced by np.array(...)[i] / series.mean()),
+	# not a native int/float whitelist. A pandas Series / list-backed
+	# IndicatorHandle is NOT a numbers.Number, so it correctly takes the
+	# positional-index path; the reference literal `0` stays scalar.
+	if isinstance(series_or_scalar, numbers.Number):
+		# `numbers.Number` is not statically known to be float-convertible, but
+		# every concrete numeric (int/float/numpy scalar) supports float() — cast
+		# at the conversion edge so mypy --strict stays clean (WR-02).
+		return float(cast(Any, series_or_scalar))
 	return float(series_or_scalar[idx])
 
 
