@@ -52,7 +52,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   re-init seam), a new **`OrderConfig`** model threaded into `OrderManager` (no more loose
   stringly-typed ctor params), and a formalized `csv_paths` passthrough. Folds composition-root
   cleanups W4-02/03/05/06/07. *Byte-exact.* [999.5-(b), SYN-05]
-- [ ] **COMP-02**: **Every** handler/manager exposes a uniform runtime **`update_config`** with one
+- [x] **COMP-02**: **Every** handler/manager exposes a uniform runtime **`update_config`** with one
   consistent signature (merge → `model_validate` → atomic-swap; unified return/error contract):
   `OrderHandler`/`OrderManager`, `StrategiesHandler`, `ExecutionHandler`, `PortfolioHandler`,
   `SimulatedExchange`, `BacktestBarFeed`. Config can be changed at runtime in a **live scenario** —
@@ -140,7 +140,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | STRAT-01 | Phase 2 — Strategy Authoring Surface | Complete |
 | IND-01 | Phase 3 — Declared-Indicator Framework | Complete |
 | COMP-01 | Phase 4 — Composition & Config Interface | Complete |
-| COMP-02 | Phase 4 — Composition & Config Interface | Pending |
+| COMP-02 | Phase 4 — Composition & Config Interface | Complete |
 | SIG-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
 | SIG-02 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
 | SIG-03 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |

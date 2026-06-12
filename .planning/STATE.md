@@ -4,13 +4,13 @@ milestone: v1.3
 milestone_name: Engine Surface Completion
 status: executing
 stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-06-12T19:44:13.658Z"
+last_updated: "2026-06-12T19:59:03.556Z"
 last_activity: 2026-06-12
 progress:
   total_phases: 9
   completed_phases: 3
   total_plans: 12
-  completed_plans: 9
+  completed_plans: 10
   percent: 33
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface 
 ## Current Position
 
 Phase: 04 (composition-config-interface) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-06-12
 
@@ -120,6 +120,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase 03]: [v1.3 Phase 03 / 03-03]: Byte-exact phase gate LOCKED with ZERO re-baseline — migrated declared-indicator SMAMACDStrategy is byte-exact against the frozen BTCUSD oracle (134 trades / final_equity 46189.87730727451, EXACT, no tolerance via pdt.assert_frame_equal + exact summary-dict). Pitfall 1 (per-indicator SMA slice) + Pitfall 2 (eager-vs-lazy MACD reorder) proven correct — the oracle is the ONLY proof (no SMA_MACD unit test guards the MACD value). Determinism double-run byte-identical; e2e 58/58; full suite 890 green under filterwarnings=[error]; mypy --strict clean (176 files). Both plan tasks were VERIFICATION-ONLY: Task 1 confirmed to_dict()/SignalRecord.config still carries auto-derived max_window/warmup==100 (get_type_hints introspection; signal_record.py NOT edited, no data migration); Task 2 conditional fix-forward scope (indicators/catalog.py SMA slice, handle.py IndicatorHandle, base.py imports) NEVER triggered — steady-state touched no source. Phase 3 declared-indicator framework (Plans 01-03) complete and numerically trustworthy; ROADMAP Success Criterion 4 satisfied.
 - [v1.3 Phase 04 / 04-01]: Three standalone COMP-01 contracts landed (byte-exact-inert, ZERO run-path import — Wave 2 consumes them). **D-15 CommissionEstimator** (`core/commission_estimator.py`, 4 spaces): `@runtime_checkable` Protocol with the primitive `__call__(self, quantity: Decimal, price: Decimal) -> Decimal`, ZERO `itrader` imports (mirrors `portfolio_read_model.py`); structural conformance tested + written append-ready for the Wave-2 (04-02 Task 2) D-15 LATE-BINDING test (post-fee-swap non-zero estimate — adapter doesn't exist yet). **D-05 OrderConfig** (`config/order.py`, 4 spaces): thin Pydantic model, `ConfigDict(extra="forbid")`, `market_execution: MarketExecution = IMMEDIATE`, `default()`. **A1 CONFIRMED TRUE** — pydantic v2 coerces the string `"immediate"` to the `MarketExecution.IMMEDIATE` MEMBER with NO custom validator (Trap 5 coercion-equivalence byte-identical to today's ctor `MarketExecution(market_execution)`); `use_enum_values` deliberately NOT used (would store the str). `MarketExecution` stays in `core/enums/` (config-enum exception). **D-01/D-02 SystemSpec** (`trading_system/system_spec.py`, TABS): `ScenarioSpec`/`PortfolioSpec`/`Action` promoted field-for-field, run-mode-agnostic name (NOT `BacktestSpec`), fields match the e2e harness by name; `actions`+`Action` kept for a single-spec Wave-4 collapse; NOT yet wired into any run path. `mypy --strict` clean 176->179 files; 10 new unit tests green; oracle (134/46189.87730727451) + e2e 58/58 untouched (no run-path touch). COMP-01 remains OPEN (this plan lands only the foundational primitives; the composition-root collapse is Wave 2+).
 - [Phase ?]: [v1.3 Phase 04 / 04-02]: Composition-root collapse landed byte-exact. compose_engine (trading_system/compose.py) is the shared mode-agnostic wiring seam — order_storage + signal_store backends injected by the FACTORY (grep "'backtest'"==0, D-14a). FeeModelCommissionEstimator holds the exchange ref, reads fee_model in __call__ (D-15 late binding); the oracle-dark post-fee-swap non-zero test pins it (swap via the LIVE update_config enum API — string coercion is Wave 3). BacktestRunner owns the fail-fast loop, post-bar record_metrics DIRECT call preserved (Trap 4). TradingSystem renamed BacktestTradingSystem (thin holder) + build_backtest_system(spec) factory (D-04); a TradingSystem alias + legacy __init__ + engine-delegating properties keep oracle/integration/e2e/scripts byte-exact by rename only until Wave 4. D-13/Trap 1: hardcoded register_symbol('BTCUSD') removed; COMPLETE set (default preset ∪ {BTCUSD} ∪ spec tickers) seeded into ExchangeConfig.limits at construction (replacement-safe); TEMPORARY no-config fallback unions {BTCUSD} (asserted, Wave 4 removes it). D-16/Trap 3: _resolve_rng_seed reads config.performance.rng_seed off the singleton (seed 42). OrderConfig threaded + commission_estimator retyped (D-05). print_metrics_summary lifted into reporting/summary.py (W4-07). GATE: oracle 134/46189.87730727451 exact, e2e 58/58, mypy --strict 181 files, full suite 854 green, determinism double-run identical.
+- [Phase ?]: 04-03: canonical update_config(dict)->None on all 5 config-model handlers; shared config/merge.py deep_merge; pydantic ValidationError wrapped into ConfigurationError; oracle-dark byte-exact held
 
 ### Pending Todos
 
@@ -148,6 +149,7 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 | Phase 03 P03 | ~10 min | 2 tasks | 0 files |
 | Phase 04 P01 | 12 | 3 tasks | 5 files |
 | Phase 04 P02 | 35 | 3 tasks | 11 files |
+| Phase 04 P03 | 40min | 3 tasks | 17 files |
 
 ## Bookkeeping
 
@@ -187,7 +189,7 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-12T19:44:13.651Z
+Last session: 2026-06-12T19:58:43.938Z
 Stopped at: Completed 04-02-PLAN.md
 Resume file: None
 
