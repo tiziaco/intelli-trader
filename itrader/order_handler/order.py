@@ -61,6 +61,15 @@ class Order:
 	# WR-03 / D-12: event-derived timestamps, never wall-clock. These are
 	# overwritten in __post_init__ from the order's own (event-derived) time so
 	# construction never leaks a non-deterministic, tz-naive datetime.now().
+	#
+	# IN-05 (init contract): callers OMIT created_at/updated_at — __post_init__
+	# fills each from the order's event-derived `time` while it is still the
+	# default None. The field is typed `datetime` (never None at rest), but the
+	# default is None as the "caller did not supply" sentinel; the
+	# `type: ignore[assignment]` reconciles the declared-non-None type with the
+	# runtime-filled None default. Passing an explicit created_at=None is
+	# therefore indistinguishable from omitting it (both take the event-time
+	# default) — the run path always omits them.
 	created_at: datetime = field(default=None)  # type: ignore[assignment]
 	updated_at: datetime = field(default=None)  # type: ignore[assignment]
 	filled_at: Optional[datetime] = None
