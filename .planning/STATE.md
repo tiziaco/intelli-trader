@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: ready_to_plan
-stopped_at: Phase 05 complete (4/4) — ready to discuss Phase 6
-last_updated: 2026-06-13T13:08:48.439Z
+status: planning
+stopped_at: Phase 6 context gathered
+last_updated: "2026-06-13T16:09:44.891Z"
 last_activity: 2026-06-13
 progress:
   total_phases: 9
@@ -195,9 +195,9 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-13T12:55:00.000Z
-Stopped at: Completed 05-04-PLAN.md (owner-signed LIMIT cross-val golden frozen — all 4 Phase-5 plans complete)
-Resume file: None
+Last session: 2026-06-13T16:09:44.882Z
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-order-lifecycle-time-in-force/06-CONTEXT.md
 
 ## Operator Next Steps
 
