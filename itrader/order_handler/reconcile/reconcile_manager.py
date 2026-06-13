@@ -217,8 +217,15 @@ class ReconcileManager:
 				applied = self._apply_executed(order, fill_event, order_id)
 			elif fill_event.status == FillStatus.CANCELLED:
 				self._apply_cancelled(order)
-			else:  # REFUSED — the only remaining terminal status
+			elif fill_event.status == FillStatus.REFUSED:
 				self._apply_refused(order)
+			else:
+				# Defensive: _classify marked this status terminal but no arm
+				# dispatches it (a future FillStatus added to _classify without a
+				# matching arm here). Fail loud BEFORE should_release is armed so the
+				# reservation stays held — never silently mis-reconcile as REFUSED.
+				raise NotImplementedError(
+					f'terminal fill status {fill_event.status!r} has no reconcile arm')
 			# A terminal status was reached (EXECUTED/CANCELLED/REFUSED): arm the
 			# release before any further work so a raise below still releases.
 			should_release = True
