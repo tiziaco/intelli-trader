@@ -127,6 +127,7 @@ class OrderOperationType(Enum):
 	CREATE_PRIMARY_ORDER = "create_primary_order"
 	CREATE_STOP_LOSS = "create_stop_loss"
 	CREATE_TAKE_PROFIT = "create_take_profit"
+	EXPIRE_ORDER = "expire_order"
 	MODIFY_ORDER = "modify_order"
 	SIGNAL_ADMISSION = "signal_admission"
 	SIGNAL_PROCESSING = "signal_processing"

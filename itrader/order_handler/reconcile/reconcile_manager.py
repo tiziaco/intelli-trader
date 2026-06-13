@@ -94,6 +94,7 @@ class ReconcileManager:
 		- EXECUTED  -> (True,  OrderStatus.FILLED)
 		- CANCELLED -> (True,  OrderStatus.CANCELLED)
 		- REFUSED   -> (True,  OrderStatus.REJECTED)
+		- EXPIRED   -> (True,  OrderStatus.EXPIRED)
 		- anything else (unknown / non-terminal) -> (False, None)
 
 		This is a pure naming aid: it does NOT drive the mirror transition (the
@@ -109,6 +110,8 @@ class ReconcileManager:
 			return True, OrderStatus.CANCELLED
 		if status == FillStatus.REFUSED:
 			return True, OrderStatus.REJECTED
+		if status == FillStatus.EXPIRED:
+			return True, OrderStatus.EXPIRED
 		return False, None
 
 	def _apply_executed(self, order: "Order", fill_event: FillEvent, order_id: Any) -> bool:
@@ -149,6 +152,19 @@ class ReconcileManager:
 	def _apply_refused(order: "Order") -> None:
 		"""REFUSED arm: mark the order REJECTED (exchange rejection)."""
 		order.reject_order("exchange rejection")
+
+	@staticmethod
+	def _apply_expired(order: "Order") -> None:
+		"""EXPIRED arm: mark the order EXPIRED (exchange expiration).
+
+		D-09 LANDMINE: NO custom already-EXPIRED guard. When the run-end sweep
+		already transitioned the mirror locally to EXPIRED, ``expire_order`` here
+		is a silent no-op — ``add_state_change`` returns False on the invalid
+		EXPIRED->EXPIRED transition (``VALID_ORDER_TRANSITIONS[EXPIRED] == []``,
+		order.py:307-309), so idempotency is FREE without a guard. The terminal
+		release still runs in the byte-identical finally; the second release is
+		idempotent (pops nothing)."""
+		order.expire_order("exchange expiration")
 
 	def on_fill(self, fill_event: FillEvent) -> List[OrderEvent]:
 		"""
@@ -219,6 +235,8 @@ class ReconcileManager:
 				self._apply_cancelled(order)
 			elif fill_event.status == FillStatus.REFUSED:
 				self._apply_refused(order)
+			elif fill_event.status == FillStatus.EXPIRED:
+				self._apply_expired(order)
 			else:
 				# Defensive: _classify marked this status terminal but no arm
 				# dispatches it (a future FillStatus added to _classify without a

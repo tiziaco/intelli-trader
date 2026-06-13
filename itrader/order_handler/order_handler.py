@@ -209,9 +209,24 @@ class OrderHandler:
 			for order_event in result.order_events:
 				self.global_queue.put(order_event)
 				self.logger.debug('Order cancellation event sent to execution handler: %s', order_event)
-		
+
 		return result.success
-	
+
+	def expire_all_resting(self) -> None:
+		"""Sweep every active order to EXPIRED at run end (LIFE-01, D-08).
+
+		Thin facade: delegates the time-in-force sweep to OrderManager (the
+		business logic owner) and enqueues each returned OrderEvent(EXPIRE) for
+		the execution handler — mirrors the cancel_order enqueue idiom (D-18: the
+		manager never touches the queue). The exchange clears each resting order
+		through ``on_order``'s EXPIRE arm.
+		"""
+		for result in self.order_manager.expire_all_resting():
+			if result.success and result.order_events:
+				for order_event in result.order_events:
+					self.global_queue.put(order_event)
+					self.logger.debug('Order expiry event sent to execution handler: %s', order_event)
+
 	def get_order_by_id(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None) -> Optional[Order]:
 		"""
 		Get an order by its ID.

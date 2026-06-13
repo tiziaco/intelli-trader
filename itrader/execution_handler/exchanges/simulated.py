@@ -261,6 +261,8 @@ class SimulatedExchange(AbstractExchange):
 		Route an order event by command (D-13: ONE matching path).
 
 		- CANCEL: remove the resting order, emit FILL(CANCELLED).
+		- EXPIRE: remove the resting order, emit FILL(EXPIRED) — the run-end
+		  time-in-force sweep arm, parallel peer of CANCEL (LIFE-01, D-08).
 		- MODIFY: mutate the resting order.
 		- NEW (every order type, MARKET included): run the pre-trade
 		  admission gate (validation, connection, failure simulation —
@@ -279,6 +281,19 @@ class SimulatedExchange(AbstractExchange):
 				# commission Decimal("0") — never settled (D-22).
 				self.global_queue.put(FillEvent.new_fill(
 					'CANCELLED', event, price=event.price, quantity=event.quantity,
+					commission=Decimal("0")))
+			return
+
+		if event.command == OrderCommand.EXPIRE:
+			# LIFE-01 (D-08): the run-end sweep's EXPIRE arm is the parallel peer
+			# of CANCEL — only acknowledge an EXPIRE for an order that was
+			# actually resting; an EXPIRE for an unknown/already-filled order
+			# emits no spurious fill (matching_engine.cancel False guard).
+			if event.order_id is not None and self.matching_engine.cancel(event.order_id):
+				# EXPIRED carries the order's own (Decimal) price/quantity,
+				# commission Decimal("0") — never settled (D-22).
+				self.global_queue.put(FillEvent.new_fill(
+					'EXPIRED', event, price=event.price, quantity=event.quantity,
 					commission=Decimal("0")))
 			return
 
