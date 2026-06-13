@@ -61,6 +61,16 @@ from itrader.strategy_handler.base import Strategy
 # Shared by the iTrader strategy AND the two cross-val engine runners so the
 # offset / cadence / SL-TP / marketable-limit bar cannot drift between engines.
 
+#: The pinned window of the REAL BTCUSD golden CSV the crafted scenario runs on
+#: (small enough that every fill is hand-derivable — see the e2e leaf VERIFY note).
+DATASET = "data/BTCUSD_1d_ohlcv_2018_2026.csv"
+WINDOW_START = "2018-09-01"
+WINDOW_END = "2018-09-20"
+
+#: Starting cash + sizing fraction (the golden FractionOfCash(0.95) policy).
+CASH = Decimal("10000")
+FRACTION = Decimal("0.95")
+
 #: BUY-limit offset below the decision-bar close (D-07: e.g. close * 0.98).
 LIMIT_OFFSET = Decimal("0.98")
 #: Percent stop-loss / take-profit below/above the ENTRY FILL price.
