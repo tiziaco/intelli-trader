@@ -4,8 +4,8 @@ milestone: v1.3
 milestone_name: Engine Surface Completion
 status: executing
 stopped_at: Phase 5 context gathered
-last_updated: "2026-06-13T10:08:15.730Z"
-last_activity: 2026-06-13 -- Phase 05 planning complete
+last_updated: "2026-06-13T12:12:46.275Z"
+last_activity: 2026-06-13 -- Phase 05 execution started
 progress:
   total_phases: 9
   completed_phases: 4
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 5 — Signal Contract & Reconcile (FRAGILE)
+**Current focus:** Phase 05 — signal-contract-reconcile-fragile
 
 ## Current Position
 
-Phase: 5
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-13 -- Phase 05 planning complete
+Phase: 05 (signal-contract-reconcile-fragile) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 05
+Last activity: 2026-06-13 -- Phase 05 execution started
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
