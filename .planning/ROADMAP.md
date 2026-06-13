@@ -130,7 +130,11 @@ only after explicit owner sign-off + external cross-validation.
   2. The `create_order` second-path gating decision (W4-09) is resolved — the unvalidated 2nd signal→order path is routed through validation, or documented/removed with rationale.
   3. The result change is fully attributed (which previously-PENDING orders now expire, and any equity/metric impact) and the new golden master is frozen ONLY after explicit owner sign-off.
   4. `mypy --strict` clean; determinism double-run byte-identical; the rest of the e2e suite holds except where TIF intentionally changes a leaf's resting-order disposition (re-baselined with attribution).
-**Plans**: TBD
+**Plans**: 4 plans (3 waves — Wave 1: enum seams + dead-path removal in parallel; Wave 2: the four EXPIRE arms wired (sweep/exchange/reconcile/runner) + Wave-0 coverage; Wave 3: owner-gated measure→attribute→re-baseline)
+  - [ ] 06-01-PLAN.md — Enum seams: `OrderCommand.EXPIRE` + `FillStatus.EXPIRED` + Wave-0 enum test (D-09, Pitfalls 2/3 enum-first)
+  - [ ] 06-02-PLAN.md — Dead-path removal: delete `create_order`/`create_orders_from_signal` (KEEP `CREATE_ORDERS_FROM_SIGNAL` enum, Pitfall 1) + soften W4-04 doc (D-03/D-03a)
+  - [ ] 06-03-PLAN.md — Wire the four EXPIRE arms: `expire_all_resting` sweep + exchange EXPIRE arm + reconcile EXPIRED arm (idempotent, D-09 LANDMINE) + runner sweep/final-drain + non-cascade test + never_fill docstring flip (D-02/D-08/D-09/D-10)
+  - [ ] 06-04-PLAN.md — Owner-gated re-baseline: measure→attribute (oracle byte-exact, D-04) → OWNER SIGN-OFF → re-freeze the 3 affected goldens (never_fill + 2 sltp/*_held, D-05/D-11)
 
 <details>
 <summary>✅ v1.0 — Backtest-Correctness Refactor (Phases 1-8) — SHIPPED 2026-06-08</summary>
