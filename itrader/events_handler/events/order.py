@@ -64,7 +64,10 @@ class OrderEvent(Event):
 
     def __str__(self) -> str:
         base = f"{self.type} ({self.ticker}, {self.action}, {self.order_type.name}, {self.quantity}, {round(self.price, 4)} $"
-        if self.stop_price:
+        # WR-03: test the sentinel explicitly — a legitimate stop_price of
+        # Decimal("0") is falsy, so a bare truthiness check would silently drop
+        # the stop segment and misrepresent the order in logs/audit trails.
+        if self.stop_price is not None:
             base += f", stop: {round(self.stop_price, 4)}"
         return base + f", ID: {self.order_id})"
 
