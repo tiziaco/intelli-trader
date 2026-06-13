@@ -202,7 +202,7 @@ class AdmissionManager:
 			# T-05-15). D-04: reserve = price x quantity + estimated commission;
 			# the zero default reproduces the old funds-check math exactly.
 			# Decimal-native arithmetic — intermediates are never quantized.
-			if self.portfolio_handler is not None and primary.action == Side.BUY.value:
+			if self.portfolio_handler is not None and primary.action is Side.BUY:
 				cost = primary.price * primary.quantity + self._estimate_commission(primary)
 				try:
 					self.portfolio_handler.reserve(
@@ -332,15 +332,15 @@ class AdmissionManager:
 			unsupported order type (short-circuits before entity creation).
 		"""
 		# D-05: the signal carries an enum-typed OrderType; dispatch on the
-		# member. The Order ENTITY keeps its str action until M4 — convert at
-		# this boundary via .value.
+		# member. The Order ENTITY now carries a Side action (SIG-03 / D-03) —
+		# thread the signal's Side member straight through (no .value).
 		if signal_event.order_type is OrderType.MARKET:
 			return Order.new_order(signal_event, exchange, quantity=quantity)
 		elif signal_event.order_type is OrderType.LIMIT:
 			return Order.new_limit_order(
 				time=signal_event.time,
 				ticker=signal_event.ticker,
-				action=signal_event.action.value,
+				action=signal_event.action,
 				price=signal_event.price,
 				quantity=quantity,
 				exchange=exchange,
@@ -351,7 +351,7 @@ class AdmissionManager:
 			return Order.new_stop_order(
 				time=signal_event.time,
 				ticker=signal_event.ticker,
-				action=signal_event.action.value,
+				action=signal_event.action,
 				price=signal_event.price,
 				quantity=quantity,
 				exchange=exchange,

@@ -2,14 +2,14 @@ from datetime import datetime
 from decimal import Decimal
 
 from itrader.events_handler.events import OrderEvent
-from itrader.core.enums import OrderType, OrderCommand
+from itrader.core.enums import OrderType, OrderCommand, Side
 from itrader.order_handler.order import Order
 
 
 def _order(order_type):
     return Order(
         time=datetime(2024, 1, 1), type=order_type, status=None,
-        ticker="BTCUSDT", action="SELL", price=42.0, quantity=2.0,
+        ticker="BTCUSDT", action=Side.SELL, price=42.0, quantity=2.0,
         exchange="default", strategy_id=1, portfolio_id=1,
     )
 
@@ -43,9 +43,8 @@ def test_parent_order_id_copied():
 
 
 def test_action_parsed_to_side_member():
-    # D-05: the entity stores a str action until M4; the factory parses it
-    # to a Side member at the event boundary.
-    from itrader.core.enums import Side
+    # SIG-03 (D-03): the entity now stores a Side member; the factory's
+    # Side(order.action) is a no-op pass-through at the event boundary.
     oe = OrderEvent.new_order_event(_order(OrderType.MARKET))
     assert oe.action is Side.SELL
 
@@ -56,7 +55,7 @@ def test_decimal_money_passes_through_exactly():
     # coercion is gone, so no binary round-trip can alter the value.
     order = Order(
         time=datetime(2024, 1, 1), type=OrderType.LIMIT, status=None,
-        ticker="BTCUSDT", action="SELL",
+        ticker="BTCUSDT", action=Side.SELL,
         price=Decimal("123.45678901"), quantity=Decimal("0.12345678901234567890123456"),
         exchange="default", strategy_id=1, portfolio_id=1,
     )

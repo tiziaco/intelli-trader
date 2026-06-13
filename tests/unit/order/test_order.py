@@ -13,7 +13,7 @@ from itrader.order_handler.order import (
     Order, OrderStateChange
 )
 from itrader.core.enums import (
-    OrderStatus, OrderType, VALID_ORDER_TRANSITIONS,
+    OrderStatus, OrderType, Side, VALID_ORDER_TRANSITIONS,
     order_status_map, order_type_map, OrderTriggerSource
 )
 
@@ -32,7 +32,7 @@ class TestOrderLifecycle:
             'type': OrderType.MARKET,
             'status': OrderStatus.PENDING,
             'ticker': 'AAPL',
-            'action': 'BUY',
+            'action': Side.BUY,
             'price': 150.0,
             'quantity': 100.0,
             'exchange': 'NYSE',
@@ -215,7 +215,8 @@ class TestOrderLifecycle:
         # Should have meaningful string representation
         order_str = str(order)
         assert order.ticker in order_str
-        assert order.action in order_str
+        # SIG-03: action is a Side member — the __str__ renders its .name text.
+        assert order.action.name in order_str
         assert order.type.name in order_str
         assert order.status.name in order_str
 

@@ -7,7 +7,7 @@ import pytest
 
 from itrader.order_handler.storage import InMemoryOrderStorage, OrderStorageFactory
 from itrader.order_handler.order import Order
-from itrader.core.enums import OrderType, OrderStatus, OrderTriggerSource
+from itrader.core.enums import OrderType, OrderStatus, OrderTriggerSource, Side
 from itrader.core.exceptions import ConfigurationError
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
@@ -36,17 +36,17 @@ def store():
 
     order1 = Order(
         time=datetime.now(UTC), type=OrderType.MARKET, status=OrderStatus.PENDING,
-        ticker="BTCUSDT", action="BUY", price=40000.0, quantity=0.1,
+        ticker="BTCUSDT", action=Side.BUY, price=40000.0, quantity=0.1,
         exchange="binance", strategy_id=1, portfolio_id=pid1, id=oid1,
     )
     order2 = Order(
         time=datetime.now(UTC), type=OrderType.LIMIT, status=OrderStatus.PENDING,
-        ticker="ETHUSDT", action="SELL", price=3000.0, quantity=0.5,
+        ticker="ETHUSDT", action=Side.SELL, price=3000.0, quantity=0.5,
         exchange="binance", strategy_id=1, portfolio_id=pid1, id=oid2,
     )
     order3 = Order(
         time=datetime.now(UTC), type=OrderType.STOP, status=OrderStatus.PENDING,
-        ticker="BTCUSDT", action="SELL", price=39000.0, quantity=0.1,
+        ticker="BTCUSDT", action=Side.SELL, price=39000.0, quantity=0.1,
         exchange="binance", strategy_id=1, portfolio_id=pid2, id=oid3,
     )
 
@@ -259,7 +259,7 @@ def test_add_rejected_order_persists_without_entering_active_book(store):
     """
     rejected = Order(
         time=datetime.now(UTC), type=OrderType.MARKET, status=OrderStatus.PENDING,
-        ticker="BTCUSDT", action="BUY", price=40000.0, quantity=0.1,
+        ticker="BTCUSDT", action=Side.BUY, price=40000.0, quantity=0.1,
         exchange="binance", strategy_id=1, portfolio_id=store.pid1,
     )
     assert rejected.add_state_change(
@@ -356,7 +356,7 @@ def test_handler_reads_delegate_through_manager(handler_env):
     oid = uuid.uuid4()
     order = Order(
         time=datetime.now(UTC), type=OrderType.MARKET, status=OrderStatus.PENDING,
-        ticker="BTCUSDT", action="BUY", price=40000.0, quantity=0.1,
+        ticker="BTCUSDT", action=Side.BUY, price=40000.0, quantity=0.1,
         exchange="binance", strategy_id=1, portfolio_id=pid, id=oid,
     )
     handler_env.storage.add_order(order)

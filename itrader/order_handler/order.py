@@ -11,7 +11,7 @@ from itrader.core.exceptions import UnsizedSignalError
 from itrader.core.money import to_money
 from ..core.enums import (
     OrderType, OrderStatus,
-    OrderTriggerSource,
+    OrderTriggerSource, Side,
     VALID_ORDER_TRANSITIONS
 )
 
@@ -46,7 +46,7 @@ class Order:
 	type: OrderType
 	status: OrderStatus
 	ticker: str
-	action: str
+	action: Side
 	price: Decimal
 	quantity: Decimal
 	exchange: str
@@ -134,7 +134,7 @@ class Order:
 		status_str = f"{self.status.name}"
 		if self.is_partially_filled:
 			status_str += f" ({self.filled_quantity}/{self.quantity})"
-		return f"Order - {self.id} ({self.type.name}, {self.ticker}, {self.action}, {status_str}, {self.price}$)"
+		return f"Order - {self.id} ({self.type.name}, {self.ticker}, {self.action.name}, {status_str}, {self.price}$)"
 
 	def __repr__(self) -> str:
 		return str(self)
@@ -177,8 +177,9 @@ class Order:
 			order_type,
 			OrderStatus.PENDING,
 			signal.ticker,
-			# The entity stores a str action until M4 — convert at this boundary.
-			signal.action.value,
+			# SIG-03 (D-03): the entity stores a Side action — thread the
+			# signal's Side member straight through (no .value conversion).
+			signal.action,
 			to_money(signal.price),
 			to_money(resolved_quantity),
 			exchange,
@@ -196,7 +197,7 @@ class Order:
 		return order
 	
 	@classmethod
-	def new_stop_order(cls, time: datetime, ticker: str, action: str, price: Any, quantity: Any, exchange: str,
+	def new_stop_order(cls, time: datetime, ticker: str, action: Side, price: Any, quantity: Any, exchange: str,
 					strategy_id: StrategyId, portfolio_id: PortfolioId) -> "Order":
 		"""
 		Generate a new Stop Order object.
@@ -229,7 +230,7 @@ class Order:
 		return order
 	
 	@classmethod
-	def new_limit_order(cls, time: datetime, ticker: str, action: str, price: Any, quantity: Any, exchange: str,
+	def new_limit_order(cls, time: datetime, ticker: str, action: Side, price: Any, quantity: Any, exchange: str,
 					strategy_id: StrategyId, portfolio_id: PortfolioId) -> "Order":
 		"""
 		Generate a new Limit Order object.

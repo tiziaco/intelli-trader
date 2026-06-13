@@ -189,8 +189,10 @@ class EnhancedOrderValidator:
                 "MISSING_TICKER"
             ))
 
-        # Action validation
-        if order.action not in ["BUY", "SELL"]:
+        # Action validation (SIG-03 / D-03): the Order entity carries a Side
+        # member — compare against the Side members directly (the former
+        # string-membership check on ["BUY", "SELL"] is dead after the retype).
+        if order.action not in (Side.BUY, Side.SELL):
             messages.append(ValidationMessage(
                 ValidationLevel.ERROR,
                 f"Invalid action: {order.action}. Must be BUY or SELL",
@@ -409,10 +411,10 @@ class EnhancedOrderValidator:
         if not position:
             return False
 
-        # The Order ENTITY stores a str action until M4 (D-05 boundary rule) —
-        # compare against the Side member's value, never a bare string literal.
-        return ((position.side.name == 'LONG' and order.action == Side.SELL.value) or
-                (position.side.name == 'SHORT' and order.action == Side.BUY.value))
+        # The Order ENTITY carries a Side member (SIG-03 / D-03) — compare by
+        # Side-member identity, never a bare string literal.
+        return ((position.side.name == 'LONG' and order.action is Side.SELL) or
+                (position.side.name == 'SHORT' and order.action is Side.BUY))
     
     # ===== PHASE 4: FINANCIAL RISK VALIDATION =====
     
