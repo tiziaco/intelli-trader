@@ -115,7 +115,11 @@ only after explicit owner sign-off + external cross-validation.
   3. `Order.action` and `_PendingBracket.action` are typed `Side` (not `str`), and the position snapshot is threaded once through admission→sizing (the double `get_position()` removed); W4-04 validator-overlap doc updated if the validator path is touched (SIG-03).
   4. The `on_fill` reconciliation + `should_release` release-in-`finally` flow is streamlined while the financial-integrity invariant holds — idempotent release on EVERY terminal reconciliation (EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED) (RECON-01).
   5. The new golden master is frozen ONLY after explicit owner sign-off with full attribution, validated by external cross-validation (`backtesting.py`/`backtrader`); `reconcile/` is touched once, not twice; `mypy --strict` clean; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 4 plans (2 waves — Wave 1: SIG-01/02 authoring + SIG-03 Side-typing/snapshot + RECON-01 reconcile cleanup in parallel (no file overlap); Wave 2: owner-gated D-07 cross-val golden)
+  - [ ] 05-01-PLAN.md — SIG-01/02 authoring surface: SignalIntent/SignalRecord order_type+entry_price, buy_limit/buy_stop/sell_limit/sell_stop factories, retire Strategy.order_type attr, per-intent handler fan-out (MARKET byte-exact)
+  - [ ] 05-02-PLAN.md — SIG-03: Order.action + _PendingBracket.action str→Side across the enumerated literal sites + W4-04 doc update; single threaded admission Position snapshot
+  - [ ] 05-03-PLAN.md — RECON-01: on_fill extract-method (_classify / per-status arms / _release_reservation) with try/finally byte-identical + Wave-0 reconcile branch coverage
+  - [ ] 05-04-PLAN.md — D-07 owner-gated cross-val: crafted BTCUSD limit-entry strategy + e2e leaf + backtesting.py/backtrader LIMIT runners + CROSS-VALIDATION-LIMIT.md; owner sign-off freezes the new golden (autonomous: false)
 
 ### Phase 6: Order Lifecycle & Time-in-Force
 **Goal**: Orders left resting at run end are disposed of via time-in-force instead of lingering PENDING — `Order.expire_order()` + `OrderStatus.EXPIRED` (which exist but are unwired) are wired on the backtest path — and the `create_order` second signal→order path is gated; owner-gated re-baseline.
