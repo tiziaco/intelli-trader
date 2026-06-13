@@ -2,7 +2,9 @@ from decimal import Decimal
 from queue import Queue
 from typing import Any, Callable, List, Dict, Optional
 
+from itrader.core.commission_estimator import CommissionEstimator
 from itrader.core.portfolio_read_model import PortfolioReadModel
+from itrader.config import OrderConfig
 from .base import OrderStorage
 from .order import Order
 from ..core.enums import OrderStatus, MarketExecution
@@ -38,8 +40,10 @@ class OrderHandler:
 	- Validation and state management
 	"""
 	def __init__(self, global_queue: "Queue[Any]", portfolio_handler: PortfolioReadModel,
-	             order_storage: Optional[OrderStorage] = None, market_execution: "str | MarketExecution" = "immediate",
-	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]] = None) -> None:
+	             order_storage: Optional[OrderStorage] = None,
+	             market_execution: "str | MarketExecution | None" = None,
+	             commission_estimator: Optional[CommissionEstimator] = None,
+	             order_config: Optional[OrderConfig] = None) -> None:
 		"""
 		Parameters
 		----------
@@ -50,19 +54,22 @@ class OrderHandler:
 			PortfolioHandler satisfies this Protocol structurally)
 		order_storage: `OrderStorage`, optional
 			The order storage for storage operations. If None, uses InMemoryOrderStorage.
+		order_config: `OrderConfig`, optional
+			Order-domain config (D-05) carrying ``market_execution``, forwarded
+			to OrderManager. None -> ``OrderConfig.default()`` ("immediate").
 		market_execution: str | MarketExecution, optional
-			Market order execution timing (passed through to OrderManager,
-			which coerces to the enum at its ctor boundary, D-06). Options:
+			DEPRECATED backward-compat override (D-05): forwarded to OrderManager,
+			which folds it into an ``OrderConfig`` (str->enum coercion lives in
+			OrderConfig validation now). Options:
 			- "immediate": Execute market orders immediately (live trading)
 			- "next_bar": Queue market orders for next bar execution (realistic backtesting)
-		commission_estimator: Callable[[Decimal, Decimal], Decimal], optional
+		commission_estimator: CommissionEstimator, optional
 			(quantity, price) -> estimated commission Decimal, forwarded to
-			OrderManager's admission reservation gate (Plan 05-06, D-04).
+			OrderManager's admission reservation gate (Plan 05-06, D-04/D-15).
 			None -> zero estimate (golden run pins fees 0).
 		"""
 		self.global_queue = global_queue
 		self.portfolio_handler = portfolio_handler
-		self.market_execution = market_execution
 
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
@@ -75,11 +82,27 @@ class OrderHandler:
 			self.logger,
 			market_execution,
 			portfolio_handler,  # Pass portfolio_handler for position-aware logic
-			commission_estimator=commission_estimator
+			commission_estimator=commission_estimator,
+			order_config=order_config,
 		)
+		# Mirror the resolved execution mode the manager settled on (D-05).
+		self.market_execution = self.order_manager.market_execution
+
 		self.order_validator = EnhancedOrderValidator(portfolio_handler)
-		
-		self.logger.info(f'Order Handler initialized with market_execution={market_execution})')
+
+		self.logger.info('Order Handler initialized', market_execution=self.market_execution)
+
+	def update_config(self, updates: Dict[str, Any]) -> None:
+		"""Update order-domain configuration at runtime (D-05/D-07/D-09).
+
+		Thin facade: delegates to ``OrderManager.update_config`` (the business
+		logic owner) per the CLAUDE.md handler/manager split — no business logic
+		in the handler. Returns ``None``; raises ``ConfigurationError`` on
+		failure. The handler's cached ``market_execution`` mirror is re-synced
+		from the manager after the swap.
+		"""
+		self.order_manager.update_config(updates)
+		self.market_execution = self.order_manager.market_execution
 
 	def on_signal(self, signal_event: SignalEvent) -> None:
 		"""

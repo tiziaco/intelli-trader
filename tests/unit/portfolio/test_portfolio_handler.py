@@ -526,9 +526,10 @@ def test_update_config_partial_nested_preserves_siblings(env):
     handler = env.handler
     before_max_positions = handler.config_data.limits.max_positions
 
-    ok = handler.update_config({"limits": {"max_portfolios": 7}})
+    # D-07/D-08: canonical contract returns None (no longer bool).
+    result = handler.update_config({"limits": {"max_portfolios": 7}})
 
-    assert ok is True
+    assert result is None
     # The intended field changed...
     assert handler.config_data.limits.max_portfolios == 7
     assert handler.max_portfolios == 7
@@ -555,8 +556,8 @@ def test_portfolio_configuration_management(portfolio):
     assert portfolio.config.limits.max_positions == 50  # Matches the test environment config
     assert portfolio.config.limits.max_position_value == Decimal("1000000")
 
-    # Test configuration update
-    portfolio.update_config(max_positions=75, max_position_value=Decimal("500000"))
+    # Test configuration update (D-07: canonical dict contract, not **kwargs)
+    portfolio.update_config({"limits": {"max_positions": 75, "max_position_value": "500000"}})
     assert portfolio.config.limits.max_positions == 75
     assert portfolio.config.limits.max_position_value == Decimal("500000")
 

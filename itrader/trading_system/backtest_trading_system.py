@@ -1,309 +1,287 @@
-import queue
-from datetime import datetime
-from decimal import Decimal
-from functools import reduce
+"""Thin backtest holder + the ``build_backtest_system`` factory (D-03/D-04).
+
+D-03: ``TradingSystem`` is renamed ``BacktestTradingSystem`` (symmetry with
+``LiveTradingSystem``, matches the filename). Wave 4 (04-05) migrated all
+existing import sites to the new name, so no backward-compat ``TradingSystem``
+alias is exported from this module.
+
+D-04: the factory builds, the class is a thin holder. ``build_backtest_system(spec)``
+selects the mode-specific backends (``OrderStorageFactory.create('backtest')`` +
+the backtest signal store, D-14a), derives the COMPLETE symbol set and folds it
+into the spec's ``ExchangeConfig`` (D-13/Trap 1), calls ``compose_engine``,
+constructs the ``BacktestRunner``, adds strategies/portfolios in spec order
+(Trap 6), wires subscriptions, and returns the holder.
+
+The holder keeps a direct-construction ``__init__`` (legacy loose params) that
+builds the same engine+runner internally, so the oracle/integration sites work
+by renaming the class only (Wave 4 swaps them to the factory). Its ``run()``
+delegates to the runner then lifts the metrics printout into ``reporting``
+(W4-07).
+
+Indentation: TABS (``trading_system/`` package convention).
+"""
+
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-import pandas as pd
-
-from itrader.core.clock import BacktestClock
-from itrader.core.exceptions import ConfigurationError
-from itrader.events_handler.full_event_handler import EventHandler
-from itrader.outils.time_parser import to_timedelta
-from itrader.price_handler.feed.bar_feed import BacktestBarFeed
-from itrader.price_handler.store.csv_store import CsvPriceStore
-from itrader.strategy_handler.strategies_handler import StrategiesHandler
+from itrader.config import ExchangeConfig, OrderConfig, get_exchange_preset
+from itrader.order_handler.storage import OrderStorageFactory
+from itrader.reporting.summary import print_metrics_summary
 from itrader.strategy_handler.storage import SignalStorageFactory, SignalStore
 from itrader.strategy_handler.signal_record import SignalRecord
-from itrader.screeners_handler.screeners_handler import ScreenersHandler
-from itrader.order_handler.order_handler import OrderHandler
-from itrader.order_handler.storage import OrderStorageFactory
-from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
-from itrader.execution_handler.execution_handler import ExecutionHandler
-from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-from itrader.trading_system.simulation.time_generator import TimeGenerator
-from itrader.universe import derive_membership
-from itrader.reporting.frames import build_equity_curve, build_trade_log
-from itrader.reporting.metrics import (
-	cagr,
-	compute_returns,
-	format_metrics,
-	max_drawdown,
-	profit_factor,
-	sharpe,
-	sortino,
-	win_rate,
-)
+from itrader.trading_system.backtest_runner import BacktestRunner
+from itrader.trading_system.compose import Engine, compose_engine
+from itrader.trading_system.system_spec import SystemSpec
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.events import EventType
 
 
-class TradingSystem(object):
+#: The default preset exchange symbols (the *USDT set) the complete supported-set
+#: union starts from (D-13/Trap 1). BTCUSD (the golden ticker) is always unioned.
+_DEFAULT_PRESET_SYMBOLS: frozenset[str] = frozenset(
+	get_exchange_preset('default').limits.supported_symbols)
+
+
+def _seed_supported_symbols(
+	exchange_config: ExchangeConfig, tickers: "set[str]") -> ExchangeConfig:
+	"""Fold the COMPLETE supported-symbol set into the exchange config (D-13/Trap 1).
+
+	The final set = default preset symbols ∪ {BTCUSD} ∪ spec tickers (upper-cased).
+	Seeded at construction so it is REPLACEMENT-SAFE — a later ``update_config``
+	that re-derives ``_supported_symbols`` from ``config.limits`` can never wipe a
+	symbol. This is the FACTORY-side derivation (Open Question 2) that keeps
+	``compose_engine`` mode-agnostic.
 	"""
-	Enscapsulates the settings and components for
-	carrying out either a backtest session.
+	complete = set(_DEFAULT_PRESET_SYMBOLS) | {'BTCUSD'} | {t.upper() for t in tickers}
+	exchange_config.limits.supported_symbols = complete
+	return exchange_config
+
+
+class BacktestTradingSystem(object):
+	"""Thin holder of a pre-built ``Engine`` + ``BacktestRunner`` (D-03/D-04).
+
+	The class ``__init__`` is a dumb holder: it stores the engine and runner and
+	exposes ``run()``. The legacy direct-construction signature is retained for
+	the oracle/integration sites (it builds the engine+runner internally via the
+	same seam the factory uses) until Wave 4 migrates them to
+	``build_backtest_system(spec)``.
 	"""
+
 	def __init__(
 		self, exchange: str = 'binance',
 		start_date: Optional[str] = None,
 		end_date: str = '',
 		to_sql: bool = False,
 		timeframe: str = '1d',
-		csv_paths: dict[str, str | Path] | None = None,
+		csv_paths: dict[str, "str | Path"] | None = None,
+		*,
+		engine: Optional[Engine] = None,
+		runner: Optional[BacktestRunner] = None,
+		signal_store: Optional[SignalStore] = None,
 	) -> None:
-		"""
-		Set up the backtest variables according to
-		what has been passed in.
+		"""Construct the holder.
+
+		Two construction modes:
+
+		* **Factory mode (D-04):** ``build_backtest_system`` passes a pre-built
+		  ``engine`` + ``runner`` (+ ``signal_store``); the holder is a dumb
+		  wrapper.
+		* **Legacy direct-construction mode:** the oracle/integration sites pass
+		  the loose params; the holder builds the engine+runner internally via the
+		  same ``compose_engine`` seam (byte-identical wiring) so they work by
+		  renaming the class only (Wave 4 swaps them to the factory).
 		"""
 		self.logger = get_itrader_logger().bind(component="Engine")
 		self.exchange = exchange
-
 		self.start_date = start_date
 		self.end_date = end_date
 		self.to_sql = to_sql
 
-		self.global_queue: "queue.Queue[Any]" = queue.Queue()
-
-		# Determinism seam (D-09/D-10): an injected BacktestClock that returns the
-		# advanced simulation/bar time instead of wall-clock. M2a STAGES the seam —
-		# it is constructed here and advanced (set_time) on every ping in the run
-		# loop — but it currently has NO domain consumer: clock.now() is read
-		# nowhere, and every domain timestamp (order audit, transaction, cash,
-		# metrics) still uses wall-clock. Wiring domain "now" reads onto this clock
-		# is Phase 3 / M2b (D-09/D-10). Backtest RESULT determinism holds today
-		# because the result-bearing path is fed ping_event.time explicitly (see
-		# record_metrics in _run_backtest), not via clock.now(). The perf-telemetry
-		# datetime.now() in _run_backtest stays wall-clock (D-09 — run duration is
-		# not a domain fact).
-		self.clock = BacktestClock()
-
-		# M5-05 (D-18): the composition root wires the Store+Feed seams directly.
-		# CsvPriceStore eagerly loads the committed golden CSV (read-only and
-		# offline on the run path — FR6); BacktestBarFeed is the look-ahead-safe
-		# read-model every market-data consumer queries per tick. Construction-
-		# time read-model injection, same style as the legacy price_handler arg:
-		# the CLAUDE.md queue-only rule governs handlers, the Feed is a read-model.
-		# Phase-3 multi-ticker injection seam (RESEARCH Pitfall 5 / Open Q2,
-		# option b): csv_paths passes straight through to CsvPriceStore. Default
-		# None makes the store fall back to its single-golden-ticker default —
-		# byte-identical to today (oracle-dark). Reusable by the Phase-9 E2E harness.
-		self.store = CsvPriceStore(
-			csv_paths=csv_paths,
-			start_date=start_date,
-			end_date=end_date or None)
-		self.feed = BacktestBarFeed(self.store, to_timedelta(timeframe))
-		# Signal-store sink (Plan 05-03, D-07/D-12): the in-memory backend
-		# captures one SignalRecord per non-None strategy intent for post-run
-		# inspection. Held on self so the post-run accessor can read it. This is
-		# a read-model sink — the queue-only contract is preserved (the handler
-		# writes locally, the composition root reads after the run).
-		self._signal_store = SignalStorageFactory.create('backtest')
-		self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, self._signal_store)
-		# ScreenersHandler is a deferred subsystem (D-screener, ignore_errors override)
-		# so its constructor is untyped to the gate.
-		self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)  # type: ignore[no-untyped-call]
-		self.portfolio_handler = PortfolioHandler(self.global_queue)
-
-		# Execution handler is constructed BEFORE the order handler so the
-		# admission gate's commission estimator can adapt the simulated
-		# exchange's fee model (Plan 05-06, D-04). Construction-order only —
-		# runtime communication stays queue-mediated.
-		self.execution_handler = ExecutionHandler(self.global_queue)
-
-		# Commission estimator for the admission cash-reservation gate
-		# (Plan 05-06, D-04): an adapter shaped (quantity, price) -> Decimal
-		# over the simulated exchange's fee model, INJECTED so order_manager
-		# never imports across the execution boundary (RESEARCH Pattern 1).
-		# fee_model is read at call time — update_config may rebuild it. The
-		# golden run pins fees 0 (ZeroFeeModel default), so the estimate is 0
-		# and the reservation equals price x quantity exactly (value-preserving).
-		simulated_exchange = self.execution_handler.exchanges.get('simulated')
-
-		def _estimate_commission(quantity: Decimal, price: Decimal) -> Decimal:
-			if not isinstance(simulated_exchange, SimulatedExchange):
-				return Decimal("0")
-			return simulated_exchange.fee_model.calculate_fee(
-				quantity, price, side="buy", order_type="market")
-
-		# Create order storage for backtesting (in-memory)
-		order_storage = OrderStorageFactory.create('backtest')
-		self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
-		                                  commission_estimator=_estimate_commission)
-		self.time_generator = TimeGenerator()
-		# The TIME route's BarEvent source is the feed-owned factory
-		# (Plan 07-02, D-20): the data engine produces the per-tick
-		# BarEvent; queue + membership are bound onto the feed at
-		# session initialisation.
-		self.event_handler = EventHandler(
-			self.strategies_handler,
-			self.screeners_handler,
-			self.portfolio_handler,
-			self.order_handler,
-			self.execution_handler,
-			self.feed.generate_bar_event,
-			self.global_queue
-		)
+		if engine is not None and runner is not None:
+			# Factory mode: dumb holder of pre-built components.
+			self.engine = engine
+			self.runner = runner
+			self._signal_store = signal_store or engine.signal_store
+		else:
+			# Legacy direct-construction mode: build the engine+runner here using
+			# the shared seam. The COMPLETE supported-symbol set is seeded into a
+			# construction-time ExchangeConfig (default preset ∪ {BTCUSD} ∪ the
+			# csv_paths tickers, upper-cased) via the same _seed_supported_symbols
+			# path the factory uses — replacement-safe (D-13/Trap 1). csv_paths=None
+			# is the single-golden-ticker default, so the seeded set is the preset ∪
+			# {BTCUSD}, byte-identical to the old ExecutionHandler no-config fallback.
+			order_storage = OrderStorageFactory.create('backtest')
+			self._signal_store = SignalStorageFactory.create('backtest')
+			tickers = {str(t).upper() for t in (csv_paths or {}).keys()}
+			exchange_config = _seed_supported_symbols(
+				get_exchange_preset('default'), tickers)
+			self.engine = compose_engine(
+				order_storage=order_storage,
+				signal_store=self._signal_store,
+				csv_paths=csv_paths,
+				start_date=start_date,
+				end_date=end_date or None,
+				timeframe=timeframe,
+				exchange_config=exchange_config,
+				order_config=OrderConfig.default(),
+			)
+			self.runner = BacktestRunner(self.engine)
 
 		self.logger.info('Trading system initialised')
 
+	# -- Backward-compat attribute seams (the engine holds the real components) --
+	# The oracle/integration/e2e/scripts sites read these off the system directly
+	# (system.strategies_handler.add_strategy, system.portfolio_handler.add_portfolio,
+	# system.store.read_bars, system.order_handler.cancel_order, ...). Expose them
+	# as read-only properties delegating to the engine so those sites work by
+	# renaming the class only (Wave 4 may collapse some onto the spec).
 
-	def _initialise_backtest_session(self) -> None:
-		"""
-		Derive membership and bind the feed's BarEvent factory, derive the
-		ping clock from the store's bar index, and precompute the
-		per-strategy resampled frames so the hot loop never resamples
-		(M5-03).
-		"""
-		self.logger.info('Initialising backtest session')
+	@property
+	def global_queue(self) -> Any:
+		return self.engine.global_queue
 
-		# Membership derived at wiring time (M5-08, D-20): the union of
-		# strategy tickers and the screener set — used by the feed's
-		# factory only for the missing-ticker warning loop.
-		membership = derive_membership(
-			self.strategies_handler.strategies,
-			# D-screener deferred subsystem (ignore_errors override) — untyped to the gate.
-			self.screeners_handler.get_screeners_universe())  # type: ignore[no-untyped-call]
-		self.feed.bind(self.global_queue, membership)
-		# Ping clock derived from the store's bar index (T-06-16): the same
-		# tick grid the legacy `.prices` access produced, asserted byte-exact
-		# by the oracle's behavioral identity.
-		#
-		# WR-07: fail loudly on an empty store (an opaque IndexError otherwise),
-		# and derive the grid from the UNION of every symbol's index so a sparse
-		# multi-symbol universe never silently drops the bars of symbols whose
-		# dates are absent from the first symbol's calendar. For the
-		# single-symbol golden run the reduce returns that one index UNCHANGED
-		# (no union call), so the tick grid stays byte-identical (oracle-dark).
-		symbols = self.store.symbols()
-		if not symbols:
-			raise ConfigurationError(
-				"Backtest store has no symbols — cannot derive the ping clock "
-				"(empty data directory or bad store path)")
-		ping_grid = reduce(
-			pd.Index.union, (self.store.index(s) for s in symbols))
-		self.time_generator.set_dates(ping_grid)
-		# M5-03: resample ONCE at run-init per registered strategy declaration —
-		# the per-tick window path is then a pure positional slice.
-		for strategy in self.strategies_handler.strategies:
-			self.feed.precompute(strategy.tickers, strategy.timeframe)
+	@property
+	def clock(self) -> Any:
+		return self.engine.clock
 
-	def _run_backtest(self, on_tick: Optional[Callable[["TradingSystem", Any], None]] = None) -> None:
-		"""
-		Carries out an for-loop that polls the
-		events queue and directs each event to either the
-		strategy component of the execution handler. The
-		loop continue until the time series is completed.
+	@property
+	def store(self) -> Any:
+		return self.engine.store
 
-		``on_tick`` (Phase 6, D-06) is an OPTIONAL per-bar callback the E2E
-		harness uses to play the OPERATOR (MODIFY/CANCEL a resting order via the
-		REAL ``order_handler`` API — D-05). It is invoked AFTER ``process_events``
-		+ ``record_metrics`` (post-bar) so an amendment lands BEFORE the next
-		bar's matching (Assumption A2). The default ``None`` invokes nothing and
-		changes ZERO bytes on the production path — ``scripts/run_backtest.py``
-		never passes it, so the BTCUSD oracle stays byte-exact (oracle-dark).
-		"""
+	@property
+	def feed(self) -> Any:
+		return self.engine.feed
 
-		self.logger.info('    RUNNING BACKTEST   ')
-		start_time = datetime.now()  # Capture start time
+	@property
+	def strategies_handler(self) -> Any:
+		return self.engine.strategies_handler
 
-		for time_event in self.time_generator:
-			# Advance the injected clock to the current simulation/bar time to keep
-			# the determinism seam staged. NOTE: the clock has no domain consumer
-			# yet — clock.now() is read nowhere; consumer-wiring is Phase 3 / M2b
-			# (D-09/D-10). Result determinism comes from passing time_event.time
-			# explicitly to record_metrics below, not from clock.now().
-			self.clock.set_time(time_event.time)
-			self.global_queue.put(time_event)
-			self.event_handler.process_events()
-			for portfolio in self.portfolio_handler.get_active_portfolios():
-				portfolio.record_metrics(time_event.time)
-			# Phase 6 (D-06): post-bar operator hook. Default None = byte-exact
-			# (oracle-dark); only the E2E harness wires it from spec.actions.
-			if on_tick is not None:
-				on_tick(self, time_event)
-		self.logger.info('    BACKTEST COMPLETED   ')
-		end_time = datetime.now()  # Capture end time
-		duration = end_time - start_time
-		print("Backtest duration:", duration)
+	@property
+	def screeners_handler(self) -> Any:
+		return self.engine.screeners_handler
+
+	@property
+	def portfolio_handler(self) -> Any:
+		return self.engine.portfolio_handler
+
+	@property
+	def execution_handler(self) -> Any:
+		return self.engine.execution_handler
+
+	@property
+	def order_handler(self) -> Any:
+		return self.engine.order_handler
+
+	@property
+	def event_handler(self) -> Any:
+		return self.engine.event_handler
+
+	@property
+	def time_generator(self) -> Any:
+		return self.engine.time_generator
 
 	def run(self, print_summary: bool = True,
-	        on_tick: Optional[Callable[["TradingSystem", Any], None]] = None) -> None:
-		"""
-		Runs the backtest and, when ``print_summary`` is True (the default),
-		prints one formatted D-15 metrics block per registered portfolio at the
-		end of the run (D-14 amendment, user decision 2026-06-07). Display
-		ONLY: the engine writes NO files — artifact serialization remains
-		``scripts/run_backtest.py``'s job, and stdout printing changes no
-		``output/`` artifact bytes (oracle-inert).
+			on_tick: Optional[Callable[["BacktestTradingSystem", Any], None]] = None) -> None:
+		"""Run the backtest, then optionally print the lifted metrics summary.
 
-		``on_tick`` (Phase 6, D-06) forwards to ``_run_backtest`` — an OPTIONAL
-		per-bar operator hook for the E2E harness. Default ``None`` is byte-exact
-		(oracle-dark); ``scripts/run_backtest.py`` never passes it.
+		Delegates the session setup + for-loop to the ``BacktestRunner`` (the
+		byte-exact ordering lives there, Trap 4). When ``print_summary`` is True
+		(the default) it calls ``reporting.print_metrics_summary`` after the run
+		(W4-07 — display only, no artifact bytes change; oracle-inert).
+
+		``on_tick`` (Phase 6, D-06) is an OPTIONAL per-bar operator hook. It is
+		wrapped so the callback receives THIS holder (``system``) as its first
+		argument — preserving the e2e ``on_tick(system, time_event)`` contract
+		(the harness reaches ``system.order_handler`` from it). Default ``None`` is
+		byte-exact (oracle-dark).
 		"""
-		self._initialise_backtest_session()
-		self._run_backtest(on_tick=on_tick)
+		wrapped: Optional[Callable[[Any, Any], None]] = None
+		if on_tick is not None:
+			def wrapped(_runner: Any, time_event: Any) -> None:
+				on_tick(self, time_event)
+
+		self.runner.run(on_tick=wrapped)
 
 		if print_summary:
-			self._print_metrics_summary()
+			print_metrics_summary(
+				self.portfolio_handler.get_active_portfolios(), self.logger)
 
 	def get_signal_records(self) -> list[SignalRecord]:
 		"""Return the signals captured during the run (Plan 05-03, SIG-02).
 
-		Post-run read-model accessor (D-12): reads the injected signal-store
-		sink AFTER the run completes. This is a sink read, NOT a cross-domain
-		handler call — the queue-only contract is preserved. The returned
-		``SignalRecord``s are queryable (each carries its strategy id, ticker,
-		time, action, sizing/SLTP declarations, and the config snapshot); use
-		``get_signal_store()`` for the predicate-filter query API.
-
-		Returns
-		-------
-		list[SignalRecord]
-			Every signal captured on the run, in insertion order.
+		Post-run read-model accessor (D-12): reads the injected signal-store sink
+		AFTER the run completes. A sink read, NOT a cross-domain handler call — the
+		queue-only contract is preserved.
 		"""
 		return self._signal_store.get_all()
 
 	def get_signal_store(self) -> SignalStore:
-		"""Return the signal-store itself for post-run filtered queries (SIG-02).
-
-		Exposes ``by_strategy`` / ``by_ticker`` for post-run inspection. Like
-		``get_signal_records``, this is a read-model sink read (D-12).
-		"""
+		"""Return the signal-store itself for post-run filtered queries (SIG-02)."""
 		return self._signal_store
 
-	def _print_metrics_summary(self) -> None:
-		"""
-		End-of-run metrics printout (D-14 amendment): build the run-artifact
-		frames per portfolio via the pure ``reporting.frames`` builders,
-		compute the D-15 metric set via ``reporting.metrics`` (one formula
-		source — the same functions ``run_backtest.py`` serializes), and print
-		the ``format_metrics`` block. Empty runs are safe: guarded
-		denominators return 0.0 instead of raising.
-		"""
-		for portfolio in self.portfolio_handler.get_active_portfolios():
-			trades = build_trade_log(portfolio)
-			equity_frame = build_equity_curve(portfolio)
-			# astype(float) keeps the empty-run path warning-free (an empty
-			# frame's column is object-dtype); populated frames are float already.
-			equity = equity_frame["total_equity"].astype(float)
-			returns = compute_returns(equity)
-			metrics: dict[str, float] = {
-				"sharpe": sharpe(returns),
-				"sortino": sortino(returns),
-				"cagr": cagr(equity),
-				"max_drawdown": max_drawdown(equity),
-				"profit_factor": profit_factor(trades),
-				"win_rate": win_rate(trades),
-			}
-			print(format_metrics(metrics, title=f"Backtest metrics — {portfolio.name}"))
-			# Decimal->float at the serialization/logging edge: portfolio.total_equity
-			# is now Decimal end-to-end (08-01 retype); float() narrows it for the
-			# structlog kwarg only — a presentation edge, never money arithmetic.
-			self.logger.info(
-				'Backtest summary',
-				portfolio=portfolio.name,
-				final_equity=float(portfolio.total_equity),
-				trade_count=len(trades),
-			)
+
+def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
+	"""Build a backtest system from a declarative ``SystemSpec`` (D-04).
+
+	The FACTORY (D-14a): selects the mode-specific backends
+	(``OrderStorageFactory.create('backtest')`` + the backtest signal store),
+	derives the COMPLETE supported-symbol set from the spec data keys (∪ default
+	preset ∪ {BTCUSD}) and folds it into the spec's ``ExchangeConfig``
+	(D-13/Trap 1), calls the shared ``compose_engine`` seam with those concretes,
+	constructs the ``BacktestRunner``, adds strategies/portfolios in SPEC ORDER
+	(Trap 6 — preserve ``get_active_portfolios`` insertion order), wires the
+	portfolio subscriptions, and returns the thin holder.
+	"""
+	# 1. Mode-specific backend selection (D-14a) — lives in the FACTORY.
+	order_storage = OrderStorageFactory.create('backtest')
+	signal_store = SignalStorageFactory.create('backtest')
+
+	# 2. Complete symbol-set seeding (D-13/Trap 1): default preset ∪ {BTCUSD} ∪
+	#    spec data tickers, folded into the spec's ExchangeConfig BEFORE the
+	#    exchange reads it (replacement-safe construction-time seeding).
+	exchange_config = spec.exchange if spec.exchange is not None else get_exchange_preset('default')
+	tickers = {str(t) for t in spec.data.keys()}
+	exchange_config = _seed_supported_symbols(exchange_config, tickers)
+
+	# 3. Wire the graph mode-agnostically through the shared seam.
+	engine = compose_engine(
+		order_storage=order_storage,
+		signal_store=signal_store,
+		csv_paths=spec.data,
+		start_date=spec.start,
+		end_date=spec.end or None,
+		timeframe=spec.timeframe,
+		exchange_config=exchange_config,
+		order_config=OrderConfig.default(),
+	)
+	runner = BacktestRunner(engine)
+
+	# 4. Add strategies/portfolios in SPEC ORDER (Trap 6 — get_active_portfolios
+	#    is dict-insertion order; preserve it). Then wire subscriptions: each
+	#    strategy subscribes to every spec portfolio (the e2e harness convention).
+	for strategy in spec.strategies:
+		engine.strategies_handler.add_strategy(strategy)
+
+	portfolio_ids = []
+	for portfolio_spec in spec.portfolios:
+		# Backtest portfolios use exchange="csv" (the offline golden venue). The
+		# portfolio's exchange string is carried onto its orders, and the order
+		# router resolves the 'csv' alias to the simulated matching engine
+		# (DEF-01-B, CLAUDE.md). Using spec.ticker here would route orders to an
+		# unregistered venue → Unknown exchange → no fills (byte-exact break);
+		# every other construction site (oracle/integration/scripts + the former
+		# e2e _build_and_run) uses "csv", so the factory must too.
+		pid = engine.portfolio_handler.add_portfolio(
+			user_id=portfolio_spec.user_id,
+			name=portfolio_spec.name,
+			exchange='csv',
+			cash=portfolio_spec.cash,
+		)
+		portfolio_ids.append(pid)
+
+	for strategy in spec.strategies:
+		for pid in portfolio_ids:
+			strategy.subscribe_portfolio(pid)
+
+	return BacktestTradingSystem(
+		engine=engine, runner=runner, signal_store=signal_store)

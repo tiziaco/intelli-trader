@@ -16,7 +16,7 @@ class _RoutingEnv:
         self.handler = ExecutionHandler(self.queue)
         exchange = self.handler.exchanges["simulated"]
         exchange.connect()
-        exchange.update_config(supported_symbols={"BTCUSDT"})
+        exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})
 
     def oe(self, order_type, action="BUY", price=40.0, order_id=1):
         return OrderEvent(

@@ -44,7 +44,7 @@ from itrader.reporting.summary import (
 from decimal import Decimal
 
 from itrader.core.sizing import FractionOfCash, TradingDirection
-from itrader.trading_system.backtest_trading_system import TradingSystem
+from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.logger import get_itrader_logger
 
@@ -65,7 +65,7 @@ def main():
     logger = get_itrader_logger().bind(component="OracleRunner")
 
     # Construct the CSV-fed engine (D-01/D-02). Fees/slippage are exchange defaults (D-04).
-    system = TradingSystem(
+    system = BacktestTradingSystem(
         exchange="csv",
         start_date=START_DATE,
         end_date=END_DATE,

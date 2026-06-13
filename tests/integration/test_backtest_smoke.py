@@ -1,6 +1,6 @@
 """Run-path smoke test for the SMA_MACD backtest (D-16).
 
-Behavior: import -> construct a CSV-fed ``TradingSystem`` -> add the SMA_MACD
+Behavior: import -> construct a CSV-fed ``BacktestTradingSystem`` -> add the SMA_MACD
 strategy + a $10k portfolio -> run a short window of bars -> assert the run
 completes AND produces at least one closed position with a non-zero quantity.
 

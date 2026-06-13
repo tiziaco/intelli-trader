@@ -5,7 +5,9 @@ from decimal import Decimal
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.portfolio_handler.position import Position
 from itrader.events_handler.events import BarEvent
-from itrader.config import PortfolioConfig, get_portfolio_preset
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+
+import pydantic
 from itrader.core.enums import PortfolioState, PositionSide, TransactionType
 
 # Import the new managers
@@ -160,33 +162,21 @@ class Portfolio(object):
 		return self.state == PortfolioState.ACTIVE
 
 	# Configuration Management
-	def update_config(self, **kwargs: Any) -> None:
-		"""Update portfolio configuration."""
-		# Mapping for backward compatibility - maps old flat keys to new nested structure
-		config_mapping = {
-			'max_positions': ('limits', 'max_positions'),
-			'max_position_value': ('limits', 'max_position_value'),
-			'max_concentration_pct': ('risk_management', 'max_concentration_pct'),
-			'max_daily_loss_pct': ('risk_management', 'max_daily_loss_pct'),
-			'max_drawdown_pct': ('risk_management', 'max_drawdown_pct'),
-			'max_transactions_per_day': ('trading_rules', 'max_transactions_per_day'),
-			'max_cash_withdrawal_pct': ('trading_rules', 'max_cash_withdrawal_pct'),
-			'validate_transactions': ('validation', 'validate_transactions'),
-			'require_sufficient_funds': ('validation', 'require_sufficient_funds'),
-			'publish_update_events': ('events', 'publish_update_events'),
-			'publish_error_events': ('events', 'publish_error_events'),
-		}
-			
-		for key, value in kwargs.items():
-			if key in config_mapping:
-				section_name, attr_name = config_mapping[key]
-				section = getattr(self.config, section_name)
-				setattr(section, attr_name, value)
-			elif hasattr(self.config, key):
-				setattr(self.config, key, value)
-			else:
-				# FL-01: unknown configuration key on the config seam.
-				raise ConfigurationError(config_key=key, reason="Unknown configuration key")
+	def update_config(self, updates: Dict[str, Any]) -> None:
+		"""Update portfolio configuration at runtime (D-07/D-08/D-09).
+
+		Canonical contract: deep_merge -> model_validate -> atomic-swap, wrapping
+		pydantic ``ValidationError`` (which also rejects unknown keys via
+		``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
+		RAISES on failure. WR-04: the deep-merge preserves sibling submodel
+		fields a partial nested update did not intend to change.
+		"""
+		merged = deep_merge(self.config.model_dump(), updates)
+		try:
+			new_config = PortfolioConfig.model_validate(merged)
+		except pydantic.ValidationError as e:
+			raise ConfigurationError(reason=str(e)) from e
+		self.config = new_config  # atomic GIL-safe reference swap (D-11)
 	
 	def get_config_dict(self) -> Dict[str, Any]:
 		"""Get configuration as dictionary."""

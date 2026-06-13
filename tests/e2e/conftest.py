@@ -14,9 +14,10 @@ Given a leaf directory ``here`` it:
    derived from the FULL leaf path relative to ``tests/e2e/`` and registered in
    ``sys.modules`` under that unique name so two leaves — even same-named ones in
    different parents — never shadow each other — Pitfall 4);
-2. wires a real ``TradingSystem`` from the spec (the SAME engine the oracle uses —
-   D-03: no parallel/reinvented config schema, the spec carries the real engine
-   config objects: strategies, portfolios, window, data path);
+2. builds a real ``BacktestTradingSystem`` from the spec via the composition
+   FACTORY ``build_backtest_system(spec)`` (the SAME factory the run path uses —
+   D-01/D-03: no parallel/reinvented config schema, the spec carries the real engine
+   config objects: strategies, portfolios, window, data path, exchange config);
 3. runs it (``print_summary=False``);
 4. reads portfolio state AFTER the run (queue-only — D-07, no mid-run cross-domain
    reads);
@@ -50,14 +51,16 @@ commit it WITH a VERIFY note. A regression-lock proves *stability*, not
 *correctness* — verification happens once, before the freeze, never via a blind
 12-scenario ``--freeze`` sweep.
 
-OPEN Q1 — the ``spec.exchange`` fee/slippage seam (deferred to Phase 7)
------------------------------------------------------------------------
-``TradingSystem(exchange="csv")`` ignores fee/slippage at construction. When a spec
-carries a non-None ``exchange`` (an ``ExchangeConfig``) the harness applies it
-post-construction, pre-``run()`` via
-``system.execution_handler.exchanges['simulated'].update_config(**fields)``. The
-Plan 03 canary's ``spec.exchange`` is None → this is a no-op today; the real
-fee/slippage threading is Phase 7 work.
+The ``spec.exchange`` fee/slippage threading (CONSTRUCTION-TIME — Wave 4, D-01/D-14)
+-----------------------------------------------------------------------------------
+A spec carrying a non-None ``exchange`` (an ``ExchangeConfig``) is threaded into the
+engine AT CONSTRUCTION by ``build_backtest_system`` → ``compose_engine`` →
+``ExecutionHandler`` → ``SimulatedExchange``. Wave 4 (04-05) COLLAPSED the former
+post-construction fee/slippage re-init seam (and the additive symbol-registration
+loop) onto this factory path: the fee/slippage/limits state is now byte-identical to
+the old re-init but established once, declaratively, at compose time. When
+``spec.exchange`` is None the factory falls back to the default preset (zero fee /
+no slippage), so the zero-fee leaves stay byte-identical to today.
 
 Indentation: 4 spaces (matches ``tests/conftest.py``).
 """
@@ -285,88 +288,42 @@ def _make_on_tick(spec, portfolio_id):
 
 
 def _build_and_run(spec):
-    """Wire a ``TradingSystem`` from ``spec``, run it, and read state AFTER the run.
+    """Build a ``BacktestTradingSystem`` from ``spec`` via the COMPOSITION FACTORY,
+    run it, and read state AFTER the run.
 
-    Reproduces the oracle generator's wiring sequence (``scripts/run_backtest.py``)
-    generalized over the spec. The ``TradingSystem`` import is DEFERRED into this
-    function body so ``--collect-only`` stays clean even with zero scenarios wired.
+    Wave 4 (04-05) collapse (D-01/D-13/D-14): this function no longer reproduces the
+    imperative wiring (construct → post-construction fee/slippage re-init →
+    additive symbol-registration → ``add_strategy``/``add_portfolio``/``subscribe``).
+    All of that is now the FACTORY's job — ``build_backtest_system(spec)`` threads the
+    spec's ``ExchangeConfig`` at construction (so the D-14 post-construction fee/
+    slippage re-init seam is GONE) and seeds the COMPLETE supported-symbol set from
+    the spec data keys (so the additive symbol-registration loop is GONE — D-13/Trap 1
+    replacement-safe construction-time seeding). The factory also adds the spec's
+    strategies/portfolios in spec order and wires subscriptions.
+
+    The ``build_backtest_system`` import is DEFERRED into this function body so
+    ``--collect-only`` stays clean even with zero scenarios wired.
     """
     # Deferred import: only executed when a scenario actually runs (collect-clean).
-    from itrader.trading_system.backtest_trading_system import TradingSystem
-
-    # D-03: the spec carries the REAL engine window + data path — no parallel schema.
-    system = TradingSystem(
-        exchange="csv",
-        start_date=spec.start,
-        end_date=spec.end,
-        timeframe=spec.timeframe,
-        csv_paths=spec.data,
-    )
-
-    # D-14 — fee/slippage seam (Phase 7). Canary leaves with spec.exchange = None
-    # skip this block entirely → byte-identical to today (oracle-dark). A non-None
-    # ExchangeConfig is applied post-construction, pre-run by re-running the EXACT
-    # constructor path SimulatedExchange.__init__ uses (simulated.py:70-74): assign
-    # the config object, then re-init the fee/slippage models from it. CRITICAL
-    # (PATTERNS A2): do NOT touch simulated._supported_symbols — execution_handler
-    # (L104-109) added BTCUSD to the instance set POST-construction, and the default
-    # ExchangeConfig.limits has no BTCUSD; re-deriving the symbol set would WIPE that
-    # admission and every order would silently REFUSE. The two model re-inits are the
-    # entire fix and nothing more.
-    exchange_config = getattr(spec, "exchange", None)
-    if exchange_config is not None:
-        simulated = system.execution_handler.exchanges["simulated"]
-        simulated.config = exchange_config
-        simulated.fee_model = simulated._init_fee_model()
-        simulated.slippage_model = simulated._init_slippage_model()
-        # Phase 8 (CASH-02 REFUSED, D-03): validate_order reads the CACHED
-        # _min_order_size / _max_order_size Decimals (simulated.py:99-100, Decimal
-        # end-to-end per DEC-02/D-06 — no float()), NOT simulated.config — so a spec
-        # carrying a tiny limits.max_order_size (the deterministic REFUSED lever) only
-        # bites if we re-derive those caches here, exactly as
-        # SimulatedExchange.update_config does (simulated.py:603-606).
-        # _supported_symbols is STILL left untouched (PATTERNS A2): execution_handler
-        # added BTCUSD to the instance set post-construction and the default
-        # ExchangeConfig.limits omits it, so re-deriving the symbol set would WIPE
-        # that admission and silently REFUSE every order. Only the size caches move.
-        simulated._min_order_size = simulated.config.limits.min_order_size
-        simulated._max_order_size = simulated.config.limits.max_order_size
-
-    # Phase 9 (ROBUST-01/02, Rule-3 seam): register the spec's data tickers with
-    # the simulated exchange's supported-symbol set so non-default tickers (e.g.
-    # SOLUSD / AAVEUSD — the real sliced-data leaves) are admitted by
-    # validate_symbol. init_exchanges only adds BTCUSD; the default preset lists
-    # the *USDT majors. This MIRRORS the integration-test wiring
-    # (test_universe_spans.py:140-149) which does the identical instance-set
-    # mutation. It is strictly ADDITIVE (a superset union — never re-derives /
-    # wipes the set, contrast the PATTERNS A2 warning about re-deriving from
-    # config), so every prior leaf is unaffected: their tickers (BTCUSD already
-    # added, ETHUSDT already in the default set) re-add as a no-op. Oracle-dark:
-    # the BTCUSD oracle runs its own TradingSystem (scripts/run_backtest.py), not
-    # this harness.
-    simulated = system.execution_handler.exchanges["simulated"]
-    for ticker in spec.data:
-        simulated.register_symbol(ticker.upper())
-
-    for strategy in spec.strategies:
-        system.strategies_handler.add_strategy(strategy)
+    from itrader.trading_system.backtest_trading_system import build_backtest_system
 
     # IN-03: fail with an explanatory message (consistent with _load_spec's
     # spec-shape failures) instead of a bare IndexError from portfolio_ids[0]
     # below when a spec declares no portfolios.
     assert spec.portfolios, "scenario spec must declare at least one portfolio"
 
-    portfolio_ids = []
-    for pf in spec.portfolios:
-        pid = system.portfolio_handler.add_portfolio(
-            user_id=pf.user_id,
-            name=pf.name,
-            exchange="csv",
-            cash=pf.cash,
-        )
-        portfolio_ids.append(pid)
-        for strategy in spec.strategies:
-            strategy.subscribe_portfolio(pid)
+    # D-01/D-04: the factory builds the entire engine from the declarative spec —
+    # strategies, portfolios, subscriptions, the construction-time ExchangeConfig
+    # (fee/slippage/limits threaded at compose_engine time, NOT re-init'd
+    # post-construction), and the complete symbol seeding. The spec IS the wiring.
+    system = build_backtest_system(spec)
+
+    # The factory adds portfolios in SPEC ORDER (Trap 6), so the active-portfolio
+    # insertion order reconstructs the spec-order id list the operator hook +
+    # _assemble need. (get_active_portfolios is dict-insertion order.)
+    portfolio_ids = [
+        p.portfolio_id for p in system.portfolio_handler.get_active_portfolios()
+    ]
 
     # Phase 6 (D-06): build the operator hook from spec.actions. Empty actions →
     # _make_on_tick returns None → byte-exact run (oracle-dark).

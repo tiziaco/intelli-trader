@@ -44,11 +44,11 @@ def golden_summary_path():
 
 @pytest.fixture
 def backtest_engine():
-    """Factory that builds a CSV-fed backtest ``TradingSystem``.
+    """Factory that builds a CSV-fed backtest ``BacktestTradingSystem``.
 
     Returns a callable so construction is DEFERRED until a test actually invokes it.
-    The TradingSystem import lives inside the inner function body so ``--collect-only``
-    succeeds even if a referenced branch is not yet wired.
+    The BacktestTradingSystem import lives inside the inner function body so
+    ``--collect-only`` succeeds even if a referenced branch is not yet wired.
     """
 
     def _make(
@@ -59,9 +59,11 @@ def backtest_engine():
         cash=10_000,
     ):
         # Deferred import: only executed when a test calls the factory.
-        from itrader.trading_system.backtest_trading_system import TradingSystem
+        from itrader.trading_system.backtest_trading_system import (
+            BacktestTradingSystem,
+        )
 
-        return TradingSystem(
+        return BacktestTradingSystem(
             exchange="csv",
             start_date=start_date,
             end_date=end_date,

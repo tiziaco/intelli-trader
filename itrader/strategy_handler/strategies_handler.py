@@ -2,6 +2,7 @@ from datetime import timedelta
 from queue import Queue
 from typing import Any, cast
 
+from itrader.core.exceptions import ConfigurationError
 from itrader.core.ids import PortfolioId
 from itrader.core.money import to_money
 from itrader.core.sizing import TradingDirection
@@ -244,3 +245,56 @@ class StrategiesHandler(object):
 			self.min_timeframe = min(self.min_timeframe, strategy.timeframe)
 
 		self.logger.info(f'New strategy added: {strategy.name}')
+
+	def update_config(self, updates: dict[str, Any]) -> None:
+		"""Re-validate -> re-run init() -> re-derive warmup, per strategy (D-09).
+
+		COMP-02's uniform runtime config-update surface for the
+		StrategiesHandler. Unlike the config-model handlers, the handler owns
+		NO Pydantic model and D-09 explicitly forbids inventing a config model
+		for it — the real work is re-running each
+		strategy's idempotent ``reconfigure`` seam (Phase 2 D-12), which
+		re-applies + re-validates the params and re-runs ``init()``, after
+		which Phase 3's auto-warmup re-derives ``warmup``/``max_window`` from
+		the declared indicators (Phase 3 D-08).
+
+		PINNED dict shape (boundary contract — Wave-4/04-05 builds against this
+		exact shape): ``updates`` is keyed by ``strategy.name``; each value is a
+		kwargs dict forwarded VERBATIM as ``reconfigure(**value)`` to that one
+		named strategy. ``strategy.name`` is the human-stable key (the
+		per-construction ``strategy_id`` UUIDv7 is NOT stable across runs).
+
+		Error contract (D-08, single web-catchable type): a key matching no
+		managed strategy's ``.name`` raises ``ConfigurationError`` (config_key =
+		the unknown name); any failure raised by ``reconfigure`` (e.g. an
+		unknown/missing param from the base engine) is wrapped into
+		``ConfigurationError`` so the surface stays single-catch.
+
+		Applied BETWEEN event cycles, never mid-cycle (D-11).
+
+		Parameters
+		----------
+		updates: `dict[str, Any]`
+			A mapping ``{strategy.name: {param: value, ...}}``; each inner dict
+			is forwarded as ``reconfigure(**inner)`` to the named strategy.
+		"""
+		by_name = {strategy.name: strategy for strategy in self.strategies}
+		for name, kwargs in updates.items():
+			strategy = by_name.get(name)
+			if strategy is None:
+				raise ConfigurationError(
+					config_key=name,
+					reason=f"no managed strategy named {name!r}",
+				)
+			try:
+				strategy.reconfigure(**kwargs)
+			except ConfigurationError:
+				raise
+			except Exception as exc:
+				# Wrap any reconfigure failure (UnknownParamError /
+				# MissingParamError / a validate() ValueError) into the single
+				# web-catchable ConfigurationError (D-08).
+				raise ConfigurationError(
+					config_key=name,
+					reason=str(exc),
+				) from exc

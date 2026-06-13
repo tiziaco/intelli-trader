@@ -24,6 +24,7 @@ from itrader.core.enums.execution import (
 )
 from itrader.execution_handler.result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 from itrader.core.enums import OrderType, OrderCommand, FillStatus, Side
+from itrader.core.exceptions.base import ConfigurationError
 
 
 def drain_fills(queue: Queue) -> list[FillEvent]:
@@ -123,56 +124,55 @@ class TestSimulatedExchangeConfiguration:
         assert isinstance(config_dict['min_order_size'], float)
 
     def test_update_config_basic_parameters(self):
-        """Test updating basic configuration parameters."""
+        """Test updating basic configuration parameters (D-07 canonical dict contract)."""
         # Test failure simulation updates
-        self.exchange.update_config(simulate_failures=True, failure_rate=0.05)
-        
+        self.exchange.update_config(
+            {"failure_simulation": {"simulate_failures": True, "failure_rate": "0.05"}})
+
         assert self.exchange.config.failure_simulation.simulate_failures is True
         assert float(self.exchange.config.failure_simulation.failure_rate) == 0.05
         assert self.exchange.simulate_failures is True
         assert self.exchange.failure_rate == 0.05
 
     def test_update_config_limits(self):
-        """Test updating exchange limits."""
+        """Test updating exchange limits (D-07 canonical dict contract)."""
         new_symbols = {'AAPL', 'MSFT', 'GOOGL'}
-        
-        self.exchange.update_config(
-            supported_symbols=new_symbols,
-            min_order_size=10.0,
-            max_order_size=10000.0
-        )
-        
+
+        self.exchange.update_config({
+            "limits": {
+                "supported_symbols": new_symbols,
+                "min_order_size": "10.0",
+                "max_order_size": "10000.0",
+            }
+        })
+
         assert self.exchange.config.limits.supported_symbols == new_symbols
         assert float(self.exchange.config.limits.min_order_size) == 10.0
         assert float(self.exchange.config.limits.max_order_size) == 10000.0
         assert self.exchange.get_supported_symbols() == new_symbols
 
     def test_update_config_fee_model(self):
-        """Test updating fee model configuration."""
+        """Test updating fee model configuration (D-07 canonical dict contract)."""
         self.exchange.update_config(
-            fee_model_type=FeeModelType.PERCENT,
-            fee_rate=0.002
-        )
-        
+            {"fee_model": {"model_type": FeeModelType.PERCENT.value, "fee_rate": "0.002"}})
+
         assert self.exchange.config.fee_model.model_type == FeeModelType.PERCENT
-        assert self.exchange.config.fee_model.fee_rate == 0.002
+        assert float(self.exchange.config.fee_model.fee_rate) == 0.002
         # Verify fee model was re-initialized
         assert hasattr(self.exchange.fee_model, 'fee_rate')
 
     def test_update_config_slippage_model(self):
-        """Test updating slippage model configuration."""
+        """Test updating slippage model configuration (D-07 canonical dict contract)."""
         self.exchange.update_config(
-            slippage_model_type=SlippageModelType.LINEAR,
-            base_slippage_pct=0.02
-        )
-        
+            {"slippage_model": {"model_type": SlippageModelType.LINEAR.value, "base_slippage_pct": "0.02"}})
+
         assert self.exchange.config.slippage_model.model_type == SlippageModelType.LINEAR
-        assert self.exchange.config.slippage_model.base_slippage_pct == 0.02
+        assert float(self.exchange.config.slippage_model.base_slippage_pct) == 0.02
 
     def test_update_config_invalid_key(self):
-        """Test updating with invalid configuration key raises error."""
-        with pytest.raises(ValueError, match="Unknown configuration key"):
-            self.exchange.update_config(invalid_key="invalid_value")
+        """Test updating with invalid configuration key raises ConfigurationError (D-08)."""
+        with pytest.raises(ConfigurationError):
+            self.exchange.update_config({"invalid_key": "invalid_value"})
 
     def test_update_config_sequential_single_writer(self):
         """D-19: config updates run on the engine thread (single-writer).
@@ -181,7 +181,8 @@ class TestSimulatedExchangeConfiguration:
         sequential updates are the sanctioned pattern now.
         """
         for i in range(10):
-            self.exchange.update_config(failure_rate=i * 0.01)
+            self.exchange.update_config(
+                {"failure_simulation": {"failure_rate": str(i * 0.01)}})
 
         # Verify exchange is still in valid state
         config_dict = self.exchange.get_config_dict()
@@ -262,10 +263,12 @@ class TestSimulatedExchangeOrderExecution:
         # deterministic, hand-derivable size-impact slippage (mirrors COST-04).
         self.exchange.config.slippage_model.size_impact_factor = Decimal("0.0001")
         self.exchange.config.slippage_model.max_slippage_pct = Decimal("50")
-        self.exchange.update_config(
-            slippage_model_type=SlippageModelType.LINEAR,
-            base_slippage_pct=Decimal("0"),
-        )
+        self.exchange.update_config({
+            "slippage_model": {
+                "model_type": SlippageModelType.LINEAR.value,
+                "base_slippage_pct": "0",
+            }
+        })
 
         order = self.create_test_order(price=100.0)
         self.exchange.on_order(order)
@@ -281,9 +284,7 @@ class TestSimulatedExchangeOrderExecution:
         """The next-bar-open fill carries fees computed on the fill price."""
         # Configure for percentage fees
         self.exchange.update_config(
-            fee_model_type=FeeModelType.PERCENT,
-            fee_rate=0.001
-        )
+            {"fee_model": {"model_type": FeeModelType.PERCENT.value, "fee_rate": "0.001"}})
 
         order = self.create_test_order(quantity=100.0, price=150.0)
         self.exchange.on_order(order)
@@ -300,7 +301,8 @@ class TestSimulatedExchangeOrderExecution:
     def test_order_admission_failure_simulation(self):
         """Failure simulation fires at admission time and emits REFUSED."""
         # Enable failure simulation with high rate
-        self.exchange.update_config(simulate_failures=True, failure_rate=1.0)
+        self.exchange.update_config(
+            {"failure_simulation": {"simulate_failures": True, "failure_rate": "1.0"}})
 
         order = self.create_test_order()
         self.exchange.on_order(order)
@@ -519,8 +521,9 @@ class TestSimulatedExchangeOrderValidation:
     def test_quantity_limits_validation(self):
         """Test validation of order quantity limits."""
         # Configure custom limits
-        self.exchange.update_config(min_order_size=50.0, max_order_size=500.0)
-        
+        self.exchange.update_config(
+            {"limits": {"min_order_size": "50.0", "max_order_size": "500.0"}})
+
         # Test below minimum (use 0.0001 which is below 50.0)
         order_small = OrderEvent(
             time=datetime.now(), ticker='BTCUSDT', action=Side.BUY,
@@ -551,21 +554,17 @@ class TestSimulatedExchangeOrderValidation:
         TypeError is gone (per D-07 there was none: Decimal-vs-float COMPARISON
         works in Py3; only arithmetic raises, and there is none on these fields).
 
-        Limits are configured with Decimal LITERALS, not floats: ExchangeLimits
-        has extra="forbid" but NO validate_assignment=True, so update_config's
-        setattr BYPASSES the field validator — a float literal would be stored AS
-        a float and the re-derived _min_order_size would carry that float, breaking
-        the DEC-02 Decimal-carry assertion below. Decimal literals keep the field
-        genuinely Decimal AND make the comparison Decimal-vs-Decimal.
+        Under the canonical update_config contract (D-07/D-09, Wave 3) the partial
+        update is run through ``ExchangeConfig.model_validate``, which COERCES the
+        limits fields to their declared ``Decimal`` type regardless of whether the
+        caller passes a string or a Decimal — so the re-derived ``_min_order_size``
+        is genuinely Decimal and the comparison is Decimal-vs-Decimal.
         """
         self.exchange.update_config(
-            min_order_size=Decimal("50"), max_order_size=Decimal("500")
-        )
+            {"limits": {"min_order_size": "50", "max_order_size": "500"}})
 
         # DEC-02 regression lock: _min_order_size is carried as Decimal end-to-end.
-        # Would have FAILED under the old float() wraps; would also fail if limits
-        # were updated with float literals (setattr-bypass). With Task 1's fix +
-        # the Decimal-literal update above, it passes.
+        # model_validate coerces the limits field to its Decimal type on the swap.
         assert isinstance(self.exchange._min_order_size, Decimal)
 
         # Decimal below-minimum quantity: Decimal("0.0001") < Decimal("50") -> True
@@ -730,7 +729,8 @@ class TestSimulatedExchangeEdgeCases:
         draw lets the order rest in the book (D-13: no immediate fill).
         """
         self.exchange.connect()
-        self.exchange.update_config(simulate_failures=True, failure_rate=0.5)
+        self.exchange.update_config(
+            {"failure_simulation": {"simulate_failures": True, "failure_rate": "0.5"}})
 
         # Test failure (random returns 0.3, which is < 0.5)
         with patch.object(self.exchange._rng, 'random', return_value=0.3):
@@ -757,7 +757,7 @@ class TestDecimalFillBoundary:
         self.queue = Queue()
         self.exchange = SimulatedExchange(self.queue)
         self.exchange.connect()
-        self.exchange.update_config(supported_symbols={"BTCUSDT"})
+        self.exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})
 
     def _order(self, **kwargs) -> OrderEvent:
         defaults = {
@@ -808,7 +808,8 @@ class TestDecimalFillBoundary:
         assert fill.price == Decimal("100") * Decimal("1.005")
 
     def test_executed_fill_commission_is_decimal(self, make_bar):
-        self.exchange.update_config(fee_model_type=FeeModelType.PERCENT, fee_rate=0.001)
+        self.exchange.update_config(
+            {"fee_model": {"model_type": FeeModelType.PERCENT.value, "fee_rate": "0.001"}})
         self.exchange.on_order(self._order())
         self.exchange.on_market_data(make_bar(open_=150, high=152, low=149, close=151))
         fills = drain_fills(self.queue)
@@ -835,7 +836,7 @@ class _RoutingHarness:
         self.exchange = SimulatedExchange(self.queue)
         self.exchange.connect()
         # Ensure the symbol validates on the default preset used by tests.
-        self.exchange.update_config(supported_symbols={"BTCUSDT"})
+        self.exchange.update_config({"limits": {"supported_symbols": {"BTCUSDT"}}})
 
     def oe(self, order_type, action="BUY", price=40.0, order_id=1, command=None, parent_order_id=None):
         # D-12: order events carry Decimal money — enter via Decimal(str(x)).

@@ -40,6 +40,10 @@ from .system import (
     PerformanceSettings,
     SystemConfig,
 )
+from .order import (
+    OrderConfig,
+)
+from .merge import deep_merge
 from .exchange import (
     ConnectionSettings,
     ExchangeConfig,
@@ -77,6 +81,10 @@ __all__ = [
     "ValidationSettings",
     "EventSettings",
     "get_portfolio_preset",
+    # Order domain
+    "OrderConfig",
+    # Shared config helpers
+    "deep_merge",
     # System domain
     "SystemConfig",
     "Environment",

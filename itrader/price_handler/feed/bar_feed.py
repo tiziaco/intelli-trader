@@ -61,7 +61,7 @@ from typing import Any, Optional
 import pandas as pd
 
 from itrader.core.bar import Bar
-from itrader.core.exceptions import MissingPriceDataError
+from itrader.core.exceptions import ConfigurationError, MissingPriceDataError
 from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.logger import get_itrader_logger
 from itrader.price_handler.store.base import PriceStore
@@ -198,6 +198,39 @@ class BacktestBarFeed(BarFeed):
         self.logger.info(
             'Backtest bar feed initialized (%d symbols, base timeframe %s)',
             len(self._symbols), self._base_alias)
+
+    # -- Uniform config surface (COMP-02 / D-10 — interface-conformance) ------
+
+    def update_config(self, updates: dict[str, Any]) -> None:
+        """Interface-conformance RAISE — the feed cannot hot-swap mid-run (D-10).
+
+        COMP-02's uniform ``update_config(self, updates: dict[str, Any]) -> None``
+        surface. The backtest feed has NO Pydantic config model — D-09 forbids
+        inventing a config model just to force a literal model_validate here.
+        ``base_timeframe`` is held as a plain construction attr that ripples
+        into ``_base_alias`` and the window cutoff math — a "replace, not a
+        hot-swap" (the live replace path is N+4).
+
+        This method exists PURELY to satisfy the uniform interface and to fail
+        LOUDLY (Pitfall 3 — never a silent no-op): it always raises
+        ``ConfigurationError`` for any update. ``base_timeframe`` is named as
+        the unsafe key so the future web layer catches the one iTrader type
+        (D-08) and surfaces an honest "replace the feed" message.
+
+        Parameters
+        ----------
+        updates: `dict[str, Any]`
+            Ignored — the feed cannot apply any update in place.
+
+        Raises
+        ------
+        ConfigurationError
+            Always — the backtest feed is not runtime-reconfigurable.
+        """
+        raise ConfigurationError(
+            config_key="base_timeframe",
+            reason="cannot hot-swap base_timeframe in backtest — replace the feed",
+        )
 
     # -- Precompute (M5-03 — resample once, out of the hot loop) --------------
 

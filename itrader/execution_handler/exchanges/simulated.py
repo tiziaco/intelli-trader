@@ -20,7 +20,10 @@ from itrader.core.enums import OrderType, OrderCommand
 from itrader.core.money import to_money
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
-from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation, FeeModelType, SlippageModelType
+from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation, FeeModelType, SlippageModelType, deep_merge
+from itrader.core.exceptions.base import ConfigurationError
+
+import pydantic
 
 class SimulatedExchange(AbstractExchange):
 	"""
@@ -75,6 +78,11 @@ class SimulatedExchange(AbstractExchange):
 		
 		# Operational parameters
 		self.simulate_failures = self.config.failure_simulation.simulate_failures
+		# failure_rate is a probability, NOT money — the Decimal-first policy
+		# does not apply here. It is cached as float because it is compared
+		# directly against self._rng.random() (a native float) at the call
+		# site; this is an intentional probability-boundary edge analogous to
+		# the float() serialization edges elsewhere in the codebase.
 		self.failure_rate = float(self.config.failure_simulation.failure_rate)
 		
 		# D-19: config lock removed — single-writer contract, see class docstring.
@@ -401,7 +409,7 @@ class SimulatedExchange(AbstractExchange):
 		
 		# Order value validation
 		order_value = event.quantity * event.price
-		if order_value < 1.0:  # Minimum order value
+		if order_value < Decimal("1"):  # Minimum order value
 			warnings.append(f"Order value ${order_value:.2f} is very small")
 		
 		# Determine overall validation result
@@ -613,63 +621,46 @@ class SimulatedExchange(AbstractExchange):
 		(unknown) configuration key.
 		"""
 		try:
-			self.update_config(**config)
-		except ValueError as exc:
+			self.update_config(config)
+		except ConfigurationError as exc:
 			self.logger.warning('Exchange configure rejected: %s', exc)
 			return False
 		return True
 
-	def update_config(self, **kwargs: Any) -> None:
-		"""Update exchange configuration."""
-		# Direct config attribute updates
-		config_mapping: Dict[str, Any] = {
-			'exchange_name': 'exchange_name',
-			'exchange_type': 'exchange_type',
-			'simulate_failures': ('failure_simulation', 'simulate_failures'),
-			'failure_rate': ('failure_simulation', 'failure_rate'),
-			'supported_symbols': ('limits', 'supported_symbols'),
-			'min_order_size': ('limits', 'min_order_size'),
-			'max_order_size': ('limits', 'max_order_size'),
-			'fee_model_type': ('fee_model', 'model_type'),
-			'fee_rate': ('fee_model', 'fee_rate'),
-			'maker_rate': ('fee_model', 'maker_rate'),
-			'taker_rate': ('fee_model', 'taker_rate'),
-			'slippage_model_type': ('slippage_model', 'model_type'),
-			'base_slippage_pct': ('slippage_model', 'base_slippage_pct'),
-			'slippage_pct': ('slippage_model', 'slippage_pct'),
-		}
-			
-		for key, value in kwargs.items():
-			if isinstance(config_mapping.get(key), tuple):
-				section_name, attr_name = config_mapping[key]
-				section = getattr(self.config, section_name)
-				setattr(section, attr_name, value)
-			elif key in config_mapping:
-				setattr(self.config, config_mapping[key], value)
-			elif hasattr(self.config, key):
-				setattr(self.config, key, value)
-			else:
-				raise ValueError(f"Unknown configuration key: {key}")
-			
-		# Re-initialize components affected by config changes
-		if any(k.startswith('fee_') for k in kwargs) or 'fee_model_type' in kwargs:
-			self.fee_model = self._init_fee_model()
-		if any(k.startswith('slippage_') for k in kwargs) or 'slippage_model_type' in kwargs:
-			self.slippage_model = self._init_slippage_model()
-		if 'simulate_failures' in kwargs or 'failure_rate' in kwargs:
-			self.simulate_failures = self.config.failure_simulation.simulate_failures
-			self.failure_rate = float(self.config.failure_simulation.failure_rate)
-			
-		# Update internal state for limits
-		if any(k in ['supported_symbols', 'min_order_size', 'max_order_size'] for k in kwargs):
-			self._supported_symbols = self.config.limits.supported_symbols
-			# DEC-02 / D-06: re-derived as Decimal (no float() — mirror init, Decimal end-to-end).
-			self._min_order_size = self.config.limits.min_order_size
-			self._max_order_size = self.config.limits.max_order_size
-			
-		# Update exchange name if changed
-		if 'exchange_name' in kwargs:
-			self._exchange_name = self.config.exchange_name
+	def update_config(self, updates: Dict[str, Any]) -> None:
+		"""Update exchange configuration at runtime (D-07/D-08/D-09).
+
+		Canonical contract: deep_merge -> model_validate -> atomic-swap, wrapping
+		pydantic ``ValidationError`` (which also rejects unknown keys via
+		``extra="forbid"``) into ``ConfigurationError``. Returns ``None`` and
+		RAISES on failure. After the swap every config-derived cache is
+		re-derived (Pitfall 1) so a stale fee model / size cache / symbol set
+		can never linger.
+		"""
+		merged = deep_merge(self.config.model_dump(), updates)
+		try:
+			new_config = ExchangeConfig.model_validate(merged)
+		except pydantic.ValidationError as e:
+			raise ConfigurationError(reason=str(e)) from e
+		self.config = new_config  # atomic GIL-safe reference swap (D-11)
+
+		# Pitfall 1: reproduce EVERY post-swap re-derivation the old form did
+		# (fee/slippage models, failure simulation, size caches, symbol set,
+		# exchange name) so the swap never leaves a stale cached internal.
+		self.fee_model = self._init_fee_model()
+		self.slippage_model = self._init_slippage_model()
+		self.simulate_failures = self.config.failure_simulation.simulate_failures
+		# float cache: probability boundary, compared against rng float — see __init__.
+		self.failure_rate = float(self.config.failure_simulation.failure_rate)
+		# Trap 1 (REPLACEMENT): _supported_symbols is re-derived wholesale from
+		# config.limits — construction must seed the COMPLETE set (D-13). The
+		# deep_merge preserves supported_symbols when an update omits it.
+		self._supported_symbols = self.config.limits.supported_symbols
+		# DEC-02 / D-06: size limits carried as Decimal end-to-end (no float() —
+		# float money is a correctness defect; config.limits.* are already Decimal).
+		self._min_order_size = self.config.limits.min_order_size
+		self._max_order_size = self.config.limits.max_order_size
+		self._exchange_name = self.config.exchange_name
 
 	def get_config_dict(self) -> Dict[str, Any]:
 		"""Get configuration as dictionary."""
