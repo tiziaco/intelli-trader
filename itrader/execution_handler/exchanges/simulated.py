@@ -25,6 +25,13 @@ from itrader.core.exceptions.base import ConfigurationError
 
 import pydantic
 
+# IN-01: the validate_order sanity threshold above which a price merely earns a
+# "seems unusually high" WARNING (not a rejection). Named + Decimal-typed to
+# match the file's Decimal-end-to-end money discipline rather than a bare int
+# literal compared against a Decimal price.
+_UNREALISTIC_PRICE_THRESHOLD = Decimal("1000000")
+
+
 class SimulatedExchange(AbstractExchange):
 	"""
 	Modern simulated exchange with config-driven architecture.
@@ -422,7 +429,7 @@ class SimulatedExchange(AbstractExchange):
 		# Price validation
 		if event.price <= 0:
 			failed_checks.append("Order price must be positive")
-		elif event.price > 1000000:  # Sanity check for unrealistic prices
+		elif event.price > _UNREALISTIC_PRICE_THRESHOLD:  # Decimal-vs-Decimal sanity check (IN-01)
 			warnings.append(f"Order price {event.price} seems unusually high")
 		
 		# Connection validation
@@ -441,11 +448,17 @@ class SimulatedExchange(AbstractExchange):
 		
 		if not is_valid:
 			# WR-02: derive error_code from a priority-ordered scan of the FULL
-			# failed_checks list, not failed_checks[0]. The quantity and price
-			# blocks above are independent `if`s, so an order can fail both at
-			# once; first-wins on append order silently dropped one distinct
-			# failure from the structured (programmatically consumed) error_code.
-			# error_message still joins every failed check for completeness.
+			# failed_checks list, not failed_checks[0]. The independence is at the
+			# BLOCK level (IN-02): the quantity block, the price block, the symbol
+			# block and the connection block are separate top-level `if`s, so a
+			# single order can fail across several blocks at once (e.g. a bad price
+			# AND an out-of-range quantity). Within the quantity block the
+			# sub-checks are an `if/elif` chain (mutually exclusive: <=0, <min,
+			# >max), so one order emits at most one quantity failure — but it can
+			# still emit a separate price/symbol/connection failure. First-wins on
+			# append order silently dropped one distinct failure from the structured
+			# (programmatically consumed) error_code. error_message still joins
+			# every failed check for completeness.
 			def _classify(check: str) -> "ExecutionErrorCode":
 				lowered = check.lower()
 				if "invalid symbol" in lowered:
