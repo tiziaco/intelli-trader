@@ -108,6 +108,24 @@ re-baselined goldens (Task 3).
 
 ## Owner Sign-Off
 
-> _Pending — Task 2 blocking owner-gate. The owner-approval block (owner handle + date +
-> byte-exact-oracle attribution acknowledgment) is appended here in Task 3 after explicit
-> "approved"._
+**APPROVED.**
+
+- **Owner:** tiziaco
+- **Date:** 2026-06-13
+- **Plan:** 06-04 (Task 2 blocking owner-gate → Task 3 freeze authorized)
+
+The owner reviewed this attribution and **approved** the owner-gated re-baseline. The
+sign-off acknowledges the **byte-exact-oracle** attribution: the SMA_MACD integration
+oracle stays byte-exact (`trade_count=134`, `final_equity=46189.87730727451`,
+equity-neutral per D-04), determinism double-run is byte-identical, and `mypy --strict`
+is clean (D-06). The result change is confined to order STATUS (`PENDING` → `EXPIRED`)
+across EXACTLY the 3 named e2e leaves (`matching/never_fill`, `sltp/from_decision_held`,
+`sltp/from_fill_held`) — the complete D-11 blast radius — with zero movement in any
+cash/equity/trade figure.
+
+This sign-off authorized the `--freeze` of those 3 re-baselined `golden/orders.csv`
+files (Task 3), executed one leaf at a time via the harness `--freeze` discipline
+(tests/e2e/conftest.py, Pitfall 5). No other leaf was frozen. This matches the v1.3
+owner-gated discipline (STATE.md §Milestone Gate v1.3) and the Phase 5 / 05-04 owner
+sign-off precedent (D-B): the new golden disposition is non-repudiably attributed
+(T-06-08) before the regression-lock is frozen.
