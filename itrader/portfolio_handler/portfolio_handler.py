@@ -221,7 +221,7 @@ class PortfolioHandler:
 
     # PortfolioReadModel — structural Protocol implementation (D-16, Plan 05-03)
     #
-    # The order domain reads portfolio state through these six members ONLY
+    # The order domain reads portfolio state through this narrow Protocol surface ONLY
     # (itrader/core/portfolio_read_model.py). No inheritance, no adapter:
     # PortfolioHandler satisfies the runtime_checkable Protocol structurally.
     # D-15: live Position objects never cross the boundary — get_position

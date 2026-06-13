@@ -223,7 +223,7 @@ class LifecycleManager:
 
 		The run-end time-in-force sweep — the peer of ``cancel_order`` (the body
 		below mirrors it near-verbatim). Visits active portfolios in
-		``get_active_portfolios()`` order and, within each, orders sorted by
+		``active_portfolio_ids()`` order and, within each, orders sorted by
 		``order_id`` (UUIDv7 stable sort, D-10 — deterministic). Per order it
 		locally transitions PENDING -> EXPIRED, persists, disarms any pending
 		bracket (WR-03 symmetry — no-ops at run end), idempotently releases the
