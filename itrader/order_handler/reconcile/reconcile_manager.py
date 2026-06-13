@@ -103,6 +103,16 @@ class ReconcileManager:
 		``(False, None)`` case stays an early-return INSIDE ``on_fill`` so the
 		reservation is intentionally HELD — the early-return is NOT pushed into
 		this helper (it must not arm ``should_release``).
+
+		IN-03 — DUAL-EDIT REQUIREMENT: the terminal-status vocabulary is encoded
+		in TWO places: here (the ``(terminal, transition)`` mapping) and the
+		per-status ``if/elif`` dispatch in ``on_fill`` (the ``_apply_*`` arms).
+		Adding a new terminal ``FillStatus`` (as LIFE-01 did with EXPIRED)
+		requires editing BOTH sites. A missed dispatch arm is caught loud at
+		runtime by the ``else: raise NotImplementedError`` fallthrough in
+		``on_fill`` — that guard is the safety net, but the duplication is a
+		maintenance trap, so it is documented here rather than left to be
+		re-discovered on the next status addition.
 		"""
 		if status == FillStatus.EXECUTED:
 			return True, OrderStatus.FILLED
