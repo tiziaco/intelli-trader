@@ -25,7 +25,7 @@ via `to_money` (NEVER `Decimal(float)`).
 """
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from ..operation_result import OperationResult
 from ..base import OrderStorage
@@ -217,3 +217,68 @@ class LifecycleManager:
 			self.logger.error(error_msg, exc_info=True)
 			return OperationResult.failure_result(error_msg,
 				error_details=str(e), operation_type=OrderOperationType.CANCEL_ORDER)
+
+	def expire_all_resting(self) -> List[OperationResult]:
+		"""Sweep every active order to EXPIRED at run end (LIFE-01, D-08/D-10).
+
+		The run-end time-in-force sweep — the peer of ``cancel_order`` (the body
+		below mirrors it near-verbatim). Visits active portfolios in
+		``get_active_portfolios()`` order and, within each, orders sorted by
+		``order_id`` (UUIDv7 stable sort, D-10 — deterministic). Per order it
+		locally transitions PENDING -> EXPIRED, persists, disarms any pending
+		bracket (WR-03 symmetry — no-ops at run end), idempotently releases the
+		reservation (WR-04), and emits an ``OrderEvent(EXPIRE)`` carried on a
+		successful ``OperationResult`` so the exchange clears the resting order
+		through the queue (the sweep never touches ``_resting`` directly,
+		T-06-05). The manager NEVER touches the queue (D-18): it returns the
+		results; the handler enqueues each ``OrderEvent``.
+
+		Returns
+		-------
+		List[OperationResult]
+			One success result per swept order, each carrying exactly one
+			OrderEvent with ``command == OrderCommand.EXPIRE``.
+		"""
+		results: List[OperationResult] = []
+		if self.portfolio_handler is None:
+			return results
+		# get_active_portfolios() is on the concrete PortfolioHandler, not the
+		# narrow PortfolioReadModel Protocol (D-13: the Protocol is the order
+		# domain's read boundary; the run-end portfolio enumeration is wider). The
+		# injected object is the concrete handler at wiring time.
+		active_portfolios = self.portfolio_handler.get_active_portfolios()  # type: ignore[attr-defined]
+		for portfolio in active_portfolios:
+			portfolio_id = portfolio.portfolio_id
+			# D-10: UUIDv7 stable sort => deterministic per-portfolio sweep order.
+			for order in sorted(
+					self.order_storage.get_active_orders(portfolio_id),
+					key=lambda o: o.id):
+				try:
+					# Local terminal transition (peer of cancel_order's
+					# order.cancel_order). Skip orders that refuse the transition.
+					if not order.expire_order("run end (time-in-force)"):
+						continue
+					self.order_storage.update_order(order)
+					# WR-03 (part 1): disarm any pending PercentFromFill bracket —
+					# symmetric with cancel_order; a no-op at run end for ordinary
+					# orders.
+					self._brackets.consume(order.id)
+					# WR-04: the local terminal transition owns the idempotent
+					# release (a stuck BUY reservation corrupts buying power).
+					if self.portfolio_handler is not None:
+						self.portfolio_handler.release(
+							order.portfolio_id, order.id)
+					# OrderEvent(EXPIRE) — the exchange clears the resting order.
+					order_event = OrderEvent.new_order_event(order, command=OrderCommand.EXPIRE)
+					results.append(OperationResult.success_result(
+						f"Order {order.id} expired at run end",
+						order_events=[order_event],
+						operation_type=OrderOperationType.EXPIRE_ORDER,
+						affected_order_ids=[order.id]))
+				except Exception as e:
+					error_msg = f"Error expiring order {order.id}: {e}"
+					self.logger.error(error_msg, exc_info=True)
+					results.append(OperationResult.failure_result(
+						error_msg, error_details=str(e),
+						operation_type=OrderOperationType.EXPIRE_ORDER))
+		return results

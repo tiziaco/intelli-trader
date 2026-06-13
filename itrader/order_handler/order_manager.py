@@ -213,6 +213,10 @@ class OrderManager:
 		"""Delegate order cancellation to LifecycleManager (D-07)."""
 		return self.lifecycle_manager.cancel_order(order_id, portfolio_id, reason)
 
+	def expire_all_resting(self) -> List[OperationResult]:
+		"""Delegate the run-end time-in-force sweep to LifecycleManager (D-07)."""
+		return self.lifecycle_manager.expire_all_resting()
+
 	# --- Read interface (D-18) -------------------------------------------------
 	# The manager owns the storage; OrderHandler read methods delegate here.
 	# Pure pass-through layer: same names, same signatures as the facade.
