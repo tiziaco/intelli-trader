@@ -31,7 +31,7 @@ from decimal import Decimal
 from typing import Any
 
 from itrader import idgen
-from itrader.core.enums import Side
+from itrader.core.enums import OrderType, Side
 from itrader.core.ids import SignalId, StrategyId
 
 
@@ -64,6 +64,13 @@ class SignalRecord:
         Fraction of the open position an exit closes, in (0, 1].
     quantity : Decimal | None
         Explicit caller-supplied quantity; None means "resolver decides".
+    order_type : OrderType
+        The entry order type the strategy decided (D-02): MARKET for plain
+        buy()/sell(), LIMIT/STOP for the typed factories. Oracle-dark audit
+        field — never affects fills.
+    entry_price : Decimal | None
+        The limit/stop entry price declared on the intent (None for MARKET).
+        Oracle-dark audit field (D-02) — never affects fills.
     config : dict[str, Any]
         A plain params snapshot dict captured from the strategy's declared
         attrs (``strategy.to_dict()``, D-04) — the pydantic config layer was
@@ -77,8 +84,10 @@ class SignalRecord:
     ticker: str
     time: datetime
     action: Side
+    order_type: OrderType
     stop_loss: Decimal | None = None
     take_profit: Decimal | None = None
     exit_fraction: Decimal = Decimal("1")
     quantity: Decimal | None = None
+    entry_price: Decimal | None = None
     config: dict[str, Any]

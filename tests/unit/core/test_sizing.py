@@ -19,7 +19,7 @@ from decimal import Decimal
 
 import pytest
 
-from itrader.core.enums import Side
+from itrader.core.enums import OrderType, Side
 from itrader.core.exceptions import SizingPolicyViolation
 from itrader.core.sizing import (
     FixedQuantity,
@@ -202,9 +202,14 @@ def test_trading_direction_unknown_raises_with_value_in_message():
 
 
 def test_signal_intent_minimal_construction_defaults():
-    intent = SignalIntent(ticker="BTCUSD", action=Side.BUY)
+    intent = SignalIntent(
+        ticker="BTCUSD", action=Side.BUY, order_type=OrderType.MARKET
+    )
     assert intent.ticker == "BTCUSD"
     assert intent.action is Side.BUY
+    # D-01: order_type is required (never None); entry_price defaults to None.
+    assert intent.order_type is OrderType.MARKET
+    assert intent.entry_price is None
     assert intent.stop_loss is None
     assert intent.take_profit is None
     # D-07: exit_fraction defaults to Decimal("1") — full exit is the default.
@@ -215,19 +220,22 @@ def test_signal_intent_minimal_construction_defaults():
 
 def test_signal_intent_exit_fraction_partial_allowed():
     intent = SignalIntent(
-        ticker="BTCUSD", action=Side.SELL, exit_fraction=Decimal("0.5")
+        ticker="BTCUSD", action=Side.SELL, order_type=OrderType.MARKET,
+        exit_fraction=Decimal("0.5")
     )
     assert intent.exit_fraction == Decimal("0.5")
 
 
 def test_signal_intent_exit_fraction_above_one_raises():
     with pytest.raises(SizingPolicyViolation, match="exit_fraction"):
-        SignalIntent(ticker="BTCUSD", action=Side.SELL, exit_fraction=Decimal("1.5"))
+        SignalIntent(ticker="BTCUSD", action=Side.SELL,
+                     order_type=OrderType.MARKET, exit_fraction=Decimal("1.5"))
 
 
 def test_signal_intent_exit_fraction_zero_raises():
     with pytest.raises(SizingPolicyViolation, match="exit_fraction"):
-        SignalIntent(ticker="BTCUSD", action=Side.SELL, exit_fraction=Decimal("0"))
+        SignalIntent(ticker="BTCUSD", action=Side.SELL,
+                     order_type=OrderType.MARKET, exit_fraction=Decimal("0"))
 
 
 # ---------------------------------------------------------------------------
@@ -248,14 +256,21 @@ def test_policy_dataclasses_are_frozen():
     sltp = PercentFromFill(sl_pct=Decimal("0.05"), tp_pct=Decimal("0.10"))
     with pytest.raises(dataclasses.FrozenInstanceError):
         sltp.sl_pct = Decimal("0.01")  # type: ignore[misc]
-    intent = SignalIntent(ticker="BTCUSD", action=Side.BUY)
+    intent = SignalIntent(
+        ticker="BTCUSD", action=Side.BUY, order_type=OrderType.MARKET
+    )
     with pytest.raises(dataclasses.FrozenInstanceError):
         intent.ticker = "ETHUSD"  # type: ignore[misc]
 
 
 def test_policy_dataclasses_use_slots():
     assert not hasattr(FractionOfCash(fraction=Decimal("0.95")), "__dict__")
-    assert not hasattr(SignalIntent(ticker="BTCUSD", action=Side.BUY), "__dict__")
+    assert not hasattr(
+        SignalIntent(
+            ticker="BTCUSD", action=Side.BUY, order_type=OrderType.MARKET
+        ),
+        "__dict__",
+    )
 
 
 # ---------------------------------------------------------------------------

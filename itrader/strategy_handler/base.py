@@ -62,7 +62,6 @@ def _json_safe(val: Any) -> Any:
 # supplied — e.g. short_window="50" stays a str, never silently int()-ed.
 _COERCE: dict[str, type[Enum]] = {
 	"timeframe": Timeframe,
-	"order_type": OrderType,
 	"direction": TradingDirection,
 }
 
@@ -98,7 +97,10 @@ class Strategy(ABC):
 	timeframe: timedelta          # required — no class-attr value
 	tickers: list[str]            # required
 	sizing_policy: SizingPolicy   # required
-	order_type: OrderType = OrderType.MARKET
+	# D-01: the per-instance ``order_type`` class attr is RETIRED. With the
+	# explicit buy_limit/buy_stop/sell_limit/sell_stop factories every call
+	# states its own type, so a strategy-wide default is never read; the type
+	# now lives per-intent on ``SignalIntent.order_type``.
 	direction: TradingDirection = TradingDirection.LONG_ONLY
 	allow_increase: bool = False
 	max_positions: int = 1
@@ -393,8 +395,8 @@ class Strategy(ABC):
 			# serialization edge; str() is safe for both int and UUID handles
 			# (str(1) == "1", str(uuid) == "019e...").
 			"subscribed_portfolios" : [str(pid) for pid in self.subscribed_portfolios],
-			# D-04: order_type is the OrderType enum now — serialize its value.
-			"order_type": self.order_type.value,
+			# D-01: the per-instance order_type attr is retired — order type is now
+			# per-intent on SignalIntent, so to_dict no longer emits an "order_type".
 			"is_active" : self.is_active,
 			# Typed declarations serialized in place of the dead settings dict.
 			"sizing_policy" : repr(self.sizing_policy),
@@ -431,41 +433,112 @@ class Strategy(ABC):
 		"""
 		raise NotImplementedError("Should implement generate_signal()")
 
-	def buy(self, ticker: str, sl: float | Decimal | None = None,
-			tp: float | Decimal | None = None,
-			exit_fraction: Decimal = Decimal("1")) -> SignalIntent:
+	def _intent(self, ticker: str, action: Side, order_type: OrderType,
+			entry_price: float | Decimal | None,
+			sl: float | Decimal | None,
+			tp: float | Decimal | None,
+			exit_fraction: Decimal) -> SignalIntent:
 		"""
-		Thin sugar returning a BUY ``SignalIntent`` for ``ticker``.
+		Shared factory (D-01) folding the sl/tp/exit_fraction/entry_price
+		logic across all six buy/sell sugar methods.
 
-		Optional ``sl``/``tp`` enter the Decimal domain via ``to_money``
-		(the D-04 string path) — exactly the entry the legacy emit path
-		applied; ``None`` means "not declared".
+		``sl``/``tp``/``entry_price`` enter the Decimal domain via ``to_money``
+		(the D-04 string path) — NEVER ``Decimal(float)``; ``None`` means
+		"not declared" (sl/tp) or "MARKET, fills at close" (entry_price).
 		"""
 		return SignalIntent(
 			ticker=ticker,
-			action=Side.BUY,
+			action=action,
+			order_type=order_type,
+			entry_price=to_money(entry_price) if entry_price is not None else None,
 			stop_loss=to_money(sl) if sl is not None else None,
 			take_profit=to_money(tp) if tp is not None else None,
 			exit_fraction=exit_fraction,
 		)
+
+	def buy(self, ticker: str, sl: float | Decimal | None = None,
+			tp: float | Decimal | None = None,
+			exit_fraction: Decimal = Decimal("1")) -> SignalIntent:
+		"""
+		Thin sugar returning a MARKET BUY ``SignalIntent`` for ``ticker``.
+
+		Byte-exact (D-01): no ``price`` param, ``order_type=MARKET`` and
+		``entry_price=None`` (fills at the decision-bar close). Optional
+		``sl``/``tp`` enter the Decimal domain via ``to_money`` (the D-04
+		string path); ``None`` means "not declared".
+		"""
+		return self._intent(ticker, Side.BUY, OrderType.MARKET,
+			None, sl, tp, exit_fraction)
 
 	def sell(self, ticker: str, sl: float | Decimal | None = None,
 			tp: float | Decimal | None = None,
 			exit_fraction: Decimal = Decimal("1")) -> SignalIntent:
 		"""
-		Thin sugar returning a SELL ``SignalIntent`` for ``ticker``.
+		Thin sugar returning a MARKET SELL ``SignalIntent`` for ``ticker``.
 
-		Optional ``sl``/``tp`` enter the Decimal domain via ``to_money``
-		(the D-04 string path) — exactly the entry the legacy emit path
-		applied; ``None`` means "not declared".
+		Byte-exact (D-01): no ``price`` param, ``order_type=MARKET`` and
+		``entry_price=None`` (fills at the decision-bar close). Optional
+		``sl``/``tp`` enter the Decimal domain via ``to_money`` (the D-04
+		string path); ``None`` means "not declared".
 		"""
-		return SignalIntent(
-			ticker=ticker,
-			action=Side.SELL,
-			stop_loss=to_money(sl) if sl is not None else None,
-			take_profit=to_money(tp) if tp is not None else None,
-			exit_fraction=exit_fraction,
-		)
+		return self._intent(ticker, Side.SELL, OrderType.MARKET,
+			None, sl, tp, exit_fraction)
+
+	def buy_limit(self, ticker: str, *, price: float | Decimal,
+			sl: float | Decimal | None = None,
+			tp: float | Decimal | None = None,
+			exit_fraction: Decimal = Decimal("1")) -> SignalIntent:
+		"""
+		Sugar returning a LIMIT BUY ``SignalIntent`` (D-01/SIG-01).
+
+		``price`` is required and keyword-only — illegal ``(order_type, price)``
+		combos are unrepresentable by construction (D-04). The limit entry price
+		enters the Decimal domain via ``to_money`` (never ``Decimal(float)``).
+		"""
+		return self._intent(ticker, Side.BUY, OrderType.LIMIT,
+			price, sl, tp, exit_fraction)
+
+	def buy_stop(self, ticker: str, *, price: float | Decimal,
+			sl: float | Decimal | None = None,
+			tp: float | Decimal | None = None,
+			exit_fraction: Decimal = Decimal("1")) -> SignalIntent:
+		"""
+		Sugar returning a STOP BUY ``SignalIntent`` (D-01/SIG-01).
+
+		``price`` is required and keyword-only — illegal ``(order_type, price)``
+		combos are unrepresentable by construction (D-04). The stop entry price
+		enters the Decimal domain via ``to_money`` (never ``Decimal(float)``).
+		"""
+		return self._intent(ticker, Side.BUY, OrderType.STOP,
+			price, sl, tp, exit_fraction)
+
+	def sell_limit(self, ticker: str, *, price: float | Decimal,
+			sl: float | Decimal | None = None,
+			tp: float | Decimal | None = None,
+			exit_fraction: Decimal = Decimal("1")) -> SignalIntent:
+		"""
+		Sugar returning a LIMIT SELL ``SignalIntent`` (D-01/SIG-01).
+
+		``price`` is required and keyword-only — illegal ``(order_type, price)``
+		combos are unrepresentable by construction (D-04). The limit entry price
+		enters the Decimal domain via ``to_money`` (never ``Decimal(float)``).
+		"""
+		return self._intent(ticker, Side.SELL, OrderType.LIMIT,
+			price, sl, tp, exit_fraction)
+
+	def sell_stop(self, ticker: str, *, price: float | Decimal,
+			sl: float | Decimal | None = None,
+			tp: float | Decimal | None = None,
+			exit_fraction: Decimal = Decimal("1")) -> SignalIntent:
+		"""
+		Sugar returning a STOP SELL ``SignalIntent`` (D-01/SIG-01).
+
+		``price`` is required and keyword-only — illegal ``(order_type, price)``
+		combos are unrepresentable by construction (D-04). The stop entry price
+		enters the Decimal domain via ``to_money`` (never ``Decimal(float)``).
+		"""
+		return self._intent(ticker, Side.SELL, OrderType.STOP,
+			price, sl, tp, exit_fraction)
 
 	def subscribe_portfolio(self, portfolio_id: PortfolioId | int) -> None:
 		# WR-01: idempotent subscribe — a duplicate subscription would fan the

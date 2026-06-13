@@ -19,13 +19,19 @@ stays 0 so the handler short-circuit never skips a scripted firing tick.
 
 Why ``order_type`` is per INSTANCE (D-03, Pitfall 3)
 ---------------------------------------------------
-Production sets ``SignalEvent.order_type = strategy.order_type`` from the strategy
-config — it is NOT carried on the per-bar ``SignalIntent``. So a LIMIT/STOP **entry**
-scenario (MATCH-02/03) selects its entry type by constructing the emitter with
-``order_type=OrderType.LIMIT``/``STOP`` (a per-instance config field), not by
-scripting it. MARKET is the default. Bracket SL/TP **children** get their STOP/LIMIT
-types from the bracket assembler regardless of the entry type, so a MARKET-entry
-bracket still works.
+A LIMIT/STOP **entry** scenario (MATCH-02/03) selects its entry type by
+constructing the emitter with ``order_type=OrderType.LIMIT``/``STOP`` — a
+per-INSTANCE fixture knob (NOT scripted per bar). MARKET is the default.
+
+As of Phase 5 (D-01) the per-bar ``SignalIntent`` carries its OWN ``order_type``
++ ``entry_price`` (the per-instance ``Strategy.order_type`` class attr was
+retired). This fixture preserves its prior behavior by routing each scripted
+intent through the matching typed factory: a LIMIT/STOP emitter rests the entry
+at the DECISION-bar close (``self.bars["close"].iloc[-1]``) — value-identical to
+the legacy ``SignalEvent.price = to_money(decision_bar.close)`` fan-out — so
+every existing golden stays byte-exact. Bracket SL/TP **children** get their
+STOP/LIMIT types from the bracket assembler regardless of the entry type, so a
+MARKET-entry bracket still works.
 
 Script entry shape (Claude's discretion, D-06)::
 
@@ -89,9 +95,11 @@ class ScriptedEmitter(Strategy):
                  sltp_policy: "SLTPPolicy | None" = None,
                  allow_increase: bool = False,
                  max_positions: int = 1) -> None:
-        # D-03 (Pitfall 3): order_type is a per-INSTANCE config field — this is HOW
+        # D-01 (Phase 5): order_type is a per-INSTANCE fixture knob — this is HOW
         # MATCH-02/03 select a LIMIT/STOP entry. The per-bar script only picks
-        # action + sl/tp/exit_fraction.
+        # action + sl/tp/exit_fraction. The retired Strategy.order_type class
+        # attr is NO LONGER a base **kwargs param, so stash it on the fixture and
+        # pick the matching typed factory in generate_signal (below).
         if sizing_policy is None:
             sizing_policy = FractionOfCash(Decimal("0.95"))
         # D-05 (Plan 02-03): every param threads straight through the base
@@ -107,10 +115,10 @@ class ScriptedEmitter(Strategy):
             direction=direction,
             allow_increase=allow_increase,
             max_positions=max_positions,
-            order_type=order_type,
             sltp_policy=sltp_policy,
         )
         self.script = script
+        self.order_type = order_type
 
     def generate_signal(self, ticker: str) -> SignalIntent | None:
         # D-06: bars dropped — evaluate() stashed the window on self.bars. This
@@ -130,8 +138,27 @@ class ScriptedEmitter(Strategy):
         if action is None:
             return None
         exit_fraction = action.get("exit_fraction", Decimal("1"))
-        if action["side"] == "BUY":
-            return self.buy(ticker, sl=action.get("sl"), tp=action.get("tp"),
-                            exit_fraction=exit_fraction)
-        return self.sell(ticker, sl=action.get("sl"), tp=action.get("tp"),
-                         exit_fraction=exit_fraction)
+        is_buy = action["side"] == "BUY"
+        sl = action.get("sl")
+        tp = action.get("tp")
+        # D-01 (Phase 5): pick the typed factory matching the per-instance
+        # order_type. MARKET keeps plain buy()/sell() (entry_price None, fills at
+        # close). LIMIT/STOP rest the entry at the DECISION-bar close — the same
+        # close the legacy fan-out used for SignalEvent.price = to_money(close),
+        # so every golden stays byte-exact (Pitfall 1 canary).
+        if self.order_type is OrderType.MARKET:
+            if is_buy:
+                return self.buy(ticker, sl=sl, tp=tp, exit_fraction=exit_fraction)
+            return self.sell(ticker, sl=sl, tp=tp, exit_fraction=exit_fraction)
+        entry = self.bars["close"].iloc[-1]
+        if self.order_type is OrderType.LIMIT:
+            if is_buy:
+                return self.buy_limit(ticker, price=entry, sl=sl, tp=tp,
+                                      exit_fraction=exit_fraction)
+            return self.sell_limit(ticker, price=entry, sl=sl, tp=tp,
+                                   exit_fraction=exit_fraction)
+        if is_buy:
+            return self.buy_stop(ticker, price=entry, sl=sl, tp=tp,
+                                 exit_fraction=exit_fraction)
+        return self.sell_stop(ticker, price=entry, sl=sl, tp=tp,
+                              exit_fraction=exit_fraction)
