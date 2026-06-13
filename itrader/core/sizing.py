@@ -40,7 +40,7 @@ NOTHING from ``order_handler``, ``events_handler``, or ``strategy_handler``.
 from dataclasses import dataclass
 from decimal import Decimal
 
-from itrader.core.enums import Side, TradingDirection
+from itrader.core.enums import OrderType, Side, TradingDirection
 from itrader.core.exceptions import SizingPolicyViolation
 from itrader.core.money import ONE
 
@@ -232,15 +232,22 @@ class SignalIntent:
         ``Decimal("1")`` — a full exit, resolved as a structural no-op (D-07).
     quantity : Decimal | None
         Explicit caller-supplied quantity; ``None`` means "resolver decides".
+    order_type : OrderType
+        The entry order type (D-01): ``MARKET`` for plain ``buy()``/``sell()``,
+        ``LIMIT``/``STOP`` for the typed factories. Never ``None``.
+    entry_price : Decimal | None
+        The limit/stop entry price for ``LIMIT``/``STOP`` intents; ``None`` for
+        ``MARKET`` intents (which fill at the decision-bar close, D-01).
     """
 
     ticker: str
     action: Side
+    order_type: OrderType
     stop_loss: Decimal | None = None
     take_profit: Decimal | None = None
     exit_fraction: Decimal = Decimal("1")
     quantity: Decimal | None = None
-    # TODO add order_type and entry_price for stop/limit orders 
+    entry_price: Decimal | None = None
 
     def __post_init__(self) -> None:
         _require_unit_interval("SignalIntent", "exit_fraction", self.exit_fraction)
