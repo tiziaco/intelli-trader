@@ -1,0 +1,19 @@
+{
+  "end_date": "2018-09-20",
+  "final_cash": 9503.442073109638,
+  "final_equity": 9503.442073109638,
+  "metrics": {
+    "cagr": -0.6052455751223171,
+    "max_drawdown": -0.04965579268903619,
+    "profit_factor": 0.0,
+    "sharpe": -4.481711903764931,
+    "sortino": -4.470484012540325,
+    "win_rate": 0.0
+  },
+  "start_date": "2018-09-01",
+  "starting_cash": 10000.0,
+  "ticker": "BTCUSD",
+  "timeframe": "1d",
+  "total_realised_pnl": -496.5579268903625,
+  "trade_count": 2
+}

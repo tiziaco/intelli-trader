@@ -104,6 +104,22 @@ Headline metrics recomputed via `itrader.reporting.metrics` for every engine, co
 - **Observation:** max_drawdown: backtrader=-0.063021 vs iTrader=-0.049656
 - **Disposition:** LEGITIMATE-DIFFERENCE (same-bar protective-SL timing — see above). Entry fills + entry dates agree.
 
-## Owner Sign-Off
+## Owner Sign-Off (D-07 / Plan 05-04 Task 3)
 
-_Pending — the new LIMIT golden is FROZEN only after explicit owner sign-off with full attribution (Plan 05-04 Task 3). This block is appended at sign-off; until then the e2e leaf xfails pending-golden._
+**Status: APPROVED.**
+
+- **Approved by:** tiziaco (Tiziano Iacovelli) <tiziano.iaco@gmail.com>
+- **Date:** 2026-06-13
+
+The project owner has signed off on the verified, externally cross-validated LIMIT-entry run. The owner **explicitly accepts the dispositioned same-bar protective-SL LEGITIMATE-DIFFERENCE (A1)**: iTrader fills the protective SL intrabar (parents-before-children, MatchingEngine pass-1-then-pass-2 against the same bar's low), so the exit is stamped on the entry bar; BOTH gating engines (backtesting.py 0.6.5, backtrader 1.9.78.123) defer the contingent SL to the NEXT bar and **agree with each other**. The iTrader-vs-gating exit-date delta and the resulting realised_pnl / final_equity delta are this single, well-understood intrabar-SL semantics difference — NOT an entry-fill-algebra divergence. The ENTRY fills + entry dates (the D-07 claim) agree across all three engines.
+
+The 10 reconcile-flagged divergence rows above (the same-bar-SL trade-timing rows + the length-sensitive metric rows that follow from them) are ALL dispositioned LEGITIMATE-DIFFERENCE. **0 BUG; no iTrader defect; no re-freeze; iTrader's numbers are kept.**
+
+This sign-off authorizes Plan 05-04 Task 3 to FREEZE the new LIMIT golden and remove the e2e leaf's `xfail` pending-golden marker. The frozen regression lock lives at `tests/e2e/matching/entries/limit_entry_crossval/golden/` (trades.csv + summary.json):
+
+- **Entry A:** 2018-09-05 @ 7155.9698 (resting limit, fills a LATER bar) → SL exit same bar @ 6798.17131
+- **Entry B:** 2018-09-14 @ 6487.39 (marketable limit, fills at the bar OPEN) → SL exit same bar @ 6471.16155
+- **trade_count:** 2
+- **final_equity:** 9503.442073 (total_realised_pnl −496.557927)
+
+The existing SMA_MACD BTCUSD oracle (`tests/integration/test_backtest_oracle.py` — 134 trades / final_equity 46189.87730727451) is unaffected and remains byte-exact: this LIMIT leaf is a SEPARATE, additive regression lock and is NOT wired into the oracle.
