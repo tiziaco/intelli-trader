@@ -90,6 +90,13 @@ def run_itrader_crafted():
     spec = importlib.util.spec_from_file_location(
         "e2e_conftest_limit", "tests/e2e/conftest.py"
     )
+    # IN-02: spec_from_file_location can return None and spec.loader can be None;
+    # guard so a missing/relocated conftest yields a located error instead of a
+    # bare AttributeError.
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            "could not load tests/e2e/conftest.py for the LIMIT cross-val"
+        )
     cf = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cf)
 
