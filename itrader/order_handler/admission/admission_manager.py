@@ -82,7 +82,13 @@ class AdmissionManager:
 		"""
 		if self.commission_estimator is None:
 			return Decimal("0")
-		return self.commission_estimator(order.quantity, order.price)
+		# WR-04: normalize the estimator return through the money boundary. An
+		# injected estimator that returns a float (e.g. a percent-fee model) would
+		# otherwise import binary-float-repr error into the reservation amount or
+		# raise Decimal+float TypeError in the reserve path, violating the
+		# Decimal-end-to-end money policy at a correctness-critical site. For the
+		# current Decimal-returning estimator this is value-identity (byte-exact).
+		return to_money(self.commission_estimator(order.quantity, order.price))
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""
