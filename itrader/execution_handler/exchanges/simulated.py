@@ -292,6 +292,13 @@ class SimulatedExchange(AbstractExchange):
 			if event.order_id is not None and self.matching_engine.cancel(event.order_id):
 				# EXPIRED carries the order's own (Decimal) price/quantity,
 				# commission Decimal("0") — never settled (D-22).
+				# Fill time (D-01/D-13): the EXPIRED fill deliberately omits
+				# `time=` and so inherits the order's original decision time,
+				# exactly like the CANCEL command-acknowledgement arm above
+				# (fill.py:95-98). The bar-time stamping rule applies only to
+				# outcomes a market-data bar *produces* (EXECUTED matches, OCO
+				# CANCELLED in on_bar); an EXPIRE is a command acknowledgement,
+				# not a bar-produced match, so it follows the CANCEL convention.
 				self.global_queue.put(FillEvent.new_fill(
 					'EXPIRED', event, price=event.price, quantity=event.quantity,
 					commission=Decimal("0")))
