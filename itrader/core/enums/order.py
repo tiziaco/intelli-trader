@@ -93,6 +93,7 @@ class OrderCommand(Enum):
 	NEW = "NEW"
 	CANCEL = "CANCEL"
 	MODIFY = "MODIFY"
+	EXPIRE = "EXPIRE"
 
 	@classmethod
 	def _missing_(cls, value: object) -> "OrderCommand":
@@ -107,7 +108,8 @@ class OrderCommand(Enum):
 order_command_map = {
 	"NEW": OrderCommand.NEW,
 	"CANCEL": OrderCommand.CANCEL,
-	"MODIFY": OrderCommand.MODIFY
+	"MODIFY": OrderCommand.MODIFY,
+	"EXPIRE": OrderCommand.EXPIRE
 }
 
 

@@ -73,6 +73,7 @@ class FillStatus(Enum):
     EXECUTED = "EXECUTED"
     REFUSED = "REFUSED"
     CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
 
     @classmethod
     def _missing_(cls, value: object) -> "FillStatus":
