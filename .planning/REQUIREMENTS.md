@@ -29,7 +29,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   STOP) rather than fixed per strategy instance; includes the Phase 8 per-bar `order_type`
   override left unwired in the e2e emitter. *Owner-gated.* [999.5-(a)] — proven end-to-end by the
   owner-signed LIMIT cross-val golden (05-04).
-- [ ] **SIG-03**: `Order.action` and `_PendingBracket.action` are typed **`Side`** (not `str`),
+- [x] **SIG-03**: `Order.action` and `_PendingBracket.action` are typed **`Side`** (not `str`),
   and the position snapshot is threaded once through admission→sizing (removing the double
   `get_position()`). FRAGILE — coupled to SIG-01/02; W4-04 validator-overlap doc updated if the
   validator path is touched. *Owner-gated (rides the SIG re-baseline).* [W2-02, W1-11, W4-04]
@@ -144,7 +144,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | COMP-02 | Phase 4 — Composition & Config Interface | Complete |
 | SIG-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-04) |
 | SIG-02 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-04) |
-| SIG-03 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
+| SIG-03 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-02) |
 | RECON-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-04) |
 | LIFE-01 | Phase 6 — Order Lifecycle & Time-in-Force | Pending |
 

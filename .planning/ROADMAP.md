@@ -43,7 +43,7 @@ only after explicit owner sign-off + external cross-validation.
 - [x] **Phase 2: Strategy Authoring Surface** — class-attribute authoring surface replacing the frozen-config + manual field-copy; re-runnable idempotent `init()` hook; reject-unknown-kwargs. (completed 2026-06-12)
 - [x] **Phase 3: Declared-Indicator Framework** — declared indicators with auto-derived `warmup`/`max_window`; lazy per-tick recompute; free-function `crossover`/`crossunder`. (completed 2026-06-12)
 - [x] **Phase 4: Composition & Config Interface** — engine-level composition API + `OrderConfig`; uniform runtime `update_config` on every handler (consumes Phase 2's re-runnable `init()`). (completed 2026-06-12)
-- [ ] **Phase 5: Signal Contract & Reconcile (FRAGILE)** — per-intent entry price + `order_type`, `Side`-typed action + snapshot threading, `on_fill`/`should_release` streamline; ONE owner-gated re-baseline.
+- [x] **Phase 5: Signal Contract & Reconcile (FRAGILE)** — per-intent entry price + `order_type`, `Side`-typed action + snapshot threading, `on_fill`/`should_release` streamline; ONE owner-gated re-baseline. (completed 2026-06-13)
 - [ ] **Phase 6: Order Lifecycle & Time-in-Force** — run-end resting-order disposition / TIF (`expire_order` + `EXPIRED` wired) + `create_order` second-path gating; owner-gated re-baseline.
 
 ## Phase Details
@@ -197,10 +197,10 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
 | 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
 | 4. Composition & Config Interface | 5/5 | Complete   | 2026-06-12 |
-| 5. Signal Contract & Reconcile (FRAGILE) | 4/4 | Plans complete (verify/close pending) | 2026-06-13 |
+| 5. Signal Contract & Reconcile (FRAGILE) | 4/4 | Complete | 2026-06-13 |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
 
-**Next:** Execute Phase 2 with `/gsd:execute-phase 2`.
+**Next:** Discuss Phase 6 with `/gsd:discuss-phase 6`.
 
 ## Backlog
 
