@@ -227,6 +227,10 @@ class PortfolioHandler:
     # D-15: live Position objects never cross the boundary — get_position
     # returns a frozen PositionView snapshot (None when flat).
 
+    def active_portfolio_ids(self) -> List[PortfolioId]:
+        """Return the ids of all active portfolios (WR-02, LIFE-01 sweep)."""
+        return [p.portfolio_id for p in self._portfolios.values() if p.is_active()]
+
     def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
         """Return the portfolio's buying power (balance minus reservations, D-14)."""
         return self.get_portfolio(portfolio_id).cash_manager.available_balance

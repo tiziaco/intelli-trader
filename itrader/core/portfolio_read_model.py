@@ -193,6 +193,24 @@ class PortfolioReadModel(Protocol):
         """
         ...
 
+    def active_portfolio_ids(self) -> list[PortfolioId]:
+        """Return the ids of all currently active portfolios.
+
+        Admission metadata (WR-02, LIFE-01): the run-end time-in-force sweep
+        enumerates active portfolios to expire their resting orders. Exposing
+        only the ids (not the live ``Portfolio`` objects) keeps the order
+        domain on the narrow read boundary — the concrete ``PortfolioHandler``
+        no longer leaks across via a ``type: ignore``, and any conforming
+        read-model (test double, future live read-model) is contract-bound to
+        implement it (D-16: structural conformance is mypy-enforced).
+
+        Returns
+        -------
+        list[PortfolioId]
+            The ids of the active portfolios.
+        """
+        ...
+
     def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
         """Return total equity: full cash balance plus position market values.
 

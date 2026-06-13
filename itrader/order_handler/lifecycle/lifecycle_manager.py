@@ -242,13 +242,12 @@ class LifecycleManager:
 		results: List[OperationResult] = []
 		if self.portfolio_handler is None:
 			return results
-		# get_active_portfolios() is on the concrete PortfolioHandler, not the
-		# narrow PortfolioReadModel Protocol (D-13: the Protocol is the order
-		# domain's read boundary; the run-end portfolio enumeration is wider). The
-		# injected object is the concrete handler at wiring time.
-		active_portfolios = self.portfolio_handler.get_active_portfolios()  # type: ignore[attr-defined]
-		for portfolio in active_portfolios:
-			portfolio_id = portfolio.portfolio_id
+		# WR-02: active_portfolio_ids() is part of the PortfolioReadModel
+		# Protocol (D-13/D-16), so the run-end enumeration is type-checked and
+		# contract-guaranteed — no concrete-handler coupling via a type: ignore.
+		# Returning ids (not live Portfolio objects) keeps the order domain on
+		# the narrow read boundary.
+		for portfolio_id in self.portfolio_handler.active_portfolio_ids():
 			# D-10: UUIDv7 stable sort => deterministic per-portfolio sweep order.
 			for order in sorted(
 					self.order_storage.get_active_orders(portfolio_id),
@@ -276,9 +275,18 @@ class LifecycleManager:
 						operation_type=OrderOperationType.EXPIRE_ORDER,
 						affected_order_ids=[order.id]))
 				except Exception as e:
-					error_msg = f"Error expiring order {order.id}: {e}"
-					self.logger.error(error_msg, exc_info=True)
-					results.append(OperationResult.failure_result(
-						error_msg, error_details=str(e),
-						operation_type=OrderOperationType.EXPIRE_ORDER))
+					# WR-03: fail-fast on the backtest run-end sweep (CLAUDE.md
+					# "Backtest error policy is fail-fast"). A mid-sweep failure
+					# leaves a half-swept book — some orders EXPIRED with released
+					# reservations, others left PENDING with stuck reservations —
+					# so we re-raise to abort the run rather than completing it
+					# "successfully" with corrupted run-end state. This mirrors the
+					# deliberate fail-fast re-raise on the reconcile path
+					# (reconcile_manager.py) at the same correctness-critical seam;
+					# the dropped-failure_result path that OrderHandler.expire_all_resting
+					# never inspected is removed entirely. (The only caller is the
+					# backtest run-end bookend, backtest_runner.py.)
+					self.logger.error(
+						f"Error expiring order {order.id}: {e}", exc_info=True)
+					raise
 		return results
