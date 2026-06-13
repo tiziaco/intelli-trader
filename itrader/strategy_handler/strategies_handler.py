@@ -151,7 +151,14 @@ class StrategiesHandler(object):
 					# D-01: the typed limit/stop factories make ``price``
 					# required, so a non-MARKET intent ALWAYS carries an
 					# entry_price — narrow the Decimal | None for SignalEvent.
-					assert intent.entry_price is not None
+					# WR-02 (D-06 fail-loud): an explicit raise survives ``-O``
+					# (a bare ``assert`` is stripped under PYTHONOPTIMIZE, which
+					# would silently build a SignalEvent(price=None) — a None
+					# poisoning the Decimal money domain in sizing/admission).
+					if intent.entry_price is None:
+						raise ValueError(
+							f"non-MARKET intent for {ticker} missing entry_price "
+							f"(order_type={intent.order_type})")
 					entry_price = intent.entry_price
 				for portfolio_id in strategy.subscribed_portfolios:
 					signal = SignalEvent(
