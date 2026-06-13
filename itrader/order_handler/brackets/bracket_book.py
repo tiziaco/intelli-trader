@@ -13,13 +13,15 @@ at the 8 verified `order_manager.py` sites. It exposes dict-compat dunders
 (`__eq__`/`__contains__`/`__len__`) so the internal-attribute-coupled
 `test_sltp_policy.py` survives untouched (RESEARCH Pitfall 2, option a).
 
-`action: str` is kept as-is on `_PendingBracket` — retyping to `Side` is W2-02,
-deferred to 999.5 per D-13.
+`action` is `Side`-typed on `_PendingBracket` (SIG-03 / D-03): the persisted
+action boundary is narrowed from `str` to `Side` across order_handler so side
+handling is mypy-checked end-to-end (closes W2-02).
 """
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Dict, Optional
+from typing import ClassVar, Dict, Optional
+from ...core.enums import Side
 from ...core.ids import OrderId, PortfolioId, StrategyId
 from ...core.sizing import PercentFromFill
 
@@ -37,7 +39,7 @@ class _PendingBracket:
 
 	policy: PercentFromFill
 	ticker: str
-	action: str
+	action: Side
 	quantity: Decimal
 	exchange: str
 	strategy_id: StrategyId
@@ -86,6 +88,16 @@ class BracketBook:
 		if isinstance(other, BracketBook):
 			return self._pending == other._pending
 		return NotImplemented
+
+	# IN-01: defining __eq__ implicitly sets __hash__ = None already; make it
+	# explicit so a future caller who tries to put a BracketBook in a set/dict
+	# gets an obvious, intentional contract rather than a surprising TypeError.
+	# IN-01: pin the unhashable contract explicitly. `object.__hash__` is typed
+	# `Callable[[], int]`, so assigning None is a deliberate declared-type
+	# override (the same dunder-vs-None reconciliation the codebase resolves with
+	# a targeted ignore) — the runtime effect is exactly what `__eq__` already
+	# implies (`__hash__ = None`), now stated for the next reader.
+	__hash__: ClassVar[None] = None  # type: ignore[assignment]  # mutable owner — intentionally unhashable
 
 	def __contains__(self, order_id: object) -> bool:
 		return order_id in self._pending

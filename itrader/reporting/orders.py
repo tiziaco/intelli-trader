@@ -86,7 +86,9 @@ def build_orders_snapshot(orders: Any) -> pd.DataFrame:
         "role": _order_role(o),
         "ticker": o.ticker,
         "order_type": o.type.name,
-        "action": o.action,
+        # SIG-03 (D-03): the Order entity carries a Side member — emit its string
+        # value at the serialization edge so the "action" column stays "BUY"/"SELL".
+        "action": o.action.value,
         # GAP #1: never-filled => "PENDING" (there is NO OrderStatus.ACTIVE).
         "status": o.status.name,
         "price": float(o.price),

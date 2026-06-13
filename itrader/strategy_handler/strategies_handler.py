@@ -2,6 +2,7 @@ from datetime import timedelta
 from queue import Queue
 from typing import Any, cast
 
+from itrader.core.enums import OrderType
 from itrader.core.exceptions import ConfigurationError
 from itrader.core.ids import PortfolioId
 from itrader.core.money import to_money
@@ -123,27 +124,49 @@ class StrategiesHandler(object):
 					ticker=ticker,
 					time=event.time,
 					action=intent.action,
+					order_type=intent.order_type,
 					stop_loss=intent.stop_loss,
 					take_profit=intent.take_profit,
 					exit_fraction=intent.exit_fraction,
 					quantity=intent.quantity,
+					entry_price=intent.entry_price,
 					config=strategy.to_dict(),
 				))
 				# Relocated SignalEvent construction (D-12): one event per
-				# subscribed portfolio. D-05 boundary parse: the strategy
-				# string order_type is converted to the enum HERE. D-22 money
-				# boundary: prices enter the Decimal domain HERE via to_money
-				# (the D-04 string path) — the bar close is ALREADY Decimal
-				# via the Bar struct (D-14): to_money(Decimal) is
-				# value-identity. Absent SL/TP preserves the legacy default
-				# exactly: to_money(0) == Decimal("0").
+				# subscribed portfolio. D-02 per-intent fan-out: order_type
+				# now comes from the intent (the per-instance strategy attr is
+				# retired, D-01). D-22 money boundary: prices enter the Decimal
+				# domain HERE via to_money (the D-04 string path) — the bar
+				# close is ALREADY Decimal via the Bar struct (D-14):
+				# to_money(Decimal) is value-identity. Absent SL/TP preserves
+				# the legacy default exactly: to_money(0) == Decimal("0").
+				#
+				# Pitfall 1 (byte-exact canary): a MARKET intent carries
+				# entry_price=None and MUST keep price = to_money(bar.close) —
+				# do NOT read intent.entry_price for MARKET. LIMIT/STOP intents
+				# use their declared entry_price.
+				if intent.order_type is OrderType.MARKET:
+					entry_price = to_money(bar.close)
+				else:
+					# D-01: the typed limit/stop factories make ``price``
+					# required, so a non-MARKET intent ALWAYS carries an
+					# entry_price — narrow the Decimal | None for SignalEvent.
+					# WR-02 (D-06 fail-loud): an explicit raise survives ``-O``
+					# (a bare ``assert`` is stripped under PYTHONOPTIMIZE, which
+					# would silently build a SignalEvent(price=None) — a None
+					# poisoning the Decimal money domain in sizing/admission).
+					if intent.entry_price is None:
+						raise ValueError(
+							f"non-MARKET intent for {ticker} missing entry_price "
+							f"(order_type={intent.order_type})")
+					entry_price = intent.entry_price
 				for portfolio_id in strategy.subscribed_portfolios:
 					signal = SignalEvent(
 						time=event.time,
-						order_type=strategy.order_type,
+						order_type=intent.order_type,
 						ticker=ticker,
 						action=intent.action,
-						price=to_money(bar.close),
+						price=entry_price,
 						stop_loss=intent.stop_loss if intent.stop_loss is not None else to_money(0),
 						take_profit=intent.take_profit if intent.take_profit is not None else to_money(0),
 						strategy_id=strategy.strategy_id,

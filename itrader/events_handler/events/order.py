@@ -64,7 +64,10 @@ class OrderEvent(Event):
 
     def __str__(self) -> str:
         base = f"{self.type} ({self.ticker}, {self.action}, {self.order_type.name}, {self.quantity}, {round(self.price, 4)} $"
-        if self.stop_price:
+        # WR-03: test the sentinel explicitly — a legitimate stop_price of
+        # Decimal("0") is falsy, so a bare truthiness check would silently drop
+        # the stop segment and misrepresent the order in logs/audit trails.
+        if self.stop_price is not None:
             base += f", stop: {round(self.stop_price, 4)}"
         return base + f", ID: {self.order_id})"
 
@@ -84,10 +87,10 @@ class OrderEvent(Event):
         Money (D-22): the entity's Decimal ``price``/``quantity`` pass
         through EXACTLY — the former M2a float() boundary coercion is gone.
 
-        Side boundary (WR-01): the Order entity stores ``action`` as a ``str``
-        until the M4 cutover, so ``Side(order.action)`` re-parses it here.
-        ``Side`` already supplies a case-insensitive ``_missing_`` parser, but
-        a non-Side value (typo in a hand-built bracket literal) still raises a
+        Side boundary (SIG-03 / D-03): the Order entity now stores ``action`` as
+        a ``Side`` member, so ``Side(order.action)`` is a no-op pass-through here.
+        The call is kept as a defensive normalizer: a non-Side value (typo in a
+        hand-built bracket literal that bypasses the factories) still raises a
         bare ``ValueError`` with no order context under the fail-fast seam. Wrap
         it so the failing ticker/order_id/action are surfaced for debugging.
         """

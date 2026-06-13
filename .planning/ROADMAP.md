@@ -43,7 +43,7 @@ only after explicit owner sign-off + external cross-validation.
 - [x] **Phase 2: Strategy Authoring Surface** — class-attribute authoring surface replacing the frozen-config + manual field-copy; re-runnable idempotent `init()` hook; reject-unknown-kwargs. (completed 2026-06-12)
 - [x] **Phase 3: Declared-Indicator Framework** — declared indicators with auto-derived `warmup`/`max_window`; lazy per-tick recompute; free-function `crossover`/`crossunder`. (completed 2026-06-12)
 - [x] **Phase 4: Composition & Config Interface** — engine-level composition API + `OrderConfig`; uniform runtime `update_config` on every handler (consumes Phase 2's re-runnable `init()`). (completed 2026-06-12)
-- [ ] **Phase 5: Signal Contract & Reconcile (FRAGILE)** — per-intent entry price + `order_type`, `Side`-typed action + snapshot threading, `on_fill`/`should_release` streamline; ONE owner-gated re-baseline.
+- [x] **Phase 5: Signal Contract & Reconcile (FRAGILE)** — per-intent entry price + `order_type`, `Side`-typed action + snapshot threading, `on_fill`/`should_release` streamline; ONE owner-gated re-baseline. (completed 2026-06-13)
 - [ ] **Phase 6: Order Lifecycle & Time-in-Force** — run-end resting-order disposition / TIF (`expire_order` + `EXPIRED` wired) + `create_order` second-path gating; owner-gated re-baseline.
 
 ## Phase Details
@@ -115,7 +115,11 @@ only after explicit owner sign-off + external cross-validation.
   3. `Order.action` and `_PendingBracket.action` are typed `Side` (not `str`), and the position snapshot is threaded once through admission→sizing (the double `get_position()` removed); W4-04 validator-overlap doc updated if the validator path is touched (SIG-03).
   4. The `on_fill` reconciliation + `should_release` release-in-`finally` flow is streamlined while the financial-integrity invariant holds — idempotent release on EVERY terminal reconciliation (EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED) (RECON-01).
   5. The new golden master is frozen ONLY after explicit owner sign-off with full attribution, validated by external cross-validation (`backtesting.py`/`backtrader`); `reconcile/` is touched once, not twice; `mypy --strict` clean; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 4 plans (2 waves — Wave 1: SIG-01/02 authoring + SIG-03 Side-typing/snapshot + RECON-01 reconcile cleanup in parallel (no file overlap); Wave 2: owner-gated D-07 cross-val golden)
+  - [x] 05-01-PLAN.md — SIG-01/02 authoring surface: SignalIntent/SignalRecord order_type+entry_price, buy_limit/buy_stop/sell_limit/sell_stop factories, retire Strategy.order_type attr, per-intent handler fan-out (MARKET byte-exact)
+  - [x] 05-02-PLAN.md — SIG-03: Order.action + _PendingBracket.action str→Side across the enumerated literal sites + W4-04 doc update; single threaded admission Position snapshot
+  - [x] 05-03-PLAN.md — RECON-01: on_fill extract-method (_classify / per-status arms / _release_reservation) with try/finally byte-identical + Wave-0 reconcile branch coverage
+  - [x] 05-04-PLAN.md — D-07 owner-gated cross-val: crafted BTCUSD limit-entry strategy + e2e leaf + backtesting.py/backtrader LIMIT runners + CROSS-VALIDATION-LIMIT.md; owner sign-off (tiziaco, 2026-06-13) froze the new golden (entry A 7155.9698→SL, entry B 6487.39→SL, trade_count 2, final_equity 9503.442073; A1 same-bar-SL LEGITIMATE-DIFFERENCE accepted; existing oracle 134/46189.87730727451 byte-exact)
 
 ### Phase 6: Order Lifecycle & Time-in-Force
 **Goal**: Orders left resting at run end are disposed of via time-in-force instead of lingering PENDING — `Order.expire_order()` + `OrderStatus.EXPIRED` (which exist but are unwired) are wired on the backtest path — and the `create_order` second signal→order path is gated; owner-gated re-baseline.
@@ -193,10 +197,10 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
 | 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
 | 4. Composition & Config Interface | 5/5 | Complete   | 2026-06-12 |
-| 5. Signal Contract & Reconcile (FRAGILE) | 0/TBD | Not started | - |
+| 5. Signal Contract & Reconcile (FRAGILE) | 4/4 | Complete | 2026-06-13 |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
 
-**Next:** Execute Phase 2 with `/gsd:execute-phase 2`.
+**Next:** Discuss Phase 6 with `/gsd:discuss-phase 6`.
 
 ## Backlog
 

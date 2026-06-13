@@ -21,21 +21,22 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Signal Contract (SIG)
 
-- [ ] **SIG-01**: A strategy can specify a per-intent **limit or stop ENTRY price** on the signal
+- [x] **SIG-01**: A strategy can specify a per-intent **limit or stop ENTRY price** on the signal
   contract (no longer hardwired to the decision-bar close), threaded
   `SignalIntent → SignalEvent → Order.new_limit_order`/`new_stop_order`. *Owner-gated.*
-  [999.5-(a)]
-- [ ] **SIG-02**: A strategy can specify the **entry `order_type` per intent** (MARKET / LIMIT /
+  [999.5-(a)] — proven end-to-end by the owner-signed LIMIT cross-val golden (05-04).
+- [x] **SIG-02**: A strategy can specify the **entry `order_type` per intent** (MARKET / LIMIT /
   STOP) rather than fixed per strategy instance; includes the Phase 8 per-bar `order_type`
-  override left unwired in the e2e emitter. *Owner-gated.* [999.5-(a)]
-- [ ] **SIG-03**: `Order.action` and `_PendingBracket.action` are typed **`Side`** (not `str`),
+  override left unwired in the e2e emitter. *Owner-gated.* [999.5-(a)] — proven end-to-end by the
+  owner-signed LIMIT cross-val golden (05-04).
+- [x] **SIG-03**: `Order.action` and `_PendingBracket.action` are typed **`Side`** (not `str`),
   and the position snapshot is threaded once through admission→sizing (removing the double
   `get_position()`). FRAGILE — coupled to SIG-01/02; W4-04 validator-overlap doc updated if the
   validator path is touched. *Owner-gated (rides the SIG re-baseline).* [W2-02, W1-11, W4-04]
 
 ### Order Reconciliation (RECON)
 
-- [ ] **RECON-01**: Streamline the `on_fill` reconciliation + `should_release` release-in-`finally`
+- [x] **RECON-01**: Streamline the `on_fill` reconciliation + `should_release` release-in-`finally`
   flow for clarity, **preserving the financial-integrity invariant** (idempotent release on every
   terminal reconciliation — EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED). Behavior-risk
   → owner-gated re-baseline + external cross-validation (`backtesting.py`/`backtrader`). **Planned
@@ -141,10 +142,10 @@ Which phases cover which requirements. Populated during roadmap creation.
 | IND-01 | Phase 3 — Declared-Indicator Framework | Complete |
 | COMP-01 | Phase 4 — Composition & Config Interface | Complete |
 | COMP-02 | Phase 4 — Composition & Config Interface | Complete |
-| SIG-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
-| SIG-02 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
-| SIG-03 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
-| RECON-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Pending |
+| SIG-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-04) |
+| SIG-02 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-04) |
+| SIG-03 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-02) |
+| RECON-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-04) |
 | LIFE-01 | Phase 6 — Order Lifecycle & Time-in-Force | Pending |
 
 **Coverage:**

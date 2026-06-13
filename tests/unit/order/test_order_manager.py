@@ -85,7 +85,7 @@ class _Harness:
     def rest_a_stop(self):
         order = Order.new_stop_order(
             time=_dt.datetime(2024, 1, 1), ticker="BTCUSDT",
-            action="SELL", price=30.0, quantity=1.0, exchange="default",
+            action=Side.SELL, price=30.0, quantity=1.0, exchange="default",
             strategy_id=1, portfolio_id=self.portfolio_id,
         )
         self.storage.add_order(order)
@@ -498,7 +498,7 @@ def test_failed_assembly_after_reserve_releases_reservation():
 
 def _rest_order(storage):
     order = Order.new_stop_order(
-        time=_dt.datetime(2024, 1, 1), ticker="BTCUSDT", action="SELL",
+        time=_dt.datetime(2024, 1, 1), ticker="BTCUSDT", action=Side.SELL,
         price=30.0, quantity=1.0, exchange="default", strategy_id=1,
         portfolio_id=uuid.uuid4(),
     )

@@ -7,7 +7,7 @@ from itrader.order_handler.order_validator import (
     EnhancedOrderValidator, ValidationResult, ValidationMessage, ValidationLevel
 )
 from itrader.order_handler.order import Order
-from itrader.core.enums import OrderType, OrderStatus, PositionSide
+from itrader.core.enums import OrderType, OrderStatus, PositionSide, Side
 from itrader.core.portfolio_read_model import PositionView
 
 
@@ -40,7 +40,7 @@ class TestEnhancedOrderValidator:
             'type': OrderType.MARKET,
             'status': OrderStatus.PENDING,
             'ticker': 'AAPL',
-            'action': 'BUY',
+            'action': Side.BUY,
             'price': 150.0,
             'quantity': 100.0,
             'exchange': 'NYSE',
@@ -91,7 +91,7 @@ class TestEnhancedOrderValidator:
         # Mock insufficient cash: not enough for 100 * 150 = 15000
         self.portfolio_handler.available_cash.return_value = Decimal("1000.00")
 
-        order = self.create_test_order(action="BUY", price=150.0, quantity=100.0)
+        order = self.create_test_order(action=Side.BUY, price=150.0, quantity=100.0)
         result = self.validator.validate_order_pipeline(order)
 
         assert result.success is False
@@ -156,7 +156,7 @@ class TestEnhancedOrderValidator:
             type=OrderType.LIMIT,
             status=OrderStatus.PARTIALLY_FILLED,
             ticker='AAPL',
-            action='BUY',
+            action=Side.BUY,
             price=150.0,
             quantity=100.0,
             exchange='NYSE',
@@ -196,7 +196,7 @@ class TestEnhancedOrderValidator:
             avg_price=Decimal("140.0"),
         )
 
-        order = self.create_test_order(action="SELL", quantity=100.0)
+        order = self.create_test_order(action=Side.SELL, quantity=100.0)
         result = self.validator.validate_order_pipeline(order)
 
         assert result.success is True or len(result.errors) == 0
