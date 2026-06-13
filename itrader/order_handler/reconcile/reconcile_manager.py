@@ -204,19 +204,20 @@ class ReconcileManager:
 			# non-terminal case stays an early-return HERE (NOT in the helper) so
 			# the reservation is intentionally HELD (should_release stays False).
 			terminal, _transition = self._classify(fill_event.status)
+			if not terminal:
+				# Truly unknown / non-terminal status: leave the order active
+				# and alert. (No release either — an unknown status is not a
+				# terminal reconciliation, so the reservation is intentionally
+				# held: should_release stays False on this early-return path.)
+				self.logger.warning('Unhandled fill status %s for order %s; order left active',
+				                    fill_event.status, order_id)
+				return out_events
 			if fill_event.status == FillStatus.EXECUTED:
 				applied = self._apply_executed(order, fill_event, order_id)
 			elif fill_event.status == FillStatus.CANCELLED:
 				self._apply_cancelled(order)
-			elif fill_event.status == FillStatus.REFUSED:
+			else:  # REFUSED — the only remaining terminal status
 				self._apply_refused(order)
-			else:
-				# Truly unknown status: leave the order active and alert.
-				# (No release either — an unknown status is not a terminal
-				# reconciliation, so the reservation is intentionally held.)
-				self.logger.warning('Unhandled fill status %s for order %s; order left active',
-				                    fill_event.status, order_id)
-				return out_events
 			# A terminal status was reached (EXECUTED/CANCELLED/REFUSED): arm the
 			# release before any further work so a raise below still releases.
 			should_release = True
