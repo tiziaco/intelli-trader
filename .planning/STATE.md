@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
 status: executing
-stopped_at: Phase 5 context gathered
-last_updated: "2026-06-13T12:12:46.275Z"
-last_activity: 2026-06-13 -- Phase 05 execution started
+stopped_at: Completed 05-04 (owner-signed LIMIT cross-val golden frozen)
+last_updated: "2026-06-13T12:55:00.000Z"
+last_activity: 2026-06-13
 progress:
   total_phases: 9
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 16
-  completed_plans: 12
-  percent: 44
+  completed_plans: 16
+  percent: 56
 ---
 
 # Project State
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface 
 ## Current Position
 
 Phase: 05 (signal-contract-reconcile-fragile) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 05
-Last activity: 2026-06-13 -- Phase 05 execution started
+Plan: 4 of 4 (all plans complete — phase ready for verification/close)
+Status: Plan 05-04 complete (owner-signed LIMIT cross-val golden frozen)
+Last activity: 2026-06-13
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -122,6 +122,7 @@ Active decisions live in PROJECT.md Key Decisions. Load-bearing program constrai
 - [Phase ?]: [v1.3 Phase 04 / 04-02]: Composition-root collapse landed byte-exact. compose_engine (trading_system/compose.py) is the shared mode-agnostic wiring seam — order_storage + signal_store backends injected by the FACTORY (grep "'backtest'"==0, D-14a). FeeModelCommissionEstimator holds the exchange ref, reads fee_model in __call__ (D-15 late binding); the oracle-dark post-fee-swap non-zero test pins it (swap via the LIVE update_config enum API — string coercion is Wave 3). BacktestRunner owns the fail-fast loop, post-bar record_metrics DIRECT call preserved (Trap 4). TradingSystem renamed BacktestTradingSystem (thin holder) + build_backtest_system(spec) factory (D-04); a TradingSystem alias + legacy __init__ + engine-delegating properties keep oracle/integration/e2e/scripts byte-exact by rename only until Wave 4. D-13/Trap 1: hardcoded register_symbol('BTCUSD') removed; COMPLETE set (default preset ∪ {BTCUSD} ∪ spec tickers) seeded into ExchangeConfig.limits at construction (replacement-safe); TEMPORARY no-config fallback unions {BTCUSD} (asserted, Wave 4 removes it). D-16/Trap 3: _resolve_rng_seed reads config.performance.rng_seed off the singleton (seed 42). OrderConfig threaded + commission_estimator retyped (D-05). print_metrics_summary lifted into reporting/summary.py (W4-07). GATE: oracle 134/46189.87730727451 exact, e2e 58/58, mypy --strict 181 files, full suite 854 green, determinism double-run identical.
 - [Phase ?]: 04-03: canonical update_config(dict)->None on all 5 config-model handlers; shared config/merge.py deep_merge; pydantic ValidationError wrapped into ConfigurationError; oracle-dark byte-exact held
 - [Phase ?]: 04-04: non-config-model update_config landed — StrategiesHandler name-keyed reconfigure delegation (D-09) + BacktestBarFeed raise-only interface-conformance (D-10); both match the core.ConfigurationError single-catch contract; oracle-dark byte-exact (134/46189.87730727451, e2e 58/58, mypy 182)
+- [Phase 05 / 05-04]: OWNER-SIGNED LIMIT GOLDEN FROZEN (D-07) — ONE externally cross-validated (backtesting.py 0.6.5 + backtrader 1.9.78.123, gating) LIMIT-entry golden on the real BTCUSD dataset, proving the SIG-01/SIG-02 `buy_limit` authoring surface end-to-end (resting limit fills a LATER bar 2018-09-05 @ 7155.9698 → SL same bar @ 6798.17131; marketable limit fills at OPEN 2018-09-14 @ 6487.39 → SL same bar @ 6471.16155; trade_count 2; final_equity 9503.442073) and exercising RECON-01 entry-fill→bracket reconciliation. Owner (tiziaco, 2026-06-13) signed off with full attribution, explicitly accepting the **A1 LEGITIMATE-DIFFERENCE** (iTrader fills the same-bar protective SL intrabar; BOTH gating engines defer the contingent SL to the next bar and AGREE with each other — 0 BUG, iTrader numbers kept). Golden frozen at `tests/e2e/matching/entries/limit_entry_crossval/golden/{trades.csv,summary.json}` via the e2e `--freeze` harness; the xfail pending-golden marker removed so the leaf is a live green diff-on-drift regression lock; owner sign-off block appended to `tests/golden/CROSS-VALIDATION-LIMIT.md`. The crafted strategy + two LIMIT runners + orchestrator are SCRIPT-ONLY (D-10, never imported under tests/). GATE: the EXISTING SMA_MACD oracle stays byte-exact (134 / 46189.87730727451) — additive NEW golden, no re-baseline of the old one; e2e leaf green. Tasks 1/2 (4729448, c2fdc6f) + Task 3 (75fb676).
 - [Phase 04 / 04-05]: BYTE-EXACT PROOF WAVE — phase 4 PROVEN byte-exact (COMP-01 + COMP-02 complete). e2e _build_and_run COLLAPSED onto build_backtest_system(spec): the D-14 post-construction fee/slippage re-init seam + the additive register_symbol loop REMOVED (subsumed by construction-time ExchangeConfig threading + complete symbol seeding, D-01/D-13/D-14). scenario_spec.py UNIFIED onto the promoted SystemSpec (ScenarioSpec = SystemSpec alias + PortfolioSpec/Action re-export — no leaf edited). All scripts/integration TradingSystem sites migrated to BacktestTradingSystem (D-03); the Wave-2 TradingSystem alias REMOVED; the legacy direct-construction __init__ now seeds its own complete ExchangeConfig (routes the backtest path off the ExecutionHandler no-config fallback, which STAYS for the out-of-scope live + unit direct-construction consumers). [Rule 1] Fixed a latent Wave-2 factory bug: add_portfolio used exchange=spec.ticker (unregistered venue → no fills) → corrected to 'csv'; only activated once the e2e path ran through the factory. D-12 scope fence HELD (no ReconfigureEvent / TradingInterface reconfigure bridge; LiveTradingSystem untouched). GATE: oracle 134/46189.87730727451 EXACT, determinism double-run byte-identical, e2e 58/58, full suite 946 green under filterwarnings=[error], mypy --strict clean (182 files). Zero re-baseline.
 
 ### Pending Todos
@@ -154,6 +155,7 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 | Phase 04 P03 | 40min | 3 tasks | 17 files |
 | Phase 04 P04 | 15 | 2 tasks | 4 files |
 | Phase 04 P05 | 30 | 3 tasks | 10 files |
+| Phase 05 P04 | ~9 min | 3 tasks | 9 files |
 
 ## Bookkeeping
 
@@ -193,9 +195,9 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-13T09:35:34.883Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-signal-contract-reconcile-fragile/05-CONTEXT.md
+Last session: 2026-06-13T12:55:00.000Z
+Stopped at: Completed 05-04-PLAN.md (owner-signed LIMIT cross-val golden frozen — all 4 Phase-5 plans complete)
+Resume file: None
 
 ## Operator Next Steps
 

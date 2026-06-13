@@ -119,7 +119,7 @@ only after explicit owner sign-off + external cross-validation.
   - [x] 05-01-PLAN.md — SIG-01/02 authoring surface: SignalIntent/SignalRecord order_type+entry_price, buy_limit/buy_stop/sell_limit/sell_stop factories, retire Strategy.order_type attr, per-intent handler fan-out (MARKET byte-exact)
   - [x] 05-02-PLAN.md — SIG-03: Order.action + _PendingBracket.action str→Side across the enumerated literal sites + W4-04 doc update; single threaded admission Position snapshot
   - [x] 05-03-PLAN.md — RECON-01: on_fill extract-method (_classify / per-status arms / _release_reservation) with try/finally byte-identical + Wave-0 reconcile branch coverage
-  - [ ] 05-04-PLAN.md — D-07 owner-gated cross-val: crafted BTCUSD limit-entry strategy + e2e leaf + backtesting.py/backtrader LIMIT runners + CROSS-VALIDATION-LIMIT.md; owner sign-off freezes the new golden (autonomous: false)
+  - [x] 05-04-PLAN.md — D-07 owner-gated cross-val: crafted BTCUSD limit-entry strategy + e2e leaf + backtesting.py/backtrader LIMIT runners + CROSS-VALIDATION-LIMIT.md; owner sign-off (tiziaco, 2026-06-13) froze the new golden (entry A 7155.9698→SL, entry B 6487.39→SL, trade_count 2, final_equity 9503.442073; A1 same-bar-SL LEGITIMATE-DIFFERENCE accepted; existing oracle 134/46189.87730727451 byte-exact)
 
 ### Phase 6: Order Lifecycle & Time-in-Force
 **Goal**: Orders left resting at run end are disposed of via time-in-force instead of lingering PENDING — `Order.expire_order()` + `OrderStatus.EXPIRED` (which exist but are unwired) are wired on the backtest path — and the `create_order` second signal→order path is gated; owner-gated re-baseline.
@@ -197,7 +197,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 2. Strategy Authoring Surface | 3/3 | Complete   | 2026-06-12 |
 | 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
 | 4. Composition & Config Interface | 5/5 | Complete   | 2026-06-12 |
-| 5. Signal Contract & Reconcile (FRAGILE) | 3/4 | In Progress|  |
+| 5. Signal Contract & Reconcile (FRAGILE) | 4/4 | Plans complete (verify/close pending) | 2026-06-13 |
 | 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
 
 **Next:** Execute Phase 2 with `/gsd:execute-phase 2`.
