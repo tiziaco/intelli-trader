@@ -3,12 +3,14 @@ Signal→order admission collaborator (D-07/D-08/D-09/D-13, WR-03/WR-04, T-05-17
 RESEARCH Pattern 5).
 
 `AdmissionManager` owns the full signal→order pipeline MOVED VERBATIM (TAB) from
-`order_manager.py` (D-13, pure code-motion — byte-exact behavior): the two public
-entry points `process_signal` / `create_orders_from_signal` (relocated INTACT,
-D-07) plus the admission gates, sizing resolution, primary-order construction,
-commission estimation and the audited-rejection helper.
+`order_manager.py` (D-13, pure code-motion — byte-exact behavior): the public
+entry point `process_signal` (relocated INTACT, D-07) plus the admission gates,
+sizing resolution, primary-order construction, commission estimation and the
+audited-rejection helper. (D-03/W4-09, Phase 6: the dead, unvalidated
+`create_orders_from_signal` second path was removed — `process_signal` is the
+single validated signal→order path.)
 
-The two entry points behave exactly as before: the strategy's DECLARED admission
+The entry point behaves exactly as before: the strategy's DECLARED admission
 constraints are enforced BEFORE sizing (direction → max_positions → increase, D-08/
 D-10), sizing resolves through the ONE SizingResolver (D-01/M5-06), the ENTITY is
 validated (not the signal, D-13), a synchronous cash-reservation gate runs (WR-03),
@@ -47,10 +49,10 @@ class AdmissionManager:
 	"""
 	Signal→order admission pipeline (D-07/D-08/D-13).
 
-	Owns `process_signal` / `create_orders_from_signal` (the two public entry
-	points OrderManager delegates into, D-07) plus the admission gates, sizing
-	resolution, primary-order construction and audited-rejection helper, all
-	moved verbatim from OrderManager. Holds the injected coordinator-owned
+	Owns `process_signal` (the single validated entry point OrderManager
+	delegates into, D-07) plus the admission gates, sizing resolution,
+	primary-order construction and audited-rejection helper, all moved
+	verbatim from OrderManager. Holds the injected coordinator-owned
 	BracketBook (`self._brackets`, D-05) and BracketManager (`self.bracket_manager`,
 	the bracket-assembly seam, D-08); never touches the events queue (D-18).
 	"""
@@ -282,58 +284,6 @@ class AdmissionManager:
 				error_details=str(e), operation_type=OrderOperationType.SIGNAL_PROCESSING))
 
 		return results
-
-	def create_orders_from_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
-		"""
-		Create all orders from a signal event (direct, unvalidated entry point).
-
-		Creates:
-		1. Primary order (market/limit/stop based on signal.order_type)
-		2. Stop-loss order (if signal.stop_loss > 0)
-		3. Take-profit order (if signal.take_profit > 0)
-
-		All entities are built FIRST with two-directional bracket linkage,
-		then stored, then emitted parent-first (D-11). This entry point —
-		used by OrderHandler.create_order — performs no validation, exactly
-		like the pre-D-13 flow (validation lives in process_signal).
-
-		Parameters
-		----------
-		signal_event : SignalEvent
-			The signal event containing order details
-
-		Returns
-		-------
-		List[OperationResult]
-			List of operation results for each order created
-		"""
-		try:
-			# SIG-03 (D-03): same single-snapshot read as process_signal — this
-			# direct (unvalidated) entry point only reaches the sizing site, so
-			# the one capture is threaded into _resolve_signal_quantity.
-			snap: PositionView | None = (
-				self.portfolio_handler.get_position(
-					signal_event.portfolio_id, signal_event.ticker)
-				if self.portfolio_handler is not None else None)
-			resolved = self._resolve_signal_quantity(signal_event, snap)
-			if isinstance(resolved, OperationResult):
-				return [resolved]
-
-			exchange = self._get_signal_exchange(signal_event)
-
-			primary = self._build_primary_order(signal_event, exchange, resolved)
-			if isinstance(primary, OperationResult):
-				return [primary]
-
-			return self.bracket_manager._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
-
-		except Exception as e:
-			self.logger.error(f'Error creating orders from signal: {e}', exc_info=True)
-			return [OperationResult.failure_result(
-				f"Failed to create orders from signal",
-				error_details=str(e),
-				operation_type=OrderOperationType.CREATE_ORDERS_FROM_SIGNAL
-			)]
 
 	def _get_signal_exchange(self, signal_event: SignalEvent) -> str:
 		"""Resolve the exchange the signal's portfolio trades on (Protocol read, D-16)."""

@@ -145,9 +145,12 @@
   domain `EnhancedOrderValidator` (`itrader/order_handler/order_validator.py`) on
   the `process_signal` admission path, and the exchange-side checks in
   `itrader/execution_handler/exchanges/simulated.py`. The overlap is
-  justified-by-decision — the `create_order` / live paths bypass the domain
-  validator, so the exchange layer is the only gate there. The duplicated action
-  check is **NOT** removed.
+  justified-by-decision — the live `TradingInterface` / `OrderEvent` path
+  bypasses the domain validator, so the exchange layer is the only gate there.
+  The duplicated action check is **NOT** removed.
+  *(D-03a, Phase 6 / W4-09: the dead, unvalidated `OrderHandler.create_order`
+  second path was removed — it no longer justifies the overlap; the live-path
+  bypass alone does. The validator code stays.)*
 - **SIG-03 / D-03 update (Phase 5):** `Order.action` (and `_PendingBracket.action`)
   are now `Side`-typed (narrowed from `str`). The domain validator's action check
   was `order.action not in ["BUY", "SELL"]` (string membership) and is now
