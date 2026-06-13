@@ -38,7 +38,7 @@ from ..brackets import BracketBook, BracketManager
 from ...core.enums import OrderStatus, OrderType, Side, OrderOperationType, OrderTriggerSource
 from ...core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ...core.money import to_money
-from ...core.portfolio_read_model import PortfolioReadModel
+from ...core.portfolio_read_model import PortfolioReadModel, PositionView
 from ...core.sizing import TradingDirection
 from ...events_handler.events import SignalEvent
 
@@ -131,11 +131,25 @@ class AdmissionManager:
 		primary_emitted = False
 
 		try:
+			# SIG-03 (D-03): capture the per-ticker position snapshot ONCE, up
+			# front, and thread it through the three admission/sizing sites that
+			# previously each re-fetched it (404/484/583). Byte-exact under the
+			# single-writer backtest contract — nothing mutates the position
+			# within one process_signal (the reserve below touches cash only), so
+			# one snapshot is value-identical to three re-fetches. ``None`` when
+			# there is no read model: each site preserves its old
+			# ``portfolio_handler is None`` fall-through by mapping it to
+			# "snap is None".
+			snap: PositionView | None = (
+				self.portfolio_handler.get_position(
+					signal_event.portfolio_id, signal_event.ticker)
+				if self.portfolio_handler is not None else None)
+
 			# 0. D-08 direction admission gate — BEFORE sizing. Enforces the
 			# strategy's DECLARED TradingDirection: an unsized LONG_ONLY SELL
 			# with no open long is an AUDITED rejection (Pitfall 4 — the exact
 			# fall-through that opened the 2 blessed golden shorts is gone).
-			gate_rejection = self._enforce_direction_admission(signal_event)
+			gate_rejection = self._enforce_direction_admission(signal_event, snap)
 			if gate_rejection is not None:
 				return [gate_rejection]
 
@@ -144,7 +158,7 @@ class AdmissionManager:
 			# increase; the cases are disjoint by position state (the increase
 			# case is an OPEN ticker, the max_positions case is a NEW ticker)
 			# so a signal trips at most ONE gate.
-			gate_rejection = self._enforce_position_admission(signal_event)
+			gate_rejection = self._enforce_position_admission(signal_event, snap)
 			if gate_rejection is not None:
 				return [gate_rejection]
 
@@ -156,7 +170,7 @@ class AdmissionManager:
 			# resolve step and a failure_result short-circuits here — the DEF-01-B
 			# narrow gate holds: the running engine never presents an unsized order
 			# to the validator (which now hard-rejects any non-positive quantity).
-			resolved = self._resolve_signal_quantity(signal_event)
+			resolved = self._resolve_signal_quantity(signal_event, snap)
 			if isinstance(resolved, OperationResult):
 				return [resolved]
 
@@ -202,7 +216,7 @@ class AdmissionManager:
 			# T-05-15). D-04: reserve = price x quantity + estimated commission;
 			# the zero default reproduces the old funds-check math exactly.
 			# Decimal-native arithmetic — intermediates are never quantized.
-			if self.portfolio_handler is not None and primary.action == Side.BUY.value:
+			if self.portfolio_handler is not None and primary.action is Side.BUY:
 				cost = primary.price * primary.quantity + self._estimate_commission(primary)
 				try:
 					self.portfolio_handler.reserve(
@@ -288,7 +302,14 @@ class AdmissionManager:
 			List of operation results for each order created
 		"""
 		try:
-			resolved = self._resolve_signal_quantity(signal_event)
+			# SIG-03 (D-03): same single-snapshot read as process_signal — this
+			# direct (unvalidated) entry point only reaches the sizing site, so
+			# the one capture is threaded into _resolve_signal_quantity.
+			snap: PositionView | None = (
+				self.portfolio_handler.get_position(
+					signal_event.portfolio_id, signal_event.ticker)
+				if self.portfolio_handler is not None else None)
+			resolved = self._resolve_signal_quantity(signal_event, snap)
 			if isinstance(resolved, OperationResult):
 				return [resolved]
 
@@ -332,15 +353,15 @@ class AdmissionManager:
 			unsupported order type (short-circuits before entity creation).
 		"""
 		# D-05: the signal carries an enum-typed OrderType; dispatch on the
-		# member. The Order ENTITY keeps its str action until M4 — convert at
-		# this boundary via .value.
+		# member. The Order ENTITY now carries a Side action (SIG-03 / D-03) —
+		# thread the signal's Side member straight through (no .value).
 		if signal_event.order_type is OrderType.MARKET:
 			return Order.new_order(signal_event, exchange, quantity=quantity)
 		elif signal_event.order_type is OrderType.LIMIT:
 			return Order.new_limit_order(
 				time=signal_event.time,
 				ticker=signal_event.ticker,
-				action=signal_event.action.value,
+				action=signal_event.action,
 				price=signal_event.price,
 				quantity=quantity,
 				exchange=exchange,
@@ -351,7 +372,7 @@ class AdmissionManager:
 			return Order.new_stop_order(
 				time=signal_event.time,
 				ticker=signal_event.ticker,
-				action=signal_event.action.value,
+				action=signal_event.action,
 				price=signal_event.price,
 				quantity=quantity,
 				exchange=exchange,
@@ -363,7 +384,8 @@ class AdmissionManager:
 			operation_type=OrderOperationType.CREATE_PRIMARY_ORDER
 		)
 
-	def _enforce_direction_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+	def _enforce_direction_admission(self, signal_event: SignalEvent,
+	                                 snap: "PositionView | None") -> Optional[OperationResult]:
 		"""
 		D-08 direction admission gate — step 0 of process_signal, BEFORE sizing.
 
@@ -397,12 +419,14 @@ class AdmissionManager:
 			return None
 		if self.portfolio_handler is None:
 			# No position truth to consult — an unsized signal without a
-			# read model fails loudly in the sizing step right after.
+			# read model fails loudly in the sizing step right after. SIG-03:
+			# this is identically the "snap is None" case (the snapshot capture
+			# in process_signal yields None when there is no read model).
 			return None
-		# FL-02: events now declare portfolio_id as PortfolioId (#10 carry-forward).
-		portfolio_id = signal_event.portfolio_id
-		open_position = self.portfolio_handler.get_position(
-			portfolio_id, signal_event.ticker)
+		# SIG-03 (D-03): use the threaded snapshot instead of re-fetching
+		# (was get_position at :404). Identical to a fresh read under the
+		# single-writer contract.
+		open_position = snap
 		if (signal_event.direction is TradingDirection.LONG_ONLY
 				and signal_event.action is Side.SELL
 				and (open_position is None or open_position.net_quantity <= 0)):
@@ -427,7 +451,8 @@ class AdmissionManager:
 			)
 		return None
 
-	def _enforce_position_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+	def _enforce_position_admission(self, signal_event: SignalEvent,
+	                                snap: "PositionView | None") -> Optional[OperationResult]:
 		"""
 		D-10 increase gate + max_positions gate — the rest of process_signal
 		step 0 (plan 07-08), running after the direction gate, BEFORE sizing.
@@ -477,12 +502,15 @@ class AdmissionManager:
 			return None
 		if self.portfolio_handler is None:
 			# No position truth to consult — an unsized signal without a
-			# read model fails loudly in the sizing step right after.
+			# read model fails loudly in the sizing step right after. SIG-03:
+			# identically the "snap is None" case.
 			return None
 		# FL-02: events now declare portfolio_id as PortfolioId (#10 carry-forward).
 		portfolio_id = signal_event.portfolio_id
-		open_position = self.portfolio_handler.get_position(
-			portfolio_id, signal_event.ticker)
+		# SIG-03 (D-03): use the threaded snapshot instead of re-fetching
+		# (was get_position at :484). The open_position_count read below is a
+		# separate aggregate crossing and is NOT part of the snapshot.
+		open_position = snap
 		if open_position is not None and open_position.net_quantity > 0:
 			# INCREASE case (D-10): BUY for an already-open long.
 			if not signal_event.allow_increase:
@@ -519,7 +547,8 @@ class AdmissionManager:
 			)
 		return None
 
-	def _resolve_signal_quantity(self, signal_event: SignalEvent) -> "Decimal | OperationResult":
+	def _resolve_signal_quantity(self, signal_event: SignalEvent,
+	                             snap: "PositionView | None") -> "Decimal | OperationResult":
 		"""
 		Resolve the order quantity in the order/risk seam (D-01/D-08/D-09/D-13, M5-06).
 
@@ -580,8 +609,10 @@ class AdmissionManager:
 			)
 		# FL-02: events now declare portfolio_id as PortfolioId (#10 carry-forward).
 		portfolio_id = signal_event.portfolio_id
-		open_position = self.portfolio_handler.get_position(
-			portfolio_id, signal_event.ticker)
+		# SIG-03 (D-03): use the threaded snapshot instead of re-fetching
+		# (was get_position at :583). Value-identical under the single-writer
+		# contract — no fill mutates the position within one process_signal.
+		open_position = snap
 		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
 			# Long-only exit: the resolver sizes the exit from exchange truth
 			# (net_quantity is Decimal, M2a entity money; the read crosses the

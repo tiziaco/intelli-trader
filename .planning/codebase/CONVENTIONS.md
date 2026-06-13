@@ -139,6 +139,26 @@
 
 - Handler modules use tabs; `config/`, `core/`, and `events_handler/events/` use 4 spaces. A mixed-indentation diff in a tab file breaks the file. Match the file you edit.
 
+## Dual-Layer Order-Validator Overlap (W4-04, Pinned)
+
+- The order domain runs TWO validation layers by design (defense-in-depth): the
+  domain `EnhancedOrderValidator` (`itrader/order_handler/order_validator.py`) on
+  the `process_signal` admission path, and the exchange-side checks in
+  `itrader/execution_handler/exchanges/simulated.py`. The overlap is
+  justified-by-decision — the `create_order` / live paths bypass the domain
+  validator, so the exchange layer is the only gate there. The duplicated action
+  check is **NOT** removed.
+- **SIG-03 / D-03 update (Phase 5):** `Order.action` (and `_PendingBracket.action`)
+  are now `Side`-typed (narrowed from `str`). The domain validator's action check
+  was `order.action not in ["BUY", "SELL"]` (string membership) and is now
+  `order.action not in (Side.BUY, Side.SELL)` (Side-member identity); the
+  `_is_closing_position` compares are `order.action is Side.SELL/is Side.BUY`.
+  The former string-membership literal at `order_validator.py:193` is **dead**
+  after the retype — a non-Side action can no longer reach the validator from the
+  factories (mypy --strict checks side handling end-to-end inside `order_handler`).
+  The dual-layer structure itself is unchanged; only the action comparison was
+  narrowed.
+
 ---
 
 *Convention analysis: 2026-06-12*

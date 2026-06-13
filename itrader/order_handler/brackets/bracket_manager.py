@@ -117,7 +117,7 @@ class BracketManager:
 						# (string-path constants enforced by the policy types).
 						sl_price, tp_price = _bracket_levels(
 							sltp_policy, to_money(signal_event.price),
-							signal_event.action.value)
+							signal_event.action)
 					case PercentFromFill():
 						# CARVE-OUT to create-all-then-emit (Phase 4 D-11):
 						# NO children at assembly — record the pending bracket;
@@ -126,7 +126,7 @@ class BracketManager:
 						self._brackets.arm(primary.id, _PendingBracket(
 							policy=sltp_policy,
 							ticker=signal_event.ticker,
-							action=signal_event.action.value,
+							action=signal_event.action,
 							quantity=quantity,
 							exchange=exchange,
 							strategy_id=signal_event.strategy_id,
@@ -139,8 +139,8 @@ class BracketManager:
 				sl_order = Order.new_stop_order(
 					time=signal_event.time,
 					ticker=signal_event.ticker,
-					# Invert on Side (D-05); the entity stores str until M4.
-					action='BUY' if signal_event.action is Side.SELL else 'SELL',
+					# Invert on Side (D-05); the entity stores a Side (SIG-03/D-03).
+					action=Side.BUY if signal_event.action is Side.SELL else Side.SELL,
 					price=sl_price,
 					quantity=quantity,
 					exchange=exchange,
@@ -153,8 +153,8 @@ class BracketManager:
 				tp_order = Order.new_limit_order(
 					time=signal_event.time,
 					ticker=signal_event.ticker,
-					# Invert on Side (D-05); the entity stores str until M4.
-					action='BUY' if signal_event.action is Side.SELL else 'SELL',
+					# Invert on Side (D-05); the entity stores a Side (SIG-03/D-03).
+					action=Side.BUY if signal_event.action is Side.SELL else Side.SELL,
 					price=tp_price,
 					quantity=quantity,
 					exchange=exchange,
@@ -241,8 +241,8 @@ class BracketManager:
 		"""
 		anchor = to_money(fill_event.price)
 		sl_price, tp_price = _bracket_levels(pending.policy, anchor, pending.action)
-		# Invert on the parent's action (D-05); the entity stores str until M4.
-		child_action = 'BUY' if pending.action == Side.SELL.value else 'SELL'
+		# Invert on the parent's action (D-05); the entity stores a Side (SIG-03/D-03).
+		child_action = Side.BUY if pending.action is Side.SELL else Side.SELL
 		sl_order = Order.new_stop_order(
 			time=fill_event.time,
 			ticker=pending.ticker,

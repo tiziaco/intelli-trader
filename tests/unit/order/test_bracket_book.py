@@ -19,6 +19,7 @@ from decimal import Decimal
 
 from itrader.order_handler.brackets import BracketBook
 from itrader.order_handler.brackets.bracket_book import _PendingBracket
+from itrader.core.enums import Side
 from itrader.core.sizing import PercentFromFill
 
 
@@ -27,7 +28,7 @@ def _make_bracket(quantity=Decimal("1")):
     return _PendingBracket(
         policy=PercentFromFill(sl_pct=Decimal("0.05"), tp_pct=Decimal("0.10")),
         ticker="BTCUSDT",
-        action="BUY",
+        action=Side.BUY,
         quantity=quantity,
         exchange="binance",
         strategy_id="strat-1",

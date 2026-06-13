@@ -24,7 +24,7 @@ from ...core.sizing import SLTPPolicy
 
 
 def _bracket_levels(policy: SLTPPolicy, anchor: Decimal,
-                    action: str) -> "tuple[Decimal, Decimal]":
+                    action: Side) -> "tuple[Decimal, Decimal]":
 	"""
 	Compute (stop_loss, take_profit) percent-offset levels from ``anchor``.
 
@@ -35,6 +35,6 @@ def _bracket_levels(policy: SLTPPolicy, anchor: Decimal,
 	identical ± pct math, different anchoring moment. Decimal end-to-end
 	(the policy types enforce string-path constants, Pitfall 1).
 	"""
-	if action == Side.SELL.value:
+	if action is Side.SELL:
 		return anchor * (ONE + policy.sl_pct), anchor * (ONE - policy.tp_pct)
 	return anchor * (ONE - policy.sl_pct), anchor * (ONE + policy.tp_pct)

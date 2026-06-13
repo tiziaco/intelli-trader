@@ -13,13 +13,15 @@ at the 8 verified `order_manager.py` sites. It exposes dict-compat dunders
 (`__eq__`/`__contains__`/`__len__`) so the internal-attribute-coupled
 `test_sltp_policy.py` survives untouched (RESEARCH Pitfall 2, option a).
 
-`action: str` is kept as-is on `_PendingBracket` — retyping to `Side` is W2-02,
-deferred to 999.5 per D-13.
+`action` is `Side`-typed on `_PendingBracket` (SIG-03 / D-03): the persisted
+action boundary is narrowed from `str` to `Side` across order_handler so side
+handling is mypy-checked end-to-end (closes W2-02).
 """
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Dict, Optional
+from ...core.enums import Side
 from ...core.ids import OrderId, PortfolioId, StrategyId
 from ...core.sizing import PercentFromFill
 
@@ -37,7 +39,7 @@ class _PendingBracket:
 
 	policy: PercentFromFill
 	ticker: str
-	action: str
+	action: Side
 	quantity: Decimal
 	exchange: str
 	strategy_id: StrategyId
