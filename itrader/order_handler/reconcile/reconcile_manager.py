@@ -49,6 +49,7 @@ from ...events_handler.events import OrderEvent, FillEvent
 
 if TYPE_CHECKING:
 	from ..brackets import BracketManager
+	from ..order import Order
 
 
 class ReconcileManager:
@@ -110,7 +111,7 @@ class ReconcileManager:
 			return True, OrderStatus.REJECTED
 		return False, None
 
-	def _apply_executed(self, order: Any, fill_event: FillEvent, order_id: Any) -> bool:
+	def _apply_executed(self, order: "Order", fill_event: FillEvent, order_id: Any) -> bool:
 		"""
 		EXECUTED arm: apply the exchange fill to the order mirror.
 
@@ -140,12 +141,12 @@ class ReconcileManager:
 		return True
 
 	@staticmethod
-	def _apply_cancelled(order: Any) -> None:
+	def _apply_cancelled(order: "Order") -> None:
 		"""CANCELLED arm: mark the order CANCELLED (exchange cancellation)."""
 		order.cancel_order("exchange cancellation")
 
 	@staticmethod
-	def _apply_refused(order: Any) -> None:
+	def _apply_refused(order: "Order") -> None:
 		"""REFUSED arm: mark the order REJECTED (exchange rejection)."""
 		order.reject_order("exchange rejection")
 
@@ -282,7 +283,7 @@ class ReconcileManager:
 			self._release_reservation(order, should_release, body_raised)
 		return out_events
 
-	def _release_reservation(self, order: Any, should_release: bool, body_raised: bool) -> None:
+	def _release_reservation(self, order: "Order", should_release: bool, body_raised: bool) -> None:
 		"""
 		Idempotent terminal-release of the order's cash reservation (D-06).
 
