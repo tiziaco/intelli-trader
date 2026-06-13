@@ -4,8 +4,8 @@ milestone: v1.3
 milestone_name: Engine Surface Completion
 status: executing
 stopped_at: Phase 6 context gathered
-last_updated: "2026-06-13T16:35:54.434Z"
-last_activity: 2026-06-13 -- Phase 06 planning complete
+last_updated: "2026-06-13T16:38:35.691Z"
+last_activity: 2026-06-13 -- Phase 06 execution started
 progress:
   total_phases: 9
   completed_phases: 5
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 6 — Order Lifecycle & Time-in-Force
+**Current focus:** Phase 06 — order-lifecycle-time-in-force
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-13 -- Phase 06 planning complete
+Phase: 06 (order-lifecycle-time-in-force) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 06
+Last activity: 2026-06-13 -- Phase 06 execution started
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
