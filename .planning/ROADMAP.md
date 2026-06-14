@@ -159,14 +159,36 @@ Scope (intent only):
   forex swap / equity borrow).
 
 - **Minimal per-instrument value object (crypto-only)** — introduce `Instrument`
-  (`core/instrument.py`, a frozen value object mirroring `core/bar.py::Bar`) owning per-symbol
-  tick / lot-step / min-order / quote-currency **plus** the maintenance-margin-rate and
-  funding-rate params the margin & funding work needs. Formalizes the hard-coded
-  `_INSTRUMENT_SCALES` table in `core/money.py` and gives margin/liquidation + funding/carry a
-  real per-symbol home (instead of new hard-coded tables). **Crypto-only, NO `asset_class`
-  taxonomy** — crypto/stock/forex tagging stays in the deferred multi-asset milestone (dead
-  metadata until non-crypto accounting exists). Lands here because margin & funding rates are
-  inherently per-instrument, so N+2 is the spec's first real consumer.
+  (`core/instrument.py`, a frozen value object mirroring `core/bar.py::Bar`). Lands here because
+  margin & funding rates are inherently per-instrument, so N+2 is the spec's first real consumer.
+  Formalizes the hard-coded `_INSTRUMENT_SCALES` table in `core/money.py` and gives
+  margin/liquidation + funding/carry a real per-symbol home (instead of new hard-coded tables).
+  **Field set (each tied to a named N+2 consumer — YAGNI gate):** `symbol`; `quote_currency`
+  (default `"USD"`, the principled source for cash precision); `price_precision`,
+  `quantity_precision` (money quantize); `maintenance_margin_rate`, `max_leverage`
+  (margin/liquidation + leverage); `settles_funding: bool` (funding/carry).
+  - **Precision, NOT trading tick.** Backtest needs rounding precision, not a price grid; `tick`
+    is live-only (fetched from the exchange) and only bites N+2 via trailing-stop min-distance —
+    deferred from this value object. **Price precision is layered: declared-wins → infer-from-data
+    (guarded: read CSV string not float, cap max dp — DOGE-safe, fixes the catastrophic flat-`0.01`
+    default) → `_DEFAULT_SCALES`.** Pinned/oracle symbols (e.g. `BTCUSD`, declared 8dp) ALWAYS take
+    the declared branch — inference from BTCUSD data would yield ~2–4dp and drift the golden master
+    off `46189.87730727451`. `quantity_precision` is declared-or-default (not inferable — no quantity
+    column).
+  - **Funding is a flag, not a rate.** Perp funding is a time-series (accrues ~8h, changes), so
+    `Instrument` carries only `settles_funding`; the rate schedule comes from data/config, like prices.
+    Maintenance-margin rate IS a static venue property → fine as a field.
+  - **No cash instrument.** Cash has no price/margin/funding/fills — it doesn't fit the Instrument
+    shape. Cash precision = the quote currency's precision (USD → 2dp). A first-class `Currency` value
+    object (sibling of `Instrument`, not cash-crammed-in) waits for multi-currency accounting (deferred
+    indefinitely, crypto-first).
+  - **`min_order_size` stays in `ExchangeLimits`** (it's a venue×instrument property; same symbol
+    differs per venue) — do NOT duplicate onto `Instrument`. Reconcile `Instrument` vs `ExchangeLimits`
+    ownership during phase discussion.
+  - **Crypto-only, NO `asset_class` taxonomy** — crypto/stock/forex tagging stays in the deferred
+    multi-asset milestone (dead metadata until non-crypto accounting exists).
+  - **Behavioral gate:** whether the backtest *snaps/rounds* via `Instrument` (vs storing metadata
+    only) is result-changing → falls under N+2's owner-gated re-baseline.
 
 - **Engine-native trailing stop** — new `TRAILING_STOP` `OrderType` + `MatchingEngine`
   ratchet logic (track running extreme, move the resting stop per bar). For the

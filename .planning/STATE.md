@@ -4,7 +4,7 @@ milestone: v1.3
 milestone_name: Engine Surface Completion
 status: Awaiting next milestone
 stopped_at: Phase 6 context gathered
-last_updated: "2026-06-14T06:41:44.541Z"
+last_updated: "2026-06-14T07:12:26.046Z"
 last_activity: 2026-06-14 — Milestone v1.3 completed and archived
 progress:
   total_phases: 6
@@ -96,6 +96,7 @@ surfaces, which is why v1.3 lands first.
 
 - Phase 999.4 edited: added Scope bullet: minimal crypto-only Instrument value object (core/instrument.py) for margin/funding per-symbol params; appended Goal half-line
 - Phase 999.3 edited: added Scope bullet: dynamic universe membership (UniverseSelectionModel poll seam), sequenced near N+4 data engine
+- Phase 999.4 edited: refined Instrument seed: 7-field set (symbol/quote_currency/price+quantity_precision/maintenance_margin_rate/max_leverage/settles_funding); precision-not-tick (tick live-only); layered price precision (declared-wins->infer-guarded->default, oracle stays declared); funding is flag not rate; no cash instrument; min_order_size stays in ExchangeLimits; behavioral snap gated under owner re-baseline
 
 ### Decisions
 
