@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
 status: Awaiting next milestone
-stopped_at: Phase 6 context gathered
+stopped_at: v1.3 milestone closed and archived (2026-06-14); awaiting /gsd:new-milestone for N+2
 last_updated: "2026-06-14T06:01:08.685Z"
 last_activity: 2026-06-14 — Milestone v1.3 completed and archived
 progress:
