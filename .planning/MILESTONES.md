@@ -1,5 +1,82 @@
 # Milestones
 
+## v1.3 — Engine Surface Completion (Shipped: 2026-06-14)
+
+**Scope:** 6 phases (Phases 1–6, numbering reset from v1.2), 20 plans. Completes the
+signal/order contracts, the composition/config interface, and the declared-indicator +
+strategy-authoring surface — the result-changing / new-framework items deferred out of v1.2
+Consolidation (promoted Backlog 999.5), BEFORE N+2 builds margin/shorts on these same surfaces.
+
+**Delivered:** The engine's authoring and contract surfaces completed. A strategy is now
+authored as class-attribute params (overridable via `**kwargs`, `UnknownParamError` on unknown
+kwargs) with a re-runnable idempotent `init()`; indicators are declared in `init()` with
+auto-derived `warmup`/`max_window`; the system composes through an engine-level API
+(`SystemSpec`/`build_backtest_system`) with construction-time `ExchangeConfig` threading, a new
+`OrderConfig`, and a uniform `update_config` on all 7 handlers; the signal contract carries
+per-intent entry price + `order_type` with `Side`-typed action and single snapshot threading;
+and run-end resting orders now expire (`EXPIRED` wired through all four arms) with the dead
+`create_order` second path removed.
+
+**Re-baseline discipline (two disciplines, honored):** byte-exact phases (1–4) held the BTCUSD
+oracle (134 trades / `final_equity 46189.87730727451`) byte-for-byte — zero drift; owner-gated
+phases (5–6) re-baselined only under explicit owner sign-off (tiziaco, 2026-06-13) + external
+cross-validation (`backtesting.py` 0.6.5 / `backtrader` 1.9.78.123). The SMA_MACD oracle itself
+stayed byte-exact end-to-end: Phase 5 added an additive owner-signed LIMIT-entry golden; Phase 6
+re-baselined exactly 3 e2e leaves' run-end disposition (`PENDING→EXPIRED`), equity-neutral.
+
+**Definition of done — achieved:** `pytest tests/integration` oracle byte-exact (134 /
+46189.87730727451) · `pytest tests/e2e -m e2e` green (59 leaves incl. the new LIMIT cross-val leaf) ·
+full suite green (995) · `mypy --strict` clean (182 source files) · no new float-for-money; single
+UUIDv7 ID scheme · determinism double-run byte-identical.
+
+**Key accomplishments:**
+
+- **Strategy authoring surface (STRAT-01, Phase 2)** — class-attribute params replacing the frozen
+  pydantic config + manual field-copy; engine-facing names with defaults on the base, alpha knobs
+  on the subclass, all overridable at construction via `**kwargs`; base rejects unknown kwargs
+  loudly (`UnknownParamError`); re-runnable idempotent `init()` hook that Phase 4 consumes.
+
+- **Declared-indicator framework (IND-01, Phase 3)** — indicators registered declaration-only in
+  `init()`, evaluated lazily per-tick; base auto-derives `warmup`/`max_window` from the recipes
+  (hand-set lines gone); look-ahead-safe free-function `crossover`/`crossunder`. Byte-exact by
+  construction (derived `warmup == max_window == 100`).
+
+- **Composition & config interface (COMP-01/02, Phase 4)** — engine-level composition API
+  (`SystemSpec` + `build_backtest_system` + `compose_engine`) with construction-time `ExchangeConfig`
+  threading (replacing the Phase 7 D-14 conftest seam) and a new `OrderConfig`; a uniform
+  `update_config` (merge → `model_validate` → atomic-swap) on all 7 handlers/managers, applied
+  between event cycles for live runtime reconfig.
+
+- **Signal contract completion + reconcile streamline (SIG-01/02/03 + RECON-01, Phase 5 — FRAGILE,
+  owner-gated)** — per-intent limit/stop ENTRY price + per-intent `order_type` threaded
+  `SignalIntent → SignalEvent → Order.new_limit/stop_order`; `Order.action`/`_PendingBracket.action`
+  typed `Side` with the position snapshot threaded once; `on_fill` reconciliation streamlined into
+  named helpers while the idempotent terminal-release invariant held. Proven by an owner-signed,
+  externally cross-validated LIMIT-entry golden.
+
+- **Order lifecycle / time-in-force (LIFE-01, Phase 6 — owner-gated)** — run-end resting orders
+  transitioned to `EXPIRED` via a non-cascading sweep across all four arms (`expire_all_resting` →
+  `OrderCommand.EXPIRE` → exchange EXPIRE arm → `FillEvent(EXPIRED)` → reconcile EXPIRED arm); the
+  dead, unvalidated `create_order` second signal→order path removed, collapsing to one validated
+  `process_signal` path.
+
+- **Engine hygiene (HYG-01, Phase 1)** — SAFE byte-exact cleanup with no run-path touch: private
+  `_storage` test asserts rewritten to public query APIs, stale mypy override removed, dead float
+  constants deleted, `validate_transaction_data` retyped off `float` (Decimal-money policy), and
+  the three v1.2 Phase-6 review residues resolved.
+
+**Milestone audit:** 10/10 requirements satisfied, 6/6 phases verified passed, 5/5 cross-phase
+seams wired, 5/5 E2E flows complete (`milestones/v1.3-MILESTONE-AUDIT.md`). Closed as `tech_debt`
+(no blockers); the flagged Phase-6 robustness warnings (WR-01 by-design, WR-02/WR-03 fixed in
+PR #42) and doc-tracker lag were reconciled before close.
+
+**Known deferred items at close:** 5 quick-tasks flagged `missing` by the `audit-open` ledger were
+verified canonically complete (`status: complete`) and acknowledged; 4 predate v1.3. Nyquist Wave-0
+partial on phases 2/3/6 (strong behavioral net via oracle + 59-leaf e2e + `mypy --strict`). See
+STATE.md → Deferred Items and `milestones/v1.3-MILESTONE-AUDIT.md`.
+
+---
+
 ## v1.2 — Consolidation (Shipped: 2026-06-12)
 
 **Scope:** 6 phases (Phases 1–6, numbering reset from v1.1), 23 plans, ~36 tasks. A
@@ -25,24 +102,29 @@ determinism double-run byte-identical.
 - **Golden master held byte-exact through the entire milestone** — 134 trades /
   `final_equity 46189.87730727451`, oracle 3/3, e2e 58/58, `mypy --strict` clean (172 files). The
   behavior-preserving guarantee never broke across 6 phases / 23 plans.
+
 - **`order_manager.py` god-module decomposed (MOD-01, Phase 6 — FRAGILE, isolated, LAST):**
   1279 → 210-line thin coordinator into `admission/`/`brackets/`/`lifecycle/`/`reconcile/`
   collaborators as pure code-motion; `on_fill` moved as one indivisible intact unit; the
   terminal-status / `should_release` / `finally`-release interplay byte-for-byte unchanged; cross-bucket
   seams rewired via coordinator callback + injected `BracketManager` (no sibling edges, no circular import).
+
 - **Locked-decision conformance closed (Phase 2):** `Optional[Decimal]` money API + Decimal
   `_min/_max_order_size` end-to-end (no float-for-money at boundaries); retired the lingering
   `uuid4()` second ID scheme to single UUIDv7 (`CorrelationId` NewType). The W2-10 "latent TypeError"
   was re-adjudicated as a misdiagnosis (D-07) — comparison works in Py3; DEC-02 reframed as
   consistency, not a crash fix.
+
 - **Hot-path performance (Phase 3):** eliminated per-tick storage copies (D-19 single-writer) with
   `snapshot_count()`/`get_latest_snapshot()` accessors, redundant `Decimal(str(Decimal))` re-wraps,
   duplicated per-tick work, and per-tick Bar/MACD churn (prebuilt Bars + MACD-in-guard) — all
   bit-identical.
+
 - **Type modeling hardened (Phase 4):** frozen/slots decision DTOs; class-based string enums
   (`OrderStatus`/`OrderCommand` + `ErrorSeverity`/`OrderOperationType`/`OrderTriggerSource`/`market_execution`)
   with `assert_never` dispatch; `OrderId`/`PortfolioId` NewTypes on public APIs; `BaseStrategyConfig`
   co-located in `config/`.
+
 - **Naming & encapsulation (Phase 5):** `events_queue→global_queue`, PascalCase strategies +
   `*_window` config, public `routes` accessor + `register_symbol()`/`update_config` seam, six tests
   re-asserted through public query APIs (unblocks backend swaps).

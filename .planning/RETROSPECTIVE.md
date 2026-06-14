@@ -117,6 +117,45 @@
 
 ---
 
+## Milestone: v1.3 — Engine Surface Completion
+
+**Shipped:** 2026-06-14
+**Phases:** 6 (Phases 1–6) | **Plans:** 20
+
+### What Was Built
+- The engine's authoring + contract surfaces completed ahead of N+2 (margin/shorts): class-attribute strategy authoring (STRAT-01) replacing the frozen-pydantic config + manual field-copy, with a re-runnable idempotent `init()`; a declared-indicator framework (IND-01) with framework-derived `warmup`/`max_window` and look-ahead-safe `crossover`/`crossunder`.
+- Engine-level composition API (COMP-01: `SystemSpec`/`build_backtest_system`/`compose_engine` + `OrderConfig` + construction-time `ExchangeConfig` threading replacing the Phase 7 D-14 conftest seam) and a uniform `update_config` on all 7 handlers (COMP-02) for between-cycle live reconfig.
+- Signal contract completed (SIG-01/02/03: per-intent entry price + order_type, `Side`-typed action, single snapshot threading) co-phased with the `on_fill`/`should_release` reconcile streamline (RECON-01) so the FRAGILE `reconcile/` path was touched once; and run-end time-in-force expiry (LIFE-01: `EXPIRED` wired through all four arms, dead `create_order` path removed).
+
+### What Worked
+- **The two-discipline split (byte-exact 1–4 vs owner-gated 5–6) in SEPARATE phases.** Byte-exact phases produced clean pass/fail golden gates (zero drift on the BTCUSD oracle); each owner-gated phase owned exactly one attributed re-baseline. No ambiguity about whether a number was *allowed* to move.
+- **Co-phasing SIG-03 + RECON-01 so `reconcile/` was touched once.** The v1.2 Phase-6 intact-move into `reconcile/` was the designed enabling surface; touching the FRAGILE path under one re-baseline + cross-validation (not twice) is exactly what the v1.2 decomposition was for — the cross-milestone setup paid off.
+- **Sequencing STRAT-01 (P2) before COMP-02 (P4).** The re-runnable idempotent `init()` shipped first as a smaller byte-exact slice, then `StrategiesHandler.update_config` consumed it (re-validate → re-run `init()` → re-derive warmup). Building the seam before the consumer kept each phase independently gateable.
+- **External cross-validation for the result-changing signal work.** The SIG-01/02 LIMIT-entry golden was validated against backtesting.py + backtrader before the owner froze it; the one legitimate intrabar-SL difference was explicitly adjudicated and accepted, not silently kept.
+
+### What Was Inefficient
+- **Planning-metadata drift recurred for the FOURTH milestone running.** HYG-01 and LIFE-01 stayed `[ ]`/Pending in REQUIREMENTS.md traceability despite passing VERIFICATION.md; SUMMARY `requirements-completed` frontmatter was present on only 3 of the phase summaries (inconsistent field naming: `requirements` vs `requirements-completed` vs absent). Both phase verifiers flagged the lag in-line, and a quick-task + the milestone audit reconciled it *again*. The mechanical phase-close gate proposed across v1.0–v1.2 is still unimplemented.
+- **The `audit-open` quick-task false-positive recurred for the third close.** 5 completed quick-tasks (`status: complete`) were flagged `missing` by the ledger; the same manual canonical-scan re-adjudication as v1.1/v1.2 was needed.
+- **Nyquist Wave-0 discovery-only again** — VALIDATION.md exists on all 6 phases but `nyquist_compliant: false` on 2/3/6. The behavioral net (oracle + 59-leaf e2e + mypy strict) carried correctness, but formal validation coverage still lags.
+
+### Patterns Established
+- **Two re-baseline disciplines, declared per-phase, kept in separate phases** — byte-exact (hold the oracle byte-for-byte) vs owner-gated (freeze a new golden only after sign-off + external cross-validation). A byte-exact phase's gate is unambiguous; a result-changing phase owns its attribution. The template for any milestone mixing cleanup with intentional result changes.
+- **Build the seam first, consume it later** — ship a re-runnable `init()` as a small byte-exact slice (P2) so a later runtime-reconfig consumer (P4 `update_config`) plugs into an already-proven hook. Decouples a risky integration into two independently gateable steps.
+- **Cross-milestone enabling surfaces** — v1.2's FRAGILE-path decomposition into `reconcile/` was explicitly designed as the bounded surface v1.3's RECON-01 would refactor; planning the enabling cleanup one milestone ahead made the fragile change a single bounded touch.
+
+### Key Lessons
+1. **Separate "allowed to change the numbers" from "must not" at the phase boundary.** Putting byte-exact and owner-gated requirements in different phases made every golden gate a clean signal and every re-baseline individually attributable — the cleanest result-discipline this project has run.
+2. **A fragile refactor is cheapest when the enabling cleanup shipped a milestone earlier.** RECON-01 touched the reconcile path once, safely, because v1.2 had already moved `on_fill` into a bounded collaborator. Plan the enabling surface ahead of the fragile change.
+3. **Metadata drift is now a FOUR-milestone confirmed process bug.** Manual reconciliation at close has been paid four times. The fix is mechanical (fail the phase close when `requirements-completed` is empty or traceability lags VERIFICATION.md), not more discipline.
+4. **The `audit-open` ledger and the SDK-port flag are both known liars** — script the canonical `status: complete` scan into the close instead of re-adjudicating by hand every milestone.
+
+### Cost Observations
+- Model mix: not instrumented this milestone.
+- Sessions: phases shipped as PRs (#37–#42: hygiene, authoring surface, indicator framework, composition/config, signal contract, order lifecycle). ~2 calendar days (2026-06-12 → 2026-06-14).
+- Notable: byte-exact phases (1–4) landed with zero golden drift; the only sanctioned result changes were the owner-signed LIMIT golden (additive) and 3 equity-neutral `PENDING→EXPIRED` e2e re-baselines.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -126,6 +165,7 @@
 | v1.0 | 8 | 62 | Established two-layer golden-master + inert-first + owner-gated re-freeze discipline |
 | v1.1 | 9 | 28 | Breadth via additive opt-in oracle-dark E2E leaves — zero re-baselines; shared-infra-first then parallel scenario leaves |
 | v1.2 | 6 | 23 | Consolidation via pure code-motion under the oracle — god-module split as a sequenced, isolated, LAST phase; zero re-baselines |
+| v1.3 | 6 | 20 | Two re-baseline disciplines (byte-exact vs owner-gated) in SEPARATE phases; cross-milestone enabling surface (v1.2 reconcile/) touched once; result changes attributed + cross-validated |
 
 ### Cumulative Quality
 
@@ -134,10 +174,12 @@
 | v1.0 | 724 pass | --strict clean | none on result path |
 | v1.1 | 58 e2e + 12 integration green (full suite ~800+) | --strict clean (161 files) | none on result path |
 | v1.2 | 58 e2e + 3 integration oracle green (full suite 851) | --strict clean (172 files) | none on result path |
+| v1.3 | 59 e2e + integration oracle green (full suite 995) | --strict clean (182 files) | none on result path |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. **Golden-master gating with minimal sanctioned re-baselines keeps refactors trustworthy** — confirmed across v1.0 (two owner-gated re-freezes), v1.1 (zero re-baselines via additive oracle-dark leaves), and v1.2 (zero re-baselines via pure code-motion). Under a byte-exact oracle, even a 1279-line god-module split lands on first attempt.
-2. **Planning-metadata drift is a recurring process gap — now confirmed across THREE milestones** — stale checkboxes/traceability/empty SUMMARY frontmatter required manual reconciliation at close in v1.0, v1.1, AND v1.2. This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty or traceability lags VERIFICATION.md.
-3. **Isolate the fragile change, move it intact, ship it last and alone** — v1.2 Phase 6 refactored the codebase's most fragile path (fill-reconciliation / reservation-release) with zero drift precisely because it carried only MOD-01, one extraction per plan, `on_fill` moved as one indivisible unit. The template for any future god-module split.
-4. **Boundary tooling that lied once will lie again** — the `gsd-sdk` SDK-port quick-task false positive recurred verbatim in v1.1 and v1.2; verify flags against the canonical scanner, don't re-adjudicate by hand each close.
+2. **Planning-metadata drift is a recurring process gap — now confirmed across FOUR milestones** — stale checkboxes/traceability/inconsistent SUMMARY frontmatter required manual reconciliation at close in v1.0, v1.1, v1.2, AND v1.3. This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty or traceability lags VERIFICATION.md.
+3. **Isolate the fragile change, move it intact, ship it last and alone — and plan its enabling surface a milestone ahead** — v1.2 Phase 6 moved `on_fill` into a bounded `reconcile/` collaborator with zero drift; v1.3 RECON-01 then refactored that exact bounded surface in a single touch, co-phased with SIG-03 under one owner-gated re-baseline. The template for any future fragile change.
+4. **Boundary tooling that lied once will lie again** — the quick-task false positive recurred verbatim in v1.1, v1.2, and v1.3 (now via the `audit-open` ledger); verify flags against the canonical `status: complete` scan, don't re-adjudicate by hand each close.
+5. **Mixing intentional result changes with cleanup is safe only when the two disciplines live in separate phases** — v1.3's byte-exact phases (1–4) and owner-gated phases (5–6) each had an unambiguous gate; every re-baseline was individually attributed and externally cross-validated.
