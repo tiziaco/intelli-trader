@@ -136,7 +136,7 @@ class OrderManager:
 		# collaborator ONCE — AFTER self._brackets and self.bracket_manager, since
 		# admission reaches bracket assembly through the injected BracketManager
 		# (D-08, the assembly seam) and holds NO reconcile/lifecycle ref. The
-		# public process_signal / create_orders_from_signal delegate into it.
+		# public process_signal delegates into it.
 		self.admission_manager = AdmissionManager(
 			order_storage, logger, self.order_validator, self.sizing_resolver,
 			portfolio_handler, commission_estimator, self._brackets,
@@ -203,10 +203,6 @@ class OrderManager:
 		"""Delegate the signal→order pipeline to AdmissionManager (D-07)."""
 		return self.admission_manager.process_signal(signal_event)
 
-	def create_orders_from_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
-		"""Delegate direct order creation to AdmissionManager (D-07)."""
-		return self.admission_manager.create_orders_from_signal(signal_event)
-
 	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
 	                portfolio_id: Optional[PortfolioId] = None, reason: str = "user modification") -> OperationResult:
 		"""Delegate order modification to LifecycleManager (D-07)."""
@@ -216,6 +212,10 @@ class OrderManager:
 	                reason: str = "user cancellation") -> OperationResult:
 		"""Delegate order cancellation to LifecycleManager (D-07)."""
 		return self.lifecycle_manager.cancel_order(order_id, portfolio_id, reason)
+
+	def expire_all_resting(self) -> List[OperationResult]:
+		"""Delegate the run-end time-in-force sweep to LifecycleManager (D-07)."""
+		return self.lifecycle_manager.expire_all_resting()
 
 	# --- Read interface (D-18) -------------------------------------------------
 	# The manager owns the storage; OrderHandler read methods delegate here.

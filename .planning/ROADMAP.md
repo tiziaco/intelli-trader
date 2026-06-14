@@ -44,7 +44,7 @@ only after explicit owner sign-off + external cross-validation.
 - [x] **Phase 3: Declared-Indicator Framework** — declared indicators with auto-derived `warmup`/`max_window`; lazy per-tick recompute; free-function `crossover`/`crossunder`. (completed 2026-06-12)
 - [x] **Phase 4: Composition & Config Interface** — engine-level composition API + `OrderConfig`; uniform runtime `update_config` on every handler (consumes Phase 2's re-runnable `init()`). (completed 2026-06-12)
 - [x] **Phase 5: Signal Contract & Reconcile (FRAGILE)** — per-intent entry price + `order_type`, `Side`-typed action + snapshot threading, `on_fill`/`should_release` streamline; ONE owner-gated re-baseline. (completed 2026-06-13)
-- [ ] **Phase 6: Order Lifecycle & Time-in-Force** — run-end resting-order disposition / TIF (`expire_order` + `EXPIRED` wired) + `create_order` second-path gating; owner-gated re-baseline.
+- [x] **Phase 6: Order Lifecycle & Time-in-Force** — run-end resting-order disposition / TIF (`expire_order` + `EXPIRED` wired) + `create_order` second-path gating; owner-gated re-baseline. (completed 2026-06-13)
 
 ## Phase Details
 
@@ -130,7 +130,11 @@ only after explicit owner sign-off + external cross-validation.
   2. The `create_order` second-path gating decision (W4-09) is resolved — the unvalidated 2nd signal→order path is routed through validation, or documented/removed with rationale.
   3. The result change is fully attributed (which previously-PENDING orders now expire, and any equity/metric impact) and the new golden master is frozen ONLY after explicit owner sign-off.
   4. `mypy --strict` clean; determinism double-run byte-identical; the rest of the e2e suite holds except where TIF intentionally changes a leaf's resting-order disposition (re-baselined with attribution).
-**Plans**: TBD
+**Plans**: 4 plans (3 waves — Wave 1: enum seams + dead-path removal in parallel; Wave 2: the four EXPIRE arms wired (sweep/exchange/reconcile/runner) + Wave-0 coverage; Wave 3: owner-gated measure→attribute→re-baseline)
+  - [x] 06-01-PLAN.md — Enum seams: `OrderCommand.EXPIRE` + `FillStatus.EXPIRED` + Wave-0 enum test (D-09, Pitfalls 2/3 enum-first)
+  - [x] 06-02-PLAN.md — Dead-path removal: delete `create_order`/`create_orders_from_signal` (KEEP `CREATE_ORDERS_FROM_SIGNAL` enum, Pitfall 1) + soften W4-04 doc (D-03/D-03a)
+  - [x] 06-03-PLAN.md — Wire the four EXPIRE arms: `expire_all_resting` sweep + exchange EXPIRE arm + reconcile EXPIRED arm (idempotent, D-09 LANDMINE) + runner sweep/final-drain + non-cascade test + never_fill docstring flip (D-02/D-08/D-09/D-10)
+  - [x] 06-04-PLAN.md — Owner-gated re-baseline: measure→attribute (oracle byte-exact, D-04) → OWNER SIGN-OFF → re-freeze the 3 affected goldens (never_fill + 2 sltp/*_held, D-05/D-11)
 
 <details>
 <summary>✅ v1.0 — Backtest-Correctness Refactor (Phases 1-8) — SHIPPED 2026-06-08</summary>
@@ -198,7 +202,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 3. Declared-Indicator Framework | 3/3 | Complete   | 2026-06-12 |
 | 4. Composition & Config Interface | 5/5 | Complete   | 2026-06-12 |
 | 5. Signal Contract & Reconcile (FRAGILE) | 4/4 | Complete | 2026-06-13 |
-| 6. Order Lifecycle & Time-in-Force | 0/TBD | Not started | - |
+| 6. Order Lifecycle & Time-in-Force | 4/4 | Complete   | 2026-06-13 |
 
 **Next:** Discuss Phase 6 with `/gsd:discuss-phase 6`.
 

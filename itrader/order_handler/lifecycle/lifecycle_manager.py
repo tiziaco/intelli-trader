@@ -25,7 +25,7 @@ via `to_money` (NEVER `Decimal(float)`).
 """
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from ..operation_result import OperationResult
 from ..base import OrderStorage
@@ -217,3 +217,76 @@ class LifecycleManager:
 			self.logger.error(error_msg, exc_info=True)
 			return OperationResult.failure_result(error_msg,
 				error_details=str(e), operation_type=OrderOperationType.CANCEL_ORDER)
+
+	def expire_all_resting(self) -> List[OperationResult]:
+		"""Sweep every active order to EXPIRED at run end (LIFE-01, D-08/D-10).
+
+		The run-end time-in-force sweep — the peer of ``cancel_order`` (the body
+		below mirrors it near-verbatim). Visits active portfolios in
+		``active_portfolio_ids()`` order and, within each, orders sorted by
+		``order_id`` (UUIDv7 stable sort, D-10 — deterministic). Per order it
+		locally transitions PENDING -> EXPIRED, persists, disarms any pending
+		bracket (WR-03 symmetry — no-ops at run end), idempotently releases the
+		reservation (WR-04), and emits an ``OrderEvent(EXPIRE)`` carried on a
+		successful ``OperationResult`` so the exchange clears the resting order
+		through the queue (the sweep never touches ``_resting`` directly,
+		T-06-05). The manager NEVER touches the queue (D-18): it returns the
+		results; the handler enqueues each ``OrderEvent``.
+
+		Returns
+		-------
+		List[OperationResult]
+			One success result per swept order, each carrying exactly one
+			OrderEvent with ``command == OrderCommand.EXPIRE``.
+		"""
+		results: List[OperationResult] = []
+		if self.portfolio_handler is None:
+			return results
+		# WR-02: active_portfolio_ids() is part of the PortfolioReadModel
+		# Protocol (D-13/D-16), so the run-end enumeration is type-checked and
+		# contract-guaranteed — no concrete-handler coupling via a type: ignore.
+		# Returning ids (not live Portfolio objects) keeps the order domain on
+		# the narrow read boundary.
+		for portfolio_id in self.portfolio_handler.active_portfolio_ids():
+			# D-10: UUIDv7 stable sort => deterministic per-portfolio sweep order.
+			for order in sorted(
+					self.order_storage.get_active_orders(portfolio_id),
+					key=lambda o: o.id):
+				try:
+					# Local terminal transition (peer of cancel_order's
+					# order.cancel_order). Skip orders that refuse the transition.
+					if not order.expire_order("run end (time-in-force)"):
+						continue
+					self.order_storage.update_order(order)
+					# WR-03 (part 1): disarm any pending PercentFromFill bracket —
+					# symmetric with cancel_order; a no-op at run end for ordinary
+					# orders.
+					self._brackets.consume(order.id)
+					# WR-04: the local terminal transition owns the idempotent
+					# release (a stuck BUY reservation corrupts buying power).
+					if self.portfolio_handler is not None:
+						self.portfolio_handler.release(
+							order.portfolio_id, order.id)
+					# OrderEvent(EXPIRE) — the exchange clears the resting order.
+					order_event = OrderEvent.new_order_event(order, command=OrderCommand.EXPIRE)
+					results.append(OperationResult.success_result(
+						f"Order {order.id} expired at run end",
+						order_events=[order_event],
+						operation_type=OrderOperationType.EXPIRE_ORDER,
+						affected_order_ids=[order.id]))
+				except Exception as e:
+					# WR-03: fail-fast on the backtest run-end sweep (CLAUDE.md
+					# "Backtest error policy is fail-fast"). A mid-sweep failure
+					# leaves a half-swept book — some orders EXPIRED with released
+					# reservations, others left PENDING with stuck reservations —
+					# so we re-raise to abort the run rather than completing it
+					# "successfully" with corrupted run-end state. This mirrors the
+					# deliberate fail-fast re-raise on the reconcile path
+					# (reconcile_manager.py) at the same correctness-critical seam;
+					# the dropped-failure_result path that OrderHandler.expire_all_resting
+					# never inspected is removed entirely. (The only caller is the
+					# backtest run-end bookend, backtest_runner.py.)
+					self.logger.error(
+						f"Error expiring order {order.id}: {e}", exc_info=True)
+					raise
+		return results

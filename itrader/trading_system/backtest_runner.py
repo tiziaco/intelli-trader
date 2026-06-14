@@ -105,6 +105,18 @@ class BacktestRunner:
 			# (oracle-dark); only the E2E harness wires it from spec.actions.
 			if on_tick is not None:
 				on_tick(self, time_event)
+
+		# LIFE-01 (D-08): run-end time-in-force sweep — the symmetric shutdown
+		# bookend to the per-tick loop. After the last bar, every still-resting
+		# order is swept to EXPIRED: the handler emits one OrderEvent(EXPIRE) per
+		# order, then ONE final process_events() drain clears them through the
+		# exchange (EXPIRE arm -> matching_engine.cancel -> FillEvent(EXPIRED) ->
+		# reconcile). The drain is provably NON-CASCADING: the routes literal
+		# sends ORDER -> on_order ONLY and FILL -> portfolio + reconcile ONLY, and
+		# EXPIRE emits no SignalEvent / no new OrderEvent(NEW) — so no unbounded
+		# re-entry is possible (T-06-06).
+		engine.order_handler.expire_all_resting()
+		engine.event_handler.process_events()
 		self.logger.info('    BACKTEST COMPLETED   ')
 		end_time = datetime.now()  # Capture end time
 		duration = end_time - start_time

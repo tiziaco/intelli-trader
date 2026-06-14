@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: ready_to_plan
-stopped_at: Phase 05 complete (4/4) — ready to discuss Phase 6
-last_updated: 2026-06-13T13:08:48.439Z
-last_activity: 2026-06-13
+status: milestone_complete
+stopped_at: Phase 06 complete (4/4) — v1.3 milestone complete (all 6 phases); ready to close milestone
+last_updated: 2026-06-13T17:16:39.161Z
+last_activity: 2026-06-13 -- Phase 06 complete; v1.3 Engine Surface Completion milestone complete
 progress:
-  total_phases: 9
-  completed_phases: 5
-  total_plans: 16
-  completed_plans: 16
-  percent: 56
+  total_phases: 6
+  completed_phases: 6
+  total_plans: 20
+  completed_plans: 20
+  percent: 100
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** Phase 6 — Order Lifecycle & Time-in-Force
+**Current focus:** v1.3 Engine Surface Completion — COMPLETE (Phases 1-6 all done). Ready to close the milestone (`/gsd:complete-milestone`) or start the next milestone. The `999.x` entries are future-milestone (N+2/N+3/N+4) backlog seeds, NOT the next active phase.
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
-Status: Ready to plan
+Phase: 6 (complete) — v1.3 milestone complete
+Plan: All plans complete (20/20)
+Status: Milestone complete — ready to close
 Last activity: 2026-06-13
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
@@ -84,7 +84,7 @@ surfaces, which is why v1.3 lands first.
 
 **Velocity (v1.2):**
 
-- Total plans completed: 39
+- Total plans completed: 43
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -195,9 +195,9 @@ bug were verified canonically complete (`status: complete`) and accepted at v1.2
 
 ## Session Continuity
 
-Last session: 2026-06-13T12:55:00.000Z
-Stopped at: Completed 05-04-PLAN.md (owner-signed LIMIT cross-val golden frozen — all 4 Phase-5 plans complete)
-Resume file: None
+Last session: 2026-06-13T16:09:44.882Z
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-order-lifecycle-time-in-force/06-CONTEXT.md
 
 ## Operator Next Steps
 

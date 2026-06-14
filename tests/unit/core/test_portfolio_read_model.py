@@ -8,7 +8,7 @@ These lock the narrow cross-handler read boundary (D-13..D-17, Plan 05-03):
 2. ``PositionView`` carries exactly the four fields consumers read today
    (ticker, side, net_quantity, avg_price) with Decimal money types.
 3. ``PortfolioReadModel`` is ``runtime_checkable`` — a minimal fake
-   implementing all seven members passes ``isinstance``; an object missing
+   implementing all eight members passes ``isinstance``; an object missing
    ``reserve`` fails (narrowness is enforced, not just satisfied).
 
 The real-handler conformance assertion (``isinstance(PortfolioHandler(...),
@@ -18,6 +18,11 @@ Plan 07-01 (M5-06) widens the Protocol by ONE member: ``total_equity`` —
 the RiskPercent sizing input (RESEARCH Pitfall 8). D-14's "equity excluded"
 rule is narrowly amended for it; oracle-dark (the golden FractionOfCash
 policy never reads it).
+
+Phase 06 (WR-02, LIFE-01) widens it by ONE further member:
+``active_portfolio_ids`` — the run-end time-in-force sweep enumerates active
+portfolios to expire their resting orders (replaces a ``# type: ignore``
+call to a non-Protocol method).
 """
 
 import dataclasses
@@ -87,7 +92,10 @@ def test_position_view_uses_slots():
 
 
 class _ConformingFake:
-    """Minimal fake implementing all seven Protocol members."""
+    """Minimal fake implementing all eight Protocol members."""
+
+    def active_portfolio_ids(self) -> list[PortfolioId]:
+        return []
 
     def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
         return Decimal("100000.00")
@@ -112,7 +120,10 @@ class _ConformingFake:
 
 
 class _MissingReserveFake:
-    """Implements six of seven members — `reserve` deliberately absent."""
+    """Implements all but `reserve` (which is deliberately absent)."""
+
+    def active_portfolio_ids(self) -> list[PortfolioId]:
+        return []
 
     def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
         return Decimal("0")
@@ -143,9 +154,11 @@ def test_object_missing_reserve_fails_isinstance():
     assert not isinstance(_MissingReserveFake(), PortfolioReadModel)
 
 
-def test_protocol_declares_exactly_seven_methods():
-    """OQ1 + Plan 07-01: six original members + total_equity (RiskPercent input)."""
+def test_protocol_declares_exactly_eight_methods():
+    """OQ1 + Plan 07-01 + Phase 06 WR-02: six original members + total_equity
+    (RiskPercent input) + active_portfolio_ids (run-end TIF sweep)."""
     expected = {
+        "active_portfolio_ids",
         "available_cash",
         "get_position",
         "reserve",

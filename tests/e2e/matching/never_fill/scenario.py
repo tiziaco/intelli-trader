@@ -1,21 +1,24 @@
-"""MATCH-08 never-fill — a far-from-market BUY LIMIT that ends PENDING.
+"""MATCH-08 never-fill — a far-from-market BUY LIMIT that EXPIRES at run end.
 
-The as-is run-end edge (D-10): a LIMIT far from EVERY authored bar's range never
-triggers; the run completes CLEANLY; the order ends ``OrderStatus.PENDING`` —
-NOT ``ACTIVE`` (GAP #1: there is no ``OrderStatus.ACTIVE`` and no run-end expiry on
-the backtest path), with filled_quantity 0 and zero trades. There are NO actions:
-this is the as-is assertion (D-10), not an operator scenario.
+The run-end time-in-force edge (LIFE-01, D-05/D-08): a LIMIT far from EVERY
+authored bar's range never triggers; the run completes CLEANLY; at run end the
+backtest sweep transitions the still-resting order to ``OrderStatus.EXPIRED``
+(the D-05 positive proof — orders no longer linger PENDING; the sweep emits
+OrderEvent(EXPIRE) -> exchange -> FillEvent(EXPIRED) -> reconcile), with
+filled_quantity 0 and zero trades, and the portfolio cash/position untouched.
+There are NO actions: this is the as-is assertion (D-10), not an operator scenario.
 
 The assertion is the final ORDER-MIRROR state, so this leaf freezes the opt-in
-``golden/orders.csv`` (exactly one row, status PENDING) plus an EMPTY ``trades.csv``
+``golden/orders.csv`` (exactly one row, status EXPIRED) plus an EMPTY ``trades.csv``
 (zero trades) and ``summary.json`` (a no-trade run produces valid scalar fields).
 
 ================================ VERIFY ================================
 
 HAND-VERIFIED & LOCKED (E2E-04 / D-13): the frozen ``golden/orders.csv`` shows
-EXACTLY ONE row — role STANDALONE, BTCUSD, LIMIT, BUY, status PENDING (NOT ACTIVE,
-GAP #1/D-10), price 80.0, filled_quantity 0.0 — and ``golden/trades.csv`` is EMPTY.
-Re-freeze ONLY via ``--freeze`` after re-verifying.
+EXACTLY ONE row — role STANDALONE, BTCUSD, LIMIT, BUY, status EXPIRED (the run-end
+time-in-force sweep, LIFE-01/D-05), price 80.0, filled_quantity 0.0 — and
+``golden/trades.csv`` is EMPTY. The owner-gated golden re-freeze (PENDING -> EXPIRED)
+lands in Plan 06-04 under owner sign-off; do NOT ``--freeze`` here.
 
 Contrived bars (``bars.csv`` — daily, tz-aware Open time):
 
@@ -39,13 +42,15 @@ Why the limit NEVER triggers (the BUY-LIMIT formula):
     limit @ 80 can never fill. (bar1's own low of 78 is irrelevant — the limit
     does not exist until the bar1 decision, and only LATER bars are matched.)
 
-Run-end behavior (D-10 / GAP #1):
+Run-end behavior (LIFE-01 / D-05 / D-08):
   * The run completes cleanly over all five bars — no crash. The never-triggered
-    limit simply remains resting in the matching book at run end; there is no
-    run-end expiry on the backtest path.
-  * The order mirror status is therefore PENDING (NOT ACTIVE — the enum has no
-    ACTIVE member; ``o.status.name`` serializes ``PENDING``), filled_quantity 0.
-  * ZERO trades land (nothing opened) — ``trades.csv`` is EMPTY.
+    limit remains resting in the matching book until the for-loop exits.
+  * At run end the backtest sweep expires every still-resting order: it emits
+    OrderEvent(EXPIRE), then ONE final non-cascading drain clears it through the
+    exchange (EXPIRE arm -> matching_engine.cancel -> FillEvent(EXPIRED)) and
+    reconciles the mirror to ``OrderStatus.EXPIRED`` (``o.status.name`` serializes
+    ``EXPIRED``), filled_quantity 0.
+  * ZERO trades land (nothing opened) — ``trades.csv`` is EMPTY; cash untouched.
 
 ============================== END VERIFY =============================
 """

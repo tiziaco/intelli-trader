@@ -29,7 +29,7 @@ class OrderHandler:
 	
 	**Key Responsibilities:**
 	- Event processing interface (on_signal, on_fill)
-	- API interface for order operations (create_order, modify_order, cancel_order)
+	- API interface for order operations (modify_order, cancel_order)
 	- OrderEvent generation and queue management
 	- Minimal business logic - delegates to OrderManager
 	
@@ -209,41 +209,24 @@ class OrderHandler:
 			for order_event in result.order_events:
 				self.global_queue.put(order_event)
 				self.logger.debug('Order cancellation event sent to execution handler: %s', order_event)
-		
+
 		return result.success
-	
-	def create_order(self, signal_event: SignalEvent) -> bool:
-		"""
-		Create orders from signal through OrderManager and generate OrderEvents.
-		
-		This is an API interface method for programmatic order creation
-		that delegates to OrderManager and ensures proper OrderEvent generation.
 
-		Parameters
-		----------
-		signal_event : SignalEvent
-			The signal event containing order details
+	def expire_all_resting(self) -> None:
+		"""Sweep every active order to EXPIRED at run end (LIFE-01, D-08).
 
-		Returns
-		-------
-		bool
-			True if orders were successfully created, False otherwise
+		Thin facade: delegates the time-in-force sweep to OrderManager (the
+		business logic owner) and enqueues each returned OrderEvent(EXPIRE) for
+		the execution handler — mirrors the cancel_order enqueue idiom (D-18: the
+		manager never touches the queue). The exchange clears each resting order
+		through ``on_order``'s EXPIRE arm.
 		"""
-		# Delegate to OrderManager
-		operation_results = self.order_manager.create_orders_from_signal(signal_event)
-		
-		# Generate OrderEvents for all created orders
-		success = False
-		for result in operation_results:
-			if result.success:
-				success = True
-			if result.order_events:
+		for result in self.order_manager.expire_all_resting():
+			if result.success and result.order_events:
 				for order_event in result.order_events:
 					self.global_queue.put(order_event)
-					self.logger.debug('Order creation event sent to execution handler: %s', order_event)
-		
-		return success
-	
+					self.logger.debug('Order expiry event sent to execution handler: %s', order_event)
+
 	def get_order_by_id(self, order_id: OrderId, portfolio_id: Optional[PortfolioId] = None) -> Optional[Order]:
 		"""
 		Get an order by its ID.

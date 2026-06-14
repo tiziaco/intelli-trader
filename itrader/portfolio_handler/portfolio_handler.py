@@ -221,11 +221,15 @@ class PortfolioHandler:
 
     # PortfolioReadModel — structural Protocol implementation (D-16, Plan 05-03)
     #
-    # The order domain reads portfolio state through these six members ONLY
+    # The order domain reads portfolio state through this narrow Protocol surface ONLY
     # (itrader/core/portfolio_read_model.py). No inheritance, no adapter:
     # PortfolioHandler satisfies the runtime_checkable Protocol structurally.
     # D-15: live Position objects never cross the boundary — get_position
     # returns a frozen PositionView snapshot (None when flat).
+
+    def active_portfolio_ids(self) -> List[PortfolioId]:
+        """Return the ids of all active portfolios (WR-02, LIFE-01 sweep)."""
+        return [p.portfolio_id for p in self._portfolios.values() if p.is_active()]
 
     def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
         """Return the portfolio's buying power (balance minus reservations, D-14)."""
