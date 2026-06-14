@@ -1,412 +1,197 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-06-12
+**Analysis Date:** 2026-06-14
 
 ## Test Framework
 
 **Runner:**
-- pytest ^8.4.2
-- Config: `pyproject.toml` `[tool.pytest.ini_options]`
-- `minversion = "8.0"`, `testpaths = ["tests"]`
+- `pytest` `^9.0.3` (dev group). `minversion = "8.0"`.
+- Config: `pyproject.toml [tool.pytest.ini_options]`.
 
 **Assertion Library:**
-- pytest built-in assertions
-- `pandas.testing.assert_frame_equal` for DataFrame diffs (used in oracle/e2e)
+- Plain `assert` (pytest rewriting). DataFrame goldens use `pandas.testing.assert_frame_equal` (`check_exact=True`, `check_like=True`, **no float tolerance**).
 
-**Coverage:**
-- pytest-cov ^7.1.0 — HTML report at `htmlcov/`
-- pytest-html ^4.2.0 — HTML test reports
+**Mocking:**
+- `unittest.mock` (`Mock`, `MagicMock`) and pytest's `monkeypatch` fixture. No `pytest-mock`/`mocker` in deps.
 
 **Run Commands:**
 ```bash
-make test              # full suite (unit + e2e; excludes slow/integration by default)
-make test-unit         # -m "unit"  →  tests/unit/
-make test-integration  # -m "integration"  →  tests/integration/ (slow)
-make test-e2e          # tests/e2e/
-make test-portfolio    # tests/unit/portfolio/
-make test-orders       # tests/unit/order/
-make test-execution    # tests/unit/execution/
-make test-events       # tests/unit/events/
-make test-strategy     # tests/unit/strategy/
-make test-cov          # coverage → opens htmlcov/index.html
+make test               # poetry run pytest tests/ -v   (full suite)
+make test-unit          # pytest tests/ -v -m "unit"
+make test-integration   # pytest tests/ -v -m "integration"
+make test-e2e           # pytest tests/ -v -m "e2e"
+make test-cov           # --cov=itrader --cov-report=html --cov-report=term-missing; opens htmlcov/index.html
+
+# Domain shortcuts (path filters, NOT marker selectors):
+make test-portfolio     # pytest tests/unit/portfolio/ -v
+make test-orders        # pytest tests/unit/order/ -v
+make test-execution     # pytest tests/unit/execution/ -v
+make test-events        # pytest tests/unit/events/ -v
+make test-strategy      # pytest tests/unit/strategy/ -v
 
 # Single file / case:
 poetry run pytest tests/unit/order/test_order.py -v
 poetry run pytest tests/unit/order/test_order.py -k "test_name" -v
 ```
 
+**Strictness gotchas (`pyproject.toml`):**
+- `addopts`: `-ra --strict-markers --strict-config --disable-warnings -v`.
+- `filterwarnings = ["error", "ignore::UserWarning", "ignore::DeprecationWarning"]` — an *unexpected* warning fails the suite.
+- `--strict-markers` + `--strict-config`: every marker must be declared in `markers`; only `unit`, `integration`, `slow`, `e2e` are registered. Marker registration lives in EXACTLY ONE home (`pyproject.toml`); conftest only *applies*, never registers.
+
 ## Test File Organization
 
 **Location:**
-- Tests are NOT co-located with source. They live in a separate `tests/` root.
-- Structure mirrors `itrader/` package within `tests/unit/`.
+- Test root is `tests/` (NOT `test/`). `testpaths = ["tests"]`.
+- Type-grouped subtrees: `tests/unit/<domain>/`, `tests/integration/`, `tests/e2e/`, `tests/golden/`.
+- 134 `test_*.py` files; ~877 test functions.
 
 **Naming:**
-- `test_<module>.py` — `test_order_manager.py`, `test_matching_engine.py`, `test_cash_manager.py`.
+- `python_files = ["test_*.py", "*_test.py"]`, `python_classes = ["Test*"]`, `python_functions = ["test_*"]`.
+- Tests mirror source: `test_<module>.py`.
 
-**Structure:**
+**Structure (TYPE axis — D-13/D-15, folder-derived markers):**
 ```
 tests/
-├── conftest.py                  # Root: folder-derived TYPE markers + global_queue + bar fixtures
-├── README.md
-├── golden/                      # Frozen oracle assets (trades.csv, equity.csv, summary.json)
-│   ├── CROSS-VALIDATION.md
-│   ├── FINAL-ORACLE.md
-│   └── REFREEZE-*.md
-├── unit/                        # One collaborating component each
-│   ├── conftest.py              # Layer anchor (minimal)
-│   ├── config/                  # Pydantic config models
-│   ├── core/                    # enums, clock, money, bar, sizing, portfolio_read_model
-│   ├── outils/                  # id_generator, time_parser
-│   ├── events/                  # event dataclasses / schemas
-│   ├── order/                   # order handler / manager / validator / storage
-│   ├── execution/               # execution handler, matching engine
-│   │   └── exchanges/           # simulated exchange
-│   ├── portfolio/               # portfolio handler + cash/position/transaction/metrics
-│   │   ├── positions/
-│   │   └── transaction/
-│   ├── price/                   # bar_feed, csv_store
-│   ├── reporting/               # metrics, plots, cash_operations
-│   ├── strategy/                # strategy config, signal store
-│   └── universe/
-├── integration/                 # Cross-component cascades, smoke, golden oracle
-│   ├── conftest.py              # golden-path fixtures + backtest_engine factory
-│   ├── test_backtest_oracle.py
-│   ├── test_backtest_smoke.py
-│   ├── test_event_wiring.py
-│   ├── test_execution_handler_routing.py
-│   ├── test_reservation_inertness.py
-│   └── test_universe_spans.py
-└── e2e/                         # Full-engine scenario runs vs frozen golden files
-    ├── conftest.py              # run_scenario fixture (the entire harness)
-    ├── scenario_spec.py         # Shared ScenarioSpec / PortfolioSpec / Action dataclasses
-    ├── strategies/              # Shared test-only strategy implementations
-    ├── smoke/single_market_buy/ # Canary scenario
-    ├── matching/                # Order-matching scenarios (entries, brackets, gaps, operator)
-    ├── sizing/                  # Sizing policy scenarios
-    ├── sltp/                    # Stop-loss / take-profit scenarios
-    ├── cost/                    # Fee and slippage scenarios
-    ├── admission/               # Order admission rule scenarios
-    ├── cash/                    # Cash reservation/release scenarios
-    ├── multi/                   # Multi-portfolio / multi-ticker / multi-strategy scenarios
-    └── robust/                  # Edge-case robustness scenarios
+├── conftest.py            # root: folder-derived TYPE markers + global_queue + bar factories
+├── unit/                  # drives ONE collaborating component  -> @unit
+│   ├── conftest.py        # unit layer anchor (no shared fixtures)
+│   ├── config/ core/ events/ execution/{exchanges/} order/ outils/
+│   ├── portfolio/{positions/,transaction/} price/ price_handler/ reporting/ strategy/ universe/
+├── integration/           # cross-component cascade / oracle  -> @integration (+ @slow)
+│   ├── conftest.py        # golden path fixtures + backtest_engine factory
+│   ├── _oracle_harness.py
+│   └── test_backtest_oracle.py, test_backtest_smoke.py, test_event_wiring.py, ...
+├── e2e/                   # tiny full-engine (strategy, data) runs vs goldens -> @e2e (NOT slow)
+│   ├── conftest.py        # the run_scenario harness (build→run→read→assemble→diff)
+│   ├── strategies/        # shared scenario strategies (e.g. SingleMarketBuy)
+│   └── <group>/<leaf>/    # scenario.py + test_scenario.py + bars.csv + golden/
+└── golden/               # frozen BTCUSD oracle: trades.csv, equity.csv, summary.json + REFREEZE-*.md
 ```
 
-## Marker System
+**Marker auto-application** (`tests/conftest.py::pytest_collection_modifyitems`):
+- file under `tests/unit/` → `unit`
+- file under `tests/integration/` → `integration` + `slow`
+- file under `tests/e2e/` → `e2e` (NOT `slow`, by design — D-15)
 
-Markers are **folder-derived** — applied automatically by `tests/conftest.py::pytest_collection_modifyitems`. Never hand-add the type marker to a test.
-
-| Folder | Markers Applied |
-|--------|----------------|
-| `tests/unit/` | `unit` |
-| `tests/integration/` | `integration`, `slow` |
-| `tests/e2e/` | `e2e` (NOT `slow`) |
-
-Registered in `pyproject.toml` (the `--strict-markers` single source of truth):
-- `unit`, `integration`, `slow`, `e2e`
-
-**Exception:** Some early unit tests carry an explicit `pytestmark = pytest.mark.unit` at module level (e.g. `tests/unit/core/test_money.py`, `tests/unit/core/test_clock.py`) to ensure `--strict-markers` is satisfied regardless of conftest ordering — keep this only for wave-0 scaffolds; new tests rely on folder-derived marking.
+The `make test-portfolio`/`-orders`/etc. targets are **path shortcuts, not marker selectors**.
 
 ## Test Structure
 
-**Pure function style (majority of unit tests):**
+**Two authoring styles coexist:**
+- Class-based (10 `Test*` classes) with `setup_method` + helper factories:
 ```python
-def test_zero_model_returns_decimal_zero():
-    fee = ZeroFeeModel().calculate_fee(Decimal("100"), Decimal("250"))
-    assert isinstance(fee, Decimal)
-    assert fee == Decimal("0")
-```
-
-**Fixture-based setup:**
-```python
-@pytest.fixture
-def cm():
-    """A CashManager seeded with $100000 on a mock portfolio."""
-    portfolio = MockPortfolio()
-    return CashManager(portfolio, 100000.0)
-
-def test_cash_manager_initialization(cm):
-    assert cm.balance == Decimal("100000.00")
-```
-
-**Harness class (for complex multi-object setups):**
-```python
-class _Harness:
-    """OrderHandler + storage + one funded portfolio."""
-    def __init__(self):
-        self.queue = Queue()
-        self.ptf_handler = PortfolioHandler(self.queue)
-        self.storage = OrderStorageFactory.create("test")
-        self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
-        self.portfolio_id = self.ptf_handler.add_portfolio(1, "p", "default", 100000)
-```
-
-**Test class style (used in simulated exchange, order lifecycle):**
-```python
-class TestSimulatedExchangeInitialization:
+class TestOrderLifecycle:
     def setup_method(self):
-        self.queue = Queue()
         self.base_time = datetime.now()
 
-    def test_default_initialization(self):
-        exchange = SimulatedExchange(self.queue)
-        assert exchange.global_queue is self.queue
+    def create_test_order(self, **kwargs) -> Order:
+        defaults = {'time': self.base_time, 'type': OrderType.MARKET, ...}
+        defaults.update(kwargs)
+        return Order(**defaults)
+
+    def test_valid_state_transitions(self):
+        order = self.create_test_order()
+        assert order.add_fill(order.quantity, order.price, datetime.now())
+        assert order.status == OrderStatus.FILLED
 ```
-
-**Teardown pattern (queue draining):**
+- Plain functions consuming fixtures (the majority — ~877 functions vs 10 classes):
 ```python
-yield SimpleNamespace(...)
-while not queue.empty():
-    queue.get_nowait()
-```
-
-## Cross-Cutting Fixtures (Root `tests/conftest.py`)
-
-```python
-@pytest.fixture
-def global_queue():
-    """A fresh FIFO event queue per test."""
-    return queue.Queue()
-
-@pytest.fixture
-def make_bar_struct():
-    """Factory: build a bare Bar value object with Decimal(str(x)) fields."""
-    return _bar_struct
-
-@pytest.fixture
-def make_bar():
-    """Factory: build a one-ticker BarEvent (dict[str, Bar] payload)."""
-    return _bar_event
-
-@pytest.fixture
-def make_bar_event():
-    """Alias of make_bar."""
-    return _bar_event
-```
-
-All positional bar args use `(open_, high, low, close)` with Decimal-via-string conversion — never raw floats.
-
-## Integration Fixtures (`tests/integration/conftest.py`)
-
-```python
-@pytest.fixture
-def golden_trades_path():
-    return pathlib.Path(__file__).resolve().parent.parent / "golden" / "trades.csv"
-
-@pytest.fixture
-def backtest_engine():
-    """Factory that builds a CSV-fed backtest TradingSystem (deferred import)."""
-    def _make(ticker="BTCUSD", timeframe="1d", ...):
-        from itrader.trading_system.backtest_trading_system import TradingSystem
-        return TradingSystem(exchange="csv", ...)
-    return _make
-```
-
-## Mocking
-
-**Framework:** `unittest.mock` (stdlib) — `Mock`, `MagicMock`, `patch`, `patch.dict`.
-
-**Simple dependency mock:**
-```python
-from unittest.mock import Mock
-
-logger = Mock()
-order_manager = OrderManager(order_storage, logger, market_execution="immediate")
-```
-
-**Structural stub class:**
-```python
-class _StubReadModel:
-    """Minimal read model for the resolver."""
-    def __init__(self, available=Decimal("10000.00"), equity=Decimal("50000")):
-        self._available = available
-
-    def available_cash(self, portfolio_id):
-        return self._available
-```
-
-**Module-level stub with `patch.dict` (for heavy import isolation):**
-```python
-_STUB_MODULES = {
-    name: MagicMock()
-    for name in [
-        "itrader.strategy_handler.strategies_handler",
-        "itrader.order_handler.order_handler",
-        ...
-    ]
-}
-with patch.dict(sys.modules, _STUB_MODULES):
-    from itrader.events_handler.full_event_handler import EventHandler
-```
-This pattern (in `tests/unit/events/test_dispatch_registry.py` and `tests/integration/test_event_wiring.py`) prevents heavy handler modules from being imported at collection time.
-
-**`monkeypatch` for env vars and attribute spying:**
-```python
-def test_log_level_env_honored(monkeypatch, clean_root_logger):
-    monkeypatch.setenv("ITRADER_LOG_LEVEL", "DEBUG")
-    ...
-
-def test_non_executed_fill_skips_operation_context(env, monkeypatch, status):
-    calls = []
-    original = env.ptf._operation_context
-    def spy(operation_name):
-        calls.append(operation_name)
-        return original(operation_name)
-    monkeypatch.setattr(env.ptf, "_operation_context", spy)
-```
-
-**What to Mock:**
-- Logger instances (`Mock()` — prevents structlog setup side effects).
-- Read-model protocols when testing managers in isolation (use structural stub classes, not `Mock()`).
-- Heavy handler modules that trigger expensive imports (use `patch.dict(sys.modules, ...)`).
-- Environment variables for config/logging tests (use `monkeypatch.setenv`/`delenv`).
-
-**What NOT to Mock:**
-- The `global_queue` — use the real `queue.Queue()` (provided by the root fixture).
-- Domain business logic — use real components; only mock the queue and cross-domain read-models.
-- The `itrader` singletons (`config`, `idgen`) — they initialize on import; accept that side effect.
-
-## Fixtures and Factories
-
-**Shared bar factories (root conftest):**
-```python
-# Usage in tests:
-def test_something(make_bar):
-    bar = make_bar(open_=100, high=105, low=99, close=104, ticker="BTCUSD")
-    # bar is a BarEvent with dict[str, Bar] payload, all Decimal(str(x))
-```
-
-**Drain helper (simulated exchange tests):**
-```python
-def drain_fills(queue: Queue) -> list[FillEvent]:
-    fills = []
-    while not queue.empty():
-        fills.append(queue.get_nowait())
-    return fills
-```
-
-**Golden fixtures (integration conftest):**
-- `golden_dir`, `golden_trades_path`, `golden_equity_path`, `golden_summary_path` resolve to `tests/golden/`.
-
-**Test data:**
-- Contrived, hand-written CSV files live alongside their scenario — e.g. `tests/e2e/smoke/single_market_buy/bars.csv`.
-- The golden-master oracle uses a real committed dataset at `data/BTCUSD_1d_ohlcv_2018_2026.csv`.
-
-## E2E Scenario Pattern
-
-Each E2E scenario lives in its own leaf directory with exactly three files:
-1. `scenario.py` — declares a module-level `SCENARIO` (a `ScenarioSpec` instance).
-2. `test_scenario.py` — one test function that calls `run_scenario(HERE)`. No assertions or diffing logic.
-3. `golden/` — committed golden files: always `trades.csv` + `summary.json`; optionally `equity.csv`, `orders.csv`, `cash_operations.csv`, `portfolios.csv`.
-
-```python
-# test_scenario.py pattern (copy-template for all E2E leaves):
-import pathlib
-HERE = pathlib.Path(__file__).resolve().parent
-
 def test_single_market_buy(run_scenario):
     run_scenario(HERE)
 ```
 
-```python
-# scenario.py pattern:
-from tests.e2e.scenario_spec import ScenarioSpec, PortfolioSpec
-from tests.e2e.strategies.single_market_buy import SingleMarketBuy
+## Mocking
 
-SCENARIO = ScenarioSpec(
-    start="2020-01-01",
-    end="2020-01-06",
-    timeframe="1d",
-    ticker="BTCUSD",
-    starting_cash=10_000,
-    data={"BTCUSD": HERE / "bars.csv"},
-    strategies=[SingleMarketBuy("1d", ["BTCUSD"], fire_on_bar=2, exit_on_bar=4)],
-    portfolios=[PortfolioSpec(user_id=1, name="canary_pf", cash=10_000)],
-    exchange=None,  # zero-fee / no-slippage defaults
-)
+**Frameworks:** `unittest.mock` (`Mock`, `MagicMock`) and pytest `monkeypatch`.
+
+**Patterns:**
+```python
+# Lightweight collaborator stub (tests/unit/order/test_order_manager.py)
+logger = Mock()
+
+# monkeypatch to assert a hot-path invariant (tests/unit/price/test_bar_feed.py)
+def test_zero_resample_calls_on_per_tick_path(daily_store, monkeypatch):
+    monkeypatch.setattr(pd.DataFrame, 'resample', counting_resample)
+    # ... assert resample was never called per tick
 ```
 
-The `run_scenario` fixture (defined in `tests/e2e/conftest.py`) owns the full build → run → read → assemble → diff pipeline. Goldens never auto-heal; regenerate with `--freeze` (one scenario at a time, after hand-verification).
+**What to Mock:**
+- Cross-domain collaborators a unit doesn't own (`Mock()` for a logger/handler dependency).
+- Hot-path methods to *count* calls and lock performance invariants (`monkeypatch.setattr` on `pd.DataFrame.resample`, `Bar.from_row`).
+
+**What NOT to Mock:**
+- The `global_queue` — use the real `queue.Queue` from the `global_queue` fixture.
+- The full engine in e2e/integration — those run the **real** `BacktestTradingSystem` end-to-end against committed CSV data and frozen goldens. No money/exchange mocks.
+- Value objects (`Bar`, events) — build real instances via the shared factory fixtures.
+
+## Fixtures and Factories
+
+**Root cross-cutting fixtures** (`tests/conftest.py`):
+- `global_queue` — a fresh `queue.Queue` per test.
+- `make_bar_struct` — factory for a bare `Bar` (every field via `Decimal(str(x))`).
+- `make_bar` / `make_bar_event` — factory for a one-ticker `BarEvent` (`dict[str, Bar]` payload), keeping the positional `(open, high, low, close)` signature.
+
+**Integration fixtures** (`tests/integration/conftest.py`):
+- `golden_dir`, `golden_trades_path`, `golden_equity_path`, `golden_summary_path` — paths to `tests/golden/`.
+- `backtest_engine` — factory (callable) that builds a CSV-fed `BacktestTradingSystem`; import is **deferred into the inner function body** so `--collect-only` stays clean.
+
+**E2E harness** (`tests/e2e/conftest.py`):
+- `run_scenario(request)` — the SINGLE shared harness. Returns `_run(here)` that imports the leaf's `scenario.py` `SCENARIO`, builds the real system via `build_backtest_system(spec)`, runs it, assembles trades/equity/summary/orders/cash_ops/portfolios via the shared `itrader.reporting` path, and diffs ONLY the golden files present.
+- Deferred imports keep `--collect-only` clean (~45 fixtures defined across `tests/unit/`).
+
+**Test data:**
+- Per-e2e-leaf hand-written `bars.csv` + a `golden/` subdir (presence = assertion).
+- The committed BTCUSD oracle: `tests/golden/{trades,equity}.csv`, `summary.json`.
 
 ## Coverage
 
-**Requirements:** No minimum enforced in `pyproject.toml`. Coverage is advisory.
+**Requirements:** None enforced (no coverage gate / no fail-under).
 
 **View Coverage:**
 ```bash
-make test-cov          # runs with --cov, opens htmlcov/index.html
+make test-cov   # pytest --cov=itrader --cov-report=html --cov-report=term-missing; opens htmlcov/index.html
 ```
 
-## Test Types Summary
+## Test Types
 
-**Unit Tests (`tests/unit/`, ~744 test functions):**
-- Scope: drives ONE collaborating component in isolation per D-15.
-- May import several classes from the same domain and use a real `global_queue`.
-- Does NOT assert cross-component cascades or run a full `TradingSystem`.
+**Unit (`tests/unit/`, `@unit`):**
+- Drives ONE collaborating component (D-15 boundary). May use the real `global_queue` and several classes from its own domain; does NOT assert cross-component cascades.
 
-**Integration Tests (`tests/integration/`, ~12 test functions, `slow`):**
-- Scope: cross-component interaction — cross-domain, cross-manager, full event cascade, run-path smoke, golden oracle.
-- Uses the `backtest_engine` factory fixture to construct a full `TradingSystem`.
-- The oracle test (`test_backtest_oracle.py`) runs `scripts/run_backtest.py` in-process, compares fresh output against `tests/golden/` with EXACT `assert_frame_equal` (no float tolerance).
+**Integration (`tests/integration/`, `@integration` + `@slow`):**
+- Asserts interaction ACROSS components — the full cascade, run-path smoke, event-wiring, and the golden-master **oracle** (`test_backtest_oracle.py`, `_oracle_harness.py`).
 
-**E2E Tests (`tests/e2e/`, ~48 test functions):**
-- Scope: full-engine runs over tiny (~6–10 bar) contrived datasets vs committed golden files.
-- Organized by behavioral category: `smoke/`, `matching/`, `sizing/`, `sltp/`, `cost/`, `admission/`, `cash/`, `multi/`, `robust/`.
-- The ONLY test assertion is: does the fresh output match the golden? Presence of a golden file = assertion.
+**E2E (`tests/e2e/`, `@e2e`, NOT slow):**
+- Tiny (~10-bar) full-engine runs on a `(strategy, data)` pair vs frozen goldens. One leaf = `scenario.py` (a frozen `ScenarioSpec` exposing module-level `SCENARIO`) + `test_scenario.py` (a one-line delegate to `run_scenario(HERE)`) + `bars.csv` + `golden/`.
+- Scenario groups: `admission/`, `cash/`, `cost/`, `matching/{brackets,entries,gaps,operator,never_fill}`, `multi/`, `robust/`, `sizing/`, `sltp/`, `smoke/`.
+
+**Cross-validation oracles (gating):**
+- `backtesting.py` `0.6.5` and `backtrader` `1.9.78.123` gate metric cross-validation (`tests/golden/CROSS-VALIDATION.md`); `nautilus-trader` `1.227.0` is a non-gating reconciliation oracle.
+
+## Golden-Master Discipline
+
+- **Exact diff, NO tolerance:** `assert_frame_equal(..., check_exact=True, check_like=True)`. Identity columns (which trade/which bar) are asserted first, then the auto-derived numeric remainder; a float tolerance would mask real regressions.
+- **Round-trip normalization:** the fresh frame is serialized through the SAME `to_csv(float_format=FLOAT_FORMAT)` → `read_csv` path the golden was written with, so the diff compares frozen bytes, not engine dtype/precision artifacts (`_roundtrip` in `tests/e2e/conftest.py`).
+- **`--freeze` flag (OFF by default):** goldens NEVER auto-heal. `--freeze` WRITES goldens and is **mechanically refused** when more than one test is selected — freeze ONE hand-verified scenario at a time (Pitfall 5). Each freeze is gated by a hand-written VERIFY note in the leaf's `scenario.py` docstring (mirrors `tests/golden/REFREEZE-*.md`).
+- **Presence = assertion:** a leaf that froze only `trades.csv` + `summary.json` asserts only those; `equity.csv`/`orders.csv`/`cash_operations.csv`/`portfolios.csv` are opt-in and diffed only if committed.
 
 ## Common Patterns
 
-**Async Testing:** Not used — the engine is synchronous.
-
-**Error Testing:**
+**Error Testing** (39 files use `pytest.raises`):
 ```python
-# Typed exception with message match:
-with pytest.raises(SizingPolicyViolation, match="RiskPercent requires stop_loss"):
-    resolver.resolve_size(...)
-
-# Exception without match:
-with pytest.raises(ValidationError):
-    ZeroFeeModel().calculate_fee(Decimal("-1"), Decimal("250"))
-
-# Checking exception fields:
-with pytest.raises(ConfigurationError) as exc_info:
-    OrderStorageFactory.create("unknown")
-assert "unknown" in str(exc_info.value)
+with pytest.raises(InsufficientFundsError) as exc_info:
+    cash_manager.withdraw(...)
+# inspect exc_info.value for structured fields when relevant
 ```
 
-**Decimal Money Testing:**
-```python
-# Always assert Decimal equality against Decimal literals:
-assert cm.balance == Decimal("100000.00")
-assert fee == Decimal("100") * Decimal("250") * Decimal("0.001")
+**Parametrize** (10 files): `@pytest.mark.parametrize` for table-driven cases.
 
-# Check isinstance to verify Decimal-native contract:
-assert isinstance(fee, Decimal)
-```
+**Money in tests:**
+- Always enter Decimal via `Decimal(str(x))` (the `_bar_struct` factory does this) — never `Decimal(float)`.
 
-**Parametrize:**
-```python
-@pytest.mark.parametrize("status", ["EXECUTED", "CANCELLED", "REFUSED"])
-def test_on_fill_status_routing(env, status):
-    ...
-```
-
-**Deferred TradingSystem import (test isolation):**
-```python
-def _make(...):
-    # Import deferred so --collect-only succeeds without the full engine.
-    from itrader.trading_system.backtest_trading_system import TradingSystem
-    return TradingSystem(...)
-```
-
-## Golden Master Discipline
-
-**Oracle freeze re-baseline points:** Only at M2 and M5 milestone boundaries. The numerical oracle in `tests/golden/` is never auto-regenerated; each refreeze requires an explicit `REFREEZE-*.md` hand-derivation note committed alongside the new golden files.
-
-**E2E freeze discipline:** `--freeze` refuses to run with more than one test selected, enforcing one-at-a-time hand-verified freezes. Goldens prove stability, not correctness — correctness is established before the freeze by the VERIFY docstring in `scenario.py`.
-
-**Diff mechanic:** `pandas.testing.assert_frame_equal` with `check_exact=True`, `check_like=True`, NO float tolerance. Both fresh and golden are round-tripped through `to_csv(float_format="%.10f")` → `read_csv` so dtypes and float precision are normalized before comparison.
+**Determinism in tests:**
+- Rely on the seeded RNG (`performance.rng_seed`, default 42) and injected clock; never use wall-clock-dependent assertions on engine output. Portfolio IDs are non-deterministic UUIDv7 — key golden snapshots on the STABLE `PortfolioSpec.name`, never the `PortfolioId` (Pitfall 2).
 
 ---
 
-*Testing analysis: 2026-06-12*
+*Testing analysis: 2026-06-14*
