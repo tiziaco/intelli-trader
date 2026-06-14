@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
 status: Awaiting next milestone
-stopped_at: v1.3 milestone closed and archived (2026-06-14); awaiting /gsd:new-milestone for N+2
-last_updated: "2026-06-14T06:01:08.685Z"
+stopped_at: Phase 6 context gathered
+last_updated: "2026-06-14T06:41:44.541Z"
 last_activity: 2026-06-14 — Milestone v1.3 completed and archived
 progress:
   total_phases: 6
@@ -91,6 +91,11 @@ surfaces, which is why v1.3 lands first.
 *Updated after each plan completion. v1.0/v1.1 velocity is archived in the respective MILESTONE-AUDIT.md.*
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 999.4 edited: added Scope bullet: minimal crypto-only Instrument value object (core/instrument.py) for margin/funding per-symbol params; appended Goal half-line
+- Phase 999.3 edited: added Scope bullet: dynamic universe membership (UniverseSelectionModel poll seam), sequenced near N+4 data engine
 
 ### Decisions
 
