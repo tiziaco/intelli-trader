@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface 
 Phase: 6 (complete) — v1.3 milestone complete
 Plan: All plans complete (20/20)
 Status: Milestone complete — ready to close
-Last activity: 2026-06-13
+Last activity: 2026-06-14 - Completed quick task 260614-atk: v1.3 tech-debt doc reconcile (REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger; WR fixes re-verified 34/34)
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -145,6 +145,7 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
+| 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger (WR fixes already in HEAD; re-verified 34/34) | 2026-06-14 | 191e21f | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
 | Phase 02 P02 | ~25 min | 3 tasks | 7 files |
 | Phase 02 P03 | ~20 min | 3 tasks | 10 files |
 | Phase 03 P01 | ~15 min | 2 tasks | 6 files |
