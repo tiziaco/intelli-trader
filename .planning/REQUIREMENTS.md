@@ -124,7 +124,6 @@ Explicitly excluded from v1.4. Documented to prevent scope creep.
 | Tiered maintenance-margin brackets | v1.4 uses a flat per-instrument MMR with notional capped to first-tier validity (documented approximation; schema wired so a tier table can replace it later). |
 | Inverse / coin-margined perps; bankruptcy price / insurance fund / ADL; hedge mode | Each is its own milestone-sized effort; crypto-first linear USD-settled only. |
 | `Portfolio.user_id` removal | Independent multi-tenancy cleanup (constructor-signature ripple); kept out so it does not muddy the owner-gated golden re-baseline. |
-| Multi-currency accounting / trading calendars / corporate actions / OANDA & non-crypto adapters | Crypto-first (locked 2026-06-08); deferred indefinitely. |
 
 ## Traceability
 
@@ -132,32 +131,32 @@ Which phases cover which requirements. Filled during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INST-01 | TBD | Pending |
-| INST-02 | TBD | Pending |
-| INST-03 | TBD | Pending |
-| MARGIN-01 | TBD | Pending |
-| MARGIN-02 | TBD | Pending |
-| MARGIN-03 | TBD | Pending |
-| LIQ-01 | TBD | Pending |
-| LIQ-02 | TBD | Pending |
-| LIQ-03 | TBD | Pending |
-| SHORT-01 | TBD | Pending |
-| SHORT-02 | TBD | Pending |
-| SHORT-03 | TBD | Pending |
-| CARRY-01 | TBD | Pending |
-| LEV-01 | TBD | Pending |
-| LEV-02 | TBD | Pending |
-| TRAIL-01 | TBD | Pending |
-| TRAIL-02 | TBD | Pending |
-| TRAIL-03 | TBD | Pending |
-| XVAL-01 | TBD | Pending |
-| PAIR-01 | TBD | Pending |
+| INST-01 | Phase 1 — Instrument Value Object | Pending |
+| INST-02 | Phase 1 — Instrument Value Object | Pending |
+| INST-03 | Phase 1 — Instrument Value Object | Pending |
+| MARGIN-01 | Phase 2 — Margin Accounting & Leverage | Pending |
+| MARGIN-02 | Phase 2 — Margin Accounting & Leverage | Pending |
+| MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Pending |
+| LEV-01 | Phase 2 — Margin Accounting & Leverage | Pending |
+| LEV-02 | Phase 2 — Margin Accounting & Leverage | Pending |
+| SHORT-01 | Phase 3 — Shorts & Borrow Carry | Pending |
+| SHORT-02 | Phase 3 — Shorts & Borrow Carry | Pending |
+| SHORT-03 | Phase 3 — Shorts & Borrow Carry | Pending |
+| CARRY-01 | Phase 3 — Shorts & Borrow Carry | Pending |
+| LIQ-01 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
+| LIQ-02 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
+| LIQ-03 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
+| XVAL-01 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
+| TRAIL-01 | Phase 5 — Engine-Native Trailing Stops | Pending |
+| TRAIL-02 | Phase 5 — Engine-Native Trailing Stops | Pending |
+| TRAIL-03 | Phase 5 — Engine-Native Trailing Stops | Pending |
+| PAIR-01 | Phase 6 — Pair-Trading Flagship | Pending |
 
 **Coverage:**
 - v1.4 requirements: 20 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 20 ⚠️
+- Mapped to phases: 20 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-14*
-*Last updated: 2026-06-14 at milestone v1.4 start*
+*Last updated: 2026-06-14 — roadmap created, all 20 requirements mapped to 6 phases (100% coverage)*
