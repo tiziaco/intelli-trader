@@ -138,7 +138,8 @@ Margin, Leverage, Shorts & Trailing Stops; see Backlog below).
 model the engine has deliberately deferred (D-08/D-09, DEF-01-C), unblocking shorts and
 leverage, AND add engine-native trailing stops — all are stateful resting-order changes to
 the same `MatchingEngine` surface, so they're done in one pass and share one golden master +
-cross-validation, like M5. **Extends exactly the signal/order/composition surfaces v1.3
+cross-validation, like M5. Also lands the minimal per-instrument value object (`Instrument`)
+the margin/funding model consumes. **Extends exactly the signal/order/composition surfaces v1.3
 completes, which is why v1.3 lands first.**
 **Requirements:** TBD
 **Plans:** 0 plans
@@ -156,6 +157,16 @@ Scope (intent only):
 - **Leverage** + **levered Kelly** (fraction > 1 becomes expressible once margin exists).
 - **Funding/carry** — crypto perp funding-rate accounting (the crypto-first analogue of
   forex swap / equity borrow).
+
+- **Minimal per-instrument value object (crypto-only)** — introduce `Instrument`
+  (`core/instrument.py`, a frozen value object mirroring `core/bar.py::Bar`) owning per-symbol
+  tick / lot-step / min-order / quote-currency **plus** the maintenance-margin-rate and
+  funding-rate params the margin & funding work needs. Formalizes the hard-coded
+  `_INSTRUMENT_SCALES` table in `core/money.py` and gives margin/liquidation + funding/carry a
+  real per-symbol home (instead of new hard-coded tables). **Crypto-only, NO `asset_class`
+  taxonomy** — crypto/stock/forex tagging stays in the deferred multi-asset milestone (dead
+  metadata until non-crypto accounting exists). Lands here because margin & funding rates are
+  inherently per-instrument, so N+2 is the spec's first real consumer.
 
 - **Engine-native trailing stop** — new `TRAILING_STOP` `OrderType` + `MatchingEngine`
   ratchet logic (track running extreme, move the resting stop per bar). For the
@@ -246,6 +257,12 @@ Scope (intent only):
 - **#6 real-time data engine** ready for live.
 - **#2 live execution engine.**
 - **#7 production-ready universe / screener.**
+- **Dynamic universe membership** — a lean `UniverseSelectionModel` poll seam for mid-run
+  adds/removes (distinct from, and a prerequisite step toward, the full production screener
+  above; grows in `universe/membership.py` per its documented D-20 growth target). Engine
+  integration edges: warmup-on-add and open-position-handling-on-remove. Orthogonal to N+2
+  (its pair-trading validation uses a fixed pair); sequenced here because it pairs with the
+  real-time data engine (#6).
 - **FL-13** — `LiveTradingSystem`/`TradingInterface` test coverage (deferred out of v1.3; the
   live surface, not the backtest engine surface).
 
