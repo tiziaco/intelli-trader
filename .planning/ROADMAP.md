@@ -287,6 +287,30 @@ Scope (intent only):
   real-time data engine (#6).
 - **FL-13** — `LiveTradingSystem`/`TradingInterface` test coverage (deferred out of v1.3; the
   live surface, not the backtest engine surface).
+- **Account abstraction (born here, with the connector)** — introduce a first-class `Account`
+  domain object as the **reconciled local mirror of the venue's balance/margin state**. The
+  **connector is the exchange adapter** (API keys, order I/O, fill/balance/funding streams — the
+  `AbstractExchange`/provider boundary); the adapter *writes into* the `Account`, the `Account`
+  does NOT talk to the venue. It is born here, not earlier, because in live the **source of truth
+  flips**: backtest computes cash/positions locally (Portfolio = account), but live treats the
+  **venue as truth**, so the engine needs a mirror to **reconcile** against (detect/repair drift
+  from partial fills, fees, funding, liquidations, manual/other-bot trades). Reconciliation has
+  no backtest analogue — which is exactly why the Account is a live concern, not an N+2 one.
+  - **Shape:** `CashAccount` vs `MarginAccount` typing (nautilus pattern); one `Account` per
+    `(venue, login)`; **Binance spot vs futures = two separate accounts** (cash vs margin);
+    **IBKR subaccounts = N accounts under one connection**. Leverage/maintenance-margin/liq-price
+    are **venue-controlled** live (set on the venue, cached in the `Account`) — distinct from the
+    N+2 backtest model that *computes* them.
+  - **Distinct driver from cross-margin.** Cross-margin (deferred beyond N+2 Phase B) needs an
+    account *collateral pool* for account-wide liquidation math — a **backtest-accounting** driver.
+    The live `Account` here is a **reconciliation** driver. Related, separately motivated; do not
+    conflate.
+  - **`user_id` is app-layer, strip from the engine.** Multi-tenancy ownership does NOT belong in
+    the trading-domain `Portfolio` (current smell: `Portfolio.user_id`) and must NOT be relocated
+    onto `Account`. The FastAPI-wrap layer owns the `user_id → portfolio_id/account_id` mapping
+    externally; the engine stays owner-agnostic, keyed by its own domain IDs. Removing
+    `Portfolio.user_id` is an independent cleanup (constructor-signature ripple) — keep it OUT of
+    N+2 to avoid muddying that milestone's golden-master re-baseline.
 
 Plans:
 
