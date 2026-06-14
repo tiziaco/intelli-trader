@@ -161,11 +161,13 @@ Scope (intent only):
 - **Minimal per-instrument value object (crypto-only)** — introduce `Instrument`
   (`core/instrument.py`, a frozen value object mirroring `core/bar.py::Bar`). Lands here because
   margin & funding rates are inherently per-instrument, so N+2 is the spec's first real consumer.
-  Formalizes the hard-coded `_INSTRUMENT_SCALES` table in `core/money.py` and gives
+  **Replaces (deletes) the hard-coded `_INSTRUMENT_SCALES` table in `core/money.py`** — `Instrument`
+  becomes the per-symbol source that `money.py::quantize` reads precision from, giving
   margin/liquidation + funding/carry a real per-symbol home (instead of new hard-coded tables).
   **Field set (each tied to a named N+2 consumer — YAGNI gate):** `symbol`; `quote_currency`
   (default `"USD"`, the principled source for cash precision); `price_precision`,
-  `quantity_precision` (money quantize); `maintenance_margin_rate`, `max_leverage`
+  `quantity_precision` (money quantize, doubles as the lot/qty step); `min_order_size`
+  (order validation/sizing — per-symbol, see below); `maintenance_margin_rate`, `max_leverage`
   (margin/liquidation + leverage); `settles_funding: bool` (funding/carry).
   - **Precision, NOT trading tick.** Backtest needs rounding precision, not a price grid; `tick`
     is live-only (fetched from the exchange) and only bites N+2 via trailing-stop min-distance —
@@ -182,9 +184,18 @@ Scope (intent only):
     shape. Cash precision = the quote currency's precision (USD → 2dp). A first-class `Currency` value
     object (sibling of `Instrument`, not cash-crammed-in) waits for multi-currency accounting (deferred
     indefinitely, crypto-first).
-  - **`min_order_size` stays in `ExchangeLimits`** (it's a venue×instrument property; same symbol
-    differs per venue) — do NOT duplicate onto `Instrument`. Reconcile `Instrument` vs `ExchangeLimits`
-    ownership during phase discussion.
+  - **`min_order_size` moves ONTO `Instrument`** (REVISED 2026-06-14, owner directive). Min size,
+    lot step, and precision are all per-symbol trading metadata; in reality the venue publishes them
+    per market (ccxt `loadMarkets` → `market['precision']`/`['limits']['amount']['min']`; IBKR
+    `contractDetails`). So `Instrument` is the per-symbol source of truth; `ExchangeLimits` is
+    **demoted to a venue-level fallback** for undeclared symbols, NOT the per-symbol authority (its
+    flat per-venue `min/max_order_size` stays only as that fallback). The full **(venue, symbol)**
+    matrix — same symbol differing across venues — only bites in multi-venue **live**, so it is an
+    **N+4** concern; v1.4's single simulated venue does not need it. **Population by mode:** backtest
+    = declared → default (`min_order_size`/`quantity_precision` are NOT inferable from OHLCV — no
+    quantity column; only `price_precision` is inferable, guarded); **live (N+4)** = fetched per
+    market from the venue. Reconcile the exact `ExchangeLimits` disposition (keep-as-fallback vs
+    absorb) during phase discussion.
   - **Crypto-only, NO `asset_class` taxonomy** — crypto/stock/forex tagging stays in the deferred
     multi-asset milestone (dead metadata until non-crypto accounting exists).
   - **Behavioral gate:** whether the backtest *snaps/rounds* via `Instrument` (vs storing metadata
@@ -236,6 +247,45 @@ strategy):
   modify latency / step / gap behavior → backtest is slightly optimistic (a known sim-to-live
   gap to flag at N+4). Backtest and live should SHARE the trail-computation logic; only "how
   the stop rests" differs.
+
+**Scoping decisions locked (2026-06-14, pre-`/gsd:new-milestone`):**
+
+- **Trailing stop — IN v1.4, as its OWN phase.** Small in backtest: the `MatchingEngine` already
+  fills resting stops (`_evaluate` STOP branch) and already has `modify()` (`dataclasses.replace`).
+  The work is a `TRAILING_STOP` `OrderType` member + map entry, a trail param + running-extreme
+  field on `OrderEvent`, and one ratchet step at the top of `on_bar` (recompute stop from the
+  running extreme, favorable-only) that hands off to the existing STOP fill path. It is a DIFFERENT
+  subsystem from margin/shorts accounting (matching-engine vs portfolio/cash) → kept in a SEPARATE
+  phase so each result-change owns its own golden re-baseline (v1.3 "result-changing phases kept
+  separate" discipline). **Look-ahead rule:** the trail updates from CLOSED-bar extremes and is
+  live for the NEXT bar (the engine's standard one-bar lag) — never trail to this bar's high and
+  trigger off this bar's low. The native-vs-synthetic capability seam is **live-only → N+4**.
+
+- **Pair trading — IN v1.4 as the FINAL, slip-able capstone phase; NOT the correctness oracle.**
+  A market-neutral two-leg strategy partially cancels its own sign errors (short PnL sign,
+  cover-arm, liquidation geometry — exactly the bugs to catch), so it is a weak oracle.
+  **Correctness is locked** by crafted, hand-computable, adversarial scenarios (pure short,
+  leveraged long, forced liquidation) cross-validated against `backtesting.py`/`backtrader`. Pair
+  trading is the headline "shorts work end-to-end" demo, scoped as a distinct phase so it can slip
+  to an immediate follow-on without blocking the shippable margin/shorts core.
+
+- **Liquidation — NO new `FillStatus`.** `FillStatus` is outcome (EXECUTED/REFUSED/CANCELLED/
+  EXPIRED); "liquidated" is a CAUSE. A liquidation's accounting effect IS an `EXECUTED` fill
+  (position closes, cash settles, penalty applied), so it reuses `status=EXECUTED` and flows
+  through the existing `on_fill` → position-close → cash-settle path with zero new branches (adding
+  `LIQUIDATED` would force a new arm into the load-bearing EXECUTED→FILLED reconcile map for no
+  benefit). The real work: the liquidation engine **mints a forced close order** (owned by the
+  position's strategy, so the required `strategy_id`/`order_id` on `FillEvent` are real and the
+  fill→order→strategy audit chain + order-mirror reconcile stay intact) that **bypasses
+  admission/sizing** (a forced deleverage must never be rejected by a margin check); tag the cause
+  with a new `OrderTriggerSource.LIQUIDATION` member (fits the existing closed vocab) for trade-log
+  / metrics filtering; the configurable liquidation penalty rides the existing `commission`/fee
+  field. (Resolves §9 Q2 of `notes/margin-leverage-shorts-999.4.md`.)
+
+- **Instrument metadata ownership** — see the revised `min_order_size` sub-bullet above: `Instrument`
+  is the per-symbol source of truth for precision + lot step + min size + margin params (deletes
+  `_INSTRUMENT_SCALES`); `ExchangeLimits` demoted to venue-level fallback; per-`(venue,symbol)`
+  generality deferred to N+4 live. (Resolves §9 Q1.)
 
 Plans:
 
