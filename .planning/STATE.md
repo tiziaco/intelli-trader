@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Engine Surface Completion
-status: milestone_complete
-stopped_at: Phase 06 complete (4/4) — v1.3 milestone complete (all 6 phases); ready to close milestone
-last_updated: 2026-06-13T17:16:39.161Z
-last_activity: 2026-06-13 -- Phase 06 complete; v1.3 Engine Surface Completion milestone complete
+status: Awaiting next milestone
+stopped_at: Phase 6 context gathered
+last_updated: "2026-06-14T06:01:08.685Z"
+last_activity: 2026-06-14 — Milestone v1.3 completed and archived
 progress:
   total_phases: 6
   completed_phases: 6
@@ -18,17 +18,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-12 — milestone v1.3 Engine Surface Completion started)
+See: .planning/PROJECT.md (updated 2026-06-14 — v1.3 Engine Surface Completion SHIPPED + full evolution review)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** v1.3 Engine Surface Completion — COMPLETE (Phases 1-6 all done). Ready to close the milestone (`/gsd:complete-milestone`) or start the next milestone. The `999.x` entries are future-milestone (N+2/N+3/N+4) backlog seeds, NOT the next active phase.
+**Current focus:** No active milestone — v1.3 shipped and archived 2026-06-14 (`milestones/v1.3-*`). Next: N+2 — Margin, Leverage, Shorts & Trailing Stops (Backlog 999.4); start with `/gsd:new-milestone`. The `999.x` entries are future-milestone (N+2/N+3/N+4) backlog seeds.
 
 ## Current Position
 
-Phase: 6 (complete) — v1.3 milestone complete
-Plan: All plans complete (20/20)
-Status: Milestone complete — ready to close
-Last activity: 2026-06-13
+Phase: Milestone v1.3 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-14 — Milestone v1.3 completed and archived
 
 ## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
 
@@ -145,6 +145,7 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
+| 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger (WR fixes already in HEAD; re-verified 34/34) | 2026-06-14 | 191e21f | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
 | Phase 02 P02 | ~25 min | 3 tasks | 7 files |
 | Phase 02 P03 | ~20 min | 3 tasks | 10 files |
 | Phase 03 P01 | ~15 min | 2 tasks | 6 files |
@@ -193,6 +194,20 @@ v1.0/v1.1/v1.2 milestone-close acknowledgments are recorded in the respective MI
 files under `milestones/`. The four v1.2 quick tasks flagged only by the `gsd-sdk` SDK-port filename
 bug were verified canonically complete (`status: complete`) and accepted at v1.2 close.
 
+**Acknowledged at v1.3 close (2026-06-14):** the pre-close `audit-open` ledger flagged 5 quick-tasks
+as `missing`; all 5 were verified canonically complete (`status: complete` in their SUMMARY
+frontmatter) and acknowledged — the flag is a tracking-ledger gap, not open work. 4 predate v1.3.
+
+| Category | Item | Status |
+|----------|------|--------|
+| quick_task | 260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc | complete (2026-06-05, pre-v1.3) |
+| quick_task | 260608-a59-demote-by-design-signal-rejection-logs-f | complete (2026-06-08, pre-v1.3) |
+| quick_task | 260608-qe2-pre-milestone-close-enum-cleanup-move-tr | complete (2026-06-08, pre-v1.3) |
+| quick_task | 260610-sjp-close-fl01-fl02 | complete (2026-06-10, pre-v1.3) |
+| quick_task | 260614-atk-v1-3-tech-debt-doc-reconcile-requirement | complete (2026-06-14, v1.3 close) |
+
+Nyquist Wave-0 partial on phases 2/3/6 (behavioral net = oracle + 59-leaf e2e + `mypy --strict`).
+
 ## Session Continuity
 
 Last session: 2026-06-13T16:09:44.882Z
@@ -201,6 +216,4 @@ Resume file: .planning/phases/06-order-lifecycle-time-in-force/06-CONTEXT.md
 
 ## Operator Next Steps
 
-- **v1.3 Engine Surface Completion roadmap created** (Phases 1-6, all 10 requirements mapped, 0 orphans).
-- Plan the first phase with `/gsd:plan-phase 1` (Phase 1 — Engine Hygiene, byte-exact, SAFE, no run-path touch — a clean low-risk opener).
-- Owner sign-off is required before Phases 5-6 freeze a new golden master (result-changing, owner-gated re-baseline + external cross-validation).
+- Start the next milestone with /gsd-new-milestone

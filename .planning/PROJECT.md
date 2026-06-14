@@ -19,11 +19,16 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
-## Current Milestone: v1.3 Engine Surface Completion
+## Shipped Milestone: v1.3 Engine Surface Completion (2026-06-14)
 
-**Goal:** Complete the signal/order contracts, give the system a real composition/config
+**SHIPPED 2026-06-14.** All 6 phases / 20 plans complete; 10/10 requirements validated at audit
+(`milestones/v1.3-MILESTONE-AUDIT.md`). The detailed scope below is retained as the record of what
+shipped. **Next milestone:** N+2 — Margin, Leverage, Shorts & Trailing Stops (Backlog 999.4); start
+with `/gsd:new-milestone`.
+
+**Goal (delivered):** Complete the signal/order contracts, give the system a real composition/config
 interface, and land the declared-indicator + strategy-authoring abstraction — BEFORE N+2 builds
-margin/shorts on top of these same surfaces. Promotes Backlog Phase 999.5. Phase numbering resets
+margin/shorts on top of these same surfaces. Promoted Backlog Phase 999.5. Phase numbering reset
 to Phase 1 (matching the v1.1/v1.2 pattern; v1.2 phase dirs archived to `milestones/v1.2-phases/`).
 
 **Target workstreams:**
@@ -152,24 +157,53 @@ clean (172 files); e2e 58/58; full suite 851; 18/18 requirements verified at mil
 - ✓ **Order-Manager Decomposition (MOD-01, Phase 6 — FRAGILE, isolated, LAST):** `order_manager.py` 1279 → 210-line thin coordinator + `admission/`/`brackets/`/`lifecycle/`/`reconcile/` collaborators, **pure code-motion**; `on_fill` moved as one intact unit; terminal-status/`should_release`/`finally` interplay byte-for-byte unchanged; cross-bucket seams via coordinator callback + injected `BracketManager` (no sibling edges/circular import); determinism double-run byte-identical.
 - ⚠ Non-blocking tech debt: DEF-02-02 (`simulated.py` diagnostic dicts emit raw `Decimal` — cosmetic); 6 REQ-IDs omitted from SUMMARY `requirements-completed` frontmatter (bookkeeping only); Nyquist Wave-0 not run (behavioral net = oracle + 58 e2e + mypy strict). See `milestones/v1.2-MILESTONE-AUDIT.md`.
 
+**Validated in v1.3 — Engine Surface Completion (Phases 1–6), 2026-06-14** — engine authoring +
+contract surfaces completed; byte-exact phases (1–4) held the BTCUSD oracle (134 trades /
+`final_equity 46189.87730727451`); owner-gated phases (5–6) re-baselined under owner sign-off +
+external cross-validation; 10/10 requirements validated at audit:
+- ✓ **STRAT-01 — strategy authoring surface (Phase 2):** class-attribute params (engine-facing
+  names + defaults on the base, alpha knobs on the subclass) overridable at construction via
+  `**kwargs`; base rejects unknown kwargs loudly (`UnknownParamError`/`MissingParamError`); re-runnable
+  idempotent `init()` hook; the frozen pydantic strategy-config layer deleted. Byte-exact.
+- ✓ **IND-01 — declared-indicator framework (Phase 3):** indicators registered declaration-only in
+  `init()`, evaluated lazily per-tick; base auto-derives `warmup`/`max_window` from recipes (hand-set
+  lines gone, derived `warmup == max_window == 100`); look-ahead-safe `crossover`/`crossunder`. Byte-exact.
+- ✓ **COMP-01/COMP-02 — composition & config interface (Phase 4):** engine-level composition API
+  (`SystemSpec`/`build_backtest_system`/`compose_engine`) with construction-time `ExchangeConfig`
+  threading (replacing the Phase 7 D-14 conftest seam) + new `OrderConfig`; uniform `update_config`
+  (merge → `model_validate` → atomic-swap) on all 7 handlers for between-cycle live reconfig. Byte-exact.
+- ✓ **SIG-01/02/03 + RECON-01 — signal contract & reconcile (Phase 5, FRAGILE, owner-gated):**
+  per-intent limit/stop ENTRY price + per-intent `order_type` threaded `SignalIntent → SignalEvent →
+  Order.new_limit/stop_order`; `Order.action`/`_PendingBracket.action` typed `Side` with the position
+  snapshot threaded once; `on_fill` reconciliation streamlined into named helpers, idempotent
+  terminal-release invariant held. Proven by an owner-signed, externally cross-validated LIMIT golden.
+- ✓ **LIFE-01 — order lifecycle / time-in-force (Phase 6, owner-gated):** run-end resting orders
+  expire (`EXPIRED` wired through all four arms, non-cascading sweep); dead `create_order` second path
+  removed → one validated `process_signal` path. Equity-neutral; 3 e2e leaves re-baselined `PENDING→EXPIRED`.
+- ✓ **HYG-01 — engine hygiene (Phase 1):** SAFE byte-exact cleanup (public-API test asserts,
+  Decimal-money validator retype, stale mypy override + dead constants removed, v1.2 Phase-6 residues).
+- ⚠ Non-blocking at close: Nyquist Wave-0 partial on phases 2/3/6 (behavioral net = oracle + 59 e2e +
+  mypy strict); 5 completed quick-tasks flagged by the `audit-open` ledger (canonically `status: complete`).
+  Phase-6 robustness warnings reconciled (WR-01 by-design; WR-02/WR-03 fixed in PR #42). See
+  `milestones/v1.3-MILESTONE-AUDIT.md`.
+
 ### Active
 
 <!-- v1.0 (Backtest-Correctness Refactor) SHIPPED 2026-06-08 — 45 requirements.
      v1.1 (Backtest Trustworthiness: Breadth) SHIPPED 2026-06-10 — 51 requirements.
      v1.2 (Consolidation) SHIPPED 2026-06-12 — 18 requirements.
-     v1.3 (Engine Surface Completion) ACTIVE from 2026-06-12 — see REQUIREMENTS.md. -->
+     v1.3 (Engine Surface Completion) SHIPPED 2026-06-14 — 10 requirements.
+     Next: N+2 — fresh REQUIREMENTS.md created by /gsd:new-milestone. -->
 
-**v1.3 — Engine Surface Completion (ACTIVE).** Promotes Backlog Phase 999.5. Requirements are
-defined in `.planning/REQUIREMENTS.md` (SIG-01/02/03 signal contract; RECON-01 on_fill streamline,
-co-phased with SIG-03; COMP-01 composition API + COMP-02 uniform live `update_config`; IND-01
-indicator framework + STRAT-01 authoring surface; LIFE-01 order lifecycle/TIF; HYG-01 engine-hygiene
-slice). v1.0 (45 reqs), v1.1 (51 reqs), and
-v1.2 (18 reqs) shipped and are recorded in the Validated section above and under `milestones/`.
+**No active milestone — v1.3 shipped 2026-06-14.** v1.0 (45 reqs), v1.1 (51 reqs), v1.2 (18 reqs),
+and v1.3 (10 reqs) are all shipped and recorded in the Validated section above and under
+`milestones/`. `.planning/REQUIREMENTS.md` is removed at milestone close; the next milestone defines
+a fresh one via `/gsd:new-milestone`.
 
-**Following milestone (N+2 — Backlog 999.4):** Margin/liquidation model → shorts (remove the
+**Next milestone (N+2 — Backlog 999.4):** Margin/liquidation model → shorts (remove the
 D-08/D-09 LONG_ONLY guard + fix the CR-01 cover-arm hole) → leverage / levered Kelly → perp
 funding → engine-native trailing stop → real long/short pair trading. N+2 extends exactly the
-signal/order/composition surfaces v1.3 completes, which is why v1.3 lands first.
+signal/order/composition surfaces v1.3 completed, which is why v1.3 landed first.
 
 ### Out of Scope
 
@@ -251,6 +285,12 @@ signal/order/composition surfaces v1.3 completes, which is why v1.3 lands first.
 | v1.2: MOD-01 god-module split is a dedicated, isolated, LAST phase | The `order_manager.py` fill-reconciliation / reservation-release path is FRAGILE; bundling code-motion with any behavior fix would make a regression unattributable | ✓ Good — shipped v1.2; 1279 → 210-line coordinator, pure code-motion, `on_fill` moved as one intact unit, golden byte-exact + determinism double-run identical |
 | v1.2: consolidation is behavior-preserving (re-baselines nothing) | Clear the cleanup-review + CONCERNS debt without touching the numbers, so engine-surface features later build on a clean foundation; result-changing items deferred to Engine Surface Completion | ✓ Good — shipped v1.2; golden byte-exact across all 6 phases / 23 plans; SIG/COMP/IND/LIFE deferred to Backlog 999.5 |
 | v1.2: D-07 — re-adjudicate the W2-10 "latent TypeError" as a misdiagnosis | Decimal-vs-float COMPARISON works in Py3 (only arithmetic raises, and there is none); the honest fix is float-for-money consistency, not a crash fix — surfaced as a bounded, owner-flagged gap delta, not silently folded | ✓ Good — DEC-02 reframed; below-minimum REFUSED branch regression-covered; golden byte-exact |
+| v1.3: complete the engine's contract/authoring surfaces BEFORE margin/shorts (N+2) | N+2 builds margin/shorts/leverage on the exact signal/order/composition surfaces v1.3 completes; finishing them first avoids reworking N+2 against a moving surface | ✓ Good — shipped v1.3; SIG/COMP/IND/STRAT/LIFE surfaces complete, N+2 builds on a stable contract |
+| v1.3: two re-baseline disciplines in SEPARATE phases (byte-exact 1–4 vs owner-gated 5–6) | A byte-exact phase's golden gate must be a clean pass/fail; mixing a result-change in makes a regression unattributable | ✓ Good — shipped v1.3; phases 1–4 held the oracle byte-exact, phases 5–6 each owned an attributed owner-signed re-baseline |
+| v1.3: class-attribute strategy authoring replaces frozen-pydantic config | Authors hand-copied fields into a frozen config subclass; real annotated class attrs (mypy-visible, `**kwargs`-overridable, reject-unknown) are the natural Python surface + the seam runtime `update_config` needs | ✓ Good — shipped v1.3 (STRAT-01); re-runnable `init()` consumed by `StrategiesHandler.update_config` |
+| v1.3: declared indicators with framework-derived warmup (model-B pre-eval) | Hand-set `warmup`/`max_window` is a footgun (under-gating → `IndexError`); deriving from declared recipes removes it while staying byte-exact (stateless recompute) | ✓ Good — shipped v1.3 (IND-01); derived `warmup == max_window == 100`, oracle byte-exact; incremental/stateful deferred to IND-02 |
+| v1.3: per-intent entry price + order_type on the signal contract | Entry was hardwired to decision-bar close + fixed per strategy instance; per-intent limit/stop price + type is the contract N+2's richer orders need | ✓ Good — shipped v1.3 (SIG-01/02/03); owner-signed LIMIT golden cross-validated vs backtesting.py + backtrader |
+| v1.3: run-end resting orders expire via TIF; collapse to one validated order path | Orders lingered PENDING at run end (`expire_order`/`EXPIRED` existed but unwired); a second unvalidated `create_order` path was dead weight | ✓ Good — shipped v1.3 (LIFE-01); EXPIRE wired through 4 arms (non-cascading), dead path removed, equity-neutral owner-gated re-baseline |
 
 ## Evolution
 
@@ -283,23 +323,24 @@ This document evolves at phase transitions and milestone boundaries.
 
 **Tech debt at v1.2 close (non-blocking, tracked):** 4 completed quick tasks flagged only by the `gsd-sdk` SDK-port filename bug (canonically clean, `status: complete`); DEF-02-02 (`simulated.py` diagnostic dicts emit raw `Decimal` — cosmetic, no consumer breaks); 6 REQ-IDs omitted from SUMMARY `requirements-completed` frontmatter (bookkeeping only — coverage intact); Nyquist Wave-0 not run (behavioral net = oracle + 58 e2e + mypy strict). See `milestones/v1.2-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
-**v1.3 — Engine Surface Completion — COMPLETE.** All 6 phases done (LIFE-01 validated in Phase 6, 2026-06-13). Phase 6 (Order Lifecycle & Time-in-Force, owner-gated) shipped 2026-06-13: added `OrderCommand.EXPIRE` + `FillStatus.EXPIRED` enum seams and wired a run-end EXPIRE sweep across all four arms — `LifecycleManager.expire_all_resting()` (deterministic portfolio-then-UUIDv7 order), the `SimulatedExchange` EXPIRE arm (`matching_engine.cancel` + `FillEvent(EXPIRED)`), the `ReconcileManager` EXPIRED arm (idempotent for free via `VALID_ORDER_TRANSITIONS[EXPIRED]==[]`), and the `BacktestRunner` post-loop sweep + provably non-cascading final drain. The dead, unvalidated second signal→order path (`create_order`/`create_orders_from_signal`) was removed, collapsing the engine to one validated `process_signal` path (W4-09/D-03). Result-change is owner-gated and equity-neutral: the SMA_MACD oracle stays byte-exact (134 / `46189.87730727451`); exactly 3 e2e leaves (`matching/never_fill`, `sltp/from_decision_held`, `sltp/from_fill_held`) re-baselined run-end disposition `PENDING→EXPIRED` under explicit owner sign-off (tiziaco, 2026-06-13, `06-ATTRIBUTION.md`). `mypy --strict` clean (182 files), full suite 995, e2e 59/59, determinism double-run identical. Milestone v1.3 ready to close.
+**v1.3 — Engine Surface Completion — SHIPPED 2026-06-14.** 6 phases (numbering reset to Phase 1), 20 plans, all 10 v1.3 requirements validated at milestone audit (10/10 requirements, 6/6 phases passed, 5/5 cross-phase seams wired, 5/5 E2E flows — `milestones/v1.3-MILESTONE-AUDIT.md`). The engine's authoring + contract surfaces are complete: class-attribute strategy authoring (STRAT-01), declared-indicator framework with auto-derived warmup (IND-01), engine-level composition API + uniform `update_config` (COMP-01/02), per-intent entry-price/order_type signal contract + streamlined reconcile (SIG-01/02/03 + RECON-01), and run-end TIF expiry (LIFE-01). Byte-exact phases (1–4) held the BTCUSD oracle (134 / `46189.87730727451`); owner-gated phases (5–6) re-baselined under owner sign-off + external cross-validation. `mypy --strict` clean (182 files), full suite 995, e2e 59/59, determinism double-run identical. Phase 6 (Order Lifecycle & Time-in-Force, owner-gated) detail: added `OrderCommand.EXPIRE` + `FillStatus.EXPIRED` enum seams and wired a run-end EXPIRE sweep across all four arms — `LifecycleManager.expire_all_resting()` (deterministic portfolio-then-UUIDv7 order), the `SimulatedExchange` EXPIRE arm (`matching_engine.cancel` + `FillEvent(EXPIRED)`), the `ReconcileManager` EXPIRED arm (idempotent for free via `VALID_ORDER_TRANSITIONS[EXPIRED]==[]`), and the `BacktestRunner` post-loop sweep + provably non-cascading final drain. The dead, unvalidated second signal→order path (`create_order`/`create_orders_from_signal`) was removed, collapsing the engine to one validated `process_signal` path (W4-09/D-03). Result-change is owner-gated and equity-neutral: the SMA_MACD oracle stays byte-exact (134 / `46189.87730727451`); exactly 3 e2e leaves (`matching/never_fill`, `sltp/from_decision_held`, `sltp/from_fill_held`) re-baselined run-end disposition `PENDING→EXPIRED` under explicit owner sign-off (tiziaco, 2026-06-13, `06-ATTRIBUTION.md`). Milestone v1.3 closed and archived 2026-06-14; next milestone N+2 (Backlog 999.4).
 
-## Following Milestone Goals: Engine Surface Completion (next milestone)
+## Next Milestone Goals: N+2 — Margin, Leverage, Shorts & Trailing Stops (Backlog 999.4)
 
-**Candidate (promote after v1.2 Consolidation, ahead of N+2 — see ROADMAP.md Phase 999.5).**
-v1.1 proved empirically where the engine's contracts are still incomplete: every E2E scenario
-phase had to work around the hardwired entry price, the fixed per-strategy order type, and the
-missing composition interface (`ScenarioSpec` is the evidence). v1.2 Consolidation cleans the
-foundation first (byte-exact); this milestone then completes the contracts before margin/shorts
-(N+2) builds on the same surfaces:
+**Next milestone (start with `/gsd:new-milestone`).** v1.3 completed the engine's signal/order/
+composition surfaces; N+2 is the matching-engine / risk-execution milestone that builds directly on
+them. All items are stateful resting-order changes to the same `MatchingEngine` surface, so they
+share one golden master + cross-validation (like M5):
 
-- **Signal contract completion** — explicit per-intent limit/stop ENTRY price + per-intent `order_type` on the signal contract (`SignalIntent` → `SignalEvent` → `Order.new_limit_order`/`new_stop_order`). Result-risky → owner-gated re-baseline discipline.
-- **System composition/config interface** — promote the `ScenarioSpec` shape into an engine-level composition API (declarative multi-strategy/multi-portfolio wiring; faithful construction-time `ExchangeConfig` threading, replacing the Phase 7 D-14 post-construction conftest seam; formalize the `csv_paths` passthrough). Should stay byte-exact vs the v1.1 E2E suite.
-- **Declared-indicator framework** — indicator abstraction on the strategy base with auto-derived warmup (à la nautilus `register_indicator_for_bars`), so authors stop hand-setting `max_window`. A genuine model shift — design against the pure-alpha D-12 contract.
-- **Order-lifecycle completion** — wire run-end resting-order disposition / time-in-force (`Order.expire_order()` + `OrderStatus.EXPIRED` exist but are unwired on the backtest path; orders currently remain PENDING at run end — result-changing, owner-gated). Plus the FL-stragglers (FL-01/FL-02 already closed; remaining along touched paths).
+- **Margin / liquidation model** in `MatchingEngine` + cash/position accounting — today there is NO liquidation model (DEF-01-C): an un-liquidated short can drive equity negative. Add maintenance margin + liquidation.
+- **Unblock shorts** — remove the `LONG_ONLY` guard in `StrategiesHandler.add_strategy` AND fix the CR-01 cover-arm hole (`_resolve_signal_quantity` has no BUY-to-cover arm for a `SHORT_ONLY` book). Consumes v1.3's `Side`-typed action + per-intent order contract.
+- **Leverage / levered Kelly** (fraction > 1 expressible once margin exists) + crypto perp **funding/carry** accounting.
+- **Engine-native trailing stop** — new `TRAILING_STOP` `OrderType` + `MatchingEngine` ratchet logic; look-ahead-safe per the `bar_feed.py` contract. Native-first / synthetic-fallback capability seam on `AbstractExchange` (design note in ROADMAP Backlog).
+- **Real long/short PAIR TRADING** (flagship validation) — market-neutral cointegration/spread strategy; the natural first real use of the short side once the guard is removed.
 
-**Then N+2** (ROADMAP backlog): margin/liquidation model → shorts (remove the D-08/D-09 LONG_ONLY guard + fix the CR-01 cover-arm hole) → leverage / levered Kelly → perp funding → engine-native trailing stop → real long/short pair trading. Promote one at a time with `/gsd:review-backlog` or start with `/gsd:new-milestone`.
+Crypto-first keeps it tractable (no multi-currency, no borrow-locate). Then N+3 (Persistence &
+Performance) and N+4 (Live Trading Readiness) — see ROADMAP.md Backlog. Promote with
+`/gsd:new-milestone`.
 
 ---
-*Last updated: 2026-06-13 — v1.3 Phase 6 (Order Lifecycle & Time-in-Force, LIFE-01) complete; 6/6 phases done — milestone v1.3 Engine Surface Completion COMPLETE, ready to close. Milestone STARTED 2026-06-12 (promotes Backlog 999.5; phase numbering reset to 1). Scope: signal-contract completion (a, owner-gated), composition/config interface + uniform live `update_config` (b, byte-exact), declared-indicator framework + strategy authoring surface (c, byte-exact), order lifecycle/TIF (d, owner-gated), and a net-new engine-hygiene slice. FL-13→999.3, FL-06→999.2. Requirements in `.planning/REQUIREMENTS.md`; triage in `notes/v1.3-concerns-triage.md`; (c) design in `notes/strategy-authoring-surface-999.5c.md`. v1.2 (Consolidation) SHIPPED — archived under `milestones/v1.2-*`.*
+*Last updated: 2026-06-14 — v1.3 Engine Surface Completion SHIPPED (6 phases / 20 plans / 10 requirements; full evolution review at milestone close). Engine signal/order/composition + authoring surfaces complete; byte-exact phases (1–4) held the BTCUSD oracle, owner-gated phases (5–6) re-baselined under sign-off + cross-validation. Milestone archived under `milestones/v1.3-*`; `REQUIREMENTS.md` removed (fresh one created by the next milestone). Next: N+2 — Margin, Leverage, Shorts & Trailing Stops (Backlog 999.4), start with `/gsd:new-milestone`. v1.0/v1.1/v1.2 also SHIPPED — archived under `milestones/`.*
