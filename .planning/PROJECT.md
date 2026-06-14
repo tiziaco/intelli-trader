@@ -19,6 +19,52 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
+## Current Milestone: v1.4 Margin, Leverage, Shorts & Trailing Stops (Backlog 999.4 / N+2)
+
+**Started 2026-06-14.** The matching-engine / risk-execution milestone — builds directly on the
+signal/order/composition surfaces v1.3 completed. Phase numbering reset to Phase 1 (matching the
+v1.1/v1.2/v1.3 pattern; v1.3 phase dirs archived to `milestones/v1.3-phases/`).
+
+**Goal:** Enable **correct, deterministic, cross-validated short selling + leverage** in backtest,
+backed by a **liquidation model** so portfolio equity can no longer drift impossibly negative
+(closes DEF-01-C) — plus **engine-native trailing stops** and the flagship **long/short
+pair-trading** validation. This is an **owner-gated, result-changing** milestone (M5-style: a new
+golden master freezes ONLY after explicit owner sign-off + external cross-validation against
+`backtesting.py`/`backtrader`).
+
+**Target features (locked scope — "Phase A" core + trailing + pairs; full design folded into
+`ROADMAP.md` 999.4 and `notes/margin-leverage-shorts-999.4.md`):**
+- **`Instrument` value object** (`core/instrument.py`, frozen, mirrors `core/bar.py::Bar`) — the
+  per-symbol source of truth for precision + lot step + `min_order_size` + margin params
+  (`maintenance_margin_rate`, `max_leverage`, `settles_funding`). **Deletes the hard-coded
+  `_INSTRUMENT_SCALES` table** in `core/money.py`; backtest populates by declared→infer(price
+  precision only)→default; live (N+4) fetches per market from the venue. `ExchangeLimits` demoted
+  to a venue-level fallback.
+- **Margin accounting** — reserve `initial_margin = notional / leverage`; reject/clip orders
+  exceeding free margin; track maintenance margin per position.
+- **Liquidation model** — isolated margin, per-bar maintenance-margin breach check on **bar close**
+  (no mark feed on daily OHLCV — honest proxy, documented), configurable penalty, force-close via
+  `FillEvent`. **No new `FillStatus`:** reuse `EXECUTED`; the liquidation engine mints a forced
+  close order (real `strategy_id`/`order_id`) that bypasses admission, tagged with a new
+  `OrderTriggerSource.LIQUIDATION` for the trade log.
+- **Short enablement** — remove the `LONG_ONLY` guard in `StrategiesHandler.add_strategy` + fix the
+  **CR-01 cover-arm hole** in `_resolve_signal_quantity`. Shorts modeled as a first-class direction.
+- **Borrow-interest carry** — `days × price × |size| × (rate/365)` on open shorts (one parameter,
+  no data feed; the spot-margin analogue of funding).
+- **Leverage + levered Kelly** — Kelly fraction > 1 becomes expressible once margin exists.
+- **Engine-native trailing stop** — new `TRAILING_STOP` `OrderType` + `MatchingEngine` ratchet
+  logic; own phase (different subsystem from accounting → separate re-baseline); closed-bar /
+  next-bar look-ahead rule. Native-vs-synthetic live capability seam deferred to N+4.
+- **Real long/short pair trading** — flagship validation (market-neutral cointegration/spread);
+  final, slip-able capstone phase; NOT the correctness oracle (crafted short/leveraged/liquidation
+  scenarios cross-validated are the oracle).
+
+**Deferred OUT of v1.4 (tracked):** Phase B perp realism — funding-rate accrual, mark-price
+liquidation trigger, funding-data pipeline, `freqtrade` as a 4th oracle (`notes/...999.4.md` §8);
+the `Account` abstraction (→ N+4 live — reconciliation has no backtest analogue); the trailing-stop
+native-vs-synthetic live seam (→ N+4); `Portfolio.user_id` removal (independent cleanup, kept out so
+it doesn't muddy the re-baseline).
+
 ## Shipped Milestone: v1.3 Engine Surface Completion (2026-06-14)
 
 **SHIPPED 2026-06-14.** All 6 phases / 20 plans complete; 10/10 requirements validated at audit
@@ -280,7 +326,7 @@ signal/order/composition surfaces v1.3 completed, which is why v1.3 landed first
 | v1.1: each E2E oracle hand-verified once, then regression-locked | A regression-lock proves *stability*, not *correctness*; tiny purpose-built scenarios are hand-computable, so verify expected fills/PnL once before freezing | ✓ Good — shipped v1.1; every leaf hand-verified in a VERIFY note before `--freeze` |
 | v1.1: normalize new data via committed script, not loader logic | Split date/time is an export quirk, not a recurring schema; CSV loading is backtest-only (live uses streaming providers) → no run-path generalization | ✓ Good — shipped v1.1; `CsvPriceStore` byte-unchanged, all four datasets load identically |
 | v1.1: minimal real universe (not a workaround) | Heterogeneous data spans make "asset enters mid-backtest" a real scenario; build a minimal `membership`-from-availability primitive the production screener extends, never a throwaway skip | ✓ Good — shipped v1.1; `is_active`/`active_membership` span primitive, proven over mid-run listings; production screener still deferred to v1.3 |
-| v1.1: opportunistic-cleanup standard (`.planning/codebase/CLEANUP-STANDARD.md`; fix-list at `.planning/codebase/FIX-LIST.md`) | Cleanup is cross-cutting along touched paths only — no big-bang refactor, no oracle re-baseline; a concrete 4-gate executor checklist (path / eligibility / golden-path / bookkeeping) every later-phase executor applies, verified at milestone close | ✓ Good — shipped v1.1; ESTABLISHED Phase 1, VERIFIED at close (CLAR-02); FL-01/FL-02 closed, FL-03/FL-04 along touched paths |
+| v1.1: opportunistic-cleanup standard (`.planning/codebase/CLEANUP-STANDARD.md`; fix-list archived at `.planning/milestones/v1.1-FIX-LIST.md`) | Cleanup is cross-cutting along touched paths only — no big-bang refactor, no oracle re-baseline; a concrete 4-gate executor checklist (path / eligibility / golden-path / bookkeeping) every later-phase executor applies, verified at milestone close | ✓ Good — shipped v1.1; ESTABLISHED Phase 1, VERIFIED at close (CLAR-02); FL-01/FL-02 closed, FL-03/FL-04 along touched paths |
 | v1.1: behavior-preserving across the full surface (no oracle re-baseline) | Breadth coverage must add E2E leaves without changing the v1.0 numbers; result-changing findings are owner-gated, never silently folded in | ✓ Good — shipped v1.1; BTCUSD oracle byte-exact throughout (134 trades / 46189.87730727451); result-changing items (entry price, TIF) deferred to v1.2 |
 | v1.2: MOD-01 god-module split is a dedicated, isolated, LAST phase | The `order_manager.py` fill-reconciliation / reservation-release path is FRAGILE; bundling code-motion with any behavior fix would make a regression unattributable | ✓ Good — shipped v1.2; 1279 → 210-line coordinator, pure code-motion, `on_fill` moved as one intact unit, golden byte-exact + determinism double-run identical |
 | v1.2: consolidation is behavior-preserving (re-baselines nothing) | Clear the cleanup-review + CONCERNS debt without touching the numbers, so engine-surface features later build on a clean foundation; result-changing items deferred to Engine Surface Completion | ✓ Good — shipped v1.2; golden byte-exact across all 6 phases / 23 plans; SIG/COMP/IND/LIFE deferred to Backlog 999.5 |
@@ -325,22 +371,20 @@ This document evolves at phase transitions and milestone boundaries.
 
 **v1.3 — Engine Surface Completion — SHIPPED 2026-06-14.** 6 phases (numbering reset to Phase 1), 20 plans, all 10 v1.3 requirements validated at milestone audit (10/10 requirements, 6/6 phases passed, 5/5 cross-phase seams wired, 5/5 E2E flows — `milestones/v1.3-MILESTONE-AUDIT.md`). The engine's authoring + contract surfaces are complete: class-attribute strategy authoring (STRAT-01), declared-indicator framework with auto-derived warmup (IND-01), engine-level composition API + uniform `update_config` (COMP-01/02), per-intent entry-price/order_type signal contract + streamlined reconcile (SIG-01/02/03 + RECON-01), and run-end TIF expiry (LIFE-01). Byte-exact phases (1–4) held the BTCUSD oracle (134 / `46189.87730727451`); owner-gated phases (5–6) re-baselined under owner sign-off + external cross-validation. `mypy --strict` clean (182 files), full suite 995, e2e 59/59, determinism double-run identical. Phase 6 (Order Lifecycle & Time-in-Force, owner-gated) detail: added `OrderCommand.EXPIRE` + `FillStatus.EXPIRED` enum seams and wired a run-end EXPIRE sweep across all four arms — `LifecycleManager.expire_all_resting()` (deterministic portfolio-then-UUIDv7 order), the `SimulatedExchange` EXPIRE arm (`matching_engine.cancel` + `FillEvent(EXPIRED)`), the `ReconcileManager` EXPIRED arm (idempotent for free via `VALID_ORDER_TRANSITIONS[EXPIRED]==[]`), and the `BacktestRunner` post-loop sweep + provably non-cascading final drain. The dead, unvalidated second signal→order path (`create_order`/`create_orders_from_signal`) was removed, collapsing the engine to one validated `process_signal` path (W4-09/D-03). Result-change is owner-gated and equity-neutral: the SMA_MACD oracle stays byte-exact (134 / `46189.87730727451`); exactly 3 e2e leaves (`matching/never_fill`, `sltp/from_decision_held`, `sltp/from_fill_held`) re-baselined run-end disposition `PENDING→EXPIRED` under explicit owner sign-off (tiziaco, 2026-06-13, `06-ATTRIBUTION.md`). Milestone v1.3 closed and archived 2026-06-14; next milestone N+2 (Backlog 999.4).
 
-## Next Milestone Goals: N+2 — Margin, Leverage, Shorts & Trailing Stops (Backlog 999.4)
+## Next Milestones (after v1.4)
 
-**Next milestone (start with `/gsd:new-milestone`).** v1.3 completed the engine's signal/order/
-composition surfaces; N+2 is the matching-engine / risk-execution milestone that builds directly on
-them. All items are stateful resting-order changes to the same `MatchingEngine` surface, so they
-share one golden master + cross-validation (like M5):
+N+2 (Margin, Leverage, Shorts & Trailing Stops) is now the **current** milestone — see the
+**Current Milestone: v1.4** section above. Remaining backlog, in promotion order (full intent in
+`ROADMAP.md` Backlog):
 
-- **Margin / liquidation model** in `MatchingEngine` + cash/position accounting — today there is NO liquidation model (DEF-01-C): an un-liquidated short can drive equity negative. Add maintenance margin + liquidation.
-- **Unblock shorts** — remove the `LONG_ONLY` guard in `StrategiesHandler.add_strategy` AND fix the CR-01 cover-arm hole (`_resolve_signal_quantity` has no BUY-to-cover arm for a `SHORT_ONLY` book). Consumes v1.3's `Side`-typed action + per-intent order contract.
-- **Leverage / levered Kelly** (fraction > 1 expressible once margin exists) + crypto perp **funding/carry** accounting.
-- **Engine-native trailing stop** — new `TRAILING_STOP` `OrderType` + `MatchingEngine` ratchet logic; look-ahead-safe per the `bar_feed.py` contract. Native-first / synthetic-fallback capability seam on `AbstractExchange` (design note in ROADMAP Backlog).
-- **Real long/short PAIR TRADING** (flagship validation) — market-neutral cointegration/spread strategy; the natural first real use of the short side once the guard is removed.
+- **N+3 — Persistence & Performance** (Backlog 999.2) — durable PostgreSQL state (orders, signals,
+  fills, equity), profiler-guided performance pass, FL-06 (SQL injection / hardcoded creds).
+- **N+4 — Live Trading Readiness** (Backlog 999.3) — real-time data engine, live execution, the
+  `Account` reconciliation abstraction, production screener / dynamic universe membership, FL-13
+  live-system test coverage, the trailing-stop native-vs-synthetic capability seam.
 
-Crypto-first keeps it tractable (no multi-currency, no borrow-locate). Then N+3 (Persistence &
-Performance) and N+4 (Live Trading Readiness) — see ROADMAP.md Backlog. Promote with
-`/gsd:new-milestone`.
+Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-locate). Multi-asset
+(forex / equities / ETF) is deferred indefinitely.
 
 ---
-*Last updated: 2026-06-14 — v1.3 Engine Surface Completion SHIPPED (6 phases / 20 plans / 10 requirements; full evolution review at milestone close). Engine signal/order/composition + authoring surfaces complete; byte-exact phases (1–4) held the BTCUSD oracle, owner-gated phases (5–6) re-baselined under sign-off + cross-validation. Milestone archived under `milestones/v1.3-*`; `REQUIREMENTS.md` removed (fresh one created by the next milestone). Next: N+2 — Margin, Leverage, Shorts & Trailing Stops (Backlog 999.4), start with `/gsd:new-milestone`. v1.0/v1.1/v1.2 also SHIPPED — archived under `milestones/`.*
+*Last updated: 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED (promotes Backlog 999.4 / N+2; phase numbering reset to Phase 1). Owner-gated, result-changing milestone: shorts/leverage/liquidation re-baseline the golden master under owner sign-off + external cross-validation (`backtesting.py`/`backtrader`). Scope locked from the 2026-06-14 brainstorming session — full design in `ROADMAP.md` 999.4 + `notes/margin-leverage-shorts-999.4.md` (Phase A in; Phase B perp realism deferred). v1.0/v1.1/v1.2/v1.3 SHIPPED — archived under `milestones/`.*

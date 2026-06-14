@@ -1,246 +1,175 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-06-12
-**Codebase state:** HEAD `68fff46` — v1.2 Consolidation shipped. 39/46 v1.2-CLEANUP-REVIEW items fixed; W3-07 missed; 10 findings deferred to 999.5/v-next. Golden master locked at 134 trades / `final_equity 46189.87730727451`.
+**Analysis Date:** 2026-06-14
 
----
+> **Scope note.** iTrader is a deliberate brownfield refactor whose *Definition of Done* is the
+> **backtest path only** (`SMA_MACD` on the golden BTCUSD CSV). The vast majority of concerns below
+> live on **deferred subsystems** (live trading, SQL persistence, CCXT/OANDA providers,
+> `my_strategies/`, screeners) that are intentionally out of scope and gated behind `mypy`
+> `ignore_errors` overrides. These are RECORDED, not silently suppressed — each carries an owning
+> milestone. The backtest path itself is regression-locked by a byte-exact golden master
+> (post-v1.3: **134 trades / `final_equity 53229.68512642488`**). Priorities reflect that the
+> golden path is trustworthy and the debt is concentrated off it.
 
 ## Tech Debt
 
-**PostgreSQL order storage is a complete stub (FL-05):**
-- Issue: `PostgreSQLOrderStorage.__init__` raises `NotImplementedError` immediately; every method raises the same. Live trading falls back to in-memory order storage silently (with a warning). Orders do not survive a restart in live mode.
-- Files: `itrader/order_handler/storage/postgresql_storage.py` (all 58 lines are stubs)
-- Impact: Live order persistence is completely absent. `LiveTradingSystem` catches the `NotImplementedError` at startup and downgrades to in-memory with a warning — the fallback is safe but silent in terms of data loss on restart.
-- Fix approach: Implement using `sqlalchemy` (already a dependency). Wire from `OrderStorageFactory.create('live', db_url)`. Owned by backlog 999.2 (N+2 — Persistence & Performance).
+**Deferred order persistence (live):**
+- Issue: `PostgreSQLOrderStorage` is a pure stub — every method raises `NotImplementedError("...Phase 2")`. Live order persistence does not exist.
+- Files: `itrader/order_handler/storage/postgresql_storage.py` (all 57 lines)
+- Impact: Live mode cannot persist or recover the order mirror; only `in_memory` storage works (backtest is fine).
+- Fix approach: Implement the `OrderStorage` interface against SQLAlchemy when the persistence/live milestone (D-sql / D-live) is scheduled. Tracked as `FIX-LIST.md::FL-05` (deferred → v1.3+, still open).
 
-**`Order.action` and `_PendingBracket.action` typed as `str` instead of `Side` (W2-39 / 999.5-a):**
-- Issue: `Order.action: str` at `itrader/order_handler/order.py:49`; `_PendingBracket.action: str` at `itrader/order_handler/brackets/bracket_book.py:40`. All events carry `action: Side` but the entity stores a raw string. The comment "stores str until M4" never completed the follow-through.
-- Files: `itrader/order_handler/order.py:49`, `itrader/order_handler/brackets/bracket_book.py:40`, `itrader/order_handler/brackets/levels.py:27`
-- Impact: Loss of type safety on the bracket/reconcile path; a typo in an action string silently misbehaves instead of failing at the type boundary. Mypy cannot catch mismatches.
-- Fix approach: Retype to `Side` throughout. FRAGILE — touches the reconcile/admission path; requires golden-master re-run. Owned by 999.5-(a) (Signal contract completion).
+**OANDA provider unfinished:**
+- Issue: Provider carries untranslated Italian TODOs and uncertain init logic (`#TODO: da modificare`, `#TODO: da vedere se serve`).
+- Files: `itrader/price_handler/providers/oanda_provider.py:36,74`
+- Impact: OANDA ingestion is not trustworthy at boundary conditions; off the reference path.
+- Fix approach: Finish + test when multi-asset / OANDA ingestion is scheduled. Tracked as `FIX-LIST.md::FL-07` (deferred).
 
-**`create_order` is a second, unvalidated signal→order path (W4-09 / 999.5-d):**
-- Issue: `OrderHandler.create_order` at `itrader/order_handler/order_handler.py:192` bypasses the `process_signal` admission gates and size-enforcement. It was kept for the D-live interface but is publicly callable today.
-- Files: `itrader/order_handler/order_handler.py:192`, `itrader/order_handler/admission/admission_manager.py:277`
-- Impact: A caller using `create_order` directly can produce an `OrderEvent` that never ran the admission gates (direction/max-positions/increase checks, cash reservation). On the backtest path this path is not used by any strategy; the risk is live mode.
-- Fix approach: Either gate with the same admission pipeline or restrict visibility. Decision needed (owner-gated per ROADMAP 999.5-d).
+**Stranded `long_only` compliance TODO duplicated across strategies:**
+- Issue: The same `# TODO: da spostare in order_handler.compliance` note is copy-pasted per strategy; compliance logic belongs in the order handler, not each strategy.
+- Files: `itrader/strategy_handler/my_strategies/momentum/ATR_Hawkes_Momentum_strategy.py:129`, `itrader/strategy_handler/my_strategies/scalping/RSI_scalping_strategy.py:56`, `itrader/strategy_handler/my_strategies/scalping/VWAP_BB_RSI_scalping_strategy.py:38,57`, `itrader/strategy_handler/my_strategies/scalping/Stoch_RSI_Keltner_strategy.py:67`
+- Impact: Compliance rules are scattered and unenforced for non-reference strategies. `my_strategies/*` is flagged in `STATE.md` as user-relocated (OUT of scope).
+- Fix approach: Centralize a compliance gate in `order_handler/admission/`. Tracked as `FIX-LIST.md::FL-08` (deferred → OUT / compliance milestone).
 
-**`ExecutionHandler._resolve_rng_seed` constructs a second `SystemConfig.default()` instead of injection (W4-06):**
-- Issue: `ExecutionHandler._resolve_rng_seed` calls `SystemConfig.default()` directly at handler construction rather than receiving the seed as a constructor argument.
-- Files: `itrader/execution_handler/execution_handler.py:54-62`
-- Impact: A second config parse at every `ExecutionHandler` construction; config cannot be overridden in tests without patching the class method. Low severity on the backtest path but inconsistent with the injection model used everywhere else.
-- Fix approach: Pass `rng_seed` (or the full `SystemConfig`) into `ExecutionHandler.__init__` from the composition root. Owned by 999.5-(b) (composition/config interface).
+**Order state-change persistence undecided (live):**
+- Issue: `# TODO: check if i have to store the state changes permanently in sql when in live trading`.
+- Files: `itrader/order_handler/order.py:328`
+- Impact: `state_changes` accumulate in-memory only; no durable audit trail in live mode.
+- Fix approach: Decide + wire durable state-change persistence with the live/SQL milestone.
 
-**`TIMEZONE` constant is a module-level parse of `Settings.model_fields["timezone"].default` (stale-init risk):**
-- Issue: `itrader/config/__init__.py:62` derives `TIMEZONE` at import time by reading the Pydantic `FieldInfo.default` rather than constructing a `Settings()` instance. An env-var override of `ITRADER_TIMEZONE` at runtime would NOT be reflected in this constant.
-- Files: `itrader/config/__init__.py:62`; callers: `itrader/price_handler/store/csv_store.py`, `itrader/outils/time_parser.py`, `itrader/price_handler/providers/ccxt_provider.py`
-- Impact: In backtest mode the default is always used — the golden run is unaffected. In live mode or when the env var is set, the timezone used in CSVs/feeds would silently diverge from `Settings().timezone`.
-- Fix approach: Pass `timezone` as a constructor argument from the composition root rather than relying on the module-level constant.
-
-**`OrderConfig` does not exist; `OrderManager` takes loose constructor parameters (SYN-05 / 999.5-b):**
-- Issue: Every other domain has a Pydantic config model (`ExchangeConfig`, `PortfolioConfig`, `SystemConfig`). `OrderManager` receives `market_execution` as a stringly-typed parameter, with no config object.
-- Files: `itrader/order_handler/order_manager.py:47-50`; `itrader/config/` (no `order.py`)
-- Impact: No validation, no YAML override, no runtime config-update surface for order behavior. Inconsistent with the rest of the config system.
-- Fix approach: Create `config/order.py::OrderConfig` and thread it through `OrderHandler`/`OrderManager`. Owned by 999.5-(b).
-
-**`get_active_portfolios()` is a list comprehension per tick (W1-13 descoped):**
-- Issue: `PortfolioHandler.get_active_portfolios()` at `itrader/portfolio_handler/portfolio_handler.py:207-209` rebuilds the active-portfolio list on every call. It is called twice per tick from `backtest_trading_system.py:220,285` and once per tick from `live_trading_system.py:314`.
-- Files: `itrader/portfolio_handler/portfolio_handler.py:207-209`, `itrader/trading_system/backtest_trading_system.py:220,285`
-- Impact: O(n) per tick per call. Negligible for single-portfolio runs; scales linearly with portfolio count in multi-portfolio backtests. Descoped from v1.2 (D-10 decision); low priority until multi-portfolio workloads become common.
-- Fix approach: Cache in a `_active_portfolios: list[Portfolio]` maintained on `add_portfolio`/`remove_portfolio`. Owned by 999.5-(b) or standalone.
-
-**`double get_position()` call in admission→sizing (W1-11 / 999.5-a):**
-- Issue: `AdmissionManager` calls `portfolio_handler.get_position()` separately in `_check_increase_gate` (`admission_manager.py:404`) and in the sizing resolver (`admission_manager.py:484,583`). The snapshot is fetched from the read-model twice for the same tick.
-- Files: `itrader/order_handler/admission/admission_manager.py:404,484,583`
-- Impact: Two read-model calls per entry signal where position exists. Threading a snapshot through is safe but touches the fragile admission sequence. Owned by 999.5-(a).
-
-**`pytz` is used in several modules despite stdlib `zoneinfo` being available (Python 3.9+):**
-- Issue: `pytz` imported in `itrader/screeners_handler/screeners_handler.py:3`, `itrader/outils/time_parser.py:2`, `itrader/price_handler/providers/ccxt_provider.py:2`, `itrader/price_handler/providers/oanda_provider.py:2`. `pytz` uses a non-standard timezone folding model that can interact poorly with `datetime.replace` on DST boundaries.
-- Files: All four files above
-- Impact: Mostly cosmetic on crypto (UTC markets, no DST ambiguity); but the `time_parser.py` usage is on the active path. No known bug, but `zoneinfo` is the modern replacement.
-- Fix approach: Replace `pytz.timezone(tz).localize(dt)` with `dt.replace(tzinfo=ZoneInfo(tz))`. Low priority.
-
----
+**Single-instrument money scale registry:**
+- Issue: Only `BTCUSD` has a money-scale override; a general per-token registry is explicitly deferred because the golden dataset is BTCUSD-only.
+- Files: `itrader/core/money.py:21-22,38-46` (`_INSTRUMENT_SCALES` / `_DEFAULT_SCALES`)
+- Impact: Adding any non-BTCUSD instrument silently falls back to default scales (price/qty 8dp), which may mis-round real instruments (e.g. JPY pairs, equities).
+- Fix approach: Build a per-instrument scale registry (config-driven) with the multi-asset milestone.
 
 ## Known Bugs
 
-**`SqlHandler.delete_all_tables` uses unparameterized DDL with string formatting — SQL injection (FL-06):**
-- Symptoms: `DROP TABLE IF EXISTS <symbol>` is constructed via `f'DROP TABLE IF EXISTS {"%s"};' % sym` at `sql_store.py:35`. The symbol comes from `get_symbols_SQL()` which reads table names from the database, but the format is still unsafe.
-- Files: `itrader/price_handler/store/sql_store.py:35`
-- Trigger: Any call to `delete_all_tables()` with a symbol name containing SQL metacharacters, or if the DB is compromised and returns a malicious table name.
-- Workaround: `SqlHandler` is quarantined — not imported at package level (`price_handler/store/__init__.py` documents this). Not on the backtest run path.
+**SQL table-name injection (off backtest path):**
+- Symptoms: `delete_all_tables` and `read_prices` string-interpolate / pass a raw `symbol` as the SQL table name — a malformed/hostile symbol is a SQL-injection vector.
+- Files: `itrader/price_handler/store/sql_store.py:28` (`delete_all_tables`), `:60` (`read_prices`)
+- Trigger: Any symbol value reaching the SQL price store that is attacker- or typo-controlled.
+- Workaround: SQL store is `ignore_errors`-deferred (D-sql) and not on the run path; CSV store (`csv_store.py`) is used for backtest. Tracked as `FIX-LIST.md::FL-06` (deferred → v1.3+). See Security below.
 
-**`SqlHandler.init_engine` has hardcoded credentials:**
-- Symptoms: `create_engine('postgresql+psycopg2://tizianoiacovelli:1234@localhost:5432/trading_system_prices')` at `sql_store.py:17`.
-- Files: `itrader/price_handler/store/sql_store.py:17`
-- Trigger: Any call that constructs `SqlHandler`.
-- Workaround: Module is quarantined and covered by `ignore_errors = true` in mypy. Fix: read from `Settings` / environment variable.
-
-**`Order.expire_order()` exists but is never called on the backtest or live path:**
-- Symptoms: Resting stop/limit orders that never fill remain in `PENDING` status at run end. The `EXPIRED` status and `VALID_ORDER_TRANSITIONS` transition are defined in `core/enums/order.py:72,83`. `expire_order()` at `order_handler/order.py:425` is never invoked from the engine.
-- Files: `itrader/order_handler/order.py:425`; `itrader/core/enums/order.py:72,83`; `itrader/trading_system/backtest_trading_system.py` (no run-end sweep)
-- Trigger: Any backtest that ends with resting orders.
-- Workaround: None currently. The equity curve is unaffected (positions are marked-to-market from the bar feed), but the order mirror is inaccurate at run end. Owned by 999.5-(d).
-
-**`PortfolioValidator.validate_transaction_data` accepts `float` parameters — bypasses Decimal policy:**
-- Symptoms: `itrader/portfolio_handler/validators.py:20-53` accepts `price: float`, `quantity: float`, `commission: float` and uses `isinstance(price, (int, float))` as the type guard. This class is not on the main fill path but could silently accept float money.
-- Files: `itrader/portfolio_handler/validators.py:20-53`
-- Trigger: Any caller that uses `PortfolioValidator.validate_transaction_data`.
-- Workaround: The main fill path (`transact_shares` → `process_transaction`) does not call this validator directly. Low risk in practice.
-
-**`itrader/portfolio_handler/portfolio.py:26` defines `TOLERANCE = 1e-3` as a float constant:**
-- Symptoms: `TOLERANCE = 1e-3` is defined at module level but not used in any Decimal comparison in that file (position quantity guard uses `Decimal("0.000001")` correctly). Dead float constant at the money module boundary creates confusion.
-- Files: `itrader/portfolio_handler/portfolio.py:26`
-- Trigger: Any reader who assumes `TOLERANCE` drives a live comparison.
-- Workaround: N/A — it is simply dead code that could mislead.
-
----
+**Screener window-arg bug + untested timing path:**
+- Symptoms: `volume_spyke` SMA "non prende window come argomento" (window arg not applied); `screeners/base.py` `to_timedelta(frequency)` marked untested.
+- Files: `itrader/screeners_handler/screeners/volume_spyke.py:40`, `itrader/screeners_handler/screeners/base.py:29`
+- Trigger: Running the (deferred) screener subsystem.
+- Workaround: Screeners are a deferred subsystem (`screeners_handler.*` under `mypy ignore_errors`); not exercised on the backtest path. Tracked as `FIX-LIST.md::FL-09` (deferred → screener milestone).
 
 ## Security Considerations
 
-**Hardcoded PostgreSQL credentials in `SqlHandler` (FL-06):**
-- Risk: Username `tizianoiacovelli` and password `1234` are in plaintext source code at `sql_store.py:17`. If the file is committed to a public repo or leaked, credentials are exposed.
-- Files: `itrader/price_handler/store/sql_store.py:17`
-- Current mitigation: The module is quarantined (not imported at package level); `ignore_errors = true` in mypy. Not on any active execution path.
-- Recommendations: Read from `Settings` (which supports `ITRADER_` env-var prefix via `pydantic-settings`); remove hardcoded credentials entirely.
+**SQL injection via symbol → table name:**
+- Risk: See "Known Bugs" above — raw symbol used as a table identifier in DDL/DML.
+- Files: `itrader/price_handler/store/sql_store.py:28,60`
+- Current mitigation: Module is deferred and not on the run path; backtest uses CSV. No production exposure today.
+- Recommendations: Validate/whitelist symbols and use a fixed schema with parameterized columns (never identifier interpolation) before any live SQL use.
 
-**SQL table-name injection in `SqlHandler.delete_all_tables` and `read_prices`:**
-- Risk: Symbol name is interpolated directly into DDL/DML. `delete_all_tables` uses `%` string formatting into a `text()` call; `read_prices` passes the raw `symbol` as the table name to `pd.read_sql`.
-- Files: `itrader/price_handler/store/sql_store.py:35,60-70`
-- Current mitigation: Module is quarantined; not reachable from the backtest path.
-- Recommendations: Use SQLAlchemy `Table`/`quoted_name` to safely construct DDL; parameterize symbol lookups.
+**Secrets in `.env` and `oanda.cfg`:**
+- Risk: DB URLs and exchange API credentials live in `.env` (loaded by `Makefile` via `include .env`) and an `oanda.cfg` referenced by the OANDA provider.
+- Files: `.env` (repo root), `oanda.cfg` (referenced by `itrader/price_handler/providers/oanda_provider.py`)
+- Current mitigation: `.env`/settings are gitignored in production; `pydantic-settings` reads `ITRADER_`-prefixed vars (`itrader/config/settings.py`).
+- Recommendations: Confirm `.env` and `oanda.cfg` are never committed; move live secrets to a secret manager before live deployment.
 
-**`LiveTradingSystem` falls back to in-memory order storage when `SYSTEM_DB_URL` is unset:**
-- Risk: Silent data loss — orders are not persisted and are lost on restart. The warning is logged but not escalated to an error or startup failure.
-- Files: `itrader/trading_system/live_trading_system.py:121-135`
-- Current mitigation: Warning log at `WARNING` level.
-- Recommendations: Make the fallback opt-in via a config flag (e.g. `allow_memory_fallback=False` by default); fail loudly in production.
-
----
+**Broad `RuntimeError` re-raise masks provider error class (low risk):**
+- Risk: CCXT provider catches `except Exception` and re-raises as a generic `RuntimeError`, losing the original error type/context for callers.
+- Files: `itrader/price_handler/providers/ccxt_provider.py:35`
+- Current mitigation: Specific `ccxt.NetworkError`/`ccxt.ExchangeError` are caught first; the broad arm is the fallthrough. Off the backtest path.
+- Recommendations: Preserve the original exception via `raise ... from e` and a typed `DataError` when the provider is hardened.
 
 ## Performance Bottlenecks
 
-**`SMAMACDStrategy.generate_signal` recomputes full-window SMA + MACD from scratch on every tick (W1-05 / 999.5-c):**
-- Problem: Both SMA slices and the MACD indicator are computed over the full bar window on every bar. The W1-12 MACD-inside-guard reorder (shipped in v1.2 Phase 3) reduced wasted MACD calls, but SMA is still computed unconditionally. At 100-bar windows over a 2018–2026 daily dataset this is dominated by pandas rolling — not a crisis, but scales poorly.
-- Files: `itrader/strategy_handler/strategies/SMA_MACD_strategy.py:78-93`
-- Cause: Stateless recompute-everything design inherited from the original strategy. The IND-01 indicator framework (999.5-c) will add an opt-in incremental state layer; the stateless path stays as the byte-exact baseline.
-- Improvement path: Owned by 999.5-(c). Short-term: no change needed (single-strategy golden run is fast). Long-term: declared-indicator framework with incremental state.
+**No retry / timeout / rate-limit backoff in data download providers:**
+- Problem: Transient network/exchange failures bail rather than retry; long downloads can fail near the end and restart from scratch.
+- Files: `itrader/price_handler/providers/ccxt_provider.py`, `itrader/price_handler/providers/oanda_provider.py`
+- Cause: Single-shot request loops with no backoff/resume.
+- Improvement path: Add bounded exponential backoff + per-symbol checkpointing during the (deferred) live/ingestion milestone. Tracked as `FIX-LIST.md::FL-10` (deferred → live).
 
-**Data-download providers have no retry, timeout, or rate-limit backoff (FL-10):**
-- Problem: `CcxtProvider.download_data` at `itrader/price_handler/providers/ccxt_provider.py` catches a broad `Exception` and re-raises immediately (`except Exception as e: raise`). Any transient network failure aborts the download with no retry.
-- Files: `itrader/price_handler/providers/ccxt_provider.py:35`, `itrader/price_handler/providers/oanda_provider.py`
-- Cause: No retry/backoff wrapper around the ccxt/tpqoa calls.
-- Improvement path: Add `tenacity` or a simple exponential-backoff loop around the exchange fetch. Owned by backlog 999.4 (D-live).
-
----
+> Note: The backtest run path itself is performance-conscious by design — `BacktestBarFeed`
+> precomputes resampled frames once and uses `searchsorted` per tick (zero per-tick resample,
+> per ARCHITECTURE.md). No backtest-path performance concern was identified.
 
 ## Fragile Areas
 
-**`test_position_manager.py` asserts through `pm._storage` private internals (W3-07 — MISSED in v1.2):**
-- Files: `tests/unit/portfolio/test_position_manager.py:62,63,79,80,118,135,136,148,149,354,361,362,393,426` (~14 sites)
-- Why fragile: Tests reach into `pm._storage` directly instead of using `get_all_positions()` / `get_closed_positions()`. Any rename or backend swap of `_storage` breaks these tests without a corresponding contract change. This was the one item in the v1.2 cleanup review that was planned (NAME-04, Phase 5) but not completed.
-- Safe modification: Replace `pm._storage.get_positions()` with `pm.get_all_positions()` and `pm._storage.get_closed_positions()` with `pm.get_closed_positions()`. SAFE — no golden-master re-run needed.
-- Test coverage: These tests are themselves the coverage; fixing them is a pure refactor.
+**Fill-reconciliation / reservation-release path (FRAGILE-zone):**
+- Files: `itrader/order_handler/reconcile/reconcile_manager.py` (354 lines), `itrader/order_handler/order_manager.py`
+- Why fragile: This is the load-bearing terminal-state reconciliation (EXECUTED→FILLED, CANCELLED→CANCELLED, REFUSED→REJECTED) plus the idempotent reservation-release invariant. `STATE.md` explicitly flags it as the FRAGILE zone and co-phases all edits so `reconcile/` is touched once per re-baseline. A `should_release` arming mistake either double-releases or strands a reservation.
+- Safe modification: Touch only under a single owner-gated re-baseline with cross-validation; preserve the `else: raise NotImplementedError` terminal-status fallthrough (`reconcile_manager.py:255`) that fails loud BEFORE `should_release` is armed rather than silently mis-reconciling as REFUSED.
+- Test coverage: Covered by the integration oracle + e2e suite, but the path is intolerant of partial edits.
 
-**Broad `except Exception` in domain logic — 32 sites (FL-12):**
-- Files: `itrader/order_handler/admission/admission_manager.py:247,258,303,652`, `itrader/order_handler/reconcile/reconcile_manager.py:194,218`, `itrader/order_handler/lifecycle/lifecycle_manager.py:141,215`, `itrader/order_handler/brackets/bracket_manager.py:209`, `itrader/portfolio_handler/portfolio_handler.py:163,203,341,368,467,480,491`, `itrader/execution_handler/exchanges/simulated.py:154,315`, `itrader/events_handler/full_event_handler.py:126`, `itrader/trading_system/live_trading_system.py:234,271,328,367,503`
-- Why fragile: Broad catches swallow unexpected programming errors (AttributeError, TypeError) silently. The event loop must not stall (documented in CONVENTIONS.md as the intentional run-mode policy), but inside domain managers the intent is to catch domain exceptions — a programming error like a missing attribute is indistinguishable from a handled domain failure.
-- Safe modification: Narrow to typed domain exceptions (`ITraderError` subclasses) as each handler is touched. Awareness-only; by-design at the event-loop boundary per CLAUDE.md.
+**Broad `except Exception` in domain handlers (by design, awareness-only):**
+- Files: `itrader/portfolio_handler/portfolio_handler.py` (7 sites: `:166,206,348,375,484,495`), `itrader/execution_handler/exchanges/simulated.py:169,352`, `itrader/order_handler/{admission,lifecycle,brackets,reconcile}/*`, `itrader/trading_system/live_trading_system.py` (5 sites)
+- Why fragile: Broad catches can mask programming errors. **This is intentional** per CLAUDE.md — the event loop must not stall, and all sites log with context. Note the run-mode policy split: backtest is fail-fast (`EventHandler._on_handler_error` re-raises), live is publish-and-continue.
+- Safe modification: When already editing one of these handlers, narrow the catch to the specific domain exception. Do NOT do a blanket sweep — the broad-except policy is documented and not-to-be-relitigated (`CONVENTIONS.md`). Tracked as `FIX-LIST.md::FL-12` (awareness-only).
 
-**Screeners subsystem is wired but untested and deferred (FL-09):**
-- Files: `itrader/screeners_handler/screeners_handler.py`, `itrader/screeners_handler/screeners/volume_spyke.py:40`, `itrader/screeners_handler/screeners/base.py:29`
-- Why fragile: `ScreenersHandler` is wired into both `BacktestTradingSystem` and `LiveTradingSystem` and registered in `EventHandler._routes` for the TIME event — but no screeners are ever added in any test or golden run. The `volume_spyke` screener has a confirmed bug (TODO: `sma` does not accept `window` as an argument). The `base.py` `to_timedelta` call is marked untested.
-- Safe modification: Do not add screeners until the subsystem is hardened. Adding any screener to a live run risks silent failures swallowed by the broad handler catches.
-- Test coverage: Zero screener unit tests. Integration test `test_dispatch_registry.py` covers only the empty SCREENER route.
-
-**Binance WebSocket streamer has an unbounded `completed_bars` accumulation bug (FL-11):**
-- Files: `itrader/price_handler/providers/binance_stream.py:175-176`
-- Why fragile: `self.completed_bars = []` is reset to a new empty list and then `.append(msg['s'])` is called — effectively only ever holding one element per `_process_bar` call. While this reset actually prevents unbounded growth (the list is always length 1), the `prices[sym]` DataFrame is sliced to `tail(max_prices_length)` but the `completed_bars` reference pattern is confusing and not tested. The streamer is also completely excluded from mypy (`ignore_errors = true`).
-- Safe modification: Owned by backlog 999.4 (D-live). Do not use `BinanceStream` in production without a review of the full streaming path.
-
-**`LiveTradingSystem` uses `BacktestBarFeed` and `CsvPriceStore` as a stub (D-live gap):**
-- Files: `itrader/trading_system/live_trading_system.py:106-107`
-- Why fragile: The live system wires `CsvPriceStore()` (with no CSV path — it constructs but reads no data) and `BacktestBarFeed` as a shim. Calling `feed.bind()` in `_initialize_live_session` will fail silently because the store has no bars. Any live strategy that requests bar data will receive an empty frame or raise.
-- Safe modification: Only safe to use `LiveTradingSystem` with strategies that do not call `feed.generate_bar_event`. A real live feed is owned by backlog 999.4 (D-live).
-
----
+**Binance live streamer unbounded buffer:**
+- Files: `itrader/price_handler/providers/binance_stream.py:43,175-176` (`completed_bars`)
+- Why fragile: `completed_bars` is a plain list appended per completed bar with no size bound — unbounded memory growth in long-running live sessions.
+- Safe modification: Replace with a bounded `collections.deque(maxlen=...)` or drain-and-clear when the streamer is hardened. Tracked as `FIX-LIST.md::FL-11` (deferred → live).
 
 ## Scaling Limits
 
-**In-memory order storage — backtest only:**
-- Current capacity: All orders for all portfolios held in a Python dict. No limit enforced, but memory grows linearly with trade count across the full run.
-- Limit: Memory-only; no disk overflow. Fine for a single multi-year backtest (134 trades for SMA_MACD). Would need measurement for high-frequency or universe-wide runs.
-- Scaling path: `PostgreSQLOrderStorage` once implemented (999.2).
+**Single-symbol golden dataset / BTCUSD-only assumptions:**
+- Current capacity: Backtest is validated and money-scale-tuned for BTCUSD only.
+- Limit: Multi-asset / multi-currency portfolios are not exercised; money scales, universe membership, and screeners are single-asset-shaped today.
+- Scaling path: Per-instrument money-scale registry (`core/money.py`), multi-asset universe + screener validation — scheduled for the N+2 margin/shorts/multi-asset milestone (Backlog 999.4).
 
-**In-memory portfolio state storage — per-portfolio snapshot list:**
-- Current capacity: `metrics_manager` stores up to `max_snapshots=10000` equity snapshots per portfolio (configurable); the trim guard fires on every tick now that W1-15 was fixed with a `snapshot_count()` accessor (shipped v1.2 Phase 3).
-- Limit: 10000 daily bars ≈ 27 years of daily data. The golden dataset (2018–2026, ~2920 bars) is safely within this limit.
-- Scaling path: Persist snapshots to PostgreSQL (999.2).
-
----
+**In-memory order + portfolio state (live):**
+- Current capacity: Order mirror and portfolio state are in-memory; durable persistence is a stub.
+- Limit: A live process crash loses all order/portfolio state; no recovery.
+- Scaling path: Implement `PostgreSQLOrderStorage` + order state-change persistence with the live/SQL milestone.
 
 ## Dependencies at Risk
 
-**`pandas-ta 0.4.71b0` is a beta pin (FL-14):**
-- Risk: The package version pinned in `pyproject.toml:18` is a pre-release beta (`0.4.71b0`). Beta packages may have breaking API changes in patch releases or be abandoned. Used by `my_strategies/` filters and the screener's `volume_spyke` screener.
-- Impact: Not on the reference backtest path (`SMA_MACD` uses `ta`, not `pandas-ta`). Risk is isolated to `my_strategies/` and the deferred screeners subsystem.
-- Migration plan: Pin to a stable release if one ships; or vendor the required indicator functions. Low urgency while `my_strategies/` is excluded from scope.
+**`pandas-ta 0.4.71b0` (beta pin):**
+- Risk: A beta-version dependency pinned exactly; underpins strategy filters / SLTP models.
+- Impact: Supply-chain/stability risk; a yanked or breaking beta could break non-reference strategy code.
+- Migration plan: Isolated to non-reference strategy code (not the `SMA_MACD` golden path). Re-evaluate / pin to a stable release when strategies are productionized. Tracked as `FIX-LIST.md::FL-14` (deferred → isolated).
 
-**`pandas-ta` is also excluded from mypy (`ignore_missing_imports = true`):**
-- Risk: API changes in `pandas-ta` are invisible to the type checker.
-- Files: `pyproject.toml:120-123`
+**Third-party libs without type stubs:**
+- Risk: `ta`, `pandas_ta`, `ccxt`, `pandas`, `scipy`, `plotly`, `sklearn`, `statsmodels`, `pytz`, `tqdm`, `yaml` are `ignore_missing_imports` in mypy.
+- Impact: No type safety at these call boundaries; runtime type errors are not caught by `mypy --strict`.
+- Migration plan: Acceptable trade-off (documented in `pyproject.toml:111-120`); add local stubs only if a boundary becomes a recurring bug source.
 
----
+**`psycopg2-binary` for production:**
+- Risk: `psycopg2-binary` is documented by upstream as unsuitable for production (binary wheel).
+- Impact: Potential runtime issues under production load when SQL/live is enabled.
+- Migration plan: Switch to `psycopg2` (source build) or `psycopg[binary]`/`psycopg` v3 when the persistence milestone lands.
 
 ## Missing Critical Features
 
-**Live price feed — no real streaming bar source:**
-- Problem: `LiveTradingSystem` uses `CsvPriceStore` and `BacktestBarFeed` as a stub. There is no wired path from `BinanceStream` or `CcxtProvider` to the event queue's BAR route.
-- Blocks: Any live trading deployment.
+**Live order persistence + recovery:**
+- Problem: `PostgreSQLOrderStorage` is a stub; no durable order/portfolio state in live mode.
+- Blocks: Crash-safe live trading and post-restart reconciliation.
 
-**OANDA provider is unfinished with Italian-language TODOs (FL-07):**
-- Problem: `itrader/price_handler/providers/oanda_provider.py:36` (`#TODO: da modificare`) and `:74` (`# TODO: da vedere se serve`) indicate incomplete translation/porting from an earlier Italian codebase. The `load_markets()` call is tagged as needing rework.
-- Files: `itrader/price_handler/providers/oanda_provider.py:36,74`
-- Blocks: OANDA live data ingestion.
+**Offline ingestion pipeline:**
+- Problem: `itrader/price_handler/ingestion.py` is a stub that raises loudly ("offline ingestion pipeline — deferred to the persistence milestone (D-sql)").
+- Blocks: Provider → store data pipeline for refreshing/extending the price database.
 
-**Deferred mypy coverage — live system, SQL store, providers, screeners:**
-- Problem: `itrader/trading_system/live_trading_system.py`, `itrader/trading_system/trading_interface.py`, `itrader/price_handler/store/sql_store.py`, all provider modules, `itrader/screeners_handler.*` carry `ignore_errors = true` in `pyproject.toml:87-100`. Type errors in these modules are completely invisible to the gate.
-- Files: `pyproject.toml:86-100`
-- Blocks: mypy cannot catch regressions in the live path.
-
-**`stale pyproject.toml` mypy override for the deleted `screener_event_handler.py`:**
-- Problem: `pyproject.toml:96` lists `itrader.events_handler.screener_event_handler` as an `ignore_errors` module. The file no longer exists in the tree (deleted in a prior cleanup). The override is a no-op but documents a latent `AttributeError` risk if the module is ever recreated without proper initialization.
-- Files: `pyproject.toml:96`
-- Fix: Remove the stale override entry.
-
----
+**Centralized strategy compliance gate:**
+- Problem: `long_only`/compliance checks are scattered as per-strategy TODOs (see Tech Debt).
+- Blocks: Uniform admission/compliance enforcement across strategies.
 
 ## Test Coverage Gaps
 
-**`LiveTradingSystem` and `TradingInterface` have zero test coverage (FL-13):**
-- What's not tested: All threading, start/stop/status lifecycle, `_publish_and_continue` error policy, `_initialize_live_session`, `_event_processing_loop`, `TradingInterface` order creation and validation.
-- Files: `itrader/trading_system/live_trading_system.py` (550 lines, 0 tests), `itrader/trading_system/trading_interface.py` (220 lines, 0 tests)
-- Risk: Any regression in the live system is undetectable until a live run.
-- Priority: High (live path; the most critical surface without coverage).
+**Live trading system + trading interface have zero test coverage:**
+- What's not tested: The entire live path — threaded event processing, start/stop/status lifecycle, order creation/validation via the external-API bridge.
+- Files: `itrader/trading_system/live_trading_system.py` (550 lines), `itrader/trading_system/trading_interface.py`
+- Risk: The largest untested critical surface; live regressions are invisible. (No `tests/*live*` or `*trading_interface*` files exist.)
+- Priority: Medium for now (off the backtest DoD path); High before any live deployment. Tracked as `FIX-LIST.md::FL-13` (deferred → live).
 
-**Screeners subsystem has zero unit tests:**
-- What's not tested: `ScreenersHandler.screen_markets`, `ScreenersHandler.init_screeners`, all concrete screeners under `screeners_handler/screeners/`.
-- Files: `itrader/screeners_handler/` (all files)
-- Risk: The subsystem is wired into the engine and will silently fail or misbehave when a screener is added.
-- Priority: Medium — deferred to 999.4 (D-screener).
+**Deferred subsystems untested:**
+- What's not tested: CCXT/OANDA/Binance providers, SQL price store, screeners, `my_strategies/*`.
+- Files: `itrader/price_handler/providers/*`, `itrader/price_handler/store/sql_store.py`, `itrader/screeners_handler/*`, `itrader/strategy_handler/my_strategies/*`
+- Risk: Boundary bugs (provider retries, SQL injection, screener window arg) surface only when these are activated.
+- Priority: Low until the owning milestone activates each subsystem.
 
-**`my_strategies/` has no test coverage and is excluded from mypy:**
-- What's not tested: `ATR_Hawkes_Momentum_strategy`, `RSI_scalping_strategy`, `VWAP_BB_RSI_scalping_strategy`, `Stoch_RSI_Keltner_strategy`, and custom indicators in `my_strategies/custom_indicators/`.
-- Files: `itrader/strategy_handler/my_strategies/` (all files)
-- Risk: Strategies that carry compliance TODOs (`long_only` guard not moved to `order_handler.compliance` — 5 files) will silently accept short signals that the order handler may or may not reject.
-- Priority: Low — `my_strategies/` is out of scope per ROADMAP; targeted for relocation to a separate repo.
-
-**`test_position_manager.py` uses private `pm._storage` instead of public API (W3-07 MISSED):**
-- What's not tested: The PUBLIC `get_all_positions()` / `get_closed_positions()` query path (only the internal storage is asserted).
-- Files: `tests/unit/portfolio/test_position_manager.py:62,63,79,80,118,135,136,148,149,354,361,362,393,426`
-- Risk: A backend swap or rename of `_storage` breaks the tests without signaling a behavioral contract change. Low immediate risk.
-- Priority: Medium — SAFE fix (rewrite assertions to public API; no golden-master re-run needed).
+**Custom indicator untested:**
+- What's not tested: `ehlers_indicators` — module note literally says "TODO: to be tested."
+- Files: `itrader/strategy_handler/my_strategies/custom_indicators/ehlers_indicators.py:228`
+- Risk: Incorrect indicator output for non-reference strategies.
+- Priority: Low (off reference path).
 
 ---
 
-*Concerns audit: 2026-06-12 — HEAD 68fff46, v1.2 Consolidation shipped*
+*Concerns audit: 2026-06-14*

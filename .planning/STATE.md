@@ -1,129 +1,176 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Engine Surface Completion
-status: Awaiting next milestone
-stopped_at: v1.3 milestone closed and archived (2026-06-14); awaiting /gsd:new-milestone for N+2
-last_updated: "2026-06-14T06:01:08.685Z"
-last_activity: 2026-06-14 — Milestone v1.3 completed and archived
+milestone: v1.4
+milestone_name: Margin, Leverage, Shorts & Trailing Stops
+status: planning
+last_updated: "2026-06-14T11:30:00.000Z"
+last_activity: 2026-06-14
 progress:
   total_phases: 6
-  completed_phases: 6
-  total_plans: 20
-  completed_plans: 20
-  percent: 100
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-14 — v1.3 Engine Surface Completion SHIPPED + full evolution review)
+See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with complete signal/order contracts, a real composition/config interface, and a declared-indicator + authoring surface, BEFORE N+2 builds margin/shorts on these same surfaces.
-**Current focus:** No active milestone — v1.3 shipped and archived 2026-06-14 (`milestones/v1.3-*`). Next: N+2 — Margin, Leverage, Shorts & Trailing Stops (Backlog 999.4); start with `/gsd:new-milestone`. The `999.x` entries are future-milestone (N+2/N+3/N+4) backlog seeds.
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
+**Current focus:** v1.4 — Margin, Leverage, Shorts & Trailing Stops (6 phases, numbering reset to Phase 1). Roadmap created 2026-06-14; all 20 requirements mapped (100% coverage). Next: plan Phase 1 (Instrument Value Object) with `/gsd:plan-phase 1`.
 
 ## Current Position
 
-Phase: Milestone v1.3 complete
+Phase: 1 — Instrument Value Object (not started)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-14 — Milestone v1.3 completed and archived
+Status: Roadmap created, awaiting phase planning
+Last activity: 2026-06-14 — v1.4 roadmap created (6 phases, 20/20 requirements mapped)
 
-## Milestone Gate (v1.3 — applies per phase, per re-baseline tag)
+## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
-**Two re-baseline disciplines run side by side. Each phase declares which it is:**
+**Two re-baseline disciplines run side by side. Each phase declares which it is.** This is an
+M5-style **owner-gated, result-changing** milestone: enabling shorts/leverage/liquidation changes
+results, so each result-changing phase re-baselines the golden master ONLY after explicit owner
+sign-off (full attribution) + external cross-validation (`backtesting.py` 0.6.5 / `backtrader`
+1.9.78.123). The existing SMA_MACD spot oracle (134 trades / `final_equity 46189.87730727451`)
+stays byte-exact except where shorts/leverage legitimately change a leaf.
 
-**Byte-exact phases (1-4: Engine Hygiene, Strategy Authoring Surface, Declared-Indicator
-Framework, Composition & Config Interface)** — re-baseline NOTHING. Each must hold:
+**Held throughout, all phases:**
+
+- `mypy --strict` clean across all source files
+- Decimal end-to-end (including liquidation formula + interest accrual; `float()` only at the
+  serialization/logging edge); no new float-for-money; single UUIDv7 ID scheme
+- Determinism double-run byte-identical (reuse the seeded RNG + injected `BacktestClock`; introduce
+  no new nondeterminism)
+
+**Byte-exact phase (Phase 1 — Instrument Value Object)** — re-baseline NOTHING. Must hold:
 
 - `pytest tests/integration` byte-exact oracle: **134 trades / `final_equity 46189.87730727451`**
-- `pytest tests/e2e -m e2e` **58/58 green** (no leaf re-baselined); full suite green
-- **`mypy --strict` clean** across all source files
-- No new float-for-money; single UUIDv7 ID scheme (no second `uuid4()` on the run path)
-- Determinism double-run byte-identical
+- `pytest tests/e2e -m e2e` green (no leaf re-baselined); full suite green
+- **Behavioral gate:** `BTCUSD` ALWAYS takes the declared 8dp branch — inference would drift the
+  oracle. Whether the backtest *snaps/rounds* via `Instrument` (vs storing metadata only) is the
+  result-changing decision and must hold the oracle byte-exact.
 
-**Owner-gated phases (5: Signal Contract & Reconcile (FRAGILE); 6: Order Lifecycle & TIF)** —
-result-changing. The new golden master is frozen **ONLY** after explicit owner sign-off with full
-attribution, validated by external cross-validation (`backtesting.py`/`backtrader`). `mypy --strict`
-clean and determinism double-run byte-identical still hold.
+**Owner-gated phases (2: Margin & Leverage; 3: Shorts & Carry; 4: Liquidation & Cross-Validation)** —
+result-changing accounting core. The new golden master freezes **ONLY** after explicit owner sign-off
+with full attribution, validated by external cross-validation.
 
-- **FRAGILE-zone rule (Phase 5):** SIG-03 (`action`→`Side` + snapshot threading) and RECON-01
-  (`on_fill`/`should_release` streamline) both touch the FRAGILE fill-reconciliation /
-  reservation-release path (`order_manager.py` `reconcile/`). They are CO-PHASED so `reconcile/` is
-  touched **once** under a single re-baseline + cross-validation, not twice. The idempotent
-  release-on-every-terminal-reconciliation invariant must hold (EXECUTED→FILLED, CANCELLED→CANCELLED,
-  REFUSED→REJECTED).
+- **ONE accounting-core re-baseline, gated by XVAL-01 (Phase 4).** The crafted, hand-computable,
+  adversarial scenarios (pure short, leveraged long, forced liquidation) cross-validated against
+  `backtesting.py`/`backtrader` are the **correctness oracle** — NOT pair trading. The accounting
+  core (margin + shorts + liquidation) re-baselines under that one owner-gated XVAL-01 gate.
 
-- **Re-baseline separation:** owner-gated (result-changing) and byte-exact requirements are kept in
-  SEPARATE phases so a byte-exact phase's golden gate is a clean pass/fail and each result-changing
-  phase owns its re-baseline.
+**Owner-gated phase (5: Engine-Native Trailing Stops)** — its OWN re-baseline, separate from the
+accounting core (a DIFFERENT subsystem: `MatchingEngine` resting-order ratchet vs portfolio/cash
+accounting). Cross-validated (TRAIL-03) against `backtesting.py`/`backtrader`. Look-ahead rule: the
+trail updates from CLOSED-bar extremes and is live for the NEXT bar — never trail to this bar's
+extreme and trigger off the same bar.
 
-## Phase Map (v1.3 — Phases 1-6)
+**Capstone phase (6: Pair-Trading Flagship)** — NOT a re-baseline of the SMA_MACD oracle (additive
+flagship strategy). NOT the correctness oracle (a two-leg market-neutral strategy partially cancels
+its own sign errors → weak oracle). Self-contained and slip-able to a follow-on without blocking the
+shippable margin/shorts core.
 
-Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from the 10 v1.3 requirements + the co-phasing /
-re-baseline hard constraints. (Numbering reset for v1.3, matching v1.1/v1.2; v1.2 phase dirs archived
-to `.planning/milestones/v1.2-phases/`, so there is no directory collision.)
+## Phase Map (v1.4 — Phases 1-6)
+
+Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from the 20 v1.4 requirements + the locked
+sequencing (Instrument first; the margin/shorts/liquidation accounting core under one owner-gated
+XVAL-01 re-baseline; trailing stops as a separate subsystem with its own re-baseline; pair trading
+as the final, slip-able capstone). Numbering reset to Phase 1 (matching v1.1/v1.2/v1.3; v1.3 phase
+dirs archived to `.planning/milestones/v1.3-phases/`, so the new `01-*..06-*` dirs do not collide —
+only the `999.2`/`999.3` backlog seed dirs remain in `.planning/phases/`).
 
 | Phase | Name | Requirements | Re-baseline | Depends on |
 |-------|------|--------------|-------------|------------|
-| 1 | Engine Hygiene | HYG-01 | Byte-exact (no run-path touch) | — |
-| 2 | Strategy Authoring Surface | STRAT-01 | Byte-exact | 1 |
-| 3 | Declared-Indicator Framework | IND-01 | Byte-exact | 2 |
-| 4 | Composition & Config Interface | COMP-01, COMP-02 | Byte-exact | 3 (consumes P2 `init()`) |
-| 5 | Signal Contract & Reconcile (FRAGILE) | SIG-01, SIG-02, SIG-03, RECON-01 | Owner-gated (single re-baseline + cross-validation) | 4 |
-| 6 | Order Lifecycle & Time-in-Force | LIFE-01 | Owner-gated | 5 |
+| 1 | Instrument Value Object | INST-01, INST-02, INST-03 | Byte-exact (BTCUSD declared 8dp; oracle holds) | — |
+| 2 | Margin Accounting & Leverage | MARGIN-01/02/03, LEV-01, LEV-02 | Owner-gated (part of the accounting-core re-baseline, frozen at P4/XVAL-01) | 1 |
+| 3 | Shorts & Borrow Carry | SHORT-01/02/03, CARRY-01 | Owner-gated (accounting-core re-baseline, frozen at P4/XVAL-01) | 2 |
+| 4 | Liquidation & Cross-Validation Re-baseline | LIQ-01/02/03, XVAL-01 | Owner-gated — THE accounting-core golden re-baseline (cross-validated + owner sign-off) | 2 AND 3 |
+| 5 | Engine-Native Trailing Stops | TRAIL-01, TRAIL-02, TRAIL-03 | Owner-gated — OWN re-baseline (MatchingEngine subsystem) | 4 |
+| 6 | Pair-Trading Flagship | PAIR-01 | Capstone — additive, NOT a re-baseline; slip-able | 3, 4 |
 
-**Sequencing rationale:** STRAT-01 (P2) ships before COMP-02 (P4) because its re-runnable idempotent
-`init()` is the seam `StrategiesHandler.update_config` consumes; IND-01 (P3) sits between (auto-warmup
-re-derived on `init()` re-run). The FRAGILE signal/reconcile core (P5) lands after the composition/config
-infra (P4); LIFE-01 (P6) is self-contained and last. N+2 (margin/shorts) extends the completed SIG/COMP
-surfaces, which is why v1.3 lands first.
+**Sequencing rationale:** INST-* (P1) is foundational — margin/liquidation/leverage all consume the
+per-instrument `Instrument`; it deletes `_INSTRUMENT_SCALES`. Margin (P2) precedes shorts (P3 — a
+short reserves margin and carry rides shorts) and liquidation (P4 — needs maintenance margin AND
+shorts to liquidate). Liquidation (P4) co-phases XVAL-01 because all three crafted scenario types
+(short, leveraged-long, liquidation) exist by then — it is the single owner-gated accounting-core
+re-baseline. Trailing stops (P5) are a different subsystem (resting-order ratchet, not accounting),
+so they own a separate re-baseline. Pair trading (P6) is the final, slip-able capstone — the flagship
+"shorts work end-to-end" demo, NOT the correctness oracle.
 
 ## Performance Metrics
 
-**Velocity (v1.2):**
+**Velocity (v1.3):**
 
-- Total plans completed: 43
+- Total plans completed: 20
 - Average duration: — min
 - Total execution time: 0.0 hours
 
-*Updated after each plan completion. v1.0/v1.1 velocity is archived in the respective MILESTONE-AUDIT.md.*
+*Updated after each plan completion. v1.0/v1.1/v1.2/v1.3 velocity is archived in the respective MILESTONE-AUDIT.md.*
 
 ## Accumulated Context
 
+### Roadmap Evolution
+
+- v1.4 roadmap created 2026-06-14 (promotes Backlog 999.4 / N+2): 6 phases derived from the 20 v1.4
+  requirements; all 20 mapped (100% coverage). Phase 999.4 backlog entry marked PROMOTED-TO-v1.4
+  (design intent retained as the historical seed); 999.2 (N+3) / 999.3 (N+4) backlog entries kept
+  intact. Phase B perp realism (FUND-01..04) folded into the N+4 backlog seed; ACCT-01 stays in N+4.
+- Phase 999.4 edited (pre-promotion): added Scope bullet for the minimal crypto-only Instrument value
+  object; refined Instrument seed to the 7-field set + layered price precision (declared-wins →
+  infer-guarded → default, oracle stays declared); funding is flag not rate; min_order_size moved onto
+  Instrument; ExchangeLimits demoted to venue fallback.
+- Phase 999.3 edited: added Scope bullet for dynamic universe membership (UniverseSelectionModel poll
+  seam), sequenced near the N+4 data engine.
+
 ### Decisions
 
-Active decisions live in PROJECT.md Key Decisions. Load-bearing program constraints still in force for v1.3:
+Active decisions live in PROJECT.md Key Decisions. Load-bearing program constraints + the v1.4 locked
+scope decisions:
 
-- Money = Decimal end-to-end; float money is a correctness defect (HYG-01 closes the latent `validate_transaction_data` float boundary).
-- IDs = single UUIDv7 scheme via `uuid-utils`.
-- **Two re-baseline disciplines (v1.3):** byte-exact phases (1-4) hold the v1.1 E2E golden suite + BTCUSD oracle (134 trades / `final_equity 46189.87730727451`) byte-for-byte; owner-gated phases (5-6) re-baseline only after explicit owner sign-off + external cross-validation. Result-changing and byte-exact requirements are kept in SEPARATE phases.
-- **Co-phasing (HARD):** SIG-01/02/03 + RECON-01 land in ONE FRAGILE reconcile phase (Phase 5) — SIG-03 and RECON-01 both touch the FRAGILE fill-reconciliation / reservation-release path, so `reconcile/` is touched once under one re-baseline, not twice.
-- **Sequencing seam:** STRAT-01 (P2) before COMP-02 (P4) — the re-runnable idempotent `init()` is what `StrategiesHandler.update_config` consumes (re-validate → re-run `init()` → re-derive warmup).
-- **Phase numbering reset to 1 for v1.3** (matching v1.1/v1.2). The v1.2 phase working dirs were archived to `.planning/milestones/v1.2-phases/`, so there is no directory collision. The `999.x` backlog entries are FUTURE milestones (N+2/N+3/N+4), left intact in ROADMAP.md `## Backlog`.
-- **Deferred OUT of v1.3:** FL-13 (live-system test coverage) → 999.3; FL-06 (SQL injection) → 999.2. Both pushed down to their owning milestone (live/persistence), not the backtest engine surface.
-- [v1.3 Phase 02 / 02-01]: `core/exceptions/strategy.py` added — `UnknownParamError`/`MissingParamError` subclass the house `ValidationError` (never bare `ValueError`, RESEARCH §Don't Hand-Roll); engine call-shapes `UnknownParamError(sorted(kwargs))` (stores `self.names`, `field="strategy_params"`) and `MissingParamError(name)` (stores `self.name`, `field=name`) are satisfiable. Re-exported via the barrel. Zero run-path touch — byte-exact (oracle 134/46189.87730727451, e2e 58/58). Plan-02 engine imports these symbols.
-- **[LOCKED → Phase 3 / IND-01] Framework-derived warmup (owner directive, closes 02-REVIEW WR-03):** Phase 3's declared-indicator framework MUST auto-derive `warmup`/`max_window` from the declared indicators' lookbacks (`max` over each) and REPLACE the hand-set `warmup`/`max_window` class attrs on `SMAMACDStrategy` — removing the WR-03 footgun (an author can currently set `warmup=0`, the handler short-circuit then under-gates, and `generate_signal` hits `IndexError` on a sub-warmup frame, aborting the fail-fast run). HARD byte-exact constraint: the derived value for `SMAMACDStrategy` MUST equal exactly **100** (= `max(long_window=100, slow_window+signal_window≈15)`), or the oracle drifts off `46189.87730727451`. This is BLOCKED until indicators are declared (can't derive from inline `ta.SMAIndicator`/`ta.MACD` calls in `generate_signal`) — which is precisely why IND-01 owns it. The interim defensive guard was deliberately NOT added in Phase 2 (keeps D-15 handler-side gating clean); WR-03 is deferred from the Phase-2 `--fix` and resolved structurally in Phase 3.
-
-- [v1.3 Phase 03 / 03-01]: Standalone `indicators/` package + flat `primitives.py` landed (D-03/04/05/07/08). `catalog.py` ships SMA/MACDHist/EMA/RSI singleton adapters typed against an `IndicatorAdapter` Protocol, each with `compute(...)` + `min_period(params)`; `[BYTE-EXACT]` SMA sliced input (`bars[start_dt:][col]`, `start_dt = now - timeframe*window`, `fillna=True` — Pitfall 1) and MACDHist full-window (`fillna=False`, no slice). D-08 min_period is first-valid only (SMA/EMA/RSI→w; MACDHist→slow+signal==15 ⇒ reference `max(50,100,15)==100`). `handle.py` holds `IndicatorHandle` (moved OUT of `base.py`, NO base import — one-directional `base → indicators`, no cycle): `[-1]`/`[-2]`→float via `.iloc`, `__len__==0` pre-repopulate, `repopulate`→`adapter.compute`, `min_period()` delegates. `primitives.py` (flat sibling): crossover/crossunder/is_above/is_below with D-02 inclusive-on-current-bar semantics + scalar broadcast via `_at`. Zero run-path touch — byte-exact (oracle 134/46189.87730727451, e2e 58/58, mypy --strict 176 files, 35 new unit tests). Plan 02 imports these symbols and base.py auto-warmup derives from `handle.min_period()`.
-
-(v1.2 per-plan decisions are archived in `milestones/v1.2-ROADMAP.md` and the phase records under `milestones/v1.2-phases/`. The v1.2 Phase-6 decomposition decisions below are retained because Phase 5 of v1.3 builds directly on the `reconcile/` collaborator they created.)
-
-- [v1.2 Phase 06 / 06-05]: D-10 step 5 (FRAGILE, LAST): extracted reconcile/ — ReconcileManager (TAB, no queue) owns on_fill moved VERBATIM as ONE indivisible intact unit; should_release/try/finally/release-in-finally interplay byte-for-byte unchanged; the two cross-bucket seams rewired with NO sibling edge — WR-05 orphaned-child cancel via self.cancel_order coordinator callback, fill-anchored children via injected coordinator-owned BracketManager; golden byte-exact (134/46189.87730727451), determinism double-run byte-identical. This is the clean, bounded enabling surface v1.3 RECON-01 was designed to refactor.
-- [v1.2 Phase 06 / 06-03]: AdmissionManager owns the 9-method signal→order pipeline (process_signal + create_orders_from_signal INTACT, plus _estimate_commission/_get_signal_exchange/_build_primary_order/_enforce_direction_admission/_enforce_position_admission/_resolve_signal_quantity/_reject_unsized_signal) — the surface v1.3 SIG-01/02/03 + W1-11 snapshot threading touch.
-- [v1.2 Phase 06 / 06-01]: BracketBook is single owner of the pending-bracket map; _PendingBracket moved to brackets/bracket_book.py with action kept `str` — v1.3 SIG-03 retypes `_PendingBracket.action` to `Side` here.
-- [v1.2 Phase 02 / 2026-06-11] D-07 gap-discovery delta: the W2-10/DEC-02 "latent `Decimal < float` TypeError" on the below-minimum validation path was a MISDIAGNOSIS — Decimal-vs-float COMPARISON works in Py3; only arithmetic raises and there is none on `_min/_max_order_size`. (Retained as standing context for any v1.3 validator-path touch in SIG-03 / W4-04.)
-- [Phase ?]: [v1.3 Phase 02 / 02-02]: Strategy authoring surface landed — base Strategy __init__ is now (**kwargs) with a stdlib get_type_hints introspection engine, a 3-entry _COERCE enum table (timeframe/order_type/direction), and init()/validate()/reconfigure() hooks (D-02/D-06/D-09/D-10/D-12). ALL engine knobs MUST be annotated (get_type_hints returns only annotated names; deviation from the RESEARCH skeleton). reconfigure falls back to prior INSTANCE value for omitted required fields (OQ1). Pydantic config layer (config/strategy.py, BaseStrategyConfig) fully deleted (D-01); SignalRecord.config retyped to dict (D-04). Suite intentionally RED at 10 construction sites pending 02-03 (all-or-broken D-05); mypy --strict itrader/ clean.
-- [Phase ?]: [v1.3 Phase 02 / 02-03]: All strategy construction sites migrated from (name, config) to the kwargs class-attr surface (D-05, no shim); strategy unit tests rewritten for the class-attr engine (unknown/missing/override/coerce/no-coerce/validate/idempotent/reconfigure/dict-snapshot). Byte-exact gate GREEN: oracle 134/46189.87730727451, e2e 58/58, mypy --strict clean (172 files), full suite 853 green, determinism double-run identical. missing-required tested via EmptyStrategy (SMA pins sizing_policy); non-coercion via max_positions (short_window collides with validate()). Zero re-baseline.
-- [v1.3 Phase 03 / 03-02]: Strategy-base framework landed + full run/test path migrated (D-06/D-08, one lockstep). `base.py` owns `self.indicator(adapter, input, *params) -> IndicatorHandle` (imported from `indicators/`, one-directional, no cycle), the `evaluate(ticker, window)` seam (stashes `self.bars`/`self.now = window.index[-1]`, repopulates handles, dispatches `generate_signal(ticker)`), and `_run_init` (resets `_handles` before `init()`, idempotent — re-run by `reconfigure`). `generate_signal` dropped `bars` (D-06); the `StrategiesHandler.calculate_signals` call-site swapped to `strategy.evaluate(ticker, data)`. `SMAMACDStrategy` is fully primitive-driven (`is_above`/`crossover`/`crossunder` over handles), hand-set `warmup`/`max_window` DELETED -> auto-derived `warmup == max_window == 100`. **DEVIATION from the must_have prose:** `warmup` is UNCONDITIONALLY derived from handle `min_period` (the WR-03 footgun fix — the real D-08 goal), but `max_window = max(derived, type(self).max_window)` — the literal "zero-handle overwrite to 0" claim BREAKS the byte-exact e2e/integration golden (`feed.window(..., max_window=0, ...)` returns `frame.iloc[pos:pos]` = empty against a REAL feed, so count/date-keyed fixtures never fire and `evaluate`'s `window.index[-1]` raises). The fetch width therefore never shrinks below a hand-set value; `evaluate()` also guards an empty window (`self.now = None`, skip repopulate). Byte-exact gate HELD: oracle 134/46189.87730727451, e2e 58/58, full suite 890 green, mypy --strict 176 files, determinism double-run identical.
-- [Phase 03]: [v1.3 Phase 03 / 03-03]: Byte-exact phase gate LOCKED with ZERO re-baseline — migrated declared-indicator SMAMACDStrategy is byte-exact against the frozen BTCUSD oracle (134 trades / final_equity 46189.87730727451, EXACT, no tolerance via pdt.assert_frame_equal + exact summary-dict). Pitfall 1 (per-indicator SMA slice) + Pitfall 2 (eager-vs-lazy MACD reorder) proven correct — the oracle is the ONLY proof (no SMA_MACD unit test guards the MACD value). Determinism double-run byte-identical; e2e 58/58; full suite 890 green under filterwarnings=[error]; mypy --strict clean (176 files). Both plan tasks were VERIFICATION-ONLY: Task 1 confirmed to_dict()/SignalRecord.config still carries auto-derived max_window/warmup==100 (get_type_hints introspection; signal_record.py NOT edited, no data migration); Task 2 conditional fix-forward scope (indicators/catalog.py SMA slice, handle.py IndicatorHandle, base.py imports) NEVER triggered — steady-state touched no source. Phase 3 declared-indicator framework (Plans 01-03) complete and numerically trustworthy; ROADMAP Success Criterion 4 satisfied.
-- [v1.3 Phase 04 / 04-01]: Three standalone COMP-01 contracts landed (byte-exact-inert, ZERO run-path import — Wave 2 consumes them). **D-15 CommissionEstimator** (`core/commission_estimator.py`, 4 spaces): `@runtime_checkable` Protocol with the primitive `__call__(self, quantity: Decimal, price: Decimal) -> Decimal`, ZERO `itrader` imports (mirrors `portfolio_read_model.py`); structural conformance tested + written append-ready for the Wave-2 (04-02 Task 2) D-15 LATE-BINDING test (post-fee-swap non-zero estimate — adapter doesn't exist yet). **D-05 OrderConfig** (`config/order.py`, 4 spaces): thin Pydantic model, `ConfigDict(extra="forbid")`, `market_execution: MarketExecution = IMMEDIATE`, `default()`. **A1 CONFIRMED TRUE** — pydantic v2 coerces the string `"immediate"` to the `MarketExecution.IMMEDIATE` MEMBER with NO custom validator (Trap 5 coercion-equivalence byte-identical to today's ctor `MarketExecution(market_execution)`); `use_enum_values` deliberately NOT used (would store the str). `MarketExecution` stays in `core/enums/` (config-enum exception). **D-01/D-02 SystemSpec** (`trading_system/system_spec.py`, TABS): `ScenarioSpec`/`PortfolioSpec`/`Action` promoted field-for-field, run-mode-agnostic name (NOT `BacktestSpec`), fields match the e2e harness by name; `actions`+`Action` kept for a single-spec Wave-4 collapse; NOT yet wired into any run path. `mypy --strict` clean 176->179 files; 10 new unit tests green; oracle (134/46189.87730727451) + e2e 58/58 untouched (no run-path touch). COMP-01 remains OPEN (this plan lands only the foundational primitives; the composition-root collapse is Wave 2+).
-- [Phase ?]: [v1.3 Phase 04 / 04-02]: Composition-root collapse landed byte-exact. compose_engine (trading_system/compose.py) is the shared mode-agnostic wiring seam — order_storage + signal_store backends injected by the FACTORY (grep "'backtest'"==0, D-14a). FeeModelCommissionEstimator holds the exchange ref, reads fee_model in __call__ (D-15 late binding); the oracle-dark post-fee-swap non-zero test pins it (swap via the LIVE update_config enum API — string coercion is Wave 3). BacktestRunner owns the fail-fast loop, post-bar record_metrics DIRECT call preserved (Trap 4). TradingSystem renamed BacktestTradingSystem (thin holder) + build_backtest_system(spec) factory (D-04); a TradingSystem alias + legacy __init__ + engine-delegating properties keep oracle/integration/e2e/scripts byte-exact by rename only until Wave 4. D-13/Trap 1: hardcoded register_symbol('BTCUSD') removed; COMPLETE set (default preset ∪ {BTCUSD} ∪ spec tickers) seeded into ExchangeConfig.limits at construction (replacement-safe); TEMPORARY no-config fallback unions {BTCUSD} (asserted, Wave 4 removes it). D-16/Trap 3: _resolve_rng_seed reads config.performance.rng_seed off the singleton (seed 42). OrderConfig threaded + commission_estimator retyped (D-05). print_metrics_summary lifted into reporting/summary.py (W4-07). GATE: oracle 134/46189.87730727451 exact, e2e 58/58, mypy --strict 181 files, full suite 854 green, determinism double-run identical.
-- [Phase ?]: 04-03: canonical update_config(dict)->None on all 5 config-model handlers; shared config/merge.py deep_merge; pydantic ValidationError wrapped into ConfigurationError; oracle-dark byte-exact held
-- [Phase ?]: 04-04: non-config-model update_config landed — StrategiesHandler name-keyed reconfigure delegation (D-09) + BacktestBarFeed raise-only interface-conformance (D-10); both match the core.ConfigurationError single-catch contract; oracle-dark byte-exact (134/46189.87730727451, e2e 58/58, mypy 182)
-- [Phase 05 / 05-04]: OWNER-SIGNED LIMIT GOLDEN FROZEN (D-07) — ONE externally cross-validated (backtesting.py 0.6.5 + backtrader 1.9.78.123, gating) LIMIT-entry golden on the real BTCUSD dataset, proving the SIG-01/SIG-02 `buy_limit` authoring surface end-to-end (resting limit fills a LATER bar 2018-09-05 @ 7155.9698 → SL same bar @ 6798.17131; marketable limit fills at OPEN 2018-09-14 @ 6487.39 → SL same bar @ 6471.16155; trade_count 2; final_equity 9503.442073) and exercising RECON-01 entry-fill→bracket reconciliation. Owner (tiziaco, 2026-06-13) signed off with full attribution, explicitly accepting the **A1 LEGITIMATE-DIFFERENCE** (iTrader fills the same-bar protective SL intrabar; BOTH gating engines defer the contingent SL to the next bar and AGREE with each other — 0 BUG, iTrader numbers kept). Golden frozen at `tests/e2e/matching/entries/limit_entry_crossval/golden/{trades.csv,summary.json}` via the e2e `--freeze` harness; the xfail pending-golden marker removed so the leaf is a live green diff-on-drift regression lock; owner sign-off block appended to `tests/golden/CROSS-VALIDATION-LIMIT.md`. The crafted strategy + two LIMIT runners + orchestrator are SCRIPT-ONLY (D-10, never imported under tests/). GATE: the EXISTING SMA_MACD oracle stays byte-exact (134 / 46189.87730727451) — additive NEW golden, no re-baseline of the old one; e2e leaf green. Tasks 1/2 (4729448, c2fdc6f) + Task 3 (75fb676).
-- [Phase 04 / 04-05]: BYTE-EXACT PROOF WAVE — phase 4 PROVEN byte-exact (COMP-01 + COMP-02 complete). e2e _build_and_run COLLAPSED onto build_backtest_system(spec): the D-14 post-construction fee/slippage re-init seam + the additive register_symbol loop REMOVED (subsumed by construction-time ExchangeConfig threading + complete symbol seeding, D-01/D-13/D-14). scenario_spec.py UNIFIED onto the promoted SystemSpec (ScenarioSpec = SystemSpec alias + PortfolioSpec/Action re-export — no leaf edited). All scripts/integration TradingSystem sites migrated to BacktestTradingSystem (D-03); the Wave-2 TradingSystem alias REMOVED; the legacy direct-construction __init__ now seeds its own complete ExchangeConfig (routes the backtest path off the ExecutionHandler no-config fallback, which STAYS for the out-of-scope live + unit direct-construction consumers). [Rule 1] Fixed a latent Wave-2 factory bug: add_portfolio used exchange=spec.ticker (unregistered venue → no fills) → corrected to 'csv'; only activated once the e2e path ran through the factory. D-12 scope fence HELD (no ReconfigureEvent / TradingInterface reconfigure bridge; LiveTradingSystem untouched). GATE: oracle 134/46189.87730727451 EXACT, determinism double-run byte-identical, e2e 58/58, full suite 946 green under filterwarnings=[error], mypy --strict clean (182 files). Zero re-baseline.
+- Money = Decimal end-to-end; float money is a correctness defect — applies to the liquidation formula
+  and interest accrual (`float()` only at the serialization/logging edge).
+- IDs = single UUIDv7 scheme via `uuid-utils`. Determinism = seeded RNG + injected `BacktestClock`;
+  v1.4 introduces NO new nondeterminism.
+- **Owner-gated, result-changing milestone (M5-style):** enabling shorts/leverage/liquidation changes
+  results; the new golden master freezes ONLY after explicit owner sign-off (full attribution) +
+  external cross-validation (`backtesting.py`/`backtrader`). The SMA_MACD oracle (134 /
+  46189.87730727451) stays byte-exact except where a leaf legitimately changes.
+- **Instrument first (LOCKED):** INST-* is foundational. `Instrument` (`core/instrument.py`, frozen,
+  mirrors `core/bar.py::Bar`) is the per-symbol source of precision + lot step + `min_order_size` +
+  margin params; `core/money.py::quantize` reads precision from it; the hard-coded `_INSTRUMENT_SCALES`
+  table is DELETED. BTCUSD stays declared 8dp (inference would drift the oracle). Whether the backtest
+  *snaps* via Instrument is the behavioral gate. `ExchangeLimits` demoted to a venue-level fallback.
+- **Accounting core = one owner-gated re-baseline at Phase 4 (LOCKED):** margin (P2) + shorts (P3) +
+  liquidation (P4) are the tightly-coupled accounting core. Liquidation depends on maintenance margin
+  AND on shorts existing to be liquidated; carry rides shorts; levered Kelly needs margin. The single
+  owner-gated golden re-baseline is gated by XVAL-01 (cross-validation + owner sign-off), co-phased
+  with Liquidation (P4) where all three crafted scenario types exist. Phases are kept clean and
+  independently verifiable rather than one giant phase.
+- **Liquidation — NO new `FillStatus` (LOCKED):** reuse `FillStatus.EXECUTED`; the liquidation engine
+  mints an admission-bypassing forced-close order (real `strategy_id`/`order_id`) tagged
+  `OrderTriggerSource.LIQUIDATION`, reconciling through the existing position/cash/order-mirror path.
+  The penalty rides the existing `commission`/fee field. (Resolves §9 Q2 of the design note.)
+- **Trailing stop = SEPARATE phase, OWN re-baseline (LOCKED):** a different subsystem (`MatchingEngine`
+  resting-order ratchet, not portfolio/cash accounting). Sequenced after the accounting core (P5).
+  Look-ahead rule: trail updates from CLOSED-bar extremes, active the NEXT bar. The native-vs-synthetic
+  live capability seam is deferred to N+4.
+- **Pair trading = FINAL, slip-able capstone; NOT the correctness oracle (LOCKED):** the crafted
+  short/leveraged/liquidation scenarios under XVAL-01 are the oracle. Pair trading is the flagship
+  long/short demonstration, scoped as a distinct last phase so it can slip to a follow-on without
+  blocking the shippable margin/shorts core.
+- **Phase numbering reset to 1 for v1.4** (matching v1.1/v1.2/v1.3). The v1.3 phase dirs were archived
+  to `.planning/milestones/v1.3-phases/`, so the new `01-*..06-*` dirs do not collide. The `999.x`
+  backlog entries are FUTURE milestones (N+3/N+4), left intact in ROADMAP.md `## Backlog`; 999.4 is
+  marked PROMOTED-TO-v1.4.
+- **Deferred OUT of v1.4 (tracked):** Phase B perp realism (FUND-01..04: funding-rate accrual,
+  mark-price liquidation trigger, funding-data pipeline, `freqtrade` 4th oracle) → future / N+4 data
+  work; the `Account` reconciliation abstraction (ACCT-01) → N+4 live; the trailing-stop
+  native-vs-synthetic live seam → N+4; `Portfolio.user_id` removal → independent cleanup (kept out so
+  it doesn't muddy the re-baseline).
 
 ### Pending Todos
 
@@ -131,91 +178,84 @@ None yet.
 
 ### Blockers/Concerns
 
-- **Two-discipline guardrail (milestone-wide):** byte-exact phases (1-4) must re-run the SMA_MACD golden master byte-exact (zero drift) and keep `pytest tests/e2e -m e2e` 58/58 green; owner-gated phases (5-6) re-baseline only after explicit owner sign-off + external cross-validation, with full attribution.
-- **FRAGILE zone (Phase 5):** `order_manager.py` fill-reconciliation / reservation-release (`reconcile/`, `admission/`) — touched once under one re-baseline for SIG-03 + RECON-01 co-phased; the idempotent terminal-release invariant must hold. The v1.2 Phase-6 intact-move into `reconcile/` is the designed enabling surface.
-- **Owner-gate dependency:** Phases 5 and 6 cannot freeze a new golden without explicit owner sign-off — plan them so the result-change is fully attributed before re-baseline.
-- **Indentation hazard:** tabs in handler modules (`order_handler/`, `strategy_handler/`); 4 spaces in `config/`/`core/`/`price_handler/feed/`/events package — match the file, never normalize (a mixed-indentation edit breaks a tab file). Phases 2-5 touch tab-indented strategy/order modules.
-- New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not silently folded into a running phase.
+- **Owner-gate dependency:** Phases 2-5 cannot freeze a new golden without explicit owner sign-off —
+  plan them so the result-change is fully attributed before re-baseline. The accounting-core
+  re-baseline (P2+P3+P4) is gated by XVAL-01 at Phase 4; Phase 5 (trailing) owns its own re-baseline.
+- **BTCUSD oracle protection (Phase 1):** the `Instrument` precision-resolution MUST route BTCUSD
+  through the declared 8dp branch — inference from BTCUSD data would yield ~2-4dp and drift the golden
+  master off `46189.87730727451`. The byte-exact gate is the proof.
+- **Correctness oracle = crafted scenarios, NOT pair trading:** lock correctness with crafted,
+  hand-computable, adversarial scenarios (pure short, leveraged long, forced liquidation)
+  cross-validated against `backtesting.py`/`backtrader` (XVAL-01). A two-leg market-neutral strategy
+  partially cancels its own sign errors and is a weak oracle.
+- **FillEvent forced-close shape (Phase 4):** confirm the forced-close `FillEvent` reconciles cleanly
+  through the existing position/cash/order-mirror path with NO new `FillStatus` (LOCKED design above);
+  open question §9 Q2 of the design note is resolved but verify at plan time.
+- **Indentation hazard:** tabs in handler modules (`order_handler/`, `strategy_handler/`,
+  `execution_handler/`, `portfolio_handler/`); 4 spaces in `config/`/`core/`/`price_handler/feed/`/
+  events package — match the file, never normalize (a mixed-indentation edit breaks a tab file). v1.4
+  touches `core/` (new `Instrument`, 4 spaces) AND tab-indented portfolio/execution/strategy modules.
+- **CR-01 cover-arm hole (Phase 3):** `_resolve_signal_quantity` (in `order_manager.py` `admission/`)
+  has no BUY-to-cover arm for a `SHORT_ONLY` book — a cover falls through to entry sizing and flips the
+  book long. This is the oracle-dark critical surfaced at v1.0 Phase 7 (07-REVIEW), routed here.
+- New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
+  silently folded into a running phase (it would corrupt the owner-gated re-baseline attribution).
 
 ### Quick Tasks Completed
 
-(v1.0 quick tasks archived in `milestones/v1.0-MILESTONE-AUDIT.md`; v1.1/v1.2 per-phase plan
-records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
+(v1.0 quick tasks archived in `milestones/v1.0-MILESTONE-AUDIT.md`; v1.1/v1.2/v1.3 per-phase plan
+records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `milestones/v1.3-phases/`.)
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
-| 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger (WR fixes already in HEAD; re-verified 34/34) | 2026-06-14 | 191e21f | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
-| Phase 02 P02 | ~25 min | 3 tasks | 7 files |
-| Phase 02 P03 | ~20 min | 3 tasks | 10 files |
-| Phase 03 P01 | ~15 min | 2 tasks | 6 files |
-| Phase 03 P02 | ~40 min | 3 tasks | 9 files |
-| Phase 03 P03 | ~10 min | 2 tasks | 0 files |
-| Phase 04 P01 | 12 | 3 tasks | 5 files |
-| Phase 04 P02 | 35 | 3 tasks | 11 files |
-| Phase 04 P03 | 40min | 3 tasks | 17 files |
-| Phase 04 P04 | 15 | 2 tasks | 4 files |
-| Phase 04 P05 | 30 | 3 tasks | 10 files |
-| Phase 05 P04 | ~9 min | 3 tasks | 9 files |
+| 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger | 2026-06-14 | 191e21f | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
 
 ## Bookkeeping
 
-- **v1.1 phase dirs archived:** the v1.1 phase working directories were moved to
-  `.planning/milestones/v1.1-phases/` (done before the v1.2 phase-number reset, so renumbering
-  v1.2 to Phases 1-6 produced no directory collision).
+- **v1.1 phase dirs archived:** moved to `.planning/milestones/v1.1-phases/` (before the v1.2
+  phase-number reset, so renumbering v1.2 to Phases 1-6 produced no directory collision).
 
-- **v1.2 phase dirs archived (2026-06-12, at milestone close):** the six v1.2 phase working
-  directories (`01`–`06`) were moved to `.planning/milestones/v1.2-phases/`. Only the `999.x`
-  backlog seed dirs remain alongside the new v1.3 phase dirs in `.planning/phases/`.
+- **v1.2 phase dirs archived (2026-06-12):** the six v1.2 phase working directories (`01`-`06`) moved
+  to `.planning/milestones/v1.2-phases/`.
 
 - **v1.3 phase dirs archived (2026-06-14, at milestone close):** the six v1.3 phase working
-  directories (`01`–`06`) were `git mv`'d to `.planning/milestones/v1.3-phases/`. The superseded
-  `999.5-engine-surface-completion` seed dir (shipped as v1.3) was removed. Only the `999.x` backlog
-  seed dirs for future milestones (`999.2`/`999.3`/`999.4` → N+3/N+4/N+2) remain in `.planning/phases/`.
+  directories (`01`-`06`) were `git mv`'d to `.planning/milestones/v1.3-phases/`. Only the `999.x`
+  backlog seed dirs (`999.2`/`999.3`) remain in `.planning/phases/`, so the new v1.4 `01-*..06-*`
+  dirs will not collide.
 
 ## Deferred Items
 
-Program-level items out of scope for v1.3, with their target milestone:
+Program-level items out of scope for v1.4, with their target milestone:
 
 | Category | Item | Status | Target |
 |----------|------|--------|--------|
+| Perp realism (Phase B) | Funding-rate accrual (FUND-01), mark-price liquidation trigger (FUND-02), funding-data pipeline (FUND-03), `freqtrade` 4th oracle (FUND-04) | Deferred | future / N+4 data work (additive on the v1.4 core) |
+| Live account | `Account` reconciliation mirror (`CashAccount`/`MarginAccount`) (ACCT-01) | Deferred | N+4 Live Readiness (Backlog 999.3) |
+| Live execution | Trailing-stop native-vs-synthetic capability seam on `AbstractExchange` | Deferred | N+4 (Backlog 999.3) |
+| Backtest accounting | Cross-margin (account-wide collateral pool / joint liquidation) | Deferred | beyond Phase B (own milestone) |
+| Margin realism | Tiered maintenance-margin brackets (v1.4 = flat per-instrument MMR, first-tier cap) | Deferred | future (schema wired for a tier table) |
+| Perps | Inverse / coin-margined perps; bankruptcy price / insurance fund / ADL; hedge mode | Deferred | each its own milestone (crypto-first linear USD) |
+| Cleanup | `Portfolio.user_id` removal (app-layer multi-tenancy concern) | Deferred | N+4 (with the connector); kept out of v1.4 to protect the re-baseline |
 | Live coverage | `LiveTradingSystem`/`TradingInterface` test coverage (FL-13) | Deferred | N+4 Live Readiness (Backlog 999.3) |
 | Persistence/security | SQL injection + hardcoded creds in `SqlHandler` (FL-06) | Deferred | N+3 Persistence (Backlog 999.2) |
-| D-margin | Margin/liquidation model, shorts, leverage, levered Kelly, trailing stop, real pair trading | Deferred | N+2 (Backlog 999.4) |
-| D-compliance | Compliance layer (long_only/short_only enforcement) | Deferred | N+2 (with shorts) |
 | D-sql | SQL persistence backends (order/price/reporting/config) | Deferred | N+3 (Backlog 999.2) |
 | D-screener | Production screener / ranking / rebalance loop (minimal `membership` shipped v1.1) | Deferred | N+4 (Backlog 999.3) |
 | D-live | Live mode (streaming, TradingInterface modify/cancel, live threading, secrets) | Deferred | N+4 |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions (forex/equities/ETF) | Deferred | indefinite (crypto-first) |
-| D-oanda | OANDA + non-crypto adapters | Deferred | with D-multiasset |
 | Indicators | IND-02 incremental/stateful indicator backends (behind the IND-01 stable interface) | Deferred | future (post-v1.3) |
-| Tooling | `pytz` → stdlib `zoneinfo` migration; broad `except Exception` narrowing | Captured (no commitment) | opportunistic / backlog |
 | OUT | `my_strategies/*` (relocated to separate repo by user) | Out-of-band | — |
 
-v1.0/v1.1/v1.2 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md
-files under `milestones/`. The four v1.2 quick tasks flagged only by the `gsd-sdk` SDK-port filename
-bug were verified canonically complete (`status: complete`) and accepted at v1.2 close.
-
-**Acknowledged at v1.3 close (2026-06-14):** the pre-close `audit-open` ledger flagged 5 quick-tasks
-as `missing`; all 5 were verified canonically complete (`status: complete` in their SUMMARY
-frontmatter) and acknowledged — the flag is a tracking-ledger gap, not open work. 4 predate v1.3.
-
-| Category | Item | Status |
-|----------|------|--------|
-| quick_task | 260605-ih3-fix-wr-01-weekly-dst-check-timeframe-anc | complete (2026-06-05, pre-v1.3) |
-| quick_task | 260608-a59-demote-by-design-signal-rejection-logs-f | complete (2026-06-08, pre-v1.3) |
-| quick_task | 260608-qe2-pre-milestone-close-enum-cleanup-move-tr | complete (2026-06-08, pre-v1.3) |
-| quick_task | 260610-sjp-close-fl01-fl02 | complete (2026-06-10, pre-v1.3) |
-| quick_task | 260614-atk-v1-3-tech-debt-doc-reconcile-requirement | complete (2026-06-14, v1.3 close) |
-
-Nyquist Wave-0 partial on phases 2/3/6 (behavioral net = oracle + 59-leaf e2e + `mypy --strict`).
+v1.0/v1.1/v1.2/v1.3 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md
+files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-13T16:09:44.882Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-order-lifecycle-time-in-force/06-CONTEXT.md
+Last session: 2026-06-14T11:30:00.000Z
+Stopped at: v1.4 roadmap created (6 phases, 20/20 requirements mapped)
+Resume file: .planning/ROADMAP.md (## Phases / ## Phase Details — v1.4)
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Review the v1.4 roadmap draft (`.planning/ROADMAP.md`, `.planning/REQUIREMENTS.md` Traceability).
+- Plan Phase 1 (Instrument Value Object) with `/gsd:plan-phase 1`.
