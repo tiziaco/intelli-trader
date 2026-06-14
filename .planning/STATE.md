@@ -168,8 +168,10 @@ records archived under `milestones/v1.1-phases/` and `milestones/v1.2-phases/`.)
   directories (`01`–`06`) were moved to `.planning/milestones/v1.2-phases/`. Only the `999.x`
   backlog seed dirs remain alongside the new v1.3 phase dirs in `.planning/phases/`.
 
-- **v1.3 phase numbering reset to 1:** new phase working dirs will be `01-*`…`06-*`. The `999.x`
-  backlog dirs are FUTURE milestones (N+2/N+3/N+4) and are NOT renumbered.
+- **v1.3 phase dirs archived (2026-06-14, at milestone close):** the six v1.3 phase working
+  directories (`01`–`06`) were `git mv`'d to `.planning/milestones/v1.3-phases/`. The `999.x`
+  backlog seed dirs (N+2/N+3/N+4) remain in `.planning/phases/`; `999.5-engine-surface-completion`
+  is the now-superseded v1.3 seed (shipped as v1.3) left in place.
 
 ## Deferred Items
 
