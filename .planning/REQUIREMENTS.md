@@ -83,7 +83,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Order Lifecycle (LIFE)
 
-- [ ] **LIFE-01**: **Run-end resting-order disposition / time-in-force** is wired on the backtest
+- [x] **LIFE-01**: **Run-end resting-order disposition / time-in-force** is wired on the backtest
   path — `Order.expire_order()` + `OrderStatus.EXPIRED` (which exist but are unwired) dispose of
   orders left resting at run end instead of leaving them PENDING. Includes the `create_order`
   second-path gating decision (route the unvalidated 2nd signal→order path through validation, or
@@ -91,7 +91,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### Engine Hygiene (HYG)
 
-- [ ] **HYG-01**: A small **engine-hygiene slice** (SAFE, no golden re-run): rewrite
+- [x] **HYG-01**: A small **engine-hygiene slice** (SAFE, no golden re-run): rewrite
   `test_position_manager` private `pm._storage` asserts to public query APIs (W3-07 — owed from
   v1.2 NAME-04, missed); remove the stale mypy override for the deleted `screener_event_handler.py`
   (`pyproject.toml`); delete the dead `TOLERANCE = 1e-3` float constant
@@ -137,7 +137,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HYG-01 | Phase 1 — Engine Hygiene | Pending |
+| HYG-01 | Phase 1 — Engine Hygiene | Complete |
 | STRAT-01 | Phase 2 — Strategy Authoring Surface | Complete |
 | IND-01 | Phase 3 — Declared-Indicator Framework | Complete |
 | COMP-01 | Phase 4 — Composition & Config Interface | Complete |
@@ -146,7 +146,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | SIG-02 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-04) |
 | SIG-03 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-02) |
 | RECON-01 | Phase 5 — Signal Contract & Reconcile (FRAGILE) | Complete (05-04) |
-| LIFE-01 | Phase 6 — Order Lifecycle & Time-in-Force | Pending |
+| LIFE-01 | Phase 6 — Order Lifecycle & Time-in-Force | Complete |
 
 **Coverage:**
 - v1 requirements: 10 total
