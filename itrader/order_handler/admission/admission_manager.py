@@ -607,6 +607,17 @@ class AdmissionManager:
 				"leverage clamped to cap",
 				requested=str(requested), capped=str(capped),
 				ticker=signal_event.ticker)
+		# WR-04 (D-09): floor the effective leverage at Decimal("1"). A
+		# misconfigured Instrument.max_leverage of 0 (or any sub-1 cap) would
+		# otherwise produce a sub-1 effective leverage and a divide-by-zero /
+		# inflated-margin downstream (locked_margin = notional / L leaks buying
+		# power as L → 0). Mirrors the existing None-guard defensiveness above —
+		# a degenerate cap can never drive effective leverage below 1.
+		if capped < Decimal("1"):
+			self.logger.warning(
+				"effective leverage floored to 1 (sub-1 cap)",
+				capped=str(capped), ticker=signal_event.ticker)
+			return Decimal("1")
 		return capped
 
 	def _enforce_leverage_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
