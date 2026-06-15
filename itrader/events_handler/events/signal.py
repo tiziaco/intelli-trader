@@ -63,6 +63,11 @@ class SignalEvent(Event):
         Fraction of the open position an exit closes, in (0, 1].
         ``Decimal("1")`` (the default) is a full exit — resolved as a
         structural no-op (D-07).
+    leverage: `Decimal`
+        The strategy-declared leverage scalar (D-03). ``Decimal("1")``
+        (the default) is unlevered — byte-exact (the engine caps it
+        against the account-wide ``max_leverage`` and applies it in the
+        order layer). SMA_MACD never sets this. Inert until Wave 2.
     sltp_policy: `SLTPPolicy | None`
         Optional percent-offset SL/TP bracket declaration (D-13);
         explicit ``stop_loss``/``take_profit`` values take precedence.
@@ -91,6 +96,7 @@ class SignalEvent(Event):
     allow_increase: bool = False
     max_positions: int = 1
     exit_fraction: Decimal = Decimal("1")
+    leverage: Decimal = Decimal("1")
     sltp_policy: SLTPPolicy | None = None
     quantity: Decimal | None = None
 

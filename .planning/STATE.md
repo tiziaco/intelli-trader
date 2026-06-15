@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: ready_to_plan
-stopped_at: Phase 01 complete (3/3) — ready to discuss Phase 2 (Margin Accounting & Leverage)
-last_updated: 2026-06-15T08:10:59.806Z
+stopped_at: Phase 02 complete (9/9) — ready to discuss Phase 3 (Shorts & Borrow Carry)
+last_updated: 2026-06-15T14:07:16.532Z
 last_activity: 2026-06-15
 progress:
-  total_phases: 6
-  completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 17
+  total_phases: 9
+  completed_phases: 2
+  total_plans: 12
+  completed_plans: 12
+  percent: 22
 ---
 
 # Project State
@@ -21,13 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 2 — Margin Accounting & Leverage
+**Current focus:** Phase 3 — Shorts & Borrow Carry
 
 ## Current Position
 
-Phase: 2
+Phase: 3
 Plan: Not started
 Status: Ready to plan
+
+> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 3 dir does
+> not exist yet (only 02 + 999.x dirs are present). Corrected manually to Phase 3 per the v1.4 Phase
+> Map (1→2→**3**→4→5→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
 Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
@@ -107,7 +111,7 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 **Velocity (v1.3):**
 
-- Total plans completed: 23
+- Total plans completed: 32
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -188,6 +192,14 @@ scope decisions:
 - [Phase ?]: Phase 1 Plan 01: Instrument stores the Decimal SCALE directly (price_precision=Decimal('0.00000001')) not an int place-count — byte-identical to the deleted _INSTRUMENT_SCALES['BTCUSD']; quantize reads scale off the handed-in Instrument (D-05 pure/stateless)
 - [Phase ?]: Phase 1 Plan 02: symbol->Instrument resolution lives in universe/ (derive_instruments + Universe facade, D-03 no separate registry); ExchangeLimits demoted to venue fallback; SimulatedExchange resolves min_order_size Instrument-first via set_universe (None default = byte-exact); oracle held 134/46189.87730727451
 - [Phase ?]: Phase 1 Plan 03: byte-exact phase gate PASSED — oracle held 134/46189.87730727451, mypy --strict clean (185 files), determinism 9/9 double-run identical, full suite 1023 passed, golden artifacts untouched; no production code modified, phase re-baselines nothing (D-10/D-01a/D-02a)
+- [Phase 02]: Phase 2 Plan 00: 13 collectible pytest.skip Wave 0 stubs (6 unit files + new tests/e2e/levered_long/ e2e stub) satisfy the Nyquist contract — every Phase-2 (02-06) -k/-m verify target selects >=1 test before any RED step; folder-derived markers only (no decorator); test-only, oracle untouched
+- [Phase ?]: Phase 2 Plan 01: SignalEvent.leverage (D-03) + TradingRules.max_leverage ge=1 (D-14) landed as inert defaulted Decimal('1') fields — oracle-dark (134/46189.87730727451 held), Wave 2 admission-gate (D-04) consumes them
+- [Phase 02]: Phase 2 Plan 02: LeveredFraction sizing kind (notional = f x total_equity, D-07/LEV-02) — f guarded >0 NOT (0,1] (f>1 gate lives in AdmissionManager/Plan 03); SizingPolicy union grew forcing the assert_never arm; SignalIntent.leverage mirror (D-03) added; resolver reads total_equity (D-12) via the read-model Protocol, never cash; FractionOfCash (0,1] oracle-dark path untouched; mypy --strict clean (185 files)
+- [Phase ?]: Phase 2 Plan 04: lock-and-settle margin model (enable_margin gate, D-09/D-10/D-11) — position-keyed locked_margin in CashManager (Pitfall 2); available_balance = balance − reserved − locked_margin (spot byte-exact); Position.leverage at open (D-06) + aggregate_notional; margin close cash delta = realised_increment + p×prior_entry_commission so round-trip == realised_pnl; SMA_MACD 134/46189.87730727451 byte-exact
+- [Phase 02]: Phase 2 Plan 05: maintenance_margin/margin_ratio compute-on-demand read-model accessors (D-13/MARGIN-03) — Σ(mmr × |size| × current_price) over open positions via injected Universe (PortfolioHandler.set_universe seam, Trap-4 ordering, mirrors order/exchange set_universe); margin_ratio = total_equity()/maintenance honest-when-breached (D-16, no clamp), Decimal('0') zero-maintenance sentinel; max_leverage rides update_config UNCHANGED (D-15, TradingRules field); 3 Wave-0 stubs (maintenance_margin/margin_ratio/max_leverage) turned green; SMA_MACD 134/46189.87730727451 byte-exact, mypy --strict clean (185 files)
+- [Phase ?]: Phase 2 Plan 07: LEV-03 closed — strategy-declared EFFECTIVE leverage min(signal,instr,pf) flows signal->order->fill->transaction->position; run-path Transaction in PortfolioHandler.on_fill (not new_transaction) was the actual carry site (deviation); locked margin == admission reservation under L>1; SMA_MACD 134/46189.87730727451 byte-exact, mypy clean (185 files)
+- [Phase 02]: Phase 2 Plan 08: gap closure for the two 02-REVIEW BLOCKERs — CR-01 CLOSED (new_limit_order/new_stop_order carry keyword-only leverage; admission LIMIT/STOP arms pass effective_leverage → locked margin == admission reservation for ALL order types, LEV-03 complete); CR-02 MITIGATED (margin over-close fill raises InvalidTransactionError before any mutation/settlement — full flip economics deferred to Phase 3); residual WR-01..05 + IN-01..03 + CR-02-residual tracked in deferred-items.md; SMA_MACD 134/46189.87730727451 byte-exact (oracle-dark), mypy --strict clean (185 files), make test 1089 passed
+- [Phase 02]: Phase 2 Plan 06: parked leveraged-long e2e (D-17 — hand-computed, NOT a frozen golden) + GREEN phase gate (SMA_MACD 134/46189.87730727451 byte-exact, margin-mode determinism byte-identical, mypy --strict clean 185 files, make test 1079 passed); blocking human-verify checkpoint owner-APPROVED — Phase 2 freezes NO new golden (accounting-core re-baseline stays the single owner-gated freeze at P4/XVAL-01, D-16/D-17). The two findings this e2e surfaced (A: StrategiesHandler dropped SignalIntent.leverage at fan-out; B: leverage not carried order->fill->transaction) were CLOSED by 02-07/LEV-03 — not open.
 
 ### Pending Todos
 
@@ -236,6 +248,15 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
+| Phase 02 P00 | 3 | 1 tasks | 8 files |
+| Phase 02 P01 | 5 | 2 tasks | 2 files |
+| Phase 02 P02 | 8 | 2 tasks | 3 files |
+| Phase 02 P03 | 18 | 3 tasks | 8 files |
+| Phase 02 P04 | 35 | 3 tasks | 9 files |
+| Phase 02 P05 | 8 | 2 tasks | 7 files |
+| Phase 02 P07 | 18 | 3 tasks | 9 files |
+| Phase 02 P06 | 0 | 2 tasks | 3 files |
+| Phase 02 P08 | 12 | 3 tasks | 7 files |
 
 ## Bookkeeping
 
@@ -277,8 +298,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T07:30:28.832Z
-Stopped at: Phase 1 context gathered
+Last session: 2026-06-15T14:00:00.000Z
+Stopped at: Completed 02-08-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

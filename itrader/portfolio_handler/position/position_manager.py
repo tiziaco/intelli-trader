@@ -154,11 +154,28 @@ class PositionManager:
     
     def _update_existing_position(self, position: Position, transaction: Transaction) -> Position:
         """Update an existing position with a new transaction."""
-        
+
         # Store original values for validation
         original_quantity = position.net_quantity
         original_avg_price = position.avg_price
-        
+
+        # D-06 one-leverage-per-position invariant: a scale-in carrying a
+        # DIFFERENT signal leverage is CLAMPED to the position's open leverage
+        # (isolated margin — the position has exactly one effective leverage,
+        # set at open, immutable thereafter). We deliberately do NOT mutate
+        # position.leverage; the differing signal leverage is dropped (logged).
+        # The margin lock recompute (aggregate_notional / position.leverage) is
+        # driven from Portfolio.process_transaction (OQ2 — this manager stays
+        # cash-agnostic), so it always uses the clamped position leverage.
+        signal_leverage = getattr(transaction, "leverage", None)
+        if signal_leverage is not None and Decimal(str(signal_leverage)) != position.leverage:
+            self.logger.debug("Scale-in leverage clamped to position leverage (D-06)",
+                position_id=position.id,
+                ticker=transaction.ticker,
+                position_leverage=str(position.leverage),
+                signal_leverage=str(signal_leverage)
+            )
+
         # Update position with transaction
         position.update_position(transaction)
         

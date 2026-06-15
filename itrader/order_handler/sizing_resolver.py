@@ -36,7 +36,13 @@ from itrader.core.exceptions import SizingPolicyViolation
 from itrader.core.ids import PortfolioId
 from itrader.core.money import ONE, to_money
 from itrader.core.portfolio_read_model import PortfolioReadModel
-from itrader.core.sizing import FixedQuantity, FractionOfCash, RiskPercent, SizingPolicy
+from itrader.core.sizing import (
+    FixedQuantity,
+    FractionOfCash,
+    LeveredFraction,
+    RiskPercent,
+    SizingPolicy,
+)
 
 __all__ = ["SizingResolver"]
 
@@ -120,6 +126,15 @@ class SizingResolver:
                     )
                 equity = self._read_model.total_equity(portfolio_id)
                 qty = (equity * policy.risk_pct) / abs(price - stop)
+            case LeveredFraction():
+                # D-07/D-12/LEV-02: size notional off mark-to-market equity —
+                # notional = fraction x total_equity(); qty = notional / price.
+                # Reads total_equity (D-12), NEVER cash. The arm is config-free:
+                # f > 1 is admitted/rejected downstream in AdmissionManager
+                # (RESEARCH A3), never clamped here. to_money(price) is the
+                # string-path Decimal entry (Pitfall 1) — NEVER Decimal(float).
+                equity = self._read_model.total_equity(portfolio_id)
+                qty = (policy.fraction * equity) / to_money(price)
             case _:
                 assert_never(policy)
         if policy.step_size is not None:

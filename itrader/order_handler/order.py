@@ -89,6 +89,16 @@ class Order:
 	modification_count: int = 0
 	last_modification_time: Optional[datetime] = None
 
+	# LEV-03 (Finding B): the admission-clamped EFFECTIVE leverage the order is
+	# margined at — min(signal.leverage, Instrument.max_leverage,
+	# portfolio.max_leverage), forced to Decimal("1") when enable_margin is off
+	# (AdmissionManager._effective_leverage). Carried through OrderEvent ->
+	# FillEvent -> Transaction -> Position so the position-life locked margin
+	# (aggregate_notional / leverage) EQUALS the admission reservation
+	# (notional / effective_leverage). Default Decimal("1") keeps the spot path
+	# byte-exact (oracle-dark).
+	leverage: Decimal = field(default_factory=lambda: Decimal("1"))
+
 	def __post_init__(self) -> None:
 		"""Enter the Decimal money domain at the construction boundary (D-04).
 
@@ -150,7 +160,8 @@ class Order:
 	
 	@classmethod
 	def new_order(cls, signal: SignalEvent, exchange: str,
-	              quantity: Optional[Decimal] = None) -> "Order":
+	              quantity: Optional[Decimal] = None, *,
+	              leverage: Decimal = Decimal("1")) -> "Order":
 		"""
 		Generate a new Order object from the signal validated from
 		the risk manager and compliance manager.
@@ -165,6 +176,11 @@ class Order:
 			The resolved order quantity (D-13: the order/risk layer sizes the
 			order and threads the Decimal-native quantity here — the signal is
 			never mutated). Falls back to ``signal.quantity`` when omitted.
+		leverage : `Decimal`, keyword-only
+			The admission-clamped EFFECTIVE leverage the order is margined at
+			(LEV-03 Finding B). The order/risk layer computes it
+			(AdmissionManager._effective_leverage) and threads it here;
+			Decimal("1") (the default) is unlevered and byte-exact (oracle-dark).
 
 		Returns
 		-------
@@ -193,9 +209,12 @@ class Order:
 			to_money(resolved_quantity),
 			exchange,
 			signal.strategy_id,
-			signal.portfolio_id
+			signal.portfolio_id,
+			# LEV-03 (Finding B): store the admission-clamped EFFECTIVE leverage
+			# (kw-only, default Decimal("1") on the spot path).
+			leverage=to_money(leverage),
 		)
-		
+
 		# Add initial state change
 		order.add_state_change(
 			OrderStatus.PENDING,
@@ -207,9 +226,20 @@ class Order:
 	
 	@classmethod
 	def new_stop_order(cls, time: datetime, ticker: str, action: Side, price: Any, quantity: Any, exchange: str,
-					strategy_id: StrategyId, portfolio_id: PortfolioId) -> "Order":
+					strategy_id: StrategyId, portfolio_id: PortfolioId, *,
+					leverage: Decimal = Decimal("1")) -> "Order":
 		"""
 		Generate a new Stop Order object.
+
+		Parameters
+		----------
+		leverage : `Decimal`, keyword-only
+			The admission-clamped EFFECTIVE leverage the order is margined at
+			(CR-01 / LEV-03). The order/risk layer computes it
+			(AdmissionManager._effective_leverage) and threads it here so the
+			LIMIT/STOP entry carries the same effective leverage as the MARKET
+			arm; Decimal("1") (the default) is unlevered and byte-exact
+			(oracle-dark).
 
 		Returns
 		-------
@@ -226,7 +256,9 @@ class Order:
 			to_money(quantity),
 			exchange,
 			strategy_id,
-			portfolio_id
+			portfolio_id,
+			# CR-01 (LEV-03): carry the admission-clamped EFFECTIVE leverage.
+			leverage=to_money(leverage),
 		)
 		
 		# Add initial state change
@@ -240,9 +272,20 @@ class Order:
 	
 	@classmethod
 	def new_limit_order(cls, time: datetime, ticker: str, action: Side, price: Any, quantity: Any, exchange: str,
-					strategy_id: StrategyId, portfolio_id: PortfolioId) -> "Order":
+					strategy_id: StrategyId, portfolio_id: PortfolioId, *,
+					leverage: Decimal = Decimal("1")) -> "Order":
 		"""
 		Generate a new Limit Order object.
+
+		Parameters
+		----------
+		leverage : `Decimal`, keyword-only
+			The admission-clamped EFFECTIVE leverage the order is margined at
+			(CR-01 / LEV-03). The order/risk layer computes it
+			(AdmissionManager._effective_leverage) and threads it here so the
+			LIMIT/STOP entry carries the same effective leverage as the MARKET
+			arm; Decimal("1") (the default) is unlevered and byte-exact
+			(oracle-dark).
 
 		Returns
 		-------
@@ -259,7 +302,9 @@ class Order:
 			to_money(quantity),
 			exchange,
 			strategy_id,
-			portfolio_id
+			portfolio_id,
+			# CR-01 (LEV-03): carry the admission-clamped EFFECTIVE leverage.
+			leverage=to_money(leverage),
 		)
 		
 		# Add initial state change

@@ -24,6 +24,7 @@ from itrader.core.exceptions import SizingPolicyViolation
 from itrader.core.sizing import (
     FixedQuantity,
     FractionOfCash,
+    LeveredFraction,
     PercentFromDecision,
     PercentFromFill,
     RiskPercent,
@@ -280,7 +281,11 @@ def test_policy_dataclasses_use_slots():
 
 def test_sizing_policy_union_members():
     # The resolver match-dispatches on exactly these kinds (D-01).
-    assert SizingPolicy == FractionOfCash | FixedQuantity | RiskPercent
+    # LeveredFraction added in Phase 2 plan 02-02 (D-07/LEV-02 equity-based levered sizing).
+    assert (
+        SizingPolicy
+        == FractionOfCash | FixedQuantity | RiskPercent | LeveredFraction
+    )
 
 
 def test_sltp_policy_union_members():

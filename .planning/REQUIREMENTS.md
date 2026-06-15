@@ -34,11 +34,11 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Margin (MARGIN)
 
-- [ ] **MARGIN-01**: Opening a position reserves `initial_margin = notional / leverage` against
+- [x] **MARGIN-01**: Opening a position reserves `initial_margin = notional / leverage` against
   available cash.
-- [ ] **MARGIN-02**: Orders exceeding available free margin are rejected (or clipped) rather than
+- [x] **MARGIN-02**: Orders exceeding available free margin are rejected (or clipped) rather than
   silently over-leveraging the simulated account.
-- [ ] **MARGIN-03**: Maintenance margin is tracked per open position.
+- [x] **MARGIN-03**: Maintenance margin is tracked per open position.
 
 ### Liquidation (LIQ)
 
@@ -66,10 +66,18 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Leverage (LEV)
 
-- [ ] **LEV-01**: A portfolio can trade with configurable leverage > 1 via the existing
+- [x] **LEV-01**: A portfolio can trade with configurable leverage > 1 via the existing
   `enable_margin` / `allow_short_selling` config hooks.
-- [ ] **LEV-02**: A Kelly sizing fraction > 1 is expressible (notional = f × equity, posting
+- [x] **LEV-02**: A Kelly sizing fraction > 1 is expressible (notional = f × equity, posting
   `notional / L` as margin).
+- [x] **LEV-03**: Strategy-declared leverage flows end-to-end through the run path
+  (signal → order → fill → transaction → position), carrying the admission-clamped
+  *effective* leverage `min(signal, instr.max, pf.max)` so the position-life locked
+  margin (`aggregate_notional / leverage`) equals the admission reservation
+  (`notional / effective_leverage`). Discovered during Phase 2 plan 02-06 (Findings A/B:
+  `StrategiesHandler` dropped `SignalIntent.leverage` at fan-out; `OrderEvent`/`FillEvent`/
+  `Transaction` carried no leverage, so `Position.leverage` defaulted to 1 and locked the
+  full notional). Closed by plan 02-07.
 
 ### Trailing stop (TRAIL)
 
@@ -134,11 +142,12 @@ Which phases cover which requirements. Filled during roadmap creation.
 | INST-01 | Phase 1 — Instrument Value Object | Complete |
 | INST-02 | Phase 1 — Instrument Value Object | Complete |
 | INST-03 | Phase 1 — Instrument Value Object | Complete |
-| MARGIN-01 | Phase 2 — Margin Accounting & Leverage | Pending |
-| MARGIN-02 | Phase 2 — Margin Accounting & Leverage | Pending |
-| MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Pending |
-| LEV-01 | Phase 2 — Margin Accounting & Leverage | Pending |
-| LEV-02 | Phase 2 — Margin Accounting & Leverage | Pending |
+| MARGIN-01 | Phase 2 — Margin Accounting & Leverage | Complete |
+| MARGIN-02 | Phase 2 — Margin Accounting & Leverage | Complete |
+| MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Complete |
+| LEV-01 | Phase 2 — Margin Accounting & Leverage | Complete |
+| LEV-02 | Phase 2 — Margin Accounting & Leverage | Complete |
+| LEV-03 | Phase 2 — Margin Accounting & Leverage | Complete |
 | SHORT-01 | Phase 3 — Shorts & Borrow Carry | Pending |
 | SHORT-02 | Phase 3 — Shorts & Borrow Carry | Pending |
 | SHORT-03 | Phase 3 — Shorts & Borrow Carry | Pending |

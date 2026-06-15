@@ -35,6 +35,10 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         # was a single aggregate Decimal; now a flat {reference_id: amount}
         # dict mirroring order storage's _by_id shape. Full precision (OQ4).
         self._reservations: Dict[str, Decimal] = {}
+        # Locked margin (working state, per position id — Plan 02-04 / D-10).
+        # A DISTINCT container from reservations (Pitfall 2): held for the
+        # lifetime of a position, full precision. Empty → clean Decimal("0").
+        self._locked_margin: Dict[str, Decimal] = {}
         # Cash operations (append-only audit) — was CashManager._cash_operations
         self._cash_operations: List[Any] = []
         # Metrics snapshots (append-only history) — was MetricsManager._snapshots
@@ -82,6 +86,20 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
 
     def pop_reservation(self, reference_id: str) -> Optional[Decimal]:
         return self._reservations.pop(reference_id, None)
+
+    # -- Locked margin (position-keyed working state — Plan 02-04 / D-10) ----
+
+    def get_locked_margin(self) -> Decimal:
+        # Clean Decimal("0") when empty (Pitfall 6): sum() with a Decimal("0")
+        # start yields a clean zero so the spot available_balance subtraction is
+        # byte-exact (x - Decimal("0") == x).
+        return sum(self._locked_margin.values(), Decimal("0"))
+
+    def add_locked_margin(self, position_id: str, amount: Decimal) -> None:
+        self._locked_margin[position_id] = amount
+
+    def pop_locked_margin(self, position_id: str) -> Optional[Decimal]:
+        return self._locked_margin.pop(position_id, None)
 
     def add_cash_operation(self, operation: Any) -> None:
         self._cash_operations.append(operation)

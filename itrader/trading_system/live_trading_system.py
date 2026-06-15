@@ -156,8 +156,15 @@ class LiveTradingSystem:
             return simulated_exchange.fee_model.calculate_fee(
                 quantity, price, side="buy", order_type="market")
 
+        # Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the
+        # order domain (mirrors compose_engine). With the default PortfolioConfig
+        # (enable_margin=False / max_leverage=1) the order domain stays on the spot
+        # byte-exact arm. The Universe is injected later via set_universe.
+        _trading_rules = self.portfolio_handler.config_data.trading_rules
         self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
-                                          commission_estimator=_estimate_commission)
+                                          commission_estimator=_estimate_commission,
+                                          enable_margin=_trading_rules.enable_margin,
+                                          portfolio_max_leverage=_trading_rules.max_leverage)
         # The TIME route's BarEvent source is the feed-owned factory
         # (Plan 07-02, D-20) — mirrors the backtest wiring shape; a real
         # live feed is owned by D-live.
@@ -281,6 +288,15 @@ class LiveTradingSystem:
             simulated_exchange = self.execution_handler.exchanges.get('simulated')
             if isinstance(simulated_exchange, SimulatedExchange):
                 simulated_exchange.set_universe(universe)
+            # Plan 02-03 (Pitfall 1): mirror the exchange injection into the ORDER
+            # domain so the admission leverage cap (D-04) can read
+            # Instrument.max_leverage — same Trap-4 ordering as backtest_runner.
+            self.order_handler.set_universe(universe)
+            # Plan 02-05 (D-13): mirror the injection into the PORTFOLIO domain so
+            # the maintenance_margin/margin_ratio read-model resolves each open
+            # position's Instrument.maintenance_margin_rate — same Trap-4 ordering
+            # as backtest_runner.
+            self.portfolio_handler.set_universe(universe)
             self.feed.bind(self.global_queue, universe.members)
 
             # Plan 06-05: the legacy set_symbols/set_timeframe calls died with

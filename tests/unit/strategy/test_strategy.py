@@ -466,3 +466,64 @@ def test_short_only_registration_rejected(handler_env):
         handler.add_strategy(strategy)
 
     assert handler.strategies == []
+
+
+# --- Finding A: leverage survives the strategy -> SignalEvent fan-out (LEV-03) ---
+
+
+class _LeverageStrategy(Strategy):
+    """A minimal strategy that returns a hand-built BUY intent carrying an
+    explicit ``leverage`` so the fan-out's leverage plumbing is exercised."""
+
+    name = "lev_intent"
+    max_window: int = 1
+
+    def __init__(self, leverage: Decimal) -> None:
+        self._leverage = leverage
+        super().__init__(
+            timeframe="1d",
+            tickers=[_TICKER],
+            sizing_policy=FractionOfCash(Decimal("0.95")),
+            direction=TradingDirection.LONG_ONLY,
+        )
+
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
+        return SignalIntent(
+            ticker=ticker,
+            action=Side.BUY,
+            order_type=OrderType.MARKET,
+            leverage=self._leverage,
+        )
+
+
+def test_fan_out_carries_declared_leverage(handler_env):
+    """Finding A (LEV-03): a strategy-declared leverage reaches the SignalEvent.
+
+    A SignalIntent with leverage=Decimal("3") must fan out onto a SignalEvent
+    carrying leverage == Decimal("3") — the field is no longer dropped.
+    """
+    handler, q = handler_env
+    strategy = _LeverageStrategy(leverage=Decimal("3"))
+    strategy.subscribe_portfolio(_PORTFOLIO_A)
+    handler.add_strategy(strategy)
+
+    handler.calculate_signals(_bar_event())
+
+    signal: SignalEvent = q.get(False)
+    assert q.empty()
+    assert signal.leverage == Decimal("3")
+
+
+def test_fan_out_default_leverage_stays_one(handler_env):
+    """The default intent leverage Decimal("1") yields a Decimal("1") SignalEvent
+    (oracle-dark — the spot fan-out is byte-exact)."""
+    handler, q = handler_env
+    strategy = _LeverageStrategy(leverage=Decimal("1"))
+    strategy.subscribe_portfolio(_PORTFOLIO_A)
+    handler.add_strategy(strategy)
+
+    handler.calculate_signals(_bar_event())
+
+    signal: SignalEvent = q.get(False)
+    assert q.empty()
+    assert signal.leverage == Decimal("1")

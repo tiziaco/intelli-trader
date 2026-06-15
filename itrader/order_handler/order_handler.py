@@ -13,6 +13,7 @@ from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
 from ..events_handler.events import SignalEvent, OrderEvent, FillEvent, PortfolioUpdateEvent
 from .storage import OrderStorageFactory
+from ..universe import Universe
 
 from itrader.logger import get_itrader_logger
 
@@ -43,7 +44,9 @@ class OrderHandler:
 	             order_storage: Optional[OrderStorage] = None,
 	             market_execution: "str | MarketExecution | None" = None,
 	             commission_estimator: Optional[CommissionEstimator] = None,
-	             order_config: Optional[OrderConfig] = None) -> None:
+	             order_config: Optional[OrderConfig] = None,
+	             enable_margin: bool = False,
+	             portfolio_max_leverage: Decimal = Decimal("1")) -> None:
 		"""
 		Parameters
 		----------
@@ -84,6 +87,8 @@ class OrderHandler:
 			portfolio_handler,  # Pass portfolio_handler for position-aware logic
 			commission_estimator=commission_estimator,
 			order_config=order_config,
+			enable_margin=enable_margin,
+			portfolio_max_leverage=portfolio_max_leverage,
 		)
 		# Mirror the resolved execution mode the manager settled on (D-05).
 		self.market_execution = self.order_manager.market_execution
@@ -91,6 +96,17 @@ class OrderHandler:
 		self.order_validator = EnhancedOrderValidator(portfolio_handler)
 
 		self.logger.info('Order Handler initialized', market_execution=self.market_execution)
+
+	def set_universe(self, universe: Universe) -> None:
+		"""Inject the symbol→Instrument read-model into the order domain (Plan 02-03).
+
+		Thin facade: forwards to ``OrderManager.set_universe`` → ``AdmissionManager``
+		(the order/risk leverage cap reads ``Instrument.max_leverage`` through it,
+		D-04). Called at the Trap-4 wiring point in both runners immediately after
+		``simulated_exchange.set_universe(universe)`` — the runner builds the
+		``Universe`` AFTER the order handler is constructed (Pitfall 1).
+		"""
+		self.order_manager.set_universe(universe)
 
 	def update_config(self, updates: Dict[str, Any]) -> None:
 		"""Update order-domain configuration at runtime (D-05/D-07/D-09).

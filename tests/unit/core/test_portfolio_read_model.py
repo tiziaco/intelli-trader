@@ -92,7 +92,7 @@ def test_position_view_uses_slots():
 
 
 class _ConformingFake:
-    """Minimal fake implementing all eight Protocol members."""
+    """Minimal fake implementing all ten Protocol members."""
 
     def active_portfolio_ids(self) -> list[PortfolioId]:
         return []
@@ -117,6 +117,12 @@ class _ConformingFake:
 
     def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
         return Decimal("100000.00")
+
+    def maintenance_margin(self, portfolio_id: PortfolioId) -> Decimal:
+        return Decimal("0")
+
+    def margin_ratio(self, portfolio_id: PortfolioId) -> Decimal:
+        return Decimal("0")
 
 
 class _MissingReserveFake:
@@ -143,9 +149,15 @@ class _MissingReserveFake:
     def total_equity(self, portfolio_id: PortfolioId) -> Decimal:
         return Decimal("0")
 
+    def maintenance_margin(self, portfolio_id: PortfolioId) -> Decimal:
+        return Decimal("0")
+
+    def margin_ratio(self, portfolio_id: PortfolioId) -> Decimal:
+        return Decimal("0")
+
 
 def test_protocol_is_runtime_checkable_and_fake_conforms():
-    """D-16: structural typing — a fake with all seven methods passes isinstance."""
+    """D-16: structural typing — a fake with all ten methods passes isinstance."""
     assert isinstance(_ConformingFake(), PortfolioReadModel)
 
 
@@ -154,9 +166,10 @@ def test_object_missing_reserve_fails_isinstance():
     assert not isinstance(_MissingReserveFake(), PortfolioReadModel)
 
 
-def test_protocol_declares_exactly_eight_methods():
-    """OQ1 + Plan 07-01 + Phase 06 WR-02: six original members + total_equity
-    (RiskPercent input) + active_portfolio_ids (run-end TIF sweep)."""
+def test_protocol_declares_exactly_ten_methods():
+    """OQ1 + Plan 07-01 + Phase 06 WR-02 + Plan 02-05: six original members +
+    total_equity (RiskPercent input) + active_portfolio_ids (run-end TIF sweep) +
+    maintenance_margin/margin_ratio (D-13/MARGIN-03 compute-on-demand accessors)."""
     expected = {
         "active_portfolio_ids",
         "available_cash",
@@ -166,6 +179,8 @@ def test_protocol_declares_exactly_eight_methods():
         "exchange_for",
         "open_position_count",
         "total_equity",
+        "maintenance_margin",
+        "margin_ratio",
     }
     declared = {
         name

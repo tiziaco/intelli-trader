@@ -446,3 +446,115 @@ def test_precision_calculations(env):
     # Values should be calculated with proper precision
     assert position.avg_price > 0
     assert position.net_quantity > 0
+
+
+# ---------------------------------------------------------------------------
+# One-leverage-per-position + aggregate notional (Plan 02-04 Task 2 — D-06/D-11)
+# ---------------------------------------------------------------------------
+
+
+def _levered_buy(ticker, price, quantity, commission, leverage, portfolio_id):
+    """A BUY transaction carrying a signal leverage (margin-mode input)."""
+    txn = Transaction(
+        time=datetime.now(), type=TransactionType.BUY, ticker=ticker,
+        price=price, quantity=quantity, commission=commission,
+        portfolio_id=portfolio_id, id=idgen.generate_transaction_id(),
+        fill_id=uuid_compat.uuid7(),
+    )
+    txn.leverage = Decimal(str(leverage))
+    return txn
+
+
+def test_one_leverage_set_at_open(env):
+    """D-06: a position opened with leverage L stores leverage == L."""
+    pm = env.position_manager
+    txn = _levered_buy("BTCUSDT", 50000.0, 1.0, 25.0, 5, env.portfolio.portfolio_id)
+
+    position = pm.process_position_update(txn)
+
+    assert position.leverage == Decimal("5")
+
+
+def test_spot_position_defaults_to_leverage_one(env):
+    """A position opened from a transaction WITHOUT a leverage attribute
+    defaults to Decimal('1') (spot byte-exact — the spot path never sets it)."""
+    pm = env.position_manager
+    # env.buy_transaction carries no leverage attribute.
+    position = pm.process_position_update(env.buy_transaction)
+
+    assert position.leverage == Decimal("1")
+
+
+def test_scale_in_margin_clamps_to_position_leverage(env):
+    """D-06: a scale-in carrying a DIFFERENT signal leverage keeps the
+    position at its open leverage (the position's L is unchanged — clamp)."""
+    pm = env.position_manager
+    open_txn = _levered_buy("BTCUSDT", 50000.0, 1.0, 25.0, 5, env.portfolio.portfolio_id)
+    position = pm.process_position_update(open_txn)
+    assert position.leverage == Decimal("5")
+
+    # Scale in with a differing leverage (L=10) — must be clamped to 5.
+    scale_in = _levered_buy("BTCUSDT", 51000.0, 0.5, 12.5, 10, env.portfolio.portfolio_id)
+    updated = pm.process_position_update(scale_in)
+
+    assert updated.id == position.id
+    assert updated.leverage == Decimal("5")  # clamped, NOT 10
+    assert updated.net_quantity == Decimal("1.5")
+
+
+def test_aggregate_notional_matches_net_quantity_times_avg_price(env):
+    """aggregate_notional = net_quantity × avg_price (direction-aware, mirrors
+    the absolute market_value shape) — the basis for locked_margin = notional / L."""
+    pm = env.position_manager
+    position = pm.process_position_update(env.buy_transaction)
+
+    expected = abs(position.net_quantity) * position.avg_price
+    assert position.aggregate_notional == expected
+    assert position.aggregate_notional > 0
+
+
+def test_aggregate_notional_short_is_positive(env):
+    """A SHORT position reports a POSITIVE aggregate notional (the margin basis
+    is a magnitude, mirroring abs(market_value))."""
+    pm = env.position_manager
+    short_txn = Transaction(
+        time=datetime.now(), type=TransactionType.SELL, ticker="ETHUSDT",
+        price=3000.0, quantity=2.0, commission=15.0,
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        fill_id=uuid_compat.uuid7(),
+    )
+
+    position = pm.process_position_update(short_txn)
+
+    assert position.side == PositionSide.SHORT
+    assert position.aggregate_notional == abs(position.net_quantity) * position.avg_price
+    assert position.aggregate_notional > 0
+
+
+def test_position_manager_holds_no_cash_manager(env):
+    """OQ2: PositionManager stays cash-agnostic — no CashManager reference."""
+    pm = env.position_manager
+    assert not hasattr(pm, "cash_manager")
+    # The only injected seam is the state storage.
+    assert pm._storage is not None
+
+
+def test_partial_close_margin_keeps_position_leverage(env):
+    """A partial close does not alter the position's one leverage (D-06): the
+    margin release/settle pro-rata is driven from Portfolio.process_transaction
+    in Task 3; the position simply preserves its open leverage through close."""
+    pm = env.position_manager
+    open_txn = _levered_buy("BTCUSDT", 50000.0, 1.0, 25.0, 4, env.portfolio.portfolio_id)
+    position = pm.process_position_update(open_txn)
+
+    partial_close = Transaction(
+        time=datetime.now(), type=TransactionType.SELL, ticker="BTCUSDT",
+        price=52000.0, quantity=0.5, commission=13.0,
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        fill_id=uuid_compat.uuid7(),
+    )
+    updated = pm.process_position_update(partial_close)
+
+    assert updated.is_open
+    assert updated.net_quantity == Decimal("0.5")
+    assert updated.leverage == Decimal("4")

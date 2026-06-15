@@ -48,7 +48,7 @@ byte-identical hold throughout. Full design: PROJECT.md "Current Milestone: v1.4
 999.4 scoping block in the Backlog below + `notes/margin-leverage-shorts-999.4.md`.
 
 - [x] **Phase 1: Instrument Value Object** - Per-symbol precision/lot/margin source replacing `_INSTRUMENT_SCALES`; BTCUSD stays declared 8dp (byte-exact behavioral gate) — completed 2026-06-15
-- [ ] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated)
+- [x] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated) — completed 2026-06-15 (9/9 plans; +LEV-03 discovered/closed)
 - [ ] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated)
 - [ ] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated)
 - [ ] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated)
@@ -165,13 +165,30 @@ with configurable leverage > 1 — making a levered Kelly fraction > 1 expressib
 golden master freezes ONLY after explicit owner sign-off + external cross-validation
 (`backtesting.py`/`backtrader`), with full attribution. `mypy --strict` clean; Decimal end-to-end;
 determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 7 plans
+- [x] 02-00-PLAN.md — [Wave 0] Nyquist stub plan: collectible -k/-m targets for every Phase-2 verify command (MARGIN-01/02/03, LEV-01/02)
+- [x] 02-01-PLAN.md — SignalEvent.leverage + TradingRules.max_leverage inert contract fields (LEV-01)
+- [x] 02-02-PLAN.md — LeveredFraction equity-based sizing kind + resolver arm + SignalIntent.leverage (LEV-02)
+- [x] 02-03-PLAN.md — [BLOCKING] Universe wiring into the order domain + leverage cap + margin reservation/over-margin reject (LEV-01/02, MARGIN-01/02)
+- [x] 02-04-PLAN.md — Lock-and-settle cash model: position-keyed locked_margin + one-leverage-per-position + process_transaction branch (MARGIN-01)
+- [x] 02-05-PLAN.md — maintenance_margin/margin_ratio compute-on-demand read-model + max_leverage update_config (MARGIN-03, LEV-01)
+- [x] 02-06-PLAN.md — Parked leveraged-long e2e (hand-computed, NOT frozen) + byte-exact/determinism/mypy phase gate (MARGIN-01/02/03, LEV-01/02)
+- [x] 02-07-PLAN.md — LEV-03 closed: effective leverage flows signal->order->fill->transaction->position (run-path on_fill carry site) (LEV-03)
+- [x] 02-08-PLAN.md — Gap closure: CR-01 LIMIT/STOP leverage threading (LEV-03 all order types) + CR-02 margin over-close fail-loud guard (LEV-03)
 
 ### Phase 3: Shorts & Borrow Carry
 **Goal**: A strategy can open and hold a first-class short position (the `LONG_ONLY` guard removed,
 the CR-01 cover-arm hole fixed), with correct short PnL and borrow-interest carry accrued on open
 shorts.
 **Depends on**: Phase 2 (margin must exist to reserve against a short; carry rides shorts)
+**Carry-forward (Phase 2 review residuals)**: address the margin-hardening residuals parked for
+Phase 3 in `phases/02-margin-accounting-leverage/deferred-items.md` — CR-02-residual (full flip
+settlement: split a flip fill into close+open, or correct `realised_increment` to the clamped
+quantity), WR-01 (settlement-side solvency assertion that the locked margin fits buying power),
+WR-03 (margin-lock release symmetry at the assembly-failure site), WR-04 (`≥1` leverage floor +
+zero guard on `_effective_leverage`), WR-05 (per-lock open-commission accumulator). These are
+oracle-dark today (margin off on the SMA_MACD spot path) but become reachable once shorts/levered
+entries lock margin on the run path. (WR-02 universe-unwired guard spans Phase 3/4; IN-03 → Phase 4.)
 **Requirements**: SHORT-01, SHORT-02, SHORT-03, CARRY-01
 **Success Criteria** (what must be TRUE):
   1. A `SHORT_ONLY` / long-short strategy is admitted — the `LONG_ONLY` guard in
@@ -263,7 +280,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
-| 2. Margin Accounting & Leverage | 0/TBD | Not started | - |
+| 2. Margin Accounting & Leverage | 9/9 | Complete   | 2026-06-15 |
 | 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
 | 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |

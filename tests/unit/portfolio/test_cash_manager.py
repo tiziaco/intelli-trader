@@ -498,3 +498,84 @@ def test_operation_id_uniqueness(cm):
         operation_ids.add(operation.operation_id)
 
     assert len(operation_ids) == 100
+
+
+# ---------------------------------------------------------------------------
+# Position-keyed locked margin (Plan 02-04 Task 1 — D-10/Pitfall 2/Pitfall 6)
+# ---------------------------------------------------------------------------
+
+
+def test_locked_margin_total_clean_zero_when_empty(cm):
+    """Pitfall 6: with no locks the total is a CLEAN Decimal('0') and
+    available_balance == balance − reserved byte-exact (x − Decimal('0') == x)."""
+    assert cm.locked_margin_total == Decimal("0")
+    # Byte-exact spot identity: subtracting the empty container preserves the value.
+    assert cm.available_balance == cm.balance - cm.reserved_balance
+    assert cm.available_balance == Decimal("100000.00")
+
+
+def test_lock_margin_subtracts_from_available_balance(cm):
+    """available_balance == balance − reserved − locked_margin (D-10)."""
+    cm.lock_margin("POS_1", Decimal("12000.00"))
+
+    assert cm.locked_margin_total == Decimal("12000.00")
+    assert cm.reserved_balance == Decimal("0.00")
+    assert cm.balance == Decimal("100000.00")  # ledger balance unchanged
+    assert cm.available_balance == Decimal("88000.00")
+
+
+def test_lock_release_round_trips_exactly_full_precision(cm):
+    """OQ4/Pitfall: lock/release at FULL precision — release == lock exactly,
+    no 2dp quantize drift; releasing returns the exact locked amount."""
+    locked = Decimal("9876.54321098")
+    cm.lock_margin("POS_FP", locked)
+
+    assert cm.locked_margin_total == locked
+    assert cm.available_balance == Decimal("100000.00") - locked
+
+    released = cm.release_margin("POS_FP")
+    assert released == locked
+
+    # Clean zero again, available restored byte-exact.
+    assert cm.locked_margin_total == Decimal("0")
+    assert cm.available_balance == Decimal("100000.00")
+
+
+def test_locked_margin_is_position_keyed_distinct_from_reservation(cm):
+    """Pitfall 2: the locked-margin container is keyed by position_id, a
+    DISTINCT lifecycle from the order-keyed reservation — locking under a
+    position and reserving under an order id are independent."""
+    cm.lock_margin("POS_A", Decimal("10000.00"))
+    cm.reserve_cash(Decimal("5000.00"), "pending order", "ORDER_A")
+
+    assert cm.locked_margin_total == Decimal("10000.00")
+    assert cm.reserved_balance == Decimal("5000.00")
+    # available subtracts BOTH, independently.
+    assert cm.available_balance == Decimal("85000.00")
+
+    # Releasing the reservation leaves the lock intact (distinct lifecycle).
+    cm.release_reservation("ORDER_A")
+    assert cm.locked_margin_total == Decimal("10000.00")
+    assert cm.available_balance == Decimal("90000.00")
+
+    # Releasing the margin leaves nothing behind.
+    cm.release_margin("POS_A")
+    assert cm.locked_margin_total == Decimal("0")
+    assert cm.available_balance == Decimal("100000.00")
+
+
+def test_locked_margin_total_sums_multiple_positions(cm):
+    """Two positions locked: locked_margin_total is the sum (per-position keying)."""
+    cm.lock_margin("POS_1", Decimal("10000.00"))
+    cm.lock_margin("POS_2", Decimal("25000.00"))
+
+    assert cm.locked_margin_total == Decimal("35000.00")
+    assert cm.available_balance == Decimal("65000.00")
+
+
+def test_release_unknown_position_margin_is_silent_noop(cm):
+    """Releasing an unknown position id returns Decimal('0') and is a no-op."""
+    released = cm.release_margin("NEVER_LOCKED")
+    assert released == Decimal("0")
+    assert cm.locked_margin_total == Decimal("0")
+    assert cm.available_balance == Decimal("100000.00")

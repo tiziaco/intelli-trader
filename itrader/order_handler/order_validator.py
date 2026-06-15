@@ -68,7 +68,8 @@ class EnhancedOrderValidator:
     4. Financial Risk - Cash availability, margin requirements, risk limits
     """
     
-    def __init__(self, portfolio_handler: Optional[PortfolioReadModel] = None) -> None:
+    def __init__(self, portfolio_handler: Optional[PortfolioReadModel] = None,
+                 enable_margin: bool = False) -> None:
         """
         Initialize the enhanced order validator.
 
@@ -77,8 +78,17 @@ class EnhancedOrderValidator:
         portfolio_handler : PortfolioReadModel, optional
             Narrow portfolio read boundary for balance and position checks
             (D-16: the concrete PortfolioHandler conforms structurally)
+        enable_margin : bool
+            Plan 02-03 (D-08/D-09): when True the validator's full-NOTIONAL cash
+            cost check is SKIPPED — in margin mode the AdmissionManager reservation
+            gate is the cash authority (it reserves ``notional / L + commission``
+            and routes an unaffordable order through the audited CASH_RESERVATION
+            REJECTED path, MARGIN-02/D-01). Defaulted False so every existing
+            caller and the spot path are byte-exact (the full-notional cost check
+            runs exactly as today). The minimum-cash floor still applies.
         """
         self.portfolio_handler = portfolio_handler
+        self.enable_margin = enable_margin
         
         # Default validation settings
         self.min_order_value = 1.0
@@ -465,8 +475,14 @@ class EnhancedOrderValidator:
                     "cash",
                     "INSUFFICIENT_CASH_MINIMUM"
                 ))
-            # Cost requirement
-            elif cash < cost:
+            # Cost requirement. Plan 02-03 (D-08/D-09): in MARGIN mode this
+            # full-notional check is the WRONG authority — only notional/L is
+            # actually reserved, so a leverage-affordable order would be wrongly
+            # rejected here and an over-margin order would reject with the VALIDATOR
+            # trigger instead of the designed audited CASH_RESERVATION path
+            # (MARGIN-02/D-01). Defer the cash-cost verdict to the AdmissionManager
+            # reservation gate when margin is on. Spot mode (default) is byte-exact.
+            elif not self.enable_margin and cash < cost:
                 messages.append(ValidationMessage(
                     ValidationLevel.ERROR,
                     f"Insufficient cash: ${cash:.2f} < ${cost:.2f} required",

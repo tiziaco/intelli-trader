@@ -186,11 +186,22 @@ def compose_engine(
 	simulated_exchange = execution_handler.exchanges.get('simulated')
 	commission_estimator = FeeModelCommissionEstimator(simulated_exchange)
 
+	# Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the
+	# order domain at construction so the admission leverage cap (D-04) and the
+	# margin reservation branch (D-08) are gated correctly. Read from the
+	# portfolio config's TradingRules (config_data.trading_rules). With the
+	# default PortfolioConfig (enable_margin=False / max_leverage=1) the order
+	# domain stays on the spot byte-exact arm. The Universe itself is injected
+	# later via order_handler.set_universe at the Trap-4 wiring point (the runner
+	# builds it after this construction).
+	trading_rules = portfolio_handler.config_data.trading_rules
 	resolved_order_config = order_config or OrderConfig.default()
 	order_handler = OrderHandler(
 		global_queue, portfolio_handler, order_storage,
 		order_config=resolved_order_config,
-		commission_estimator=commission_estimator)
+		commission_estimator=commission_estimator,
+		enable_margin=trading_rules.enable_margin,
+		portfolio_max_leverage=trading_rules.max_leverage)
 
 	time_generator = TimeGenerator()
 	# The TIME route's BarEvent source is the feed-owned factory (D-20).

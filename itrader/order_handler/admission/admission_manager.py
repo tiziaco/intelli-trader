@@ -41,8 +41,9 @@ from ...core.enums import OrderStatus, OrderType, Side, OrderOperationType, Orde
 from ...core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ...core.money import to_money
 from ...core.portfolio_read_model import PortfolioReadModel, PositionView
-from ...core.sizing import TradingDirection
+from ...core.sizing import TradingDirection, LeveredFraction
 from ...events_handler.events import SignalEvent
+from ...universe import Universe
 
 
 class AdmissionManager:
@@ -62,7 +63,10 @@ class AdmissionManager:
 	             sizing_resolver: Optional[SizingResolver],
 	             portfolio_handler: Optional[PortfolioReadModel],
 	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]],
-	             brackets: BracketBook, bracket_manager: BracketManager) -> None:
+	             brackets: BracketBook, bracket_manager: BracketManager,
+	             universe: Optional[Universe] = None,
+	             enable_margin: bool = False,
+	             portfolio_max_leverage: Decimal = Decimal("1")) -> None:
 		self.order_storage = order_storage
 		self.logger = logger
 		self.order_validator = order_validator
@@ -74,6 +78,26 @@ class AdmissionManager:
 		# D-08: the coordinator-owned bracket-assembly seam, injected — admission
 		# reaches assembly through it WITHOUT holding a reconcile/lifecycle ref.
 		self.bracket_manager = bracket_manager
+		# Plan 02-03 (Pitfall 1, BLOCKING): the order-domain instrument seam.
+		# Optional[Universe] (default None) so existing no-universe constructions
+		# stay byte-exact — the leverage cap degrades to Decimal("1") with NO
+		# instrument read when None or enable_margin=False (D-04). Set late at
+		# the Trap-4 wiring point via OrderHandler.set_universe → OrderManager.
+		self._universe = universe
+		# D-09 margin gate + D-14 account-wide cap. enable_margin=False forces the
+		# spot byte-exact arm everywhere (no division, no instrument read).
+		self._enable_margin = enable_margin
+		self._portfolio_max_leverage = portfolio_max_leverage
+
+	def set_universe(self, universe: Universe) -> None:
+		"""Inject the symbol→Instrument read-model at the Trap-4 wiring point.
+
+		The runner builds the ``Universe`` AFTER the order domain is constructed
+		(it derives membership/instruments at session init), so the seam is set
+		late — mirroring ``SimulatedExchange.set_universe``. ``_effective_leverage``
+		reads ``self._universe.instrument(ticker).max_leverage`` once margin is on.
+		"""
+		self._universe = universe
 
 	def _estimate_commission(self, order: Order) -> Decimal:
 		"""Estimate the commission for an order's admission reservation (D-04).
@@ -170,6 +194,19 @@ class AdmissionManager:
 			if gate_rejection is not None:
 				return [gate_rejection]
 
+			# 0c. D-07/LEV-02 leverage-sizing gate (Plan 02-03, RESEARCH A3) — the
+			# last admission gate, BEFORE sizing. A LeveredFraction(fraction > 1)
+			# is a LEVERED size (notional = f x equity > equity) that only makes
+			# sense with margin enabled. With enable_margin=False such a policy is
+			# REJECTED via the audited path (no order emitted, audited entity
+			# stored) — the f>1 guard lives HERE, not in the config-free resolver
+			# (the policy/resolver never know enable_margin). f <= 1 passes (it
+			# fits within equity); the FractionOfCash (0,1] oracle-dark path is
+			# untouched (only LeveredFraction reaches this branch).
+			gate_rejection = self._enforce_leverage_admission(signal_event)
+			if gate_rejection is not None:
+				return [gate_rejection]
+
 			# 1. Resolve the DECLARED sizing policy BEFORE validation (D-01/D-08/D-09).
 			# The strategy emits quantity=None (D-10); the order/risk layer resolves the
 			# per-portfolio quantity through the SizingResolver dispatching on
@@ -225,7 +262,23 @@ class AdmissionManager:
 			# the zero default reproduces the old funds-check math exactly.
 			# Decimal-native arithmetic — intermediates are never quantized.
 			if self.portfolio_handler is not None and primary.action is Side.BUY:
-				cost = primary.price * primary.quantity + self._estimate_commission(primary)
+				# Plan 02-03 (D-08/D-09, BYTE-EXACT SITE #1): branch the
+				# reservation cost on enable_margin. notional + commission are
+				# computed ONCE. The MARGIN arm reserves the initial margin
+				# (notional / effective_leverage + commission, D-08); the SPOT arm
+				# reserves the full notional with NO division — operand-for-operand
+				# identical to today's price*qty + commission. CRITICAL (Pitfall 4):
+				# the spot arm must NOT route through notional / 1 — Decimal
+				# division is context-sensitive and a /1 can shift the exponent,
+				# drifting the byte-exact oracle. Use a real if-branch, not a
+				# forced-to-1 division. Full Decimal precision — never quantized.
+				notional = primary.price * primary.quantity
+				commission = self._estimate_commission(primary)
+				if self._enable_margin:
+					effective_leverage = self._effective_leverage(signal_event)
+					cost = notional / effective_leverage + commission
+				else:
+					cost = notional + commission
 				try:
 					self.portfolio_handler.reserve(
 						primary.portfolio_id, primary.id, cost)
@@ -308,11 +361,18 @@ class AdmissionManager:
 			The PENDING primary order, or a failure result for an
 			unsupported order type (short-circuits before entity creation).
 		"""
+		# LEV-03 (Finding B): compute the admission-clamped EFFECTIVE leverage
+		# once at the order-build site and thread it onto the Order entity so it
+		# flows OrderEvent -> FillEvent -> Transaction -> Position. On the spot
+		# path (enable_margin off) _effective_leverage returns Decimal("1") with
+		# NO instrument read or division — byte-exact (oracle-dark).
+		effective_leverage = self._effective_leverage(signal_event)
 		# D-05: the signal carries an enum-typed OrderType; dispatch on the
 		# member. The Order ENTITY now carries a Side action (SIG-03 / D-03) —
 		# thread the signal's Side member straight through (no .value).
 		if signal_event.order_type is OrderType.MARKET:
-			return Order.new_order(signal_event, exchange, quantity=quantity)
+			return Order.new_order(signal_event, exchange, quantity=quantity,
+			                       leverage=effective_leverage)
 		elif signal_event.order_type is OrderType.LIMIT:
 			return Order.new_limit_order(
 				time=signal_event.time,
@@ -322,7 +382,11 @@ class AdmissionManager:
 				quantity=quantity,
 				exchange=exchange,
 				strategy_id=signal_event.strategy_id,
-				portfolio_id=signal_event.portfolio_id
+				portfolio_id=signal_event.portfolio_id,
+				# CR-01 (LEV-03): thread the CLAMPED effective leverage onto the
+				# LIMIT entry too — not just MARKET — so position-life locked
+				# margin equals the admission reservation for every order type.
+				leverage=effective_leverage,
 			)
 		elif signal_event.order_type is OrderType.STOP:
 			return Order.new_stop_order(
@@ -333,7 +397,10 @@ class AdmissionManager:
 				quantity=quantity,
 				exchange=exchange,
 				strategy_id=signal_event.strategy_id,
-				portfolio_id=signal_event.portfolio_id
+				portfolio_id=signal_event.portfolio_id,
+				# CR-01 (LEV-03): thread the CLAMPED effective leverage onto the
+				# STOP entry too (mirrors the MARKET/LIMIT arms).
+				leverage=effective_leverage,
 			)
 		return OperationResult.failure_result(
 			f"Unsupported order type: {signal_event.order_type}",
@@ -498,6 +565,70 @@ class AdmissionManager:
 				f">= max_positions={signal_event.max_positions}; "
 				f"new entry for {signal_event.ticker} not allowed by strategy",
 				triggered_by=OrderTriggerSource.ADMISSION_MAX_POSITIONS,
+				operation_type=OrderOperationType.SIGNAL_ADMISSION,
+				error_prefix="Signal rejected at admission",
+			)
+		return None
+
+	def _effective_leverage(self, signal_event: SignalEvent) -> Decimal:
+		"""Resolve the effective leverage for an order (D-04/D-05).
+
+		When ``enable_margin`` is off the leverage is FORCED to ``Decimal("1")``
+		with NO instrument read — the spot byte-exact arm (the cap helper never
+		touches the Universe on the spot path).
+
+		When ``enable_margin`` is on the effective leverage is the venue-realistic
+		cap ``min(signal.leverage, Instrument.max_leverage, portfolio.max_leverage)``
+		(D-04). The instrument cap degrades to ``Decimal("1")`` when no Universe is
+		wired. A requested leverage ABOVE the cap is CLAMPED to the cap and a
+		warning is logged (D-05 — NOT rejected, NOT silent).
+		"""
+		if not self._enable_margin:
+			# D-04: spot byte-exact — forced to 1, no instrument read.
+			return Decimal("1")
+		instr_cap = (
+			self._universe.instrument(signal_event.ticker).max_leverage
+			if self._universe is not None else Decimal("1"))
+		pf_cap = self._portfolio_max_leverage
+		requested = signal_event.leverage
+		capped = min(requested, instr_cap, pf_cap)
+		if requested > capped:
+			# D-05: venue-realistic clamp — log the clamp loudly, do not reject.
+			self.logger.warning(
+				"leverage clamped to cap",
+				requested=str(requested), capped=str(capped),
+				ticker=signal_event.ticker)
+		return capped
+
+	def _enforce_leverage_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+		"""D-07/LEV-02 gate — a LeveredFraction(f>1) needs enable_margin (RESEARCH A3).
+
+		A ``LeveredFraction`` sizes notional as ``f x total_equity``; an ``f > 1``
+		opens MORE notional than equity, which is only fundable with margin. With
+		``enable_margin=False`` such a policy is REJECTED via the audited path
+		(reuses ``_reject_unsized_signal`` → the same audited add_state_change →
+		persist → failure_result shape D-01 uses for over-cash). ``f <= 1`` fits
+		within equity and passes (the gate is f>1-ONLY); any non-LeveredFraction
+		policy passes untouched (the FractionOfCash (0,1] oracle-dark path is never
+		blocked here).
+
+		Returns
+		-------
+		Optional[OperationResult]
+			A failure_result when an f>1 LeveredFraction reaches admission with
+			margin off (the audited REJECTED entity is already persisted), or
+			None when the signal passes the gate.
+		"""
+		policy = signal_event.sizing_policy
+		if (isinstance(policy, LeveredFraction)
+				and policy.fraction > Decimal("1")
+				and not self._enable_margin):
+			return self._reject_unsized_signal(
+				signal_event,
+				f"leverage violation: LeveredFraction(fraction={policy.fraction}) "
+				f"requires enable_margin (f > 1 opens notional above equity) "
+				f"for {signal_event.ticker}",
+				triggered_by=OrderTriggerSource.ADMISSION_LEVERAGE,
 				operation_type=OrderOperationType.SIGNAL_ADMISSION,
 				error_prefix="Signal rejected at admission",
 			)

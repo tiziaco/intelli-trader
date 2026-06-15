@@ -7,6 +7,7 @@ and all Order class specific functionality.
 
 import pytest
 from datetime import datetime, timedelta
+from decimal import Decimal
 from unittest.mock import Mock
 
 from itrader.order_handler.order import (
@@ -283,6 +284,41 @@ class TestOrderLifecycle:
         if hasattr(order, 'metadata'):
             order.metadata['custom_field'] = 'test_value'
             assert order.metadata['custom_field'] == 'test_value'
+
+
+class TestTypedFactoryLeverage:
+    """CR-01 (LEV-03): the LIMIT/STOP typed factories must carry the
+    admission-clamped EFFECTIVE leverage onto the Order entity, mirroring
+    ``Order.new_order`` (order.py:215), so position-life locked margin equals
+    the admission reservation for ALL order types — not just MARKET."""
+
+    base_time = datetime.now()
+
+    def test_new_limit_order_carries_leverage(self):
+        order = Order.new_limit_order(
+            self.base_time, "BTCUSD", Side.BUY, 40.0, 100.0, "binance",
+            1, 1, leverage=Decimal("5"),
+        )
+        assert order.leverage == Decimal("5")
+
+    def test_new_stop_order_carries_leverage(self):
+        order = Order.new_stop_order(
+            self.base_time, "BTCUSD", Side.BUY, 40.0, 100.0, "binance",
+            1, 1, leverage=Decimal("5"),
+        )
+        assert order.leverage == Decimal("5")
+
+    def test_new_limit_order_default_leverage_is_one(self):
+        order = Order.new_limit_order(
+            self.base_time, "BTCUSD", Side.BUY, 40.0, 100.0, "binance", 1, 1,
+        )
+        assert order.leverage == Decimal("1")
+
+    def test_new_stop_order_default_leverage_is_one(self):
+        order = Order.new_stop_order(
+            self.base_time, "BTCUSD", Side.BUY, 40.0, 100.0, "binance", 1, 1,
+        )
+        assert order.leverage == Decimal("1")
 
 
 if __name__ == "__main__":

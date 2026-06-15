@@ -66,6 +66,10 @@ class FillEvent(Event):
     fill_id: uuid.UUID
     order_id: OrderId
     strategy_id: StrategyId
+    # LEV-03 (Finding B): the admission-clamped EFFECTIVE leverage carried from
+    # the originating order. Default Decimal("1") is unlevered (oracle-dark);
+    # EXECUTED and REFUSED/CANCELLED fills all carry it for the Transaction hop.
+    leverage: Decimal = Decimal("1")
 
     def __str__(self) -> str:
         return f'{self.type} ({self.ticker}, {self.action}, {round(self.quantity, 4)}, {round(self.price, 4)} $)'
@@ -139,4 +143,8 @@ class FillEvent(Event):
             fill_id=uuid_compat.uuid7(),
             order_id=order.order_id,
             strategy_id=order.strategy_id,
+            # LEV-03 (Finding B): carry the effective leverage from the order.
+            # getattr default keeps hand-built order stubs (predating the field)
+            # working — they degrade to Decimal("1") (oracle-dark).
+            leverage=getattr(order, "leverage", Decimal("1")),
         )
