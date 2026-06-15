@@ -586,9 +586,84 @@ def test_portfolio_enhanced_to_dict(portfolio):
     assert portfolio_dict["cash"] == 10000.0
 
 
-def test_maintenance_margin_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 05")
+# ===================
+# MAINTENANCE MARGIN / MARGIN RATIO (Plan 02-05, MARGIN-03, D-13/D-16)
+# ===================
 
 
-def test_margin_ratio_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 05")
+def _fake_universe(rates):
+    """A minimal Universe stand-in exposing instrument(ticker).maintenance_margin_rate.
+
+    ``rates`` maps ticker -> Decimal maintenance_margin_rate. Mirrors the
+    Universe.instrument(symbol) -> Instrument surface the handler reads (D-13).
+    """
+    instruments = {
+        ticker: SimpleNamespace(maintenance_margin_rate=rate)
+        for ticker, rate in rates.items()
+    }
+    return SimpleNamespace(instrument=lambda ticker: instruments[ticker])
+
+
+def test_maintenance_margin_sums_mmr_times_size_times_price(env):
+    """maintenance_margin = Σ (mmr × |size| × current_price) over open positions (D-13)."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    # Position A: |size| 2 @ 100, mmr 0.01 -> 2 ; Position B: |size| 1 @ 50, mmr 0.02 -> 1
+    env.handler.on_fill(_fill_event("AAA", Side.BUY, 100, 2, 0, portfolio_id))
+    env.handler.on_fill(_fill_event("BBB", Side.BUY, 50, 1, 0, portfolio_id))
+    env.handler.set_universe(_fake_universe({
+        "AAA": Decimal("0.01"),
+        "BBB": Decimal("0.02"),
+    }))
+
+    mm = env.handler.maintenance_margin(portfolio_id)
+    assert isinstance(mm, Decimal)
+    assert mm == Decimal("3")
+
+
+def test_maintenance_margin_zero_with_no_open_positions(env):
+    """No open positions -> Decimal('0') maintenance margin (no margin required)."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    env.handler.set_universe(_fake_universe({}))
+    assert env.handler.maintenance_margin(portfolio_id) == Decimal("0")
+
+
+def test_margin_ratio_equals_equity_over_maintenance(env):
+    """margin_ratio = total_equity() / maintenance_margin (D-12 mark-to-market)."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    env.handler.on_fill(_fill_event("AAA", Side.BUY, 100, 2, 0, portfolio_id))
+    env.handler.on_fill(_fill_event("BBB", Side.BUY, 50, 1, 0, portfolio_id))
+    env.handler.set_universe(_fake_universe({
+        "AAA": Decimal("0.01"),
+        "BBB": Decimal("0.02"),
+    }))
+
+    equity = env.handler.total_equity(portfolio_id)
+    mm = env.handler.maintenance_margin(portfolio_id)
+    ratio = env.handler.margin_ratio(portfolio_id)
+    assert isinstance(ratio, Decimal)
+    assert ratio == equity / mm
+
+
+def test_margin_ratio_zero_sentinel_when_no_maintenance(env):
+    """Zero maintenance (no open positions) -> deterministic Decimal('0') sentinel, no div0."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    env.handler.set_universe(_fake_universe({}))
+    assert env.handler.margin_ratio(portfolio_id) == Decimal("0")
+
+
+def test_margin_ratio_reads_honestly_when_breached(env):
+    """When equity drops below maintenance, margin_ratio < 1 and is NOT clamped (D-16)."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, 100)
+    # One position whose maintenance margin exceeds tiny equity:
+    # |size| 1 @ 50, mmr 0.99 -> maintenance 49.5; with starting cash 100 the
+    # mmr is set high enough that equity/maintenance is small but, more directly,
+    # we assert no clamp: a deliberately huge mmr forces ratio < 1.
+    env.handler.on_fill(_fill_event("AAA", Side.BUY, 50, 1, 0, portfolio_id))
+    env.handler.set_universe(_fake_universe({"AAA": Decimal("100")}))
+
+    equity = env.handler.total_equity(portfolio_id)
+    mm = env.handler.maintenance_margin(portfolio_id)
+    ratio = env.handler.margin_ratio(portfolio_id)
+    assert mm > equity  # breached
+    assert ratio < Decimal("1")
+    assert ratio == equity / mm  # honest, no clamp to 0 or 1

@@ -110,5 +110,27 @@ def test_portfolio_partial_nested_update_preserves_siblings(portfolio):
     assert portfolio.config.limits.max_position_value == original_max_position_value
 
 
-def test_max_leverage_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 05")
+def test_max_leverage_rides_update_config(handler):
+    """max_leverage survives deep_merge -> model_validate -> atomic-swap (D-15).
+
+    It is a TradingRules field, so the uniform update_config seam carries it with
+    no special-casing — the swapped config_data reflects the new max_leverage.
+    """
+    assert handler.config_data.trading_rules.max_leverage == Decimal("1")
+    result = handler.update_config({"trading_rules": {"max_leverage": Decimal("5")}})
+    assert result is None
+    assert handler.config_data.trading_rules.max_leverage == Decimal("5")
+
+
+def test_max_leverage_below_floor_raises_configuration_error(handler):
+    """max_leverage < 1 is rejected at validation (ge=1 floor, Plan 01)."""
+    with pytest.raises(ConfigurationError):
+        handler.update_config({"trading_rules": {"max_leverage": Decimal("0")}})
+
+
+def test_max_leverage_update_preserves_sibling_trading_rules(handler):
+    """A single max_leverage update preserves sibling TradingRules fields (WR-04)."""
+    original_enable_margin = handler.config_data.trading_rules.enable_margin
+    handler.update_config({"trading_rules": {"max_leverage": Decimal("3")}})
+    assert handler.config_data.trading_rules.max_leverage == Decimal("3")
+    assert handler.config_data.trading_rules.enable_margin == original_enable_margin
