@@ -71,6 +71,19 @@ class BacktestRunner:
 			engine.strategies_handler.strategies,
 			engine.screeners_handler.get_screeners_universe(),  # type: ignore[no-untyped-call]
 			price_data={})
+		# WR-03: derive_instruments calls derive_membership internally over the
+		# same inputs, so its key set must match the membership derived above. The
+		# two agree within one interpreter today, but a future non-idempotent
+		# derive_membership would silently desync universe.members from the
+		# instrument map (members holding a symbol absent from instrument_map ->
+		# KeyError on instrument(symbol) mid-run). Assert the invariant at wiring
+		# so a desync fails loudly here rather than deep in a tick.
+		if set(membership) != set(instruments):
+			raise ConfigurationError(
+				"Universe membership desync: derive_membership and "
+				"derive_instruments produced different symbol sets "
+				f"(members={sorted(set(membership))}, "
+				f"instruments={sorted(set(instruments))})")
 		universe = Universe(members=membership, instrument_map=instruments)
 		engine.universe = universe
 		# Inject the Universe into the simulated exchange so the admission gate
