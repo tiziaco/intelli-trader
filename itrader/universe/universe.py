@@ -50,7 +50,13 @@ class Universe:
 
     @property
     def members(self) -> list[str]:
-        """Return the membership list (the SAME object the feed binds, Pitfall 4)."""
+        """Return the membership list (the SAME object the feed binds, Pitfall 4).
+
+        IN-02: returned BY IDENTITY (not a defensive copy) because the byte-exact
+        ``feed.bind`` consumer requires the same list object. The returned list is
+        therefore READ-ONLY by contract — DO NOT mutate it; a mutation rewrites the
+        universe's internal membership in place.
+        """
         return self._members
 
     def instrument(self, symbol: str) -> Instrument:
