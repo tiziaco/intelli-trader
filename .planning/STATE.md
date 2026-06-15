@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: verifying
-stopped_at: Completed 02-07-PLAN.md
-last_updated: "2026-06-15T13:00:46.455Z"
+stopped_at: Completed 02-08-PLAN.md
+last_updated: "2026-06-15T14:00:00.000Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 9
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 ## Current Position
 
 Phase: 02 (margin-accounting-leverage) — EXECUTING
-Plan: 7 of 7
-Status: Phase complete — ready for verification
+Plan: 8 of 8 (02-08 gap-closure for the two 02-REVIEW BLOCKERs)
+Status: Phase complete — review BLOCKERs (CR-01/CR-02) closed; ready for verification
 Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
@@ -194,6 +194,7 @@ scope decisions:
 - [Phase ?]: Phase 2 Plan 04: lock-and-settle margin model (enable_margin gate, D-09/D-10/D-11) — position-keyed locked_margin in CashManager (Pitfall 2); available_balance = balance − reserved − locked_margin (spot byte-exact); Position.leverage at open (D-06) + aggregate_notional; margin close cash delta = realised_increment + p×prior_entry_commission so round-trip == realised_pnl; SMA_MACD 134/46189.87730727451 byte-exact
 - [Phase 02]: Phase 2 Plan 05: maintenance_margin/margin_ratio compute-on-demand read-model accessors (D-13/MARGIN-03) — Σ(mmr × |size| × current_price) over open positions via injected Universe (PortfolioHandler.set_universe seam, Trap-4 ordering, mirrors order/exchange set_universe); margin_ratio = total_equity()/maintenance honest-when-breached (D-16, no clamp), Decimal('0') zero-maintenance sentinel; max_leverage rides update_config UNCHANGED (D-15, TradingRules field); 3 Wave-0 stubs (maintenance_margin/margin_ratio/max_leverage) turned green; SMA_MACD 134/46189.87730727451 byte-exact, mypy --strict clean (185 files)
 - [Phase ?]: Phase 2 Plan 07: LEV-03 closed — strategy-declared EFFECTIVE leverage min(signal,instr,pf) flows signal->order->fill->transaction->position; run-path Transaction in PortfolioHandler.on_fill (not new_transaction) was the actual carry site (deviation); locked margin == admission reservation under L>1; SMA_MACD 134/46189.87730727451 byte-exact, mypy clean (185 files)
+- [Phase 02]: Phase 2 Plan 08: gap closure for the two 02-REVIEW BLOCKERs — CR-01 CLOSED (new_limit_order/new_stop_order carry keyword-only leverage; admission LIMIT/STOP arms pass effective_leverage → locked margin == admission reservation for ALL order types, LEV-03 complete); CR-02 MITIGATED (margin over-close fill raises InvalidTransactionError before any mutation/settlement — full flip economics deferred to Phase 3); residual WR-01..05 + IN-01..03 + CR-02-residual tracked in deferred-items.md; SMA_MACD 134/46189.87730727451 byte-exact (oracle-dark), mypy --strict clean (185 files), make test 1089 passed
 - [Phase 02]: Phase 2 Plan 06: parked leveraged-long e2e (D-17 — hand-computed, NOT a frozen golden) + GREEN phase gate (SMA_MACD 134/46189.87730727451 byte-exact, margin-mode determinism byte-identical, mypy --strict clean 185 files, make test 1079 passed); blocking human-verify checkpoint owner-APPROVED — Phase 2 freezes NO new golden (accounting-core re-baseline stays the single owner-gated freeze at P4/XVAL-01, D-16/D-17). The two findings this e2e surfaced (A: StrategiesHandler dropped SignalIntent.leverage at fan-out; B: leverage not carried order->fill->transaction) were CLOSED by 02-07/LEV-03 — not open.
 
 ### Pending Todos
@@ -251,6 +252,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 02 P05 | 8 | 2 tasks | 7 files |
 | Phase 02 P07 | 18 | 3 tasks | 9 files |
 | Phase 02 P06 | 0 | 2 tasks | 3 files |
+| Phase 02 P08 | 12 | 3 tasks | 7 files |
 
 ## Bookkeeping
 
@@ -292,8 +294,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T12:51:35.339Z
-Stopped at: Completed 02-07-PLAN.md
+Last session: 2026-06-15T14:00:00.000Z
+Stopped at: Completed 02-08-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

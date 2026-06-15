@@ -173,6 +173,8 @@ determinism double-run byte-identical.
 - [x] 02-04-PLAN.md — Lock-and-settle cash model: position-keyed locked_margin + one-leverage-per-position + process_transaction branch (MARGIN-01)
 - [x] 02-05-PLAN.md — maintenance_margin/margin_ratio compute-on-demand read-model + max_leverage update_config (MARGIN-03, LEV-01)
 - [x] 02-06-PLAN.md — Parked leveraged-long e2e (hand-computed, NOT frozen) + byte-exact/determinism/mypy phase gate (MARGIN-01/02/03, LEV-01/02)
+- [x] 02-07-PLAN.md — LEV-03 closed: effective leverage flows signal->order->fill->transaction->position (run-path on_fill carry site) (LEV-03)
+- [x] 02-08-PLAN.md — Gap closure: CR-01 LIMIT/STOP leverage threading (LEV-03 all order types) + CR-02 margin over-close fail-loud guard (LEV-03)
 
 ### Phase 3: Shorts & Borrow Carry
 **Goal**: A strategy can open and hold a first-class short position (the `LONG_ONLY` guard removed,
@@ -270,7 +272,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
-| 2. Margin Accounting & Leverage | 8/8 | Complete   | 2026-06-15 |
+| 2. Margin Accounting & Leverage | 9/9 | Complete   | 2026-06-15 |
 | 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
 | 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |
