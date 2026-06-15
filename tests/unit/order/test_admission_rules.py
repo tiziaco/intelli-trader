@@ -228,6 +228,33 @@ def test_short_only_unsized_buy_with_no_open_short_is_rejected(harness):
     assert "SHORT_ONLY" in last_change.reason
 
 
+def test_short_only_unsized_sell_while_short_is_rejected(harness):
+    """WR-01 (D-09): a SHORT_ONLY unsized SELL that ADDS to an open short is an
+    audited admission rejection (short increase out of v1 scope), NOT a
+    fall-through to first-entry sizing that silently scales the short.
+
+    Before the fix the SELL passed the direction gate (SHORT_ONLY+SELL is not
+    policed), was not a reduction (SELL vs an open SHORT), and routed into
+    resolve_entry — opening a fresh entry-sized lot on top of the short."""
+    harness.open_short(quantity=2.0, price=40.0)
+    position = harness.ptf_handler.get_position(harness.last_ptf_id, "BTCUSDT")
+    assert position is not None and position.side is PositionSide.SHORT
+    assert harness.queue.empty()
+
+    signal = harness.create_mock_signal(
+        "SELL", direction=TradingDirection.SHORT_ONLY)
+    harness.order_handler.on_signal(signal)
+
+    # No order emitted — the short was NOT scaled by entry sizing.
+    assert harness.queue.empty()
+    last_change = _get_single_rejection(harness, "BTCUSDT")
+    assert last_change.from_status == OrderStatus.PENDING
+    assert last_change.to_status == OrderStatus.REJECTED
+    assert last_change.triggered_by is OrderTriggerSource.ADMISSION_INCREASE
+    assert "short increase" in last_change.reason
+    assert last_change.timestamp == signal.time
+
+
 def test_long_short_direction_passes_the_gate(harness):
     """A LONG_SHORT-direction signal (e.g. from TradingInterface) passes the
     gate — registration, not admission, polices LONG_SHORT."""

@@ -508,16 +508,21 @@ class AdmissionManager:
 		  (triggered_by=OrderTriggerSource.ADMISSION_MAX_POSITIONS). Oracle-dark: the golden
 		  run is single-ticker with max_positions=1 and at most one open
 		  position, so a new-entry BUY never trips it.
-		* OPEN short for the ticker (net_quantity < 0) — a BUY is a cover/
-		  exit; neither gate applies (short increases are out of v1 scope
-		  with the margin model, D-09).
+		* OPEN short for the ticker — a BUY is a cover/exit (passes; sized
+		  downstream). An unsized SELL is a same-side ADD (short increase),
+		  out of v1 scope with the margin model (D-09, WR-01): it is an
+		  AUDITED rejection (triggered_by=OrderTriggerSource.ADMISSION_INCREASE),
+		  mirroring the long INCREASE gate — it must NOT fall through to
+		  first-entry sizing.
 
 		Preserved paths the gates never block:
 		- First entries (no open position, count under the limit) size
 		  EXACTLY as before — byte-exactness of the post-07-07 reference
 		  depends on it when N=0.
 		- Explicit-quantity signals skip both gates (live/manual path).
-		- SELLs pass: exits are sized downstream; direction polices the rest.
+		- SELLs pass UNLESS they add to an open short (the WR-01 gate above):
+		  exits (SELL on an open long) and sanctioned first short entries
+		  (SELL with no open position) are sized downstream.
 
 		Returns
 		-------
@@ -530,6 +535,24 @@ class AdmissionManager:
 			# Explicit caller-supplied quantity: the gates do not apply.
 			return None
 		if signal_event.action is not Side.BUY:
+			# WR-01 (D-09): an unsized SELL that ADDS to an open short is a short
+			# increase — out of v1 scope with the margin model, mirroring the long
+			# INCREASE gate. Without this gate the SELL passes the direction gate
+			# (SHORT_ONLY+SELL is not policed), is not a reduction (SELL vs an open
+			# SHORT, _resolve_signal_quantity:750-753), and falls into FIRST-ENTRY
+			# `resolve_entry` sizing — silently scaling the short on entry-fraction-
+			# of-cash. Reject it as an AUDITED admission failure instead. A SELL
+			# against an open LONG (exit) or with no open position (a sanctioned
+			# first short entry) still passes — only the same-side add is blocked.
+			if (snap is not None and snap.side is PositionSide.SHORT):
+				return self._reject_unsized_signal(
+					signal_event,
+					f"position increase not allowed: short increase is out of "
+					f"v1 scope (D-09) for {signal_event.ticker}",
+					triggered_by=OrderTriggerSource.ADMISSION_INCREASE,
+					operation_type=OrderOperationType.SIGNAL_ADMISSION,
+					error_prefix="Signal rejected at admission",
+				)
 			return None
 		if self.portfolio_handler is None:
 			# No position truth to consult — an unsized signal without a
