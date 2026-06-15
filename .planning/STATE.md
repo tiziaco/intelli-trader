@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: executing
-stopped_at: Phase 2 context gathered
-last_updated: "2026-06-15T11:03:27.210Z"
-last_activity: 2026-06-15 -- Phase 02 planning complete
+stopped_at: Completed 02-00-PLAN.md
+last_updated: "2026-06-15T11:10:54.683Z"
+last_activity: 2026-06-15
 progress:
   total_phases: 9
   completed_phases: 1
   total_plans: 10
-  completed_plans: 3
+  completed_plans: 4
   percent: 11
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 2 — Margin Accounting & Leverage
+**Current focus:** Phase 02 — margin-accounting-leverage
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (margin-accounting-leverage) — EXECUTING
+Plan: 2 of 7
 Status: Ready to execute
-Last activity: 2026-06-15 -- Phase 02 planning complete
+Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -188,6 +188,7 @@ scope decisions:
 - [Phase ?]: Phase 1 Plan 01: Instrument stores the Decimal SCALE directly (price_precision=Decimal('0.00000001')) not an int place-count — byte-identical to the deleted _INSTRUMENT_SCALES['BTCUSD']; quantize reads scale off the handed-in Instrument (D-05 pure/stateless)
 - [Phase ?]: Phase 1 Plan 02: symbol->Instrument resolution lives in universe/ (derive_instruments + Universe facade, D-03 no separate registry); ExchangeLimits demoted to venue fallback; SimulatedExchange resolves min_order_size Instrument-first via set_universe (None default = byte-exact); oracle held 134/46189.87730727451
 - [Phase ?]: Phase 1 Plan 03: byte-exact phase gate PASSED — oracle held 134/46189.87730727451, mypy --strict clean (185 files), determinism 9/9 double-run identical, full suite 1023 passed, golden artifacts untouched; no production code modified, phase re-baselines nothing (D-10/D-01a/D-02a)
+- [Phase 02]: Phase 2 Plan 00: 13 collectible pytest.skip Wave 0 stubs (6 unit files + new tests/e2e/levered_long/ e2e stub) satisfy the Nyquist contract — every Phase-2 (02-06) -k/-m verify target selects >=1 test before any RED step; folder-derived markers only (no decorator); test-only, oracle untouched
 
 ### Pending Todos
 
@@ -236,6 +237,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
+| Phase 02 P00 | 3 | 1 tasks | 8 files |
 
 ## Bookkeeping
 
@@ -277,9 +279,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T10:20:01.563Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-margin-accounting-leverage/02-CONTEXT.md
+Last session: 2026-06-15T11:10:54.674Z
+Stopped at: Completed 02-00-PLAN.md
+Resume file: None
 
 ## Operator Next Steps
 

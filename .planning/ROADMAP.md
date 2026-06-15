@@ -166,7 +166,7 @@ golden master freezes ONLY after explicit owner sign-off + external cross-valida
 (`backtesting.py`/`backtrader`), with full attribution. `mypy --strict` clean; Decimal end-to-end;
 determinism double-run byte-identical.
 **Plans**: 7 plans
-- [ ] 02-00-PLAN.md — [Wave 0] Nyquist stub plan: collectible -k/-m targets for every Phase-2 verify command (MARGIN-01/02/03, LEV-01/02)
+- [x] 02-00-PLAN.md — [Wave 0] Nyquist stub plan: collectible -k/-m targets for every Phase-2 verify command (MARGIN-01/02/03, LEV-01/02)
 - [ ] 02-01-PLAN.md — SignalEvent.leverage + TradingRules.max_leverage inert contract fields (LEV-01)
 - [ ] 02-02-PLAN.md — LeveredFraction equity-based sizing kind + resolver arm + SignalIntent.leverage (LEV-02)
 - [ ] 02-03-PLAN.md — [BLOCKING] Universe wiring into the order domain + leverage cap + margin reservation/over-margin reject (LEV-01/02, MARGIN-01/02)
@@ -270,7 +270,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
-| 2. Margin Accounting & Leverage | 0/TBD | Not started | - |
+| 2. Margin Accounting & Leverage | 1/7 | In Progress|  |
 | 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
 | 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |
