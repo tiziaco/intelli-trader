@@ -49,6 +49,13 @@ _MAX_PRICE_DP = 8
 _DEFAULT_PRICE_SCALE = Decimal("0.01")
 _DEFAULT_QUANTITY_SCALE = Decimal("0.00000001")
 
+# IN-05 — single definition site for the BTCUSD 8dp scale. The byte-exact
+# guarantee rests on ``_DECLARED["BTCUSD"]`` reproducing the deleted
+# ``_INSTRUMENT_SCALES["BTCUSD"]`` 8dp scales EXACTLY; anchoring both the price
+# and quantity declared scales to ONE constant removes the four-place magic
+# literal so a future edit cannot silently drift the oracle.
+_BTC_8DP = Decimal("0.00000001")
+
 # Inert margin defaults (INST-03; consumed Phase 2 leverage / Phase 4
 # liquidation). Conservative Phase-1 placeholders — present + Decimal-typed so
 # every constructed Instrument is strict-clean, unused this phase.
@@ -98,8 +105,8 @@ class _Declared:
 # on BTCUSD because it is declared (D-10).
 _DECLARED: dict[str, _Declared] = {
     "BTCUSD": _Declared(
-        price_precision=Decimal("0.00000001"),
-        quantity_precision=Decimal("0.00000001"),
+        price_precision=_BTC_8DP,
+        quantity_precision=_BTC_8DP,
         # min_order_size intentionally OMITTED (D-01a) -> None -> venue fallback.
     ),
 }
@@ -130,8 +137,14 @@ def _infer_price_scale(raw_cells: Sequence[str]) -> Decimal | None:
         text = str(cell).strip()
         if "." not in text:
             continue
+        frac = text.split(".", 1)[1]
+        if not frac.isdigit():
+            # WR-02: scientific notation ("1.0e-5" -> "0e-5") or trailing
+            # garbage ("12.34%") is NOT a plain-decimal count — skip the cell
+            # rather than mis-measure its fractional length.
+            continue
         seen = True
-        decimals = len(text.split(".", 1)[1])
+        decimals = len(frac)
         if decimals > max_dp:
             max_dp = decimals
     if not seen:
@@ -141,6 +154,17 @@ def _infer_price_scale(raw_cells: Sequence[str]) -> Decimal | None:
         return None
     # D-04 string path — Decimal("1e-<n>") normalized to the explicit scale.
     return Decimal(f"1e-{capped}")
+
+
+def _pick[T](value: T | None, default: T) -> T:
+    """Return ``value`` when declared (not ``None``), else ``default`` (IN-03).
+
+    Collapses the repeated ``declared.X if declared.X is not None else default``
+    rung to one line for the margin / ``settles_funding`` ladder. Identical
+    semantics to the inline guard — a ``None`` declared field falls through to
+    the default exactly as before.
+    """
+    return value if value is not None else default
 
 
 def derive_instruments(
@@ -205,19 +229,18 @@ def derive_instruments(
         # min_order_size: declared -> None (D-01a — NOT inferable).
         min_order_size = declared.min_order_size if declared is not None else None
 
-        # margin params: declared -> default (inert this phase).
-        if declared is not None and declared.maintenance_margin_rate is not None:
-            maintenance_margin_rate = declared.maintenance_margin_rate
-        else:
-            maintenance_margin_rate = _DEFAULT_MAINTENANCE_MARGIN_RATE
-        if declared is not None and declared.max_leverage is not None:
-            max_leverage = declared.max_leverage
-        else:
-            max_leverage = _DEFAULT_MAX_LEVERAGE
-        if declared is not None and declared.settles_funding is not None:
-            settles_funding = declared.settles_funding
-        else:
-            settles_funding = False
+        # margin params: declared -> default (inert this phase). IN-03 — the
+        # per-field ``declared is not None and declared.X is not None`` ladder
+        # collapses to ``_pick`` over ``declared.X if declared else None``.
+        maintenance_margin_rate = _pick(
+            declared.maintenance_margin_rate if declared is not None else None,
+            _DEFAULT_MAINTENANCE_MARGIN_RATE)
+        max_leverage = _pick(
+            declared.max_leverage if declared is not None else None,
+            _DEFAULT_MAX_LEVERAGE)
+        settles_funding = _pick(
+            declared.settles_funding if declared is not None else None,
+            False)
 
         instruments[symbol] = Instrument(
             symbol=symbol,
