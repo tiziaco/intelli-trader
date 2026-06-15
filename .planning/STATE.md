@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: ready_to_plan
-stopped_at: Phase 03 complete (6/6) — ready to discuss Phase 999.2
+stopped_at: Phase 03 complete (6/6) — ready to discuss Phase 4
 last_updated: 2026-06-15T19:29:46.758Z
-last_activity: 2026-06-15 -- Phase 03 execution started
+last_activity: 2026-06-15 -- Phase 03 complete (6/6), verification passed
 progress:
   total_phases: 9
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 18
   completed_plans: 18
-  percent: 22
+  percent: 33
 ---
 
 # Project State
@@ -21,17 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 4 — Liquidation & Cross-Validation Re-baseline (LIQ-01/02/03, XVAL-01)
 
 ## Current Position
 
-Phase: 999.2
+Phase: 4
 Plan: Not started
-Status: Ready to plan
+Status: Ready to discuss
 
-> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 3 dir does
-> not exist yet (only 02 + 999.x dirs are present). Corrected manually to Phase 3 per the v1.4 Phase
-> Map (1→2→**3**→4→5→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
+> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 4 dir does
+> not exist yet (only 01/02/03 + 999.x dirs are present). Corrected manually to Phase 4 per the v1.4
+> Phase Map (1→2→3→**4**→5→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
 Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
