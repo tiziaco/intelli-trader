@@ -72,6 +72,13 @@ class TradingRules(BaseModel):
     enable_margin: bool = False
     enable_options: bool = False
     enable_futures: bool = False
+    # D-14: account-wide leverage cap consumed by Wave 2's admission-gate
+    # leverage cap (D-04). ge=1 — leverage is a floor of 1 (you can never
+    # have a sub-1 leverage as an account cap). Default Decimal("1") is
+    # unlevered/byte-exact; SMA_MACD never sets it. NOT default_leverage —
+    # leverage is a strategy/signal concern (rides SignalEvent), not a
+    # portfolio default.
+    max_leverage: Decimal = Field(default=Decimal("1"), ge=1)
     min_trade_amount: Decimal = Decimal("100.0")
     max_trade_amount: Optional[Decimal] = None
     max_transactions_per_day: Optional[int] = None
