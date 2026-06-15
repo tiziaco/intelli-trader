@@ -112,7 +112,6 @@ class LiveTradingSystem:
         # backtest system) — a local variable would leave every captured
         # SignalRecord permanently unreachable (a write-only accumulation).
         self._signal_store = SignalStorageFactory.create('backtest')
-        self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, self._signal_store)
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
         # WR-04: declare the universe attribute as a clean "not yet wired"
@@ -161,6 +160,16 @@ class LiveTradingSystem:
         # (enable_margin=False / max_leverage=1) the order domain stays on the spot
         # byte-exact arm. The Universe is injected later via set_universe.
         _trading_rules = self.portfolio_handler.config_data.trading_rules
+
+        # SHORT-01/D-07: thread the two shorts-enabling flags from trading_rules
+        # into the registration gate (mirrors compose_engine). Constructed AFTER
+        # the _trading_rules binding so the flags are available; both default off
+        # → SMA_MACD (LONG_ONLY) stays admitted, oracle byte-exact.
+        self.strategies_handler = StrategiesHandler(
+            self.global_queue, self.feed, self._signal_store,
+            allow_short_selling=_trading_rules.allow_short_selling,
+            enable_margin=_trading_rules.enable_margin)
+
         self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
                                           commission_estimator=_estimate_commission,
                                           enable_margin=_trading_rules.enable_margin,
