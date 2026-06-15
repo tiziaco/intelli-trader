@@ -38,7 +38,7 @@ from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
-from itrader.core.enums import OrderType, OrderStatus, Side, OrderTriggerSource
+from itrader.core.enums import OrderType, OrderStatus, Side, OrderTriggerSource, PositionSide
 from itrader.core.money import to_money
 from itrader.core.sizing import FractionOfCash, TradingDirection
 
@@ -741,7 +741,11 @@ def test_cover_arm_buy_on_open_short_routes_through_resolve_exit(harness):
     CR-01 hole. After the fix it returns abs(net_quantity) = 2.0."""
     harness.open_short(quantity=2.0, price=40.0)
     position = harness.ptf_handler.get_position(harness.last_ptf_id, "BTCUSDT")
-    assert position is not None and position.net_quantity < 0
+    # The order-boundary read-model carries an UNSIGNED magnitude + a `side`
+    # discriminator (PositionView.net_quantity == abs(...) >= 0); SHORT is in
+    # `side`, never a negative net_quantity.
+    assert position is not None and position.side is PositionSide.SHORT
+    assert position.net_quantity == Decimal("2.0")
 
     cover = harness.create_mock_signal(
         "BUY", direction=TradingDirection.LONG_SHORT, exit_fraction=Decimal("1"),
@@ -751,7 +755,7 @@ def test_cover_arm_buy_on_open_short_routes_through_resolve_exit(harness):
     order_event: OrderEvent = harness.queue.get(False)
     assert order_event.action is Side.BUY
     # The cover sizes to the FULL short magnitude (clamp-to-flat at fraction 1),
-    # not the entry-sizing fraction-of-cash quantity. abs(-2.0) == 2.0.
+    # not the entry-sizing fraction-of-cash quantity.
     assert order_event.quantity == abs(position.net_quantity)
     assert order_event.quantity == Decimal("2")
 
@@ -781,7 +785,8 @@ def test_over_cover_clamp_buy_clamps_to_short_magnitude(harness):
     magnitude, so a full-close cover can never exceed the open short."""
     harness.open_short(quantity=1.5, price=40.0)
     position = harness.ptf_handler.get_position(harness.last_ptf_id, "BTCUSDT")
-    assert position is not None and position.net_quantity < 0
+    assert position is not None and position.side is PositionSide.SHORT
+    assert position.net_quantity == Decimal("1.5")
 
     cover = harness.create_mock_signal(
         "BUY", direction=TradingDirection.LONG_SHORT, exit_fraction=Decimal("1"),
