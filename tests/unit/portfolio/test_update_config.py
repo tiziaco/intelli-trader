@@ -108,3 +108,7 @@ def test_portfolio_partial_nested_update_preserves_siblings(portfolio):
     portfolio.update_config({"limits": {"max_positions": 11}})
     assert portfolio.config.limits.max_positions == 11
     assert portfolio.config.limits.max_position_value == original_max_position_value
+
+
+def test_max_leverage_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 05")

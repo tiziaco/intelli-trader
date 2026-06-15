@@ -402,3 +402,23 @@ def test_explicit_quantity_buy_skips_increase_and_max_positions_gates(harness):
     order_event: OrderEvent = harness.queue.get(False)
     assert order_event.action is Side.BUY
     assert order_event.quantity == 1.0
+
+
+def test_leverage_cap_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+
+
+def test_leverage_forced_one_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+
+
+def test_over_margin_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+
+
+def test_margin_reservation_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+
+
+def test_levered_fraction_gate_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")

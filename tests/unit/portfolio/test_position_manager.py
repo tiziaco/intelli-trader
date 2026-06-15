@@ -446,3 +446,15 @@ def test_precision_calculations(env):
     # Values should be calculated with proper precision
     assert position.avg_price > 0
     assert position.net_quantity > 0
+
+
+def test_scale_in_margin_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 04")
+
+
+def test_one_leverage_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 04")
+
+
+def test_partial_close_margin_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 04")

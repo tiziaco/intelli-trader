@@ -584,3 +584,11 @@ def test_portfolio_enhanced_to_dict(portfolio):
     assert portfolio_dict["name"] == "Test Portfolio"
     assert portfolio_dict["state"] == PortfolioState.ACTIVE.value
     assert portfolio_dict["cash"] == 10000.0
+
+
+def test_maintenance_margin_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 05")
+
+
+def test_margin_ratio_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 05")

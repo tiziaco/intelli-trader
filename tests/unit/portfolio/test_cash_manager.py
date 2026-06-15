@@ -498,3 +498,7 @@ def test_operation_id_uniqueness(cm):
         operation_ids.add(operation.operation_id)
 
     assert len(operation_ids) == 100
+
+
+def test_locked_margin_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 04")

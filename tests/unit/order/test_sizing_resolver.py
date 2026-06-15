@@ -271,3 +271,7 @@ def test_exit_partial_with_step_quantizes_round_down():
     # sized = 10 * 0.333 = 3.330; remainder 6.670 >= 0.01 -> quantize down.
     result = _resolver().resolve_exit(Decimal("10"), Decimal("0.333"), Decimal("0.01"))
     assert str(result) == "3.33"
+
+
+def test_levered_fraction_wave0_stub():
+    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 02")
