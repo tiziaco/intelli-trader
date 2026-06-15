@@ -20,6 +20,7 @@ from itrader.core.enums import OrderType, OrderCommand
 from itrader.core.money import to_money
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
+from itrader.universe import Universe
 from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, SlippageModelConfig, ExchangeLimits, FailureSimulation, FeeModelType, SlippageModelType, deep_merge
 from itrader.core.exceptions.base import ConfigurationError
 
@@ -114,11 +115,67 @@ class SimulatedExchange(AbstractExchange):
 		# DEC-02 / D-06: size limits carried as Decimal end-to-end (no float() — float money
 		# is a correctness defect). config.limits.* are already Decimal (Pydantic ExchangeLimits);
 		# the validate_order comparisons run Decimal-vs-Decimal.
+		# INST-03 (D-01): _min_order_size is the VENUE-LEVEL FALLBACK for
+		# undeclared symbols. The admission gate resolves Instrument-first via
+		# resolve_min_order_size(ticker), falling through to this venue value only
+		# when the symbol's Instrument leaves min_order_size undeclared (D-01a) or
+		# no Universe is injected.
 		self._min_order_size = self.config.limits.min_order_size
 		self._max_order_size = self.config.limits.max_order_size
 		self._exchange_name = self.config.exchange_name
+
+		# INST-03 (D-01/D-08): the injected Universe read-model for per-symbol
+		# Instrument resolution. None until set at wiring (set_universe) — when
+		# None the admission gate uses the venue fallback unconditionally, which
+		# keeps every pre-existing (no-universe) construction byte-exact.
+		self._universe: Optional[Universe] = None
 		
 		self.logger.info('Simulated Exchange initialized: %s', self.config.exchange_name)
+
+	def set_universe(self, universe: Universe) -> None:
+		"""Inject the Universe read-model for per-symbol Instrument resolution.
+
+		Called once at wiring (INST-03, D-08) after the Universe is constructed
+		in the runner. Until set, the admission gate uses the venue-level
+		``min_order_size`` fallback unconditionally (byte-exact default).
+
+		Parameters
+		----------
+		universe : Universe
+			The wired read-model whose ``instrument(ticker)`` resolves the
+			per-symbol ``Instrument``.
+		"""
+		self._universe = universe
+
+	def resolve_min_order_size(self, ticker: str) -> Decimal:
+		"""Resolve the effective min order size Instrument-first (INST-03, D-01/D-01a).
+
+		Resolution ladder: the symbol's ``Instrument.min_order_size`` when an
+		injected Universe declares one; otherwise the venue-level
+		``ExchangeLimits`` fallback (``self._min_order_size``). A symbol absent
+		from the universe — or no universe injected at all — also falls through
+		to the venue fallback. Because BTCUSD's ``Instrument.min_order_size`` is
+		None (D-01a), this returns ``Decimal("0.001")`` byte-identically to the
+		pre-INST-03 admission gate (Pitfall 2).
+
+		Parameters
+		----------
+		ticker : str
+			The order's symbol (``OrderEvent.ticker``).
+
+		Returns
+		-------
+		Decimal
+			The effective minimum order size for ``ticker``.
+		"""
+		if self._universe is not None:
+			try:
+				instrument = self._universe.instrument(ticker)
+			except KeyError:
+				instrument = None
+			if instrument is not None and instrument.min_order_size is not None:
+				return instrument.min_order_size
+		return self._min_order_size
 
 	def _admit_order(self, event: OrderEvent) -> bool:
 		"""
@@ -418,11 +475,14 @@ class SimulatedExchange(AbstractExchange):
 		if not self.validate_symbol(event.ticker):
 			failed_checks.append(f"Invalid symbol: {event.ticker}")
 		
-		# Quantity validation
+		# Quantity validation. INST-03 (D-01/D-01a): resolve the effective
+		# minimum Instrument-first -> venue fallback. BTCUSD (undeclared) falls
+		# through to ExchangeLimits(0.001) byte-identically (Pitfall 2).
+		min_order_size = self.resolve_min_order_size(event.ticker)
 		if event.quantity <= 0:
 			failed_checks.append("Order quantity must be positive")
-		elif event.quantity < self._min_order_size:
-			failed_checks.append(f"Order quantity {event.quantity} below minimum {self._min_order_size}")
+		elif event.quantity < min_order_size:
+			failed_checks.append(f"Order quantity {event.quantity} below minimum {min_order_size}")
 		elif event.quantity > self._max_order_size:
 			failed_checks.append(f"Order quantity {event.quantity} exceeds maximum {self._max_order_size}")
 		

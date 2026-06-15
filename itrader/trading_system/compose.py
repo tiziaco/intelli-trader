@@ -48,6 +48,7 @@ from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.strategy_handler.storage import SignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.trading_system.simulation.time_generator import TimeGenerator
+from itrader.universe import Universe
 
 
 class FeeModelCommissionEstimator:
@@ -99,6 +100,10 @@ class Engine:
 	order_handler: OrderHandler
 	event_handler: EventHandler
 	time_generator: TimeGenerator
+	# INST-03 (D-06/D-08): the symbol->Instrument read-model, constructed at the
+	# Trap-4 wiring point in the runner (_initialise_backtest_session) and set
+	# onto the engine there. None until wiring — populated before the run loop.
+	universe: Optional[Universe] = None
 
 
 def compose_engine(
