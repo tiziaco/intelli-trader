@@ -164,11 +164,6 @@ def compose_engine(
 		end_date=end_date or None)
 	feed = BacktestBarFeed(store, to_timedelta(timeframe))
 
-	# Signal-store sink (read-model): one SignalRecord per non-None intent,
-	# read post-run; the queue-only contract is preserved (handler writes
-	# locally, the holder reads after the run). The backend is selected by the
-	# FACTORY and injected (D-14a) — the seam never names a run mode.
-	strategies_handler = StrategiesHandler(global_queue, feed, signal_store)
 	# ScreenersHandler is a deferred subsystem (ignore_errors override).
 	screeners_handler = ScreenersHandler(global_queue, feed)  # type: ignore[no-untyped-call]
 	portfolio_handler = PortfolioHandler(global_queue)
@@ -195,6 +190,21 @@ def compose_engine(
 	# later via order_handler.set_universe at the Trap-4 wiring point (the runner
 	# builds it after this construction).
 	trading_rules = portfolio_handler.config_data.trading_rules
+
+	# Signal-store sink (read-model): one SignalRecord per non-None intent,
+	# read post-run; the queue-only contract is preserved (handler writes
+	# locally, the holder reads after the run). The backend is selected by the
+	# FACTORY and injected (D-14a) — the seam never names a run mode.
+	#
+	# SHORT-01/D-07: thread the two shorts-enabling flags from trading_rules into
+	# the registration gate. Constructed AFTER the trading_rules binding so the
+	# flags are available; both default off → SMA_MACD (LONG_ONLY) stays admitted
+	# and the oracle stays byte-exact.
+	strategies_handler = StrategiesHandler(
+		global_queue, feed, signal_store,
+		allow_short_selling=trading_rules.allow_short_selling,
+		enable_margin=trading_rules.enable_margin)
+
 	resolved_order_config = order_config or OrderConfig.default()
 	order_handler = OrderHandler(
 		global_queue, portfolio_handler, order_storage,
