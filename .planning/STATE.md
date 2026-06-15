@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
-status: executing
+status: verifying
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-15T07:27:58.061Z"
+last_updated: "2026-06-15T07:30:33.219Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 9
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 0
+  completed_plans: 3
+  percent: 11
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 
 Phase: 01 (instrument-value-object) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
@@ -187,6 +187,7 @@ scope decisions:
 
 - [Phase ?]: Phase 1 Plan 01: Instrument stores the Decimal SCALE directly (price_precision=Decimal('0.00000001')) not an int place-count — byte-identical to the deleted _INSTRUMENT_SCALES['BTCUSD']; quantize reads scale off the handed-in Instrument (D-05 pure/stateless)
 - [Phase ?]: Phase 1 Plan 02: symbol->Instrument resolution lives in universe/ (derive_instruments + Universe facade, D-03 no separate registry); ExchangeLimits demoted to venue fallback; SimulatedExchange resolves min_order_size Instrument-first via set_universe (None default = byte-exact); oracle held 134/46189.87730727451
+- [Phase ?]: Phase 1 Plan 03: byte-exact phase gate PASSED — oracle held 134/46189.87730727451, mypy --strict clean (185 files), determinism 9/9 double-run identical, full suite 1023 passed, golden artifacts untouched; no production code modified, phase re-baselines nothing (D-10/D-01a/D-02a)
 
 ### Pending Todos
 
@@ -234,6 +235,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger | 2026-06-14 | 191e21f | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
+| Phase 01 P03 | 2 | 1 tasks | 0 files |
 
 ## Bookkeeping
 
@@ -275,7 +277,7 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T07:27:53.399Z
+Last session: 2026-06-15T07:30:28.832Z
 Stopped at: Phase 1 context gathered
 Resume file: None
 

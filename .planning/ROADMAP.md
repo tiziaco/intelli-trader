@@ -145,7 +145,7 @@ whether the backtest *snaps/rounds* via Instrument must hold the oracle byte-exa
 **Plans**: 3 plans
 - [x] 01-01-PLAN.md — Frozen Instrument value object + quantize(Instrument) rewire; delete _INSTRUMENT_SCALES (INST-01/03)
 - [x] 01-02-PLAN.md — derive_instruments ladder + Universe facade + ExchangeLimits demotion + SimulatedExchange/wiring (INST-02/03)
-- [ ] 01-03-PLAN.md — Byte-exact oracle + mypy --strict + determinism phase gate (INST-01/02/03)
+- [x] 01-03-PLAN.md — Byte-exact oracle + mypy --strict + determinism phase gate (INST-01/02/03)
 
 ### Phase 2: Margin Accounting & Leverage
 **Goal**: A portfolio opens positions on reserved margin (`initial_margin = notional / leverage`),
@@ -262,7 +262,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Instrument Value Object | 2/3 | In Progress|  |
+| 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
 | 2. Margin Accounting & Leverage | 0/TBD | Not started | - |
 | 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
