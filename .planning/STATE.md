@@ -4,13 +4,13 @@ milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: executing
 stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-06-15T11:30:56.662Z"
+last_updated: "2026-06-15T11:45:10.773Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 9
   completed_phases: 1
   total_plans: 10
-  completed_plans: 7
+  completed_plans: 8
   percent: 11
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 ## Current Position
 
 Phase: 02 (margin-accounting-leverage) — EXECUTING
-Plan: 5 of 7
+Plan: 6 of 7
 Status: Ready to execute
 Last activity: 2026-06-15
 
@@ -191,6 +191,7 @@ scope decisions:
 - [Phase 02]: Phase 2 Plan 00: 13 collectible pytest.skip Wave 0 stubs (6 unit files + new tests/e2e/levered_long/ e2e stub) satisfy the Nyquist contract — every Phase-2 (02-06) -k/-m verify target selects >=1 test before any RED step; folder-derived markers only (no decorator); test-only, oracle untouched
 - [Phase ?]: Phase 2 Plan 01: SignalEvent.leverage (D-03) + TradingRules.max_leverage ge=1 (D-14) landed as inert defaulted Decimal('1') fields — oracle-dark (134/46189.87730727451 held), Wave 2 admission-gate (D-04) consumes them
 - [Phase 02]: Phase 2 Plan 02: LeveredFraction sizing kind (notional = f x total_equity, D-07/LEV-02) — f guarded >0 NOT (0,1] (f>1 gate lives in AdmissionManager/Plan 03); SizingPolicy union grew forcing the assert_never arm; SignalIntent.leverage mirror (D-03) added; resolver reads total_equity (D-12) via the read-model Protocol, never cash; FractionOfCash (0,1] oracle-dark path untouched; mypy --strict clean (185 files)
+- [Phase ?]: Phase 2 Plan 04: lock-and-settle margin model (enable_margin gate, D-09/D-10/D-11) — position-keyed locked_margin in CashManager (Pitfall 2); available_balance = balance − reserved − locked_margin (spot byte-exact); Position.leverage at open (D-06) + aggregate_notional; margin close cash delta = realised_increment + p×prior_entry_commission so round-trip == realised_pnl; SMA_MACD 134/46189.87730727451 byte-exact
 
 ### Pending Todos
 
@@ -243,6 +244,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 02 P01 | 5 | 2 tasks | 2 files |
 | Phase 02 P02 | 8 | 2 tasks | 3 files |
 | Phase 02 P03 | 18 | 3 tasks | 8 files |
+| Phase 02 P04 | 35 | 3 tasks | 9 files |
 
 ## Bookkeeping
 
@@ -284,8 +286,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T11:30:22.301Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-06-15T11:44:00.873Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
