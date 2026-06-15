@@ -578,13 +578,87 @@ class Portfolio(object):
 				raise PortfolioError(f"Transaction value {transaction_value} exceeds limit {self.config.limits.max_position_value}")
 	
 	# Enhanced Market Value Update
-	def update_market_value_of_portfolio(self, prices: Mapping[str, float | Decimal]) -> None:
-		"""Update portfolio market values."""
+	def update_market_value_of_portfolio(self, prices: Mapping[str, float | Decimal],
+			bar_time: Optional[datetime] = None, universe: Any = None) -> None:
+		"""Update portfolio market values, then accrue per-bar short carry (CARRY-01).
+
+		``bar_time`` is the bar's BUSINESS time threaded down from
+		``PortfolioHandler.update_portfolios_market_value`` (D-04 — the carry
+		days basis and the carry op timestamp derive from it, NEVER
+		``datetime.now(UTC)``; a wall-clock stamp breaks the determinism
+		double-run gate). It defaults to ``None`` for legacy callers that only
+		mark; in that case the mark falls back to the wall clock and no carry
+		accrues (no bar time, no days basis).
+
+		``universe`` is the injected ``Universe`` read-model used to resolve each
+		open short's ``Instrument.borrow_rate`` (D-01), mirroring the
+		``maintenance_margin`` read pattern in ``PortfolioHandler``. With no
+		``universe`` (or ``borrow_rate == 0`` / no open shorts) nothing accrues
+		and SMA_MACD stays byte-exact under default-off.
+		"""
 		if not self.can_trade():
 			return  # Skip updates for inactive portfolios
-			
-		self.position_manager.update_position_market_values(prices, datetime.now(UTC))
-		self._last_activity = datetime.now(UTC)
+
+		# D-04: mark positions at the bar's business time, NOT the wall clock,
+		# so the equity curve is deterministic. Legacy mark-only callers (no
+		# bar_time) keep the prior wall-clock behaviour.
+		mark_time = bar_time if bar_time is not None else datetime.now(UTC)
+		self.position_manager.update_position_market_values(prices, mark_time)
+
+		# CARRY-01: accrue per-bar borrow interest on every OPEN SHORT (D-02/D-03/
+		# D-08). Skipped entirely when carry can't apply (no bar time / no
+		# universe) — the default-off no-op that keeps the oracle byte-exact.
+		if bar_time is not None and universe is not None:
+			self._accrue_short_carry(bar_time, universe)
+
+		self._last_activity = mark_time
+
+	def _accrue_short_carry(self, bar_time: datetime, universe: Any) -> None:
+		"""Accrue per-bar borrow interest on every open short (CARRY-01).
+
+		For each OPEN SHORT, debit
+		``days × close × |net_quantity| × borrow_rate / Decimal("365")``
+		(Decimal end-to-end — ``borrow_rate`` is already Decimal; NEVER
+		``Decimal(float)``) from realized cash via a ``BORROW_INTEREST``
+		``CashOperation``. ``days`` = ``(bar_time − last_accrual)`` from the bar's
+		BUSINESS time (D-04). The per-short ``last_accrual`` advances to
+		``bar_time`` after debiting (it seeds from the position entry date). LONG
+		positions and ``borrow_rate == 0`` accrue nothing. Carry NEVER folds into
+		``Position.realised_pnl`` (D-08 — clean trade PnL; carry nets at cash).
+		"""
+		positions = self.position_manager.get_all_positions()
+		for ticker, position in positions.items():
+			if position.side != PositionSide.SHORT or not position.is_open:
+				continue
+
+			borrow_rate = universe.instrument(ticker).borrow_rate
+			if borrow_rate == Decimal("0"):
+				# Default-off / no-cost short: advance the accrual marker so a
+				# later non-zero rate measures from here, but book no op.
+				position._last_accrual_time = bar_time
+				continue
+
+			# D-04 days basis from the bar gap (seed from the position entry).
+			last_accrual = position._last_accrual_time or position.entry_date
+			elapsed_seconds = Decimal(str((bar_time - last_accrual).total_seconds()))
+			days = elapsed_seconds / Decimal("86400")
+			if days <= Decimal("0"):
+				continue
+
+			carry = (
+				days
+				* position.current_price
+				* abs(position.net_quantity)
+				* borrow_rate
+				/ Decimal("365")
+			)
+			self.cash_manager.accrue_borrow_interest(
+				amount=carry,
+				reference_id=str(position.id),
+				description=f"Borrow interest {ticker}",
+				timestamp=bar_time,
+			)
+			position._last_accrual_time = bar_time
 	
 	# Enhanced to_dict with new information
 	def to_dict(self) -> Dict[str, Any]:
