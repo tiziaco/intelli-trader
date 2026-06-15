@@ -48,6 +48,13 @@ _DEFAULT_SCALES: dict[str, Decimal] = {
     "cash": Decimal("0.01"),
 }
 
+# D-09 — per-quote-currency cash scale. USD -> 2dp, byte-identical to the prior
+# hard-coded ``_DEFAULT_SCALES["cash"]``. Any unmapped quote currency falls
+# through to the 2dp no-data fallback. (WR-01: honour the documented contract —
+# ``quantize(kind="cash")`` now derives the scale from ``instrument.quote_currency``
+# instead of always returning 2dp.)
+_CASH_SCALES: dict[str, Decimal] = {"USD": Decimal("0.01")}
+
 
 def to_money(x: float | int | str | Decimal) -> Decimal:
     """Enter the Decimal domain via the string path (D-04).
@@ -68,12 +75,12 @@ def quantize(value: Decimal, instrument: Instrument, kind: str) -> Decimal:
     ``kind`` is one of ``"price"``, ``"quantity"``, ``"cash"``. The
     ``"price"``/``"quantity"`` scales are read off the handed-in ``Instrument``
     (the per-symbol source of truth, INST-01); the ``"cash"`` scale derives from
-    ``quote_currency`` (default USD -> 2dp), held in ``_DEFAULT_SCALES["cash"]``
-    as the no-data fallback (D-09).
+    ``instrument.quote_currency`` via ``_CASH_SCALES`` (USD -> 2dp), falling back
+    to ``_DEFAULT_SCALES["cash"]`` (2dp) for an unmapped quote currency (D-09).
     """
     scale = {
         "price": instrument.price_precision,
         "quantity": instrument.quantity_precision,
-        "cash": _DEFAULT_SCALES["cash"],
+        "cash": _CASH_SCALES.get(instrument.quote_currency, _DEFAULT_SCALES["cash"]),
     }.get(kind, _DEFAULT_SCALES[kind])
     return value.quantize(scale, rounding=ROUND_HALF_UP)
