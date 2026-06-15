@@ -71,6 +71,12 @@ class Instrument:
     settles_funding:
         Whether the instrument settles perpetual funding (INST-03; inert flag,
         Phase B deferred).
+    borrow_rate:
+        Per-symbol annualised borrow rate as a ``Decimal`` (D-01; CARRY-01).
+        Static-over-time approximation mirroring how crypto venues attribute
+        borrow cost per asset. Defaults to ``Decimal("0")`` (carry-off) so
+        SMA_MACD stays oracle byte-exact; the Plan-05 per-bar short-carry
+        accrual reads it via the Universe read-model. Oracle-dark until then.
     """
 
     symbol: str
@@ -81,3 +87,4 @@ class Instrument:
     quote_currency: str = "USD"
     min_order_size: Decimal | None = None
     settles_funding: bool = False
+    borrow_rate: Decimal = Decimal("0")

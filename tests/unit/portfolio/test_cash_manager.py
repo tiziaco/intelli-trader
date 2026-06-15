@@ -451,6 +451,22 @@ def test_cash_operation_event_time_and_uuid_id(cm):
     assert isinstance(operation.operation_id, uuid.UUID)
 
 
+def test_cash_operation_borrow_interest_member_exists():
+    """D-03 / CARRY-01: a first-class BORROW_INTEREST op kind makes the
+    short-carry financing-cost drag an attributable ledger line."""
+    assert CashOperationType.BORROW_INTEREST.value == "BORROW_INTEREST"
+    # The duck-typed serializer reads op.operation_type.name.
+    assert CashOperationType.BORROW_INTEREST.name == "BORROW_INTEREST"
+
+
+def test_cash_operation_borrow_interest_parses_case_insensitively():
+    """The _missing_ parser resolves lower-case input to the member."""
+    assert (
+        CashOperationType("borrow_interest")
+        is CashOperationType.BORROW_INTEREST
+    )
+
+
 def test_assert_funds_invariant_raises_when_required_exceeds_balance(cm):
     """D-10: required > balance raises typed InsufficientFundsError."""
     with pytest.raises(InsufficientFundsError):

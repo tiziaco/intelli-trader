@@ -67,6 +67,11 @@ class CashOperationType(Enum):
     TRANSACTION_CREDIT = "TRANSACTION_CREDIT"
     RESERVATION = "RESERVATION"
     RELEASE_RESERVATION = "RELEASE_RESERVATION"
+    # D-03 / CARRY-01: dedicated, auditable short-carry financing-cost line,
+    # distinct from trade debits/credits. Oracle-dark until Plan 05 wires the
+    # per-bar accrual; the _missing_ parser and the duck-typed serializer
+    # (reporting/cash_operations.py) pick it up automatically.
+    BORROW_INTEREST = "BORROW_INTEREST"
 
     @classmethod
     def _missing_(cls, value: object) -> "CashOperationType":
