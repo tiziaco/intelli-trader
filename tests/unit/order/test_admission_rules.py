@@ -707,3 +707,27 @@ def test_build_primary_stop_order_carries_clamped_leverage(harness):
     order = am._build_primary_order(signal, "binance", Decimal("100"))
     assert order.type is OrderType.STOP
     assert order.leverage == Decimal("5")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Wave 0 stubs (SHORT-02 / WR-04) — collectible RED placeholders.
+# Seeded by Plan 03-02 so the Plan 03-04 verify selectors
+# (`cover_arm`, `over_cover_clamp`, `leverage_floor`) each select >=1 test
+# BEFORE any production code is written (the Nyquist contract, D-10). These
+# assert NOTHING yet — Plan 03-04 turns them green.
+# ---------------------------------------------------------------------------
+
+
+def test_cover_arm_stub():
+    """SHORT-02: side-agnostic cover-arm in admission (Plan 03-04 turns green)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")
+
+
+def test_over_cover_clamp_stub():
+    """SHORT-02: over-cover clamps to flat (no accidental flip; Plan 03-04)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")
+
+
+def test_leverage_floor_stub():
+    """SHORT-03: admission leverage floor at 1 (Plan 03-04 turns green)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")

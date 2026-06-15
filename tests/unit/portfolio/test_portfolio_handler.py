@@ -667,3 +667,16 @@ def test_margin_ratio_reads_honestly_when_breached(env):
     assert mm > equity  # breached
     assert ratio < Decimal("1")
     assert ratio == equity / mm  # honest, no clamp to 0 or 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Wave 0 stub (WR-02) — collectible RED placeholder.
+# Seeded by Plan 03-02 so the Plan 03-06 `universe_unwired` verify selector
+# selects >=1 test BEFORE any production code is written (D-10). Asserts
+# NOTHING yet — Plan 03-06 turns it green.
+# ---------------------------------------------------------------------------
+
+
+def test_universe_unwired_stub():
+    """WR-02: portfolio handler universe wiring residual fix (Plan 03-06)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-06")
