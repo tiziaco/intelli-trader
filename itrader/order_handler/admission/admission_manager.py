@@ -450,9 +450,16 @@ class AdmissionManager:
 		# (was get_position at :404). Identical to a fresh read under the
 		# single-writer contract.
 		open_position = snap
+		# SHORT-02 fix (Rule 1): the read-model carries an UNSIGNED magnitude
+		# (``PositionView.net_quantity == abs(...) >= 0`` — position.py:121), so a
+		# sign test cannot distinguish "open long" from "open short". Dispatch on
+		# ``side`` (the same discipline the reduction predicate uses at :742). A
+		# SELL is a sanctioned exit ONLY when an open LONG exists; a BUY is a
+		# sanctioned cover ONLY when an open SHORT exists.
 		if (signal_event.direction is TradingDirection.LONG_ONLY
 				and signal_event.action is Side.SELL
-				and (open_position is None or open_position.net_quantity <= 0)):
+				and (open_position is None
+				     or open_position.side is not PositionSide.LONG)):
 			return self._reject_unsized_signal(
 				signal_event,
 				f"direction violation: LONG_ONLY strategy cannot open a short "
@@ -463,7 +470,8 @@ class AdmissionManager:
 			)
 		if (signal_event.direction is TradingDirection.SHORT_ONLY
 				and signal_event.action is Side.BUY
-				and (open_position is None or open_position.net_quantity >= 0)):
+				and (open_position is None
+				     or open_position.side is not PositionSide.SHORT)):
 			return self._reject_unsized_signal(
 				signal_event,
 				f"direction violation: SHORT_ONLY strategy cannot open a long "
