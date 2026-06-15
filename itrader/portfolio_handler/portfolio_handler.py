@@ -390,6 +390,13 @@ class PortfolioHandler:
                     # D-11 audit chain: the settlement record carries the
                     # originating fill's identity (fill -> order -> strategy).
                     fill_id=fill_event.fill_id,
+                    # LEV-03 (Finding B): carry the admission-clamped EFFECTIVE
+                    # leverage from the fill so the opening Transaction sets
+                    # Position.leverage to the effective value — the position-life
+                    # locked margin (aggregate_notional / leverage) then EQUALS
+                    # the admission reservation (notional / effective_leverage).
+                    # getattr default keeps spot fills byte-exact (oracle-dark).
+                    leverage=getattr(fill_event, "leverage", Decimal("1")),
                 )
 
                 portfolio.transact_shares(transaction)
