@@ -4,13 +4,13 @@ milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-15T07:08:28.033Z"
-last_activity: 2026-06-15 -- Phase 01 planning complete
+last_updated: "2026-06-15T07:19:30.844Z"
+last_activity: 2026-06-15
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** v1.4 — Margin, Leverage, Shorts & Trailing Stops (6 phases, numbering reset to Phase 1). Roadmap created 2026-06-14; all 20 requirements mapped (100% coverage). Next: plan Phase 1 (Instrument Value Object) with `/gsd:plan-phase 1`.
+**Current focus:** Phase 01 — instrument-value-object
 
 ## Current Position
 
-Phase: 1 — Instrument Value Object (not started)
-Plan: —
+Phase: 01 (instrument-value-object) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-15 -- Phase 01 planning complete
+Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -185,6 +185,8 @@ scope decisions:
   native-vs-synthetic live seam → N+4; `Portfolio.user_id` removal → independent cleanup (kept out so
   it doesn't muddy the re-baseline).
 
+- [Phase ?]: Phase 1 Plan 01: Instrument stores the Decimal SCALE directly (price_precision=Decimal('0.00000001')) not an int place-count — byte-identical to the deleted _INSTRUMENT_SCALES['BTCUSD']; quantize reads scale off the handed-in Instrument (D-05 pure/stateless)
+
 ### Pending Todos
 
 None yet.
@@ -229,6 +231,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 |---|-------------|------|--------|-----------|
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 | 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger | 2026-06-14 | 191e21f | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
+| Phase 01 P01 | 4 | 2 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -270,9 +273,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T06:34:21.661Z
+Last session: 2026-06-15T07:19:26.121Z
 Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-instrument-value-object/01-CONTEXT.md
+Resume file: None
 
 ## Operator Next Steps
 
