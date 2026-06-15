@@ -442,27 +442,36 @@ def test_sparse_ticker_guard_skips_silently(handler_env):
 
 
 def test_long_short_registration_rejected(handler_env):
-    """D-08: registering a LONG_SHORT strategy raises the documented error."""
+    """SHORT-01/D-07: a LONG_SHORT strategy is rejected when the flags default off.
+
+    ``handler_env`` constructs the handler with both shorts-enabling flags off,
+    so a non-LONG_ONLY strategy is rejected loudly naming both required flags.
+    """
     handler, _q = handler_env
     strategy = _AlwaysBuyStrategy(direction=TradingDirection.LONG_SHORT)
 
-    with pytest.raises(ValueError, match="Only LONG_ONLY is admissible"):
+    with pytest.raises(
+        ValueError, match="allow_short_selling AND enable_margin"
+    ):
         handler.add_strategy(strategy)
 
     assert handler.strategies == []
 
 
 def test_short_only_registration_rejected(handler_env):
-    """CR-01/D-09: registering a SHORT_ONLY strategy raises loudly.
+    """SHORT-01/D-07: a SHORT_ONLY strategy is rejected when the flags default off.
 
-    SHORT_ONLY has no cover arm in ``_resolve_signal_quantity``; a sanctioned
-    BUY-cover would fall through to entry sizing and could net the book LONG.
-    The door is closed at registration until the margin/liquidation milestone.
+    With both flags off (the byte-exact default) registration rejects the
+    capability loudly naming both required flags. SHORT_ONLY has no cover arm in
+    ``_resolve_signal_quantity`` until the margin model is wired on, so the door
+    stays closed unless ``allow_short_selling`` AND ``enable_margin`` are both on.
     """
     handler, _q = handler_env
     strategy = _AlwaysBuyStrategy(direction=TradingDirection.SHORT_ONLY)
 
-    with pytest.raises(ValueError, match="Only LONG_ONLY is admissible"):
+    with pytest.raises(
+        ValueError, match="allow_short_selling AND enable_margin"
+    ):
         handler.add_strategy(strategy)
 
     assert handler.strategies == []
