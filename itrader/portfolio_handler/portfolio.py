@@ -644,11 +644,18 @@ class Portfolio(object):
 		# fail-loud universe-unwired guard lives at the ``maintenance_margin`` read
 		# in ``PortfolioHandler`` (the actual deferred WR-02 site).
 		if bar_time is not None and universe is not None:
-			self._accrue_short_carry(bar_time, universe)
+			# CR-01: only shorts whose ticker was actually re-marked this tick
+			# (price present in `prices`) may accrue carry — a short absent from
+			# this tick's prices keeps a STALE current_price, so accruing on it
+			# books financing against a wrong mark. The marked set IS the keys of
+			# `prices` (position_manager updates `if ticker in price_data`).
+			marked_tickers = set(prices.keys())
+			self._accrue_short_carry(bar_time, universe, marked_tickers)
 
 		self._last_activity = mark_time
 
-	def _accrue_short_carry(self, bar_time: datetime, universe: Any) -> None:
+	def _accrue_short_carry(self, bar_time: datetime, universe: Any,
+			marked_tickers: set[str]) -> None:
 		"""Accrue per-bar borrow interest on every open short (CARRY-01).
 
 		For each OPEN SHORT, debit
@@ -660,17 +667,53 @@ class Portfolio(object):
 		``bar_time`` after debiting (it seeds from the position entry date). LONG
 		positions and ``borrow_rate == 0`` accrue nothing. Carry NEVER folds into
 		``Position.realised_pnl`` (D-08 — clean trade PnL; carry nets at cash).
+
+		``marked_tickers`` is the set of tickers actually re-marked this tick (the
+		keys of ``prices``). CR-01: a short whose ticker is absent from it carries a
+		STALE ``current_price``, so its accrual is SKIPPED and its clock is NOT
+		advanced — the next priced bar then accrues the full elapsed interval on a
+		correct mark. WR-02: a ticker the Universe no longer carries an Instrument
+		for fails LOUD with a ``StateError`` (mirroring ``maintenance_margin``).
+		WR-03: a non-positive ``current_price`` is skipped (never a wrong debit).
+		WR-05: the ``borrow_rate == 0`` branch is a plain ``continue`` — no
+		clock-advance (the frozen-Instrument static-rate contract).
 		"""
 		positions = self.position_manager.get_all_positions()
 		for ticker, position in positions.items():
 			if position.side != PositionSide.SHORT or not position.is_open:
 				continue
 
-			borrow_rate = universe.instrument(ticker).borrow_rate
+			# CR-01: no fresh mark this tick (ticker absent from `prices`) —
+			# defer carry; do NOT advance the clock, so the next priced bar
+			# accrues the full elapsed interval on a correct price.
+			if ticker not in marked_tickers:
+				continue
+
+			# WR-03: defend the money operand. A zero/unset mark must never
+			# silently produce a wrong financing debit — skip rather than book
+			# carry on a non-positive price.
+			if position.current_price <= Decimal("0"):
+				continue
+
+			# WR-02: resolve the Instrument via the injected Universe. A short on
+			# a ticker the Universe no longer carries an Instrument for raises a
+			# bare KeyError that would abort the run with an opaque message — fail
+			# LOUD with a context-rich StateError instead, mirroring the
+			# maintenance_margin universe guard in PortfolioHandler.
+			try:
+				borrow_rate = universe.instrument(ticker).borrow_rate
+			except KeyError as exc:
+				raise StateError(
+					position.id,
+					"instrument-missing",
+					required_state=f"universe carries Instrument for {ticker}",
+					operation="accrue_short_carry",
+				) from exc
 			if borrow_rate == Decimal("0"):
-				# Default-off / no-cost short: advance the accrual marker so a
-				# later non-zero rate measures from here, but book no op.
-				position._last_accrual_time = bar_time
+				# WR-05: no clock-advance. Instrument is frozen and borrow_rate is
+				# static-over-time, so the rate can never transition 0 -> non-zero
+				# within a run — advancing the clock here was dead rationale and
+				# would suppress carry across a transition if the type ever changed.
 				continue
 
 			# D-04 days basis from the bar gap (seed from the position entry).
