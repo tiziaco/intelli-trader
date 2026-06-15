@@ -570,3 +570,91 @@ def test_levered_fraction_f_le_one_passes_the_gate_without_margin(harness):
     order_event: OrderEvent = harness.queue.get(False)
     assert order_event.action is Side.BUY
     assert order_event.quantity > 0
+
+
+# --- Plan 02-03 Task 3: margin reservation branch (D-08/D-09) + over-margin ---
+
+
+def _enable_margin(harness, max_leverage):
+    """Flip the admission gate into margin mode with a Universe carrying the
+    instrument cap, mirroring the compose-root wiring."""
+    am = _admission(harness)
+    am._enable_margin = True
+    am._portfolio_max_leverage = max_leverage
+    am.set_universe(_make_universe("BTCUSDT", max_leverage))
+    return am
+
+
+def test_margin_reservation_is_notional_over_leverage(harness):
+    """enable_margin=True → the admission reservation reserves
+    notional / effective_leverage + commission (D-08 initial_margin), NOT the
+    full notional. available_cash drops by exactly notional/L (commission 0)."""
+    _enable_margin(harness, Decimal("5"))
+    before = harness.ptf_handler.available_cash(harness.last_ptf_id)
+
+    # Explicit quantity so notional is exact: 100 @ 40 = 4000; margin = 4000/5 = 800.
+    signal = harness.create_mock_signal("BUY", quantity=100, price=40.0)
+    object.__setattr__(signal, "leverage", Decimal("5"))
+    harness.order_handler.on_signal(signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    after = harness.ptf_handler.available_cash(harness.last_ptf_id)
+    notional = to_money(40.0) * to_money(100)
+    expected_margin = notional / Decimal("5")
+    assert before - after == expected_margin
+
+
+def test_spot_reservation_reserves_full_notional(harness):
+    """enable_margin=False (spot) → reservation == price*qty + commission, the
+    full notional with NO division (Pitfall 4 — byte-exact)."""
+    am = _admission(harness)
+    assert am._enable_margin is False
+    before = harness.ptf_handler.available_cash(harness.last_ptf_id)
+
+    signal = harness.create_mock_signal("BUY", quantity=100, price=40.0)
+    harness.order_handler.on_signal(signal)
+
+    harness.queue.get(False)
+    after = harness.ptf_handler.available_cash(harness.last_ptf_id)
+    assert before - after == to_money(40.0) * to_money(100)
+
+
+def test_over_margin_order_is_rejected_via_audited_path(harness):
+    """enable_margin=True with initial_margin > free margin → audited REJECTED
+    via the existing InsufficientFundsError path (MARGIN-02/D-01): no order
+    emitted, no reservation recorded, audited REJECTED entity stored."""
+    _enable_margin(harness, Decimal("2"))
+    before = harness.ptf_handler.available_cash(harness.last_ptf_id)
+
+    # notional = 1000 @ 40 = 40000; margin = 40000/2 = 20000 > 10000 free.
+    signal = harness.create_mock_signal("BUY", quantity=1000, price=40.0)
+    object.__setattr__(signal, "leverage", Decimal("2"))
+    harness.order_handler.on_signal(signal)
+
+    assert harness.queue.empty()
+    rejected = [
+        o for o in harness.order_storage.get_orders_by_ticker("BTCUSDT", harness.last_ptf_id)
+        if o.status == OrderStatus.REJECTED
+    ]
+    assert len(rejected) == 1
+    last_change = rejected[0].get_latest_state_change()
+    assert last_change.to_status == OrderStatus.REJECTED
+    assert last_change.triggered_by is OrderTriggerSource.CASH_RESERVATION
+    # No reservation recorded — free cash intact.
+    assert harness.ptf_handler.available_cash(harness.last_ptf_id) == before
+
+
+def test_margin_makes_otherwise_unaffordable_order_affordable(harness):
+    """An order whose FULL notional exceeds free cash is fundable under leverage
+    because only notional/L is reserved (the point of margin)."""
+    _enable_margin(harness, Decimal("10"))
+
+    # notional = 500 @ 40 = 20000 > 10000 free; margin = 20000/10 = 2000 <= 10000.
+    signal = harness.create_mock_signal("BUY", quantity=500, price=40.0)
+    object.__setattr__(signal, "leverage", Decimal("10"))
+    harness.order_handler.on_signal(signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    assert order_event.quantity == 500
