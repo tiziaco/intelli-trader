@@ -33,6 +33,7 @@ from .reconcile import ReconcileManager
 from ..events_handler.events import OrderEvent, SignalEvent, FillEvent
 from .order_validator import EnhancedOrderValidator
 from .sizing_resolver import SizingResolver
+from ..universe import Universe
 
 
 class OrderManager:
@@ -54,7 +55,9 @@ class OrderManager:
 	             market_execution: "str | MarketExecution | None" = None,
 	             portfolio_handler: Optional[PortfolioReadModel] = None,
 	             commission_estimator: Optional[CommissionEstimator] = None,
-	             order_config: Optional[OrderConfig] = None) -> None:
+	             order_config: Optional[OrderConfig] = None,
+	             enable_margin: bool = False,
+	             portfolio_max_leverage: Decimal = Decimal("1")) -> None:
 		"""
 		Initialize the OrderManager.
 
@@ -140,7 +143,8 @@ class OrderManager:
 		self.admission_manager = AdmissionManager(
 			order_storage, logger, self.order_validator, self.sizing_resolver,
 			portfolio_handler, commission_estimator, self._brackets,
-			self.bracket_manager)
+			self.bracket_manager, enable_margin=enable_margin,
+			portfolio_max_leverage=portfolio_max_leverage)
 
 		# D-04/D-09 coordinator-owned star: construct the modify/cancel lifecycle
 		# collaborator ONCE, injecting the dep subset (order_storage, logger,
@@ -202,6 +206,15 @@ class OrderManager:
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""Delegate the signal→order pipeline to AdmissionManager (D-07)."""
 		return self.admission_manager.process_signal(signal_event)
+
+	def set_universe(self, universe: "Universe") -> None:
+		"""Forward the Trap-4 Universe injection to AdmissionManager (Plan 02-03).
+
+		The runner builds the ``Universe`` after the order domain is constructed,
+		so the seam is set late (mirrors ``SimulatedExchange.set_universe``). The
+		order/risk leverage cap (D-04) reads ``Instrument.max_leverage`` through it.
+		"""
+		self.admission_manager.set_universe(universe)
 
 	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
 	                portfolio_id: Optional[PortfolioId] = None, reason: str = "user modification") -> OperationResult:

@@ -43,6 +43,7 @@ from ...core.money import to_money
 from ...core.portfolio_read_model import PortfolioReadModel, PositionView
 from ...core.sizing import TradingDirection
 from ...events_handler.events import SignalEvent
+from ...universe import Universe
 
 
 class AdmissionManager:
@@ -62,7 +63,10 @@ class AdmissionManager:
 	             sizing_resolver: Optional[SizingResolver],
 	             portfolio_handler: Optional[PortfolioReadModel],
 	             commission_estimator: Optional[Callable[[Decimal, Decimal], Decimal]],
-	             brackets: BracketBook, bracket_manager: BracketManager) -> None:
+	             brackets: BracketBook, bracket_manager: BracketManager,
+	             universe: Optional[Universe] = None,
+	             enable_margin: bool = False,
+	             portfolio_max_leverage: Decimal = Decimal("1")) -> None:
 		self.order_storage = order_storage
 		self.logger = logger
 		self.order_validator = order_validator
@@ -74,6 +78,26 @@ class AdmissionManager:
 		# D-08: the coordinator-owned bracket-assembly seam, injected — admission
 		# reaches assembly through it WITHOUT holding a reconcile/lifecycle ref.
 		self.bracket_manager = bracket_manager
+		# Plan 02-03 (Pitfall 1, BLOCKING): the order-domain instrument seam.
+		# Optional[Universe] (default None) so existing no-universe constructions
+		# stay byte-exact — the leverage cap degrades to Decimal("1") with NO
+		# instrument read when None or enable_margin=False (D-04). Set late at
+		# the Trap-4 wiring point via OrderHandler.set_universe → OrderManager.
+		self._universe = universe
+		# D-09 margin gate + D-14 account-wide cap. enable_margin=False forces the
+		# spot byte-exact arm everywhere (no division, no instrument read).
+		self._enable_margin = enable_margin
+		self._portfolio_max_leverage = portfolio_max_leverage
+
+	def set_universe(self, universe: Universe) -> None:
+		"""Inject the symbol→Instrument read-model at the Trap-4 wiring point.
+
+		The runner builds the ``Universe`` AFTER the order domain is constructed
+		(it derives membership/instruments at session init), so the seam is set
+		late — mirroring ``SimulatedExchange.set_universe``. ``_effective_leverage``
+		reads ``self._universe.instrument(ticker).max_leverage`` once margin is on.
+		"""
+		self._universe = universe
 
 	def _estimate_commission(self, order: Order) -> Decimal:
 		"""Estimate the commission for an order's admission reservation (D-04).

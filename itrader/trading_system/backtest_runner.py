@@ -93,6 +93,11 @@ class BacktestRunner:
 		simulated_exchange = engine.execution_handler.exchanges.get('simulated')
 		if isinstance(simulated_exchange, SimulatedExchange):
 			simulated_exchange.set_universe(universe)
+		# Plan 02-03 (Pitfall 1, BLOCKING): mirror the exchange injection into the
+		# ORDER domain so the admission leverage cap (D-04) can read
+		# Instrument.max_leverage. Same Trap-4 ordering — the Universe was just
+		# built above, AFTER the order handler was constructed in compose_engine.
+		engine.order_handler.set_universe(universe)
 		# feed.bind receives universe.members — the SAME set-derived list
 		# derive_membership produced (Pitfall 4 — byte-identical to today).
 		engine.feed.bind(engine.global_queue, universe.members)
