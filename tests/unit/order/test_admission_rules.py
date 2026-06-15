@@ -404,21 +404,169 @@ def test_explicit_quantity_buy_skips_increase_and_max_positions_gates(harness):
     assert order_event.quantity == 1.0
 
 
-def test_leverage_cap_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+# --- Plan 02-03 Task 2: leverage cap (D-04/D-05) + f>1 gate (D-07/LEV-02) ----
 
 
-def test_leverage_forced_one_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+from itrader.core.instrument import Instrument
+from itrader.core.sizing import LeveredFraction
+from itrader.universe import Universe
 
 
-def test_over_margin_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+def _make_universe(ticker, max_leverage):
+    """Build a one-symbol Universe whose Instrument carries max_leverage.
+
+    Only max_leverage matters here; the other fields are realistic-crypto
+    placeholders (oracle-dark — this Universe is never wired into the golden run).
+    """
+    instr = Instrument(
+        symbol=ticker,
+        price_precision=Decimal("0.01"),
+        quantity_precision=Decimal("0.00000001"),
+        maintenance_margin_rate=Decimal("0.005"),
+        max_leverage=max_leverage,
+    )
+    return Universe(members=[ticker], instrument_map={ticker: instr})
 
 
-def test_margin_reservation_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+def _admission(harness):
+    return harness.order_handler.order_manager.admission_manager
 
 
-def test_levered_fraction_gate_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 03")
+def test_leverage_forced_one_when_margin_off(harness):
+    """enable_margin=False → _effective_leverage returns Decimal("1") with NO
+    instrument read (spot byte-exact). Even a Universe present and a high
+    signal.leverage cannot lift it above 1."""
+    am = _admission(harness)
+    # Margin OFF (the harness default). A universe with a high cap is present,
+    # but the spot arm must never consult it.
+    am.set_universe(_make_universe("BTCUSDT", Decimal("50")))
+    assert am._enable_margin is False
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    assert am._effective_leverage(signal) == Decimal("1")
+
+
+def test_leverage_forced_one_no_instrument_read(harness, monkeypatch):
+    """Spot arm must NOT call universe.instrument() at all (D-04 no instrument
+    read when margin off)."""
+    am = _admission(harness)
+    universe = _make_universe("BTCUSDT", Decimal("50"))
+
+    def _boom(symbol):
+        raise AssertionError("instrument() must not be read on the spot arm")
+
+    monkeypatch.setattr(universe, "instrument", _boom)
+    am.set_universe(universe)
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    assert am._effective_leverage(signal) == Decimal("1")
+
+
+def test_leverage_cap_is_min_of_signal_instrument_portfolio(harness):
+    """enable_margin=True → effective = min(signal, instr.max_lev, pf.max_lev).
+    With {signal 20, instr 10, pf 5} → 5 (D-04)."""
+    am = _admission(harness)
+    am._enable_margin = True
+    am._portfolio_max_leverage = Decimal("5")
+    am.set_universe(_make_universe("BTCUSDT", Decimal("10")))
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    assert am._effective_leverage(signal) == Decimal("5")
+
+
+def test_leverage_cap_logs_warning_when_clamped(harness):
+    """requested > capped → a warning is logged AND the capped value returned
+    (D-05 clamp, NOT reject)."""
+    am = _admission(harness)
+    am._enable_margin = True
+    am._portfolio_max_leverage = Decimal("5")
+    am.set_universe(_make_universe("BTCUSDT", Decimal("10")))
+
+    warnings = []
+    am.logger.warning = lambda *a, **k: warnings.append((a, k))  # type: ignore[method-assign]
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    capped = am._effective_leverage(signal)
+    assert capped == Decimal("5")
+    assert len(warnings) == 1
+
+
+def test_leverage_cap_no_warning_when_within_cap(harness):
+    """requested <= cap → no clamp warning (D-05)."""
+    am = _admission(harness)
+    am._enable_margin = True
+    am._portfolio_max_leverage = Decimal("10")
+    am.set_universe(_make_universe("BTCUSDT", Decimal("10")))
+
+    warnings = []
+    am.logger.warning = lambda *a, **k: warnings.append((a, k))  # type: ignore[method-assign]
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("3"))
+
+    assert am._effective_leverage(signal) == Decimal("3")
+    assert warnings == []
+
+
+def test_leverage_cap_instrument_cap_is_one_when_no_universe(harness):
+    """enable_margin=True but no Universe → instrument cap degrades to
+    Decimal("1") (D-04 None fallback)."""
+    am = _admission(harness)
+    am._enable_margin = True
+    am._portfolio_max_leverage = Decimal("10")
+    # No universe injected.
+    assert am._universe is None
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    assert am._effective_leverage(signal) == Decimal("1")
+
+
+def test_levered_fraction_gate_rejects_f_gt_one_without_margin(harness):
+    """A LeveredFraction(fraction>1) reaching admission with enable_margin=False
+    → audited REJECTED via the existing audited path; NO order emitted, the
+    audited entity is stored (LEV-02 / D-07)."""
+    am = _admission(harness)
+    assert am._enable_margin is False
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "sizing_policy", LeveredFraction(fraction=Decimal("2")))
+
+    harness.order_handler.on_signal(signal)
+
+    assert harness.queue.empty()
+    rejected = [
+        o for o in harness.order_storage.get_orders_by_ticker("BTCUSDT", harness.last_ptf_id)
+        if o.status == OrderStatus.REJECTED
+    ]
+    assert len(rejected) == 1
+    last_change = rejected[0].get_latest_state_change()
+    assert last_change.from_status == OrderStatus.PENDING
+    assert last_change.to_status == OrderStatus.REJECTED
+    assert last_change.triggered_by is OrderTriggerSource.ADMISSION_LEVERAGE
+    assert harness.order_storage.get_active_orders(harness.last_ptf_id) == []
+
+
+def test_levered_fraction_f_le_one_passes_the_gate_without_margin(harness):
+    """A LeveredFraction(fraction<=1) is NOT blocked by the f>1 gate even with
+    margin off — it sizes off total_equity and emits (the gate is f>1-only)."""
+    am = _admission(harness)
+    assert am._enable_margin is False
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "sizing_policy", LeveredFraction(fraction=Decimal("0.5")))
+
+    harness.order_handler.on_signal(signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    assert order_event.quantity > 0

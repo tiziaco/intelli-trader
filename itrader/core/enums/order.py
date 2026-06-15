@@ -189,6 +189,7 @@ class OrderTriggerSource(Enum):
 	ADMISSION_DIRECTION = "admission_direction"
 	ADMISSION_INCREASE = "admission_increase"
 	ADMISSION_MAX_POSITIONS = "admission_max_positions"
+	ADMISSION_LEVERAGE = "admission_leverage"
 
 	@classmethod
 	def _missing_(cls, value: object) -> "OrderTriggerSource":
