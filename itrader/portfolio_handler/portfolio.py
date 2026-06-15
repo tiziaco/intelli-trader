@@ -297,6 +297,22 @@ class Portfolio(object):
 		# 1. Pure validation — raises InvalidTransactionError, nothing mutated.
 		self.transaction_manager.validate(transaction)
 
+		# enable_margin gate (D-09): branch the settlement on the portfolio's
+		# trading rules. The spot arm (False) is byte-exact site #2 — operand-
+		# for-operand identical to today; the margin arm is lock-and-settle.
+		if self.config.trading_rules.enable_margin:
+			self._process_transaction_margin(transaction)
+		else:
+			self._process_transaction_spot(transaction)
+
+	def _process_transaction_spot(self, transaction: Transaction) -> None:
+		"""Spot settlement (enable_margin=False) — UNCHANGED, byte-exact site #2.
+
+		Full notional debit via Transaction.net_cash_delta; nothing locked.
+		This arm is operand-for-operand identical to the pre-margin code and
+		MUST stay so (the SMA_MACD golden oracle, 134 / 46189.87730727451,
+		regression-locks it). NO `/ leverage` ever touches this path (Pitfall 4).
+		"""
 		# 2. Funds invariant on the debit side (D-10). The actual net cost is
 		#    the entity's own cash math (Transaction.net_cash_delta) — the
 		#    EXACT delta the interim seam computed (value preservation).
@@ -319,6 +335,117 @@ class Portfolio(object):
 		)
 
 		# 5. Record — the applied Transaction entity IS the audit record (D-11).
+		self.transaction_manager.record(transaction)
+
+	def _process_transaction_margin(self, transaction: Transaction) -> None:
+		"""Lock-and-settle margin settlement (enable_margin=True, D-09/D-11).
+
+		The position-keyed locked-margin lifecycle is driven HERE (this method
+		holds the returned Position + the CashManager); PositionManager stays
+		cash-agnostic (OQ2). Four observed transitions, dispatched by comparing
+		the position state captured BEFORE the mutation against the result:
+
+		* OPEN (no prior position): lock `aggregate_notional / L`, debit ONLY
+		  the commission (D-08, Pitfall 3 — NEVER the full notional, T-02-11).
+		* SCALE-IN (same-direction add): recompute the lock to the new
+		  `aggregate_notional / L` (release old, lock new), debit ONLY commission.
+		* PARTIAL CLOSE (opposite-direction reduce, still open): release the
+		  closed fraction `p` of the lock (recompute to the remaining
+		  `aggregate_notional / L`), settle `p × realized_PnL` + re-credit the
+		  closed fraction's pre-debited open commission (D-11).
+		* FULL CLOSE (position closed): release the whole lock, settle the
+		  realized PnL (which already nets commissions, so re-credit the open
+		  commission once → round-trip cash delta == realized PnL).
+
+		Decimal end-to-end, full precision (no intermediate quantize). The lock
+		basis `aggregate_notional / L` rides the margin arm ONLY — the spot arm
+		never divides (Pitfall 4).
+		"""
+		ticker = transaction.ticker
+
+		# Capture pre-mutation state for the transition classification.
+		prior = self.position_manager.get_position(ticker)
+		prior_qty = abs(prior.net_quantity) if prior is not None else Decimal("0")
+		prior_realised = prior.realised_pnl if prior is not None else Decimal("0")
+		# Entry-side commission already pre-debited at open (LONG -> buy side,
+		# SHORT -> sell side); used to avoid double-counting it on close.
+		if prior is not None:
+			prior_entry_commission = (
+				prior.buy_commission if prior.side == PositionSide.LONG
+				else prior.sell_commission
+			)
+		else:
+			prior_entry_commission = Decimal("0")
+
+		# Is this fill increasing the position (open / scale-in) or reducing it
+		# (partial / full close)? An increase moves in the position's own side.
+		if prior is None:
+			is_increase = True
+		else:
+			is_increase = (
+				(prior.side == PositionSide.LONG and transaction.type == TransactionType.BUY)
+				or (prior.side == PositionSide.SHORT and transaction.type == TransactionType.SELL)
+			)
+
+		# Funds invariant (D-10/OQ3): in margin mode the open/scale debit is
+		# ONLY the commission, so feed the invariant the commission-only delta
+		# (locked-margin sufficiency was enforced pre-trade by the admission
+		# reservation gate, Plan 02-03). Commission is always non-negative.
+		commission = transaction.commission
+		if is_increase and commission > 0:
+			self.cash_manager.assert_funds_invariant(commission)
+
+		# Position mutation (all checks passed; handles shorts properly).
+		position = self.position_manager.process_position_update(transaction)
+		transaction.position_id = position.id
+
+		# D-06: the position carries the authoritative ONE effective leverage
+		# (a scale-in's differing signal leverage was clamped). The lock basis
+		# ALWAYS uses position.leverage, never the transaction's leverage.
+		leverage = position.leverage
+
+		if is_increase:
+			# OPEN or SCALE-IN: recompute the lock to the (new) aggregate
+			# notional / L; debit ONLY the commission.
+			self.cash_manager.release_margin(str(position.id))
+			self.cash_manager.lock_margin(
+				str(position.id), position.aggregate_notional / leverage
+			)
+			cash_delta = -commission
+		else:
+			# PARTIAL or FULL CLOSE. Closed fraction p of the prior position.
+			closed_qty = transaction.quantity
+			if closed_qty > prior_qty:
+				closed_qty = prior_qty
+			fraction = (closed_qty / prior_qty) if prior_qty > 0 else Decimal("0")
+
+			# Release the whole lock, then re-lock the remaining (0 on a full
+			# close — position.is_open is False and aggregate_notional is 0).
+			self.cash_manager.release_margin(str(position.id))
+			if position.is_open:
+				self.cash_manager.lock_margin(
+					str(position.id), position.aggregate_notional / leverage
+				)
+
+			# Settle the realized-PnL increment for the closed portion. The
+			# position's realised_pnl already nets BOTH commissions; the open
+			# commission for the closed fraction was already debited at open, so
+			# re-credit it (p × prior_entry_commission) to avoid double-count —
+			# the round-trip cash delta then equals the realized PnL exactly.
+			realised_increment = position.realised_pnl - prior_realised
+			cash_delta = realised_increment + fraction * prior_entry_commission
+
+		# ONE ledger entry: signed cash delta + the commission fee field +
+		# event-derived timestamp (D-06, Pitfalls 1/5).
+		self.cash_manager.apply_fill_cash_flow(
+			amount=cash_delta,
+			fee=commission,
+			description=f"Margin {transaction.type.name} {transaction.ticker}",
+			reference_id=str(transaction.id),
+			timestamp=transaction.time,
+		)
+
+		# Record — the applied Transaction entity IS the audit record (D-11).
 		self.transaction_manager.record(transaction)
 
 	def update_market_value(self, bar_event: BarEvent) -> None:
