@@ -1,31 +1,124 @@
-"""Borrow-interest days-basis / accrual formula (CARRY-01) — Phase 3 Wave 0 scaffold.
-
-Collectible RED placeholder seeded by Plan 03-02 (the Nyquist contract, D-10):
-the Plan 03-05 verify selector `days_basis` must select >=1 test BEFORE any
-production code is written, so a downstream `<automated>` verify can never
-select zero tests and report a silent green.
+"""Borrow-interest days-basis / accrual formula (CARRY-01) — Phase 3 Plan 03-05.
 
 CARRY-01: borrow-interest accrual derives its days-basis from the bar's BUSINESS
 time (never wall clock — determinism), and the per-bar carry debit is computed in
 Decimal end-to-end. The `borrow_interest` accrual itself is also exercised by
-`tests/unit/portfolio/test_cash_manager.py`; this NEW module is the dedicated home
-for the days-basis / accrual-formula case. These stubs assert NOTHING yet — Plan
-03-05 turns them green. Folder-derived `unit` marker only (tests/conftest.py
-applies it; no decorator here).
+`tests/unit/portfolio/test_cash_manager.py`; this module is the dedicated home for
+the days-basis / accrual-formula cases. Folder-derived `unit` marker only
+(tests/conftest.py applies it; no decorator here).
 """
 
-import pytest
+from datetime import datetime, timedelta
+from decimal import Decimal
+
+import uuid_utils.compat as uuid_compat
+
+from itrader.core.enums import CashOperationType
+from itrader.portfolio_handler.portfolio import Portfolio
+from itrader.portfolio_handler.position import Position
+from itrader.portfolio_handler.transaction import Transaction, TransactionType
 
 
-def test_days_basis_stub():
-    """CARRY-01: days basis comes from bar business time, no wall clock (Plan 03-05)."""
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-05")
+_TICKER = "SYNTH"
+_PORTFOLIO_ID = "pf-carry"
 
 
-def test_borrow_interest_accrual_formula_stub():
-    """CARRY-01: per-bar borrow_interest accrual formula in Decimal (Plan 03-05).
+class _StubInstrument:
+    """Minimal Instrument stand-in exposing borrow_rate."""
 
-    Named to also satisfy the `borrow_interest` selector from this dedicated
-    carry module (the cash_manager module carries the op-flow case).
-    """
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-05")
+    def __init__(self, borrow_rate: Decimal) -> None:
+        self.borrow_rate = borrow_rate
+
+
+class _StubUniverse:
+    """Minimal Universe read-model: instrument(ticker) -> _StubInstrument."""
+
+    def __init__(self, borrow_rate: Decimal) -> None:
+        self._instrument = _StubInstrument(borrow_rate)
+
+    def instrument(self, symbol: str) -> _StubInstrument:
+        return self._instrument
+
+
+def _portfolio(cash: Decimal = Decimal("100000")) -> Portfolio:
+    return Portfolio(
+        user_id=1, name="carry-pf", exchange="simulated",
+        cash=cash, time=datetime(2024, 1, 1),
+    )
+
+
+def _open_short(portfolio: Portfolio, *, entry_date: datetime,
+                size: Decimal, price: Decimal) -> Position:
+    """Insert an OPEN short of |size| at `price`, entered at `entry_date`."""
+    sell = Transaction(
+        entry_date, TransactionType.SELL, _TICKER, price, size, 0,
+        _PORTFOLIO_ID, id=1, fill_id=uuid_compat.uuid7(),
+    )
+    position = Position.open_position(sell)
+    portfolio.position_manager._storage.set_position(_TICKER, position)
+    return position
+
+
+def test_days_basis_one_day_gap_accrues_one_day():
+    """days basis == 1 (Decimal) for a one-day bar gap; carry = 1×close×|size|×rate/365."""
+    pf = _portfolio()
+    entry = datetime(2024, 1, 1)
+    _open_short(pf, entry_date=entry, size=Decimal("2"), price=Decimal("100"))
+    universe = _StubUniverse(Decimal("0.10"))
+
+    bar_time = entry + timedelta(days=1)
+    balance_before = pf.cash_manager.balance
+    pf.update_market_value_of_portfolio({_TICKER: Decimal("100")}, bar_time, universe)
+
+    # days == 1: 1 × 100 × 2 × 0.10 / 365
+    expected = Decimal("1") * Decimal("100") * Decimal("2") * Decimal("0.10") / Decimal("365")
+    assert pf.cash_manager.balance == balance_before - expected
+
+
+def test_days_basis_three_day_gap_accrues_three_days():
+    """A 3-day gap → days == 3 (Decimal) → 3× the one-day carry."""
+    pf = _portfolio()
+    entry = datetime(2024, 1, 1)
+    _open_short(pf, entry_date=entry, size=Decimal("2"), price=Decimal("100"))
+    universe = _StubUniverse(Decimal("0.10"))
+
+    bar_time = entry + timedelta(days=3)
+    balance_before = pf.cash_manager.balance
+    pf.update_market_value_of_portfolio({_TICKER: Decimal("100")}, bar_time, universe)
+
+    expected = Decimal("3") * Decimal("100") * Decimal("2") * Decimal("0.10") / Decimal("365")
+    assert pf.cash_manager.balance == balance_before - expected
+
+
+def test_borrow_interest_op_uses_bar_business_time_not_wall_clock():
+    """The BORROW_INTEREST op timestamp is the bar business time (determinism)."""
+    pf = _portfolio()
+    entry = datetime(2024, 1, 1)
+    _open_short(pf, entry_date=entry, size=Decimal("2"), price=Decimal("100"))
+    universe = _StubUniverse(Decimal("0.10"))
+
+    bar_time = entry + timedelta(days=1)
+    pf.update_market_value_of_portfolio({_TICKER: Decimal("100")}, bar_time, universe)
+
+    ops = pf.cash_manager.get_cash_operations(
+        operation_type=CashOperationType.BORROW_INTEREST
+    )
+    assert len(ops) == 1
+    assert ops[0].timestamp == bar_time
+
+
+def test_borrow_interest_determinism_double_run_identical():
+    """Two identical runs produce byte-identical carry amounts AND timestamps."""
+    def run():
+        pf = _portfolio()
+        entry = datetime(2024, 1, 1)
+        _open_short(pf, entry_date=entry, size=Decimal("2"), price=Decimal("100"))
+        universe = _StubUniverse(Decimal("0.10"))
+        bar_time = entry + timedelta(days=1)
+        pf.update_market_value_of_portfolio({_TICKER: Decimal("100")}, bar_time, universe)
+        op = pf.cash_manager.get_cash_operations(
+            operation_type=CashOperationType.BORROW_INTEREST
+        )[0]
+        return op.amount, op.timestamp, pf.cash_manager.balance
+
+    assert run() == run()

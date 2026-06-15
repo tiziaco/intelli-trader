@@ -606,14 +606,51 @@ def test_release_unknown_position_margin_is_silent_noop(cm):
 # ---------------------------------------------------------------------------
 
 
-def test_borrow_interest_stub():
-    """CARRY-01: borrow-interest accrual debits cash (Plan 03-05 turns green)."""
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-05")
+def test_borrow_interest_debits_cash_by_exact_amount(cm):
+    """CARRY-01/D-03: accrue_borrow_interest debits realized cash by the exact
+    Decimal carry amount (a REAL outflow, not a reservation)."""
+    amount = Decimal("0.05479452054794520547945205")  # 2×100×0.10/365 full precision
+    before = cm.balance
+    cm.accrue_borrow_interest(
+        amount=amount, reference_id="POS_SHORT",
+        description="borrow interest", timestamp=_EVENT_TIME,
+    )
+    assert cm.balance == before - amount
 
 
-def test_borrow_interest_op_stub():
-    """CARRY-01: borrow-interest flows via the BORROW_INTEREST cash op (Plan 03-05)."""
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-05")
+def test_borrow_interest_records_borrow_interest_op_with_balances_and_time(cm):
+    """CARRY-01/D-03: a BORROW_INTEREST CashOperation is recorded with the
+    Decimal amount, balance_before/after, and the caller-supplied bar time."""
+    amount = Decimal("12.34")
+    before = cm.balance
+    cm.accrue_borrow_interest(
+        amount=amount, reference_id="POS_SHORT",
+        description="borrow interest", timestamp=_EVENT_TIME,
+    )
+
+    ops = cm.get_cash_operations(operation_type=CashOperationType.BORROW_INTEREST)
+    assert len(ops) == 1
+    op = ops[0]
+    assert op.operation_type is CashOperationType.BORROW_INTEREST
+    assert op.amount == amount
+    assert op.balance_before == before
+    assert op.balance_after == before - amount
+    assert op.timestamp == _EVENT_TIME
+    assert op.reference_id == "POS_SHORT"
+
+
+def test_borrow_interest_zero_amount_is_noop(cm):
+    """A zero carry (rate-0 / no-short) accrues nothing and records no op —
+    keeps the SMA_MACD oracle byte-exact under default-off."""
+    before = cm.balance
+    cm.accrue_borrow_interest(
+        amount=Decimal("0"), reference_id="POS_SHORT",
+        description="borrow interest", timestamp=_EVENT_TIME,
+    )
+    assert cm.balance == before
+    assert cm.get_cash_operations(
+        operation_type=CashOperationType.BORROW_INTEREST
+    ) == []
 
 
 def test_release_symmetry_stub():
