@@ -361,11 +361,18 @@ class AdmissionManager:
 			The PENDING primary order, or a failure result for an
 			unsupported order type (short-circuits before entity creation).
 		"""
+		# LEV-03 (Finding B): compute the admission-clamped EFFECTIVE leverage
+		# once at the order-build site and thread it onto the Order entity so it
+		# flows OrderEvent -> FillEvent -> Transaction -> Position. On the spot
+		# path (enable_margin off) _effective_leverage returns Decimal("1") with
+		# NO instrument read or division — byte-exact (oracle-dark).
+		effective_leverage = self._effective_leverage(signal_event)
 		# D-05: the signal carries an enum-typed OrderType; dispatch on the
 		# member. The Order ENTITY now carries a Side action (SIG-03 / D-03) —
 		# thread the signal's Side member straight through (no .value).
 		if signal_event.order_type is OrderType.MARKET:
-			return Order.new_order(signal_event, exchange, quantity=quantity)
+			return Order.new_order(signal_event, exchange, quantity=quantity,
+			                       leverage=effective_leverage)
 		elif signal_event.order_type is OrderType.LIMIT:
 			return Order.new_limit_order(
 				time=signal_event.time,

@@ -38,6 +38,13 @@ class Transaction(object):
 	id: TransactionId
 	fill_id: uuid.UUID = field(kw_only=True)
 	position_id: Optional[PositionId] = None
+	# LEV-03 (Finding B): the admission-clamped EFFECTIVE leverage carried from
+	# the FillEvent. kw_only with a Decimal("1") default keeps the positional
+	# construction (price/quantity/commission/portfolio_id/id) and the spot path
+	# byte-exact (oracle-dark). Position.open_position reads this via getattr so
+	# the position-life locked margin (aggregate_notional / leverage) EQUALS the
+	# admission reservation (notional / effective_leverage).
+	leverage: Decimal = field(kw_only=True, default_factory=lambda: Decimal("1"))
 
 	def __post_init__(self) -> None:
 		"""Enter the Decimal money domain at the construction boundary (D-04).
@@ -49,6 +56,9 @@ class Transaction(object):
 		self.price = to_money(self.price)
 		self.quantity = to_money(self.quantity)
 		self.commission = to_money(self.commission)
+		# LEV-03: normalise leverage to Decimal via the string path (identity for
+		# an already-Decimal input; never Decimal(float)).
+		self.leverage = to_money(self.leverage)
 
 	def __repr__(self) -> str:
 		"""
@@ -135,7 +145,10 @@ class Transaction(object):
 			to_money(filled_order.commission),
 			filled_order.portfolio_id,
 			TransactionId(idgen.generate_transaction_id()),
-			fill_id=filled_order.fill_id
+			fill_id=filled_order.fill_id,
+			# LEV-03 (Finding B): carry the effective leverage from the fill.
+			# getattr default keeps spot fills (predating the field) byte-exact.
+			leverage=getattr(filled_order, "leverage", Decimal("1")),
 		)
 
 	def to_dict(self) -> dict[str, object]:

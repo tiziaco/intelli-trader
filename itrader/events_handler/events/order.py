@@ -56,6 +56,10 @@ class OrderEvent(Event):
     # without its entity id is malformed by construction (TypeError).
     order_id: OrderId
     stop_price: Decimal | None = None
+    # LEV-03 (Finding B): the admission-clamped EFFECTIVE leverage carried from
+    # the Order entity. Default Decimal("1") is unlevered (oracle-dark) — the
+    # spot path never sets it; the execution layer carries it onto the FillEvent.
+    leverage: Decimal = Decimal("1")
     parent_order_id: OrderId | None = None
     # D-11: two-directional bracket linkage — a bracket parent carries its
     # children's ids; non-bracket orders carry the empty tuple.
@@ -115,6 +119,10 @@ class OrderEvent(Event):
             # The Order entity carries no stop_price field today — preserve the
             # legacy getattr-None read until the entity grows one.
             stop_price=getattr(order, 'stop_price', None),
+            # LEV-03 (Finding B): read the effective leverage off the Order
+            # entity via the getattr default (mirrors the stop_price pattern) —
+            # robust to hand-built order stubs that predate the field.
+            leverage=getattr(order, 'leverage', Decimal("1")),
             order_id=order.id,
             parent_order_id=order.parent_order_id,
             child_order_ids=tuple(order.child_order_ids),
