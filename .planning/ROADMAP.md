@@ -165,7 +165,13 @@ with configurable leverage > 1 — making a levered Kelly fraction > 1 expressib
 golden master freezes ONLY after explicit owner sign-off + external cross-validation
 (`backtesting.py`/`backtrader`), with full attribution. `mypy --strict` clean; Decimal end-to-end;
 determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 6 plans
+- [ ] 02-01-PLAN.md — SignalEvent.leverage + TradingRules.max_leverage inert contract fields (LEV-01)
+- [ ] 02-02-PLAN.md — LeveredFraction equity-based sizing kind + resolver arm + SignalIntent.leverage (LEV-02)
+- [ ] 02-03-PLAN.md — [BLOCKING] Universe wiring into the order domain + leverage cap + margin reservation/over-margin reject (LEV-01/02, MARGIN-01/02)
+- [ ] 02-04-PLAN.md — Lock-and-settle cash model: position-keyed locked_margin + one-leverage-per-position + process_transaction branch (MARGIN-01)
+- [ ] 02-05-PLAN.md — maintenance_margin/margin_ratio compute-on-demand read-model + max_leverage update_config (MARGIN-03, LEV-01)
+- [ ] 02-06-PLAN.md — Parked leveraged-long e2e (hand-computed, NOT frozen) + byte-exact/determinism/mypy phase gate (MARGIN-01/02/03, LEV-01/02)
 
 ### Phase 3: Shorts & Borrow Carry
 **Goal**: A strategy can open and hold a first-class short position (the `LONG_ONLY` guard removed,
