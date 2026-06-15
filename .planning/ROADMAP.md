@@ -181,6 +181,14 @@ determinism double-run byte-identical.
 the CR-01 cover-arm hole fixed), with correct short PnL and borrow-interest carry accrued on open
 shorts.
 **Depends on**: Phase 2 (margin must exist to reserve against a short; carry rides shorts)
+**Carry-forward (Phase 2 review residuals)**: address the margin-hardening residuals parked for
+Phase 3 in `phases/02-margin-accounting-leverage/deferred-items.md` — CR-02-residual (full flip
+settlement: split a flip fill into close+open, or correct `realised_increment` to the clamped
+quantity), WR-01 (settlement-side solvency assertion that the locked margin fits buying power),
+WR-03 (margin-lock release symmetry at the assembly-failure site), WR-04 (`≥1` leverage floor +
+zero guard on `_effective_leverage`), WR-05 (per-lock open-commission accumulator). These are
+oracle-dark today (margin off on the SMA_MACD spot path) but become reachable once shorts/levered
+entries lock margin on the run path. (WR-02 universe-unwired guard spans Phase 3/4; IN-03 → Phase 4.)
 **Requirements**: SHORT-01, SHORT-02, SHORT-03, CARRY-01
 **Success Criteria** (what must be TRUE):
   1. A `SHORT_ONLY` / long-short strategy is admitted — the `LONG_ONLY` guard in
