@@ -343,6 +343,21 @@ def test_levered_fraction_step_size_quantizes_round_down():
 # ---------------------------------------------------------------------------
 
 
-def test_cover_magnitude_stub():
-    """SHORT-02: resolver sizes the cover magnitude (Plan 03-04 turns green)."""
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")
+def test_cover_magnitude_sizes_full_short_at_fraction_one():
+    """SHORT-02/D-06: the admission cover-arm passes abs(net_quantity) (a
+    positive magnitude) to resolve_exit. At exit_fraction == 1 the resolver
+    returns that magnitude UNCHANGED (the structural no-op), so a full cover
+    sizes to exactly the short magnitude — clamp-to-flat."""
+    magnitude = Decimal("2.0")
+    result = _resolver().resolve_exit(magnitude, Decimal("1"), None)
+    assert str(result) == str(magnitude)
+
+
+def test_cover_magnitude_partial_sizes_reduction():
+    """SHORT-02: a partial cover (exit_fraction < 1) on a short magnitude
+    sizes the reduction multiply, identical to a long partial exit — the
+    resolver is side-agnostic (it operates on a positive magnitude)."""
+    magnitude = Decimal("2.0")
+    result = _resolver().resolve_exit(magnitude, Decimal("0.5"), None)
+    assert result == magnitude * Decimal("0.5")
+    assert str(result) == str(magnitude * Decimal("0.5"))

@@ -106,6 +106,19 @@ class _AdmissionHarness:
         self.order_handler.on_signal(buy)
         return self.fill_next_order()
 
+    def open_short(self, quantity, price=40.0, ticker="BTCUSDT"):
+        """Open a short position by filling an explicit-quantity SELL.
+
+        Explicit quantity skips the direction gate, so the SELL reaches the
+        fill regardless of direction — the resulting position carries
+        net_quantity < 0 (the cover-arm fixture, SHORT-02)."""
+        sell = self.create_mock_signal(
+            "SELL", ticker=ticker, quantity=quantity, price=price,
+            direction=TradingDirection.LONG_SHORT,
+        )
+        self.order_handler.on_signal(sell)
+        return self.fill_next_order()
+
 
 @pytest.fixture
 def harness():
@@ -718,16 +731,110 @@ def test_build_primary_stop_order_carries_clamped_leverage(harness):
 # ---------------------------------------------------------------------------
 
 
-def test_cover_arm_stub():
-    """SHORT-02: side-agnostic cover-arm in admission (Plan 03-04 turns green)."""
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")
+def test_cover_arm_buy_on_open_short_routes_through_resolve_exit(harness):
+    """SHORT-02/D-05: a BUY-to-cover on an open short (net_quantity < 0) routes
+    through the side-agnostic exit and sizes the reduction to the position
+    magnitude — it does NOT fall into entry sizing and flip the book long.
+
+    Before the fix the cover BUY failed the `SELL and net>0` predicate and fell
+    into entry sizing, sizing 0.95*available_cash / price (a NEW long) — the
+    CR-01 hole. After the fix it returns abs(net_quantity) = 2.0."""
+    harness.open_short(quantity=2.0, price=40.0)
+    position = harness.ptf_handler.get_position(harness.last_ptf_id, "BTCUSDT")
+    assert position is not None and position.net_quantity < 0
+
+    cover = harness.create_mock_signal(
+        "BUY", direction=TradingDirection.LONG_SHORT, exit_fraction=Decimal("1"),
+    )
+    harness.order_handler.on_signal(cover)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    # The cover sizes to the FULL short magnitude (clamp-to-flat at fraction 1),
+    # not the entry-sizing fraction-of-cash quantity. abs(-2.0) == 2.0.
+    assert order_event.quantity == abs(position.net_quantity)
+    assert order_event.quantity == Decimal("2")
 
 
-def test_over_cover_clamp_stub():
-    """SHORT-02: over-cover clamps to flat (no accidental flip; Plan 03-04)."""
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")
+def test_cover_arm_sell_on_open_long_is_byte_exact(harness):
+    """SHORT-02/A2: the long-exit path stays byte-exact under the generalized
+    predicate — a SELL on an open long sizes to the SAME net_quantity it did
+    before the change (abs() is identity for net>0)."""
+    harness.open_long(quantity=2.5, price=40.0)
+    position = harness.ptf_handler.get_position(harness.last_ptf_id, "BTCUSDT")
+    assert position is not None and position.net_quantity > 0
+
+    sell = harness.create_mock_signal("SELL")
+    harness.order_handler.on_signal(sell)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.SELL
+    # Byte-exact: the SELL-on-long exit quantity is the position net_quantity,
+    # repr-identical (str compare, not just ==).
+    assert str(order_event.quantity) == str(position.net_quantity)
 
 
-def test_leverage_floor_stub():
-    """SHORT-03: admission leverage floor at 1 (Plan 03-04 turns green)."""
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")
+def test_over_cover_clamp_buy_clamps_to_short_magnitude(harness):
+    """SHORT-02/D-06: a BUY-cover with exit_fraction == 1 on an open short
+    clamps to EXACTLY abs(net_quantity) — the cover closes to flat and the
+    excess does NOT auto-open a long. resolve_exit returns at most the full
+    magnitude, so a full-close cover can never exceed the open short."""
+    harness.open_short(quantity=1.5, price=40.0)
+    position = harness.ptf_handler.get_position(harness.last_ptf_id, "BTCUSDT")
+    assert position is not None and position.net_quantity < 0
+
+    cover = harness.create_mock_signal(
+        "BUY", direction=TradingDirection.LONG_SHORT, exit_fraction=Decimal("1"),
+    )
+    harness.order_handler.on_signal(cover)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.BUY
+    # Clamped to flat: the cover quantity equals the short magnitude exactly,
+    # never more (no auto-opened long from the excess).
+    assert order_event.quantity == abs(position.net_quantity)
+    assert order_event.quantity <= abs(position.net_quantity)
+
+
+def test_leverage_floor_zero_instrument_cap_floors_at_one(harness):
+    """WR-04/D-09: a misconfigured Instrument.max_leverage of Decimal("0")
+    yields an effective leverage floored at Decimal("1") — never sub-1, never
+    a downstream divide-by-zero."""
+    am = _admission(harness)
+    am._enable_margin = True
+    am._portfolio_max_leverage = Decimal("10")
+    am.set_universe(_make_universe("BTCUSDT", Decimal("0")))
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("5"))
+
+    assert am._effective_leverage(signal) == Decimal("1")
+
+
+def test_leverage_floor_sub_one_instrument_cap_floors_at_one(harness):
+    """WR-04/D-09: a sub-1 instrument cap (e.g. 0.5) also floors at 1 — the
+    floor guards every cap below 1, not just exactly 0."""
+    am = _admission(harness)
+    am._enable_margin = True
+    am._portfolio_max_leverage = Decimal("10")
+    am.set_universe(_make_universe("BTCUSDT", Decimal("0.5")))
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("5"))
+
+    assert am._effective_leverage(signal) == Decimal("1")
+
+
+def test_leverage_floor_normal_cap_unaffected(harness):
+    """WR-04: a normal cap is unaffected by the floor — min(signal, instr, pf)
+    still applies above 1. {signal 20, instr 5, pf 10} → 5 (the floor never
+    lifts a legitimately-capped value)."""
+    am = _admission(harness)
+    am._enable_margin = True
+    am._portfolio_max_leverage = Decimal("10")
+    am.set_universe(_make_universe("BTCUSDT", Decimal("5")))
+
+    signal = harness.create_mock_signal("BUY")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    assert am._effective_leverage(signal) == Decimal("5")
