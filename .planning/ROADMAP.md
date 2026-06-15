@@ -217,6 +217,14 @@ configurable penalty, reconciling through the existing position/cash/order-mirro
 margin/shorts/liquidation accounting core is cross-validated and the new golden master frozen under
 owner sign-off.
 **Depends on**: Phase 2 (maintenance margin) AND Phase 3 (shorts to liquidate)
+**Carry-forward (review residuals → Phase 4)**: address the residuals parked in
+`phases/03-shorts-borrow-carry/deferred-items.md` — WR-04 (`assert_lock_fits_buying_power` add-back
+reads `0` because `release_margin` pops the prior lock before the assertion runs; fix the call order —
+assert before release, or pass the released amount in — so the solvency assertion credits the prior
+lock it claims to). Conservative today (fails loud, not a leak) but lands on the FRAGILE margin seam
+this phase re-touches, so bundle it under the single XVAL-01 owner-gated re-baseline. Plus IN-03
+(per-instrument maintenance-margin-rate table) declared here before liquidation consumes `margin_ratio`.
+(WR-02 universe-unwired guard — resolved in Phase 3 as a fail-loud `StateError` — no longer carries forward.)
 **Requirements**: LIQ-01, LIQ-02, LIQ-03, XVAL-01
 **Success Criteria** (what must be TRUE):
   1. A position breaching maintenance margin on bar close is force-closed via a `FillEvent`, loss
