@@ -41,7 +41,7 @@ from ...core.enums import OrderStatus, OrderType, Side, OrderOperationType, Orde
 from ...core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ...core.money import to_money
 from ...core.portfolio_read_model import PortfolioReadModel, PositionView
-from ...core.sizing import TradingDirection
+from ...core.sizing import TradingDirection, LeveredFraction
 from ...events_handler.events import SignalEvent
 from ...universe import Universe
 
@@ -191,6 +191,19 @@ class AdmissionManager:
 			# case is an OPEN ticker, the max_positions case is a NEW ticker)
 			# so a signal trips at most ONE gate.
 			gate_rejection = self._enforce_position_admission(signal_event, snap)
+			if gate_rejection is not None:
+				return [gate_rejection]
+
+			# 0c. D-07/LEV-02 leverage-sizing gate (Plan 02-03, RESEARCH A3) — the
+			# last admission gate, BEFORE sizing. A LeveredFraction(fraction > 1)
+			# is a LEVERED size (notional = f x equity > equity) that only makes
+			# sense with margin enabled. With enable_margin=False such a policy is
+			# REJECTED via the audited path (no order emitted, audited entity
+			# stored) — the f>1 guard lives HERE, not in the config-free resolver
+			# (the policy/resolver never know enable_margin). f <= 1 passes (it
+			# fits within equity); the FractionOfCash (0,1] oracle-dark path is
+			# untouched (only LeveredFraction reaches this branch).
+			gate_rejection = self._enforce_leverage_admission(signal_event)
 			if gate_rejection is not None:
 				return [gate_rejection]
 
@@ -522,6 +535,70 @@ class AdmissionManager:
 				f">= max_positions={signal_event.max_positions}; "
 				f"new entry for {signal_event.ticker} not allowed by strategy",
 				triggered_by=OrderTriggerSource.ADMISSION_MAX_POSITIONS,
+				operation_type=OrderOperationType.SIGNAL_ADMISSION,
+				error_prefix="Signal rejected at admission",
+			)
+		return None
+
+	def _effective_leverage(self, signal_event: SignalEvent) -> Decimal:
+		"""Resolve the effective leverage for an order (D-04/D-05).
+
+		When ``enable_margin`` is off the leverage is FORCED to ``Decimal("1")``
+		with NO instrument read — the spot byte-exact arm (the cap helper never
+		touches the Universe on the spot path).
+
+		When ``enable_margin`` is on the effective leverage is the venue-realistic
+		cap ``min(signal.leverage, Instrument.max_leverage, portfolio.max_leverage)``
+		(D-04). The instrument cap degrades to ``Decimal("1")`` when no Universe is
+		wired. A requested leverage ABOVE the cap is CLAMPED to the cap and a
+		warning is logged (D-05 — NOT rejected, NOT silent).
+		"""
+		if not self._enable_margin:
+			# D-04: spot byte-exact — forced to 1, no instrument read.
+			return Decimal("1")
+		instr_cap = (
+			self._universe.instrument(signal_event.ticker).max_leverage
+			if self._universe is not None else Decimal("1"))
+		pf_cap = self._portfolio_max_leverage
+		requested = signal_event.leverage
+		capped = min(requested, instr_cap, pf_cap)
+		if requested > capped:
+			# D-05: venue-realistic clamp — log the clamp loudly, do not reject.
+			self.logger.warning(
+				"leverage clamped to cap",
+				requested=str(requested), capped=str(capped),
+				ticker=signal_event.ticker)
+		return capped
+
+	def _enforce_leverage_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
+		"""D-07/LEV-02 gate — a LeveredFraction(f>1) needs enable_margin (RESEARCH A3).
+
+		A ``LeveredFraction`` sizes notional as ``f x total_equity``; an ``f > 1``
+		opens MORE notional than equity, which is only fundable with margin. With
+		``enable_margin=False`` such a policy is REJECTED via the audited path
+		(reuses ``_reject_unsized_signal`` → the same audited add_state_change →
+		persist → failure_result shape D-01 uses for over-cash). ``f <= 1`` fits
+		within equity and passes (the gate is f>1-ONLY); any non-LeveredFraction
+		policy passes untouched (the FractionOfCash (0,1] oracle-dark path is never
+		blocked here).
+
+		Returns
+		-------
+		Optional[OperationResult]
+			A failure_result when an f>1 LeveredFraction reaches admission with
+			margin off (the audited REJECTED entity is already persisted), or
+			None when the signal passes the gate.
+		"""
+		policy = signal_event.sizing_policy
+		if (isinstance(policy, LeveredFraction)
+				and policy.fraction > Decimal("1")
+				and not self._enable_margin):
+			return self._reject_unsized_signal(
+				signal_event,
+				f"leverage violation: LeveredFraction(fraction={policy.fraction}) "
+				f"requires enable_margin (f > 1 opens notional above equity) "
+				f"for {signal_event.ticker}",
+				triggered_by=OrderTriggerSource.ADMISSION_LEVERAGE,
 				operation_type=OrderOperationType.SIGNAL_ADMISSION,
 				error_prefix="Signal rejected at admission",
 			)
