@@ -231,3 +231,52 @@ class PortfolioReadModel(Protocol):
             Total equity at full ledger precision.
         """
         ...
+
+    def maintenance_margin(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return the portfolio's maintenance margin, computed on demand.
+
+        Plan 02-05 (MARGIN-03, D-13/D-13a): ``maintenance_margin =
+        Σ (Instrument.maintenance_margin_rate × |size| × current_price)`` over
+        the portfolio's OPEN positions, resolving each ticker's ``Instrument``
+        via the injected ``Universe``. It is a COMPUTE-ON-DEMAND read-model
+        accessor — NOT a stored mutable ``Position`` field (D-13: a second
+        source of truth would drift and fight the N+4 ``Account`` venue mirror,
+        D-13a). Decimal end-to-end (RESEARCH Pitfall 8 — never narrow through a
+        float). With no open positions the maintenance margin is ``Decimal("0")``.
+
+        Parameters
+        ----------
+        portfolio_id : PortfolioId
+            The portfolio to read.
+
+        Returns
+        -------
+        Decimal
+            Maintenance margin at full precision.
+        """
+        ...
+
+    def margin_ratio(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return the portfolio's margin ratio, ``total_equity / maintenance_margin``.
+
+        Plan 02-05 (MARGIN-03, D-12/D-13): the mark-to-market figure a UI/live
+        layer (deferred N+4) reads to compute margin-call warnings. The numerator
+        is ``total_equity()`` (D-12 mark-to-market), the denominator is
+        ``maintenance_margin()``. It reads HONESTLY even when breached — no clamp
+        (D-16): an equity drop below maintenance returns a ratio < 1 (the P4
+        liquidation input). When ``maintenance_margin`` is ``Decimal("0")`` (no
+        open positions, no margin required) it returns the deterministic sentinel
+        ``Decimal("0")`` (no division by zero).
+
+        Parameters
+        ----------
+        portfolio_id : PortfolioId
+            The portfolio to read.
+
+        Returns
+        -------
+        Decimal
+            Margin ratio at full precision (``Decimal("0")`` when no margin is
+            required).
+        """
+        ...
