@@ -130,3 +130,8 @@ None - no external service configuration required.
 ---
 *Phase: 02-margin-accounting-leverage*
 *Completed: 2026-06-15*
+
+## Self-Check: PASSED
+
+- All created/modified files exist on disk (test_leverage_plumbing.py, SUMMARY.md, portfolio_handler.py).
+- All task + RED/GREEN + SUMMARY commits present in git log (42d0763, 81f85ec, 978b646, df8c2a0, 4e9ca05, 4b02c73).

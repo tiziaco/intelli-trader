@@ -70,7 +70,7 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
   `enable_margin` / `allow_short_selling` config hooks.
 - [x] **LEV-02**: A Kelly sizing fraction > 1 is expressible (notional = f × equity, posting
   `notional / L` as margin).
-- [ ] **LEV-03**: Strategy-declared leverage flows end-to-end through the run path
+- [x] **LEV-03**: Strategy-declared leverage flows end-to-end through the run path
   (signal → order → fill → transaction → position), carrying the admission-clamped
   *effective* leverage `min(signal, instr.max, pf.max)` so the position-life locked
   margin (`aggregate_notional / leverage`) equals the admission reservation
@@ -147,7 +147,7 @@ Which phases cover which requirements. Filled during roadmap creation.
 | MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Complete |
 | LEV-01 | Phase 2 — Margin Accounting & Leverage | Complete |
 | LEV-02 | Phase 2 — Margin Accounting & Leverage | Complete |
-| LEV-03 | Phase 2 — Margin Accounting & Leverage | Pending |
+| LEV-03 | Phase 2 — Margin Accounting & Leverage | Complete |
 | SHORT-01 | Phase 3 — Shorts & Borrow Carry | Pending |
 | SHORT-02 | Phase 3 — Shorts & Borrow Carry | Pending |
 | SHORT-03 | Phase 3 — Shorts & Borrow Carry | Pending |

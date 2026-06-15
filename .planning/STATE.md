@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
-status: executing
-stopped_at: Completed 02-05-PLAN.md
-last_updated: "2026-06-15T11:53:34.236Z"
+status: verifying
+stopped_at: Completed 02-07-PLAN.md
+last_updated: "2026-06-15T12:51:40.223Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 9
   completed_phases: 1
-  total_plans: 10
-  completed_plans: 9
+  total_plans: 11
+  completed_plans: 10
   percent: 11
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 
 Phase: 02 (margin-accounting-leverage) — EXECUTING
 Plan: 7 of 7
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
@@ -193,6 +193,7 @@ scope decisions:
 - [Phase 02]: Phase 2 Plan 02: LeveredFraction sizing kind (notional = f x total_equity, D-07/LEV-02) — f guarded >0 NOT (0,1] (f>1 gate lives in AdmissionManager/Plan 03); SizingPolicy union grew forcing the assert_never arm; SignalIntent.leverage mirror (D-03) added; resolver reads total_equity (D-12) via the read-model Protocol, never cash; FractionOfCash (0,1] oracle-dark path untouched; mypy --strict clean (185 files)
 - [Phase ?]: Phase 2 Plan 04: lock-and-settle margin model (enable_margin gate, D-09/D-10/D-11) — position-keyed locked_margin in CashManager (Pitfall 2); available_balance = balance − reserved − locked_margin (spot byte-exact); Position.leverage at open (D-06) + aggregate_notional; margin close cash delta = realised_increment + p×prior_entry_commission so round-trip == realised_pnl; SMA_MACD 134/46189.87730727451 byte-exact
 - [Phase 02]: Phase 2 Plan 05: maintenance_margin/margin_ratio compute-on-demand read-model accessors (D-13/MARGIN-03) — Σ(mmr × |size| × current_price) over open positions via injected Universe (PortfolioHandler.set_universe seam, Trap-4 ordering, mirrors order/exchange set_universe); margin_ratio = total_equity()/maintenance honest-when-breached (D-16, no clamp), Decimal('0') zero-maintenance sentinel; max_leverage rides update_config UNCHANGED (D-15, TradingRules field); 3 Wave-0 stubs (maintenance_margin/margin_ratio/max_leverage) turned green; SMA_MACD 134/46189.87730727451 byte-exact, mypy --strict clean (185 files)
+- [Phase ?]: Phase 2 Plan 07: LEV-03 closed — strategy-declared EFFECTIVE leverage min(signal,instr,pf) flows signal->order->fill->transaction->position; run-path Transaction in PortfolioHandler.on_fill (not new_transaction) was the actual carry site (deviation); locked margin == admission reservation under L>1; SMA_MACD 134/46189.87730727451 byte-exact, mypy clean (185 files)
 
 ### Pending Todos
 
@@ -247,6 +248,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 02 P03 | 18 | 3 tasks | 8 files |
 | Phase 02 P04 | 35 | 3 tasks | 9 files |
 | Phase 02 P05 | 8 | 2 tasks | 7 files |
+| Phase 02 P07 | 18 | 3 tasks | 9 files |
 
 ## Bookkeeping
 
@@ -288,8 +290,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T11:53:34.228Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-06-15T12:51:35.339Z
+Stopped at: Completed 02-07-PLAN.md
 Resume file: None
 
 ## Operator Next Steps

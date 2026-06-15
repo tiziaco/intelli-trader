@@ -270,7 +270,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
-| 2. Margin Accounting & Leverage | 6/7 | In Progress|  |
+| 2. Margin Accounting & Leverage | 7/8 | In Progress|  |
 | 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
 | 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |
