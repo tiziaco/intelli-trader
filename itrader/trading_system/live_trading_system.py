@@ -21,7 +21,7 @@ from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-from itrader.universe import derive_membership
+from itrader.universe import Universe, derive_instruments, derive_membership
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, TimeEvent, OrderEvent, ErrorEvent
@@ -115,6 +115,12 @@ class LiveTradingSystem:
         self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, self._signal_store)
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
+        # WR-04: declare the universe attribute as a clean "not yet wired"
+        # sentinel here, mirroring Engine.universe: Optional[Universe] = None on
+        # the backtest path. It is populated in _initialize_live_session (from
+        # start()); without this, any pre-start read raises AttributeError
+        # instead of returning None — an attribute-existence trap for D-live.
+        self.universe: Optional[Universe] = None
         
         # Create order storage for live trading (PostgreSQL)
         # Note: For now using in-memory until Phase 2 is complete
@@ -260,7 +266,22 @@ class LiveTradingSystem:
                 self.strategies_handler.strategies,
                 self.screeners_handler.get_screeners_universe()
             )
-            self.feed.bind(self.global_queue, membership)
+            # INST-02/INST-03 (D-08): mirror the backtest_runner Universe
+            # construction/injection so the live path is Universe-aware and
+            # consistent. price_data empty (declared symbols win; live venue
+            # fetch is D-live). This module is mypy-deferred (ignore_errors) and
+            # NOT exercised by the backtest byte-exact/determinism gates.
+            instruments = derive_instruments(
+                self.strategies_handler.strategies,
+                self.screeners_handler.get_screeners_universe(),
+                price_data={}
+            )
+            universe = Universe(members=membership, instrument_map=instruments)
+            self.universe = universe
+            simulated_exchange = self.execution_handler.exchanges.get('simulated')
+            if isinstance(simulated_exchange, SimulatedExchange):
+                simulated_exchange.set_universe(universe)
+            self.feed.bind(self.global_queue, universe.members)
 
             # Plan 06-05: the legacy set_symbols/set_timeframe calls died with
             # the price handler — the Store knows its symbols (store.symbols()).

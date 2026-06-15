@@ -8,10 +8,14 @@ query (``is_active`` / ``active_membership``, UNIV-01) was added alongside
 ``derive_membership`` (D-03).
 """
 
+from .instruments import derive_instruments
 from .membership import active_membership, derive_membership, is_active
+from .universe import Universe
 
 __all__ = [
+    'Universe',
     'active_membership',
+    'derive_instruments',
     'derive_membership',
     'is_active',
 ]

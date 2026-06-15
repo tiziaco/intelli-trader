@@ -21,14 +21,14 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Instrument (INST)
 
-- [ ] **INST-01**: An `Instrument` value object (`core/instrument.py`, frozen) is the per-symbol source
+- [x] **INST-01**: An `Instrument` value object (`core/instrument.py`, frozen) is the per-symbol source
   of price precision, quantity precision, and `min_order_size`; `core/money.py::quantize` reads
   precision from it and the hard-coded `_INSTRUMENT_SCALES` table is deleted.
-- [ ] **INST-02**: Price precision resolves declared → inferred-from-data (guarded: read the price as a
+- [x] **INST-02**: Price precision resolves declared → inferred-from-data (guarded: read the price as a
   string, cap max decimal places) → default; `quantity_precision` and `min_order_size` resolve
   declared → default (not inferable from OHLCV). `BTCUSD` always takes the declared 8dp branch so the
   golden oracle does not drift.
-- [ ] **INST-03**: `Instrument` carries the margin/funding params (`maintenance_margin_rate`,
+- [x] **INST-03**: `Instrument` carries the margin/funding params (`maintenance_margin_rate`,
   `max_leverage`, `settles_funding: bool`) consumed by the margin, liquidation, and leverage features.
   `ExchangeLimits` is demoted to a venue-level fallback for undeclared symbols.
 
@@ -131,9 +131,9 @@ Which phases cover which requirements. Filled during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INST-01 | Phase 1 — Instrument Value Object | Pending |
-| INST-02 | Phase 1 — Instrument Value Object | Pending |
-| INST-03 | Phase 1 — Instrument Value Object | Pending |
+| INST-01 | Phase 1 — Instrument Value Object | Complete |
+| INST-02 | Phase 1 — Instrument Value Object | Complete |
+| INST-03 | Phase 1 — Instrument Value Object | Complete |
 | MARGIN-01 | Phase 2 — Margin Accounting & Leverage | Pending |
 | MARGIN-02 | Phase 2 — Margin Accounting & Leverage | Pending |
 | MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Pending |

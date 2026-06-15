@@ -96,10 +96,22 @@ class SlippageModelConfig(BaseModel):
 
 
 class ExchangeLimits(BaseModel):
-    """Exchange trading limits."""
+    """Venue-level exchange trading limits (D-01, INST-03).
+
+    ``min_order_size`` is the venue-level FALLBACK for symbols whose
+    ``Instrument`` does not declare one (``Instrument.min_order_size is None``,
+    D-01a). The per-symbol ``Instrument`` is the source of truth; the exchange
+    resolves Instrument-first and falls through to this value only when the
+    instrument leaves it undeclared. The value is unchanged from before the
+    INST-03 demotion — BTCUSD (undeclared) reads ``Decimal("0.001")`` here,
+    byte-identical to the pre-demotion behavior.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    # D-01/INST-03: the venue-level min-order-size fallback for UNDECLARED
+    # symbols (Instrument-first resolution falls through to this). Value
+    # unchanged (byte-exact) — BTCUSD reads this 0.001 today.
     min_order_size: Decimal = Decimal("0.001")
     max_order_size: Decimal = Decimal("1000000.0")
     max_price: Decimal = Decimal("1000000.0")

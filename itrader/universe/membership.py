@@ -64,8 +64,12 @@ def derive_membership(
     Returns
     -------
     list[str]
-        The deduplicated membership. Order is unspecified (set-derived,
-        exactly like the legacy code) — consumers must not rely on it.
+        The deduplicated membership, sorted (WR-05). Sorting at the membership
+        boundary makes multi-symbol runs reproducible (``list(set(...))`` order
+        varies with ``PYTHONHASHSEED``); a single-symbol universe is its own
+        sort, so the byte-exact single-symbol oracle is unaffected. Consumers
+        still should treat order as a derived property of this seam, not relied
+        on cross-version.
     """
     tickers: list[str] = []
     for strategy in strategies:
@@ -76,7 +80,7 @@ def derive_membership(
             else:
                 tickers.append(entry)
     tickers.extend(screener_tickers)
-    return list(set(tickers))
+    return sorted(set(tickers))
 
 
 # A span is a half-inclusive-both-ends [first_bar, last_bar] availability

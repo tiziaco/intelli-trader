@@ -27,8 +27,9 @@ import pandas as pd
 
 from itrader.core.exceptions import ConfigurationError
 from itrader.logger import get_itrader_logger
+from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.compose import Engine
-from itrader.universe import derive_membership
+from itrader.universe import Universe, derive_instruments, derive_membership
 
 
 class BacktestRunner:
@@ -61,7 +62,40 @@ class BacktestRunner:
 			engine.strategies_handler.strategies,
 			# D-screener deferred subsystem (ignore_errors override) — untyped to the gate.
 			engine.screeners_handler.get_screeners_universe())  # type: ignore[no-untyped-call]
-		engine.feed.bind(engine.global_queue, membership)
+		# INST-02/INST-03 (D-03/D-06/D-08): build the symbol->Instrument map and
+		# the Universe read-model at THIS Trap-4 point, then inject it into the
+		# exchange for Instrument-first min_order_size resolution. price_data is
+		# empty on the golden path — BTCUSD is DECLARED (D-10), so inference is
+		# never consulted and the oracle stays byte-exact (Pitfall 1/Pitfall 4).
+		instruments = derive_instruments(
+			engine.strategies_handler.strategies,
+			engine.screeners_handler.get_screeners_universe(),  # type: ignore[no-untyped-call]
+			price_data={})
+		# WR-03: derive_instruments calls derive_membership internally over the
+		# same inputs, so its key set must match the membership derived above. The
+		# two agree within one interpreter today, but a future non-idempotent
+		# derive_membership would silently desync universe.members from the
+		# instrument map (members holding a symbol absent from instrument_map ->
+		# KeyError on instrument(symbol) mid-run). Assert the invariant at wiring
+		# so a desync fails loudly here rather than deep in a tick.
+		if set(membership) != set(instruments):
+			raise ConfigurationError(
+				reason=(
+					"Universe membership desync: derive_membership and "
+					"derive_instruments produced different symbol sets "
+					f"(members={sorted(set(membership))}, "
+					f"instruments={sorted(set(instruments))})"))
+		universe = Universe(members=membership, instrument_map=instruments)
+		engine.universe = universe
+		# Inject the Universe into the simulated exchange so the admission gate
+		# resolves min_order_size Instrument-first (BTCUSD undeclared -> venue
+		# fallback 0.001 byte-identical, D-01a/Pitfall 2).
+		simulated_exchange = engine.execution_handler.exchanges.get('simulated')
+		if isinstance(simulated_exchange, SimulatedExchange):
+			simulated_exchange.set_universe(universe)
+		# feed.bind receives universe.members — the SAME set-derived list
+		# derive_membership produced (Pitfall 4 — byte-identical to today).
+		engine.feed.bind(engine.global_queue, universe.members)
 		# Ping clock derived from the store's bar index (T-06-16). WR-07: fail
 		# loudly on an empty store, and derive the grid from the UNION of every
 		# symbol's index so a sparse multi-symbol universe never silently drops
@@ -70,8 +104,9 @@ class BacktestRunner:
 		symbols = engine.store.symbols()
 		if not symbols:
 			raise ConfigurationError(
-				"Backtest store has no symbols — cannot derive the ping clock "
-				"(empty data directory or bad store path)")
+				reason=(
+					"Backtest store has no symbols — cannot derive the ping clock "
+					"(empty data directory or bad store path)"))
 		ping_grid = reduce(
 			pd.Index.union, (engine.store.index(s) for s in symbols))
 		engine.time_generator.set_dates(ping_grid)

@@ -47,7 +47,7 @@ legitimately change a leaf. `mypy --strict` clean, Decimal end-to-end, determini
 byte-identical hold throughout. Full design: PROJECT.md "Current Milestone: v1.4" + the (promoted)
 999.4 scoping block in the Backlog below + `notes/margin-leverage-shorts-999.4.md`.
 
-- [ ] **Phase 1: Instrument Value Object** - Per-symbol precision/lot/margin source replacing `_INSTRUMENT_SCALES`; BTCUSD stays declared 8dp (byte-exact behavioral gate)
+- [x] **Phase 1: Instrument Value Object** - Per-symbol precision/lot/margin source replacing `_INSTRUMENT_SCALES`; BTCUSD stays declared 8dp (byte-exact behavioral gate) — completed 2026-06-15
 - [ ] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated)
 - [ ] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated)
 - [ ] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated)
@@ -142,7 +142,10 @@ pinned to its declared 8dp so the golden oracle does not drift.
 **Re-baseline**: Byte-exact behavioral gate. The Instrument seam lands metadata + precision-read;
 whether the backtest *snaps/rounds* via Instrument must hold the oracle byte-exact (BTCUSD declared
 8dp branch). `mypy --strict` clean; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 3 plans
+- [x] 01-01-PLAN.md — Frozen Instrument value object + quantize(Instrument) rewire; delete _INSTRUMENT_SCALES (INST-01/03)
+- [x] 01-02-PLAN.md — derive_instruments ladder + Universe facade + ExchangeLimits demotion + SimulatedExchange/wiring (INST-02/03)
+- [x] 01-03-PLAN.md — Byte-exact oracle + mypy --strict + determinism phase gate (INST-01/02/03)
 
 ### Phase 2: Margin Accounting & Leverage
 **Goal**: A portfolio opens positions on reserved margin (`initial_margin = notional / leverage`),
@@ -259,7 +262,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Instrument Value Object | 0/TBD | Not started | - |
+| 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
 | 2. Margin Accounting & Leverage | 0/TBD | Not started | - |
 | 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
