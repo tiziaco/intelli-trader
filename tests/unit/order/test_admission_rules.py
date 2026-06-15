@@ -664,3 +664,46 @@ def test_margin_makes_otherwise_unaffordable_order_affordable(harness):
     order_event: OrderEvent = harness.queue.get(False)
     assert order_event.action is Side.BUY
     assert order_event.quantity == 500
+
+
+# --- Plan 02-08 (CR-01 / LEV-03): LIMIT/STOP arms thread effective leverage ---
+
+
+def test_build_primary_market_order_carries_clamped_leverage(harness):
+    """Baseline: the MARKET arm already threads the CLAMPED effective leverage
+    onto the Order (signal 20, instr/pf cap 5 → 5)."""
+    am = _enable_margin(harness, Decimal("5"))
+    signal = harness.create_mock_signal("BUY", quantity=100, price=40.0,
+                                        order_type="MARKET")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    order = am._build_primary_order(signal, "binance", Decimal("100"))
+    assert order.type is OrderType.MARKET
+    assert order.leverage == Decimal("5")
+
+
+def test_build_primary_limit_order_carries_clamped_leverage(harness):
+    """CR-01: the LIMIT arm must thread the CLAMPED effective leverage onto the
+    Order entity (so position-life locked margin == admission reservation), not
+    silently default to Decimal('1')."""
+    am = _enable_margin(harness, Decimal("5"))
+    signal = harness.create_mock_signal("BUY", quantity=100, price=40.0,
+                                        order_type="LIMIT")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    order = am._build_primary_order(signal, "binance", Decimal("100"))
+    assert order.type is OrderType.LIMIT
+    assert order.leverage == Decimal("5")
+
+
+def test_build_primary_stop_order_carries_clamped_leverage(harness):
+    """CR-01: the STOP arm must thread the CLAMPED effective leverage onto the
+    Order entity, mirroring the MARKET/LIMIT arms."""
+    am = _enable_margin(harness, Decimal("5"))
+    signal = harness.create_mock_signal("BUY", quantity=100, price=40.0,
+                                        order_type="STOP")
+    object.__setattr__(signal, "leverage", Decimal("20"))
+
+    order = am._build_primary_order(signal, "binance", Decimal("100"))
+    assert order.type is OrderType.STOP
+    assert order.leverage == Decimal("5")
