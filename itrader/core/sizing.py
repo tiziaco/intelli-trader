@@ -47,6 +47,7 @@ from itrader.core.money import ONE
 __all__ = [
     "FixedQuantity",
     "FractionOfCash",
+    "LeveredFraction",
     "PercentFromDecision",
     "PercentFromFill",
     "RiskPercent",
@@ -149,9 +150,51 @@ class RiskPercent:
         _validate_step_size("RiskPercent", self.step_size)
 
 
+@dataclass(frozen=True, slots=True)
+class LeveredFraction:
+    """Equity-based levered sizing: notional = f x total_equity (D-07/LEV-02).
+
+    Mirrors ``RiskPercent``'s shape but sizes notional directly off
+    mark-to-market equity (D-12), not off a stop distance: the resolver reads
+    ``total_equity()`` and computes ``qty = (fraction * equity) / price``.
+
+    CRITICAL — ``fraction`` is guarded ``> 0`` (``_require_positive``), NOT the
+    ``(0, 1]`` unit interval that ``FractionOfCash`` enforces. A Kelly fraction
+    ``f > 1`` is structurally expressible here: ``notional = f x equity`` is the
+    levered exposure. The ``f > 1 only when enable_margin`` GATE does NOT live
+    in this policy — it is enforced downstream in ``AdmissionManager`` (Plan 03,
+    RESEARCH A3) so this policy stays config-agnostic.
+
+    D-07a — ``fraction`` (exposure: notional = f x equity) and ``leverage``
+    (margin backing, ``SignalIntent.leverage`` / D-03) are COMPLEMENTARY, not
+    redundant: ``fraction`` sets how much notional is opened, ``leverage`` sets
+    how much margin backs it. The resolver never conflates them.
+
+    Oracle-dark: the golden ``FractionOfCash`` run never constructs a
+    ``LeveredFraction`` (the (0, 1] path is byte-exact untouched).
+
+    Attributes
+    ----------
+    fraction : Decimal
+        Equity fraction setting notional exposure, strictly positive
+        (``> 0``, NOT ``(0, 1]`` — ``f > 1`` is allowed at the policy level).
+    step_size : Decimal | None
+        Optional exchange quantity step (D-05); ``None`` means no quantize.
+    """
+
+    fraction: Decimal
+    step_size: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        _require_positive("LeveredFraction", "fraction", self.fraction)
+        _validate_step_size("LeveredFraction", self.step_size)
+
+
 # D-01/D-02: the resolver match-dispatches on exactly these kinds, closing
-# with assert_never so mypy --strict fails on an unhandled kind.
-SizingPolicy = FractionOfCash | FixedQuantity | RiskPercent
+# with assert_never so mypy --strict fails on an unhandled kind. D-07/LEV-02
+# grows the union with LeveredFraction — the resolver's assert_never arm is
+# satisfied in the same change (D-02 growth rule, mypy --strict gate).
+SizingPolicy = FractionOfCash | FixedQuantity | RiskPercent | LeveredFraction
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -238,6 +281,13 @@ class SignalIntent:
     entry_price : Decimal | None
         The limit/stop entry price for ``LIMIT``/``STOP`` intents; ``None`` for
         ``MARKET`` intents (which fill at the decision-bar close, D-01).
+    leverage : Decimal
+        The strategy-return mirror of the requested margin backing (D-03).
+        Defaults to ``Decimal("1")`` (unlevered) so the field is inert on the
+        golden path; rides into the ``SignalEvent`` exactly as ``sizing_policy``
+        does. Complementary to a ``LeveredFraction`` policy's ``fraction``
+        (exposure) — leverage sets margin backing, fraction sets notional
+        (D-07a); the resolver/admission layer never conflates the two.
     """
 
     ticker: str
@@ -248,6 +298,7 @@ class SignalIntent:
     exit_fraction: Decimal = Decimal("1")
     quantity: Decimal | None = None
     entry_price: Decimal | None = None
+    leverage: Decimal = Decimal("1")
 
     def __post_init__(self) -> None:
         _require_unit_interval("SignalIntent", "exit_fraction", self.exit_fraction)
