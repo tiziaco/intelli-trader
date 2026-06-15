@@ -101,3 +101,27 @@ def test_settles_funding_defaults_to_false():
 def test_quote_currency_defaults_to_usd():
     # Source of the kind="cash" 2dp scale.
     assert _btcusd().quote_currency == "USD"
+
+
+def test_borrow_rate_defaults_to_decimal_zero():
+    # D-01 / Pitfall 3: undeclared borrow_rate defaults to Decimal("0")
+    # (carry-off) so SMA_MACD stays oracle byte-exact.
+    instrument = _btcusd()
+    assert instrument.borrow_rate == Decimal("0")
+    # MUST be a Decimal, never the literal int 0 (int re-enters int arithmetic
+    # and fails mypy --strict in the Plan-05 carry formula).
+    assert isinstance(instrument.borrow_rate, Decimal)
+
+
+def test_borrow_rate_round_trips_declared_decimal():
+    # D-01: a per-symbol borrow rate stores the Decimal value unchanged.
+    instrument = Instrument(
+        symbol="BTCUSD",
+        price_precision=Decimal("0.00000001"),
+        quantity_precision=Decimal("0.00000001"),
+        maintenance_margin_rate=Decimal("0.005"),
+        max_leverage=Decimal("10"),
+        borrow_rate=Decimal("0.10"),
+    )
+    assert instrument.borrow_rate == Decimal("0.10")
+    assert isinstance(instrument.borrow_rate, Decimal)
