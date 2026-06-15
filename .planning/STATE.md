@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
-status: planning
+status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-15T06:34:21.669Z"
-last_activity: 2026-06-14 — v1.4 roadmap created (6 phases, 20/20 requirements mapped)
+last_updated: "2026-06-15T07:08:28.033Z"
+last_activity: 2026-06-15 -- Phase 01 planning complete
 progress:
   total_phases: 9
   completed_phases: 0
-  total_plans: 0
+  total_plans: 3
   completed_plans: 0
   percent: 0
 ---
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 
 Phase: 1 — Instrument Value Object (not started)
 Plan: —
-Status: Roadmap created, awaiting phase planning
-Last activity: 2026-06-14 — v1.4 roadmap created (6 phases, 20/20 requirements mapped)
+Status: Ready to execute
+Last activity: 2026-06-15 -- Phase 01 planning complete
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
