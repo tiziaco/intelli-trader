@@ -382,7 +382,11 @@ class AdmissionManager:
 				quantity=quantity,
 				exchange=exchange,
 				strategy_id=signal_event.strategy_id,
-				portfolio_id=signal_event.portfolio_id
+				portfolio_id=signal_event.portfolio_id,
+				# CR-01 (LEV-03): thread the CLAMPED effective leverage onto the
+				# LIMIT entry too — not just MARKET — so position-life locked
+				# margin equals the admission reservation for every order type.
+				leverage=effective_leverage,
 			)
 		elif signal_event.order_type is OrderType.STOP:
 			return Order.new_stop_order(
@@ -393,7 +397,10 @@ class AdmissionManager:
 				quantity=quantity,
 				exchange=exchange,
 				strategy_id=signal_event.strategy_id,
-				portfolio_id=signal_event.portfolio_id
+				portfolio_id=signal_event.portfolio_id,
+				# CR-01 (LEV-03): thread the CLAMPED effective leverage onto the
+				# STOP entry too (mirrors the MARKET/LIMIT arms).
+				leverage=effective_leverage,
 			)
 		return OperationResult.failure_result(
 			f"Unsupported order type: {signal_event.order_type}",

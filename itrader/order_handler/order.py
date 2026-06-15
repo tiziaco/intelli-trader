@@ -226,9 +226,20 @@ class Order:
 	
 	@classmethod
 	def new_stop_order(cls, time: datetime, ticker: str, action: Side, price: Any, quantity: Any, exchange: str,
-					strategy_id: StrategyId, portfolio_id: PortfolioId) -> "Order":
+					strategy_id: StrategyId, portfolio_id: PortfolioId, *,
+					leverage: Decimal = Decimal("1")) -> "Order":
 		"""
 		Generate a new Stop Order object.
+
+		Parameters
+		----------
+		leverage : `Decimal`, keyword-only
+			The admission-clamped EFFECTIVE leverage the order is margined at
+			(CR-01 / LEV-03). The order/risk layer computes it
+			(AdmissionManager._effective_leverage) and threads it here so the
+			LIMIT/STOP entry carries the same effective leverage as the MARKET
+			arm; Decimal("1") (the default) is unlevered and byte-exact
+			(oracle-dark).
 
 		Returns
 		-------
@@ -245,7 +256,9 @@ class Order:
 			to_money(quantity),
 			exchange,
 			strategy_id,
-			portfolio_id
+			portfolio_id,
+			# CR-01 (LEV-03): carry the admission-clamped EFFECTIVE leverage.
+			leverage=to_money(leverage),
 		)
 		
 		# Add initial state change
@@ -259,9 +272,20 @@ class Order:
 	
 	@classmethod
 	def new_limit_order(cls, time: datetime, ticker: str, action: Side, price: Any, quantity: Any, exchange: str,
-					strategy_id: StrategyId, portfolio_id: PortfolioId) -> "Order":
+					strategy_id: StrategyId, portfolio_id: PortfolioId, *,
+					leverage: Decimal = Decimal("1")) -> "Order":
 		"""
 		Generate a new Limit Order object.
+
+		Parameters
+		----------
+		leverage : `Decimal`, keyword-only
+			The admission-clamped EFFECTIVE leverage the order is margined at
+			(CR-01 / LEV-03). The order/risk layer computes it
+			(AdmissionManager._effective_leverage) and threads it here so the
+			LIMIT/STOP entry carries the same effective leverage as the MARKET
+			arm; Decimal("1") (the default) is unlevered and byte-exact
+			(oracle-dark).
 
 		Returns
 		-------
@@ -278,7 +302,9 @@ class Order:
 			to_money(quantity),
 			exchange,
 			strategy_id,
-			portfolio_id
+			portfolio_id,
+			# CR-01 (LEV-03): carry the admission-clamped EFFECTIVE leverage.
+			leverage=to_money(leverage),
 		)
 		
 		# Add initial state change
