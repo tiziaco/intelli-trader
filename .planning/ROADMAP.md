@@ -202,7 +202,13 @@ entries lock margin on the run path. (WR-02 universe-unwired guard spans Phase 3
 **Re-baseline**: Owner-gated (result-changing). Shorts change results (the v1.0 oracle eliminated 2
 blessed shorts under D-08 LONG_ONLY); the new golden freezes ONLY after owner sign-off + external
 cross-validation. `mypy --strict` clean; Decimal end-to-end; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 6 plans (3 waves)
+- [ ] 03-01-PLAN.md — inert data/enum plumbing: Instrument.borrow_rate (D-01) + CashOperationType.BORROW_INTEREST (D-03), default-off/oracle-dark
+- [ ] 03-02-PLAN.md — Wave 0 test scaffolding: collectible skipped stubs for every selector + 3 parked e2e dirs (Nyquist contract, D-10)
+- [ ] 03-03-PLAN.md — SHORT-01 two-flag registration gate (allow_short_selling AND enable_margin, D-07) + compose/live wiring
+- [ ] 03-04-PLAN.md — SHORT-02 side-agnostic cover-arm + clamp-to-flat (D-05/D-06) + WR-04 leverage floor + SHORT-03 PnL confirm
+- [ ] 03-05-PLAN.md — CARRY-01 per-bar BORROW_INTEREST carry accrual: thread bar business time + Universe into the mark (D-02/D-04/D-08)
+- [ ] 03-06-PLAN.md — WR-01/02/03/05 margin-seam hardening (D-09) + 3 parked e2e scenarios + owner-gated phase gate (D-10)
 
 ### Phase 4: Liquidation & Cross-Validation Re-baseline
 **Goal**: A position breaching maintenance margin (checked on bar close — the honest daily-OHLCV
