@@ -199,6 +199,63 @@ class PortfolioStateStorage(ABC):
         """
         pass
 
+    # -- Locked margin (position-keyed working state — Plan 02-04, D-10) ------
+    # A DISTINCT lifecycle from the order-keyed reservation (Pitfall 2): the
+    # lock is held for the lifetime of a position (open → scale-in → close),
+    # not for a pending order. Stored at FULL precision (no quantize) so the
+    # release equals the lock exactly.
+
+    @abstractmethod
+    def get_locked_margin(self) -> Decimal:
+        """Return the total currently locked margin across all positions.
+
+        Mirrors ``get_reserved_cash`` but for the position-keyed locked-margin
+        container (margin mode, D-10). Returns a CLEAN ``Decimal('0')`` when
+        nothing is locked (Pitfall 6) so the spot ``available_balance``
+        subtraction is byte-exact.
+
+        Returns
+        -------
+        Decimal
+            The sum of all per-position locked-margin amounts (clean zero when
+            empty).
+        """
+        pass
+
+    @abstractmethod
+    def add_locked_margin(self, position_id: str, amount: Decimal) -> None:
+        """Store (insert or replace) the locked margin for a position id.
+
+        Amounts are stored at FULL precision (no quantize) so the released
+        amount equals the locked amount exactly. A scale-in replaces the prior
+        lock with the recomputed ``new_aggregate_notional / L``.
+
+        Parameters
+        ----------
+        position_id : str
+            The position the locked margin is keyed by.
+        amount : Decimal
+            The locked margin amount (full precision).
+        """
+        pass
+
+    @abstractmethod
+    def pop_locked_margin(self, position_id: str) -> Optional[Decimal]:
+        """Remove and return the locked margin for a position id.
+
+        Parameters
+        ----------
+        position_id : str
+            The position whose locked margin is removed.
+
+        Returns
+        -------
+        Optional[Decimal]
+            The locked amount if a lock existed, else ``None`` (no error when
+            absent — release is idempotent).
+        """
+        pass
+
     @abstractmethod
     def add_cash_operation(self, operation: Any) -> None:
         """Append a cash operation to the audit trail.

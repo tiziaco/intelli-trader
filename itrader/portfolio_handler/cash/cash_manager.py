@@ -105,8 +105,28 @@ class CashManager:
     
     @property
     def available_balance(self) -> Decimal:
-        """Get available cash balance (total - reserved)."""
-        return self._balance - self._storage.get_reserved_cash()
+        """Get available cash balance (D-10: one buying-power authority).
+
+        ``balance − reserved − locked_margin`` (Plan 02-04, Pitfall 6). In spot
+        mode (``enable_margin=False``) nothing is ever locked, so
+        ``locked_margin_total`` is a clean ``Decimal('0')`` and this is
+        byte-exact ``balance − reserved`` (``x − Decimal('0') == x``).
+        """
+        return (
+            self._balance
+            - self._storage.get_reserved_cash()
+            - self._storage.get_locked_margin()
+        )
+
+    @property
+    def locked_margin_total(self) -> Decimal:
+        """Total margin currently locked across all open positions (D-10).
+
+        Position-keyed, a DISTINCT lifecycle from the order-keyed reservation
+        (Pitfall 2). Returns a clean ``Decimal('0')`` when nothing is locked
+        (Pitfall 6) — never a float, never a quantized zero.
+        """
+        return self._storage.get_locked_margin()
 
     @property
     def reserved_balance(self) -> Decimal:
@@ -447,6 +467,60 @@ class CashManager:
             reference_id=reference_id
         )
     
+    def lock_margin(self, position_id: str, amount: Decimal) -> None:
+        """Lock (insert or replace) margin for a position, keyed by id (D-10).
+
+        The margin-mode analogue of ``reserve_cash`` (Pitfall 2 — a DISTINCT,
+        position-lifetime container, not the order-keyed reservation). Held at
+        FULL precision (no 2dp quantize, same discipline as ``reserve_cash``)
+        so a later ``release_margin`` returns the EXACT locked amount with no
+        rounding drift. The ledger balance is unchanged — only buying power
+        (``available_balance``) moves. A scale-in replaces the prior lock with
+        the recomputed ``new_aggregate_notional / L``.
+
+        No audit ``CashOperation`` is recorded here: the lock is working state
+        (like a reservation move), and the open/close fill that drives it
+        already records its own commission/PnL settlement entry.
+
+        Args:
+            position_id: The position the margin is locked under.
+            amount: The locked margin (full precision, no quantization).
+        """
+        self._storage.add_locked_margin(position_id, amount)
+
+        self.logger.debug("Margin locked",
+            amount=str(amount),
+            locked_total=str(self._storage.get_locked_margin()),
+            position_id=position_id
+        )
+
+    def release_margin(self, position_id: str) -> Decimal:
+        """Release the margin locked for a position id, returning the amount.
+
+        Idempotent: releasing an unknown or already-released position is a
+        silent no-op that returns a clean ``Decimal('0')`` (no exception). When
+        a lock existed, the EXACT locked amount (full precision) is released and
+        returned — the caller settles PnL + releases the lock together on close
+        (Plan 02-04, D-11).
+
+        Args:
+            position_id: The position whose locked margin is released.
+
+        Returns:
+            The released amount (full precision), or ``Decimal('0')`` if no
+            lock existed.
+        """
+        released = self._storage.pop_locked_margin(position_id)
+        if released is None:
+            return Decimal("0")
+
+        self.logger.debug("Margin released",
+            amount=str(released),
+            locked_total=str(self._storage.get_locked_margin()),
+            position_id=position_id
+        )
+        return released
+
     def get_balance_info(self) -> Dict[str, float]:
         """Get comprehensive balance information."""
         return {
