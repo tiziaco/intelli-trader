@@ -34,7 +34,8 @@ findings:
   warning: 5
   info: 3
   total: 10
-status: issues_found
+status: resolved
+resolution: "Both BLOCKERs closed by plan 02-08 (CR-01 fully; CR-02 fail-loud guard). 5 WARNING + 3 INFO residuals tracked in deferred-items.md for Phase 3 / future (all oracle-dark, unreachable on the spot golden path)."
 ---
 
 # Phase 02: Code Review Report
@@ -42,7 +43,7 @@ status: issues_found
 **Reviewed:** 2026-06-15
 **Depth:** standard
 **Files Reviewed:** 24
-**Status:** issues_found
+**Status:** resolved (BLOCKERs CR-01/CR-02 closed by plan 02-08; WR/IN residuals tracked in deferred-items.md)
 
 ## Summary
 
