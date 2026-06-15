@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 phase: 01-instrument-value-object
 source: [01-VERIFICATION.md]
 started: 2026-06-15T07:39:42Z
@@ -8,24 +8,24 @@ updated: 2026-06-15T07:39:42Z
 
 ## Current Test
 
-[awaiting human testing]
+[all items resolved in code]
 
 ## Tests
 
 ### 1. WR-02 — `_infer_price_scale` miscounts scientific-notation cells
-expected: Owner acknowledges this as a known latent bug. `_infer_price_scale` counts characters after the first `.` without digit validation, so a cell like `"1.0e-5"` infers 4dp instead of 5dp. Oracle-dark today (inference is never called on the golden BTCUSD run — `price_data={}`, BTCUSD is declared). Acknowledge and schedule the one-line `frac.isdigit()` guard before any non-declared symbol is wired through live inference (INST-02 consumers in later phases).
-result: [pending]
+expected: Owner acknowledges this as a known latent bug, or it is fixed before non-declared symbols are wired through live inference.
+result: resolved — FIXED in code. A `frac.isdigit()` guard was added to `_infer_price_scale` in `itrader/universe/instruments.py` (fix(01) commit `5bf5821`); scientific-notation / trailing-garbage cells are now skipped instead of miscounted. No longer a latent defect.
 
 ### 2. WR-01 — `Instrument.quote_currency` not read by `quantize` cash precision
-expected: Owner acknowledges the contract/code mismatch. The `quote_currency` docstring says it is the cash-scale source, but `money.quantize` hard-codes cash precision at 2dp and never reads `instrument.quote_currency`. Inert while all instruments are USD. Either fix the docstring ("(inert this phase — cash fixed at 2dp)") or implement the derivation before non-USD instruments land.
-result: [pending]
+expected: Owner decides — fix the docstring (inert) or implement the `quote_currency`-derived cash scale before non-USD instruments land.
+result: resolved — FIXED in code and owner-approved. `quantize(kind="cash")` now derives the scale from `instrument.quote_currency` via `_CASH_SCALES` (USD -> 2dp, byte-identical) in `itrader/core/money.py` (fix(01) commit `1498048`). Owner reviewed the design and chose to keep the forward-looking derivation. Inert today (all instruments USD; `quantize` has no production caller yet); byte-exact oracle independently re-verified passing post-fix.
 
 ## Summary
 
 total: 2
-passed: 0
+passed: 2
 issues: 0
-pending: 2
+pending: 0
 skipped: 0
 blocked: 0
 
