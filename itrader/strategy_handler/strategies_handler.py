@@ -181,6 +181,11 @@ class StrategiesHandler(object):
 						allow_increase=strategy.allow_increase,
 						max_positions=strategy.max_positions,
 						exit_fraction=intent.exit_fraction,
+						# Finding A (LEV-03): carry the strategy-declared leverage
+						# onto the fan-out SignalEvent (D-03). Default Decimal("1")
+						# leaves the spot path byte-exact; the order/risk layer caps
+						# and applies it (admission _effective_leverage).
+						leverage=intent.leverage,
 						# WR-01: honor an explicit caller-supplied quantity. The
 						# field is already Decimal | None (D-22 money domain) on
 						# both SignalIntent and SignalEvent — no boundary parse.
