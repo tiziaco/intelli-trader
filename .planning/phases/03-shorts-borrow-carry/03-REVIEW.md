@@ -21,7 +21,8 @@ findings:
   warning: 5
   info: 4
   total: 10
-status: issues_found
+status: resolved
+resolution: CR-01 + WR-01/02/03/05 fixed inline (commits 1667467, 01db518) with regression tests; WR-04 + IN-01..04 tracked in deferred-items.md
 ---
 
 # Phase 3: Code Review Report
