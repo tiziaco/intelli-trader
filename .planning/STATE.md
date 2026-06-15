@@ -3,10 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: planning
-last_updated: "2026-06-14T11:30:00.000Z"
-last_activity: 2026-06-14
+stopped_at: Phase 1 context gathered
+last_updated: "2026-06-15T06:34:21.669Z"
+last_activity: 2026-06-14 — v1.4 roadmap created (6 phases, 20/20 requirements mapped)
 progress:
-  total_phases: 6
+  total_phases: 9
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -43,6 +44,7 @@ stays byte-exact except where shorts/leverage legitimately change a leaf.
 - `mypy --strict` clean across all source files
 - Decimal end-to-end (including liquidation formula + interest accrual; `float()` only at the
   serialization/logging edge); no new float-for-money; single UUIDv7 ID scheme
+
 - Determinism double-run byte-identical (reuse the seeded RNG + injected `BacktestClock`; introduce
   no new nondeterminism)
 
@@ -119,10 +121,12 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
   requirements; all 20 mapped (100% coverage). Phase 999.4 backlog entry marked PROMOTED-TO-v1.4
   (design intent retained as the historical seed); 999.2 (N+3) / 999.3 (N+4) backlog entries kept
   intact. Phase B perp realism (FUND-01..04) folded into the N+4 backlog seed; ACCT-01 stays in N+4.
+
 - Phase 999.4 edited (pre-promotion): added Scope bullet for the minimal crypto-only Instrument value
   object; refined Instrument seed to the 7-field set + layered price precision (declared-wins →
   infer-guarded → default, oracle stays declared); funding is flag not rate; min_order_size moved onto
   Instrument; ExchangeLimits demoted to venue fallback.
+
 - Phase 999.3 edited: added Scope bullet for dynamic universe membership (UniverseSelectionModel poll
   seam), sequenced near the N+4 data engine.
 
@@ -133,39 +137,48 @@ scope decisions:
 
 - Money = Decimal end-to-end; float money is a correctness defect — applies to the liquidation formula
   and interest accrual (`float()` only at the serialization/logging edge).
+
 - IDs = single UUIDv7 scheme via `uuid-utils`. Determinism = seeded RNG + injected `BacktestClock`;
   v1.4 introduces NO new nondeterminism.
+
 - **Owner-gated, result-changing milestone (M5-style):** enabling shorts/leverage/liquidation changes
   results; the new golden master freezes ONLY after explicit owner sign-off (full attribution) +
   external cross-validation (`backtesting.py`/`backtrader`). The SMA_MACD oracle (134 /
   46189.87730727451) stays byte-exact except where a leaf legitimately changes.
+
 - **Instrument first (LOCKED):** INST-* is foundational. `Instrument` (`core/instrument.py`, frozen,
   mirrors `core/bar.py::Bar`) is the per-symbol source of precision + lot step + `min_order_size` +
   margin params; `core/money.py::quantize` reads precision from it; the hard-coded `_INSTRUMENT_SCALES`
   table is DELETED. BTCUSD stays declared 8dp (inference would drift the oracle). Whether the backtest
   *snaps* via Instrument is the behavioral gate. `ExchangeLimits` demoted to a venue-level fallback.
+
 - **Accounting core = one owner-gated re-baseline at Phase 4 (LOCKED):** margin (P2) + shorts (P3) +
   liquidation (P4) are the tightly-coupled accounting core. Liquidation depends on maintenance margin
   AND on shorts existing to be liquidated; carry rides shorts; levered Kelly needs margin. The single
   owner-gated golden re-baseline is gated by XVAL-01 (cross-validation + owner sign-off), co-phased
   with Liquidation (P4) where all three crafted scenario types exist. Phases are kept clean and
   independently verifiable rather than one giant phase.
+
 - **Liquidation — NO new `FillStatus` (LOCKED):** reuse `FillStatus.EXECUTED`; the liquidation engine
   mints an admission-bypassing forced-close order (real `strategy_id`/`order_id`) tagged
   `OrderTriggerSource.LIQUIDATION`, reconciling through the existing position/cash/order-mirror path.
   The penalty rides the existing `commission`/fee field. (Resolves §9 Q2 of the design note.)
+
 - **Trailing stop = SEPARATE phase, OWN re-baseline (LOCKED):** a different subsystem (`MatchingEngine`
   resting-order ratchet, not portfolio/cash accounting). Sequenced after the accounting core (P5).
   Look-ahead rule: trail updates from CLOSED-bar extremes, active the NEXT bar. The native-vs-synthetic
   live capability seam is deferred to N+4.
+
 - **Pair trading = FINAL, slip-able capstone; NOT the correctness oracle (LOCKED):** the crafted
   short/leveraged/liquidation scenarios under XVAL-01 are the oracle. Pair trading is the flagship
   long/short demonstration, scoped as a distinct last phase so it can slip to a follow-on without
   blocking the shippable margin/shorts core.
+
 - **Phase numbering reset to 1 for v1.4** (matching v1.1/v1.2/v1.3). The v1.3 phase dirs were archived
   to `.planning/milestones/v1.3-phases/`, so the new `01-*..06-*` dirs do not collide. The `999.x`
   backlog entries are FUTURE milestones (N+3/N+4), left intact in ROADMAP.md `## Backlog`; 999.4 is
   marked PROMOTED-TO-v1.4.
+
 - **Deferred OUT of v1.4 (tracked):** Phase B perp realism (FUND-01..04: funding-rate accrual,
   mark-price liquidation trigger, funding-data pipeline, `freqtrade` 4th oracle) → future / N+4 data
   work; the `Account` reconciliation abstraction (ACCT-01) → N+4 live; the trailing-stop
@@ -181,23 +194,29 @@ None yet.
 - **Owner-gate dependency:** Phases 2-5 cannot freeze a new golden without explicit owner sign-off —
   plan them so the result-change is fully attributed before re-baseline. The accounting-core
   re-baseline (P2+P3+P4) is gated by XVAL-01 at Phase 4; Phase 5 (trailing) owns its own re-baseline.
+
 - **BTCUSD oracle protection (Phase 1):** the `Instrument` precision-resolution MUST route BTCUSD
   through the declared 8dp branch — inference from BTCUSD data would yield ~2-4dp and drift the golden
   master off `46189.87730727451`. The byte-exact gate is the proof.
+
 - **Correctness oracle = crafted scenarios, NOT pair trading:** lock correctness with crafted,
   hand-computable, adversarial scenarios (pure short, leveraged long, forced liquidation)
   cross-validated against `backtesting.py`/`backtrader` (XVAL-01). A two-leg market-neutral strategy
   partially cancels its own sign errors and is a weak oracle.
+
 - **FillEvent forced-close shape (Phase 4):** confirm the forced-close `FillEvent` reconciles cleanly
   through the existing position/cash/order-mirror path with NO new `FillStatus` (LOCKED design above);
   open question §9 Q2 of the design note is resolved but verify at plan time.
+
 - **Indentation hazard:** tabs in handler modules (`order_handler/`, `strategy_handler/`,
   `execution_handler/`, `portfolio_handler/`); 4 spaces in `config/`/`core/`/`price_handler/feed/`/
   events package — match the file, never normalize (a mixed-indentation edit breaks a tab file). v1.4
   touches `core/` (new `Instrument`, 4 spaces) AND tab-indented portfolio/execution/strategy modules.
+
 - **CR-01 cover-arm hole (Phase 3):** `_resolve_signal_quantity` (in `order_manager.py` `admission/`)
   has no BUY-to-cover arm for a `SHORT_ONLY` book — a cover falls through to entry sizing and flips the
   book long. This is the oracle-dark critical surfaced at v1.0 Phase 7 (07-REVIEW), routed here.
+
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase (it would corrupt the owner-gated re-baseline attribution).
 
@@ -251,9 +270,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-14T11:30:00.000Z
-Stopped at: v1.4 roadmap created (6 phases, 20/20 requirements mapped)
-Resume file: .planning/ROADMAP.md (## Phases / ## Phase Details — v1.4)
+Last session: 2026-06-15T06:34:21.661Z
+Stopped at: Phase 1 context gathered
+Resume file: .planning/phases/01-instrument-value-object/01-CONTEXT.md
 
 ## Operator Next Steps
 
