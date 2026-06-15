@@ -48,7 +48,7 @@ byte-identical hold throughout. Full design: PROJECT.md "Current Milestone: v1.4
 999.4 scoping block in the Backlog below + `notes/margin-leverage-shorts-999.4.md`.
 
 - [x] **Phase 1: Instrument Value Object** - Per-symbol precision/lot/margin source replacing `_INSTRUMENT_SCALES`; BTCUSD stays declared 8dp (byte-exact behavioral gate) — completed 2026-06-15
-- [ ] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated)
+- [x] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated) — completed 2026-06-15 (9/9 plans; +LEV-03 discovered/closed)
 - [ ] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated)
 - [ ] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated)
 - [ ] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated)
