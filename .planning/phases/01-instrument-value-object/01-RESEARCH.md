@@ -413,13 +413,15 @@ engine.feed.bind(engine.global_queue, membership)  # then ping-grid → precompu
 
 All other claims are `[VERIFIED]` against file:line in this session.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **`derive_instruments` declared-config home** — where declared params (BTCUSD 8dp, undeclared min_order_size, default mmr/leverage) physically live (a Python dict in `universe/`, a YAML in `settings/`, or constants). CONTEXT marks placement as Claude's Discretion.
    - What we know: no per-symbol config exists today; `ExchangeLimits` is venue-wide.
    - Recommendation: a small in-code declared table in `universe/instruments.py` for Phase 1 (one symbol), keeping byte-exact + strict-clean; YAML later if symbol count grows.
+   - **RESOLVED:** in-code declared table in `itrader/universe/instruments.py` (plan 01-02 Task 1, Claude's Discretion).
 2. **Fold `is_active`/spans into `Universe` now or defer** — CONTEXT: cheap-to-fold → fold, else defer.
    - Recommendation: defer the span-folding unless the planner needs `.is_active` for a Phase-1 consumer (none identified) — keeps scope to façade + instrument map (D-07 scope discipline).
+   - **RESOLVED:** defer — no Phase-1 consumer identified (D-07 scope discipline).
 
 ## Environment Availability
 
