@@ -68,7 +68,7 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 - [x] **LEV-01**: A portfolio can trade with configurable leverage > 1 via the existing
   `enable_margin` / `allow_short_selling` config hooks.
-- [ ] **LEV-02**: A Kelly sizing fraction > 1 is expressible (notional = f × equity, posting
+- [x] **LEV-02**: A Kelly sizing fraction > 1 is expressible (notional = f × equity, posting
   `notional / L` as margin).
 
 ### Trailing stop (TRAIL)
@@ -138,7 +138,7 @@ Which phases cover which requirements. Filled during roadmap creation.
 | MARGIN-02 | Phase 2 — Margin Accounting & Leverage | Pending |
 | MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Pending |
 | LEV-01 | Phase 2 — Margin Accounting & Leverage | Complete |
-| LEV-02 | Phase 2 — Margin Accounting & Leverage | Pending |
+| LEV-02 | Phase 2 — Margin Accounting & Leverage | Complete |
 | SHORT-01 | Phase 3 — Shorts & Borrow Carry | Pending |
 | SHORT-02 | Phase 3 — Shorts & Borrow Carry | Pending |
 | SHORT-03 | Phase 3 — Shorts & Borrow Carry | Pending |

@@ -4,13 +4,13 @@ milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: executing
 stopped_at: Completed 02-00-PLAN.md
-last_updated: "2026-06-15T11:14:02.764Z"
+last_updated: "2026-06-15T11:17:50.347Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 9
   completed_phases: 1
   total_plans: 10
-  completed_plans: 5
+  completed_plans: 6
   percent: 11
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 ## Current Position
 
 Phase: 02 (margin-accounting-leverage) — EXECUTING
-Plan: 3 of 7
+Plan: 4 of 7
 Status: Ready to execute
 Last activity: 2026-06-15
 
@@ -190,6 +190,7 @@ scope decisions:
 - [Phase ?]: Phase 1 Plan 03: byte-exact phase gate PASSED — oracle held 134/46189.87730727451, mypy --strict clean (185 files), determinism 9/9 double-run identical, full suite 1023 passed, golden artifacts untouched; no production code modified, phase re-baselines nothing (D-10/D-01a/D-02a)
 - [Phase 02]: Phase 2 Plan 00: 13 collectible pytest.skip Wave 0 stubs (6 unit files + new tests/e2e/levered_long/ e2e stub) satisfy the Nyquist contract — every Phase-2 (02-06) -k/-m verify target selects >=1 test before any RED step; folder-derived markers only (no decorator); test-only, oracle untouched
 - [Phase ?]: Phase 2 Plan 01: SignalEvent.leverage (D-03) + TradingRules.max_leverage ge=1 (D-14) landed as inert defaulted Decimal('1') fields — oracle-dark (134/46189.87730727451 held), Wave 2 admission-gate (D-04) consumes them
+- [Phase 02]: Phase 2 Plan 02: LeveredFraction sizing kind (notional = f x total_equity, D-07/LEV-02) — f guarded >0 NOT (0,1] (f>1 gate lives in AdmissionManager/Plan 03); SizingPolicy union grew forcing the assert_never arm; SignalIntent.leverage mirror (D-03) added; resolver reads total_equity (D-12) via the read-model Protocol, never cash; FractionOfCash (0,1] oracle-dark path untouched; mypy --strict clean (185 files)
 
 ### Pending Todos
 
@@ -240,6 +241,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
 | Phase 02 P00 | 3 | 1 tasks | 8 files |
 | Phase 02 P01 | 5 | 2 tasks | 2 files |
+| Phase 02 P02 | 8 | 2 tasks | 3 files |
 
 ## Bookkeeping
 
@@ -281,7 +283,7 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T11:13:51.576Z
+Last session: 2026-06-15T11:17:19.718Z
 Stopped at: Completed 02-00-PLAN.md
 Resume file: None
 
