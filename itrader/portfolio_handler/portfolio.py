@@ -21,7 +21,7 @@ from itrader.portfolio_handler.storage import (
 )
 from itrader.core.ids import PortfolioId
 from itrader.core.exceptions.base import ValidationError, StateError, ConfigurationError
-from itrader.core.exceptions.portfolio import PortfolioError
+from itrader.core.exceptions.portfolio import PortfolioError, InvalidTransactionError
 
 from itrader import idgen
 
@@ -385,6 +385,22 @@ class Portfolio(object):
 			is_increase = (
 				(prior.side == PositionSide.LONG and transaction.type == TransactionType.BUY)
 				or (prior.side == PositionSide.SHORT and transaction.type == TransactionType.SELL)
+			)
+
+		# CR-02 (Phase-2 mitigation): fail loud on an over-close / flip fill.
+		# A reducing fill (not an increase) whose quantity EXCEEDS the open
+		# quantity would leave a residual flipped position; the close arm below
+		# clamps closed_qty but reads realised_increment after the FULL
+		# transaction.quantity mutated the position, re-locking margin on a
+		# flipped position at the original side's leverage and settling a wrong
+		# cash delta. Reject it BEFORE any mutation/settlement. The full
+		# flip-settlement economics (split into full-close + fresh-open) are a
+		# Phase-3 (shorts) concern, where flips become reachable.
+		if not is_increase and transaction.quantity > prior_qty:
+			raise InvalidTransactionError(
+				"Margin close fill exceeds open quantity (flip not supported "
+				"in Phase 2 — tracked for Phase 3 shorts)",
+				{"closed": str(transaction.quantity), "open": str(prior_qty)},
 			)
 
 		# Funds invariant (D-10/OQ3): in margin mode the open/scale debit is
