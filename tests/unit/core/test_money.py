@@ -24,9 +24,28 @@ from decimal import Decimal
 
 import pytest
 
+from itrader.core.instrument import Instrument
 from itrader.core.money import quantize, to_money
 
 pytestmark = pytest.mark.unit
+
+# A BTCUSD-like Instrument (8dp price/quantity scales) reproducing the deleted
+# _INSTRUMENT_SCALES["BTCUSD"] entry, and a default-precision Instrument standing
+# in for the former "UNKNOWN" string -> default-scale fallback case.
+_BTCUSD = Instrument(
+    symbol="BTCUSD",
+    price_precision=Decimal("0.00000001"),
+    quantity_precision=Decimal("0.00000001"),
+    maintenance_margin_rate=Decimal("0.005"),
+    max_leverage=Decimal("10"),
+)
+_DEFAULT_INSTRUMENT = Instrument(
+    symbol="DEFAULT",
+    price_precision=Decimal("0.01"),
+    quantity_precision=Decimal("0.00000001"),
+    maintenance_margin_rate=Decimal("0.005"),
+    max_leverage=Decimal("10"),
+)
 
 
 def test_to_money_uses_str_path():
@@ -42,16 +61,16 @@ def test_to_money_accepts_int_str_decimal():
 
 def test_quantize_cash_half_up_2dp():
     # D-03: USD cash scale is 2dp, ROUND_HALF_UP -> 1.005 rounds up to 1.01.
-    assert quantize(Decimal("1.005"), "BTCUSD", "cash") == Decimal("1.01")
+    assert quantize(Decimal("1.005"), _BTCUSD, "cash") == Decimal("1.01")
 
 
 def test_quantize_quantity_btc_8dp_half_up():
-    # BTC quantity scale is 8dp, ROUND_HALF_UP.
-    assert quantize(Decimal("0.123456785"), "BTCUSD", "quantity") == Decimal(
+    # BTC quantity scale is 8dp (read off the Instrument), ROUND_HALF_UP.
+    assert quantize(Decimal("0.123456785"), _BTCUSD, "quantity") == Decimal(
         "0.12345679"
     )
 
 
-def test_quantize_unknown_instrument_falls_back_to_default():
-    # Unknown instrument uses the default scales for the given kind (cash 2dp).
-    assert quantize(Decimal("1.005"), "UNKNOWN", "cash") == Decimal("1.01")
+def test_quantize_default_instrument_uses_default_scale():
+    # A default-precision Instrument -> the default cash scale (2dp).
+    assert quantize(Decimal("1.005"), _DEFAULT_INSTRUMENT, "cash") == Decimal("1.01")
