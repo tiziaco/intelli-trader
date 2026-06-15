@@ -423,6 +423,55 @@ def test_partial_close_margin_releases_fraction_and_settles_fraction(margin_port
     assert pf.total_realised_pnl == Decimal("5000")
 
 
+def test_margin_over_close_fill_fails_loud(margin_portfolio):
+    """CR-02 (Phase-2 mitigation): a margin SELL fill whose quantity EXCEEDS the
+    open long (an over-close / flip attempt) must RAISE InvalidTransactionError
+    BEFORE any re-lock/settlement — never silently re-lock a flipped position and
+    settle a wrong cash delta. Full flip-settlement economics are a Phase-3
+    (shorts) concern."""
+    pf = margin_portfolio
+    # Open 2 units @ 50000, L=5, zero commission. locked = 100000/5 = 20000.
+    buy = _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, 2, 0, 5)
+    pf.process_transaction(buy)
+    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+
+    # Over-close: SELL 3 of an open 2 (would leave a residual SHORT == flip).
+    over_close = _levered_txn(TransactionType.SELL, "BTCUSDT", 55000, 3, 0, 5)
+    with pytest.raises(InvalidTransactionError):
+        pf.process_transaction(over_close)
+
+
+def test_margin_exact_full_close_still_succeeds(margin_portfolio):
+    """The over-close guard must NOT regress an exact full-close: sell == open
+    qty settles realized PnL and releases the whole lock unchanged."""
+    pf = margin_portfolio
+    buy = _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, 2, 0, 5)
+    pf.process_transaction(buy)
+
+    sell = _levered_txn(TransactionType.SELL, "BTCUSDT", 55000, 2, 0, 5)
+    pf.process_transaction(sell)  # must NOT raise
+
+    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert pf.cash == Decimal("150000") + Decimal("10000")
+    assert len(pf.positions) == 0
+
+
+def test_margin_partial_close_still_succeeds(margin_portfolio):
+    """The over-close guard must NOT regress a partial-close: sell < open qty
+    settles the fraction and keeps the position open unchanged."""
+    pf = margin_portfolio
+    buy = _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, 4, 0, 5)
+    pf.process_transaction(buy)
+
+    sell = _levered_txn(TransactionType.SELL, "BTCUSDT", 55000, 1, 0, 5)
+    pf.process_transaction(sell)  # must NOT raise
+
+    position = pf.positions["BTCUSDT"]
+    assert position.is_open
+    assert position.net_quantity == Decimal("3")
+    assert pf.cash_manager.locked_margin_total == Decimal("30000")
+
+
 def test_spot_mode_process_transaction_unchanged_byte_exact(portfolio):
     """Pitfall 6 / byte-exact site #2: with enable_margin=False the spot arm is
     UNCHANGED — full notional debited, nothing locked, available == balance."""
