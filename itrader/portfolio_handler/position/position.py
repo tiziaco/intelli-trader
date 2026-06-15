@@ -41,11 +41,19 @@ class Position(object):
 		buy_commission: MoneyInput,
 		sell_commission: MoneyInput,
 		is_open: bool,
-		portfolio_id: "PortfolioId | int"
+		portfolio_id: "PortfolioId | int",
+		leverage: MoneyInput = Decimal("1"),
 	) -> None:
 		self.id: PositionId = PositionId(idgen.generate_position_id())
 		self.ticker = ticker
 		self.side = side
+		# D-06: one effective leverage per position (isolated margin), set at
+		# open. Enters the Decimal domain via to_money (string path). Default
+		# Decimal("1") keeps spot positions byte-exact — the spot path never
+		# sets it. A scale-in CLAMPS a differing signal leverage to this value
+		# (the position's leverage is immutable after open); see
+		# PositionManager._update_existing_position.
+		self.leverage = to_money(leverage)
 		# Money fields enter the Decimal domain at the construction boundary (D-04):
 		# callers may pass int/float (e.g. the opposite-side 0 in open_position).
 		self.current_price = to_money(price)
@@ -77,6 +85,20 @@ class Position(object):
 			return -self.current_price * abs(self.net_quantity)
 		else:
 			return self.current_price * abs(self.net_quantity)
+
+	@property
+	def aggregate_notional(self) -> Decimal:
+		"""
+		Direction-agnostic notional magnitude of the open position (D-11).
+
+		``|net_quantity| × avg_price`` — the POSITIVE magnitude mirroring
+		``abs(market_value)`` (the SHORT side of market_value is negative; this
+		basis is always positive). It is the basis for the margin lock
+		(``locked_margin = aggregate_notional / leverage``), recomputed as fills
+		aggregate. NOT stored on the Position — the lock lives in CashManager
+		(D-13); this property exposes the magnitude the lock is computed from.
+		"""
+		return abs(self.net_quantity) * self.avg_price
 
 	@property
 	def avg_price(self) -> Decimal:
@@ -213,6 +235,10 @@ class Position(object):
 			sell_commission = transaction.commission if position_side == PositionSide.SHORT else 0,
 			is_open = True,
 			portfolio_id = transaction.portfolio_id,
+			# D-06: the one effective leverage, taken from the opening fill's
+			# signal leverage. The spot path's Transaction has no leverage
+			# attribute → default Decimal("1") (byte-exact, oracle-dark).
+			leverage = getattr(transaction, "leverage", Decimal("1")),
 		)
 
 	def update_position(self, transaction: Transaction) -> None:
