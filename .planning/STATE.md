@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
-status: verifying
-stopped_at: Completed 02-08-PLAN.md
-last_updated: "2026-06-15T14:00:00.000Z"
+status: ready_to_plan
+stopped_at: Phase 02 complete (9/9) — ready to discuss Phase 3 (Shorts & Borrow Carry)
+last_updated: 2026-06-15T14:07:16.532Z
 last_activity: 2026-06-15
 progress:
   total_phases: 9
   completed_phases: 2
-  total_plans: 11
-  completed_plans: 11
+  total_plans: 12
+  completed_plans: 12
   percent: 22
 ---
 
@@ -21,13 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 02 — margin-accounting-leverage
+**Current focus:** Phase 3 — Shorts & Borrow Carry
 
 ## Current Position
 
-Phase: 02 (margin-accounting-leverage) — EXECUTING
-Plan: 8 of 8 (02-08 gap-closure for the two 02-REVIEW BLOCKERs)
-Status: Phase complete — review BLOCKERs (CR-01/CR-02) closed; ready for verification
+Phase: 3
+Plan: Not started
+Status: Ready to plan
+
+> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 3 dir does
+> not exist yet (only 02 + 999.x dirs are present). Corrected manually to Phase 3 per the v1.4 Phase
+> Map (1→2→**3**→4→5→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
 Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
@@ -107,7 +111,7 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 **Velocity (v1.3):**
 
-- Total plans completed: 23
+- Total plans completed: 32
 - Average duration: — min
 - Total execution time: 0.0 hours
 
