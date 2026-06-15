@@ -38,7 +38,7 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
   available cash.
 - [x] **MARGIN-02**: Orders exceeding available free margin are rejected (or clipped) rather than
   silently over-leveraging the simulated account.
-- [ ] **MARGIN-03**: Maintenance margin is tracked per open position.
+- [x] **MARGIN-03**: Maintenance margin is tracked per open position.
 
 ### Liquidation (LIQ)
 
@@ -136,7 +136,7 @@ Which phases cover which requirements. Filled during roadmap creation.
 | INST-03 | Phase 1 — Instrument Value Object | Complete |
 | MARGIN-01 | Phase 2 — Margin Accounting & Leverage | Complete |
 | MARGIN-02 | Phase 2 — Margin Accounting & Leverage | Complete |
-| MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Pending |
+| MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Complete |
 | LEV-01 | Phase 2 — Margin Accounting & Leverage | Complete |
 | LEV-02 | Phase 2 — Margin Accounting & Leverage | Complete |
 | SHORT-01 | Phase 3 — Shorts & Borrow Carry | Pending |
