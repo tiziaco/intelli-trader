@@ -369,22 +369,25 @@ The mirror field on `SignalIntent` (`core/sizing.py:211`) lets the strategy decl
 | A4 | backtesting.py models leverage as `margin = 1/leverage` (a single initial+maintenance ratio) with an `equity ≤ 0` liquidation; backtrader uses a per-instrument margin in `comminfo`. Informational for the P4/XVAL-01 freeze only — NOT a Phase-2 implementation input. | Cross-Validation Signal | Phase 2 freezes no oracle; wrong detail here has no Phase-2 impact. LOW. |
 | A5 | The parked leveraged-long scenario's BTCUSD `max_leverage`/`maintenance_margin_rate` values are discretion (realistic crypto defaults, e.g. `max_leverage` ~10–125, `maintenance_margin_rate` ~0.004–0.05). Oracle-dark. | Validation Architecture | Values affect only the parked (not-frozen) scenario. LOW until P4. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Exact instrument-access seam into the order domain (Pitfall 1).**
    - What we know: `Universe` exists and resolves `symbol → Instrument`; it is injected into `SimulatedExchange` only.
    - What's unclear: inject the concrete `Universe` into `AdmissionManager`/`OrderManager`, or define a narrow `InstrumentReadModel` Protocol (mirroring `PortfolioReadModel`'s discipline)?
    - Recommendation: inject `Optional[Universe]` for v1 (smallest seam; the order domain already injects concrete read-models like `BacktestBarFeed`). Revisit a Protocol if the live path needs a different instrument source. Planner must add the compose-root wiring task either way.
+   - RESOLVED by Plan 02-03: inject `Optional[Universe]` into the order-domain constructor (`AdmissionManager`/`OrderManager`/`OrderHandler`, defaulted `None`) + a `set_universe` seam wired in both runners after the Trap-4 Universe build.
 
 2. **Where the locked-margin lifecycle is driven from in the settlement sequence.**
    - What we know: `Portfolio.process_transaction` (`portfolio.py:270`) orchestrates validate → funds-invariant → position-mutate → cash-apply → record; `PositionManager` decides open/update/close (`_should_close_position`).
    - What's unclear: whether the lock/release calls hang off `process_transaction` directly (it sees the position transition via the returned `Position`) or off `PositionManager`'s open/close transitions.
    - Recommendation: drive lock/release from `process_transaction` (it already holds both the `Position` result and the `CashManager`); keep `PositionManager` cash-agnostic (it has no cash access today — preserve that).
+   - RESOLVED by Plan 02-04: the locked-margin lock/release is driven from `Portfolio.process_transaction` (it holds the returned `Position` + the `CashManager`); `PositionManager` stays cash-agnostic.
 
 3. **`assert_funds_invariant` semantics in margin mode.**
    - What we know: it guards `net_delta < 0` against `balance` (`portfolio.py:305`).
    - What's unclear: in margin mode the open-fill cash debit is only commission, not notional — the invariant input must be the margin-adjusted delta.
    - Recommendation: feed the invariant the actual margin-mode cash delta (commission on open); document that the locked-margin sufficiency was enforced pre-trade by the admission reservation gate (the same precedent as today's `Pitfall 2` note in `cash_manager.py:342`).
+   - RESOLVED by Plan 02-04 Task 3 action: `assert_funds_invariant` is fed the margin-adjusted (commission-only) cash delta on open; locked-margin sufficiency was enforced pre-trade by the admission reservation gate (Plan 02-03).
 
 ## Environment Availability
 

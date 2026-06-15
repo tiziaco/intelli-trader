@@ -165,7 +165,8 @@ with configurable leverage > 1 — making a levered Kelly fraction > 1 expressib
 golden master freezes ONLY after explicit owner sign-off + external cross-validation
 (`backtesting.py`/`backtrader`), with full attribution. `mypy --strict` clean; Decimal end-to-end;
 determinism double-run byte-identical.
-**Plans**: 6 plans
+**Plans**: 7 plans
+- [ ] 02-00-PLAN.md — [Wave 0] Nyquist stub plan: collectible -k/-m targets for every Phase-2 verify command (MARGIN-01/02/03, LEV-01/02)
 - [ ] 02-01-PLAN.md — SignalEvent.leverage + TradingRules.max_leverage inert contract fields (LEV-01)
 - [ ] 02-02-PLAN.md — LeveredFraction equity-based sizing kind + resolver arm + SignalIntent.leverage (LEV-02)
 - [ ] 02-03-PLAN.md — [BLOCKING] Universe wiring into the order domain + leverage cap + margin reservation/over-margin reject (LEV-01/02, MARGIN-01/02)
