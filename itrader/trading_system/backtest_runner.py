@@ -98,6 +98,13 @@ class BacktestRunner:
 		# Instrument.max_leverage. Same Trap-4 ordering — the Universe was just
 		# built above, AFTER the order handler was constructed in compose_engine.
 		engine.order_handler.set_universe(universe)
+		# Plan 02-05 (D-13): mirror the injection into the PORTFOLIO domain so the
+		# maintenance_margin/margin_ratio read-model can resolve each open
+		# position's Instrument.maintenance_margin_rate. Same Trap-4 ordering — the
+		# Universe was just built above, AFTER the portfolio handler was
+		# constructed in compose_engine. Query-only and oracle-dark on the golden
+		# path (the accessors are never read during the SMA_MACD run).
+		engine.portfolio_handler.set_universe(universe)
 		# feed.bind receives universe.members — the SAME set-derived list
 		# derive_membership produced (Pitfall 4 — byte-identical to today).
 		engine.feed.bind(engine.global_queue, universe.members)

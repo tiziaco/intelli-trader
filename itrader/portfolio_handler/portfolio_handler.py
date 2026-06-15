@@ -77,6 +77,15 @@ class PortfolioHandler:
         # D-19: collection lock removed — single-writer contract, see class docstring.
         self._portfolios: Dict[Any, Portfolio] = {}
 
+        # Plan 02-05 (D-13/MARGIN-03): the injected Universe read-model used to
+        # resolve each open position's Instrument (maintenance_margin_rate) on
+        # demand. None until wired — the runner builds the Universe at its Trap-4
+        # point (AFTER this handler is constructed in compose_engine) and calls
+        # set_universe, mirroring the exchange/order-domain seam from Plan 02-03.
+        # maintenance_margin/margin_ratio are query-only and unread on the golden
+        # path, so a None Universe never trips during the byte-exact SMA_MACD run.
+        self._universe: Any = None
+
         # Global logger
         self.logger = get_itrader_logger().bind(component="PortfolioHandler")
 
@@ -283,6 +292,53 @@ class PortfolioHandler:
             portfolio.cash_manager.balance
             + portfolio.position_manager.get_total_market_value()
         )
+
+    def set_universe(self, universe: Any) -> None:
+        """Inject the Universe read-model used to resolve per-symbol Instruments.
+
+        Plan 02-05 (D-13): called by the runner at its Trap-4 wiring point (after
+        the Universe is built, mirroring the exchange/order-domain set_universe
+        seam from Plan 02-03). Stores the reference; maintenance_margin reads
+        ``universe.instrument(ticker).maintenance_margin_rate`` per open position.
+        """
+        self._universe = universe
+
+    def maintenance_margin(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return maintenance margin computed on demand (D-13/MARGIN-03).
+
+        ``maintenance_margin = Σ (Instrument.maintenance_margin_rate × |size| ×
+        current_price)`` over the portfolio's OPEN positions, resolving each
+        ticker's Instrument via the injected Universe. Decimal end-to-end
+        (RESEARCH Pitfall 8 — Position.net_quantity is already |size| Decimal and
+        current_price is Decimal; the rate is Decimal). NOT a stored Position
+        field (D-13a). With no open positions the sum is ``Decimal("0")``.
+        """
+        portfolio = self.get_portfolio(portfolio_id)
+        total = Decimal("0")
+        for position in portfolio.position_manager.get_all_positions().values():
+            instrument = self._universe.instrument(position.ticker)
+            total += (
+                instrument.maintenance_margin_rate
+                * abs(position.net_quantity)
+                * position.current_price
+            )
+        return total
+
+    def margin_ratio(self, portfolio_id: PortfolioId) -> Decimal:
+        """Return ``total_equity() / maintenance_margin`` (D-12/D-13).
+
+        Mark-to-market equity over maintenance margin — the figure a UI/live layer
+        (deferred N+4) reads for margin-call warnings. Reads HONESTLY even when
+        breached: an equity drop below maintenance returns a ratio < 1 with NO
+        clamp (D-16 — the honest sub-1 reading is the P4 liquidation input). When
+        maintenance margin is ``Decimal("0")`` (no open positions, no margin
+        required) it returns the deterministic sentinel ``Decimal("0")`` rather
+        than dividing by zero.
+        """
+        maintenance = self.maintenance_margin(portfolio_id)
+        if maintenance == Decimal("0"):
+            return Decimal("0")
+        return self.total_equity(portfolio_id) / maintenance
 
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:

@@ -292,6 +292,11 @@ class LiveTradingSystem:
             # domain so the admission leverage cap (D-04) can read
             # Instrument.max_leverage — same Trap-4 ordering as backtest_runner.
             self.order_handler.set_universe(universe)
+            # Plan 02-05 (D-13): mirror the injection into the PORTFOLIO domain so
+            # the maintenance_margin/margin_ratio read-model resolves each open
+            # position's Instrument.maintenance_margin_rate — same Trap-4 ordering
+            # as backtest_runner.
+            self.portfolio_handler.set_universe(universe)
             self.feed.bind(self.global_queue, universe.members)
 
             # Plan 06-05: the legacy set_symbols/set_timeframe calls died with
