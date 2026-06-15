@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
-status: ready_to_plan
-stopped_at: Phase 02 complete (9/9) — ready to discuss Phase 3 (Shorts & Borrow Carry)
-last_updated: 2026-06-15T14:07:16.532Z
+status: planning
+stopped_at: Phase 3 context gathered
+last_updated: "2026-06-15T16:42:03.354Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 9
@@ -298,9 +298,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T14:00:00.000Z
-Stopped at: Completed 02-08-PLAN.md
-Resume file: None
+Last session: 2026-06-15T16:42:03.346Z
+Stopped at: Phase 3 context gathered
+Resume file: .planning/phases/03-shorts-borrow-carry/03-CONTEXT.md
 
 ## Operator Next Steps
 
