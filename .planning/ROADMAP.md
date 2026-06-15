@@ -144,7 +144,7 @@ whether the backtest *snaps/rounds* via Instrument must hold the oracle byte-exa
 8dp branch). `mypy --strict` clean; determinism double-run byte-identical.
 **Plans**: 3 plans
 - [x] 01-01-PLAN.md — Frozen Instrument value object + quantize(Instrument) rewire; delete _INSTRUMENT_SCALES (INST-01/03)
-- [ ] 01-02-PLAN.md — derive_instruments ladder + Universe facade + ExchangeLimits demotion + SimulatedExchange/wiring (INST-02/03)
+- [x] 01-02-PLAN.md — derive_instruments ladder + Universe facade + ExchangeLimits demotion + SimulatedExchange/wiring (INST-02/03)
 - [ ] 01-03-PLAN.md — Byte-exact oracle + mypy --strict + determinism phase gate (INST-01/02/03)
 
 ### Phase 2: Margin Accounting & Leverage
@@ -262,7 +262,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Instrument Value Object | 1/3 | In Progress|  |
+| 1. Instrument Value Object | 2/3 | In Progress|  |
 | 2. Margin Accounting & Leverage | 0/TBD | Not started | - |
 | 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
