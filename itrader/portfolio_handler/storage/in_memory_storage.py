@@ -95,6 +95,10 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         # byte-exact (x - Decimal("0") == x).
         return sum(self._locked_margin.values(), Decimal("0"))
 
+    def get_locked_margin_for(self, position_id: str) -> Decimal:
+        # WR-01: clean Decimal("0") when the position holds no lock.
+        return self._locked_margin.get(position_id, Decimal("0"))
+
     def add_locked_margin(self, position_id: str, amount: Decimal) -> None:
         self._locked_margin[position_id] = amount
 

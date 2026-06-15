@@ -653,6 +653,25 @@ def test_borrow_interest_zero_amount_is_noop(cm):
     ) == []
 
 
-def test_release_symmetry_stub():
-    """WR-03: reserve/release margin symmetry under shorts (Plan 03-06 turns green)."""
-    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-06")
+def test_release_symmetry_returns_exact_locked_amount(cm):
+    """WR-03: release_margin returns EXACTLY the locked amount (full precision,
+    no rounding drift) — lock/release are symmetric so a release can never leak
+    or short-change a position-keyed margin lock (T-03-16)."""
+    amount = Decimal("12345.6789012345678901234567")  # full-precision, > 2dp
+    cm.lock_margin("POS_SHORT", amount)
+    assert cm.locked_margin_total == amount
+
+    released = cm.release_margin("POS_SHORT")
+    assert released == amount  # symmetric — exact round-trip, no quantize drift
+    assert cm.locked_margin_total == Decimal("0")
+
+
+def test_release_symmetry_unlocked_position_is_clean_zero(cm):
+    """WR-03: releasing a position id that was NEVER locked (the assembly-failure
+    site — no fill yet → no position-keyed lock can exist) returns a clean
+    Decimal('0') and leaks nothing, never an un-paired release (T-03-16)."""
+    before = cm.available_balance
+    released = cm.release_margin("NEVER_LOCKED")
+    assert released == Decimal("0")
+    assert cm.locked_margin_total == Decimal("0")
+    assert cm.available_balance == before

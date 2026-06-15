@@ -423,10 +423,17 @@ class Portfolio(object):
 		if is_increase:
 			# OPEN or SCALE-IN: recompute the lock to the (new) aggregate
 			# notional / L; debit ONLY the commission.
+			# WR-03 (T-03-16): release THEN re-lock is symmetric — release returns
+			# the position's own prior lock (0 on a fresh open; the prior
+			# aggregate lock on a scale-in), and lock_margin replaces it. No
+			# un-paired lock can leak because the key is the same position id.
 			self.cash_manager.release_margin(str(position.id))
-			self.cash_manager.lock_margin(
-				str(position.id), position.aggregate_notional / leverage
-			)
+			new_lock = position.aggregate_notional / leverage
+			# WR-01 (T-03-15): settlement-side solvency assertion — the lock must
+			# fit buying power (the prior lock was just released, so it is added
+			# back). Fail loud BEFORE applying the lock — never silently over-lock.
+			self.cash_manager.assert_lock_fits_buying_power(new_lock, str(position.id))
+			self.cash_manager.lock_margin(str(position.id), new_lock)
 			cash_delta = -commission
 		else:
 			# PARTIAL or FULL CLOSE. Closed fraction p of the prior position.
@@ -437,19 +444,39 @@ class Portfolio(object):
 
 			# Release the whole lock, then re-lock the remaining (0 on a full
 			# close — position.is_open is False and aggregate_notional is 0).
+			# WR-03 (T-03-16): the release/re-lock pair stays symmetric on the
+			# same position key — the remaining lock replaces the released one.
 			self.cash_manager.release_margin(str(position.id))
 			if position.is_open:
-				self.cash_manager.lock_margin(
-					str(position.id), position.aggregate_notional / leverage
+				remaining_lock = position.aggregate_notional / leverage
+				# WR-01 (T-03-15): the recomputed remaining lock must still fit
+				# buying power (the prior whole lock was just released).
+				self.cash_manager.assert_lock_fits_buying_power(
+					remaining_lock, str(position.id)
 				)
+				self.cash_manager.lock_margin(str(position.id), remaining_lock)
 
 			# Settle the realized-PnL increment for the closed portion. The
 			# position's realised_pnl already nets BOTH commissions; the open
 			# commission for the closed fraction was already debited at open, so
-			# re-credit it (p × prior_entry_commission) to avoid double-count —
-			# the round-trip cash delta then equals the realized PnL exactly.
+			# re-credit it to avoid double-count — the round-trip cash delta then
+			# equals the realized PnL exactly.
+			#
+			# WR-05 (T-03-16): re-credit the EXACT open commission the realised
+			# increment charged for THIS closed portion, tracked as a per-lock
+			# accumulator (``_open_commission_settled`` below). The prior
+			# ``fraction × prior_entry_commission`` proxy (fraction = closed_qty /
+			# net_qty) drifts from realised_pnl's own open-commission term
+			# (charged as closed_qty / total_open_qty) after a non-uniform-
+			# commission scale-in or a staged partial close, because the
+			# denominators differ once net_qty < total open qty. The accumulator
+			# settles against the actual realised-pnl open-commission term, so the
+			# cumulative round-trip cash delta == realized PnL with NO drift.
 			realised_increment = position.realised_pnl - prior_realised
-			cash_delta = realised_increment + fraction * prior_entry_commission
+			open_commission_credit = self._open_commission_credit_for_close(
+				position, closed_qty
+			)
+			cash_delta = realised_increment + open_commission_credit
 
 		# ONE ledger entry: signed cash delta + the commission fee field +
 		# event-derived timestamp (D-06, Pitfalls 1/5).
@@ -608,6 +635,14 @@ class Portfolio(object):
 		# CARRY-01: accrue per-bar borrow interest on every OPEN SHORT (D-02/D-03/
 		# D-08). Skipped entirely when carry can't apply (no bar time / no
 		# universe) — the default-off no-op that keeps the oracle byte-exact.
+		# WR-02 (T-03-17): the carry borrow_rate read (``universe.instrument(...)``
+		# inside ``_accrue_short_carry``) is reached ONLY when ``universe is not
+		# None``, so it can never hit the bare ``AttributeError`` the
+		# ``maintenance_margin`` site exposed — it is None-safe by construction.
+		# A legacy mark-only caller (no universe) leaves carry as a silent no-op,
+		# which is the correct default-off behaviour (SMA_MACD byte-exact). The
+		# fail-loud universe-unwired guard lives at the ``maintenance_margin`` read
+		# in ``PortfolioHandler`` (the actual deferred WR-02 site).
 		if bar_time is not None and universe is not None:
 			self._accrue_short_carry(bar_time, universe)
 
@@ -659,7 +694,37 @@ class Portfolio(object):
 				timestamp=bar_time,
 			)
 			position._last_accrual_time = bar_time
-	
+
+	def _open_commission_credit_for_close(
+		self, position: Position, closed_qty: Decimal
+	) -> Decimal:
+		"""WR-05 (T-03-16): the EXACT open commission to re-credit for a close.
+
+		``realised_pnl`` deducts the entry-side commission proportionally to the
+		closed fraction of the OPENING side's total quantity:
+
+		* LONG  close: ``(sell_quantity / buy_quantity)  × buy_commission``
+		* SHORT close: ``(buy_quantity  / sell_quantity) × sell_commission``
+
+		Settling the realised increment therefore re-introduces the open
+		commission for the closed portion as ``(closed_qty / open_side_qty) ×
+		open_side_commission``. Re-crediting EXACTLY that term cancels the
+		double-count so the round-trip cash delta equals realized PnL — even
+		after a non-uniform-commission scale-in or staged partial close, where
+		the legacy ``closed_qty / net_quantity`` proxy drifts (the denominators
+		diverge once ``net_quantity < open_side_qty``). Decimal end-to-end.
+		"""
+		if position.side == PositionSide.LONG:
+			open_side_qty = position.buy_quantity
+			open_side_commission = position.buy_commission
+		else:  # SHORT
+			open_side_qty = position.sell_quantity
+			open_side_commission = position.sell_commission
+		if open_side_qty == Decimal("0"):
+			return Decimal("0")
+		return (closed_qty / open_side_qty) * open_side_commission
+
+
 	# Enhanced to_dict with new information
 	def to_dict(self) -> Dict[str, Any]:
 		"""Convert portfolio to dictionary."""

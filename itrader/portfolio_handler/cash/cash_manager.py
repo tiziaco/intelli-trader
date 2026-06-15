@@ -434,6 +434,40 @@ class CashManager:
                 available_cash=float(self._balance),
             )
 
+    def assert_lock_fits_buying_power(self, lock_amount: Decimal,
+                                      position_id: str) -> None:
+        """WR-01 (T-03-15): assert a margin lock fits available buying power.
+
+        A settlement-side solvency assertion run BEFORE a position-keyed margin
+        lock is applied: the lock (``aggregate_notional / L``) must fit the
+        buying power that remains AFTER releasing any prior lock on the SAME
+        position (a scale-in replaces its own lock, so its already-locked amount
+        is not double-counted). Fails LOUD — a silent over-lock beyond buying
+        power on the short/levered path is a solvency leak the D-02 admission
+        reservation should have caught upstream; if it reaches here it is an
+        engine bug and the backtest stops loudly.
+
+        Available buying power for this check =
+            ``available_balance + own_prior_lock``
+        (``available_balance`` already nets reserved + locked; the position's
+        own prior lock is about to be released and re-locked, so it is added
+        back). A lock within that figure settles normally.
+
+        Args:
+            lock_amount: The margin about to be locked (``aggregate_notional / L``).
+            position_id: The position the lock is keyed under.
+
+        Raises:
+            InsufficientFundsError: When ``lock_amount`` exceeds buying power.
+        """
+        own_prior_lock = self._storage.get_locked_margin_for(position_id)
+        buying_power = self.available_balance + own_prior_lock
+        if lock_amount > buying_power:
+            raise InsufficientFundsError(
+                required_cash=float(lock_amount),
+                available_cash=float(buying_power),
+            )
+
     def reserve_cash(self, amount: float | Decimal, description: str, reference_id: str) -> None:
         """Reserve cash for a pending order, keyed by reference id (Plan 05-03).
 

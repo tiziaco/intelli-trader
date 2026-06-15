@@ -15,7 +15,8 @@ from contextlib import contextmanager
 from .portfolio import Portfolio
 from itrader.core.exceptions import (
     PortfolioNotFoundError, InvalidPortfolioOperationError,
-    PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError
+    PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError,
+    StateError,
 )
 from itrader.core.enums import PortfolioState, TransactionType, FillStatus, Side
 from itrader.core.ids import OrderId, PortfolioId, TransactionId, CorrelationId
@@ -315,7 +316,21 @@ class PortfolioHandler:
         """
         portfolio = self.get_portfolio(portfolio_id)
         total = Decimal("0")
-        for position in portfolio.position_manager.get_all_positions().values():
+        positions = portfolio.position_manager.get_all_positions()
+        # WR-02 (T-03-17): the per-symbol Instrument read dereferences the
+        # injected Universe. If positions exist but the Universe was never wired
+        # (``set_universe`` not called), fail LOUD with a context-rich StateError
+        # — never a bare ``AttributeError: 'NoneType' has no attribute
+        # 'instrument'``. With NO open positions the read is never reached, so an
+        # unwired Universe is benign and the sum is ``Decimal("0")``.
+        if positions and self._universe is None:
+            raise StateError(
+                portfolio_id,
+                "universe-unwired",
+                required_state="universe-wired (call set_universe)",
+                operation="maintenance_margin",
+            )
+        for position in positions.values():
             instrument = self._universe.instrument(position.ticker)
             total += (
                 instrument.maintenance_margin_rate
