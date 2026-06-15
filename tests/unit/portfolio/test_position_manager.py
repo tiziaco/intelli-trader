@@ -558,3 +558,16 @@ def test_partial_close_margin_keeps_position_leverage(env):
     assert updated.is_open
     assert updated.net_quantity == Decimal("0.5")
     assert updated.leverage == Decimal("4")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Wave 0 stub (SHORT-03) — collectible RED placeholder.
+# Seeded by Plan 03-02 so the Plan 03-04 `short_pnl` verify selector selects
+# >=1 test BEFORE any production code is written (D-10). Asserts NOTHING yet —
+# Plan 03-04 turns it green.
+# ---------------------------------------------------------------------------
+
+
+def test_short_pnl_stub():
+    """SHORT-03: realised PnL is correct for a SHORT position (Plan 03-04)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")

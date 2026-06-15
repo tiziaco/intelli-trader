@@ -333,3 +333,16 @@ def test_levered_fraction_step_size_quantizes_round_down():
         None,
     )
     assert result == Decimal("3333.33")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Wave 0 stub (SHORT-02) — collectible RED placeholder.
+# Seeded by Plan 03-02 so the Plan 03-04 `cover_magnitude` verify selector
+# selects >=1 test BEFORE any production code is written (D-10). Asserts
+# NOTHING yet — Plan 03-04 turns it green.
+# ---------------------------------------------------------------------------
+
+
+def test_cover_magnitude_stub():
+    """SHORT-02: resolver sizes the cover magnitude (Plan 03-04 turns green)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-04")

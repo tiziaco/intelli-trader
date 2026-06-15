@@ -579,3 +579,27 @@ def test_release_unknown_position_margin_is_silent_noop(cm):
     assert released == Decimal("0")
     assert cm.locked_margin_total == Decimal("0")
     assert cm.available_balance == Decimal("100000.00")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Wave 0 stubs (CARRY-01 / WR-03) — collectible RED placeholders.
+# Seeded by Plan 03-02 so the Plan 03-05 / 03-06 verify selectors
+# (`borrow_interest`, `borrow_interest_op`, `release_symmetry`) each select
+# >=1 test BEFORE any production code is written (D-10). These assert NOTHING
+# yet — the implementing plans turn them green.
+# ---------------------------------------------------------------------------
+
+
+def test_borrow_interest_stub():
+    """CARRY-01: borrow-interest accrual debits cash (Plan 03-05 turns green)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-05")
+
+
+def test_borrow_interest_op_stub():
+    """CARRY-01: borrow-interest flows via the BORROW_INTEREST cash op (Plan 03-05)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-05")
+
+
+def test_release_symmetry_stub():
+    """WR-03: reserve/release margin symmetry under shorts (Plan 03-06 turns green)."""
+    pytest.skip("Phase 3 Wave 0 stub — implemented in plan 03-06")
