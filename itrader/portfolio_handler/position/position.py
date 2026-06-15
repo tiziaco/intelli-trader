@@ -68,6 +68,12 @@ class Position(object):
 		self.exit_date: Optional[datetime] = None
 		self.is_open = is_open
 		self.portfolio_id = portfolio_id
+		# CARRY-01/D-04: per-short borrow-interest accrual marker. The carry days
+		# basis is (bar_time − _last_accrual_time); seeded at the position entry
+		# and advanced to the bar's business time after each per-bar accrual. None
+		# until the carry hook first reads it (then it falls back to entry_date).
+		# Decimal carry never folds into realised_pnl (D-08).
+		self._last_accrual_time: Optional[datetime] = None
 
 	def __repr__(self) -> str:
 		rep = ('%s, %s, %s'%(self.ticker, self.side.name, self.net_quantity))

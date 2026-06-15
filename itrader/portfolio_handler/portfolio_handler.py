@@ -425,16 +425,27 @@ class PortfolioHandler:
         # Decimal via the Bar struct (D-14); downstream position updates
         # enter via to_money (value-identity on Decimal input).
         prices = {}
+        # CARRY-01/D-04: thread the bar's BUSINESS time down into the per-portfolio
+        # mark + carry accrual — NEVER datetime.now(UTC) (a wall-clock stamp breaks
+        # the determinism double-run gate). One BarEvent per tick on the daily grid;
+        # the last event's time stamps the mark for this tick.
+        bar_time = None
         for bar_event in bar_events:
+            bar_time = bar_event.time
             for ticker, bar in bar_event.bars.items():
                 prices[ticker] = bar.close
-        
+
         # Update only active portfolios (each handles its own thread safety)
         active_portfolios = self.get_active_portfolios()
 
         for portfolio in active_portfolios:
             try:
-                portfolio.update_market_value_of_portfolio(prices)
+                # CARRY-01/D-01: thread bar business time + the injected Universe
+                # so each open short can resolve its Instrument.borrow_rate (the
+                # same read pattern as maintenance_margin). _universe is None until
+                # set_universe is wired; with no universe / rate-0 / no open shorts
+                # the carry accrual is a no-op (SMA_MACD byte-exact under default-off).
+                portfolio.update_market_value_of_portfolio(prices, bar_time, self._universe)
             except Exception as e:
                 # WR-08: a failed mark must NOT be swallowed. In a project whose
                 # core value is "numbers you can trust", silently continuing

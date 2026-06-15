@@ -359,6 +359,58 @@ class CashManager:
             reference_id=reference_id
         )
 
+    def accrue_borrow_interest(self, amount: Decimal, reference_id: str,
+                               description: str, timestamp: datetime) -> None:
+        """Debit a short's per-bar borrow-interest carry (CARRY-01/D-03/D-08).
+
+        The financing-cost analogue of ``apply_fill_cash_flow`` for the short
+        side: a REAL ledger outflow (carry erodes equity as it accrues so the
+        P4 liquidation trigger sees carry-eroded equity), recorded as a
+        first-class ``BORROW_INTEREST`` ``CashOperation`` so the drag is an
+        attributable ledger line DISTINCT from trade PnL (D-08 — carry never
+        folds into ``Position.realised_pnl``).
+
+        Full precision, like ``apply_fill_cash_flow`` (Pitfall 1: routing
+        through ``_validate_and_convert_amount``'s 2dp quantize would shift the
+        equity curve → byte-exact oracle FAIL). ``timestamp`` is the bar's
+        BUSINESS time supplied by the caller — NEVER ``datetime.now(UTC)``
+        (Pitfall 5 / D-04 — a wall-clock stamp breaks the determinism double-run
+        gate).
+
+        A zero ``amount`` (rate-0 / no-short under default-off) is a silent
+        no-op — no balance change, no audit entry — keeping SMA_MACD byte-exact.
+
+        Args:
+            amount: Decimal carry magnitude to debit (positive outflow). A
+                non-positive amount is a no-op.
+            reference_id: Reference id (e.g. position id) keying the audit line.
+            description: Audit description.
+            timestamp: Bar business time (event-derived — never wall clock).
+        """
+        if amount <= Decimal("0"):
+            return
+
+        old_balance = self._balance
+        new_balance = old_balance - amount
+        self._balance = new_balance
+
+        self._create_operation(
+            CashOperationType.BORROW_INTEREST,
+            amount,
+            description,
+            reference_id,
+            old_balance,
+            new_balance,
+            timestamp=timestamp,
+        )
+
+        self.logger.debug("Borrow interest accrued",
+            amount=str(amount),
+            old_balance=str(old_balance),
+            new_balance=str(new_balance),
+            reference_id=reference_id
+        )
+
     def assert_funds_invariant(self, required: Decimal) -> None:
         """D-10 engine-bug guard: raise when a settlement debit exceeds balance.
 
