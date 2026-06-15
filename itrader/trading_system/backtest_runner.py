@@ -80,10 +80,11 @@ class BacktestRunner:
 		# so a desync fails loudly here rather than deep in a tick.
 		if set(membership) != set(instruments):
 			raise ConfigurationError(
-				"Universe membership desync: derive_membership and "
-				"derive_instruments produced different symbol sets "
-				f"(members={sorted(set(membership))}, "
-				f"instruments={sorted(set(instruments))})")
+				reason=(
+					"Universe membership desync: derive_membership and "
+					"derive_instruments produced different symbol sets "
+					f"(members={sorted(set(membership))}, "
+					f"instruments={sorted(set(instruments))})"))
 		universe = Universe(members=membership, instrument_map=instruments)
 		engine.universe = universe
 		# Inject the Universe into the simulated exchange so the admission gate
@@ -103,8 +104,9 @@ class BacktestRunner:
 		symbols = engine.store.symbols()
 		if not symbols:
 			raise ConfigurationError(
-				"Backtest store has no symbols — cannot derive the ping clock "
-				"(empty data directory or bad store path)")
+				reason=(
+					"Backtest store has no symbols — cannot derive the ping clock "
+					"(empty data directory or bad store path)"))
 		ping_grid = reduce(
 			pd.Index.union, (engine.store.index(s) for s in symbols))
 		engine.time_generator.set_dates(ping_grid)
