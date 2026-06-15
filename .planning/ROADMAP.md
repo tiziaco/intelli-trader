@@ -169,7 +169,7 @@ determinism double-run byte-identical.
 - [x] 02-00-PLAN.md — [Wave 0] Nyquist stub plan: collectible -k/-m targets for every Phase-2 verify command (MARGIN-01/02/03, LEV-01/02)
 - [x] 02-01-PLAN.md — SignalEvent.leverage + TradingRules.max_leverage inert contract fields (LEV-01)
 - [x] 02-02-PLAN.md — LeveredFraction equity-based sizing kind + resolver arm + SignalIntent.leverage (LEV-02)
-- [ ] 02-03-PLAN.md — [BLOCKING] Universe wiring into the order domain + leverage cap + margin reservation/over-margin reject (LEV-01/02, MARGIN-01/02)
+- [x] 02-03-PLAN.md — [BLOCKING] Universe wiring into the order domain + leverage cap + margin reservation/over-margin reject (LEV-01/02, MARGIN-01/02)
 - [ ] 02-04-PLAN.md — Lock-and-settle cash model: position-keyed locked_margin + one-leverage-per-position + process_transaction branch (MARGIN-01)
 - [ ] 02-05-PLAN.md — maintenance_margin/margin_ratio compute-on-demand read-model + max_leverage update_config (MARGIN-03, LEV-01)
 - [ ] 02-06-PLAN.md — Parked leveraged-long e2e (hand-computed, NOT frozen) + byte-exact/determinism/mypy phase gate (MARGIN-01/02/03, LEV-01/02)
@@ -270,7 +270,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
-| 2. Margin Accounting & Leverage | 3/7 | In Progress|  |
+| 2. Margin Accounting & Leverage | 4/7 | In Progress|  |
 | 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
 | 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |

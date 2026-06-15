@@ -34,9 +34,9 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Margin (MARGIN)
 
-- [ ] **MARGIN-01**: Opening a position reserves `initial_margin = notional / leverage` against
+- [x] **MARGIN-01**: Opening a position reserves `initial_margin = notional / leverage` against
   available cash.
-- [ ] **MARGIN-02**: Orders exceeding available free margin are rejected (or clipped) rather than
+- [x] **MARGIN-02**: Orders exceeding available free margin are rejected (or clipped) rather than
   silently over-leveraging the simulated account.
 - [ ] **MARGIN-03**: Maintenance margin is tracked per open position.
 
@@ -134,8 +134,8 @@ Which phases cover which requirements. Filled during roadmap creation.
 | INST-01 | Phase 1 — Instrument Value Object | Complete |
 | INST-02 | Phase 1 — Instrument Value Object | Complete |
 | INST-03 | Phase 1 — Instrument Value Object | Complete |
-| MARGIN-01 | Phase 2 — Margin Accounting & Leverage | Pending |
-| MARGIN-02 | Phase 2 — Margin Accounting & Leverage | Pending |
+| MARGIN-01 | Phase 2 — Margin Accounting & Leverage | Complete |
+| MARGIN-02 | Phase 2 — Margin Accounting & Leverage | Complete |
 | MARGIN-03 | Phase 2 — Margin Accounting & Leverage | Pending |
 | LEV-01 | Phase 2 — Margin Accounting & Leverage | Complete |
 | LEV-02 | Phase 2 — Margin Accounting & Leverage | Complete |
