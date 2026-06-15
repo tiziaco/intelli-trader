@@ -114,7 +114,11 @@ class OrderManager:
 		self.commission_estimator = commission_estimator
 
 		# Initialize validator if portfolio_handler is available
-		self.order_validator = EnhancedOrderValidator(portfolio_handler) if portfolio_handler else None
+		# Plan 02-03 (D-08/D-09): thread enable_margin so the validator defers its
+		# full-notional cash-cost check to the AdmissionManager reservation gate in
+		# margin mode (the reservation reserves notional/L, the over-margin REJECT
+		# routes via the audited CASH_RESERVATION path). Default False → byte-exact.
+		self.order_validator = EnhancedOrderValidator(portfolio_handler, enable_margin=enable_margin) if portfolio_handler else None
 
 		# The ONE sizing resolver (D-01, M5-06): dispatches on the signal's
 		# DECLARED SizingPolicy. Same optionality pattern as the read model —

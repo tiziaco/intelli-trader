@@ -577,10 +577,16 @@ def test_levered_fraction_f_le_one_passes_the_gate_without_margin(harness):
 
 def _enable_margin(harness, max_leverage):
     """Flip the admission gate into margin mode with a Universe carrying the
-    instrument cap, mirroring the compose-root wiring."""
+    instrument cap, mirroring the compose-root wiring (which threads
+    enable_margin into BOTH the admission reservation gate AND the validator so
+    the validator defers its full-notional cash check to the reservation gate)."""
     am = _admission(harness)
     am._enable_margin = True
     am._portfolio_max_leverage = max_leverage
+    # Mirror construction: the validator the AdmissionManager holds must also see
+    # margin mode (compose threads enable_margin into both at construction).
+    if am.order_validator is not None:
+        am.order_validator.enable_margin = True
     am.set_universe(_make_universe("BTCUSDT", max_leverage))
     return am
 

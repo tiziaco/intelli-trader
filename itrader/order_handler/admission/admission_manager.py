@@ -262,7 +262,23 @@ class AdmissionManager:
 			# the zero default reproduces the old funds-check math exactly.
 			# Decimal-native arithmetic — intermediates are never quantized.
 			if self.portfolio_handler is not None and primary.action is Side.BUY:
-				cost = primary.price * primary.quantity + self._estimate_commission(primary)
+				# Plan 02-03 (D-08/D-09, BYTE-EXACT SITE #1): branch the
+				# reservation cost on enable_margin. notional + commission are
+				# computed ONCE. The MARGIN arm reserves the initial margin
+				# (notional / effective_leverage + commission, D-08); the SPOT arm
+				# reserves the full notional with NO division — operand-for-operand
+				# identical to today's price*qty + commission. CRITICAL (Pitfall 4):
+				# the spot arm must NOT route through notional / 1 — Decimal
+				# division is context-sensitive and a /1 can shift the exponent,
+				# drifting the byte-exact oracle. Use a real if-branch, not a
+				# forced-to-1 division. Full Decimal precision — never quantized.
+				notional = primary.price * primary.quantity
+				commission = self._estimate_commission(primary)
+				if self._enable_margin:
+					effective_leverage = self._effective_leverage(signal_event)
+					cost = notional / effective_leverage + commission
+				else:
+					cost = notional + commission
 				try:
 					self.portfolio_handler.reserve(
 						primary.portfolio_id, primary.id, cost)
