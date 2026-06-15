@@ -115,6 +115,12 @@ class LiveTradingSystem:
         self.strategies_handler = StrategiesHandler(self.global_queue, self.feed, self._signal_store)
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
+        # WR-04: declare the universe attribute as a clean "not yet wired"
+        # sentinel here, mirroring Engine.universe: Optional[Universe] = None on
+        # the backtest path. It is populated in _initialize_live_session (from
+        # start()); without this, any pre-start read raises AttributeError
+        # instead of returning None — an attribute-existence trap for D-live.
+        self.universe: Optional[Universe] = None
         
         # Create order storage for live trading (PostgreSQL)
         # Note: For now using in-memory until Phase 2 is complete
