@@ -25,7 +25,12 @@ import pytest
 from itrader.core.ids import PortfolioId
 from itrader.core.exceptions import SizingPolicyViolation
 from itrader.core.money import to_money
-from itrader.core.sizing import FixedQuantity, FractionOfCash, RiskPercent
+from itrader.core.sizing import (
+    FixedQuantity,
+    FractionOfCash,
+    LeveredFraction,
+    RiskPercent,
+)
 from itrader.order_handler.sizing_resolver import SizingResolver
 
 pytestmark = pytest.mark.unit
@@ -273,5 +278,58 @@ def test_exit_partial_with_step_quantizes_round_down():
     assert str(result) == "3.33"
 
 
-def test_levered_fraction_wave0_stub():
-    pytest.skip("Wave 0 stub — implemented in Phase 2 plan 02")
+# ---------------------------------------------------------------------------
+# LeveredFraction — equity-based: notional = f x total_equity (D-07/D-12/LEV-02)
+# ---------------------------------------------------------------------------
+
+
+def test_levered_fraction_sizes_notional_off_equity():
+    # notional = f x equity, qty = notional / price. f=2, equity=50000,
+    # price=100 -> qty = (2 * 50000) / 100 = 1000. Reads total_equity (D-12),
+    # NOT available_cash (the cash basis is intentionally tiny to prove it).
+    result = _resolver(available=Decimal("1.00"), equity=Decimal("50000")).resolve_entry(
+        LeveredFraction(fraction=Decimal("2")),
+        _PID,
+        to_money(100.0),
+        None,
+    )
+    assert result == Decimal("1000")
+
+
+def test_levered_fraction_above_one_sizes_larger_than_unit():
+    # f > 1 resolves a strictly larger qty than f = 1 (no clamp here — the
+    # f>1-only-under-enable_margin gate lives in AdmissionManager, not here).
+    equity = Decimal("50000")
+    price = to_money(100.0)
+    unit = _resolver(equity=equity).resolve_entry(
+        LeveredFraction(fraction=Decimal("1")), _PID, price, None
+    )
+    levered = _resolver(equity=equity).resolve_entry(
+        LeveredFraction(fraction=Decimal("3")), _PID, price, None
+    )
+    assert levered == unit * Decimal("3")
+    assert levered > unit
+
+
+def test_levered_fraction_ignores_stop():
+    # Unlike RiskPercent, LeveredFraction does not consume a stop distance —
+    # passing None is fine (notional = f x equity is stop-independent).
+    result = _resolver(equity=Decimal("50000")).resolve_entry(
+        LeveredFraction(fraction=Decimal("1")),
+        _PID,
+        to_money(100.0),
+        None,
+    )
+    assert result == Decimal("500")
+
+
+def test_levered_fraction_step_size_quantizes_round_down():
+    # D-05: step_size quantizes the resolved quantity ROUND_DOWN.
+    # (2 * 50000) / 30 = 3333.333... -> step 0.01 -> 3333.33
+    result = _resolver(equity=Decimal("50000")).resolve_entry(
+        LeveredFraction(fraction=Decimal("2"), step_size=Decimal("0.01")),
+        _PID,
+        to_money(30.0),
+        None,
+    )
+    assert result == Decimal("3333.33")
