@@ -81,3 +81,9 @@ None — plan executed exactly as written. The two RESEARCH-cited filename corre
 ## Known Stubs
 
 All 14 unit stubs and 3 e2e stubs are intentional collectible RED placeholders (the Nyquist Wave-0 deliverable). Each is `pytest.skip`-bodied and names the implementing plan in its skip reason (03-03 / 03-04 / 03-05 / 03-06). They are turned green by the downstream production plans; this plan's goal IS to create them, so their stub status is the intended terminal state for Wave 0.
+
+## Self-Check: PASSED
+
+- All 10 created files verified present on disk.
+- All 5 modified files verified (153 prior tests still pass).
+- Commits `fe4e02f` (Task 1), `a391e28` (Task 2), `04857fd` (SUMMARY) verified in git log.
