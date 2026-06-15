@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
-status: ready_to_plan
-stopped_at: Phase 01 complete (3/3) — ready to discuss Phase 2 (Margin Accounting & Leverage)
-last_updated: 2026-06-15T08:10:59.806Z
+status: planning
+stopped_at: Phase 2 context gathered
+last_updated: "2026-06-15T10:20:01.572Z"
 last_activity: 2026-06-15
 progress:
-  total_phases: 6
+  total_phases: 9
   completed_phases: 1
   total_plans: 3
   completed_plans: 3
-  percent: 17
+  percent: 11
 ---
 
 # Project State
@@ -277,9 +277,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T07:30:28.832Z
-Stopped at: Phase 1 context gathered
-Resume file: None
+Last session: 2026-06-15T10:20:01.563Z
+Stopped at: Phase 2 context gathered
+Resume file: .planning/phases/02-margin-accounting-leverage/02-CONTEXT.md
 
 ## Operator Next Steps
 
