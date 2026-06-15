@@ -142,7 +142,10 @@ pinned to its declared 8dp so the golden oracle does not drift.
 **Re-baseline**: Byte-exact behavioral gate. The Instrument seam lands metadata + precision-read;
 whether the backtest *snaps/rounds* via Instrument must hold the oracle byte-exact (BTCUSD declared
 8dp branch). `mypy --strict` clean; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 01-01-PLAN.md — Frozen Instrument value object + quantize(Instrument) rewire; delete _INSTRUMENT_SCALES (INST-01/03)
+- [ ] 01-02-PLAN.md — derive_instruments ladder + Universe facade + ExchangeLimits demotion + SimulatedExchange/wiring (INST-02/03)
+- [ ] 01-03-PLAN.md — Byte-exact oracle + mypy --strict + determinism phase gate (INST-01/02/03)
 
 ### Phase 2: Margin Accounting & Leverage
 **Goal**: A portfolio opens positions on reserved margin (`initial_margin = notional / leverage`),
