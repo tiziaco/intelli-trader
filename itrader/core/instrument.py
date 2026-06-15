@@ -47,6 +47,10 @@ class Instrument:
         Universe key (upper-cased to match store keying).
     quote_currency:
         Settlement currency; source of the ``kind="cash"`` scale (USD -> 2dp).
+        Consumed by ``core.money.quantize(kind="cash")`` via ``_CASH_SCALES``
+        (WR-01): USD resolves to 2dp; an unmapped quote currency falls back to
+        2dp. Non-USD quote currencies are not yet derived this phase, so the
+        mapping is effectively exercised only for USD until they land.
     price_precision:
         Price rounding **scale** as a ``Decimal`` (D-10 — the scale, e.g.
         ``Decimal("0.00000001")`` for BTCUSD 8dp), read by
