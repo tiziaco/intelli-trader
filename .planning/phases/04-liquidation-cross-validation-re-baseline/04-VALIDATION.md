@@ -2,7 +2,7 @@
 phase: 04
 slug: liquidation-cross-validation-re-baseline
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-06-16
 ---
@@ -43,7 +43,7 @@ created: 2026-06-16
 | LIQ-02 (penalty + cap) | TBD | 1 | LIQ-02 | — | Penalty = rate×\|size\|×liq, total loss capped at WB | unit | `poetry run pytest -k "liquidation_penalty" -x` | ❌ W0 | ⬜ pending |
 | LIQ-03 (mirror reconcile) | TBD | 2 | LIQ-03 | — | EXECUTED→FILLED, `OrderTriggerSource.LIQUIDATION`, no new `FillStatus` | unit | `poetry run pytest tests/unit/order -k "liquidation" -x` | ❌ W0 | ⬜ pending |
 | LIQ-01/02/03 (run path) | TBD | 2 | LIQ-01, LIQ-02, LIQ-03 | — | Forced-liq long / short / leveraged-long-into-liquidation full run path | e2e (white-box, mirror `levered_long`) | `poetry run pytest tests/e2e/forced_liq_long -x` | ❌ W0 | ⬜ pending |
-| WR-04 (call-order fix) | TBD | 1 | LIQ-01 (carry) | — | `assert_lock_fits_buying_power` credits the prior lock add-back | unit (regression) | `poetry run pytest tests/unit/portfolio -k "lock_fits_buying_power" -x` | ❌ W0 | ⬜ pending |
+| WR-04 (call-order fix) | 04-02 | 1 | LIQ-01 (carry) | — | `assert_lock_fits_buying_power` credits the prior lock add-back | unit (regression, TDD RED→GREEN inline) | `poetry run pytest tests/unit/portfolio -k "lock_fits_buying_power" -x` | created by 04-02 (TDD) — no W0 stub | ⬜ pending |
 | D-11 (oracle-dark hold) | TBD | 3 | XVAL-01 | — | SMA_MACD byte-exact (134 / `46189.87730727451`) | integration (existing) | `poetry run pytest tests/integration/test_backtest_oracle.py -x` | ✅ | ⬜ pending |
 | D-10 (freeze parked scenarios) | TBD | 3 | XVAL-01 | — | Parked P2/P3 scenarios frozen alongside P4 | e2e | `poetry run pytest tests/e2e/levered_long tests/e2e/short_roundtrip tests/e2e/short_carry tests/e2e/partial_cover -x` | ✅ (assert inline; no `golden/` yet) | ⬜ pending |
 | XVAL-01 (cross-validate) | TBD | 3 | XVAL-01 | — | Short/leveraged/liquidation cross-validated vs backtesting.py + backtrader | script (not in suite) | `poetry run python scripts/cross_validate.py` (extend) | ✅ driver exists | ⬜ pending |
@@ -58,11 +58,12 @@ created: 2026-06-16
 
 - [ ] `tests/unit/portfolio/test_liquidation.py` — stubs for LIQ-01/LIQ-02 (formula, breach, penalty, cap, determinism)
 - [ ] `tests/unit/order/test_liquidation_reconcile.py` — stubs for LIQ-03 (EXECUTED→FILLED, `LIQUIDATION` trigger, no new status, registered order)
-- [ ] `tests/unit/portfolio/test_wr04_lock_fits_buying_power.py` — WR-04 regression stub
 - [ ] `tests/e2e/forced_liq_long/`, `tests/e2e/forced_liq_short/`, `tests/e2e/levered_long_into_liquidation/` — new white-box e2e leaves (mirror `tests/e2e/levered_long/test_levered_long_scenario.py`)
 - [ ] Framework: pytest already installed — no install needed
 
 *Existing infrastructure (pytest + Poetry + golden harness) covers the framework; the gaps above are new test files only.*
+
+**Note (WR-04 ownership):** `tests/unit/portfolio/test_wr04_lock_fits_buying_power.py` is NOT a Wave 0 stub — it is created and made green inline by plan **04-02** as a TDD RED→GREEN task. The `-k "lock_fits_buying_power"` selector therefore resolves within 04-02's own task (no separate Wave 0 collectible needed); this is why `nyquist_compliant: true` holds despite the test not existing before 04-02 runs.
 
 ---
 
