@@ -564,12 +564,22 @@ class PortfolioHandler:
         built for the mark — passed in (not re-derived from bar_events) so the
         mark price and the breach price are guaranteed identical.
 
-        WR-05: ``marked_portfolio_ids`` is the set of portfolios that re-marked
-        cleanly this tick. Only those are evaluated — a portfolio whose mark
-        raised mid-loop (possible only on the LIVE _publish_and_continue path;
-        the backtest re-raise aborts before this pass) is SKIPPED so the breach
-        never reads its stale, partially-marked equity. ``None`` (legacy direct
-        callers / unit tests) means "no gating" — evaluate every active portfolio.
+        WR-05 (WR-02 re-review): ``marked_portfolio_ids`` is the set of
+        portfolios that re-marked cleanly this tick. Only those are evaluated.
+        Under the CURRENT error policy this gate NEVER fires: a failed mark in
+        ``update_portfolios_market_value`` re-raises (it does not continue the
+        per-portfolio loop), and the dispatch error seam operates at the
+        granularity of the whole handler call — so in BOTH backtest and live
+        modes either every active portfolio re-marked (and this pass runs with a
+        full set) or the re-raise propagates out and this pass is never reached.
+        ``marked_portfolio_ids`` is therefore always the full active set whenever
+        the pass runs, and the ``not in`` skip below is never taken in
+        production. The gate is kept purely as a DEFENSIVE guardrail: if a future
+        per-portfolio continue-on-mark-failure policy is ever adopted for live
+        mode, the partial-mark scenario would become reachable and this gate
+        would already prevent the breach from reading a stale, partially-marked
+        equity. ``None`` (legacy direct callers / unit tests) means "no gating"
+        — evaluate every active portfolio.
         """
         if bar_time is None or self._universe is None or self._order_storage is None:
             return
@@ -731,13 +741,20 @@ class PortfolioHandler:
         # Update only active portfolios (each handles its own thread safety)
         active_portfolios = self.get_active_portfolios()
 
-        # WR-05: record which portfolios re-marked cleanly THIS tick so the
-        # liquidation pass never evaluates a breach against a stale mark. In the
-        # backtest path the re-raise below aborts the run before the pass runs
-        # (so all-or-nothing); in the LIVE path (_publish_and_continue swallows
-        # at the dispatch boundary) a portfolio whose mark raised mid-loop is
-        # SKIPPED by the pass — the "breach sees carry-eroded equity" invariant
-        # (D-02) only holds for a portfolio that actually re-marked this tick.
+        # WR-05 (WR-02 re-review): record which portfolios re-marked cleanly
+        # THIS tick and pass the set to the liquidation gate. Under the CURRENT
+        # error policy this is always the FULL active set whenever the pass runs:
+        # the except below RE-RAISES (it does not continue the loop), so a single
+        # mark failure aborts the whole handler call in both backtest and live
+        # modes (the dispatch error seam — _on_handler_error / live
+        # _publish_and_continue — works at handler-call granularity, not
+        # per-portfolio). Hence the pass either sees every portfolio re-marked,
+        # or never runs at all; the gate's "skip a partially-marked portfolio"
+        # branch never fires in production today. It is kept purely as a
+        # DEFENSIVE guardrail for a FUTURE per-portfolio continue-on-mark-failure
+        # policy: were the swallow ever moved INSIDE this loop, the partial-mark
+        # scenario would become reachable and this set would already protect the
+        # "breach sees carry-eroded equity" invariant (D-02).
         marked_portfolio_ids: set[Any] = set()
 
         for portfolio in active_portfolios:
@@ -768,7 +785,9 @@ class PortfolioHandler:
         # check runs AFTER the per-portfolio mark + P3 carry pass so a breach
         # sees the carry-eroded equity. Oracle-dark on the spot path (no locked
         # margin / no Universe-or-storage wired → zero breaches, no fills).
-        # WR-05: only portfolios that re-marked cleanly this tick are eligible.
+        # WR-05 (WR-02 re-review): the marked-set gate is a defensive guardrail
+        # that, under the current re-raise-on-mark-failure policy, always passes
+        # the full active set (see the comment on marked_portfolio_ids above).
         # IN-01: reuse the SAME ``prices`` map the mark used so the breach price
         # and the mark price cannot diverge (no second pass over bar_events).
         self._run_liquidation_pass(prices, bar_time, marked_portfolio_ids)
