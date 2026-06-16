@@ -459,20 +459,6 @@ class PortfolioHandler:
         fee_rate = instrument.liquidation_fee_rate
         return wb, mmr, fee_rate
 
-    def _collect_breaches(self, portfolio: Portfolio, close: Decimal,
-                          bar_time: datetime) -> List[Position]:
-        """Collect open positions breaching against a SINGLE shared close.
-
-        WR-01: thin adapter — builds a ``{ticker: close}`` map keyed on every
-        open position's ticker (all marked at the same ``close``) and delegates
-        to ``_collect_breaches_over_prices`` so there is ONE breach predicate.
-        Avoids the maintainability hazard of two near-identical collectors
-        drifting apart (a fix to the predicate in one but not the other).
-        """
-        positions = portfolio.position_manager.get_all_positions()
-        closes = {ticker: close for ticker in positions}
-        return self._collect_breaches_over_prices(portfolio, closes, bar_time)
-
     def _liquidate_position(self, portfolio: Portfolio, position: Position,
                             liq_price: Decimal, fee_rate: Decimal,
                             bar_time: datetime) -> None:
@@ -612,8 +598,10 @@ class PortfolioHandler:
                                       bar_time: datetime) -> List[Position]:
         """Collect breached open positions across a per-ticker close map.
 
-        The SINGLE breach predicate (WR-01): ``_collect_breaches`` is a thin
-        adapter over this. Evaluates each position against ITS OWN ticker's
+        The SINGLE breach predicate (WR-01): the live path
+        (``_run_liquidation_pass``) and the unit tests both call this directly;
+        there is no second collector to drift apart. Evaluates each position
+        against ITS OWN ticker's
         close from ``closes`` — a position whose ticker is absent from this tick
         is skipped (stale mark, never a spurious breach). Returns the breached
         set sorted ``(ticker, open_time, position_id)``. The WR-02
