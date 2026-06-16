@@ -562,7 +562,7 @@ class PortfolioHandler:
             portfolio_id=portfolio.portfolio_id,
         )
 
-    def _run_liquidation_pass(self, bar_events: List[BarEvent],
+    def _run_liquidation_pass(self, closes: Dict[str, Decimal],
                               bar_time: Optional[datetime],
                               marked_portfolio_ids: Optional[set[Any]] = None) -> None:
         """BAR-route per-position liquidation breach check (D-02 placement).
@@ -575,6 +575,10 @@ class PortfolioHandler:
         stays byte-exact (D-11). No Universe / no order_storage wired (legacy
         mark-only callers) → no-op.
 
+        IN-01: ``closes`` is the SAME per-ticker close map the caller already
+        built for the mark — passed in (not re-derived from bar_events) so the
+        mark price and the breach price are guaranteed identical.
+
         WR-05: ``marked_portfolio_ids`` is the set of portfolios that re-marked
         cleanly this tick. Only those are evaluated — a portfolio whose mark
         raised mid-loop (possible only on the LIVE _publish_and_continue path;
@@ -584,11 +588,6 @@ class PortfolioHandler:
         """
         if bar_time is None or self._universe is None or self._order_storage is None:
             return
-        # The tick's close per ticker (the same prices used for the mark).
-        closes: Dict[str, Decimal] = {}
-        for bar_event in bar_events:
-            for ticker, bar in bar_event.bars.items():
-                closes[ticker] = bar.close
         for portfolio in self.get_active_portfolios():
             if (marked_portfolio_ids is not None
                     and portfolio.portfolio_id not in marked_portfolio_ids):
@@ -783,7 +782,9 @@ class PortfolioHandler:
         # sees the carry-eroded equity. Oracle-dark on the spot path (no locked
         # margin / no Universe-or-storage wired → zero breaches, no fills).
         # WR-05: only portfolios that re-marked cleanly this tick are eligible.
-        self._run_liquidation_pass(bar_events, bar_time, marked_portfolio_ids)
+        # IN-01: reuse the SAME ``prices`` map the mark used so the breach price
+        # and the mark price cannot diverge (no second pass over bar_events).
+        self._run_liquidation_pass(prices, bar_time, marked_portfolio_ids)
 
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:
