@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.4
-milestone_name: Margin, Leverage, Shorts & Trailing Stops
-status: executing
+milestone_name: — Margin, Leverage, Shorts & Trailing Stops
+status: completed
 stopped_at: Phase 4 context gathered
-last_updated: "2026-06-16T10:13:01.018Z"
-last_activity: 2026-06-16 -- Phase 04 execution started
+last_updated: "2026-06-16T11:37:47.403Z"
+last_activity: 2026-06-16 -- Phase 04 marked complete
 progress:
   total_phases: 9
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 24
-  completed_plans: 18
-  percent: 33
+  completed_plans: 24
+  percent: 44
 ---
 
 # Project State
@@ -25,14 +25,14 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 
 ## Current Position
 
-Phase: 04 (liquidation-cross-validation-re-baseline) — EXECUTING
+Phase: 04 — COMPLETE
 Plan: 1 of 6
-Status: Executing Phase 04
+Status: Phase 04 complete
 
 > Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 4 dir does
 > not exist yet (only 01/02/03 + 999.x dirs are present). Corrected manually to Phase 4 per the v1.4
 > Phase Map (1→2→3→**4**→5→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
-Last activity: 2026-06-16 -- Phase 04 execution started
+Last activity: 2026-06-16 -- Phase 04 marked complete
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
