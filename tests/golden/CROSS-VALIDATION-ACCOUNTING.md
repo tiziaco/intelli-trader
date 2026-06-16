@@ -135,4 +135,32 @@ Headline metrics recomputed via `itrader.reporting.metrics` for every engine, co
 
 ## Owner Sign-Off (D-12)
 
-**Status: PENDING.** This evidence is produced for owner review at the BLOCKING human-verify checkpoint in Plan 04-05. The accounting-core golden (ALL parked P2/P3 scenarios + the new P4 liquidation scenarios, D-10) freezes ONLY after the owner accepts the per-scenario verdict here and signs off — NO golden is frozen by this plan. Until then the hand-computed closed-form remains the PRIMARY liquidation oracle (D-08) and the white-box e2e leaves are the regression lock.
+**Status: APPROVED** (2026-06-16, project owner — Approved-by: tiziaco (tiziano.iaco@gmail.com)).
+The owner accepts the per-scenario verdict — **0 BUG / 25 divergence rows dispositioned (12 metric
+INFORMATIONAL on the tiny 6-bar short + levered series; 13 LEGITIMATE-DIFFERENCE on the D-08
+directional-only liquidation); no iTrader defect** — as the basis for the accounting-core golden
+freeze. The blocking human-verify checkpoint in Plan 04-05 presented this evidence; the owner
+explicitly approved the freeze.
+
+During the blocking human-verify checkpoint the owner reviewed:
+- **Trade-level reconciliation (PRIMARY) is GREEN** for the short round-trip and leveraged long on
+  BOTH gating engines (backtesting.py + backtrader entry/exit dates match iTrader to the bar).
+- **Liquidation directionally corroborated (D-08):** backtesting.py liquidated = `True`; backtrader
+  liquidated = `True` — both engines force-close / margin-call the levered long. backtrader does NOT
+  floor equity (drifts to −8000), which is exactly the DEF-01-C defect iTrader's explicit WB-cap
+  closes — the iTrader value (final_equity 6081.191919) is PRIMARY. The 13 liquidation divergence
+  rows reflect that modeled difference, NOT an iTrader bug.
+- **Metric divergences are INFORMATIONAL** — the length-sensitive annualized Sharpe / Sortino /
+  max_drawdown rows on these tiny 6-bar series carry a documented CAVEAT; the trade-level table is
+  the primary gate, and it reconciles.
+- **The SMA_MACD spot oracle stays byte-exact** (134 / 46189.87730727451, D-11) — synthetic tickers
+  (`SHORTUSD` / `LEVUSD` / `LIQUSD`) only, never BTCUSD.
+- **The seven-leaf accounting-core e2e suite is 7/7 green.**
+
+No code change and no re-baseline of the SMA_MACD goldens were performed (zero BUG rows). This
+sign-off authorizes the freeze of the single accounting-core golden = ALL parked P2/P3 scenarios
+(`levered_long`, `short_roundtrip`, `short_carry`, `partial_cover`) + the new P4 liquidation
+scenarios (`forced_liq_long`, `forced_liq_short`, `levered_long_into_liquidation`) (D-10). The
+seven white-box e2e leaves are the regression lock; the hand-computed closed-form remains the
+PRIMARY liquidation oracle (D-08). The freeze is recorded as a D-10/D-12 FROZEN freeze-provenance
+banner on each of the seven scenario leaves, citing this sign-off date.

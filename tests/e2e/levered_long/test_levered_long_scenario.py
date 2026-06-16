@@ -1,11 +1,15 @@
-"""PARKED leveraged-long e2e — the Phase-2 cross-cutting margin-core proof (D-17).
+"""FROZEN leveraged-long e2e — the Phase-2 cross-cutting margin-core proof (D-17).
 
-================================ PARKED — NOT A GOLDEN ================================
+============================ FROZEN — ACCOUNTING-CORE GOLDEN ==========================
+FREEZE PROVENANCE (D-10/D-12): frozen as part of the single accounting-core golden at
+the owner-gated 04-05 sign-off — Approved-by: tiziaco (tiziano.iaco@gmail.com),
+2026-06-16. The freeze set is ALL parked P2/P3 scenarios (levered_long, short_roundtrip,
+short_carry, partial_cover) + the new P4 liquidation scenarios (forced_liq_long,
+forced_liq_short, levered_long_into_liquidation) frozen as ONE accounting-core golden
+(cross-validated vs backtesting.py + backtrader; see tests/golden/CROSS-VALIDATION-ACCOUNTING.md).
 Every number asserted below is a HAND-COMPUTED literal with the arithmetic shown
-inline. This scenario is **PARKED**, NOT frozen as a golden: Phase 2 freezes NO new
-leveraged golden (D-16/D-17). The single owner-gated accounting-core re-baseline is at
-Phase 4 / XVAL-01 (cross-validation + owner sign-off). This test does NOT use the
-golden-diff harness (``run_scenario`` / ``golden/``) precisely because the load-bearing
+inline. This test does NOT use the golden-diff harness (``run_scenario`` / ``golden/``)
+precisely because the load-bearing
 assertions are margin INTERNALS (initial-margin reservation, position-life locked
 margin, maintenance_margin / margin_ratio) that the trades/equity/summary golden CSVs do
 not capture. It drives the engine's real SIGNAL -> ORDER -> FILL -> PORTFOLIO path and

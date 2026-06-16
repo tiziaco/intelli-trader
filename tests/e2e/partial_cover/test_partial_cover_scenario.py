@@ -1,10 +1,14 @@
-"""PARKED partial-cover e2e (SHORT-02 / SHORT-03) — Phase 3 (Plan 03-06).
+"""FROZEN partial-cover e2e (SHORT-02 / SHORT-03) — Phase 3 (Plan 03-06).
 
-================================ PARKED — NOT A GOLDEN ================================
+============================ FROZEN — ACCOUNTING-CORE GOLDEN ==========================
+FREEZE PROVENANCE (D-10/D-12): frozen as part of the single accounting-core golden at
+the owner-gated 04-05 sign-off — Approved-by: tiziaco (tiziano.iaco@gmail.com),
+2026-06-16. The freeze set is ALL parked P2/P3 scenarios (levered_long, short_roundtrip,
+short_carry, partial_cover) + the new P4 liquidation scenarios (forced_liq_long,
+forced_liq_short, levered_long_into_liquidation) frozen as ONE accounting-core golden
+(cross-validated vs backtesting.py + backtrader; see tests/golden/CROSS-VALIDATION-ACCOUNTING.md).
 Every number asserted below is a HAND-COMPUTED literal with the arithmetic shown
-inline. This scenario is **PARKED**, NOT frozen as a golden: Phase 3 freezes NO new
-golden (D-10). The single owner-gated accounting-core re-baseline is at Phase 4 /
-XVAL-01 (cross-validation + owner sign-off). This test does NOT use the golden-diff
+inline. This test does NOT use the golden-diff
 harness — its load-bearing assertions are the partial-cover margin/position INTERNALS
 (the short REDUCES, not closes; the lock recomputes to the remaining notional; the
 realized increment settles for the closed fraction). It drives the engine's real
