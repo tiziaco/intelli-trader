@@ -31,7 +31,7 @@
 | `tests/unit/order/test_liquidation_reconcile.py` (NEW) | test | unit | `tests/unit/order/test_reconcile_manager.py` | exact |
 | `tests/unit/portfolio/test_wr04_lock_fits_buying_power.py` (NEW) | test | unit | `tests/unit/portfolio/test_cash_manager.py` | exact |
 | `tests/e2e/forced_liq_long/`, `forced_liq_short/`, `levered_long_into_liquidation/` (NEW) | test (white-box e2e) | e2e | `tests/e2e/levered_long/test_levered_long_scenario.py` | exact |
-| `scripts/crossval/{short,levered,liquidation}_run.py` + extend `scripts/cross_validate.py` (NEW) | script | cross-validation | `scripts/cross_validate_limit.py` + `crossval/*_limit_run.py` | exact |
+| `scripts/crossval/{short,levered,liquidation}_run.py` + `scripts/cross_validate_accounting.py` (NEW standalone sibling; base `scripts/cross_validate.py` is NOT modified) | script | cross-validation | `scripts/cross_validate_limit.py` + `crossval/*_limit_run.py` | exact |
 | `tests/golden/CROSS-VALIDATION-ACCOUNTING.md` (NEW) | evidence doc | n/a | `tests/golden/CROSS-VALIDATION.md` (Owner Sign-Off block 206-224) | exact |
 
 ---
