@@ -453,7 +453,7 @@ class PortfolioHandler:
         Universe Instrument carries the rate; here the Instrument always does
         since it defaults to ``Decimal("0")``).
         """
-        wb = portfolio.cash_manager._storage.get_locked_margin_for(str(position.id))
+        wb = portfolio.cash_manager.get_locked_margin_for(str(position.id))
         instrument = self._universe.instrument(position.ticker)
         mmr = instrument.maintenance_margin_rate
         fee_rate = instrument.liquidation_fee_rate

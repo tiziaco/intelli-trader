@@ -128,6 +128,18 @@ class CashManager:
         """
         return self._storage.get_locked_margin()
 
+    def get_locked_margin_for(self, position_id: str) -> Decimal:
+        """Return the isolated margin locked for one position id (WR-03).
+
+        Public read-surface delegator over the storage seam so sibling handlers
+        (the liquidation engine's ``_liq_inputs``) read a single position's
+        locked margin WITHOUT reaching through the private ``_storage``
+        attribute — a refactor of the pluggable storage backend then surfaces as
+        a typed contract change here, not a silent ``AttributeError`` across a
+        domain boundary. Returns a clean ``Decimal('0')`` when nothing is locked.
+        """
+        return self._storage.get_locked_margin_for(position_id)
+
     @property
     def reserved_balance(self) -> Decimal:
         """Get reserved cash balance."""
