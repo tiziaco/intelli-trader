@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: completed
-stopped_at: Phase 4 context gathered
-last_updated: "2026-06-16T11:37:47.403Z"
+status: ready_to_plan
+stopped_at: Phase 04 complete (6/6) — ready to discuss Phase 5 (Engine-Native Trailing Stops)
+last_updated: 2026-06-16T13:13:46.947Z
 last_activity: 2026-06-16 -- Phase 04 marked complete
 progress:
   total_phases: 9
@@ -21,18 +21,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 04 — liquidation-cross-validation-re-baseline
+**Current focus:** Phase 5 — Engine-Native Trailing Stops
 
 ## Current Position
 
-Phase: 04 — COMPLETE
-Plan: 1 of 6
-Status: Phase 04 complete
+Phase: 5
+Plan: Not started
+Status: Ready to plan
 
-> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 4 dir does
-> not exist yet (only 01/02/03 + 999.x dirs are present). Corrected manually to Phase 4 per the v1.4
-> Phase Map (1→2→3→**4**→5→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
-Last activity: 2026-06-16 -- Phase 04 marked complete
+> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
+> not exist yet (only 01/02/03/04 + 999.x dirs are present). Corrected manually to Phase 5 per the v1.4
+> Phase Map (1→2→3→4→**5**→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
+Last activity: 2026-06-16
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -111,7 +111,7 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 **Velocity (v1.3):**
 
-- Total plans completed: 38
+- Total plans completed: 44
 - Average duration: — min
 - Total execution time: 0.0 hours
 
