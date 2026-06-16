@@ -102,6 +102,14 @@ None - no external service configuration required.
 - DEF-01-C is closed — the explicit WB-capped loss guarantees equity can no longer drift impossibly negative on a forced liquidation.
 - Ready for the v1.4 trailing-stop and pair-trading phases (separate subsystems / re-baselines).
 
+## Self-Check: PASSED
+
+- FOUND: scripts/determinism_liquidation_double_run.py
+- FOUND: .planning/phases/04-liquidation-cross-validation-re-baseline/04-05-SUMMARY.md
+- FOUND commit ce0e3e9 (Task 2), 1547b92 (Task 3), 0f2dced (SUMMARY)
+- FOUND: `Status: APPROVED` in CROSS-VALIDATION-ACCOUNTING.md; NO `PARKED — NOT A GOLDEN` banners remain
+- SMA_MACD goldens untouched (git diff empty)
+
 ---
 *Phase: 04-liquidation-cross-validation-re-baseline*
 *Completed: 2026-06-16*
