@@ -21,8 +21,12 @@ from itrader.core.exceptions import (
 )
 from itrader.core.enums import (
     PortfolioState, TransactionType, FillStatus, Side, PositionSide,
+    OrderType, OrderStatus, OrderTriggerSource,
 )
-from itrader.core.ids import OrderId, PortfolioId, TransactionId, CorrelationId
+from itrader.core.ids import OrderId, PortfolioId, TransactionId, CorrelationId, StrategyId
+from itrader.order_handler.base import OrderStorage
+from itrader.order_handler.order import Order
+from itrader.events_handler.events import OrderEvent
 from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money
 from itrader.portfolio_handler.transaction import Transaction
@@ -89,6 +93,15 @@ class PortfolioHandler:
         # maintenance_margin/margin_ratio are query-only and unread on the golden
         # path, so a None Universe never trips during the byte-exact SMA_MACD run.
         self._universe: Any = None
+
+        # LIQ-03 (04-03): the NARROW INJECTED WRITE-SEAM the liquidation engine
+        # uses to register a forced-close Order in the shared order mirror, set
+        # via set_order_storage (the analog of set_universe). None until wired —
+        # compose.py injects the SAME order_storage instance the OrderHandler /
+        # ReconcileManager hold, so the portfolio side writes into the exact
+        # mirror the reconcile reads. Oracle-dark on the spot path: with no
+        # breaches it is never written, so SMA_MACD stays byte-exact.
+        self._order_storage: Optional[OrderStorage] = None
 
         # Global logger
         self.logger = get_itrader_logger().bind(component="PortfolioHandler")
@@ -307,6 +320,22 @@ class PortfolioHandler:
         """
         self._universe = universe
 
+    def set_order_storage(self, order_storage: OrderStorage) -> None:
+        """Inject the shared order mirror for the liquidation forced-close (LIQ-03).
+
+        04-03: the NARROW INJECTED WRITE-SEAM (the analog of ``set_universe`` and
+        the ``PortfolioReadModel.reserve``/``release`` write-ish surface) the
+        BAR-route liquidation engine uses to register a real forced-close
+        ``Order`` so ``ReconcileManager.on_fill`` reconciles EXECUTED→FILLED
+        (Pitfall 4 — without the registered order the reconcile early-returns and
+        the mirror silently no-ops). ``compose.py`` injects the SAME
+        ``order_storage`` instance the ``OrderHandler``/``ReconcileManager`` hold,
+        so the mirror is a single shared store. NOT a raw handler-to-handler call
+        and NOT an enqueued OrderEvent (the ORDER route would fill next-bar-open,
+        violating D-04/Pitfall 6). Query/write-only and oracle-dark on the golden
+        path (no breaches → never written)."""
+        self._order_storage = order_storage
+
     def maintenance_margin(self, portfolio_id: PortfolioId) -> Decimal:
         """Return maintenance margin computed on demand (D-13/MARGIN-03).
 
@@ -485,6 +514,144 @@ class PortfolioHandler:
         breached.sort(key=lambda p: (p.ticker, p.entry_date, str(p.id)))
         return breached
 
+    def _liquidate_position(self, portfolio: Portfolio, position: Position,
+                            liq_price: Decimal, fee_rate: Decimal,
+                            bar_time: datetime) -> None:
+        """Force-close a breached position on the BAR route (LIQ-02/LIQ-03/D-04).
+
+        Mints a REAL opposite-side ``Order`` (SELL to close a long / BUY to close
+        a short; qty = ``|net_quantity|``) tagged ``OrderTriggerSource.LIQUIDATION``,
+        registers it in the injected ``order_storage`` (Pitfall 4 — without this
+        ``ReconcileManager.on_fill`` early-returns and the mirror never reaches
+        FILLED), and emits a ``FillEvent(EXECUTED)`` DIRECTLY on the queue at the
+        liq price with ``time=bar_time`` — NOT routed through ExecutionHandler /
+        SimulatedExchange (D-04/Pitfall 6 — those fill next-bar-open; liquidation
+        settles on the breach bar). The liq price enters the FillEvent as the
+        executed price; the penalty rides ``commission`` (D-05). The existing
+        ``portfolio.on_fill`` settle path realizes the PnL + penalty and releases
+        the lock; the Task-1 explicit cap keeps total loss ≤ WB.
+        """
+        if self._order_storage is None:
+            raise StateError(
+                portfolio.portfolio_id,
+                "order-storage-unwired",
+                required_state="order-storage-wired (call set_order_storage)",
+                operation="liquidate_position",
+            )
+        size = abs(position.net_quantity)
+        # Opposite side closes the position: SELL closes a long, BUY a short.
+        close_side = Side.SELL if position.side == PositionSide.LONG else Side.BUY
+        penalty = self._liquidation_penalty(fee_rate, size, liq_price)
+
+        # Quantize the liq price to the instrument price scale ONLY here, at the
+        # FillEvent money boundary (Pitfall 5 — never mid-formula). The Universe
+        # Instrument carries the per-symbol price scale; a stub Instrument without
+        # one (unit tests) leaves the full-precision liq price untouched.
+        fill_price = liq_price
+        instrument = self._universe.instrument(position.ticker)
+        price_scale = getattr(instrument, "price_precision", None)
+        if price_scale is not None:
+            from itrader.core.money import quantize
+            fill_price = quantize(liq_price, instrument, "price")
+
+        # A forced deleverage is never owned by a strategy — mint a fresh
+        # StrategyId so the trade log still carries a real fill→order→strategy
+        # chain (the LIQUIDATION trigger source distinguishes it from a
+        # strategy-driven close).
+        order = Order(
+            time=bar_time,
+            type=OrderType.MARKET,
+            status=OrderStatus.PENDING,
+            ticker=position.ticker,
+            action=close_side,
+            price=fill_price,
+            quantity=size,
+            exchange=portfolio.exchange,
+            strategy_id=StrategyId(idgen.generate_strategy_id()),
+            portfolio_id=portfolio.portfolio_id,
+        )
+        # Record the forced-close trigger (admission-bypassing — a forced
+        # deleverage is never rejected by a margin check).
+        order.add_state_change(
+            OrderStatus.PENDING,
+            f"Forced liquidation close for {position.ticker}",
+            OrderTriggerSource.LIQUIDATION,
+            time=bar_time,
+            allow_same_status=True,
+        )
+        # Pitfall 4: register in the SHARED mirror so the reconcile reaches FILLED.
+        self._order_storage.add_order(order)
+
+        order_event = OrderEvent.new_order_event(order)
+        fill_event = FillEvent.new_fill(
+            "EXECUTED", order_event,
+            price=fill_price, quantity=size, commission=penalty, time=bar_time)
+        self.global_queue.put(fill_event)
+
+        self.logger.info(
+            "Position force-liquidated",
+            ticker=position.ticker,
+            side=position.side.name,
+            liq_price=str(fill_price),
+            penalty=str(penalty),
+            order_id=order.id,
+            portfolio_id=portfolio.portfolio_id,
+        )
+
+    def _run_liquidation_pass(self, bar_events: List[BarEvent],
+                              bar_time: Optional[datetime]) -> None:
+        """BAR-route per-position liquidation breach check (D-02 placement).
+
+        Runs AFTER the per-portfolio mark + P3 carry pass so the breach sees the
+        carry-eroded equity. For each active portfolio, collect the deterministically
+        sorted breached positions at this tick's close and force-close each. Fully
+        oracle-dark: with the liquidation engine default-off (no locked margin /
+        zero breaches) this loop finds nothing and emits no fills, so SMA_MACD
+        stays byte-exact (D-11). No Universe / no order_storage wired (legacy
+        mark-only callers) → no-op.
+        """
+        if bar_time is None or self._universe is None or self._order_storage is None:
+            return
+        # The tick's close per ticker (the same prices used for the mark).
+        closes: Dict[str, Decimal] = {}
+        for bar_event in bar_events:
+            for ticker, bar in bar_event.bars.items():
+                closes[ticker] = bar.close
+        for portfolio in self.get_active_portfolios():
+            for position in self._collect_breaches_over_prices(portfolio, closes, bar_time):
+                wb, mmr, fee_rate = self._liq_inputs(portfolio, position)
+                liq_price = self._isolated_liq_price(position, wb, mmr)
+                self._liquidate_position(portfolio, position, liq_price, fee_rate, bar_time)
+
+    def _collect_breaches_over_prices(self, portfolio: Portfolio,
+                                      closes: Dict[str, Decimal],
+                                      bar_time: datetime) -> List[Position]:
+        """Collect breached open positions across a per-ticker close map.
+
+        Mirrors ``_collect_breaches`` (single-close) but evaluates each position
+        against ITS OWN ticker's close from ``closes`` — a position whose ticker
+        is absent from this tick is skipped (stale mark, never a spurious breach).
+        Returns the breached set sorted ``(ticker, open_time, position_id)``.
+        """
+        positions = portfolio.position_manager.get_all_positions()
+        if not positions:
+            return []
+        breached: List[Position] = []
+        for ticker, position in positions.items():
+            if not position.is_open:
+                continue
+            close = closes.get(ticker)
+            if close is None or close <= Decimal("0"):
+                continue
+            wb, mmr, _fee_rate = self._liq_inputs(portfolio, position)
+            if wb <= Decimal("0"):
+                continue
+            liq_price = self._isolated_liq_price(position, wb, mmr)
+            if self._is_breached(position, close, liq_price):
+                breached.append(position)
+        breached.sort(key=lambda p: (p.ticker, p.entry_date, str(p.id)))
+        return breached
+
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
         """Process fill event for the appropriate portfolio.
@@ -605,7 +772,13 @@ class PortfolioHandler:
                     e, "update_portfolios_market_value", correlation_id,
                     portfolio.portfolio_id)
                 raise
-    
+
+        # LIQ-01/02/03 (D-02 placement): the per-position liquidation breach
+        # check runs AFTER the per-portfolio mark + P3 carry pass so a breach
+        # sees the carry-eroded equity. Oracle-dark on the spot path (no locked
+        # margin / no Universe-or-storage wired → zero breaches, no fills).
+        self._run_liquidation_pass(bar_events, bar_time)
+
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:
         """Generate global health report."""

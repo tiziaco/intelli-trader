@@ -174,6 +174,11 @@ class LiveTradingSystem:
                                           commission_estimator=_estimate_commission,
                                           enable_margin=_trading_rules.enable_margin,
                                           portfolio_max_leverage=_trading_rules.max_leverage)
+        # LIQ-03 (04-03): live-parity injection of the SAME order_storage into the
+        # portfolio handler so a BAR-route liquidation forced-close registers its
+        # real Order in the shared mirror the ReconcileManager reads (mirrors the
+        # compose.py backtest wiring). Oracle-dark on the spot path.
+        self.portfolio_handler.set_order_storage(order_storage)
         # The TIME route's BarEvent source is the feed-owned factory
         # (Plan 07-02, D-20) — mirrors the backtest wiring shape; a real
         # live feed is owned by D-live.

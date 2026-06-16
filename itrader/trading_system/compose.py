@@ -213,6 +213,14 @@ def compose_engine(
 		enable_margin=trading_rules.enable_margin,
 		portfolio_max_leverage=trading_rules.max_leverage)
 
+	# LIQ-03 (04-03): inject the SAME order_storage instance into the portfolio
+	# handler so the BAR-route liquidation forced-close registers its real Order
+	# in the exact mirror the ReconcileManager reads (the set_order_storage
+	# write-seam, the analog of set_universe). Construction-time injection —
+	# order_storage exists at construction, so no Trap-4 timing is needed.
+	# Oracle-dark: with no breaches the seam is never written, SMA_MACD byte-exact.
+	portfolio_handler.set_order_storage(order_storage)
+
 	time_generator = TimeGenerator()
 	# The TIME route's BarEvent source is the feed-owned factory (D-20).
 	event_handler = EventHandler(
