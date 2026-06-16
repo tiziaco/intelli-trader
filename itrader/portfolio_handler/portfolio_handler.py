@@ -537,6 +537,13 @@ class PortfolioHandler:
             price=fill_price, quantity=size, commission=penalty, time=bar_time)
         self.global_queue.put(fill_event)
 
+        # IN-01: ``liq_price`` here is the QUANTIZED FillEvent price (``fill_price``,
+        # rounded to the instrument price scale above) — that IS the price the
+        # position settles at. The ``penalty`` field carries FULL precision
+        # (``fee_rate × |size| × liq_price`` on the UNquantized formula price),
+        # so a reader cross-checking the log against the hand-computed isolated
+        # liq formula will see the rounded field but the full-precision penalty.
+        # This is intentional: the logged value mirrors the emitted FillEvent.
         self.logger.info(
             "Position force-liquidated",
             ticker=position.ticker,
