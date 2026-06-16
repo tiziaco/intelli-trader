@@ -240,7 +240,13 @@ this phase re-touches, so bundle it under the single XVAL-01 owner-gated re-base
 gated by XVAL-01 (cross-validation + explicit owner sign-off). The crafted scenarios are the
 correctness oracle (NOT pair trading). `mypy --strict` clean; Decimal end-to-end including the
 liquidation formula + interest accrual; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 6 plans
+- [ ] 04-00-PLAN.md — [Wave 0] Nyquist stubs: collectible liquidation unit + e2e scaffolds (LIQ-01/02/03)
+- [ ] 04-01-PLAN.md — Inert plumbing: OrderTriggerSource.LIQUIDATION + Instrument/TradingRules liquidation_fee_rate (default-off, D-06) (LIQ-02/03)
+- [ ] 04-02-PLAN.md — WR-04 carry-forward: assert_lock_fits_buying_power call-order fix (both sites) + regression (LIQ-01)
+- [ ] 04-03-PLAN.md — Liquidation engine on the BAR route: corrected isolated formula + explicit loss cap + registered forced-close Order + direct FillEvent (LIQ-01/02/03)
+- [ ] 04-04-PLAN.md — Crafted liquidation e2e (PRIMARY oracle) + crossval runners + accounting-core evidence doc (XVAL-01)
+- [ ] 04-05-PLAN.md — [owner-gated] Blocking sign-off checkpoint → freeze accounting-core golden (D-10/D-12) + phase gate (XVAL-01)
 
 ### Phase 5: Engine-Native Trailing Stops
 **Goal**: A strategy can declare a `TRAILING_STOP` order; the `MatchingEngine` ratchets the resting
@@ -296,7 +302,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
 | 2. Margin Accounting & Leverage | 9/9 | Complete   | 2026-06-15 |
 | 3. Shorts & Borrow Carry | 6/6 | Complete   | 2026-06-15 |
-| 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
+| 4. Liquidation & Cross-Validation Re-baseline | 0/6 | Planned | - |
 | 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |
 | 6. Pair-Trading Flagship | 0/TBD | Not started | - |
 
