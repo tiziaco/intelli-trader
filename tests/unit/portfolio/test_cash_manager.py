@@ -451,6 +451,22 @@ def test_cash_operation_event_time_and_uuid_id(cm):
     assert isinstance(operation.operation_id, uuid.UUID)
 
 
+def test_cash_operation_borrow_interest_member_exists():
+    """D-03 / CARRY-01: a first-class BORROW_INTEREST op kind makes the
+    short-carry financing-cost drag an attributable ledger line."""
+    assert CashOperationType.BORROW_INTEREST.value == "BORROW_INTEREST"
+    # The duck-typed serializer reads op.operation_type.name.
+    assert CashOperationType.BORROW_INTEREST.name == "BORROW_INTEREST"
+
+
+def test_cash_operation_borrow_interest_parses_case_insensitively():
+    """The _missing_ parser resolves lower-case input to the member."""
+    assert (
+        CashOperationType("borrow_interest")
+        is CashOperationType.BORROW_INTEREST
+    )
+
+
 def test_assert_funds_invariant_raises_when_required_exceeds_balance(cm):
     """D-10: required > balance raises typed InsufficientFundsError."""
     with pytest.raises(InsufficientFundsError):
@@ -579,3 +595,83 @@ def test_release_unknown_position_margin_is_silent_noop(cm):
     assert released == Decimal("0")
     assert cm.locked_margin_total == Decimal("0")
     assert cm.available_balance == Decimal("100000.00")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Wave 0 stubs (CARRY-01 / WR-03) — collectible RED placeholders.
+# Seeded by Plan 03-02 so the Plan 03-05 / 03-06 verify selectors
+# (`borrow_interest`, `borrow_interest_op`, `release_symmetry`) each select
+# >=1 test BEFORE any production code is written (D-10). These assert NOTHING
+# yet — the implementing plans turn them green.
+# ---------------------------------------------------------------------------
+
+
+def test_borrow_interest_debits_cash_by_exact_amount(cm):
+    """CARRY-01/D-03: accrue_borrow_interest debits realized cash by the exact
+    Decimal carry amount (a REAL outflow, not a reservation)."""
+    amount = Decimal("0.05479452054794520547945205")  # 2×100×0.10/365 full precision
+    before = cm.balance
+    cm.accrue_borrow_interest(
+        amount=amount, reference_id="POS_SHORT",
+        description="borrow interest", timestamp=_EVENT_TIME,
+    )
+    assert cm.balance == before - amount
+
+
+def test_borrow_interest_records_borrow_interest_op_with_balances_and_time(cm):
+    """CARRY-01/D-03: a BORROW_INTEREST CashOperation is recorded with the
+    Decimal amount, balance_before/after, and the caller-supplied bar time."""
+    amount = Decimal("12.34")
+    before = cm.balance
+    cm.accrue_borrow_interest(
+        amount=amount, reference_id="POS_SHORT",
+        description="borrow interest", timestamp=_EVENT_TIME,
+    )
+
+    ops = cm.get_cash_operations(operation_type=CashOperationType.BORROW_INTEREST)
+    assert len(ops) == 1
+    op = ops[0]
+    assert op.operation_type is CashOperationType.BORROW_INTEREST
+    assert op.amount == amount
+    assert op.balance_before == before
+    assert op.balance_after == before - amount
+    assert op.timestamp == _EVENT_TIME
+    assert op.reference_id == "POS_SHORT"
+
+
+def test_borrow_interest_zero_amount_is_noop(cm):
+    """A zero carry (rate-0 / no-short) accrues nothing and records no op —
+    keeps the SMA_MACD oracle byte-exact under default-off."""
+    before = cm.balance
+    cm.accrue_borrow_interest(
+        amount=Decimal("0"), reference_id="POS_SHORT",
+        description="borrow interest", timestamp=_EVENT_TIME,
+    )
+    assert cm.balance == before
+    assert cm.get_cash_operations(
+        operation_type=CashOperationType.BORROW_INTEREST
+    ) == []
+
+
+def test_release_symmetry_returns_exact_locked_amount(cm):
+    """WR-03: release_margin returns EXACTLY the locked amount (full precision,
+    no rounding drift) — lock/release are symmetric so a release can never leak
+    or short-change a position-keyed margin lock (T-03-16)."""
+    amount = Decimal("12345.6789012345678901234567")  # full-precision, > 2dp
+    cm.lock_margin("POS_SHORT", amount)
+    assert cm.locked_margin_total == amount
+
+    released = cm.release_margin("POS_SHORT")
+    assert released == amount  # symmetric — exact round-trip, no quantize drift
+    assert cm.locked_margin_total == Decimal("0")
+
+
+def test_release_symmetry_unlocked_position_is_clean_zero(cm):
+    """WR-03: releasing a position id that was NEVER locked (the assembly-failure
+    site — no fill yet → no position-keyed lock can exist) returns a clean
+    Decimal('0') and leaks nothing, never an un-paired release (T-03-16)."""
+    before = cm.available_balance
+    released = cm.release_margin("NEVER_LOCKED")
+    assert released == Decimal("0")
+    assert cm.locked_margin_total == Decimal("0")
+    assert cm.available_balance == before

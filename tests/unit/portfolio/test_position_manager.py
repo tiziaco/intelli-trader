@@ -558,3 +558,74 @@ def test_partial_close_margin_keeps_position_leverage(env):
     assert updated.is_open
     assert updated.net_quantity == Decimal("0.5")
     assert updated.leverage == Decimal("4")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 Wave 0 stub (SHORT-03) — collectible RED placeholder.
+# Seeded by Plan 03-02 so the Plan 03-04 `short_pnl` verify selector selects
+# >=1 test BEFORE any production code is written (D-10). Asserts NOTHING yet —
+# Plan 03-04 turns it green.
+# ---------------------------------------------------------------------------
+
+
+def test_short_pnl_realised_is_size_times_entry_minus_exit(env):
+    """SHORT-03/D-08: a closed short computes first-class realised PnL via the
+    existing PositionSide.SHORT branch: |size| × (entry − exit) net of
+    commissions. CONFIRM-ONLY — no production change; position.py:182-190 is
+    already first-class. Entry (avg_sold) 3000, exit (avg_bought) 2800, size 2:
+    gross = (3000 − 2800) × 2 = 400; net = 400 − sell_comm − buy_comm."""
+    pm = env.position_manager
+    # Open the short: SELL 2 @ 3000 (avg_sold = 3000), commission 15.
+    open_short = Transaction(
+        time=datetime.now(), type=TransactionType.SELL, ticker="ETHUSDT",
+        price=3000.0, quantity=2.0, commission=15.0,
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        fill_id=uuid_compat.uuid7(),
+    )
+    position = pm.process_position_update(open_short)
+    assert position.side == PositionSide.SHORT
+
+    # Cover the short: BUY 2 @ 2800 (avg_bought = 2800, price fell → profit).
+    cover = Transaction(
+        time=datetime.now(), type=TransactionType.BUY, ticker="ETHUSDT",
+        price=2800.0, quantity=2.0, commission=14.0,
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        fill_id=uuid_compat.uuid7(),
+    )
+    closed = pm.process_position_update(cover)
+
+    # SHORT realised branch (position.py:186-190):
+    #   (avg_sold − avg_bought) * buy_quantity
+    #     − (buy_quantity / sell_quantity) * sell_commission
+    #     − buy_commission
+    gross = (Decimal("3000") - Decimal("2800")) * Decimal("2")  # |size|×(entry−exit)
+    expected = (
+        gross
+        - (Decimal("2") / Decimal("2")) * Decimal("15.0")
+        - Decimal("14.0")
+    )
+    assert closed.realised_pnl == expected
+    assert gross == Decimal("400")  # |size| × (entry − exit), profit on a fall
+
+
+def test_short_pnl_unrealised_is_avg_minus_current_times_net(env):
+    """SHORT-03/D-08: an OPEN short marks unrealised PnL via the SHORT branch
+    (avg_price − current_price) × net_quantity (position.py:203-204). Entry
+    3000, mark 2800: a price FALL is a SHORT profit."""
+    pm = env.position_manager
+    short_txn = Transaction(
+        time=datetime.now(), type=TransactionType.SELL, ticker="ETHUSDT",
+        price=3000.0, quantity=2.0, commission=15.0,
+        portfolio_id=env.portfolio.portfolio_id, id=idgen.generate_transaction_id(),
+        fill_id=uuid_compat.uuid7(),
+    )
+    position = pm.process_position_update(short_txn)
+    assert position.side == PositionSide.SHORT
+
+    pm.update_position_market_values({"ETHUSDT": 2800.0}, datetime.now())
+    marked = pm.get_position("ETHUSDT")
+
+    expected = (marked.avg_price - marked.current_price) * marked.net_quantity
+    assert marked.unrealised_pnl == expected
+    # A price fall on a short is a profit.
+    assert marked.unrealised_pnl > 0

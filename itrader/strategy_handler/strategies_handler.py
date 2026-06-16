@@ -21,7 +21,14 @@ class StrategiesHandler(object):
 	Manage all the strategies of the trading system.
 	"""
 
-	def __init__(self, global_queue: "Queue[Any]", feed: BarFeed, signal_store: SignalStore) -> None:
+	def __init__(
+		self,
+		global_queue: "Queue[Any]",
+		feed: BarFeed,
+		signal_store: SignalStore,
+		allow_short_selling: bool = False,
+		enable_margin: bool = False,
+	) -> None:
 		"""
 		Parameters
 		----------
@@ -36,10 +43,25 @@ class StrategiesHandler(object):
 			fan-out (D-09); the store is read post-run via the TradingSystem
 			accessor. It is a sink/read-model — NOT a cross-domain handler call,
 			so the queue-only contract is preserved.
+		allow_short_selling: `bool`
+			SHORT-01/D-07 registration flag. Together with ``enable_margin`` it
+			gates ``add_strategy``: a non-``LONG_ONLY`` strategy is admitted ONLY
+			when BOTH flags are on. Defaults off so the golden ``LONG_ONLY`` path
+			(SMA_MACD) is unaffected and the oracle stays byte-exact.
+		enable_margin: `bool`
+			SHORT-01/D-07 registration flag. Coupled with ``allow_short_selling``
+			because ``enable_margin`` turns on the lock-and-settle model (Phase 2
+			D-09) — the only model that can represent a short (a short has no
+			notional to "spend"; spot debit-notional cannot express it). With the
+			default ``max_leverage == 1`` this gives fully-collateralized shorts
+			(no leverage); levered shorts are a separate opt-in dial. Defaults off.
 		"""
 		self.global_queue: "Queue[Any]" = global_queue
 		self.feed: BarFeed = feed
 		self.signal_store: SignalStore = signal_store
+		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
+		self._allow_short_selling: bool = allow_short_selling
+		self._enable_margin: bool = enable_margin
 		# IN-06: initialize to None rather than a 100-week magic sentinel. A
 		# downstream consumer reading min_timeframe before any strategy is
 		# registered gets a clear "no strategies" signal (None) instead of
@@ -237,25 +259,32 @@ class StrategiesHandler(object):
 		Raises
 		------
 		ValueError
-			If the strategy declares any direction other than
-			``TradingDirection.LONG_ONLY`` (D-08/D-09): shorting (LONG_SHORT
-			and SHORT_ONLY alike) requires the margin/liquidation milestone.
-			Until it lands, registration rejects the capability loudly instead
-			of silently mis-handling un-margined shorts. SHORT_ONLY in
-			particular has no cover arm in ``_resolve_signal_quantity`` (CR-01):
-			a sanctioned BUY-cover would fall through to entry sizing and could
-			net a SHORT_ONLY book LONG — so it must not be reachable yet.
+			If the strategy declares a direction other than
+			``TradingDirection.LONG_ONLY`` while NOT both shorts-enabling flags
+			are on (SHORT-01/D-07). A non-``LONG_ONLY`` strategy (LONG_SHORT or
+			SHORT_ONLY) is admitted ONLY when ``allow_short_selling`` AND
+			``enable_margin`` are both set; otherwise registration rejects the
+			capability loudly. ``enable_margin`` is required (not just
+			``allow_short_selling``) because it turns on the lock-and-settle
+			model (Phase 2 D-09) — the only model that can represent a short
+			(spot debit-notional cannot). With the default ``max_leverage == 1``
+			this gives fully-collateralized shorts (no leverage); levered shorts
+			are a separate opt-in dial. Both flags default off → the golden
+			``LONG_ONLY`` path (SMA_MACD) is unaffected, oracle byte-exact.
 		"""
-		# D-08/D-09 registration guard: only LONG_ONLY is admissible until the
-		# margin/liquidation milestone lands. This closes the SHORT_ONLY cover
-		# hole (CR-01) at the door — the smaller, oracle-dark change: the golden
-		# FractionOfCash/LONG_ONLY path is unaffected.
+		# SHORT-01/D-07 two-flag registration gate: a non-LONG_ONLY direction is
+		# admissible ONLY when BOTH allow_short_selling AND enable_margin are on.
+		# enable_margin is coupled in because it enables the lock-and-settle model
+		# that can actually represent a short. Both default off → the golden
+		# LONG_ONLY path is unaffected (oracle byte-exact).
 		if strategy.direction is not TradingDirection.LONG_ONLY:
-			raise ValueError(
-				"Only LONG_ONLY is admissible until the margin/liquidation "
-				"milestone — shorting (LONG_SHORT / SHORT_ONLY) requires the "
-				"margin model (D-08/D-09)"
-			)
+			if not (self._allow_short_selling and self._enable_margin):
+				raise ValueError(
+					"Non-LONG_ONLY strategies (LONG_SHORT / SHORT_ONLY) require "
+					"BOTH allow_short_selling AND enable_margin to be enabled "
+					"(SHORT-01/D-07) — enable_margin turns on the lock-and-settle "
+					"model that can represent a short. Both flags default off."
+				)
 
 		# Add the strategy in the strategies list
 		self.strategies.append(strategy)

@@ -667,3 +667,33 @@ def test_margin_ratio_reads_honestly_when_breached(env):
     assert mm > equity  # breached
     assert ratio < Decimal("1")
     assert ratio == equity / mm  # honest, no clamp to 0 or 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 WR-02 (universe_unwired) — fail-loud StateError on an unwired universe.
+# A maintenance_margin / carry read with OPEN positions but `_universe is None`
+# must raise a context-rich `StateError` (universe-unwired), NEVER a bare
+# `AttributeError`. Implemented in Plan 03-06.
+# ---------------------------------------------------------------------------
+
+
+def test_universe_unwired_maintenance_margin_raises_state_error(env):
+    """WR-02: maintenance_margin with open positions but `_universe is None`
+    raises a context-rich StateError, NOT a bare AttributeError."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    # Open a position WITHOUT wiring the universe (set_universe never called).
+    env.handler.on_fill(_fill_event("AAA", Side.BUY, 100, 2, 0, portfolio_id))
+
+    with pytest.raises(StateError) as exc_info:
+        env.handler.maintenance_margin(portfolio_id)
+    # Fail-loud with attribution context — not a bare AttributeError.
+    assert "universe" in str(exc_info.value).lower()
+
+
+def test_universe_unwired_no_positions_is_not_an_error(env):
+    """WR-02: with NO open positions, an unwired universe is benign — the sum is
+    Decimal('0') and no StateError is raised (the guard only fires when there is
+    something to read)."""
+    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    # No positions, no set_universe — must NOT raise.
+    assert env.handler.maintenance_margin(portfolio_id) == Decimal("0")

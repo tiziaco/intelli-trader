@@ -423,10 +423,17 @@ class Portfolio(object):
 		if is_increase:
 			# OPEN or SCALE-IN: recompute the lock to the (new) aggregate
 			# notional / L; debit ONLY the commission.
+			# WR-03 (T-03-16): release THEN re-lock is symmetric — release returns
+			# the position's own prior lock (0 on a fresh open; the prior
+			# aggregate lock on a scale-in), and lock_margin replaces it. No
+			# un-paired lock can leak because the key is the same position id.
 			self.cash_manager.release_margin(str(position.id))
-			self.cash_manager.lock_margin(
-				str(position.id), position.aggregate_notional / leverage
-			)
+			new_lock = position.aggregate_notional / leverage
+			# WR-01 (T-03-15): settlement-side solvency assertion — the lock must
+			# fit buying power (the prior lock was just released, so it is added
+			# back). Fail loud BEFORE applying the lock — never silently over-lock.
+			self.cash_manager.assert_lock_fits_buying_power(new_lock, str(position.id))
+			self.cash_manager.lock_margin(str(position.id), new_lock)
 			cash_delta = -commission
 		else:
 			# PARTIAL or FULL CLOSE. Closed fraction p of the prior position.
@@ -437,19 +444,39 @@ class Portfolio(object):
 
 			# Release the whole lock, then re-lock the remaining (0 on a full
 			# close — position.is_open is False and aggregate_notional is 0).
+			# WR-03 (T-03-16): the release/re-lock pair stays symmetric on the
+			# same position key — the remaining lock replaces the released one.
 			self.cash_manager.release_margin(str(position.id))
 			if position.is_open:
-				self.cash_manager.lock_margin(
-					str(position.id), position.aggregate_notional / leverage
+				remaining_lock = position.aggregate_notional / leverage
+				# WR-01 (T-03-15): the recomputed remaining lock must still fit
+				# buying power (the prior whole lock was just released).
+				self.cash_manager.assert_lock_fits_buying_power(
+					remaining_lock, str(position.id)
 				)
+				self.cash_manager.lock_margin(str(position.id), remaining_lock)
 
 			# Settle the realized-PnL increment for the closed portion. The
 			# position's realised_pnl already nets BOTH commissions; the open
 			# commission for the closed fraction was already debited at open, so
-			# re-credit it (p × prior_entry_commission) to avoid double-count —
-			# the round-trip cash delta then equals the realized PnL exactly.
+			# re-credit it to avoid double-count — the round-trip cash delta then
+			# equals the realized PnL exactly.
+			#
+			# WR-05 (T-03-16): re-credit the EXACT open commission the realised
+			# increment charged for THIS closed portion, tracked as a per-lock
+			# accumulator (``_open_commission_settled`` below). The prior
+			# ``fraction × prior_entry_commission`` proxy (fraction = closed_qty /
+			# net_qty) drifts from realised_pnl's own open-commission term
+			# (charged as closed_qty / total_open_qty) after a non-uniform-
+			# commission scale-in or a staged partial close, because the
+			# denominators differ once net_qty < total open qty. The accumulator
+			# settles against the actual realised-pnl open-commission term, so the
+			# cumulative round-trip cash delta == realized PnL with NO drift.
 			realised_increment = position.realised_pnl - prior_realised
-			cash_delta = realised_increment + fraction * prior_entry_commission
+			open_commission_credit = self._open_commission_credit_for_close(
+				position, closed_qty
+			)
+			cash_delta = realised_increment + open_commission_credit
 
 		# ONE ledger entry: signed cash delta + the commission fee field +
 		# event-derived timestamp (D-06, Pitfalls 1/5).
@@ -578,14 +605,169 @@ class Portfolio(object):
 				raise PortfolioError(f"Transaction value {transaction_value} exceeds limit {self.config.limits.max_position_value}")
 	
 	# Enhanced Market Value Update
-	def update_market_value_of_portfolio(self, prices: Mapping[str, float | Decimal]) -> None:
-		"""Update portfolio market values."""
+	def update_market_value_of_portfolio(self, prices: Mapping[str, float | Decimal],
+			bar_time: Optional[datetime] = None, universe: Any = None) -> None:
+		"""Update portfolio market values, then accrue per-bar short carry (CARRY-01).
+
+		``bar_time`` is the bar's BUSINESS time threaded down from
+		``PortfolioHandler.update_portfolios_market_value`` (D-04 — the carry
+		days basis and the carry op timestamp derive from it, NEVER
+		``datetime.now(UTC)``; a wall-clock stamp breaks the determinism
+		double-run gate). It defaults to ``None`` for legacy callers that only
+		mark; in that case the mark falls back to the wall clock and no carry
+		accrues (no bar time, no days basis).
+
+		``universe`` is the injected ``Universe`` read-model used to resolve each
+		open short's ``Instrument.borrow_rate`` (D-01), mirroring the
+		``maintenance_margin`` read pattern in ``PortfolioHandler``. With no
+		``universe`` (or ``borrow_rate == 0`` / no open shorts) nothing accrues
+		and SMA_MACD stays byte-exact under default-off.
+		"""
 		if not self.can_trade():
 			return  # Skip updates for inactive portfolios
-			
-		self.position_manager.update_position_market_values(prices, datetime.now(UTC))
-		self._last_activity = datetime.now(UTC)
-	
+
+		# D-04: mark positions at the bar's business time, NOT the wall clock,
+		# so the equity curve is deterministic. Legacy mark-only callers (no
+		# bar_time) keep the prior wall-clock behaviour.
+		mark_time = bar_time if bar_time is not None else datetime.now(UTC)
+		self.position_manager.update_position_market_values(prices, mark_time)
+
+		# CARRY-01: accrue per-bar borrow interest on every OPEN SHORT (D-02/D-03/
+		# D-08). Skipped entirely when carry can't apply (no bar time / no
+		# universe) — the default-off no-op that keeps the oracle byte-exact.
+		# WR-02 (T-03-17): the carry borrow_rate read (``universe.instrument(...)``
+		# inside ``_accrue_short_carry``) is reached ONLY when ``universe is not
+		# None``, so it can never hit the bare ``AttributeError`` the
+		# ``maintenance_margin`` site exposed — it is None-safe by construction.
+		# A legacy mark-only caller (no universe) leaves carry as a silent no-op,
+		# which is the correct default-off behaviour (SMA_MACD byte-exact). The
+		# fail-loud universe-unwired guard lives at the ``maintenance_margin`` read
+		# in ``PortfolioHandler`` (the actual deferred WR-02 site).
+		if bar_time is not None and universe is not None:
+			# CR-01: only shorts whose ticker was actually re-marked this tick
+			# (price present in `prices`) may accrue carry — a short absent from
+			# this tick's prices keeps a STALE current_price, so accruing on it
+			# books financing against a wrong mark. The marked set IS the keys of
+			# `prices` (position_manager updates `if ticker in price_data`).
+			marked_tickers = set(prices.keys())
+			self._accrue_short_carry(bar_time, universe, marked_tickers)
+
+		self._last_activity = mark_time
+
+	def _accrue_short_carry(self, bar_time: datetime, universe: Any,
+			marked_tickers: set[str]) -> None:
+		"""Accrue per-bar borrow interest on every open short (CARRY-01).
+
+		For each OPEN SHORT, debit
+		``days × close × |net_quantity| × borrow_rate / Decimal("365")``
+		(Decimal end-to-end — ``borrow_rate`` is already Decimal; NEVER
+		``Decimal(float)``) from realized cash via a ``BORROW_INTEREST``
+		``CashOperation``. ``days`` = ``(bar_time − last_accrual)`` from the bar's
+		BUSINESS time (D-04). The per-short ``last_accrual`` advances to
+		``bar_time`` after debiting (it seeds from the position entry date). LONG
+		positions and ``borrow_rate == 0`` accrue nothing. Carry NEVER folds into
+		``Position.realised_pnl`` (D-08 — clean trade PnL; carry nets at cash).
+
+		``marked_tickers`` is the set of tickers actually re-marked this tick (the
+		keys of ``prices``). CR-01: a short whose ticker is absent from it carries a
+		STALE ``current_price``, so its accrual is SKIPPED and its clock is NOT
+		advanced — the next priced bar then accrues the full elapsed interval on a
+		correct mark. WR-02: a ticker the Universe no longer carries an Instrument
+		for fails LOUD with a ``StateError`` (mirroring ``maintenance_margin``).
+		WR-03: a non-positive ``current_price`` is skipped (never a wrong debit).
+		WR-05: the ``borrow_rate == 0`` branch is a plain ``continue`` — no
+		clock-advance (the frozen-Instrument static-rate contract).
+		"""
+		positions = self.position_manager.get_all_positions()
+		for ticker, position in positions.items():
+			if position.side != PositionSide.SHORT or not position.is_open:
+				continue
+
+			# CR-01: no fresh mark this tick (ticker absent from `prices`) —
+			# defer carry; do NOT advance the clock, so the next priced bar
+			# accrues the full elapsed interval on a correct price.
+			if ticker not in marked_tickers:
+				continue
+
+			# WR-03: defend the money operand. A zero/unset mark must never
+			# silently produce a wrong financing debit — skip rather than book
+			# carry on a non-positive price.
+			if position.current_price <= Decimal("0"):
+				continue
+
+			# WR-02: resolve the Instrument via the injected Universe. A short on
+			# a ticker the Universe no longer carries an Instrument for raises a
+			# bare KeyError that would abort the run with an opaque message — fail
+			# LOUD with a context-rich StateError instead, mirroring the
+			# maintenance_margin universe guard in PortfolioHandler.
+			try:
+				borrow_rate = universe.instrument(ticker).borrow_rate
+			except KeyError as exc:
+				raise StateError(
+					position.id,
+					"instrument-missing",
+					required_state=f"universe carries Instrument for {ticker}",
+					operation="accrue_short_carry",
+				) from exc
+			if borrow_rate == Decimal("0"):
+				# WR-05: no clock-advance. Instrument is frozen and borrow_rate is
+				# static-over-time, so the rate can never transition 0 -> non-zero
+				# within a run — advancing the clock here was dead rationale and
+				# would suppress carry across a transition if the type ever changed.
+				continue
+
+			# D-04 days basis from the bar gap (seed from the position entry).
+			last_accrual = position._last_accrual_time or position.entry_date
+			elapsed_seconds = Decimal(str((bar_time - last_accrual).total_seconds()))
+			days = elapsed_seconds / Decimal("86400")
+			if days <= Decimal("0"):
+				continue
+
+			carry = (
+				days
+				* position.current_price
+				* abs(position.net_quantity)
+				* borrow_rate
+				/ Decimal("365")
+			)
+			self.cash_manager.accrue_borrow_interest(
+				amount=carry,
+				reference_id=str(position.id),
+				description=f"Borrow interest {ticker}",
+				timestamp=bar_time,
+			)
+			position._last_accrual_time = bar_time
+
+	def _open_commission_credit_for_close(
+		self, position: Position, closed_qty: Decimal
+	) -> Decimal:
+		"""WR-05 (T-03-16): the EXACT open commission to re-credit for a close.
+
+		``realised_pnl`` deducts the entry-side commission proportionally to the
+		closed fraction of the OPENING side's total quantity:
+
+		* LONG  close: ``(sell_quantity / buy_quantity)  × buy_commission``
+		* SHORT close: ``(buy_quantity  / sell_quantity) × sell_commission``
+
+		Settling the realised increment therefore re-introduces the open
+		commission for the closed portion as ``(closed_qty / open_side_qty) ×
+		open_side_commission``. Re-crediting EXACTLY that term cancels the
+		double-count so the round-trip cash delta equals realized PnL — even
+		after a non-uniform-commission scale-in or staged partial close, where
+		the legacy ``closed_qty / net_quantity`` proxy drifts (the denominators
+		diverge once ``net_quantity < open_side_qty``). Decimal end-to-end.
+		"""
+		if position.side == PositionSide.LONG:
+			open_side_qty = position.buy_quantity
+			open_side_commission = position.buy_commission
+		else:  # SHORT
+			open_side_qty = position.sell_quantity
+			open_side_commission = position.sell_commission
+		if open_side_qty == Decimal("0"):
+			return Decimal("0")
+		return (closed_qty / open_side_qty) * open_side_commission
+
+
 	# Enhanced to_dict with new information
 	def to_dict(self) -> Dict[str, Any]:
 		"""Convert portfolio to dictionary."""

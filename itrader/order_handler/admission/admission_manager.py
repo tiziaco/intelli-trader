@@ -37,7 +37,7 @@ from ..base import OrderStorage
 from ..order_validator import EnhancedOrderValidator
 from ..sizing_resolver import SizingResolver
 from ..brackets import BracketBook, BracketManager
-from ...core.enums import OrderStatus, OrderType, Side, OrderOperationType, OrderTriggerSource
+from ...core.enums import OrderStatus, OrderType, Side, OrderOperationType, OrderTriggerSource, PositionSide
 from ...core.exceptions import InsufficientFundsError, SizingPolicyViolation
 from ...core.money import to_money
 from ...core.portfolio_read_model import PortfolioReadModel, PositionView
@@ -450,9 +450,16 @@ class AdmissionManager:
 		# (was get_position at :404). Identical to a fresh read under the
 		# single-writer contract.
 		open_position = snap
+		# SHORT-02 fix (Rule 1): the read-model carries an UNSIGNED magnitude
+		# (``PositionView.net_quantity == abs(...) >= 0`` — position.py:121), so a
+		# sign test cannot distinguish "open long" from "open short". Dispatch on
+		# ``side`` (the same discipline the reduction predicate uses at :742). A
+		# SELL is a sanctioned exit ONLY when an open LONG exists; a BUY is a
+		# sanctioned cover ONLY when an open SHORT exists.
 		if (signal_event.direction is TradingDirection.LONG_ONLY
 				and signal_event.action is Side.SELL
-				and (open_position is None or open_position.net_quantity <= 0)):
+				and (open_position is None
+				     or open_position.side is not PositionSide.LONG)):
 			return self._reject_unsized_signal(
 				signal_event,
 				f"direction violation: LONG_ONLY strategy cannot open a short "
@@ -463,7 +470,8 @@ class AdmissionManager:
 			)
 		if (signal_event.direction is TradingDirection.SHORT_ONLY
 				and signal_event.action is Side.BUY
-				and (open_position is None or open_position.net_quantity >= 0)):
+				and (open_position is None
+				     or open_position.side is not PositionSide.SHORT)):
 			return self._reject_unsized_signal(
 				signal_event,
 				f"direction violation: SHORT_ONLY strategy cannot open a long "
@@ -500,16 +508,21 @@ class AdmissionManager:
 		  (triggered_by=OrderTriggerSource.ADMISSION_MAX_POSITIONS). Oracle-dark: the golden
 		  run is single-ticker with max_positions=1 and at most one open
 		  position, so a new-entry BUY never trips it.
-		* OPEN short for the ticker (net_quantity < 0) — a BUY is a cover/
-		  exit; neither gate applies (short increases are out of v1 scope
-		  with the margin model, D-09).
+		* OPEN short for the ticker — a BUY is a cover/exit (passes; sized
+		  downstream). An unsized SELL is a same-side ADD (short increase),
+		  out of v1 scope with the margin model (D-09, WR-01): it is an
+		  AUDITED rejection (triggered_by=OrderTriggerSource.ADMISSION_INCREASE),
+		  mirroring the long INCREASE gate — it must NOT fall through to
+		  first-entry sizing.
 
 		Preserved paths the gates never block:
 		- First entries (no open position, count under the limit) size
 		  EXACTLY as before — byte-exactness of the post-07-07 reference
 		  depends on it when N=0.
 		- Explicit-quantity signals skip both gates (live/manual path).
-		- SELLs pass: exits are sized downstream; direction polices the rest.
+		- SELLs pass UNLESS they add to an open short (the WR-01 gate above):
+		  exits (SELL on an open long) and sanctioned first short entries
+		  (SELL with no open position) are sized downstream.
 
 		Returns
 		-------
@@ -522,6 +535,24 @@ class AdmissionManager:
 			# Explicit caller-supplied quantity: the gates do not apply.
 			return None
 		if signal_event.action is not Side.BUY:
+			# WR-01 (D-09): an unsized SELL that ADDS to an open short is a short
+			# increase — out of v1 scope with the margin model, mirroring the long
+			# INCREASE gate. Without this gate the SELL passes the direction gate
+			# (SHORT_ONLY+SELL is not policed), is not a reduction (SELL vs an open
+			# SHORT, _resolve_signal_quantity:750-753), and falls into FIRST-ENTRY
+			# `resolve_entry` sizing — silently scaling the short on entry-fraction-
+			# of-cash. Reject it as an AUDITED admission failure instead. A SELL
+			# against an open LONG (exit) or with no open position (a sanctioned
+			# first short entry) still passes — only the same-side add is blocked.
+			if (snap is not None and snap.side is PositionSide.SHORT):
+				return self._reject_unsized_signal(
+					signal_event,
+					f"position increase not allowed: short increase is out of "
+					f"v1 scope (D-09) for {signal_event.ticker}",
+					triggered_by=OrderTriggerSource.ADMISSION_INCREASE,
+					operation_type=OrderOperationType.SIGNAL_ADMISSION,
+					error_prefix="Signal rejected at admission",
+				)
 			return None
 		if self.portfolio_handler is None:
 			# No position truth to consult — an unsized signal without a
@@ -534,7 +565,16 @@ class AdmissionManager:
 		# (was get_position at :484). The open_position_count read below is a
 		# separate aggregate crossing and is NOT part of the snapshot.
 		open_position = snap
-		if open_position is not None and open_position.net_quantity > 0:
+		# SHORT-02 (D-05/D-06): dispatch on `side`, NOT the sign of net_quantity.
+		# The order-boundary read-model carries an UNSIGNED magnitude
+		# (PositionView.net_quantity == abs(...) >= 0, position.py:121) with
+		# direction in `side`. The pre-SHORT-02 `net_quantity > 0` predicate
+		# matched EVERY open position (a magnitude is always > 0), so it
+		# misclassified an open SHORT as a long and rejected a legitimate
+		# BUY-to-cover as a disallowed increase — the same CR-01 sign-convention
+		# hole the cover-arm fix closes downstream. The long INCREASE path stays
+		# byte-exact (an open long has side LONG).
+		if open_position is not None and open_position.side is PositionSide.LONG:
 			# INCREASE case (D-10): BUY for an already-open long.
 			if not signal_event.allow_increase:
 				return self._reject_unsized_signal(
@@ -549,7 +589,7 @@ class AdmissionManager:
 			# FractionOfCash arm reads CURRENT available_cash (remaining-cash
 			# semantics) and the check-and-reserve gate covers the cash check.
 			return None
-		if open_position is not None and open_position.net_quantity < 0:
+		if open_position is not None and open_position.side is PositionSide.SHORT:
 			# BUY against an open short is a cover/exit — neither gate applies.
 			return None
 		# NEW-POSITION case: no open position for the ticker (or a fully
@@ -598,6 +638,17 @@ class AdmissionManager:
 				"leverage clamped to cap",
 				requested=str(requested), capped=str(capped),
 				ticker=signal_event.ticker)
+		# WR-04 (D-09): floor the effective leverage at Decimal("1"). A
+		# misconfigured Instrument.max_leverage of 0 (or any sub-1 cap) would
+		# otherwise produce a sub-1 effective leverage and a divide-by-zero /
+		# inflated-margin downstream (locked_margin = notional / L leaks buying
+		# power as L → 0). Mirrors the existing None-guard defensiveness above —
+		# a degenerate cap can never drive effective leverage below 1.
+		if capped < Decimal("1"):
+			self.logger.warning(
+				"effective leverage floored to 1 (sub-1 cap)",
+				capped=str(capped), ticker=signal_event.ticker)
+			return Decimal("1")
 		return capped
 
 	def _enforce_leverage_admission(self, signal_event: SignalEvent) -> Optional[OperationResult]:
@@ -700,16 +751,39 @@ class AdmissionManager:
 		# (was get_position at :583). Value-identical under the single-writer
 		# contract — no fill mutates the position within one process_signal.
 		open_position = snap
-		if signal_event.action is Side.SELL and open_position is not None and open_position.net_quantity > 0:
-			# Long-only exit: the resolver sizes the exit from exchange truth
-			# (net_quantity is Decimal, M2a entity money; the read crosses the
-			# boundary as a frozen PositionView, D-15). The golden
-			# exit_fraction == Decimal("1") is the D-07 structural no-op:
-			# net_quantity is returned UNCHANGED — the Decimal flows native
-			# onto the Order entity, no float roundtrip (D-13), so the exit
-			# nets the long to exactly the position quantity.
+		# SHORT-02 (D-05/D-06): side-agnostic exit. A reduction is "the order
+		# action OPPOSES the open position's side" — a SELL against an open LONG
+		# OR a BUY-to-cover against an open SHORT. Both route through the SAME
+		# proven resolve_exit. NOTE (verified, deviates from PLAN's `net_quantity
+		# < 0` framing): the order-boundary read-model carries an UNSIGNED
+		# magnitude — PositionView.net_quantity == Position.net_quantity ==
+		# abs(buy_qty - sell_qty) >= 0 (position.py:121) — with direction in
+		# `side`. So the reduction predicate dispatches on `side`, not the sign
+		# of net_quantity (a short never presents net_quantity < 0 here). We
+		# still pass abs(net_quantity) for symmetry/defence (it is already a
+		# magnitude, so abs() is identity). This closes the v1.0 M5b CR-01 hole:
+		# before, a BUY-cover-on-short failed the long-only `SELL and net>0`
+		# predicate and fell into entry sizing (:726), flipping the short book
+		# LONG. The long-exit path stays BYTE-EXACT — a SELL-on-long still hits
+		# the same resolve_exit with the same (magnitude) operand (A2). D-06
+		# clamp-to-flat is implicit: a cover carries only a reduction
+		# exit_fraction (no opening basis) and resolve_exit returns AT MOST the
+		# full magnitude, so the excess can never auto-open a long. The Phase-2
+		# over-close guard (portfolio.py:399-404) stays as defense-in-depth.
+		is_reduction = open_position is not None and (
+			(signal_event.action is Side.SELL and open_position.side is PositionSide.LONG)
+			or (signal_event.action is Side.BUY and open_position.side is PositionSide.SHORT)
+		)
+		if is_reduction:
+			assert open_position is not None  # narrowed by is_reduction
+			# The resolver sizes the exit from exchange truth (net_quantity is
+			# Decimal, M2a entity money; the read crosses the boundary as a
+			# frozen PositionView, D-15). The golden exit_fraction == Decimal("1")
+			# is the D-07 structural no-op: the magnitude is returned UNCHANGED —
+			# the Decimal flows native onto the Order entity, no float roundtrip
+			# (D-13), so the exit nets the position to exactly its quantity.
 			return self.sizing_resolver.resolve_exit(
-				open_position.net_quantity,
+				abs(open_position.net_quantity),
 				signal_event.exit_fraction,
 				signal_event.sizing_policy.step_size,
 			)

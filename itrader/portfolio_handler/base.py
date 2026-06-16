@@ -223,6 +223,28 @@ class PortfolioStateStorage(ABC):
         pass
 
     @abstractmethod
+    def get_locked_margin_for(self, position_id: str) -> Decimal:
+        """Return the margin currently locked for a single position id.
+
+        WR-01 (T-03-15) reads this so a scale-in's own prior lock is added back
+        to buying power before the settlement-side solvency assertion (the
+        position replaces its own lock, so its already-locked amount must not be
+        double-counted against the new lock). Returns a CLEAN ``Decimal('0')``
+        when the position holds no lock.
+
+        Parameters
+        ----------
+        position_id : str
+            The position whose locked margin is read.
+
+        Returns
+        -------
+        Decimal
+            The locked amount for the position, or ``Decimal('0')`` if none.
+        """
+        pass
+
+    @abstractmethod
     def add_locked_margin(self, position_id: str, amount: Decimal) -> None:
         """Store (insert or replace) the locked margin for a position id.
 

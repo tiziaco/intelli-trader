@@ -49,7 +49,7 @@ byte-identical hold throughout. Full design: PROJECT.md "Current Milestone: v1.4
 
 - [x] **Phase 1: Instrument Value Object** - Per-symbol precision/lot/margin source replacing `_INSTRUMENT_SCALES`; BTCUSD stays declared 8dp (byte-exact behavioral gate) — completed 2026-06-15
 - [x] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated) — completed 2026-06-15 (9/9 plans; +LEV-03 discovered/closed)
-- [ ] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated)
+- [x] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated) — completed 2026-06-15 (6/6 plans; review BLOCKER CR-01 found+fixed inline)
 - [ ] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated)
 - [ ] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated)
 - [ ] **Phase 6: Pair-Trading Flagship** - Market-neutral long/short cointegration/spread strategy end-to-end; flagship demo (NOT the correctness oracle); final, slip-able capstone
@@ -202,7 +202,13 @@ entries lock margin on the run path. (WR-02 universe-unwired guard spans Phase 3
 **Re-baseline**: Owner-gated (result-changing). Shorts change results (the v1.0 oracle eliminated 2
 blessed shorts under D-08 LONG_ONLY); the new golden freezes ONLY after owner sign-off + external
 cross-validation. `mypy --strict` clean; Decimal end-to-end; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 6 plans (3 waves)
+- [x] 03-01-PLAN.md — inert data/enum plumbing: Instrument.borrow_rate (D-01) + CashOperationType.BORROW_INTEREST (D-03), default-off/oracle-dark
+- [x] 03-02-PLAN.md — Wave 0 test scaffolding: collectible skipped stubs for every selector + 3 parked e2e dirs (Nyquist contract, D-10)
+- [x] 03-03-PLAN.md — SHORT-01 two-flag registration gate (allow_short_selling AND enable_margin, D-07) + compose/live wiring
+- [x] 03-04-PLAN.md — SHORT-02 side-agnostic cover-arm + clamp-to-flat (D-05/D-06) + WR-04 leverage floor + SHORT-03 PnL confirm
+- [x] 03-05-PLAN.md — CARRY-01 per-bar BORROW_INTEREST carry accrual: thread bar business time + Universe into the mark (D-02/D-04/D-08)
+- [x] 03-06-PLAN.md — WR-01/02/03/05 margin-seam hardening (D-09) + 3 parked e2e scenarios + owner-gated phase gate (D-10)
 
 ### Phase 4: Liquidation & Cross-Validation Re-baseline
 **Goal**: A position breaching maintenance margin (checked on bar close — the honest daily-OHLCV
@@ -211,6 +217,14 @@ configurable penalty, reconciling through the existing position/cash/order-mirro
 margin/shorts/liquidation accounting core is cross-validated and the new golden master frozen under
 owner sign-off.
 **Depends on**: Phase 2 (maintenance margin) AND Phase 3 (shorts to liquidate)
+**Carry-forward (review residuals → Phase 4)**: address the residuals parked in
+`phases/03-shorts-borrow-carry/deferred-items.md` — WR-04 (`assert_lock_fits_buying_power` add-back
+reads `0` because `release_margin` pops the prior lock before the assertion runs; fix the call order —
+assert before release, or pass the released amount in — so the solvency assertion credits the prior
+lock it claims to). Conservative today (fails loud, not a leak) but lands on the FRAGILE margin seam
+this phase re-touches, so bundle it under the single XVAL-01 owner-gated re-baseline. Plus IN-03
+(per-instrument maintenance-margin-rate table) declared here before liquidation consumes `margin_ratio`.
+(WR-02 universe-unwired guard — resolved in Phase 3 as a fail-loud `StateError` — no longer carries forward.)
 **Requirements**: LIQ-01, LIQ-02, LIQ-03, XVAL-01
 **Success Criteria** (what must be TRUE):
   1. A position breaching maintenance margin on bar close is force-closed via a `FillEvent`, loss
@@ -281,7 +295,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 |-------|----------------|--------|-----------|
 | 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
 | 2. Margin Accounting & Leverage | 9/9 | Complete   | 2026-06-15 |
-| 3. Shorts & Borrow Carry | 0/TBD | Not started | - |
+| 3. Shorts & Borrow Carry | 6/6 | Complete   | 2026-06-15 |
 | 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
 | 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |
 | 6. Pair-Trading Flagship | 0/TBD | Not started | - |

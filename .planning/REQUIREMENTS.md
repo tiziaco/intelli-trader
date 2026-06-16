@@ -52,16 +52,16 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Shorts (SHORT)
 
-- [ ] **SHORT-01**: A strategy can open and hold a short position — the `LONG_ONLY` guard in
+- [x] **SHORT-01**: A strategy can open and hold a short position — the `LONG_ONLY` guard in
   `StrategiesHandler.add_strategy` no longer blocks `SHORT_ONLY` / long-short books.
-- [ ] **SHORT-02**: A BUY-to-cover on a `SHORT_ONLY` book reduces/closes the short instead of falling
+- [x] **SHORT-02**: A BUY-to-cover on a `SHORT_ONLY` book reduces/closes the short instead of falling
   through to entry sizing and flipping the book long (CR-01 cover-arm fix in `_resolve_signal_quantity`).
-- [ ] **SHORT-03**: Short positions compute first-class short PnL (`|size| × (entry − exit)` minus
+- [x] **SHORT-03**: Short positions compute first-class short PnL (`|size| × (entry − exit)` minus
   carry), modeled as a first-class direction rather than a sign-flipped long.
 
 ### Carry (CARRY)
 
-- [ ] **CARRY-01**: Open short positions accrue borrow interest (`days × price × |size| × rate/365`)
+- [x] **CARRY-01**: Open short positions accrue borrow interest (`days × price × |size| × rate/365`)
   booked to realized cash (one parameter, no external data feed).
 
 ### Leverage (LEV)
@@ -148,10 +148,10 @@ Which phases cover which requirements. Filled during roadmap creation.
 | LEV-01 | Phase 2 — Margin Accounting & Leverage | Complete |
 | LEV-02 | Phase 2 — Margin Accounting & Leverage | Complete |
 | LEV-03 | Phase 2 — Margin Accounting & Leverage | Complete |
-| SHORT-01 | Phase 3 — Shorts & Borrow Carry | Pending |
-| SHORT-02 | Phase 3 — Shorts & Borrow Carry | Pending |
-| SHORT-03 | Phase 3 — Shorts & Borrow Carry | Pending |
-| CARRY-01 | Phase 3 — Shorts & Borrow Carry | Pending |
+| SHORT-01 | Phase 3 — Shorts & Borrow Carry | Complete |
+| SHORT-02 | Phase 3 — Shorts & Borrow Carry | Complete |
+| SHORT-03 | Phase 3 — Shorts & Borrow Carry | Complete |
+| CARRY-01 | Phase 3 — Shorts & Borrow Carry | Complete |
 | LIQ-01 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
 | LIQ-02 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
 | LIQ-03 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |

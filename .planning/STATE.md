@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Margin, Leverage, Shorts & Trailing Stops
 status: ready_to_plan
-stopped_at: Phase 02 complete (9/9) — ready to discuss Phase 3 (Shorts & Borrow Carry)
-last_updated: 2026-06-15T14:07:16.532Z
-last_activity: 2026-06-15
+stopped_at: Phase 03 complete (6/6) — ready to discuss Phase 4
+last_updated: 2026-06-15T19:29:46.758Z
+last_activity: 2026-06-15 -- Phase 03 complete (6/6), verification passed
 progress:
   total_phases: 9
-  completed_phases: 2
-  total_plans: 12
-  completed_plans: 12
-  percent: 22
+  completed_phases: 3
+  total_plans: 18
+  completed_plans: 18
+  percent: 33
 ---
 
 # Project State
@@ -21,17 +21,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 3 — Shorts & Borrow Carry
+**Current focus:** Phase 4 — Liquidation & Cross-Validation Re-baseline (LIQ-01/02/03, XVAL-01)
 
 ## Current Position
 
-Phase: 3
+Phase: 4
 Plan: Not started
-Status: Ready to plan
+Status: Ready to discuss
 
-> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 3 dir does
-> not exist yet (only 02 + 999.x dirs are present). Corrected manually to Phase 3 per the v1.4 Phase
-> Map (1→2→**3**→4→5→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
+> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 4 dir does
+> not exist yet (only 01/02/03 + 999.x dirs are present). Corrected manually to Phase 4 per the v1.4
+> Phase Map (1→2→3→**4**→5→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
 Last activity: 2026-06-15
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
@@ -111,7 +111,7 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 **Velocity (v1.3):**
 
-- Total plans completed: 32
+- Total plans completed: 38
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -298,9 +298,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-15T14:00:00.000Z
-Stopped at: Completed 02-08-PLAN.md
-Resume file: None
+Last session: 2026-06-15T16:42:03.346Z
+Stopped at: Phase 3 context gathered
+Resume file: .planning/phases/03-shorts-borrow-carry/03-CONTEXT.md
 
 ## Operator Next Steps
 
