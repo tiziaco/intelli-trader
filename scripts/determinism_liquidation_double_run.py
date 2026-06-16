@@ -95,17 +95,30 @@ def main() -> int:
         return 1
 
     # Sanity: the run actually exercised the liquidation (a closed position + final
-    # balance reflecting the WB-capped loss), so a no-op run can't pass the gate.
-    if run_a["closed_count"] != 1 or run_a["final_balance"] != str(Decimal("6081.191919191919191919191919")):
-        # final balance derived from the hand-computed scenario (10000 - 3918.808...).
-        # Print but don't hard-fail on the exact tail — the byte-identity above is the gate;
-        # this only guards against a silently-empty run.
-        if run_a["closed_count"] != 1:
-            print(
-                f"DETERMINISM FAIL — run did not liquidate (closed_count={run_a['closed_count']!r})",
-                file=sys.stderr,
-            )
-            return 1
+    # balance reflecting the forced-close loss), so a no-op run can't pass the gate.
+    # WR-02: BOTH halves are now asserted hard (the prior `or` over final_balance
+    # was dead — the inner block only acted on closed_count, so a final_balance
+    # divergence printed "DETERMINISM OK"). The expected balance is derived from
+    # named scenario constants, not a bare 28-digit literal.
+    _INITIAL_CASH = Decimal("10000")
+    # Hand-computed forced-close loss for the scenario (the e2e leaf oracle):
+    #   |realized loss| + penalty == 3918.808080808080808080808081.
+    _FORCED_CLOSE_LOSS = Decimal("3918.808080808080808080808081")
+    _EXPECTED_FINAL_BALANCE = str(_INITIAL_CASH - _FORCED_CLOSE_LOSS)
+    if run_a["closed_count"] != 1:
+        print(
+            f"DETERMINISM FAIL — run did not liquidate (closed_count={run_a['closed_count']!r})",
+            file=sys.stderr,
+        )
+        return 1
+    if run_a["final_balance"] != _EXPECTED_FINAL_BALANCE:
+        print(
+            "DETERMINISM FAIL — final_balance diverged from the hand-computed scenario:",
+            file=sys.stderr,
+        )
+        print(f"    expected: {_EXPECTED_FINAL_BALANCE!r}", file=sys.stderr)
+        print(f"    actual:   {run_a['final_balance']!r}", file=sys.stderr)
+        return 1
 
     print("DETERMINISM OK — liquidation double-run byte-identical")
     print(f"  bars: {len(run_a['per_bar'])}  closed_positions: {run_a['closed_count']}  "
