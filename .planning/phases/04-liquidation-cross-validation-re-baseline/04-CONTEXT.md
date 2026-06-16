@@ -190,6 +190,36 @@ single-order flips (deferred explicit-quantity feature).
   `strategy_handler/`; 4 spaces in `core/`, `config/`, `events_handler/events/` —
   match the file, never normalize.
 
+### Planning-time correction (owner-authorized 2026-06-16, via Phase 4 research)
+- **D-01-CORR — the D-01 formula string is a transcription error; use the
+  freqtrade-canonical isolated form.** `Entry×(1−(WB/size)/L)/(1+MMR)` as literally
+  written yields a NEGATIVE price (hand-verified in a Decimal harness: −297.03 for
+  Entry=100, L=5, MMR=0.01) because `WB/size` already equals `Entry/L` (the extra
+  `/L` double-counts leverage) and `(1+MMR)` has the wrong sign for a long. The
+  CORRECT formula (WB = the position's allocated isolated margin from the
+  `CashManager` locked-margin container):
+  - **Long:** `liq_price = (entry − WB/|size|) / (1 − MMR)`
+  - **Short:** `liq_price = (entry + WB/|size|) / (1 + MMR)`
+  - Worked (Entry=100, size=200, L=5 → WB=4000, MMR=0.01): **long 80.8080…, short
+    118.8118…**. These corrected numbers are the e2e oracle + golden master.
+- **D-03-CORR — the loss floor is NOT automatic; D-07's cap is an explicit clamp.**
+  D-03's "loss == allocated margin by construction, no clamp needed" is exact only
+  at the bankruptcy price (MMR=0). At the maintenance liq price the position retains
+  a `/(1−MMR)` buffer (realized loss −3838.38, not −4000 for the worked long); D-05's
+  %-of-notional penalty consumes that buffer, and total realized loss is capped via
+  an **explicit** `total_realized_loss = min(realized_loss + penalty, WB)` (a fat
+  penalty or deep MMR can push past WB → the clamp guards the tail and keeps DEF-01-C
+  closed). D-03's "no clamp" wording is superseded by D-07's cap.
+- **IN-03 (clarification, not a change):** the existing per-instrument
+  `Instrument.maintenance_margin_rate` (INST-03, read by `maintenance_margin`)
+  already satisfies the LIQ MMR need — no new field. The `deferred-items.md` "IN-03"
+  is a *different* (carry-gap) item; do not conflate the label.
+- **LIQ-03 mechanism (clarification):** the forced-close engine mints and persists a
+  REAL `Order` (tagged `OrderTriggerSource.LIQUIDATION`) in `order_storage` so the
+  mirror's `on_fill` reconcile (EXECUTED→FILLED) fires — `ReconcileManager.on_fill`
+  early-returns if the fill's `order_id` is unknown, so a real registered Order is
+  required to keep LIQ-03's "reconciles through the existing path" literally true.
+
 </decisions>
 
 <canonical_refs>
