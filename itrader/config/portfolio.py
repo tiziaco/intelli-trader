@@ -79,6 +79,11 @@ class TradingRules(BaseModel):
     # leverage is a strategy/signal concern (rides SignalEvent), not a
     # portfolio default.
     max_leverage: Decimal = Field(default=Decimal("1"), ge=1)
+    # D-06: config-level forced-close penalty fallback (LIQ-02) for symbols that
+    # do not declare liquidation_fee_rate on Instrument (Instrument-first ->
+    # config fallback, resolved in Phase 4). Default Decimal("0") is oracle-dark;
+    # ge=0 rejects negative rates. SMA_MACD never sets it.
+    liquidation_fee_rate: Decimal = Field(default=Decimal("0"), ge=0)
     min_trade_amount: Decimal = Decimal("100.0")
     max_trade_amount: Optional[Decimal] = None
     max_transactions_per_day: Optional[int] = None
