@@ -28,10 +28,12 @@ files_reviewed_list:
   - tests/unit/portfolio/test_liquidation.py
   - tests/unit/portfolio/test_wr04_lock_fits_buying_power.py
 findings:
-  critical: 1
+  critical: 0
   warning: 5
   info: 4
-  total: 10
+  total: 9
+  resolved:
+    - "CR-01 (was critical) — resolved by fix b461db0 via /gsd:debug liq-loss-cap-dead-code; owner chose option (a) fill-at-liq-price."
 status: issues_found
 ---
 
@@ -66,6 +68,9 @@ reach-through, and a few quality items.
 ## Critical Issues
 
 ### CR-01: The DEF-01-C loss-cap (`_capped_realized_loss`) is dead code — the advertised "equity never below -WB" guarantee is never enforced
+
+> **✅ RESOLVED — fix `b461db0` (via `/gsd:debug liq-loss-cap-dead-code`, owner decision 2026-06-16).**
+> Investigation confirmed the finding and falsified the "gap-through books uncapped loss" concern as a description of *current* behavior: the engine deliberately fills the forced close at the maintenance liq price, so the loss is bounded by construction (not by the clamp). The clamp was also structurally unreachable (binds only when `fee_rate > MMR`). Owner chose **option (a)**: fill-at-liq-price is the deliberate bound. The dead `_capped_realized_loss` helper + its test-only arm were removed, the false attribution corrected across docstrings / 04-03-SUMMARY / 04-03-PLAN truth / threat T-04-03-NEG / e2e comments, and a gap-through regression (`test_liquidation_fills_at_liq_price_on_gap_through`) now pins the fill-at-liq-price guarantee. Zero numerical change — oracle byte-exact, no golden re-freeze, 1146 passed, mypy --strict clean. Original finding retained below as the audit record.
 
 **File:** `itrader/portfolio_handler/portfolio_handler.py:444-456` (definition); liquidation path `:517-624`
 
