@@ -563,7 +563,8 @@ class PortfolioHandler:
         )
 
     def _run_liquidation_pass(self, bar_events: List[BarEvent],
-                              bar_time: Optional[datetime]) -> None:
+                              bar_time: Optional[datetime],
+                              marked_portfolio_ids: Optional[set[Any]] = None) -> None:
         """BAR-route per-position liquidation breach check (D-02 placement).
 
         Runs AFTER the per-portfolio mark + P3 carry pass so the breach sees the
@@ -573,6 +574,13 @@ class PortfolioHandler:
         zero breaches) this loop finds nothing and emits no fills, so SMA_MACD
         stays byte-exact (D-11). No Universe / no order_storage wired (legacy
         mark-only callers) → no-op.
+
+        WR-05: ``marked_portfolio_ids`` is the set of portfolios that re-marked
+        cleanly this tick. Only those are evaluated — a portfolio whose mark
+        raised mid-loop (possible only on the LIVE _publish_and_continue path;
+        the backtest re-raise aborts before this pass) is SKIPPED so the breach
+        never reads its stale, partially-marked equity. ``None`` (legacy direct
+        callers / unit tests) means "no gating" — evaluate every active portfolio.
         """
         if bar_time is None or self._universe is None or self._order_storage is None:
             return
@@ -582,6 +590,9 @@ class PortfolioHandler:
             for ticker, bar in bar_event.bars.items():
                 closes[ticker] = bar.close
         for portfolio in self.get_active_portfolios():
+            if (marked_portfolio_ids is not None
+                    and portfolio.portfolio_id not in marked_portfolio_ids):
+                continue
             for position in self._collect_breaches_over_prices(portfolio, closes, bar_time):
                 wb, mmr, fee_rate = self._liq_inputs(portfolio, position)
                 liq_price = self._isolated_liq_price(position, wb, mmr)
@@ -734,6 +745,15 @@ class PortfolioHandler:
         # Update only active portfolios (each handles its own thread safety)
         active_portfolios = self.get_active_portfolios()
 
+        # WR-05: record which portfolios re-marked cleanly THIS tick so the
+        # liquidation pass never evaluates a breach against a stale mark. In the
+        # backtest path the re-raise below aborts the run before the pass runs
+        # (so all-or-nothing); in the LIVE path (_publish_and_continue swallows
+        # at the dispatch boundary) a portfolio whose mark raised mid-loop is
+        # SKIPPED by the pass — the "breach sees carry-eroded equity" invariant
+        # (D-02) only holds for a portfolio that actually re-marked this tick.
+        marked_portfolio_ids: set[Any] = set()
+
         for portfolio in active_portfolios:
             try:
                 # CARRY-01/D-01: thread bar business time + the injected Universe
@@ -742,6 +762,7 @@ class PortfolioHandler:
                 # set_universe is wired; with no universe / rate-0 / no open shorts
                 # the carry accrual is a no-op (SMA_MACD byte-exact under default-off).
                 portfolio.update_market_value_of_portfolio(prices, bar_time, self._universe)
+                marked_portfolio_ids.add(portfolio.portfolio_id)
             except Exception as e:
                 # WR-08: a failed mark must NOT be swallowed. In a project whose
                 # core value is "numbers you can trust", silently continuing
@@ -761,7 +782,8 @@ class PortfolioHandler:
         # check runs AFTER the per-portfolio mark + P3 carry pass so a breach
         # sees the carry-eroded equity. Oracle-dark on the spot path (no locked
         # margin / no Universe-or-storage wired → zero breaches, no fills).
-        self._run_liquidation_pass(bar_events, bar_time)
+        # WR-05: only portfolios that re-marked cleanly this tick are eligible.
+        self._run_liquidation_pass(bar_events, bar_time, marked_portfolio_ids)
 
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:
