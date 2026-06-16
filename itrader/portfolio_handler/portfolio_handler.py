@@ -13,12 +13,15 @@ from typing import Dict, Optional, Any, List, Generator, Union
 from contextlib import contextmanager
 
 from .portfolio import Portfolio
+from .position import Position
 from itrader.core.exceptions import (
     PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError,
     StateError,
 )
-from itrader.core.enums import PortfolioState, TransactionType, FillStatus, Side
+from itrader.core.enums import (
+    PortfolioState, TransactionType, FillStatus, Side, PositionSide,
+)
 from itrader.core.ids import OrderId, PortfolioId, TransactionId, CorrelationId
 from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money
@@ -354,6 +357,133 @@ class PortfolioHandler:
         if maintenance == Decimal("0"):
             return Decimal("0")
         return self.total_equity(portfolio_id) / maintenance
+
+    # ------------------------------------------------------------------
+    # Isolated-margin liquidation engine (LIQ-01/02, D-01-CORR/D-03-CORR/D-04/
+    # D-05/D-07). The BAR-route per-position breach check runs AFTER the per-
+    # portfolio mark + P3 carry pass (D-02 placement — breach sees carry-eroded
+    # equity). The math is Decimal end-to-end (Pitfall 5 — NEVER Decimal(float));
+    # the liq price is quantized to the instrument price scale ONLY at the
+    # FillEvent boundary in the mint step, never mid-formula.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _isolated_liq_price(position: Position, wb: Decimal, mmr: Decimal) -> Decimal:
+        """Corrected isolated liquidation price (D-01-CORR — HAND-VERIFIED).
+
+        ``margin_per_unit = wb / |size|`` where ``wb`` is the position-keyed
+        locked isolated margin (``CashManager.get_locked_margin_for``) and
+        ``|size| = abs(net_quantity)``. With ``entry = avg_price``:
+
+        * LONG : ``(entry − margin_per_unit) / (1 − mmr)``
+        * SHORT: ``(entry + margin_per_unit) / (1 + mmr)``
+
+        The corrected formula (NOT the literal CONTEXT D-01 string, which yields
+        a negative price). For Entry=100, |size|=200, WB=4000, MMR=0.01 it gives
+        the long 80.808080… / short 118.811881… worked numbers. Full Decimal
+        precision is carried; quantization happens only at the FillEvent price
+        boundary (the mint step).
+        """
+        size = abs(position.net_quantity)
+        entry = position.avg_price
+        margin_per_unit = wb / size
+        if position.side == PositionSide.LONG:
+            return (entry - margin_per_unit) / (Decimal("1") - mmr)
+        return (entry + margin_per_unit) / (Decimal("1") + mmr)
+
+    @staticmethod
+    def _is_breached(position: Position, close: Decimal, liq_price: Decimal) -> bool:
+        """Return True when the bar close crosses the liquidation price.
+
+        LONG breaches when ``close <= liq`` (price fell into the maintenance
+        floor); SHORT breaches when ``close >= liq`` (price rose into it). The
+        liq price is computed once by the breach pass and passed in.
+        """
+        if position.side == PositionSide.LONG:
+            return close <= liq_price
+        return close >= liq_price
+
+    @staticmethod
+    def _liquidation_penalty(fee_rate: Decimal, size: Decimal, liq_price: Decimal) -> Decimal:
+        """Forced-close penalty = ``fee_rate × |size| × liq_price`` (D-05/LIQ-02).
+
+        Rides ``FillEvent.commission`` (no new FillStatus). Full Decimal
+        precision; defaults to ``Decimal("0")`` for a 0 fee rate (oracle-dark).
+        """
+        return fee_rate * size * liq_price
+
+    @staticmethod
+    def _capped_realized_loss(realized_loss_magnitude: Decimal, penalty: Decimal,
+                              wb: Decimal) -> Decimal:
+        """EXPLICIT loss clamp ``min(realized_loss + penalty, WB)`` (D-03-CORR/D-07).
+
+        Caps the total loss at the allocated isolated margin (WB) so equity can
+        never drift impossibly negative (closes DEF-01-C). The clamp is EXPLICIT
+        — not an automatic by-product of the maintenance liq price: at the
+        maintenance price the loss magnitude alone stays below WB (the buffer is
+        retained), and only a fat penalty (or an extreme gap) makes the clamp
+        bite.
+        """
+        return min(realized_loss_magnitude + penalty, wb)
+
+    def _liq_inputs(self, portfolio: Portfolio, position: Position) -> "tuple[Decimal, Decimal, Decimal]":
+        """Resolve ``(wb, mmr, fee_rate)`` for a position from cash + Universe.
+
+        ``wb`` = the position-keyed locked isolated margin
+        (``get_locked_margin_for(str(position.id))``); ``mmr`` =
+        ``Instrument.maintenance_margin_rate``; ``fee_rate`` resolved
+        Instrument-first (``instrument.liquidation_fee_rate``) — the Universe
+        Instrument is the single per-symbol source of truth (the
+        ``TradingRules`` config fallback is consulted by the caller only when no
+        Universe Instrument carries the rate; here the Instrument always does
+        since it defaults to ``Decimal("0")``).
+        """
+        wb = portfolio.cash_manager._storage.get_locked_margin_for(str(position.id))
+        instrument = self._universe.instrument(position.ticker)
+        mmr = instrument.maintenance_margin_rate
+        fee_rate = instrument.liquidation_fee_rate
+        return wb, mmr, fee_rate
+
+    def _collect_breaches(self, portfolio: Portfolio, close: Decimal,
+                          bar_time: datetime) -> List[Position]:
+        """Collect open positions whose bar close crosses their liq price.
+
+        Iterates the portfolio's OPEN positions, computes each isolated liq
+        price, flags breaches, and returns them SORTED by
+        ``(ticker, open_time, position_id)`` for the byte-identical double-run
+        (D-02/Pitfall 3 — independent of dict iteration order). A position with
+        no locked margin (``wb == 0`` — spot, unlevered) or a non-positive mark
+        is skipped (never a spurious breach). The WR-02 unwired-Universe guard
+        fires only when there is a position to evaluate.
+        """
+        positions = portfolio.position_manager.get_all_positions()
+        if not positions:
+            return []
+        if self._universe is None:
+            raise StateError(
+                portfolio.portfolio_id,
+                "universe-unwired",
+                required_state="universe-wired (call set_universe)",
+                operation="liquidation_breach_check",
+            )
+        breached: List[Position] = []
+        for position in positions.values():
+            if not position.is_open:
+                continue
+            # WR-03 mirror: a non-positive mark never produces a breach.
+            if position.current_price <= Decimal("0"):
+                continue
+            wb, mmr, _fee_rate = self._liq_inputs(portfolio, position)
+            # Spot / unlevered positions hold no isolated margin lock — there is
+            # no maintenance floor to breach (oracle-dark: SMA_MACD never locks).
+            if wb <= Decimal("0"):
+                continue
+            liq_price = self._isolated_liq_price(position, wb, mmr)
+            if self._is_breached(position, close, liq_price=liq_price):
+                breached.append(position)
+        # Deterministic order (Pitfall 3): symbol, then open-time, then id.
+        breached.sort(key=lambda p: (p.ticker, p.entry_date, str(p.id)))
+        return breached
 
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:

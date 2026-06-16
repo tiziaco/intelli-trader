@@ -118,15 +118,15 @@ def test_liquidation_breach_detected_on_bar_close():
     pid, position = _open_position(h, side="long")
 
     # close above liq → no breach; close at/below liq → breach.
-    assert h._is_breached(position, _LONG_LIQ + Decimal("1")) is False
-    assert h._is_breached(position, _LONG_LIQ) is True
-    assert h._is_breached(position, _LONG_LIQ - Decimal("5")) is True
+    assert h._is_breached(position, _LONG_LIQ + Decimal("1"), _LONG_LIQ) is False
+    assert h._is_breached(position, _LONG_LIQ, _LONG_LIQ) is True
+    assert h._is_breached(position, _LONG_LIQ - Decimal("5"), _LONG_LIQ) is True
 
     h2 = _handler(_StubUniverse({_TICKER: _StubInstrument(_MMR, Decimal("0"))}))
     _, short_pos = _open_position(h2, side="short")
-    assert h2._is_breached(short_pos, _SHORT_LIQ - Decimal("1")) is False
-    assert h2._is_breached(short_pos, _SHORT_LIQ) is True
-    assert h2._is_breached(short_pos, _SHORT_LIQ + Decimal("5")) is True
+    assert h2._is_breached(short_pos, _SHORT_LIQ - Decimal("1"), _SHORT_LIQ) is False
+    assert h2._is_breached(short_pos, _SHORT_LIQ, _SHORT_LIQ) is True
+    assert h2._is_breached(short_pos, _SHORT_LIQ + Decimal("5"), _SHORT_LIQ) is True
 
 
 def test_liquidation_penalty():
