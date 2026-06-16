@@ -38,7 +38,21 @@ _PRICES = [
     ("2020-01-06", 10.0),
 ]
 _BUY_DATE = "2020-01-02"
-QTY = 200
+# iTrader sizes notional = f x equity = 2 x 10_000 = 20_000.
+NOTIONAL = 2 * CASH
+
+
+def _entry_price(buy_date: str) -> float:
+    """Fill price for a decision on ``buy_date`` (next-bar fill -> that bar's close)."""
+    dates = [d for d, _ in _PRICES]
+    fill_close = _PRICES[dates.index(buy_date) + 1][1]
+    return fill_close
+
+
+# IN-03: derive QTY from notional / entry_price so it TRACKS the frame instead of
+# being correct only by coincidence of a flat-100 entry. The 5x leverage / deep
+# collapse is unaffected — only the absolute entry size is derived here.
+QTY = int(NOTIONAL / _entry_price(_BUY_DATE))
 
 
 def _frame() -> pd.DataFrame:
