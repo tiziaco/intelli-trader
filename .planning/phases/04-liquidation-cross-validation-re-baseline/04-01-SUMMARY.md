@@ -92,3 +92,9 @@ None - plan executed exactly as written.
 
 None — these are intentional inert contracts (oracle-dark by design), wired by the 04-03 consumer.
 Documented as default-off in PROJECT/STATE; not stubs that block this plan's goal.
+
+## Self-Check: PASSED
+
+- Files: `itrader/core/enums/order.py`, `itrader/core/instrument.py`, `itrader/config/portfolio.py`,
+  `04-01-SUMMARY.md` — all present.
+- Commits: `86d64b1` (Task 1), `5a9f804` (Task 2) — both present in git log.
