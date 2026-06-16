@@ -190,6 +190,7 @@ class OrderTriggerSource(Enum):
 	ADMISSION_INCREASE = "admission_increase"
 	ADMISSION_MAX_POSITIONS = "admission_max_positions"
 	ADMISSION_LEVERAGE = "admission_leverage"
+	LIQUIDATION = "liquidation"  # LIQ-03 — forced-close trigger source
 
 	@classmethod
 	def _missing_(cls, value: object) -> "OrderTriggerSource":

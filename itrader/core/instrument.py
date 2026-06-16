@@ -77,6 +77,13 @@ class Instrument:
         borrow cost per asset. Defaults to ``Decimal("0")`` (carry-off) so
         SMA_MACD stays oracle byte-exact; the Plan-05 per-bar short-carry
         accrual reads it via the Universe read-model. Oracle-dark until then.
+    liquidation_fee_rate:
+        Per-symbol forced-close penalty rate as a ``Decimal`` (D-06; LIQ-02).
+        Mirrors ``borrow_rate`` exactly in shape. Defaults to ``Decimal("0")``
+        — # D-06 — default 0 = oracle-dark — so the SMA_MACD spot oracle stays
+        byte-exact; the Phase-4 liquidation engine reads it Instrument-first,
+        falling back to ``TradingRules.liquidation_fee_rate`` when a symbol
+        leaves it undeclared. Unread on the spot path until then.
     """
 
     symbol: str
@@ -88,3 +95,4 @@ class Instrument:
     min_order_size: Decimal | None = None
     settles_funding: bool = False
     borrow_rate: Decimal = Decimal("0")
+    liquidation_fee_rate: Decimal = Decimal("0")  # D-06 — default 0 = oracle-dark

@@ -128,6 +128,18 @@ class CashManager:
         """
         return self._storage.get_locked_margin()
 
+    def get_locked_margin_for(self, position_id: str) -> Decimal:
+        """Return the isolated margin locked for one position id (WR-03).
+
+        Public read-surface delegator over the storage seam so sibling handlers
+        (the liquidation engine's ``_liq_inputs``) read a single position's
+        locked margin WITHOUT reaching through the private ``_storage``
+        attribute — a refactor of the pluggable storage backend then surfaces as
+        a typed contract change here, not a silent ``AttributeError`` across a
+        domain boundary. Returns a clean ``Decimal('0')`` when nothing is locked.
+        """
+        return self._storage.get_locked_margin_for(position_id)
+
     @property
     def reserved_balance(self) -> Decimal:
         """Get reserved cash balance."""
@@ -452,6 +464,15 @@ class CashManager:
         (``available_balance`` already nets reserved + locked; the position's
         own prior lock is about to be released and re-locked, so it is added
         back). A lock within that figure settles normally.
+
+        WR-04 (Plan 04-02) — CALL-ORDER CONTRACT: callers MUST invoke this
+        assertion while the position's prior lock is STILL present (i.e. assert
+        BEFORE ``release_margin``). The add-back reads
+        ``get_locked_margin_for(position_id)`` to credit the position's own prior
+        lock; if the prior lock has already been popped by ``release_margin`` it
+        reads ``0`` and the add-back is silently dropped. The ``portfolio.py``
+        margin-lock sites (open/scale-in and partial/full close) honour this
+        order — assert, then release, then re-lock.
 
         Args:
             lock_amount: The margin about to be locked (``aggregate_notional / L``).

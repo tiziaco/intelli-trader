@@ -1,0 +1,275 @@
+"""FROZEN leveraged-long-into-liquidation white-box e2e — the P2-margin -> P4-liq thread.
+
+============================ FROZEN — ACCOUNTING-CORE GOLDEN ==========================
+FREEZE PROVENANCE (D-10/D-12): frozen as part of the single accounting-core golden at
+the owner-gated 04-05 sign-off — Approved-by: tiziaco (tiziano.iaco@gmail.com),
+2026-06-16. The freeze set is ALL parked P2/P3 scenarios (levered_long, short_roundtrip,
+short_carry, partial_cover) + the new P4 liquidation scenarios (forced_liq_long,
+forced_liq_short, levered_long_into_liquidation) frozen as ONE accounting-core golden
+(liquidation directionally corroborated vs backtesting.py + backtrader, D-08; the
+hand-computed closed-form is PRIMARY; see tests/golden/CROSS-VALIDATION-ACCOUNTING.md).
+Every number asserted below is a HAND-COMPUTED literal with the arithmetic shown
+inline. This
+test does NOT use the golden-diff harness (``run_scenario`` / ``golden/``) — its
+load-bearing assertions thread the Phase-2 MARGIN CORE (LeveredFraction sizing,
+admission reservation = notional / L, position-life locked margin) INTO the Phase-4
+liquidation trigger, asserting that the maintenance-margin breach check fires on the
+bar close, the forced close RELEASES the locked margin, and the total loss is bounded
+at the wallet's allocated margin by SETTLING THE CLOSE AT THE LIQ PRICE (fill-at-liq-price)
+so equity cannot drift impossibly negative (DEF-01-C). There is NO explicit clamp (CR-01).
+
+DIRECTIONAL CORROBORATION (D-08): this is the leveraged-long scenario that
+backtesting.py's ``equity <= 0 -> close-all`` minimal liquidation model corroborates
+(see ``scripts/crossval/liquidation_run.py``). The hand-computed closed-form here is
+PRIMARY; the reference engines give DIRECTIONAL agreement only (they liquidate the
+levered long; they do NOT byte-match the isolated formula).
+=====================================================================================
+
+What it exercises (the margin-core -> liquidation thread, LIQ-01/02/03)
+----------------------------------------------------------------------
+* MARGIN-01 / LEV-02 — a LeveredFraction-sized leveraged long opens with admission
+                       reservation -> position-life locked isolated margin WB = notional/L.
+* LIQ-01 — the maintenance-margin breach check fires on the bar CLOSE (no mark feed on
+           daily OHLCV — the honest documented proxy) the moment the close crosses the
+           corrected isolated long liq price.
+* LIQ-02 — the forced close RELEASES the locked margin and bounds the total loss at WB
+           by SETTLING AT THE LIQ PRICE (fill-at-liq-price, D-03 automatic-floor reading /
+           D-07) so equity cannot drift impossibly negative (DEF-01-C closed). NO explicit
+           min(loss + penalty, WB) clamp — the floor is the fill (CR-01).
+* LIQ-03 — the forced close reconciles EXECUTED -> FILLED tagged LIQUIDATION.
+
+Discretion values (oracle-dark — synthetic instrument, NEVER BTCUSD)
+--------------------------------------------------------------------
+``LIQUSD`` declares ``max_leverage = 10``, ``maintenance_margin_rate = 0.01``,
+``liquidation_fee_rate = 0.005``. Portfolio cap 5; signal requests leverage 20 (clamps
+to 5) sized by ``LeveredFraction(f=2)``. (Synthetic — the spot oracle stays byte-exact
+134 / 46189.87730727451, D-11.)
+
+================================ HAND COMPUTATION ================================
+
+Price series (``bars.csv`` — daily, flat-OHLC so close == the unambiguous mark):
+
+    bar  date         close
+    0    2020-01-01   100
+    1    2020-01-02   100     <- BUY decided (leverage 20 -> clamps to 5, LeveredFraction f=2)
+    2    2020-01-03   100     <- BUY fills next bar at close 100; LONG opened, WB locked
+    3    2020-01-04    90     <- adverse mark, STILL HEALTHY (90 > 80.808 liq floor): no breach
+    4    2020-01-05    75     <- BREACH: close 75 <= 80.808 liq price -> FORCED LIQUIDATION
+
+--- BUY fill (2020-01-03), fill price = 100 ---
+    effective leverage = min(20, 10, 5) = 5; notional = f x equity = 2 x 10_000 = 20_000;
+    quantity = 20_000 / 100 = 200.
+    MARGIN-01 admission reservation -> position-life locked isolated margin
+        WB = aggregate_notional / leverage = 20_000 / 5 = 4_000
+        available = balance - locked = 10_000 - 4_000 = 6_000.
+
+--- corrected isolated LONG liquidation price (D-01-CORR) ---
+    liq_price = (entry - WB/|size|) / (1 - MMR) = (100 - 20)/0.99 = 80 / 0.99 = 80.808080...
+
+--- adverse mark (2020-01-04), mark 90 ---
+    90 > 80.808... -> NO breach; locked margin stays 4_000; the position survives.
+
+--- BREACH (2020-01-05), close 75 <= 80.808... -> FORCED LIQUIDATION ---
+    The forced close settles AT the liq price, QUANTIZED to 0.01: fill_price = 80.81.
+    penalty (D-05) = 0.005 x 200 x 80.808080... = 80.808080..., on FillEvent.commission.
+    Position.realised_pnl = (fill - entry) x |size| - penalty = (80.81 - 100) x 200
+        - 80.808080... = -3838.00 - 80.808080... = -3918.808080...
+    The locked 4_000 is RELEASED on the forced close; the total loss 3918.808080... is
+    within WB = 4_000 (D-07 envelope — bounded by fill-at-liq-price, NO explicit clamp)
+    so equity stays floored:
+    final balance = 10_000 - 3918.808080... = 6081.191919... (> 0; DEF-01-C closed).
+
+================================ END HAND COMPUTATION ================================
+"""
+
+import pathlib
+from decimal import Decimal
+
+from itrader.core.enums import Side
+from itrader.core.enums.order import OrderStatus, OrderType, OrderTriggerSource
+from itrader.core.instrument import Instrument
+from itrader.core.sizing import LeveredFraction, SignalIntent, TradingDirection
+from itrader.strategy_handler.base import Strategy
+from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.universe import Universe
+
+HERE = pathlib.Path(__file__).resolve().parent
+
+# Synthetic ticker — NEVER BTCUSD, so the spot oracle (134 / 46189.87730727451)
+# cannot be touched by anything in this file.
+_TICKER = "LIQUSD"
+_CASH = 10_000
+
+_INSTRUMENT_MAX_LEVERAGE = Decimal("10")
+_MAINTENANCE_MARGIN_RATE = Decimal("0.01")
+_LIQUIDATION_FEE_RATE = Decimal("0.005")
+_PORTFOLIO_MAX_LEVERAGE = Decimal("5")
+
+_REQUESTED_LEVERAGE = Decimal("20")             # above both caps -> clamps to 5
+_KELLY_FRACTION = Decimal("2")
+
+# --- Hand-computed margin-core + liquidation literals (the PRIMARY oracle, D-08) ----
+_WB = Decimal("4000")                           # locked isolated margin = 20000 / 5
+_SIZE = Decimal("200")
+_ENTRY = Decimal("100")
+_LIQ_PRICE = (_ENTRY - _WB / _SIZE) / (Decimal("1") - _MAINTENANCE_MARGIN_RATE)
+_FILL_PRICE = Decimal("80.81")                  # quantized to the 0.01 price scale
+_PENALTY = _LIQUIDATION_FEE_RATE * _SIZE * _LIQ_PRICE
+_FILL_PNL = (_FILL_PRICE - _ENTRY) * _SIZE      # -3838.00 at the fill price
+_REALIZED_PNL = _FILL_PNL - _PENALTY            # -3918.808080... net of penalty
+
+
+class _LevLongIntoLiqStrategy(Strategy):
+    """BUY-to-open a leveraged long on 2020-01-02 then HOLD — marked DOWN past its liq
+    price and force-liquidated by the engine. Drives the NORMAL fan-out (LEV-03)."""
+
+    name = "levered_long_into_liquidation"
+    max_window = 100
+    warmup = 0
+    sizing_policy = LeveredFraction(fraction=_KELLY_FRACTION)
+    direction = TradingDirection.LONG_ONLY
+
+    def __init__(self, timeframe: str, tickers: list[str]) -> None:
+        super().__init__(timeframe=timeframe, tickers=list(tickers))
+
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
+        date = self.now.tz_convert("UTC").strftime("%Y-%m-%d")
+        if date == "2020-01-02":
+            return SignalIntent(
+                ticker=ticker,
+                action=Side.BUY,
+                order_type=OrderType.MARKET,
+                leverage=_REQUESTED_LEVERAGE,
+            )
+        return None
+
+
+def _liq_instrument() -> Instrument:
+    """Oracle-dark synthetic instrument declaring the margin + liquidation params (D-06)."""
+    return Instrument(
+        symbol=_TICKER,
+        price_precision=Decimal("0.01"),
+        quantity_precision=Decimal("0.00000001"),
+        min_order_size=None,
+        maintenance_margin_rate=_MAINTENANCE_MARGIN_RATE,
+        max_leverage=_INSTRUMENT_MAX_LEVERAGE,
+        settles_funding=False,
+        liquidation_fee_rate=_LIQUIDATION_FEE_RATE,
+    )
+
+
+def _build_liq_system():
+    """Build the real backtest engine, enable margin (white-box), wire the oracle-dark
+    margin Instrument on the three set_universe seams. The set_order_storage write-seam
+    (04-03, LIQ-03) is wired at construction by compose.py."""
+    system = BacktestTradingSystem(
+        exchange="csv",
+        csv_paths={_TICKER: HERE / "bars.csv"},
+        start_date="2020-01-01",
+        end_date="2020-01-05",
+    )
+    strategy = _LevLongIntoLiqStrategy(timeframe="1d", tickers=[_TICKER])
+    system.strategies_handler.add_strategy(strategy)
+    portfolio_id = system.portfolio_handler.add_portfolio(
+        user_id=1, name="levered_long_into_liquidation_pf", exchange="csv", cash=_CASH)
+    strategy.subscribe_portfolio(portfolio_id)
+
+    portfolio = system.portfolio_handler.get_portfolio(portfolio_id)
+    portfolio.config = portfolio.config.model_copy(update={
+        "trading_rules": portfolio.config.trading_rules.model_copy(update={
+            "enable_margin": True,
+            "max_leverage": _PORTFOLIO_MAX_LEVERAGE,
+        })})
+    order_manager = system.order_handler.order_manager
+    order_manager.admission_manager._enable_margin = True
+    order_manager.admission_manager._portfolio_max_leverage = _PORTFOLIO_MAX_LEVERAGE
+    order_manager.order_validator.enable_margin = True
+
+    runner = system.runner
+    runner._initialise_backtest_session()
+    universe = Universe(members=[_TICKER], instrument_map={_TICKER: _liq_instrument()})
+    system.execution_handler.exchanges["simulated"].set_universe(universe)
+    system.order_handler.set_universe(universe)
+    system.portfolio_handler.set_universe(universe)
+
+    return system, portfolio, portfolio_id
+
+
+def test_levered_long_into_liquidation_scenario():
+    """Leveraged-long-into-liquidation full run-path e2e (white-box, PRIMARY oracle D-08).
+    Threads the Phase-2 margin core (LeveredFraction sizing, locked WB = notional/L) into
+    the Phase-4 liquidation trigger: the position survives the adverse mark (90 > 80.808),
+    the maintenance-margin breach fires on the bar close (75), the forced close RELEASES
+    the locked margin, and the total loss is bounded at WB by fill-at-liq-price (settle AT
+    the floor, NO explicit clamp) so equity never drifts impossibly negative (DEF-01-C
+    closed). See the module docstring for the arithmetic."""
+    system, portfolio, portfolio_id = _build_liq_system()
+    engine = system.engine
+    handler = system.portfolio_handler
+    cash = portfolio.cash_manager
+
+    snaps: dict[str, dict] = {}
+    for time_event in engine.time_generator:
+        date = time_event.time.tz_convert("UTC").strftime("%Y-%m-%d")
+        engine.clock.set_time(time_event.time)
+        engine.global_queue.put(time_event)
+        engine.event_handler.process_events()
+        for active in handler.get_active_portfolios():
+            active.record_metrics(time_event.time)
+
+        position = portfolio.get_open_position(_TICKER)
+        snaps[date] = {
+            "balance": cash.balance,
+            "available": cash.available_balance,
+            "locked": cash.locked_margin_total,
+            "qty": None if position is None else position.net_quantity,
+            "leverage": None if position is None else position.leverage,
+            "equity": handler.total_equity(portfolio_id),
+        }
+
+    engine.order_handler.expire_all_resting()
+    engine.event_handler.process_events()
+
+    # --- MARGIN-01 / LEV-02 (BUY fill 2020-01-03): WB locked = notional/L = 4000 -------
+    opened = snaps["2020-01-03"]
+    assert opened["qty"] == Decimal("200"), "LeveredFraction sized notional = f x equity"
+    assert opened["leverage"] == Decimal("5"), "effective leverage min(20,10,5) = 5 (LEV-03)"
+    assert opened["locked"] == Decimal("4000"), "position-life WB = aggregate_notional / L"
+    assert opened["available"] == Decimal("6000"), "available = 10000 - 4000 locked"
+
+    # --- adverse mark (2020-01-04, 90): STILL HEALTHY, locked margin unchanged ---------
+    healthy = snaps["2020-01-04"]
+    assert healthy["qty"] == Decimal("200"), "survives the adverse mark (no breach)"
+    assert healthy["locked"] == Decimal("4000"), "lock stays at the ENTRY notional/L"
+
+    # --- BREACH (2020-01-05, 75 <= 80.808): FORCED LIQUIDATION releases the lock --------
+    liq = snaps["2020-01-05"]
+    assert liq["qty"] is None, "LIQ-01: maintenance-margin breach force-liquidates on close"
+    assert liq["locked"] == Decimal("0"), "LIQ-02: forced close RELEASES the locked margin"
+    # DEF-01-C: fill-at-liq-price keeps equity floored — never impossibly negative.
+    assert liq["equity"] > Decimal("0"), "DEF-01-C: equity floored"
+    assert liq["equity"] >= -_WB, "DEF-01-C: equity never below -WB"
+
+    # --- the closed position carries the hand-computed forced-close PnL ---------------
+    closed = portfolio.closed_positions
+    assert len(closed) == 1
+    assert closed[0].side.name == "LONG"
+    assert closed[0].realised_pnl == _REALIZED_PNL, "(80.81 - 100) x 200 - penalty"
+    total_loss = -_REALIZED_PNL
+    assert total_loss <= _WB, "D-07: loss + penalty <= WB (DEF-01-C closed)"
+    assert cash.balance == _CASH - total_loss, "final balance = 10000 - total loss"
+
+    # --- LIQ-03: the forced-close Order is FILLED + tagged LIQUIDATION -----------------
+    orders = system.order_handler.get_orders_by_ticker(_TICKER, portfolio_id)
+    assert len(orders) == 2
+    assert {o.status for o in orders} == {OrderStatus.FILLED}, "both orders FILLED"
+    liq_orders = [
+        o for o in orders
+        if any(sc.triggered_by == OrderTriggerSource.LIQUIDATION for sc in o.state_changes)
+    ]
+    assert len(liq_orders) == 1, "exactly one LIQUIDATION-tagged forced-close Order"
+    liq_order = liq_orders[0]
+    assert liq_order.action == Side.SELL, "a long is closed by a SELL"
+    assert liq_order.quantity == Decimal("200"), "forced-close qty = |net_quantity|"
+    assert liq_order.status == OrderStatus.FILLED, "LIQ-03: EXECUTED -> FILLED in the mirror"
+    assert liq_order.price == _FILL_PRICE, "settled at the quantized isolated liq price 80.81"

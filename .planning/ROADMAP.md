@@ -50,7 +50,7 @@ byte-identical hold throughout. Full design: PROJECT.md "Current Milestone: v1.4
 - [x] **Phase 1: Instrument Value Object** - Per-symbol precision/lot/margin source replacing `_INSTRUMENT_SCALES`; BTCUSD stays declared 8dp (byte-exact behavioral gate) — completed 2026-06-15
 - [x] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated) — completed 2026-06-15 (9/9 plans; +LEV-03 discovered/closed)
 - [x] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated) — completed 2026-06-15 (6/6 plans; review BLOCKER CR-01 found+fixed inline)
-- [ ] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated)
+- [x] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated) — completed 2026-06-16 (6/6 plans; owner-signed golden freeze; review BLOCKER CR-01 found+fixed via debug → fill-at-liq-price)
 - [ ] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated)
 - [ ] **Phase 6: Pair-Trading Flagship** - Market-neutral long/short cointegration/spread strategy end-to-end; flagship demo (NOT the correctness oracle); final, slip-able capstone
 
@@ -240,7 +240,13 @@ this phase re-touches, so bundle it under the single XVAL-01 owner-gated re-base
 gated by XVAL-01 (cross-validation + explicit owner sign-off). The crafted scenarios are the
 correctness oracle (NOT pair trading). `mypy --strict` clean; Decimal end-to-end including the
 liquidation formula + interest accrual; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 6 plans
+- [x] 04-00-PLAN.md — [Wave 0] Nyquist stubs: collectible liquidation unit + e2e scaffolds (LIQ-01/02/03)
+- [x] 04-01-PLAN.md — Inert plumbing: OrderTriggerSource.LIQUIDATION + Instrument/TradingRules liquidation_fee_rate (default-off, D-06) (LIQ-02/03)
+- [x] 04-02-PLAN.md — WR-04 carry-forward: assert_lock_fits_buying_power call-order fix (both sites) + regression (LIQ-01)
+- [x] 04-03-PLAN.md — Liquidation engine on the BAR route: corrected isolated formula + explicit loss cap + registered forced-close Order + direct FillEvent (LIQ-01/02/03)
+- [x] 04-04-PLAN.md — Crafted liquidation e2e (PRIMARY oracle) + crossval runners + accounting-core evidence doc (XVAL-01)
+- [x] 04-05-PLAN.md — [owner-gated] Blocking sign-off checkpoint → freeze accounting-core golden (D-10/D-12) + phase gate (XVAL-01)
 
 ### Phase 5: Engine-Native Trailing Stops
 **Goal**: A strategy can declare a `TRAILING_STOP` order; the `MatchingEngine` ratchets the resting
@@ -296,7 +302,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | 1. Instrument Value Object | 3/3 | Complete   | 2026-06-15 |
 | 2. Margin Accounting & Leverage | 9/9 | Complete   | 2026-06-15 |
 | 3. Shorts & Borrow Carry | 6/6 | Complete   | 2026-06-15 |
-| 4. Liquidation & Cross-Validation Re-baseline | 0/TBD | Not started | - |
+| 4. Liquidation & Cross-Validation Re-baseline | 6/6 | Complete   | 2026-06-16 |
 | 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |
 | 6. Pair-Trading Flagship | 0/TBD | Not started | - |
 

@@ -1,11 +1,15 @@
-"""PARKED leveraged-long e2e — the Phase-2 cross-cutting margin-core proof (D-17).
+"""FROZEN leveraged-long e2e — the Phase-2 cross-cutting margin-core proof (D-17).
 
-================================ PARKED — NOT A GOLDEN ================================
+============================ FROZEN — ACCOUNTING-CORE GOLDEN ==========================
+FREEZE PROVENANCE (D-10/D-12): frozen as part of the single accounting-core golden at
+the owner-gated 04-05 sign-off — Approved-by: tiziaco (tiziano.iaco@gmail.com),
+2026-06-16. The freeze set is ALL parked P2/P3 scenarios (levered_long, short_roundtrip,
+short_carry, partial_cover) + the new P4 liquidation scenarios (forced_liq_long,
+forced_liq_short, levered_long_into_liquidation) frozen as ONE accounting-core golden
+(cross-validated vs backtesting.py + backtrader; see tests/golden/CROSS-VALIDATION-ACCOUNTING.md).
 Every number asserted below is a HAND-COMPUTED literal with the arithmetic shown
-inline. This scenario is **PARKED**, NOT frozen as a golden: Phase 2 freezes NO new
-leveraged golden (D-16/D-17). The single owner-gated accounting-core re-baseline is at
-Phase 4 / XVAL-01 (cross-validation + owner sign-off). This test does NOT use the
-golden-diff harness (``run_scenario`` / ``golden/``) precisely because the load-bearing
+inline. This test does NOT use the golden-diff harness (``run_scenario`` / ``golden/``)
+precisely because the load-bearing
 assertions are margin INTERNALS (initial-margin reservation, position-life locked
 margin, maintenance_margin / margin_ratio) that the trades/equity/summary golden CSVs do
 not capture. It drives the engine's real SIGNAL -> ORDER -> FILL -> PORTFOLIO path and
@@ -62,7 +66,9 @@ mark unambiguously):
     0    2020-01-01   100
     1    2020-01-02   100     <- BUY decided here (leverage 20 requested, LeveredFraction f=2)
     2    2020-01-03   100     <- BUY fills next bar at close 100 (look-ahead-safe)
-    3    2020-01-04    80     <- ADVERSE mark (price drops 20%)
+    3    2020-01-04    90     <- ADVERSE mark (price drops 10% — stays ABOVE the 80.808 liq
+                              floor, so the P4 liquidation engine does NOT trigger; the
+                              breach case is owned by levered_long_into_liquidation)
     4    2020-01-05   120     <- SELL (close) decided here
     5    2020-01-06   120     <- SELL fills next bar at close 120
 
@@ -93,13 +99,20 @@ MARGIN-03 read-model at price 100:
     total_equity = balance + market_value = 10_000 + 200 x 100 = 30_000
     margin_ratio = total_equity / maintenance = 30_000 / 200 = 150
 
---- ADVERSE mark (2020-01-04), mark price = 80 (D-16 honest-when-breached) ---
-    maintenance_margin = 0.01 x 200 x 80 = 160
-    total_equity = 10_000 + 200 x 80 = 26_000
-    margin_ratio = 26_000 / 160 = 162.5     (read HONESTLY off the adverse mark, no clamp)
+--- ADVERSE mark (2020-01-04), mark price = 90 (D-16 honest-when-breached) ---
+    maintenance_margin = 0.01 x 200 x 90 = 180
+    total_equity = 10_000 + 200 x 90 = 28_000
+    margin_ratio = 28_000 / 180 = 155.5555...  (read HONESTLY off the adverse mark, no clamp)
     locked_margin stays 4_000 (locked off the ENTRY notional at open, not the mark)
     available_balance = balance - locked = 10_000 - 4_000 = 6_000 (free margin POSITIVE —
         the 4000 lock is well within the 10000 cash floor; the position is healthy)
+    The mark 90 stays ABOVE the corrected isolated long liq price 80.808080... (P4,
+        D-01-CORR: (entry - WB/|size|)/(1 - MMR) = (100 - 4000/200)/0.99 = 80/0.99),
+        so the P4 liquidation engine finds NO breach here — the position survives. (The
+        original Phase-2 mark of 80 sat exactly AT the bankruptcy price entry x (1 - 1/L)
+        = 100 x 0.8 = 80, which is BELOW 80.808 and now liquidates under the closed
+        DEF-01-C engine; the deep-mark breach case is owned by the dedicated
+        levered_long_into_liquidation leaf.)
 
 --- SELL fill (2020-01-06), fill price = 120 ---
 MARGIN-01 lock-and-settle close:
@@ -315,19 +328,22 @@ def test_levered_long_scenario_parked():
     assert fill["equity"] == Decimal("30000")
     assert fill["margin_ratio"] == Decimal("150")
 
-    # --- MARGIN-03 honest-when-breached on an adverse mark (2020-01-04, price 80, D-16) -
+    # --- MARGIN-03 honest-when-breached on an adverse mark (2020-01-04, price 90, D-16) -
     adverse = snaps["2020-01-04"]
-    # maintenance = 0.01 x 200 x 80 = 160; equity = 10_000 + 200 x 80 = 26_000;
-    # ratio = 26_000 / 160 = 162.5 — read straight off the adverse mark, NO clamp (D-16).
-    assert adverse["maintenance"] == Decimal("160")
-    assert adverse["equity"] == Decimal("26000")
-    assert adverse["margin_ratio"] == Decimal("162.5")
+    # maintenance = 0.01 x 200 x 90 = 180; equity = 10_000 + 200 x 90 = 28_000;
+    # ratio = 28_000 / 180 = 155.5555... — read straight off the adverse mark, NO clamp.
+    assert adverse["maintenance"] == Decimal("180")
+    assert adverse["equity"] == Decimal("28000")
+    assert adverse["margin_ratio"] == Decimal("28000") / Decimal("180")
     # Locked margin stays 4_000 (locked off the ENTRY notional at open, not the mark);
-    # free margin stays POSITIVE 6_000 — the position is healthy even on the adverse mark
-    # (the honest read-model still surfaces the falling margin_ratio for a future P4
-    # liquidation trigger — D-16, DEF-01-C stays open until P4).
+    # free margin stays POSITIVE 6_000 — the position is healthy on the adverse mark.
+    # The mark 90 stays ABOVE the 80.808080... long liq floor (P4, D-01-CORR), so the
+    # closed-DEF-01-C liquidation engine finds NO breach here and the position survives;
+    # the deep-mark breach case is owned by the levered_long_into_liquidation leaf.
     assert adverse["locked"] == Decimal("4000")
     assert adverse["available"] == Decimal("6000")
+    # The position is STILL OPEN after the adverse mark (NOT liquidated).
+    assert adverse["qty"] == Decimal("200"), "survives the adverse mark (no P4 breach)"
 
     # --- MARGIN-01 lock-and-settle close (SELL fills 2020-01-06) ----------------------
     close = snaps["2020-01-06"]
