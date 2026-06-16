@@ -427,12 +427,17 @@ class Portfolio(object):
 			# the position's own prior lock (0 on a fresh open; the prior
 			# aggregate lock on a scale-in), and lock_margin replaces it. No
 			# un-paired lock can leak because the key is the same position id.
-			self.cash_manager.release_margin(str(position.id))
 			new_lock = position.aggregate_notional / leverage
 			# WR-01 (T-03-15): settlement-side solvency assertion — the lock must
-			# fit buying power (the prior lock was just released, so it is added
-			# back). Fail loud BEFORE applying the lock — never silently over-lock.
+			# fit buying power, which credits back the position's OWN prior lock.
+			# WR-04 (Plan 04-02): assert BEFORE release so the assertion's add-back
+			# (``get_locked_margin_for``) reads the TRUE prior lock, not ``0``.
+			# Releasing first pops this position's lock, which the assertion is
+			# documented to credit back — running the guard while the prior lock is
+			# still present is the correct call order. Fail loud BEFORE applying the
+			# new lock — never silently over-lock.
 			self.cash_manager.assert_lock_fits_buying_power(new_lock, str(position.id))
+			self.cash_manager.release_margin(str(position.id))
 			self.cash_manager.lock_margin(str(position.id), new_lock)
 			cash_delta = -commission
 		else:
@@ -442,19 +447,23 @@ class Portfolio(object):
 				closed_qty = prior_qty
 			fraction = (closed_qty / prior_qty) if prior_qty > 0 else Decimal("0")
 
-			# Release the whole lock, then re-lock the remaining (0 on a full
-			# close — position.is_open is False and aggregate_notional is 0).
-			# WR-03 (T-03-16): the release/re-lock pair stays symmetric on the
-			# same position key — the remaining lock replaces the released one.
-			self.cash_manager.release_margin(str(position.id))
+			# Re-lock the remaining (0 on a full close — position.is_open is
+			# False and aggregate_notional is 0), then release the prior whole
+			# lock. WR-03 (T-03-16): the release/re-lock pair stays symmetric on
+			# the same position key — the remaining lock replaces the released one.
 			if position.is_open:
 				remaining_lock = position.aggregate_notional / leverage
-				# WR-01 (T-03-15): the recomputed remaining lock must still fit
-				# buying power (the prior whole lock was just released).
+				# WR-01 (T-03-15) / WR-04 (Plan 04-02): assert BEFORE release so
+				# the recomputed remaining lock is checked against buying power
+				# that still credits the position's TRUE prior whole lock (the
+				# add-back reads ``get_locked_margin_for``, not ``0``).
 				self.cash_manager.assert_lock_fits_buying_power(
 					remaining_lock, str(position.id)
 				)
+				self.cash_manager.release_margin(str(position.id))
 				self.cash_manager.lock_margin(str(position.id), remaining_lock)
+			else:
+				self.cash_manager.release_margin(str(position.id))
 
 			# Settle the realized-PnL increment for the closed portion. The
 			# position's realised_pnl already nets BOTH commissions; the open

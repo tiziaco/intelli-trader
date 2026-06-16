@@ -453,6 +453,15 @@ class CashManager:
         own prior lock is about to be released and re-locked, so it is added
         back). A lock within that figure settles normally.
 
+        WR-04 (Plan 04-02) — CALL-ORDER CONTRACT: callers MUST invoke this
+        assertion while the position's prior lock is STILL present (i.e. assert
+        BEFORE ``release_margin``). The add-back reads
+        ``get_locked_margin_for(position_id)`` to credit the position's own prior
+        lock; if the prior lock has already been popped by ``release_margin`` it
+        reads ``0`` and the add-back is silently dropped. The ``portfolio.py``
+        margin-lock sites (open/scale-in and partial/full close) honour this
+        order — assert, then release, then re-lock.
+
         Args:
             lock_amount: The margin about to be locked (``aggregate_notional / L``).
             position_id: The position the lock is keyed under.
