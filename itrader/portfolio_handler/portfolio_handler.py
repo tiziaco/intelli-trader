@@ -28,7 +28,7 @@ from itrader.order_handler.base import OrderStorage
 from itrader.order_handler.order import Order
 from itrader.events_handler.events import OrderEvent
 from itrader.core.portfolio_read_model import PositionView
-from itrader.core.money import to_money
+from itrader.core.money import to_money, quantize
 from itrader.portfolio_handler.transaction import Transaction
 from itrader.events_handler.events import BarEvent, FillEvent, PortfolioUpdateEvent, PortfolioErrorEvent
 from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
@@ -515,7 +515,6 @@ class PortfolioHandler:
         instrument = self._universe.instrument(position.ticker)
         price_scale = getattr(instrument, "price_precision", None)
         if price_scale is not None:
-            from itrader.core.money import quantize
             fill_price = quantize(liq_price, instrument, "price")
 
         # A forced deleverage is never owned by a strategy — mint a fresh
