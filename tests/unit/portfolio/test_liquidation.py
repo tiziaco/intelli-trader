@@ -164,8 +164,11 @@ def test_multi_breach_deterministic():
     _add("ZZZUSD", datetime(2024, 1, 2))
     _add("AAAUSD", datetime(2024, 1, 1))
 
-    # Both breach at a deep close.
-    breached = h._collect_breaches(portfolio, Decimal("50"), datetime(2024, 2, 1))
+    # Both breach at a deep close. WR-01: exercise the PRODUCTION collector
+    # (_collect_breaches_over_prices, the per-ticker close map the BAR route
+    # runs) so the deterministic-sort assertion guards the real path.
+    closes = {"ZZZUSD": Decimal("50"), "AAAUSD": Decimal("50")}
+    breached = h._collect_breaches_over_prices(portfolio, closes, datetime(2024, 2, 1))
     tickers = [b.ticker for b in breached]
     assert tickers == sorted(tickers)
     assert tickers == ["AAAUSD", "ZZZUSD"]

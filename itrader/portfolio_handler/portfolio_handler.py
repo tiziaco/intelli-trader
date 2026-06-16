@@ -461,44 +461,17 @@ class PortfolioHandler:
 
     def _collect_breaches(self, portfolio: Portfolio, close: Decimal,
                           bar_time: datetime) -> List[Position]:
-        """Collect open positions whose bar close crosses their liq price.
+        """Collect open positions breaching against a SINGLE shared close.
 
-        Iterates the portfolio's OPEN positions, computes each isolated liq
-        price, flags breaches, and returns them SORTED by
-        ``(ticker, open_time, position_id)`` for the byte-identical double-run
-        (D-02/Pitfall 3 — independent of dict iteration order). A position with
-        no locked margin (``wb == 0`` — spot, unlevered) or a non-positive mark
-        is skipped (never a spurious breach). The WR-02 unwired-Universe guard
-        fires only when there is a position to evaluate.
+        WR-01: thin adapter — builds a ``{ticker: close}`` map keyed on every
+        open position's ticker (all marked at the same ``close``) and delegates
+        to ``_collect_breaches_over_prices`` so there is ONE breach predicate.
+        Avoids the maintainability hazard of two near-identical collectors
+        drifting apart (a fix to the predicate in one but not the other).
         """
         positions = portfolio.position_manager.get_all_positions()
-        if not positions:
-            return []
-        if self._universe is None:
-            raise StateError(
-                portfolio.portfolio_id,
-                "universe-unwired",
-                required_state="universe-wired (call set_universe)",
-                operation="liquidation_breach_check",
-            )
-        breached: List[Position] = []
-        for position in positions.values():
-            if not position.is_open:
-                continue
-            # WR-03 mirror: a non-positive mark never produces a breach.
-            if position.current_price <= Decimal("0"):
-                continue
-            wb, mmr, _fee_rate = self._liq_inputs(portfolio, position)
-            # Spot / unlevered positions hold no isolated margin lock — there is
-            # no maintenance floor to breach (oracle-dark: SMA_MACD never locks).
-            if wb <= Decimal("0"):
-                continue
-            liq_price = self._isolated_liq_price(position, wb, mmr)
-            if self._is_breached(position, close, liq_price=liq_price):
-                breached.append(position)
-        # Deterministic order (Pitfall 3): symbol, then open-time, then id.
-        breached.sort(key=lambda p: (p.ticker, p.entry_date, str(p.id)))
-        return breached
+        closes = {ticker: close for ticker in positions}
+        return self._collect_breaches_over_prices(portfolio, closes, bar_time)
 
     def _liquidate_position(self, portfolio: Portfolio, position: Position,
                             liq_price: Decimal, fee_rate: Decimal,
@@ -619,14 +592,23 @@ class PortfolioHandler:
                                       bar_time: datetime) -> List[Position]:
         """Collect breached open positions across a per-ticker close map.
 
-        Mirrors ``_collect_breaches`` (single-close) but evaluates each position
-        against ITS OWN ticker's close from ``closes`` — a position whose ticker
-        is absent from this tick is skipped (stale mark, never a spurious breach).
-        Returns the breached set sorted ``(ticker, open_time, position_id)``.
+        The SINGLE breach predicate (WR-01): ``_collect_breaches`` is a thin
+        adapter over this. Evaluates each position against ITS OWN ticker's
+        close from ``closes`` — a position whose ticker is absent from this tick
+        is skipped (stale mark, never a spurious breach). Returns the breached
+        set sorted ``(ticker, open_time, position_id)``. The WR-02
+        unwired-Universe guard fires only when there is a position to evaluate.
         """
         positions = portfolio.position_manager.get_all_positions()
         if not positions:
             return []
+        if self._universe is None:
+            raise StateError(
+                portfolio.portfolio_id,
+                "universe-unwired",
+                required_state="universe-wired (call set_universe)",
+                operation="liquidation_breach_check",
+            )
         breached: List[Position] = []
         for ticker, position in positions.items():
             if not position.is_open:
