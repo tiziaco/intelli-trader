@@ -12,7 +12,7 @@ dependency-graph:
   provides:
     - "BAR-route per-position liquidation breach check + forced-close mint/emit (PortfolioHandler)"
     - "set_order_storage write-seam (analog of set_universe) wired in compose.py + live_trading_system.py"
-    - "Corrected isolated liq-price + explicit min(loss+penalty, WB) cap (closes DEF-01-C)"
+    - "Corrected isolated liq-price; loss bounded by fill-at-liq-price (settle AT the maintenance floor — closes DEF-01-C, D-03 automatic-floor reading; NO explicit clamp, CR-01)"
   affects:
     - "04-04 e2e author — the LOCKED wiring is set_order_storage at compose.py + live parity; full_event_handler.py untouched; no execution-time fork remains"
 tech-stack:
@@ -44,8 +44,9 @@ metrics:
 # Phase 4 Plan 03: Isolated-Margin Liquidation Engine Summary
 
 The heart of Phase 4: a bar-close maintenance-margin breach now force-closes the position at
-the corrected isolated liquidation price (D-01-CORR), loss EXPLICITLY capped at the allocated
-isolated margin WB (D-03-CORR/D-07 — closes DEF-01-C), penalty charged in commission (D-05),
+the corrected isolated liquidation price (D-01-CORR), loss bounded at the allocated isolated
+margin WB by SETTLING THE CLOSE AT THE LIQ PRICE (fill-at-liq-price, D-03 automatic-floor reading
+— closes DEF-01-C, D-07; NO explicit clamp, CR-01), penalty charged in commission (D-05),
 reconciling EXECUTED→FILLED via a real `OrderTriggerSource.LIQUIDATION`-tagged Order registered
 in the injected `order_storage` (the `set_order_storage` write-seam, LIQ-03) with NO new
 `FillStatus` — deterministically and oracle-dark (SMA_MACD byte-exact at 134 / 46189.87730727451).
@@ -57,9 +58,14 @@ in the injected `order_storage` (the `set_order_storage` write-seam, LIQ-03) wit
   `(entry + WB/|size|)/(1 + MMR)`; hand-verified long 80.808080… / short 118.811881… for the
   worked case (Entry=100, |size|=200, WB=4000, MMR=0.01). Decimal end-to-end, no `Decimal(float)`.
 - `_liquidation_penalty` = `fee_rate × |size| × liq_price` (D-05, rides `FillEvent.commission`).
-- `_capped_realized_loss` = `min(realized_loss_magnitude + penalty, WB)` — the EXPLICIT clamp
-  (D-03-CORR/D-07). Unit test asserts the loss-magnitude alone is < WB at the maintenance liq
-  price (buffer retained, clamp not by-construction) AND that a fat fee makes it TRIGGER (≤ WB).
+- Loss-bounding mechanism: the forced close is SETTLED AT THE ISOLATED MAINTENANCE LIQ PRICE
+  (D-03 automatic-floor reading, D-07) — the position is closed AT the floor, never below it, even
+  on a far gap-through, which bounds the realized loss at WB (closes DEF-01-C). There is NO explicit
+  `min(loss + penalty, WB)` clamp. (CR-01, owner-resolved 2026-06-16 option (a): an earlier
+  `_capped_realized_loss` helper + its isolated unit-test arm were BUILT but never wired into the
+  settlement path — confirmed dead code, removed; the loss was always bounded by fill-at-liq-price.)
+  A gap-through regression test (`test_liquidation_fills_at_liq_price_on_far_gap_through`) pins the
+  fill at the liq price (close=10 vs liq≈80.81) — NOT the gapped close.
 - `_collect_breaches` / `_collect_breaches_over_prices` — post-carry breach pass (D-02 placement),
   flags LONG `close <= liq` / SHORT `close >= liq`, skips spot/unlevered (`wb <= 0`) and
   non-positive marks, sorts `(ticker, open_time, position_id)` (Pitfall 3). Commits `bdb86e7` (RED),
@@ -125,8 +131,10 @@ remains: the liquidation forced-close settles on the breach bar via the direct p
 
 ## Threat-Model Coverage
 
-- **T-04-03-NEG (mitigate):** explicit `min(loss+penalty, WB)` clamp; unit test asserts loss ≤ WB
-  for a fat-penalty case. Held.
+- **T-04-03-NEG (mitigate):** fill-at-liq-price — the forced close settles AT the isolated
+  maintenance liq price (D-03 automatic-floor reading), bounding the realized loss at WB; NO
+  explicit clamp (CR-01). Gap-through unit test asserts the fill books at the liq price (close=10
+  vs liq≈80.81), not the gapped close. Held.
 - **T-04-03-DET (mitigate):** deterministic `(ticker, open_time, position_id)` sort; fills stamped
   `time=bar_time`; oracle double-run identical. Held.
 - **T-04-03-PREC (mitigate):** Decimal end-to-end via `to_money`/string entry; quantize only at the

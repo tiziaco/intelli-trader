@@ -441,20 +441,6 @@ class PortfolioHandler:
         """
         return fee_rate * size * liq_price
 
-    @staticmethod
-    def _capped_realized_loss(realized_loss_magnitude: Decimal, penalty: Decimal,
-                              wb: Decimal) -> Decimal:
-        """EXPLICIT loss clamp ``min(realized_loss + penalty, WB)`` (D-03-CORR/D-07).
-
-        Caps the total loss at the allocated isolated margin (WB) so equity can
-        never drift impossibly negative (closes DEF-01-C). The clamp is EXPLICIT
-        — not an automatic by-product of the maintenance liq price: at the
-        maintenance price the loss magnitude alone stays below WB (the buffer is
-        retained), and only a fat penalty (or an extreme gap) makes the clamp
-        bite.
-        """
-        return min(realized_loss_magnitude + penalty, wb)
-
     def _liq_inputs(self, portfolio: Portfolio, position: Position) -> "tuple[Decimal, Decimal, Decimal]":
         """Resolve ``(wb, mmr, fee_rate)`` for a position from cash + Universe.
 
@@ -529,7 +515,12 @@ class PortfolioHandler:
         settles on the breach bar). The liq price enters the FillEvent as the
         executed price; the penalty rides ``commission`` (D-05). The existing
         ``portfolio.on_fill`` settle path realizes the PnL + penalty and releases
-        the lock; the Task-1 explicit cap keeps total loss ≤ WB.
+        the lock. The realized loss is bounded by SETTLING THE FORCED CLOSE AT THE
+        ISOLATED MAINTENANCE LIQ PRICE (D-03 automatic-floor reading): the position
+        is closed AT the floor, never below it, even when the breach bar gaps far
+        below the liq price (the engine fills at the liq price, not the gapped
+        close). There is NO explicit ``min(loss + penalty, WB)`` clamp —
+        fill-at-liq-price is the loss-bounding mechanism.
         """
         if self._order_storage is None:
             raise StateError(

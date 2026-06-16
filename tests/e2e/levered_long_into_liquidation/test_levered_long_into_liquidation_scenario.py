@@ -14,8 +14,9 @@ test does NOT use the golden-diff harness (``run_scenario`` / ``golden/``) — i
 load-bearing assertions thread the Phase-2 MARGIN CORE (LeveredFraction sizing,
 admission reservation = notional / L, position-life locked margin) INTO the Phase-4
 liquidation trigger, asserting that the maintenance-margin breach check fires on the
-bar close, the forced close RELEASES the locked margin, and the total loss is clamped
-at the wallet's allocated margin so equity cannot drift impossibly negative (DEF-01-C).
+bar close, the forced close RELEASES the locked margin, and the total loss is bounded
+at the wallet's allocated margin by SETTLING THE CLOSE AT THE LIQ PRICE (fill-at-liq-price)
+so equity cannot drift impossibly negative (DEF-01-C). There is NO explicit clamp (CR-01).
 
 DIRECTIONAL CORROBORATION (D-08): this is the leveraged-long scenario that
 backtesting.py's ``equity <= 0 -> close-all`` minimal liquidation model corroborates
@@ -31,8 +32,10 @@ What it exercises (the margin-core -> liquidation thread, LIQ-01/02/03)
 * LIQ-01 — the maintenance-margin breach check fires on the bar CLOSE (no mark feed on
            daily OHLCV — the honest documented proxy) the moment the close crosses the
            corrected isolated long liq price.
-* LIQ-02 — the forced close RELEASES the locked margin and clamps the total loss at WB
-           (D-03-CORR / D-07) so equity cannot drift impossibly negative (DEF-01-C closed).
+* LIQ-02 — the forced close RELEASES the locked margin and bounds the total loss at WB
+           by SETTLING AT THE LIQ PRICE (fill-at-liq-price, D-03 automatic-floor reading /
+           D-07) so equity cannot drift impossibly negative (DEF-01-C closed). NO explicit
+           min(loss + penalty, WB) clamp — the floor is the fill (CR-01).
 * LIQ-03 — the forced close reconciles EXECUTED -> FILLED tagged LIQUIDATION.
 
 Discretion values (oracle-dark — synthetic instrument, NEVER BTCUSD)
@@ -72,7 +75,8 @@ Price series (``bars.csv`` — daily, flat-OHLC so close == the unambiguous mark
     Position.realised_pnl = (fill - entry) x |size| - penalty = (80.81 - 100) x 200
         - 80.808080... = -3838.00 - 80.808080... = -3918.808080...
     The locked 4_000 is RELEASED on the forced close; the total loss 3918.808080... is
-    within WB = 4_000 (D-07 envelope, clamp not binding) so equity stays floored:
+    within WB = 4_000 (D-07 envelope — bounded by fill-at-liq-price, NO explicit clamp)
+    so equity stays floored:
     final balance = 10_000 - 3918.808080... = 6081.191919... (> 0; DEF-01-C closed).
 
 ================================ END HAND COMPUTATION ================================
@@ -196,8 +200,9 @@ def test_levered_long_into_liquidation_scenario():
     Threads the Phase-2 margin core (LeveredFraction sizing, locked WB = notional/L) into
     the Phase-4 liquidation trigger: the position survives the adverse mark (90 > 80.808),
     the maintenance-margin breach fires on the bar close (75), the forced close RELEASES
-    the locked margin, and the total loss is clamped at WB so equity never drifts
-    impossibly negative (DEF-01-C closed). See the module docstring for the arithmetic."""
+    the locked margin, and the total loss is bounded at WB by fill-at-liq-price (settle AT
+    the floor, NO explicit clamp) so equity never drifts impossibly negative (DEF-01-C
+    closed). See the module docstring for the arithmetic."""
     system, portfolio, portfolio_id = _build_liq_system()
     engine = system.engine
     handler = system.portfolio_handler
@@ -241,7 +246,7 @@ def test_levered_long_into_liquidation_scenario():
     liq = snaps["2020-01-05"]
     assert liq["qty"] is None, "LIQ-01: maintenance-margin breach force-liquidates on close"
     assert liq["locked"] == Decimal("0"), "LIQ-02: forced close RELEASES the locked margin"
-    # DEF-01-C: the loss clamp keeps equity floored — never impossibly negative.
+    # DEF-01-C: fill-at-liq-price keeps equity floored — never impossibly negative.
     assert liq["equity"] > Decimal("0"), "DEF-01-C: equity floored"
     assert liq["equity"] >= -_WB, "DEF-01-C: equity never below -WB"
 

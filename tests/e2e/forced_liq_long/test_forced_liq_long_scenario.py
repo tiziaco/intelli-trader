@@ -13,7 +13,7 @@ inline. This
 test does NOT use the golden-diff harness (``run_scenario`` / ``golden/``) precisely
 because the load-bearing assertions are liquidation INTERNALS (the corrected isolated
 liq price, the breach-bar forced-close FillEvent, the penalty on commission, the
-WB-capped loss, the LIQUIDATION-tagged forced-close Order reaching FILLED in the
+WB-bounded loss (fill-at-liq-price), the LIQUIDATION-tagged forced-close Order reaching FILLED in the
 mirror) that the trades/equity/summary golden CSVs do not capture. It drives the
 engine's real BAR -> (liquidation pass) -> FILL -> PORTFOLIO path and asserts on the
 live read-model + cash/position state.
@@ -30,8 +30,10 @@ What it exercises (LIQ-01 / LIQ-02 / LIQ-03, end-to-end — closes DEF-01-C)
            (D-01-CORR) the moment the bar CLOSE crosses it.
 * LIQ-02 — a configurable liquidation penalty rides ``FillEvent.commission``
            (``fee_rate x |size| x liq_price``, D-05), and the total realized loss is
-           EXPLICITLY clamped at the allocated isolated margin WB (D-03-CORR / D-07) so
-           equity can never drift impossibly negative (DEF-01-C closed).
+           bounded at the allocated isolated margin WB by SETTLING THE FORCED CLOSE AT
+           THE LIQ PRICE (fill-at-liq-price, D-03 automatic-floor reading / D-07) so
+           equity can never drift impossibly negative (DEF-01-C closed). There is NO
+           explicit min(loss + penalty, WB) clamp — the floor is the fill (CR-01).
 * LIQ-03 — the forced close reuses ``FillStatus.EXECUTED`` (NO new status), minting an
            admission-bypassing close Order tagged ``OrderTriggerSource.LIQUIDATION`` that
            reconciles EXECUTED -> FILLED through the existing mirror path.
@@ -78,9 +80,12 @@ Price series (``bars.csv`` — daily, flat-OHLC so close == the unambiguous mark
     Position.realised_pnl = close PnL at the quantized fill price NET of the penalty:
         (fill_price - entry) x |size| - penalty = (80.81 - 100) x 200 - 80.808080...
         = -3838.00 - 80.808080... = -3918.808080...
-    The EXPLICIT D-07 clamp min(loss + penalty, WB) keeps the total loss <= WB = 4_000;
-    here total loss 3918.808080... <= 4_000 -> within the envelope, the clamp is not
-    binding, but it GUARANTEES equity never drops below -WB (DEF-01-C).
+    Fill-at-liq-price (D-03 automatic-floor reading / D-07) keeps the total loss <= WB = 4_000:
+    the close settles AT the liq price (~80.81), never below it (even though the breach bar
+    gapped to close=75, below the 80.808... floor — the engine fills at the floor, not the gap).
+    Here total loss 3918.808080... <= 4_000 -> within the envelope. There is NO explicit
+    min(loss + penalty, WB) clamp; settling at the floor GUARANTEES equity never drops below
+    -WB (DEF-01-C). (CR-01)
     final balance = 10_000 - 3918.808080... = 6081.191919... (> 0; DEF-01-C closed).
     The position closes; the locked 4_000 is released; the forced-close Order reaches
     FILLED in the mirror tagged OrderTriggerSource.LIQUIDATION.
@@ -213,7 +218,7 @@ def test_forced_liq_long_scenario():
     """Forced-liquidation LONG full run-path e2e (white-box, PRIMARY oracle D-08).
     The position survives the adverse mark (90 > 80.808 liq floor) and is FORCE-
     LIQUIDATED on the breach bar (close 75) at the corrected isolated liq price, with
-    the penalty on commission, the WB-capped loss, and the LIQUIDATION-tagged forced-
+    the penalty on commission, the WB-bounded loss (fill-at-liq-price), and the LIQUIDATION-tagged forced-
     close Order FILLED in the mirror. See the module docstring for the full arithmetic."""
     system, portfolio, portfolio_id = _build_liq_system()
     engine = system.engine
@@ -270,9 +275,12 @@ def test_forced_liq_long_scenario():
     # Realized PnL = close PnL at the quantized liq fill price 80.81 NET of the penalty
     # commission: (80.81 - 100) x 200 - penalty = -3838.00 - 80.808... = -3918.808080...
     assert closed[0].realised_pnl == _REALIZED_PNL, "(80.81 - 100) x 200 - penalty"
-    # The total loss magnitude (close loss + penalty) stays within WB (D-07 envelope —
-    # the explicit min(loss + penalty, WB) clamp is not binding here, but GUARANTEES the
-    # tail). final balance = 10000 - 3918.808... = 6081.191... > 0 (DEF-01-C closed).
+    # The total loss magnitude (close loss + penalty) stays within WB (D-07 envelope).
+    # The bound comes from SETTLING THE CLOSE AT THE LIQ PRICE (fill-at-liq-price, D-03
+    # automatic-floor reading): the breach bar gapped to close=75, BELOW the 80.808 floor,
+    # yet the position closed AT the liq price (~80.81), never below it. There is NO
+    # explicit min(loss + penalty, WB) clamp — settling at the floor IS the guarantee
+    # (CR-01). final balance = 10000 - 3918.808... = 6081.191... > 0 (DEF-01-C closed).
     total_loss = -_REALIZED_PNL
     assert total_loss <= _WB, "D-07: loss + penalty <= WB (DEF-01-C closed)"
     assert cash.balance == _CASH - total_loss, "final balance = 10000 - total loss"

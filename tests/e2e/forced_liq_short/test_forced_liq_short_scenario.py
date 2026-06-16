@@ -27,7 +27,9 @@ What it exercises (LIQ-01 / LIQ-02 / LIQ-03 — the SHORT side, closes DEF-01-C)
            breaching SHORT position at the corrected isolated liquidation price the
            moment the bar CLOSE crosses it UPWARD (a short breaches as price rises).
 * LIQ-02 — the configurable liquidation penalty rides ``FillEvent.commission``, total
-           realized loss EXPLICITLY clamped at WB (D-03-CORR / D-07).
+           realized loss bounded at WB by SETTLING THE COVER AT THE LIQ PRICE
+           (fill-at-liq-price, D-03 automatic-floor reading / D-07). There is NO explicit
+           min(loss + penalty, WB) clamp — the floor is the fill (CR-01).
 * LIQ-03 — the forced cover reuses ``FillStatus.EXECUTED`` (NO new status), minting an
            admission-bypassing BUY-to-cover Order tagged ``OrderTriggerSource.LIQUIDATION``.
 
@@ -69,9 +71,10 @@ Price series (``bars.csv`` — daily, flat-OHLC so close == the unambiguous mark
     Position.realised_pnl = short close PnL at the quantized fill price NET of penalty:
         (entry - fill_price) x |size| - penalty = (100 - 118.81) x 200 - 118.811881...
         = -3762.00 - 118.811881... = -3880.811881...
-    The EXPLICIT D-07 clamp min(loss + penalty, WB) keeps the total loss <= WB = 4_000;
-    here 3880.811881... <= 4_000 -> within the envelope (clamp not binding), and
-    GUARANTEES equity never drops below -WB (DEF-01-C closed).
+    Fill-at-liq-price (D-03 automatic-floor reading / D-07) keeps the total loss <= WB = 4_000:
+    the cover settles AT the liq price (~118.81), never above it. Here 3880.811881... <= 4_000
+    -> within the envelope. There is NO explicit min(loss + penalty, WB) clamp; settling at the
+    floor GUARANTEES equity never drops below -WB (DEF-01-C closed). (CR-01)
     final balance = 10_000 - 3880.811881... = 6119.188118... (> 0).
     The short covers to FLAT; the locked 4_000 is released; the forced-cover Order
     reaches FILLED in the mirror tagged OrderTriggerSource.LIQUIDATION.

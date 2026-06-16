@@ -1,4 +1,4 @@
-"""Liquidation formula / breach / penalty / cap (LIQ-01, LIQ-02) — 04-03.
+"""Liquidation formula / breach / penalty / fill-at-liq-price (LIQ-01, LIQ-02) — 04-03.
 
 Isolated-margin liquidation engine unit coverage (D-01-CORR / D-03-CORR / D-04 /
 D-05 / D-07). The corrected worked scenario is Entry=100, |size|=200, leverage
@@ -137,31 +137,6 @@ def test_liquidation_penalty():
     assert penalty == fee_rate * _SIZE * _LONG_LIQ
 
 
-def test_liquidation_loss_capped_at_wb():
-    """LIQ-02 (D-03-CORR/D-07): total_realized_loss = min(loss + penalty, WB).
-
-    Asserts (a) at the maintenance liq price the loss-magnitude ALONE is < WB
-    (the maintenance buffer is retained — the clamp is NOT a by-construction
-    identity), and (b) a FAT fee drives loss+penalty over WB so the EXPLICIT
-    clamp TRIGGERS and total stays <= WB.
-    """
-    h = _handler()
-
-    # (a) loss magnitude at the long maintenance liq price (no fee).
-    realized_loss = (_ENTRY - _LONG_LIQ) * _SIZE   # magnitude
-    assert realized_loss < _WB, "maintenance buffer retained → clamp not by-construction"
-    capped_no_fee = h._capped_realized_loss(realized_loss, Decimal("0"), _WB)
-    assert capped_no_fee == realized_loss          # below WB → unchanged
-
-    # (b) a fat fee pushes loss + penalty over WB → clamp triggers.
-    fat_fee = Decimal("0.50")
-    penalty = h._liquidation_penalty(fat_fee, _SIZE, _LONG_LIQ)
-    assert realized_loss + penalty > _WB
-    capped = h._capped_realized_loss(realized_loss, penalty, _WB)
-    assert capped == _WB
-    assert capped <= _WB
-
-
 def test_multi_breach_deterministic():
     """LIQ-01: simultaneous multi-position breaches are collected in a FIXED
     (ticker, open_time, position_id) order regardless of dict iteration order."""
@@ -219,6 +194,55 @@ def test_liquidation_emits_executed_fill_on_bar_route():
     assert fill.price == _LONG_LIQ
     assert fill.commission == fee_rate * _SIZE * _LONG_LIQ
     # Opposite side to close a long.
+    assert fill.action.name == "SELL"
+
+
+def test_liquidation_fills_at_liq_price_on_far_gap_through():
+    """CR-01 (option a): fill-at-liq-price IS the loss-bounding mechanism.
+
+    When the breach bar gaps FAR below the isolated liq price (close=10 vs
+    liq≈80.808), the forced close still books the fill AT the liq price (≈80.81),
+    NOT at the gapped close. The realized loss is the liq-price loss
+    ``(entry − liq) × |size|``, NOT the gapped-close loss ``(entry − 10) × |size|``.
+
+    This pins the actual mechanism: there is NO explicit ``min(loss + penalty,
+    WB)`` clamp — the loss is bounded by SETTLING AT THE FLOOR (D-03 automatic-
+    floor reading). The engine never models a pessimistic below-floor gap fill.
+    """
+    fee_rate = Decimal("0.001")
+    h = _handler(_StubUniverse({_TICKER: _StubInstrument(_MMR, fee_rate)}))
+    pid, position = _open_position(h, side="long")
+    h.set_order_storage(_DictOrderStorage())
+
+    bar_time = datetime(2024, 2, 1)
+    gapped_close = Decimal("10")   # FAR below the 80.808… liq floor.
+    assert gapped_close < _LONG_LIQ
+    _drain(h.global_queue)
+    _mark_close(h, _TICKER, gapped_close, bar_time)
+
+    fills = [e for e in _drain(h.global_queue) if isinstance(e, FillEvent)]
+    assert len(fills) == 1
+    fill = fills[0]
+
+    # The fill is booked AT the liq price (≈80.81), NOT the gapped close (10).
+    assert fill.price == _LONG_LIQ
+    assert fill.price != gapped_close
+    assert str(fill.price).startswith("80.808080")
+
+    # Realized loss is the LIQ-PRICE loss, not the gapped-close loss.
+    liq_price_loss = (_ENTRY - _LONG_LIQ) * _SIZE
+    gapped_close_loss = (_ENTRY - gapped_close) * _SIZE
+    assert fill.price * _SIZE == _LONG_LIQ * _SIZE
+    booked_loss = (_ENTRY - fill.price) * _SIZE
+    assert booked_loss == liq_price_loss
+    assert booked_loss != gapped_close_loss
+    # The liq-price loss is below WB (the floor bounds it by construction);
+    # the gapped-close loss would have blown WELL past WB had the engine filled
+    # at the gapped close (proving why fill-at-liq-price is what bounds the loss).
+    assert liq_price_loss < _WB
+    assert gapped_close_loss > _WB
+
+    assert fill.commission == fee_rate * _SIZE * _LONG_LIQ
     assert fill.action.name == "SELL"
 
 
