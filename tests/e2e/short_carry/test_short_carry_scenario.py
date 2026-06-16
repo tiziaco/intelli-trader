@@ -1,10 +1,14 @@
-"""PARKED short-with-carry e2e (SHORT-03 / CARRY-01) — Phase 3 (Plan 03-06).
+"""FROZEN short-with-carry e2e (SHORT-03 / CARRY-01) — Phase 3 (Plan 03-06).
 
-================================ PARKED — NOT A GOLDEN ================================
+============================ FROZEN — ACCOUNTING-CORE GOLDEN ==========================
+FREEZE PROVENANCE (D-10/D-12): frozen as part of the single accounting-core golden at
+the owner-gated 04-05 sign-off — Approved-by: tiziaco (tiziano.iaco@gmail.com),
+2026-06-16. The freeze set is ALL parked P2/P3 scenarios (levered_long, short_roundtrip,
+short_carry, partial_cover) + the new P4 liquidation scenarios (forced_liq_long,
+forced_liq_short, levered_long_into_liquidation) frozen as ONE accounting-core golden
+(cross-validated vs backtesting.py + backtrader; see tests/golden/CROSS-VALIDATION-ACCOUNTING.md).
 Every number asserted below is a HAND-COMPUTED literal with the arithmetic shown
-inline. This scenario is **PARKED**, NOT frozen as a golden: Phase 3 freezes NO new
-golden (D-10). The single owner-gated accounting-core re-baseline is at Phase 4 /
-XVAL-01 (cross-validation + owner sign-off). This test does NOT use the golden-diff
+inline. This test does NOT use the golden-diff
 harness — its load-bearing assertions are the per-bar BORROW_INTEREST carry debits and
 the carry-eroded balance, which the trades/equity/summary golden CSVs do not capture.
 It drives the engine's real SIGNAL -> ORDER -> FILL -> PORTFOLIO path and asserts on

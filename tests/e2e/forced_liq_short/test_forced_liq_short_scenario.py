@@ -1,9 +1,15 @@
-"""PARKED forced-liquidation SHORT white-box e2e — the P4 liquidation core (D-08).
+"""FROZEN forced-liquidation SHORT white-box e2e — the P4 liquidation core (D-08).
 
-================================ PARKED — NOT A GOLDEN ================================
+============================ FROZEN — ACCOUNTING-CORE GOLDEN ==========================
+FREEZE PROVENANCE (D-10/D-12): frozen as part of the single accounting-core golden at
+the owner-gated 04-05 sign-off — Approved-by: tiziaco (tiziano.iaco@gmail.com),
+2026-06-16. The freeze set is ALL parked P2/P3 scenarios (levered_long, short_roundtrip,
+short_carry, partial_cover) + the new P4 liquidation scenarios (forced_liq_long,
+forced_liq_short, levered_long_into_liquidation) frozen as ONE accounting-core golden
+(liquidation directionally corroborated vs backtesting.py + backtrader, D-08; the
+hand-computed closed-form is PRIMARY; see tests/golden/CROSS-VALIDATION-ACCOUNTING.md).
 Every number asserted below is a HAND-COMPUTED literal with the arithmetic shown
-inline. This scenario is **PARKED**, NOT frozen as a golden: Phase 4 freezes the
-single accounting-core golden ONLY at the owner-gated 04-05 sign-off (D-10/D-12). This
+inline. This
 test does NOT use the golden-diff harness (``run_scenario`` / ``golden/``) precisely
 because the load-bearing assertions are liquidation INTERNALS (the corrected isolated
 SHORT liq price, the breach-bar forced-cover FillEvent, the penalty on commission, the
