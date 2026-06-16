@@ -585,6 +585,17 @@ class PortfolioHandler:
             for position in self._collect_breaches_over_prices(portfolio, closes, bar_time):
                 wb, mmr, fee_rate = self._liq_inputs(portfolio, position)
                 liq_price = self._isolated_liq_price(position, wb, mmr)
+                # WR-04 / CR-01 (LOAD-BEARING): the breach is DETECTED on the
+                # bar close (``_is_breached``) but the position is SETTLED at
+                # ``liq_price`` (the maintenance liq price), NOT at the breaching
+                # close. With NO explicit ``min(loss + penalty, WB)`` clamp,
+                # filling at the maintenance floor is THE mechanism that bounds
+                # the realized loss near WB even on a gap-through (DEF-01-C). A
+                # maintainer "fixing" this to settle at the realistic breach
+                # close would silently re-open DEF-01-C with no clamp behind it —
+                # see _liquidate_position's docstring (fill-at-liq-price is the
+                # loss bound) and the gap-through regression
+                # test_liquidation_fills_at_liq_price_on_far_gap_through.
                 self._liquidate_position(portfolio, position, liq_price, fee_rate, bar_time)
 
     def _collect_breaches_over_prices(self, portfolio: Portfolio,
