@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
 status: executing
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-06-17T07:01:33.341Z"
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-06-17T07:11:53.086Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 29
-  completed_plans: 26
+  completed_plans: 27
   percent: 44
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 ## Current Position
 
 Phase: 05 (engine-native-trailing-stops) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 
 > Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
@@ -202,6 +202,8 @@ scope decisions:
 - [Phase 02]: Phase 2 Plan 06: parked leveraged-long e2e (D-17 — hand-computed, NOT a frozen golden) + GREEN phase gate (SMA_MACD 134/46189.87730727451 byte-exact, margin-mode determinism byte-identical, mypy --strict clean 185 files, make test 1079 passed); blocking human-verify checkpoint owner-APPROVED — Phase 2 freezes NO new golden (accounting-core re-baseline stays the single owner-gated freeze at P4/XVAL-01, D-16/D-17). The two findings this e2e surfaced (A: StrategiesHandler dropped SignalIntent.leverage at fan-out; B: leverage not carried order->fill->transaction) were CLOSED by 02-07/LEV-03 — not open.
 - [Phase ?]: Phase 5 Plan 00: 7 collectible pytest.skip Wave-0 trailing stubs satisfy the Nyquist contract — every Phase-5 -k/-m selector including compound 'trailing and bracket' collects >=1 before any RED; test-only, oracle byte-exact
 - [Phase ?]: Phase 5 Plan 01: TrailType lives in config/order.py (config-enum exception, order-domain cohesion); TRAILING_STOP order type + trail_type/trail_value carriage (Order->OrderEvent) + new_trailing_stop_order factory; D-TRAIL-7 dual-layer non-viable-trail gate with Pitfall-6 strategy (a) positive computed initial stop (price<=0 gate NOT branched out, both layers agree D-03a); SMA_MACD spot oracle byte-exact, mypy --strict clean (185 files)
+- [Phase ?]: 05-02: order.price is the trailing reference/anchor (HWM/LWM seed), not the initial stop — confirmed via D-TRAIL-7 validator
+- [Phase ?]: 05-02: D-TRAIL-8 quantize seam made optional (instrument_resolver); pure engine quantization-free by default, HWM/LWM always full precision
 
 ### Pending Todos
 
@@ -302,8 +304,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T07:01:33.333Z
-Stopped at: Completed 05-01-PLAN.md
+Last session: 2026-06-17T07:11:53.077Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
