@@ -328,7 +328,11 @@ primary correctness oracle; the crafted scenarios under XVAL-01 are).
 **Re-baseline**: Capstone — additive flagship strategy, not a re-baseline of the SMA_MACD oracle.
 NOT the correctness oracle (a two-leg strategy partially cancels its own sign errors → weak oracle).
 Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 4 plans (3 waves)
+- [ ] 06-01-PLAN.md — PairStrategy base + pair dispatch type-branch in StrategiesHandler + Wave-0 collectible test stubs
+- [ ] 06-02-PLAN.md — ETH/BTC reference pair strategy (log-OLS β freeze, z-score crossing firing, β-weighted explicit-quantity entries) + hand-computed β/z unit tests
+- [ ] 06-03-PLAN.md — Dispatch unit tests (both legs / both-present guard / β-weighted + LONG_SHORT) + close-only/safe-when-flat exit-safety integration test (D-12)
+- [ ] 06-04-PLAN.md — ETH/BTC flagship end-to-end run, STABILITY snapshot (tests/golden/pair/, NOT the oracle) + determinism double-run + phase gate
 
 ## Progress
 
