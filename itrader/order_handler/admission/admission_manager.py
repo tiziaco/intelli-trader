@@ -535,24 +535,33 @@ class AdmissionManager:
 			# Explicit caller-supplied quantity: the gates do not apply.
 			return None
 		if signal_event.action is not Side.BUY:
-			# WR-01 (D-09): an unsized SELL that ADDS to an open short is a short
-			# increase — out of v1 scope with the margin model, mirroring the long
-			# INCREASE gate. Without this gate the SELL passes the direction gate
-			# (SHORT_ONLY+SELL is not policed), is not a reduction (SELL vs an open
-			# SHORT, _resolve_signal_quantity:750-753), and falls into FIRST-ENTRY
-			# `resolve_entry` sizing — silently scaling the short on entry-fraction-
-			# of-cash. Reject it as an AUDITED admission failure instead. A SELL
+			# SCALE-01 (D-01): an unsized SELL that ADDS to an open short is a
+			# short increase — now gated behind the SAME `allow_increase` flag as
+			# the long INCREASE gate (:577-591), byte-symmetrically. Without this
+			# gate the SELL passes the direction gate (SHORT_ONLY+SELL is not
+			# policed), is not a reduction (SELL vs an open SHORT,
+			# _resolve_signal_quantity:750-753), and falls into FIRST-ENTRY
+			# `resolve_entry` sizing. With allow_increase=True the add is ADMITTED
+			# and falls through to the SAME direction-agnostic resolve_entry sizing
+			# + check-and-reserve gate the long add uses (D-02/D-05/D-06); with
+			# allow_increase=False it is an AUDITED admission rejection. A SELL
 			# against an open LONG (exit) or with no open position (a sanctioned
-			# first short entry) still passes — only the same-side add is blocked.
+			# first short entry) still passes — only the same-side add is gated.
 			if (snap is not None and snap.side is PositionSide.SHORT):
-				return self._reject_unsized_signal(
-					signal_event,
-					f"position increase not allowed: short increase is out of "
-					f"v1 scope (D-09) for {signal_event.ticker}",
-					triggered_by=OrderTriggerSource.ADMISSION_INCREASE,
-					operation_type=OrderOperationType.SIGNAL_ADMISSION,
-					error_prefix="Signal rejected at admission",
-				)
+				if not signal_event.allow_increase:
+					return self._reject_unsized_signal(
+						signal_event,
+						f"position increase not allowed by strategy "
+						f"(allow_increase=False) for {signal_event.ticker}",
+						triggered_by=OrderTriggerSource.ADMISSION_INCREASE,
+						operation_type=OrderOperationType.SIGNAL_ADMISSION,
+						error_prefix="Signal rejected at admission",
+					)
+				# allow_increase=True: fall through to entry sizing — the SELL-add
+				# reaches the SAME resolve_entry + check-and-reserve gate the long
+				# add uses (the reservation books notional/leverage on the reserve
+				# side; D-06 reserve-side correctness).
+				return None
 			return None
 		if self.portfolio_handler is None:
 			# No position truth to consult — an unsized signal without a
