@@ -196,3 +196,39 @@ def test_trailing_oco_sl_vs_tp_limit(engine, make_bar):
     assert not engine.has_order(2)
     assert not engine.has_order(3)
     assert 2 not in engine._trails                            # side-table popped
+
+
+# --- WR-01: MODIFY on a resting trailing stop reseeds the side-table --------
+
+
+def test_trailing_modify_price_reseeds_trail_state(engine, make_bar):
+    """WR-01: a MODIFY that changes a resting TRAILING_STOP's reference price
+    must NOT leave the ratchet side-table seeded from the ORIGINAL price. The
+    TrailState (hwm/lwm/current_stop) is re-seeded from the new reference so the
+    dynamic trigger reflects the modified order — not the stale original level."""
+    # anchor 100, PRICE trail 10 -> initial stop 90 (long sell-stop).
+    engine.submit(make_trailing_order_event(
+        "SELL", 100.0, 1, trail_type=TrailType.PRICE, trail_value=10.0))
+    assert engine._trails[1].current_stop == Decimal("90")
+    assert engine._trails[1].hwm == Decimal("100")
+
+    # MODIFY the reference up to 150 -> the trail must re-seed: hwm 150, stop 140.
+    assert engine.modify(1, new_price=Decimal("150"))
+    assert engine._trails[1].hwm == Decimal("150")            # not the stale 100
+    assert engine._trails[1].lwm == Decimal("150")
+    assert engine._trails[1].current_stop == Decimal("140")  # 150 - 10, not 90
+
+    # The modified order triggers against the NEW level: a bar piercing 140
+    # (but not the stale 90) fills.
+    fills, _ = engine.on_bar(make_bar(open_=145, high=146, low=139, close=141))
+    assert [f.order_event.order_id for f in fills] == [1]
+    assert fills[0].fill_price == Decimal("140")             # min(open 145, stop 140)
+
+
+def test_modify_non_trailing_order_leaves_no_trail_state(engine, make_bar):
+    """A MODIFY on a plain STOP must not spuriously create a TrailState entry
+    (the reseed path is TRAILING_STOP-only)."""
+    engine.submit(make_order_event(OrderType.STOP, "SELL", 90.0, order_id=7))
+    assert engine.modify(7, new_price=Decimal("85"))
+    assert 7 not in engine._trails
+    assert engine.get_order(7).price == Decimal("85")

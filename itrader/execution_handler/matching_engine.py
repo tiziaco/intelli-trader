@@ -163,11 +163,21 @@ class MatchingEngine:
         if order is None:
             return False
         # None-guarded: an omitted kwarg keeps the resting order's own value.
-        self._resting[order_id] = dataclasses.replace(
+        updated = dataclasses.replace(
             order,
             price=order.price if new_price is None else to_money(new_price),
             quantity=order.quantity if new_quantity is None else to_money(new_quantity),
         )
+        self._resting[order_id] = updated
+        # WR-01: a TRAILING_STOP's ratchet state (hwm/lwm/current_stop) is seeded
+        # from the order's reference ``price``. A MODIFY changes that reference,
+        # so the parallel side-table MUST be re-seeded — otherwise the engine
+        # keeps triggering against the STALE level derived from the original
+        # price and the modify silently has no effect on the dynamic trigger.
+        # Re-seed from the updated order so the ratchet restarts from the new
+        # reference (the favorably-only invariant resumes from there).
+        if updated.order_type == OrderType.TRAILING_STOP:
+            self._trails[order_id] = self._seed_trail(updated)
         return True
 
     def has_order(self, order_id: OrderId) -> bool:
