@@ -73,8 +73,11 @@ dense enough to catch ratchet/timing regressions, not just "it triggered once". 
 
 ## Wave 0 Requirements
 
-- [ ] `tests/unit/execution/test_trailing_stop.py` — unit stubs for TRAIL-01/TRAIL-02 (ratchet,
-      closed-bar/next-bar, gap, OCO, validation; long + short).
+- [ ] `tests/unit/execution/test_matching_engine_trailing.py` — unit stubs for TRAIL-01/TRAIL-02
+      (ratchet, closed-bar/next-bar, gap, OCO; long + short).
+- [ ] `tests/unit/order/test_trailing_validation.py` — D-TRAIL-7 non-viable-trail rejection stubs.
+- [ ] `tests/unit/order/test_trailing_bracket.py` — D-TRAIL-3/D-TRAIL-5 bracket-declaration stub
+      collectible under `-k "trailing and bracket"` (long + short).
 - [ ] `tests/golden/` trailing cross-val scenario stub — TRAIL-03 oracle reconciliation
       (backtesting.py `TrailingStrategy` + backtrader `StopTrail`, within 1% relative tolerance,
       trade-level primary; oracle-trails-off-close vs D-TRAIL-1-trails-off-high is a documented

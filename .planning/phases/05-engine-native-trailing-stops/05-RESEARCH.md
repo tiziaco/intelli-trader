@@ -355,17 +355,19 @@ leverage=getattr(order, 'leverage', Decimal("1")),
 | A2 | Routing the trailing SL through a fill-anchored (PercentFromFill-style) declaration is the cleanest seam for D-TRAIL-3 | Pattern 4 / Pitfall 6 | If the planner prefers seeding HWM/LWM at submit-time instead, the bracket-declaration site differs — but both satisfy the locked decisions. This is Claude's-discretion territory; the assumption only affects WHERE the seed lands, not WHETHER it works. |
 | A3 | `config/order.py` (vs `config/exchange.py`) is the more cohesive home for `TrailType` | Pattern 2 | Either location is convention-compliant; wrong guess only means a different (still-valid) file. Flagged as a plan decision. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Where does the trailing SL's initial stop get seeded — at bracket declaration or at parent fill?**
    - What we know: D-TRAIL-3 seeds HWM/LWM from the entry fill price; the `PercentFromFill` carve-out already creates fill-anchored children at parent EXECUTED fill (`_create_fill_anchored_children`).
    - What's unclear: Whether the trailing SL is a resting order from declaration (dormant until parent fills, with HWM/LWM seeded when the parent fill is observed in the engine) or created fresh at parent fill (PercentFromFill path).
    - Recommendation: Prefer the fill-anchored path (A2) — it reuses an existing, tested seam and naturally provides the entry fill price for the D-TRAIL-3 seed. Let the planner confirm against the engine's view of the parent fill.
+   - **RESOLVED: 05-03 adopts the fill-anchored path (A2).**
 
 2. **How does the validator's positive-`price` assumption coexist with a dynamic trailing stop?**
    - What we know: Both `EnhancedOrderValidator` (order_validator.py:213-220) and `SimulatedExchange.validate_order` (simulated.py:490-491) reject `price <= 0`.
    - What's unclear: The trailing SL has no fixed trigger price at declaration; D-TRAIL-7 validates `trail_value` viability, not a static price.
    - Recommendation: D-TRAIL-7 validation expressed against `trail_value` + reference price; for the resting trailing order, either carry the computed initial stop as `price` (after fill seed) or branch the positive-price check on `order_type == TRAILING_STOP`. Plan must pick one and keep the spot oracle byte-exact (trailing is oracle-dark on the SMA_MACD path).
+   - **RESOLVED: 05-01 adopts the positive computed-initial-stop strategy (skip static-price check for TRAILING_STOP, validate trail_value viability instead).**
 
 ## Environment Availability
 
@@ -443,7 +445,7 @@ leverage=getattr(order, 'leverage', Decimal("1")),
 |------|-------------|-------------|
 | `itrader/execution_handler/matching_engine.py` | **4-SPACE** (verified) | ratchet step, `_evaluate` TRAILING_STOP arm, `_fill_reason`, side-table |
 | `itrader/execution_handler/exchanges/simulated.py` | **4-SPACE** (verified) | `_emit_fill` is_maker/slippage gating, `validate_order` price branch |
-| `itrader/core/enums/order.py` | **4-SPACE** (verified) | `OrderType.TRAILING_STOP` + `order_type_map` |
+| `itrader/core/enums/order.py` | **TAB (verified)** | `OrderType.TRAILING_STOP` + `order_type_map` |
 | `itrader/events_handler/events/order.py` | **4-SPACE** (verified) | `trail_type`/`trail_value` fields + `new_order_event` read-back |
 | `itrader/config/order.py` or `config/exchange.py` | **4-SPACE** (config is spaces) | `TrailType` enum |
 | `itrader/config/__init__.py` | **4-SPACE** | re-export `TrailType` |

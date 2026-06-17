@@ -42,14 +42,14 @@ in the execution layer — the order handler declares the trailing bracket leg v
 
 ### Behavioral decisions
 
-**D-TRAIL-1 — Trail off the CLOSED bar's extreme.**
+**D-TRAIL-1:** Trail off the CLOSED bar's extreme.
 Longs ratchet the high-water-mark from the **closed** bar's HIGH; shorts ratchet the
 low-water-mark from the closed bar's LOW (not the close). Note this is marginally more aggressive
 than the oracles (backtesting.py / backtrader trail off the *close*) — accepted, documented as a
 known systematic cross-val gap (see Testing). TRAIL-02 mandates "closed-bar extremes" → extremes,
 not close.
 
-**D-TRAIL-2 — Closed-bar / next-bar activation (look-ahead-safe). [TRAIL-02 core]**
+**D-TRAIL-2:** Closed-bar / next-bar activation (look-ahead-safe). [TRAIL-02 core]
 The ratcheted stop computed from bar N's extreme becomes active on bar **N+1**. The engine NEVER
 trails to this bar's extreme and triggers off the same bar. This is the explicit reversal of the
 earlier conversational "high-first same-bar" idea, which contradicted TRAIL-02 and the
@@ -57,32 +57,32 @@ earlier conversational "high-first same-bar" idea, which contradicted TRAIL-02 a
 evaluated against the stop level derived from bars ≤ N-1; then bar N's extreme updates the
 HWM/LWM for use on bar N+1.
 
-**D-TRAIL-3 — Seed HWM/LWM from the entry fill price.**
+**D-TRAIL-3:** Seed HWM/LWM from the entry fill price.
 When the trailing stop is declared as a bracket child on entry fill, seed the high/low-water-mark
 from the entry fill price. Initial stop = fill − trail (long) / fill + trail (short); it ratchets
 only favorably thereafter, activating per D-TRAIL-2.
 
-**D-TRAIL-4 — Gap-through fills reuse the static-stop gap-aware rule verbatim.**
+**D-TRAIL-4:** Gap-through fills reuse the static-stop gap-aware rule verbatim.
 A trailing stop is still a stop: on a clean gap-through bar it fills at the worse price (the open),
 exactly like the existing static-stop gap convention. Compute/refresh the active trail level
 BEFORE the gap test on each bar.
 
-**D-TRAIL-5 — OCO: trailing SL replaces the fixed SL leg.**
+**D-TRAIL-5:** OCO: trailing SL replaces the fixed SL leg.
 A bracket has EITHER a fixed SL OR a trailing SL, not both. The existing same-bar OCO priority
 rule applies unchanged to the now-dynamic SL leg (TP-limit vs trailing-SL same-bar resolution
 uses the existing priority).
 
-**D-TRAIL-6 — State ownership: matching engine resting book, not the order mirror.**
+**D-TRAIL-6:** State ownership: matching engine resting book, not the order mirror.
 HWM/LWM and the current stop level live in the `MatchingEngine` resting book (`_resting`). The
 order mirror only knows a trailing child exists and reconciles from `FillEvent`s. Preserves the
 "execution is source of truth for fills" contract. (Deterministic + reproducible: the resting-book
 state is a pure function of the bar sequence in single-threaded backtest.)
 
-**D-TRAIL-7 — Validation rejects a non-viable trail.**
+**D-TRAIL-7:** Validation rejects a non-viable trail.
 `EnhancedOrderValidator` rejects a `trail_value` that would place the initial stop at or below zero
 (percent ≥ 1, or absolute ≥ entry/reference price) BEFORE the order rests.
 
-**D-TRAIL-8 — Decimal discipline.**
+**D-TRAIL-8:** Decimal discipline.
 Carry HWM/LWM at full 28-digit precision; `quantize(..., "price")` ONLY the computed stop level
 used for the trigger comparison / fill. Money is Decimal end-to-end.
 
