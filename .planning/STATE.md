@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: verifying
-stopped_at: Completed 05-04-PLAN.md
-last_updated: "2026-06-17T07:54:25.400Z"
+status: ready_to_plan
+stopped_at: Phase 05 complete (6/5) — ready to discuss Phase 05.1
+last_updated: 2026-06-17T08:21:33.031Z
 last_activity: 2026-06-17
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 29
-  completed_plans: 29
+  completed_plans: 30
   percent: 50
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 05 — engine-native-trailing-stops
+**Current focus:** Phase 05.1 — short position scale in margin increase
 
 ## Current Position
 
-Phase: 05 (engine-native-trailing-stops) — EXECUTING
-Plan: 5 of 5
-Status: Phase 5 complete — trailing re-baseline frozen (owner-signed); ready for verification
+Phase: 05.1
+Plan: Not started
+Status: Ready to plan
 
 > Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
 > not exist yet (only 01/02/03/04 + 999.x dirs are present). Corrected manually to Phase 5 per the v1.4
@@ -111,7 +111,7 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 **Velocity (v1.3):**
 
-- Total plans completed: 44
+- Total plans completed: 50
 - Average duration: — min
 - Total execution time: 0.0 hours
 
