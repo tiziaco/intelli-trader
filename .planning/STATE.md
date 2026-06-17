@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: Ready to discuss/plan
+status: executing
 stopped_at: Phase 6 context gathered
-last_updated: "2026-06-17T13:54:24.850Z"
-last_activity: 2026-06-17
+last_updated: "2026-06-17T14:37:44.404Z"
+last_activity: 2026-06-17 -- Phase 06 planning complete
 progress:
   total_phases: 10
   completed_phases: 6
-  total_plans: 31
+  total_plans: 35
   completed_plans: 32
   percent: 60
 ---
@@ -27,13 +27,13 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 
 Phase: 6
 Plan: Not started
-Status: Ready to discuss/plan
+Status: Ready to execute
 
 > Note: `phase.complete` again auto-resolved next_phase to backlog seed 999.2 because the Phase 6 dir
 > does not exist yet (only 01/02/03/04/05 + 05.1 + 999.x dirs are present). Corrected manually to
 > Phase 6 (Pair-Trading Flagship) per the v1.4 Phase Map (1→2→3→4→5→**6**). 999.2/999.3 remain FUTURE
 > (N+3/N+4) backlog entries, not the next phase.
-Last activity: 2026-06-17
+Last activity: 2026-06-17 -- Phase 06 planning complete
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 

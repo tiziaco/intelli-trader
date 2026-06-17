@@ -467,9 +467,13 @@ resample alias (handled in the feed, not here, but watch statsmodels deprecation
 | A4 | The `PairStrategy` dispatch returns a pair (list/tuple) of `SignalIntent`; the handler iterates them through the existing fan-out. The exact base method name/signature is a design choice. | Pattern 1, OQ3 | Naming/shape only; no engine risk. `[ASSUMED]` |
 | A5 | The snapshot artifact goes in a NEW directory, not `tests/golden/`. | Validation Wave 0 | If placed in `tests/golden/`, it could be mistaken for an oracle or collide with the SMA_MACD freeze. Low risk if planner pins the location. `[ASSUMED]` |
 
-## Open Questions
+## Open Questions (RESOLVED — locked 2026-06-17, see CONTEXT.md D-04/D-10/D-12)
 
-1. **Log vs raw prices for β (D-04 wording).** D-04 literally says "OLS of price_A on price_B."
+> All three resolved during the planning session and locked inline in CONTEXT.md:
+> **Q1 → LOG prices** (D-04); **Q2 → coint as logged DIAGNOSTIC, keep ETH/BTC** (D-10);
+> **Q3 → ACCEPT + DOCUMENT the single-sided-liquidation re-entry; dispatch guard DEFERRED** (D-12).
+
+1. **[RESOLVED → log prices]** **Log vs raw prices for β (D-04 wording).** D-04 literally says "OLS of price_A on price_B."
    Offline analysis strongly favors **log prices** (β≈0.53, R²≈0.57 vs raw β≈0.021, R²≈0.44).
    - What we know: raw-price β is near-degenerate and gives a lopsided notional split.
    - What's unclear: whether the owner intends the literal raw-price spread.
