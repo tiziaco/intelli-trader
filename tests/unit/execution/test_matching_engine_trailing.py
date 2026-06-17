@@ -232,3 +232,23 @@ def test_modify_non_trailing_order_leaves_no_trail_state(engine, make_bar):
     assert engine.modify(7, new_price=Decimal("85"))
     assert 7 not in engine._trails
     assert engine.get_order(7).price == Decimal("85")
+
+
+# --- WR-03: trailing stops carry FULL precision (no dead quantize branch) ----
+
+
+def test_trailing_stop_carries_full_precision_no_quantize(engine, make_bar):
+    """WR-03: the dead instrument-resolver quantize branch is removed. A computed
+    trailing stop is carried at FULL Decimal precision exactly like every other
+    matching price (D-14 never-round-prices) — the engine NEVER quantizes the
+    stop. A PERCENT trail producing a non-terminating-scale stop keeps every
+    digit (no rounding to a symbol price scale)."""
+    # anchor 100, PERCENT trail 0.333 -> stop 100 * (1 - 0.333) = 66.700
+    engine.submit(make_trailing_order_event(
+        "SELL", 100.0, 1, trail_type=TrailType.PERCENT, trail_value=0.333))
+    assert engine._trails[1].current_stop == Decimal("100") * (Decimal("1") - Decimal("0.333"))
+    assert engine._trails[1].current_stop == Decimal("66.700")  # full precision, unquantized
+
+    # The pure engine carries no instrument resolver / quantize seam (removed).
+    assert not hasattr(engine, "_instrument_resolver")
+    assert not hasattr(engine, "_quantize_stop")

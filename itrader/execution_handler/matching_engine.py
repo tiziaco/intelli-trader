@@ -49,11 +49,10 @@ encodes margin.
 import dataclasses
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Callable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from itrader.core.ids import OrderId
-from itrader.core.instrument import Instrument
-from itrader.core.money import quantize, to_money
+from itrader.core.money import to_money
 from itrader.events_handler.events import OrderEvent, BarEvent
 from itrader.config import TrailType
 from itrader.core.enums import OrderType, Side
@@ -71,8 +70,8 @@ class TrailState:
 
     ``hwm``/``lwm`` are carried at FULL 28-digit Decimal precision (D-TRAIL-8) —
     only ``current_stop`` (the level used for the trigger comparison/fill) is
-    ever ``quantize``'d. For a long sell-stop only ``hwm`` advances; for a short
-    buy-stop only ``lwm`` advances.
+    carried at full precision. For a long sell-stop only ``hwm`` advances; for a
+    short buy-stop only ``lwm`` advances.
     """
     hwm: Decimal           # running max of closed-bar highs (long); seed = fill price
     lwm: Decimal           # running min of closed-bar lows (short); seed = fill price
@@ -104,8 +103,7 @@ class CancelDecision:
 class MatchingEngine:
     """Resting-order book + trigger/OCO evaluation."""
 
-    def __init__(self,
-                 instrument_resolver: Optional[Callable[[str], Optional[Instrument]]] = None) -> None:
+    def __init__(self) -> None:
         # Order ids have been UUIDv7-backed since M2 (D-12) — the book is
         # keyed by OrderId, never by int.
         self._resting: dict[OrderId, OrderEvent] = {}
@@ -113,13 +111,15 @@ class MatchingEngine:
         # keyed by the SAME OrderId as ``_resting`` and popped at every
         # ``_resting.pop`` site so no entry leaks for a filled/cancelled order.
         self._trails: dict[OrderId, TrailState] = {}
-        # D-TRAIL-8: optional per-symbol Instrument resolver used to ``quantize``
-        # the computed stop level to the symbol's price scale. None (default,
-        # byte-exact for every pre-existing construction) means the stop is
-        # carried at full Decimal precision exactly like every other matching
-        # price (D-14 never-round-prices) — only the running extreme must stay
-        # full precision, which it does unconditionally.
-        self._instrument_resolver = instrument_resolver
+        # WR-03 / D-TRAIL-8: the computed trailing stop is carried at FULL Decimal
+        # precision exactly like every other matching price (D-14 never-round-prices).
+        # The engine is a pure, dependency-free module with no Instrument access,
+        # so it does NOT quantize the stop — the one and only construction site
+        # (SimulatedExchange) wires no resolver, so the former optional
+        # instrument-resolver quantize seam was dead on every real run and has
+        # been removed. The running extreme (hwm/lwm) is full precision too —
+        # the genuine D-TRAIL-8 risk (quantizing the running extreme, causing
+        # ratchet drift) cannot occur because nothing quantizes here.
 
     # --- book management ---
 
@@ -194,9 +194,9 @@ class MatchingEngine:
         D-TRAIL-3: HWM (long) / LWM (short) seed from the entry/reference price
         (``order.price`` — the fill-anchored reference, the same value the
         D-TRAIL-7 validator gates ``trail_value`` against). The initial active
-        stop is computed from that seed and ``quantize``'d (D-TRAIL-8), so the
-        order is immediately triggerable on its first bar against the level
-        derived from its entry (bars <= N-1, where N-1 is the entry bar).
+        stop is computed from that seed at full precision (WR-03 — no quantize),
+        so the order is immediately triggerable on its first bar against the
+        level derived from its entry (bars <= N-1, where N-1 is the entry bar).
         """
         anchor = order.price                       # full-precision Decimal reference
         stop = self._compute_stop(order, anchor)
@@ -206,15 +206,15 @@ class MatchingEngine:
         return TrailState(hwm=anchor, lwm=anchor, current_stop=stop)
 
     def _compute_stop(self, order: OrderEvent, watermark: Decimal) -> Decimal:
-        """Compute the (quantized) stop level for ``watermark`` per the trail.
+        """Compute the stop level for ``watermark`` per the trail.
 
         Long sell-stop:  stop = HWM - trail (PRICE) | HWM * (1 - trail) (PERCENT)
         Short buy-stop:  stop = LWM + trail (PRICE) | LWM * (1 + trail) (PERCENT)
 
         The arithmetic runs at full Decimal precision off the full-precision
-        watermark (D-TRAIL-8); ONLY the returned stop is ``quantize``'d to the
-        symbol's price scale (when an Instrument resolver is injected — else it
-        is carried at full precision like every other matching price, D-14).
+        watermark (D-TRAIL-8); the returned stop is carried at full precision
+        like every other matching price (D-14 never-round-prices — WR-03: the
+        engine does NOT quantize the stop, the dead resolver seam was removed).
         """
         trail_value = order.trail_value
         trail_type = order.trail_type
@@ -232,21 +232,9 @@ class MatchingEngine:
                 raw = watermark + trail_value
             else:                                           # PERCENT
                 raw = watermark * (Decimal("1") + trail_value)
-        return self._quantize_stop(order.ticker, raw)
-
-    def _quantize_stop(self, ticker: str, raw: Decimal) -> Decimal:
-        """quantize(raw, instrument, "price") when a resolver is injected.
-
-        D-TRAIL-8: quantize ONLY the computed stop used for trigger/fill. With
-        no resolver (the pure default construction) the level is carried at full
-        precision — byte-identical to the engine's existing never-round-prices
-        contract (D-14)."""
-        if self._instrument_resolver is None:
-            return raw
-        instrument = self._instrument_resolver(ticker)
-        if instrument is None:
-            return raw
-        return quantize(raw, instrument, "price")
+        # WR-03 / D-14: carried at full precision — the engine never quantizes
+        # the stop (the dead instrument-resolver seam was removed).
+        return raw
 
     def _ratchet_trail(self, order: OrderEvent, state: TrailState, bar: BarEvent) -> None:
         """Advance HWM/LWM from THIS bar's extreme and recompute the stop for
