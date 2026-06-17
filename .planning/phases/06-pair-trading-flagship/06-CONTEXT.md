@@ -59,6 +59,12 @@ is reused unchanged.
   price_B (use `statsmodels` OLS — a declared-but-currently-unused dependency); `spread = A − β·B`.
   Textbook cointegration pairs trade; deterministic. (Chosen over the log-price ratio and a rolling
   re-estimated β.)
+  - **RESOLVED (research, locked 2026-06-17): use LOG prices.** Offline measurement showed raw
+    prices give a near-degenerate β≈0.021 (unbalanced legs, weak market-neutrality); log prices
+    give a balanced β≈0.53, R²≈0.57 — the standard cointegration transform. So
+    `spread = log(A) − β·log(B)`, β fit on log prices over warmup then frozen (D-05). Expose a
+    `use_log_prices` class-attr knob **defaulting to log**. This amends D-04's literal "price"
+    wording.
 - **D-05 (β fit on warmup, then frozen — look-ahead-safe):** Compute β **once** via OLS over a
   warmup window of **completed bars only** (the strategy's declared warmup), then **freeze** it for
   the rest of the run. The z-score rolling mean/std also use completed bars only. Respects the
@@ -91,6 +97,12 @@ is reused unchanged.
   history overlap (**2021-01-01 → 2026-01-08, ~1834 aligned daily bars**), least sparse. Research
   MUST confirm the `statsmodels` `coint` p-value over the warmup window. (SOL is sparser — 1416 bars
   over the same span — reinforcing D-02.)
+  - **RESOLVED (research, locked 2026-06-17): coint is a logged DIAGNOSTIC, not a gate; keep
+    ETH/BTC.** ETH/BTC fails strict Engle-Granger over every warmup window (p never < 0.05) — normal
+    for crypto majors, and no other pair in `data/` is likely to pass. Log the p-value as an honest
+    run diagnostic; do **NOT** gate the run on `p < 0.05`. The rolling z-score still produces 48-72
+    round trips, satisfying the "non-trivial round trips" success criterion. The D-10 discretion
+    fallback ("MAY fall back if not cointegrated") is therefore **not triggered** — ETH/BTC stays.
 - **D-11 (Snapshot + unit tests validation):** Because this is NOT the oracle and IS slip-able, and
   cross-validation is explicitly NOT required:
   - **Hand-verified unit tests** on the hand-computable parts: β/z-score math, `PairStrategy`
@@ -111,6 +123,16 @@ is reused unchanged.
   directly with D-07 (no stop → a leg can be liquidated out from under the strategy). (Chosen over
   giving `PairStrategy` `PortfolioReadModel` access, which breaks the pure-alpha contract and is
   awkward under the per-portfolio fan-out.)
+  - **RESOLVED (research, locked 2026-06-17): exit path is SAFE; single-sided-liquidation re-entry
+    ACCEPTED + DOCUMENTED.** The close-only / safe-when-flat path exists — the strategy MUST emit
+    β-weighted **explicit-quantity entries** and **quantity-free `exit_fraction=1.0` exits** (an
+    explicit `quantity` on an exit would short-circuit the reduction resolver and open a new
+    position). Residual hazard (D-07 × D-12): if a leg is liquidated mid-pair while the in-pair flag
+    is still set, the next exit crossing's close of the *already-liquidated* leg resolves as a NEW
+    entry when flat (bounded to once per round trip). **Accepted as honest flagship behavior** —
+    D-11 labels the run a stability lock, not a correctness oracle; the snapshot test captures
+    whatever happens; zero new engine surface (keeps the D-12 pure-alpha contract). The dispatch
+    guard to suppress it is a tracked follow-up (see Deferred Ideas).
 - **D-13 (Crossing-based stateful firing):** **Enter** only when z *crosses into* the band (was
   inside, now `|z| > entry`) AND the strategy is flat; **exit** only when z *crosses back inside*
   (`|z| < exit`) AND the strategy is in-pair. One clean entry/exit per round trip; pairs naturally
@@ -240,6 +262,13 @@ is reused unchanged.
   contract and is awkward under per-portfolio fan-out (D-12).
 - **Cross-validation of the pair flagship vs `backtesting.py`/`backtrader`** — explicitly NOT
   required (the crafted XVAL-01 scenarios are the oracle); a possible later nice-to-have.
+- **TODO — single-sided-liquidation re-entry guard (follow-up to D-12 resolution, 2026-06-17):**
+  Investigate the D-07 × D-12 edge case where a liquidated-away leg's stale close re-opens a new
+  single-leg position, and **ideally implement a guard** (a read-model check at the *dispatch*
+  layer that detects an in-pair flag with only one live leg and suppresses the spurious re-entry).
+  Deferred for the flagship (accepted + documented for now, per D-12 resolution); not blocking. The
+  Phase 6 snapshot should capture whether this actually fires on the ETH/BTC 1x run to size the
+  follow-up.
 
 </deferred>
 
