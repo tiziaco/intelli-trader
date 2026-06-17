@@ -28,6 +28,7 @@ from typing import Any, List, Optional, assert_never
 from ..order import Order
 from ..operation_result import OperationResult
 from ...core.enums import OrderOperationType, Side
+from ...core.exceptions import SizingPolicyViolation
 from ...core.money import to_money
 from ...core.sizing import PercentFromDecision, PercentFromFill
 from ...events_handler.events import OrderEvent, SignalEvent, FillEvent
@@ -123,6 +124,12 @@ class BracketManager:
 						# NO children at assembly — record the pending bracket;
 						# on_fill creates them priced from the actual fill
 						# (IB attached-order semantics, Pattern 5 Option B).
+						# TRAIL-01/TRAIL-02 (D-TRAIL-3/D-TRAIL-5): a trailing
+						# PercentFromFill carries trail_type/trail_value, which
+						# survive the arm->fill round-trip so the SL child can be
+						# declared as a TRAILING_STOP seeded from the entry fill
+						# (a trailing SL has no static price at declaration, so it
+						# rides the fill-anchored carve-out naturally).
 						self._brackets.arm(primary.id, _PendingBracket(
 							policy=sltp_policy,
 							ticker=signal_event.ticker,
@@ -131,6 +138,8 @@ class BracketManager:
 							exchange=exchange,
 							strategy_id=signal_event.strategy_id,
 							portfolio_id=signal_event.portfolio_id,
+							trail_type=sltp_policy.trail_type,
+							trail_value=sltp_policy.trail_value,
 						))
 					case _:
 						assert_never(sltp_policy)
@@ -243,16 +252,59 @@ class BracketManager:
 		sl_price, tp_price = _bracket_levels(pending.policy, anchor, pending.action)
 		# Invert on the parent's action (D-05); the entity stores a Side (SIG-03/D-03).
 		child_action = Side.BUY if pending.action is Side.SELL else Side.SELL
-		sl_order = Order.new_stop_order(
-			time=fill_event.time,
-			ticker=pending.ticker,
-			action=child_action,
-			price=sl_price,
-			quantity=pending.quantity,
-			exchange=pending.exchange,
-			strategy_id=pending.strategy_id,
-			portfolio_id=pending.portfolio_id
-		)
+		if pending.trail_type is not None and pending.trail_value is not None:
+			# CR-01 / D-TRAIL-7 (PRICE case): the absolute trail viability gate is
+			# only knowable HERE, at the fill, against the resolved anchor — it is
+			# bypassed by the validator (which never runs on this fill-anchored
+			# child). A PRICE trail >= anchor would seed a NON-POSITIVE stop
+			# (anchor - trail <= 0 for a long; mirrored for a short) that can never
+			# trigger, silently resting an unprotected position. Reject fail-loud
+			# (backtest fail-fast: the reconcile caller logs + re-raises) instead of
+			# resting a dead stop. The PERCENT case is bounded earlier at policy
+			# construction (WR-02); only PRICE needs the fill-time anchor check.
+			# TrailType is imported lazily (config-enum exception — keep the
+			# order/core -> config dependency direction off the module load path).
+			from ...config import TrailType
+			if pending.trail_type == TrailType.PRICE and pending.trail_value >= anchor:
+				raise SizingPolicyViolation(
+					f"PercentFromFill PRICE trail_value {pending.trail_value} must be "
+					f"< the entry-fill anchor {anchor}: a non-viable absolute trail "
+					f"would seed a non-positive stop that can never trigger "
+					f"(parent {parent.id})"
+				)
+			# TRAIL-01/TRAIL-02 (D-TRAIL-3/D-TRAIL-5): the SL leg is a
+			# TRAILING_STOP, not a fixed STOP. Its `price` is the ENTRY FILL
+			# anchor (the SAME value MatchingEngine._seed_trail reads as the
+			# HWM/LWM seed — 05-02 confirmed order.price is the reference/anchor,
+			# NOT the initial stop). The engine computes the initial stop from
+			# the anchor and trail_value on submit (Pitfall 6: the anchor is a
+			# positive price, so BOTH dual-layer validators' positive-price gate
+			# passes; D-TRAIL-7 gates trail_value < anchor for the PRICE type).
+			# D-TRAIL-5 EITHER/OR: the trailing SL REPLACES the fixed STOP leg;
+			# the TP-limit leg below is unchanged.
+			sl_order = Order.new_trailing_stop_order(
+				time=fill_event.time,
+				ticker=pending.ticker,
+				action=child_action,
+				price=anchor,
+				quantity=pending.quantity,
+				exchange=pending.exchange,
+				strategy_id=pending.strategy_id,
+				portfolio_id=pending.portfolio_id,
+				trail_type=pending.trail_type,
+				trail_value=pending.trail_value,
+			)
+		else:
+			sl_order = Order.new_stop_order(
+				time=fill_event.time,
+				ticker=pending.ticker,
+				action=child_action,
+				price=sl_price,
+				quantity=pending.quantity,
+				exchange=pending.exchange,
+				strategy_id=pending.strategy_id,
+				portfolio_id=pending.portfolio_id
+			)
 		sl_order.parent_order_id = parent.id
 		tp_order = Order.new_limit_order(
 			time=fill_event.time,

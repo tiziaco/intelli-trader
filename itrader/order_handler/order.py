@@ -9,6 +9,7 @@ from itrader import idgen
 from itrader.core.ids import OrderId, PortfolioId, StrategyId
 from itrader.core.exceptions import UnsizedSignalError
 from itrader.core.money import to_money
+from itrader.config import TrailType
 from ..core.enums import (
     OrderType, OrderStatus,
     OrderTriggerSource, Side,
@@ -98,6 +99,13 @@ class Order:
 	# (notional / effective_leverage). Default Decimal("1") keeps the spot path
 	# byte-exact (oracle-dark).
 	leverage: Decimal = field(default_factory=lambda: Decimal("1"))
+
+	# TRAIL-01: the trail descriptor for a TRAILING_STOP order. Both default to
+	# None / no-op so every non-trailing order is byte-exact (oracle-dark). The
+	# MatchingEngine ratchet (05-02) and BracketManager seeding (05-03) consume
+	# these; trail_value enters the Decimal money domain via to_money (D-TRAIL-8).
+	trail_type: Optional[TrailType] = None
+	trail_value: Optional[Decimal] = None
 
 	def __post_init__(self) -> None:
 		"""Enter the Decimal money domain at the construction boundary (D-04).
@@ -267,9 +275,71 @@ class Order:
 			f"Stop order created for {ticker}",
 			OrderTriggerSource.SYSTEM
 		)
-		
+
 		return order
-	
+
+	@classmethod
+	def new_trailing_stop_order(cls, time: datetime, ticker: str, action: Side, price: Any, quantity: Any, exchange: str,
+					strategy_id: StrategyId, portfolio_id: PortfolioId, *,
+					trail_type: TrailType, trail_value: Any,
+					leverage: Decimal = Decimal("1")) -> "Order":
+		"""
+		Generate a new Trailing-Stop Order object (TRAIL-01).
+
+		Copies ``new_stop_order`` with ``OrderType.STOP`` -> ``OrderType.TRAILING_STOP``
+		and the trail descriptor (``trail_type`` / ``trail_value``) attached. The
+		MatchingEngine ratchet (05-02) reads the trail off the resting order; the
+		fill-anchored initial stop seeding lands in 05-03.
+
+		Parameters
+		----------
+		price : `Any`
+			The fill-anchored INITIAL stop price (Pitfall 6 — must be a positive
+			Decimal so ``__post_init__``'s ``to_money(self.price)`` and BOTH
+			validator positive-price gates pass; the actual seeding lands in 05-03).
+		trail_type : `TrailType`, keyword-only
+			How the trail distance is measured (PRICE absolute / PERCENT fraction).
+		trail_value : `Any`, keyword-only
+			The trail distance; entered into the Decimal money domain via
+			``to_money`` (D-TRAIL-8: NEVER ``Decimal(float)``).
+		leverage : `Decimal`, keyword-only
+			The admission-clamped EFFECTIVE leverage the order is margined at
+			(CR-01 / LEV-03); Decimal("1") (the default) is unlevered and
+			byte-exact (oracle-dark).
+
+		Returns
+		-------
+		Order : `Order`
+			A new Order object with order_type == OrderType.TRAILING_STOP.
+		"""
+		order = cls(
+			time,
+			OrderType.TRAILING_STOP,
+			OrderStatus.PENDING,
+			ticker,
+			action,
+			to_money(price),
+			to_money(quantity),
+			exchange,
+			strategy_id,
+			portfolio_id,
+			# CR-01 (LEV-03): carry the admission-clamped EFFECTIVE leverage.
+			leverage=to_money(leverage),
+		)
+		# TRAIL-01 / D-TRAIL-8: attach the trail descriptor; trail_value enters
+		# the Decimal money domain via to_money (never Decimal(float)).
+		order.trail_type = trail_type
+		order.trail_value = to_money(trail_value)
+
+		# Add initial state change
+		order.add_state_change(
+			OrderStatus.PENDING,
+			f"Trailing stop order created for {ticker}",
+			OrderTriggerSource.SYSTEM
+		)
+
+		return order
+
 	@classmethod
 	def new_limit_order(cls, time: datetime, ticker: str, action: Side, price: Any, quantity: Any, exchange: str,
 					strategy_id: StrategyId, portfolio_id: PortfolioId, *,

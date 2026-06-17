@@ -486,7 +486,22 @@ class SimulatedExchange(AbstractExchange):
 		elif event.quantity > self._max_order_size:
 			failed_checks.append(f"Order quantity {event.quantity} exceeds maximum {self._max_order_size}")
 		
-		# Price validation
+		# Price validation.
+		# D-TRAIL-7 / D-03a (dual-layer agreement): a TRAILING_STOP carries its
+		# fill-anchored ENTRY ANCHOR in ``event.price`` (positive — Pitfall 6
+		# strategy (a), seeded in 05-03), so the unchanged ``event.price <= 0``
+		# gate gives the SAME accept/reject verdict as EnhancedOrderValidator for
+		# a viable trailing order. WR-04/CR-01: trail VIABILITY (PERCENT < 1,
+		# PRICE < anchor) is no longer bypassable on the real fill-anchored path —
+		# it is now gated upstream at policy construction (WR-02, core/sizing.py)
+		# and at the fill boundary (CR-01, bracket_manager._create_fill_anchored_children),
+		# so a non-viable trail is rejected fail-loud BEFORE any OrderEvent reaches
+		# this exchange. The dynamic-price ratchet (05-02) never lowers the stop
+		# below 0, so no contradictory rejection is added here — the exchange
+		# admits exactly the trailing orders the domain layers already deemed
+		# viable. This layer intentionally carries NO trail-awareness (the
+		# viability gate lives where the anchor is known); the dual-layer
+		# disposition for trailing orders is therefore consistent, not bypassed.
 		if event.price <= 0:
 			failed_checks.append("Order price must be positive")
 		elif event.price > _UNREALISTIC_PRICE_THRESHOLD:  # Decimal-vs-Decimal sanity check (IN-01)

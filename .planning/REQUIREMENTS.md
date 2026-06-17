@@ -81,12 +81,12 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Trailing stop (TRAIL)
 
-- [ ] **TRAIL-01**: A strategy can declare a `TRAILING_STOP` order; the `MatchingEngine` ratchets the
+- [x] **TRAIL-01**: A strategy can declare a `TRAILING_STOP` order; the `MatchingEngine` ratchets the
   resting stop in the favorable direction only as price extends.
-- [ ] **TRAIL-02**: The trail updates from closed-bar extremes and becomes active on the next bar
+- [x] **TRAIL-02**: The trail updates from closed-bar extremes and becomes active on the next bar
   (look-ahead-safe per the `bar_feed.py` contract — never trail to this bar's extreme and trigger off
   the same bar).
-- [ ] **TRAIL-03**: Trailing-stop backtest behavior is cross-validated against `backtesting.py` and
+- [x] **TRAIL-03**: Trailing-stop backtest behavior is cross-validated against `backtesting.py` and
   `backtrader`.
 
 ### Validation & flagship (XVAL / PAIR)
@@ -156,9 +156,9 @@ Which phases cover which requirements. Filled during roadmap creation.
 | LIQ-02 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
 | LIQ-03 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
 | XVAL-01 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
-| TRAIL-01 | Phase 5 — Engine-Native Trailing Stops | Pending |
-| TRAIL-02 | Phase 5 — Engine-Native Trailing Stops | Pending |
-| TRAIL-03 | Phase 5 — Engine-Native Trailing Stops | Pending |
+| TRAIL-01 | Phase 5 — Engine-Native Trailing Stops | Complete |
+| TRAIL-02 | Phase 5 — Engine-Native Trailing Stops | Complete |
+| TRAIL-03 | Phase 5 — Engine-Native Trailing Stops | Complete |
 | PAIR-01 | Phase 6 — Pair-Trading Flagship | Pending |
 
 **Coverage:**

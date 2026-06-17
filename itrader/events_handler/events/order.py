@@ -5,12 +5,19 @@ fully linked to its originating Order entity (D-11/D-12).
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from itrader.core.enums import EventType, OrderCommand, OrderType, Side
 from itrader.core.ids import OrderId, PortfolioId, StrategyId
 
 from .base import Event
+
+if TYPE_CHECKING:
+    # TRAIL-01: TrailType is an order-domain config enum (config-enum exception,
+    # CONVENTIONS.md). Imported under TYPE_CHECKING only — the field annotation is
+    # a string forward-ref, so no runtime import is triggered (the events package
+    # stays free of the config package's import side effects).
+    from itrader.config import TrailType
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -60,6 +67,11 @@ class OrderEvent(Event):
     # the Order entity. Default Decimal("1") is unlevered (oracle-dark) — the
     # spot path never sets it; the execution layer carries it onto the FillEvent.
     leverage: Decimal = Decimal("1")
+    # TRAIL-01: the trail descriptor carried from the Order entity. Both default
+    # to None / no-op so every non-trailing order is byte-exact (oracle-dark on
+    # the SMA_MACD spot path). The MatchingEngine ratchet (05-02) reads these.
+    trail_type: "TrailType | None" = None
+    trail_value: Decimal | None = None
     parent_order_id: OrderId | None = None
     # D-11: two-directional bracket linkage — a bracket parent carries its
     # children's ids; non-bracket orders carry the empty tuple.
@@ -123,6 +135,11 @@ class OrderEvent(Event):
             # entity via the getattr default (mirrors the stop_price pattern) —
             # robust to hand-built order stubs that predate the field.
             leverage=getattr(order, 'leverage', Decimal("1")),
+            # TRAIL-01: read the trail descriptor off the Order entity via the
+            # getattr default (mirrors the stop_price/leverage pattern) — robust
+            # to hand-built order stubs that predate the fields.
+            trail_type=getattr(order, 'trail_type', None),
+            trail_value=getattr(order, 'trail_value', None),
             order_id=order.id,
             parent_order_id=order.parent_order_id,
             child_order_ids=tuple(order.child_order_ids),

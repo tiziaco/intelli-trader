@@ -14,7 +14,10 @@ from typing import Dict, Any
 from itrader.core.exceptions import ValidationError
 
 # Known order-type strings (case-insensitive) accepted at the model boundary.
-_KNOWN_ORDER_TYPES = {"market", "limit", "stop"}
+# TRAIL-01/TRAIL-02: a TRAILING_STOP is a taker fill like a STOP once triggered,
+# so the fee model accepts it as a known type (is_maker is False for it, matching
+# STOP); without this the post-trigger fee call raises a ValidationError.
+_KNOWN_ORDER_TYPES = {"market", "limit", "stop", "trailing_stop"}
 
 
 class FeeModel(ABC):

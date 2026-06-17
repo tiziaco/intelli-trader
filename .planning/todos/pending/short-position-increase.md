@@ -1,9 +1,10 @@
 ---
-status: pending
+status: scheduled
 created: "2026-06-16"
 source: surfaced in conversation (admission_manager.py WR-01 gate, cash_manager.py WR-04, ROADMAP Phase 4)
-tags: [shorts, margin, increase, scale-in, D-09, WR-01, WR-04, deferred, out-of-v1-scope]
-resolves_phase:
+tags: [shorts, margin, increase, scale-in, D-09, WR-01, WR-04, scheduled]
+resolves_phase: "05.1"
+scheduled_note: "2026-06-17 — promoted to v1.4 Phase 5.1 (Short Position Scale-In). WR-01/WR-04 confirmed already fixed in Phase 4 (see below); scope narrowed to the gate-lift + flip-guard test + owner-gated re-baseline."
 ---
 
 # Enable increasing/scaling into a SHORT position (margin scale-in)
@@ -22,38 +23,40 @@ rejection (`OrderTriggerSource.ADMISSION_INCREASE`), mirroring the long INCREASE
 - Contrast: long increases ARE supported, gated behind the strategy `allow_increase` flag
   (`admission_manager.py:577-591`). Shorts have no such flag — blocked unconditionally.
 
-**Why it is blocked — margin model gaps that must close first:**
+**Why it was blocked — margin model gaps. STATUS UPDATE (2026-06-17): items 1 and 2 are
+already RESOLVED in Phase 4; only item 3 (flip/split) remains, and it is being DEFERRED
+out of Phase 5.1 by design (see Do list).**
 
-1. **WR-01 — settlement-side solvency unchecked.** The margin open/scale-in path feeds
-   `assert_funds_invariant` only the *commission*, not the full `aggregate_notional / L`
-   being locked. The reservation gate is order-keyed and released on reconciliation, while
-   the lock is position-keyed and applied at settlement — so there is no settlement-time
-   assertion that the locked margin fits `available_balance`. (See `02-REVIEW.md` WR-01.)
+1. **WR-01 — settlement-side solvency.** ✅ **RESOLVED in Phase 4.** A settlement-side
+   buying-power assertion for the FULL locked margin now exists: `assert_lock_fits_buying_power`
+   (`cash_manager.py:449-490`) is called against `aggregate_notional / leverage` on both the
+   increase arm (`portfolio.py:439`) and the partial-close arm (`portfolio.py:460`), not just
+   the commission. (Original concern: the path fed `assert_funds_invariant` only the commission.)
 
-2. **WR-04 — call-order bug in `assert_lock_fits_buying_power`**
-   (`itrader/portfolio_handler/.../cash_manager.py:437-469`). The formula intends
-   `buying_power = available_balance + own_prior_lock` (credit back the prior lock that is
-   about to be re-locked), but `release_margin` pops the prior lock *before* the assertion
-   runs, so `own_prior_lock` reads `0`. Conservative today (fails loud / over-strict, not a
-   leak) on the cover-only path, but it is exactly the math a scale-in exercises.
-   **Carried to Phase 4** (bundled under XVAL-01 owner-gated re-baseline) — see
-   `phases/03-shorts-borrow-carry/deferred-items.md` (WR-04) and `ROADMAP.md:220-227`.
+2. **WR-04 — call-order in `assert_lock_fits_buying_power`.** ✅ **RESOLVED in Phase 4.** The
+   `assert → release → lock` order now holds (`portfolio.py:439-441` and `:460-464`), so the
+   add-back (`get_locked_margin_for`, `cash_manager.py:484-485`) reads the TRUE prior lock, not
+   `0`. (Original concern: `release_margin` popped the prior lock before the assertion ran.)
 
-3. **Flip / split settlement (CR-02 residual, deferred).** A fill crossing zero or stacking
+3. **Flip / split settlement (CR-02 residual, DEFERRED — stays a fail-loud guard).** A fill crossing zero or stacking
    opens needs proper aggregate-notional handling; no split path exists today.
 
 4. **Liquidation over multiple opens.** Phase 4 forced-close math must reason about
    aggregate short notional, which presupposes (1)–(3) are correct.
 
-**Do (when scope allows, post-Phase-4 foundation):**
-1. Add the settlement-side buying-power assertion for the full locked margin (WR-01),
-   not just commission.
-2. Fix the WR-04 call order so the prior-lock credit-back actually holds (assert before
-   release, or pass the released amount in) — likely landed in Phase 4 already; confirm.
-3. Add a `allow_increase`-equivalent gate for shorts and route same-side SELL through
-   entry/scale-in sizing instead of the admission rejection.
-4. Handle flip/split settlement (CR-02 residual).
-5. Cross-validate scale-in + liquidation scenarios against backtesting.py / backtrader.
+**Do — Phase 5.1 scope (2026-06-17):**
+1. ✅ ~~Settlement-side buying-power assertion (WR-01)~~ — DONE in Phase 4 (`portfolio.py:439/460`).
+2. ✅ ~~WR-04 call order (assert before release)~~ — DONE in Phase 4 (`portfolio.py:439-441/460-464`).
+3. **[Phase 5.1]** Add an `allow_increase`-equivalent gate for shorts at
+   `admission_manager.py:537-556` (mirror the long gate at `:577-591`) and let the same-side SELL
+   fall through to the EXISTING `resolve_entry` arm (`:800-806`) — no new sizing function; settlement
+   reuses the existing SCALE-IN branch (`portfolio.py:423-441`).
+4. **[DEFERRED — NOT Phase 5.1]** Flip/split settlement (CR-02 residual). Out of scope; the over-cover
+   guard (`portfolio.py:399-404`) stays a fail-loud fence. A Phase 5.1 regression test asserts it still
+   fires. Reversals, if ever needed, are modelled as explicit close-then-open signals OR a separate
+   future owner-gated split-settlement phase.
+5. **[Phase 5.1]** Cross-validate short scale-in against backtesting.py 0.6.5 / backtrader 1.9.78.123;
+   owner-gated re-baseline.
 
 **Notes:** Keep D-09 as the explicit "blocked until margin seam trustworthy" decision.
 Do not lift the admission gate until WR-01/WR-04 + flip settlement are resolved.

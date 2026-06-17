@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
 status: ready_to_plan
-stopped_at: Phase 04 complete (6/6) — ready to discuss Phase 5 (Engine-Native Trailing Stops)
-last_updated: 2026-06-16T13:13:46.947Z
-last_activity: 2026-06-16 -- Phase 04 marked complete
+stopped_at: Phase 05 complete (6/5) — ready to discuss Phase 05.1
+last_updated: 2026-06-17T08:21:33.031Z
+last_activity: 2026-06-17
 progress:
-  total_phases: 9
-  completed_phases: 4
-  total_plans: 24
-  completed_plans: 24
-  percent: 44
+  total_phases: 10
+  completed_phases: 5
+  total_plans: 29
+  completed_plans: 30
+  percent: 50
 ---
 
 # Project State
@@ -21,18 +21,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 5 — Engine-Native Trailing Stops
+**Current focus:** Phase 05.1 — short position scale in margin increase
 
 ## Current Position
 
-Phase: 5
+Phase: 05.1
 Plan: Not started
 Status: Ready to plan
 
 > Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
 > not exist yet (only 01/02/03/04 + 999.x dirs are present). Corrected manually to Phase 5 per the v1.4
 > Phase Map (1→2→3→4→**5**→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
-Last activity: 2026-06-16
+Last activity: 2026-06-17
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -111,7 +111,7 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 **Velocity (v1.3):**
 
-- Total plans completed: 44
+- Total plans completed: 50
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -133,6 +133,8 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 - Phase 999.3 edited: added Scope bullet for dynamic universe membership (UniverseSelectionModel poll
   seam), sequenced near the N+4 data engine.
+
+- Phase 05.1 inserted after Phase 5: Short Position Scale-In (Margin Increase) — lift short-increase admission gate behind allow_increase; flip/split deferred; owner-gated re-baseline (URGENT)
 
 ### Decisions
 
@@ -200,6 +202,14 @@ scope decisions:
 - [Phase ?]: Phase 2 Plan 07: LEV-03 closed — strategy-declared EFFECTIVE leverage min(signal,instr,pf) flows signal->order->fill->transaction->position; run-path Transaction in PortfolioHandler.on_fill (not new_transaction) was the actual carry site (deviation); locked margin == admission reservation under L>1; SMA_MACD 134/46189.87730727451 byte-exact, mypy clean (185 files)
 - [Phase 02]: Phase 2 Plan 08: gap closure for the two 02-REVIEW BLOCKERs — CR-01 CLOSED (new_limit_order/new_stop_order carry keyword-only leverage; admission LIMIT/STOP arms pass effective_leverage → locked margin == admission reservation for ALL order types, LEV-03 complete); CR-02 MITIGATED (margin over-close fill raises InvalidTransactionError before any mutation/settlement — full flip economics deferred to Phase 3); residual WR-01..05 + IN-01..03 + CR-02-residual tracked in deferred-items.md; SMA_MACD 134/46189.87730727451 byte-exact (oracle-dark), mypy --strict clean (185 files), make test 1089 passed
 - [Phase 02]: Phase 2 Plan 06: parked leveraged-long e2e (D-17 — hand-computed, NOT a frozen golden) + GREEN phase gate (SMA_MACD 134/46189.87730727451 byte-exact, margin-mode determinism byte-identical, mypy --strict clean 185 files, make test 1079 passed); blocking human-verify checkpoint owner-APPROVED — Phase 2 freezes NO new golden (accounting-core re-baseline stays the single owner-gated freeze at P4/XVAL-01, D-16/D-17). The two findings this e2e surfaced (A: StrategiesHandler dropped SignalIntent.leverage at fan-out; B: leverage not carried order->fill->transaction) were CLOSED by 02-07/LEV-03 — not open.
+- [Phase ?]: Phase 5 Plan 00: 7 collectible pytest.skip Wave-0 trailing stubs satisfy the Nyquist contract — every Phase-5 -k/-m selector including compound 'trailing and bracket' collects >=1 before any RED; test-only, oracle byte-exact
+- [Phase ?]: Phase 5 Plan 01: TrailType lives in config/order.py (config-enum exception, order-domain cohesion); TRAILING_STOP order type + trail_type/trail_value carriage (Order->OrderEvent) + new_trailing_stop_order factory; D-TRAIL-7 dual-layer non-viable-trail gate with Pitfall-6 strategy (a) positive computed initial stop (price<=0 gate NOT branched out, both layers agree D-03a); SMA_MACD spot oracle byte-exact, mypy --strict clean (185 files)
+- [Phase ?]: 05-02: order.price is the trailing reference/anchor (HWM/LWM seed), not the initial stop — confirmed via D-TRAIL-7 validator
+- [Phase ?]: 05-02: D-TRAIL-8 quantize seam made optional (instrument_resolver); pure engine quantization-free by default, HWM/LWM always full precision
+- [Phase ?]: 05-03: trailing intent = extended PercentFromFill (optional trail_type/trail_value, all-or-nothing); rides the existing fill-anchored carve-out, no new SLTPPolicy variant
+- [Phase ?]: 05-03: trailing SL child price = ENTRY FILL anchor (the engine _seed_trail HWM/LWM seed per 05-02), NOT the computed initial stop; TP-limit unchanged (D-TRAIL-5 EITHER/OR)
+- [Phase ?]: 05-03: fee/slippage _KNOWN_ORDER_TYPES gained trailing_stop (triggered TRAILING_STOP fills/fees like a STOP); long+short e2e ratcheted-exit proven (long 135 vs seed 90, short 55 vs seed 110)
+- [Phase 05]: 05-04: trailing-stop cross-validated (TRAIL-03) vs backtesting.py 0.6.5 + backtrader 1.9.78.123 — trade-level reconciliation EXACT (exit 100.8, PnL +8.0), 8/8 metrics within 1%, A1 oracle API CONFIRMED (both CLOSE-basis); high-vs-close gap (D-TRAIL-1, iTrader closed-bar-extreme correct per TRAIL-02) dispositioned LEGITIMATE-DIFFERENCE, 0 BUG; phase's OWN trailing golden re-baseline FROZEN under owner sign-off (tiziaco, 2026-06-17); SMA_MACD spot oracle byte-exact 134/46189.87730727451, mypy --strict clean, determinism byte-identical
 
 ### Pending Todos
 
@@ -257,6 +267,10 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 02 P07 | 18 | 3 tasks | 9 files |
 | Phase 02 P06 | 0 | 2 tasks | 3 files |
 | Phase 02 P08 | 12 | 3 tasks | 7 files |
+| Phase 05 P00 | 6 | 2 tasks | 7 files |
+| Phase 05 P01 | 4 | 2 tasks | 8 files |
+| Phase 05 P03 | 25 | 2 tasks | 10 files |
+| Phase 05 P04 | 40 | 2 tasks tasks | 6 files files |
 
 ## Bookkeeping
 
@@ -298,9 +312,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-16T07:57:29.810Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-liquidation-cross-validation-re-baseline/04-CONTEXT.md
+Last session: 2026-06-17T07:53:46.248Z
+Stopped at: Completed 05-04-PLAN.md (Phase 5 complete — trailing re-baseline frozen, owner-signed)
+Resume file: None
 
 ## Operator Next Steps
 

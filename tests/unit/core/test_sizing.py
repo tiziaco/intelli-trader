@@ -174,6 +174,53 @@ def test_percent_from_decision_nonpositive_pct_raises():
 
 
 # ---------------------------------------------------------------------------
+# WR-02 (CR-01 root enabler): a PERCENT trail must be a fraction < 1.
+# A PERCENT trail >= 1 seeds a non-positive stop (anchor * (1 - trail) <= 0)
+# that can never trigger — fail loud at construction (D-06), the same contract
+# the D-TRAIL-7 validator enforces (order_validator PERCENT < 1).
+# ---------------------------------------------------------------------------
+
+
+def test_percent_from_fill_percent_trail_ge_one_raises():
+    from itrader.config import TrailType
+
+    with pytest.raises(SizingPolicyViolation, match="trail_value"):
+        PercentFromFill(
+            sl_pct=Decimal("0.05"), tp_pct=Decimal("0.10"),
+            trail_type=TrailType.PERCENT, trail_value=Decimal("1"),
+        )
+    with pytest.raises(SizingPolicyViolation, match="trail_value"):
+        PercentFromFill(
+            sl_pct=Decimal("0.05"), tp_pct=Decimal("0.10"),
+            trail_type=TrailType.PERCENT, trail_value=Decimal("1.5"),
+        )
+
+
+def test_percent_from_fill_percent_trail_below_one_constructs():
+    from itrader.config import TrailType
+
+    sltp = PercentFromFill(
+        sl_pct=Decimal("0.05"), tp_pct=Decimal("0.10"),
+        trail_type=TrailType.PERCENT, trail_value=Decimal("0.90"),
+    )
+    assert sltp.is_trailing
+    assert sltp.trail_value == Decimal("0.90")
+
+
+def test_percent_from_fill_price_trail_ge_one_allowed():
+    """A PRICE trail has no construction-time upper bound (the anchor is unknown
+    until fill); only the PERCENT case is bounded here. The PRICE viability gate
+    (trail_value < anchor) lives at the fill boundary (CR-01)."""
+    from itrader.config import TrailType
+
+    sltp = PercentFromFill(
+        sl_pct=Decimal("0.05"), tp_pct=Decimal("0.10"),
+        trail_type=TrailType.PRICE, trail_value=Decimal("8"),
+    )
+    assert sltp.trail_value == Decimal("8")
+
+
+# ---------------------------------------------------------------------------
 # TradingDirection — case-insensitive boundary parse (D-08 seam)
 # ---------------------------------------------------------------------------
 

@@ -52,6 +52,7 @@ byte-identical hold throughout. Full design: PROJECT.md "Current Milestone: v1.4
 - [x] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated) — completed 2026-06-15 (6/6 plans; review BLOCKER CR-01 found+fixed inline)
 - [x] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated) — completed 2026-06-16 (6/6 plans; owner-signed golden freeze; review BLOCKER CR-01 found+fixed via debug → fill-at-liq-price)
 - [ ] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated)
+- [ ] **Phase 5.1: Short Position Scale-In (Margin Increase)** *(INSERTED)* - Lift the unconditional short-increase admission rejection behind the `allow_increase` flag (mirror the long path); reuse the existing `resolve_entry` sizing + margin SCALE-IN settlement; flip/split stays a fail-loud guard, out of scope; own re-baseline + cross-validation (owner-gated)
 - [ ] **Phase 6: Pair-Trading Flagship** - Market-neutral long/short cointegration/spread strategy end-to-end; flagship demo (NOT the correctness oracle); final, slip-able capstone
 
 <details>
@@ -264,7 +265,51 @@ extremes, active the next bar), cross-validated against the external oracles.
 **Re-baseline**: Owner-gated (result-changing) — its OWN re-baseline, separate from the accounting
 core (MatchingEngine resting-order subsystem, not portfolio/cash accounting). The native-vs-synthetic
 live capability seam is deferred to N+4. `mypy --strict` clean; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 5 plans
+- [x] 05-00-PLAN.md — [Wave 0] Nyquist stubs: collectible trailing unit + e2e selectors (long AND short) (TRAIL-01/02/03)
+- [x] 05-01-PLAN.md — Static plumbing: OrderType.TRAILING_STOP + TrailType config-enum + event/entity fields + factory + dual-layer D-TRAIL-7 validation (TRAIL-01/02)
+- [x] 05-02-PLAN.md — MatchingEngine ratchet core: side-table HWM/LWM, end-of-on_bar ratchet (D-TRAIL-2), STOP-arm reuse + long/short unit tests (TRAIL-01/02)
+- [x] 05-03-PLAN.md — Fill-anchored trailing-SL bracket declaration (D-TRAIL-3/5) + long/short e2e scenarios (TRAIL-01/02)
+- [x] 05-04-PLAN.md — [owner-gated] Cross-validation vs backtesting.py/backtrader + evidence report + blocking re-baseline sign-off (TRAIL-03)
+
+### Phase 05.1: Short Position Scale-In (Margin Increase) (INSERTED)
+**Goal**: A strategy can INCREASE an open SHORT (a same-side SELL add) the same way it increases a
+long today — by lifting the currently-unconditional short-increase admission rejection
+(`admission_manager.py:537-556`) behind the strategy `allow_increase` flag, mirroring the long
+INCREASE gate (`admission_manager.py:577-591`). Flip/split settlement (a single reducing fill that
+crosses zero) stays **explicitly out of scope** — the CR-02 crossing-fill case remains a fail-loud
+guard.
+**Depends on**: Phase 4 (margin/shorts accounting core — the lock-and-settle SCALE-IN branch) and
+Phase 5 (sequenced after trailing stops, BEFORE the Phase 6 capstone so its result-changing
+re-baseline lands before the flagship consumes the numbers).
+**Requirements**: SCALE-01, SCALE-02, SCALE-03 (to be registered in REQUIREMENTS.md at plan time);
+source todo `.planning/todos/pending/short-position-increase.md` (D-09).
+**Success Criteria** (what must be TRUE):
+  1. With `allow_increase=True`, a same-side SELL against an open SHORT is ADMITTED and sized through
+     the existing `SizingResolver.resolve_entry` arm (`admission_manager.py:800-806`) — no new sizing
+     function; with `allow_increase=False` it remains an AUDITED `ADMISSION_INCREASE` rejection
+     (today's behavior preserved).
+  2. The admitted scale-in settles through the existing margin SCALE-IN branch
+     (`portfolio.py:423-441` — recompute the lock to the new `aggregate_notional / leverage`),
+     reusing the already-landed WR-01/WR-04 guards (see scope note).
+  3. Flip/split stays out of scope: the over-cover crossing-fill guard (`portfolio.py:399-404`) still
+     fires loud on a reducing fill whose quantity exceeds the open position — locked by a regression
+     test that asserts it raises.
+  4. Trailing-design checks resolved during planning: (a) `resolve_entry`'s fraction-of-remaining
+     semantics is the intended short scale-in behavior (a deliberate choice, the long path inherits
+     it too); (b) the margin reservation sizes a short ADD correctly (reserve side, not just the
+     WR-01 settlement-side assertion).
+  5. Short scale-in cross-validated against `backtesting.py` 0.6.5 / `backtrader` 1.9.78.123; any
+     result-change freezes only under owner sign-off.
+**Re-baseline**: Owner-gated (result-changing) — its OWN re-baseline (order-sizing/admission gate +
+margin settlement reuse, same discipline as Phases 2-4). `mypy --strict` clean; Decimal end-to-end;
+determinism double-run byte-identical.
+**Scope note — already done (NOT this phase)**: WR-01 (settlement-side solvency,
+`assert_lock_fits_buying_power`) and WR-04 (assert-BEFORE-release call order) landed in Phase 4 and
+are present at `portfolio.py:439-441` / `:460-464`. The source todo lists them as blockers, but they
+are resolved — this phase is the gate-lift + flip-guard regression test + owner-gated re-baseline.
+**Plans**: TBD (run `/gsd:plan-phase 05.1` to break down)
+- [ ] TBD (run /gsd:plan-phase 05.1 to break down)
 
 ### Phase 6: Pair-Trading Flagship
 **Goal**: A market-neutral long/short pair-trading strategy (cointegration/spread) runs end-to-end,
@@ -303,7 +348,8 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | 2. Margin Accounting & Leverage | 9/9 | Complete   | 2026-06-15 |
 | 3. Shorts & Borrow Carry | 6/6 | Complete   | 2026-06-15 |
 | 4. Liquidation & Cross-Validation Re-baseline | 6/6 | Complete   | 2026-06-16 |
-| 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |
+| 5. Engine-Native Trailing Stops | 5/5 | Complete   | 2026-06-17 |
+| 5.1 Short Position Scale-In (INSERTED) | 0/TBD | Not started | - |
 | 6. Pair-Trading Flagship | 0/TBD | Not started | - |
 
 **Next:** Plan Phase 1 with `/gsd:plan-phase 1`.

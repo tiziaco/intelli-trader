@@ -19,6 +19,10 @@ class OrderType(Enum):
 	MARKET = "MARKET"
 	STOP = "STOP"
 	LIMIT = "LIMIT"
+	# TRAIL-01: a resting stop whose trigger ratchets with favourable
+	# closed-bar extremes (trail_type/trail_value carried on the Order entity +
+	# OrderEvent). The MatchingEngine ratchet lands in 05-02; this is the type.
+	TRAILING_STOP = "TRAILING_STOP"
 
 	@classmethod
 	def _missing_(cls, value: object) -> "OrderType":
@@ -59,7 +63,8 @@ class OrderStatus(Enum):
 order_type_map = {
 	"MARKET": OrderType.MARKET,
 	"STOP": OrderType.STOP,
-	"LIMIT": OrderType.LIMIT
+	"LIMIT": OrderType.LIMIT,
+	"TRAILING_STOP": OrderType.TRAILING_STOP  # TRAIL-01
 }
 
 # Order Status Mapping

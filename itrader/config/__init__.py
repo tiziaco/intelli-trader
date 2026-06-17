@@ -42,6 +42,7 @@ from .system import (
 )
 from .order import (
     OrderConfig,
+    TrailType,
 )
 from .merge import deep_merge
 from .exchange import (
@@ -83,6 +84,7 @@ __all__ = [
     "get_portfolio_preset",
     # Order domain
     "OrderConfig",
+    "TrailType",
     # Shared config helpers
     "deep_merge",
     # System domain

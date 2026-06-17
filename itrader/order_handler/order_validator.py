@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .order import Order
+from ..config import TrailType
 from ..core.enums import OrderType, OrderStatus, Side
 from ..core.ids import PortfolioId
 from ..core.portfolio_read_model import PortfolioReadModel
@@ -235,6 +236,40 @@ class EnhancedOrderValidator:
         # Order type is an OrderType enum on the entity by construction —
         # an unsupported type fails before the entity exists (D-13), so the
         # legacy string order-type check is structurally impossible here.
+
+        # D-TRAIL-7: non-viable-trail rejection (TRAIL-01, threat T-05-02).
+        # A trailing stop must rest with a viable trail or it is rejected BEFORE
+        # it ever rests. Pitfall 6 / Open Question 2 is resolved with strategy
+        # (a) "positive computed initial stop": the static ``price`` carries the
+        # fill-anchored INITIAL stop (positive, seeded in 05-03), so the
+        # ``order.price <= 0`` check above stays valid for TRAILING_STOP — we do
+        # NOT branch out the positive-price gate. All comparisons are Decimal
+        # (M5-10), never float. trail_type/trail_value are read via getattr so a
+        # hand-built order stub predating the fields is tolerated.
+        if order.type == OrderType.TRAILING_STOP:
+            trail_type = getattr(order, "trail_type", None)
+            trail_value = getattr(order, "trail_value", None)
+            if trail_value is None or trail_value <= 0 or trail_type is None:
+                messages.append(ValidationMessage(
+                    ValidationLevel.ERROR,
+                    "Trailing stop requires a positive trail_value and a trail_type",
+                    "trail_value",
+                    "INVALID_TRAIL"
+                ))
+            elif trail_type == TrailType.PERCENT and trail_value >= Decimal("1"):
+                messages.append(ValidationMessage(
+                    ValidationLevel.ERROR,
+                    f"Percent trail_value {trail_value} must be < 1 (a fraction of the HWM/LWM)",
+                    "trail_value",
+                    "INVALID_TRAIL"
+                ))
+            elif trail_type == TrailType.PRICE and trail_value >= order.price:
+                messages.append(ValidationMessage(
+                    ValidationLevel.ERROR,
+                    f"Absolute trail_value {trail_value} must be < reference price {order.price}",
+                    "trail_value",
+                    "INVALID_TRAIL"
+                ))
 
         # Portfolio ID validation
         if not order.portfolio_id:

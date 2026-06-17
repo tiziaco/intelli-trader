@@ -14,7 +14,10 @@ from typing import Dict, Any
 from itrader.core.exceptions import ValidationError
 
 # Known order-type strings (case-insensitive) accepted at the model boundary.
-_KNOWN_ORDER_TYPES = {"market", "limit", "stop"}
+# TRAIL-01/TRAIL-02: a TRAILING_STOP fills like a STOP once its ratcheted level
+# triggers (gap-aware), so the slippage model treats it identically to "stop";
+# it must be a known type or the post-trigger fill slippage call raises here.
+_KNOWN_ORDER_TYPES = {"market", "limit", "stop", "trailing_stop"}
 
 
 class SlippageModel(ABC):

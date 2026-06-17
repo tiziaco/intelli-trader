@@ -39,10 +39,18 @@ NOTHING from ``order_handler``, ``events_handler``, or ``strategy_handler``.
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from itrader.core.enums import OrderType, Side, TradingDirection
 from itrader.core.exceptions import SizingPolicyViolation
 from itrader.core.money import ONE
+
+if TYPE_CHECKING:
+    # Pitfall 3 / config-enum exception (CONVENTIONS.md): TrailType lives in
+    # config/order.py to preserve the core->config dependency direction. It is
+    # imported under TYPE_CHECKING ONLY so core/sizing.py carries the trail type
+    # annotation without a runtime config import (which would invert the layering).
+    from itrader.config import TrailType
 
 __all__ = [
     "FixedQuantity",
@@ -203,20 +211,67 @@ class PercentFromFill:
 
     Children are created/adjusted when the parent fill price is known.
 
+    TRAIL-01/TRAIL-02 (D-TRAIL-3/D-TRAIL-5): when ``trail_type`` and
+    ``trail_value`` are BOTH set, the STOP-loss leg is declared as an
+    engine-native ``TRAILING_STOP`` instead of a fixed STOP — it is seeded from
+    the actual entry-fill price (the engine's HWM/LWM anchor) and ratchets in the
+    matching layer. A bracket carries EITHER a fixed SL OR a trailing SL, never
+    both (D-TRAIL-5); the TP-limit leg and OCO linkage are unchanged. ``sl_pct``
+    is then unused for the SL level (the trail governs the stop) but stays
+    required so the no-trail path is byte-exact. Both default ``None`` so every
+    non-trailing PercentFromFill is byte-identical to before (oracle-dark).
+
     Attributes
     ----------
     sl_pct : Decimal
-        Stop-loss offset as a fraction of fill price, strictly positive.
+        Stop-loss offset as a fraction of fill price, strictly positive. Unused
+        for the SL level when the trail descriptor is set (the trail governs it).
     tp_pct : Decimal
         Take-profit offset as a fraction of fill price, strictly positive.
+    trail_type : TrailType | None
+        How the trail distance is measured (PRICE absolute / PERCENT fraction);
+        ``None`` (the default) means a fixed STOP SL leg. When set, ``trail_value``
+        must also be set (D-06 fail-loud).
+    trail_value : Decimal | None
+        The trail distance, strictly positive when set; entered into the Decimal
+        domain by the policy caller (Pitfall 1, string-path literal).
     """
 
     sl_pct: Decimal
     tp_pct: Decimal
+    trail_type: "TrailType | None" = None
+    trail_value: Decimal | None = None
 
     def __post_init__(self) -> None:
         _require_positive("PercentFromFill", "sl_pct", self.sl_pct)
         _require_positive("PercentFromFill", "tp_pct", self.tp_pct)
+        # D-TRAIL-5 / D-06: the trail descriptor is all-or-nothing — both fields
+        # together declare a trailing SL leg, or neither (a fixed STOP SL).
+        if (self.trail_type is None) != (self.trail_value is None):
+            raise SizingPolicyViolation(
+                "PercentFromFill.trail_type and trail_value must be set together "
+                f"(got trail_type={self.trail_type!r}, trail_value={self.trail_value!r})"
+            )
+        if self.trail_value is not None:
+            _require_positive("PercentFromFill", "trail_value", self.trail_value)
+            # WR-02 (CR-01 root enabler / D-06 fail-loud): a PERCENT trail is a
+            # FRACTION of the HWM/LWM — it MUST be < 1, or the seeded stop
+            # ``anchor * (1 - trail)`` is non-positive and can never trigger,
+            # silently resting an unprotected position. Mirror the D-TRAIL-7
+            # validator's PERCENT < 1 gate at construction. TrailType is imported
+            # lazily here (config-enum exception): a module-level runtime import
+            # would invert the core->config dependency direction.
+            from itrader.config import TrailType
+            if self.trail_type == TrailType.PERCENT and self.trail_value >= ONE:
+                raise SizingPolicyViolation(
+                    f"PercentFromFill.trail_value must be < 1 for a PERCENT trail "
+                    f"(a fraction of the HWM/LWM): got {self.trail_value!r}"
+                )
+
+    @property
+    def is_trailing(self) -> bool:
+        """True when this policy declares a trailing SL leg (D-TRAIL-5)."""
+        return self.trail_type is not None and self.trail_value is not None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
