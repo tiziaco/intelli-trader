@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
 status: ready_to_plan
-stopped_at: Phase 05 complete (6/5) — ready to discuss Phase 05.1
-last_updated: 2026-06-17T08:21:33.031Z
+stopped_at: Phase 05.1 complete (2/2) — next: Phase 6 (Pair-Trading Flagship)
+last_updated: 2026-06-17T11:28:21.806Z
 last_activity: 2026-06-17
 progress:
   total_phases: 10
-  completed_phases: 5
-  total_plans: 29
-  completed_plans: 30
-  percent: 50
+  completed_phases: 6
+  total_plans: 31
+  completed_plans: 32
+  percent: 60
 ---
 
 # Project State
@@ -21,17 +21,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 05.1 — short position scale in margin increase
+**Current focus:** Phase 6 — Pair-Trading Flagship
 
 ## Current Position
 
-Phase: 05.1
+Phase: 6
 Plan: Not started
-Status: Ready to plan
+Status: Ready to discuss/plan
 
-> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
-> not exist yet (only 01/02/03/04 + 999.x dirs are present). Corrected manually to Phase 5 per the v1.4
-> Phase Map (1→2→3→4→**5**→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
+> Note: `phase.complete` again auto-resolved next_phase to backlog seed 999.2 because the Phase 6 dir
+> does not exist yet (only 01/02/03/04/05 + 05.1 + 999.x dirs are present). Corrected manually to
+> Phase 6 (Pair-Trading Flagship) per the v1.4 Phase Map (1→2→3→4→5→**6**). 999.2/999.3 remain FUTURE
+> (N+3/N+4) backlog entries, not the next phase.
 Last activity: 2026-06-17
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
@@ -111,7 +112,7 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 **Velocity (v1.3):**
 
-- Total plans completed: 50
+- Total plans completed: 52
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -210,6 +211,9 @@ scope decisions:
 - [Phase ?]: 05-03: trailing SL child price = ENTRY FILL anchor (the engine _seed_trail HWM/LWM seed per 05-02), NOT the computed initial stop; TP-limit unchanged (D-TRAIL-5 EITHER/OR)
 - [Phase ?]: 05-03: fee/slippage _KNOWN_ORDER_TYPES gained trailing_stop (triggered TRAILING_STOP fills/fees like a STOP); long+short e2e ratcheted-exit proven (long 135 vs seed 90, short 55 vs seed 110)
 - [Phase 05]: 05-04: trailing-stop cross-validated (TRAIL-03) vs backtesting.py 0.6.5 + backtrader 1.9.78.123 — trade-level reconciliation EXACT (exit 100.8, PnL +8.0), 8/8 metrics within 1%, A1 oracle API CONFIRMED (both CLOSE-basis); high-vs-close gap (D-TRAIL-1, iTrader closed-bar-extreme correct per TRAIL-02) dispositioned LEGITIMATE-DIFFERENCE, 0 BUG; phase's OWN trailing golden re-baseline FROZEN under owner sign-off (tiziaco, 2026-06-17); SMA_MACD spot oracle byte-exact 134/46189.87730727451, mypy --strict clean, determinism byte-identical
+- [Phase ?]: 05.1-01: short-increase admission gate lifted behind allow_increase (byte-symmetric mirror of long gate, long arm byte-exact); D-06 admission-gate reality — a short SELL-add reserves NOTHING at admission (admission_manager.py:264 reserves only Side.BUY), margin lock rides settlement (Plan 05.1-02); CR-02 over-cover guard regression-locked for SHORT side (RED-verified); SMA_MACD oracle byte-exact 134/46189.87730727451
+- [Phase 05.1]: 05.1-02 (Tasks 1-2): admitted short SELL-add settles through the EXISTING side-agnostic SCALE-IN branch (portfolio.py:423-441) — margin RE-LOCKS to aggregate_notional/leverage (1000->2000 on the second add; pro-rata release to 1000 + realised PnL 200 on a half-cover), proven by two parked e2e leaves (SCALEUSD/SCALPCUSD, NEVER BTCUSD); NO new settlement branch (D-02/D-03); cross-validated vs backtesting.py 0.6.5 / backtrader 1.9.78.123 (CROSS-VALIDATION-SCALE-IN.md, trade-level PRIMARY GREEN, 0 BUG); determinism byte-identical, SMA_MACD oracle byte-exact, mypy --strict clean (185 files).
+- [Phase 05.1]: 05.1-02 (Task 3): owner-gated short scale-in re-baseline FROZEN under explicit owner sign-off (tiziaco, tiziano.iaco@gmail.com, 2026-06-17) at the blocking human-verify checkpoint. CROSS-VALIDATION-SCALE-IN.md Owner Sign-Off PENDING->APPROVED with full attribution; both scale-in e2e leaves (SCALEUSD/SCALPCUSD) carry a D-10/D-12 FROZEN freeze-provenance banner (test logic + hand-computed Decimal assertions UNCHANGED); SCALE-02/SCALE-03 marked complete. Re-confirmed at the freeze: mypy --strict clean (185 files), SMA_MACD oracle byte-exact 134/46189.87730727451, both frozen leaves green. No production code touched (portfolio.py / sizing_resolver.py untouched).
 
 ### Pending Todos
 
@@ -271,6 +275,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 05 P01 | 4 | 2 tasks | 8 files |
 | Phase 05 P03 | 25 | 2 tasks | 10 files |
 | Phase 05 P04 | 40 | 2 tasks tasks | 6 files files |
+| Phase 05.1 P01 | 12 | 3 tasks | 3 files |
 
 ## Bookkeeping
 
@@ -312,8 +317,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T07:53:46.248Z
-Stopped at: Completed 05-04-PLAN.md (Phase 5 complete — trailing re-baseline frozen, owner-signed)
+Last session: 2026-06-17T11:10:00.000Z
+Stopped at: Plan 05.1-02 COMPLETE — owner-gated short scale-in re-baseline FROZEN (tiziaco, 2026-06-17); phase ready for verification
 Resume file: None
 
 ## Operator Next Steps
