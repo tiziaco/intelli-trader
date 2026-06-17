@@ -254,6 +254,19 @@ class PercentFromFill:
             )
         if self.trail_value is not None:
             _require_positive("PercentFromFill", "trail_value", self.trail_value)
+            # WR-02 (CR-01 root enabler / D-06 fail-loud): a PERCENT trail is a
+            # FRACTION of the HWM/LWM — it MUST be < 1, or the seeded stop
+            # ``anchor * (1 - trail)`` is non-positive and can never trigger,
+            # silently resting an unprotected position. Mirror the D-TRAIL-7
+            # validator's PERCENT < 1 gate at construction. TrailType is imported
+            # lazily here (config-enum exception): a module-level runtime import
+            # would invert the core->config dependency direction.
+            from itrader.config import TrailType
+            if self.trail_type == TrailType.PERCENT and self.trail_value >= ONE:
+                raise SizingPolicyViolation(
+                    f"PercentFromFill.trail_value must be < 1 for a PERCENT trail "
+                    f"(a fraction of the HWM/LWM): got {self.trail_value!r}"
+                )
 
     @property
     def is_trailing(self) -> bool:
