@@ -26,7 +26,13 @@ findings:
   warning: 4
   info: 4
   total: 9
-status: issues_found
+status: resolved
+resolution:
+  resolved: [CR-01, WR-01, WR-02, WR-03, WR-04]
+  deferred: [IN-01, IN-02, IN-03, IN-04]
+  fix_summary: 05-FIX-SUMMARY.md
+  fix_commits: [ce8ff51, "642d6fc", f752d5c, 6f78d1f]
+  revalidation: "tests 1179 passed; mypy --strict clean; SMA_MACD oracle byte-exact (134 / 46189.87730727451)"
 ---
 
 # Phase 5: Code Review Report
@@ -34,7 +40,7 @@ status: issues_found
 **Reviewed:** 2026-06-17
 **Depth:** standard
 **Files Reviewed:** 18 (one listed source path, `scripts/crossval/trailing_run.py`, appears once but two oracle runners cross-reference it; 17 distinct review targets + the orchestrator)
-**Status:** issues_found
+**Status:** resolved (CR-01 + WR-01..WR-04 fixed 2026-06-17; see `05-FIX-SUMMARY.md`. Info items IN-01..IN-04 deferred as minor.)
 
 ## Summary
 
@@ -118,6 +124,15 @@ if pending.trail_type == TrailType.PRICE and pending.trail_value >= anchor:
 (Importing `TrailType` at runtime here is fine — `bracket_manager.py` already participates
 in the order domain; or compare via the policy's `is_trailing`/a helper.)
 
+**Resolution (2026-06-17, commits `ce8ff51` + `642d6fc`):** FIXED. PERCENT case bounded at
+policy construction — `PercentFromFill.__post_init__` raises `SizingPolicyViolation` when
+`trail_type == PERCENT and trail_value >= 1` (WR-02). PRICE case gated at the fill boundary —
+`_create_fill_anchored_children` raises `SizingPolicyViolation` when `trail_type == PRICE and
+trail_value >= anchor` BEFORE building the trailing SL child, fail-loud (the reconcile caller
+logs + re-raises under backtest fail-fast). A non-viable trail is now rejected before it can
+rest a non-positive stop; the D-TRAIL-7 gate is no longer bypassable via the carve-out. RED->GREEN
+tests in `test_sizing.py` + `test_trailing_bracket.py`. Oracle byte-exact.
+
 ## Warnings
 
 ### WR-01: MODIFY on a resting trailing stop leaves the ratchet side-table stale
@@ -139,6 +154,12 @@ reject the modify): after the `replace`, call `self._trails[order_id] =
 self._seed_trail(updated_order)` so the ratchet restarts from the new reference, or raise
 on a price-modify of a trailing order to make the no-op explicit.
 
+**Resolution (2026-06-17, commit `f752d5c`):** FIXED via the reseed path. `matching_engine.modify`
+now re-seeds the `_trails` side-table from the updated order when it is a `TRAILING_STOP`
+(`self._trails[order_id] = self._seed_trail(updated)`); non-trailing MODIFYs are untouched.
+RED->GREEN tests in `test_matching_engine_trailing.py` (reseed + fill against the new level;
+plain-STOP MODIFY leaves no side-table entry).
+
 ### WR-02: PercentFromFill policy permits PERCENT trail >= 1 (no upper-bound guard)
 
 **File:** `itrader/core/sizing.py:245-256`
@@ -155,6 +176,11 @@ fail-loud contract every other sizing field follows (D-06).
 **Fix:** Add the `(0, 1)` upper bound for PERCENT in `__post_init__` (see CR-01 snippet).
 PRICE trails legitimately have no fixed upper bound at construction (the anchor is unknown),
 so bound only the PERCENT case here.
+
+**Resolution (2026-06-17, commit `ce8ff51`):** FIXED. `PercentFromFill.__post_init__` raises
+`SizingPolicyViolation` when `trail_type == TrailType.PERCENT and trail_value >= 1` (lazy
+`TrailType` import to preserve the core->config direction). PRICE keeps no construction bound
+(gated at fill — see CR-01). RED->GREEN tests in `test_sizing.py`.
 
 ### WR-03: `_quantize_stop` Instrument-resolver path is never wired — quantization claim is unverifiable in the run path
 
@@ -176,6 +202,14 @@ the resolver branch (lines 234-239) is untested-by-construction dead code.
 parameter and `_quantize_stop` and state plainly that trailing stops carry full precision
 like every other matching price. Do not leave a documented-but-dead capability.
 
+**Resolution (2026-06-17, commit `6f78d1f`):** FIXED by REMOVING the dead branch (lowest
+oracle risk; wiring would add an Instrument dependency to a deliberately-pure engine, D-14).
+Removed the `instrument_resolver` constructor param, the `_instrument_resolver` attribute, the
+`_quantize_stop` method, and the now-unused `Callable`/`Instrument`/`quantize` imports;
+`_compute_stop` returns the full-precision stop directly. Docstrings corrected to state trailing
+stops carry full precision (D-14). Byte-identical (the branch never executed). RED->GREEN test
+in `test_matching_engine_trailing.py` asserts full-precision retention and no remaining seam.
+
 ### WR-04: Trailing child trail viability is split across two layers that disagree on coverage
 
 **File:** `itrader/order_handler/order_validator.py:249-272`, `itrader/execution_handler/exchanges/simulated.py:489-500`
@@ -193,6 +227,14 @@ hold for the trailing case.
 **Fix:** Once CR-01 is fixed at the policy/fill boundary, update the `simulated.py:489-496`
 comment to stop claiming agreement, or add a trail-awareness check to the exchange layer so
 the documented dual-layer agreement is actually true for trailing orders.
+
+**Resolution (2026-06-17, commit `642d6fc`):** FIXED by closing CR-01 + correcting the comment.
+With trail viability gated upstream (policy construction WR-02 + fill boundary CR-01), a
+non-viable trail is rejected fail-loud BEFORE any OrderEvent reaches the exchange, so the
+exchange admits exactly the trailing orders the domain layers deemed viable — the dual-layer
+disposition is now consistent, not bypassed. The `simulated.validate_order` comment was rewritten
+to state this plainly (the exchange intentionally carries no trail-awareness; the viability gate
+lives where the anchor is known).
 
 ## Info
 
