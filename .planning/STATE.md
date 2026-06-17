@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: verifying
-stopped_at: Plan 05.1-02 complete — owner-gated short scale-in re-baseline FROZEN (tiziaco, 2026-06-17)
-last_updated: "2026-06-17T11:09:38.715Z"
+status: ready_to_plan
+stopped_at: Phase 05.1 complete (2/2) — next: Phase 6 (Pair-Trading Flagship)
+last_updated: 2026-06-17T11:28:21.806Z
 last_activity: 2026-06-17
 progress:
   total_phases: 10
@@ -21,17 +21,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 05.1 — short-position-scale-in-margin-increase
+**Current focus:** Phase 6 — Pair-Trading Flagship
 
 ## Current Position
 
-Phase: 05.1 (short-position-scale-in-margin-increase) — EXECUTING
-Plan: 2 of 2
-Status: Plan 05.1-02 COMPLETE (3/3 tasks). Owner-gated re-baseline FROZEN under explicit owner sign-off (tiziaco, 2026-06-17) at the Task 3 blocking checkpoint. Phase complete — ready for verification.
+Phase: 6
+Plan: Not started
+Status: Ready to discuss/plan
 
-> Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
-> not exist yet (only 01/02/03/04 + 999.x dirs are present). Corrected manually to Phase 5 per the v1.4
-> Phase Map (1→2→3→4→**5**→6). 999.2/999.3 remain FUTURE (N+3/N+4) backlog entries, not the next phase.
+> Note: `phase.complete` again auto-resolved next_phase to backlog seed 999.2 because the Phase 6 dir
+> does not exist yet (only 01/02/03/04/05 + 05.1 + 999.x dirs are present). Corrected manually to
+> Phase 6 (Pair-Trading Flagship) per the v1.4 Phase Map (1→2→3→4→5→**6**). 999.2/999.3 remain FUTURE
+> (N+3/N+4) backlog entries, not the next phase.
 Last activity: 2026-06-17
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
@@ -111,7 +112,7 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 
 **Velocity (v1.3):**
 
-- Total plans completed: 50
+- Total plans completed: 52
 - Average duration: — min
 - Total execution time: 0.0 hours
 
