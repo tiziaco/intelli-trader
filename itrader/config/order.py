@@ -19,9 +19,30 @@ exception (CONVENTIONS.md): ``MarketExecution`` stays in ``core/enums/``, it is
 NOT relocated here.
 """
 
+from enum import Enum
+
 from pydantic import BaseModel, ConfigDict
 
 from itrader.core.enums import MarketExecution
+
+
+class TrailType(str, Enum):
+    """How a trailing stop measures its trail distance (TRAIL-01).
+
+    Config-enum exception (CONVENTIONS.md): the order-domain config enum lives
+    here in ``config/order.py`` — NOT in ``core/enums/`` — by design (relocating
+    it to core would invert the core->config dependency). Placed in the order
+    domain (over ``config/exchange.py``) for order-domain cohesion (PATTERNS A3).
+    Mirrors the ``FeeModelType`` ``(str, Enum)`` shape so Pydantic validates by
+    value.
+
+    - ``PRICE``   — an absolute quote distance below the high-water mark
+                    (long) / above the low-water mark (short).
+    - ``PERCENT`` — a fraction (0, 1) of the HWM/LWM.
+    """
+
+    PRICE = "price"
+    PERCENT = "percent"
 
 
 class OrderConfig(BaseModel):
