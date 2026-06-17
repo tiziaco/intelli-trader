@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 import uuid_utils.compat as uuid_compat
 
-from itrader.core.enums import CashOperationType
+from itrader.core.enums import CashOperationType, PositionSide
 from itrader.core.exceptions import (
     InsufficientFundsError,
     InvalidTransactionError,
@@ -470,6 +470,46 @@ def test_margin_partial_close_still_succeeds(margin_portfolio):
     assert position.is_open
     assert position.net_quantity == Decimal("3")
     assert pf.cash_manager.locked_margin_total == Decimal("30000")
+
+
+def test_margin_short_over_cover_fill_fails_loud(margin_portfolio):
+    """D-07 (SCALE-03/criterion 3): the SHORT-side mirror of
+    test_margin_over_close_fill_fails_loud. A margin BUY fill whose quantity
+    EXCEEDS an open SHORT (a flip-to-long attempt) must RAISE
+    InvalidTransactionError BEFORE any re-lock/settlement — the CR-02 over-cover
+    guard at portfolio.py:399-404 is side-agnostic (is_increase derives from
+    side-vs-type at :385-388, so a SHORT+BUY-over-cover is `not is_increase` and
+    trips the `transaction.quantity > prior_qty` raise). This regression-locks
+    the guard for the SHORT side now that short scale-in is admitted (Plan
+    05.1-01); single-order flips stay a deferred close-then-open split."""
+    pf = margin_portfolio
+    # Open a SHORT of 2 units @ 50000, L=5, zero commission. locked = 100000/5.
+    short = _levered_txn(TransactionType.SELL, "BTCUSDT", 50000, 2, 0, 5)
+    pf.process_transaction(short)
+    position = pf.positions["BTCUSDT"]
+    assert position.side is PositionSide.SHORT
+    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+
+    # Over-cover: BUY 3 of an open short 2 (would leave a residual LONG == flip).
+    over_cover = _levered_txn(TransactionType.BUY, "BTCUSDT", 45000, 3, 0, 5)
+    with pytest.raises(InvalidTransactionError):
+        pf.process_transaction(over_cover)
+
+
+def test_margin_short_exact_full_cover_still_succeeds(margin_portfolio):
+    """The over-cover guard must NOT regress a legitimate exact full-cover: a
+    BUY == the open short qty covers to flat without raising (D-07
+    non-regression — the guard does not over-fire on a legitimate cover)."""
+    pf = margin_portfolio
+    short = _levered_txn(TransactionType.SELL, "BTCUSDT", 50000, 2, 0, 5)
+    pf.process_transaction(short)
+    assert pf.positions["BTCUSDT"].side is PositionSide.SHORT
+
+    cover = _levered_txn(TransactionType.BUY, "BTCUSDT", 45000, 2, 0, 5)
+    pf.process_transaction(cover)  # must NOT raise — settles to flat
+
+    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert len(pf.positions) == 0
 
 
 def test_spot_mode_process_transaction_unchanged_byte_exact(portfolio):
