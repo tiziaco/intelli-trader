@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-06-17T06:54:09.328Z"
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-06-17T07:01:33.341Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 29
-  completed_plans: 25
+  completed_plans: 26
   percent: 44
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 ## Current Position
 
 Phase: 05 (engine-native-trailing-stops) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 
 > Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
@@ -201,6 +201,7 @@ scope decisions:
 - [Phase 02]: Phase 2 Plan 08: gap closure for the two 02-REVIEW BLOCKERs — CR-01 CLOSED (new_limit_order/new_stop_order carry keyword-only leverage; admission LIMIT/STOP arms pass effective_leverage → locked margin == admission reservation for ALL order types, LEV-03 complete); CR-02 MITIGATED (margin over-close fill raises InvalidTransactionError before any mutation/settlement — full flip economics deferred to Phase 3); residual WR-01..05 + IN-01..03 + CR-02-residual tracked in deferred-items.md; SMA_MACD 134/46189.87730727451 byte-exact (oracle-dark), mypy --strict clean (185 files), make test 1089 passed
 - [Phase 02]: Phase 2 Plan 06: parked leveraged-long e2e (D-17 — hand-computed, NOT a frozen golden) + GREEN phase gate (SMA_MACD 134/46189.87730727451 byte-exact, margin-mode determinism byte-identical, mypy --strict clean 185 files, make test 1079 passed); blocking human-verify checkpoint owner-APPROVED — Phase 2 freezes NO new golden (accounting-core re-baseline stays the single owner-gated freeze at P4/XVAL-01, D-16/D-17). The two findings this e2e surfaced (A: StrategiesHandler dropped SignalIntent.leverage at fan-out; B: leverage not carried order->fill->transaction) were CLOSED by 02-07/LEV-03 — not open.
 - [Phase ?]: Phase 5 Plan 00: 7 collectible pytest.skip Wave-0 trailing stubs satisfy the Nyquist contract — every Phase-5 -k/-m selector including compound 'trailing and bracket' collects >=1 before any RED; test-only, oracle byte-exact
+- [Phase ?]: Phase 5 Plan 01: TrailType lives in config/order.py (config-enum exception, order-domain cohesion); TRAILING_STOP order type + trail_type/trail_value carriage (Order->OrderEvent) + new_trailing_stop_order factory; D-TRAIL-7 dual-layer non-viable-trail gate with Pitfall-6 strategy (a) positive computed initial stop (price<=0 gate NOT branched out, both layers agree D-03a); SMA_MACD spot oracle byte-exact, mypy --strict clean (185 files)
 
 ### Pending Todos
 
@@ -259,6 +260,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 02 P06 | 0 | 2 tasks | 3 files |
 | Phase 02 P08 | 12 | 3 tasks | 7 files |
 | Phase 05 P00 | 6 | 2 tasks | 7 files |
+| Phase 05 P01 | 4 | 2 tasks | 8 files |
 
 ## Bookkeeping
 
@@ -300,8 +302,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T06:53:35.477Z
-Stopped at: Phase 4 context gathered
+Last session: 2026-06-17T07:01:33.333Z
+Stopped at: Completed 05-01-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
