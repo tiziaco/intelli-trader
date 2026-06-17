@@ -228,21 +228,27 @@ def test_short_only_unsized_buy_with_no_open_short_is_rejected(harness):
     assert "SHORT_ONLY" in last_change.reason
 
 
-def test_short_only_unsized_sell_while_short_is_rejected(harness):
-    """WR-01 (D-09): a SHORT_ONLY unsized SELL that ADDS to an open short is an
-    audited admission rejection (short increase out of v1 scope), NOT a
-    fall-through to first-entry sizing that silently scales the short.
+def test_short_only_unsized_sell_while_short_is_rejected_when_allow_increase_false(harness):
+    """SCALE-01 (D-01): a SHORT_ONLY unsized SELL that ADDS to an open short is
+    an audited admission rejection WHEN allow_increase=False — now conditional
+    on the SAME flag that gates a long add, byte-symmetrically with the long
+    gate (admission_manager.py:577-591). The mock signal defaults
+    allow_increase=False, so this still rejects; the reason text now mirrors the
+    long arm ("position increase not allowed by strategy") rather than the old
+    unconditional "short increase out of v1 scope (D-09)" wording.
 
-    Before the fix the SELL passed the direction gate (SHORT_ONLY+SELL is not
+    Without the gate the SELL passed the direction gate (SHORT_ONLY+SELL is not
     policed), was not a reduction (SELL vs an open SHORT), and routed into
-    resolve_entry — opening a fresh entry-sized lot on top of the short."""
+    resolve_entry — opening a fresh entry-sized lot on top of the short. The
+    allow_increase=True admit path is proven in
+    test_allow_increase_true_sizes_short_increase_on_remaining_cash_and_reserves."""
     harness.open_short(quantity=2.0, price=40.0)
     position = harness.ptf_handler.get_position(harness.last_ptf_id, "BTCUSDT")
     assert position is not None and position.side is PositionSide.SHORT
     assert harness.queue.empty()
 
     signal = harness.create_mock_signal(
-        "SELL", direction=TradingDirection.SHORT_ONLY)
+        "SELL", direction=TradingDirection.SHORT_ONLY, allow_increase=False)
     harness.order_handler.on_signal(signal)
 
     # No order emitted — the short was NOT scaled by entry sizing.
@@ -251,7 +257,9 @@ def test_short_only_unsized_sell_while_short_is_rejected(harness):
     assert last_change.from_status == OrderStatus.PENDING
     assert last_change.to_status == OrderStatus.REJECTED
     assert last_change.triggered_by is OrderTriggerSource.ADMISSION_INCREASE
-    assert "short increase" in last_change.reason
+    # The rejection is now BECAUSE allow_increase=False, not "always".
+    assert "position increase not allowed by strategy" in last_change.reason
+    assert "allow_increase=False" in last_change.reason
     assert last_change.timestamp == signal.time
 
 
@@ -344,6 +352,81 @@ def test_allow_increase_true_sizes_increase_on_remaining_cash_and_reserves(harne
     # exactly the reservation amount (price x quantity, zero commission).
     reserved_available = harness.ptf_handler.available_cash(harness.last_ptf_id)
     assert reserved_available == remaining - to_money(40.0) * expected
+
+
+# --- SCALE-01/SCALE-02 short scale-in: admit/reject + D-06 reserve (Plan 05.1-01)
+
+
+def test_allow_increase_false_unsized_sell_while_short_is_rejected(harness):
+    """SCALE-01 (D-01): allow_increase=False + unsized SELL + open short: zero
+    emitted orders, ONE stored REJECTED order naming the violation. The exact
+    SHORT-side mirror of test_allow_increase_false_unsized_buy_while_long_is_rejected
+    — same gate, same reason text, swapping open_long->open_short, BUY->SELL."""
+    harness.open_short(quantity=2.5, price=40.0)
+    assert harness.queue.empty()
+
+    signal = harness.create_mock_signal(
+        "SELL", direction=TradingDirection.LONG_SHORT, allow_increase=False)
+    harness.order_handler.on_signal(signal)
+
+    assert harness.queue.empty()
+    last_change = _get_single_rejection(harness, "BTCUSDT")
+    assert last_change.from_status == OrderStatus.PENDING
+    assert last_change.to_status == OrderStatus.REJECTED
+    assert last_change.triggered_by is OrderTriggerSource.ADMISSION_INCREASE
+    assert "position increase not allowed by strategy" in last_change.reason
+    assert "allow_increase=False" in last_change.reason
+    # Event-derived timestamp — never the wall clock (M2-09).
+    assert last_change.timestamp == signal.time
+
+
+def test_allow_increase_true_sizes_short_increase_on_remaining_cash_and_reserves(harness):
+    """SCALE-01 + SCALE-02/D-06: allow_increase=True + unsized SELL + open short:
+    the SELL-add is ADMITTED and sized via the policy on CURRENT remaining
+    available_cash (FractionOfCash compounding semantics, D-04), proving it
+    reached the direction-agnostic resolve_entry (SCALE-01).
+
+    D-06 reserve-side correctness (criterion 4b): the admission check-and-reserve
+    gate reserves ONLY for the cash-DEBITING primary, i.e. a BUY
+    (admission_manager.py:259-264, D-03/T-05-15 — "SELLs and bracket SL/TP
+    children are exempt: no OCO double-reservation"). A short SELL-add CREDITS
+    cash, so it books NO admission-side cash reservation; its margin LOCK is a
+    SETTLEMENT-side concern recomputed to aggregate_notional/leverage in
+    portfolio.py:423-441 (Plan 05.1-02 owns that settlement-path portion of
+    SCALE-02). The reserve-side correctness this admission-gate test proves is
+    therefore the EXACT, non-vacuous fact that the admitted SELL-add reserves
+    NOTHING extra at admission — available_cash is UNCHANGED across the admit
+    (it neither over-reserves the SELL-side notional nor silently debits the
+    short proceeds). This is the honest mirror of the long arm: the long BUY
+    reserves price*qty because a BUY debits cash; the short SELL reserves zero
+    because a SELL credits cash. (Verified against the live reserve path:
+    admission_manager.py:264 gates the reservation on `primary.action is Side.BUY`.)"""
+    harness.open_short(quantity=100, price=40.0)  # SELL proceeds credit balance
+    remaining = harness.ptf_handler.available_cash(harness.last_ptf_id)
+    # A short SELL credits proceeds (spot/collateralized basis, margin gate off
+    # in this harness), so available_cash RISES above the starting balance —
+    # the SELL-side counterpart of the long add's `remaining < 10000`.
+    assert remaining > Decimal("10000")
+    expected = (Decimal("0.95") * remaining) / to_money(40.0)
+
+    signal = harness.create_mock_signal(
+        "SELL", direction=TradingDirection.LONG_SHORT, allow_increase=True)
+    harness.order_handler.on_signal(signal)
+
+    order_event: OrderEvent = harness.queue.get(False)
+    # The SELL-add reached resolve_entry — it was sized, not rejected (SCALE-01).
+    assert order_event.action is Side.SELL
+    # The policy expression on REMAINING cash, repr-exact (Pitfall 1 shape) —
+    # proves the SELL-add was sized by the SAME FractionOfCash arm as a long add.
+    assert str(order_event.quantity) == str(expected)
+    # D-06 reserve-side check (criterion 4b): the cash-CREDITING SELL primary
+    # books NO admission-side reservation (D-03, admission_manager.py:264 reserves
+    # only when `primary.action is Side.BUY`). available_cash is UNCHANGED across
+    # the admit — NOT a vacuous >= 0 assert: it pins that the SELL-add neither
+    # over-reserves the SELL-side notional nor debits the credited short proceeds.
+    # The short's margin LOCK rides settlement (portfolio.py:423-441, Plan 05.1-02).
+    reserved_available = harness.ptf_handler.available_cash(harness.last_ptf_id)
+    assert reserved_available == remaining
 
 
 def test_increase_with_insufficient_funds_yields_cash_reservation_rejection(harness):
