@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: executing
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-06-17T07:26:12.988Z"
+status: verifying
+stopped_at: Completed 05-04-PLAN.md
+last_updated: "2026-06-17T07:54:25.400Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 10
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 29
-  completed_plans: 28
-  percent: 40
+  completed_plans: 29
+  percent: 50
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 
 Phase: 05 (engine-native-trailing-stops) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase 5 complete — trailing re-baseline frozen (owner-signed); ready for verification
 
 > Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
 > not exist yet (only 01/02/03/04 + 999.x dirs are present). Corrected manually to Phase 5 per the v1.4
@@ -209,6 +209,7 @@ scope decisions:
 - [Phase ?]: 05-03: trailing intent = extended PercentFromFill (optional trail_type/trail_value, all-or-nothing); rides the existing fill-anchored carve-out, no new SLTPPolicy variant
 - [Phase ?]: 05-03: trailing SL child price = ENTRY FILL anchor (the engine _seed_trail HWM/LWM seed per 05-02), NOT the computed initial stop; TP-limit unchanged (D-TRAIL-5 EITHER/OR)
 - [Phase ?]: 05-03: fee/slippage _KNOWN_ORDER_TYPES gained trailing_stop (triggered TRAILING_STOP fills/fees like a STOP); long+short e2e ratcheted-exit proven (long 135 vs seed 90, short 55 vs seed 110)
+- [Phase 05]: 05-04: trailing-stop cross-validated (TRAIL-03) vs backtesting.py 0.6.5 + backtrader 1.9.78.123 — trade-level reconciliation EXACT (exit 100.8, PnL +8.0), 8/8 metrics within 1%, A1 oracle API CONFIRMED (both CLOSE-basis); high-vs-close gap (D-TRAIL-1, iTrader closed-bar-extreme correct per TRAIL-02) dispositioned LEGITIMATE-DIFFERENCE, 0 BUG; phase's OWN trailing golden re-baseline FROZEN under owner sign-off (tiziaco, 2026-06-17); SMA_MACD spot oracle byte-exact 134/46189.87730727451, mypy --strict clean, determinism byte-identical
 
 ### Pending Todos
 
@@ -269,6 +270,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 05 P00 | 6 | 2 tasks | 7 files |
 | Phase 05 P01 | 4 | 2 tasks | 8 files |
 | Phase 05 P03 | 25 | 2 tasks | 10 files |
+| Phase 05 P04 | 40 | 2 tasks tasks | 6 files files |
 
 ## Bookkeeping
 
@@ -310,8 +312,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T07:26:12.980Z
-Stopped at: Completed 05-03-PLAN.md
+Last session: 2026-06-17T07:53:46.248Z
+Stopped at: Completed 05-04-PLAN.md (Phase 5 complete — trailing re-baseline frozen, owner-signed)
 Resume file: None
 
 ## Operator Next Steps
