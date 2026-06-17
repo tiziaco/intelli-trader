@@ -486,7 +486,14 @@ class SimulatedExchange(AbstractExchange):
 		elif event.quantity > self._max_order_size:
 			failed_checks.append(f"Order quantity {event.quantity} exceeds maximum {self._max_order_size}")
 		
-		# Price validation
+		# Price validation.
+		# D-TRAIL-7 / D-03a (dual-layer agreement): a TRAILING_STOP carries its
+		# fill-anchored INITIAL stop in ``event.price`` (positive — Pitfall 6
+		# strategy (a) "positive computed initial stop", seeded in 05-03), so the
+		# unchanged ``event.price <= 0`` gate gives the SAME accept/reject verdict
+		# as EnhancedOrderValidator for a viable trailing order. The dynamic-price
+		# ratchet (05-02) never lowers the stop below 0, so no contradictory
+		# rejection is added here — the disposition matches the domain validator.
 		if event.price <= 0:
 			failed_checks.append("Order price must be positive")
 		elif event.price > _UNREALISTIC_PRICE_THRESHOLD:  # Decimal-vs-Decimal sanity check (IN-01)
