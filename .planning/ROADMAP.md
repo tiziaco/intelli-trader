@@ -310,7 +310,7 @@ are present at `portfolio.py:439-441` / `:460-464`. The source todo lists them a
 are resolved — this phase is the gate-lift + flip-guard regression test + owner-gated re-baseline.
 **Plans**: 2 plans
 - [x] 05.1-01-PLAN.md — Lift short-increase admission gate behind allow_increase (mirror long); short admit/reject + D-06 reserve units; D-07 over-cover regression lock
-- [ ] 05.1-02-PLAN.md — Parked scale-in scenarios (aggregate-notional re-lock + scale-in-then-partial-cover); cross-validate vs backtesting.py/backtrader; determinism + oracle; owner-gated re-baseline sign-off
+- [x] 05.1-02-PLAN.md — Parked scale-in scenarios (aggregate-notional re-lock + scale-in-then-partial-cover); cross-validate vs backtesting.py/backtrader; determinism + oracle; owner-gated re-baseline sign-off
 
 ### Phase 6: Pair-Trading Flagship
 **Goal**: A market-neutral long/short pair-trading strategy (cointegration/spread) runs end-to-end,
@@ -350,7 +350,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | 3. Shorts & Borrow Carry | 6/6 | Complete   | 2026-06-15 |
 | 4. Liquidation & Cross-Validation Re-baseline | 6/6 | Complete   | 2026-06-16 |
 | 5. Engine-Native Trailing Stops | 5/5 | Complete   | 2026-06-17 |
-| 5.1 Short Position Scale-In (INSERTED) | 1/2 | In Progress|  |
+| 5.1 Short Position Scale-In (INSERTED) | 2/2 | Complete   | 2026-06-17 |
 | 6. Pair-Trading Flagship | 0/TBD | Not started | - |
 
 **Next:** Plan Phase 1 with `/gsd:plan-phase 1`.

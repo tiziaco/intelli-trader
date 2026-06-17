@@ -1,12 +1,13 @@
-"""PARKED short scale-in e2e (SCALE-02) — Phase 05.1 (Plan 05.1-02).
+"""FROZEN short scale-in e2e (SCALE-02) — Phase 05.1 (Plan 05.1-02).
 
-============================ PARKED — NOT YET FROZEN ===============================
-This is a PARKED, hand-computed scenario in the Phase-3/4 discipline (mirrors
-``tests/e2e/short_roundtrip/`` and ``tests/e2e/partial_cover/``). It is frozen as the
-parked regression lock for the short scale-in ONLY at the owner-gated re-baseline
-sign-off (Plan 05.1-02 Task 3 — blocking human-verify). Until then it is a passing,
-hand-computed e2e proof, NOT a frozen golden.
-
+============================ FROZEN — SHORT SCALE-IN REGRESSION LOCK ================
+FREEZE PROVENANCE (D-10/D-12): frozen as the parked regression lock for the short
+scale-in re-baseline at the owner-gated 05.1-02 sign-off — Approved-by: tiziaco
+(tiziano.iaco@gmail.com), 2026-06-17. The freeze set is the two parked short scale-in
+scenarios (``short_scale_in`` aggregate-notional re-lock + ``short_scale_in_partial_cover``
+scale-in-then-partial-cover) cross-validated vs backtesting.py 0.6.5 + backtrader
+1.9.78.123 (see tests/golden/CROSS-VALIDATION-SCALE-IN.md, Owner Sign-Off = APPROVED).
+This is a RESULT-CHANGING re-baseline that froze ONLY under explicit owner sign-off.
 Every number asserted below is a HAND-COMPUTED literal with the arithmetic shown
 inline (Decimal end-to-end; repr-exact ``str(x) == str(expected)`` assertions, never
 float ``==``). This test does NOT use the golden-diff harness — its load-bearing

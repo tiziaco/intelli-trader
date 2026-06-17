@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: executing
-stopped_at: Phase 05.1 context gathered
-last_updated: "2026-06-17T10:08:40.626Z"
+status: verifying
+stopped_at: Plan 05.1-02 complete — owner-gated short scale-in re-baseline FROZEN (tiziaco, 2026-06-17)
+last_updated: "2026-06-17T11:09:38.715Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 10
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 31
-  completed_plans: 31
-  percent: 50
+  completed_plans: 32
+  percent: 60
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 
 Phase: 05.1 (short-position-scale-in-margin-increase) — EXECUTING
 Plan: 2 of 2
-Status: PAUSED at Plan 05.1-02 Task 3 — blocking owner-gated re-baseline checkpoint (human-verify, PENDING sign-off). Tasks 1-2 complete + committed (1b0219f, 205c0e5).
+Status: Plan 05.1-02 COMPLETE (3/3 tasks). Owner-gated re-baseline FROZEN under explicit owner sign-off (tiziaco, 2026-06-17) at the Task 3 blocking checkpoint. Phase complete — ready for verification.
 
 > Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
 > not exist yet (only 01/02/03/04 + 999.x dirs are present). Corrected manually to Phase 5 per the v1.4
@@ -211,7 +211,8 @@ scope decisions:
 - [Phase ?]: 05-03: fee/slippage _KNOWN_ORDER_TYPES gained trailing_stop (triggered TRAILING_STOP fills/fees like a STOP); long+short e2e ratcheted-exit proven (long 135 vs seed 90, short 55 vs seed 110)
 - [Phase 05]: 05-04: trailing-stop cross-validated (TRAIL-03) vs backtesting.py 0.6.5 + backtrader 1.9.78.123 — trade-level reconciliation EXACT (exit 100.8, PnL +8.0), 8/8 metrics within 1%, A1 oracle API CONFIRMED (both CLOSE-basis); high-vs-close gap (D-TRAIL-1, iTrader closed-bar-extreme correct per TRAIL-02) dispositioned LEGITIMATE-DIFFERENCE, 0 BUG; phase's OWN trailing golden re-baseline FROZEN under owner sign-off (tiziaco, 2026-06-17); SMA_MACD spot oracle byte-exact 134/46189.87730727451, mypy --strict clean, determinism byte-identical
 - [Phase ?]: 05.1-01: short-increase admission gate lifted behind allow_increase (byte-symmetric mirror of long gate, long arm byte-exact); D-06 admission-gate reality — a short SELL-add reserves NOTHING at admission (admission_manager.py:264 reserves only Side.BUY), margin lock rides settlement (Plan 05.1-02); CR-02 over-cover guard regression-locked for SHORT side (RED-verified); SMA_MACD oracle byte-exact 134/46189.87730727451
-- [Phase 05.1]: 05.1-02 (Tasks 1-2): admitted short SELL-add settles through the EXISTING side-agnostic SCALE-IN branch (portfolio.py:423-441) — margin RE-LOCKS to aggregate_notional/leverage (1000->2000 on the second add; pro-rata release to 1000 + realised PnL 200 on a half-cover), proven by two parked e2e leaves (SCALEUSD/SCALPCUSD, NEVER BTCUSD); NO new settlement branch (D-02/D-03); cross-validated vs backtesting.py 0.6.5 / backtrader 1.9.78.123 (CROSS-VALIDATION-SCALE-IN.md, trade-level PRIMARY GREEN, 0 BUG); determinism byte-identical, SMA_MACD oracle byte-exact, mypy --strict clean (185 files). Task 3 (owner-gated re-baseline freeze) is a BLOCKING human-verify checkpoint — PENDING owner sign-off (NOT self-approved).
+- [Phase 05.1]: 05.1-02 (Tasks 1-2): admitted short SELL-add settles through the EXISTING side-agnostic SCALE-IN branch (portfolio.py:423-441) — margin RE-LOCKS to aggregate_notional/leverage (1000->2000 on the second add; pro-rata release to 1000 + realised PnL 200 on a half-cover), proven by two parked e2e leaves (SCALEUSD/SCALPCUSD, NEVER BTCUSD); NO new settlement branch (D-02/D-03); cross-validated vs backtesting.py 0.6.5 / backtrader 1.9.78.123 (CROSS-VALIDATION-SCALE-IN.md, trade-level PRIMARY GREEN, 0 BUG); determinism byte-identical, SMA_MACD oracle byte-exact, mypy --strict clean (185 files).
+- [Phase 05.1]: 05.1-02 (Task 3): owner-gated short scale-in re-baseline FROZEN under explicit owner sign-off (tiziaco, tiziano.iaco@gmail.com, 2026-06-17) at the blocking human-verify checkpoint. CROSS-VALIDATION-SCALE-IN.md Owner Sign-Off PENDING->APPROVED with full attribution; both scale-in e2e leaves (SCALEUSD/SCALPCUSD) carry a D-10/D-12 FROZEN freeze-provenance banner (test logic + hand-computed Decimal assertions UNCHANGED); SCALE-02/SCALE-03 marked complete. Re-confirmed at the freeze: mypy --strict clean (185 files), SMA_MACD oracle byte-exact 134/46189.87730727451, both frozen leaves green. No production code touched (portfolio.py / sizing_resolver.py untouched).
 
 ### Pending Todos
 
@@ -315,9 +316,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T10:14:00.000Z
-Stopped at: Plan 05.1-02 Task 3 — blocking owner-gated re-baseline checkpoint (PENDING sign-off)
-Resume file: .planning/phases/05.1-short-position-scale-in-margin-increase/05.1-02-PLAN.md (Task 3)
+Last session: 2026-06-17T11:10:00.000Z
+Stopped at: Plan 05.1-02 COMPLETE — owner-gated short scale-in re-baseline FROZEN (tiziaco, 2026-06-17); phase ready for verification
+Resume file: None
 
 ## Operator Next Steps
 

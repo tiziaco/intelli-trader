@@ -131,14 +131,46 @@ release. This file freezes the scale-in re-baseline ONLY after explicit owner si
 
 ## Owner Sign-Off (D-12)
 
-**Status: PENDING** — awaiting the project owner's explicit sign-off at the Plan 05.1-02 Task 3
-blocking human-verify checkpoint.
+**Status: APPROVED** (2026-06-17, project owner — Approved-by: tiziaco (tiziano.iaco@gmail.com)).
+The owner accepts the short scale-in cross-validation verdict — **trade-level PRIMARY GREEN on both
+gating engines (backtesting.py 0.6.5 + backtrader 1.9.78.123: averaged-entry open, partial-cover
+exit, realised PnL 200), metric-level SECONDARY at 1% tolerance with the documented tiny-series
+caveat, 0 BUG; no iTrader defect** — as the basis for freezing the short scale-in re-baseline.
 
-This is a RESULT-CHANGING, owner-gated re-baseline. The short scale-in scenarios freeze as the
-parked regression lock ONLY on the owner's explicit "approved" with full attribution. `auto_advance`
-is IGNORED for this gate.
+This was a RESULT-CHANGING, owner-gated re-baseline. The short scale-in scenarios freeze as the
+parked regression lock ONLY on the owner's explicit "approved" with full attribution; `auto_advance`
+was IGNORED for this gate. The blocking human-verify checkpoint in Plan 05.1-02 (Task 3) presented
+this evidence and the owner explicitly approved the freeze.
 
-The attribution to be reviewed at the checkpoint:
+During the blocking human-verify checkpoint the owner reviewed:
+- **Plan 05.1-01 admission gate-lift** — the unconditional short-increase rejection lifted behind
+  `allow_increase` (byte-symmetric mirror of the long INCREASE gate; long arm + `portfolio.py` +
+  `sizing_resolver.py` untouched).
+- **Two parked scale-in scenarios green** — `short_scale_in` (aggregate-notional re-lock 1000 → 2000)
+  and `short_scale_in_partial_cover` (scale-in then partial cover: pro-rata release to 1000 +
+  realised PnL 200 on the covered fraction); both drive the real SIGNAL → ORDER → FILL → PORTFOLIO
+  path.
+- **Trade-level reconciliation (PRIMARY) is GREEN** on BOTH gating engines (backtesting.py 0.6.5 +
+  backtrader 1.9.78.123 averaged-entry open + partial-cover exit + realised PnL 200 match to the bar).
+- **The per-add margin re-lock is iTrader-specific accounting (PRIMARY = the parked e2e leaf)** — the
+  engines corroborate the surrounding economics; the hand-computed re-lock (1000 → 2000 → pro-rata
+  1000) is the PRIMARY oracle for the lock itself.
+- **Metric divergences are INFORMATIONAL** — the length-sensitive annualized Sharpe / Sortino rows on
+  the tiny ≤7-bar series carry a documented CAVEAT; the trade-level table is the primary gate and it
+  reconciles.
+- **The SMA_MACD spot oracle stays byte-exact** (134 / 46189.87730727451, D-11) — synthetic tickers
+  (`SCALEUSD` / `SCALPCUSD`) only, never BTCUSD; the short scale-in is short-dark relative to the
+  LONG_ONLY oracle and did NOT drift it.
+- **Determinism double-run byte-identical; mypy --strict clean** (185 source files).
+
+No production code change and no re-baseline of the SMA_MACD goldens were performed (zero BUG rows).
+This sign-off authorizes the freeze of the short scale-in re-baseline: the two white-box e2e leaves
+(`tests/e2e/short_scale_in/`, `tests/e2e/short_scale_in_partial_cover/`) are the regression lock; the
+hand-computed Decimal literals in those leaves remain the PRIMARY oracle for the per-add margin
+re-lock and the partial-cover release. The freeze is recorded as a FROZEN freeze-provenance banner on
+each of the two scenario leaves, citing this sign-off date (2026-06-17).
+
+The attribution reviewed at the checkpoint:
 
 - **Plan 05.1-01 admission gate-lift** — the short-increase rejection lifted behind `allow_increase`
   (byte-symmetric mirror of the long INCREASE gate; long arm + `portfolio.py` + `sizing_resolver.py`
@@ -153,8 +185,8 @@ The attribution to be reviewed at the checkpoint:
 - **Determinism + oracle** — determinism double-run byte-identical; SMA_MACD spot oracle byte-exact
   (134 / 46189.87730727451); mypy --strict clean (185 files).
 
-On owner approval, this block is updated with the owner attribution (name, email, date) and the two
-scale-in scenario leaves are frozen as the parked regression lock (a FROZEN freeze-provenance banner
-citing the sign-off date is added to each leaf).
+On this owner approval (2026-06-17) the block was updated with the owner attribution and the two
+scale-in scenario leaves were frozen as the parked regression lock (a FROZEN freeze-provenance banner
+citing the sign-off date was added to each leaf).
 
-<!-- OWNER-ATTRIBUTION-PLACEHOLDER: replaced with "Approved-by: <name> (<email>), <date>" on sign-off -->
+<!-- Approved-by: tiziaco (tiziano.iaco@gmail.com), 2026-06-17 -->

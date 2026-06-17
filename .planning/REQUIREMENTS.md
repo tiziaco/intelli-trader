@@ -98,12 +98,12 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
   with `allow_increase=False` it remains an AUDITED `ADMISSION_INCREASE` rejection (today's behavior).
   Lifts the unconditional short-increase rejection (`admission_manager.py:537-556`) behind
   `allow_increase`, mirroring the long gate (`:577-591`); the long path stays byte-exact. (D-09)
-- [ ] **SCALE-02**: The admitted scale-in settles through the EXISTING side-agnostic margin SCALE-IN
+- [x] **SCALE-02**: The admitted scale-in settles through the EXISTING side-agnostic margin SCALE-IN
   branch (`portfolio.py:423-441` — recompute the lock to the new `aggregate_notional / leverage`),
   reusing the already-landed WR-01/WR-04 guards, with no new settlement branch. The SELL-add reserves
   `notional / leverage` on the correct (reserve) side at the check-and-reserve admission gate (D-06,
   verified in planning — not only the WR-01 settlement-side assertion).
-- [ ] **SCALE-03**: Flip/split stays out of scope and the result-change is owner-gated. The CR-02
+- [x] **SCALE-03**: Flip/split stays out of scope and the result-change is owner-gated. The CR-02
   over-cover crossing-fill guard (`portfolio.py:399-404`) still fires loud on a reducing fill whose
   quantity exceeds the open position (regression-test locked, D-07). Short scale-in is cross-validated
   against `backtesting.py` 0.6.5 / `backtrader` 1.9.78.123; any result-change freezes ONLY under owner
@@ -181,8 +181,8 @@ Which phases cover which requirements. Filled during roadmap creation.
 | TRAIL-03 | Phase 5 — Engine-Native Trailing Stops | Complete |
 | PAIR-01 | Phase 6 — Pair-Trading Flagship | Pending |
 | SCALE-01 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Complete |
-| SCALE-02 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Pending |
-| SCALE-03 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Pending |
+| SCALE-02 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Complete |
+| SCALE-03 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Complete |
 
 **Coverage:**
 - v1.4 requirements: 23 total (20 original + SCALE-01/02/03 inserted with Phase 05.1)
