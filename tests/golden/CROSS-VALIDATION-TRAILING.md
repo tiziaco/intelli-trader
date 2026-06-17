@@ -1,6 +1,6 @@
 # Trailing-Stop Cross-Validation Report (TRAIL-03, D-TRAIL-1)
 
-Committed **evidence** that iTrader's engine-native trailing stop — the `MatchingEngine` resting-order ratchet subsystem (a DIFFERENT subsystem from the Phase-4 portfolio/cash accounting core) — reconciles across independent backtest engines (Phase 5, TRAIL-03). This file is **evidence, NOT the oracle** and is **NOT wired into `make test` or CI** — the white-box e2e leaves under `tests/e2e/{trailing_long,trailing_short}/` are the regression lock (this phase's OWN result-changing trailing golden re-baseline freezes ONLY after owner sign-off — see the Owner Sign-Off block below, currently UNSIGNED).
+Committed **evidence** that iTrader's engine-native trailing stop — the `MatchingEngine` resting-order ratchet subsystem (a DIFFERENT subsystem from the Phase-4 portfolio/cash accounting core) — reconciles across independent backtest engines (Phase 5, TRAIL-03). This file is **evidence, NOT the oracle** and is **NOT wired into `make test` or CI** — the white-box e2e leaves under `tests/e2e/{trailing_long,trailing_short}/` are the regression lock (this phase's OWN result-changing trailing golden re-baseline freezes ONLY after owner sign-off — see the Owner Sign-Off block below, **APPROVED 2026-06-17**).
 
 ## Force-Match Configuration
 
@@ -55,10 +55,48 @@ Headline metrics recomputed via `itrader.reporting.metrics` for every engine, co
 
 No divergences flagged by the reconcile helpers — trade-level PRIMARY reconciliation is exact across both gating engines and every headline metric is within the 1% tolerance.
 
-## Owner Sign-Off
+## Owner Sign-Off (TRAIL-03, D-TRAIL-1)
 
-**Status: UNSIGNED — PENDING owner review.** This evidence is produced for owner review at the BLOCKING human-verify checkpoint in Plan 05-04 (Task 2). This phase's OWN result-changing trailing golden re-baseline (a SEPARATE re-baseline from the Phase-4 accounting core — a different subsystem) freezes ONLY after the owner reviews the trade-level reconciliation + the high-vs-close disposition above and signs this block with attribution (name + date). The freeze is manual (`workflow.auto_advance` is false — this checkpoint is never auto-approvable). Until then the `tests/e2e/{trailing_long,trailing_short}/` white-box e2e leaves are the regression lock.
+**Status: APPROVED** (2026-06-17, project owner — Approved-by: tiziaco (tiziano.iaco@gmail.com)).
+The owner accepts the trailing cross-val verdict — **0 BUG; trade-level PRIMARY reconciliation EXACT
+across iTrader / backtesting.py / backtrader (single trade, entry 2020-01-03, exit 2020-01-07 at the
+ratcheted stop 100.8, PnL +8.0); all 8 headline metrics within the 1% tolerance; the high-vs-close
+trail-basis gap dispositioned LEGITIMATE-DIFFERENCE (D-TRAIL-1 — iTrader trails off the closed-bar
+HIGH/LOW per the look-ahead-safe TRAIL-02 convention; both oracles trail off the CLOSE), NOT a bug** —
+as the basis for this phase's OWN result-changing trailing golden re-baseline freeze (a SEPARATE
+re-baseline from the Phase-4 accounting core — the `MatchingEngine` resting-order ratchet is a
+different subsystem). The blocking human-verify checkpoint in Plan 05-04 (Task 2) presented this
+evidence; the owner explicitly approved the freeze. The freeze is manual (`workflow.auto_advance` is
+false — this checkpoint is never auto-approvable).
 
-> _Approved-by:_ (unsigned)
+During the blocking human-verify checkpoint the owner reviewed and APPROVED:
+- **Trade-level reconciliation (PRIMARY) is EXACT** — all three engines fill at the SAME ratcheted
+  stop (100.8 = 112 high-water-mark × 0.90) on the SAME bar; PnL +8.0; the crafted scenario neutralizes
+  the high-vs-close basis difference (`high == close` on every ratcheting bar) so the residual gap
+  contributes ZERO trade-timing divergence here.
+- **A1 oracle trailing API CONFIRMED** at runner-implementation time — backtesting.py 0.6.5
+  `TrailingStrategy.set_trailing_sl`/`set_trailing_pct` (CLOSE-basis ratchet) and backtrader
+  1.9.78.123 `bt.Order.StopTrail`/`StopTrailLimit` (`trailpercent`, CLOSE-basis); both runners
+  force-match an EXACT percent-of-close ratchet.
+- **The high-vs-close gap is a documented LEGITIMATE-DIFFERENCE (D-TRAIL-1), not a defect** —
+  iTrader's closed-bar-extreme behavior is the CORRECT one per TRAIL-02; on a series where a
+  ratcheting bar's HIGH strictly exceeds its CLOSE it surfaces only as a <=1-bar SHIFT, within tolerance.
+- **Full suite green** — `make test` (worktree: `poetry run pytest tests`) passes; no oracle import
+  under `tests/` (backtesting/backtrader imports stay SCRIPT-ONLY under `scripts/crossval/`, D-10/T-05-09).
+- **mypy --strict clean** across `itrader`.
+- **Determinism double-run byte-identical** — `scripts/run_backtest.py` x2 produced identical output.
+- **The SMA_MACD spot oracle stayed byte-exact** — `poetry run pytest tests/integration/test_backtest_oracle.py`
+  (16 passed, 134 trades / final_equity 46189.87730727451, D-11) — trailing is oracle-dark on the spot
+  path; synthetic ticker `TRAILUSD` only, never BTCUSD. (Verify-command correction: the plan originally
+  cited `pytest tests/golden -x`, which is WRONG — `tests/golden/` is an artifacts directory and
+  collects 0 tests; the correct oracle test is `tests/integration/test_backtest_oracle.py`. Fixed in
+  05-04-PLAN.md, commit d6f0de8.)
+
+No code change and no re-baseline of the SMA_MACD goldens were performed (zero BUG rows). This sign-off
+authorizes the freeze of this phase's OWN trailing golden re-baseline. The
+`tests/e2e/{trailing_long,trailing_short}/` white-box e2e leaves are the regression lock (this file is
+EVIDENCE, NOT wired into `make test`/CI).
+
+> _Approved-by:_ tiziaco (tiziano.iaco@gmail.com)
 >
-> _Date:_ (unsigned)
+> _Date:_ 2026-06-17
