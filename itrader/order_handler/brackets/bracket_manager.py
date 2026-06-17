@@ -28,6 +28,7 @@ from typing import Any, List, Optional, assert_never
 from ..order import Order
 from ..operation_result import OperationResult
 from ...core.enums import OrderOperationType, Side
+from ...core.exceptions import SizingPolicyViolation
 from ...core.money import to_money
 from ...core.sizing import PercentFromDecision, PercentFromFill
 from ...events_handler.events import OrderEvent, SignalEvent, FillEvent
@@ -252,6 +253,25 @@ class BracketManager:
 		# Invert on the parent's action (D-05); the entity stores a Side (SIG-03/D-03).
 		child_action = Side.BUY if pending.action is Side.SELL else Side.SELL
 		if pending.trail_type is not None and pending.trail_value is not None:
+			# CR-01 / D-TRAIL-7 (PRICE case): the absolute trail viability gate is
+			# only knowable HERE, at the fill, against the resolved anchor — it is
+			# bypassed by the validator (which never runs on this fill-anchored
+			# child). A PRICE trail >= anchor would seed a NON-POSITIVE stop
+			# (anchor - trail <= 0 for a long; mirrored for a short) that can never
+			# trigger, silently resting an unprotected position. Reject fail-loud
+			# (backtest fail-fast: the reconcile caller logs + re-raises) instead of
+			# resting a dead stop. The PERCENT case is bounded earlier at policy
+			# construction (WR-02); only PRICE needs the fill-time anchor check.
+			# TrailType is imported lazily (config-enum exception — keep the
+			# order/core -> config dependency direction off the module load path).
+			from ...config import TrailType
+			if pending.trail_type == TrailType.PRICE and pending.trail_value >= anchor:
+				raise SizingPolicyViolation(
+					f"PercentFromFill PRICE trail_value {pending.trail_value} must be "
+					f"< the entry-fill anchor {anchor}: a non-viable absolute trail "
+					f"would seed a non-positive stop that can never trigger "
+					f"(parent {parent.id})"
+				)
 			# TRAIL-01/TRAIL-02 (D-TRAIL-3/D-TRAIL-5): the SL leg is a
 			# TRAILING_STOP, not a fixed STOP. Its `price` is the ENTRY FILL
 			# anchor (the SAME value MatchingEngine._seed_trail reads as the

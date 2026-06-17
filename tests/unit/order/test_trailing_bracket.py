@@ -33,6 +33,7 @@ from itrader.order_handler.storage import OrderStorageFactory
 from itrader.events_handler.events import FillEvent, OrderEvent, SignalEvent
 from itrader.config import TrailType
 from itrader.core.enums import OrderStatus, OrderType, Side
+from itrader.core.exceptions import SizingPolicyViolation
 from itrader.core.sizing import (
     FractionOfCash,
     PercentFromFill,
@@ -190,3 +191,39 @@ def test_trailing_bracket_child_replaces_fixed_sl_short(harness):
     assert tp_event.order_type == OrderType.LIMIT
     assert tp_event.price == Decimal("88.2")
     assert sl_event.parent_order_id == parent_event.order_id
+
+
+def test_trailing_bracket_nonviable_price_trail_rejected_at_fill(harness):
+    """CR-01 (PRICE case): a PRICE trail >= the entry-fill anchor would seed a
+    NON-POSITIVE stop (anchor - trail <= 0) that can never trigger — a silently
+    unprotected position. The PRICE viability gate (D-TRAIL-7) is only knowable
+    at fill, so it is enforced in ``_create_fill_anchored_children`` and rejected
+    fail-loud (backtest fail-fast: the reconcile path re-raises), NOT silently
+    rested as a dead stop. Construction is allowed (the anchor is unknown then)."""
+    signal = harness.create_signal(
+        "BUY", quantity=1.0, price=100.0,
+        sltp_policy=PercentFromFill(
+            sl_pct=Decimal("0.05"), tp_pct=Decimal("0.10"),
+            # PRICE trail of 120 is fine at construction; only at the fill of
+            # 100 does it become non-viable (100 - 120 = -20, a dead stop).
+            trail_type=TrailType.PRICE, trail_value=Decimal("120"),
+        ),
+    )
+
+    harness.order_handler.on_signal(signal)
+    order_events = harness.drain_order_events()
+    assert len(order_events) == 1
+    parent_event = order_events[0]
+
+    # Fill at 100 — the (positive) anchor is BELOW the 120 PRICE trail, so the
+    # carve-out must reject the non-viable trail instead of resting stop = -20.
+    parent = harness.order_storage.get_order_by_id(
+        parent_event.order_id, harness.last_ptf_id)
+    pending = harness.order_handler.order_manager._brackets.get(parent_event.order_id)
+    fill = FillEvent.new_fill(
+        "EXECUTED", parent_event, price=Decimal("100"),
+        quantity=parent_event.quantity, commission=0.0,
+    )
+    with pytest.raises(SizingPolicyViolation, match="trail_value"):
+        harness.order_handler.order_manager.bracket_manager._create_fill_anchored_children(
+            parent, pending, fill)
