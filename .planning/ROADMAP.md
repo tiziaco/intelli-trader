@@ -264,7 +264,12 @@ extremes, active the next bar), cross-validated against the external oracles.
 **Re-baseline**: Owner-gated (result-changing) — its OWN re-baseline, separate from the accounting
 core (MatchingEngine resting-order subsystem, not portfolio/cash accounting). The native-vs-synthetic
 live capability seam is deferred to N+4. `mypy --strict` clean; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 5 plans
+- [ ] 05-00-PLAN.md — [Wave 0] Nyquist stubs: collectible trailing unit + e2e selectors (long AND short) (TRAIL-01/02/03)
+- [ ] 05-01-PLAN.md — Static plumbing: OrderType.TRAILING_STOP + TrailType config-enum + event/entity fields + factory + dual-layer D-TRAIL-7 validation (TRAIL-01/02)
+- [ ] 05-02-PLAN.md — MatchingEngine ratchet core: side-table HWM/LWM, end-of-on_bar ratchet (D-TRAIL-2), STOP-arm reuse + long/short unit tests (TRAIL-01/02)
+- [ ] 05-03-PLAN.md — Fill-anchored trailing-SL bracket declaration (D-TRAIL-3/5) + long/short e2e scenarios (TRAIL-01/02)
+- [ ] 05-04-PLAN.md — [owner-gated] Cross-validation vs backtesting.py/backtrader + evidence report + blocking re-baseline sign-off (TRAIL-03)
 
 ### Phase 6: Pair-Trading Flagship
 **Goal**: A market-neutral long/short pair-trading strategy (cointegration/spread) runs end-to-end,
@@ -303,7 +308,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | 2. Margin Accounting & Leverage | 9/9 | Complete   | 2026-06-15 |
 | 3. Shorts & Borrow Carry | 6/6 | Complete   | 2026-06-15 |
 | 4. Liquidation & Cross-Validation Re-baseline | 6/6 | Complete   | 2026-06-16 |
-| 5. Engine-Native Trailing Stops | 0/TBD | Not started | - |
+| 5. Engine-Native Trailing Stops | 0/5 | Planned | - |
 | 6. Pair-Trading Flagship | 0/TBD | Not started | - |
 
 **Next:** Plan Phase 1 with `/gsd:plan-phase 1`.
