@@ -49,12 +49,34 @@ encodes margin.
 import dataclasses
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from itrader.core.ids import OrderId
-from itrader.core.money import to_money
+from itrader.core.instrument import Instrument
+from itrader.core.money import quantize, to_money
 from itrader.events_handler.events import OrderEvent, BarEvent
+from itrader.config import TrailType
 from itrader.core.enums import OrderType, Side
+
+
+@dataclass(slots=True)
+class TrailState:
+    """Mutable per-trailing-order ratchet bookkeeping (D-TRAIL-6).
+
+    Lives in a ``MatchingEngine``-owned side-table parallel to ``_resting`` —
+    NOT on the frozen ``OrderEvent`` (which is ``frozen=True, slots=True`` and
+    would raise ``FrozenInstanceError``). The static trail declaration
+    (``trail_type``/``trail_value``) stays on the immutable event; the running
+    extreme and the active stop level are the only mutable state and live here.
+
+    ``hwm``/``lwm`` are carried at FULL 28-digit Decimal precision (D-TRAIL-8) —
+    only ``current_stop`` (the level used for the trigger comparison/fill) is
+    ever ``quantize``'d. For a long sell-stop only ``hwm`` advances; for a short
+    buy-stop only ``lwm`` advances.
+    """
+    hwm: Decimal           # running max of closed-bar highs (long); seed = fill price
+    lwm: Decimal           # running min of closed-bar lows (short); seed = fill price
+    current_stop: Decimal  # active ratcheted stop, derived from bars <= N-1
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -82,22 +104,44 @@ class CancelDecision:
 class MatchingEngine:
     """Resting-order book + trigger/OCO evaluation."""
 
-    def __init__(self) -> None:
+    def __init__(self,
+                 instrument_resolver: Optional[Callable[[str], Optional[Instrument]]] = None) -> None:
         # Order ids have been UUIDv7-backed since M2 (D-12) — the book is
         # keyed by OrderId, never by int.
         self._resting: dict[OrderId, OrderEvent] = {}
+        # D-TRAIL-6: mutable ratchet state for resting TRAILING_STOP orders,
+        # keyed by the SAME OrderId as ``_resting`` and popped at every
+        # ``_resting.pop`` site so no entry leaks for a filled/cancelled order.
+        self._trails: dict[OrderId, TrailState] = {}
+        # D-TRAIL-8: optional per-symbol Instrument resolver used to ``quantize``
+        # the computed stop level to the symbol's price scale. None (default,
+        # byte-exact for every pre-existing construction) means the stop is
+        # carried at full Decimal precision exactly like every other matching
+        # price (D-14 never-round-prices) — only the running extreme must stay
+        # full precision, which it does unconditionally.
+        self._instrument_resolver = instrument_resolver
 
     # --- book management ---
 
     def submit(self, order_event: OrderEvent) -> None:
         """Add a resting order (every NEW order rests here — stop, limit,
-        and market alike; D-13 single matching path)."""
+        and market alike; D-13 single matching path).
+
+        A TRAILING_STOP additionally seeds its side-table TrailState from the
+        order's positive initial ``price`` (the fill-anchored INITIAL stop set
+        by 05-03's declaration; D-TRAIL-3). HWM/LWM seed to that same anchor so
+        the first ratcheted level can never loosen below the declared initial
+        stop, and ``current_stop`` is the declared initial stop verbatim.
+        """
         if order_event.order_id is None:
             raise ValueError("Cannot rest an order with no order_id")
         self._resting[order_event.order_id] = order_event
+        if order_event.order_type == OrderType.TRAILING_STOP:
+            self._trails[order_event.order_id] = self._seed_trail(order_event)
 
     def cancel(self, order_id: OrderId) -> bool:
         """Remove a resting order. Returns True if it was present."""
+        self._trails.pop(order_id, None)
         return self._resting.pop(order_id, None) is not None
 
     def modify(self, order_id: OrderId, new_price: Optional[Decimal] = None,
@@ -132,6 +176,88 @@ class MatchingEngine:
     def get_order(self, order_id: OrderId) -> Optional[OrderEvent]:
         return self._resting.get(order_id)
 
+    # --- trailing-stop ratchet bookkeeping (D-TRAIL-1/2/3/8) ---
+
+    def _seed_trail(self, order: OrderEvent) -> TrailState:
+        """Build the initial TrailState for a TRAILING_STOP entering the book.
+
+        D-TRAIL-3: HWM (long) / LWM (short) seed from the entry/reference price
+        (``order.price`` — the fill-anchored reference, the same value the
+        D-TRAIL-7 validator gates ``trail_value`` against). The initial active
+        stop is computed from that seed and ``quantize``'d (D-TRAIL-8), so the
+        order is immediately triggerable on its first bar against the level
+        derived from its entry (bars <= N-1, where N-1 is the entry bar).
+        """
+        anchor = order.price                       # full-precision Decimal reference
+        stop = self._compute_stop(order, anchor)
+        # Seed BOTH water-marks to the anchor: only the relevant one advances
+        # (hwm for a long sell-stop, lwm for a short buy-stop); the other is
+        # inert. Keeping both seeded avoids a None branch in the ratchet step.
+        return TrailState(hwm=anchor, lwm=anchor, current_stop=stop)
+
+    def _compute_stop(self, order: OrderEvent, watermark: Decimal) -> Decimal:
+        """Compute the (quantized) stop level for ``watermark`` per the trail.
+
+        Long sell-stop:  stop = HWM - trail (PRICE) | HWM * (1 - trail) (PERCENT)
+        Short buy-stop:  stop = LWM + trail (PRICE) | LWM * (1 + trail) (PERCENT)
+
+        The arithmetic runs at full Decimal precision off the full-precision
+        watermark (D-TRAIL-8); ONLY the returned stop is ``quantize``'d to the
+        symbol's price scale (when an Instrument resolver is injected — else it
+        is carried at full precision like every other matching price, D-14).
+        """
+        trail_value = order.trail_value
+        trail_type = order.trail_type
+        if trail_value is None or trail_type is None:
+            # Defensive: a TRAILING_STOP without a viable trail is rejected by
+            # D-TRAIL-7 before it rests; never reached on the validated path.
+            return watermark
+        if order.action is Side.SELL:                       # long sell-stop
+            if trail_type == TrailType.PRICE:
+                raw = watermark - trail_value
+            else:                                           # PERCENT
+                raw = watermark * (Decimal("1") - trail_value)
+        else:                                               # short buy-stop
+            if trail_type == TrailType.PRICE:
+                raw = watermark + trail_value
+            else:                                           # PERCENT
+                raw = watermark * (Decimal("1") + trail_value)
+        return self._quantize_stop(order.ticker, raw)
+
+    def _quantize_stop(self, ticker: str, raw: Decimal) -> Decimal:
+        """quantize(raw, instrument, "price") when a resolver is injected.
+
+        D-TRAIL-8: quantize ONLY the computed stop used for trigger/fill. With
+        no resolver (the pure default construction) the level is carried at full
+        precision — byte-identical to the engine's existing never-round-prices
+        contract (D-14)."""
+        if self._instrument_resolver is None:
+            return raw
+        instrument = self._instrument_resolver(ticker)
+        if instrument is None:
+            return raw
+        return quantize(raw, instrument, "price")
+
+    def _ratchet_trail(self, order: OrderEvent, state: TrailState, bar: BarEvent) -> None:
+        """Advance HWM/LWM from THIS bar's extreme and recompute the stop for
+        the NEXT bar (D-TRAIL-1/D-TRAIL-2 — runs at the END of on_bar).
+
+        Long: hwm = max(hwm, bar.high); short: lwm = min(lwm, bar.low) — extremes,
+        not close (D-TRAIL-1). The recomputed candidate is applied favorably-only
+        (long: current_stop never decreases; short: never increases) so the stop
+        ratchets but never loosens (the ratchet invariant)."""
+        bar_struct = bar.bars.get(order.ticker)
+        if bar_struct is None:
+            return                                          # no bar this tick — no ratchet
+        if order.action is Side.SELL:                       # long sell-stop
+            state.hwm = max(state.hwm, bar_struct.high)     # full precision (D-TRAIL-8)
+            candidate = self._compute_stop(order, state.hwm)
+            state.current_stop = max(state.current_stop, candidate)   # non-decreasing
+        else:                                               # short buy-stop
+            state.lwm = min(state.lwm, bar_struct.low)
+            candidate = self._compute_stop(order, state.lwm)
+            state.current_stop = min(state.current_stop, candidate)   # non-increasing
+
     # --- matching ---
 
     def _evaluate(self, order: OrderEvent, bar: BarEvent) -> Optional[Decimal]:
@@ -162,6 +288,24 @@ class MatchingEngine:
             else:                                   # BUY stop (cover short)
                 if high >= trigger:
                     return max(open_, trigger)      # pessimistic gap-up
+
+        elif order.order_type == OrderType.TRAILING_STOP:
+            # D-TRAIL-2/D-TRAIL-4: a trailing stop evaluates EXACTLY like a STOP,
+            # but against the ACTIVE ratcheted level from the side-table (derived
+            # from bars <= N-1), NOT this bar's extreme. The level is advanced for
+            # the NEXT bar by the ratchet step at the END of on_bar — never here.
+            # Reuses the STOP gap-aware min/max(open_, trigger) rule verbatim.
+            state = (self._trails.get(order.order_id)
+                     if order.order_id is not None else None)
+            if state is None:
+                return None                         # no side-table entry — not armed
+            trail_trigger = state.current_stop
+            if order.action is Side.SELL:           # long trailing sell-stop
+                if low <= trail_trigger:
+                    return min(open_, trail_trigger)        # pessimistic gap-down
+            else:                                   # short trailing buy-stop
+                if high >= trail_trigger:
+                    return max(open_, trail_trigger)        # pessimistic gap-up
 
         elif order.order_type == OrderType.LIMIT:
             # Limit-or-better (D-03): a limit fill can never be worse than the
@@ -233,6 +377,7 @@ class MatchingEngine:
                 # Leaving the book NOW is what unlocks this parent's bracket
                 # children for pass 2 on this same bar (CR-01).
                 self._resting.pop(order.order_id, None)
+                self._trails.pop(order.order_id, None)   # D-TRAIL-6: no leak
 
         # --- Pass 2: bracket children whose parent has left the book ------
         # 1. Collect candidate fills (price reached AND parent not resting).
@@ -252,6 +397,10 @@ class MatchingEngine:
                 candidates[order.order_id] = price
 
         if not candidates:
+            # No child fills this bar — still run the END-of-on_bar ratchet so
+            # resting trailing orders advance their level for the NEXT bar
+            # (D-TRAIL-2 holds on every bar, fill or no fill).
+            self._run_ratchet_step(bar)
             return fills, []
 
         # 2. Resolve, per bracket, which single child fills.
@@ -294,22 +443,50 @@ class MatchingEngine:
                     cancelled_ids.add(sibling.order_id)
 
         # 4. Remove filled + cancelled children from the book (pass-1 fills
-        # were already popped as they filled).
+        # were already popped as they filled). Pop the parallel side-table at
+        # every pop site so a filled/OCO-cancelled trailing order leaks no
+        # ratchet state (D-TRAIL-6).
         for order_id in chosen:
             self._resting.pop(order_id, None)
+            self._trails.pop(order_id, None)
         for cancel in cancels:
             if cancel.order_event.order_id is not None:
                 self._resting.pop(cancel.order_event.order_id, None)
+                self._trails.pop(cancel.order_event.order_id, None)
+
+        # END-of-on_bar ratchet (D-TRAIL-1/D-TRAIL-2) — see _run_ratchet_step.
+        self._run_ratchet_step(bar)
 
         return fills, cancels
 
+    def _run_ratchet_step(self, bar: BarEvent) -> None:
+        """Advance every still-resting trailing order's level for the NEXT bar.
+
+        D-TRAIL-1/D-TRAIL-2: runs at the END of on_bar, AFTER both fill passes
+        and OCO cancels resolve. The level a trailing order triggers against on
+        bar N is therefore always derived from bars <= N-1, never N — the
+        phase-defining look-ahead-safety invariant. A "tall bar" whose high
+        ratchets the stop AND whose low pierces the new tighter level does NOT
+        fill on that bar; the new level is active only on the following bar.
+        FORBIDDEN: advancing HWM/LWM before/inside the fill passes (same-bar
+        ratchet-and-trigger)."""
+        for order_id, state in self._trails.items():
+            order = self._resting.get(order_id)
+            if order is None:
+                continue                            # filled/cancelled this bar
+            self._ratchet_trail(order, state, bar)
+
     def _pick_bracket_winner(self, bracket: OrderId,
                              candidates: dict[OrderId, Decimal]) -> OrderId:
-        """Among candidate legs of a bracket, prefer a STOP (pessimistic)."""
+        """Among candidate legs of a bracket, prefer a STOP (pessimistic).
+
+        D-TRAIL-5: a trailing SL is a (dynamic) stop — it keeps the same
+        STOP-beats-LIMIT same-bar priority as a fixed SL, so TRAILING_STOP is
+        included in the stop preference alongside STOP."""
         leg_ids = [oid for oid in candidates
                    if self._resting[oid].parent_order_id == bracket]
         for oid in leg_ids:
-            if self._resting[oid].order_type == OrderType.STOP:
+            if self._resting[oid].order_type in (OrderType.STOP, OrderType.TRAILING_STOP):
                 return oid
         return leg_ids[0]
 
@@ -317,6 +494,8 @@ class MatchingEngine:
     def _fill_reason(order: OrderEvent) -> str:
         if order.order_type == OrderType.STOP:
             return "stop triggered"
+        if order.order_type == OrderType.TRAILING_STOP:
+            return "trailing stop triggered"
         if order.order_type == OrderType.LIMIT:
             return "limit triggered"
         return "market fill"
