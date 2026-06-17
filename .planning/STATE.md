@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
 status: executing
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-06-17T07:11:53.086Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-06-17T07:26:12.988Z"
 last_activity: 2026-06-17
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 4
   total_plans: 29
-  completed_plans: 27
-  percent: 44
+  completed_plans: 28
+  percent: 40
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts 
 ## Current Position
 
 Phase: 05 (engine-native-trailing-stops) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 
 > Note: `phase.complete` auto-resolved next_phase to backlog seed 999.2 because the Phase 5 dir does
@@ -134,6 +134,8 @@ so they own a separate re-baseline. Pair trading (P6) is the final, slip-able ca
 - Phase 999.3 edited: added Scope bullet for dynamic universe membership (UniverseSelectionModel poll
   seam), sequenced near the N+4 data engine.
 
+- Phase 05.1 inserted after Phase 5: Short Position Scale-In (Margin Increase) — lift short-increase admission gate behind allow_increase; flip/split deferred; owner-gated re-baseline (URGENT)
+
 ### Decisions
 
 Active decisions live in PROJECT.md Key Decisions. Load-bearing program constraints + the v1.4 locked
@@ -204,6 +206,9 @@ scope decisions:
 - [Phase ?]: Phase 5 Plan 01: TrailType lives in config/order.py (config-enum exception, order-domain cohesion); TRAILING_STOP order type + trail_type/trail_value carriage (Order->OrderEvent) + new_trailing_stop_order factory; D-TRAIL-7 dual-layer non-viable-trail gate with Pitfall-6 strategy (a) positive computed initial stop (price<=0 gate NOT branched out, both layers agree D-03a); SMA_MACD spot oracle byte-exact, mypy --strict clean (185 files)
 - [Phase ?]: 05-02: order.price is the trailing reference/anchor (HWM/LWM seed), not the initial stop — confirmed via D-TRAIL-7 validator
 - [Phase ?]: 05-02: D-TRAIL-8 quantize seam made optional (instrument_resolver); pure engine quantization-free by default, HWM/LWM always full precision
+- [Phase ?]: 05-03: trailing intent = extended PercentFromFill (optional trail_type/trail_value, all-or-nothing); rides the existing fill-anchored carve-out, no new SLTPPolicy variant
+- [Phase ?]: 05-03: trailing SL child price = ENTRY FILL anchor (the engine _seed_trail HWM/LWM seed per 05-02), NOT the computed initial stop; TP-limit unchanged (D-TRAIL-5 EITHER/OR)
+- [Phase ?]: 05-03: fee/slippage _KNOWN_ORDER_TYPES gained trailing_stop (triggered TRAILING_STOP fills/fees like a STOP); long+short e2e ratcheted-exit proven (long 135 vs seed 90, short 55 vs seed 110)
 
 ### Pending Todos
 
@@ -263,6 +268,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 02 P08 | 12 | 3 tasks | 7 files |
 | Phase 05 P00 | 6 | 2 tasks | 7 files |
 | Phase 05 P01 | 4 | 2 tasks | 8 files |
+| Phase 05 P03 | 25 | 2 tasks | 10 files |
 
 ## Bookkeeping
 
@@ -304,8 +310,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T07:11:53.077Z
-Stopped at: Completed 05-02-PLAN.md
+Last session: 2026-06-17T07:26:12.980Z
+Stopped at: Completed 05-03-PLAN.md
 Resume file: None
 
 ## Operator Next Steps
