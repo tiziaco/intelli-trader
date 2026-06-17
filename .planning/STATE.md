@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: ready_to_plan
-stopped_at: Phase 05.1 complete (2/2) — next: Phase 6 (Pair-Trading Flagship)
-last_updated: 2026-06-17T11:28:21.806Z
+status: Ready to discuss/plan
+stopped_at: Phase 6 context gathered
+last_updated: "2026-06-17T13:54:24.850Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 10
@@ -317,9 +317,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T11:10:00.000Z
-Stopped at: Plan 05.1-02 COMPLETE — owner-gated short scale-in re-baseline FROZEN (tiziaco, 2026-06-17); phase ready for verification
-Resume file: None
+Last session: 2026-06-17T13:54:24.830Z
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-pair-trading-flagship/06-CONTEXT.md
 
 ## Operator Next Steps
 
