@@ -308,8 +308,9 @@ determinism double-run byte-identical.
 `assert_lock_fits_buying_power`) and WR-04 (assert-BEFORE-release call order) landed in Phase 4 and
 are present at `portfolio.py:439-441` / `:460-464`. The source todo lists them as blockers, but they
 are resolved — this phase is the gate-lift + flip-guard regression test + owner-gated re-baseline.
-**Plans**: TBD (run `/gsd:plan-phase 05.1` to break down)
-- [ ] TBD (run /gsd:plan-phase 05.1 to break down)
+**Plans**: 2 plans
+- [ ] 05.1-01-PLAN.md — Lift short-increase admission gate behind allow_increase (mirror long); short admit/reject + D-06 reserve units; D-07 over-cover regression lock
+- [ ] 05.1-02-PLAN.md — Parked scale-in scenarios (aggregate-notional re-lock + scale-in-then-partial-cover); cross-validate vs backtesting.py/backtrader; determinism + oracle; owner-gated re-baseline sign-off
 
 ### Phase 6: Pair-Trading Flagship
 **Goal**: A market-neutral long/short pair-trading strategy (cointegration/spread) runs end-to-end,
