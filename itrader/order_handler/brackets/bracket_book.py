@@ -20,10 +20,16 @@ handling is mypy-checked end-to-end (closes W2-02).
 
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import ClassVar, Dict, Optional
+from typing import TYPE_CHECKING, ClassVar, Dict, Optional
 from ...core.enums import Side
 from ...core.ids import OrderId, PortfolioId, StrategyId
 from ...core.sizing import PercentFromFill
+
+if TYPE_CHECKING:
+	# Config-enum exception (CONVENTIONS.md): TrailType lives in config/order.py.
+	# Imported under TYPE_CHECKING only so this order-domain module carries the
+	# trail annotation without a runtime config import.
+	from ...config import TrailType
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -44,6 +50,12 @@ class _PendingBracket:
 	exchange: str
 	strategy_id: StrategyId
 	portfolio_id: PortfolioId
+	# TRAIL-01/TRAIL-02 (D-TRAIL-3/D-TRAIL-5): the trail descriptor survives the
+	# arm->fill round-trip so the fill-anchored SL child can be declared as a
+	# TRAILING_STOP seeded from the entry fill. Both default None — a non-trailing
+	# bracket carries neither and builds a fixed STOP SL leg (byte-exact).
+	trail_type: "TrailType | None" = None
+	trail_value: Optional[Decimal] = None
 
 
 class BracketBook:

@@ -123,6 +123,12 @@ class BracketManager:
 						# NO children at assembly — record the pending bracket;
 						# on_fill creates them priced from the actual fill
 						# (IB attached-order semantics, Pattern 5 Option B).
+						# TRAIL-01/TRAIL-02 (D-TRAIL-3/D-TRAIL-5): a trailing
+						# PercentFromFill carries trail_type/trail_value, which
+						# survive the arm->fill round-trip so the SL child can be
+						# declared as a TRAILING_STOP seeded from the entry fill
+						# (a trailing SL has no static price at declaration, so it
+						# rides the fill-anchored carve-out naturally).
 						self._brackets.arm(primary.id, _PendingBracket(
 							policy=sltp_policy,
 							ticker=signal_event.ticker,
@@ -131,6 +137,8 @@ class BracketManager:
 							exchange=exchange,
 							strategy_id=signal_event.strategy_id,
 							portfolio_id=signal_event.portfolio_id,
+							trail_type=sltp_policy.trail_type,
+							trail_value=sltp_policy.trail_value,
 						))
 					case _:
 						assert_never(sltp_policy)
@@ -243,16 +251,40 @@ class BracketManager:
 		sl_price, tp_price = _bracket_levels(pending.policy, anchor, pending.action)
 		# Invert on the parent's action (D-05); the entity stores a Side (SIG-03/D-03).
 		child_action = Side.BUY if pending.action is Side.SELL else Side.SELL
-		sl_order = Order.new_stop_order(
-			time=fill_event.time,
-			ticker=pending.ticker,
-			action=child_action,
-			price=sl_price,
-			quantity=pending.quantity,
-			exchange=pending.exchange,
-			strategy_id=pending.strategy_id,
-			portfolio_id=pending.portfolio_id
-		)
+		if pending.trail_type is not None and pending.trail_value is not None:
+			# TRAIL-01/TRAIL-02 (D-TRAIL-3/D-TRAIL-5): the SL leg is a
+			# TRAILING_STOP, not a fixed STOP. Its `price` is the ENTRY FILL
+			# anchor (the SAME value MatchingEngine._seed_trail reads as the
+			# HWM/LWM seed — 05-02 confirmed order.price is the reference/anchor,
+			# NOT the initial stop). The engine computes the initial stop from
+			# the anchor and trail_value on submit (Pitfall 6: the anchor is a
+			# positive price, so BOTH dual-layer validators' positive-price gate
+			# passes; D-TRAIL-7 gates trail_value < anchor for the PRICE type).
+			# D-TRAIL-5 EITHER/OR: the trailing SL REPLACES the fixed STOP leg;
+			# the TP-limit leg below is unchanged.
+			sl_order = Order.new_trailing_stop_order(
+				time=fill_event.time,
+				ticker=pending.ticker,
+				action=child_action,
+				price=anchor,
+				quantity=pending.quantity,
+				exchange=pending.exchange,
+				strategy_id=pending.strategy_id,
+				portfolio_id=pending.portfolio_id,
+				trail_type=pending.trail_type,
+				trail_value=pending.trail_value,
+			)
+		else:
+			sl_order = Order.new_stop_order(
+				time=fill_event.time,
+				ticker=pending.ticker,
+				action=child_action,
+				price=sl_price,
+				quantity=pending.quantity,
+				exchange=pending.exchange,
+				strategy_id=pending.strategy_id,
+				portfolio_id=pending.portfolio_id
+			)
 		sl_order.parent_order_id = parent.id
 		tp_order = Order.new_limit_order(
 			time=fill_event.time,
