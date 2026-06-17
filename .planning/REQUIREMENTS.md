@@ -91,7 +91,7 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Short scale-in (SCALE)
 
-- [ ] **SCALE-01**: A strategy can INCREASE an open SHORT via a same-side SELL add the same way it
+- [x] **SCALE-01**: A strategy can INCREASE an open SHORT via a same-side SELL add the same way it
   increases a long. With `allow_increase=True` an unsized SELL against an open SHORT is ADMITTED and
   sized through the EXISTING `SizingResolver.resolve_entry` arm (`admission_manager.py:800-806`) — no
   new sizing function, no direction-specific arm (the `assert_never` one-resolver invariant holds);
@@ -180,7 +180,7 @@ Which phases cover which requirements. Filled during roadmap creation.
 | TRAIL-02 | Phase 5 — Engine-Native Trailing Stops | Complete |
 | TRAIL-03 | Phase 5 — Engine-Native Trailing Stops | Complete |
 | PAIR-01 | Phase 6 — Pair-Trading Flagship | Pending |
-| SCALE-01 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Pending |
+| SCALE-01 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Complete |
 | SCALE-02 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Pending |
 | SCALE-03 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Pending |
 
