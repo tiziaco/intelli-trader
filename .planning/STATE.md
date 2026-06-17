@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: ready_to_plan
-stopped_at: Phase 05 complete (6/5) — ready to discuss Phase 05.1
-last_updated: 2026-06-17T08:21:33.031Z
+status: planning
+stopped_at: Phase 05.1 context gathered
+last_updated: "2026-06-17T09:22:17.425Z"
 last_activity: 2026-06-17
 progress:
   total_phases: 10
@@ -312,9 +312,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T07:53:46.248Z
-Stopped at: Completed 05-04-PLAN.md (Phase 5 complete — trailing re-baseline frozen, owner-signed)
-Resume file: None
+Last session: 2026-06-17T09:22:17.410Z
+Stopped at: Phase 05.1 context gathered
+Resume file: .planning/phases/05.1-short-position-scale-in-margin-increase/05.1-CONTEXT.md
 
 ## Operator Next Steps
 
