@@ -510,19 +510,20 @@ class AdmissionManager:
 		  position, so a new-entry BUY never trips it.
 		* OPEN short for the ticker — a BUY is a cover/exit (passes; sized
 		  downstream). An unsized SELL is a same-side ADD (short increase),
-		  out of v1 scope with the margin model (D-09, WR-01): it is an
-		  AUDITED rejection (triggered_by=OrderTriggerSource.ADMISSION_INCREASE),
-		  mirroring the long INCREASE gate — it must NOT fall through to
-		  first-entry sizing.
+		  now gated behind ``allow_increase`` (SCALE-01) byte-symmetrically
+		  with the long INCREASE gate: ``allow_increase=False`` is an AUDITED
+		  rejection (triggered_by=OrderTriggerSource.ADMISSION_INCREASE);
+		  ``allow_increase=True`` falls through to the SAME direction-agnostic
+		  resolve_entry sizing.
 
 		Preserved paths the gates never block:
 		- First entries (no open position, count under the limit) size
 		  EXACTLY as before — byte-exactness of the post-07-07 reference
 		  depends on it when N=0.
 		- Explicit-quantity signals skip both gates (live/manual path).
-		- SELLs pass UNLESS they add to an open short (the WR-01 gate above):
-		  exits (SELL on an open long) and sanctioned first short entries
-		  (SELL with no open position) are sized downstream.
+		- SELLs pass UNLESS they add to an open short with allow_increase=False
+		  (the SCALE-01 gate above): exits (SELL on an open long) and sanctioned
+		  first short entries (SELL with no open position) are sized downstream.
 
 		Returns
 		-------
@@ -557,10 +558,11 @@ class AdmissionManager:
 						operation_type=OrderOperationType.SIGNAL_ADMISSION,
 						error_prefix="Signal rejected at admission",
 					)
-				# allow_increase=True: fall through to entry sizing — the SELL-add
-				# reaches the SAME resolve_entry + check-and-reserve gate the long
-				# add uses (the reservation books notional/leverage on the reserve
-				# side; D-06 reserve-side correctness).
+				# allow_increase=True: fall through to entry sizing. The SELL-add
+				# is sized by resolve_entry but books NO admission-side reservation
+				# (the reserve gate at :264 is BUY-only; a SELL credits cash) — the
+				# margin LOCK rides settlement (portfolio.py:423-441 re-locks to
+				# aggregate_notional / leverage).
 				return None
 			return None
 		if self.portfolio_handler is None:
