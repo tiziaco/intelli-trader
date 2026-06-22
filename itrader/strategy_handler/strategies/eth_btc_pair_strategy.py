@@ -26,6 +26,7 @@ The concrete two-leg, market-neutral mean-reversion strategy on top of
 Indentation: TABS (match ``SMA_MACD_strategy.py`` / ``base.py``; never normalize).
 """
 
+import math
 from decimal import Decimal
 
 import numpy as np
@@ -35,7 +36,7 @@ from statsmodels.tsa.stattools import coint
 
 from itrader.core.enums import OrderType, Side, TradingDirection
 from itrader.core.money import to_money
-from itrader.core.sizing import FractionOfCash, SignalIntent
+from itrader.core.sizing import FractionOfCash, SignalIntent, _require_positive
 from itrader.strategy_handler.pair_base import PairStrategy
 
 from itrader.logger import get_itrader_logger
@@ -81,6 +82,27 @@ class EthBtcPairStrategy(PairStrategy):
 		# PairStrategy.validate() asserts: exactly two tickers, exit_z < entry_z,
 		# max_window >= beta_warmup + z_lookback (Pitfall 3). Keep those.
 		super().validate()
+		# WR-06: entry_units feeds BOTH leg quantities (leg A = entry_units, leg B =
+		# entry_units·β). A zero value yields a no-op/SizingPolicyViolation entry and
+		# a negative value yields a negative quantity (the CR-01 defect class). Guard
+		# it strictly positive at construction. Dormant at the default Decimal("1").
+		_require_positive("EthBtcPairStrategy", "entry_units", self.entry_units)
+		# WR-01: the "β fit over the FIRST beta_warmup dataset bars" guarantee holds
+		# ONLY when max_window == beta_warmup + z_lookback exactly. If max_window were
+		# LARGER, once enough history accrued the feed would hand a longer trailing
+		# window and `[:beta_warmup]` on the fit tick would be the first N bars OF
+		# THAT LONGER WINDOW, not the first N dataset bars — quietly changing β. The
+		# base only asserts `>=`; pin exact-equality here so the property is enforced,
+		# not implicit. (At the pinned config 280 == 250 + 30 — dormant.)
+		required = self.beta_warmup + self.z_lookback
+		if self.max_window != required:
+			raise ValueError(
+				f"EthBtcPairStrategy requires max_window == beta_warmup + z_lookback "
+				f"({self.beta_warmup} + {self.z_lookback} = {required}) so β is fit "
+				f"on the FIRST {self.beta_warmup} dataset bars (WR-01): got "
+				f"max_window={self.max_window}. A larger max_window would slide the "
+				f"fit window off dataset-start once history accrues."
+			)
 
 	def init(self) -> None:
 		# Handle-FREE: the β/z alpha reads self.bars windows via statsmodels/numpy
@@ -107,14 +129,38 @@ class EthBtcPairStrategy(PairStrategy):
 		log_A = np.log(win_A["close"].to_numpy(dtype=float)[: self.beta_warmup])
 		log_B = np.log(win_B["close"].to_numpy(dtype=float)[: self.beta_warmup])
 		X = sm.add_constant(log_B)
-		return float(sm.OLS(log_A, X).fit().params[1])
+		beta = float(sm.OLS(log_A, X).fit().params[1])
+		# CR-01 guard: β is the raw OLS slope and is used ONLY as a positive
+		# per-leg WEIGHT (the long/short DIRECTION is chosen by the z-sign, not by
+		# β). A non-finite β (degenerate/rank-deficient warmup, e.g. a constant-price
+		# leg) would poison the Decimal money domain as Decimal("NaN"); a NEGATIVE β
+		# would produce a negative β-weighted entry quantity that flows unchecked
+		# into the sizing/admission layer (SignalIntent.__post_init__ does not
+		# validate quantity sign). Both are undefined behaviour, so fail loud at the
+		# fit boundary rather than emit a poisoned quantity. Dormant at the pinned
+		# ETH/BTC β≈0.53 (positive, finite) — the happy path is unchanged.
+		if not math.isfinite(beta) or beta <= 0:
+			raise ValueError(
+				f"degenerate hedge ratio for {self.tickers}: β={beta!r} "
+				f"(expected finite and > 0; a non-positive/NaN β cannot weight a leg)"
+			)
+		return beta
 
 	def _coint_pvalue(self, win_A: pd.DataFrame, win_B: pd.DataFrame) -> float:
 		"""Engle-Granger cointegration p-value over the warmup window (D-10).
 
 		Computed on the SAME warmup window as β and LOGGED as a diagnostic only —
 		it NEVER gates the run (ETH/BTC does not pass strict cointegration; the
-		rolling z-score delivers the round trips).
+		rolling z-score delivers the round trips). Because the p-value is only
+		logged and never feeds a trade decision, its value cannot perturb the run
+		output even if statsmodels' `coint` internals changed across versions.
+
+		CR-02 determinism note: `coint` runs OUTSIDE the engine's injected seeded
+		`random.Random` (it does not consume `performance.rng_seed`). The
+		Engle-Granger MacKinnon p-value path is deterministic for fixed inputs, but
+		reproducibility here rests on statsmodels/numpy/BLAS being fixed, NOT on the
+		engine seed — and it does not matter for the run regardless, since the
+		p-value is diagnostic-only.
 		"""
 		log_A = np.log(win_A["close"].to_numpy(dtype=float)[: self.beta_warmup])
 		log_B = np.log(win_B["close"].to_numpy(dtype=float)[: self.beta_warmup])
@@ -130,13 +176,28 @@ class EthBtcPairStrategy(PairStrategy):
 	def _crosses_into(
 		self, prev_z: Decimal, curr_z: Decimal, threshold: Decimal
 	) -> bool:
-		"""True only on the bar ``|z|`` crosses INTO the band (D-13 entry)."""
+		"""True only on the bar ``|z|`` crosses INTO the band (D-13 entry).
+
+		WR-03 band convention (DELIBERATE, documented so it is not mistaken for an
+		off-by-one): a z resting EXACTLY on a threshold is treated as "still
+		outside" the entry band — entry uses strict ``>`` (``abs(curr) == entry_z``
+		is NOT an entry) and exit (``_crosses_inside``) uses strict ``<``
+		(``abs(curr) == exit_z`` is NOT an exit, the position stays open until z
+		moves strictly inside). The asymmetry is intentional and benign: because z
+		is a ``to_money(float(...))`` Decimal carrying a long float repr, exact
+		equality on real data is astronomically unlikely.
+		"""
 		return abs(prev_z) <= threshold and abs(curr_z) > threshold
 
 	def _crosses_inside(
 		self, prev_z: Decimal, curr_z: Decimal, threshold: Decimal
 	) -> bool:
-		"""True only on the bar ``|z|`` crosses back INSIDE the band (D-13 exit)."""
+		"""True only on the bar ``|z|`` crosses back INSIDE the band (D-13 exit).
+
+		Strict ``<`` boundary (see ``_crosses_into`` WR-03 note): a z resting
+		exactly on ``exit_z`` is "still outside" the exit band, so the position
+		stays open until ``|z|`` moves strictly inside.
+		"""
 		return abs(prev_z) >= threshold and abs(curr_z) < threshold
 
 	# ------------------------------------------------------------------ alpha
@@ -149,6 +210,16 @@ class EthBtcPairStrategy(PairStrategy):
 		Fits + freezes β on the first tick that has enough bars, logs the coint
 		diagnostic, then each tick computes the rolling z-score and fires on a
 		crossing into/out of the band against the internal in-pair flag.
+
+		PRECONDITION — NOT re-entrant / exactly-once-per-tick (WR-02, mirrors the
+		``Strategy.evaluate`` non-re-entrant note in base.py). The crossing decision
+		reads the captured ``prev_z`` and then MUTATES ``self._prev_z`` (and
+		``self._in_pair`` / ``self._entry_z_sign`` on a fire) as hidden engine state.
+		A second call for the SAME tick would observe ``prev_z == curr_z`` and could
+		never detect the crossing, silently dropping a signal. The pair path
+		(``StrategiesHandler._dispatch_pair`` → ``evaluate_pair``) calls this EXACTLY
+		ONCE per ``BarEvent`` per strategy; a retry/re-dispatch/multi-evaluation of
+		the same ``asof`` would violate this contract.
 		"""
 		required = self.beta_warmup + self.z_lookback
 		if len(win_A) < required or len(win_B) < required:
@@ -176,7 +247,13 @@ class EthBtcPairStrategy(PairStrategy):
 		spread = log_A - beta * log_B
 		z_series = self._zscore(spread, self.z_lookback)
 		curr_raw = z_series.iloc[-1]
-		if pd.isna(curr_raw):
+		# WR-04 guard: a flat/constant spread window yields rolling_std == 0, so the
+		# z-score is ±inf (or NaN for 0/0). pd.isna catches NaN but NOT inf; an inf z
+		# becomes Decimal("Infinity") and abs(z) > entry_z is True, firing a spurious
+		# entry on a degenerate (zero-variance) window. Treat any non-finite z as "no
+		# signal". Dormant on log ETH/BTC (non-flat spread) — the happy path is
+		# unchanged; only a degenerate reuse pair is protected.
+		if pd.isna(curr_raw) or not np.isfinite(curr_raw):
 			return None
 		curr_z = to_money(float(curr_raw))  # Decimal via the string path
 		prev_z = self._prev_z
@@ -192,6 +269,17 @@ class EthBtcPairStrategy(PairStrategy):
 		# EXIT (in-pair, |z| crosses back inside the band, D-13). Quantity-FREE —
 		# the resolver sizes the close from exchange truth and clamps to flat
 		# (RESEARCH Pitfall 1; an explicit quantity would open a NEW position).
+		#
+		# WR-05 — close-only safety on the pair path: the engine-level
+		# no-op-when-flat guarantee that test_pair_exit_safety.py locks is proven for
+		# a SHORT_ONLY strategy, where the direction gate (admission_manager.py:441)
+		# rejects a flat BUY. This strategy fires LONG_SHORT exits (one BUY leg + one
+		# SELL leg), and LONG_SHORT does NOT have that same flat-BUY rejection arm. On
+		# the pair path the close-only guarantee therefore rests on THIS `_in_pair`
+		# flag (we only emit a close while genuinely in-pair) rather than on the
+		# admission gate. The flag is the single-writer gate keeping a flat-state
+		# close from being emitted at all; the quantity-free + exit_fraction=1 shape
+		# is the second line of defence.
 		if self._in_pair:
 			if self._crosses_inside(prev_z, curr_z, self.exit_z):
 				sign = self._entry_z_sign
