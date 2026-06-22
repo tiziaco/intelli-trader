@@ -953,3 +953,99 @@ def test_leverage_floor_normal_cap_unaffected(harness):
     object.__setattr__(signal, "leverage", Decimal("20"))
 
     assert am._effective_leverage(signal) == Decimal("5")
+
+
+# --- P05.1 WR-03: admission-side margin solvency check for the short SELL-add ---
+#
+# An UNFUNDED short increase (admitted SELL-add whose prospective post-add margin
+# lock exceeds available buying power) must produce exactly ONE audited REJECTED
+# order at admission — the SHORT-side mirror of the long arm's check-and-reserve
+# gate (test_over_margin_order_is_rejected_via_audited_path) — instead of being
+# admitted, emitted and (mis)settling silently / aborting at settlement. The fix
+# does NOT book a reservation (a SELL credits cash, D-06): it is a SOLVENCY CHECK
+# that emits an audited CASH_RESERVATION rejection on failure only.
+
+
+def _open_short_with_leverage(harness, quantity, price, leverage):
+    """Open a SHORT in margin mode with an explicit, pinned signal leverage.
+
+    The harness ``open_short`` helper sizes off the default ``leverage=1``; the
+    margin-ON solvency scenarios need the position's clamped leverage pinned to
+    a known value (so the admission-side prior-lock basis,
+    existing_notional / effective_leverage, matches the settlement basis,
+    position.leverage). Explicit quantity skips the position gate; the SELL
+    settles to an open SHORT carrying ``leverage``."""
+    sell = harness.create_mock_signal(
+        "SELL", quantity=quantity, price=price,
+        direction=TradingDirection.LONG_SHORT,
+    )
+    object.__setattr__(sell, "leverage", leverage)
+    harness.order_handler.on_signal(sell)
+    return harness.fill_next_order()
+
+
+def test_unfunded_short_increase_is_rejected_via_audited_path(harness):
+    """P05.1 WR-03 (T-pmk-01): an admitted SELL-add whose prospective post-add
+    aggregate margin lock exceeds available buying power yields exactly ONE
+    audited REJECTED order at admission — mirroring
+    test_over_margin_order_is_rejected_via_audited_path. No order emitted, no
+    reservation booked (a SELL credits cash, D-06), free cash UNCHANGED.
+
+    Math (max_leverage=2): open SHORT 100 @ 40 (lev 2) → existing_notional=4000,
+    own_prior_lock=4000/2=2000, available_cash=14000 → buying_power=16000. An
+    explicit SELL-add of 1000 @ 40 → add_notional=40000, prospective_lock=
+    (4000+40000)/2=22000 > 16000 → REJECTED. Explicit quantity skips the position
+    gate but MUST still hit the new post-sizing solvency check."""
+    _enable_margin(harness, Decimal("2"))
+    _open_short_with_leverage(harness, quantity=100, price=40.0, leverage=Decimal("2"))
+    # The open-short order already drained; nothing left from setup.
+    assert harness.queue.empty()
+    before = harness.ptf_handler.available_cash(harness.last_ptf_id)
+
+    # Unfunded SELL-add: explicit quantity so the position gate is skipped — the
+    # new post-sizing solvency check is the ONLY thing that can stop it.
+    add = harness.create_mock_signal(
+        "SELL", quantity=1000, price=40.0,
+        direction=TradingDirection.LONG_SHORT, allow_increase=True,
+    )
+    object.__setattr__(add, "leverage", Decimal("2"))
+    harness.order_handler.on_signal(add)
+
+    # Nothing emitted — the add was rejected at admission, not sent to the exchange.
+    assert harness.queue.empty()
+    # Exactly ONE REJECTED entity for the ticker (the prior FILLED open-short is
+    # excluded by the REJECTED filter in _get_single_rejection).
+    last_change = _get_single_rejection(harness, "BTCUSDT")
+    assert last_change.from_status == OrderStatus.PENDING
+    assert last_change.to_status == OrderStatus.REJECTED
+    # SAME rejection path the long arm uses (the over-margin BUY test).
+    assert last_change.triggered_by is OrderTriggerSource.CASH_RESERVATION
+    # No reservation booked — free cash / buying power intact (a SELL credits
+    # cash; this is a solvency CHECK, never a reserve, D-06).
+    assert harness.ptf_handler.available_cash(harness.last_ptf_id) == before
+
+
+def test_funded_short_increase_still_admits(harness):
+    """P05.1 WR-03 (T-pmk-02): a FUNDED short increase is NOT over-rejected by the
+    new admission-side solvency check — it is admitted, sized and emitted. Credits
+    back the existing short's own prior lock (mirroring WR-01) so a fundable add
+    is never rejected.
+
+    Math (max_leverage=2): open SHORT 100 @ 40 (lev 2) → buying_power=16000. An
+    explicit SELL-add of 100 @ 40 → prospective_lock=(4000+4000)/2=4000 <= 16000
+    → ADMITTED."""
+    _enable_margin(harness, Decimal("2"))
+    _open_short_with_leverage(harness, quantity=100, price=40.0, leverage=Decimal("2"))
+    assert harness.queue.empty()
+
+    add = harness.create_mock_signal(
+        "SELL", quantity=100, price=40.0,
+        direction=TradingDirection.LONG_SHORT, allow_increase=True,
+    )
+    object.__setattr__(add, "leverage", Decimal("2"))
+    harness.order_handler.on_signal(add)
+
+    # The funded SELL-add reached the exchange — admitted, not over-rejected.
+    order_event: OrderEvent = harness.queue.get(False)
+    assert order_event.action is Side.SELL
+    assert order_event.quantity == 100
