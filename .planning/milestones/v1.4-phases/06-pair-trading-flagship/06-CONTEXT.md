@@ -273,7 +273,13 @@ is reused unchanged.
 </deferred>
 
 <open_questions>
-## Open Questions for Research (must resolve before/while planning)
+## Research Questions — RESOLVED (answered during research/planning; Phase 6 shipped, 14/14 verified)
+
+**Resolution (2026-06-22):** All three pre-planning research questions below were answered and
+locked during Phase 6 research — Q1 (exit-path safety) and Q2 (ETH/BTC cointegration) are recorded
+as "RESOLVED (research, locked 2026-06-17)" in the Implementation Decisions above (D-12 and D-10
+respectively); Q3 (dispatch hook) was answered by D-01 and confirmed in Integration Points. Original
+question text retained below for provenance.
 
 1. **⚠ Exit path is close-only / safe-when-flat (D-12 blocker).** Confirm that a cover/close signal
    (BUY to close a short leg, SELL to close a long leg, `exit_fraction=1.0`) resolves to "close the

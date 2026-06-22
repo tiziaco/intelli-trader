@@ -1,5 +1,74 @@
 # Milestones
 
+## v1.4 — Margin, Leverage, Shorts & Trailing Stops (Shipped: 2026-06-22)
+
+**Scope:** 7 phases (Phases 1–6 + inserted 05.1), 35 plans, 45 tasks. Promoted from N+2 Backlog
+(999.4). Builds the crypto-derivatives surface — per-symbol instruments, reserved-margin leverage,
+first-class shorts with borrow carry, isolated-margin liquidation, engine-native trailing stops,
+short scale-in, and a market-neutral pair flagship — on top of the v1.3 authoring/contract surfaces.
+
+**Delivered:** The engine now trades on margin. A frozen per-symbol `Instrument` value object is the
+single source of price/quantity scales, max-leverage, and maintenance-margin-rate, consumed by all
+downstream margin/liquidation/carry code. Positions open on reserved margin
+(`initial_margin = notional / leverage`) with effective leverage threaded
+signal→order→fill→transaction→position across MARKET/LIMIT/STOP; over-margin admission routes through
+the audited REJECTED path. The `LONG_ONLY` guard is gone — shorts are first-class, with short PnL and
+daily borrow-carry settling through the accounting core. A maintenance-margin breach is checked on bar
+close (the honest daily-OHLCV cadence) and liquidates with capped loss. `TRAILING_STOP` is a
+first-class order type whose `MatchingEngine` ratchets favorably-only from closed-bar extremes. A
+short can be increased (same-side SELL add) through the side-agnostic SCALE-IN branch with an
+admission-side solvency gate symmetric to the long arm. Finally, a market-neutral ETH/BTC pair
+strategy runs end-to-end (94 round trips, both legs) through the unchanged Phase 2–4 accounting core —
+demonstrating the short side with zero new correctness branches.
+
+**Re-baseline discipline (two disciplines, honored):** the SMA_MACD spot oracle held byte-exact
+(134 trades / `final_equity 46189.87730727451`) across all 7 phases — every margin/shorts/leverage
+path is oracle-dark on the spot arm. The three result-changing re-baselines (accounting core P4,
+trailing P5, short scale-in P5.1) were each frozen ONLY under explicit owner sign-off (tiziaco,
+2026-06-16 / 06-17) plus external cross-validation (`backtesting.py` 0.6.5 / `backtrader` 1.9.78.123).
+The pair flagship is explicitly additive (a stability snapshot, NOT a correctness oracle) and
+re-baselines nothing.
+
+**Definition of done — achieved:** SMA_MACD oracle byte-exact (134 / 46189.87730727451) ·
+full suite green (1193) · `mypy --strict` clean (187 source files) · Decimal end-to-end, no new
+float-for-money; single UUIDv7 ID scheme · determinism double-run byte-identical · all owner-gated
+goldens signed with dated attribution · flagship pair strategy runs both sides end-to-end.
+
+**Key accomplishments:**
+
+- **Instrument value object (INST-01/02/03, Phase 1)** — a frozen per-symbol `Instrument` +
+  `derive_instruments` ladder behind a `Universe` facade, the single source of price/quantity scales,
+  `max_leverage`, and `maintenance_margin_rate` injected into every margin/liquidation/carry consumer.
+
+- **Margin accounting & leverage (MARGIN-01/02/03, LEV-01/02/03, Phase 2)** — `enable_margin`-branched
+  reservation (`notional / L` + commission) with over-margin routed to the audited REJECTED path and
+  an `f > 1` admission gate; a position-keyed lock-and-settle model where opening debits only
+  commission + locks `aggregate_notional / L` and closing settles realized PnL pro-rata; effective
+  leverage threaded end-to-end for MARKET/LIMIT/STOP, with over-close fills failing loud.
+
+- **First-class shorts + borrow carry (SHORT-01/02/03, CARRY-01, Phase 3)** — the `LONG_ONLY` guard
+  removed via a side-agnostic cover-arm with clamp-to-flat; short PnL and daily borrow-carry (marked
+  against business-time bars through the Universe) settle through the hardened margin/settlement seam.
+
+- **Isolated-margin liquidation + cross-validation re-baseline (LIQ-01/02/03, XVAL-01, Phase 4)** —
+  maintenance-margin breach checked on bar close, capped-loss liquidation, deterministic breach
+  collection; the owner-gated accounting-core golden (7 scenario leaves) frozen under sign-off
+  (tiziaco, 2026-06-16) with the `set_order_storage` seam reconciling the live order mirror.
+
+- **Engine-native trailing stops (TRAIL-01/02/03, Phase 5)** — a first-class `TRAILING_STOP` order
+  type ratcheting favorably-only from closed-bar extremes in a leak-free engine-owned side-table,
+  declared via `PercentFromFill` (SL leg seeded from entry fill, OCO intact, order handler never
+  matches), cross-validated EXACTLY against both gating oracles and frozen under sign-off
+  (tiziaco, 2026-06-17); the production path's D-TRAIL-7 viability gate hardened to fail loud.
+
+- **Short scale-in + pair-trading flagship (SCALE-01/02/03, PAIR-01, Phases 05.1 & 6)** — a same-side
+  SELL add settles through the existing side-agnostic SCALE-IN branch with an admission-side solvency
+  gate symmetric to the long arm (frozen under sign-off, tiziaco, 2026-06-17); a market-neutral ETH/BTC
+  pair strategy runs end-to-end (94 round trips, LONG + SHORT) through the unchanged accounting core,
+  the flagship demonstration of the short side with zero new engine branches.
+
+---
+
 ## v1.3 — Engine Surface Completion (Shipped: 2026-06-14)
 
 **Scope:** 6 phases (Phases 1–6, numbering reset from v1.2), 20 plans. Completes the

@@ -156,6 +156,44 @@
 
 ---
 
+## Milestone: v1.4 — Margin, Leverage, Shorts & Trailing Stops
+
+**Shipped:** 2026-06-22
+**Phases:** 7 (Phases 1–6 + inserted 5.1) | **Plans:** 35
+
+### What Was Built
+- The matching-engine / risk-execution surface: a frozen per-symbol `Instrument` value object (deletes `_INSTRUMENT_SCALES`) as the single source of price/quantity scales + `max_leverage` + `maintenance_margin_rate` (INST-01/02/03); reserved-margin position opening with effective leverage threaded signal→order→fill→transaction→position for MARKET/LIMIT/STOP, over-margin → audited REJECTED (MARGIN/LEV).
+- First-class shorts (the `LONG_ONLY` guard removed via a side-agnostic cover-arm) with short PnL + daily borrow-carry (SHORT/CARRY); bar-close maintenance-margin liquidation with capped loss, cross-validated (LIQ/XVAL); engine-native `TRAILING_STOP` ratcheting favorably-only from closed-bar extremes (TRAIL).
+- Short scale-in through the existing side-agnostic SCALE-IN branch with a symmetric admission solvency gate (SCALE, inserted Phase 5.1); a market-neutral ETH/BTC pair flagship running end-to-end both legs (94 round trips) through the unchanged accounting core (PAIR-01).
+
+### What Worked
+- **The "reuse the side-agnostic accounting core, zero new correctness branches" constraint.** Shorts, levered entries, short scale-in, and both pair legs all settle through the same lock-and-settle SCALE-IN branch. Holding the line on "no new settlement path" is exactly why the spot oracle stayed byte-exact across all 7 phases while the engine gained margin trading.
+- **One owner-gated re-baseline per result-changing subsystem, each cross-validated.** Three separate signed re-baselines (accounting core P4, trailing P5, scale-in P5.1, tiziaco 2026-06-16/06-17) kept every result change attributable and externally checked — the v1.3 discipline carried forward cleanly to a much larger result-changing milestone.
+- **The pair flagship framed as additive (NOT the oracle) from the CONTEXT stage.** Declaring up front that a two-leg strategy partially cancels its own sign errors — so the crafted XVAL-01 scenarios are the oracle and the flagship is a stability snapshot — avoided over-trusting a weak signal and kept the capstone genuinely slip-able.
+- **Inserting Phase 5.1 as a clean decimal phase.** The short scale-in gap (an unconditional admission rejection) surfaced after Phase 5; inserting 5.1 rather than stretching Phase 5 kept the trailing re-baseline and the scale-in re-baseline independently attributable.
+
+### What Was Inefficient
+- **Planning-metadata drift recurred for the FIFTH milestone running.** LIQ-01/02/03, XVAL-01, PAIR-01 stayed `[ ]`/Pending in REQUIREMENTS.md despite passing VERIFICATION.md; Phase 01 used a non-standard `requirements:` frontmatter field (vs `requirements-completed:`) so INST-01/02/03 were tooling-invisible; SHORT-01/SCALE-01/PAIR-01 were absent from their SUMMARY frontmatter. The milestone audit reconciled it *again*. The mechanical phase-close gate proposed since v1.0 is still unbuilt.
+- **The `audit-open` quick-task false-positive recurred for the FOURTH close — and this time the root cause was nailed.** The scanner reads `quick/<dir>/SUMMARY.md` but GSD writes `<slug>-SUMMARY.md`, so every quick task always reads `[missing]` regardless of `status: complete`. Resolved at close by adding unprefixed completion-marker files; the real fix is in the SDK scanner (glob `*-SUMMARY.md`), which can't be patched durably from the repo.
+- **Nyquist Wave-0 still discovery-only** — VALIDATION.md is `draft`/`planned` on most phases and absent on 5.1; the behavioral net (spot oracle + crafted scenarios + 1193 suite) carried correctness, but formal validation coverage lags for the fifth milestone.
+
+### Patterns Established
+- **"No new correctness branch" as an explicit milestone-level constraint.** When adding a large feature family (shorts/leverage/liquidation/scale-in/pairs) that *could* each fork settlement, require every new case to route through the existing side-agnostic core. The oracle byte-exactness becomes the proof that the constraint held.
+- **Weak-oracle honesty for multi-leg / self-cancelling strategies.** A strategy whose own structure masks sign errors is declared a stability snapshot, not a correctness oracle, at the CONTEXT stage — the crafted adversarial scenarios remain the oracle.
+- **Decimal-phase insertion for a mid-milestone gap with its own re-baseline.** A gap discovered between owner-gated phases gets its own inserted phase so its re-baseline doesn't entangle the neighbour's attribution.
+
+### Key Lessons
+1. **A large result-changing milestone stays trustworthy when every new case reuses one validated settlement path.** Seven phases of margin/shorts/leverage/liquidation/trailing/scale-in/pairs landed with the spot oracle byte-exact because nothing forked the accounting core — the single most important discipline of this milestone.
+2. **Name the weak oracle before building it.** Declaring the pair flagship "additive, not the oracle" up front kept correctness anchored on the crafted scenarios and made the capstone safely slip-able.
+3. **Metadata drift is now a FIVE-milestone confirmed process bug, and the `audit-open` lie is a fully diagnosed tooling bug.** Both were paid again by hand at close. The fixes are mechanical: a phase-close gate on `requirements-completed`, and an SDK scanner that globs `*-SUMMARY.md`.
+
+### Cost Observations
+- Model mix: not instrumented this milestone.
+- Sessions: ~8 calendar days (2026-06-14 → 2026-06-22); much of the result-changing work executed in isolated worktrees and merged. 16 commits on `v1.3..HEAD`; ~13.9k LOC code added (itrader + tests).
+- Notable: the spot oracle held byte-exact (134 / 46189.87730727451) across all 7 phases; the only sanctioned result changes were the 3 owner-signed, externally cross-validated re-baselines.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -166,6 +204,7 @@
 | v1.1 | 9 | 28 | Breadth via additive opt-in oracle-dark E2E leaves — zero re-baselines; shared-infra-first then parallel scenario leaves |
 | v1.2 | 6 | 23 | Consolidation via pure code-motion under the oracle — god-module split as a sequenced, isolated, LAST phase; zero re-baselines |
 | v1.3 | 6 | 20 | Two re-baseline disciplines (byte-exact vs owner-gated) in SEPARATE phases; cross-milestone enabling surface (v1.2 reconcile/) touched once; result changes attributed + cross-validated |
+| v1.4 | 7 | 35 | Large result-changing family (margin/shorts/leverage/liquidation/trailing/scale-in/pairs) reusing one side-agnostic settlement core — zero new correctness branches, spot oracle byte-exact across all 7 phases; 3 owner-signed cross-validated re-baselines; weak-oracle honesty for the pair flagship |
 
 ### Cumulative Quality
 
@@ -175,11 +214,13 @@
 | v1.1 | 58 e2e + 12 integration green (full suite ~800+) | --strict clean (161 files) | none on result path |
 | v1.2 | 58 e2e + 3 integration oracle green (full suite 851) | --strict clean (172 files) | none on result path |
 | v1.3 | 59 e2e + integration oracle green (full suite 995) | --strict clean (182 files) | none on result path |
+| v1.4 | integration oracle byte-exact + pair flagship snapshot green (full suite 1193) | --strict clean (187 files) | none on result path |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. **Golden-master gating with minimal sanctioned re-baselines keeps refactors trustworthy** — confirmed across v1.0 (two owner-gated re-freezes), v1.1 (zero re-baselines via additive oracle-dark leaves), and v1.2 (zero re-baselines via pure code-motion). Under a byte-exact oracle, even a 1279-line god-module split lands on first attempt.
-2. **Planning-metadata drift is a recurring process gap — now confirmed across FOUR milestones** — stale checkboxes/traceability/inconsistent SUMMARY frontmatter required manual reconciliation at close in v1.0, v1.1, v1.2, AND v1.3. This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty or traceability lags VERIFICATION.md.
+2. **Planning-metadata drift is a recurring process gap — now confirmed across FIVE milestones** — stale checkboxes/traceability/inconsistent SUMMARY frontmatter required manual reconciliation at close in v1.0, v1.1, v1.2, v1.3, AND v1.4 (v1.4 added a non-standard `requirements:` field name that hid INST-01/02/03 from tooling). This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty/misnamed or traceability lags VERIFICATION.md.
 3. **Isolate the fragile change, move it intact, ship it last and alone — and plan its enabling surface a milestone ahead** — v1.2 Phase 6 moved `on_fill` into a bounded `reconcile/` collaborator with zero drift; v1.3 RECON-01 then refactored that exact bounded surface in a single touch, co-phased with SIG-03 under one owner-gated re-baseline. The template for any future fragile change.
-4. **Boundary tooling that lied once will lie again** — the quick-task false positive recurred verbatim in v1.1, v1.2, and v1.3 (now via the `audit-open` ledger); verify flags against the canonical `status: complete` scan, don't re-adjudicate by hand each close.
-5. **Mixing intentional result changes with cleanup is safe only when the two disciplines live in separate phases** — v1.3's byte-exact phases (1–4) and owner-gated phases (5–6) each had an unambiguous gate; every re-baseline was individually attributed and externally cross-validated.
+4. **Boundary tooling that lied once will lie again — now ROOT-CAUSED** — the quick-task false positive recurred verbatim in v1.1, v1.2, v1.3, and v1.4. The cause is now pinned: the `audit-open` scanner reads `quick/<dir>/SUMMARY.md` but GSD writes `<slug>-SUMMARY.md`, so completion is never seen. Fix the scanner to glob `*-SUMMARY.md`; until then, completion markers clear it.
+5. **Mixing intentional result changes with cleanup is safe only when the two disciplines live in separate phases** — v1.3's byte-exact phases (1–4) and owner-gated phases (5–6) each had an unambiguous gate; v1.4 extended this to 3 owner-gated re-baselines (P4/P5/P5.1), each individually attributed and externally cross-validated.
+6. **A large feature family stays trustworthy when every new case reuses ONE validated settlement path** — v1.4 added margin/shorts/leverage/liquidation/trailing/scale-in/pairs with the spot oracle byte-exact across all 7 phases because nothing forked the side-agnostic accounting core. "No new correctness branch" as an explicit milestone constraint is the proof discipline for feature-heavy result-changing work.

@@ -2,38 +2,33 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: milestone_complete
-stopped_at: Phase 06 complete (4/4) — v1.4 fully complete (Phases 1–6 incl. 5.1); ready to close milestone
-last_updated: 2026-06-22T14:33:10.367Z
-last_activity: 2026-06-22 -- Phase 06 execution complete; v1.4 milestone fully delivered
+status: Awaiting next milestone
+stopped_at: Milestone v1.4 closed and archived
+last_updated: "2026-06-22T19:18:25.396Z"
+last_activity: 2026-06-22 — Milestone v1.4 completed, archived, and tagged
 progress:
-  total_phases: 10
-  completed_phases: 6
+  total_phases: 7
+  completed_phases: 7
   total_plans: 35
-  completed_plans: 36
-  percent: 60
+  completed_plans: 35
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
+See: .planning/PROJECT.md (updated 2026-06-22 — v1.4 Margin, Leverage, Shorts & Trailing Stops SHIPPED + archived; N+3 next)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** v1.4 milestone complete — close with `/gsd:complete-milestone`
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a bar-close liquidation model (closing DEF-01-C), engine-native trailing stops, short scale-in, and a market-neutral pair flagship, all owner-gated and cross-validated.
+**Current focus:** v1.4 shipped, archived, and tagged. Next: N+3 — Persistence & Performance (Backlog 999.2); start with `/gsd:new-milestone`.
 
 ## Current Position
 
-Phase: v1.4 complete (Phases 1–6 incl. 5.1 all delivered)
+Phase: Milestone v1.4 complete
 Plan: —
-Status: Ready to close milestone
-
-> Note: `phase.complete` again auto-resolved next_phase to backlog seed 999.2 because the next-phase
-> scan only sees `999.x` backlog seed dirs after Phase 6 (the last real v1.4 phase) finished. There is
-> no real Phase 999.2 to advance to — 999.2/999.3 are FUTURE (N+3/N+4) backlog entries. v1.4 is fully
-> complete; the correct next action is `/gsd:complete-milestone`, not discussing/planning Phase 999.2.
-Last activity: 2026-06-22
+Status: Awaiting next milestone
+Last activity: 2026-06-22 — Milestone v1.4 completed and archived
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -255,10 +250,11 @@ None yet.
 (v1.0 quick tasks archived in `milestones/v1.0-MILESTONE-AUDIT.md`; v1.1/v1.2/v1.3 per-phase plan
 records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `milestones/v1.3-phases/`.)
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
-| 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger | 2026-06-14 | 191e21f | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
+| 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger | 2026-06-14 | 191e21f | | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
+| 260622-pmk | Audited admission rejection for unfunded short increase (close P05.1 WR-03) | 2026-06-22 | 9270146 | Verified | [260622-pmk-audited-admission-rejection-for-unfunded](./quick/260622-pmk-audited-admission-rejection-for-unfunded/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
@@ -323,5 +319,4 @@ Resume file: .planning/phases/06-pair-trading-flagship/06-CONTEXT.md
 
 ## Operator Next Steps
 
-- Review the v1.4 roadmap draft (`.planning/ROADMAP.md`, `.planning/REQUIREMENTS.md` Traceability).
-- Plan Phase 1 (Instrument Value Object) with `/gsd:plan-phase 1`.
+- Start the next milestone with /gsd-new-milestone

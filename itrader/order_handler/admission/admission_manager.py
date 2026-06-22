@@ -300,6 +300,70 @@ class AdmissionManager:
 						error_details=str(e),
 						operation_type=OrderOperationType.CASH_RESERVATION)]
 
+			# 3c. Short-increase margin SOLVENCY gate (P05.1 WR-03 / T-pmk-01).
+			# The BUY reserve gate above is BUY-only (a SELL credits cash, D-06),
+			# so an admitted SELL-add against an OPEN SHORT books NO admission-side
+			# reservation — its margin lock previously rode settlement alone. An
+			# UNFUNDED short add (prospective post-add aggregate margin lock >
+			# available buying power) therefore slipped past admission and either
+			# settled silently or fail-fast aborted the backtest at
+			# cash_manager.assert_lock_fits_buying_power. This is the SYMMETRIC,
+			# admission-side mirror of the long arm: a SOLVENCY CHECK that emits an
+			# audited CASH_RESERVATION rejection on failure only — it NEVER books a
+			# reservation (D-06: a SELL credits cash). Guarded to the admitted short
+			# ADD: an open SHORT for the ticker + a SELL primary. A SELL with no open
+			# short (first short entry) or a SELL-on-long (exit) is NOT a short
+			# increase and is skipped (those paths stay byte-exact); BUYs are owned
+			# by the reserve gate above. This runs AFTER sizing (so add_notional is
+			# known) and also covers explicit-quantity short adds (the position
+			# admission gate is skipped for explicit quantity).
+			if (self.portfolio_handler is not None
+					and primary.action is Side.SELL):
+				open_short = self.portfolio_handler.get_position(
+					primary.portfolio_id, primary.ticker)
+				if (open_short is not None
+						and open_short.side is PositionSide.SHORT):
+					# Prospective post-add aggregate margin lock = (existing short
+					# notional + add notional) / effective_leverage. Pitfall 4: the
+					# spot/no-margin arm must stay division-free — a forced `/1` can
+					# shift the Decimal exponent and drift the oracle. Use a real
+					# if-branch on enable_margin, mirroring the BUY reserve gate.
+					existing_notional = open_short.net_quantity * open_short.avg_price
+					add_notional = primary.price * primary.quantity
+					aggregate_notional = existing_notional + add_notional
+					if self._enable_margin:
+						effective_leverage = self._effective_leverage(signal_event)
+						prospective_lock = aggregate_notional / effective_leverage
+						# WR-01: settlement RELEASES this position's OWN prior lock
+						# then re-locks the new aggregate, so the admission headroom
+						# must credit the existing short's own prior lock back to
+						# available_cash (otherwise the gate double-counts it and
+						# over-rejects a fundable add). The prior lock equals the
+						# value cash_manager credits back: existing_notional / L.
+						own_prior_lock = existing_notional / effective_leverage
+					else:
+						prospective_lock = aggregate_notional
+						own_prior_lock = existing_notional
+					buying_power = (
+						self.portfolio_handler.available_cash(primary.portfolio_id)
+						+ own_prior_lock)
+					if prospective_lock > buying_power:
+						# Audited CASH_RESERVATION rejection (same path as the long
+						# arm). _reject_unsized_signal builds its OWN UNSIZED audit
+						# entity, transitions it PENDING→REJECTED and persists it —
+						# exactly ONE audited REJECTED order, queue untouched,
+						# available_cash unchanged (no reserve booked, D-06). Do NOT
+						# also store `primary`.
+						return [self._reject_unsized_signal(
+							signal_event,
+							f"insufficient margin for short increase: required "
+							f"{prospective_lock} > buying power {buying_power} "
+							f"for {primary.ticker}",
+							triggered_by=OrderTriggerSource.CASH_RESERVATION,
+							operation_type=OrderOperationType.CASH_RESERVATION,
+							error_prefix="Signal rejected at admission",
+						)]
+
 			# 4. Create-all-then-emit (D-11): assemble brackets, store, emit.
 			assembled = self.bracket_manager._assemble_bracket_and_emit(signal_event, exchange, resolved, primary)
 			primary_emitted = any(
@@ -560,9 +624,14 @@ class AdmissionManager:
 					)
 				# allow_increase=True: fall through to entry sizing. The SELL-add
 				# is sized by resolve_entry but books NO admission-side reservation
-				# (the reserve gate at :264 is BUY-only; a SELL credits cash) — the
+				# (the reserve gate at :264 is BUY-only; a SELL credits cash). The
 				# margin LOCK rides settlement (portfolio.py:423-441 re-locks to
-				# aggregate_notional / leverage).
+				# aggregate_notional / leverage), BUT an admitted short add now also
+				# passes through a SYMMETRIC admission-side margin SOLVENCY check
+				# (step 3c in process_signal, P05.1 WR-03): an UNFUNDED add whose
+				# prospective post-add lock exceeds buying power is rejected via the
+				# audited CASH_RESERVATION path instead of slipping to a settlement-
+				# time fail-fast abort. That check is a CHECK, not a reservation.
 				return None
 			return None
 		if self.portfolio_handler is None:

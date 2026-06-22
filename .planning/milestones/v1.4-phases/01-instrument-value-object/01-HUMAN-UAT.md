@@ -1,5 +1,5 @@
 ---
-status: resolved
+status: complete
 phase: 01-instrument-value-object
 source: [01-VERIFICATION.md]
 started: 2026-06-15T07:39:42Z

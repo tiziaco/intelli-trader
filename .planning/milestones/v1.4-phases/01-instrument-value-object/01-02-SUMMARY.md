@@ -48,7 +48,7 @@ metrics:
   duration_minutes: 5
   tasks_completed: 2
   completed_date: 2026-06-15
-requirements: [INST-02, INST-03]
+requirements-completed: [INST-02, INST-03]
 ---
 
 # Phase 1 Plan 02: Universe Instrument Resolution & ExchangeLimits Demotion Summary

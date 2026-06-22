@@ -29,6 +29,7 @@ decisions:
   - "D-07 two-flag gate: non-LONG_ONLY admitted ONLY when allow_short_selling AND enable_margin both on; either off raises ValueError naming both flags"
   - "enable_margin coupled into the gate because it turns on the lock-and-settle model (Phase 2 D-09) — the only model that can represent a short"
   - "Both flags default off → SMA_MACD (LONG_ONLY) unaffected; oracle byte-exact 134 / 46189.87730727451"
+requirements-completed: [SHORT-01]
 metrics:
   duration: ~12m
   completed: 2026-06-15

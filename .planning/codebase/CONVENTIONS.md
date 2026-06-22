@@ -1,156 +1,140 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-06-14
-
-> This file is the **authoritative home** for the four pinned project conventions
-> (config-enum exception, broad-`except` run-mode policy, tab/space indentation
-> hazard, dual-layer order-validator overlap). They are documented here so they are
-> not re-litigated. See **Documented Conventions (Pinned)** at the end.
+**Analysis Date:** 2026-06-22
 
 ## Naming Patterns
 
 **Files:**
-- `snake_case.py` throughout — no exceptions found.
+- `snake_case.py` throughout — no exceptions.
 - Handler modules: `<domain>_handler.py` — `order_handler.py`, `execution_handler.py`, `portfolio_handler.py`.
 - Manager modules: `<domain>_manager.py` — `order_manager.py`, `cash_manager.py`, `position_manager.py`.
-- Abstract base modules: `base.py` inside each domain package (e.g. `itrader/execution_handler/exchanges/base.py`).
+- Abstract base modules: `base.py` inside each domain package — `execution_handler/exchanges/base.py`, `price_handler/feed/base.py`.
 - Storage backends: `<backend>_storage.py` — `in_memory_storage.py`, `postgresql_storage.py`.
-- Tests mirror source: `test_<module>.py` (e.g. `tests/unit/order/test_order_manager.py`).
+- Tests mirror source: `test_<module>.py` — `test_order_manager.py`, `test_cash_manager.py`.
 
 **Functions:**
-- `snake_case` always.
 - Event-handler callbacks: `on_<event>()` — `on_signal()`, `on_order()`, `on_fill()`, `on_market_data()`.
 - Factory class methods: `new_<object>()` — `Order.new_order()`, `Order.new_stop_order()`, `FillEvent.new_fill()`.
 - Getters: `get_<thing>()` — `get_portfolio()`, `get_cash_operations()`, `get_order()`.
 - Private helpers/attributes: single leading underscore — `_resolve_rng_seed()`, `self._rng`, `self._storage`.
-- Module-private module-level constants: leading underscore — `_ONE = Decimal("1")`, `_DEFAULT_SCALES`.
+- Module-private constants: leading underscore — `_ONE = Decimal("1")`, `_DEFAULT_SCALES`.
 
 **Variables:**
 - `snake_case` always.
-- The shared event queue is always named `global_queue` (constructor parameter) or `events_queue`.
-- Bound logger is always `self.logger`.
-- Config is always `self.config` (or a typed config object such as `SystemConfig`).
+- The shared event queue: always `global_queue` (constructor parameter) or `events_queue`.
+- Bound logger: always `self.logger`.
+- Config object: always `self.config` (or a typed `SystemConfig`).
 
-**Types:**
+**Types/Classes:**
 - Classes: `PascalCase` — `OrderHandler`, `SimulatedExchange`, `MatchingEngine`, `CashManager`.
 - Handler/Manager split: `<Domain>Handler` (thin interface) + `<Domain>Manager` (business logic).
 - Abstract bases: `Abstract<Name>` — `AbstractExchange`, `AbstractExecutionHandler`.
 - Config classes: `<Domain>Config` — `PortfolioConfig`, `SystemConfig`, `ExchangeConfig`.
 - Exception classes: `<Specific><Category>Error` — `PortfolioNotFoundError`, `InsufficientFundsError`, `SizingPolicyViolation`.
-- Enum names `PascalCase`, members `UPPER_CASE` — `OrderStatus.PENDING`, `FillStatus.EXECUTED`, `Side.BUY`.
+- Enum names: `PascalCase`; members: `UPPER_CASE` — `OrderStatus.PENDING`, `FillStatus.EXECUTED`, `Side.BUY`.
 - String-to-enum maps: `<domain>_<type>_map` — `order_type_map`, `order_status_map`.
 
 ## Code Style
 
 **Formatting:**
-- **No autoformatter configured** (no `black`/`ruff`/`prettier` config present). Match the surrounding file by hand.
-- No standalone linter config (`.flake8`, `.pylintrc`, `ruff.toml`, `.pre-commit-config.yaml`, `setup.cfg` all absent).
+- No autoformatter configured (no black/ruff/prettier). Match the surrounding file by hand.
+- **Critical indentation rule:** handler/manager modules under `itrader/` use **tabs** — `order_handler/`, `portfolio_handler/`, `execution_handler/`, `strategy_handler/`. Newer refactored modules (`itrader/config/`, `itrader/core/money.py`, `itrader/core/bar.py`, `itrader/core/ids.py`, `itrader/events_handler/events/`) use **4 spaces**. Always match the file being edited. A mixed-indentation diff in a tab file breaks it.
 
-**Linting / static analysis:**
-- The **only** static-analysis gate is **mypy** (`pyproject.toml [tool.mypy]`, `strict = true`, `files = ["itrader"]`). Run via `make typecheck` → `poetry run mypy itrader`.
-- Several subsystems are deferred from strict typing via `[[tool.mypy.overrides]]` (live trading, sql stores, ccxt/oanda providers, screeners, `my_strategies`, `postgresql_storage`). Do NOT rely on these being typed; new code should be strict-clean.
-- Third-party stubless libs (`ta.*`, `pandas_ta.*`, `ccxt.*`, `pandas.*`, `scipy.*`, `plotly.*`, `sklearn.*`, `statsmodels.*`, etc.) are `ignore_missing_imports = true`.
+**Linting:**
+- No standalone linter config (`.flake8`, `.pylintrc`, `ruff.toml`, `.pre-commit-config.yaml` all absent).
+- The only static-analysis gate is `mypy --strict` (`pyproject.toml [tool.mypy]`, `files = ["itrader"]`), run via `make typecheck`.
+- Several subsystems are deferred from strict typing via `[[tool.mypy.overrides]]`: live trading, sql stores, ccxt/oanda providers, screeners, `my_strategies`. Do not add new code to these subsystems without acknowledging the type debt.
 
-**Indentation (correctness hazard — see Pinned):**
-- **Tabs:** most handler/manager modules under `itrader/` use tab indentation — `order_handler/`, `portfolio_handler/`, `execution_handler/`, `strategy_handler/`.
-- **4 spaces:** newer refactored modules use spaces — `itrader/config/`, `itrader/core/money.py`, `itrader/core/bar.py`, `itrader/core/ids.py`, `itrader/price_handler/feed/`, `itrader/events_handler/events/`.
-- **Rule:** ALWAYS match the indentation of the file being edited. Do NOT normalize. A mixed-indentation diff in a tab file will break the file.
-
-**Type hints:**
-- Required and enforced under `mypy --strict` for in-scope code.
+**Type Annotations:**
+- Required and enforced by `mypy --strict` for in-scope code.
 - Modern union syntax preferred: `float | int | str | Decimal`, `"PortfolioId | int"`.
 - `typing` imports used where needed: `Any`, `Optional`, `Callable`, `Dict`, `List`, `cast`, `assert_never`.
 
 ## Import Organization
 
-**Order (observed, not enforced by tooling):**
-1. Standard library (`pathlib`, `queue`, `datetime`, `decimal`).
-2. Third-party (`pytest`, `pandas`, `pydantic`).
-3. First-party `itrader.*`.
+**Pattern:**
+- Both relative (`..core.enums`) and absolute (`itrader.core.enums`) styles appear; relative is common inside a domain package, absolute for cross-domain. Match the file.
+- Singletons imported directly from the package root: `from itrader import idgen`, `from itrader import logger, idgen`.
+- No path aliases — Python package imports only.
 
-**Relative vs absolute:**
-- Both relative (`..core.enums`) and absolute (`itrader.core.enums`) styles appear; relative is common inside a domain package, absolute for cross-domain. **Match the file.**
-- Singletons are imported directly from the package root: `from itrader import idgen`, `from itrader import logger, idgen`, `from itrader import config`.
-
-**Path Aliases:**
-- None — Python package imports only. No `tsconfig`-style aliases.
-
-**Import side effects (constraint):**
-- Importing anything from `itrader` triggers singleton init in `itrader/__init__.py` (`config`, `logger`, `idgen`). Do not import `itrader` in fixtures without understanding this.
+**Side-effect warning:**
+- Importing anything from `itrader` triggers singleton init in `itrader/__init__.py` (`config`, `logger`, `idgen`). Do not import `itrader` in fixtures or test setup without understanding this.
 
 ## Error Handling
 
-**Exception hierarchy** (`itrader/core/exceptions/`):
-- Root: `ITraderError` (`base.py`).
+**Exception hierarchy (root: `itrader/core/exceptions/base.py`):**
+- `ITraderError` — root base.
 - Base categories: `ValidationError`, `ConfigurationError`, `StateError`, `ConcurrencyError`, `NotFoundError`.
-- Domain-specific: `portfolio.py` (`PortfolioError`, `InsufficientFundsError`, `PortfolioNotFoundError`), `order.py` (`OrderError`, `UnsizedSignalError`, `SizingPolicyViolation`), `data.py` (`DataError`, `MalformedDataError`, `MissingPriceDataError`).
-- Exceptions carry structured fields and build their message in `__init__` (e.g. `ValidationError(field, value, message)`, `StateError(entity_id, current_state, ...)`).
+- Domain-specific: `itrader/core/exceptions/portfolio.py` (`PortfolioError`, `InsufficientFundsError`, `PortfolioNotFoundError`), `itrader/core/exceptions/order.py` (`OrderError`, `UnsizedSignalError`, `SizingPolicyViolation`), `itrader/core/exceptions/data.py` (`DataError`, `MalformedDataError`, `MissingPriceDataError`).
+- Execution failures flow as `FillEvent(REFUSED)` events, **not** exceptions; error codes live in `itrader/core/enums/execution.py::ExecutionErrorCode`.
 
 **Patterns:**
-- Raise typed exceptions, not bare `Exception` or boolean returns. Fee/validation models raise `ValidationError` rather than returning `False`.
-- Rejections flow as **events, not exceptions**: `SimulatedExchange.execute_order()` returns `ExecutionResult(success=False, ...)` and emits a `FillEvent(REFUSED)` so the order mirror reconciles. Execution error codes live in `itrader/core/enums/execution.py::ExecutionErrorCode`.
-- Handlers catch-and-log at the event boundary and do NOT re-raise — `ExecutionHandler.on_order` / `on_market_data` swallow per-exchange exceptions to prevent queue stalls.
+- Raise typed exceptions, not bare `Exception` or boolean returns.
+- `ValidationError(field, value, message)` and `StateError(entity_id, current_state, ...)` carry structured fields and build their message in `__init__`.
+- Handlers catch-and-log at the event boundary and do NOT re-raise — `ExecutionHandler.on_order`/`on_market_data` swallow per-exchange exceptions to prevent queue stalls.
+- Rejections flow as events: `SimulatedExchange.execute_order()` returns `ExecutionResult(success=False, ...)` and emits a `FillEvent(REFUSED)` so the order mirror reconciles.
 - `PortfolioHandler._operation_context()` tracks active operations and publishes `PortfolioErrorEvent` on failure.
-- `EventHandler._log_error_event` is the real `ERROR`-route consumer (structured log sink, severity-mapped).
+- Run-mode distinction: backtest uses fail-fast (`EventHandler._on_handler_error` re-raises); live trading uses publish-and-continue (emit `ErrorEvent`, keep draining). This is an intentional locked decision (not an inconsistency).
 
 ## Money Policy (correctness-critical)
 
-- **Decimal end-to-end** — float for money is a defect (locked decision).
-- Enter the Decimal domain only via `to_money(x)` → `Decimal(str(x))` (`itrader/core/money.py`). **NEVER** call `Decimal(float)` directly (binary-float repr artifact).
-- Carry full 28-digit precision through intermediate math; `quantize(value, instrument, kind)` ONLY at money boundaries (ledger write, reported PnL, serialization). `kind` ∈ `"price" | "quantity" | "cash"`; rounding is `ROUND_HALF_UP`.
-- Per-instrument scales live in `_INSTRUMENT_SCALES` / `_DEFAULT_SCALES` in `itrader/core/money.py`.
-- `float()` appears ONLY at the serialization/logging edge.
+- **Decimal end-to-end** — float for money is a defect (locked decision, `itrader/core/money.py`).
+- Enter the Decimal domain only via `to_money(x)` → `Decimal(str(x))`. NEVER call `Decimal(float)` directly.
+- Carry full 28-digit precision through intermediate math; `quantize(value, instrument, kind)` ONLY at money boundaries (ledger write, reported PnL, serialization).
+- `kind` ∈ `"price" | "quantity" | "cash"`; rounding is `ROUND_HALF_UP`.
+- `float()` appears only at the serialization/logging edge.
+- Test data follows the same rule: `Decimal(str(price))` or `Decimal("literal")`, never `Decimal(0.95)`.
 
-## IDs & Determinism
+## IDs and Determinism
 
-- Single UUIDv7 scheme via the `idgen` singleton (`from itrader import idgen`), backed by `uuid-utils`. Do NOT introduce a second ID scheme.
-- Determinism: a single seeded `random.Random` is constructed at engine wiring and injected into stochastic components (`ExecutionHandler._rng`, seed from config key `performance.rng_seed`, default 42). Never seed per-call. An injected `BacktestClock` (`itrader/core/clock.py`) is staged on the determinism seam.
+- Single UUIDv7 scheme via the `idgen` singleton (`from itrader import idgen`), backed by `uuid-utils`. Do not introduce a second ID scheme.
+- Determinism: a single seeded `random.Random` is constructed at engine wiring and injected into stochastic components (`ExecutionHandler._rng`, seed from config `performance.rng_seed`, default 42). Never seed per-call.
+- `BacktestClock` (`itrader/core/clock.py`) is an injected deterministic clock; never use wall clock for business time.
 
 ## Logging
 
-**Framework:** `structlog` (`itrader/logger.py`).
+- Bind component context at construction: `self.logger = get_itrader_logger().bind(component="ClassName")`.
+- Levels: `info` for successful ops/initialization; `warning` for non-fatal issues; `error` for caught exceptions with `exc_info=True`; `debug` rarely used.
+- Configured via structlog (`itrader/logger.py`); console (color) or JSON renderer set in `SystemConfig`.
 
-**Patterns:**
-- Bind a component context: `self.logger = get_itrader_logger().bind(component="ClassName")` (21 occurrences across handlers).
-- Levels: `info` for successful ops/initialization; `warning` for non-fatal issues (unknown exchange, skipped event); `error` for caught exceptions with `exc_info=True` (12 occurrences); `debug` rarely used.
+## Comments and Docstrings
 
-## Comments & Docstrings
-
-**When to comment:**
-- Comments explain **WHY**, often referencing a decision tag or pitfall (e.g. `# D-04 — string entry`, `# RESEARCH Pitfall 5`). Avoid restating what the code does.
-
-**Module / class / function docstrings:**
-- Heavy, decision-anchored. Modules open with a triple-quoted docstring that frequently cites locked decision tags (`D-01`, `D-13`, `M5-04`, `T-07-14`) tying the code to the refactor plan. **Preserve this style** — these tags are load-bearing references to planning artifacts.
+**Docstrings:**
+- Modules open with a triple-quoted docstring; frequently cites locked decision tags (`D-01`, `D-13`, `M5-04`, `T-07-14`) tying the code to planning artifacts. Preserve these tags — they are load-bearing references.
 - Classes carry a summary docstring describing responsibilities (often a bulleted list).
-- Functions use either a one-line docstring or NumPy-style `Parameters`/`Returns` blocks (see `ExecutionHandler.__init__`).
+- Functions use a one-line docstring or NumPy-style `Parameters`/`Returns` blocks.
 
-## Function & Module Design
+**Inline comments:**
+- Used to explain WHY, often referencing a decision tag or pitfall (e.g. `# D-04 — string entry`, `# RESEARCH Pitfall 5`). Avoid restating what the code does.
+- Cross-module citations in comments name both the SYMBOL and a line hint (e.g. `# SimulatedExchange.update_config — simulated.py:~99`). The symbol is the durable anchor; line numbers drift.
 
-**Handler/Manager split:**
-- `<Domain>Handler` is a **thin interface**: receives events from the queue, delegates to its `<Domain>Manager`, emits events back to the queue. It has no business logic.
-- `<Domain>Manager` owns the business logic and has NO queue access and NO back-reference to its handler (layering is one-directional: facade → manager → storage; see `OrderManager` D-18 note).
+## Function and Module Design
 
-**Cross-domain communication:**
-- Components take `global_queue` as a constructor argument and never call other handlers directly across domains — they emit an event onto the queue instead. Read-only cross-domain access goes through an injected read-model (`PortfolioReadModel` Protocol, `BacktestBarFeed`).
+**Handler/Manager split (enforced pattern):**
+- `<Domain>Handler` is a thin interface: receives events from the queue, delegates to its `<Domain>Manager`, emits events back to the queue. It has no business logic.
+- `<Domain>Manager` owns the business logic and has NO queue access and NO back-reference to its handler — layering is one-directional (facade → manager → storage).
+- See: `itrader/order_handler/order_handler.py` (handler) + `itrader/order_handler/order_manager.py` (manager).
 
-**Value objects / events:**
-- Events and value objects are `@dataclass` (often `frozen=True` — e.g. events, `_PendingBracket`, `Bar`). Events are `@dataclass(frozen=True, slots=True, kw_only=True)` subclasses of `Event`; `type` pinned via `field(default=EventType.X, init=False)`.
+**Component construction:**
+- Components take `global_queue` as a constructor argument. Never call other handlers directly across domains — emit an event instead.
+- Read-only cross-domain access goes through an injected read-model Protocol (e.g. `PortfolioReadModel` in `itrader/core/portfolio_read_model.py`).
 
-**Exports / barrels:**
-- `__init__.py` files act as barrels that re-export the domain's public surface (e.g. `core/enums/__init__.py` re-exports all enums grouped by domain with comment headers).
+**Events and value objects:**
+- Events are `@dataclass(frozen=True, slots=True, kw_only=True)` subclassing `Event`; `type` is pinned via `field(default=EventType.X, init=False)`; factory class methods for safe construction.
+- Non-event value objects use `@dataclass` (often `frozen=True`) — e.g. `_PendingBracket`, `Bar`.
 
-## Documented Conventions (Pinned — do NOT re-litigate)
+**Module exports:**
+- `__init__.py` files act as barrels re-exporting the domain's public surface with comment headers grouping enums by domain (e.g. `itrader/core/enums/__init__.py`).
 
-These four are intentional design decisions, pinned so reviewers stop flagging them:
+## Pinned Convention Exceptions
 
-1. **Config-enum exception (D-NN).** The seven `str, Enum` config-domain enums (`FeeModelType`, `SlippageModelType`, `PortfolioType`, …) live in `itrader/config/` NOT `itrader/core/enums/` **by design** — relocating them would invert the core→config dependency (`core/` depends on nothing inside `itrader`).
+Four established conventions are documented in this file as exceptions so they are not re-litigated:
 
-2. **Broad-`except` run-mode policy.** Backtest **fail-fast** (`EventHandler._on_handler_error` re-raises) vs live **publish-and-continue** (`LiveTradingSystem` emits `ErrorEvent` and keeps draining) is **intentional**, not an inconsistency.
-
-3. **Tab/space indentation hazard.** Handler modules use tabs; `config/`, `core/`, `price_handler/feed/`, `events_handler/events/` use 4 spaces. Match the file you edit; never normalize.
-
-4. **Dual-layer order-validator overlap (D-03a, W4-09).** The overlap between `order_handler/order_validator.py` and `execution_handler/exchanges/simulated.py` is **justified-by-decision** (defense-in-depth — the live `TradingInterface`/`OrderEvent` path bypasses the domain validator). The dead `create_order` second path was removed (W4-09); the live-path bypass alone now justifies keeping the overlap. The code is NOT removed.
+1. **Config-enum exception:** the seven `str, Enum` config-domain enums (`FeeModelType`, `SlippageModelType`, `PortfolioType`, …) live in `itrader/config/` not `itrader/core/enums/` by design — relocating inverts the core→config dependency.
+2. **Broad-except run-mode policy:** backtest fail-fast vs live publish-and-continue is intentional, not an inconsistency.
+3. **Tab/space indentation hazard:** described above — match the file, never normalize.
+4. **Dual-layer order-validator overlap:** `itrader/order_handler/order_validator.py` / `itrader/execution_handler/exchanges/simulated.py` validation duplication is justified-by-decision (defense-in-depth for the live-path bypass). Do not remove it.
 
 ---
 
-*Convention analysis: 2026-06-14*
+*Convention analysis: 2026-06-22*
