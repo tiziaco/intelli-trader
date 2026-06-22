@@ -1,0 +1,66 @@
+"""Coverage instrument B — limit-maker mean reversion (LONG_ONLY).
+
+================================ COVERAGE INSTRUMENT ================================
+This is NOT a real/product strategy. It exists ONLY to exercise engine paths for
+the performance benchmark. Trade-density over alpha. Never tradeable.
+====================================================================================
+
+Engine path owned (PERF-BASELINE §6):
+- **Resting-limit book at scale** (every entry is a resting ``buy_limit`` below
+  the current price)
+- Multi-symbol per-bar fan-out (ETHUSDT, SOLUSDT, BNBUSDT)
+- **Order cancel / modify + mirror reconcile** — NOTE: the cancel/modify
+  lifecycle is NOT reachable from ``generate_signal`` (the intent is order-ref
+  -free, RECON §3). It lives in the W1 RUNNER's ``on_tick`` hook, which tracks
+  this strategy's resting limit IDs and re-prices / cancels unfilled limits each
+  bar. The strategy only EMITS the resting limit.
+
+Signal: a cheap mean-reversion condition — price below a moving average by a
+band -> rest a ``buy_limit`` a little below the current close (with a ``tp``
+above). Reuses the SMA init pattern. Instruments: ETHUSDT, SOLUSDT, BNBUSDT.
+"""
+
+from decimal import Decimal
+
+from itrader.core.enums import TradingDirection
+from itrader.core.sizing import FractionOfCash, SignalIntent
+from itrader.strategy_handler.base import Strategy
+from itrader.strategy_handler.indicators import SMA
+
+__all__ = ["LimitMakerStrategy"]
+
+# Mean-reversion band + resting-limit / tp offsets (fractions of close).
+_BAND_PCT = Decimal("0.005")    # enter when close is >=0.5% below the MA
+_LIMIT_BELOW = Decimal("0.003")  # rest the limit 0.3% below the current close
+_TP_ABOVE = Decimal("0.01")      # take profit 1% above the limit
+
+
+class LimitMakerStrategy(Strategy):
+    """B: limit-maker mean reversion — rests buy_limit orders below price.
+
+    The runner's ``on_tick`` re-prices / cancels this strategy's unfilled resting
+    limits each bar (that is where the cancel/modify coverage is honestly owned).
+    """
+
+    name = "B_limit_maker"
+    tickers = ["ETHUSDT", "SOLUSDT", "BNBUSDT"]
+    # Smaller fraction than A/C so three symbols share the portfolio cash and many
+    # limits can rest concurrently (resting-limit book at scale).
+    sizing_policy = FractionOfCash(Decimal("0.25"))
+    direction = TradingDirection.LONG_ONLY
+    ma_window: int = 50
+
+    def init(self) -> None:
+        self.ma = self.indicator(SMA, "close", self.ma_window)
+
+    def generate_signal(self, ticker: str) -> SignalIntent | None:
+        close = Decimal(str(self.bars["close"].iloc[-1]))
+        ma = Decimal(str(self.ma[-1]))
+        # Mean reversion: when close sits a band below the MA, rest a limit a bit
+        # lower still (a maker order that fills on a further dip).
+        threshold = ma * (Decimal("1") - _BAND_PCT)
+        if close <= threshold:
+            limit_price = close * (Decimal("1") - _LIMIT_BELOW)
+            tp = limit_price * (Decimal("1") + _TP_ABOVE)
+            return self.buy_limit(ticker, price=limit_price, tp=tp)
+        return None
