@@ -38,6 +38,7 @@ mypy = "^2.1.0"
 backtesting = "0.6.5"
 backtrader = "1.9.78.123"
 nautilus-trader = "1.227.0"
+scalene = "^2.3.0"
 
 [tool.pytest.ini_options]
 # Test discovery

@@ -189,7 +189,7 @@ version = "0.7.0"
 description = "Reusable constraint types to use with typing.Annotated"
 optional = false
 python-versions = ">=3.8"
-groups = ["main"]
+groups = ["main", "dev"]
 files = [
     {file = "annotated_types-0.7.0-py3-none-any.whl", hash = "sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53"},
     {file = "annotated_types-0.7.0.tar.gz", hash = "sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89"},
@@ -628,6 +628,18 @@ files = [
 
 [package.dependencies]
 colorama = {version = "*", markers = "platform_system == \"Windows\""}
+
+[[package]]
+name = "cloudpickle"
+version = "3.1.2"
+description = "Pickler class to extend the standard pickle.Pickler functionality"
+optional = false
+python-versions = ">=3.8"
+groups = ["dev"]
+files = [
+    {file = "cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a"},
+    {file = "cloudpickle-3.1.2.tar.gz", hash = "sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414"},
+]
 
 [[package]]
 name = "coincurve"
@@ -1670,6 +1682,30 @@ files = [
 ]
 
 [[package]]
+name = "markdown-it-py"
+version = "4.2.0"
+description = "Python port of markdown-it. Markdown parsing, done right!"
+optional = false
+python-versions = ">=3.10"
+groups = ["dev"]
+files = [
+    {file = "markdown_it_py-4.2.0-py3-none-any.whl", hash = "sha256:9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"},
+    {file = "markdown_it_py-4.2.0.tar.gz", hash = "sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49"},
+]
+
+[package.dependencies]
+mdurl = ">=0.1,<1.0"
+
+[package.extras]
+benchmarking = ["psutil", "pytest", "pytest-benchmark"]
+compare = ["commonmark (>=0.9,<1.0)", "markdown (>=3.4,<4.0)", "markdown-it-pyrs", "mistletoe (>=1.0,<2.0)", "mistune (>=3.0,<4.0)", "panflute (>=2.3,<3.0)"]
+linkify = ["linkify-it-py (>=1,<3)"]
+plugins = ["mdit-py-plugins (>=0.5.0)"]
+profiling = ["gprof2dot"]
+rtd = ["ipykernel", "jupyter_sphinx", "mdit-py-plugins (>=0.5.0)", "myst-parser", "pyyaml", "sphinx", "sphinx-book-theme (>=1.0,<2.0)", "sphinx-copybutton", "sphinx-design"]
+testing = ["coverage", "pytest", "pytest-cov", "pytest-regressions", "pytest-timeout", "requests"]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.3"
 description = "Safely add untrusted strings to HTML/XML markup."
@@ -1785,6 +1821,18 @@ traitlets = "*"
 
 [package.extras]
 test = ["flake8", "matplotlib", "nbdime", "nbval", "notebook", "pytest"]
+
+[[package]]
+name = "mdurl"
+version = "0.1.2"
+description = "Markdown URL utilities"
+optional = false
+python-versions = ">=3.7"
+groups = ["dev"]
+files = [
+    {file = "mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"},
+    {file = "mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba"},
+]
 
 [[package]]
 name = "msgspec"
@@ -2263,6 +2311,19 @@ files = [
     {file = "numpy-2.2.6-pp310-pypy310_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ce47521a4754c8f4593837384bd3424880629f718d87c5d44f8ed763edd63543"},
     {file = "numpy-2.2.6-pp310-pypy310_pp73-win_amd64.whl", hash = "sha256:d042d24c90c41b54fd506da306759e06e568864df8ec17ccc17e9e884634fd00"},
     {file = "numpy-2.2.6.tar.gz", hash = "sha256:e29554e2bef54a90aa5cc07da6ce955accb83f21ab5de01a62c8478897b264fd"},
+]
+
+[[package]]
+name = "nvidia-ml-py"
+version = "13.610.43"
+description = "Python Bindings for the NVIDIA Management Library"
+optional = false
+python-versions = "*"
+groups = ["dev"]
+markers = "platform_system != \"Darwin\""
+files = [
+    {file = "nvidia_ml_py-13.610.43-py3-none-any.whl", hash = "sha256:f13c72698edef492f985cc225f14faafe68ae065a2e407f45bdf6f4b9b43fde8"},
+    {file = "nvidia_ml_py-13.610.43.tar.gz", hash = "sha256:65437eb73d68d0c62c931ca4d45038472faff03bd0b8729abba4b899f70d60f2"},
 ]
 
 [[package]]
@@ -3103,7 +3164,7 @@ version = "2.13.4"
 description = "Data validation using Python type hints"
 optional = false
 python-versions = ">=3.9"
-groups = ["main"]
+groups = ["main", "dev"]
 files = [
     {file = "pydantic-2.13.4-py3-none-any.whl", hash = "sha256:45a282cde31d808236fd7ea9d919b128653c8b38b393d1c4ab335c62924d9aba"},
     {file = "pydantic-2.13.4.tar.gz", hash = "sha256:c40756b57adaa8b1efeeced5c196f3f3b7c435f90e84ea7f443901bec8099ef6"},
@@ -3125,7 +3186,7 @@ version = "2.46.4"
 description = "Core functionality for Pydantic validation and serialization"
 optional = false
 python-versions = ">=3.9"
-groups = ["main"]
+groups = ["main", "dev"]
 files = [
     {file = "pydantic_core-2.46.4-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:a396dcc17e5a0b164dbe026896245a4fa9ff402edca1dff0be3d53a517f74de4"},
     {file = "pydantic_core-2.46.4-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:da4b951fe36dc7c3a1ccb4e3cd1747c3542b8c9ceede8fc86cae054e764485f5"},
@@ -3623,6 +3684,66 @@ urllib3 = ">=1.26,<3"
 [package.extras]
 socks = ["PySocks (>=1.5.6,!=1.5.7)"]
 use-chardet-on-py3 = ["chardet (>=3.0.2,<8)"]
+
+[[package]]
+name = "rich"
+version = "15.0.0"
+description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
+optional = false
+python-versions = ">=3.9.0"
+groups = ["dev"]
+files = [
+    {file = "rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"},
+    {file = "rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36"},
+]
+
+[package.dependencies]
+markdown-it-py = ">=2.2.0"
+pygments = ">=2.13.0,<3.0.0"
+
+[package.extras]
+jupyter = ["ipywidgets (>=7.5.1,<9)"]
+
+[[package]]
+name = "scalene"
+version = "2.3.0"
+description = "Scalene: A high-resolution, low-overhead CPU, GPU, and memory profiler for Python with AI-powered optimization suggestions"
+optional = false
+python-versions = "!=3.11.0,>=3.8"
+groups = ["dev"]
+files = [
+    {file = "scalene-2.3.0-cp310-cp310-macosx_15_0_universal2.whl", hash = "sha256:1779137e7c2e8760906baf4b89254088a0f021883c2859304b1341152ad0d203"},
+    {file = "scalene-2.3.0-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f870af67b6b20992eee3b9dff5b1d9eca03e3c15dd12b0651caa6b382e426ce3"},
+    {file = "scalene-2.3.0-cp310-cp310-win_amd64.whl", hash = "sha256:f199236164c537c92b3b5b7aa08cb54669f64f3ef016b4628fa1ea2b01227562"},
+    {file = "scalene-2.3.0-cp311-cp311-macosx_15_0_universal2.whl", hash = "sha256:d63903b03316b54f2487d9ea6db91e639b5f748ff37af88c80df4e0068e2a7f6"},
+    {file = "scalene-2.3.0-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6952d0a7c23add84a5f9f4c5fa375e44d6e5635aeb7a4198396be30aa168a772"},
+    {file = "scalene-2.3.0-cp312-cp312-macosx_15_0_universal2.whl", hash = "sha256:cf614b958c30b8d795f99796eb0d24370d6638353a3a1a89de3301d9181cf8c4"},
+    {file = "scalene-2.3.0-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5b8a6d26abf75226a64a9af4d9f3b74cd8c3cd9f67639d1c0950a3dfe517dc9f"},
+    {file = "scalene-2.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:31ccce9167a237acdfe70b2735aafb022c00fc7eb21c64724b974fbf5ea58214"},
+    {file = "scalene-2.3.0-cp313-cp313-macosx_15_0_universal2.whl", hash = "sha256:68ccf616be1bd957802fdc88675810352c714d26bfdbcf25445e68711822e510"},
+    {file = "scalene-2.3.0-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:deca1214b8f2b3b1d2c770651d7817364c2e9d41c17e0fd37537707ae8482121"},
+    {file = "scalene-2.3.0-cp313-cp313-win_amd64.whl", hash = "sha256:5af3eeccf109712d0bb14c4d2782314835c30de3aa7286c787f25441caadf248"},
+    {file = "scalene-2.3.0-cp314-cp314-macosx_15_0_universal2.whl", hash = "sha256:b8400014d4af47410f6ba5250e27f19f1addf0f534cef7013b1a7827170f5ea8"},
+    {file = "scalene-2.3.0-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2c6acc3bb76e32dfbfc7a0fe75986cde8eb8e98cee2515aea541631d440bc465"},
+    {file = "scalene-2.3.0-cp314-cp314-win_amd64.whl", hash = "sha256:dec3398f6166bbe65494241506745ed088395c6298d31394461bf7061729edef"},
+    {file = "scalene-2.3.0-cp39-cp39-macosx_15_0_universal2.whl", hash = "sha256:b9d0e37d0ddcb3fefc32b0a6267e5bae973537aa966a9048720fe1b297f688ef"},
+    {file = "scalene-2.3.0-cp39-cp39-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c90db3cf673bc467dc7a51450bcb23832e958d40de761fef194886c22e07fb00"},
+    {file = "scalene-2.3.0-cp39-cp39-win_amd64.whl", hash = "sha256:6393b19f1d74b33b2fad4e23b1e250271c4b31ce8ef553ed47bc3fbf2686b849"},
+    {file = "scalene-2.3.0.tar.gz", hash = "sha256:57212ceeeeeef9891c344275592413f4b90fb407ecdec75b5b164f0eef2e6261"},
+]
+
+[package.dependencies]
+cloudpickle = ">=2.2.1"
+Jinja2 = ">=3.0.3"
+numpy = {version = ">=1.24.0,<1.27 || >1.27", markers = "python_version < \"3.14\""}
+nvidia-ml-py = {version = ">=12.555.43", markers = "platform_system != \"Darwin\""}
+psutil = ">=5.9.2"
+pydantic = ">=2.6"
+pyyaml = ">=6.0"
+rich = ">=10.7.0"
+
+[package.extras]
+test = ["hypothesis (>=6.0)", "jax (>=0.4.20) ; python_version < \"3.14\" and platform_system != \"Windows\"", "jaxlib (>=0.4.20) ; python_version < \"3.14\" and platform_system != \"Windows\"", "pytest (>=7.0)", "pytest-asyncio (>=0.21)", "tensorflow (>=2.15) ; python_version < \"3.14\" and platform_system != \"Windows\""]
 
 [[package]]
 name = "scikit-learn"
@@ -4130,7 +4251,7 @@ version = "0.4.2"
 description = "Runtime typing introspection tools"
 optional = false
 python-versions = ">=3.9"
-groups = ["main"]
+groups = ["main", "dev"]
 files = [
     {file = "typing_inspection-0.4.2-py3-none-any.whl", hash = "sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7"},
     {file = "typing_inspection-0.4.2.tar.gz", hash = "sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464"},
@@ -4496,4 +4617,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.14"
-content-hash = "457aabbe6be05df9b1f82f5fa748e8b2ed9dcbed147c9d94426fbb70fcd3479a"
+content-hash = "1329ee03de6bc9a42f372e9ea2f25963b2abccc0b9bba6f15613ceef3bfcb488"
