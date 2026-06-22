@@ -271,7 +271,16 @@ class StrategiesHandler(object):
 		NOT the handle-derived ``strategy.warmup`` (0 for a handle-free pair).
 		"""
 		# The pair contract is exactly two tickers (PairStrategy.validate asserts
-		# it at construction) — leg A is tickers[0], leg B is tickers[1].
+		# it at construction) — leg A is tickers[0], leg B is tickers[1]. IN-04:
+		# guard the len-2 contract here with a clear message rather than relying on
+		# the tuple-unpack raising a bare "too many/not enough values to unpack" if
+		# a subclass ever overrides validate() without calling super().validate().
+		if len(strategy.tickers) != 2:
+			raise ValueError(
+				f"_dispatch_pair requires a two-ticker pair contract: "
+				f"got {strategy.tickers!r} (PairStrategy.validate enforces len-2; a "
+				f"subclass override must call super().validate())"
+			)
 		ticker_A, ticker_B = strategy.tickers
 		# D-02 both-present guard (mirrors the single-leg :111-113 shape, requiring
 		# BOTH legs). A missing leg means no spread this tick — skip silently, do
