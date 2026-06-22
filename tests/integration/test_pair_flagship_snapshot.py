@@ -67,6 +67,17 @@ _SNAPSHOT_DIR = _REPO_ROOT / "tests" / "golden" / "pair"
 
 # Deterministic columns to diff (mirrors the oracle test). Trades keyed by
 # (entry_date, exit_date, side); equity by (timestamp, total_equity).
+#
+# CR-02 platform-fragility ACKNOWLEDGEMENT: `total_equity` is an exact-match on a
+# float — it derives from β (a statsmodels OLS slope on fixed log-price data) that
+# scales every leg-B quantity. β/`total_equity` are deterministic for a FIXED
+# numpy/BLAS/statsmodels build, but a different platform BLAS or numpy minor version
+# can perturb the OLS slope in the last ULPs and trip this exact comparison. The
+# integer/categorical trade keys (entry_date/exit_date/side) are the robust signal;
+# the `total_equity` exact-match is the brittlest assertion here and is the expected
+# first casualty of a cross-platform regen. If it fails ONLY on `total_equity` (trade
+# keys still match), regenerate the snapshot on the target platform rather than
+# treating it as a behavioural regression.
 _TRADE_KEY_COLUMNS = ["entry_date", "exit_date", "side"]
 _EQUITY_KEY_COLUMNS = ["timestamp", "total_equity"]
 
@@ -224,9 +235,17 @@ def test_pair_flagship_determinism_double_run() -> None:
     """Two runs of the ETH/BTC flagship are byte-identical (determinism, D-11).
 
     Run the flagship twice in-process (fresh system each run, same seed/clock) and
-    assert the two outputs (trades + equity) are identical on every column. β enters
-    the Decimal domain only via to_money so the run is reproducible (Pitfall 4); no
-    new nondeterminism is introduced.
+    assert the two outputs (trades + equity) are identical on every column.
+
+    Determinism source (IN-01/CR-02 — corrected justification): reproducibility
+    rests on (a) the engine's seeded `random.Random` (`performance.rng_seed`) for
+    every stochastic engine component, and (b) β being a DETERMINISTIC OLS fit on
+    FIXED data (statsmodels/numpy/BLAS pinned). `to_money` only guarantees that β's
+    Decimal ENTRY is reproducible (no binary-float repr artifact, Pitfall 4) — it
+    does NOT, by itself, make β reproducible; the deterministic OLS fit does. NOTE
+    (CR-02 scope): this double-run is WITHIN one process, so it shares the same BLAS
+    and therefore proves in-process repeatability, not cross-platform/cross-BLAS
+    reproducibility of the float-OLS-derived snapshot.
     """
     trades_a, equity_a = _run_flagship()
     trades_b, equity_b = _run_flagship()
