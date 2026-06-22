@@ -30,8 +30,12 @@ from itrader.strategy_handler.indicators import SMA
 __all__ = ["LimitMakerStrategy"]
 
 # Mean-reversion band + resting-limit / tp offsets (fractions of close).
-_BAND_PCT = Decimal("0.005")    # enter when close is >=0.5% below the MA
-_LIMIT_BELOW = Decimal("0.003")  # rest the limit 0.3% below the current close
+# Band kept loose (any dip below the MA) so the resting-limit book is densely
+# populated each bar — the "resting-limit book at scale" path is the coverage,
+# exercised by the many orders the runner's on_tick chases/cancels, not just the
+# fills.
+_BAND_PCT = Decimal("0.000")    # enter on any close below the MA
+_LIMIT_BELOW = Decimal("0.001")  # rest the limit 0.1% below the current close
 _TP_ABOVE = Decimal("0.01")      # take profit 1% above the limit
 
 
@@ -46,8 +50,12 @@ class LimitMakerStrategy(Strategy):
     tickers = ["ETHUSDT", "SOLUSDT", "BNBUSDT"]
     # Smaller fraction than A/C so three symbols share the portfolio cash and many
     # limits can rest concurrently (resting-limit book at scale).
-    sizing_policy = FractionOfCash(Decimal("0.25"))
+    sizing_policy = FractionOfCash(Decimal("0.15"))
     direction = TradingDirection.LONG_ONLY
+    # Allow a position per symbol concurrently (the multi-symbol resting-limit
+    # book at scale path); the default max_positions=1 would cap B at one open
+    # position across all three symbols and starve the coverage.
+    max_positions = 3
     ma_window: int = 50
 
     def init(self) -> None:

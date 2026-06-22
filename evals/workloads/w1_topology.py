@@ -146,9 +146,18 @@ def wire_w1(system: Any) -> W1Topology:
     topo.strategy_d.subscribe_portfolio(pid5)
     topo.strategy_d.subscribe_portfolio(pid6)
 
-    # 4. Per-portfolio trading-rules margin/short flags (all six; required for the
-    #    short legs P4/P5/P6, harmless for the long books P1/P2/P3).
-    for pid in topo.portfolio_ids:
+    # 4. Per-portfolio trading-rules margin/short flags — ONLY the D-fed shorts
+    #    (P4/P5/P6). The LONG books (P1/P2/P3 = A/B/C) stay SPOT: enabling
+    #    per-portfolio margin on them would route their long settlements through
+    #    the margin lock-and-settle assertion (assert_lock_fits_buying_power),
+    #    which RAISES InsufficientFundsError on an over-extended add (Strategy C)
+    #    and fail-fast aborts the backtest. In SPOT mode that same over-extension
+    #    instead produces the graceful admission-side CASH_RESERVATION rejection
+    #    (FillEvent(REFUSED) -> mirror reconcile) the benchmark wants to exercise
+    #    (spec §6). The system-wide handler/admission/validator margin flags
+    #    (steps 1+5) stay on for the SHORT_ONLY registration gate; the PER-PORTFOLIO
+    #    trading-rules margin is the one that branches long settlement.
+    for pid in topo.portfolio_ids[3:]:  # P4, P5, P6 (D fan-out) only
         _enable_portfolio_margin(system, pid)
 
     return topo

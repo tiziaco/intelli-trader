@@ -26,7 +26,6 @@ admission + fan-out paths, D uses a rolling z-score of the ETHUSDT close itself
 (same cost class, same SHORT_ONLY coverage). The ORDER is on ETHUSDT either way.
 """
 
-from collections import deque
 from decimal import Decimal
 
 from itrader.core.enums import TradingDirection
@@ -53,22 +52,34 @@ class ShortZScoreStrategy(Strategy):
     # some legs (exercising short-side rejections) without instantly busting all.
     sizing_policy = FractionOfCash(Decimal("0.30"))
     direction = TradingDirection.SHORT_ONLY
+    # Allow repeated short entries (re-shorting after a cover) so the short-side
+    # admission + fan-out paths fire more than once per portfolio; the default
+    # max_positions=1 would cap D at a single short per portfolio.
+    max_positions = 5
     z_window: int = _Z_WINDOW
+    # D has NO declared indicators, so the base would auto-derive max_window == 0
+    # and the feed would hand us an EMPTY window every tick (frame.iloc[pos:pos]).
+    # Pin a fetch width >= the z-window so the feed gives us a real window; warmup
+    # stays 0 (the rolling deque self-gates until it fills).
+    max_window: int = _Z_WINDOW
 
     def init(self) -> None:
-        # Cheap rolling state — NO heavy indicator / cointegration compute.
-        self._closes: deque[float] = deque(maxlen=self.z_window)
+        # No heavy indicator / cointegration compute — the z-score is computed
+        # directly off the bar window in generate_signal (cheap, stateless).
+        ...
 
     def generate_signal(self, ticker: str) -> SignalIntent | None:
-        close = float(self.bars["close"].iloc[-1])
-        self._closes.append(close)
-        if len(self._closes) < self.z_window:
+        # warmup == 0 (no declared indicators) means the base may dispatch us with
+        # an empty window (feed.window returns frame.iloc[pos:pos] at the frame
+        # start). Guard the empty read; self-gate until the window fills.
+        if self.bars.empty or len(self.bars) < self.z_window:
             return None
-        # Rolling mean / population std (cheap, pure-python).
-        n = len(self._closes)
-        mean = sum(self._closes) / n
-        var = sum((x - mean) ** 2 for x in self._closes) / n
-        std = var ** 0.5
+        # Rolling z-score of the close over the last z_window bars (cheap, pure
+        # numpy off the window the feed already handed us).
+        closes = self.bars["close"].to_numpy()[-self.z_window:]
+        close = float(closes[-1])
+        mean = float(closes.mean())
+        std = float(closes.std())  # population std (ddof=0)
         if std == 0.0:
             return None
         z = (close - mean) / std
