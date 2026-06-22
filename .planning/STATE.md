@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: ready_to_plan
-stopped_at: Phase 06 complete (4/4) — ready to discuss Phase 999.2
+status: milestone_complete
+stopped_at: Phase 06 complete (4/4) — v1.4 fully complete (Phases 1–6 incl. 5.1); ready to close milestone
 last_updated: 2026-06-22T14:33:10.367Z
-last_activity: 2026-06-22 -- Phase 06 execution started
+last_activity: 2026-06-22 -- Phase 06 execution complete; v1.4 milestone fully delivered
 progress:
   total_phases: 10
   completed_phases: 6
@@ -21,18 +21,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14 — v1.4 Margin, Leverage, Shorts & Trailing Stops STARTED; promotes Backlog 999.4 / N+2)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a liquidation model (closing DEF-01-C), and engine-native trailing stops, all owner-gated and cross-validated.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** v1.4 milestone complete — close with `/gsd:complete-milestone`
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
-Status: Ready to plan
+Phase: v1.4 complete (Phases 1–6 incl. 5.1 all delivered)
+Plan: —
+Status: Ready to close milestone
 
-> Note: `phase.complete` again auto-resolved next_phase to backlog seed 999.2 because the Phase 6 dir
-> does not exist yet (only 01/02/03/04/05 + 05.1 + 999.x dirs are present). Corrected manually to
-> Phase 6 (Pair-Trading Flagship) per the v1.4 Phase Map (1→2→3→4→5→**6**). 999.2/999.3 remain FUTURE
-> (N+3/N+4) backlog entries, not the next phase.
+> Note: `phase.complete` again auto-resolved next_phase to backlog seed 999.2 because the next-phase
+> scan only sees `999.x` backlog seed dirs after Phase 6 (the last real v1.4 phase) finished. There is
+> no real Phase 999.2 to advance to — 999.2/999.3 are FUTURE (N+3/N+4) backlog entries. v1.4 is fully
+> complete; the correct next action is `/gsd:complete-milestone`, not discussing/planning Phase 999.2.
 Last activity: 2026-06-22
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)

@@ -51,9 +51,9 @@ byte-identical hold throughout. Full design: PROJECT.md "Current Milestone: v1.4
 - [x] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated) — completed 2026-06-15 (9/9 plans; +LEV-03 discovered/closed)
 - [x] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated) — completed 2026-06-15 (6/6 plans; review BLOCKER CR-01 found+fixed inline)
 - [x] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated) — completed 2026-06-16 (6/6 plans; owner-signed golden freeze; review BLOCKER CR-01 found+fixed via debug → fill-at-liq-price)
-- [ ] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated)
-- [ ] **Phase 5.1: Short Position Scale-In (Margin Increase)** *(INSERTED)* - Lift the unconditional short-increase admission rejection behind the `allow_increase` flag (mirror the long path); reuse the existing `resolve_entry` sizing + margin SCALE-IN settlement; flip/split stays a fail-loud guard, out of scope; own re-baseline + cross-validation (owner-gated)
-- [ ] **Phase 6: Pair-Trading Flagship** - Market-neutral long/short cointegration/spread strategy end-to-end; flagship demo (NOT the correctness oracle); final, slip-able capstone
+- [x] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated) — completed 2026-06-17 (5/5 plans)
+- [x] **Phase 5.1: Short Position Scale-In (Margin Increase)** *(INSERTED)* - Lift the unconditional short-increase admission rejection behind the `allow_increase` flag (mirror the long path); reuse the existing `resolve_entry` sizing + margin SCALE-IN settlement; flip/split stays a fail-loud guard, out of scope; own re-baseline + cross-validation (owner-gated) — completed 2026-06-17 (2/2 plans)
+- [x] **Phase 6: Pair-Trading Flagship** - Market-neutral long/short cointegration/spread strategy end-to-end; flagship demo (NOT the correctness oracle); final, slip-able capstone — completed 2026-06-22 (4/4 plans; verification passed 14/14; code review 2 advisory blockers, non-gating at pinned β)
 
 <details>
 <summary>✅ v1.3 — Engine Surface Completion (Phases 1-6) — SHIPPED 2026-06-14</summary>
@@ -357,7 +357,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | 5.1 Short Position Scale-In (INSERTED) | 2/2 | Complete   | 2026-06-17 |
 | 6. Pair-Trading Flagship | 4/4 | Complete   | 2026-06-22 |
 
-**Next:** Plan Phase 1 with `/gsd:plan-phase 1`.
+**Next:** v1.4 fully complete (Phases 1–6, incl. 5.1). Close the milestone with `/gsd:complete-milestone`.
 
 ## Backlog
 
