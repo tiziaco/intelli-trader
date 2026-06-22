@@ -23,7 +23,7 @@ metrics:
   duration_minutes: 2
   tasks_completed: 1
   completed_date: 2026-06-15
-requirements: [INST-01, INST-02, INST-03]
+requirements-completed: [INST-01, INST-02, INST-03]
 ---
 
 # Phase 1 Plan 03: Byte-Exact Phase Gate Verification Summary

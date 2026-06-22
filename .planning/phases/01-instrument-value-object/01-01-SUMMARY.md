@@ -31,7 +31,7 @@ metrics:
   duration_minutes: 4
   tasks_completed: 2
   completed_date: 2026-06-15
-requirements: [INST-01, INST-03]
+requirements-completed: [INST-01, INST-03]
 ---
 
 # Phase 1 Plan 01: Instrument Value Object & quantize() Rewire Summary

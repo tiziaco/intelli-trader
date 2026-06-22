@@ -29,6 +29,7 @@ decisions:
   - "Starting capital raised to $500k so a single UNLEVERED fixed-1-ETH / β-BTC pair fits the margin lock with drawdown headroom across 2021-2026 (BTC short leg notional peaks near 0.53 × $125k ≈ $66k + the ~$4.8k ETH leg ≈ $71k/pair). At $100k the fail-fast backtest aborted mid-run on the engine solvency assertion (InsufficientFundsError). No engine change — β-weighting and the Phase 2-4 accounting core are untouched (Rule 3 blocking-config fix)"
   - "The closed-position trade-log `side` column is the POSITION side (LONG/SHORT), not the order action (BUY/SELL) — PAIR-01 both-legs assertion checks LONG and SHORT present"
   - "Determinism double-run compares ALL columns (not just the deterministic keys) via the _csv_roundtrip serialised form — the stronger byte-identity claim"
+requirements-completed: [PAIR-01]
 metrics:
   duration: ~20 min
   completed: 2026-06-22

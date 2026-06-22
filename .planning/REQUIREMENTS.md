@@ -42,11 +42,11 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Liquidation (LIQ)
 
-- [ ] **LIQ-01**: A position breaching maintenance margin (checked on bar close — the honest proxy on
+- [x] **LIQ-01**: A position breaching maintenance margin (checked on bar close — the honest proxy on
   daily OHLCV with no mark feed) is force-closed via a `FillEvent`, with loss floored at the position's
   allocated isolated margin.
-- [ ] **LIQ-02**: A configurable liquidation penalty/fee is charged so liquidation PnL is not optimistic.
-- [ ] **LIQ-03**: Forced liquidation reuses `FillStatus.EXECUTED` and mints an admission-bypassing close
+- [x] **LIQ-02**: A configurable liquidation penalty/fee is charged so liquidation PnL is not optimistic.
+- [x] **LIQ-03**: Forced liquidation reuses `FillStatus.EXECUTED` and mints an admission-bypassing close
   order tagged with a new `OrderTriggerSource.LIQUIDATION`, reconciling through the existing
   position/cash/order-mirror path (no new `FillStatus`).
 
@@ -111,10 +111,10 @@ Requirements for milestone v1.4. Each maps to exactly one roadmap phase (see Tra
 
 ### Validation & flagship (XVAL / PAIR)
 
-- [ ] **XVAL-01**: Short, leveraged-long, and liquidation scenarios are cross-validated against
+- [x] **XVAL-01**: Short, leveraged-long, and liquidation scenarios are cross-validated against
   `backtesting.py` and `backtrader`; the new golden master freezes only after explicit owner sign-off
   with full attribution.
-- [ ] **PAIR-01**: A market-neutral long/short pair-trading strategy (cointegration/spread) runs
+- [x] **PAIR-01**: A market-neutral long/short pair-trading strategy (cointegration/spread) runs
   end-to-end, exercising both sides — the flagship demonstration of the short side (NOT the primary
   correctness oracle; that is the crafted scenarios under XVAL-01).
 
@@ -172,14 +172,14 @@ Which phases cover which requirements. Filled during roadmap creation.
 | SHORT-02 | Phase 3 — Shorts & Borrow Carry | Complete |
 | SHORT-03 | Phase 3 — Shorts & Borrow Carry | Complete |
 | CARRY-01 | Phase 3 — Shorts & Borrow Carry | Complete |
-| LIQ-01 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
-| LIQ-02 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
-| LIQ-03 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
-| XVAL-01 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Pending |
+| LIQ-01 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Complete |
+| LIQ-02 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Complete |
+| LIQ-03 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Complete |
+| XVAL-01 | Phase 4 — Liquidation & Cross-Validation Re-baseline | Complete |
 | TRAIL-01 | Phase 5 — Engine-Native Trailing Stops | Complete |
 | TRAIL-02 | Phase 5 — Engine-Native Trailing Stops | Complete |
 | TRAIL-03 | Phase 5 — Engine-Native Trailing Stops | Complete |
-| PAIR-01 | Phase 6 — Pair-Trading Flagship | Pending |
+| PAIR-01 | Phase 6 — Pair-Trading Flagship | Complete |
 | SCALE-01 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Complete |
 | SCALE-02 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Complete |
 | SCALE-03 | Phase 05.1 — Short Position Scale-In (Margin Increase) | Complete |
@@ -191,4 +191,4 @@ Which phases cover which requirements. Filled during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-14*
-*Last updated: 2026-06-14 — roadmap created, all 20 requirements mapped to 6 phases (100% coverage)*
+*Last updated: 2026-06-22 — v1.4 milestone audit: all 23 requirements verified SATISFIED; LIQ-01/02/03, XVAL-01, PAIR-01 traceability flipped Pending→Complete (Phases 4 & 6 closed).*
