@@ -306,7 +306,27 @@ The deliverable that feeds `/gsd:new-milestone`:
 
 ---
 
-## 12. Handoff
+## 12. Execution vehicles
+
+This spec is a **hybrid** — part durable committed code, part exploration — so it runs as
+**two GSD vehicles**, not one. Don't run the whole thing as a single spike.
+
+| Step | Vehicle | Covers | Output |
+|---|---|---|---|
+| **1 — Build the harness** | `/gsd:quick` (or a small planned phase if it feels big) | Hardened CCXT fetch script + CSV validation; the durable `evals/` tree (`strategies/`, `workloads/`, `runners/`); the numpy-GBM synthetic generator | Committed `evals/` scaffolding (atomic commits + state tracking) |
+| **2 — Profile & baseline** | `/gsd:spike` | Run Scalene on W1 + W2; read profiles; freeze the baseline; write the hotspot map | `evals/results/PERF-BASELINE-RESULTS.md` (findings) — throwaway Scalene command lives here |
+
+Rationale: the `evals/` harness is a *deliverable you keep and regression-track* → that's
+quick's job (atomic commits, state). The profiling is genuine *learning by doing* → that's
+the spike. Each piece sits on the vehicle that matches its nature.
+
+**Ordering is strict:** Step 1 before Step 2 (evals-first — build the scoreboard, then
+profile). And within Step 1 the **very first action is the hardened fetch + CSV validation** —
+everything downstream depends on trustworthy source data (see §7).
+
+---
+
+## 13. Handoff
 
 On completion → `/gsd:new-milestone` consumes `evals/results/PERF-BASELINE-RESULTS.md`.
 
