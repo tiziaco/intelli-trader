@@ -329,7 +329,7 @@ primary correctness oracle; the crafted scenarios under XVAL-01 are).
 NOT the correctness oracle (a two-leg strategy partially cancels its own sign errors → weak oracle).
 Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-run byte-identical.
 **Plans**: 4 plans (3 waves)
-- [ ] 06-01-PLAN.md — PairStrategy base + pair dispatch type-branch in StrategiesHandler + Wave-0 collectible test stubs
+- [x] 06-01-PLAN.md — PairStrategy base + pair dispatch type-branch in StrategiesHandler + Wave-0 collectible test stubs
 - [ ] 06-02-PLAN.md — ETH/BTC reference pair strategy (log-OLS β freeze, z-score crossing firing, β-weighted explicit-quantity entries) + hand-computed β/z unit tests
 - [ ] 06-03-PLAN.md — Dispatch unit tests (both legs / both-present guard / β-weighted + LONG_SHORT) + close-only/safe-when-flat exit-safety integration test (D-12)
 - [ ] 06-04-PLAN.md — ETH/BTC flagship end-to-end run, STABILITY snapshot (tests/golden/pair/, NOT the oracle) + determinism double-run + phase gate
@@ -355,7 +355,7 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | 4. Liquidation & Cross-Validation Re-baseline | 6/6 | Complete   | 2026-06-16 |
 | 5. Engine-Native Trailing Stops | 5/5 | Complete   | 2026-06-17 |
 | 5.1 Short Position Scale-In (INSERTED) | 2/2 | Complete   | 2026-06-17 |
-| 6. Pair-Trading Flagship | 0/TBD | Not started | - |
+| 6. Pair-Trading Flagship | 1/4 | In Progress|  |
 
 **Next:** Plan Phase 1 with `/gsd:plan-phase 1`.
 
