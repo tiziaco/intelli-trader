@@ -51,9 +51,9 @@ byte-identical hold throughout. Full design: PROJECT.md "Current Milestone: v1.4
 - [x] **Phase 2: Margin Accounting & Leverage** - Reserve `initial_margin = notional/leverage`, reject over-leverage, track maintenance margin, levered Kelly > 1 (owner-gated) — completed 2026-06-15 (9/9 plans; +LEV-03 discovered/closed)
 - [x] **Phase 3: Shorts & Borrow Carry** - First-class short direction (LONG_ONLY guard removed, CR-01 cover-arm fixed), short PnL, borrow-interest accrual (owner-gated) — completed 2026-06-15 (6/6 plans; review BLOCKER CR-01 found+fixed inline)
 - [x] **Phase 4: Liquidation & Cross-Validation Re-baseline** - Bar-close maintenance-margin breach → forced-close `FillEvent`; the owner-gated accounting-core golden re-baseline cross-validated against backtesting.py/backtrader (owner-gated) — completed 2026-06-16 (6/6 plans; owner-signed golden freeze; review BLOCKER CR-01 found+fixed via debug → fill-at-liq-price)
-- [ ] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated)
-- [ ] **Phase 5.1: Short Position Scale-In (Margin Increase)** *(INSERTED)* - Lift the unconditional short-increase admission rejection behind the `allow_increase` flag (mirror the long path); reuse the existing `resolve_entry` sizing + margin SCALE-IN settlement; flip/split stays a fail-loud guard, out of scope; own re-baseline + cross-validation (owner-gated)
-- [ ] **Phase 6: Pair-Trading Flagship** - Market-neutral long/short cointegration/spread strategy end-to-end; flagship demo (NOT the correctness oracle); final, slip-able capstone
+- [x] **Phase 5: Engine-Native Trailing Stops** - `TRAILING_STOP` order type + `MatchingEngine` ratchet (closed-bar/next-bar look-ahead); own re-baseline + cross-validation (owner-gated) — completed 2026-06-17 (5/5 plans)
+- [x] **Phase 5.1: Short Position Scale-In (Margin Increase)** *(INSERTED)* - Lift the unconditional short-increase admission rejection behind the `allow_increase` flag (mirror the long path); reuse the existing `resolve_entry` sizing + margin SCALE-IN settlement; flip/split stays a fail-loud guard, out of scope; own re-baseline + cross-validation (owner-gated) — completed 2026-06-17 (2/2 plans)
+- [x] **Phase 6: Pair-Trading Flagship** - Market-neutral long/short cointegration/spread strategy end-to-end; flagship demo (NOT the correctness oracle); final, slip-able capstone — completed 2026-06-22 (4/4 plans; verification passed 14/14; code review 2 advisory blockers, non-gating at pinned β)
 
 <details>
 <summary>✅ v1.3 — Engine Surface Completion (Phases 1-6) — SHIPPED 2026-06-14</summary>
@@ -328,7 +328,11 @@ primary correctness oracle; the crafted scenarios under XVAL-01 are).
 **Re-baseline**: Capstone — additive flagship strategy, not a re-baseline of the SMA_MACD oracle.
 NOT the correctness oracle (a two-leg strategy partially cancels its own sign errors → weak oracle).
 Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-run byte-identical.
-**Plans**: TBD
+**Plans**: 4 plans (3 waves)
+- [x] 06-01-PLAN.md — PairStrategy base + pair dispatch type-branch in StrategiesHandler + Wave-0 collectible test stubs
+- [x] 06-02-PLAN.md — ETH/BTC reference pair strategy (log-OLS β freeze, z-score crossing firing, β-weighted explicit-quantity entries) + hand-computed β/z unit tests
+- [x] 06-03-PLAN.md — Dispatch unit tests (both legs / both-present guard / β-weighted + LONG_SHORT) + close-only/safe-when-flat exit-safety integration test (D-12)
+- [x] 06-04-PLAN.md — ETH/BTC flagship end-to-end run, STABILITY snapshot (tests/golden/pair/, NOT the oracle) + determinism double-run + phase gate
 
 ## Progress
 
@@ -351,9 +355,9 @@ Slip-able to an immediate follow-on. `mypy --strict` clean; determinism double-r
 | 4. Liquidation & Cross-Validation Re-baseline | 6/6 | Complete   | 2026-06-16 |
 | 5. Engine-Native Trailing Stops | 5/5 | Complete   | 2026-06-17 |
 | 5.1 Short Position Scale-In (INSERTED) | 2/2 | Complete   | 2026-06-17 |
-| 6. Pair-Trading Flagship | 0/TBD | Not started | - |
+| 6. Pair-Trading Flagship | 4/4 | Complete   | 2026-06-22 |
 
-**Next:** Plan Phase 1 with `/gsd:plan-phase 1`.
+**Next:** v1.4 fully complete (Phases 1–6, incl. 5.1). Close the milestone with `/gsd:complete-milestone`.
 
 ## Backlog
 
