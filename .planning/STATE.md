@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-22 — v1.4 Margin, Leverage, Shorts 
 Phase: Milestone v1.4 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-22 — Milestone v1.4 completed and archived
+Last activity: 2026-06-22 — Completed quick task 260622-vlh: durable evals/ benchmark harness (PERF-BASELINE Step 1)
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -255,6 +255,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 | 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger | 2026-06-14 | 191e21f | | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
 | 260622-pmk | Audited admission rejection for unfunded short increase (close P05.1 WR-03) | 2026-06-22 | 9270146 | Verified | [260622-pmk-audited-admission-rejection-for-unfunded](./quick/260622-pmk-audited-admission-rejection-for-unfunded/) |
+| 260622-vlh | Durable evals/ benchmark harness (PERF-BASELINE Step 1): hardened CCXT fetch + 4×5m CSVs, coverage strategies A–D, W1 topology + W2 synthetic generator, W1/W2 runners, scalene dev dep | 2026-06-22 | bbc5987 | Verified | [260622-vlh-build-the-durable-evals-benchmark-harnes](./quick/260622-vlh-build-the-durable-evals-benchmark-harnes/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
