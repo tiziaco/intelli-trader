@@ -10,112 +10,76 @@ files_reviewed_list:
   - .gitignore
 findings:
   critical: 0
-  warning: 2
-  info: 2
-  total: 4
-status: issues_found
+  warning: 0
+  info: 0
+  total: 0
+status: clean
 ---
 
-# Phase 01: Code Review Report
+# Phase 01: Code Review Report (Post-Fix Re-Review, iteration 2)
 
-**Reviewed:** 2026-06-23
+**Reviewed:** 2026-06-23T00:00:00Z
 **Depth:** standard
 **Files Reviewed:** 4
-**Status:** issues_found
+**Status:** clean
 
 ## Summary
 
-Tooling-only phase: a performance-measurement harness plus build/ignore wiring. No
-`itrader/` engine code was touched, so the review is scoped to the perf-harness diff
-vs base `12355c1`.
+This is the post-fix re-review of the `--auto` fix loop (iteration 2). The prior
+review found 0 critical / 2 warning / 2 info. All four findings were fixed in
+commits `ca4fd12` (WR-01), `1f7ade0` (WR-02), `02efa97` (IN-01), `c2a8bef`
+(IN-02). This re-review (1) confirms each prior finding is genuinely resolved and
+(2) checks the fix commits did not introduce new defects or regress load-bearing
+semantics.
 
-The phase's load-bearing requirements all verified clean:
+All four prior findings are resolved, no new issues were introduced, and every
+load-bearing invariant re-verified directly holds. Status is **clean**.
 
-- **`_check_regression` soft-guard is correct.** The fail condition is `wall_d > band_pct`
-  with no `abs()` — an improvement (negative delta) returns 0, only a real `>+5%` slowdown
-  returns 1. Peak memory is reported but never fails the gate. Matches the D-02/D-04 contract.
-- **`_to_baseline_schema` money discipline holds.** `final_equity` is the string constant
-  `"46189.87730727451"`, never a JSON float. The other numeric metrics are correctly rounded
-  perf measurements, not money.
-- **`perf-w1` is profiler-free.** The gated target runs `run_w1_benchmark --check` with no
-  scalene wrapping; profiling is isolated in `perf-profile` (two-step run→view).
-- **`.gitignore` ignore lines are narrow.** `perf/results/scalene-*.json` ignores the profile
-  artifact but does NOT sweep the committed `W1-BASELINE.json` (confirmed via `git check-ignore`
-  and `git ls-files`: baseline is tracked, scalene json is not).
-- **`--json` argparse wiring** in both runners is correct.
+### Prior findings — resolution status
 
-Two WARNING-level build/robustness defects remain (a missing `.PHONY` entry and an
-unguarded division in the soft guard), plus two INFO items.
+- **WR-01 (perf-view missing from .PHONY)** — RESOLVED. `Makefile:6` now lists
+  `perf-view` in the `.PHONY` line alongside the other perf targets.
+- **WR-02 (ZeroDivisionError on zero/malformed baseline)** — RESOLVED.
+  `run_w1_benchmark.py:208-211` adds the guard `if base_wall <= 0: ... return 1`
+  ahead of the division at line 212. It degrades to the documented worst case
+  (`return 1` with a clear message) instead of raising. The companion `mem_d`
+  computation at line 215 independently guards `base_mem > 0` (NaN fallback), so
+  neither division can crash.
+- **IN-01 (--baseline-out + --check self-comparison)** — RESOLVED.
+  `run_w1_benchmark.py:239-242` warns loudly when both flags are combined while
+  preserving documented precedence (baseline written, then the meaningless check
+  runs). Each flag still works alone.
+- **IN-02 (perf-profile scalene-json freshness)** — RESOLVED. `Makefile:126`
+  adds `@test -s perf/results/scalene-w1.json || { ...; exit 1; }` between the
+  profile run and the viewer step, so a failed/empty profile aborts before
+  `scalene view`.
 
-## Warnings
+### Load-bearing invariants — re-verified directly
 
-### WR-01: `perf-view` target is missing from `.PHONY`
+- `_check_regression` fails ONLY on `wall_d > band_pct` (`:218`, no `abs()`);
+  improvement / within-band returns 0; the new zero-baseline guard returns 1
+  without raising. CONFIRMED.
+- `_to_baseline_schema` untouched; `final_equity` is still the STRING
+  `"46189.87730727451"` (`:176`). CONFIRMED.
+- `perf-w1` is profiler-free (`Makefile:101`, `--check` only); `perf-profile` is
+  the two-step run → view (`Makefile:121-127`). CONFIRMED.
+- `.gitignore` stays narrow: `perf/results/W1-BASELINE.json` is git-tracked and
+  NOT ignored; only `perf/results/scalene-*.json` is ignored. CONFIRMED via
+  `git ls-files` + `git check-ignore`.
+- perf/ runner files contain no tab indentation (4-space); Makefile recipe lines
+  are literal tabs. CONFIRMED via `grep -P '\t'`.
 
-**File:** `Makefile:6` (declaration) / `Makefile:129` (target)
-**Issue:** The `.PHONY` line declares `perf-w1 perf-w2 perf-baseline perf-profile` but the
-phase also added a fifth perf target, `perf-view` (line 129), which is NOT listed. `perf-view`
-produces no file named `perf-view`, so it is a phony recipe. If a file or directory named
-`perf-view` ever appears at the repo root, `make perf-view` will report "Nothing to be done"
-and silently skip the viewer — the exact class of footgun `.PHONY` exists to prevent. Every
-other recipe in this file that produces no same-named file is declared phony; this one breaks
-that invariant.
-**Fix:**
-```makefile
-.PHONY: init-env clean test test-unit test-integration test-e2e test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-profile perf-view
-```
+## Narrative Findings (AI reviewer)
 
-### WR-02: `_check_regression` divides by the baseline with no zero-guard — crashes instead of soft-failing
-
-**File:** `perf/runners/run_w1_benchmark.py:203-204`
-**Issue:** The deltas are computed as `(wall - base_wall) / base_wall * 100.0` and
-`(mem - base_mem) / base_mem * 100.0`. If `base_wall` or `base_mem` read from the baseline
-JSON is `0` (a hand-edited, truncated, or freshly-stubbed `W1-BASELINE.json`), this raises an
-uncaught `ZeroDivisionError` and aborts the run with a traceback. The function is documented
-as a *soft* guard whose worst case is `return 1`; a crash on a malformed baseline violates that
-contract and is harder to diagnose than a clear message. A current well-formed baseline rounds
-to `247.5` / `167.3` so this does not fire today, but the guard should degrade gracefully.
-**Fix:**
-```python
-    base_wall = base["metric"]["wall_clock_s"]
-    base_mem = base["metric"]["peak_mem_mb"]
-    if base_wall <= 0:
-        print(f"PERF GUARD: baseline wall_clock_s is {base_wall} — refusing to "
-              "compute a delta against a zero/invalid baseline")
-        return 1
-    ...
-    mem_d = (mem - base_mem) / base_mem * 100.0 if base_mem else float("nan")
-```
-
-## Info
-
-### IN-01: `--baseline-out` and `--check` together compare a run against itself
-
-**File:** `perf/runners/run_w1_benchmark.py:225-228`
-**Issue:** In `main()`, when both `--baseline-out perf/results/W1-BASELINE.json` and `--check`
-are passed, the baseline is written first (line 226), then `_check_regression` re-reads that
-same path (line 228). The delta is therefore always ~0% and the guard can never fail — a
-silently meaningless self-comparison. The Makefile never combines the two flags, so this is
-latent, not active. Consider making the two flags mutually exclusive (an argparse mutually
-exclusive group) or skipping the `--check` step when `--baseline-out` targets the same path.
-**Fix:** Add `parser.add_mutually_exclusive_group()` for `--check` vs `--baseline-out`, or
-emit a warning when both are supplied.
-
-### IN-02: `perf-profile` runs the viewer unconditionally even if the scalene profiling run failed
-
-**File:** `Makefile:121-126`
-**Issue:** The two commands in `perf-profile` sit on separate recipe lines, so `make` will
-abort the recipe if `scalene run` exits non-zero — that part is fine. But if `scalene run`
-exits `0` while writing an empty/partial `perf/results/scalene-w1.json` (e.g. interrupted
-mid-write), the immediately-following `scalene view` is invoked on a stale/garbage file with no
-freshness check. This is a manual-review convenience target, not a gate, so impact is low.
-Optionally gate the view step on a non-empty output, e.g. `[ -s perf/results/scalene-w1.json ]`.
-**Fix:** Prefix the view step with a size check:
-```makefile
-	@test -s perf/results/scalene-w1.json || { echo "scalene-w1.json missing/empty — profile run failed"; exit 1; }
-```
+No critical issues, warnings, or info items. The four fix commits are clean:
+each is a minimal, targeted change that resolves its finding without touching
+adjacent semantics. The new WR-02 zero-baseline guard correctly precedes both
+division sites; the `--baseline-out`/`--check` ordering keeps each flag
+functional in isolation. No new null/edge-case, security, or quality defects
+were introduced, and no previously-sound behavior regressed.
 
 ---
 
-_Reviewed: 2026-06-23_
+_Reviewed: 2026-06-23T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
