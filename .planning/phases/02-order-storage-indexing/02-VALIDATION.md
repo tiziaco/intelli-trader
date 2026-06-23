@@ -1,9 +1,9 @@
 ---
 phase: 2
 slug: order-storage-indexing
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-06-23
 ---
 
@@ -45,7 +45,11 @@ created: 2026-06-23
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | Status |
 |---------|------|------|-------------|-----------|-------------------|--------|
-| TBD | TBD | TBD | PERF-01 | unit | `poetry run pytest tests/unit/order/test_order_storage.py -q` | ⬜ pending |
+| 02-01-T1 | 02-01 | 1 | PERF-01 | unit | `poetry run pytest tests/unit/order/test_order_storage.py -x -q && poetry run mypy --strict itrader/order_handler/storage/in_memory_storage.py` | ⬜ pending |
+| 02-01-T2 | 02-01 | 1 | PERF-01 | unit | `poetry run pytest tests/unit/order/test_order_storage.py -x -q && poetry run mypy --strict itrader/order_handler/storage/in_memory_storage.py` | ⬜ pending |
+| 02-01-T3 | 02-01 | 1 | PERF-01 (gate a) | unit + oracle + determinism | `poetry run pytest tests/unit/order/test_order_storage.py -q && poetry run pytest tests/integration/test_backtest_oracle.py -q && poetry run pytest tests/e2e/robust/test_determinism.py -q && poetry run mypy --strict itrader` | ⬜ pending |
+| 02-02-T1 | 02-02 | 2 | PERF-01 (gate b) | manual perf | `make perf-w1` — human-read Δ ≥5% vs W1-BASELINE.json (~247.5 s; target ≤235.1 s) | ⬜ pending |
+| 02-02-T2 | 02-02 | 2 | PERF-01 (gate b) | manual action | `make perf-baseline` — re-freeze the new locked W1-BASELINE.json | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -72,11 +76,11 @@ created: 2026-06-23
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies (02-01 tasks automated; 02-02 tasks are inherently-manual gate (b) checkpoints per RESEARCH A2)
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify (all three 02-01 tasks carry an automated verify)
+- [x] Wave 0 covers all MISSING references (no MISSING refs — existing pytest + oracle infra covers the phase)
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s (per-task unit loop is seconds-fast; the oracle/perf runs are gate runs, not the per-task loop)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-06-23
