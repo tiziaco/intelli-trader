@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-22 — v1.4 Margin, Leverage, Shorts 
 Phase: Milestone v1.4 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-22 — Completed quick task 260622-vlh: durable evals/ benchmark harness (PERF-BASELINE Step 1)
+Last activity: 2026-06-23 — Completed quick task 260623-ajs: enriched end-of-run backtest summary print
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -256,6 +256,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger | 2026-06-14 | 191e21f | | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
 | 260622-pmk | Audited admission rejection for unfunded short increase (close P05.1 WR-03) | 2026-06-22 | 9270146 | Verified | [260622-pmk-audited-admission-rejection-for-unfunded](./quick/260622-pmk-audited-admission-rejection-for-unfunded/) |
 | 260622-vlh | Durable evals/ benchmark harness (PERF-BASELINE Step 1): hardened CCXT fetch + 4×5m CSVs, coverage strategies A–D, W1 topology + W2 synthetic generator, W1/W2 runners, scalene dev dep | 2026-06-22 | bbc5987 | Verified | [260622-vlh-build-the-durable-evals-benchmark-harnes](./quick/260622-vlh-build-the-durable-evals-benchmark-harnes/) |
+| 260623-ajs | Enriched end-of-run backtest summary print: 9 guarded derived metrics + format_backtest_summary grouped block (Capital/Trades/Risk-Return), run-level Period+Duration header, per-portfolio instrument list; display-only / oracle-inert | 2026-06-23 | ef0dd6e | | [260623-ajs-enriched-backtest-summary-print](./quick/260623-ajs-enriched-backtest-summary-print/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
