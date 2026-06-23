@@ -335,7 +335,15 @@ class Portfolio(object):
 				(prior.side == PositionSide.LONG and transaction.type == TransactionType.BUY)
 				or (prior.side == PositionSide.SHORT and transaction.type == TransactionType.SELL)
 			)
-		if not is_increase and transaction.quantity > prior_qty:
+		# Raise ONLY on a GROSS over-sell — a real logic error (the 64-BTC
+		# phantom-equity case from .planning/debug/spot-long-only-oversell.md,
+		# guard origin: quick task 260623-gao). A sub-close-tolerance excess
+		# (e.g. 1E-27 per-add bracket-child requantization on a pyramided
+		# position) is Decimal quantization noise, NOT an over-sell — absorb it
+		# as a clean full close: it passes here and `_should_close_position`
+		# (abs(net) <= tolerance) settles the residual to flat (260623-h6i debug
+		# session). Reuse the existing PositionManager.tolerance (1e-5).
+		if not is_increase and (transaction.quantity - prior_qty) > self.position_manager.tolerance:
 			raise InvalidTransactionError(
 				"Spot close fill exceeds held quantity (over-sell not allowed — "
 				"cannot sell more than owned in a spot portfolio)",
@@ -425,7 +433,15 @@ class Portfolio(object):
 		# cash delta. Reject it BEFORE any mutation/settlement. The full
 		# flip-settlement economics (split into full-close + fresh-open) are a
 		# Phase-3 (shorts) concern, where flips become reachable.
-		if not is_increase and transaction.quantity > prior_qty:
+		# Raise ONLY on a GROSS over-close — a real flip (the 64-BTC
+		# phantom-equity logic error, .planning/debug/spot-long-only-oversell.md;
+		# spot guard origin: quick task 260623-gao). A sub-close-tolerance excess
+		# (1E-27 per-add bracket-child requantization on a pyramided position) is
+		# Decimal quantization noise, NOT a flip — absorb it as a clean full
+		# close: it passes here and `_should_close_position` (abs(net) <=
+		# tolerance) settles the residual to flat (260623-h6i debug session).
+		# Reuse the existing PositionManager.tolerance (1e-5).
+		if not is_increase and (transaction.quantity - prior_qty) > self.position_manager.tolerance:
 			raise InvalidTransactionError(
 				"Margin close fill exceeds open quantity (flip not supported "
 				"in Phase 2 — tracked for Phase 3 shorts)",
