@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-e2e test-cov backtest normalize-data precommit typecheck
+.PHONY: init-env clean test test-unit test-integration test-e2e test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-profile
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -87,4 +87,38 @@ normalize-data:
 
 precommit:
 	pre-commit run --all-files --hook-stage manual
+
+# Performance harness (v1.5). perf/ lives outside shipped itrader/. Targets inherit
+# the include .env / .EXPORT_ALL_VARIABLES idiom above, so W1_START_DATE / W1_END_DATE
+# env overrides flow through automatically (D-07: pinned default, env-overridable).
+
+# Clean W1 benchmark + delta vs frozen baseline + soft regression guard (gate b).
+# Default window pinned to the frozen 2-month slice (D-07); override with
+#   make perf-w1 W1_START_DATE=… W1_END_DATE=…
+# Carries NO scalene — the gated run is profiler-free (TOOL-02 structural split).
+perf-w1:
+	@echo "⏱️  W1 benchmark + regression guard (vs frozen baseline)..."
+	poetry run python -m perf.runners.run_w1_benchmark --check
+
+# W2 synthetic scaling sweep {1,10,50} symbols (human table; --json for machine output).
+perf-w2:
+	@echo "📈 W2 scaling sweep {1,10,50} symbols..."
+	poetry run python -m perf.runners.run_w2_sweep
+
+# RE-FREEZE the W1 baseline: clean run, write committed perf/results/W1-BASELINE.json
+# (TOOL-04, consumed in plan 02). Run BEFORE any optimization.
+perf-baseline:
+	@echo "🧊 Freezing W1 baseline → perf/results/W1-BASELINE.json..."
+	poetry run python -m perf.runners.run_w1_benchmark --baseline-out perf/results/W1-BASELINE.json
+
+# Scalene CPU profile → gitignored HTML (manual review). NEVER wraps the gated run.
+# Two steps: run (writes JSON) then view --html (renders scalene-profile.html) —
+# `scalene run --html` does NOT parse in 2.3.0 (Pitfall 1). $(CURDIR) = repo root.
+# Do NOT pass --profile-all (profiles Scalene's own thread) or --memory.
+perf-profile:
+	@echo "🔬 Scalene CPU profile (HTML, gitignored) — NOT the gated run..."
+	poetry run python -m scalene run --cpu-only --program-path $(CURDIR) \
+		-o perf/results/scalene-w1.json -m perf.runners.run_w1_benchmark
+	poetry run python -m scalene view --html perf/results/scalene-w1.json
+	@echo "   → wrote scalene-profile.html (gitignored)"
 
