@@ -230,6 +230,16 @@ def main() -> None:
     parser.add_argument("--baseline-out", metavar="PATH",
                         help="freeze: write the run as the committed baseline JSON")
     args = parser.parse_args()
+    # IN-01: --baseline-out + --check together would re-check a run against the
+    # baseline it JUST wrote (delta ~0%, a silently meaningless self-comparison).
+    # The Makefile never combines them; warn loudly so an ad-hoc invocation does
+    # not trust the always-passing self-check. Documented precedence: the baseline
+    # is still written, then the (meaningless) check runs — both flags keep working
+    # alone, only the combination is flagged.
+    if args.baseline_out and args.check:
+        print("PERF WARNING: --baseline-out and --check together compare a run "
+              "against the baseline it just wrote (delta ~0%) — the regression "
+              "guard cannot fail. Run --check against a PREVIOUSLY frozen baseline.")
     result = run_w1()                       # human stdout prints by default (D-06)
     if args.json:
         print(json.dumps(_to_baseline_schema(result), indent=2))
