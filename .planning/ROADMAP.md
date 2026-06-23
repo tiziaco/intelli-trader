@@ -7,7 +7,8 @@
 - ✅ **v1.2 — Consolidation** — Phases 1-6 (shipped 2026-06-12; numbering reset for v1.2, matching v1.1)
 - ✅ **v1.3 — Engine Surface Completion** — Phases 1-6 (shipped 2026-06-14; numbering reset; promoted Backlog 999.5)
 - ✅ **v1.4 — Margin, Leverage, Shorts & Trailing Stops** — Phases 1-6 + 5.1 (shipped 2026-06-22; numbering reset; promoted Backlog 999.4 / N+2)
-- 📋 **N+3 — Persistence & Performance** — Backlog (next)
+- 🚧 **v1.5 — Backtest Performance Optimization** — Phases 1-6 (active; numbering reset; performance half of Backlog 999.2, split out from Persistence)
+- 📋 **N+3b — Persistence** — Backlog (the persistence half of 999.2, split out; follows v1.5)
 - 📋 **N+4 — Live Trading Readiness** — Backlog (planned)
 
 Full milestone detail (phase goals, success criteria, per-plan breakdown) is archived per milestone:
@@ -32,11 +33,155 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 under
 > behavior-preserving cleanup milestone (Phases 1-6). The feature work formerly seeded as
 > "v1.2 — Engine Surface Completion" was promoted to **v1.3 — Engine Surface Completion**
 > (shipped 2026-06-14; it was Backlog Phase 999.5). **v1.4 — Margin, Leverage, Shorts &
-> Trailing Stops** (shipped 2026-06-22) promoted Backlog Phase 999.4 (N+2). The remaining
-> `999.x` entries are future milestones (N+3/N+4); **N+3 is next** — start it with
-> `/gsd:new-milestone`.
+> Trailing Stops** (shipped 2026-06-22) promoted Backlog Phase 999.4 (N+2). **v1.5 — Backtest
+> Performance Optimization** (active) promotes the **performance half** of Backlog 999.2 — the
+> profiler-guided, oracle-gated hot-path pass — and **splits Persistence out** into its own
+> following milestone (N+3b). The remaining `999.x` entries are future milestones (Persistence,
+> N+4 live).
 
 ## Phases
+
+### 🚧 v1.5 — Backtest Performance Optimization (Phases 1-6) — ACTIVE
+
+Phase numbering reset to Phase 1 (matching v1.1/v1.2/v1.3/v1.4). The performance analog of v1.2
+Consolidation: a **behavior-preserving** milestone that cuts the frozen W1 baseline (240.8 s /
+167.3 MB) via profiler-ranked, oracle-gated hot-path optimizations — **changing no numbers**. Every
+optimization phase is gated on BOTH (a) the byte-exact SMA_MACD oracle staying green (134 trades /
+`final_equity 46189.87730727451`, `tests/integration/test_backtest_oracle.py`) AND (b) a measurable,
+locked W1 wall-clock and/or peak-memory improvement vs the frozen baseline, re-frozen after the
+phase. Held throughout: `mypy --strict` clean; Decimal end-to-end (every fix is *less repeated work*,
+never a float swap); single UUIDv7; determinism double-run byte-identical. Source: the v1.5 spike
+[`perf/results/PERF-BASELINE-RESULTS.md`](../perf/results/PERF-BASELINE-RESULTS.md) (the spike IS the
+research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADMAP.md).
+
+- [ ] **Phase 1: Perf Tooling & Baseline** — root-Makefile `perf-*` targets, two-mode benchmark/Scalene-profile runner, cross-validation runners, re-freeze the baseline (TOOL-01..04)
+- [ ] **Phase 2: Order-Storage Indexing** — derived secondary indexes over the flat `{id: order}` dict (D-20 source of truth), Postgres-extensible interface (PERF-01, ~37% CPU)
+- [ ] **Phase 3: Running PnL Accumulator** — maintain realised PnL on close, stop the per-bar re-sum; opportunistic in-file CONCERNS cleanups allowed (PERF-02, ~13% CPU)
+- [ ] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
+- [ ] **Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)** — rolling/memoized SMA & MACD replacing the per-bar full-window `ta` rebuild, byte-exact (PERF-05, ~24% CPU)
+- [ ] **Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)** — reduce per-tick `iloc` frame copies, preserving the look-ahead bar-timing contract (PERF-06, ~4% W1 / ~22% W2)
+
+## Phase Details
+
+### Phase 1: Perf Tooling & Baseline
+**Goal**: A repeatable measurement harness exists in the root Makefile so every later phase has an
+honest, gated way to prove its W1 improvement — and the W1 baseline is re-frozen as the locked
+reference before any optimization touches engine code.
+**Depends on**: Nothing (first phase; the prerequisite for every optimization gate)
+**Requirements**: TOOL-01, TOOL-02, TOOL-03, TOOL-04
+**Success Criteria** (what must be TRUE):
+  1. The root Makefile exposes a `make perf-*` command surface (at least `perf-w1`, `perf-w2`,
+     `perf-baseline`, `perf-profile`, `perf-crossval`) that inherits `include .env` /
+     `.EXPORT_ALL_VARIABLES`.
+  2. The W1 runner has two clearly separated modes — a clean **benchmark** (profiler-free, the gated
+     timing run that produces the frozen number) and a **separate** Scalene `--cpu-only --html
+     --program-path` **profile** command that writes a gitignored HTML artifact; profiling never
+     wraps the timed/gated run.
+  3. `backtesting.py` + `backtrader` cross-validation comparison runners exist for the performance
+     reference path and reconcile against the iTrader result (spec §13).
+  4. The W1 baseline is re-frozen by a clean benchmark run after TOOL-01..03 land and BEFORE any
+     optimization — recorded as the locked reference (≈ 240.8 s / 167.3 MB) every later phase is
+     judged against.
+  5. The byte-exact SMA_MACD oracle is green (134 trades / `final_equity 46189.87730727451`); no
+     engine code changed in this phase (tooling + measurement only).
+**Plans**: TBD
+
+### Phase 2: Order-Storage Indexing
+**Goal**: Order-storage queries stop linear-scanning the full flat `{id: order}` dict, removing the
+single largest W1 hotspot (~37% CPU) — with the flat dict still the source of truth (D-20) and the
+interface designed so a future Postgres backend satisfies the same contract.
+**Depends on**: Phase 1 (the harness/baseline must exist to measure gate (b))
+**Requirements**: PERF-01
+**Success Criteria** (what must be TRUE):
+  1. `get_orders_by_status`, by-portfolio, and active queries resolve via derived secondary indexes
+     maintained over the flat dict — no O(all-orders-ever) rescan on the per-bar `on_tick` /
+     admission / reconcile path.
+  2. The flat `{id: order}` dict remains the source of truth (D-20 — all orders kept for audit); the
+     indexes are caches kept consistent on every insert/transition/terminal write.
+  3. The `OrderStorage` interface is designed for extension so a future Postgres backend satisfies
+     the same contract (no in-memory-only assumptions leak into the seam).
+  4. **Gate (a):** the byte-exact SMA_MACD oracle is green (134 / `46189.87730727451`); `mypy
+     --strict` clean; determinism double-run byte-identical.
+  5. **Gate (b):** the clean W1 benchmark shows a measurable wall-clock improvement vs the Phase 1
+     re-frozen baseline, re-frozen as the new locked reference.
+**Plans**: TBD
+
+### Phase 3: Running PnL Accumulator
+**Goal**: Realised PnL is maintained as a running accumulator updated on position close, eliminating
+the per-bar re-summation over all open+closed positions (~13% CPU) — Decimal preserved (this is
+*less re-summation*, never a float swap).
+**Depends on**: Phase 1 (harness/baseline). Independent of Phase 2 (different subsystem) but
+sequenced after it by payoff order.
+**Requirements**: PERF-02
+**Success Criteria** (what must be TRUE):
+  1. `get_total_realized_pnl` returns a running accumulator updated on position close — no per-bar
+     re-sum over all positions; the `+=` stays Decimal.
+  2. Per-bar equity/metrics that consumed the re-sum produce identical values to the baseline (the
+     accumulator is mathematically equal to the prior sum at every bar).
+  3. Opportunistic zero-behavior in-file CONCERNS cleanups in `position_manager.py` / `portfolio.py`
+     are allowed as separate atomic commits with the oracle staying green (per the milestone scope
+     exception) — no behavior change.
+  4. **Gate (a):** the byte-exact SMA_MACD oracle is green (134 / `46189.87730727451`); `mypy
+     --strict` clean; determinism double-run byte-identical.
+  5. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
+     baseline, re-frozen as the new locked reference.
+**Plans**: TBD
+
+### Phase 4: Hot-Path Discipline
+**Goal**: The per-bar path stops paying structural waste on two behavior-only sinks — hot-loop
+logging (~6% W1 / ~22% W2) and re-resolved type hints (~2% W1 / ~14% W2) — neither of which has a
+numeric surface, so they bundle cleanly into one discipline phase.
+**Depends on**: Phase 1 (harness/baseline)
+**Requirements**: PERF-03, PERF-04
+**Success Criteria** (what must be TRUE):
+  1. Hot-loop log calls are level-gated (cached `isEnabledFor`/bool); per-bar admission-rejection
+     warnings are demoted/sampled; `debug()` calls are removed from the per-bar path — no log call
+     pays pipeline overhead when it would not emit.
+  2. `get_type_hints` is memoized per class in `Strategy.to_dict` (resolved once per class, not
+     per signal snapshot) — identical hint output, no per-signal re-walk of the MRO.
+  3. No emitted-log content or signal-snapshot content changes on any path the oracle or e2e leaves
+     observe (behavior-only; demotion/sampling affects volume, not correctness).
+  4. **Gate (a):** the byte-exact SMA_MACD oracle is green (134 / `46189.87730727451`); `mypy
+     --strict` clean; determinism double-run byte-identical.
+  5. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
+     baseline, re-frozen as the new locked reference.
+**Plans**: TBD
+
+### Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)
+**Goal**: SMA & MACD compute incrementally (rolling/memoized) instead of a full-window `ta` rebuild
+every bar — the largest single CPU chunk (~24%, hotspots #2+#7) — reproducing `[BYTE-EXACT]` output,
+isolated as the last and highest-care phase with the oracle as the lock.
+**Depends on**: Phase 1 (harness/baseline). Sequenced LAST and isolated (the byte-exact constraint
+makes any bundled change unattributable).
+**Requirements**: PERF-05
+**Success Criteria** (what must be TRUE):
+  1. `_SMA.compute` and `_MACDHist.compute` produce values **bit-identical** to the full-window `ta`
+     rebuild they replace (no fresh `ta` object / re-slice / `dropna` copy per bar).
+  2. The incremental state is look-ahead-safe and deterministic (no future bars visible; same
+     warmup/visibility semantics as the framework-derived `warmup == max_window`).
+  3. **Gate (a):** the byte-exact SMA_MACD oracle is green (134 / `46189.87730727451`) — this is the
+     lock for the entire phase; `mypy --strict` clean; determinism double-run byte-identical.
+  4. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
+     baseline, re-frozen as the new locked reference.
+**Plans**: TBD
+
+### Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)
+**Goal**: Per-tick bar-feed window `iloc` frame copies are reduced (reusable view / cached slice
+bounds), preserving the look-ahead bar-timing contract — the #1 framework cost in symbol-dense runs
+(~22% W2, ~4% W1). Optional and slip-able to a follow-on without blocking the shippable core.
+**Depends on**: Phase 1 (harness/baseline). Independent of Phases 2-5; sequenced last as the optional
+contract-gated item.
+**Requirements**: PERF-06
+**Success Criteria** (what must be TRUE):
+  1. Per-tick window materialization reduces frame copies (reusable view / cached `searchsorted`
+     bounds) on the `BacktestBarFeed.window` path.
+  2. The look-ahead bar-timing contract is preserved — all 7 rules in `feed/bar_feed.py` hold; no
+     future bar becomes visible and no window content changes.
+  3. **Gate (a):** the byte-exact SMA_MACD oracle is green (134 / `46189.87730727451`); the e2e
+     suite is green; `mypy --strict` clean; determinism double-run byte-identical.
+  4. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
+     baseline, re-frozen as the new locked reference (most visible in the W2 symbol sweep).
+**Plans**: TBD
 
 <details>
 <summary>✅ v1.4 — Margin, Leverage, Shorts & Trailing Stops (Phases 1-6 + 5.1) — SHIPPED 2026-06-22</summary>
@@ -130,6 +275,17 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 
 ## Progress
 
+**Active milestone — v1.5 Backtest Performance Optimization:**
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. Perf Tooling & Baseline | 0/TBD | Not started | - |
+| 2. Order-Storage Indexing | 0/TBD | Not started | - |
+| 3. Running PnL Accumulator | 0/TBD | Not started | - |
+| 4. Hot-Path Discipline | 0/TBD | Not started | - |
+| 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
+| 6. Bar-Feed Window Copies (OPTIONAL) | 0/TBD | Not started | - |
+
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
 
 | Milestone | Phases | Plans | Status | Shipped |
@@ -140,12 +296,13 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | v1.3 — Engine Surface Completion | 1-6 | 20 | ✅ Shipped | 2026-06-14 |
 | v1.4 — Margin, Leverage, Shorts & Trailing Stops | 1-6 + 5.1 | 35 | ✅ Shipped | 2026-06-22 |
 
-**Next:** v1.4 shipped (tagged `v1.4`). N+3 — Persistence & Performance is next; start it with `/gsd:new-milestone`.
+**Next:** v1.5 active — plan Phase 1 with `/gsd:plan-phase 1`. After v1.5 ships, N+3b
+(Persistence — the split-out half of 999.2) and N+4 (Live Trading Readiness) remain in the Backlog.
 
 ## Backlog
 
 > Future **milestone-level** seeds — intent + rationale only, NOT detailed plans.
-> **Logical promotion order: N+3 (next) → N+4**
+> **Logical promotion order: N+3b Persistence (after v1.5) → N+4**
 > (the `N+x` labels carry the dependency order; the `999.x` decimals are just stable IDs
 > and need not match the order). Promote one at a time with `/gsd:review-backlog` (or
 > start it via `/gsd:new-milestone`); defer detailed planning until promotion so each
@@ -158,30 +315,38 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 > **N+1 (Backtest Trustworthiness: Breadth) shipped as v1.1 (2026-06-10).** **v1.2 —
 > Consolidation** (cleanup, Phases 1-6) shipped 2026-06-12. Engine Surface Completion (former
 > Backlog Phase 999.5) shipped as **v1.3** (2026-06-14). **N+2 — Margin, Leverage, Shorts &
-> Trailing Stops (former Backlog Phase 999.4) shipped as v1.4 (2026-06-22)** — full detail in
-> [`milestones/v1.4-ROADMAP.md`](./milestones/v1.4-ROADMAP.md). The remaining `999.x` entries
-> below are future milestones (N+3/N+4); **N+3 is next**.
+> Trailing Stops (former Backlog Phase 999.4) shipped as v1.4 (2026-06-22).** **Backlog 999.2 is
+> SPLIT:** its performance half is **active as v1.5 — Backtest Performance Optimization**; its
+> persistence half (below) is split out into its own following milestone. The remaining `999.x`
+> entries are future milestones (Persistence, N+4 live).
 
-### Phase 999.2: N+3 — Persistence & Performance (BACKLOG)
+### Phase 999.2: N+3b — Persistence (BACKLOG — performance half promoted to v1.5)
 
-**Goal:** Durable state + acceptable latency — the infra prerequisites for live trading.
-Must come AFTER the correctness work (N+1, N+2) so we are not optimizing/persisting
-unvalidated behavior.
-**Requirements:** TBD
+**Goal:** Durable PostgreSQL state — the infra prerequisite for live trading. The performance half
+of this backlog entry was **split out and promoted to v1.5** (Backtest Performance Optimization,
+active); **persistence remains here** as its own following milestone. Sequenced AFTER the
+performance work so we are not persisting unvalidated behavior.
+**Requirements:** TBD (PERSIST-01..03 seeded in v1.5 `REQUIREMENTS.md` v2 section)
 **Plans:** 0 plans
 
-Scope (intent only):
+> **SPLIT (2026-06-23):** the **#5 profiler-guided performance pass** was promoted to **v1.5**
+> (`perf/results/PERF-BASELINE-RESULTS.md` is the spike research; 10 reqs TOOL-01..04 + PERF-01..06).
+> Persistence is a live-path, DB-gated concern not covered by the backtest oracle (a different North
+> Star), so it follows v1.5 as its own milestone rather than bundling with the perf gate.
+
+Scope (intent only, persistence half):
 
 - **#4 permanent PostgreSQL storage** (orders, signals, fills, equity).
-  `PostgreSQLOrderStorage` is currently a `NotImplementedError` placeholder.
+  `PostgreSQLOrderStorage` is currently a `NotImplementedError` placeholder. The v1.5
+  order-storage indexing (PERF-01) designs its interface for extension so this backend satisfies
+  the same contract.
 
-- **#5 profiler-guided performance pass** (profiler already used to spot hotspots).
 - **#1 continued** — structural cleanup that the live-mode transition specifically demands.
 - **FL-06** — SQL injection + hardcoded creds in `SqlHandler` (deferred out of v1.3; module
   is quarantined, belongs with persistence/SQL work).
 
-Rationale: persistence + performance are cross-cutting infra, cleaner done together than
-bolted on during the live push.
+Rationale: persistence is cross-cutting live-path infra; sequenced after v1.5 perf so the engine it
+persists is both fast and validated.
 
 Plans:
 
@@ -191,7 +356,7 @@ Plans:
 
 **Goal:** Land the new operating mode as one coherent, testable thing. Do last — depends on
 validated multi-scenario behavior (N+1), the margin model (N+2), durable storage + latency
-(N+3), and a streaming data engine.
+(N+3 perf v1.5 + N+3b persistence), and a streaming data engine.
 **Requirements:** TBD
 **Plans:** 0 plans
 

@@ -90,26 +90,27 @@ Deferred to future milestones. Tracked, not in this roadmap.
 
 ## Traceability
 
-Empty until roadmap creation; the roadmapper maps each requirement to exactly one phase.
+Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md` Phase Details and
+`milestones/v1.5-ROADMAP.md` for phase goals + success criteria.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TOOL-01 | TBD | Pending |
-| TOOL-02 | TBD | Pending |
-| TOOL-03 | TBD | Pending |
-| TOOL-04 | TBD | Pending |
-| PERF-01 | TBD | Pending |
-| PERF-02 | TBD | Pending |
-| PERF-03 | TBD | Pending |
-| PERF-04 | TBD | Pending |
-| PERF-05 | TBD | Pending |
-| PERF-06 | TBD | Pending |
+| TOOL-01 | Phase 1 — Perf Tooling & Baseline | Pending |
+| TOOL-02 | Phase 1 — Perf Tooling & Baseline | Pending |
+| TOOL-03 | Phase 1 — Perf Tooling & Baseline | Pending |
+| TOOL-04 | Phase 1 — Perf Tooling & Baseline | Pending |
+| PERF-01 | Phase 2 — Order-Storage Indexing | Pending |
+| PERF-02 | Phase 3 — Running PnL Accumulator | Pending |
+| PERF-03 | Phase 4 — Hot-Path Discipline | Pending |
+| PERF-04 | Phase 4 — Hot-Path Discipline | Pending |
+| PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | Pending |
+| PERF-06 | Phase 6 — Bar-Feed Window Copies (OPTIONAL) | Pending |
 
 **Coverage:**
 - v1 requirements: 10 total (TOOL ×4 + PERF ×6; PERF-06 optional)
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 10 ⚠️
+- Mapped to phases: 10 ✓
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-23*
-*Last updated: 2026-06-23 — initial v1.5 definition from `perf/results/PERF-BASELINE-RESULTS.md` §6*
+*Last updated: 2026-06-23 — roadmap created; all 10 v1 requirements mapped to 6 phases (100% coverage). Source: `perf/results/PERF-BASELINE-RESULTS.md` §6.*
