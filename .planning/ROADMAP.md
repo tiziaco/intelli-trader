@@ -154,6 +154,24 @@ numeric surface, so they bundle cleanly into one discipline phase.
      baseline, re-frozen as the new locked reference.
 **Plans**: TBD
 
+> **Note — captured during Phase 1 (2026-06-23), concrete instance of criterion #1:** the W1 timed run
+> emits frequent `error`-level `OrderHandler` logs `Signal validation failed: Market validation failed -
+> ['Quantity ... below minimum 0.001']`. Root cause: the `FractionOfCash` coverage strategies
+> (A/B/C/D in `perf/strategies/`) size as `fraction × available_cash ÷ price`; as a portfolio's cash
+> depletes (C pyramids uncapped to exhaustion; B shares one cash pool across 3 symbols), the computed
+> quantity falls below the `0.001 BTC` venue minimum (`ExchangeLimits` fallback, BTCUSD
+> `Instrument.min_order_size` undeclared per D-01a) and the market validator correctly refuses the dust
+> order. **This is NOT a correctness defect** — the SMA_MACD oracle (134 / `46189.87730727451`) is a
+> separate run and is unaffected — but the `error`-level log volume burns CPU inside the W1 timed loop,
+> so demoting/sampling it is a legitimate PERF-03 win folded into criterion #1.
+>
+> **DISCUSS THE *HOW* AT PHASE 4 DISCUSS/PLAN TIME (do not pre-decide):** options include demote
+> `error`→`debug`/`warning`, cached `isEnabledFor` level-gate, sample/rate-limit, or drop the per-signal
+> rejection log entirely — and confirm clean measurement/attribution, since part of PERF-03's gate-(b)
+> speedup would come from removing this spam (the post-phase re-freeze must account for it). **Decided in
+> Phase 1 (do NOT revisit):** do NOT change `min_order_size` or the coverage-strategy sizing to silence
+> it — that is the wrong lever and would re-bake the frozen W1 baseline.
+
 ### Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)
 **Goal**: SMA & MACD compute incrementally (rolling/memoized) instead of a full-window `ta` rebuild
 every bar — the largest single CPU chunk (~24%, hotspots #2+#7) — reproducing `[BYTE-EXACT]` output,

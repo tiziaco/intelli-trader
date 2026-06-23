@@ -206,7 +206,15 @@ scope decisions:
 
 ### Pending Todos
 
-None yet.
+- **[Phase 4 / PERF-03] Demote the W1 sub-minimum rejection log (captured 2026-06-23).** W1 runs emit
+  frequent `error`-level `OrderHandler` "Quantity ... below minimum 0.001" logs — the `FractionOfCash`
+  coverage strategies size to dust as portfolio cash depletes and the validator correctly refuses them
+  (NOT a correctness defect; SMA_MACD oracle unaffected). The `error`-level volume costs CPU in the
+  timed loop → a legitimate PERF-03 win (folds into Phase 4 criterion #1). **HOW is undecided — discuss
+  at Phase 4 discuss/plan time** (demote vs level-gate vs sample vs drop; ensure clean gate-(b)
+  attribution + re-freeze). Do NOT change `min_order_size` or coverage sizing to silence it (wrong
+  lever, re-bakes the frozen baseline — decided Phase 1). Full note in ROADMAP §"Phase 4: Hot-Path
+  Discipline".
 
 ### Blockers/Concerns
 
