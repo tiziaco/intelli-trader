@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-22 — v1.4 Margin, Leverage, Shorts 
 Phase: Milestone v1.4 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-23 — Completed quick task 260623-f80: fix perf coverage instrument A over-selling (bracket-only recycle)
+Last activity: 2026-06-23 — Completed quick task 260623-gao: engine over-sell protection A+B (spot settlement guard + orphaned-bracket cancel), oracle byte-exact
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -260,6 +260,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | fast | Rename `evals/` → `perf/` (reserve `benchmarks/` for cross-framework comparison); updated package imports, README commands, docstrings | 2026-06-23 | ee77f37 | | — |
 | 260623-bmg | Fix perf coverage instruments B/C/D so positions recycle (boost trade density): added the missing exit leg to each (D short tp+sl bracket, B limit-long sl + tightened tp, C pyramiding tp) — 30d-slice fills jumped ~11→759, closed 0→291 across P2_B/P3_C/P4-6_D; coverage semantics unchanged | 2026-06-23 | 4cd2be7 | | [260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p](./quick/260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p/) |
 | 260623-f80 | Fix perf coverage instrument A over-selling: removed the cash-sized discretionary crossunder exit (sized off FractionOfCash(0.95), not the held qty → sold 65 vs held 1 → net-short inventory mislabeled LONG → $100k→$10M phantom equity → fills froze after Jan); now bracket-only (OCO sl/tp) so longs close cleanly & recycle. A-only full-window: fills spread Dec–Jun (251, was frozen 184), closed 61→125, equity sane $76,452 (was phantom $10M). Surfaced a SEPARATE engine anomaly (spot LONG_ONLY over-sell allowed) → /gsd:debug | 2026-06-23 | 3657d30 | | [260623-f80-fix-perf-coverage-instrument-a-over-sell](./quick/260623-f80-fix-perf-coverage-instrument-a-over-sell/) |
+| 260623-gao | Engine over-sell protection A+B (TDD, oracle-gated) for the spot LONG_ONLY over-sell / phantom-equity bug (diagnosed in .planning/debug/spot-long-only-oversell.md). A: ported the CR-02 over-close guard into the SPOT settlement path (portfolio.py _process_transaction_spot) — a reducing SELL exceeding held qty now raises InvalidTransactionError (was silent corruption). B: cancel orphaned bracket children on flatten-by-fill in the order domain (reconcile on_fill), scoped to (portfolio_id, ticker). Fix C (sign-aware net_quantity/market_value) left owner-gated/out-of-scope. Oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1231 green; mypy --strict clean | 2026-06-23 | c004672 | Verified | [260623-gao-engine-over-sell-protection-a-b-spot-set](./quick/260623-gao-engine-over-sell-protection-a-b-spot-set/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
