@@ -2,11 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: planning
-last_updated: "2026-06-23T14:56:46.444Z"
-last_activity: 2026-06-23
+status: Defining requirements
+stopped_at: Phase 1 context gathered (TOOL-03 dropped)
+last_updated: "2026-06-23T15:48:56.443Z"
+last_activity: 2026-06-23 — Milestone v1.5 started
 progress:
-  total_phases: 0
+  total_phases: 8
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -37,6 +38,7 @@ Last activity: 2026-06-23 — Milestone v1.5 started
 1. **Gate (a) — byte-exact oracle stays green:** `tests/integration/test_backtest_oracle.py` —
    SMA_MACD **134 trades / `final_equity 46189.87730727451`**. No golden is re-baselined anywhere in
    v1.5.
+
 2. **Gate (b) — measurable, locked W1 improvement:** the clean W1 benchmark shows a real wall-clock
    and/or peak-memory reduction vs the frozen baseline (**240.8 s / 167.3 MB**), **re-frozen after
    the phase** as the new locked reference the next phase is judged against.
@@ -49,6 +51,7 @@ no engine code and is held to gate (a) only.
 - `mypy --strict` clean across all source files
 - Decimal end-to-end — no new float-for-money; **every fix is *less repeated work*, never a float
   swap** (`float()` stays only at the serialization/logging edge); single UUIDv7 ID scheme
+
 - Determinism double-run byte-identical (reuse the seeded RNG + injected `BacktestClock`; introduce
   no new nondeterminism)
 
@@ -57,6 +60,7 @@ no engine code and is held to gate (a) only.
 - **Opportunistic in-file CONCERNS cleanups** are allowed ONLY where a perf phase already edits that
   file (notably P3 in `position_manager.py` / `portfolio.py`), as separate atomic commits, oracle
   staying green — zero behavior change. General CONCERNS.md tech debt stays OUT (its own future sweep).
+
 - **Persistence is split out** to its own following milestone (N+3b) — PostgreSQL storage + FL-06 are
   live-path, DB-gated, not covered by the backtest oracle. PERF-01 designs the `OrderStorage`
   interface for extension so that backend can satisfy the same contract later.
@@ -308,9 +312,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-17T13:54:24.830Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-pair-trading-flagship/06-CONTEXT.md
+Last session: 2026-06-23T15:48:56.435Z
+Stopped at: Phase 1 context gathered (TOOL-03 dropped)
+Resume file: .planning/phases/01-perf-tooling-baseline/01-CONTEXT.md
 
 ## Operator Next Steps
 
