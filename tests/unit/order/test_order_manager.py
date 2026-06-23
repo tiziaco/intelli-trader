@@ -437,7 +437,16 @@ def test_refused_parent_cancels_orphaned_bracket_children():
 
 def test_filled_parent_keeps_bracket_children_active(harness):
     """WR-05 guard: a parent that actually FILLED must NOT cancel its
-    protective children — they are the exit legs of the open position."""
+    protective children — they are the exit legs of the open position.
+
+    OVERSELL-B interaction: the production FILL route runs
+    ``portfolio_handler.on_fill`` BEFORE ``order_handler.on_fill`` (see
+    EventHandler._routes), so by the time reconcile reads the read-model the
+    parent's OPENING fill has already established the position — get_position is
+    non-None and the OVERSELL-B flatten-cancel correctly does NOT fire. This test
+    mirrors that route order so the order-domain reconcile sees the real open
+    position (without it, the isolated reconcile would see a phantom-flat
+    read-model and wrongly cancel the just-opened position's children)."""
     harness.handler.on_signal(harness.signal(stop_loss=30.0, take_profit=55.0))
     while not harness.queue.empty():
         harness.queue.get_nowait()
@@ -445,7 +454,11 @@ def test_filled_parent_keeps_bracket_children_active(harness):
         o for o in harness.storage.get_active_orders(harness.portfolio_id)
         if o.parent_order_id is None
     )
-    harness.handler.on_fill(harness.fill(primary, "EXECUTED"))
+    fill = harness.fill(primary, "EXECUTED")
+    # Production FILL route order: portfolio settles the fill (opens the
+    # position) BEFORE the order-domain reconcile reads the read-model.
+    harness.ptf_handler.on_fill(fill)
+    harness.handler.on_fill(fill)
     assert (
         harness.storage.get_order_by_id(primary.id, harness.portfolio_id).status
         == OrderStatus.FILLED
