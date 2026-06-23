@@ -441,6 +441,27 @@ def test_margin_over_close_fill_fails_loud(margin_portfolio):
         pf.process_transaction(over_close)
 
 
+def test_margin_sub_tolerance_over_close_absorbs_as_clean_close(margin_portfolio):
+    """260623-h6i: the margin CR-02 twin of the spot sub-tolerance test. A
+    sub-tolerance over-close (excess << PositionManager.tolerance, 1e-5) must NOT
+    raise — it is Decimal quantization dust, not a real over-close/flip. BUY 2
+    then SELL 2 + 1e-9 @ 55000 L=5: the 1e-9 excess passes the tolerance-aware
+    CR-02 guard and `_should_close_position` settles it to flat, releasing the
+    lock. Decimal-typed qty so the 1e-9 excess is exact, never a float artifact."""
+    pf = margin_portfolio
+    buy = _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, Decimal("2"), 0, 5)
+    pf.process_transaction(buy)
+
+    # Over-close by 1e-9 (<< tolerance 1e-5) — must NOT raise, settles to flat.
+    sell = _levered_txn(
+        TransactionType.SELL, "BTCUSDT", 55000, Decimal("2") + Decimal("1e-9"), 0, 5
+    )
+    pf.process_transaction(sell)
+
+    assert len(pf.positions) == 0
+    assert pf.cash_manager.locked_margin_total == Decimal("0")
+
+
 def test_margin_exact_full_close_still_succeeds(margin_portfolio):
     """The over-close guard must NOT regress an exact full-close: sell == open
     qty settles realized PnL and releases the whole lock unchanged."""

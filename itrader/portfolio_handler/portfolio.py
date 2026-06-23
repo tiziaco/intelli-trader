@@ -313,6 +313,43 @@ class Portfolio(object):
 		MUST stay so (the SMA_MACD golden oracle, 134 / 46189.87730727451,
 		regression-locks it). NO `/ leverage` ever touches this path (Pitfall 4).
 		"""
+		# OVERSELL-A / CR-02 (spot): fail loud on an over-close SELL BEFORE any
+		# mutation — mirror of the margin guard at _process_transaction_margin
+		# (portfolio.py:399-404). Root cause:
+		# .planning/debug/spot-long-only-oversell.md — the spot path applied any
+		# reducing fill UNCONDITIONALLY, so a SELL exceeding the held long settled
+		# silently into a net-short inventory mislabeled side=LONG with phantom
+		# positive market_value (the dangerous part: fail-fast did NOT trip). This
+		# is the documented "byte-exact site #2"; the guard is DARK on the SMA_MACD
+		# golden path (exits are clamped to net_quantity, so it never over-sells),
+		# so the oracle stays byte-exact (134 / 46189.87730727451). No clamp —
+		# match the margin path's fail-fast semantics (raise, never truncate).
+		ticker = transaction.ticker
+		prior = self.position_manager.get_position(ticker)
+		prior_qty = abs(prior.net_quantity) if prior is not None else Decimal("0")
+		# is_increase: a fill that moves in the position's OWN side.
+		if prior is None:
+			is_increase = True
+		else:
+			is_increase = (
+				(prior.side == PositionSide.LONG and transaction.type == TransactionType.BUY)
+				or (prior.side == PositionSide.SHORT and transaction.type == TransactionType.SELL)
+			)
+		# Raise ONLY on a GROSS over-sell — a real logic error (the 64-BTC
+		# phantom-equity case from .planning/debug/spot-long-only-oversell.md,
+		# guard origin: quick task 260623-gao). A sub-close-tolerance excess
+		# (e.g. 1E-27 per-add bracket-child requantization on a pyramided
+		# position) is Decimal quantization noise, NOT an over-sell — absorb it
+		# as a clean full close: it passes here and `_should_close_position`
+		# (abs(net) <= tolerance) settles the residual to flat (260623-h6i debug
+		# session). Reuse the existing PositionManager.tolerance (1e-5).
+		if not is_increase and (transaction.quantity - prior_qty) > self.position_manager.tolerance:
+			raise InvalidTransactionError(
+				"Spot close fill exceeds held quantity (over-sell not allowed — "
+				"cannot sell more than owned in a spot portfolio)",
+				{"closed": str(transaction.quantity), "open": str(prior_qty)},
+			)
+
 		# 2. Funds invariant on the debit side (D-10). The actual net cost is
 		#    the entity's own cash math (Transaction.net_cash_delta) — the
 		#    EXACT delta the interim seam computed (value preservation).
@@ -396,7 +433,15 @@ class Portfolio(object):
 		# cash delta. Reject it BEFORE any mutation/settlement. The full
 		# flip-settlement economics (split into full-close + fresh-open) are a
 		# Phase-3 (shorts) concern, where flips become reachable.
-		if not is_increase and transaction.quantity > prior_qty:
+		# Raise ONLY on a GROSS over-close — a real flip (the 64-BTC
+		# phantom-equity logic error, .planning/debug/spot-long-only-oversell.md;
+		# spot guard origin: quick task 260623-gao). A sub-close-tolerance excess
+		# (1E-27 per-add bracket-child requantization on a pyramided position) is
+		# Decimal quantization noise, NOT a flip — absorb it as a clean full
+		# close: it passes here and `_should_close_position` (abs(net) <=
+		# tolerance) settles the residual to flat (260623-h6i debug session).
+		# Reuse the existing PositionManager.tolerance (1e-5).
+		if not is_increase and (transaction.quantity - prior_qty) > self.position_manager.tolerance:
 			raise InvalidTransactionError(
 				"Margin close fill exceeds open quantity (flip not supported "
 				"in Phase 2 — tracked for Phase 3 shorts)",

@@ -200,10 +200,12 @@ class ReconcileManager:
 		-------
 		List[OrderEvent]
 			CANCEL OrderEvents for bracket children orphaned by a parent that
-			reached a terminal state without any fill (WR-05), plus the
-			fill-anchored PercentFromFill children created on the parent's
-			EXECUTED fill (D-13, Pattern 5 Option B). The manager never
-			touches the queue (D-18) — the handler enqueues these.
+			reached a terminal state without any fill (WR-05), CANCEL OrderEvents
+			for bracket children orphaned when an EXECUTED fill FLATTENED their
+			portfolio+ticker position (OVERSELL-B), plus the fill-anchored
+			PercentFromFill children created on the parent's EXECUTED fill (D-13,
+			Pattern 5 Option B). The manager never touches the queue (D-18) — the
+			handler enqueues these.
 		"""
 		out_events: List[OrderEvent] = []
 		order_id = getattr(fill_event, 'order_id', None)
@@ -296,6 +298,36 @@ class ReconcileManager:
 				if pending is not None and applied:
 					out_events.extend(
 						self.bracket_manager._create_fill_anchored_children(order, pending, fill_event))
+				# OVERSELL-B (the SEED fix): when an EXECUTED fill FLATTENS the
+				# (portfolio, ticker) position, cancel that portfolio+ticker's
+				# resting bracket children. Root cause:
+				# .planning/debug/spot-long-only-oversell.md — a discretionary
+				# market SELL flattens a bracketed long but the matching engine's
+				# OCO only cancels a bracket's OWN sibling, so the orphaned SL/TP
+				# survive and fire later as a SELL fill against a flat portfolio,
+				# bypassing admission and seeding the silent over-sell. This is
+				# DISTINCT from the WR-05 case above (a PARENT that terminated
+				# WITHOUT any fill); here a SEPARATE order's EXECUTED fill closed
+				# the position. Stays in the ORDER domain: reads the portfolio
+				# ONLY through the injected read-model and cancels ONLY through the
+				# injected coordinator callback (D-04 star / D-08 — no cross-domain
+				# reach). Oracle-dark: SMA_MACD declares no brackets.
+				if self.portfolio_handler is not None:
+					view = self.portfolio_handler.get_position(
+						fill_event.portfolio_id, fill_event.ticker)
+					if view is None:  # the fill closed the position — now FLAT
+						for active in self.order_storage.get_active_orders(fill_event.portfolio_id):
+							# Scope PRECISELY: same ticker, a bracket child
+							# (parent_order_id is not None), never the just-filled
+							# order itself, never other tickers / non-bracket orders.
+							if (active.ticker == fill_event.ticker
+									and active.parent_order_id is not None
+									and active.id != order.id):
+								child_result = self._cancel_order(
+									active.id, fill_event.portfolio_id,
+									reason=f"position {fill_event.ticker} flattened by fill {order.id}")
+								if child_result.success and child_result.order_events:
+									out_events.extend(child_result.order_events)
 			else:
 				self._brackets.consume(order_id)
 		except Exception as e:

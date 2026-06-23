@@ -43,6 +43,9 @@ class BacktestRunner:
 	def __init__(self, engine: Engine) -> None:
 		self.engine = engine
 		self.logger = get_itrader_logger().bind(component="BacktestRunner")
+		# 260623-ajs: the wall-clock run duration, captured AFTER the run so the
+		# end-of-run summary printer can surface it (previously only logged).
+		self.duration_seconds: float | None = None
 
 	def _initialise_backtest_session(self) -> None:
 		"""Derive membership, bind the feed factory, derive the ping clock, and
@@ -167,6 +170,9 @@ class BacktestRunner:
 		self.logger.info('    BACKTEST COMPLETED   ')
 		end_time = datetime.now()  # Capture end time
 		duration = end_time - start_time
+		# 260623-ajs: store the computed duration for the summary printer beside
+		# the existing structlog line (which is kept — no behaviour loss).
+		self.duration_seconds = duration.total_seconds()
 		self.logger.info('Backtest completed', duration_seconds=duration.total_seconds())
 
 	def run(self, on_tick: Optional[Callable[[Any, Any], None]] = None) -> None:

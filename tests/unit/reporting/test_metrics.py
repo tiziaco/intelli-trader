@@ -25,15 +25,25 @@ import pytest
 import itrader.reporting.metrics as metrics_module
 from itrader.reporting.metrics import (
     PERIODS,
+    avg_loss,
+    avg_trade_duration,
+    avg_trade_pnl,
+    avg_win,
+    best_trade,
     cagr,
+    calmar,
     compute_returns,
+    exposure_time,
+    format_backtest_summary,
     format_metrics,
     max_drawdown,
     profit_factor,
     rolling_sharpe,
     sharpe,
     sortino,
+    total_return,
     win_rate,
+    worst_trade,
 )
 
 
@@ -195,6 +205,252 @@ def test_rolling_sharpe_constant_returns_no_raise():
     returns = compute_returns(pd.Series([100.0, 100.0, 100.0]))
     result = rolling_sharpe(returns, window=2)
     assert len(result) == 3
+
+
+# --- Nine new derived metrics (Task 1) --------------------------------------
+#
+# Trade-duration / exposure fixtures (hand-computed, independent of pandas).
+# entry/exit deltas: [1 day, 2 days, 3 days] -> mean = 2 days = 172800.0 seconds.
+TRADE_DURATIONS = pd.DataFrame(
+    {
+        "entry_date": [
+            pd.Timestamp("2020-01-01"),
+            pd.Timestamp("2020-01-01"),
+            pd.Timestamp("2020-01-01"),
+        ],
+        "exit_date": [
+            pd.Timestamp("2020-01-02"),  # +1 day
+            pd.Timestamp("2020-01-03"),  # +2 days
+            pd.Timestamp("2020-01-04"),  # +3 days
+        ],
+    }
+)
+EMPTY_DURATIONS = pd.DataFrame(
+    {
+        "entry_date": pd.Series(dtype="datetime64[ns]"),
+        "exit_date": pd.Series(dtype="datetime64[ns]"),
+    }
+)
+
+# Exposure fixture: open_positions_count [0, 2, 0, 1] -> 2 of 4 bars open = 0.5.
+EXPOSURE_FRAME = pd.DataFrame({"open_positions_count": [0, 2, 0, 1]})
+EMPTY_EXPOSURE = pd.DataFrame({"open_positions_count": pd.Series(dtype=int)})
+
+
+def test_total_return_hand_fixture():
+    # equity 100 -> 121 => 121/100 - 1 = 0.21 exactly.
+    assert total_return(pd.Series([100.0, 121.0])) == pytest.approx(0.21)
+
+
+def test_total_return_empty_returns_zero():
+    assert total_return(pd.Series(dtype=float)) == 0.0
+
+
+def test_total_return_zero_start_returns_zero():
+    assert total_return(pd.Series([0.0, 100.0])) == 0.0
+
+
+def test_avg_trade_pnl_hand_fixture():
+    # mean([10, -5, 20]) = 25/3.
+    assert avg_trade_pnl(TRADES) == pytest.approx(25.0 / 3.0)
+
+
+def test_avg_trade_pnl_empty_returns_zero():
+    assert avg_trade_pnl(EMPTY_TRADES) == 0.0
+
+
+def test_avg_win_hand_fixture():
+    # mean over pnl>0 of [10, -5, 20] = mean([10, 20]) = 15.0.
+    assert avg_win(TRADES) == pytest.approx(15.0)
+
+
+def test_avg_win_no_winners_returns_zero():
+    assert avg_win(pd.DataFrame({"realised_pnl": [-10.0, -20.0]})) == 0.0
+
+
+def test_avg_loss_hand_fixture():
+    # mean over pnl<0 of [10, -5, 20] = mean([-5]) = -5.0 (NEGATIVE).
+    assert avg_loss(TRADES) == pytest.approx(-5.0)
+
+
+def test_avg_loss_no_losers_returns_zero():
+    assert avg_loss(pd.DataFrame({"realised_pnl": [10.0, 20.0]})) == 0.0
+
+
+def test_best_trade_hand_fixture():
+    assert best_trade(TRADES) == pytest.approx(20.0)
+
+
+def test_best_trade_empty_returns_zero():
+    assert best_trade(EMPTY_TRADES) == 0.0
+
+
+def test_worst_trade_hand_fixture():
+    assert worst_trade(TRADES) == pytest.approx(-5.0)
+
+
+def test_worst_trade_empty_returns_zero():
+    assert worst_trade(EMPTY_TRADES) == 0.0
+
+
+def test_avg_trade_duration_hand_fixture():
+    # deltas [1d, 2d, 3d] -> mean 2 days = 2 * 86400 = 172800.0 seconds.
+    assert avg_trade_duration(TRADE_DURATIONS) == pytest.approx(172800.0)
+
+
+def test_avg_trade_duration_empty_returns_zero():
+    assert avg_trade_duration(EMPTY_DURATIONS) == 0.0
+
+
+def test_exposure_time_hand_fixture():
+    # open_positions_count [0, 2, 0, 1] -> (count>0).mean() = 2/4 = 0.5.
+    assert exposure_time(EXPOSURE_FRAME) == pytest.approx(0.5)
+
+
+def test_exposure_time_empty_returns_zero():
+    assert exposure_time(EMPTY_EXPOSURE) == 0.0
+
+
+def test_calmar_hand_fixture():
+    # calmar = cagr(EQUITY) / abs(max_drawdown(EQUITY)); both already hand-tested.
+    expected = cagr(EQUITY) / abs(max_drawdown(EQUITY))
+    assert calmar(EQUITY) == pytest.approx(expected)
+
+
+def test_calmar_zero_drawdown_returns_zero():
+    # Monotonic equity -> drawdown 0 -> guarded to 0.0 (no ZeroDivisionError).
+    assert calmar(pd.Series([100.0, 110.0, 120.0])) == 0.0
+
+
+def test_calmar_empty_returns_zero():
+    assert calmar(pd.Series(dtype=float)) == 0.0
+
+
+# --- format_backtest_summary rendering (Task 2) -----------------------------
+def _portfolio_bag(**overrides):
+    """A fully-populated per-portfolio value bag for format_backtest_summary."""
+    bag = {
+        "name": "oracle_pf",
+        "tickers": ["BTCUSD"],
+        "starting_cash": 10000.0,
+        "final_cash": 8432.10,
+        "final_equity": 19910.55,
+        "realised_pnl": 9910.55,
+        "trade_count": 137,
+        "total_return": 0.9911,
+        "win_rate": 0.3657,
+        "profit_factor": 1.2911,
+        "avg_trade_pnl": 72.34,
+        "avg_win": 410.20,
+        "avg_loss": -122.55,
+        "best_trade": 1840.0,
+        "worst_trade": -612.30,
+        "avg_trade_duration": 4 * 86400 + 6 * 3600,  # 4d 6h
+        "exposure_time": 0.5820,
+        "cagr": 0.1991,
+        "sharpe": 0.6584,
+        "sortino": 1.0385,
+        "max_drawdown": -0.5383,
+        "calmar": 0.3698,
+    }
+    bag.update(overrides)
+    return bag
+
+
+def test_format_backtest_summary_percentages_and_ratios():
+    block = format_backtest_summary(
+        [_portfolio_bag()],
+        period=(pd.Timestamp("2018-01-01"), pd.Timestamp("2026-06-03"), 3076),
+        duration_seconds=3.42,
+    )
+    assert isinstance(block, str)
+    # Period renders as three tz-stripped lines: Start / End / Bars.
+    assert "2018-01-01 00:00:00" in block
+    assert "2026-06-03 00:00:00" in block
+    assert "Bars" in block
+    assert "3076" in block
+    # Percentages render value*100 with '%', signed where natural.
+    assert "+99.11%" in block       # total_return
+    assert "36.57%" in block        # win_rate
+    assert "58.20%" in block        # exposure_time
+    assert "19.91%" in block        # cagr
+    assert "-53.83%" in block       # max_drawdown
+    # Ratios render raw %.4f.
+    assert "0.6584" in block        # sharpe
+    assert "1.0385" in block        # sortino
+    assert "1.2911" in block        # profit_factor
+    assert "0.3698" in block        # calmar
+
+
+def test_format_backtest_summary_currency_thousands_and_sign():
+    block = format_backtest_summary([_portfolio_bag()])
+    assert "10,000.00" in block     # starting cash, thousands sep + 2dp
+    assert "+9,910.55" in block     # realised pnl, signed
+    assert "1,840.00" in block      # best trade
+
+
+def test_format_backtest_summary_duration_human_form():
+    block = format_backtest_summary(
+        [_portfolio_bag()],
+        duration_seconds=3.42,
+    )
+    # Duration header rendered in a human form (seconds for a sub-minute run).
+    assert "Duration" in block
+    # Avg trade duration 4d 6h rendered human.
+    assert "4d 6h" in block
+
+
+def test_format_backtest_summary_inf_profit_factor_passes_through():
+    block = format_backtest_summary([_portfolio_bag(profit_factor=float("inf"))])
+    assert "inf" in block  # must not raise
+
+
+def test_format_backtest_summary_ticker_truncation():
+    tickers = ["A", "B", "C", "D", "E", "F", "G", "H"]  # 8 > cap 6
+    block = format_backtest_summary([_portfolio_bag(tickers=tickers)])
+    assert "+2 more" in block  # 6 shown + "+2 more"
+
+
+def test_format_backtest_summary_omits_empty_ticker_line():
+    block = format_backtest_summary([_portfolio_bag(tickers=[])])
+    # No instrument list rendered; the portfolio header still appears.
+    assert "oracle_pf" in block
+
+
+def test_format_backtest_summary_omits_period_when_none():
+    block = format_backtest_summary([_portfolio_bag()], period=None)
+    # The Start/End/Bars header lines are all dropped. ("Start" would false-match
+    # "Starting cash", so assert on the unique "Bars" label.)
+    assert "Bars" not in block
+
+
+def test_format_backtest_summary_empty_portfolio_path():
+    empty = {
+        "name": "empty_pf",
+        "tickers": [],
+        "starting_cash": 0.0,
+        "final_cash": 0.0,
+        "final_equity": 0.0,
+        "realised_pnl": 0.0,
+        "trade_count": 0,
+        "total_return": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_trade_pnl": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "best_trade": 0.0,
+        "worst_trade": 0.0,
+        "avg_trade_duration": 0.0,
+        "exposure_time": 0.0,
+        "cagr": 0.0,
+        "sharpe": 0.0,
+        "sortino": 0.0,
+        "max_drawdown": 0.0,
+        "calmar": 0.0,
+    }
+    block = format_backtest_summary([empty])  # must not raise
+    assert "empty_pf" in block
 
 
 def test_format_metrics_renders_names_and_values():

@@ -30,6 +30,8 @@ under the suite's ``filterwarnings=["error"]`` regime. Pandas-2-safe idioms only
 ``.iloc`` indexing, whole-column construction, explicit empty-subset guards.
 """
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -138,6 +140,102 @@ def rolling_sharpe(returns: pd.Series, window: int, periods: int = PERIODS) -> p
     return result
 
 
+def total_return(equity: pd.Series) -> float:
+    """Total return over the equity series: ``final / start - 1``.
+
+    Mirrors ``cagr``'s guards: empty equity or a non-positive start returns 0.0.
+    ``.iloc`` indexing only (pandas-2-safe).
+    """
+    if equity.empty:
+        return 0.0
+    start = float(equity.iloc[0])
+    if start <= 0.0:
+        return 0.0
+    final = float(equity.iloc[-1])
+    return final / start - 1.0
+
+
+def avg_trade_pnl(trades: pd.DataFrame) -> float:
+    """Mean realised pnl across all closed trades. Empty frame returns 0.0."""
+    if trades.empty:
+        return 0.0
+    return float(trades["realised_pnl"].mean())
+
+
+def avg_win(trades: pd.DataFrame) -> float:
+    """Mean realised pnl over winning trades (pnl > 0). No winners returns 0.0."""
+    if trades.empty:
+        return 0.0
+    pnl = trades["realised_pnl"]
+    winners = pnl[pnl > 0]
+    if winners.empty:
+        return 0.0  # guard: .mean() of an empty subset raises RuntimeWarning
+    return float(winners.mean())
+
+
+def avg_loss(trades: pd.DataFrame) -> float:
+    """Mean realised pnl over losing trades (pnl < 0) — a NEGATIVE value.
+
+    No losers returns 0.0 (guards the empty-subset ``.mean()`` RuntimeWarning).
+    """
+    if trades.empty:
+        return 0.0
+    pnl = trades["realised_pnl"]
+    losers = pnl[pnl < 0]
+    if losers.empty:
+        return 0.0
+    return float(losers.mean())
+
+
+def best_trade(trades: pd.DataFrame) -> float:
+    """Maximum realised pnl across closed trades. Empty frame returns 0.0."""
+    if trades.empty:
+        return 0.0
+    return float(trades["realised_pnl"].max())
+
+
+def worst_trade(trades: pd.DataFrame) -> float:
+    """Minimum realised pnl across closed trades. Empty frame returns 0.0."""
+    if trades.empty:
+        return 0.0
+    return float(trades["realised_pnl"].min())
+
+
+def avg_trade_duration(trades: pd.DataFrame) -> float:
+    """Mean trade duration ``(exit_date - entry_date)`` in SECONDS (float).
+
+    Empty frame returns 0.0. The formatter renders the human ``Nd Nh`` form;
+    this function returns the raw seconds.
+    """
+    if trades.empty:
+        return 0.0
+    deltas = trades["exit_date"] - trades["entry_date"]
+    return float(deltas.dt.total_seconds().mean())
+
+
+def exposure_time(equity_frame: pd.DataFrame) -> float:
+    """Fraction of bars with an open position — ``(open_positions_count > 0).mean()``.
+
+    Takes the equity FRAME (it needs the ``open_positions_count`` column), NOT the
+    equity series. A value in ``[0, 1]``; an empty frame returns 0.0.
+    """
+    if equity_frame.empty:
+        return 0.0
+    return float((equity_frame["open_positions_count"] > 0).mean())
+
+
+def calmar(equity: pd.Series, periods: int = PERIODS) -> float:
+    """Calmar ratio: ``cagr(equity) / abs(max_drawdown(equity))``.
+
+    Reuses the pinned ``cagr``/``max_drawdown`` formulas. A zero drawdown
+    (monotonic or empty equity) is guarded to 0.0 (no ZeroDivisionError).
+    """
+    dd = max_drawdown(equity)
+    if dd == 0.0:
+        return 0.0
+    return cagr(equity, periods) / abs(dd)
+
+
 def format_metrics(metrics: dict[str, float], title: str = "Backtest metrics") -> str:
     """Render a metric dict as an aligned multi-line text block (D-14 amendment).
 
@@ -149,4 +247,146 @@ def format_metrics(metrics: dict[str, float], title: str = "Backtest metrics") -
     lines = [title, "-" * max(len(title), name_width + 12)]
     for name, value in metrics.items():
         lines.append(f"{name:<{name_width}}  {value:>10.4f}")
+    return "\n".join(lines)
+
+
+#: Cap on the rendered instrument list before truncating with "+N more".
+_TICKER_CAP = 6
+
+#: Box-drawing rules for the grouped backtest-summary block.
+_DOUBLE_RULE = "=" * 46
+_SINGLE_RULE = "-" * 46
+
+
+def _format_duration(seconds: float) -> str:
+    """Human duration: ``Nd Nh`` / ``Nh Nm`` / ``Nm Ns`` / ``N.NNs``.
+
+    Pure string building. The two-largest non-zero units are shown; sub-minute
+    durations render as fractional seconds (``3.42s``).
+    """
+    total = int(seconds)
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    if days > 0:
+        return f"{days}d {hours}h"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    if minutes > 0:
+        return f"{minutes}m {secs}s"
+    return f"{seconds:.2f}s"
+
+
+def _format_tickers(tickers: list[str], cap: int = _TICKER_CAP) -> str:
+    """Comma-joined instrument list; ``+N more`` past ``cap``. Empty -> ``""``."""
+    if not tickers:
+        return ""
+    if len(tickers) <= cap:
+        return ", ".join(tickers)
+    shown = ", ".join(tickers[:cap])
+    return f"{shown}, +{len(tickers) - cap} more"
+
+
+def _pct(value: float, *, signed: bool = False) -> str:
+    """Render a fraction as ``value * 100`` with a ``%`` suffix (optionally signed)."""
+    fmt = "{:+.2f}%" if signed else "{:.2f}%"
+    return fmt.format(value * 100.0)
+
+
+def _ratio(value: float) -> str:
+    """Render a raw ratio at 4dp; ``inf`` passes through (``str(float('inf'))``)."""
+    if not np.isfinite(value):
+        return str(value)
+    return f"{value:.4f}"
+
+
+def _money(value: float, *, signed: bool = False) -> str:
+    """Render currency with thousands separators + 2dp (optionally signed)."""
+    fmt = "{:+,.2f}" if signed else "{:,.2f}"
+    return fmt.format(value)
+
+
+def format_backtest_summary(
+    portfolios: list[dict[str, Any]],
+    *,
+    period: tuple[Any, Any, int] | None = None,
+    duration_seconds: float | None = None,
+) -> str:
+    """Render the grouped end-of-run backtest summary block (display-only).
+
+    Sibling to the UNTOUCHED ``format_metrics``. Pure string building — no I/O,
+    no itrader imports. Renders one shared run-level header (Period + Duration)
+    followed by a per-portfolio Capital / Trades / Risk-Return group.
+
+    Each entry in ``portfolios`` is a value bag with keys: ``name``, ``tickers``
+    (``list[str]``), ``starting_cash``, ``final_cash``, ``final_equity``,
+    ``realised_pnl``, ``trade_count``, plus the metric bag (``total_return``,
+    ``win_rate``, ``profit_factor``, ``avg_trade_pnl``, ``avg_win``, ``avg_loss``,
+    ``best_trade``, ``worst_trade``, ``avg_trade_duration`` [seconds],
+    ``exposure_time``, ``cagr``, ``sharpe``, ``sortino``, ``max_drawdown``,
+    ``calmar``).
+
+    Rendering rules (spec §2):
+
+    * Currency: thousands separators + 2dp; signed for return/PnL columns.
+    * Percentages (total_return, cagr, max_drawdown, win_rate, exposure_time):
+      ``value * 100`` with ``%``, signed where natural.
+    * Ratios (sharpe, sortino, profit_factor, calmar): raw ``%.4f``; ``inf``
+      passes through.
+    * Duration: seconds -> human ``Nd Nh`` / ``Nh Nm`` / ``Nm Ns`` form.
+    * Instrument list: comma-joined, ``+N more`` past a cap of 6; line OMITTED
+      if empty.
+    * Period: three lines (Start / End / Bars), date+time with the timezone
+      stripped; all three omitted if ``period`` is None.
+    """
+    lines: list[str] = [_DOUBLE_RULE, " Backtest Run Summary", _DOUBLE_RULE]
+
+    if period is not None:
+        start, end, bar_count = period
+        # Date+time only, timezone stripped (%Y-%m-%d %H:%M:%S, no %z).
+        lines.append(f" {'Start':<13} {pd.Timestamp(start).strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f" {'End':<13} {pd.Timestamp(end).strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f" {'Bars':<13} {bar_count}")
+    if duration_seconds is not None:
+        lines.append(f" Duration      {_format_duration(duration_seconds)}")
+
+    for bag in portfolios:
+        lines.append(_SINGLE_RULE)
+        header = f" Portfolio · {bag['name']}"
+        ticker_line = _format_tickers(list(bag.get("tickers", [])))
+        if ticker_line:
+            header += f"   ({ticker_line})"
+        lines.append(header)
+        lines.append(_SINGLE_RULE)
+
+        # Capital group.
+        lines.append(" Capital")
+        lines.append(f"   Starting cash      {_money(bag['starting_cash']):>14}")
+        lines.append(f"   Final cash         {_money(bag['final_cash']):>14}")
+        lines.append(f"   Final equity       {_money(bag['final_equity']):>14}")
+        lines.append(f"   Total return       {_pct(bag['total_return'], signed=True):>14}")
+        lines.append(f"   Realised PnL       {_money(bag['realised_pnl'], signed=True):>14}")
+
+        # Trades group.
+        lines.append(" Trades")
+        lines.append(f"   Count              {bag['trade_count']:>14}")
+        lines.append(f"   Win rate           {_pct(bag['win_rate']):>14}")
+        lines.append(f"   Profit factor      {_ratio(bag['profit_factor']):>14}")
+        lines.append(f"   Avg trade PnL      {_money(bag['avg_trade_pnl'], signed=True):>14}")
+        lines.append(f"   Avg win            {_money(bag['avg_win'], signed=True):>14}")
+        lines.append(f"   Avg loss           {_money(bag['avg_loss'], signed=True):>14}")
+        lines.append(f"   Best trade         {_money(bag['best_trade'], signed=True):>14}")
+        lines.append(f"   Worst trade        {_money(bag['worst_trade'], signed=True):>14}")
+        lines.append(f"   Avg duration       {_format_duration(bag['avg_trade_duration']):>14}")
+        lines.append(f"   Exposure time      {_pct(bag['exposure_time']):>14}")
+
+        # Risk / Return group.
+        lines.append(" Risk / Return")
+        lines.append(f"   CAGR               {_pct(bag['cagr']):>14}")
+        lines.append(f"   Sharpe             {_ratio(bag['sharpe']):>14}")
+        lines.append(f"   Sortino            {_ratio(bag['sortino']):>14}")
+        lines.append(f"   Max drawdown       {_pct(bag['max_drawdown']):>14}")
+        lines.append(f"   Calmar             {_ratio(bag['calmar']):>14}")
+
+    lines.append(_DOUBLE_RULE)
     return "\n".join(lines)

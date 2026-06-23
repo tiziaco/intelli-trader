@@ -1,107 +1,95 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: Awaiting next milestone
-stopped_at: Milestone v1.4 closed and archived
-last_updated: "2026-06-22T19:18:25.396Z"
-last_activity: 2026-06-22 — Milestone v1.4 completed, archived, and tagged
+milestone: v1.5
+milestone_name: Backtest Performance Optimization
+status: planning
+last_updated: "2026-06-23T14:56:46.444Z"
+last_activity: 2026-06-23
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 35
-  completed_plans: 35
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-22 — v1.4 Margin, Leverage, Shorts & Trailing Stops SHIPPED + archived; N+3 next)
+See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a bar-close liquidation model (closing DEF-01-C), engine-native trailing stops, short scale-in, and a market-neutral pair flagship, all owner-gated and cross-validated.
-**Current focus:** v1.4 shipped, archived, and tagged. Next: N+3 — Persistence & Performance (Backlog 999.2); start with `/gsd:new-milestone`.
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
+**Current focus:** v1.5 started (promoted the performance half of Backlog 999.2; Persistence deferred to its own next milestone). Defining requirements → roadmap. Source: `perf/results/PERF-BASELINE-RESULTS.md` (the spike = the research). NOTE: the v1.4 "Milestone Gate" + "Phase Map" sections below are stale — the roadmapper rewrites them for v1.5.
 
 ## Current Position
 
-Phase: Milestone v1.4 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-22 — Milestone v1.4 completed and archived
+Status: Defining requirements
+Last activity: 2026-06-23 — Milestone v1.5 started
 
-## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
+## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
-**Two re-baseline disciplines run side by side. Each phase declares which it is.** This is an
-M5-style **owner-gated, result-changing** milestone: enabling shorts/leverage/liquidation changes
-results, so each result-changing phase re-baselines the golden master ONLY after explicit owner
-sign-off (full attribution) + external cross-validation (`backtesting.py` 0.6.5 / `backtrader`
-1.9.78.123). The existing SMA_MACD spot oracle (134 trades / `final_equity 46189.87730727451`)
-stays byte-exact except where shorts/leverage legitimately change a leaf.
+**This is the perf analog of v1.2 Consolidation: it re-baselines NOTHING.** Every optimization phase
+(2-6) is gated on BOTH:
+
+1. **Gate (a) — byte-exact oracle stays green:** `tests/integration/test_backtest_oracle.py` —
+   SMA_MACD **134 trades / `final_equity 46189.87730727451`**. No golden is re-baselined anywhere in
+   v1.5.
+2. **Gate (b) — measurable, locked W1 improvement:** the clean W1 benchmark shows a real wall-clock
+   and/or peak-memory reduction vs the frozen baseline (**240.8 s / 167.3 MB**), **re-frozen after
+   the phase** as the new locked reference the next phase is judged against.
+
+Phase 1 (tooling) **builds** gate (b)'s measurement harness and re-freezes the baseline; it changes
+no engine code and is held to gate (a) only.
 
 **Held throughout, all phases:**
 
 - `mypy --strict` clean across all source files
-- Decimal end-to-end (including liquidation formula + interest accrual; `float()` only at the
-  serialization/logging edge); no new float-for-money; single UUIDv7 ID scheme
-
+- Decimal end-to-end — no new float-for-money; **every fix is *less repeated work*, never a float
+  swap** (`float()` stays only at the serialization/logging edge); single UUIDv7 ID scheme
 - Determinism double-run byte-identical (reuse the seeded RNG + injected `BacktestClock`; introduce
   no new nondeterminism)
 
-**Byte-exact phase (Phase 1 — Instrument Value Object)** — re-baseline NOTHING. Must hold:
+**Two scope exceptions (LOCKED):**
 
-- `pytest tests/integration` byte-exact oracle: **134 trades / `final_equity 46189.87730727451`**
-- `pytest tests/e2e -m e2e` green (no leaf re-baselined); full suite green
-- **Behavioral gate:** `BTCUSD` ALWAYS takes the declared 8dp branch — inference would drift the
-  oracle. Whether the backtest *snaps/rounds* via `Instrument` (vs storing metadata only) is the
-  result-changing decision and must hold the oracle byte-exact.
+- **Opportunistic in-file CONCERNS cleanups** are allowed ONLY where a perf phase already edits that
+  file (notably P3 in `position_manager.py` / `portfolio.py`), as separate atomic commits, oracle
+  staying green — zero behavior change. General CONCERNS.md tech debt stays OUT (its own future sweep).
+- **Persistence is split out** to its own following milestone (N+3b) — PostgreSQL storage + FL-06 are
+  live-path, DB-gated, not covered by the backtest oracle. PERF-01 designs the `OrderStorage`
+  interface for extension so that backend can satisfy the same contract later.
 
-**Owner-gated phases (2: Margin & Leverage; 3: Shorts & Carry; 4: Liquidation & Cross-Validation)** —
-result-changing accounting core. The new golden master freezes **ONLY** after explicit owner sign-off
-with full attribution, validated by external cross-validation.
+## Phase Map (v1.5 — Phases 1-6)
 
-- **ONE accounting-core re-baseline, gated by XVAL-01 (Phase 4).** The crafted, hand-computable,
-  adversarial scenarios (pure short, leveraged long, forced liquidation) cross-validated against
-  `backtesting.py`/`backtrader` are the **correctness oracle** — NOT pair trading. The accounting
-  core (margin + shorts + liquidation) re-baselines under that one owner-gated XVAL-01 gate.
+Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from the 10 v1.5 requirements + the
+`perf/results/PERF-BASELINE-RESULTS.md` §6 sequencing (payoff × safety; low-risk/no-numeric-surface
+first, the dangerous oracle-gated indicators LAST, optional contract-gated bar-feed work as a
+slip-able final phase). Numbering reset to Phase 1 (matching v1.1/v1.2/v1.3/v1.4). The only dirs in
+`.planning/phases/` are the `999.2`/`999.3` backlog placeholders (999.x prefix — no collision with
+the new `01-*..06-*` dirs); they are FUTURE milestones, left intact (999.3 = N+4 live; 999.2's
+persistence half is deferred to its own next milestone).
 
-**Owner-gated phase (5: Engine-Native Trailing Stops)** — its OWN re-baseline, separate from the
-accounting core (a DIFFERENT subsystem: `MatchingEngine` resting-order ratchet vs portfolio/cash
-accounting). Cross-validated (TRAIL-03) against `backtesting.py`/`backtrader`. Look-ahead rule: the
-trail updates from CLOSED-bar extremes and is live for the NEXT bar — never trail to this bar's
-extreme and trigger off the same bar.
+| Phase | Name | Requirements | Hotspot(s) | Gate | Depends on |
+|-------|------|--------------|------------|------|------------|
+| 1 | Perf Tooling & Baseline | TOOL-01/02/03/04 | — (harness) | (a) only — no engine code; re-freeze baseline | — |
+| 2 | Order-Storage Indexing | PERF-01 | #1 (~37% CPU) | (a) + (b) | 1 |
+| 3 | Running PnL Accumulator | PERF-02 | #3 (~13% CPU) | (a) + (b) | 1 |
+| 4 | Hot-Path Discipline | PERF-03, PERF-04 | #4 (~6%W1/22%W2) + #6 (~2%W1/14%W2) | (a) + (b) | 1 |
+| 5 | Incremental Indicators (FRAGILE, LAST) | PERF-05 | #2 + #7 (~24% CPU) | (a) + (b) — oracle is THE lock | 1 |
+| 6 | Bar-Feed Window Copies (OPTIONAL, slip-able) | PERF-06 | #5 (~4%W1/22%W2) | (a) + (b) — contract-gated | 1 |
 
-**Capstone phase (6: Pair-Trading Flagship)** — NOT a re-baseline of the SMA_MACD oracle (additive
-flagship strategy). NOT the correctness oracle (a two-leg market-neutral strategy partially cancels
-its own sign errors → weak oracle). Self-contained and slip-able to a follow-on without blocking the
-shippable margin/shorts core.
-
-## Phase Map (v1.4 — Phases 1-6)
-
-Execution order: 1 → 2 → 3 → 4 → 5 → 6. Derived from the 20 v1.4 requirements + the locked
-sequencing (Instrument first; the margin/shorts/liquidation accounting core under one owner-gated
-XVAL-01 re-baseline; trailing stops as a separate subsystem with its own re-baseline; pair trading
-as the final, slip-able capstone). Numbering reset to Phase 1 (matching v1.1/v1.2/v1.3; v1.3 phase
-dirs archived to `.planning/milestones/v1.3-phases/`, so the new `01-*..06-*` dirs do not collide —
-only the `999.2`/`999.3` backlog seed dirs remain in `.planning/phases/`).
-
-| Phase | Name | Requirements | Re-baseline | Depends on |
-|-------|------|--------------|-------------|------------|
-| 1 | Instrument Value Object | INST-01, INST-02, INST-03 | Byte-exact (BTCUSD declared 8dp; oracle holds) | — |
-| 2 | Margin Accounting & Leverage | MARGIN-01/02/03, LEV-01, LEV-02 | Owner-gated (part of the accounting-core re-baseline, frozen at P4/XVAL-01) | 1 |
-| 3 | Shorts & Borrow Carry | SHORT-01/02/03, CARRY-01 | Owner-gated (accounting-core re-baseline, frozen at P4/XVAL-01) | 2 |
-| 4 | Liquidation & Cross-Validation Re-baseline | LIQ-01/02/03, XVAL-01 | Owner-gated — THE accounting-core golden re-baseline (cross-validated + owner sign-off) | 2 AND 3 |
-| 5 | Engine-Native Trailing Stops | TRAIL-01, TRAIL-02, TRAIL-03 | Owner-gated — OWN re-baseline (MatchingEngine subsystem) | 4 |
-| 6 | Pair-Trading Flagship | PAIR-01 | Capstone — additive, NOT a re-baseline; slip-able | 3, 4 |
-
-**Sequencing rationale:** INST-* (P1) is foundational — margin/liquidation/leverage all consume the
-per-instrument `Instrument`; it deletes `_INSTRUMENT_SCALES`. Margin (P2) precedes shorts (P3 — a
-short reserves margin and carry rides shorts) and liquidation (P4 — needs maintenance margin AND
-shorts to liquidate). Liquidation (P4) co-phases XVAL-01 because all three crafted scenario types
-(short, leveraged-long, liquidation) exist by then — it is the single owner-gated accounting-core
-re-baseline. Trailing stops (P5) are a different subsystem (resting-order ratchet, not accounting),
-so they own a separate re-baseline. Pair trading (P6) is the final, slip-able capstone — the flagship
-"shorts work end-to-end" demo, NOT the correctness oracle.
+**Sequencing rationale:** P1 is the prerequisite — it builds the measurement harness every later
+phase's gate (b) depends on and re-freezes the baseline before any optimization. Then optimizations
+run low-risk/high-return first and the dangerous one last: P2 order-storage indexing (~37%, pure
+data-structure, no numeric surface) → P3 running PnL accumulator (~13%, less re-summation, Decimal
+preserved) → P4 hot-path discipline (logging PERF-03 + `get_type_hints` PERF-04, both behavior-only
+with no numeric surface, merged into one clean phase) → **P5 incremental indicators (~24%,
+oracle-gated, isolated LAST** so a byte-exactness regression is attributable) → P6 optional bar-feed
+window copies (contract-gated by the look-ahead 7 rules, slip-able to a follow-on without blocking
+the core). Every optimization phase depends on Phase 1 (the harness/baseline must exist to measure
+gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 ## Performance Metrics
 
@@ -255,6 +243,13 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | 260610-sjp | Close FL-01 & FL-02 fix-list residuals + reconcile FIX-LIST.md status | 2026-06-10 | 4db1907 | | [260610-sjp-close-fl01-fl02](./quick/260610-sjp-close-fl01-fl02/) |
 | 260614-atk | v1.3 tech-debt doc reconcile: REQUIREMENTS checkboxes + stale Phase 6 WR-02/WR-03 audit ledger | 2026-06-14 | 191e21f | | [260614-atk-v1-3-tech-debt-doc-reconcile-requirement](./quick/260614-atk-v1-3-tech-debt-doc-reconcile-requirement/) |
 | 260622-pmk | Audited admission rejection for unfunded short increase (close P05.1 WR-03) | 2026-06-22 | 9270146 | Verified | [260622-pmk-audited-admission-rejection-for-unfunded](./quick/260622-pmk-audited-admission-rejection-for-unfunded/) |
+| 260622-vlh | Durable evals/ benchmark harness (PERF-BASELINE Step 1): hardened CCXT fetch + 4×5m CSVs, coverage strategies A–D, W1 topology + W2 synthetic generator, W1/W2 runners, scalene dev dep | 2026-06-22 | bbc5987 | Verified | [260622-vlh-build-the-durable-evals-benchmark-harnes](./quick/260622-vlh-build-the-durable-evals-benchmark-harnes/) |
+| 260623-ajs | Enriched end-of-run backtest summary print: 9 guarded derived metrics + format_backtest_summary grouped block (Capital/Trades/Risk-Return), run-level Period+Duration header, per-portfolio instrument list; display-only / oracle-inert | 2026-06-23 | ef0dd6e | | [260623-ajs-enriched-backtest-summary-print](./quick/260623-ajs-enriched-backtest-summary-print/) |
+| fast | Rename `evals/` → `perf/` (reserve `benchmarks/` for cross-framework comparison); updated package imports, README commands, docstrings | 2026-06-23 | ee77f37 | | — |
+| 260623-bmg | Fix perf coverage instruments B/C/D so positions recycle (boost trade density): added the missing exit leg to each (D short tp+sl bracket, B limit-long sl + tightened tp, C pyramiding tp) — 30d-slice fills jumped ~11→759, closed 0→291 across P2_B/P3_C/P4-6_D; coverage semantics unchanged | 2026-06-23 | 4cd2be7 | | [260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p](./quick/260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p/) |
+| 260623-f80 | Fix perf coverage instrument A over-selling: removed the cash-sized discretionary crossunder exit (sized off FractionOfCash(0.95), not the held qty → sold 65 vs held 1 → net-short inventory mislabeled LONG → $100k→$10M phantom equity → fills froze after Jan); now bracket-only (OCO sl/tp) so longs close cleanly & recycle. A-only full-window: fills spread Dec–Jun (251, was frozen 184), closed 61→125, equity sane $76,452 (was phantom $10M). Surfaced a SEPARATE engine anomaly (spot LONG_ONLY over-sell allowed) → /gsd:debug | 2026-06-23 | 3657d30 | | [260623-f80-fix-perf-coverage-instrument-a-over-sell](./quick/260623-f80-fix-perf-coverage-instrument-a-over-sell/) |
+| 260623-gao | Engine over-sell protection A+B (TDD, oracle-gated) for the spot LONG_ONLY over-sell / phantom-equity bug (diagnosed in .planning/debug/spot-long-only-oversell.md). A: ported the CR-02 over-close guard into the SPOT settlement path (portfolio.py _process_transaction_spot) — a reducing SELL exceeding held qty now raises InvalidTransactionError (was silent corruption). B: cancel orphaned bracket children on flatten-by-fill in the order domain (reconcile on_fill), scoped to (portfolio_id, ticker). Fix C (sign-aware net_quantity/market_value) left owner-gated/out-of-scope. Oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1231 green; mypy --strict clean | 2026-06-23 | c004672 | Verified | [260623-gao-engine-over-sell-protection-a-b-spot-set](./quick/260623-gao-engine-over-sell-protection-a-b-spot-set/) |
+| 260623-h6i | Refine the over-close guard (spot + margin twin, portfolio.py) to compare the over-sell excess against the existing PositionManager.tolerance (1e-5) instead of strict `>`. Surfaced when the full W1 re-run fail-fast aborted on coverage instrument C (pyramiding): the "over-sell" was 1E-27 BTC — last-digit Decimal noise from independent per-add bracket-child quantization after partial closes, NOT a real over-sell (A/B completed with sane equity). Now sub-close-tolerance dust is absorbed as a clean full close; a GROSS over-sell (the 64-BTC phantom-equity case) still raises loudly at both sites. TDD; oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1233 green; mypy --strict clean | 2026-06-23 | 09d49b1 | Verified | [260623-h6i-refine-over-close-guard-with-tolerance-a](./quick/260623-h6i-refine-over-close-guard-with-tolerance-a/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |

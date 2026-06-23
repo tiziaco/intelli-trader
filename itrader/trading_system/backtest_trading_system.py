@@ -203,8 +203,30 @@ class BacktestTradingSystem(object):
 		self.runner.run(on_tick=wrapped)
 
 		if print_summary:
+			# 260623-ajs: assemble the three run-level header inputs from
+			# reachable handles, then pass them to the enriched printer.
+			duration = self.runner.duration_seconds
+			# Period span from the pinned bar-date grid; an empty/None index
+			# omits the Period line rather than raising.
+			dates = self.engine.time_generator.dates
+			period: Optional[tuple[Any, Any, int]] = None
+			if dates is not None and len(dates) > 0:
+				period = (dates[0], dates[-1], len(dates))
+			# Per-portfolio instrument universe: union (dedup, order-preserving)
+			# of each subscribed strategy's tickers, keyed by the same
+			# PortfolioId handle that portfolio.portfolio_id carries.
+			portfolio_tickers: dict[Any, list[str]] = {}
+			for strategy in self.strategies_handler.strategies:
+				for pid in strategy.subscribed_portfolios:
+					bucket = portfolio_tickers.setdefault(pid, [])
+					for ticker in strategy.tickers:
+						if ticker not in bucket:
+							bucket.append(ticker)
 			print_metrics_summary(
-				self.portfolio_handler.get_active_portfolios(), self.logger)
+				self.portfolio_handler.get_active_portfolios(), self.logger,
+				duration_seconds=duration,
+				period=period,
+				portfolio_tickers=portfolio_tickers)
 
 	def get_signal_records(self) -> list[SignalRecord]:
 		"""Return the signals captured during the run (Plan 05-03, SIG-02).

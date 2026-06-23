@@ -82,6 +82,11 @@ class _FakeStorage:
             raise self._update_raises
         return True
 
+    def get_active_orders(self, portfolio_id):
+        # OVERSELL-B flatten-cancel reads active orders on an EXECUTED fill; these
+        # tests carry no resting bracket children, so the list is empty.
+        return []
+
 
 class _FakeBrackets:
     """consume() returns None — no pending bracket (no fill-anchored children)."""
@@ -102,14 +107,20 @@ class _RecordingPortfolio:
         if self._release_raises is not None:
             raise self._release_raises
 
+    def get_position(self, portfolio_id, ticker):
+        # OVERSELL-B flatten-cancel reads the position on an EXECUTED fill; these
+        # tests do not exercise that path (no resting children), so report flat.
+        return None
+
 
 class _FakeFill:
     """Minimal fill carrying only the attributes on_fill reads."""
 
-    def __init__(self, status, order_id="O-1", portfolio_id="P-1"):
+    def __init__(self, status, order_id="O-1", portfolio_id="P-1", ticker="BTCUSDT"):
         self.status = status
         self.order_id = order_id
         self.portfolio_id = portfolio_id
+        self.ticker = ticker
         self.quantity = Decimal("1")
         self.price = Decimal("100")
         self.time = None
