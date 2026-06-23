@@ -11,7 +11,13 @@ findings:
   warning: 3
   info: 2
   total: 5
-status: issues_found
+status: resolved
+resolved_at: 2026-06-23T00:00:00Z
+resolution:
+  - "WR-01 FIXED (commit 6a4cc90): get_orders_by_status(active) now yields _by_id add-order via _orders() while resolving membership through the _by_status index; byte-equivalence (D-06/D-08/D-09) restored on every active status."
+  - "WR-03 FIXED (commit 6a4cc90): added test_partially_filled_status_query_preserves_add_order_equivalence — verified to FAIL against the transition-order version and PASS with the fix."
+  - "WR-02 partially addressed: the fixed get_orders_by_status path now uses ==-based portfolio comparison; the remaining IdLike/native-UUID divergence is latent (production goes through PortfolioId-typed manager) and left as-is."
+  - "IN-01 / IN-02: accepted as informational; no change (memory posture and _orders() reuse are out of this phase's correctness scope)."
 ---
 
 # Phase 2: Code Review Report
@@ -19,7 +25,7 @@ status: issues_found
 **Reviewed:** 2026-06-23T00:00:00Z
 **Depth:** standard
 **Files Reviewed:** 2
-**Status:** issues_found
+**Status:** resolved (WR-01 + WR-03 fixed in 6a4cc90; WR-02/IN-01/IN-02 accepted as latent/informational)
 
 ## Summary
 
