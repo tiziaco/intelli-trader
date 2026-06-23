@@ -16,8 +16,11 @@ Engine path owned (PERF-BASELINE §6):
   bar. The strategy only EMITS the resting limit.
 
 Signal: a cheap mean-reversion condition — price below a moving average by a
-band -> rest a ``buy_limit`` a little below the current close (with a ``tp``
-above). Reuses the SMA init pattern. Instruments: ETHUSDT, SOLUSDT, BNBUSDT.
+band -> rest a ``buy_limit`` a little below the current close, bracketed by a
+TIGHT ``tp`` (above) AND ``sl`` (below). The tight exit leg makes the filled long
+RECYCLE — close -> free a ``max_positions`` slot -> re-rest a new limit — which
+keeps the resting-limit book churning every bar (density is the coverage here,
+not alpha). Reuses the SMA init pattern. Instruments: ETHUSDT, SOLUSDT, BNBUSDT.
 """
 
 from decimal import Decimal
@@ -36,7 +39,11 @@ __all__ = ["LimitMakerStrategy"]
 # fills.
 _BAND_PCT = Decimal("0.000")    # enter on any close below the MA
 _LIMIT_BELOW = Decimal("0.001")  # rest the limit 0.1% below the current close
-_TP_ABOVE = Decimal("0.01")      # take profit 1% above the limit
+# Tight exit bracket so the filled long RECYCLES (close -> frees a max_positions
+# slot -> re-rests a new limit) instead of resting forever — keeps the
+# resting-limit book churning every bar (density is the coverage, not alpha).
+_TP_ABOVE = Decimal("0.005")     # take profit ~0.5% above the limit (tight -> recycles)
+_SL_BELOW = Decimal("0.01")      # stop ~1% below the limit (the other exit leg)
 
 
 class LimitMakerStrategy(Strategy):
@@ -69,6 +76,9 @@ class LimitMakerStrategy(Strategy):
         threshold = ma * (Decimal("1") - _BAND_PCT)
         if close <= threshold:
             limit_price = close * (Decimal("1") - _LIMIT_BELOW)
+            # Both exit legs (tp above, sl below) so the filled long always closes
+            # quickly and frees its slot to re-rest — recycling for density.
             tp = limit_price * (Decimal("1") + _TP_ABOVE)
-            return self.buy_limit(ticker, price=limit_price, tp=tp)
+            sl = limit_price * (Decimal("1") - _SL_BELOW)
+            return self.buy_limit(ticker, price=limit_price, sl=sl, tp=tp)
         return None

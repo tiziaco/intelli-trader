@@ -15,7 +15,11 @@ Engine path owned (PERF-BASELINE §6):
 Signal — deliberately CHEAP (spec §4/§6: D's compute must add NO artificial CPU,
 so the framework-CPU hotspots come from the matching engine / bar feed, not from
 D's signal). A rolling z-score of the ETHUSDT close: when the close is an extreme
-number of std-devs ABOVE its rolling mean, ``sell()`` (short the mean-reversion).
+number of std-devs ABOVE its rolling mean, ``sell()`` (short the mean-reversion),
+bracketed by a SHORT exit (``tp`` below entry to cover in profit, ``sl`` above to
+cover the loss). The tight exit makes the short COVER and re-short repeatedly, so
+short-side admission + the 3-portfolio fan-out + rejections fire many times per
+portfolio instead of opening one short and capping at ``max_positions``.
 
 DEVIATION (documented): the spec names a z-score of the ETHUSDT/SOLUSDT price
 RATIO. A cross-symbol ratio is NOT reachable from the single-ticker
@@ -36,6 +40,12 @@ __all__ = ["ShortZScoreStrategy"]
 
 _Z_WINDOW = 50            # rolling window for mean/std of the close
 _Z_ENTRY = 1.0           # short when z-score >= this (close stretched ABOVE mean)
+# Short-side exit bracket (SHORT semantics: tp BELOW entry = cover in profit when
+# price falls; sl ABOVE entry = cover the loss when price rises). Tight so the
+# short COVERS and re-shorts repeatedly — exercising short-side admission +
+# fan-out + rejections many times per portfolio instead of one capped short.
+_TP_BELOW = Decimal("0.01")    # cover ~1% BELOW entry (short profit)
+_SL_ABOVE = Decimal("0.015")   # cover ~1.5% ABOVE entry (short stop)
 
 
 class ShortZScoreStrategy(Strategy):
@@ -85,5 +95,11 @@ class ShortZScoreStrategy(Strategy):
         z = (close - mean) / std
         # Short when the close is stretched ABOVE its rolling mean (revert down).
         if z >= _Z_ENTRY:
-            return self.sell(ticker)
+            # Build the SHORT exit bracket off the current close as Decimal (NEVER
+            # Decimal(float)). tp BELOW / sl ABOVE for a short — the short covers
+            # and re-shorts, firing short-side admission + fan-out repeatedly.
+            close_d = Decimal(str(close))
+            tp = close_d * (Decimal("1") - _TP_BELOW)
+            sl = close_d * (Decimal("1") + _SL_ABOVE)
+            return self.sell(ticker, sl=sl, tp=tp)
         return None

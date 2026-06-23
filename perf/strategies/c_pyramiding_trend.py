@@ -16,8 +16,11 @@ Engine path owned (PERF-BASELINE §6):
   rejections fire from CASH for free (not from a duplicate guard).
 
 Signal: a cheap trend-continuation condition — short MA above long MA AND the
-close rising vs the prior bar -> a (bracketed) ``buy()`` that adds to the open
-long every continuation bar. Instrument: BTCUSDT.
+close rising vs the prior bar -> a ``buy()`` (bracketed with both ``sl`` below and
+``tp`` above) that adds to the open long every continuation bar. The ``tp`` makes
+the pyramided long take profit, close, and free cash to re-accumulate — so the
+averaging / repeated-admission / CASH-rejection paths fire across many cycles
+instead of one stuck position (recycling for density). Instrument: BTCUSDT.
 """
 
 from decimal import Decimal
@@ -31,6 +34,10 @@ from itrader.strategy_handler.primitives import is_above
 __all__ = ["PyramidingTrendStrategy"]
 
 _SL_PCT = Decimal("0.03")  # aggregate stop a few % below the latest add
+# Take-profit exit leg so the pyramided long CLOSES, frees its cash, and lets the
+# strategy re-accumulate from scratch — keeping the repeated-admission / averaging
+# / CASH-rejection paths firing across MANY cycles instead of one stuck position.
+_TP_PCT = Decimal("0.02")  # take profit ~2% above the latest add (tight -> recycles)
 
 
 class PyramidingTrendStrategy(Strategy):
@@ -63,6 +70,9 @@ class PyramidingTrendStrategy(Strategy):
             prev = float(self.bars["close"].iloc[-2]) if len(self.bars) >= 2 else close
             if close > prev:
                 sl = Decimal(str(close)) * (Decimal("1") - _SL_PCT)
-                # Repeated buys -> averaging (allow_increase) + CASH rejections.
-                return self.buy(ticker, sl=sl)
+                tp = Decimal(str(close)) * (Decimal("1") + _TP_PCT)
+                # Repeated buys -> averaging (allow_increase) + CASH rejections; the
+                # tp closes the pyramided long and frees cash to re-accumulate, so
+                # those paths fire across many cycles (recycling for density).
+                return self.buy(ticker, sl=sl, tp=tp)
         return None
