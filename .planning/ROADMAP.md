@@ -54,7 +54,7 @@ never a float swap); single UUIDv7; determinism double-run byte-identical. Sourc
 [`perf/results/PERF-BASELINE-RESULTS.md`](../perf/results/PERF-BASELINE-RESULTS.md) (the spike IS the
 research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADMAP.md).
 
-- [ ] **Phase 1: Perf Tooling & Baseline** — root-Makefile `perf-*` targets, two-mode benchmark/Scalene-profile runner, cross-validation runners, re-freeze the baseline (TOOL-01..04)
+- [ ] **Phase 1: Perf Tooling & Baseline** — root-Makefile `perf-*` targets, two-mode benchmark/Scalene-profile runner, re-freeze the baseline to a committed `W1-BASELINE.json` + soft regression guard (gate (b) = ≥5% wall-clock) (TOOL-01, TOOL-02, TOOL-04 — TOOL-03 cross-val dropped 2026-06-23)
 - [ ] **Phase 2: Order-Storage Indexing** — derived secondary indexes over the flat `{id: order}` dict (D-20 source of truth), Postgres-extensible interface (PERF-01, ~37% CPU)
 - [ ] **Phase 3: Running PnL Accumulator** — maintain realised PnL on close, stop the per-bar re-sum; opportunistic in-file CONCERNS cleanups allowed (PERF-02, ~13% CPU)
 - [ ] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
@@ -68,22 +68,27 @@ research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADM
 honest, gated way to prove its W1 improvement — and the W1 baseline is re-frozen as the locked
 reference before any optimization touches engine code.
 **Depends on**: Nothing (first phase; the prerequisite for every optimization gate)
-**Requirements**: TOOL-01, TOOL-02, TOOL-03, TOOL-04
+**Requirements**: TOOL-01, TOOL-02, TOOL-04 (TOOL-03 cross-validation **dropped** 2026-06-23 — see note below)
 **Success Criteria** (what must be TRUE):
   1. The root Makefile exposes a `make perf-*` command surface (at least `perf-w1`, `perf-w2`,
-     `perf-baseline`, `perf-profile`, `perf-crossval`) that inherits `include .env` /
-     `.EXPORT_ALL_VARIABLES`.
+     `perf-baseline`, `perf-profile`) that inherits `include .env` / `.EXPORT_ALL_VARIABLES`.
   2. The W1 runner has two clearly separated modes — a clean **benchmark** (profiler-free, the gated
      timing run that produces the frozen number) and a **separate** Scalene `--cpu-only --html
      --program-path` **profile** command that writes a gitignored HTML artifact; profiling never
      wraps the timed/gated run.
-  3. `backtesting.py` + `backtrader` cross-validation comparison runners exist for the performance
-     reference path and reconcile against the iTrader result (spec §13).
-  4. The W1 baseline is re-frozen by a clean benchmark run after TOOL-01..03 land and BEFORE any
-     optimization — recorded as the locked reference (≈ 240.8 s / 167.3 MB) every later phase is
-     judged against.
-  5. The byte-exact SMA_MACD oracle is green (134 trades / `final_equity 46189.87730727451`); no
+  3. The W1 baseline is re-frozen by a clean benchmark run after TOOL-01..02 land and BEFORE any
+     optimization — recorded in a committed machine-readable `perf/results/W1-BASELINE.json` as the
+     locked reference (≈ 240.8 s / 167.3 MB) every later phase is judged against. `perf-w1` prints
+     the delta vs it with a soft regression guard; gate (b) "measurable" = ≥5% wall-clock improvement
+     (single timed run; peak memory tracked alongside).
+  4. The byte-exact SMA_MACD oracle is green (134 trades / `final_equity 46189.87730727451`); no
      engine code changed in this phase (tooling + measurement only).
+
+> **TOOL-03 dropped (2026-06-23, owner decision, Phase 1 discussion):** the `backtesting.py` +
+> `backtrader` cross-validation runners are removed from v1.5. v1.5 is behavior-preserving and gated
+> on the byte-exact oracle — correctness is proven by *invariance*, not external *agreement*; the
+> v1.0 `tests/golden/CROSS-VALIDATION.md` evidence stays valid since no numbers change. No
+> `perf-crossval` target.
 **Plans**: TBD
 
 ### Phase 2: Order-Storage Indexing
