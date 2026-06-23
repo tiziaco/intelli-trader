@@ -54,7 +54,7 @@ never a float swap); single UUIDv7; determinism double-run byte-identical. Sourc
 [`perf/results/PERF-BASELINE-RESULTS.md`](../perf/results/PERF-BASELINE-RESULTS.md) (the spike IS the
 research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADMAP.md).
 
-- [ ] **Phase 1: Perf Tooling & Baseline** — root-Makefile `perf-*` targets, two-mode benchmark/Scalene-profile runner, cross-validation runners, re-freeze the baseline (TOOL-01..04)
+- [x] **Phase 1: Perf Tooling & Baseline** — root-Makefile `perf-*` targets, two-mode benchmark/Scalene-profile runner, re-freeze the baseline to a committed `W1-BASELINE.json` + soft regression guard (gate (b) = ≥5% wall-clock) (TOOL-01, TOOL-02, TOOL-04 — TOOL-03 cross-val dropped 2026-06-23)
 - [ ] **Phase 2: Order-Storage Indexing** — derived secondary indexes over the flat `{id: order}` dict (D-20 source of truth), Postgres-extensible interface (PERF-01, ~37% CPU)
 - [ ] **Phase 3: Running PnL Accumulator** — maintain realised PnL on close, stop the per-bar re-sum; opportunistic in-file CONCERNS cleanups allowed (PERF-02, ~13% CPU)
 - [ ] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
@@ -68,23 +68,30 @@ research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADM
 honest, gated way to prove its W1 improvement — and the W1 baseline is re-frozen as the locked
 reference before any optimization touches engine code.
 **Depends on**: Nothing (first phase; the prerequisite for every optimization gate)
-**Requirements**: TOOL-01, TOOL-02, TOOL-03, TOOL-04
+**Requirements**: TOOL-01, TOOL-02, TOOL-04 (TOOL-03 cross-validation **dropped** 2026-06-23 — see note below)
 **Success Criteria** (what must be TRUE):
   1. The root Makefile exposes a `make perf-*` command surface (at least `perf-w1`, `perf-w2`,
-     `perf-baseline`, `perf-profile`, `perf-crossval`) that inherits `include .env` /
-     `.EXPORT_ALL_VARIABLES`.
+     `perf-baseline`, `perf-profile`) that inherits `include .env` / `.EXPORT_ALL_VARIABLES`.
   2. The W1 runner has two clearly separated modes — a clean **benchmark** (profiler-free, the gated
      timing run that produces the frozen number) and a **separate** Scalene `--cpu-only --html
      --program-path` **profile** command that writes a gitignored HTML artifact; profiling never
      wraps the timed/gated run.
-  3. `backtesting.py` + `backtrader` cross-validation comparison runners exist for the performance
-     reference path and reconcile against the iTrader result (spec §13).
-  4. The W1 baseline is re-frozen by a clean benchmark run after TOOL-01..03 land and BEFORE any
-     optimization — recorded as the locked reference (≈ 240.8 s / 167.3 MB) every later phase is
-     judged against.
-  5. The byte-exact SMA_MACD oracle is green (134 trades / `final_equity 46189.87730727451`); no
+  3. The W1 baseline is re-frozen by a clean benchmark run after TOOL-01..02 land and BEFORE any
+     optimization — recorded in a committed machine-readable `perf/results/W1-BASELINE.json` as the
+     locked reference (≈ 240.8 s / 167.3 MB) every later phase is judged against. `perf-w1` prints
+     the delta vs it with a soft regression guard; gate (b) "measurable" = ≥5% wall-clock improvement
+     (single timed run; peak memory tracked alongside).
+  4. The byte-exact SMA_MACD oracle is green (134 trades / `final_equity 46189.87730727451`); no
      engine code changed in this phase (tooling + measurement only).
-**Plans**: TBD
+
+> **TOOL-03 dropped (2026-06-23, owner decision, Phase 1 discussion):** the `backtesting.py` +
+> `backtrader` cross-validation runners are removed from v1.5. v1.5 is behavior-preserving and gated
+> on the byte-exact oracle — correctness is proven by *invariance*, not external *agreement*; the
+> v1.0 `tests/golden/CROSS-VALIDATION.md` evidence stays valid since no numbers change. No
+> `perf-crossval` target.
+**Plans**: 2 plans
+  - [x] 01-01-PLAN.md — perf-* Makefile targets + runner --json/--check/--baseline-out flags + D-07 window pin + Scalene .gitignore (TOOL-01, TOOL-02)
+  - [x] 01-02-PLAN.md — re-freeze the committed W1-BASELINE.json + prove the soft regression guard (TOOL-04)
 
 ### Phase 2: Order-Storage Indexing
 **Goal**: Order-storage queries stop linear-scanning the full flat `{id: order}` dict, removing the
@@ -146,6 +153,24 @@ numeric surface, so they bundle cleanly into one discipline phase.
   5. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
      baseline, re-frozen as the new locked reference.
 **Plans**: TBD
+
+> **Note — captured during Phase 1 (2026-06-23), concrete instance of criterion #1:** the W1 timed run
+> emits frequent `error`-level `OrderHandler` logs `Signal validation failed: Market validation failed -
+> ['Quantity ... below minimum 0.001']`. Root cause: the `FractionOfCash` coverage strategies
+> (A/B/C/D in `perf/strategies/`) size as `fraction × available_cash ÷ price`; as a portfolio's cash
+> depletes (C pyramids uncapped to exhaustion; B shares one cash pool across 3 symbols), the computed
+> quantity falls below the `0.001 BTC` venue minimum (`ExchangeLimits` fallback, BTCUSD
+> `Instrument.min_order_size` undeclared per D-01a) and the market validator correctly refuses the dust
+> order. **This is NOT a correctness defect** — the SMA_MACD oracle (134 / `46189.87730727451`) is a
+> separate run and is unaffected — but the `error`-level log volume burns CPU inside the W1 timed loop,
+> so demoting/sampling it is a legitimate PERF-03 win folded into criterion #1.
+>
+> **DISCUSS THE *HOW* AT PHASE 4 DISCUSS/PLAN TIME (do not pre-decide):** options include demote
+> `error`→`debug`/`warning`, cached `isEnabledFor` level-gate, sample/rate-limit, or drop the per-signal
+> rejection log entirely — and confirm clean measurement/attribution, since part of PERF-03's gate-(b)
+> speedup would come from removing this spam (the post-phase re-freeze must account for it). **Decided in
+> Phase 1 (do NOT revisit):** do NOT change `min_order_size` or the coverage-strategy sizing to silence
+> it — that is the wrong lever and would re-bake the frozen W1 baseline.
 
 ### Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)
 **Goal**: SMA & MACD compute incrementally (rolling/memoized) instead of a full-window `ta` rebuild
@@ -279,7 +304,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Perf Tooling & Baseline | 0/TBD | Not started | - |
+| 1. Perf Tooling & Baseline | 2/2 | Complete   | 2026-06-23 |
 | 2. Order-Storage Indexing | 0/TBD | Not started | - |
 | 3. Running PnL Accumulator | 0/TBD | Not started | - |
 | 4. Hot-Path Discipline | 0/TBD | Not started | - |

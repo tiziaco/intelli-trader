@@ -27,17 +27,28 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
 
 ### Tooling & Baseline (TOOL) — Phase 1 prerequisite (spec §13)
 
-- [ ] **TOOL-01**: A `make perf-*` command surface lives in the **root** Makefile (so it inherits
+- [x] **TOOL-01**: A `make perf-*` command surface lives in the **root** Makefile (so it inherits
   `include .env` / `.EXPORT_ALL_VARIABLES`): at minimum `perf-w1`, `perf-w2`, `perf-baseline`
-  (clean frozen run), `perf-profile` (Scalene), `perf-crossval`.
-- [ ] **TOOL-02**: The W1 runner has two modes — a clean **benchmark** mode (the gated, profiler-free
+  (clean frozen run), `perf-profile` (Scalene).
+- [x] **TOOL-02**: The W1 runner has two modes — a clean **benchmark** mode (the gated, profiler-free
   timing run that produces the frozen number) and a **separate** Scalene `--cpu-only --html
   --program-path` **profile** command that writes a (gitignored) HTML artifact for manual review.
   Profiling NEVER wraps the timed/gated run (it would 2–5× the wall-clock and destroy the gate).
-- [ ] **TOOL-03**: `backtesting.py` + `backtrader` cross-validation comparison runners exist for the
-  performance reference path and reconcile against the iTrader result (spec §13).
-- [ ] **TOOL-04**: The W1 baseline is **re-frozen** (clean run) after TOOL-01..03 land and BEFORE any
-  optimization — the locked reference every later phase is judged against.
+- [x] **TOOL-04**: The W1 baseline is **re-frozen** (clean run) after TOOL-01..02 land and BEFORE any
+  optimization — the locked reference every later phase is judged against. The frozen number is
+  written to a committed machine-readable baseline file (`perf/results/W1-BASELINE.json`); `perf-w1`
+  prints the delta vs it with a soft regression guard. Gate (b) "measurable" = **≥5% wall-clock
+  improvement** (single timed run; peak memory tracked alongside).
+
+> **TOOL-03 (cross-validation) DROPPED from v1.5 — owner decision, 2026-06-23, Phase 1 discussion.**
+> v1.5 is behavior-preserving and gated on the byte-exact oracle staying green — correctness is
+> proven by *invariance* (oracle), not external *agreement*. Cross-validation against other engines
+> was the tool for *result-changing* milestones (v1.0/v1.4) that needed proof the *new* numbers were
+> right; v1.5 produces no new numbers, so the v1.0 `tests/golden/CROSS-VALIDATION.md` evidence stays
+> valid and the comparison adds no signal. (Comparing a vectorized framework to event-driven iTrader
+> on *speed* is also apples-to-oranges; gate (b) is iTrader-vs-its-own-baseline.) No `perf-crossval`
+> target. Revive the v1.0 force-match methodology only if a future result-changing milestone
+> re-baselines numbers.
 
 ### Hot-Path Optimization (PERF) — ordered by payoff × safety (§6)
 
@@ -95,10 +106,10 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TOOL-01 | Phase 1 — Perf Tooling & Baseline | Pending |
-| TOOL-02 | Phase 1 — Perf Tooling & Baseline | Pending |
-| TOOL-03 | Phase 1 — Perf Tooling & Baseline | Pending |
-| TOOL-04 | Phase 1 — Perf Tooling & Baseline | Pending |
+| TOOL-01 | Phase 1 — Perf Tooling & Baseline | Complete |
+| TOOL-02 | Phase 1 — Perf Tooling & Baseline | Complete |
+| ~~TOOL-03~~ | ~~Phase 1~~ — **DROPPED** (2026-06-23, owner decision; oracle proves correctness by invariance) | Dropped |
+| TOOL-04 | Phase 1 — Perf Tooling & Baseline | Complete |
 | PERF-01 | Phase 2 — Order-Storage Indexing | Pending |
 | PERF-02 | Phase 3 — Running PnL Accumulator | Pending |
 | PERF-03 | Phase 4 — Hot-Path Discipline | Pending |
@@ -107,10 +118,10 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | PERF-06 | Phase 6 — Bar-Feed Window Copies (OPTIONAL) | Pending |
 
 **Coverage:**
-- v1 requirements: 10 total (TOOL ×4 + PERF ×6; PERF-06 optional)
-- Mapped to phases: 10 ✓
+- v1 requirements: 9 total (TOOL ×3 + PERF ×6; PERF-06 optional) — TOOL-03 dropped 2026-06-23
+- Mapped to phases: 9 ✓
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-23*
-*Last updated: 2026-06-23 — roadmap created; all 10 v1 requirements mapped to 6 phases (100% coverage). Source: `perf/results/PERF-BASELINE-RESULTS.md` §6.*
+*Last updated: 2026-06-23 — Phase 1 discussion: TOOL-03 (cross-validation) DROPPED (owner decision — byte-exact oracle proves correctness by invariance in a behavior-preserving milestone). 9 v1 requirements mapped to 6 phases (100% coverage). Source: `perf/results/PERF-BASELINE-RESULTS.md` §6.*
