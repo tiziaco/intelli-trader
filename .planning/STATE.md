@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: phase-complete
-stopped_at: Phase 1 VERIFIED (9/9 must-haves; TOOL-01/02/04 delivered, gate (a) green); ready to plan Phase 2 (Order-Storage Indexing, PERF-01)
-last_updated: "2026-06-23T18:10:40.110Z"
-last_activity: 2026-06-23
+status: verifying
+stopped_at: Phase 2 context gathered
+last_updated: "2026-06-23T20:33:48.591Z"
+last_activity: "2026-06-23 -- 01-02 complete: W1-BASELINE.json frozen (247.5s/167.3MB), soft guard proven both arms, gate (a) green, TOOL-04 closed"
 progress:
   total_phases: 8
   completed_phases: 1
@@ -324,9 +324,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-23T18:09:42Z
-Stopped at: Completed 01-02-PLAN.md — Phase 1 complete (W1-BASELINE.json frozen, soft guard proven, TOOL-04 closed); ready for verification
-Resume file: None
+Last session: 2026-06-23T20:33:48.581Z
+Stopped at: Phase 2 context gathered
+Resume file: .planning/phases/02-order-storage-indexing/02-CONTEXT.md
 
 ## Operator Next Steps
 
