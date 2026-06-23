@@ -12,6 +12,8 @@ trivial strategy is sufficient. Determinism: seed 42 throughout. Profiling
 (Scalene) is Step 2, NOT here.
 """
 
+import argparse
+import json
 import tempfile
 import time
 import tracemalloc
@@ -147,7 +149,13 @@ def run_w2() -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    run_w2()
+    parser = argparse.ArgumentParser(description="W2 synthetic scaling sweep")
+    parser.add_argument("--json", action="store_true",
+                        help="emit the scaling points as JSON (machine-readable)")
+    args = parser.parse_args()
+    points = run_w2()                       # human table prints by default (D-06)
+    if args.json:
+        print(json.dumps(points, indent=2))
 
 
 if __name__ == "__main__":

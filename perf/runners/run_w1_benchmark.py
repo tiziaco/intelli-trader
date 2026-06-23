@@ -9,7 +9,11 @@ Prints a per-portfolio breakdown so the §6 paths that fired are visible.
 Profiling (Scalene) is Step 2, NOT here.
 """
 
+import argparse
+import datetime as dt
+import json
 import os
+import sys
 import time
 import tracemalloc
 from decimal import Decimal
@@ -20,11 +24,12 @@ from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 
 from perf.workloads.w1_topology import CSV_PATHS, TIMEFRAME, wire_w1, W1Topology
 
-# Date window covering the fetched 5m data (180d ending 2026-06-22). The frozen
-# default spans the full fetched range; override via env (W1_START_DATE /
-# W1_END_DATE) to profile a shorter, faster slice (e.g. a 2-month window) without
-# editing — keeps the slice reproducible and the committed default untouched.
-_START_DATE = os.environ.get("W1_START_DATE", "2025-12-24")
+# Date window for the gated W1 run. D-07: the default is PINNED to the frozen
+# 2-month baseline slice (2026-04-23 → 2026-06-23) so `make perf-w1` reproduces
+# the ~240.8s gated number with no env vars to remember. The os.environ.get
+# override mechanism stays intact: `make perf-w1 W1_START_DATE=… W1_END_DATE=…`
+# still slices an ad-hoc window via the Makefile's .EXPORT_ALL_VARIABLES.
+_START_DATE = os.environ.get("W1_START_DATE", "2026-04-23")
 _END_DATE = os.environ.get("W1_END_DATE", "2026-06-23")
 
 
@@ -142,8 +147,85 @@ def run_w1() -> dict[str, Any]:
     }
 
 
+def _to_baseline_schema(result: dict[str, Any]) -> dict[str, Any]:
+    """Build the D-01 committed-baseline payload from a run_w1() result dict.
+
+    final_equity is the byte-exact SMA_MACD oracle CONSTANT serialized as a
+    STRING (money discipline; never a JSON float) — it is a provenance stamp
+    that the engine was on-contract when frozen (OQ-1/A1), NOT a W1-derived
+    value (the W1 coverage workload is not the oracle).
+    """
+    return {
+        "schema_version": 1,
+        "frozen_at": dt.date.today().isoformat(),
+        "metric": {
+            "wall_clock_s": round(result["wall_clock_s"], 1),
+            "peak_mem_mb": round(result["peak_mem_mb"], 1),
+        },
+        "window": {"start_date": _START_DATE, "end_date": _END_DATE},
+        "workload": {
+            "name": "W1",
+            "timeframe": TIMEFRAME,
+            "seed": 42,
+            "total_fills": result["total_fills"],
+            "total_closed_positions": result["total_closed_positions"],
+        },
+        "oracle_provenance": {
+            "test": "tests/integration/test_backtest_oracle.py",
+            "trade_count": 134,
+            "final_equity": "46189.87730727451",
+            "green_at_freeze": True,
+        },
+    }
+
+
+def _write_baseline(result: dict[str, Any], out_path: str) -> None:
+    """Freeze a run as the committed W1-BASELINE.json (D-01 schema)."""
+    with open(out_path, "w") as fh:
+        json.dump(_to_baseline_schema(result), fh, indent=2)
+        fh.write("\n")
+
+
+def _check_regression(
+    result: dict[str, Any], baseline_path: str, band_pct: float = 5.0
+) -> int:
+    """Soft regression guard (D-02/D-04). ALWAYS print both deltas; FAIL (return
+    1) ONLY on a >+band_pct wall-clock SLOWDOWN. A faster-or-within-±band run
+    returns 0 — an improvement must NEVER trip the guard (Pitfall 3; no abs()).
+    Peak memory is reported and watched but never fails.
+    """
+    with open(baseline_path) as fh:
+        base = json.load(fh)
+    base_wall = base["metric"]["wall_clock_s"]
+    base_mem = base["metric"]["peak_mem_mb"]
+    wall = result["wall_clock_s"]
+    mem = result["peak_mem_mb"]
+    wall_d = (wall - base_wall) / base_wall * 100.0
+    mem_d = (mem - base_mem) / base_mem * 100.0
+    print(f"W1 wall_clock {wall:.1f}s  Δ {wall_d:+.1f}%  (baseline {base_wall:.1f}s)")
+    print(f"W1 peak_mem  {mem:.1f}MB  Δ {mem_d:+.1f}%  (baseline {base_mem:.1f}MB, watched)")
+    if wall_d > band_pct:                       # only a real SLOWDOWN fails (D-04)
+        print(f"PERF REGRESSION: +{wall_d:.1f}% > band {band_pct:.1f}% — gate (b) guard FAILED")
+        return 1
+    return 0
+
+
 def main() -> None:
-    run_w1()
+    parser = argparse.ArgumentParser(description="W1 realistic benchmark")
+    parser.add_argument("--json", action="store_true",
+                        help="emit the result dict as JSON (machine-readable)")
+    parser.add_argument("--check", action="store_true",
+                        help="compare vs W1-BASELINE.json; soft regression guard (gate b)")
+    parser.add_argument("--baseline-out", metavar="PATH",
+                        help="freeze: write the run as the committed baseline JSON")
+    args = parser.parse_args()
+    result = run_w1()                       # human stdout prints by default (D-06)
+    if args.json:
+        print(json.dumps(_to_baseline_schema(result), indent=2))
+    if args.baseline_out:
+        _write_baseline(result, args.baseline_out)
+    if args.check:
+        sys.exit(_check_regression(result, "perf/results/W1-BASELINE.json"))
 
 
 if __name__ == "__main__":
