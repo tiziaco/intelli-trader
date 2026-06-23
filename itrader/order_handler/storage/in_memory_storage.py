@@ -61,7 +61,7 @@ class InMemoryOrderStorage(OrderStorage):
         self._by_id: Dict[uuid.UUID, 'Order'] = {}                          # SOURCE OF TRUTH (D-20)
         self._active_by_portfolio: Dict[uuid.UUID, Dict[uuid.UUID, None]] = {}   # derived cache (D-02)
         self._by_status: Dict['OrderStatus', Dict[uuid.UUID, None]] = {}         # derived cache, active-only (D-10)
-        self._last_indexed_status: Dict[uuid.UUID, 'OrderStatus'] = {}           # shadow registry (D-03)
+        self._last_indexed_status: Dict[uuid.UUID, 'OrderStatus'] = {}           # shadow registry (D-03): one entry per LIVE order (active OR terminal)
 
     # --- index maintenance (derived caches over the flat dict) --------------
 
@@ -103,8 +103,11 @@ class InMemoryOrderStorage(OrderStorage):
     def _index_remove(self, order: 'Order') -> None:
         """Drop one order from both caches + the registry (delete paths).
 
-        Pitfall 5: every remove pops the registry entry too, so no stale status
-        leaks (and the active-only memory posture, D-11, is preserved).
+        Pitfall 5: every remove pops the registry entry too, so the registry
+        holds exactly one entry per LIVE _by_id order (active OR terminal) and
+        never leaks a stale status after the order is deleted. (The registry is
+        NOT active-only — _index_apply records terminal statuses as well, which
+        the old_status diff for a later re-add/update of the same id relies on.)
         """
         oid = order.id
         pid = order.portfolio_id
@@ -158,7 +161,12 @@ class InMemoryOrderStorage(OrderStorage):
         active bucket is the exact equivalent set. Terminal orders stay in
         ``_by_id`` (history) — they were never in the active index.
         """
-        bucket = self._active_by_portfolio.get(portfolio_id, {})   # type: ignore[arg-type]
+        # WR-01: the index is UUID-keyed; a non-UUID IdLike can never be a key,
+        # so fail closed rather than silently returning {} (which would diverge
+        # from the ==-based scan paths on the same logical query).
+        if not isinstance(portfolio_id, uuid.UUID):
+            return 0
+        bucket = self._active_by_portfolio.get(portfolio_id, {})
         to_remove = [
             oid for oid in bucket if self._by_id[oid].ticker == ticker
         ]
@@ -176,7 +184,10 @@ class InMemoryOrderStorage(OrderStorage):
         a stored structure (D-20).
         """
         if portfolio_id is not None:
-            bucket = self._active_by_portfolio.get(portfolio_id, {})   # type: ignore[arg-type]
+            # WR-01: index is UUID-keyed; fail closed on a non-UUID IdLike.
+            if not isinstance(portfolio_id, uuid.UUID):
+                return {portfolio_id: {}}
+            bucket = self._active_by_portfolio.get(portfolio_id, {})
             return {portfolio_id: {oid: self._by_id[oid] for oid in bucket}}
         # None path: scan _by_id filtered by active membership so the nested
         # shape keeps the SAME first-seen-portfolio + within-portfolio GLOBAL
@@ -219,7 +230,10 @@ class InMemoryOrderStorage(OrderStorage):
         were never in the active index, so sourcing from it is exactly
         equivalent to the old ``is_active`` scan.
         """
-        bucket = self._active_by_portfolio.get(portfolio_id, {})   # type: ignore[arg-type]
+        # WR-01: index is UUID-keyed; fail closed on a non-UUID IdLike.
+        if not isinstance(portfolio_id, uuid.UUID):
+            return 0
+        bucket = self._active_by_portfolio.get(portfolio_id, {})
         to_remove = list(bucket)
         for order_id in to_remove:
             order = self._by_id[order_id]
@@ -270,9 +284,14 @@ class InMemoryOrderStorage(OrderStorage):
         lifecycle iterates per concrete pid), so the scan costs nothing measured.
         """
         if portfolio_id is not None:
-            bucket = self._active_by_portfolio.get(portfolio_id, {})   # type: ignore[arg-type]
+            # WR-01: index is UUID-keyed; fail closed on a non-UUID IdLike.
+            if not isinstance(portfolio_id, uuid.UUID):
+                return []
+            bucket = self._active_by_portfolio.get(portfolio_id, {})
             return [self._by_id[oid] for oid in bucket]
-        return [o for o in self._by_id.values() if o.status in _ACTIVE_STATUSES]
+        # IN-02: route the None scan through the centralized _orders() predicate
+        # (byte-identical add-order; single iteration source for the flat scan).
+        return [o for o in self._orders() if o.status in _ACTIVE_STATUSES]
 
     def get_orders_by_time_range(self, start_time: datetime, end_time: datetime,
                                 portfolio_id: Optional[IdLike] = None) -> List['Order']:
