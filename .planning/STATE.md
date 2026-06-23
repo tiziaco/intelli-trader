@@ -4,14 +4,14 @@ milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
 stopped_at: Phase 1 context gathered (TOOL-03 dropped)
-last_updated: "2026-06-23T16:54:39.991Z"
-last_activity: 2026-06-23 -- Phase 01 planning complete
+last_updated: "2026-06-23T17:47:48.903Z"
+last_activity: 2026-06-23
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 2
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 50
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** v1.5 started (promoted the performance half of Backlog 999.2; Persistence deferred to its own next milestone). Defining requirements → roadmap. Source: `perf/results/PERF-BASELINE-RESULTS.md` (the spike = the research). NOTE: the v1.4 "Milestone Gate" + "Phase Map" sections below are stale — the roadmapper rewrites them for v1.5.
+**Current focus:** Phase 01 — perf-tooling-baseline
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-06-23 -- Phase 01 planning complete
+Phase: 01 (perf-tooling-baseline) — EXECUTING
+Plan: 2 of 2
+Status: Plan 01-01 complete (perf tooling surface built); 01-02 (baseline freeze) next
+Last activity: 2026-06-23 -- 01-01 complete: perf-* targets + runner flags landed, Task 3 checkpoint approved
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
@@ -201,6 +201,7 @@ scope decisions:
 - [Phase ?]: 05.1-01: short-increase admission gate lifted behind allow_increase (byte-symmetric mirror of long gate, long arm byte-exact); D-06 admission-gate reality — a short SELL-add reserves NOTHING at admission (admission_manager.py:264 reserves only Side.BUY), margin lock rides settlement (Plan 05.1-02); CR-02 over-cover guard regression-locked for SHORT side (RED-verified); SMA_MACD oracle byte-exact 134/46189.87730727451
 - [Phase 05.1]: 05.1-02 (Tasks 1-2): admitted short SELL-add settles through the EXISTING side-agnostic SCALE-IN branch (portfolio.py:423-441) — margin RE-LOCKS to aggregate_notional/leverage (1000->2000 on the second add; pro-rata release to 1000 + realised PnL 200 on a half-cover), proven by two parked e2e leaves (SCALEUSD/SCALPCUSD, NEVER BTCUSD); NO new settlement branch (D-02/D-03); cross-validated vs backtesting.py 0.6.5 / backtrader 1.9.78.123 (CROSS-VALIDATION-SCALE-IN.md, trade-level PRIMARY GREEN, 0 BUG); determinism byte-identical, SMA_MACD oracle byte-exact, mypy --strict clean (185 files).
 - [Phase 05.1]: 05.1-02 (Task 3): owner-gated short scale-in re-baseline FROZEN under explicit owner sign-off (tiziaco, tiziano.iaco@gmail.com, 2026-06-17) at the blocking human-verify checkpoint. CROSS-VALIDATION-SCALE-IN.md Owner Sign-Off PENDING->APPROVED with full attribution; both scale-in e2e leaves (SCALEUSD/SCALPCUSD) carry a D-10/D-12 FROZEN freeze-provenance banner (test logic + hand-computed Decimal assertions UNCHANGED); SCALE-02/SCALE-03 marked complete. Re-confirmed at the freeze: mypy --strict clean (185 files), SMA_MACD oracle byte-exact 134/46189.87730727451, both frozen leaves green. No production code touched (portfolio.py / sizing_resolver.py untouched).
+- [Phase 01]: 01-01 (TOOL-01/02): perf tooling surface built — make perf-w1/w2/baseline/profile (+ user-added perf-view) in the root Makefile; perf-w1 is PROFILER-FREE and perf-profile is the ONLY Scalene path (two-step run->view; user switched the viewer from --html to native `scalene view` local-server, approved deviation 4fa61d1/4d50996, TOOL-02 split intact). run_w1_benchmark.py gained --json/--check/--baseline-out (D-06 human-stdout default) + _to_baseline_schema/_write_baseline/_check_regression (soft guard fails ONLY on >+5% slowdown, no abs(), Pitfall 3); run_w2_sweep.py gained --json. D-07: _START_DATE default pinned 2025-12-24->2026-04-23 (env-overridable). final_equity stored as STRING constant 46189.87730727451 (OQ-1/A1 provenance, not W1-derived). Narrow .gitignore (scalene-profile.html + perf/results/scalene-*.json) keeps W1-BASELINE.json trackable (Pitfall 4). Gate (a) green 134/46189.87730727451; NO itrader/ engine code touched. Scalene hotspot confirmed: in_memory_storage 48% (P2), position_manager 17% (P3), indicators/catalog 18% (P5).
 
 ### Pending Todos
 
@@ -271,6 +272,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 05 P03 | 25 | 2 tasks | 10 files |
 | Phase 05 P04 | 40 | 2 tasks tasks | 6 files files |
 | Phase 05.1 P01 | 12 | 3 tasks | 3 files |
+| v1.5 Phase 01 P01 | ~5 (hands-on) | 3 tasks (2 auto + 1 checkpoint) | 4 files |
 
 ## Bookkeeping
 
@@ -312,9 +314,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-23T15:48:56.435Z
+Last session: 2026-06-23T17:47:48.896Z
 Stopped at: Phase 1 context gathered (TOOL-03 dropped)
-Resume file: .planning/phases/01-perf-tooling-baseline/01-CONTEXT.md
+Resume file: None
 
 ## Operator Next Steps
 

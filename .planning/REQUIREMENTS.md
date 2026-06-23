@@ -27,10 +27,10 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
 
 ### Tooling & Baseline (TOOL) — Phase 1 prerequisite (spec §13)
 
-- [ ] **TOOL-01**: A `make perf-*` command surface lives in the **root** Makefile (so it inherits
+- [x] **TOOL-01**: A `make perf-*` command surface lives in the **root** Makefile (so it inherits
   `include .env` / `.EXPORT_ALL_VARIABLES`): at minimum `perf-w1`, `perf-w2`, `perf-baseline`
   (clean frozen run), `perf-profile` (Scalene).
-- [ ] **TOOL-02**: The W1 runner has two modes — a clean **benchmark** mode (the gated, profiler-free
+- [x] **TOOL-02**: The W1 runner has two modes — a clean **benchmark** mode (the gated, profiler-free
   timing run that produces the frozen number) and a **separate** Scalene `--cpu-only --html
   --program-path` **profile** command that writes a (gitignored) HTML artifact for manual review.
   Profiling NEVER wraps the timed/gated run (it would 2–5× the wall-clock and destroy the gate).
@@ -106,8 +106,8 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TOOL-01 | Phase 1 — Perf Tooling & Baseline | Pending |
-| TOOL-02 | Phase 1 — Perf Tooling & Baseline | Pending |
+| TOOL-01 | Phase 1 — Perf Tooling & Baseline | Complete |
+| TOOL-02 | Phase 1 — Perf Tooling & Baseline | Complete |
 | ~~TOOL-03~~ | ~~Phase 1~~ — **DROPPED** (2026-06-23, owner decision; oracle proves correctness by invariance) | Dropped |
 | TOOL-04 | Phase 1 — Perf Tooling & Baseline | Pending |
 | PERF-01 | Phase 2 — Order-Storage Indexing | Pending |
