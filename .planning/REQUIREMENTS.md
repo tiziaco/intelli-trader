@@ -34,7 +34,7 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
   timing run that produces the frozen number) and a **separate** Scalene `--cpu-only --html
   --program-path` **profile** command that writes a (gitignored) HTML artifact for manual review.
   Profiling NEVER wraps the timed/gated run (it would 2–5× the wall-clock and destroy the gate).
-- [ ] **TOOL-04**: The W1 baseline is **re-frozen** (clean run) after TOOL-01..02 land and BEFORE any
+- [x] **TOOL-04**: The W1 baseline is **re-frozen** (clean run) after TOOL-01..02 land and BEFORE any
   optimization — the locked reference every later phase is judged against. The frozen number is
   written to a committed machine-readable baseline file (`perf/results/W1-BASELINE.json`); `perf-w1`
   prints the delta vs it with a soft regression guard. Gate (b) "measurable" = **≥5% wall-clock
@@ -109,7 +109,7 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | TOOL-01 | Phase 1 — Perf Tooling & Baseline | Complete |
 | TOOL-02 | Phase 1 — Perf Tooling & Baseline | Complete |
 | ~~TOOL-03~~ | ~~Phase 1~~ — **DROPPED** (2026-06-23, owner decision; oracle proves correctness by invariance) | Dropped |
-| TOOL-04 | Phase 1 — Perf Tooling & Baseline | Pending |
+| TOOL-04 | Phase 1 — Perf Tooling & Baseline | Complete |
 | PERF-01 | Phase 2 — Order-Storage Indexing | Pending |
 | PERF-02 | Phase 3 — Running PnL Accumulator | Pending |
 | PERF-03 | Phase 4 — Hot-Path Discipline | Pending |

@@ -91,7 +91,7 @@ reference before any optimization touches engine code.
 > `perf-crossval` target.
 **Plans**: 2 plans
   - [x] 01-01-PLAN.md — perf-* Makefile targets + runner --json/--check/--baseline-out flags + D-07 window pin + Scalene .gitignore (TOOL-01, TOOL-02)
-  - [ ] 01-02-PLAN.md — re-freeze the committed W1-BASELINE.json + prove the soft regression guard (TOOL-04)
+  - [x] 01-02-PLAN.md — re-freeze the committed W1-BASELINE.json + prove the soft regression guard (TOOL-04)
 
 ### Phase 2: Order-Storage Indexing
 **Goal**: Order-storage queries stop linear-scanning the full flat `{id: order}` dict, removing the
@@ -286,7 +286,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Perf Tooling & Baseline | 1/2 | In Progress|  |
+| 1. Perf Tooling & Baseline | 2/2 | Complete   | 2026-06-23 |
 | 2. Order-Storage Indexing | 0/TBD | Not started | - |
 | 3. Running PnL Accumulator | 0/TBD | Not started | - |
 | 4. Hot-Path Discipline | 0/TBD | Not started | - |
