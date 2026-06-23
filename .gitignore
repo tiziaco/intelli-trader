@@ -47,4 +47,3 @@ htmlcov/
 # Scalene perf profiles (manual-review artifacts — committed results live in perf/results/*.md + W1-BASELINE.json)
 scalene-profile.html
 perf/results/scalene-*.json
-

@@ -111,14 +111,17 @@ perf-baseline:
 	@echo "🧊 Freezing W1 baseline → perf/results/W1-BASELINE.json..."
 	poetry run python -m perf.runners.run_w1_benchmark --baseline-out perf/results/W1-BASELINE.json
 
-# Scalene CPU profile → gitignored HTML (manual review). NEVER wraps the gated run.
-# Two steps: run (writes JSON) then view --html (renders scalene-profile.html) —
+# Scalene CPU profile (manual review). NEVER wraps the gated run.
+# Two steps: run (writes JSON) then `scalene view` (native viewer) — it serves the
+# GUI assets itself and prints a localhost URL to open in the VS Code Simple Browser.
+# Do NOT use `view --html`: the standalone file references jquery/bootstrap by
+# relative path, so it only half-renders unless those assets sit next to it.
 # `scalene run --html` does NOT parse in 2.3.0 (Pitfall 1). $(CURDIR) = repo root.
 # Do NOT pass --profile-all (profiles Scalene's own thread) or --memory.
 perf-profile:
-	@echo "🔬 Scalene CPU profile (HTML, gitignored) — NOT the gated run..."
+	@echo "🔬 Scalene CPU profile — NOT the gated run..."
 	poetry run python -m scalene run --cpu-only --program-path $(CURDIR) \
 		-o perf/results/scalene-w1.json -m perf.runners.run_w1_benchmark
-	poetry run python -m scalene view --html perf/results/scalene-w1.json
-	@echo "   → wrote scalene-profile.html (gitignored)"
+	@echo "   → opening native viewer (paste the printed localhost URL into the VS Code browser)..."
+	poetry run python -m scalene view perf/results/scalene-w1.json
 
