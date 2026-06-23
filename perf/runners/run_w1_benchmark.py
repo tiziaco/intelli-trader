@@ -9,6 +9,7 @@ Prints a per-portfolio breakdown so the §6 paths that fired are visible.
 Profiling (Scalene) is Step 2, NOT here.
 """
 
+import os
 import time
 import tracemalloc
 from decimal import Decimal
@@ -19,9 +20,12 @@ from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 
 from perf.workloads.w1_topology import CSV_PATHS, TIMEFRAME, wire_w1, W1Topology
 
-# Date window covering the fetched 5m data (180d ending 2026-06-22).
-_START_DATE = "2025-12-24"
-_END_DATE = "2026-06-23"
+# Date window covering the fetched 5m data (180d ending 2026-06-22). The frozen
+# default spans the full fetched range; override via env (W1_START_DATE /
+# W1_END_DATE) to profile a shorter, faster slice (e.g. a 2-month window) without
+# editing — keeps the slice reproducible and the committed default untouched.
+_START_DATE = os.environ.get("W1_START_DATE", "2025-12-24")
+_END_DATE = os.environ.get("W1_END_DATE", "2026-06-23")
 
 
 def _make_on_tick(system: Any, topo: W1Topology) -> Any:
