@@ -200,8 +200,19 @@ def _check_regression(
     base_mem = base["metric"]["peak_mem_mb"]
     wall = result["wall_clock_s"]
     mem = result["peak_mem_mb"]
+    # WR-02 soft-guard: a zeroed/malformed baseline (hand-edited, truncated, or
+    # freshly stubbed W1-BASELINE.json) must degrade gracefully, never raise an
+    # uncaught ZeroDivisionError. The documented worst case for this guard is
+    # `return 1`, so a non-positive baseline wall takes the FAILED path with a
+    # clear message instead of a traceback.
+    if base_wall <= 0:
+        print(f"PERF GUARD: baseline wall_clock_s is {base_wall} — refusing to "
+              "compute a delta against a zero/invalid baseline")
+        return 1
     wall_d = (wall - base_wall) / base_wall * 100.0
-    mem_d = (mem - base_mem) / base_mem * 100.0
+    # Peak memory is watched but NEVER fails the gate; a non-positive baseline
+    # mem just yields a NaN delta in the printout rather than crashing.
+    mem_d = (mem - base_mem) / base_mem * 100.0 if base_mem > 0 else float("nan")
     print(f"W1 wall_clock {wall:.1f}s  Δ {wall_d:+.1f}%  (baseline {base_wall:.1f}s)")
     print(f"W1 peak_mem  {mem:.1f}MB  Δ {mem_d:+.1f}%  (baseline {base_mem:.1f}MB, watched)")
     if wall_d > band_pct:                       # only a real SLOWDOWN fails (D-04)
