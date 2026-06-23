@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: verifying
-stopped_at: Phase 1 complete (01-02 — W1-BASELINE.json frozen, TOOL-04 closed); ready for verification
+status: phase-complete
+stopped_at: Phase 1 VERIFIED (9/9 must-haves; TOOL-01/02/04 delivered, gate (a) green); ready to plan Phase 2 (Order-Storage Indexing, PERF-01)
 last_updated: "2026-06-23T18:10:40.110Z"
 last_activity: 2026-06-23
 progress:
