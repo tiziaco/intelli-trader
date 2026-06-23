@@ -87,12 +87,15 @@ def test_flat_dict_is_sole_container(store):
     assert storage.get_order_by_id(store.oid3) is None
 
 
-def test_filled_order_leaves_active_queries_via_predicate(store):
-    """A status change ALONE moves an order out of active queries (D-20).
+def test_filled_order_leaves_active_queries_after_update(store):
+    """A PENDING->FILLED transition + ``update_order`` drops it from active queries.
 
-    No ``deactivate_order``/``update_order`` call is needed: "active" is a
-    predicate over ``order.is_active`` evaluated at query time, not a
-    separate container membership.
+    With the active indexes (D-02/D-03), the storage write seam is where the
+    index reconciles old->new: the order mutates status IN PLACE
+    (``add_fill``), then the caller pairs it with ``update_order`` (the D-04
+    invariant — reconcile_manager does exactly this). After the write, the
+    FILLED order leaves both active queries; it stays in the flat dict as
+    history (T-05-02).
     """
     store.storage.add_order(store.order1)
     store.storage.add_order(store.order2)
@@ -102,8 +105,11 @@ def test_filled_order_leaves_active_queries_via_predicate(store):
         store.order1.quantity, store.order1.price, store.order1.time
     )
     assert store.order1.status == OrderStatus.FILLED
+    # D-04 invariant: the in-place mutation is paired with a storage write,
+    # which reconciles the active index.
+    assert store.storage.update_order(store.order1)
 
-    # Active queries exclude it purely via the predicate.
+    # Active queries exclude it via the reconciled index.
     active = store.storage.get_active_orders(store.pid1)
     assert [o.id for o in active] == [store.oid2]
     pending = store.storage.get_pending_orders(store.pid1)
@@ -121,6 +127,9 @@ def test_history_queries_return_filled_orders(store):
     assert store.order1.add_fill(
         store.order1.quantity, store.order1.price, store.order1.time
     )
+    # D-04 invariant: pair the in-place fill with a storage write so the active
+    # index reconciles (terminal-status queries below scan the flat dict, D-10).
+    assert store.storage.update_order(store.order1)
 
     assert store.storage.get_order_by_id(store.oid1) == store.order1
     assert store.storage.get_orders_by_status(OrderStatus.FILLED, store.pid1) == [store.order1]

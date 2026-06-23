@@ -151,13 +151,21 @@ class InMemoryOrderStorage(OrderStorage):
         return True
 
     def remove_orders_by_ticker(self, ticker: str, portfolio_id: IdLike) -> int:
-        """Remove all active orders for a specific ticker in a portfolio."""
+        """Remove all active orders for a specific ticker in a portfolio.
+
+        Sources candidate ids from the active index (D-07): this method only
+        ever removed active orders (the old scan filtered ``is_active``), so the
+        active bucket is the exact equivalent set. Terminal orders stay in
+        ``_by_id`` (history) — they were never in the active index.
+        """
+        bucket = self._active_by_portfolio.get(portfolio_id, {})   # type: ignore[arg-type]
         to_remove = [
-            order.id for order in self._orders(portfolio_id)
-            if order.is_active and order.ticker == ticker
+            oid for oid in bucket if self._by_id[oid].ticker == ticker
         ]
         for order_id in to_remove:
+            order = self._by_id[order_id]
             del self._by_id[order_id]
+            self._index_remove(order)
         return len(to_remove)
 
     def get_pending_orders(self, portfolio_id: Optional[IdLike] = None) -> Dict[Any, Dict[Any, 'Order']]:
@@ -168,13 +176,15 @@ class InMemoryOrderStorage(OrderStorage):
         a stored structure (D-20).
         """
         if portfolio_id is not None:
-            return {portfolio_id: {
-                order.id: order for order in self._orders(portfolio_id)
-                if order.is_active
-            }}
+            bucket = self._active_by_portfolio.get(portfolio_id, {})   # type: ignore[arg-type]
+            return {portfolio_id: {oid: self._by_id[oid] for oid in bucket}}
+        # None path: scan _by_id filtered by active membership so the nested
+        # shape keeps the SAME first-seen-portfolio + within-portfolio GLOBAL
+        # add_order order as today's scan (Pitfall 1 — a per-portfolio index
+        # union would re-group and change the sequence).
         result: Dict[Any, Dict[Any, 'Order']] = {}
-        for order in self._orders():
-            if order.is_active:
+        for order in self._by_id.values():
+            if order.status in _ACTIVE_STATUSES:
                 result.setdefault(order.portfolio_id, {})[order.id] = order
         return result
 
@@ -203,26 +213,59 @@ class InMemoryOrderStorage(OrderStorage):
         return [order for order in self._orders(portfolio_id) if order.ticker == ticker]
 
     def clear_portfolio_orders(self, portfolio_id: IdLike) -> int:
-        """Clear all active orders for a portfolio.
+        """Clear all active orders for a portfolio (sourced from the active index, D-07).
 
-        Terminal orders are kept in the flat dict to preserve history.
+        Terminal orders are kept in the flat dict to preserve history — they
+        were never in the active index, so sourcing from it is exactly
+        equivalent to the old ``is_active`` scan.
         """
-        to_remove = [
-            order.id for order in self._orders(portfolio_id) if order.is_active
-        ]
+        bucket = self._active_by_portfolio.get(portfolio_id, {})   # type: ignore[arg-type]
+        to_remove = list(bucket)
         for order_id in to_remove:
+            order = self._by_id[order_id]
             del self._by_id[order_id]
+            self._index_remove(order)
         return len(to_remove)
 
     # Enhanced storage methods implementation
+    #
+    # D-05/D-05a seam audit (no Postgres code — PERSIST-01 deferred): the
+    # OrderStorage ABC stays query-shaped and UNCHANGED; the indexes below are a
+    # private cache of InMemoryOrderStorage only. Every ABC method is
+    # SQL-expressible by a future PostgreSQLOrderStorage — insertion order maps
+    # to ``ORDER BY created_at, id``; get_order_history implies a state-change
+    # child table; search_orders needs a column whitelist; the active vs terminal
+    # split here is an in-memory caching detail (SQL covers both with one
+    # ``WHERE status=?``). No in-memory-only assumption leaks into the seam.
 
     def get_orders_by_status(self, status: 'OrderStatus', portfolio_id: Optional[IdLike] = None) -> List['Order']:
-        """Get orders by status, optionally filtered by portfolio."""
+        """Get orders by status, optionally filtered by portfolio.
+
+        Active statuses resolve via the by_status index (D-02); terminal
+        statuses keep scanning the flat dict (D-10 — no hot caller, unbounded
+        bucket growth avoided).
+        """
+        if status in _ACTIVE_STATUSES:
+            bucket = self._by_status.get(status, {})
+            return [
+                self._by_id[oid] for oid in bucket
+                if portfolio_id is None or self._by_id[oid].portfolio_id == portfolio_id
+            ]
         return [order for order in self._orders(portfolio_id) if order.status == status]
 
     def get_active_orders(self, portfolio_id: Optional[IdLike] = None) -> List['Order']:
-        """Get all active orders — pure ``order.is_active`` predicate (D-20)."""
-        return [order for order in self._orders(portfolio_id) if order.is_active]
+        """Get all active orders via the active index (D-02/D-07).
+
+        Per-portfolio: a single bucket lookup. None: a ``_by_id`` scan filtered
+        by active membership — preserves GLOBAL add_order insertion order
+        byte-identically (Pitfall 1; a per-portfolio union would re-group). The
+        None path has no production hot caller (reconcile passes a concrete pid,
+        lifecycle iterates per concrete pid), so the scan costs nothing measured.
+        """
+        if portfolio_id is not None:
+            bucket = self._active_by_portfolio.get(portfolio_id, {})   # type: ignore[arg-type]
+            return [self._by_id[oid] for oid in bucket]
+        return [o for o in self._by_id.values() if o.status in _ACTIVE_STATUSES]
 
     def get_orders_by_time_range(self, start_time: datetime, end_time: datetime,
                                 portfolio_id: Optional[IdLike] = None) -> List['Order']:
