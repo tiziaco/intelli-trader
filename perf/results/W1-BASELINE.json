@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "frozen_at": "2026-06-23",
+  "metric": {
+    "wall_clock_s": 247.5,
+    "peak_mem_mb": 167.3
+  },
+  "window": {
+    "start_date": "2026-04-23",
+    "end_date": "2026-06-23"
+  },
+  "workload": {
+    "name": "W1",
+    "timeframe": "5m",
+    "seed": 42,
+    "total_fills": 1578,
+    "total_closed_positions": 659
+  },
+  "oracle_provenance": {
+    "test": "tests/integration/test_backtest_oracle.py",
+    "trade_count": 134,
+    "final_equity": "46189.87730727451",
+    "green_at_freeze": true
+  }
+}
