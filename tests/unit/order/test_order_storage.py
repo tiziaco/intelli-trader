@@ -353,6 +353,52 @@ def test_active_queries_match_full_scan_equivalence(store):
     }
 
 
+def test_partially_filled_status_query_preserves_add_order_equivalence(store):
+    """WR-01/D-08: get_orders_by_status(PARTIALLY_FILLED) yields add-order, not transition-order.
+
+    The _by_status bucket is kept in status-transition order (an order is popped
+    from PENDING and appended to PARTIALLY_FILLED at transition time). When orders
+    cross into PARTIALLY_FILLED out of add-order, the bucket sequence diverges from
+    add-order — yet the query must stay byte-identical to the prior flat scan
+    (D-06/D-08/D-09). Here order2 (added second) transitions FIRST, so a raw
+    transition-order index would return [order2, order1]; the add-order oracle
+    returns [order1, order2]. PENDING never exposes this (entry == add), which is
+    why the FILLED/PENDING-only equivalence test missed it (WR-03).
+    """
+    s = store.storage
+    s.add_order(store.order1)   # pid1, added first
+    s.add_order(store.order2)   # pid1, added second
+
+    # order2 reaches PARTIALLY_FILLED BEFORE order1 — reverse of add-order. The
+    # full-quantity add_fill contract (D-06) cannot produce PARTIALLY_FILLED, so
+    # drive it via the valid PENDING->PARTIALLY_FILLED transition directly.
+    assert store.order2.add_state_change(
+        OrderStatus.PARTIALLY_FILLED, "partial", OrderTriggerSource.EXCHANGE
+    )
+    assert s.update_order(store.order2)
+    assert store.order1.add_state_change(
+        OrderStatus.PARTIALLY_FILLED, "partial", OrderTriggerSource.EXCHANGE
+    )
+    assert s.update_order(store.order1)
+
+    # Independent oracle: scan _by_id (add-order), filter to PARTIALLY_FILLED.
+    oracle_pf = [
+        o for o in s._by_id.values() if o.status == OrderStatus.PARTIALLY_FILLED
+    ]
+    assert [o.id for o in oracle_pf] == [store.order1.id, store.order2.id]
+
+    # Index-backed query must match the add-order oracle, NOT transition order.
+    assert (
+        [o.id for o in s.get_orders_by_status(OrderStatus.PARTIALLY_FILLED)]
+        == [o.id for o in oracle_pf]
+    )
+    # Per-portfolio path stays add-order too.
+    assert (
+        [o.id for o in s.get_orders_by_status(OrderStatus.PARTIALLY_FILLED, store.pid1)]
+        == [store.order1.id, store.order2.id]
+    )
+
+
 def test_filled_via_update_drops_from_active_index_terminal_fallback(store):
     """PENDING->FILLED via update_order drops from active AND by_status; terminal scan still finds it (D-10)."""
     s = store.storage

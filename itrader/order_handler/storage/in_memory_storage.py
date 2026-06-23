@@ -241,16 +241,23 @@ class InMemoryOrderStorage(OrderStorage):
     def get_orders_by_status(self, status: 'OrderStatus', portfolio_id: Optional[IdLike] = None) -> List['Order']:
         """Get orders by status, optionally filtered by portfolio.
 
-        Active statuses resolve via the by_status index (D-02); terminal
-        statuses keep scanning the flat dict (D-10 — no hot caller, unbounded
-        bucket growth avoided).
+        Active statuses resolve membership via the by_status index (D-02);
+        terminal statuses keep scanning the flat dict (D-10 — no hot caller,
+        unbounded bucket growth avoided).
+
+        Ordering note (D-06/D-08, WR-01): the by_status bucket is kept in
+        status-transition order (an order is popped from PENDING and appended to
+        PARTIALLY_FILLED at fill time), which diverges from add-order. To keep
+        output byte-identical to the prior flat scan on EVERY active status (not
+        just PENDING, where transition order == add-order), we yield in _by_id
+        add-order and use the bucket only as the membership filter. This method
+        has no per-bar hot caller (the hot active-set path is get_active_orders /
+        get_pending_orders via _active_by_portfolio), so the _by_id walk here is
+        not on the measured path.
         """
         if status in _ACTIVE_STATUSES:
             bucket = self._by_status.get(status, {})
-            return [
-                self._by_id[oid] for oid in bucket
-                if portfolio_id is None or self._by_id[oid].portfolio_id == portfolio_id
-            ]
+            return [order for order in self._orders(portfolio_id) if order.id in bucket]
         return [order for order in self._orders(portfolio_id) if order.status == status]
 
     def get_active_orders(self, portfolio_id: Optional[IdLike] = None) -> List['Order']:
