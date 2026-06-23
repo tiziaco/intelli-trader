@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: ready_to_plan
-stopped_at: Phase 02 complete (2/2) — ready to discuss Phase 999.2
+stopped_at: Phase 02 complete (2/2) — ready to discuss Phase 3
 last_updated: 2026-06-23T21:36:41.025Z
 last_activity: 2026-06-23
 progress:
   total_phases: 8
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
   completed_plans: 4
   percent: 13
@@ -21,11 +21,11 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 3 — Running PnL Accumulator (PERF-02, ~13% CPU)
 
 ## Current Position
 
-Phase: 999.2
+Phase: 3
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-06-23
