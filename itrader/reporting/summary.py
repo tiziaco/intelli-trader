@@ -23,14 +23,23 @@ import pandas as pd
 
 from itrader.reporting.frames import build_equity_curve, build_trade_log
 from itrader.reporting.metrics import (
+    avg_loss,
+    avg_trade_duration,
+    avg_trade_pnl,
+    avg_win,
+    best_trade,
     cagr,
+    calmar,
     compute_returns,
-    format_metrics,
+    exposure_time,
+    format_backtest_summary,
     max_drawdown,
     profit_factor,
     sharpe,
     sortino,
+    total_return,
     win_rate,
+    worst_trade,
 )
 
 #: pinned repr for cross-platform stability (T-04-01)
@@ -154,20 +163,29 @@ def build_summary(
     }
 
 
-def print_metrics_summary(portfolios: Any, logger: Any) -> None:
-    """End-of-run metrics printout lifted from the composition root (W4-07/D-14).
+def print_metrics_summary(
+    portfolios: Any,
+    logger: Any,
+    *,
+    duration_seconds: float | None = None,
+    period: tuple[Any, Any, int] | None = None,
+    portfolio_tickers: dict[Any, list[str]] | None = None,
+) -> None:
+    """End-of-run grouped metrics printout (W4-07/D-14, enriched 260623-ajs).
 
-    Relocated VERBATIM from ``BacktestTradingSystem._print_metrics_summary``: for
-    each portfolio, build the run-artifact frames via the pure
-    ``reporting.frames`` builders, compute the D-15 metric set via
-    ``reporting.metrics``, print the ``format_metrics`` block, and emit a
-    structlog summary line. The holder's ``run()`` calls this after the runner
-    finishes. Display ONLY — the engine writes NO files (artifact serialization
-    stays ``scripts/run_backtest.py``'s job). Empty runs are safe: guarded
-    denominators return 0.0 instead of raising.
+    For each portfolio, build the run-artifact frames via the pure
+    ``reporting.frames`` builders, compute the existing six metrics PLUS the nine
+    new derived metrics + capital values, assemble a per-portfolio value bag, and
+    render one grouped Capital / Trades / Risk-Return block under a shared
+    run-level header (Period + Duration) via ``format_backtest_summary``. The
+    holder's ``run()`` calls this after the runner finishes. Display ONLY — the
+    engine writes NO files (artifact serialization stays
+    ``scripts/run_backtest.py``'s job); this is oracle-inert. Empty runs are
+    safe: guarded denominators return 0.0 instead of raising.
 
-    The ``portfolio`` objects stay DUCK-TYPED (``name`` / ``total_equity`` plus
-    the frame-builder duck-typing) — zero handler imports (purity contract).
+    The ``portfolio`` objects stay DUCK-TYPED (``portfolio_id`` / ``name`` /
+    ``cash`` / ``total_equity`` plus the frame-builder duck-typing) — zero
+    handler imports (purity contract).
 
     Parameters
     ----------
@@ -175,7 +193,16 @@ def print_metrics_summary(portfolios: Any, logger: Any) -> None:
         The active portfolios to summarize, in iteration order.
     logger : structlog logger
         Bound logger for the per-portfolio ``Backtest summary`` line.
+    duration_seconds : float | None
+        Wall-clock run duration (from ``backtest_runner.duration_seconds``).
+    period : tuple[start, end, bar_count] | None
+        The bar-date span; ``None`` omits the Period header line.
+    portfolio_tickers : dict[portfolio_id, list[str]] | None
+        Per-portfolio configured instrument universe (from the subscribed
+        strategies). Missing keys default to an empty list (line omitted).
     """
+    tickers_by_pid = portfolio_tickers or {}
+    bags: list[dict[str, Any]] = []
     for portfolio in portfolios:
         trades = build_trade_log(portfolio)
         equity_frame = build_equity_curve(portfolio)
@@ -183,15 +210,38 @@ def print_metrics_summary(portfolios: Any, logger: Any) -> None:
         # frame's column is object-dtype); populated frames are float already.
         equity = equity_frame["total_equity"].astype(float)
         returns = compute_returns(equity)
-        metrics: dict[str, float] = {
+        # Starting cash = the first equity-curve snapshot (opening equity);
+        # 0.0 for an empty run (no snapshots recorded).
+        starting_cash = float(equity.iloc[0]) if not equity.empty else 0.0
+        realised_pnl = (
+            float(trades["realised_pnl"].sum()) if not trades.empty else 0.0)
+        # Decimal->float ONLY at the print edge: portfolio.cash and
+        # portfolio.total_equity are Decimal end-to-end; float() narrows them
+        # here with NO arithmetic on the Decimal beforehand (direct reads).
+        bags.append({
+            "name": portfolio.name,
+            "tickers": list(tickers_by_pid.get(portfolio.portfolio_id, [])),
+            "starting_cash": starting_cash,
+            "final_cash": float(portfolio.cash),
+            "final_equity": float(portfolio.total_equity),
+            "realised_pnl": realised_pnl,
+            "trade_count": len(trades),
+            "total_return": total_return(equity),
+            "win_rate": win_rate(trades),
+            "profit_factor": profit_factor(trades),
+            "avg_trade_pnl": avg_trade_pnl(trades),
+            "avg_win": avg_win(trades),
+            "avg_loss": avg_loss(trades),
+            "best_trade": best_trade(trades),
+            "worst_trade": worst_trade(trades),
+            "avg_trade_duration": avg_trade_duration(trades),
+            "exposure_time": exposure_time(equity_frame),
+            "cagr": cagr(equity),
             "sharpe": sharpe(returns),
             "sortino": sortino(returns),
-            "cagr": cagr(equity),
             "max_drawdown": max_drawdown(equity),
-            "profit_factor": profit_factor(trades),
-            "win_rate": win_rate(trades),
-        }
-        print(format_metrics(metrics, title=f"Backtest metrics — {portfolio.name}"))
+            "calmar": calmar(equity),
+        })
         # Decimal->float at the serialization/logging edge: portfolio.total_equity
         # is Decimal end-to-end (08-01 retype); float() narrows it for the
         # structlog kwarg only — a presentation edge, never money arithmetic.
@@ -201,3 +251,6 @@ def print_metrics_summary(portfolios: Any, logger: Any) -> None:
             final_equity=float(portfolio.total_equity),
             trade_count=len(trades),
         )
+
+    print(format_backtest_summary(
+        bags, period=period, duration_seconds=duration_seconds))

@@ -34,6 +34,7 @@ from itrader.reporting.metrics import (
     calmar,
     compute_returns,
     exposure_time,
+    format_backtest_summary,
     format_metrics,
     max_drawdown,
     profit_factor,
@@ -323,6 +324,126 @@ def test_calmar_zero_drawdown_returns_zero():
 
 def test_calmar_empty_returns_zero():
     assert calmar(pd.Series(dtype=float)) == 0.0
+
+
+# --- format_backtest_summary rendering (Task 2) -----------------------------
+def _portfolio_bag(**overrides):
+    """A fully-populated per-portfolio value bag for format_backtest_summary."""
+    bag = {
+        "name": "oracle_pf",
+        "tickers": ["BTCUSD"],
+        "starting_cash": 10000.0,
+        "final_cash": 8432.10,
+        "final_equity": 19910.55,
+        "realised_pnl": 9910.55,
+        "trade_count": 137,
+        "total_return": 0.9911,
+        "win_rate": 0.3657,
+        "profit_factor": 1.2911,
+        "avg_trade_pnl": 72.34,
+        "avg_win": 410.20,
+        "avg_loss": -122.55,
+        "best_trade": 1840.0,
+        "worst_trade": -612.30,
+        "avg_trade_duration": 4 * 86400 + 6 * 3600,  # 4d 6h
+        "exposure_time": 0.5820,
+        "cagr": 0.1991,
+        "sharpe": 0.6584,
+        "sortino": 1.0385,
+        "max_drawdown": -0.5383,
+        "calmar": 0.3698,
+    }
+    bag.update(overrides)
+    return bag
+
+
+def test_format_backtest_summary_percentages_and_ratios():
+    block = format_backtest_summary(
+        [_portfolio_bag()],
+        period=(pd.Timestamp("2018-01-01"), pd.Timestamp("2026-06-03"), 3076),
+        duration_seconds=3.42,
+    )
+    assert isinstance(block, str)
+    # Percentages render value*100 with '%', signed where natural.
+    assert "+99.11%" in block       # total_return
+    assert "36.57%" in block        # win_rate
+    assert "58.20%" in block        # exposure_time
+    assert "19.91%" in block        # cagr
+    assert "-53.83%" in block       # max_drawdown
+    # Ratios render raw %.4f.
+    assert "0.6584" in block        # sharpe
+    assert "1.0385" in block        # sortino
+    assert "1.2911" in block        # profit_factor
+    assert "0.3698" in block        # calmar
+
+
+def test_format_backtest_summary_currency_thousands_and_sign():
+    block = format_backtest_summary([_portfolio_bag()])
+    assert "10,000.00" in block     # starting cash, thousands sep + 2dp
+    assert "+9,910.55" in block     # realised pnl, signed
+    assert "1,840.00" in block      # best trade
+
+
+def test_format_backtest_summary_duration_human_form():
+    block = format_backtest_summary(
+        [_portfolio_bag()],
+        duration_seconds=3.42,
+    )
+    # Duration header rendered in a human form (seconds for a sub-minute run).
+    assert "Duration" in block
+    # Avg trade duration 4d 6h rendered human.
+    assert "4d 6h" in block
+
+
+def test_format_backtest_summary_inf_profit_factor_passes_through():
+    block = format_backtest_summary([_portfolio_bag(profit_factor=float("inf"))])
+    assert "inf" in block  # must not raise
+
+
+def test_format_backtest_summary_ticker_truncation():
+    tickers = ["A", "B", "C", "D", "E", "F", "G", "H"]  # 8 > cap 6
+    block = format_backtest_summary([_portfolio_bag(tickers=tickers)])
+    assert "+2 more" in block  # 6 shown + "+2 more"
+
+
+def test_format_backtest_summary_omits_empty_ticker_line():
+    block = format_backtest_summary([_portfolio_bag(tickers=[])])
+    # No instrument list rendered; the portfolio header still appears.
+    assert "oracle_pf" in block
+
+
+def test_format_backtest_summary_omits_period_when_none():
+    block = format_backtest_summary([_portfolio_bag()], period=None)
+    assert "Period" not in block
+
+
+def test_format_backtest_summary_empty_portfolio_path():
+    empty = {
+        "name": "empty_pf",
+        "tickers": [],
+        "starting_cash": 0.0,
+        "final_cash": 0.0,
+        "final_equity": 0.0,
+        "realised_pnl": 0.0,
+        "trade_count": 0,
+        "total_return": 0.0,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "avg_trade_pnl": 0.0,
+        "avg_win": 0.0,
+        "avg_loss": 0.0,
+        "best_trade": 0.0,
+        "worst_trade": 0.0,
+        "avg_trade_duration": 0.0,
+        "exposure_time": 0.0,
+        "cagr": 0.0,
+        "sharpe": 0.0,
+        "sortino": 0.0,
+        "max_drawdown": 0.0,
+        "calmar": 0.0,
+    }
+    block = format_backtest_summary([empty])  # must not raise
+    assert "empty_pf" in block
 
 
 def test_format_metrics_renders_names_and_values():
