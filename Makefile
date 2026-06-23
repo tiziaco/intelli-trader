@@ -125,3 +125,9 @@ perf-profile:
 	@echo "   → opening native viewer (paste the printed localhost URL into the VS Code browser)..."
 	poetry run python -m scalene view perf/results/scalene-w1.json
 
+# Re-open the native viewer against an EXISTING profile JSON (no re-run).
+perf-view:
+	@echo "🔬 Opening Scalene viewer for existing perf/results/scalene-w1.json..."
+	@echo "   → paste the printed localhost URL into the VS Code browser..."
+	poetry run python -m scalene view perf/results/scalene-w1.json
+
