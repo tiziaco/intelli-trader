@@ -111,7 +111,9 @@ interface designed so a future Postgres backend satisfies the same contract.
      --strict` clean; determinism double-run byte-identical.
   5. **Gate (b):** the clean W1 benchmark shows a measurable wall-clock improvement vs the Phase 1
      re-frozen baseline, re-frozen as the new locked reference.
-**Plans**: TBD
+**Plans**: 2 plans
+  - [ ] 02-01-PLAN.md — index implementation (active_by_portfolio + active-only by_status + shadow registry), 5-write-seam maintenance, active-query rerouting, D-09 equivalence test + gate (a) (PERF-01)
+  - [ ] 02-02-PLAN.md — gate (b): human-run make perf-w1 (≥ 5% wall-clock), re-freeze W1-BASELINE.json (PERF-01)
 
 ### Phase 3: Running PnL Accumulator
 **Goal**: Realised PnL is maintained as a running accumulator updated on position close, eliminating
