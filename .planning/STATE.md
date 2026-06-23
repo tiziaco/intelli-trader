@@ -1,34 +1,33 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: — Margin, Leverage, Shorts & Trailing Stops
-status: Awaiting next milestone
-stopped_at: Milestone v1.4 closed and archived
-last_updated: "2026-06-22T19:18:25.396Z"
-last_activity: 2026-06-22 — Milestone v1.4 completed, archived, and tagged
+milestone: v1.5
+milestone_name: Backtest Performance Optimization
+status: planning
+last_updated: "2026-06-23T14:56:46.444Z"
+last_activity: 2026-06-23
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 35
-  completed_plans: 35
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-22 — v1.4 Margin, Leverage, Shorts & Trailing Stops SHIPPED + archived; N+3 next)
+See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers — now extended with first-class shorts, leverage, a bar-close liquidation model (closing DEF-01-C), engine-native trailing stops, short scale-in, and a market-neutral pair flagship, all owner-gated and cross-validated.
-**Current focus:** v1.4 shipped, archived, and tagged. Next: N+3 — Persistence & Performance (Backlog 999.2); start with `/gsd:new-milestone`.
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
+**Current focus:** v1.5 started (promoted the performance half of Backlog 999.2; Persistence deferred to its own next milestone). Defining requirements → roadmap. Source: `perf/results/PERF-BASELINE-RESULTS.md` (the spike = the research). NOTE: the v1.4 "Milestone Gate" + "Phase Map" sections below are stale — the roadmapper rewrites them for v1.5.
 
 ## Current Position
 
-Phase: Milestone v1.4 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-23 — Completed quick task 260623-h6i: tolerance-aware over-close guard (absorb sub-quantum Decimal noise; gross over-sell still raises), oracle byte-exact
+Status: Defining requirements
+Last activity: 2026-06-23 — Milestone v1.5 started
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 

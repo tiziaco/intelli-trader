@@ -19,6 +19,45 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
+## Current Milestone: v1.5 Backtest Performance Optimization
+
+**Goal:** Cut the frozen W1 performance baseline (240.8 s / 167.3 MB) via profiler-ranked,
+oracle-gated hot-path optimizations — **without changing a single number**. Every optimization phase
+is gated on (a) the byte-exact oracle (`tests/integration/test_backtest_oracle.py`) staying green AND
+(b) the W1 benchmark showing a measurable, locked improvement vs the frozen baseline.
+
+**Source:** `perf/results/PERF-BASELINE-RESULTS.md` — the v1.5 spike's frozen baseline + ranked
+hotspot map + §6 phase breakdown. The spike IS this milestone's research (no further research pass run).
+
+**Target work (ordered by payoff × safety):**
+- **P0 — Perf tooling & baseline:** root-Makefile `perf-*` targets; a two-mode runner (clean
+  *benchmark* = the gate, vs a separate Scalene `--cpu-only --html` *profile* command that is never
+  gated and never wraps the timed run); `backtesting.py` + `backtrader` cross-validation runners;
+  re-freeze the baseline before any optimization.
+- **P1 — Order-storage indexing (~37% CPU):** derived secondary indexes (portfolio/status/active)
+  over the flat `{id: order}` dict, which stays source of truth (D-20); interface designed for
+  extension so a future Postgres backend satisfies the same contract.
+- **P2 — Running PnL accumulator (~13%):** maintain realised PnL as a running total updated on
+  position close; stop the per-bar re-sum (Decimal preserved — less re-summation, never float).
+- **P3 — Hot-path logging discipline (~6% W1 / ~22% W2):** level-gate hot-loop logs; demote/sample
+  per-bar admission-rejection warnings; drop `debug()` from the per-bar path.
+- **P4 — Cache `get_type_hints` in `to_dict` (~2% W1 / ~14% W2):** per-class memoization.
+- **P5 — Incremental indicators (~24%, oracle-gated, LAST):** rolling/memoized SMA & MACD replacing
+  the per-bar full-window `ta` rebuild; must reproduce `[BYTE-EXACT]` output, the oracle as the lock.
+- **P6 — Bar-feed window copies (optional, ~4% W1 / ~22% W2):** reduce per-tick `iloc` frame copies
+  (reusable view / cached bounds), preserving the look-ahead bar-timing contract.
+
+**Held throughout:** byte-exact SMA_MACD oracle (134 / `46189.87730727451`); `mypy --strict` clean;
+Decimal end-to-end (no new float-for-money); single UUIDv7; determinism double-run byte-identical.
+
+**Explicitly DEFERRED to a separate next milestone — Persistence:** PostgreSQL storage (orders,
+signals, fills, equity; `PostgreSQLOrderStorage` is a `NotImplementedError` placeholder) + FL-06
+(SQL-injection / hardcoded creds). The original Backlog 999.2 "Persistence & Performance" is **split** —
+Performance ships as v1.5; Persistence follows as its own milestone (a live-path, DB-gated concern not
+covered by the backtest oracle — a different North Star). General CONCERNS.md tech debt also stays OUT
+(its own future sweep), with opportunistic zero-behavior in-file cleanups allowed only where a perf
+phase already edits the file (notably P2 in `position_manager.py` / `portfolio.py`).
+
 ## Shipped Milestone: v1.4 Margin, Leverage, Shorts & Trailing Stops (2026-06-22)
 
 **SHIPPED 2026-06-22.** 7 phases (1–6 + inserted 5.1), 35 plans, all 23 requirements validated at
@@ -218,16 +257,17 @@ cross-validated; 23/23 requirements validated at audit (`milestones/v1.4-MILESTO
      v1.4 (Margin, Leverage, Shorts & Trailing Stops) SHIPPED 2026-06-22 — 23 requirements.
      Next: N+3 — fresh REQUIREMENTS.md created by /gsd:new-milestone. -->
 
-**No active milestone — v1.4 shipped 2026-06-22.** v1.0 (45 reqs), v1.1 (51 reqs), v1.2 (18 reqs),
-v1.3 (10 reqs), and v1.4 (23 reqs) are all shipped and recorded in the Validated section above and
-under `milestones/`. `.planning/REQUIREMENTS.md` is removed at milestone close; the next milestone
-defines a fresh one via `/gsd:new-milestone`.
+**Active milestone: v1.5 Backtest Performance Optimization** — see the **Current Milestone** section
+above; requirements tracked in `.planning/REQUIREMENTS.md`. This is the profiler-guided performance
+half of Backlog 999.2, promoted and **split out from Persistence**. v1.0 (45 reqs), v1.1 (51 reqs),
+v1.2 (18 reqs), v1.3 (10 reqs), and v1.4 (23 reqs) are shipped and recorded in the Validated section
+above and under `milestones/`.
 
-**Next milestone (N+3 — Backlog 999.2): Persistence & Performance** — durable PostgreSQL state
-(orders, signals, fills, equity; `PostgreSQLOrderStorage` is currently a `NotImplementedError`
-placeholder), a profiler-guided performance pass, and FL-06 (SQL injection / hardcoded creds in
-`SqlHandler`). The infra prerequisites for live trading (N+4), sequenced AFTER the correctness work
-so we are not optimizing/persisting unvalidated behavior.
+**Deferred to a separate next milestone — Persistence** (the other half of Backlog 999.2): durable
+PostgreSQL state (orders, signals, fills, equity; `PostgreSQLOrderStorage` is currently a
+`NotImplementedError` placeholder) + FL-06 (SQL injection / hardcoded creds in `SqlHandler`). Split
+out from Performance because it is a live-path, DB-gated concern not covered by the backtest oracle,
+and sequenced AFTER the performance work so we are not persisting unvalidated behavior.
 
 ### Out of Scope
 
@@ -364,8 +404,11 @@ N+2 (Margin, Leverage, Shorts & Trailing Stops) shipped as **v1.4** (2026-06-22)
 **Shipped Milestone: v1.4** section above. Remaining backlog, in promotion order (full intent in
 `ROADMAP.md` Backlog); **N+3 is next**:
 
-- **N+3 — Persistence & Performance** (Backlog 999.2) — durable PostgreSQL state (orders, signals,
-  fills, equity), profiler-guided performance pass, FL-06 (SQL injection / hardcoded creds).
+- **N+3 — Performance** (Backlog 999.2, performance half) — promoted as **v1.5** (active); the
+  profiler-guided hot-path pass over the frozen W1 baseline, oracle-gated. See **Current Milestone**.
+- **N+3b — Persistence** (Backlog 999.2, persistence half, split out) — durable PostgreSQL state
+  (orders, signals, fills, equity), FL-06 (SQL injection / hardcoded creds); follows v1.5 as its own
+  milestone (live-path, DB-gated, not oracle-covered).
 - **N+4 — Live Trading Readiness** (Backlog 999.3) — real-time data engine, live execution, the
   `Account` reconciliation abstraction, production screener / dynamic universe membership, FL-13
   live-system test coverage, the trailing-stop native-vs-synthetic capability seam.
@@ -374,4 +417,13 @@ Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-lo
 (forex / equities / ETF) is deferred indefinitely.
 
 ---
-*Last updated: 2026-06-22 — v1.4 (Margin, Leverage, Shorts & Trailing Stops) SHIPPED and archived. 7 phases (1–6 + inserted 5.1), 35 plans, all 23 requirements validated at audit (23/23, 7/7 seams, 3/3 flows). The engine now trades on margin: per-symbol `Instrument`, reserved-margin leverage, first-class shorts + borrow carry, bar-close liquidation, engine-native trailing stops, short scale-in, and a market-neutral ETH/BTC pair flagship — all settling through the side-agnostic accounting core with zero new correctness branches. SMA_MACD spot oracle byte-exact (134 / 46189.87730727451) across all 7 phases; 3 owner-signed result-changing re-baselines (tiziaco, 2026-06-16/06-17) externally cross-validated. mypy --strict clean (187 files), full suite 1193, determinism double-run byte-identical. Next: N+3 — Persistence & Performance (Backlog 999.2); start with `/gsd:new-milestone`. v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
+*Last updated: 2026-06-23 — v1.5 (Backtest Performance Optimization) STARTED. Promoted the performance
+half of Backlog 999.2 and split Persistence out into its own following milestone. Goal: cut the frozen
+W1 baseline (240.8 s / 167.3 MB) via profiler-ranked, oracle-gated hot-path optimizations without
+changing the numbers — P0 perf tooling & baseline (root-Makefile `perf-*` targets, two-mode
+benchmark/Scalene-HTML-profile runner, backtesting.py/backtrader cross-val runners, re-freeze), then
+P1 order-storage indexing, P2 running PnL accumulator, P3 hot-path logging discipline, P4
+`get_type_hints` cache, P5 incremental indicators (oracle-gated, last), P6 optional bar-feed window
+copies. Every phase gated on the byte-exact SMA_MACD oracle (134 / 46189.87730727451) staying green +
+a measurable W1 improvement. Source: `perf/results/PERF-BASELINE-RESULTS.md` (spike = the research).
+v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
