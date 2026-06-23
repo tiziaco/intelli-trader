@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-22 — v1.4 Margin, Leverage, Shorts 
 Phase: Milestone v1.4 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-23 — Completed quick task 260623-ajs: enriched end-of-run backtest summary print
+Last activity: 2026-06-23 — Completed quick task 260623-bmg: fix perf coverage instruments B/C/D so positions recycle
 
 ## Milestone Gate (v1.4 — owner-gated, result-changing; applies per phase, per re-baseline tag)
 
@@ -258,6 +258,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | 260622-vlh | Durable evals/ benchmark harness (PERF-BASELINE Step 1): hardened CCXT fetch + 4×5m CSVs, coverage strategies A–D, W1 topology + W2 synthetic generator, W1/W2 runners, scalene dev dep | 2026-06-22 | bbc5987 | Verified | [260622-vlh-build-the-durable-evals-benchmark-harnes](./quick/260622-vlh-build-the-durable-evals-benchmark-harnes/) |
 | 260623-ajs | Enriched end-of-run backtest summary print: 9 guarded derived metrics + format_backtest_summary grouped block (Capital/Trades/Risk-Return), run-level Period+Duration header, per-portfolio instrument list; display-only / oracle-inert | 2026-06-23 | ef0dd6e | | [260623-ajs-enriched-backtest-summary-print](./quick/260623-ajs-enriched-backtest-summary-print/) |
 | fast | Rename `evals/` → `perf/` (reserve `benchmarks/` for cross-framework comparison); updated package imports, README commands, docstrings | 2026-06-23 | ee77f37 | | — |
+| 260623-bmg | Fix perf coverage instruments B/C/D so positions recycle (boost trade density): added the missing exit leg to each (D short tp+sl bracket, B limit-long sl + tightened tp, C pyramiding tp) — 30d-slice fills jumped ~11→759, closed 0→291 across P2_B/P3_C/P4-6_D; coverage semantics unchanged | 2026-06-23 | 4cd2be7 | | [260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p](./quick/260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
