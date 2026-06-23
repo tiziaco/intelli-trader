@@ -123,6 +123,7 @@ perf-profile:
 	poetry run python -m scalene run --cpu-only --program-path $(CURDIR) \
 		-o perf/results/scalene-w1.json -m perf.runners.run_w1_benchmark
 	@echo "   → opening native viewer (paste the printed localhost URL into the VS Code browser)..."
+	@test -s perf/results/scalene-w1.json || { echo "scalene-w1.json missing/empty — profile run failed"; exit 1; }
 	poetry run python -m scalene view perf/results/scalene-w1.json
 
 # Re-open the native viewer against an EXISTING profile JSON (no re-run).
