@@ -138,6 +138,102 @@ def rolling_sharpe(returns: pd.Series, window: int, periods: int = PERIODS) -> p
     return result
 
 
+def total_return(equity: pd.Series) -> float:
+    """Total return over the equity series: ``final / start - 1``.
+
+    Mirrors ``cagr``'s guards: empty equity or a non-positive start returns 0.0.
+    ``.iloc`` indexing only (pandas-2-safe).
+    """
+    if equity.empty:
+        return 0.0
+    start = float(equity.iloc[0])
+    if start <= 0.0:
+        return 0.0
+    final = float(equity.iloc[-1])
+    return final / start - 1.0
+
+
+def avg_trade_pnl(trades: pd.DataFrame) -> float:
+    """Mean realised pnl across all closed trades. Empty frame returns 0.0."""
+    if trades.empty:
+        return 0.0
+    return float(trades["realised_pnl"].mean())
+
+
+def avg_win(trades: pd.DataFrame) -> float:
+    """Mean realised pnl over winning trades (pnl > 0). No winners returns 0.0."""
+    if trades.empty:
+        return 0.0
+    pnl = trades["realised_pnl"]
+    winners = pnl[pnl > 0]
+    if winners.empty:
+        return 0.0  # guard: .mean() of an empty subset raises RuntimeWarning
+    return float(winners.mean())
+
+
+def avg_loss(trades: pd.DataFrame) -> float:
+    """Mean realised pnl over losing trades (pnl < 0) — a NEGATIVE value.
+
+    No losers returns 0.0 (guards the empty-subset ``.mean()`` RuntimeWarning).
+    """
+    if trades.empty:
+        return 0.0
+    pnl = trades["realised_pnl"]
+    losers = pnl[pnl < 0]
+    if losers.empty:
+        return 0.0
+    return float(losers.mean())
+
+
+def best_trade(trades: pd.DataFrame) -> float:
+    """Maximum realised pnl across closed trades. Empty frame returns 0.0."""
+    if trades.empty:
+        return 0.0
+    return float(trades["realised_pnl"].max())
+
+
+def worst_trade(trades: pd.DataFrame) -> float:
+    """Minimum realised pnl across closed trades. Empty frame returns 0.0."""
+    if trades.empty:
+        return 0.0
+    return float(trades["realised_pnl"].min())
+
+
+def avg_trade_duration(trades: pd.DataFrame) -> float:
+    """Mean trade duration ``(exit_date - entry_date)`` in SECONDS (float).
+
+    Empty frame returns 0.0. The formatter renders the human ``Nd Nh`` form;
+    this function returns the raw seconds.
+    """
+    if trades.empty:
+        return 0.0
+    deltas = trades["exit_date"] - trades["entry_date"]
+    return float(deltas.dt.total_seconds().mean())
+
+
+def exposure_time(equity_frame: pd.DataFrame) -> float:
+    """Fraction of bars with an open position — ``(open_positions_count > 0).mean()``.
+
+    Takes the equity FRAME (it needs the ``open_positions_count`` column), NOT the
+    equity series. A value in ``[0, 1]``; an empty frame returns 0.0.
+    """
+    if equity_frame.empty:
+        return 0.0
+    return float((equity_frame["open_positions_count"] > 0).mean())
+
+
+def calmar(equity: pd.Series, periods: int = PERIODS) -> float:
+    """Calmar ratio: ``cagr(equity) / abs(max_drawdown(equity))``.
+
+    Reuses the pinned ``cagr``/``max_drawdown`` formulas. A zero drawdown
+    (monotonic or empty equity) is guarded to 0.0 (no ZeroDivisionError).
+    """
+    dd = max_drawdown(equity)
+    if dd == 0.0:
+        return 0.0
+    return cagr(equity, periods) / abs(dd)
+
+
 def format_metrics(metrics: dict[str, float], title: str = "Backtest metrics") -> str:
     """Render a metric dict as an aligned multi-line text block (D-14 amendment).
 
