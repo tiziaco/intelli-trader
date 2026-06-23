@@ -112,7 +112,7 @@ interface designed so a future Postgres backend satisfies the same contract.
   5. **Gate (b):** the clean W1 benchmark shows a measurable wall-clock improvement vs the Phase 1
      re-frozen baseline, re-frozen as the new locked reference.
 **Plans**: 2 plans
-  - [ ] 02-01-PLAN.md — index implementation (active_by_portfolio + active-only by_status + shadow registry), 5-write-seam maintenance, active-query rerouting, D-09 equivalence test + gate (a) (PERF-01)
+  - [x] 02-01-PLAN.md — index implementation (active_by_portfolio + active-only by_status + shadow registry), 5-write-seam maintenance, active-query rerouting, D-09 equivalence test + gate (a) (PERF-01)
   - [ ] 02-02-PLAN.md — gate (b): human-run make perf-w1 (≥ 5% wall-clock), re-freeze W1-BASELINE.json (PERF-01)
 
 ### Phase 3: Running PnL Accumulator
@@ -307,7 +307,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Perf Tooling & Baseline | 2/2 | Complete   | 2026-06-23 |
-| 2. Order-Storage Indexing | 0/TBD | Not started | - |
+| 2. Order-Storage Indexing | 1/2 | In Progress|  |
 | 3. Running PnL Accumulator | 0/TBD | Not started | - |
 | 4. Hot-Path Discipline | 0/TBD | Not started | - |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
