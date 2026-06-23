@@ -1,9 +1,11 @@
 ---
-status: diagnosed
+status: resolved
 trigger: "Spot LONG_ONLY portfolio allows over-selling beyond holdings → net-short inventory mislabeled side=LONG with positive market_value → phantom equity ($100k → $10M)"
 created: 2026-06-23
 updated: 2026-06-23
+resolved: 2026-06-23
 goal: find_root_cause_only
+resolved_by: "quick tasks 260623-gao (Fix A spot over-close guard + Fix B orphaned-bracket cancel) and 260623-h6i (tolerance-refine the guard); Fix C deferred (owner-gated)"
 ---
 
 # Debug Session: spot-long-only-oversell
@@ -308,3 +310,35 @@ verification: |
     signal exit clamp re-grows the corrupted magnitude (runaway).
 
 files_changed: []
+
+## Resolution Applied (2026-06-23)
+
+The recommended oracle-safe path (A + B) was implemented and verified, plus a
+follow-on tolerance refinement surfaced by re-running the full W1 perf benchmark.
+
+- **Fix A — spot over-close guard** (quick task 260623-gao, commit `046b958`):
+  ported the CR-02 guard into `_process_transaction_spot` — a reducing SELL whose
+  quantity exceeds held quantity now raises `InvalidTransactionError` before any
+  mutation (was silent corruption).
+- **Fix B — cancel orphaned bracket children on flatten** (260623-gao, commit
+  `c004672`): in the order domain (`ReconcileManager.on_fill`), when a fill leaves
+  the position flat, cancel that `(portfolio_id, ticker)` bracket's resting
+  children — removes the seed. Respects queue-only / read-model architecture.
+- **Tolerance refinement** (quick task 260623-h6i, commit `09d49b1`): re-running
+  the full W1 benchmark made the new guard fail-fast on coverage instrument C
+  (pyramiding) over a **1E-27 BTC** excess — last-digit Decimal noise from
+  independent per-add bracket-child quantization, NOT a real over-sell. Both guard
+  sites (spot + margin CR-02) now compare the excess against the existing
+  `PositionManager.tolerance` (1e-5): sub-close-tolerance dust is absorbed as a
+  clean full close; a GROSS over-sell (the 64-BTC phantom-equity case) still raises.
+
+- **Fix C (sign-aware `net_quantity`/`market_value`)** — NOT implemented;
+  intentionally deferred as the owner-gated, result-changing change. A+B+tolerance
+  prevent the corrupted state from forming, so C is defense-in-depth only. Candidate
+  for a future-milestone roadmap entry if net-short-of-a-long support is ever wanted.
+
+**Validation:** SMA_MACD oracle held byte-exact (134 trades /
+`final_equity 46189.87730727451`) across both engine changes; tests/e2e green;
+full suite green (1233); `mypy --strict` clean. End-to-end confirmation: the full
+W1 benchmark now completes (no abort) with sane per-portfolio equity ($68k–$111k on
+$100k starts; no phantom). See STATE.md quick-task ledger (260623-gao / -h6i).
