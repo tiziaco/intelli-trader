@@ -17,7 +17,7 @@ from typing import Any
 from itrader.core.enums import OrderStatus, OrderType
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 
-from evals.workloads.w1_topology import CSV_PATHS, TIMEFRAME, wire_w1, W1Topology
+from perf.workloads.w1_topology import CSV_PATHS, TIMEFRAME, wire_w1, W1Topology
 
 # Date window covering the fetched 5m data (180d ending 2026-06-22).
 _START_DATE = "2025-12-24"

@@ -1,4 +1,4 @@
-"""CSV validation gate for the evals 5m datasets (PERF-BASELINE §7 / §12 Step 1).
+"""CSV validation gate for the perf 5m datasets (PERF-BASELINE §7 / §12 Step 1).
 
 Bad source data invalidates the whole baseline, so this gate raises LOUDLY (an
 ``AssertionError``) on any violation rather than warning. It mirrors the

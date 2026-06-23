@@ -1,6 +1,6 @@
-# evals/results/ — frozen baseline + hotspot artifacts
+# perf/results/ — frozen baseline + hotspot artifacts
 
-This directory holds the durable performance-evals artifacts. It is intentionally
+This directory holds the durable performance artifacts. It is intentionally
 empty (a `.gitkeep` placeholder) after Step 1 of the `PERF-BASELINE` spike.
 
 `PERF-BASELINE-RESULTS.md` — the frozen baseline (W1 wall-clock + peak memory),

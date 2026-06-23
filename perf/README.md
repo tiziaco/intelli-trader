@@ -1,18 +1,18 @@
-# evals/ — durable performance-evals harness
+# perf/ — durable performance harness
 
 This tree is the **durable benchmark scoreboard** for the iTrader backtest
 engine, built per the `PERF-BASELINE` spike (Step 1 — the harness only; Scalene
 profiling is Step 2 and lives in a separate spike). These are long-lived eval
 assets, regression-tracked every milestone — **not** scratch.
 
-`evals/` lives OUTSIDE the shipped `itrader/` package and imports the engine via
+`perf/` lives OUTSIDE the shipped `itrader/` package and imports the engine via
 absolute imports (`from itrader.strategy_handler.base import Strategy`).
 Convention: **4-space indentation** throughout (newer-module convention).
 
 ## Layout
 
 ```
-evals/
+perf/
 ├── tools/        # one-shot CCXT fetch + CSV validation gate
 ├── strategies/   # coverage instruments A–D (exercise engine paths, NOT alpha)
 ├── workloads/    # W1 topology wiring + W2 numpy-GBM synthetic generator
@@ -40,7 +40,7 @@ evals/
 | D | Short z-score-of-ratio | SHORT_ONLY | short-side admission + 1-strategy→3-portfolio fan-out |
 
 These deliberately over-extend / trade at a loss to saturate engine paths. They
-must never be mistaken for real strategies — the `evals/` home makes that
+must never be mistaken for real strategies — the `perf/` home makes that
 unambiguous.
 
 ## One-shot data fetch
@@ -50,15 +50,15 @@ NOT on the engine run path). Its OUTPUT — the committed `data/*_5m.csv` files 
 the exact Binance-kline schema `CsvPriceStore` parses — is the durable artifact.
 
 ```bash
-poetry run python evals/tools/fetch_binance_5m.py --days 180   # refetch
-poetry run python evals/tools/validate_csv.py                  # validate
+poetry run python perf/tools/fetch_binance_5m.py --days 180   # refetch
+poetry run python perf/tools/validate_csv.py                  # validate
 ```
 
 ## Runners
 
 ```bash
-poetry run python evals/runners/run_w1_benchmark.py   # W1: asserts >0 trades, prints breakdown + timing/mem
-poetry run python evals/runners/run_w2_sweep.py       # W2: {1,10,50} symbol scaling points
+poetry run python perf/runners/run_w1_benchmark.py   # W1: asserts >0 trades, prints breakdown + timing/mem
+poetry run python perf/runners/run_w2_sweep.py       # W2: {1,10,50} symbol scaling points
 ```
 
 Both capture wall-clock (`time.perf_counter`) and peak memory (`tracemalloc`).

@@ -1,6 +1,6 @@
-"""Durable evals/ benchmark harness for the iTrader backtest engine.
+"""Durable perf/ benchmark harness for the iTrader backtest engine.
 
-This package is the long-lived performance-evals scoreboard (PERF-BASELINE
+This package is the long-lived performance scoreboard (PERF-BASELINE
 spike, Step 1). It lives OUTSIDE the shipped ``itrader/`` package and imports
 the engine via absolute imports (``from itrader.strategy_handler.base import
 Strategy``). These are durable assets, regression-tracked every milestone — NOT

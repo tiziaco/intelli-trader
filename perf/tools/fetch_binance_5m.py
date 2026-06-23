@@ -25,7 +25,7 @@ filled with derived/zero placeholders.
 
 Usage (run on the MAIN tree — live network I/O):
 
-    poetry run python evals/tools/fetch_binance_5m.py --days 180
+    poetry run python perf/tools/fetch_binance_5m.py --days 180
 """
 
 import argparse

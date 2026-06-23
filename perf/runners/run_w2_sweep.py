@@ -26,7 +26,7 @@ from itrader.core.sizing import FractionOfCash, SignalIntent
 from itrader.strategy_handler.base import Strategy
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 
-from evals.workloads.synthetic import make_synthetic_ohlcv
+from perf.workloads.synthetic import make_synthetic_ohlcv
 
 _N_BARS = 3000
 _N_SYMBOLS_SWEEP = [1, 10, 50]

@@ -24,7 +24,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from evals.strategies import (
+from perf.strategies import (
     BracketedMomentumStrategy,
     LimitMakerStrategy,
     PyramidingTrendStrategy,

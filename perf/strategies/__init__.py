@@ -1,9 +1,9 @@
-"""Coverage instruments A-D for the evals harness (NOT alpha).
+"""Coverage instruments A-D for the perf harness (NOT alpha).
 
 Each strategy exists ONLY to exercise a set of engine paths for the performance
 benchmark (PERF-BASELINE §4/§6). They deliberately trade at trade-density
 thresholds (even at a loss) and must never be mistaken for real strategies — the
-``evals/`` home makes that unambiguous.
+``perf/`` home makes that unambiguous.
 
 - A — BracketedMomentumStrategy  (LONG_ONLY, every entry a bracket/OCO)
 - B — LimitMakerStrategy         (LONG_ONLY, resting limits + runner cancel/modify)

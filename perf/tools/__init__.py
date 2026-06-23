@@ -1,4 +1,4 @@
-"""Throwaway-but-kept tooling for the evals harness.
+"""Throwaway-but-kept tooling for the perf harness.
 
 - ``fetch_binance_5m.py`` — a hardened ONE-SHOT CCXT fetch script. Its OUTPUT
   (the committed ``data/*_5m.csv`` files) is the durable artifact; the script
