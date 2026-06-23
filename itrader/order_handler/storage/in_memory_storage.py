@@ -2,10 +2,23 @@ import uuid
 from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 from datetime import datetime
 from ..base import OrderStorage, IdLike
+# D-03/D-10: OrderStatus is needed at RUNTIME (as a dict key for the
+# active-only by_status index and the shadow registry, and to build the
+# module-level _ACTIVE_STATUSES frozenset). A TYPE_CHECKING-only import would
+# NameError at runtime — keep this a real top-level import. ``Order`` stays
+# under TYPE_CHECKING (string forward refs only); no ``from __future__``.
+from ...core.enums import OrderStatus
 
 if TYPE_CHECKING:
     from ..order import Order
-    from ...core.enums import OrderStatus
+
+
+# D-02/D-10: the single source of the active predicate, kept in lockstep with
+# ``Order.is_active`` (PENDING / PARTIALLY_FILLED). Never re-derive the active
+# set per call site — index logic reads this frozenset.
+_ACTIVE_STATUSES: frozenset['OrderStatus'] = frozenset(
+    {OrderStatus.PENDING, OrderStatus.PARTIALLY_FILLED}
+)
 
 
 class InMemoryOrderStorage(OrderStorage):
@@ -34,10 +47,78 @@ class InMemoryOrderStorage(OrderStorage):
     def __init__(self) -> None:
         """Initialize the in-memory storage.
 
-        D-20: the flat ``{order_id: order}`` dict is the ONLY instance
-        container.
+        D-20: the flat ``{order_id: order}`` dict is the ONLY source of truth.
+
+        The three structures below are DERIVED CACHES over it (D-02/D-03/D-10),
+        never a second source of truth. They are kept consistent at every one of
+        the five write seams (add_order / update_order / remove_order /
+        remove_orders_by_ticker / clear_portfolio_orders) via the shared
+        ``_index_apply`` / ``_index_remove`` helpers — exactly mirroring the
+        MatchingEngine ``_resting`` (truth) / ``_trails`` (parallel cache)
+        discipline, where the side-table is touched at every site the truth dict
+        is touched so no entry ever leaks or drifts.
         """
-        self._by_id: Dict[uuid.UUID, 'Order'] = {}
+        self._by_id: Dict[uuid.UUID, 'Order'] = {}                          # SOURCE OF TRUTH (D-20)
+        self._active_by_portfolio: Dict[uuid.UUID, Dict[uuid.UUID, None]] = {}   # derived cache (D-02)
+        self._by_status: Dict['OrderStatus', Dict[uuid.UUID, None]] = {}         # derived cache, active-only (D-10)
+        self._last_indexed_status: Dict[uuid.UUID, 'OrderStatus'] = {}           # shadow registry (D-03)
+
+    # --- index maintenance (derived caches over the flat dict) --------------
+
+    def _index_apply(self, order: 'Order') -> None:
+        """Reconcile both caches + the shadow registry for one order.
+
+        Diff-on-write (D-03): the order mutates status IN PLACE before the
+        storage write, so the stored object already shows the new status. We
+        diff the registry's ``old`` (None for a brand-new id — never pre-seed
+        it, Pitfall 3) against ``order.status``. Called by BOTH add_order and
+        update_order (one shared path — no divergence). Idempotent.
+        """
+        oid = order.id
+        pid = order.portfolio_id                          # immutable per order (D-03)
+        old_status = self._last_indexed_status.get(oid)   # None => brand-new id
+        new_status = order.status
+        if old_status == new_status:
+            return                                        # PENDING->PENDING modify / EXPIRED no-op: no bucket move
+        was_active = old_status in _ACTIVE_STATUSES       # None => was absent (Pitfall 2: REJECTED-at-add)
+        is_active = new_status in _ACTIVE_STATUSES
+        # active_by_portfolio: maintain only on an active-boundary crossing.
+        if is_active and not was_active:
+            self._active_by_portfolio.setdefault(pid, {})[oid] = None   # insertion-ordered append
+        elif was_active and not is_active:
+            bucket = self._active_by_portfolio.get(pid)
+            if bucket is not None:
+                bucket.pop(oid, None)
+                if not bucket:
+                    del self._active_by_portfolio[pid]    # keep get_active_orders(None) clean
+        # by_status: active-only (D-10) — drop on terminal, add on active.
+        # ``was_active`` implies ``old_status`` is a non-None active member;
+        # test it directly so mypy narrows ``OrderStatus | None`` -> ``OrderStatus``.
+        if old_status is not None and old_status in _ACTIVE_STATUSES:
+            self._by_status[old_status].pop(oid, None)
+        if is_active:
+            self._by_status.setdefault(new_status, {})[oid] = None
+        self._last_indexed_status[oid] = new_status
+
+    def _index_remove(self, order: 'Order') -> None:
+        """Drop one order from both caches + the registry (delete paths).
+
+        Pitfall 5: every remove pops the registry entry too, so no stale status
+        leaks (and the active-only memory posture, D-11, is preserved).
+        """
+        oid = order.id
+        pid = order.portfolio_id
+        bucket = self._active_by_portfolio.get(pid)
+        if bucket is not None:
+            bucket.pop(oid, None)
+            if not bucket:
+                del self._active_by_portfolio[pid]
+        registered = self._last_indexed_status.get(oid)
+        if registered in _ACTIVE_STATUSES:
+            status_bucket = self._by_status.get(registered)
+            if status_bucket is not None:
+                status_bucket.pop(oid, None)
+        self._last_indexed_status.pop(oid, None)
 
     def _orders(self, portfolio_id: Optional[IdLike] = None) -> Iterator['Order']:
         """Iterate stored orders, optionally filtered by portfolio predicate."""
@@ -46,8 +127,14 @@ class InMemoryOrderStorage(OrderStorage):
                 yield order
 
     def add_order(self, order: 'Order') -> None:
-        """Add a new order to in-memory storage (single flat-dict write, D-20)."""
+        """Add a new order to in-memory storage (flat-dict write, D-20).
+
+        Routes through the same ``_index_apply`` diff as update_order so a
+        re-add of an existing id is idempotent (Pitfall 4) and a reject-then-add
+        (REJECTED at add time, Pitfall 2) never enters the active book.
+        """
         self._by_id[order.id] = order
+        self._index_apply(order)
 
     def remove_order(self, order_id: IdLike, portfolio_id: Optional[IdLike] = None) -> bool:
         """Remove an order from in-memory storage (O(1) flat-dict delete)."""
@@ -60,6 +147,7 @@ class InMemoryOrderStorage(OrderStorage):
         if portfolio_id is not None and order.portfolio_id != portfolio_id:
             return False
         del self._by_id[order_id]
+        self._index_remove(order)
         return True
 
     def remove_orders_by_ticker(self, ticker: str, portfolio_id: IdLike) -> int:
@@ -103,9 +191,10 @@ class InMemoryOrderStorage(OrderStorage):
         return order
 
     def update_order(self, order: 'Order') -> bool:
-        """Update an existing order (single flat-dict write)."""
+        """Update an existing order (flat-dict write + index reconcile)."""
         if order.id in self._by_id:
             self._by_id[order.id] = order
+            self._index_apply(order)
             return True
         return False
 
