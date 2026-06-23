@@ -543,7 +543,7 @@ This is a tooling-addition phase, not a rename/refactor/migration. **Runtime Sta
 | A3 | The soft-guard tolerance band is symmetric at 5% with only the +slowdown side failing. D-04 fixes ≥5% as the *improvement* bar; the *regression* band reusing the same 5% is the natural mirror but not explicitly stated. | Soft Regression Guard | Low-Medium — the band width is the one number the planner could tune; D-04's "noise 1–2%" justifies 5%. Owner could prefer a tighter regression band (e.g. +3%). Flag for plan-time confirmation. |
 | A4 | `scalene view --html` writes `scalene-profile.html` to the CWD (repo root via make), so the un-pathed `.gitignore` line is correct. | .gitignore Entry; Scalene Invocation | Low — verified `view --help` shows the fixed filename; CWD behavior is the documented default. If a future Scalene version adds an output path, revisit. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **OQ-1: `final_equity` provenance — oracle constant vs W1-derived value?** (A1)
    - What we know: D-01 requires "the oracle `final_equity` (provenance that the run was on-contract)" in the baseline file. The W1 coverage runner does NOT run SMA_MACD and does not produce that number.
