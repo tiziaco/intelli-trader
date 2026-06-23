@@ -8,185 +8,152 @@ files_reviewed_list:
   - tests/unit/order/test_order_storage.py
 findings:
   critical: 0
-  warning: 3
+  warning: 1
   info: 2
-  total: 5
+  total: 3
 status: resolved
 resolved_at: 2026-06-23T00:00:00Z
 resolution:
-  - "WR-01 FIXED (commit 6a4cc90): get_orders_by_status(active) now yields _by_id add-order via _orders() while resolving membership through the _by_status index; byte-equivalence (D-06/D-08/D-09) restored on every active status."
-  - "WR-03 FIXED (commit 6a4cc90): added test_partially_filled_status_query_preserves_add_order_equivalence — verified to FAIL against the transition-order version and PASS with the fix."
-  - "WR-02 partially addressed: the fixed get_orders_by_status path now uses ==-based portfolio comparison; the remaining IdLike/native-UUID divergence is latent (production goes through PortfolioId-typed manager) and left as-is."
-  - "IN-01 / IN-02: accepted as informational; no change (memory posture and _orders() reuse are out of this phase's correctness scope)."
+  - "WR-01 FIXED (commit 95520de): added isinstance(portfolio_id, uuid.UUID) fail-closed guards at the four _active_by_portfolio lookup sites (get_active_orders, get_pending_orders, remove_orders_by_ticker, clear_portfolio_orders); the four # type: ignore[arg-type] suppressions are removed (isinstance narrows IdLike to uuid.UUID for mypy)."
+  - "IN-01 FIXED (commit 95520de): corrected the _last_indexed_status docstrings — the registry is one-entry-per-live-order (active OR terminal), not active-only."
+  - "IN-02 FIXED (commit 95520de): get_active_orders(None) now routes the flat scan through the centralized _orders() helper; get_pending_orders left as-is (nested shape) by design."
+  - "Verified after fix: mypy --strict clean (187 files); oracle byte-exact (134 / 46189.87730727451); determinism 9/9; storage 27/27; order+execution 416."
 ---
 
-# Phase 2: Code Review Report
+# Phase 02: Code Review Report
 
 **Reviewed:** 2026-06-23T00:00:00Z
 **Depth:** standard
 **Files Reviewed:** 2
-**Status:** resolved (WR-01 + WR-03 fixed in 6a4cc90; WR-02/IN-01/IN-02 accepted as latent/informational)
+**Status:** resolved (all 3 findings fixed in 95520de via --fix --all)
 
 ## Summary
 
-Reviewed the new secondary-index machinery in `InMemoryOrderStorage`
-(`_active_by_portfolio`, active-only `_by_status`, and the `_last_indexed_status`
-shadow registry) plus its test suite. The primary risk class for this phase was
-cache-coherency / stale-index drift (T-02-01). I traced all five write seams,
-confirmed each `_by_id` mutation is paired with an `_index_apply`/`_index_remove`
-call (no bypass), verified `_index_remove` cannot leak a `_by_status` or registry
-entry, and confirmed the per-portfolio and `None` active-query paths return
-add-order-consistent sequences. I also dynamically reproduced the candidate
-ordering bug.
+Reviewed the two derived secondary indexes (`_active_by_portfolio`, active-only
+`_by_status`) plus the `_last_indexed_status` shadow registry added over the flat
+`_by_id` source of truth in `InMemoryOrderStorage`, with focus on the primary risk
+class T-02-01 (cache-coherency / stale-index drift).
 
-Coherency is sound: there is no path where a `_by_id` entry exists without the
-indexes being reconciled, and no KeyError risk in the query comprehensions
-(`_by_id[oid]` is always populated for any `oid` present in an index). I found **no
-BLOCKER**.
+**Cache-coherency verdict: clean.** I traced every one of the five write seams and
+the `_index_apply` / `_index_remove` diff logic:
 
-However, the phase's documented byte-equivalence contract (D-09: "index-backed
-query order == prior full-scan order") is **violated for `get_orders_by_status`
-on the `PARTIALLY_FILLED` status** — the index orders by status-transition order,
-not by `_by_id` add order. This is masked by a test gap (the equivalence test only
-exercises PENDING and a terminal transition, never PARTIALLY_FILLED). Two further
-WARNING/INFO items concern an inaccurate memory-posture docstring and a
-type-coherence assumption at the portfolio-keyed index lookups.
+- `_index_apply` correctly handles all four boundary cases — brand-new id (`old=None`),
+  active->active (PENDING->PARTIALLY_FILLED, no bucket move), active->terminal (drop
+  from both caches), and REJECTED-at-add (never enters the active book). The `old_status
+  is not None and old_status in _ACTIVE_STATUSES` guard at L97 cannot dereference a
+  missing `_by_status` bucket, because the bucket is always `setdefault`-created (L100)
+  on the prior active write that registered `old_status`.
+- The active-only branches (`get_active_orders(pid)`, `get_pending_orders(pid)`,
+  `get_orders_by_status` active branch, `remove_orders_by_ticker`, `clear_portfolio_orders`)
+  all depend on the D-04 invariant (in-place status mutation paired with a storage write).
+  I verified in production that every terminal arm in `reconcile_manager.on_fill`
+  (`_apply_cancelled` / `_apply_refused` / `_apply_expired`, L247-251) leaves `applied=True`
+  (initialized L229) and reaches `update_order` (L266-267), so the index always reconciles.
+  `lifecycle_manager` (L116/179/260) and `bracket_manager` likewise pair mutation with a write.
+- The `None`-path queries (`get_active_orders(None)`, `get_pending_orders(None)`,
+  terminal-status branch of `get_orders_by_status`) read `order.status` live off `_by_id`,
+  so they are correct by construction regardless of index state.
 
-`in_memory_storage.py`/`test_order_storage.py` 4-space indentation is by design and
-is not flagged. Money handling is unchanged in this diff.
+**Prior-finding confirmations:**
+
+- **WR-01 (FIXED — do NOT re-report):** `get_orders_by_status` active branch (L258-261)
+  now resolves membership via `_by_status` but yields via `_orders()` in `_by_id` add-order.
+  Confirmed byte-equivalent to the flat-scan oracle for PARTIALLY_FILLED; the regression
+  test `test_partially_filled_status_query_preserves_add_order_equivalence` (L356-399)
+  correctly drives order2-before-order1 transition order and locks add-order output. Correct.
+
+Three findings remain, carried from the prior review and re-assessed against current code:
+one WARNING (latent type-divergence, prior WR-02) and two INFO (prior IN-01 overstated
+docstrings, prior IN-02 scattered portfolio predicate).
 
 ## Warnings
 
-### WR-01: `get_orders_by_status` reorders active-status results, breaking the D-09 byte-equivalence contract
+### WR-01: Index lookups assume native-UUID `portfolio_id`, silently miss on the ABC's permitted str/int
 
-**File:** `itrader/order_handler/storage/in_memory_storage.py:248-253`
-**Issue:**
-The active-status branch returns orders in `_by_status[status]` insertion order,
-which is **status-transition order**, not the prior flat-scan's `_by_id`
-**add order**. For `PENDING` this is harmless (every order enters `_by_status[PENDING]`
-at `add_order`, so transition order == add order). But for `PARTIALLY_FILLED`,
-an order is *popped* from `_by_status[PENDING]` and *appended* to
-`_by_status[PARTIALLY_FILLED]` at transition time (lines 97-100), so the bucket
-sequence is the order in which orders crossed into `PARTIALLY_FILLED` — which can
-differ from add order.
-
-The class docstrings and D-09 assert index output is byte-equal to the prior
-`_orders()` flat scan. I reproduced the divergence dynamically: with orders A then
-B added, B transitioned to `PARTIALLY_FILLED` before A, `get_orders_by_status(PARTIALLY_FILLED)`
-returns `[B, A]` while the prior flat scan (and the test oracle) returns `[A, B]`.
-
-This is not a coherency/correctness bug for membership (the right *set* is returned),
-and no current internal caller depends on the order of `get_orders_by_status(PARTIALLY_FILLED)`
-— so it is a WARNING, not a BLOCKER. But it silently contradicts a load-bearing
-documented invariant and will surface the moment a caller (or a future golden-master
-assertion) relies on it.
-
-**Fix:** Either (a) re-sort the active-status branch to match `_by_id` order, or
-(b) narrow the documented contract. Option (a):
+**File:** `itrader/order_handler/storage/in_memory_storage.py:161, 179, 222, 273`
+**Issue:** Four call sites look up `_active_by_portfolio.get(portfolio_id, {})` with a
+`# type: ignore[arg-type]`. `_active_by_portfolio` is keyed exclusively by
+`order.portfolio_id`, which is a native `uuid.UUID` at runtime (`PortfolioId = NewType(..., uuid.UUID)`).
+But the `OrderStorage` ABC and these method signatures declare `portfolio_id: IdLike =
+Union[str, int, uuid.UUID]` (`base.py:7`). If a legacy `str`/`int` portfolio_id ever
+reaches `get_active_orders` / `get_pending_orders` / `remove_orders_by_ticker` /
+`clear_portfolio_orders`, the index lookup returns `{}` (silent empty) — yet the
+`None`-path and terminal-status fallbacks compare with `order.portfolio_id == portfolio_id`
+and would behave differently. This is a latent stale-index-shaped correctness divergence:
+the same logical query returns different results on the index path vs the scan path purely
+on id type. Today all production callers (`reconcile_manager.py:319`,
+`lifecycle_manager.py:253`) pass UUID-typed ids so it does not fire, but the four
+`type: ignore` suppressions are the marker of an unguarded type assumption, and the ABC
+contract explicitly permits the divergent input.
+**Fix:** Make the assumption explicit and fail-closed rather than silent-miss. Add a
+narrow guard mirroring the `remove_order`/`get_order_by_id` pattern (which already returns
+`False`/`None` on non-UUID ids, L142/L194). At each of the four sites, short-circuit when
+`portfolio_id` is not a `uuid.UUID`:
 ```python
-if status in _ACTIVE_STATUSES:
-    bucket = self._by_status.get(status, {})
-    # Restore prior flat-scan (add) order: _by_id is insertion-ordered.
-    return [
-        order for order in self._orders(portfolio_id)
-        if order.id in bucket and order.status == status
-    ]
-```
-If the O(all-orders) scan is unacceptable for this path, instead sort the bucket
-ids by a stable add-order key. Whichever is chosen, also extend the equivalence
-test (see WR-03).
-
-### WR-02: `_active_by_portfolio` / `_by_status` lookups assume `portfolio_id` is the same hashable type as the stored key, diverging from the flat-scan `==` comparison
-
-**File:** `itrader/order_handler/storage/in_memory_storage.py:161, 179, 222, 248-253, 266`
-**Issue:**
-The portfolio-keyed index paths resolve via `self._active_by_portfolio.get(portfolio_id, {})`
-and `self._by_status.get(status, {})`, which is a **hash/`__eq__` dict lookup** keyed
-on the native `uuid.UUID` (`order.portfolio_id`). The prior flat scan that these
-paths replaced (and the retained terminal fallback at line 254, and
-`get_orders_by_status`'s portfolio filter at line 252) compares with
-`order.portfolio_id == portfolio_id`.
-
-For native-UUID callers these agree. But `IdLike = str | int | uuid.UUID` per the
-ABC, and the four index lookups carry a `# type: ignore[arg-type]` precisely because
-`portfolio_id` is typed `IdLike`, not `uuid.UUID`. If any caller ever passes a
-legacy `str`/`int` portfolio id (which the ABC signatures still permit), the index
-path silently returns `{}` (empty) while the retained scan paths would still match
-via `==` if `UUID.__eq__` accepted it — producing an inconsistent result *between
-methods on the same storage*. Production callers go through `OrderManager`, which
-types these as `PortfolioId` (UUID), so this is latent, not active — hence WARNING.
-
-**Fix:** Make the type contract explicit so the divergence cannot arise. Either
-tighten the public signatures to `PortfolioId`/`uuid.UUID` (drop `IdLike` for
-portfolio params, mirroring `remove_order`'s `isinstance(order_id, uuid.UUID)`
-guard), or normalize at entry. Minimal guard, mirroring the existing order-id guard:
-```python
+# get_active_orders, get_pending_orders (per-portfolio branch):
 if portfolio_id is not None and not isinstance(portfolio_id, uuid.UUID):
-    # non-UUID portfolio id can never key the index — match the scan's empty result
-    return []   # or {} for get_pending_orders
+    return []          # (or {portfolio_id: {}} for get_pending_orders)
+bucket = self._active_by_portfolio.get(portfolio_id, {})
+# remove_orders_by_ticker / clear_portfolio_orders:
+if not isinstance(portfolio_id, uuid.UUID):
+    return 0
 ```
-
-### WR-03: Equivalence regression test never exercises `PARTIALLY_FILLED`, masking WR-01
-
-**File:** `tests/unit/order/test_order_storage.py:310-353`
-**Issue:**
-`test_active_queries_match_full_scan_equivalence` is the D-09 oracle gate, but it
-only transitions an order to **FILLED** (terminal) and asserts equivalence for the
-**PENDING** active status. The one active status whose index order can diverge from
-add order — `PARTIALLY_FILLED` — is never reached (the test seeds only PENDING and
-FILLED). As a result the suite is fully green (26/26) while WR-01's reordering goes
-undetected. The test gives false confidence that the index is byte-equal for *all*
-active statuses.
-
-**Fix:** Add a case that drives an order into `PARTIALLY_FILLED` out of add order
-(via `add_state_change(OrderStatus.PARTIALLY_FILLED, ...)`, since the full-quantity
-`add_fill` contract cannot produce it) and assert
-`get_orders_by_status(OrderStatus.PARTIALLY_FILLED)` equals the `_by_id`-scan oracle:
-```python
-# B added after A, but B reaches PARTIALLY_FILLED first
-store.order2.add_state_change(OrderStatus.PARTIALLY_FILLED, "pf", OrderTriggerSource.EXCHANGE)
-s.update_order(store.order2)
-store.order1.add_state_change(OrderStatus.PARTIALLY_FILLED, "pf", OrderTriggerSource.EXCHANGE)
-s.update_order(store.order1)
-oracle_pf = [o for o in s._by_id.values() if o.status == OrderStatus.PARTIALLY_FILLED]
-assert ([o.id for o in s.get_orders_by_status(OrderStatus.PARTIALLY_FILLED)]
-        == [o.id for o in oracle_pf])   # currently FAILS -> confirms WR-01
-```
+This removes the silent-miss divergence and lets the four `# type: ignore[arg-type]`
+comments be deleted (the `isinstance` narrows `IdLike` to `uuid.UUID` for mypy).
 
 ## Info
 
-### IN-01: Shadow-registry docstrings overstate the "active-only memory posture"
+### IN-01: Shadow-registry docstrings overstate an "active-only memory posture" that the code does not enforce
 
-**File:** `itrader/order_handler/storage/in_memory_storage.py:103-108, 64`
-**Issue:**
-`_index_apply` (line 101) writes `_last_indexed_status[oid] = new_status`
-**unconditionally**, including for terminal statuses (REJECTED-at-add, and any
-order that transitions to a terminal state but stays in `_by_id` as history,
-T-05-02). Since terminal orders are intentionally never removed from `_by_id`,
-their registry entries persist for the life of the run. The `_index_remove`
-docstring ("the active-only memory posture, D-11, is preserved") and the
-`_by_status` "active-only" framing therefore do not apply to the registry: I
-confirmed dynamically that adding three REJECTED-at-add orders leaves
-`_by_status` and `_active_by_portfolio` empty but `_last_indexed_status` holding 3
-entries. This is **not a correctness defect** (the registry is bounded by `_by_id`
-membership, same as the source of truth, and memory/perf is out of v1 scope) — but
-the docstring will mislead a future maintainer reasoning about the memory contract
-or a Postgres port. Recommend clarifying that only `_by_status` is active-only;
-the registry mirrors `_by_id` membership.
+**File:** `itrader/order_handler/storage/in_memory_storage.py:64, 106-108`
+**Issue:** The inline comment at L64 and `_index_remove`'s docstring (L106-108, "the
+active-only memory posture, D-11, is preserved") describe `_last_indexed_status` as an
+active-only structure. This is inaccurate: `_index_apply` writes
+`self._last_indexed_status[oid] = new_status` unconditionally for every status change
+(L101), including terminal ones. A REJECTED-at-add order (Pitfall 2) and every
+PENDING->FILLED transition leave a terminal status in the registry; it is NOT active-only.
+The registry's actual posture is "one entry per live `_by_id` order, dropped on remove"
+— which is the correct behavior, but the docstring describes a different, narrower
+invariant that a future maintainer could mistakenly try to "restore" by pruning terminal
+entries. That would break the `old_status` diff for terminal orders: the diff at L79-83
+relies on the registered terminal status to compute `was_active`/`old_status` correctly on
+a subsequent re-add or update of the same id.
+**Fix:** Correct the two comments to describe the real invariant. Replace the L106-108
+docstring clause and the L64 inline comment so they read, in effect:
+```python
+# L106-108:
+"""Drop one order from both caches + the registry (delete paths).
 
-### IN-02: `_orders()` helper bypassed by several methods, leaving two parallel iteration idioms
+Pitfall 5: every remove pops the registry entry too, so the registry holds
+exactly one entry per LIVE _by_id order (active OR terminal) and never leaks a
+stale status after the order is deleted.
+"""
+```
+and change the L64 inline `# shadow registry (D-03)` note to state it records the
+last-indexed status for every live order (active or terminal), not active-only.
 
-**File:** `itrader/order_handler/storage/in_memory_storage.py:186-188, 251-253, 268`
-**Issue:**
-`_orders(portfolio_id)` centralizes the "iterate flat dict, filter by portfolio"
-predicate, but `get_pending_orders` (None path), `get_active_orders` (None path),
-and `get_orders_by_status` (active path) each re-inline a bare
-`self._by_id.values()` loop with their own portfolio filter rather than reusing it.
-This is justified where the active-membership filter differs from the helper, but it
-means the portfolio-equality predicate now lives in five places; a future change to
-how portfolio matching works (see WR-02) must touch all of them. Minor maintainability
-note — consider routing the scan-based paths through `_orders()` where the only extra
-filter is active-membership.
+### IN-02: `_orders()` helper bypassed by the `get_active_orders` None scan, re-scattering the portfolio predicate it centralizes
+
+**File:** `itrader/order_handler/storage/in_memory_storage.py:275` (and 186-188 for context)
+**Issue:** `_orders(portfolio_id)` (L123-127) exists to centralize the
+`portfolio_id is None or order.portfolio_id == portfolio_id` filter, and most query
+methods route through it (`get_orders_by_ticker`, `get_orders_by_status` terminal branch,
+`get_orders_by_time_range`, `search_orders`, `count_orders_by_status`). Two `None`-path
+scans inline their own `_by_id.values()` walk instead: `get_active_orders` (L275) and
+`get_pending_orders` (L186-188). The `get_pending_orders` case is justified — it builds a
+*nested* `{pid: {oid: order}}` shape that genuinely cannot use the flat helper. But
+`get_active_orders`'s None branch, `[o for o in self._by_id.values() if o.status in
+_ACTIVE_STATUSES]`, duplicates an unfiltered walk that the helper already provides,
+leaving the iteration source inconsistent with its sibling query methods. Low severity:
+the walk is correct and add-order-equivalent today; this is a maintainability/consistency
+note, not a bug.
+**Fix:** Source the `get_active_orders` None branch through the helper:
+```python
+return [o for o in self._orders() if o.status in _ACTIVE_STATUSES]
+```
+Leave `get_pending_orders` as-is, but add a one-line comment there noting it does not use
+`_orders()` because it constructs a nested shape, so the asymmetry is intentional-by-record
+rather than an oversight.
 
 ---
 
