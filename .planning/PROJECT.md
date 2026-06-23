@@ -50,6 +50,15 @@ hotspot map + §6 phase breakdown. The spike IS this milestone's research (no fu
 **Held throughout:** byte-exact SMA_MACD oracle (134 / `46189.87730727451`); `mypy --strict` clean;
 Decimal end-to-end (no new float-for-money); single UUIDv7; determinism double-run byte-identical.
 
+**Progress:** P0 (Phase 1 — perf tooling & baseline) and P1 (Phase 2 — order-storage indexing)
+shipped. Phase 2 replaced the flat `{id: order}` linear scan with derived secondary indexes
+(`_active_by_portfolio` + active-only `_by_status` + shadow registry) maintained at the 5 write
+seams — the flat dict stays the source of truth (D-20), the `OrderStorage` ABC is unchanged
+(Postgres-extensible), output is byte-identical (D-06/D-08/D-09, locked by a code-review fix to the
+active `get_orders_by_status` ordering). Gate (a) byte-exact; gate (b) re-froze `W1-BASELINE.json`
+247.5 s → 199.4 s (−19.4 %), prior baseline preserved as `W1-BASELINE-phase1.json`. Phase 3 (P2 —
+running PnL accumulator, PERF-02) is next.
+
 **Explicitly DEFERRED to a separate next milestone — Persistence:** PostgreSQL storage (orders,
 signals, fills, equity; `PostgreSQLOrderStorage` is a `NotImplementedError` placeholder) + FL-06
 (SQL-injection / hardcoded creds). The original Backlog 999.2 "Persistence & Performance" is **split** —
@@ -417,7 +426,8 @@ Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-lo
 (forex / equities / ETF) is deferred indefinitely.
 
 ---
-*Last updated: 2026-06-23 — v1.5 (Backtest Performance Optimization) STARTED. Promoted the performance
+*Last updated: 2026-06-23 — v1.5 Phase 2 (Order-Storage Indexing, PERF-01) COMPLETE: index-backed active queries, gate (a) byte-exact, gate (b) re-froze W1-BASELINE.json 247.5 s → 199.4 s (−19.4 %). Phase 3 (Running PnL Accumulator, PERF-02) next.*
+*v1.5 (Backtest Performance Optimization) STARTED. Promoted the performance
 half of Backlog 999.2 and split Persistence out into its own following milestone. Goal: cut the frozen
 W1 baseline (240.8 s / 167.3 MB) via profiler-ranked, oracle-gated hot-path optimizations without
 changing the numbers — P0 perf tooling & baseline (root-Makefile `perf-*` targets, two-mode
