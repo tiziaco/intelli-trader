@@ -336,13 +336,17 @@ def format_backtest_summary(
     * Duration: seconds -> human ``Nd Nh`` / ``Nh Nm`` / ``Nm Ns`` form.
     * Instrument list: comma-joined, ``+N more`` past a cap of 6; line OMITTED
       if empty.
-    * Period line: omitted if ``period`` is None.
+    * Period: three lines (Start / End / Bars), date+time with the timezone
+      stripped; all three omitted if ``period`` is None.
     """
     lines: list[str] = [_DOUBLE_RULE, " Backtest Run Summary", _DOUBLE_RULE]
 
     if period is not None:
         start, end, bar_count = period
-        lines.append(f" Period        {start} → {end}  ({bar_count} bars)")
+        # Date+time only, timezone stripped (%Y-%m-%d %H:%M:%S, no %z).
+        lines.append(f" {'Start':<13} {pd.Timestamp(start).strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f" {'End':<13} {pd.Timestamp(end).strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f" {'Bars':<13} {bar_count}")
     if duration_seconds is not None:
         lines.append(f" Duration      {_format_duration(duration_seconds)}")
 

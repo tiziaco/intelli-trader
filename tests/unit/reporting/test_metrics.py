@@ -364,6 +364,11 @@ def test_format_backtest_summary_percentages_and_ratios():
         duration_seconds=3.42,
     )
     assert isinstance(block, str)
+    # Period renders as three tz-stripped lines: Start / End / Bars.
+    assert "2018-01-01 00:00:00" in block
+    assert "2026-06-03 00:00:00" in block
+    assert "Bars" in block
+    assert "3076" in block
     # Percentages render value*100 with '%', signed where natural.
     assert "+99.11%" in block       # total_return
     assert "36.57%" in block        # win_rate
@@ -414,7 +419,9 @@ def test_format_backtest_summary_omits_empty_ticker_line():
 
 def test_format_backtest_summary_omits_period_when_none():
     block = format_backtest_summary([_portfolio_bag()], period=None)
-    assert "Period" not in block
+    # The Start/End/Bars header lines are all dropped. ("Start" would false-match
+    # "Starting cash", so assert on the unique "Bars" label.)
+    assert "Bars" not in block
 
 
 def test_format_backtest_summary_empty_portfolio_path():
