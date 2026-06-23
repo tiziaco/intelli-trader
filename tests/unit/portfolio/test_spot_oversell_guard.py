@@ -54,6 +54,24 @@ def test_spot_over_close_fill_fails_loud(spot_portfolio):
         pf.process_transaction(over_close)
 
 
+def test_spot_sub_tolerance_over_close_absorbs_as_clean_close(spot_portfolio):
+    """260623-h6i: a sub-tolerance over-close (excess << PositionManager.tolerance,
+    1e-5) must NOT raise — it is Decimal quantization dust (the 1E-27 per-add
+    bracket-child requantization on a pyramided position), not a real over-sell.
+    BUY 1 then SELL 1 + 1e-9 @ 1000: the 1e-9 excess passes the tolerance-aware
+    guard and `_should_close_position` (abs(net) <= tolerance) settles it to flat.
+    Decimal-typed qty so the 1e-9 excess is exact, never a float artifact."""
+    pf = spot_portfolio
+    pf.process_transaction(_txn(TransactionType.BUY, "BTCUSDT", 1000, Decimal("1")))
+
+    # Over-close by 1e-9 (<< tolerance 1e-5) — must NOT raise, settles to flat.
+    over_close = _txn(TransactionType.SELL, "BTCUSDT", 1000, Decimal("1") + Decimal("1e-9"))
+    pf.process_transaction(over_close)
+
+    assert len(pf.positions) == 0
+    assert len(pf.closed_positions) == 1
+
+
 def test_spot_exact_full_close_still_succeeds(spot_portfolio):
     """The over-close guard must NOT regress an exact full-close: SELL == held
     qty settles to flat without raising (non-regression)."""
