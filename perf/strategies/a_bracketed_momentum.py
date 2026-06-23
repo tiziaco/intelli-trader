@@ -18,6 +18,27 @@ Signal: reuse the SMA_MACD crossover signal (same SMA/MACDHist init, same
 crossover trigger), changing ONLY the order plumbing — every entry returns a
 bracketed ``buy()`` with sl a few % below and tp a few % above the decision close.
 Instrument: BTCUSDT.
+
+Exit path — bracket-only (260623-f80):
+A previously ALSO closed long on a downward ``macd_hist`` zero-cross via a
+discretionary exit order. That exit was sized off this instrument's
+``FractionOfCash(0.95)`` sizing policy — i.e. off CASH, NOT off the held position
+quantity — so A over-sold: it built a net-short inventory that the spot LONG_ONLY
+engine mislabeled LONG with a positive ``market_value``, yielding phantom ~$10M
+equity on a $100k start. The net inventory never returned to 0, so the long never
+closed; with ``max_positions=1`` every later entry was then blocked and fills
+FROZE after January despite ~400 entry + ~400 exit signals/month through June.
+
+The discretionary exit branch is therefore removed. The OCO bracket
+(``sl``/``tp`` children, declared on EVERY entry) is now A's sole declared exit
+path: its children close EXACTLY the entry quantity, so over-sell is impossible and
+longs close cleanly — letting A recycle across the full window. This is the direct
+analog of the 260623-bmg recycle fix applied to B/C/D.
+
+Note: a SEPARATE engine-level anomaly (spot LONG_ONLY permitting over-sell into a
+net-short inventory carrying a positive ``market_value`` / phantom equity) is being
+investigated under a ``/gsd:debug`` session. THIS change does NOT attempt to fix
+the engine — it only removes the cash-sized discretionary exit that triggered it.
 """
 
 from decimal import Decimal
@@ -26,7 +47,7 @@ from itrader.core.enums import TradingDirection
 from itrader.core.sizing import FractionOfCash, SignalIntent
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.indicators import SMA, MACDHist
-from itrader.strategy_handler.primitives import crossover, crossunder, is_above
+from itrader.strategy_handler.primitives import crossover, is_above
 
 __all__ = ["BracketedMomentumStrategy"]
 
@@ -64,7 +85,10 @@ class BracketedMomentumStrategy(Strategy):
                 sl = close * (Decimal("1") - _SL_PCT)
                 tp = close * (Decimal("1") + _TP_PCT)
                 # Both sl and tp -> bracket / OCO children (the path A owns).
+                # The OCO children are A's SOLE exit: they close EXACTLY the entry
+                # quantity, so the long closes cleanly and A recycles. The old
+                # discretionary downward-zero-cross exit was sized off FractionOfCash
+                # (CASH), not the held quantity -> over-sold into a phantom net-short;
+                # removed (260623-f80, see module docstring).
                 return self.buy(ticker, sl=sl, tp=tp)
-            if crossunder(self.macd_hist, 0):
-                return self.sell(ticker)
         return None
