@@ -52,7 +52,7 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
 
 ### Hot-Path Optimization (PERF) — ordered by payoff × safety (§6)
 
-- [ ] **PERF-01**: Order-storage queries (`get_orders_by_status`, by-portfolio, active) no longer
+- [x] **PERF-01**: Order-storage queries (`get_orders_by_status`, by-portfolio, active) no longer
   linear-scan the full flat `{id: order}` dict — derived secondary indexes are maintained over the
   dict, which stays the source of truth (D-20 keeps all orders for audit). The `OrderStorage`
   interface is designed for extension so a future Postgres backend satisfies the same contract.
@@ -110,7 +110,7 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | TOOL-02 | Phase 1 — Perf Tooling & Baseline | Complete |
 | ~~TOOL-03~~ | ~~Phase 1~~ — **DROPPED** (2026-06-23, owner decision; oracle proves correctness by invariance) | Dropped |
 | TOOL-04 | Phase 1 — Perf Tooling & Baseline | Complete |
-| PERF-01 | Phase 2 — Order-Storage Indexing | Pending |
+| PERF-01 | Phase 2 — Order-Storage Indexing | Complete |
 | PERF-02 | Phase 3 — Running PnL Accumulator | Pending |
 | PERF-03 | Phase 4 — Hot-Path Discipline | Pending |
 | PERF-04 | Phase 4 — Hot-Path Discipline | Pending |

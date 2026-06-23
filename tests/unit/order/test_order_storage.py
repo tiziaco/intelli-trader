@@ -87,12 +87,15 @@ def test_flat_dict_is_sole_container(store):
     assert storage.get_order_by_id(store.oid3) is None
 
 
-def test_filled_order_leaves_active_queries_via_predicate(store):
-    """A status change ALONE moves an order out of active queries (D-20).
+def test_filled_order_leaves_active_queries_after_update(store):
+    """A PENDING->FILLED transition + ``update_order`` drops it from active queries.
 
-    No ``deactivate_order``/``update_order`` call is needed: "active" is a
-    predicate over ``order.is_active`` evaluated at query time, not a
-    separate container membership.
+    With the active indexes (D-02/D-03), the storage write seam is where the
+    index reconciles old->new: the order mutates status IN PLACE
+    (``add_fill``), then the caller pairs it with ``update_order`` (the D-04
+    invariant — reconcile_manager does exactly this). After the write, the
+    FILLED order leaves both active queries; it stays in the flat dict as
+    history (T-05-02).
     """
     store.storage.add_order(store.order1)
     store.storage.add_order(store.order2)
@@ -102,8 +105,11 @@ def test_filled_order_leaves_active_queries_via_predicate(store):
         store.order1.quantity, store.order1.price, store.order1.time
     )
     assert store.order1.status == OrderStatus.FILLED
+    # D-04 invariant: the in-place mutation is paired with a storage write,
+    # which reconciles the active index.
+    assert store.storage.update_order(store.order1)
 
-    # Active queries exclude it purely via the predicate.
+    # Active queries exclude it via the reconciled index.
     active = store.storage.get_active_orders(store.pid1)
     assert [o.id for o in active] == [store.oid2]
     pending = store.storage.get_pending_orders(store.pid1)
@@ -121,6 +127,9 @@ def test_history_queries_return_filled_orders(store):
     assert store.order1.add_fill(
         store.order1.quantity, store.order1.price, store.order1.time
     )
+    # D-04 invariant: pair the in-place fill with a storage write so the active
+    # index reconciles (terminal-status queries below scan the flat dict, D-10).
+    assert store.storage.update_order(store.order1)
 
     assert store.storage.get_order_by_id(store.oid1) == store.order1
     assert store.storage.get_orders_by_status(OrderStatus.FILLED, store.pid1) == [store.order1]
@@ -280,6 +289,182 @@ def test_add_rejected_order_persists_without_entering_active_book(store):
     pending = store.storage.get_pending_orders(store.pid1)
     assert rejected.id not in pending[store.pid1]
     assert store.order1.id in pending[store.pid1]
+
+
+# --- D-09 order-equivalence + maintenance-matrix regression -----------------
+
+
+def _active_oracle(storage, portfolio_id=None):
+    """Independent oracle: scan ``_by_id`` in insertion order, filter is_active.
+
+    Reproduces the prior full-scan semantics so index-backed output can be
+    asserted byte-equal against it (D-09). GLOBAL add_order order on the None
+    path; filtered to a portfolio otherwise.
+    """
+    return [
+        o for o in storage._by_id.values()
+        if o.is_active and (portfolio_id is None or o.portfolio_id == portfolio_id)
+    ]
+
+
+def test_active_queries_match_full_scan_equivalence(store):
+    """D-09: index-backed query order == prior full-scan order (both paths).
+
+    Seeds active orders across pid1/pid2, transitions one to FILLED (the active
+    set is then non-trivial), and asserts the index-backed queries reproduce the
+    independent flat-dict-scan oracle on the GLOBAL (None) path and the
+    per-portfolio path, including get_orders_by_status(active) and the nested
+    get_pending_orders shape.
+    """
+    s = store.storage
+    s.add_order(store.order1)   # pid1 BTCUSDT PENDING
+    s.add_order(store.order2)   # pid1 ETHUSDT PENDING
+    s.add_order(store.order3)   # pid2 BTCUSDT PENDING
+
+    # Transition order2 PENDING -> FILLED via the write seam so the active set
+    # is non-trivial (a terminal order must drop out of every active query).
+    assert store.order2.add_fill(
+        store.order2.quantity, store.order2.price, store.order2.time
+    )
+    assert s.update_order(store.order2)
+
+    # GLOBAL (None) path — byte-equal to the global flat-scan oracle.
+    oracle_all = _active_oracle(s, None)
+    assert [o.id for o in s.get_active_orders(None)] == [o.id for o in oracle_all]
+
+    # Per-portfolio path — byte-equal to the oracle filtered to pid1.
+    oracle_p1 = _active_oracle(s, store.pid1)
+    assert [o.id for o in s.get_active_orders(store.pid1)] == [o.id for o in oracle_p1]
+
+    # get_orders_by_status(active) via the index == oracle filtered to PENDING.
+    pending_oracle = [o for o in oracle_all if o.status == OrderStatus.PENDING]
+    assert (
+        [o.id for o in s.get_orders_by_status(OrderStatus.PENDING)]
+        == [o.id for o in pending_oracle]
+    )
+
+    # get_pending_orders(None) nested shape == scan-built nesting.
+    nested = s.get_pending_orders(None)
+    expected: dict = {}
+    for o in oracle_all:
+        expected.setdefault(o.portfolio_id, {})[o.id] = o
+    assert {pid: list(d) for pid, d in nested.items()} == {
+        pid: list(d) for pid, d in expected.items()
+    }
+
+
+def test_partially_filled_status_query_preserves_add_order_equivalence(store):
+    """WR-01/D-08: get_orders_by_status(PARTIALLY_FILLED) yields add-order, not transition-order.
+
+    The _by_status bucket is kept in status-transition order (an order is popped
+    from PENDING and appended to PARTIALLY_FILLED at transition time). When orders
+    cross into PARTIALLY_FILLED out of add-order, the bucket sequence diverges from
+    add-order — yet the query must stay byte-identical to the prior flat scan
+    (D-06/D-08/D-09). Here order2 (added second) transitions FIRST, so a raw
+    transition-order index would return [order2, order1]; the add-order oracle
+    returns [order1, order2]. PENDING never exposes this (entry == add), which is
+    why the FILLED/PENDING-only equivalence test missed it (WR-03).
+    """
+    s = store.storage
+    s.add_order(store.order1)   # pid1, added first
+    s.add_order(store.order2)   # pid1, added second
+
+    # order2 reaches PARTIALLY_FILLED BEFORE order1 — reverse of add-order. The
+    # full-quantity add_fill contract (D-06) cannot produce PARTIALLY_FILLED, so
+    # drive it via the valid PENDING->PARTIALLY_FILLED transition directly.
+    assert store.order2.add_state_change(
+        OrderStatus.PARTIALLY_FILLED, "partial", OrderTriggerSource.EXCHANGE
+    )
+    assert s.update_order(store.order2)
+    assert store.order1.add_state_change(
+        OrderStatus.PARTIALLY_FILLED, "partial", OrderTriggerSource.EXCHANGE
+    )
+    assert s.update_order(store.order1)
+
+    # Independent oracle: scan _by_id (add-order), filter to PARTIALLY_FILLED.
+    oracle_pf = [
+        o for o in s._by_id.values() if o.status == OrderStatus.PARTIALLY_FILLED
+    ]
+    assert [o.id for o in oracle_pf] == [store.order1.id, store.order2.id]
+
+    # Index-backed query must match the add-order oracle, NOT transition order.
+    assert (
+        [o.id for o in s.get_orders_by_status(OrderStatus.PARTIALLY_FILLED)]
+        == [o.id for o in oracle_pf]
+    )
+    # Per-portfolio path stays add-order too.
+    assert (
+        [o.id for o in s.get_orders_by_status(OrderStatus.PARTIALLY_FILLED, store.pid1)]
+        == [store.order1.id, store.order2.id]
+    )
+
+
+def test_filled_via_update_drops_from_active_index_terminal_fallback(store):
+    """PENDING->FILLED via update_order drops from active AND by_status; terminal scan still finds it (D-10)."""
+    s = store.storage
+    s.add_order(store.order1)   # pid1 PENDING
+
+    assert store.order1.add_fill(
+        store.order1.quantity, store.order1.price, store.order1.time
+    )
+    assert s.update_order(store.order1)
+
+    # Dropped from both active queries.
+    assert s.get_active_orders(store.pid1) == []
+    assert s.get_orders_by_status(OrderStatus.PENDING, store.pid1) == []
+    # Internal index + registry have no stale active entry.
+    assert store.pid1 not in s._active_by_portfolio
+    assert store.oid1 not in s._by_status.get(OrderStatus.PENDING, {})
+    assert s._last_indexed_status[store.oid1] == OrderStatus.FILLED
+    # Terminal-status query still returns it via the flat-dict fallback (D-10).
+    assert s.get_orders_by_status(OrderStatus.FILLED, store.pid1) == [store.order1]
+
+
+def test_remove_orders_by_ticker_keeps_indexes_consistent(store):
+    """remove_orders_by_ticker leaves both indexes + registry with no stale entries."""
+    s = store.storage
+    s.add_order(store.order1)   # pid1 BTCUSDT PENDING
+    s.add_order(store.order2)   # pid1 ETHUSDT PENDING
+
+    assert s.remove_orders_by_ticker("BTCUSDT", store.pid1) == 1
+
+    # order1 (BTCUSDT) gone from active queries + internal indexes + registry.
+    assert [o.id for o in s.get_active_orders(store.pid1)] == [store.oid2]
+    assert store.oid1 not in s._active_by_portfolio.get(store.pid1, {})
+    assert store.oid1 not in s._by_status.get(OrderStatus.PENDING, {})
+    assert store.oid1 not in s._last_indexed_status
+    # order2 (ETHUSDT) untouched.
+    assert s._last_indexed_status[store.oid2] == OrderStatus.PENDING
+
+
+def test_clear_portfolio_orders_keeps_indexes_consistent(store):
+    """clear_portfolio_orders clears the active bucket + registry for that portfolio only."""
+    s = store.storage
+    s.add_order(store.order1)   # pid1
+    s.add_order(store.order2)   # pid1
+    s.add_order(store.order3)   # pid2
+
+    assert s.clear_portfolio_orders(store.pid1) == 2
+
+    # pid1 emptied from every index + registry.
+    assert s.get_active_orders(store.pid1) == []
+    assert store.pid1 not in s._active_by_portfolio
+    assert store.oid1 not in s._last_indexed_status
+    assert store.oid2 not in s._last_indexed_status
+    # pid2 untouched.
+    assert [o.id for o in s.get_active_orders(store.pid2)] == [store.oid3]
+    assert s._last_indexed_status[store.oid3] == OrderStatus.PENDING
+
+
+def test_re_add_order_is_idempotent(store):
+    """Re-add of an existing PENDING id does not duplicate it in the active index (Pitfall 4)."""
+    s = store.storage
+    s.add_order(store.order1)
+    s.add_order(store.order1)   # re-add same id
+
+    active = s.get_active_orders(store.pid1)
+    assert [o.id for o in active] == [store.oid1]
+    assert list(s._active_by_portfolio[store.pid1]) == [store.oid1]
 
 
 # --- OrderStorageFactory ----------------------------------------------------

@@ -55,7 +55,7 @@ never a float swap); single UUIDv7; determinism double-run byte-identical. Sourc
 research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADMAP.md).
 
 - [x] **Phase 1: Perf Tooling & Baseline** — root-Makefile `perf-*` targets, two-mode benchmark/Scalene-profile runner, re-freeze the baseline to a committed `W1-BASELINE.json` + soft regression guard (gate (b) = ≥5% wall-clock) (TOOL-01, TOOL-02, TOOL-04 — TOOL-03 cross-val dropped 2026-06-23)
-- [ ] **Phase 2: Order-Storage Indexing** — derived secondary indexes over the flat `{id: order}` dict (D-20 source of truth), Postgres-extensible interface (PERF-01, ~37% CPU)
+- [x] **Phase 2: Order-Storage Indexing** — derived secondary indexes over the flat `{id: order}` dict (D-20 source of truth), Postgres-extensible interface (PERF-01, ~37% CPU)
 - [ ] **Phase 3: Running PnL Accumulator** — maintain realised PnL on close, stop the per-bar re-sum; opportunistic in-file CONCERNS cleanups allowed (PERF-02, ~13% CPU)
 - [ ] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
 - [ ] **Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)** — rolling/memoized SMA & MACD replacing the per-bar full-window `ta` rebuild, byte-exact (PERF-05, ~24% CPU)
@@ -111,7 +111,9 @@ interface designed so a future Postgres backend satisfies the same contract.
      --strict` clean; determinism double-run byte-identical.
   5. **Gate (b):** the clean W1 benchmark shows a measurable wall-clock improvement vs the Phase 1
      re-frozen baseline, re-frozen as the new locked reference.
-**Plans**: TBD
+**Plans**: 2 plans
+  - [x] 02-01-PLAN.md — index implementation (active_by_portfolio + active-only by_status + shadow registry), 5-write-seam maintenance, active-query rerouting, D-09 equivalence test + gate (a) (PERF-01)
+  - [x] 02-02-PLAN.md — gate (b): human-run make perf-w1 (≥ 5% wall-clock), re-freeze W1-BASELINE.json (PERF-01)
 
 ### Phase 3: Running PnL Accumulator
 **Goal**: Realised PnL is maintained as a running accumulator updated on position close, eliminating
@@ -305,7 +307,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Perf Tooling & Baseline | 2/2 | Complete   | 2026-06-23 |
-| 2. Order-Storage Indexing | 0/TBD | Not started | - |
+| 2. Order-Storage Indexing | 2/2 | Complete   | 2026-06-23 |
 | 3. Running PnL Accumulator | 0/TBD | Not started | - |
 | 4. Hot-Path Discipline | 0/TBD | Not started | - |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
