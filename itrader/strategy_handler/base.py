@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 from datetime import timedelta
 from enum import Enum
+from functools import cache
 from typing import Any, cast, get_type_hints
 
 import pandas as pd
@@ -57,6 +58,23 @@ def _json_safe(val: Any) -> Any:
 		return {str(k): _json_safe(x) for k, x in val.items()}
 	return repr(val)
 
+
+# D-05 (PERF-04): memoize get_type_hints per concrete Strategy subclass. The
+# declared-attr annotations are CONSTANT per class (fixed at import), yet to_dict
+# (hot — per signal snapshot) re-walked the MRO and re-resolved them on every
+# call. `type(self)` keys the cache on the concrete subclass so each class
+# resolves exactly once; functools.cache is thread-safe (locks internally) for
+# live mode, and no manual invalidation is needed (the strategy-class count is
+# bounded and annotations never change after import). Resolution is memoized,
+# NOT removed: neither call site uses the resolved TYPES (both only iterate keys
+# and enum coercion is driven by _COERCE), but a names-only MRO walk would risk
+# snapshot key-ordering in this byte-exact phase, so removal is deferred. Both
+# sites only iterate keys (never mutate / .pop), so the shared cached dict is
+# read-only-safe (T-04-04).
+@cache
+def _declared_hints(cls: type["Strategy"]) -> dict[str, Any]:
+	return get_type_hints(cls)
+
 # D-08: ONLY these three engine fields coerce a str off their annotation to an
 # enum (via the enum's case-insensitive _missing_). Every other knob is left as
 # supplied — e.g. short_window="50" stays a str, never silently int()-ed.
@@ -90,7 +108,8 @@ class Strategy(ABC):
 	# the resolved consumer type; the bare annotation (no value) still marks it
 	# REQUIRED for get_type_hints-driven detection (D-07).
 	# EVERY engine-facing knob is ANNOTATED — `_apply_params` iterates
-	# `get_type_hints(type(self))`, which returns ONLY annotated names, so an
+	# `_declared_hints(type(self))` (memoized get_type_hints, D-05), which
+	# returns ONLY annotated names, so an
 	# unannotated class attr would be invisible to the engine (un-overridable by
 	# kwarg, and its enum coercion would never fire). The three bare annotations
 	# (no value) are REQUIRED (D-07); the rest carry defaults.
@@ -127,7 +146,8 @@ class Strategy(ABC):
 	def _apply_params(self, **kwargs: Any) -> None:
 		"""Apply ``**kwargs`` over the declared class-attr surface (D-06/D-07/D-08).
 
-		``get_type_hints(type(self))`` merges the full MRO so the base-owned
+		``_declared_hints(type(self))`` (memoized ``get_type_hints``, D-05)
+		merges the full MRO so the base-owned
 		names and the subclass's params are introspected together. For each
 		declared name, resolution order is: the kwarg if present, else the prior
 		INSTANCE value on a reconfigure (RESEARCH Open Question 1 — a partial
@@ -143,7 +163,7 @@ class Strategy(ABC):
 		timeframe_supplied = "timeframe" in kwargs
 		# Has _apply_params run before? (reconfigure path — fall back to instance)
 		reconfiguring = hasattr(self, "_timeframe")
-		hints = get_type_hints(type(self))
+		hints = _declared_hints(type(self))
 		for nm in hints:
 			default = getattr(type(self), nm, _MISSING)
 			if nm in kwargs:
@@ -346,14 +366,15 @@ class Strategy(ABC):
 		# WR-02: a faithful "params snapshot" (SIG-02 queryability) must capture
 		# the FULL declared surface — timeframe / tickers / max_window / warmup
 		# AND every subclass tuning knob (short_window, long_window, …) — not a
-		# hand-listed subset. Introspect get_type_hints(type(self)) so the
+		# hand-listed subset. Introspect _declared_hints(type(self)) (memoized
+		# get_type_hints, D-05) so the
 		# snapshot can interpret a signal (which timeframe, which tickers, which
 		# windows). The identity/runtime fields below (strategy_id,
 		# strategy_name, is_active, subscribed_portfolios) and the bespoke
 		# serializations (enum .value, policy repr, timeframe_alias instead of
 		# the timedelta) take precedence over the raw declared value.
 		snapshot: dict[str, Any] = {}
-		for nm in get_type_hints(type(self)):
+		for nm in _declared_hints(type(self)):
 			# `timeframe` resolves to a timedelta at runtime — skip it here and
 			# serialize via the stable `timeframe_alias` below (the str the
 			# snapshot can round-trip). `name` is surfaced as `strategy_name`.
