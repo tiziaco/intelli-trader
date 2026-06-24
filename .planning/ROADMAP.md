@@ -135,7 +135,7 @@ sequenced after it by payoff order.
   5. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
      baseline, re-frozen as the new locked reference.
 **Plans**: 2 plans
-  - [ ] 03-01-PLAN.md — D-02 invariant audit + accumulator field/apply method + wire both spot & margin close arms + collapse the dead dual-loop + D-03 equivalence test + gate (a) (PERF-02)
+  - [x] 03-01-PLAN.md — D-02 invariant audit + accumulator field/apply method + wire both spot & margin close arms + collapse the dead dual-loop + D-03 equivalence test + gate (a) (PERF-02)
   - [ ] 03-02-PLAN.md — gate (b): human-run make perf-w1 (>= 5% wall-clock vs 199.4 s), re-freeze W1-BASELINE.json (PERF-02)
 
 ### Phase 4: Hot-Path Discipline
@@ -310,7 +310,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 |-------|----------------|--------|-----------|
 | 1. Perf Tooling & Baseline | 2/2 | Complete   | 2026-06-23 |
 | 2. Order-Storage Indexing | 2/2 | Complete   | 2026-06-23 |
-| 3. Running PnL Accumulator | 0/TBD | Not started | - |
+| 3. Running PnL Accumulator | 1/2 | In Progress|  |
 | 4. Hot-Path Discipline | 0/TBD | Not started | - |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
 | 6. Bar-Feed Window Copies (OPTIONAL) | 0/TBD | Not started | - |

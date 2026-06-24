@@ -57,7 +57,7 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
   dict, which stays the source of truth (D-20 keeps all orders for audit). The `OrderStorage`
   interface is designed for extension so a future Postgres backend satisfies the same contract.
   *(Hotspot #1, ~37% CPU.)*
-- [ ] **PERF-02**: Realised PnL is maintained as a running accumulator updated on position close —
+- [x] **PERF-02**: Realised PnL is maintained as a running accumulator updated on position close —
   no per-bar re-summation over all open+closed positions. *(Hotspot #3, ~13% CPU. Decimal preserved.)*
 - [ ] **PERF-03**: Hot-path logging is level-gated; per-bar admission-rejection warnings are
   demoted/sampled; `debug()` calls are removed from the per-bar path. *(Hotspot #4, ~6% W1 / ~22% W2.)*
@@ -111,7 +111,7 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | ~~TOOL-03~~ | ~~Phase 1~~ — **DROPPED** (2026-06-23, owner decision; oracle proves correctness by invariance) | Dropped |
 | TOOL-04 | Phase 1 — Perf Tooling & Baseline | Complete |
 | PERF-01 | Phase 2 — Order-Storage Indexing | Complete |
-| PERF-02 | Phase 3 — Running PnL Accumulator | Pending |
+| PERF-02 | Phase 3 — Running PnL Accumulator | Complete |
 | PERF-03 | Phase 4 — Hot-Path Discipline | Pending |
 | PERF-04 | Phase 4 — Hot-Path Discipline | Pending |
 | PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | Pending |
