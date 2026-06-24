@@ -92,8 +92,41 @@ def _write_kline_csv(frame: pd.DataFrame, path: Path) -> None:
     out[_KLINE_HEADER].to_csv(path, index=False)
 
 
+def _wire_system(
+    csv_paths: dict[str, str], start: str, end: str, tickers: list[str]
+) -> BacktestTradingSystem:
+    """Build a fresh, identically-wired BacktestTradingSystem for one pass.
+
+    Both the timed pass (PASS 1) and the peak-mem pass (PASS 2) re-wire through
+    this helper from the SAME csv_paths/start/end so the two passes measure the
+    same engine work on the same seeded input — only the instrumentation differs.
+    The wiring parameters (exchange="csv", cash, strategy/tickers, seed=_SEED via
+    _TIMEFRAME-pinned synthetic frames) are identical across passes.
+    """
+    system = BacktestTradingSystem(
+        exchange="csv", csv_paths=csv_paths,
+        start_date=start, end_date=end, timeframe=_TIMEFRAME,
+    )
+    strategy = _TrivialBuyStrategy(timeframe=_TIMEFRAME, tickers=tickers)
+    system.strategies_handler.add_strategy(strategy)
+    pid = system.portfolio_handler.add_portfolio(
+        user_id=1, name="W2_pf", exchange="csv", cash=Decimal("1000000"))
+    strategy.subscribe_portfolio(pid)
+    return system
+
+
 def _run_point(n_symbols: int, tmpdir: Path) -> dict[str, Any]:
-    """Generate, wire, run one sweep point; return timing + memory."""
+    """Generate, wire, run one sweep point; return timing + memory.
+
+    D-13 part 2 — DE-TIMED two-pass structure. The synthetic frames/CSVs are
+    generated ONCE (outside both passes) and reused. PASS 1 times ONLY
+    ``system.run()`` with ``perf_counter`` and NO tracemalloc in the timed
+    region, so ``wall_clock_s`` measures engine work clean (not ~19% harness
+    allocation-tracking overhead). PASS 2 re-wires a fresh system from the same
+    csv_paths/start/end (same seed=42) and captures peak memory under
+    tracemalloc in a SEPARATE, un-timed pass.
+    """
+    # Synthetic generation — ONCE, outside any measured region; reused by both passes.
     frames = make_synthetic_ohlcv(_N_BARS, n_symbols, seed=_SEED)
     csv_paths: dict[str, str] = {}
     start = None
@@ -105,21 +138,18 @@ def _run_point(n_symbols: int, tmpdir: Path) -> dict[str, Any]:
         if start is None:
             start = frame.index[0].strftime("%Y-%m-%d")
             end = (frame.index[-1] + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+    tickers = list(frames.keys())
 
-    system = BacktestTradingSystem(
-        exchange="csv", csv_paths=csv_paths,
-        start_date=start, end_date=end, timeframe=_TIMEFRAME,
-    )
-    strategy = _TrivialBuyStrategy(timeframe=_TIMEFRAME, tickers=list(frames.keys()))
-    system.strategies_handler.add_strategy(strategy)
-    pid = system.portfolio_handler.add_portfolio(
-        user_id=1, name="W2_pf", exchange="csv", cash=Decimal("1000000"))
-    strategy.subscribe_portfolio(pid)
-
-    tracemalloc.start()
+    # PASS 1 — clean wall-clock: NO tracemalloc anywhere in the timed region.
+    system = _wire_system(csv_paths, start, end, tickers)
     t0 = time.perf_counter()
     system.run(print_summary=False)
     wall_clock_s = time.perf_counter() - t0
+
+    # PASS 2 — peak memory: fresh re-wired system (same seed/input), instrumented.
+    mem_system = _wire_system(csv_paths, start, end, tickers)
+    tracemalloc.start()
+    mem_system.run(print_summary=False)
     _current, peak_bytes = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     peak_mem_mb = peak_bytes / (1024 * 1024)
