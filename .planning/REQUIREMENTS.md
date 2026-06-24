@@ -116,7 +116,7 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | PERF-02 | Phase 3 — Running PnL Accumulator | Complete |
 | PERF-03 | Phase 4 — Hot-Path Discipline | Complete |
 | PERF-04 | Phase 4 — Hot-Path Discipline | Complete |
-| PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | In Progress (05-01 Plan A data layer done; B/C pending) |
+| PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | Complete — gate (a) GREEN (05-01 Plan A data layer + 05-02 Plan B O(1) stateful indicators + 05-03 Plan C per-tick window slice cut & pair migration; SMA_MACD oracle byte-exact 134/46189.87730727451); gate (b) W1/W2 re-freeze = carried thermal todo |
 | PERF-06 | Phase 6 — Bar-Feed Window Copies (OPTIONAL) | Complete |
 
 **Coverage:**

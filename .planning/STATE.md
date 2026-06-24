@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
-stopped_at: Completed 05-01-PLAN.md (Plan A shared recent-bars feed data layer — byte-exact plumbing, oracle held)
-last_updated: "2026-06-24T21:29:29.347Z"
+stopped_at: Completed 05-03-PLAN.md (Plan C — per-tick feed.window() slice removed ENTIRELY; update->is_ready->generate loop; pair on β fit-once-frozen + z bounded-window; oracle byte-exact 134/46189.87730727451)
+last_updated: "2026-06-24T22:30:00.000Z"
 last_activity: 2026-06-24
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 17
-  completed_plans: 16
-  percent: 63
+  completed_plans: 17
+  percent: 67
 ---
 
 # Project State
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 ## Current Position
 
 Phase: 05 (incremental-indicators-fragile-oracle-gated-last) — EXECUTING
-Plan: 3 of 3
-Status: Ready to execute
+Plan: 3 of 3 — COMPLETE
+Status: Phase 5 plans all executed (gate (a) correctness GREEN); gate (b) W1/W2 re-freeze on a cool machine is the carried thermal todo
 Last activity: 2026-06-24
 
 > NOTE: `phase.complete` advanced Current Position to the `999.2` backlog placeholder because no
@@ -227,6 +227,8 @@ scope decisions:
 - [Phase 06]: 06-04 (PERF-06 / D-10 monotonic cursor) — BacktestBarFeed.window() resolves the cutoff via a per-(ticker,alias) forward int64 cursor over frame.index.asi8 (`iv_i8[pos] <= cutoff_i8`, `cutoff_i8 = pd.Timestamp(cutoff).value`) replacing the per-tick searchsorted (13.2% W2); byte-identical to searchsorted(side="right"). Cold key OR `cutoff_i8 < last_cut` → silent safe searchsorted rebuild (never leak a future bar, D-10 reset-safety). The `iloc[start:pos]` read-only view + D-06 empty short-circuit are KEPT cursor-only (D-11 cheaper-slice empirically infeasible — every candidate slower than iloc, D-07 forbids reconstruction; D-12 built on 06-01 9168cae, NOT reverted). D-16: cursor==searchsorted + no-future-bar proven in the EXTENDED D-08 test suite only, NO hot-loop runtime assert. Deviation (Rule 3): `cutoff.value` → `pd.Timestamp(cutoff).value` for mypy --strict (asof typed `datetime`, no `.value`). Gate (a) byte-exact 134/46189.87730727451, determinism double-run identical (SHA-256), mypy --strict clean (187 files), full suite 1262 passed. Commits d034ea3 + 00c5480. Gate (b) W2/W1 re-freeze deferred to 06-05 (cool machine, D-14).
 - [Phase 05]: 05-01 (PERF-05, Plan A — shared recent-bars feed data layer, BYTE-EXACT plumbing) — `BarFeed` now owns the shared recent-bars API: (1) new pure `itrader/price_handler/feed/cache_registration.py::derive` — derive-once-at-wiring mirror of `universe/instruments.py::derive_instruments` (no class/state/queue/feed/store import, sorted/deduped/laddered), keys cache capacity off **RAW-BAR consumers NOT indicator min_period** (P5-D07/D22: indicators self-buffer under Model B); empty consumer set → newest-bar-only depth 1, deep multi-bar cache DEFERRED to the first raw-bar consumer (`.planning/todos/deep-shared-bar-history.md`). (2) G5 newest-bar unify (P5-D16a): the cache newest-row write rides the **EXISTING** `current_bars` per-symbol walk so `newest_bar(ticker)` IS `BarEvent.bars[ticker]` (one source of truth) — NO second loop (for-ticker count stays 2). (3) G1 (P5-D16b): module-level `assert_update_trigger` interface-only `base_timeframe <= min(timeframe)` causality guard; golden 1d==base collapses to "every tick"; multi-timeframe consolidator deferred. **A3 byte-exact held**: `window()` D-08/D-10 monotonic int64 cursor + 7-rule bar-timing contract byte-for-byte unchanged (git diff shows no window-body edits), SMA_MACD oracle byte-exact 134/46189.87730727451, mypy --strict clean (188 files), 61 price+integration tests green + 6 new Plan-A tests. Deviation (Rule 3): narrow `.gitignore` negations un-ignore the two `*cache*`-named tracked files (the broad `**cache**` rule matched them by filename; plan mandates the exact filenames). Plan B (stateful indicators, P5-D07 self-buffer, does NOT read this cache) unblocked structurally — still gated only on the G2 seeding decision P5-D04. Commits 5be5047 + 86ff5b2 + 484724f.
 
+- [Phase 05]: 05-03 (PERF-05, Plan C — per-tick window slice CUT, pair migrated, BYTE-EXACT vs the Plan-02 re-baseline) — the per-tick `feed.window()` master-frame slice + the `len(data)<warmup` gate are removed ENTIRELY for BOTH the single-leg and pair paths (P5-D13/D14). The handler loop is now `strategy.update(ticker,bar)` -> `if not strategy.is_ready(ticker): continue` -> `generate_signal(ticker)`; the bar-is-None gap skip STAYS (= no-update, state frozen, P5-D10c). Per-symbol fan-out is a STATE-SWAP on the SINGLE registration handle-set (`_activate_ticker` + `IndicatorHandle.snapshot_state/load_state/fresh_state`) — the author-bound `self.short_sma` reflects the active ticker WITHOUT the base knowing the attr name (P5-D21); this FIXED a Plan-B design bug where separate per-ticker handle objects left `self.short_sma` reading an un-updated handle (read-before-warm crash). `self.now = bar.time` (a tz-aware Timestamp byte-identical to the legacy `window.index[-1]`), NOT the literal `event.time` (a plain datetime with no `.tz_convert` — would break ~12 e2e scenarios). The pair runs on β fit-once-frozen over the oldest 250 of a bounded `maxlen=280` per-leg buffer + z bounded-window over 30, fed by multi-input `update_pair(bar_A,bar_B)` (P5-D09); `_buffers_as_windows()` renders the bounded buffers as the `(win_A,win_B)` the PRESERVED window-based β/z helpers read — byte-identical to the removed `feed.window(280)` (β/z math, `_crosses_into/_inside` band logic, `_in_pair` flag, non-finite-z guard, β→`to_money` fence all UNTOUCHED). Count/date fixtures migrated off `self.bars` onto `bar_count`/`latest_bar` (firing preserved, P5-D13a); the indicator-free multi-bar strategies (limit_entry_crossval + perf a/b/c/d + run_w2_sweep) migrated onto a new `recent_closes(ticker)` seam (Rule-3, required for the full-suite gate). GATE (a) GREEN: SMA_MACD oracle byte-exact 134/46189.87730727451 (behavioral + numeric), pair flagship snapshot byte-for-byte, full suite 1287 passed, mypy --strict clean (188 files), determinism double-run BYTE-IDENTICAL (SHA-256). Commits 37f6a4e + 44222bb + 094a345.
+
 ### Pending Todos
 
 - **[BEFORE Phase 4 gate (b)] Re-freeze W1-BASELINE.json on a cool machine (captured 2026-06-24).**
@@ -321,6 +323,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 06 P03 | 2 | 2 tasks | 2 files |
 | Phase 06 P04 | 5 | 2 tasks | 2 files |
 | v1.5 Phase 05 P01 | ~10 | 3 tasks | 5 files |
+| v1.5 Phase 05 P03 | ~40 | 3 tasks | 16 files |
 
 ## Bookkeeping
 
@@ -362,8 +365,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T22:05:00.000Z
-Stopped at: Completed 05-02-PLAN.md (Plan B — four O(1) stateful indicators, ta dropped on runtime path; SMA_MACD oracle re-baseline confirmed BYTE-IDENTICAL 134 / 46189.87730727451, cross-validated, owner-approved P5-D02)
+Last session: 2026-06-24T22:30:00.000Z
+Stopped at: Completed 05-03-PLAN.md (Plan C — per-tick feed.window() slice CUT entirely; update->is_ready->generate loop; pair on β fit-once-frozen + z bounded-window; SMA_MACD oracle byte-exact 134/46189.87730727451, full suite 1287 passed, determinism byte-identical, mypy --strict clean). Phase 5 all 3 plans executed (gate (a) GREEN).
 Resume file: None
 Carried todo: re-freeze W1-BASELINE.json on a verified-cool isolated run (the 06-05 W1 re-freeze was thermally inflated to 259.1s and deferred; baseline kept at 238.5s). See 06-05-SUMMARY.md.
 
