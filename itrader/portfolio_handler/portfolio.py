@@ -327,6 +327,12 @@ class Portfolio(object):
 		ticker = transaction.ticker
 		prior = self.position_manager.get_position(ticker)
 		prior_qty = abs(prior.net_quantity) if prior is not None else Decimal("0")
+		# PERF-02 (D-02): capture realised PnL BEFORE the mutation so the
+		# accumulator can be fed the realised increment after settling — mirrors
+		# the margin arm's pre/post capture (portfolio.py:406/529). The spot path
+		# is the SMA_MACD oracle path and has no explicit increment today, so it is
+		# added here (03-INVARIANT-AUDIT.md §5). Open/scale-in yield increment 0.
+		prior_realised = prior.realised_pnl if prior is not None else Decimal("0")
 		# is_increase: a fill that moves in the position's OWN side.
 		if prior is None:
 			is_increase = True
@@ -360,6 +366,14 @@ class Portfolio(object):
 		# 3. Position mutation (all checks passed; handles shorts properly).
 		position = self.position_manager.process_position_update(transaction)
 		transaction.position_id = position.id
+
+		# PERF-02 (D-02): feed the running realised-PnL accumulator the increment
+		# from THIS fill. Decimal('0') on pure-open/scale-in (realised_pnl
+		# unchanged), the realised delta on partial/full closes — applied
+		# unconditionally (byte-safe; never gated behind a branch that could skip a
+		# partial close). Facade->manager call; the manager keeps no back-reference.
+		realised_increment = position.realised_pnl - prior_realised
+		self.position_manager.apply_realised_increment(realised_increment)
 
 		# 4. Cash apply — full-precision signed delta, one ledger entry with
 		#    fee field and event-derived timestamp (D-05/D-06, Pitfalls 1/5).
@@ -527,6 +541,11 @@ class Portfolio(object):
 			# settles against the actual realised-pnl open-commission term, so the
 			# cumulative round-trip cash delta == realized PnL with NO drift.
 			realised_increment = position.realised_pnl - prior_realised
+			# PERF-02 (D-02): feed the running realised-PnL accumulator the SAME
+			# realised increment already computed here for the cash settle. CLOSE
+			# arm ONLY — the is_increase open/scale-in branch never changes
+			# realised_pnl (03-INVARIANT-AUDIT.md §4). Facade->manager call.
+			self.position_manager.apply_realised_increment(realised_increment)
 			open_commission_credit = self._open_commission_credit_for_close(
 				position, closed_qty
 			)

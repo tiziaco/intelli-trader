@@ -86,7 +86,15 @@ class PositionManager:
         # Calculation precision
         self.precision = Decimal('0.00000001')  # 8 decimal places for calculations
         self.tolerance = Decimal('0.00001')     # Tolerance for position closure
-        
+
+        # PERF-02 (D-01/D-02/D-05): running realised-PnL accumulator. Replaces the
+        # per-bar dual open+closed re-sum in get_total_realized_pnl with an O(1)
+        # cached field, fed the realised increment from the Portfolio close funnel
+        # via apply_realised_increment (both settle arms — see 03-INVARIANT-AUDIT.md).
+        # Seeded Decimal('0.00') to match the prior re-sum's empty-portfolio seed so
+        # the per-bar value is BYTE-identical, not merely == (D-05); never quantized.
+        self._realised_pnl_accumulator = Decimal('0.00')
+
         self.logger.info("PositionManager initialized",
             max_positions=self.max_total_positions,
             max_position_value=str(self.max_position_value)
@@ -307,20 +315,20 @@ class PositionManager:
 
         return total_pnl
 
+    def apply_realised_increment(self, increment: Decimal) -> None:
+        """Fold a realised-PnL increment into the running accumulator (D-01/D-02/D-05)."""
+        # Full precision — NO quantize, NO mid-sum rounding (D-05): the running
+        # sum stays byte-identical to the prior dual-loop re-sum of the same
+        # per-position realised terms. Fed only from the Portfolio close funnel.
+        self._realised_pnl_accumulator += increment
+
     def get_total_realized_pnl(self) -> Decimal:
         """Calculate total realized P&L from open and closed positions."""
-        total_pnl = Decimal('0.00')
-
-        # Add realized P&L from open positions
-        # W1-08: position.realised_pnl is already -> Decimal at source.
-        for position in self._storage.get_positions().values():
-            total_pnl += position.realised_pnl
-
-        # Add realized P&L from closed positions
-        for position in self._storage.get_closed_positions():
-            total_pnl += position.realised_pnl
-
-        return total_pnl
+        # PERF-02 (D-01): return the running accumulator (fed via
+        # apply_realised_increment from the Portfolio close funnel) instead of the
+        # per-bar dual open+closed re-sum. The dead dual loop is collapsed here
+        # (D-04 intrinsic cleanup). Empty-portfolio value stays Decimal('0.00').
+        return self._realised_pnl_accumulator
     
     def calculate_position_metrics(self, position_id: PositionId) -> Optional[PositionMetrics]:
         """Calculate comprehensive metrics for a position."""
