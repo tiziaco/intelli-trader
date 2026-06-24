@@ -63,7 +63,7 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
   demoted/sampled; `debug()` calls are removed from the per-bar path. *(Hotspot #4, ~6% W1 / ~22% W2.)*
 - [x] **PERF-04**: `get_type_hints` is memoized per class in `Strategy.to_dict` — resolved once per
   class, not re-resolved on every signal snapshot. *(Hotspot #6, ~2% W1 / ~14% W2.)*
-- [ ] **PERF-05**: SMA & MACD indicators compute incrementally (rolling/memoized) instead of a
+- [x] **PERF-05**: SMA & MACD indicators compute incrementally (rolling/memoized) instead of a
   full-window `ta` rebuild every bar, reproducing `[BYTE-EXACT]` output. **Oracle-gated, done LAST.**
   *(05-01 Plan A shipped the shared recent-bars feed DATA LAYER, byte-exact; the incremental SMA/MACD
   compute itself lands with Plans B/C — keep open until then.)*

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
-stopped_at: "Phase 5 context gathered (reframed: stateful indicators + shared bar cache, oracle re-baselined)"
-last_updated: "2026-06-24T21:08:11.646Z"
+stopped_at: Completed 05-01-PLAN.md (Plan A shared recent-bars feed data layer — byte-exact plumbing, oracle held)
+last_updated: "2026-06-24T21:29:29.347Z"
 last_activity: 2026-06-24
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 17
-  completed_plans: 15
+  completed_plans: 16
   percent: 63
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 ## Current Position
 
 Phase: 05 (incremental-indicators-fragile-oracle-gated-last) — EXECUTING
-Plan: 2 of 3
-Status: Executing Phase 05 (05-01 Plan A complete, byte-exact; 05-02 next)
-Last activity: 2026-06-24 -- 05-01 (Plan A shared recent-bars feed) complete
+Plan: 3 of 3
+Status: Ready to execute
+Last activity: 2026-06-24
 
 > NOTE: `phase.complete` advanced Current Position to the `999.2` backlog placeholder because no
 > `05-*` phase dir exists yet (scanner artifact — see memory `phase-complete-jumps-to-backlog`).
@@ -137,6 +137,15 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 Active decisions live in PROJECT.md Key Decisions. Load-bearing program constraints + the v1.4 locked
 scope decisions:
+
+- **Phase 5 / 05-02 (LOCKED):** all four indicators (SMA/EMA/MACD/RSI) are now hand-written O(1)
+  stateful recurrences (`ta` DROPPED on the runtime path, P5-D11/D12). The SMA_MACD oracle re-baseline
+  (P5-D02) was confirmed **BYTE-IDENTICAL** (134 / 46189.87730727451 unchanged) — numerically
+  transparent because the indicators gate decisions via boolean primitives only and never enter the
+  money arithmetic; cross-validated PASS (backtesting.py −0.35%, backtrader exact, 134 both); owner
+  sign-off: tiziaco (tiziano.iaco@gmail.com), 2026-06-24, P5-D02. No golden re-freeze was required.
+  RSI Pitfall-1 landmine: `ta` seeds `up[0]=dn[0]=0.0` at bar 0 (diff[0]=NaN → `.where` → 0.0), NOT
+  bar-1 first-gain.
 
 - Money = Decimal end-to-end; float money is a correctness defect — applies to the liquidation formula
   and interest accrual (`float()` only at the serialization/logging edge).
@@ -353,8 +362,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T21:08:11.638Z
-Stopped at: Completed 05-01-PLAN.md (Plan A shared recent-bars feed data layer — byte-exact plumbing, oracle held)
+Last session: 2026-06-24T22:05:00.000Z
+Stopped at: Completed 05-02-PLAN.md (Plan B — four O(1) stateful indicators, ta dropped on runtime path; SMA_MACD oracle re-baseline confirmed BYTE-IDENTICAL 134 / 46189.87730727451, cross-validated, owner-approved P5-D02)
 Resume file: None
 Carried todo: re-freeze W1-BASELINE.json on a verified-cool isolated run (the 06-05 W1 re-freeze was thermally inflated to 259.1s and deferred; baseline kept at 238.5s). See 06-05-SUMMARY.md.
 
