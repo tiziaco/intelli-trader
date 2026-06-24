@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
-stopped_at: Phase 06 context PIVOTED to incremental-cursor window() (D-10–D-16); ready to replan cursor fix
-last_updated: "2026-06-24T14:54:31.136Z"
-last_activity: 2026-06-24 -- Phase 06 execution started
+stopped_at: Completed 06-03-PLAN.md (D-13 denominator cleanup); ready to plan/execute 06-04 cursor
+last_updated: "2026-06-24T14:59:18.085Z"
+last_activity: 2026-06-24
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 14
-  completed_plans: 10
+  completed_plans: 12
   percent: 50
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 ## Current Position
 
 Phase: 06 (bar-feed-window-copies-optional-slip-able) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 06
-Last activity: 2026-06-24 -- Phase 06 execution started
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-06-24
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
@@ -205,6 +205,7 @@ scope decisions:
 - [Phase 01]: 01-01 (TOOL-01/02): perf tooling surface built — make perf-w1/w2/baseline/profile (+ user-added perf-view) in the root Makefile; perf-w1 is PROFILER-FREE and perf-profile is the ONLY Scalene path (two-step run->view; user switched the viewer from --html to native `scalene view` local-server, approved deviation 4fa61d1/4d50996, TOOL-02 split intact). run_w1_benchmark.py gained --json/--check/--baseline-out (D-06 human-stdout default) + _to_baseline_schema/_write_baseline/_check_regression (soft guard fails ONLY on >+5% slowdown, no abs(), Pitfall 3); run_w2_sweep.py gained --json. D-07: _START_DATE default pinned 2025-12-24->2026-04-23 (env-overridable). final_equity stored as STRING constant 46189.87730727451 (OQ-1/A1 provenance, not W1-derived). Narrow .gitignore (scalene-profile.html + perf/results/scalene-*.json) keeps W1-BASELINE.json trackable (Pitfall 4). Gate (a) green 134/46189.87730727451; NO itrader/ engine code touched. Scalene hotspot confirmed: in_memory_storage 48% (P2), position_manager 17% (P3), indicators/catalog 18% (P5).
 - [Phase ?]: [Phase 02]: 02-01 (PERF-01) — InMemoryOrderStorage gained derived active-by-portfolio + active-only by-status indexes (dict[oid,None]) over a _last_indexed_status shadow registry (D-03) atop the flat _by_id source of truth (D-20); shared _index_apply diff-on-write at all 5 write seams; active queries/scanners rerouted (None scan-fallback keeps GLOBAL order byte-identical, Pitfall 1); ABC UNCHANGED (D-05) + D-05a SQL-expressibility audit in-code; gate (a) PASSED (oracle 134/46189.87730727451, determinism 9/9, mypy strict 187). Gate (b) perf = Plan 02.
 - [Phase 03]: 03-01 (PERF-02) — running Decimal realised-PnL accumulator on PositionManager (_realised_pnl_accumulator, seed Decimal('0.00'), no mid-sum quantize) replaces the per-bar dual open+closed re-sum in get_total_realized_pnl (now a bare `return self._realised_pnl_accumulator`, D-01/D-04 dead-loop collapse). Fed via apply_realised_increment from BOTH Portfolio settle arms — the SPOT arm (SMA_MACD oracle path) had NO explicit realised_increment today and was wired with pre/post capture (audit finding, 03-INVARIANT-AUDIT.md §5); MARGIN arm reuses the existing increment on the CLOSE branch only (D-02). Three-layer correctness lock: written single-funnel invariant audit (03-INVARIANT-AUDIT.md) + byte-exact oracle/determinism + dedicated equivalence regression test (accumulator == fresh full re-sum, D-03). Gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files), full suite 1241 passed, determinism double-run byte-identical. Gate (b) W1 wall-clock re-freeze = Plan 02.
+- [Phase ?]: [Phase 06]: 06-03 (PERF-06 / D-13 denominator cleanup, PREP before the cursor) — removed the per-bar TIME EVENT debug block from EventHandler._dispatch (eager f-string every bar, discarded at INFO, ~22% W2 CPU) and de-timed run_w2_sweep._run_point into two passes (clean perf_counter wall-clock, NO tracemalloc in the timed region + separate fresh-wired tracemalloc peak-mem, same seed=42); _wire_system helper factored, return dict shape + 06-02 --check/--baseline-out flags unchanged. Behavior-neutral: gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files); re-baselines NOTHING numeric (cleaned baselines re-freeze 06-05). Commits 15834d7 + 43e5e72.
 
 ### Pending Todos
 
@@ -297,6 +298,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | v1.5 Phase 01 P02 | ~18 (3× ~240s benchmark runs) | 2 tasks (both auto) | 1 file |
 | Phase 02 P01 | 4 | 3 tasks | 2 files |
 | Phase 03 P01 | 5 | 3 tasks | 4 files |
+| Phase 06 P03 | 2 | 2 tasks | 2 files |
 
 ## Bookkeeping
 
@@ -338,9 +340,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T14:15:37.651Z
-Stopped at: Phase 06 context PIVOTED to incremental-cursor window() (D-10–D-16); ready to replan cursor fix
-Resume file: .planning/phases/06-bar-feed-window-copies-optional-slip-able/06-CONTEXT.md
+Last session: 2026-06-24T14:59:18.077Z
+Stopped at: Completed 06-03-PLAN.md (D-13 denominator cleanup); ready to plan/execute 06-04 cursor
+Resume file: None
 
 ## Operator Next Steps
 
