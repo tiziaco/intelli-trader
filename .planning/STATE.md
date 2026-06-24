@@ -4,8 +4,8 @@ milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
 stopped_at: Phase 4 context gathered
-last_updated: "2026-06-24T10:05:25.260Z"
-last_activity: 2026-06-24 -- Phase 04 planning complete
+last_updated: "2026-06-24T10:10:11.885Z"
+last_activity: 2026-06-24 -- Phase 04 execution started
 progress:
   total_phases: 8
   completed_phases: 3
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 4 — Hot-Path Discipline (PERF-03, PERF-04). NOTE: `phase.complete` jumped the pointer to backlog dir 999.2 because the `04-*` phase dir does not exist yet; 999.2/999.3 are FUTURE-milestone (N+3/N+4) backlog placeholders, NOT the next v1.5 phase. Corrected manually to Phase 4.
+**Current focus:** Phase 04 — hot-path-discipline
 
 ## Current Position
 
-Phase: 4
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-24 -- Phase 04 planning complete
+Phase: 04 (hot-path-discipline) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 04
+Last activity: 2026-06-24 -- Phase 04 execution started
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
