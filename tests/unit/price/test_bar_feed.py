@@ -23,6 +23,7 @@ from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -305,6 +306,70 @@ def test_minutes_precompute_resamples_without_futurewarning(tmp_path):
                          asof=ts('2020-03-02 09:59:00'))
     assert list(window.index) == [ts('2020-03-02 09:00:00'),
                                   ts('2020-03-02 09:30:00')]
+
+
+# -- 7b. PERF-06 / D-08: window() read-only-view drift-lock ----------------------
+
+"""D-08 drift/equivalence lock for the PERF-06 read-only-view window() (D-01/
+D-06/D-07/D-09).
+
+This is the dedicated unit-level drift lock co-located with the 7-rule
+bar-timing contract suite above (the contract suite IS D-08 assertion (c) —
+it stays green). The "oracle" here is the OLD ``frame.iloc[start:pos].copy()``
+data copy that ``window()`` returned before this phase; the new ``window()``
+returns a read-only VIEW that must be byte-identical to that copy.
+
+Two assertions land here:
+- (a) ``test_window_view_content_equals_old_copy`` — the returned view's
+  content (values, float64 dtype, tz-aware ``DatetimeIndex``, column set+order)
+  equals the matching positional slice of the base frame across sampled ticks,
+  via ``pd.testing.assert_frame_equal`` (the existing byte-identity backstop).
+- (b) ``test_window_view_is_read_only_and_cannot_leak`` — a DIRECT numpy write
+  to the returned view's buffer raises ``ValueError(read-only)`` and cannot
+  leak into the master (re-fetching the window yields the unchanged values).
+  The proof targets the numpy ``ValueError`` (RESEARCH Pitfall 1) — NOT a
+  pandas ``view.iloc[...] = x`` chained assignment, which fires
+  ``SettingWithCopyWarning`` under ``filterwarnings=["error"]`` BEFORE the
+  read-only buffer is touched (false confidence).
+
+The run-path drift locks are the byte-exact SMA_MACD oracle + the determinism
+double-run; this file locks the slice itself. NO hot-path runtime guard is
+added (D-09) — re-paying the per-tick wrapper-construction cost is exactly what
+the phase removes; the read-only enforcement is a one-time numpy flag at the
+master-frame build sites.
+"""
+
+
+def test_window_view_content_equals_old_copy(daily_feed, daily_base_frame):
+    # (a) view content == old-copy content across sampled ticks (byte-identical).
+    # Same-timeframe (tf == base) so the positional slice on the base frame is
+    # the exact oracle the old `frame.iloc[start:pos].copy()` produced.
+    tf = timedelta(days=1)
+    max_window = 3
+    base_tf = timedelta(days=1)
+    for asof in [ts('2020-01-03'), ts('2020-01-05'),
+                 ts('2020-01-07'), ts('2020-01-10')]:
+        cutoff = asof - tf + base_tf
+        pos = int(daily_base_frame.index.searchsorted(cutoff, side="right"))
+        expected = daily_base_frame.iloc[max(0, pos - max_window):pos]
+        view = daily_feed.window('BTCUSD', tf, max_window=max_window, asof=asof)
+        pd.testing.assert_frame_equal(view, expected, check_freq=False)
+
+
+def test_window_view_is_read_only_and_cannot_leak(daily_feed):
+    # (b) a DIRECT numpy write to the returned window RAISES read-only and cannot
+    # leak into the master. Target the numpy ValueError (RESEARCH Pitfall 1) —
+    # a pandas `view.iloc[0,0] = x` would fire SettingWithCopyWarning first.
+    view = daily_feed.window('BTCUSD', timedelta(days=1), max_window=3,
+                             asof=ts('2020-01-07'))
+    assert not view.empty
+    before = view.to_numpy(copy=False).copy()
+    with pytest.raises(ValueError, match="read-only"):
+        view.to_numpy(copy=False)[0, 0] = 999.0
+    # No leak: re-fetch the same window, assert byte-identical to `before`.
+    again = daily_feed.window('BTCUSD', timedelta(days=1), max_window=3,
+                              asof=ts('2020-01-07'))
+    assert np.array_equal(again.to_numpy(), before)
 
 
 # -- 8. BarEvent factory (relocated from DynamicUniverse — Plan 07-02, D-20) ------
