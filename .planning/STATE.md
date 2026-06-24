@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
-stopped_at: Phase 6 context gathered
-last_updated: "2026-06-24T12:56:58.826Z"
-last_activity: 2026-06-24 -- Phase 06 execution started
+stopped_at: 06-02 Task 1 committed; paused at blocking human-verify checkpoint (Task 2 — cool-machine W2 before/after capture)
+last_updated: "2026-06-24T13:22:11.000Z"
+last_activity: 2026-06-24 -- 06-02 Task 1 (W2 gate-b mechanization) committed f51d7c6; awaiting human thermal measurement
 progress:
   total_phases: 8
   completed_phases: 4
@@ -338,9 +338,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T12:24:04.970Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-bar-feed-window-copies-optional-slip-able/06-CONTEXT.md
+Last session: 2026-06-24T13:22:11.000Z
+Stopped at: 06-02 Task 1 committed (f51d7c6); BLOCKING human-verify checkpoint (Task 2 — cool-machine W2 before/after capture + W1/W1-baseline re-freeze)
+Resume file: .planning/phases/06-bar-feed-window-copies-optional-slip-able/06-02-PLAN.md
 
 ## Operator Next Steps
 
