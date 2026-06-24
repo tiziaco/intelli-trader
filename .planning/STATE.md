@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: ready_to_plan
-stopped_at: Phase 02 complete (2/2) — ready to discuss Phase 3
-last_updated: 2026-06-23T21:36:41.025Z
-last_activity: 2026-06-23
+stopped_at: Phase 03 complete (2/2) — ready to discuss/plan Phase 4 (Hot-Path Discipline)
+last_updated: 2026-06-24T07:58:29.343Z
+last_activity: 2026-06-24 -- Phase 03 complete (2/2): gate (a) byte-exact, gate (b) proven (Scalene 16.21%->0%, A/B -15.4%); W1 re-freeze deferred
 progress:
   total_phases: 8
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
-  percent: 13
+  completed_phases: 3
+  total_plans: 6
+  completed_plans: 6
+  percent: 38
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 3 — Running PnL Accumulator (PERF-02, ~13% CPU)
+**Current focus:** Phase 4 — Hot-Path Discipline (PERF-03, PERF-04). NOTE: `phase.complete` jumped the pointer to backlog dir 999.2 because the `04-*` phase dir does not exist yet; 999.2/999.3 are FUTURE-milestone (N+3/N+4) backlog placeholders, NOT the next v1.5 phase. Corrected manually to Phase 4.
 
 ## Current Position
 
-Phase: 3
+Phase: 4
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-23
+Status: Ready to discuss/plan (Hot-Path Discipline — PERF-03, PERF-04)
+Last activity: 2026-06-24 -- Phase 03 complete (gate (a)+(b)); next: discuss/plan Phase 4
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
@@ -99,7 +99,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 58
+- Total plans completed: 62
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -204,8 +204,19 @@ scope decisions:
 - [Phase 01]: 01-02 (TOOL-04): W1-BASELINE.json FROZEN from a single clean `make perf-baseline` run (247.5s / 167.3MB, 1578 fills / 659 closed; D-03 not best-of-N) with the D-01 schema — metric.{wall_clock_s,peak_mem_mb}, window 2026-04-23→2026-06-23, frozen_at 2026-06-23, oracle_provenance.final_equity STRING constant 46189.87730727451 (OQ-1/A1 provenance stamp, never W1-derived). Trackable (not gitignored; Pitfall 4), committed b56afdd. Soft regression guard PROVEN both arms: positive `make perf-w1` printed Δ +0.2% wall / +0.0% mem and exited 0 (within ±5% noise); negative path (committed baseline lowered ~20% to 198.0s) made the ~248-253s run read Δ +27.7%, printed `PERF REGRESSION ... gate (b) guard FAILED`, exited non-zero; restored via `git checkout` → `git diff --quiet` clean (T-01-03 mitigated, no tamper left). Gate (a) green at freeze AND after (134 / 46189.87730727451); NO itrader/ engine code touched. This is the locked reference every later v1.5 phase's gate (b) diffs against.
 - [Phase 01]: 01-01 (TOOL-01/02): perf tooling surface built — make perf-w1/w2/baseline/profile (+ user-added perf-view) in the root Makefile; perf-w1 is PROFILER-FREE and perf-profile is the ONLY Scalene path (two-step run->view; user switched the viewer from --html to native `scalene view` local-server, approved deviation 4fa61d1/4d50996, TOOL-02 split intact). run_w1_benchmark.py gained --json/--check/--baseline-out (D-06 human-stdout default) + _to_baseline_schema/_write_baseline/_check_regression (soft guard fails ONLY on >+5% slowdown, no abs(), Pitfall 3); run_w2_sweep.py gained --json. D-07: _START_DATE default pinned 2025-12-24->2026-04-23 (env-overridable). final_equity stored as STRING constant 46189.87730727451 (OQ-1/A1 provenance, not W1-derived). Narrow .gitignore (scalene-profile.html + perf/results/scalene-*.json) keeps W1-BASELINE.json trackable (Pitfall 4). Gate (a) green 134/46189.87730727451; NO itrader/ engine code touched. Scalene hotspot confirmed: in_memory_storage 48% (P2), position_manager 17% (P3), indicators/catalog 18% (P5).
 - [Phase ?]: [Phase 02]: 02-01 (PERF-01) — InMemoryOrderStorage gained derived active-by-portfolio + active-only by-status indexes (dict[oid,None]) over a _last_indexed_status shadow registry (D-03) atop the flat _by_id source of truth (D-20); shared _index_apply diff-on-write at all 5 write seams; active queries/scanners rerouted (None scan-fallback keeps GLOBAL order byte-identical, Pitfall 1); ABC UNCHANGED (D-05) + D-05a SQL-expressibility audit in-code; gate (a) PASSED (oracle 134/46189.87730727451, determinism 9/9, mypy strict 187). Gate (b) perf = Plan 02.
+- [Phase 03]: 03-01 (PERF-02) — running Decimal realised-PnL accumulator on PositionManager (_realised_pnl_accumulator, seed Decimal('0.00'), no mid-sum quantize) replaces the per-bar dual open+closed re-sum in get_total_realized_pnl (now a bare `return self._realised_pnl_accumulator`, D-01/D-04 dead-loop collapse). Fed via apply_realised_increment from BOTH Portfolio settle arms — the SPOT arm (SMA_MACD oracle path) had NO explicit realised_increment today and was wired with pre/post capture (audit finding, 03-INVARIANT-AUDIT.md §5); MARGIN arm reuses the existing increment on the CLOSE branch only (D-02). Three-layer correctness lock: written single-funnel invariant audit (03-INVARIANT-AUDIT.md) + byte-exact oracle/determinism + dedicated equivalence regression test (accumulator == fresh full re-sum, D-03). Gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files), full suite 1241 passed, determinism double-run byte-identical. Gate (b) W1 wall-clock re-freeze = Plan 02.
 
 ### Pending Todos
+
+- **[BEFORE Phase 4 gate (b)] Re-freeze W1-BASELINE.json on a cool machine (captured 2026-06-24).**
+  Phase 3 (PERF-02) delivered a proven ~15% wall-clock win (same-machine A/B 317.5s→268.4s; Scalene
+  CPU share `position_manager.py` 16.21%→0%; profiled elapsed −29.6%), but the re-freeze (Plan 03-02
+  Task 2) was **deferred**: the box was thermally throttled on 2026-06-24 (old code itself read 317.5s
+  vs the 199.4s frozen yesterday), so no run that day could produce a clean reference. `W1-BASELINE.json`
+  still holds the **Phase-2 199.4s** number. **Action:** on a cool/quiet machine, in the main checkout,
+  run `make perf-baseline` then commit — BEFORE Phase 4's gate (b) is measured, else Phase 4 diffs
+  against a pre-Phase-3 baseline and over-credits its own win by ~15%. Evidence + hotspot map in
+  `.planning/phases/03-running-pnl-accumulator/03-02-SUMMARY.md`.
 
 - **[Phase 4 / PERF-03] Demote the W1 sub-minimum rejection log (captured 2026-06-23).** W1 runs emit
   frequent `error`-level `OrderHandler` "Quantity ... below minimum 0.001" logs — the `FractionOfCash`
@@ -285,6 +296,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | v1.5 Phase 01 P01 | ~5 (hands-on) | 3 tasks (2 auto + 1 checkpoint) | 4 files |
 | v1.5 Phase 01 P02 | ~18 (3× ~240s benchmark runs) | 2 tasks (both auto) | 1 file |
 | Phase 02 P01 | 4 | 3 tasks | 2 files |
+| Phase 03 P01 | 5 | 3 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -326,9 +338,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-23T21:08:15.796Z
-Stopped at: Phase 2 context gathered
-Resume file: None
+Last session: 2026-06-24T06:18:39.366Z
+Stopped at: Phase 3 context gathered
+Resume file: .planning/phases/03-running-pnl-accumulator/03-CONTEXT.md
 
 ## Operator Next Steps
 

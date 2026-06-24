@@ -86,7 +86,15 @@ class PositionManager:
         # Calculation precision
         self.precision = Decimal('0.00000001')  # 8 decimal places for calculations
         self.tolerance = Decimal('0.00001')     # Tolerance for position closure
-        
+
+        # PERF-02 (D-01/D-02/D-05): running realised-PnL accumulator. Replaces the
+        # per-bar dual open+closed re-sum in get_total_realized_pnl with an O(1)
+        # cached field, fed the realised increment from the Portfolio close funnel
+        # via apply_realised_increment (both settle arms — see 03-INVARIANT-AUDIT.md).
+        # Seeded Decimal('0.00') to match the prior re-sum's empty-portfolio seed so
+        # the per-bar value is BYTE-identical, not merely == (D-05); never quantized.
+        self._realised_pnl_accumulator = Decimal('0.00')
+
         self.logger.info("PositionManager initialized",
             max_positions=self.max_total_positions,
             max_position_value=str(self.max_position_value)
@@ -307,20 +315,61 @@ class PositionManager:
 
         return total_pnl
 
+    def apply_realised_increment(self, increment: Decimal) -> None:
+        """Fold a realised-PnL increment into the running accumulator (D-01/D-02/D-05)."""
+        # Full precision — NO quantize, NO mid-sum rounding (D-05): the running
+        # sum stays byte-identical to the prior dual-loop re-sum of the same
+        # per-position realised terms. Fed only from the Portfolio close funnel.
+        self._realised_pnl_accumulator += increment
+
     def get_total_realized_pnl(self) -> Decimal:
-        """Calculate total realized P&L from open and closed positions."""
-        total_pnl = Decimal('0.00')
+        """Return the running realised-PnL accumulator (O(1) cached field).
 
-        # Add realized P&L from open positions
-        # W1-08: position.realised_pnl is already -> Decimal at source.
+        IN-03: this returns the cached ``_realised_pnl_accumulator`` field and does
+        NOT inspect open/closed positions — do not "fix" a suspected desync by
+        re-adding a per-position loop here (that re-pays the O(positions) cost
+        PERF-02 removed). To verify the accumulator against the prior re-sum, call
+        ``assert_accumulator_consistent`` (a gated test seam — see WR-03), never
+        change this getter back to a loop.
+        """
+        # PERF-02 (D-01): return the running accumulator (fed via
+        # apply_realised_increment from the Portfolio close funnel) instead of the
+        # per-bar dual open+closed re-sum. The dead dual loop is collapsed here
+        # (D-04 intrinsic cleanup). Empty-portfolio value stays Decimal('0.00').
+        return self._realised_pnl_accumulator
+
+    def assert_accumulator_consistent(self) -> None:
+        """WR-03 enforcement seam: assert the accumulator equals a fresh re-sum.
+
+        The running accumulator's correctness is coupled to EVERY position-close
+        path feeding ``apply_realised_increment`` exactly once with the right
+        increment (the Portfolio settle arms + ``close_all_positions``). The
+        prior self-correcting re-sum could never desync; the accumulator can, if
+        a caller drives the manager outside the funnel (the docstrings assert
+        this contract in prose but nothing on the hot path enforces it).
+
+        This recomputes the dual open+closed re-sum (the exact prior loop, seeded
+        ``Decimal('0.00')``) and raises ``PositionCalculationError`` on any
+        divergence so a desync fails LOUD in tests rather than producing a quietly
+        wrong total. It is a GATED test/debug seam — deliberately NOT called on the
+        per-bar hot path (D-03: no runtime re-sum guard, that would re-pay the
+        O(positions) cost PERF-02 removed). Equality is value-``==`` (D-05):
+        byte-identical seed + no mid-sum quantize.
+        """
+        resum = Decimal('0.00')
         for position in self._storage.get_positions().values():
-            total_pnl += position.realised_pnl
-
-        # Add realized P&L from closed positions
+            resum += position.realised_pnl
         for position in self._storage.get_closed_positions():
-            total_pnl += position.realised_pnl
-
-        return total_pnl
+            resum += position.realised_pnl
+        if self._realised_pnl_accumulator != resum:
+            raise PositionCalculationError(
+                "Realised-PnL accumulator desync: a close path bypassed the "
+                "increment funnel (WR-03).",
+                {
+                    "accumulator": str(self._realised_pnl_accumulator),
+                    "resum": str(resum),
+                },
+            )
     
     def calculate_position_metrics(self, position_id: PositionId) -> Optional[PositionMetrics]:
         """Calculate comprehensive metrics for a position."""
@@ -441,7 +490,19 @@ class PositionManager:
 
         for ticker, position in list(self._storage.get_positions().items()):
             if ticker in current_prices:
+                # WR-01 (PERF-02 equivalence break): close_all_positions is an
+                # emergency bypass that does NOT flow through the Portfolio settle
+                # funnel, so the running accumulator would NOT be fed and the
+                # closed position's realised PnL would be silently dropped from
+                # get_total_realized_pnl (the prior re-sum still counted it via the
+                # closed list). Feed the increment HERE — capturing realised BEFORE
+                # the close so the delta is exact. This is the ONLY funnel for this
+                # path: _close_position is NOT touched (the normal path already
+                # feeds the increment from the Portfolio settle arms, so moving it
+                # into _close_position would double-count).
+                prior_realised = position.realised_pnl
                 self._close_position(position, current_prices[ticker], timestamp)
+                self.apply_realised_increment(position.realised_pnl - prior_realised)
                 closed_positions.append(position)
             else:
                 self.logger.warning("Cannot close position: no price data",
