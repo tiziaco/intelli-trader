@@ -66,7 +66,7 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
 - [ ] **PERF-05**: SMA & MACD indicators compute incrementally (rolling/memoized) instead of a
   full-window `ta` rebuild every bar, reproducing `[BYTE-EXACT]` output. **Oracle-gated, done LAST.**
   *(Hotspots #2+#7, ~24% CPU — highest-care item.)*
-- [ ] **PERF-06** *(optional)*: Per-tick bar-feed window `iloc` frame copies are reduced (reusable
+- [x] **PERF-06** *(optional)*: Per-tick bar-feed window `iloc` frame copies are reduced (reusable
   view / cached slice bounds), preserving the look-ahead bar-timing contract (the 7 rules in
   `feed/bar_feed.py`). *(Hotspot #5, ~4% W1 / ~22% W2 — scales with symbol count.)*
 
@@ -115,7 +115,7 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | PERF-03 | Phase 4 — Hot-Path Discipline | Complete |
 | PERF-04 | Phase 4 — Hot-Path Discipline | Complete |
 | PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | Pending |
-| PERF-06 | Phase 6 — Bar-Feed Window Copies (OPTIONAL) | Pending |
+| PERF-06 | Phase 6 — Bar-Feed Window Copies (OPTIONAL) | Complete |
 
 **Coverage:**
 - v1 requirements: 9 total (TOOL ×3 + PERF ×6; PERF-06 optional) — TOOL-03 dropped 2026-06-23

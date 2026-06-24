@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
-stopped_at: Completed 06-03-PLAN.md (D-13 denominator cleanup); ready to plan/execute 06-04 cursor
-last_updated: "2026-06-24T14:59:18.085Z"
+stopped_at: Completed 06-04-PLAN.md (D-10 monotonic int64 cursor); ready to execute 06-05 gate-(b) re-freeze
+last_updated: "2026-06-24T15:07:46.999Z"
 last_activity: 2026-06-24
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 14
-  completed_plans: 12
+  completed_plans: 13
   percent: 50
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 ## Current Position
 
 Phase: 06 (bar-feed-window-copies-optional-slip-able) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-06-24
 
@@ -206,6 +206,7 @@ scope decisions:
 - [Phase ?]: [Phase 02]: 02-01 (PERF-01) — InMemoryOrderStorage gained derived active-by-portfolio + active-only by-status indexes (dict[oid,None]) over a _last_indexed_status shadow registry (D-03) atop the flat _by_id source of truth (D-20); shared _index_apply diff-on-write at all 5 write seams; active queries/scanners rerouted (None scan-fallback keeps GLOBAL order byte-identical, Pitfall 1); ABC UNCHANGED (D-05) + D-05a SQL-expressibility audit in-code; gate (a) PASSED (oracle 134/46189.87730727451, determinism 9/9, mypy strict 187). Gate (b) perf = Plan 02.
 - [Phase 03]: 03-01 (PERF-02) — running Decimal realised-PnL accumulator on PositionManager (_realised_pnl_accumulator, seed Decimal('0.00'), no mid-sum quantize) replaces the per-bar dual open+closed re-sum in get_total_realized_pnl (now a bare `return self._realised_pnl_accumulator`, D-01/D-04 dead-loop collapse). Fed via apply_realised_increment from BOTH Portfolio settle arms — the SPOT arm (SMA_MACD oracle path) had NO explicit realised_increment today and was wired with pre/post capture (audit finding, 03-INVARIANT-AUDIT.md §5); MARGIN arm reuses the existing increment on the CLOSE branch only (D-02). Three-layer correctness lock: written single-funnel invariant audit (03-INVARIANT-AUDIT.md) + byte-exact oracle/determinism + dedicated equivalence regression test (accumulator == fresh full re-sum, D-03). Gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files), full suite 1241 passed, determinism double-run byte-identical. Gate (b) W1 wall-clock re-freeze = Plan 02.
 - [Phase ?]: [Phase 06]: 06-03 (PERF-06 / D-13 denominator cleanup, PREP before the cursor) — removed the per-bar TIME EVENT debug block from EventHandler._dispatch (eager f-string every bar, discarded at INFO, ~22% W2 CPU) and de-timed run_w2_sweep._run_point into two passes (clean perf_counter wall-clock, NO tracemalloc in the timed region + separate fresh-wired tracemalloc peak-mem, same seed=42); _wire_system helper factored, return dict shape + 06-02 --check/--baseline-out flags unchanged. Behavior-neutral: gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files); re-baselines NOTHING numeric (cleaned baselines re-freeze 06-05). Commits 15834d7 + 43e5e72.
+- [Phase 06]: 06-04 (PERF-06 / D-10 monotonic cursor) — BacktestBarFeed.window() resolves the cutoff via a per-(ticker,alias) forward int64 cursor over frame.index.asi8 (`iv_i8[pos] <= cutoff_i8`, `cutoff_i8 = pd.Timestamp(cutoff).value`) replacing the per-tick searchsorted (13.2% W2); byte-identical to searchsorted(side="right"). Cold key OR `cutoff_i8 < last_cut` → silent safe searchsorted rebuild (never leak a future bar, D-10 reset-safety). The `iloc[start:pos]` read-only view + D-06 empty short-circuit are KEPT cursor-only (D-11 cheaper-slice empirically infeasible — every candidate slower than iloc, D-07 forbids reconstruction; D-12 built on 06-01 9168cae, NOT reverted). D-16: cursor==searchsorted + no-future-bar proven in the EXTENDED D-08 test suite only, NO hot-loop runtime assert. Deviation (Rule 3): `cutoff.value` → `pd.Timestamp(cutoff).value` for mypy --strict (asof typed `datetime`, no `.value`). Gate (a) byte-exact 134/46189.87730727451, determinism double-run identical (SHA-256), mypy --strict clean (187 files), full suite 1262 passed. Commits d034ea3 + 00c5480. Gate (b) W2/W1 re-freeze deferred to 06-05 (cool machine, D-14).
 
 ### Pending Todos
 
@@ -299,6 +300,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 02 P01 | 4 | 3 tasks | 2 files |
 | Phase 03 P01 | 5 | 3 tasks | 4 files |
 | Phase 06 P03 | 2 | 2 tasks | 2 files |
+| Phase 06 P04 | 5 | 2 tasks | 2 files |
 
 ## Bookkeeping
 
@@ -340,8 +342,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T14:59:18.077Z
-Stopped at: Completed 06-03-PLAN.md (D-13 denominator cleanup); ready to plan/execute 06-04 cursor
+Last session: 2026-06-24T15:06:52.157Z
+Stopped at: Completed 06-04-PLAN.md (D-10 monotonic int64 cursor); ready to execute 06-05 gate-(b) re-freeze
 Resume file: None
 
 ## Operator Next Steps
