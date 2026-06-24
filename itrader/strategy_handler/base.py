@@ -164,10 +164,20 @@ class Strategy(ABC):
 		# Has _apply_params run before? (reconfigure path — fall back to instance)
 		reconfiguring = hasattr(self, "_timeframe")
 		hints = _declared_hints(type(self))
+		# WR-02: resolve + coerce + validate the FULL kwarg set into a local dict
+		# FIRST, committing to `self` only after every check (resolution,
+		# coercion, unknown/missing, malformed-tickers) passes. Previously each
+		# value was setattr'd inside the loop, so a coercion failure or the
+		# post-loop tickers guard left the instance partially mutated on a
+		# rejected reconfigure. Mutating `kwargs` (pop) only affects the local
+		# copy below, never `self`, so resolution stays side-effect-free until
+		# the commit phase.
+		remaining = dict(kwargs)
+		resolved: dict[str, Any] = {}
 		for nm in hints:
 			default = getattr(type(self), nm, _MISSING)
-			if nm in kwargs:
-				val = kwargs.pop(nm)
+			if nm in remaining:
+				val = remaining.pop(nm)
 			elif nm == "timeframe" and reconfiguring:
 				# self.timeframe is a timedelta after the first pass — fall back
 				# to the stashed ENUM so the prior timeframe is preserved.
@@ -197,23 +207,28 @@ class Strategy(ABC):
 			coerce = _COERCE.get(nm)
 			if coerce is not None and not isinstance(val, coerce):
 				val = coerce(val)  # enum _missing_ (str -> enum); raises on bogus
-			setattr(self, nm, val)
-		if kwargs:
-			raise UnknownParamError(sorted(kwargs))
+			resolved[nm] = val
+		if remaining:
+			raise UnknownParamError(sorted(remaining))
 		# IN-02: reject a malformed-but-present `tickers`. A bare `str` is
 		# iterable char-by-char, so `for ticker in strategy.tickers` would
 		# silently request windows for "B", "T", … (producing nothing) rather
 		# than failing loudly; an empty list trades nothing. Extend the engine's
 		# "reject loudly" philosophy from unknown/missing to malformed values.
-		# Checked against the resolved instance value so it covers both the
-		# kwarg and class-attr-default paths.
-		tickers = getattr(self, "tickers", _MISSING)
+		# Checked against the RESOLVED value (WR-02) so it covers both the kwarg
+		# and class-attr-default paths and fires BEFORE any commit to self.
+		tickers = resolved.get("tickers", _MISSING)
 		if tickers is not _MISSING:
 			if isinstance(tickers, str) or not isinstance(tickers, list) \
 					or not tickers or not all(isinstance(t, str) for t in tickers):
 				raise ValueError(
 					"tickers must be a non-empty list[str] (a bare str is rejected)"
 				)
+		# WR-02 commit phase: every check above passed — now mutate self. A
+		# rejected reconfigure raised before reaching this line, leaving prior
+		# instance state intact.
+		for nm, val in resolved.items():
+			setattr(self, nm, val)
 		# Pitfall 1 (the #1 oracle trap): self.timeframe is consumed as a
 		# TIMEDELTA by check_timeframe / min_timeframe and SMA's
 		# `last_time - self.timeframe * self.short_window`. The coerced
@@ -335,12 +350,29 @@ class Strategy(ABC):
 		leave ``self.now`` as ``None`` and skip the repopulate loop — the strategy
 		still runs (count/date fixtures guard on ``self.bars.empty`` / ``len``).
 		"""
-		self.bars: pd.DataFrame = window
-		self.now = window.index[-1] if len(window) else None
-		if self.now is not None:
-			for handle in self._handles:
-				handle.repopulate(self.bars, self.now, self.timeframe)
-		return self.generate_signal(ticker)
+		# IN-06: cheap debug-build re-entrancy guard. The single-writer contract
+		# above is enforced only by prose; in a perf milestone where parallel
+		# strategy evaluation is a plausible future optimization, a second writer
+		# would silently race on the per-tick snapshot (self.bars/self.now/the
+		# handles). Set a flag around the body and assert it is clear on entry so
+		# a future re-entrant/concurrent call on the SAME instance trips LOUDLY
+		# instead of corrupting the snapshot. The `assert` compiles out under
+		# `python -O`, and on the synchronous single-writer oracle/live path the
+		# flag is always clear on entry — so this is a pure no-op there.
+		assert not getattr(self, "_evaluating", False), (
+			"Strategy.evaluate is not re-entrant — a second writer raced on the "
+			"per-tick snapshot (IN-06 single-writer contract)."
+		)
+		self._evaluating = True
+		try:
+			self.bars: pd.DataFrame = window
+			self.now = window.index[-1] if len(window) else None
+			if self.now is not None:
+				for handle in self._handles:
+					handle.repopulate(self.bars, self.now, self.timeframe)
+			return self.generate_signal(ticker)
+		finally:
+			self._evaluating = False
 
 	def reconfigure(self, **kwargs: Any) -> None:
 		"""Re-apply + re-coerce kwargs, re-validate, re-run init() (D-12/D-13).
