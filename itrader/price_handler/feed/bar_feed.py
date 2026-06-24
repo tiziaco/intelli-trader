@@ -250,6 +250,19 @@ class BacktestBarFeed(BarFeed):
                 for ts, row in frame.iterrows()
             }
 
+        # D-10 (PERF-06): monotonic forward-cursor state for window(), keyed
+        # (ticker, alias) EXACTLY like self._frames (Pitfall 5 — keying on
+        # ticker alone would share one cursor across two timeframes). The
+        # backtest asof cutoff advances monotonically per (ticker, alias), so
+        # window() steps a cached position FORWARD over frame.index.asi8 int64
+        # ns instead of re-running searchsorted every tick (the 13.2% W2
+        # hotspot). _cursor holds the last forward position; _cursor_cut holds
+        # the last cutoff (int64 ns) so a backwards/jumped cutoff is detected
+        # (cutoff_i8 < last_cut) and SAFE-REBUILT via searchsorted — never
+        # trusting stale state, never leaking a future bar (D-10 reset-safety).
+        self._cursor: dict[tuple[str, str], int] = {}
+        self._cursor_cut: dict[tuple[str, str], int] = {}
+
         # Run-path bindings for the BarEvent factory (Plan 07-02, D-20) —
         # set by the trading system at wiring time via ``bind``. The queue
         # is optional (unbound: the factory RETURNS the event); membership
@@ -432,8 +445,9 @@ class BacktestBarFeed(BarFeed):
         ``cutoff = asof - timeframe + base_timeframe`` (degenerating to
         ``asof`` when ``timeframe == base_timeframe``, rule 3 — both
         branches agree, D-02); a bucket stamped ``B`` is included iff
-        ``B <= cutoff``. The lookup is a pure ``searchsorted`` positional
-        slice — zero resample calls on this path (M5-03).
+        ``B <= cutoff``. The cutoff is resolved by a per-(ticker, alias)
+        monotonic forward cursor over the index int64 ns (D-10, replacing the
+        per-tick ``searchsorted``); zero resample calls on this path (M5-03).
 
         Parameters
         ----------
@@ -459,18 +473,57 @@ class BacktestBarFeed(BarFeed):
         ValueError
             If ``timeframe`` maps to no supported pandas offset alias.
         """
-        # PERF-06 (D-01/D-06/D-07/D-09): return a READ-ONLY VIEW on the cached
-        # master frame instead of materializing a fresh wrapper every tick.
-        # Mirrors the current_bars() de-pandas precedent above — the win is
-        # wall-clock per-tick wrapper-construction churn (the W2 ~22%, validated
-        # by wall-clock NOT tracemalloc) plus the now-memoized _offset_alias
-        # string compute; it is NOT a buffer-copy/memory drop — on the
-        # homogeneous float64 single-block OHLCV frame frame.iloc[start:pos] is
-        # ALREADY a view, no large copy was ever happening (RESEARCH Pitfall 2).
+        # PERF-06 (D-01/D-06/D-07/D-09/D-12): return a READ-ONLY VIEW on the
+        # cached master frame instead of materializing a fresh wrapper every
+        # tick (06-01, kept). On the homogeneous float64 single-block OHLCV
+        # frame frame.iloc[start:pos] is ALREADY a view — no large copy ever
+        # happened. The PIVOT (D-10/D-11, post-profile 06-04) sits ON TOP of
+        # that view: the real reducible per-tick cost is the fresh
+        # searchsorted over the full index every tick × every symbol (13.2% of
+        # W2), now replaced by the monotonic int64 forward cursor below. The
+        # iloc slice is KEPT cursor-only (D-11): every cheaper-slice candidate
+        # measured SLOWER than iloc on this single-block frame (reconstruct 9.2
+        # vs iloc 7.3 µs; take 21 µs) and D-07 forbids pd.DataFrame(...)
+        # reconstruction (tz/dtype/column-order drift) — D-11's separate
+        # cheaper-slice idea is recorded as investigated + empirically
+        # infeasible, superseded by research; the 7.9% iloc cost is accepted
+        # via the D-15 ship-and-reframe fallback (06-05).
         alias = _offset_alias(timeframe)
         frame = self._resampled_frame(ticker, alias)
         cutoff = asof - timeframe + self._base_timeframe
-        pos = int(frame.index.searchsorted(cutoff, side="right"))
+        # D-10: per-(ticker, alias) monotonic forward cursor over int64 ns —
+        # byte-identical to int(frame.index.searchsorted(cutoff, side="right"))
+        # on every reachable cutoff (VERIFIED on-grid + mid-gap; proven by the
+        # D-16 drift suite). The int64 path is load-bearing: iv_i8[pos] <=
+        # cutoff_i8 is 0.14 µs/step; a pandas-Timestamp compare (2.0 µs) or a
+        # per-tick np.datetime64 conversion (3.3 µs ≈ the searchsorted it
+        # replaces) deliver NO win — use asi8 + Timestamp.value (Pitfall 1).
+        # The `<=` (not `<`) reproduces searchsorted side="right" exactly: pos
+        # is count(index <= cutoff), the exclusive-right cutoff (rule 4).
+        key = (ticker, alias)
+        n = len(frame.index)
+        iv_i8 = frame.index.asi8          # zero-copy cached int64 ns view (UTC)
+        # O(1) int64 ns; == asi8[k] for the tz-aware index (Timestamp.value).
+        # asof arrives as a pd.Timestamp at run time but is typed `datetime`, so
+        # the pd.Timestamp(...) wrap is a no-op box that keeps mypy --strict
+        # happy (datetime has no `.value`) without a per-tick datetime64 convert.
+        cutoff_i8 = pd.Timestamp(cutoff).value
+        last_pos = self._cursor.get(key)
+        last_cut = self._cursor_cut.get(key)
+        if last_pos is None or last_cut is None or cutoff_i8 < last_cut:
+            # COLD (key unseen) or NON-MONOTONIC (backwards/jumped cutoff —
+            # universe re-entry re-issuing an earlier asof, resampled cutoffs):
+            # SAFE FULL REBUILD via searchsorted. Never trust stale state, never
+            # leak a future bar; silent rebuild (NOT fail-loud — a non-monotonic
+            # cutoff is legitimate, RESEARCH A3). Byte-identical to today.
+            pos = int(frame.index.searchsorted(cutoff, side="right"))
+        else:
+            # MONOTONIC forward step from the cached position (0.14 µs/step).
+            pos = last_pos
+            while pos < n and iv_i8[pos] <= cutoff_i8:
+                pos += 1
+        self._cursor[key] = pos
+        self._cursor_cut[key] = cutoff_i8
         start = max(0, pos - max_window)
         if start >= pos:
             # D-06: empty window (cutoff at frame start) returns the size-0
