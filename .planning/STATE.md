@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_plan
-stopped_at: Phase 03 complete (2/2) — ready to discuss/plan Phase 4 (Hot-Path Discipline)
-last_updated: 2026-06-24T07:58:29.343Z
-last_activity: 2026-06-24 -- Phase 03 complete (2/2): gate (a) byte-exact, gate (b) proven (Scalene 16.21%->0%, A/B -15.4%); W1 re-freeze deferred
+status: Ready to discuss/plan (Hot-Path Discipline — PERF-03, PERF-04)
+stopped_at: Phase 4 context gathered
+last_updated: "2026-06-24T09:42:45.470Z"
+last_activity: "2026-06-24 -- Phase 03 complete (gate (a)+(b)); next: discuss/plan Phase 4"
 progress:
   total_phases: 8
   completed_phases: 3
@@ -338,9 +338,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T06:18:39.366Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-running-pnl-accumulator/03-CONTEXT.md
+Last session: 2026-06-24T09:42:45.458Z
+Stopped at: Phase 4 context gathered
+Resume file: .planning/phases/04-hot-path-discipline/04-CONTEXT.md
 
 ## Operator Next Steps
 
