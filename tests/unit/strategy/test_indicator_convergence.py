@@ -104,11 +104,14 @@ def test_macdhist_converges_to_ta():
 		window_sign=signal,
 		fillna=False,
 	).macd_diff()
-	# RESEARCH Pitfall 4: the EMA transient leaves residual >1e-6 out to ~bar 38 on
-	# the golden data; post-bar-100 (the SMA_MACD firing region) is fully converged
-	# at 1.7e-11. Assert from a documented settle offset past the slow-EMA transient
-	# (the oracle reads macd_hist ONLY at bar 100+, where drift is 1.7e-11).
-	settle = 2 * slow + signal  # 27 — clears the slow-span-12 EMA transient
+	# RESEARCH Pitfall 4: ta's MACD recomputes over a SLIDING window each tick
+	# (re-seeding), while the stateful EMA seeds ONCE — so the slow-span-12 EMA
+	# transient differs until it decays. Measured on the golden data the residual is
+	# >1e-6 out to ~bar 50 and reaches the 1.7e-11 floor by bar 100 (the SMA_MACD
+	# firing region — the oracle reads macd_hist ONLY there). Assert from a documented
+	# settle offset that clears the transient (>= ~5x the slow span). The pre-warmup
+	# transient is the LEGITIMATELY-different region P5-D17 skips.
+	settle = 5 * slow  # 60 — past the slow-EMA transient; golden bar-100+ is 1.7e-11
 	_assert_converges(inc, ta_series, settle)
 
 
