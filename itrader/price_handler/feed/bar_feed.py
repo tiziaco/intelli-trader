@@ -514,7 +514,7 @@ class BacktestBarFeed(BarFeed):
         # is count(index <= cutoff), the exclusive-right cutoff (rule 4).
         key = (ticker, alias)
         n = len(frame.index)
-        iv_i8 = frame.index.asi8          # zero-copy cached int64 ns view (UTC)
+        iv_i8 = frame.index.asi8          # zero-copy int64 ns view (UTC; fresh wrapper, shared buffer)
         # O(1) int64 ns; == asi8[k] for the tz-aware index (Timestamp.value).
         # asof arrives as a pd.Timestamp at run time but is typed `datetime`, so
         # the pd.Timestamp(...) wrap is a no-op box that keeps mypy --strict
