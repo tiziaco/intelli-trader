@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_plan
-stopped_at: Phase 06 complete (D-15 ship-and-reframe) — Phase 5 (Incremental Indicators) is the LAST remaining v1.5 phase (6-before-5 reorder); 999.2 jump is the phase.complete backlog-scan artifact, corrected
-last_updated: 2026-06-24T15:42:12.372Z
+status: planning
+stopped_at: "Phase 5 context gathered (reframed: stateful indicators + shared bar cache, oracle re-baselined)"
+last_updated: "2026-06-24T20:17:41.239Z"
 last_activity: 2026-06-24
 progress:
   total_phases: 8
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 14
   completed_plans: 14
-  percent: 50
+  percent: 63
 ---
 
 # Project State
@@ -351,9 +351,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T15:06:52.157Z
-Stopped at: Phase 06 COMPLETE — all 5 plans done (06-02 closed-out-superseded; 06-03 cleanup; 06-04 cursor; 06-05 D-15 ship-and-reframe verdict +1.9% W2). Verification passed 6/6. Next: Phase 5 (Incremental Indicators), the last v1.5 phase.
-Resume file: None
+Last session: 2026-06-24T20:17:41.231Z
+Stopped at: Phase 5 context gathered (reframed: stateful indicators + shared bar cache, oracle re-baselined)
+Resume file: .planning/phases/05-incremental-indicators-fragile-oracle-gated-last/05-CONTEXT.md
 Carried todo: re-freeze W1-BASELINE.json on a verified-cool isolated run (the 06-05 W1 re-freeze was thermally inflated to 259.1s and deferred; baseline kept at 238.5s). See 06-05-SUMMARY.md.
 
 ## Operator Next Steps
