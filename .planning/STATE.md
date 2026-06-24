@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: executing
-stopped_at: Completed 03-01-PLAN.md (running PnL accumulator, PERF-02)
-last_updated: "2026-06-24T06:44:44.477Z"
-last_activity: 2026-06-24 -- Phase 03 Plan 01 complete (gate (a) byte-exact)
+status: ready_to_plan
+stopped_at: Phase 03 complete (2/2) — ready to discuss/plan Phase 4 (Hot-Path Discipline)
+last_updated: 2026-06-24T07:58:29.343Z
+last_activity: 2026-06-24 -- Phase 03 complete (2/2): gate (a) byte-exact, gate (b) proven (Scalene 16.21%->0%, A/B -15.4%); W1 re-freeze deferred
 progress:
   total_phases: 8
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 6
-  completed_plans: 5
-  percent: 25
+  completed_plans: 6
+  percent: 38
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 03 — running-pnl-accumulator
+**Current focus:** Phase 4 — Hot-Path Discipline (PERF-03, PERF-04). NOTE: `phase.complete` jumped the pointer to backlog dir 999.2 because the `04-*` phase dir does not exist yet; 999.2/999.3 are FUTURE-milestone (N+3/N+4) backlog placeholders, NOT the next v1.5 phase. Corrected manually to Phase 4.
 
 ## Current Position
 
-Phase: 03 (running-pnl-accumulator) — EXECUTING
-Plan: 2 of 2
-Status: Plan 01 complete (PERF-02 accumulator + invariant audit + equivalence test; gate (a) byte-exact) — Plan 02 (gate (b) W1 re-freeze) next
-Last activity: 2026-06-24 -- Phase 03 Plan 01 complete
+Phase: 4
+Plan: Not started
+Status: Ready to discuss/plan (Hot-Path Discipline — PERF-03, PERF-04)
+Last activity: 2026-06-24 -- Phase 03 complete (gate (a)+(b)); next: discuss/plan Phase 4
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
@@ -99,7 +99,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 58
+- Total plans completed: 62
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -207,6 +207,16 @@ scope decisions:
 - [Phase 03]: 03-01 (PERF-02) — running Decimal realised-PnL accumulator on PositionManager (_realised_pnl_accumulator, seed Decimal('0.00'), no mid-sum quantize) replaces the per-bar dual open+closed re-sum in get_total_realized_pnl (now a bare `return self._realised_pnl_accumulator`, D-01/D-04 dead-loop collapse). Fed via apply_realised_increment from BOTH Portfolio settle arms — the SPOT arm (SMA_MACD oracle path) had NO explicit realised_increment today and was wired with pre/post capture (audit finding, 03-INVARIANT-AUDIT.md §5); MARGIN arm reuses the existing increment on the CLOSE branch only (D-02). Three-layer correctness lock: written single-funnel invariant audit (03-INVARIANT-AUDIT.md) + byte-exact oracle/determinism + dedicated equivalence regression test (accumulator == fresh full re-sum, D-03). Gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files), full suite 1241 passed, determinism double-run byte-identical. Gate (b) W1 wall-clock re-freeze = Plan 02.
 
 ### Pending Todos
+
+- **[BEFORE Phase 4 gate (b)] Re-freeze W1-BASELINE.json on a cool machine (captured 2026-06-24).**
+  Phase 3 (PERF-02) delivered a proven ~15% wall-clock win (same-machine A/B 317.5s→268.4s; Scalene
+  CPU share `position_manager.py` 16.21%→0%; profiled elapsed −29.6%), but the re-freeze (Plan 03-02
+  Task 2) was **deferred**: the box was thermally throttled on 2026-06-24 (old code itself read 317.5s
+  vs the 199.4s frozen yesterday), so no run that day could produce a clean reference. `W1-BASELINE.json`
+  still holds the **Phase-2 199.4s** number. **Action:** on a cool/quiet machine, in the main checkout,
+  run `make perf-baseline` then commit — BEFORE Phase 4's gate (b) is measured, else Phase 4 diffs
+  against a pre-Phase-3 baseline and over-credits its own win by ~15%. Evidence + hotspot map in
+  `.planning/phases/03-running-pnl-accumulator/03-02-SUMMARY.md`.
 
 - **[Phase 4 / PERF-03] Demote the W1 sub-minimum rejection log (captured 2026-06-23).** W1 runs emit
   frequent `error`-level `OrderHandler` "Quantity ... below minimum 0.001" logs — the `FractionOfCash`

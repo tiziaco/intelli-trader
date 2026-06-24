@@ -56,7 +56,7 @@ research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADM
 
 - [x] **Phase 1: Perf Tooling & Baseline** — root-Makefile `perf-*` targets, two-mode benchmark/Scalene-profile runner, re-freeze the baseline to a committed `W1-BASELINE.json` + soft regression guard (gate (b) = ≥5% wall-clock) (TOOL-01, TOOL-02, TOOL-04 — TOOL-03 cross-val dropped 2026-06-23)
 - [x] **Phase 2: Order-Storage Indexing** — derived secondary indexes over the flat `{id: order}` dict (D-20 source of truth), Postgres-extensible interface (PERF-01, ~37% CPU)
-- [ ] **Phase 3: Running PnL Accumulator** — maintain realised PnL on close, stop the per-bar re-sum; opportunistic in-file CONCERNS cleanups allowed (PERF-02, ~13% CPU)
+- [x] **Phase 3: Running PnL Accumulator** — maintain realised PnL on close, stop the per-bar re-sum; opportunistic in-file CONCERNS cleanups allowed (PERF-02, ~13% CPU)
 - [ ] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
 - [ ] **Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)** — rolling/memoized SMA & MACD replacing the per-bar full-window `ta` rebuild, byte-exact (PERF-05, ~24% CPU)
 - [ ] **Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)** — reduce per-tick `iloc` frame copies, preserving the look-ahead bar-timing contract (PERF-06, ~4% W1 / ~22% W2)
@@ -136,7 +136,7 @@ sequenced after it by payoff order.
      baseline, re-frozen as the new locked reference.
 **Plans**: 2 plans
   - [x] 03-01-PLAN.md — D-02 invariant audit + accumulator field/apply method + wire both spot & margin close arms + collapse the dead dual-loop + D-03 equivalence test + gate (a) (PERF-02)
-  - [ ] 03-02-PLAN.md — gate (b): human-run make perf-w1 (>= 5% wall-clock vs 199.4 s), re-freeze W1-BASELINE.json (PERF-02)
+  - [x] 03-02-PLAN.md — gate (b): human-run make perf-w1 (>= 5% wall-clock vs 199.4 s), re-freeze W1-BASELINE.json (PERF-02)
 
 ### Phase 4: Hot-Path Discipline
 **Goal**: The per-bar path stops paying structural waste on two behavior-only sinks — hot-loop
@@ -310,7 +310,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 |-------|----------------|--------|-----------|
 | 1. Perf Tooling & Baseline | 2/2 | Complete   | 2026-06-23 |
 | 2. Order-Storage Indexing | 2/2 | Complete   | 2026-06-23 |
-| 3. Running PnL Accumulator | 1/2 | In Progress|  |
+| 3. Running PnL Accumulator | 2/2 | Complete   | 2026-06-24 |
 | 4. Hot-Path Discipline | 0/TBD | Not started | - |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
 | 6. Bar-Feed Window Copies (OPTIONAL) | 0/TBD | Not started | - |
