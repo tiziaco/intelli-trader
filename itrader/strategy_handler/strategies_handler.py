@@ -264,14 +264,18 @@ class StrategiesHandler(object):
 		Routed from ``calculate_signals`` for any ``PairStrategy`` (a typed
 		``isinstance`` branch). Reads the pair's two tickers, requires BOTH legs'
 		bars present this tick (D-02 — skip silently, NO forward-fill so no
-		stale/forward-filled price ever enters the spread, T-06-01), fetches both
-		completed-bar windows (``asof`` from the event ONLY, T-06-02/T-06-18),
-		short-circuits on the fit/z warmup, then calls ``evaluate_pair`` and fans
-		EACH returned intent through the SAME ``_emit_intent`` path used by the
-		single-leg loop.
+		stale/forward-filled price ever enters the spread, T-06-01), pushes BOTH
+		legs into the pair's own bounded buffers via ``update_pair(bar_A, bar_B)``
+		(P5-D09/D15 — the per-tick ``feed.window()`` slice is GONE), gates on the
+		pair's own ``is_pair_ready()`` (β fittable + z tail = beta_warmup +
+		z_lookback bars buffered), then calls ``evaluate_pair`` and fans EACH
+		returned intent through the SAME ``_emit_intent`` path used by the single-leg
+		loop.
 
-		Warmup gate (Pitfall 3): the threshold is ``beta_warmup + z_lookback``,
-		NOT the handle-derived ``strategy.warmup`` (0 for a handle-free pair).
+		Readiness (P5-D15): the legacy window-length fit/z short-circuit is folded
+		into the pair's buffer fill (``is_pair_ready`` — the buffer holds the full
+		β-fit + z-tail bar count), NOT the handle-derived ``strategy.warmup`` (0 for
+		a handle-free pair).
 		"""
 		# The pair contract is exactly two tickers (PairStrategy.validate asserts
 		# it at construction) — leg A is tickers[0], leg B is tickers[1]. IN-04:
@@ -291,17 +295,19 @@ class StrategiesHandler(object):
 		bar_A = event.bars.get(ticker_A)
 		bar_B = event.bars.get(ticker_B)
 		if bar_A is None or bar_B is None:
+			# D-02/P5-D10c: a missing leg = no spread this tick — skip silently,
+			# the pair buffers + count stay frozen (no update, no forward-fill).
 			return
-		# Per-leg completed-bar windows; asof comes ONLY from the event (T-06-18,
-		# the look-ahead-safe seam), zero resample on this path (M5-03).
-		win_A = self.feed.window(ticker_A, strategy.timeframe, strategy.max_window, asof=event.time)
-		win_B = self.feed.window(ticker_B, strategy.timeframe, strategy.max_window, asof=event.time)
-		# Pitfall 3: gate on the fit/z warmup (beta_warmup + z_lookback), NOT the
-		# handle-derived strategy.warmup (== 0 for a handle-free pair). Skip until
-		# BOTH legs have enough completed bars to fit β and compute the z-score.
-		required = strategy.beta_warmup + strategy.z_lookback
-		if len(win_A) < required or len(win_B) < required:
+		# P5-D09/D15: push BOTH legs into the pair's own bounded per-leg buffers
+		# (the feed.window() slice is removed). update_pair stamps self.now from
+		# leg A's bar (a tz-aware Timestamp). The buffers ARE the trailing windows
+		# the β/z math reads — byte-identical to the removed feed.window(280).
+		strategy.update_pair(bar_A, bar_B)
+		# P5-D15 readiness: gate on the pair's buffer fill (β fittable + z tail),
+		# folding the removed window-length fit/z short-circuit.
+		if not strategy.is_pair_ready():
 			return
+		win_A, win_B = strategy._buffers_as_windows()
 		intents = strategy.evaluate_pair(win_A, win_B)
 		if intents is None:
 			return

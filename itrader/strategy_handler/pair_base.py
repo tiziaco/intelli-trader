@@ -37,7 +37,9 @@ a tab file).
 """
 
 from abc import abstractmethod
+from collections import deque
 from decimal import Decimal
+from typing import Any
 
 import pandas as pd
 
@@ -126,6 +128,74 @@ class PairStrategy(Strategy):
 				f"got max_window={self.max_window} (Pitfall 3 — a too-narrow "
 				f"fetch width yields an unusable feed window)"
 			)
+
+	def _run_init(self) -> None:
+		"""Extend the base auto-warmup pass with the pair's bounded two-leg buffers (P5-D15).
+
+		Plan C removed the per-tick ``feed.window()`` slice for the pair too: the
+		handler now pushes BOTH legs per tick via ``update(bar_A, bar_B)`` (P5-D09),
+		so the pair holds its OWN bounded per-leg close buffers sized to
+		``beta_warmup + z_lookback`` (== ``max_window``, 280 for the reference). The
+		buffer IS the window the spread/β/z math reads — β fits the OLDEST
+		``beta_warmup`` (250) of it ONCE then freezes (Pattern 3 / Pitfall 3), z is
+		the bounded ``z_lookback`` (30) tail. Reset here so a reconfigure is
+		idempotent (D-10), mirroring the base's handle-reset-before-init().
+		"""
+		# Buffer capacity = beta_warmup + z_lookback (== max_window, validated). A
+		# maxlen-bounded deque is the trailing-window the legacy feed.window(280)
+		# produced — byte-identical for both the one-time β fit (oldest 250) and the
+		# z tail (last 30). On the golden ETH/BTC path β is fit-once at the first
+		# full tick (280 bars), so the deque slide never re-reads dataset-start.
+		self._pair_buffer_size: int = self.beta_warmup + self.z_lookback
+		self._buf_A: deque[Any] = deque(maxlen=self._pair_buffer_size)
+		self._buf_B: deque[Any] = deque(maxlen=self._pair_buffer_size)
+		self._pair_bar_count: int = 0
+		# Base machinery (handle reset + init() + warmup derivation). A handle-free
+		# pair leaves warmup == 0; readiness gates on the pair's own buffer fill.
+		super()._run_init()
+
+	def update_pair(self, bar_A: Any, bar_B: Any) -> None:
+		"""Push BOTH legs' latest completed bars into the pair buffers (P5-D09/D15).
+
+		Multi-input update (P5-D09): the pair β/z indicator consumes both legs per
+		tick. Appends each leg's ``close`` to its bounded buffer and stamps the
+		decision anchor ``self.now`` from leg A's bar (a tz-aware Timestamp — the
+		SAME value the legacy ``win.index[-1]`` carried). A gap on either leg is
+		handled by the CALLER (the both-present D-02 guard skips the tick, so this is
+		never called with a missing leg — the buffers + count stay frozen).
+		"""
+		self._buf_A.append(bar_A.close)
+		self._buf_B.append(bar_B.close)
+		self._pair_bar_count += 1
+		self.now = bar_A.time
+		self.current_bar = bar_A
+
+	def is_pair_ready(self) -> bool:
+		"""True once enough bars to fit β AND seed the z-score lookback (P5-D15).
+
+		Readiness = the buffers hold ``beta_warmup + z_lookback`` (280) completed
+		bars — i.e. β can fit the oldest ``beta_warmup`` AND the z-score has its full
+		``z_lookback`` tail. This folds the legacy ``len(win) < beta_warmup +
+		z_lookback`` dispatch short-circuit into the pair's own buffer fill (the
+		handle-derived ``warmup`` is 0 for a handle-free pair). Byte-identical firing
+		tick to the removed len-gate.
+		"""
+		return self._pair_bar_count >= (self.beta_warmup + self.z_lookback)
+
+	def _buffers_as_windows(self) -> "tuple[pd.DataFrame, pd.DataFrame]":
+		"""Render the bounded per-leg buffers as the ``(win_A, win_B)`` the math reads.
+
+		The β/z helpers (``_fit_beta`` / ``_zscore`` / ``evaluate_pair``) are
+		PRESERVED window-based (the pure-math read surface stays identical, P5-D21);
+		this adapter materializes the trailing-window DataFrames from the bounded
+		buffers so ``evaluate_pair`` reads the SAME ``close`` series the legacy
+		``feed.window(280)`` handed it (byte-identical β fit + z). Only the ``close``
+		column is populated — the β/z math reads ``win["close"]`` exclusively.
+		"""
+		return (
+			pd.DataFrame({"close": list(self._buf_A)}),
+			pd.DataFrame({"close": list(self._buf_B)}),
+		)
 
 	def generate_signal(self, ticker: str) -> SignalIntent | None:
 		"""Single-leg seam — NEVER called for a pair strategy.

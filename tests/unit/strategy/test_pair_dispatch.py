@@ -74,15 +74,19 @@ class _StubPair(PairStrategy):
 
 
 class _StubFeed:
-    """A minimal ``BarFeed`` stand-in returning a window long enough to clear
-    the ``beta_warmup + z_lookback`` short-circuit for every requested leg."""
+    """A minimal ``BarFeed`` stand-in.
+
+    P5-D13/D15: the pair dispatch no longer slices ``feed.window()`` — it pushes
+    both legs into the pair's OWN bounded buffers via ``update_pair`` and gates on
+    ``is_pair_ready()``. The feed is therefore never queried on the pair path; this
+    stub only needs ``symbols`` for wiring and a vestigial ``window`` to satisfy the
+    ``BarFeed`` shape if ever called (it is not, on the pair path).
+    """
 
     def symbols(self) -> list[str]:
         return [_TICKER_A, _TICKER_B]
 
     def window(self, ticker, timeframe, max_window, asof):  # type: ignore[no-untyped-def]
-        # Return more rows than the warmup gate requires so _dispatch_pair calls
-        # evaluate_pair (the dispatch contract, NOT the warmup edge).
         n = _MAX_WINDOW + 2
         idx = pd.date_range(end=asof, periods=n, freq="1D", tz="UTC")
         return pd.DataFrame(
@@ -126,11 +130,11 @@ def _make_subscribed_pair(handler: StrategiesHandler) -> _StubPair:
     return strategy
 
 
-def _bar_event(*, both_legs: bool) -> BarEvent:
+def _bar_event(*, both_legs: bool, day: int = 8) -> BarEvent:
     bars = {_TICKER_A: _bar(2000.0)}
     if both_legs:
         bars[_TICKER_B] = _bar(40000.0)
-    return BarEvent(time=datetime(2020, 1, 8, tzinfo=timezone.utc), bars=bars)
+    return BarEvent(time=datetime(2020, 1, day, tzinfo=timezone.utc), bars=bars)
 
 
 def _drain(queue: "Queue") -> list[SignalEvent]:  # type: ignore[type-arg]
@@ -140,10 +144,26 @@ def _drain(queue: "Queue") -> list[SignalEvent]:  # type: ignore[type-arg]
     return events
 
 
+def _warm_to_ready(handler: StrategiesHandler) -> None:
+    """P5-D15: feed ``beta_warmup + z_lookback - 1`` two-leg ticks WITHOUT crossing
+    the readiness threshold, draining each so the queue is empty on the final
+    (ready) tick the test asserts on.
+
+    The pair dispatch now gates on the pair's OWN bounded-buffer fill
+    (``is_pair_ready()`` == ``beta_warmup + z_lookback`` bars buffered), NOT a
+    ``feed.window()`` slice. So a single tick no longer fires — the buffer must be
+    primed to one-below-ready first.
+    """
+    for d in range(1, _MAX_WINDOW):  # _MAX_WINDOW-1 priming ticks (day 1.._MAX_WINDOW-1)
+        handler.calculate_signals(_bar_event(both_legs=True, day=d))
+    _drain(handler.global_queue)
+
+
 def test_both_legs_emit_once_per_tick() -> None:
-    """D-01: both legs present -> EXACTLY two SignalEvents (one per leg)."""
+    """D-01: both legs present (and buffer ready) -> EXACTLY two SignalEvents."""
     handler = _make_handler()
     _make_subscribed_pair(handler)
+    _warm_to_ready(handler)
 
     handler.calculate_signals(_bar_event(both_legs=True))
 
@@ -157,6 +177,7 @@ def test_both_present_guard_skips_when_one_absent() -> None:
     """D-02: one leg's bar absent -> ZERO SignalEvents (skip silently)."""
     handler = _make_handler()
     _make_subscribed_pair(handler)
+    _warm_to_ready(handler)
 
     handler.calculate_signals(_bar_event(both_legs=False))
 
@@ -169,6 +190,7 @@ def test_beta_weighted_leg_quantities() -> None:
     each, SELL on the rich leg and BUY on the cheap leg."""
     handler = _make_handler()
     _make_subscribed_pair(handler)
+    _warm_to_ready(handler)
 
     handler.calculate_signals(_bar_event(both_legs=True))
 
