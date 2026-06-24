@@ -213,7 +213,12 @@ contract-gated item.
      suite is green; `mypy --strict` clean; determinism double-run byte-identical.
   4. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
      baseline, re-frozen as the new locked reference (most visible in the W2 symbol sweep).
-**Plans**: TBD
+**Plans**: 4 active plans (post-pivot — 06-01 kept; 06-02 Task 1 harness reused, its freeze/verify absorbed into 06-05)
+  - [x] 06-01-PLAN.md — view-returning window() + memoized _offset_alias + read-only master frames at build sites (D-01/D-06/D-07/D-09) + D-08 drift/equivalence test + Gate (a) (PERF-06)
+  - [~] 06-02-PLAN.md — Task 1 (run_w2_sweep --check/--baseline-out harness + Makefile, f51d7c6) COMMITTED + reused as-is; Tasks 2/3 (cool-machine freeze + verify) SUPERSEDED by 06-05 post-pivot (PERF-06)
+  - [x] 06-03-PLAN.md — D-13 denominator cleanup (prep): remove per-bar TIME EVENT debug log + de-time run_w2_sweep two-pass; Gate (a) held (PERF-06)
+  - [x] 06-04-PLAN.md — D-10 monotonic int64 cursor in window() (replaces per-tick searchsorted) + D-16 drift-test extension; D-11 recorded infeasible (iloc kept, cursor-only); D-12 builds on kept 06-01; Gate (a) byte-exact (PERF-06)
+  - [x] 06-05-PLAN.md — D-14/D-15 gate (b): re-freeze BOTH baselines on the cleaned engine (cool machine) + cursor-alone ≥10% W2 verdict (or D-15 ship-and-reframe); absorbs 06-02 Tasks 2/3 (PERF-06)
 
 <details>
 <summary>✅ v1.4 — Margin, Leverage, Shorts & Trailing Stops (Phases 1-6 + 5.1) — SHIPPED 2026-06-22</summary>
@@ -316,7 +321,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 3. Running PnL Accumulator | 2/2 | Complete   | 2026-06-24 |
 | 4. Hot-Path Discipline | 3/3 | Complete   | 2026-06-24 |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
-| 6. Bar-Feed Window Copies (OPTIONAL) | 0/TBD | Not started | - |
+| 6. Bar-Feed Window Copies (OPTIONAL) | 5/5 | Complete   | 2026-06-24 |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
 

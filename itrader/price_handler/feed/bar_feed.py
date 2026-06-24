@@ -54,10 +54,12 @@ Plan 07-02, D-20): the data engine produces the per-tick BarEvent and may
 log the missing-ticker warning (RESEARCH OQ4).
 """
 
+import functools
 import queue
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 
 from itrader.core.bar import Bar
@@ -75,6 +77,12 @@ _AGG = {"open": "first", "high": "max", "low": "min",
         "close": "last", "volume": "sum"}
 
 
+# D-01 (PERF-06): memoize the per-call offset-alias string compute — it fires
+# ONCE per distinct timeframe across __init__/precompute/the per-tick window()
+# path. timedelta is hashable; functools.cache does NOT cache exceptions, so the
+# raise-on-unsupported ValueError guard inside is preserved (RESEARCH Pitfall 4).
+# The function BODY is byte-unchanged — only this decorator was added.
+@functools.cache
 def _offset_alias(timeframe: timedelta) -> str:
     """Map a timeframe to its canonical pandas offset alias.
 
@@ -119,6 +127,53 @@ def _offset_alias(timeframe: timedelta) -> str:
     raise ValueError(
         f"unsupported resample timeframe {timeframe!r} — supported units "
         "are minutes, hours, days and weeks (months are not supported)")
+
+
+def _readonly_master(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a SINGLE-BLOCK float64 frame with its values buffer read-only (D-09).
+
+    The PERF-06 read-only enforcement: lock the underlying numpy buffer so a
+    per-tick ``window()`` VIEW inherits read-only and a consumer in-place
+    mutation raises ``ValueError(read-only)`` instead of silently poisoning a
+    future tick (RESEARCH Pattern 1, verified pandas 2.3.3 / numpy 2.2.6).
+
+    Two steps, both byte-identity-preserving:
+
+    1. **Consolidate to a single block.** The store's canonical OHLCV frame is
+       NOT always a single homogeneous float64 block — ``read_csv`` + the
+       ``astype(float)`` + ``.loc`` window slice can leave it MULTI-block (e.g.
+       4×N and 1×N). On a multi-block frame ``to_numpy(copy=False)`` returns a
+       fresh CONSOLIDATED COPY, so locking individual block buffers would NOT
+       be observable through ``to_numpy`` and a consumer's
+       ``view.to_numpy(copy=False)[i,j] = x`` would write to a throwaway copy
+       (no protection, no leak — but the guarantee is unobservable). A plain
+       ``frame.copy()`` consolidates to ONE block while preserving values,
+       float64 dtype, the tz-aware ``DatetimeIndex`` and column set+order
+       byte-identically (``assert_frame_equal`` passes). A frame that is
+       already single-block is copied harmlessly.
+    2. **Lock the single block's buffer.** For the consolidated single-block
+       frame ``to_numpy(copy=False)`` returns a non-owning VIEW whose ``.base``
+       IS the block's writeable buffer — the flag must be set on that base
+       buffer, NOT on the returned view (a view carries its own ``writeable``
+       flag; clearing it leaves the buffer writeable). The ``np.shares_memory``
+       assert proves the handle aliases the frame's own buffer (RESEARCH
+       Pattern 1 caveat — ``to_numpy(copy=False)`` is not contractually
+       zero-copy); after the ``copy()`` consolidation it always does.
+
+    ``resample``/``searchsorted``/``iterrows`` and the ``ta`` reads all work on
+    a non-writeable frame — no D-09 per-view fallback is triggered.
+    """
+    master = frame.copy()  # consolidate to a single block (byte-identical)
+    arr = master.to_numpy(copy=False)
+    # Walk to the buffer the frame actually owns: the block buffer is `arr.base`
+    # for a non-owning view, else `arr` itself.
+    buffer: "np.ndarray[Any, np.dtype[Any]]" = (
+        arr if arr.flags.owndata else arr.base)
+    assert np.shares_memory(buffer, master.to_numpy(copy=False)), (
+        "to_numpy(copy=False) did not alias the frame's own buffer after "
+        "consolidation — read-only flag would not take effect (D-09 fallback)")
+    buffer.flags.writeable = False
+    return master
 
 
 class BacktestBarFeed(BarFeed):
@@ -179,13 +234,34 @@ class BacktestBarFeed(BarFeed):
         # so a cache would serve zero hits.
         self._prebuilt: dict[str, dict[datetime, Bar]] = {}
         for ticker in self._symbols:
-            frame = store.read_bars(ticker)
+            # D-09 (PERF-06): store a SINGLE-BLOCK, read-only master so every
+            # per-tick window VIEW inherits a non-writeable buffer and any
+            # in-place mutation fails loudly (ValueError) instead of silently
+            # poisoning a future tick (the look-ahead invariant, hard-enforced
+            # at the feed source — subsumes D-02 view-safety). The consolidation
+            # is byte-identical to the store frame (Pitfall 3: the index[0]/[-1]
+            # reads and frame.iterrows() below both work on a non-writeable
+            # frame). The store frame is returned UNTOUCHED — we lock our copy.
+            frame = _readonly_master(store.read_bars(ticker))
             self._frames[(ticker, self._base_alias)] = frame
             self._spans[ticker] = (frame.index[0], frame.index[-1])
             self._prebuilt[ticker] = {
                 ts: Bar.from_row(ts, row)
                 for ts, row in frame.iterrows()
             }
+
+        # D-10 (PERF-06): monotonic forward-cursor state for window(), keyed
+        # (ticker, alias) EXACTLY like self._frames (Pitfall 5 — keying on
+        # ticker alone would share one cursor across two timeframes). The
+        # backtest asof cutoff advances monotonically per (ticker, alias), so
+        # window() steps a cached position FORWARD over frame.index.asi8 int64
+        # ns instead of re-running searchsorted every tick (the 13.2% W2
+        # hotspot). _cursor holds the last forward position; _cursor_cut holds
+        # the last cutoff (int64 ns) so a backwards/jumped cutoff is detected
+        # (cutoff_i8 < last_cut) and SAFE-REBUILT via searchsorted — never
+        # trusting stale state, never leaking a future bar (D-10 reset-safety).
+        self._cursor: dict[tuple[str, str], int] = {}
+        self._cursor_cut: dict[tuple[str, str], int] = {}
 
         # Run-path bindings for the BarEvent factory (Plan 07-02, D-20) —
         # set by the trading system at wiring time via ``bind``. The queue
@@ -270,6 +346,10 @@ class BacktestBarFeed(BarFeed):
             raise MissingPriceDataError(
                 ticker, "ticker not loaded in BacktestBarFeed")
         resampled = base.resample(alias, label="left", closed="left").agg(_AGG)
+        # D-09 (PERF-06): resample produced a NEW writeable frame, so lock it
+        # (single-block + read-only buffer) before any window() view aliases it.
+        # Same one-time, out-of-hot-loop mark as the __init__ base load.
+        resampled = _readonly_master(resampled)
         self._frames[key] = resampled
         return resampled
 
@@ -365,8 +445,9 @@ class BacktestBarFeed(BarFeed):
         ``cutoff = asof - timeframe + base_timeframe`` (degenerating to
         ``asof`` when ``timeframe == base_timeframe``, rule 3 — both
         branches agree, D-02); a bucket stamped ``B`` is included iff
-        ``B <= cutoff``. The lookup is a pure ``searchsorted`` positional
-        slice — zero resample calls on this path (M5-03).
+        ``B <= cutoff``. The cutoff is resolved by a per-(ticker, alias)
+        monotonic forward cursor over the index int64 ns (D-10, replacing the
+        per-tick ``searchsorted``); zero resample calls on this path (M5-03).
 
         Parameters
         ----------
@@ -392,11 +473,82 @@ class BacktestBarFeed(BarFeed):
         ValueError
             If ``timeframe`` maps to no supported pandas offset alias.
         """
+        # PERF-06 (D-01/D-06/D-07/D-09/D-12): return a READ-ONLY VIEW on the
+        # cached master frame instead of materializing a fresh wrapper every
+        # tick (06-01, kept). On the homogeneous float64 single-block OHLCV
+        # frame frame.iloc[start:pos] is ALREADY a view — no large copy ever
+        # happened. The PIVOT (D-10/D-11, post-profile 06-04) sits ON TOP of
+        # that view: the real reducible per-tick cost is the fresh
+        # searchsorted over the full index every tick × every symbol (13.2% of
+        # W2), now replaced by the monotonic int64 forward cursor below. The
+        # iloc slice is KEPT cursor-only (D-11): every cheaper-slice candidate
+        # measured SLOWER than iloc on this single-block frame (reconstruct 9.2
+        # vs iloc 7.3 µs; take 21 µs) and D-07 forbids pd.DataFrame(...)
+        # reconstruction (tz/dtype/column-order drift) — D-11's separate
+        # cheaper-slice idea is recorded as investigated + empirically
+        # infeasible, superseded by research; the 7.9% iloc cost is accepted
+        # via the D-15 ship-and-reframe fallback (06-05).
         alias = _offset_alias(timeframe)
         frame = self._resampled_frame(ticker, alias)
         cutoff = asof - timeframe + self._base_timeframe
-        pos = int(frame.index.searchsorted(cutoff, side="right"))
-        return frame.iloc[max(0, pos - max_window):pos]
+        # WR-01 guard: the forward-step branch compares cutoff_i8 (raw ns since
+        # the UTC epoch) against the tz-aware index's asi8. A tz-naive cutoff
+        # would skew that int64 compare by the tz offset and SILENTLY return a
+        # wrong cursor (leak/hide a bar), whereas the cold/rebuild searchsorted
+        # path raises TypeError on a tz-naive↔tz-aware compare. Assert
+        # tz-awareness once so BOTH branches fail loudly and identically — the
+        # engine path always passes tz-aware asof (TimeEvent.time), so this only
+        # restores the loud-fail backstop for a future tz-naive caller/test.
+        if getattr(cutoff, "tzinfo", None) is None:
+            raise ValueError(
+                "window() asof must be tz-aware to match the tz-aware index; "
+                f"got {asof!r}")
+        # D-10: per-(ticker, alias) monotonic forward cursor over int64 ns —
+        # byte-identical to int(frame.index.searchsorted(cutoff, side="right"))
+        # on every reachable cutoff (VERIFIED on-grid + mid-gap; proven by the
+        # D-16 drift suite). The int64 path is load-bearing: iv_i8[pos] <=
+        # cutoff_i8 is 0.14 µs/step; a pandas-Timestamp compare (2.0 µs) or a
+        # per-tick np.datetime64 conversion (3.3 µs ≈ the searchsorted it
+        # replaces) deliver NO win — use asi8 + Timestamp.value (Pitfall 1).
+        # The `<=` (not `<`) reproduces searchsorted side="right" exactly: pos
+        # is count(index <= cutoff), the exclusive-right cutoff (rule 4).
+        key = (ticker, alias)
+        n = len(frame.index)
+        iv_i8 = frame.index.asi8          # zero-copy int64 ns view (UTC; fresh wrapper, shared buffer)
+        # O(1) int64 ns; == asi8[k] for the tz-aware index (Timestamp.value).
+        # asof arrives as a pd.Timestamp at run time but is typed `datetime`, so
+        # the pd.Timestamp(...) wrap is a no-op box that keeps mypy --strict
+        # happy (datetime has no `.value`) without a per-tick datetime64 convert.
+        cutoff_i8 = pd.Timestamp(cutoff).value
+        last_pos = self._cursor.get(key)
+        last_cut = self._cursor_cut.get(key)
+        if last_pos is None or last_cut is None or cutoff_i8 < last_cut:
+            # COLD (key unseen) or NON-MONOTONIC (backwards/jumped cutoff —
+            # universe re-entry re-issuing an earlier asof, resampled cutoffs):
+            # SAFE FULL REBUILD via searchsorted. Never trust stale state, never
+            # leak a future bar; silent rebuild (NOT fail-loud — a non-monotonic
+            # cutoff is legitimate, RESEARCH A3). Byte-identical to today.
+            pos = int(frame.index.searchsorted(cutoff, side="right"))
+        else:
+            # MONOTONIC forward step from the cached position (0.14 µs/step).
+            pos = last_pos
+            while pos < n and iv_i8[pos] <= cutoff_i8:
+                pos += 1
+        self._cursor[key] = pos
+        self._cursor_cut[key] = cutoff_i8
+        start = max(0, pos - max_window)
+        if start >= pos:
+            # D-06: empty window (cutoff at frame start) returns the size-0
+            # slice UNCHANGED — bypass the view/read-only machinery entirely,
+            # preserving byte-identical empty semantics base.py relies on.
+            return frame.iloc[pos:pos]
+        # D-07: slice the existing (already non-writeable, single-block) float64
+        # master — do NOT reconstruct via pd.DataFrame(...) (tz/dtype/column-order
+        # drift risk; byte-identity is the hard constraint) and do NOT re-copy
+        # (that would defeat the view return). The slice is a VIEW that aliases
+        # the master's read-only buffer, so it inherits writeable=False for free
+        # (D-09) — a consumer in-place mutation raises ValueError(read-only).
+        return frame.iloc[start:pos]
 
     # -- Multi-symbol megaframe (screener path, D-19) --------------------------
 

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: ready_to_plan
-stopped_at: Phase 04 complete (3/3), verified — ready to discuss Phase 6 (deliberate reorder: 6 before 5; Phase 5 kept LAST per its FRAGILE/oracle-gated designation; Phase 6 is independent of 2-5)
-last_updated: 2026-06-24T11:29:32.075Z
-last_activity: 2026-06-24 -- Phase 04 complete & verified (PERF-03 + PERF-04, gate (b) PASS)
+stopped_at: Phase 06 complete (D-15 ship-and-reframe) — Phase 5 (Incremental Indicators) is the LAST remaining v1.5 phase (6-before-5 reorder); 999.2 jump is the phase.complete backlog-scan artifact, corrected
+last_updated: 2026-06-24T15:42:12.372Z
+last_activity: 2026-06-24
 progress:
   total_phases: 8
   completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 14
+  completed_plans: 14
   percent: 50
 ---
 
@@ -21,14 +21,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 6 — Bar-Feed Window Copies (PERF-06, OPTIONAL/slip-able) — taken before Phase 5 by owner decision (2026-06-24); Phase 5 (Incremental Indicators, FRAGILE) deferred to LAST.
+**Current focus:** Phase 5 — Incremental Indicators (FRAGILE, oracle-gated, LAST) — the final remaining v1.5 phase
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
+Phase: 5 (Incremental Indicators — PERF-05; deferred to run AFTER Phase 6 per the 6-before-5 reorder)
+Plan: Not started (no Phase 5 dir yet — needs discuss/plan)
 Status: Ready to plan
 Last activity: 2026-06-24
+
+> NOTE: `phase.complete` advanced Current Position to the `999.2` backlog placeholder because no
+> `05-*` phase dir exists yet (scanner artifact — see memory `phase-complete-jumps-to-backlog`).
+> Corrected manually: the next v1.5 phase is **Phase 5 (Incremental Indicators)**, not 999.2.
+> 999.2/999.3 remain FUTURE-milestone backlog seeds. v1.5 = Phases 1-4 + 6 done; Phase 5 remaining.
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
@@ -99,7 +104,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 65
+- Total plans completed: 70
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -205,6 +210,8 @@ scope decisions:
 - [Phase 01]: 01-01 (TOOL-01/02): perf tooling surface built — make perf-w1/w2/baseline/profile (+ user-added perf-view) in the root Makefile; perf-w1 is PROFILER-FREE and perf-profile is the ONLY Scalene path (two-step run->view; user switched the viewer from --html to native `scalene view` local-server, approved deviation 4fa61d1/4d50996, TOOL-02 split intact). run_w1_benchmark.py gained --json/--check/--baseline-out (D-06 human-stdout default) + _to_baseline_schema/_write_baseline/_check_regression (soft guard fails ONLY on >+5% slowdown, no abs(), Pitfall 3); run_w2_sweep.py gained --json. D-07: _START_DATE default pinned 2025-12-24->2026-04-23 (env-overridable). final_equity stored as STRING constant 46189.87730727451 (OQ-1/A1 provenance, not W1-derived). Narrow .gitignore (scalene-profile.html + perf/results/scalene-*.json) keeps W1-BASELINE.json trackable (Pitfall 4). Gate (a) green 134/46189.87730727451; NO itrader/ engine code touched. Scalene hotspot confirmed: in_memory_storage 48% (P2), position_manager 17% (P3), indicators/catalog 18% (P5).
 - [Phase ?]: [Phase 02]: 02-01 (PERF-01) — InMemoryOrderStorage gained derived active-by-portfolio + active-only by-status indexes (dict[oid,None]) over a _last_indexed_status shadow registry (D-03) atop the flat _by_id source of truth (D-20); shared _index_apply diff-on-write at all 5 write seams; active queries/scanners rerouted (None scan-fallback keeps GLOBAL order byte-identical, Pitfall 1); ABC UNCHANGED (D-05) + D-05a SQL-expressibility audit in-code; gate (a) PASSED (oracle 134/46189.87730727451, determinism 9/9, mypy strict 187). Gate (b) perf = Plan 02.
 - [Phase 03]: 03-01 (PERF-02) — running Decimal realised-PnL accumulator on PositionManager (_realised_pnl_accumulator, seed Decimal('0.00'), no mid-sum quantize) replaces the per-bar dual open+closed re-sum in get_total_realized_pnl (now a bare `return self._realised_pnl_accumulator`, D-01/D-04 dead-loop collapse). Fed via apply_realised_increment from BOTH Portfolio settle arms — the SPOT arm (SMA_MACD oracle path) had NO explicit realised_increment today and was wired with pre/post capture (audit finding, 03-INVARIANT-AUDIT.md §5); MARGIN arm reuses the existing increment on the CLOSE branch only (D-02). Three-layer correctness lock: written single-funnel invariant audit (03-INVARIANT-AUDIT.md) + byte-exact oracle/determinism + dedicated equivalence regression test (accumulator == fresh full re-sum, D-03). Gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files), full suite 1241 passed, determinism double-run byte-identical. Gate (b) W1 wall-clock re-freeze = Plan 02.
+- [Phase ?]: [Phase 06]: 06-03 (PERF-06 / D-13 denominator cleanup, PREP before the cursor) — removed the per-bar TIME EVENT debug block from EventHandler._dispatch (eager f-string every bar, discarded at INFO, ~22% W2 CPU) and de-timed run_w2_sweep._run_point into two passes (clean perf_counter wall-clock, NO tracemalloc in the timed region + separate fresh-wired tracemalloc peak-mem, same seed=42); _wire_system helper factored, return dict shape + 06-02 --check/--baseline-out flags unchanged. Behavior-neutral: gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files); re-baselines NOTHING numeric (cleaned baselines re-freeze 06-05). Commits 15834d7 + 43e5e72.
+- [Phase 06]: 06-04 (PERF-06 / D-10 monotonic cursor) — BacktestBarFeed.window() resolves the cutoff via a per-(ticker,alias) forward int64 cursor over frame.index.asi8 (`iv_i8[pos] <= cutoff_i8`, `cutoff_i8 = pd.Timestamp(cutoff).value`) replacing the per-tick searchsorted (13.2% W2); byte-identical to searchsorted(side="right"). Cold key OR `cutoff_i8 < last_cut` → silent safe searchsorted rebuild (never leak a future bar, D-10 reset-safety). The `iloc[start:pos]` read-only view + D-06 empty short-circuit are KEPT cursor-only (D-11 cheaper-slice empirically infeasible — every candidate slower than iloc, D-07 forbids reconstruction; D-12 built on 06-01 9168cae, NOT reverted). D-16: cursor==searchsorted + no-future-bar proven in the EXTENDED D-08 test suite only, NO hot-loop runtime assert. Deviation (Rule 3): `cutoff.value` → `pd.Timestamp(cutoff).value` for mypy --strict (asof typed `datetime`, no `.value`). Gate (a) byte-exact 134/46189.87730727451, determinism double-run identical (SHA-256), mypy --strict clean (187 files), full suite 1262 passed. Commits d034ea3 + 00c5480. Gate (b) W2/W1 re-freeze deferred to 06-05 (cool machine, D-14).
 
 ### Pending Todos
 
@@ -297,6 +304,8 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | v1.5 Phase 01 P02 | ~18 (3× ~240s benchmark runs) | 2 tasks (both auto) | 1 file |
 | Phase 02 P01 | 4 | 3 tasks | 2 files |
 | Phase 03 P01 | 5 | 3 tasks | 4 files |
+| Phase 06 P03 | 2 | 2 tasks | 2 files |
+| Phase 06 P04 | 5 | 2 tasks | 2 files |
 
 ## Bookkeeping
 
@@ -338,9 +347,10 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T09:42:45.458Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-hot-path-discipline/04-CONTEXT.md
+Last session: 2026-06-24T15:06:52.157Z
+Stopped at: Phase 06 COMPLETE — all 5 plans done (06-02 closed-out-superseded; 06-03 cleanup; 06-04 cursor; 06-05 D-15 ship-and-reframe verdict +1.9% W2). Verification passed 6/6. Next: Phase 5 (Incremental Indicators), the last v1.5 phase.
+Resume file: None
+Carried todo: re-freeze W1-BASELINE.json on a verified-cool isolated run (the 06-05 W1 re-freeze was thermally inflated to 259.1s and deferred; baseline kept at 238.5s). See 06-05-SUMMARY.md.
 
 ## Operator Next Steps
 

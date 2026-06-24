@@ -111,9 +111,6 @@ class EventHandler(object):
 		drops are a tampering risk, T-04-18). Unexpected handler
 		exceptions route through the ``_on_handler_error`` policy seam.
 		"""
-		if event.type is EventType.TIME:
-			# D-21: per-tick flow log demoted from INFO to DEBUG.
-			self.logger.debug(f"TIME EVENT: {event.time}")
 		try:
 			handlers = self.routes[event.type]
 		except KeyError:
