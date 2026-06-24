@@ -18,7 +18,7 @@ test is the unit-level drift lock. No hot-path runtime re-sum guard is added (D-
 re-pay the O(positions) cost this phase removes.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import uuid_utils.compat as uuid_compat
@@ -30,10 +30,28 @@ from itrader.portfolio_handler.transaction import Transaction, TransactionType
 from itrader import idgen
 
 
+# IN-01: a fixed business timestamp (not wall-clock datetime.now()) for the
+# determinism convention — the project threads business time, never wall clock.
+# tz-aware UTC for timezone consistency. The timestamp does not affect
+# realised_pnl, so this is convention-alignment, not a correctness change.
+_FIXED_TIME = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+
 @pytest.fixture
 def portfolio():
     """A fresh simulated portfolio funded with $150000 (mirrors test_portfolio.py)."""
-    return Portfolio(1, "test_pf", "simulated", 150000, datetime.now())
+    # IN-02: Decimal cash (money is Decimal end-to-end); IN-01: fixed timestamp.
+    return Portfolio(1, "test_pf", "simulated", Decimal("150000"), _FIXED_TIME)
+
+
+@pytest.fixture
+def margin_portfolio():
+    """A $150000 portfolio with enable_margin=True (lock-and-settle on, WR-02)."""
+    pf = Portfolio(1, "margin_pf", "simulated", Decimal("150000"), _FIXED_TIME)
+    pf.update_config(
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal("10")}}
+    )
+    return pf
 
 
 def _resum_realised(pm: PositionManager) -> Decimal:
@@ -50,18 +68,26 @@ def _resum_realised(pm: PositionManager) -> Decimal:
     return total
 
 
-def _buy(ticker: str, price: float, qty: float) -> Transaction:
-    return Transaction(
-        datetime.now(), TransactionType.BUY, ticker, price, qty, 0, None,
+def _buy(ticker: str, price, qty, leverage=None) -> Transaction:
+    # IN-01: fixed business timestamp; IN-02: Decimal money inputs at call sites.
+    txn = Transaction(
+        _FIXED_TIME, TransactionType.BUY, ticker, price, qty, Decimal("0"), None,
         idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
+    if leverage is not None:
+        txn.leverage = Decimal(str(leverage))
+    return txn
 
 
-def _sell(ticker: str, price: float, qty: float) -> Transaction:
-    return Transaction(
-        datetime.now(), TransactionType.SELL, ticker, price, qty, 0, None,
+def _sell(ticker: str, price, qty, leverage=None) -> Transaction:
+    # IN-01: fixed business timestamp; IN-02: Decimal money inputs at call sites.
+    txn = Transaction(
+        _FIXED_TIME, TransactionType.SELL, ticker, price, qty, Decimal("0"), None,
         idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
     )
+    if leverage is not None:
+        txn.leverage = Decimal(str(leverage))
+    return txn
 
 
 def test_empty_portfolio_accumulator_is_zero(portfolio):
@@ -82,23 +108,101 @@ def test_accumulator_equals_full_resum_across_open_scalein_partial_full(portfoli
     pm = portfolio.position_manager
 
     # OPEN: buy 2 BTC @ $38000 (realised_pnl unchanged -> increment 0).
-    portfolio.process_transaction(_buy("BTCUSDT", 38000, 2))
+    portfolio.process_transaction(_buy("BTCUSDT", Decimal("38000"), Decimal("2")))
     assert pm._realised_pnl_accumulator == _resum_realised(pm)
 
     # SCALE-IN: buy 1 BTC @ $40000 (same-side add -> realised_pnl unchanged -> increment 0).
-    portfolio.process_transaction(_buy("BTCUSDT", 40000, 1))
+    portfolio.process_transaction(_buy("BTCUSDT", Decimal("40000"), Decimal("1")))
     assert pm._realised_pnl_accumulator == _resum_realised(pm)
 
     # PARTIAL CLOSE: sell 1 BTC @ $45000 (position still open; open list carries realised).
-    portfolio.process_transaction(_sell("BTCUSDT", 45000, 1))
+    portfolio.process_transaction(_sell("BTCUSDT", Decimal("45000"), Decimal("1")))
     assert len(portfolio.positions) == 1
     assert pm._realised_pnl_accumulator == _resum_realised(pm)
 
     # FULL CLOSE: sell the remaining 2 BTC @ $46000 (moves the position to _closed_positions).
-    portfolio.process_transaction(_sell("BTCUSDT", 46000, 2))
+    portfolio.process_transaction(_sell("BTCUSDT", Decimal("46000"), Decimal("2")))
     assert len(portfolio.positions) == 0
     assert len(portfolio.closed_positions) == 1
     assert pm._realised_pnl_accumulator == _resum_realised(pm)
 
     # Final sanity: the public read-property routes through the accumulator and equals the oracle.
+    assert portfolio.total_realised_pnl == _resum_realised(pm)
+
+
+def test_accumulator_equals_resum_margin_open_partial_full(margin_portfolio):
+    """WR-02: margin settle arm equivalence — the more complex partial/full-close
+    economics on _process_transaction_margin has its own apply_realised_increment
+    wiring. Drive open -> partial close -> full close on a levered position and
+    assert the accumulator equals the dual-loop re-sum after every closing fill.
+    """
+    pf = margin_portfolio
+    pm = pf.position_manager
+
+    # OPEN: long 4 BTC @ 50000, L=5 -> lock = 200000/5 = 40000 (within 150000 bp).
+    pf.process_transaction(_buy("BTCUSDT", Decimal("50000"), Decimal("4"), leverage=5))
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
+
+    # PARTIAL CLOSE: sell 1 BTC @ 55000 (position still open; realised changes).
+    pf.process_transaction(_sell("BTCUSDT", Decimal("55000"), Decimal("1"), leverage=5))
+    assert len(pf.positions) == 1
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
+
+    # FULL CLOSE: sell the remaining 3 BTC @ 60000 (moves to closed list).
+    pf.process_transaction(_sell("BTCUSDT", Decimal("60000"), Decimal("3"), leverage=5))
+    assert len(pf.positions) == 0
+    assert len(pf.closed_positions) == 1
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
+    assert pf.total_realised_pnl == _resum_realised(pm)
+
+
+def test_accumulator_equals_resum_short_lifecycle_spot(portfolio):
+    """WR-02: SHORT lifecycle equivalence — the SHORT realised_pnl property takes a
+    different branch (position.py). Sell to open, buy to cover through the spot
+    funnel; assert the accumulator equals the re-sum after the covering close.
+    """
+    pm = portfolio.position_manager
+
+    # OPEN SHORT: sell 2 BTC @ 45000 (realised unchanged on open -> increment 0).
+    portfolio.process_transaction(_sell("BTCUSDT", Decimal("45000"), Decimal("2")))
+    assert len(portfolio.positions) == 1
+    assert portfolio.positions["BTCUSDT"].side.name == "SHORT"
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
+
+    # PARTIAL COVER: buy 1 BTC @ 42000 (short still open; realised changes).
+    portfolio.process_transaction(_buy("BTCUSDT", Decimal("42000"), Decimal("1")))
+    assert len(portfolio.positions) == 1
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
+
+    # FULL COVER: buy the remaining 1 BTC @ 40000 (covers to flat).
+    portfolio.process_transaction(_buy("BTCUSDT", Decimal("40000"), Decimal("1")))
+    assert len(portfolio.positions) == 0
+    assert len(portfolio.closed_positions) == 1
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
+    assert portfolio.total_realised_pnl == _resum_realised(pm)
+
+
+def test_accumulator_equals_resum_two_tickers_interleaved(portfolio):
+    """WR-02: multi-ticker equivalence — a per-ticker desync would not show on a
+    single-ticker re-sum. Interleave two tickers and assert the accumulator equals
+    the cross-ticker re-sum after each close.
+    """
+    pm = portfolio.position_manager
+
+    # Open BTC and ETH.
+    portfolio.process_transaction(_buy("BTCUSDT", Decimal("38000"), Decimal("1")))
+    portfolio.process_transaction(_buy("ETHUSDT", Decimal("2000"), Decimal("10")))
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
+
+    # Close BTC fully (ETH still open — the re-sum must count BTC's closed realised
+    # plus ETH's open realised; a per-ticker desync would diverge here).
+    portfolio.process_transaction(_sell("BTCUSDT", Decimal("42000"), Decimal("1")))
+    assert len(portfolio.positions) == 1
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
+
+    # Close ETH fully.
+    portfolio.process_transaction(_sell("ETHUSDT", Decimal("2500"), Decimal("10")))
+    assert len(portfolio.positions) == 0
+    assert len(portfolio.closed_positions) == 2
+    assert pm._realised_pnl_accumulator == _resum_realised(pm)
     assert portfolio.total_realised_pnl == _resum_realised(pm)
