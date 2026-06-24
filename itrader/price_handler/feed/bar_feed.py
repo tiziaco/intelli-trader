@@ -491,6 +491,18 @@ class BacktestBarFeed(BarFeed):
         alias = _offset_alias(timeframe)
         frame = self._resampled_frame(ticker, alias)
         cutoff = asof - timeframe + self._base_timeframe
+        # WR-01 guard: the forward-step branch compares cutoff_i8 (raw ns since
+        # the UTC epoch) against the tz-aware index's asi8. A tz-naive cutoff
+        # would skew that int64 compare by the tz offset and SILENTLY return a
+        # wrong cursor (leak/hide a bar), whereas the cold/rebuild searchsorted
+        # path raises TypeError on a tz-naive↔tz-aware compare. Assert
+        # tz-awareness once so BOTH branches fail loudly and identically — the
+        # engine path always passes tz-aware asof (TimeEvent.time), so this only
+        # restores the loud-fail backstop for a future tz-naive caller/test.
+        if getattr(cutoff, "tzinfo", None) is None:
+            raise ValueError(
+                "window() asof must be tz-aware to match the tz-aware index; "
+                f"got {asof!r}")
         # D-10: per-(ticker, alias) monotonic forward cursor over int64 ns —
         # byte-identical to int(frame.index.searchsorted(cutoff, side="right"))
         # on every reachable cutoff (VERIFIED on-grid + mid-gap; proven by the
