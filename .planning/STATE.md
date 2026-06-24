@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
-stopped_at: 06-02 Task 1 committed; paused at blocking human-verify checkpoint (Task 2 — cool-machine W2 before/after capture)
-last_updated: "2026-06-24T13:22:11.000Z"
-last_activity: 2026-06-24 -- 06-02 Task 1 (W2 gate-b mechanization) committed f51d7c6; awaiting human thermal measurement
+stopped_at: 06 PAUSED for re-plan — Gate (b) measured ~0% W2 win (06-01's alias/copy levers negligible); Scalene shows real hotspot is per-tick searchsorted; planning incremental-cursor window()
+last_updated: "2026-06-24T13:45:00.000Z"
+last_activity: 2026-06-24 -- Gate (b) A/B + Scalene profile (see 06-PROFILE-FINDINGS.md); 06-01 safe but ~0% W2 win; user chose to plan incremental-cursor fix
 progress:
   total_phases: 8
   completed_phases: 4
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 
 ## Current Position
 
-Phase: 06 (bar-feed-window-copies-optional-slip-able) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 06
-Last activity: 2026-06-24 -- Phase 06 execution started
+Phase: 06 (bar-feed-window-copies-optional-slip-able) — PAUSED (re-plan pending)
+Plan: 06-01 complete (safety win); 06-02 Task 1 complete (gate harness); 06-02 Task 2/3 deferred
+Status: Gate (b) ≥10% W2 win NOT met by 06-01 (~0%, profile-confirmed). Next: plan incremental-cursor window() that replaces per-tick searchsorted. See 06-PROFILE-FINDINGS.md.
+Last activity: 2026-06-24 -- Gate (b) measurement + Scalene profile; user chose to plan the cursor fix
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
