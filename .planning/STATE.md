@@ -35,7 +35,11 @@ Last activity: 2026-06-25 -- Phase 05 executed, verified (12/12), and completed
 > 6-before-5 reorder), so it is NOT "next". With Phase 5 now complete, ALL SIX v1.5 phases (1-6) are
 > Complete — **v1.5 (Backtest Performance Optimization) is finished**. The next step is milestone close
 > (`/gsd-complete-milestone`), not a new phase. 999.2/999.3 remain FUTURE-milestone backlog seeds.
-> Carried todo: the Gate (b) W1/W2 perf re-freeze on a verified-cool machine (thermal defer, tracked below).
+> Carried todo **CLEARED 2026-06-25** (quick `260625-0qj`): Gate (b) W1/W2 baselines re-frozen on a
+> verified-cool box (`pmset` clean, in-battery HEAD drift +0.9%) — **W1 153.7 s / 162.3 MB**, **W2 4.05 s
+> @50 / 210.87 MB**. Cool same-machine A/B attributes Phase 5: **W1 −40.1%** (255.4 s→153.0 s) and
+> **W2@50 −70.2%** (13.61 s→4.05 s), Gate (a) byte-exact 134/46189.87730727451, owner sign-off tiziaco.
+> See `.planning/quick/260625-0qj-refreeze-w1-w2-baseline-cool/ATTRIBUTION.md`. v1.5 ready for milestone close.
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
@@ -52,7 +56,9 @@ dates/count (134) are expected to stay identical (firing tick preserved); numeri
 
 2. **Gate (b) — measurable, locked W1 improvement:** the clean W1 benchmark shows a real wall-clock
    and/or peak-memory reduction vs the frozen baseline (**240.8 s / 167.3 MB**), **re-frozen after
-   the phase** as the new locked reference the next phase is judged against.
+   the phase** as the new locked reference the next phase is judged against. **v1.5-final locked
+   reference (re-frozen cool 2026-06-25, quick `260625-0qj`): W1 153.7 s / 162.3 MB · W2 4.05 s @50 /
+   210.87 MB.**
 
 Phase 1 (tooling) **builds** gate (b)'s measurement harness and re-freezes the baseline; it changes
 no engine code and is held to gate (a) only.
@@ -300,6 +306,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | 260623-bmg | Fix perf coverage instruments B/C/D so positions recycle (boost trade density): added the missing exit leg to each (D short tp+sl bracket, B limit-long sl + tightened tp, C pyramiding tp) — 30d-slice fills jumped ~11→759, closed 0→291 across P2_B/P3_C/P4-6_D; coverage semantics unchanged | 2026-06-23 | 4cd2be7 | | [260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p](./quick/260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p/) |
 | 260623-f80 | Fix perf coverage instrument A over-selling: removed the cash-sized discretionary crossunder exit (sized off FractionOfCash(0.95), not the held qty → sold 65 vs held 1 → net-short inventory mislabeled LONG → $100k→$10M phantom equity → fills froze after Jan); now bracket-only (OCO sl/tp) so longs close cleanly & recycle. A-only full-window: fills spread Dec–Jun (251, was frozen 184), closed 61→125, equity sane $76,452 (was phantom $10M). Surfaced a SEPARATE engine anomaly (spot LONG_ONLY over-sell allowed) → /gsd:debug | 2026-06-23 | 3657d30 | | [260623-f80-fix-perf-coverage-instrument-a-over-sell](./quick/260623-f80-fix-perf-coverage-instrument-a-over-sell/) |
 | 260623-gao | Engine over-sell protection A+B (TDD, oracle-gated) for the spot LONG_ONLY over-sell / phantom-equity bug (diagnosed in .planning/debug/spot-long-only-oversell.md). A: ported the CR-02 over-close guard into the SPOT settlement path (portfolio.py _process_transaction_spot) — a reducing SELL exceeding held qty now raises InvalidTransactionError (was silent corruption). B: cancel orphaned bracket children on flatten-by-fill in the order domain (reconcile on_fill), scoped to (portfolio_id, ticker). Fix C (sign-aware net_quantity/market_value) left owner-gated/out-of-scope. Oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1231 green; mypy --strict clean | 2026-06-23 | c004672 | Verified | [260623-gao-engine-over-sell-protection-a-b-spot-set](./quick/260623-gao-engine-over-sell-protection-a-b-spot-set/) |
+| 260625-0qj | Re-froze v1.5 Gate (b) baselines on a verified-cool box (clears the carried thermal-defer todo) + attributed Phase 5. `pmset -g therm` clean; cool same-machine A/B (de2e19f vs HEAD via `make perf-w1`, identical 1578-fill workload, OLD bracketed between two HEAD runs → in-battery HEAD drift +0.9%, no throttle): **W1 −40.1%** (255.4→153.0 s), peak-mem flat. New frozen W1 153.7 s / 162.3 MB (was stale Phase-6 238.5 s) + W2 4.05 s @50 / 210.87 MB (was 13.61 s → **W2@50 −70.2%**). Gate (a) byte-exact 134/46189.87730727451 (3 passed). Owner sign-off tiziaco 2026-06-25. No engine code touched | 2026-06-25 | fbd78b3 | Verified | [260625-0qj-refreeze-w1-w2-baseline-cool](./quick/260625-0qj-refreeze-w1-w2-baseline-cool/) |
 | 260623-h6i | Refine the over-close guard (spot + margin twin, portfolio.py) to compare the over-sell excess against the existing PositionManager.tolerance (1e-5) instead of strict `>`. Surfaced when the full W1 re-run fail-fast aborted on coverage instrument C (pyramiding): the "over-sell" was 1E-27 BTC — last-digit Decimal noise from independent per-add bracket-child quantization after partial closes, NOT a real over-sell (A/B completed with sane equity). Now sub-close-tolerance dust is absorbed as a clean full close; a GROSS over-sell (the 64-BTC phantom-equity case) still raises loudly at both sites. TDD; oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1233 green; mypy --strict clean | 2026-06-23 | 09d49b1 | Verified | [260623-h6i-refine-over-close-guard-with-tolerance-a](./quick/260623-h6i-refine-over-close-guard-with-tolerance-a/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
@@ -367,10 +374,10 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T22:30:00.000Z
-Stopped at: Completed 05-03-PLAN.md (Plan C — per-tick feed.window() slice CUT entirely; update->is_ready->generate loop; pair on β fit-once-frozen + z bounded-window; SMA_MACD oracle byte-exact 134/46189.87730727451, full suite 1287 passed, determinism byte-identical, mypy --strict clean). Phase 5 all 3 plans executed (gate (a) GREEN).
+Last session: 2026-06-25T00:50:00.000Z
+Stopped at: Quick `260625-0qj` — re-froze the v1.5 Gate (b) baselines on a verified-cool box and attributed Phase 5. W1 153.7 s / 162.3 MB, W2 4.05 s @50 / 210.87 MB (frozen_at 2026-06-25); cool same-machine A/B (de2e19f vs HEAD, identical 1578-fill workload, HEAD drift +0.9%) gives W1 −40.1% (255.4→153.0 s) and W2@50 −70.2% (13.61→4.05 s). Gate (a) byte-exact 134/46189.87730727451 (3 passed). Owner sign-off tiziaco. The carried cool-machine re-freeze todo is now CLEARED.
 Resume file: None
-Carried todo: re-freeze W1-BASELINE.json on a verified-cool isolated run (the 06-05 W1 re-freeze was thermally inflated to 259.1s and deferred; baseline kept at 238.5s). See 06-05-SUMMARY.md.
+Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready for `/gsd-complete-milestone`.
 
 ## Operator Next Steps
 
