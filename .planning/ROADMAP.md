@@ -208,7 +208,10 @@ phase). Plan A is plannable byte-exact in parallel; only Plan B is blocked by th
      --strict` clean; determinism double-run byte-identical.
   4. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
      baseline, re-frozen as the new locked reference (attribute via same-machine A/B; re-freeze cool).
-**Plans**: TBD (A→B→C per spec §5 / CONTEXT P5-D01..D22)
+**Plans**: 3 plans (A→B→C per spec §5 / CONTEXT P5-D01..D22)
+  - [ ] 05-01-PLAN.md — Plan A: shared recent-bars feed (newest-bar + registration/capacity interface, G5 unify, G1 trigger seam interface-only; deep cache deferred) — byte-exact
+  - [ ] 05-02-PLAN.md — Plan B: all four indicators -> O(1) stateful recurrences (ta dropped on runtime path), per-symbol fan-out + readiness + reset() + causal guard, ta-convergence test, SMA_MACD oracle RE-BASELINE (cross-val gated)
+  - [ ] 05-03-PLAN.md — Plan C: drop the per-tick self.bars/feed.window slice (handler loop restructure), pair β fit-once-frozen / z bounded-window migration, count/date fixture migration
 
 ### Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)
 **Goal**: Per-tick bar-feed window `iloc` frame copies are reduced (reusable view / cached slice
