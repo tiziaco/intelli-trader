@@ -372,6 +372,118 @@ def test_window_view_is_read_only_and_cannot_leak(daily_feed):
     assert np.array_equal(again.to_numpy(), before)
 
 
+# -- 7c. PERF-06 / D-16: monotonic-cursor == searchsorted drift-lock + no-leak ----
+
+"""D-16 cursor-equivalence + reset-safety lock for the D-10 monotonic cursor.
+
+This EXTENDS the D-08 drift suite (above) onto the cursor that replaces the
+per-tick ``frame.index.searchsorted(cutoff, side="right")`` inside
+``window()`` (D-10, built on the kept 06-01 read-only view — D-12). The
+"oracle" for every assertion here is a FRESH
+``int(frame.index.searchsorted(cutoff, side="right"))`` on the same frame:
+the cursor's resolved ``pos`` must equal it byte-for-byte on every reachable
+cutoff (cold / monotonic-forward / backwards-rebuild / gap), AND the returned
+window must never carry a bar stamped ``> cutoff`` (the look-ahead invariant,
+contract rule 4).
+
+By design these tests stay GREEN against BOTH the un-cursored (searchsorted)
+window() and the post-cursor window() — they encode the INVARIANT, not the
+implementation. The cursor is byte-identical to ``searchsorted(side="right")``
+(VERIFIED across 3000 on-grid + 3000 mid-gap ticks, 06-RESEARCH Finding A), so
+proving the invariant proves the cursor.
+
+NO hot-path runtime guard is added to ``window()`` (D-16): an always-on
+``assert cursor == searchsorted`` would re-pay the per-tick searchsorted the
+cursor exists to remove. The equivalence is proven HERE, in the test, once —
+matching the audit-the-invariant + dedicated-test house style (Phase 3 D-03,
+Phase 4 D-06/07, this phase's D-08/D-09).
+"""
+
+
+def test_cursor_equals_fresh_searchsorted_across_ticks(daily_feed,
+                                                       daily_base_frame):
+    # D-10/D-16 (a): across MONOTONIC advancing ticks the cursor's resolved end
+    # position == a fresh searchsorted(cutoff, side="right") on the same frame
+    # (the window's last bar is at fresh_pos - 1), AND (b) NO returned stamp is
+    # > cutoff (no future-bar leak). Oracle = fresh searchsorted; tf == base so
+    # the base frame IS the resampled frame.
+    tf = timedelta(days=1)
+    base_tf = timedelta(days=1)
+    max_window = 3
+    frame = daily_base_frame
+    for asof in [ts('2020-01-02'), ts('2020-01-05'),
+                 ts('2020-01-07'), ts('2020-01-10')]:
+        cutoff = asof - tf + base_tf
+        fresh_pos = int(frame.index.searchsorted(cutoff, side="right"))
+        win = daily_feed.window('BTCUSD', tf, max_window, asof=asof)
+        if not win.empty:
+            # (a) the cursor matched the fresh searchsorted end position
+            assert frame.index.get_loc(win.index[-1]) == fresh_pos - 1
+        # (b) no-future-bar invariant: every returned stamp <= cutoff
+        assert (win.index <= cutoff).all()
+
+
+def test_cursor_safe_rebuild_on_backwards_asof(daily_feed, daily_store,
+                                               daily_base_frame):
+    # D-10/D-16 reset-safety: advance the cursor to a LATE asof, then query an
+    # EARLIER asof on the SAME feed — the `cutoff_i8 < last_cut` rebuild guard
+    # must fire so the early window leaks NO future bar (no Jan-4..10 stamp),
+    # and it must be byte-identical to a virgin-cursor feed's window at that
+    # same early asof (the fresh searchsorted oracle).
+    tf = timedelta(days=1)
+    base_tf = timedelta(days=1)
+    max_window = 5
+    early_asof = ts('2020-01-03')
+    early_cutoff = early_asof - tf + base_tf
+
+    daily_feed.window('BTCUSD', tf, max_window, asof=ts('2020-01-10'))  # advance
+    early = daily_feed.window('BTCUSD', tf, max_window, asof=early_asof)  # back
+
+    # no-future-bar: nothing later than the early cutoff leaked through
+    assert (early.index <= early_cutoff).all()
+    assert early.index[-1] == ts('2020-01-03')
+
+    # byte-identical to a fresh-cursor feed queried at the same early asof
+    virgin = BacktestBarFeed(daily_store, timedelta(days=1))
+    virgin_early = virgin.window('BTCUSD', tf, max_window, asof=early_asof)
+    pd.testing.assert_frame_equal(early, virgin_early, check_freq=False)
+    # and equal to the fresh searchsorted positional oracle
+    fresh_pos = int(daily_base_frame.index.searchsorted(early_cutoff,
+                                                        side="right"))
+    expected = daily_base_frame.iloc[max(0, fresh_pos - max_window):fresh_pos]
+    pd.testing.assert_frame_equal(early, expected, check_freq=False)
+
+
+def test_cursor_cold_and_gap(gappy_feed):
+    # D-10/D-16 reset-safety: the FIRST call for a key (cold cursor) AND a cutoff
+    # landing on the MISSING Jan-5 gap day both resolve with no future-bar leak
+    # and the gap day absent from the window. GAPPY has bars Jan 1..4, 6..10.
+    tf = timedelta(days=1)
+    base_tf = timedelta(days=1)
+    asof = ts('2020-01-05')          # the missing gap day
+    cutoff = asof - tf + base_tf      # == Jan 5 (tf == base)
+
+    win = gappy_feed.window('GAPPY', tf, 5, asof=asof)  # cold first call
+    assert not win.empty
+    assert (win.index <= cutoff).all()          # no future-bar leak
+    assert ts('2020-01-05') not in win.index    # the gap day has no bar
+    assert win.index[-1] == ts('2020-01-04')    # last visible bar before the gap
+
+
+def test_cursor_universe_reentry(duo_feed):
+    # D-10/D-16 reset-safety: BTC queried, then ETH (a DIFFERENT key — cold for
+    # ETH, leaves BTC's cursor untouched), then BTC again at a LATER tick. BTC's
+    # forward step is still correct because its cutoff advanced monotonically;
+    # no leak, ends at the expected last bar.
+    tf = timedelta(days=1)
+    w1 = duo_feed.window('BTCUSD', tf, 3, asof=ts('2020-01-04'))
+    assert w1.index[-1] == ts('2020-01-04')
+    _ = duo_feed.window('ETHUSD', tf, 3, asof=ts('2020-01-05'))  # other key
+    w2 = duo_feed.window('BTCUSD', tf, 3, asof=ts('2020-01-07'))  # re-entry later
+    assert (w2.index <= ts('2020-01-07')).all()   # no future-bar leak
+    assert w2.index[-1] == ts('2020-01-07')
+
+
 # -- 8. BarEvent factory (relocated from DynamicUniverse — Plan 07-02, D-20) ------
 
 def test_generate_bar_event_unbound_returns_the_bar_event(daily_feed):
