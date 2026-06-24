@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: "Gate (b) ≥10% W2 win NOT met by 06-01 (~0%, profile-confirmed). Next: plan incremental-cursor window() that replaces per-tick searchsorted. See 06-PROFILE-FINDINGS.md."
+status: executing
 stopped_at: Phase 06 context PIVOTED to incremental-cursor window() (D-10–D-16); ready to replan cursor fix
-last_updated: "2026-06-24T14:15:37.660Z"
-last_activity: 2026-06-24 -- Gate (b) measurement + Scalene profile; user chose to plan the cursor fix
+last_updated: "2026-06-24T14:48:31.315Z"
+last_activity: 2026-06-24 -- Phase 06 planning complete
 progress:
   total_phases: 8
   completed_phases: 4
-  total_plans: 11
+  total_plans: 14
   completed_plans: 10
   percent: 50
 ---
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 
 Phase: 06 (bar-feed-window-copies-optional-slip-able) — PAUSED (re-plan pending)
 Plan: 06-01 complete (safety win); 06-02 Task 1 complete (gate harness); 06-02 Task 2/3 deferred
-Status: Gate (b) ≥10% W2 win NOT met by 06-01 (~0%, profile-confirmed). Next: plan incremental-cursor window() that replaces per-tick searchsorted. See 06-PROFILE-FINDINGS.md.
-Last activity: 2026-06-24 -- Gate (b) measurement + Scalene profile; user chose to plan the cursor fix
+Status: Ready to execute
+Last activity: 2026-06-24 -- Phase 06 planning complete
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
