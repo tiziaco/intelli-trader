@@ -54,10 +54,12 @@ Plan 07-02, D-20): the data engine produces the per-tick BarEvent and may
 log the missing-ticker warning (RESEARCH OQ4).
 """
 
+import functools
 import queue
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 
 from itrader.core.bar import Bar
@@ -75,6 +77,12 @@ _AGG = {"open": "first", "high": "max", "low": "min",
         "close": "last", "volume": "sum"}
 
 
+# D-01 (PERF-06): memoize the per-call offset-alias string compute — it fires
+# ONCE per distinct timeframe across __init__/precompute/the per-tick window()
+# path. timedelta is hashable; functools.cache does NOT cache exceptions, so the
+# raise-on-unsupported ValueError guard inside is preserved (RESEARCH Pitfall 4).
+# The function BODY is byte-unchanged — only this decorator was added.
+@functools.cache
 def _offset_alias(timeframe: timedelta) -> str:
     """Map a timeframe to its canonical pandas offset alias.
 
@@ -119,6 +127,53 @@ def _offset_alias(timeframe: timedelta) -> str:
     raise ValueError(
         f"unsupported resample timeframe {timeframe!r} — supported units "
         "are minutes, hours, days and weeks (months are not supported)")
+
+
+def _readonly_master(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a SINGLE-BLOCK float64 frame with its values buffer read-only (D-09).
+
+    The PERF-06 read-only enforcement: lock the underlying numpy buffer so a
+    per-tick ``window()`` VIEW inherits read-only and a consumer in-place
+    mutation raises ``ValueError(read-only)`` instead of silently poisoning a
+    future tick (RESEARCH Pattern 1, verified pandas 2.3.3 / numpy 2.2.6).
+
+    Two steps, both byte-identity-preserving:
+
+    1. **Consolidate to a single block.** The store's canonical OHLCV frame is
+       NOT always a single homogeneous float64 block — ``read_csv`` + the
+       ``astype(float)`` + ``.loc`` window slice can leave it MULTI-block (e.g.
+       4×N and 1×N). On a multi-block frame ``to_numpy(copy=False)`` returns a
+       fresh CONSOLIDATED COPY, so locking individual block buffers would NOT
+       be observable through ``to_numpy`` and a consumer's
+       ``view.to_numpy(copy=False)[i,j] = x`` would write to a throwaway copy
+       (no protection, no leak — but the guarantee is unobservable). A plain
+       ``frame.copy()`` consolidates to ONE block while preserving values,
+       float64 dtype, the tz-aware ``DatetimeIndex`` and column set+order
+       byte-identically (``assert_frame_equal`` passes). A frame that is
+       already single-block is copied harmlessly.
+    2. **Lock the single block's buffer.** For the consolidated single-block
+       frame ``to_numpy(copy=False)`` returns a non-owning VIEW whose ``.base``
+       IS the block's writeable buffer — the flag must be set on that base
+       buffer, NOT on the returned view (a view carries its own ``writeable``
+       flag; clearing it leaves the buffer writeable). The ``np.shares_memory``
+       assert proves the handle aliases the frame's own buffer (RESEARCH
+       Pattern 1 caveat — ``to_numpy(copy=False)`` is not contractually
+       zero-copy); after the ``copy()`` consolidation it always does.
+
+    ``resample``/``searchsorted``/``iterrows`` and the ``ta`` reads all work on
+    a non-writeable frame — no D-09 per-view fallback is triggered.
+    """
+    master = frame.copy()  # consolidate to a single block (byte-identical)
+    arr = master.to_numpy(copy=False)
+    # Walk to the buffer the frame actually owns: the block buffer is `arr.base`
+    # for a non-owning view, else `arr` itself.
+    buffer: "np.ndarray[Any, np.dtype[Any]]" = (
+        arr if arr.flags.owndata else arr.base)
+    assert np.shares_memory(buffer, master.to_numpy(copy=False)), (
+        "to_numpy(copy=False) did not alias the frame's own buffer after "
+        "consolidation — read-only flag would not take effect (D-09 fallback)")
+    buffer.flags.writeable = False
+    return master
 
 
 class BacktestBarFeed(BarFeed):
@@ -179,7 +234,15 @@ class BacktestBarFeed(BarFeed):
         # so a cache would serve zero hits.
         self._prebuilt: dict[str, dict[datetime, Bar]] = {}
         for ticker in self._symbols:
-            frame = store.read_bars(ticker)
+            # D-09 (PERF-06): store a SINGLE-BLOCK, read-only master so every
+            # per-tick window VIEW inherits a non-writeable buffer and any
+            # in-place mutation fails loudly (ValueError) instead of silently
+            # poisoning a future tick (the look-ahead invariant, hard-enforced
+            # at the feed source — subsumes D-02 view-safety). The consolidation
+            # is byte-identical to the store frame (Pitfall 3: the index[0]/[-1]
+            # reads and frame.iterrows() below both work on a non-writeable
+            # frame). The store frame is returned UNTOUCHED — we lock our copy.
+            frame = _readonly_master(store.read_bars(ticker))
             self._frames[(ticker, self._base_alias)] = frame
             self._spans[ticker] = (frame.index[0], frame.index[-1])
             self._prebuilt[ticker] = {
@@ -270,6 +333,10 @@ class BacktestBarFeed(BarFeed):
             raise MissingPriceDataError(
                 ticker, "ticker not loaded in BacktestBarFeed")
         resampled = base.resample(alias, label="left", closed="left").agg(_AGG)
+        # D-09 (PERF-06): resample produced a NEW writeable frame, so lock it
+        # (single-block + read-only buffer) before any window() view aliases it.
+        # Same one-time, out-of-hot-loop mark as the __init__ base load.
+        resampled = _readonly_master(resampled)
         self._frames[key] = resampled
         return resampled
 
@@ -392,11 +459,31 @@ class BacktestBarFeed(BarFeed):
         ValueError
             If ``timeframe`` maps to no supported pandas offset alias.
         """
+        # PERF-06 (D-01/D-06/D-07/D-09): return a READ-ONLY VIEW on the cached
+        # master frame instead of materializing a fresh wrapper every tick.
+        # Mirrors the current_bars() de-pandas precedent above — the win is
+        # wall-clock per-tick wrapper-construction churn (the W2 ~22%, validated
+        # by wall-clock NOT tracemalloc) plus the now-memoized _offset_alias
+        # string compute; it is NOT a buffer-copy/memory drop — on the
+        # homogeneous float64 single-block OHLCV frame frame.iloc[start:pos] is
+        # ALREADY a view, no large copy was ever happening (RESEARCH Pitfall 2).
         alias = _offset_alias(timeframe)
         frame = self._resampled_frame(ticker, alias)
         cutoff = asof - timeframe + self._base_timeframe
         pos = int(frame.index.searchsorted(cutoff, side="right"))
-        return frame.iloc[max(0, pos - max_window):pos]
+        start = max(0, pos - max_window)
+        if start >= pos:
+            # D-06: empty window (cutoff at frame start) returns the size-0
+            # slice UNCHANGED — bypass the view/read-only machinery entirely,
+            # preserving byte-identical empty semantics base.py relies on.
+            return frame.iloc[pos:pos]
+        # D-07: slice the existing (already non-writeable, single-block) float64
+        # master — do NOT reconstruct via pd.DataFrame(...) (tz/dtype/column-order
+        # drift risk; byte-identity is the hard constraint) and do NOT re-copy
+        # (that would defeat the view return). The slice is a VIEW that aliases
+        # the master's read-only buffer, so it inherits writeable=False for free
+        # (D-09) — a consumer in-place mutation raises ValueError(read-only).
+        return frame.iloc[start:pos]
 
     # -- Multi-symbol megaframe (screener path, D-19) --------------------------
 
