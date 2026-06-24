@@ -13,7 +13,9 @@ trivial strategy is sufficient. Determinism: seed 42 throughout. Profiling
 """
 
 import argparse
+import datetime as dt
 import json
+import sys
 import tempfile
 import time
 import tracemalloc
@@ -148,14 +150,90 @@ def run_w2() -> list[dict[str, Any]]:
     return points
 
 
+def _to_w2_baseline_schema(points: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build the W2 committed-baseline payload from a run_w2() points list.
+
+    Mirrors the W1 envelope (`run_w1_benchmark._to_baseline_schema`) but keys the
+    metric on the 50-symbol sweep point — that is the most W2-visible scaling
+    number gate (b) for this phase is judged on (D-05). The full {1,10,50} points
+    list is carried verbatim so the standing reference also seeds Phase 5.
+    """
+    p50 = next(p for p in points if p["n_symbols"] == 50)
+    return {
+        "schema_version": 1,
+        "frozen_at": dt.date.today().isoformat(),
+        "metric": {
+            "wall_clock_s_at_50": round(p50["wall_clock_s"], 2),
+            "peak_mem_mb_at_50": round(p50["peak_mem_mb"], 2),
+        },
+        "sweep": {"n_symbols": _N_SYMBOLS_SWEEP, "n_bars": _N_BARS, "seed": _SEED},
+        "points": points,
+    }
+
+
+def _write_w2_baseline(points: list[dict[str, Any]], out_path: str) -> None:
+    """Freeze a sweep as the committed W2-BASELINE.json (mirrors _write_baseline)."""
+    with open(out_path, "w") as fh:
+        json.dump(_to_w2_baseline_schema(points), fh, indent=2)
+        fh.write("\n")
+
+
+def _check_w2(
+    points: list[dict[str, Any]],
+    baseline_path: str,
+    min_improvement_pct: float = 10.0,
+) -> int:
+    """Gate (b) for this W2-dominant phase. The sense is INVERTED vs W1's soft
+    guard: W1 FAILS only on a slowdown beyond a band, whereas this gate REQUIRES
+    the win — PASS (return 0) iff the 50-symbol wall-clock improved by at least
+    ``min_improvement_pct`` against the frozen baseline. ALWAYS print the line.
+
+    WR-02 soft guard (carried from run_w1_benchmark._check_regression:208-211): a
+    zeroed/malformed/hand-edited baseline (non-positive base50) must degrade
+    gracefully — print a message and return 1, never raise a ZeroDivisionError.
+    """
+    with open(baseline_path) as fh:
+        base = json.load(fh)
+    base50 = base["metric"]["wall_clock_s_at_50"]
+    now50 = next(p for p in points if p["n_symbols"] == 50)["wall_clock_s"]
+    if base50 <= 0:
+        print(f"PERF GUARD: baseline wall_clock_s_at_50 is {base50} — refusing to "
+              "compute a delta against a zero/invalid baseline")
+        return 1
+    impr = (base50 - now50) / base50 * 100.0
+    print(f"W2@50 {now50:.2f}s  improvement {impr:+.1f}%  (baseline {base50:.2f}s)")
+    if impr < min_improvement_pct:
+        print(f"PERF GATE (b): improvement {impr:+.1f}% < required "
+              f"{min_improvement_pct:.1f}% at 50 symbols — gate (b) FAILED")
+        return 1
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="W2 synthetic scaling sweep")
     parser.add_argument("--json", action="store_true",
                         help="emit the scaling points as JSON (machine-readable)")
+    parser.add_argument("--check", action="store_true",
+                        help="compare vs W2-BASELINE.json; gate (b) REQUIRES a "
+                             ">=10%% wall-clock win at 50 symbols (inverted guard)")
+    parser.add_argument("--baseline-out", metavar="PATH",
+                        help="freeze: write the sweep as the committed W2 baseline JSON")
     args = parser.parse_args()
+    # IN-01 (mirrors run_w1_benchmark): --baseline-out + --check together would
+    # re-check a run against the baseline it JUST wrote (impr ~0%, a meaningless
+    # self-comparison that can never reach the >=10% bar). The Makefile never
+    # combines them; warn loudly so an ad-hoc invocation does not trust it.
+    if args.baseline_out and args.check:
+        print("PERF WARNING: --baseline-out and --check together compare a run "
+              "against the baseline it just wrote (improvement ~0%) — the gate "
+              "cannot pass. Run --check against a PREVIOUSLY frozen baseline.")
     points = run_w2()                       # human table prints by default (D-06)
     if args.json:
         print(json.dumps(points, indent=2))
+    if args.baseline_out:
+        _write_w2_baseline(points, args.baseline_out)
+    if args.check:
+        sys.exit(_check_w2(points, "perf/results/W2-BASELINE.json"))
 
 
 if __name__ == "__main__":

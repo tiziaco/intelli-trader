@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-e2e test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-profile perf-view
+.PHONY: init-env clean test test-unit test-integration test-e2e test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -100,16 +100,24 @@ perf-w1:
 	@echo "⏱️  W1 benchmark + regression guard (vs frozen baseline)..."
 	poetry run python -m perf.runners.run_w1_benchmark --check
 
-# W2 synthetic scaling sweep {1,10,50} symbols (human table; --json for machine output).
+# W2 synthetic scaling sweep {1,10,50} symbols + gate (b) guard. The --check REQUIRES
+# a >=10% wall-clock win at 50 symbols vs perf/results/W2-BASELINE.json (inverted sense
+# vs W1's slowdown guard — this gate must SEE the win). --json for machine output.
 perf-w2:
-	@echo "📈 W2 scaling sweep {1,10,50} symbols..."
-	poetry run python -m perf.runners.run_w2_sweep
+	@echo "📈 W2 scaling sweep {1,10,50} symbols + gate (b) win guard..."
+	poetry run python -m perf.runners.run_w2_sweep --check
 
 # RE-FREEZE the W1 baseline: clean run, write committed perf/results/W1-BASELINE.json
 # (TOOL-04, consumed in plan 02). Run BEFORE any optimization.
 perf-baseline:
 	@echo "🧊 Freezing W1 baseline → perf/results/W1-BASELINE.json..."
 	poetry run python -m perf.runners.run_w1_benchmark --baseline-out perf/results/W1-BASELINE.json
+
+# FREEZE the W2 baseline: clean sweep, write committed perf/results/W2-BASELINE.json
+# (D-05, seeds Phase 5). The AFTER-run reference the --check guard then diffs against.
+perf-w2-baseline:
+	@echo "🧊 Freezing W2 baseline → perf/results/W2-BASELINE.json..."
+	poetry run python -m perf.runners.run_w2_sweep --baseline-out perf/results/W2-BASELINE.json
 
 # Scalene CPU profile (manual review). NEVER wraps the gated run.
 # Two steps: run (writes JSON) then `scalene view` (native viewer) — it serves the
