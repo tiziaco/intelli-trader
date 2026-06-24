@@ -25,15 +25,17 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 
 ## Current Position
 
-Phase: 06
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-24
+Phase: — (v1.5 COMPLETE)
+Plan: —
+Status: Milestone v1.5 complete — ready for milestone close
+Last activity: 2026-06-25 -- Phase 05 executed, verified (12/12), and completed
 
-> NOTE: `phase.complete` advanced Current Position to the `999.2` backlog placeholder because no
-> `05-*` phase dir exists yet (scanner artifact — see memory `phase-complete-jumps-to-backlog`).
-> Corrected manually: the next v1.5 phase is **Phase 5 (Incremental Indicators)**, not 999.2.
-> 999.2/999.3 remain FUTURE-milestone backlog seeds. v1.5 = Phases 1-4 + 6 done; Phase 5 remaining.
+> NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
+> `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
+> 6-before-5 reorder), so it is NOT "next". With Phase 5 now complete, ALL SIX v1.5 phases (1-6) are
+> Complete — **v1.5 (Backtest Performance Optimization) is finished**. The next step is milestone close
+> (`/gsd-complete-milestone`), not a new phase. 999.2/999.3 remain FUTURE-milestone backlog seeds.
+> Carried todo: the Gate (b) W1/W2 perf re-freeze on a verified-cool machine (thermal defer, tracked below).
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
