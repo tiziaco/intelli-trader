@@ -328,17 +328,22 @@ def _check_w2(points, baseline_path, min_improvement_pct=10.0) -> int:
 
 **Note:** The two load-bearing technical claims (view-construction API, non-writeable-breaks-nothing, exception types, byte-identity) are all `[VERIFIED: empirical test]`, not assumed.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **D-08 test home vs existing contract tests.**
+> Both questions are advisory placement/stylistic choices (not technical unknowns) and are
+> resolved in the plan action sections.
+
+1. **D-08 test home vs existing contract tests.** **RESOLVED:** co-locate in
+   `tests/unit/price/test_bar_feed.py` per 06-01 Task 0 action; D-08's literal
+   `tests/unit/price_handler/feed/` path is treated as directional.
    - What we know: D-08 says home is `tests/unit/price_handler/feed/` (which does **not exist** yet). The existing 7-rule bar-timing contract tests live in `tests/unit/price/test_bar_feed.py` (383 lines, uses `assert_frame_equal` at `:167`/`:183` — the byte-identity backstop for assertion (c)).
    - What's unclear: whether to create the new `tests/unit/price_handler/feed/` dir per D-08's literal text, or co-locate the new drift test with the existing contract tests in `tests/unit/price/test_bar_feed.py`.
    - Recommendation: Co-locate the new drift test in `tests/unit/price/test_bar_feed.py` (or a sibling `test_bar_feed_window_view.py` in the SAME dir) so the existing contract suite (assertion (c)) and the new (a)/(b) assertions live together and run as one unit. Treat D-08's path as directional, not literal. Confirm with the planner; this is a placement decision, not a correctness one.
 
-2. **Whether to add the explicit per-view re-mark.**
-   - What we know: a view off a non-writeable master already has `writeable == False` (Finding B) — the explicit re-mark in Pattern 2 is redundant for safety.
-   - What's unclear: whether the redundant re-mark is worth the extra line for documentation/defense-in-depth.
-   - Recommendation: Include it (cheap, documents intent, survives a future refactor that might forget to mark a master). Low stakes either way.
+2. **Whether to add the explicit per-view re-mark.** **RESOLVED:** include the
+   belt-and-suspenders re-mark per 06-01 Task 1 action (cheap, documents intent,
+   survives a future refactor that forgets to mark a master). Redundant for safety
+   but low-stakes positive.
 
 ## Environment Availability
 
