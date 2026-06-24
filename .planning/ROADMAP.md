@@ -213,7 +213,9 @@ contract-gated item.
      suite is green; `mypy --strict` clean; determinism double-run byte-identical.
   4. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
      baseline, re-frozen as the new locked reference (most visible in the W2 symbol sweep).
-**Plans**: TBD
+**Plans**: 2 plans
+  - [ ] 06-01-PLAN.md — view-returning window() + memoized _offset_alias + read-only master frames at build sites (D-01/D-06/D-07/D-09) + D-08 drift/equivalence test + Gate (a) (PERF-06)
+  - [ ] 06-02-PLAN.md — Gate (b): perf-w2 --check/--baseline-out (>=10% at 50 symbols, D-05) + commit W2-BASELINE.json + re-freeze W1-BASELINE.json (D-04) (PERF-06)
 
 <details>
 <summary>✅ v1.4 — Margin, Leverage, Shorts & Trailing Stops (Phases 1-6 + 5.1) — SHIPPED 2026-06-22</summary>
@@ -316,7 +318,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 3. Running PnL Accumulator | 2/2 | Complete   | 2026-06-24 |
 | 4. Hot-Path Discipline | 3/3 | Complete   | 2026-06-24 |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
-| 6. Bar-Feed Window Copies (OPTIONAL) | 0/TBD | Not started | - |
+| 6. Bar-Feed Window Copies (OPTIONAL) | 0/2 | Planned | - |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
 
