@@ -4,8 +4,8 @@ milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
 stopped_at: Phase 06 context PIVOTED to incremental-cursor window() (D-10–D-16); ready to replan cursor fix
-last_updated: "2026-06-24T14:48:31.315Z"
-last_activity: 2026-06-24 -- Phase 06 planning complete
+last_updated: "2026-06-24T14:54:31.136Z"
+last_activity: 2026-06-24 -- Phase 06 execution started
 progress:
   total_phases: 8
   completed_phases: 4
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 
 ## Current Position
 
-Phase: 06 (bar-feed-window-copies-optional-slip-able) — PAUSED (re-plan pending)
-Plan: 06-01 complete (safety win); 06-02 Task 1 complete (gate harness); 06-02 Task 2/3 deferred
-Status: Ready to execute
-Last activity: 2026-06-24 -- Phase 06 planning complete
+Phase: 06 (bar-feed-window-copies-optional-slip-able) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 06
+Last activity: 2026-06-24 -- Phase 06 execution started
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 

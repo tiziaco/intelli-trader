@@ -321,7 +321,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 3. Running PnL Accumulator | 2/2 | Complete   | 2026-06-24 |
 | 4. Hot-Path Discipline | 3/3 | Complete   | 2026-06-24 |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
-| 6. Bar-Feed Window Copies (OPTIONAL) | 1/4 active (post-pivot) | In Progress|  |
+| 6. Bar-Feed Window Copies (OPTIONAL) | 2/5 | In Progress|  |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
 
