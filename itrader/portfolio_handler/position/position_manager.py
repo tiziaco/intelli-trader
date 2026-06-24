@@ -195,15 +195,6 @@ class PositionManager:
         # Validate position consistency after update
         self._validate_position_consistency(position, transaction)
         
-        self.logger.debug("Position updated",
-            position_id=position.id,
-            ticker=transaction.ticker,
-            old_quantity=str(original_quantity),
-            new_quantity=str(position.net_quantity),
-            old_avg_price=str(original_avg_price),
-            new_avg_price=str(position.avg_price)
-        )
-        
         return position
     
     def _should_close_position(self, position: Position) -> bool:
@@ -270,11 +261,6 @@ class PositionManager:
                 position.update_current_price_time(current_price, timestamp)
                 updated_count += 1
 
-        self.logger.debug("Position market values updated",
-            updated_positions=updated_count,
-            total_positions=len(positions)
-        )
-    
     def get_position(self, ticker: str) -> Optional[Position]:
         """Get active position for a ticker."""
         return self._storage.get_position(ticker)

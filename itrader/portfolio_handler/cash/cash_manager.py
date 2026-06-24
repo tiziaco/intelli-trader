@@ -363,14 +363,6 @@ class CashManager:
             fee=fee,
         )
 
-        self.logger.debug("Fill cash flow applied",
-            amount=str(amount),
-            fee=str(fee),
-            old_balance=str(old_balance),
-            new_balance=str(new_balance),
-            reference_id=reference_id
-        )
-
     def accrue_borrow_interest(self, amount: Decimal, reference_id: str,
                                description: str, timestamp: datetime) -> None:
         """Debit a short's per-bar borrow-interest carry (CARRY-01/D-03/D-08).
@@ -536,12 +528,6 @@ class CashManager:
             timestamp=datetime.now(UTC)  # admission audit — wall clock, not oracle-serialized
         )
 
-        self.logger.debug("Cash reserved",
-            amount=str(amount_decimal),
-            reserved_total=str(self._storage.get_reserved_cash()),
-            reference_id=reference_id
-        )
-
     def release_reservation(self, reference_id: str) -> None:
         """Release the cash reservation keyed by a reference id (Plan 05-03).
 
@@ -568,12 +554,6 @@ class CashManager:
             timestamp=datetime.now(UTC)  # admission audit — wall clock, not oracle-serialized
         )
 
-        self.logger.debug("Cash reservation released",
-            amount=str(released),
-            reserved_total=str(self._storage.get_reserved_cash()),
-            reference_id=reference_id
-        )
-    
     def lock_margin(self, position_id: str, amount: Decimal) -> None:
         """Lock (insert or replace) margin for a position, keyed by id (D-10).
 
@@ -595,12 +575,6 @@ class CashManager:
         """
         self._storage.add_locked_margin(position_id, amount)
 
-        self.logger.debug("Margin locked",
-            amount=str(amount),
-            locked_total=str(self._storage.get_locked_margin()),
-            position_id=position_id
-        )
-
     def release_margin(self, position_id: str) -> Decimal:
         """Release the margin locked for a position id, returning the amount.
 
@@ -621,11 +595,6 @@ class CashManager:
         if released is None:
             return Decimal("0")
 
-        self.logger.debug("Margin released",
-            amount=str(released),
-            locked_total=str(self._storage.get_locked_margin()),
-            position_id=position_id
-        )
         return released
 
     def get_balance_info(self) -> Dict[str, float]:

@@ -392,9 +392,6 @@ class AdmissionManager:
 					reserved_primary.id)
 			results.extend(assembled)
 
-			self.logger.debug('Processed signal for %s %s: %d operations completed',
-							signal_event.ticker, signal_event.action, len(results))
-
 		except Exception as e:
 			error_msg = f"Error processing signal: {e}"
 			self.logger.error(error_msg, exc_info=True)
