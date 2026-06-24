@@ -449,7 +449,19 @@ class PositionManager:
 
         for ticker, position in list(self._storage.get_positions().items()):
             if ticker in current_prices:
+                # WR-01 (PERF-02 equivalence break): close_all_positions is an
+                # emergency bypass that does NOT flow through the Portfolio settle
+                # funnel, so the running accumulator would NOT be fed and the
+                # closed position's realised PnL would be silently dropped from
+                # get_total_realized_pnl (the prior re-sum still counted it via the
+                # closed list). Feed the increment HERE — capturing realised BEFORE
+                # the close so the delta is exact. This is the ONLY funnel for this
+                # path: _close_position is NOT touched (the normal path already
+                # feeds the increment from the Portfolio settle arms, so moving it
+                # into _close_position would double-count).
+                prior_realised = position.realised_pnl
                 self._close_position(position, current_prices[ticker], timestamp)
+                self.apply_realised_increment(position.realised_pnl - prior_realised)
                 closed_positions.append(position)
             else:
                 self.logger.warning("Cannot close position: no price data",
