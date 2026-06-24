@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_plan
-stopped_at: Phase 04 complete (3/3), verified — ready to discuss Phase 6 (deliberate reorder: 6 before 5; Phase 5 kept LAST per its FRAGILE/oracle-gated designation; Phase 6 is independent of 2-5)
-last_updated: 2026-06-24T11:29:32.075Z
-last_activity: 2026-06-24 -- Phase 04 complete & verified (PERF-03 + PERF-04, gate (b) PASS)
+status: planning
+stopped_at: Phase 6 context gathered
+last_updated: "2026-06-24T12:24:04.979Z"
+last_activity: 2026-06-24
 progress:
   total_phases: 8
   completed_phases: 4
@@ -338,9 +338,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T09:42:45.458Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-hot-path-discipline/04-CONTEXT.md
+Last session: 2026-06-24T12:24:04.970Z
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-bar-feed-window-copies-optional-slip-able/06-CONTEXT.md
 
 ## Operator Next Steps
 
