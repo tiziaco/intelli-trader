@@ -80,9 +80,16 @@ def _reset_module_disable_flag(monkeypatch, value: bool) -> None:
 
     The flag is resolved once at import; tests that exercise D-08 patch it
     directly so they do not depend on import-time env state.
-    """
-    import itrader.logger as logmod
 
+    NOTE: ``itrader/__init__.py`` binds ``logger = init_logger(...)`` which shadows
+    the ``itrader.logger`` submodule name with the logger *instance*. So reach the
+    real module object through ``sys.modules`` — ``import itrader.logger`` here would
+    resolve to the instance, and patching its attribute would not touch the module
+    global the wrapper methods read.
+    """
+    import sys
+
+    logmod = sys.modules["itrader.logger"]
     monkeypatch.setattr(logmod, "_DISABLE_LOGS", value, raising=False)
 
 
@@ -217,9 +224,9 @@ def _capture_via_direct_structlog(level: str, *args, **kw) -> str:
     structlog.configure(
         processors=[
             structlog.processors.add_log_level,
-            structlog.processors.PositionalArgumentsFormatter(),
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            lambda _l, _m, ed: captured.append(dict(ed)) or ed,
             structlog.processors.KeyValueRenderer(key_order=["event"]),
-            lambda _l, _m, ed: captured.append(ed) or ed,
         ],
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=False,
