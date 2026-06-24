@@ -285,9 +285,30 @@ class Strategy(ABC):
 		The base re-populates the SAME handle each tick in ``evaluate``; the
 		auto-warmup post-pass derives ``warmup``/``max_window`` from
 		``handle.min_period()`` (D-08).
+
+		P5-D20 causal guard: a non-causal adapter (``adapter.causal is False``) is
+		REJECTED here at the decision-path / registration boundary — raised
+		EXPLICITLY (not an ``assert``, which is stripped under ``-O``/PYTHONOPTIMIZE)
+		so a future statistical/ML adapter that peeks the future can never silently
+		enter the look-ahead-safe decision path. All v1 adapters declare
+		``causal = True``.
+
+		P5-D21: the author surface is UNCHANGED — only the per-symbol fan-out spec is
+		recorded alongside (``self._handle_specs``) so the framework can auto-fan-out
+		one stateful handle-set per symbol (P5-D10), lazily on the ticker's first bar.
 		"""
-		handle = IndicatorHandle(adapter, input_col, tuple(params))
+		# P5-D20: reject a non-causal adapter at the registration boundary.
+		if not getattr(adapter, "causal", False):
+			raise RuntimeError(
+				f"non-causal adapter {type(adapter).__name__!r} rejected at "
+				f"registration (P5-D20 causal guard): the decision path admits "
+				f"only causal indicators (all v1 adapters declare causal=True)."
+			)
+		params_tuple = tuple(params)
+		handle = IndicatorHandle(adapter, input_col, params_tuple)
 		self._handles.append(handle)
+		# P5-D10: record the recipe so per-symbol handle-sets can be minted lazily.
+		self._handle_specs.append((adapter, input_col, params_tuple))
 		return handle
 
 	def _run_init(self) -> None:
@@ -318,12 +339,76 @@ class Strategy(ABC):
 		Called from both ``__init__`` and ``reconfigure``.
 		"""
 		self._handles: list[IndicatorHandle] = []
+		# P5-D10: the per-symbol fan-out spec (the declared recipes) + the lazy
+		# per-ticker handle-set map. Reset BEFORE init() so a re-run is idempotent
+		# (D-10). The author declares once via self.indicator(...); the framework
+		# auto-fans-out one stateful handle-set per symbol on that symbol's FIRST
+		# bar (P5-D10a), with independent per-symbol readiness (P5-D10b).
+		self._handle_specs: list[tuple[IndicatorAdapter, str, tuple[int, ...]]] = []
+		self._handle_sets: dict[str, list[IndicatorHandle]] = {}
 		self.init()
 		derived = max((h.min_period() for h in self._handles), default=0)
 		self.warmup = derived
 		# Fetch width: never shrink below a hand-set class value (preserve the
 		# fixtures' wide window; the reference's deleted hand-set is 0 -> derived).
 		self.max_window = max(derived, type(self).max_window)
+
+	def _handle_set_for(self, ticker: str) -> list[IndicatorHandle]:
+		"""Return ticker's stateful handle-set, minting it lazily on first bar (P5-D10a).
+
+		One independent stateful set per symbol (P5-D10): each declared recipe
+		(``self._handle_specs``) becomes a fresh ``IndicatorHandle`` for THIS ticker,
+		so per-symbol state + readiness never cross-contaminate (P5-D10b).
+		"""
+		handles = self._handle_sets.get(ticker)
+		if handles is None:
+			handles = [
+				IndicatorHandle(adapter, input_col, params)
+				for adapter, input_col, params in self._handle_specs
+			]
+			self._handle_sets[ticker] = handles
+		return handles
+
+	def update(self, ticker: str, bar: Any) -> None:
+		"""Push ``ticker``'s latest completed bar into its handle-set (P5-D07/D10/D14).
+
+		Extracts each handle's declared ``input_col`` from the bar and pushes it
+		through THAT ticker's stateful handle-set. Called on EVERY consumed bar
+		(update during warmup, gate emission only — RESEARCH Pattern 2): skipping
+		``update`` during warmup would corrupt the O(1) recurrence state. A
+		missing/gap bar is handled by the CALLER (it never calls ``update`` when the
+		bar is absent — P5-D10c, state frozen, count increments on REAL bars only —
+		so this method never fabricates a bar).
+		"""
+		handles = self._handle_set_for(ticker)
+		for handle, (_adapter, input_col, _params) in zip(handles, self._handle_specs):
+			handle.update(float(getattr(bar, input_col)))
+
+	def is_ready(self, ticker: str) -> bool:
+		"""True iff ALL of ``ticker``'s handles are ready (P5-D06/D10b).
+
+		Per-indicator readiness aggregated per symbol (``all(h.is_ready)``); a
+		symbol with no declared handles is ALWAYS ready (no gating). Readiness is
+		independent across symbols (P5-D10b) — one ticker being ready never gates
+		another. A ticker that has never received a bar is NOT ready.
+		"""
+		handles = self._handle_sets.get(ticker)
+		if handles is None:
+			# No bar seen yet for this ticker -> not ready (unless handle-free).
+			return not self._handle_specs
+		return all(h.is_ready for h in handles)
+
+	def reset(self) -> None:
+		"""Clear every per-symbol handle-set AND the fan-out map (P5-D19).
+
+		Each stateful handle's scalar/ring/count/output-buffer is cleared and the
+		per-ticker map is emptied, returning the strategy's indicator state to a
+		just-constructed shape (so a re-feed reproduces a fresh run, P5-D19).
+		"""
+		for handles in self._handle_sets.values():
+			for handle in handles:
+				handle.reset()
+		self._handle_sets.clear()
 
 	def evaluate(self, ticker: str, window: pd.DataFrame) -> SignalIntent | None:
 		"""Orchestration seam: stash the window, repopulate handles, dispatch (D-06).
