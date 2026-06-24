@@ -221,6 +221,13 @@ def _capture_via_direct_structlog(level: str, *args, **kw) -> str:
     """
     captured: list[str] = []
 
+    # WR-05: snapshot the prior structlog config and restore it in a finally so
+    # this throwaway PrintLoggerFactory chain does not leak into later tests
+    # (in this file or another) that depend on the init_logger/setup_logging
+    # config WITHOUT re-configuring it themselves. Under filterwarnings=["error"]
+    # and pytest ordering, an unrestored global config is exactly the kind of
+    # hidden coupling that produces later flakiness.
+    saved_config = structlog.get_config()
     structlog.configure(
         processors=[
             structlog.processors.add_log_level,
@@ -231,9 +238,12 @@ def _capture_via_direct_structlog(level: str, *args, **kw) -> str:
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=False,
     )
-    log = structlog.get_logger()
-    getattr(log, level)(*args, **kw)
-    return captured[0]
+    try:
+        log = structlog.get_logger()
+        getattr(log, level)(*args, **kw)
+        return captured[0]
+    finally:
+        structlog.configure(**saved_config)
 
 
 def test_admission_line_warning_renders_same_content_as_error():
