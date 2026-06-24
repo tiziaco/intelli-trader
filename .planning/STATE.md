@@ -4,8 +4,8 @@ milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
 stopped_at: Phase 6 context gathered
-last_updated: "2026-06-24T12:54:33.014Z"
-last_activity: 2026-06-24 -- Phase 06 planning complete
+last_updated: "2026-06-24T12:56:58.826Z"
+last_activity: 2026-06-24 -- Phase 06 execution started
 progress:
   total_phases: 8
   completed_phases: 4
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 6 — Bar-Feed Window Copies (PERF-06, OPTIONAL/slip-able) — taken before Phase 5 by owner decision (2026-06-24); Phase 5 (Incremental Indicators, FRAGILE) deferred to LAST.
+**Current focus:** Phase 06 — bar-feed-window-copies-optional-slip-able
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-24 -- Phase 06 planning complete
+Phase: 06 (bar-feed-window-copies-optional-slip-able) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 06
+Last activity: 2026-06-24 -- Phase 06 execution started
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
