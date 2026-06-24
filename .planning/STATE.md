@@ -4,13 +4,13 @@ milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
 stopped_at: "Phase 5 context gathered (reframed: stateful indicators + shared bar cache, oracle re-baselined)"
-last_updated: "2026-06-24T20:49:33.681Z"
-last_activity: 2026-06-24 -- Phase 05 planning complete
+last_updated: "2026-06-24T21:08:11.646Z"
+last_activity: 2026-06-24
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 17
-  completed_plans: 14
+  completed_plans: 15
   percent: 63
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** Phase 5 — **Stateful Indicators + Shared Bar Cache** (FRAGILE, oracle RE-BASELINED, LAST) — DISCUSSED 2026-06-24, reframed by spec (`05-CONTEXT.md` P5-D01..D22); ready to plan (A→B→C)
+**Current focus:** Phase 05 — incremental-indicators-fragile-oracle-gated-last
 
 ## Current Position
 
-Phase: 5 (Incremental Indicators — PERF-05; deferred to run AFTER Phase 6 per the 6-before-5 reorder)
-Plan: Not started (no Phase 5 dir yet — needs discuss/plan)
-Status: Ready to execute
-Last activity: 2026-06-24 -- Phase 05 planning complete
+Phase: 05 (incremental-indicators-fragile-oracle-gated-last) — EXECUTING
+Plan: 2 of 3
+Status: Executing Phase 05 (05-01 Plan A complete, byte-exact; 05-02 next)
+Last activity: 2026-06-24 -- 05-01 (Plan A shared recent-bars feed) complete
 
 > NOTE: `phase.complete` advanced Current Position to the `999.2` backlog placeholder because no
 > `05-*` phase dir exists yet (scanner artifact — see memory `phase-complete-jumps-to-backlog`).
@@ -216,6 +216,7 @@ scope decisions:
 - [Phase 03]: 03-01 (PERF-02) — running Decimal realised-PnL accumulator on PositionManager (_realised_pnl_accumulator, seed Decimal('0.00'), no mid-sum quantize) replaces the per-bar dual open+closed re-sum in get_total_realized_pnl (now a bare `return self._realised_pnl_accumulator`, D-01/D-04 dead-loop collapse). Fed via apply_realised_increment from BOTH Portfolio settle arms — the SPOT arm (SMA_MACD oracle path) had NO explicit realised_increment today and was wired with pre/post capture (audit finding, 03-INVARIANT-AUDIT.md §5); MARGIN arm reuses the existing increment on the CLOSE branch only (D-02). Three-layer correctness lock: written single-funnel invariant audit (03-INVARIANT-AUDIT.md) + byte-exact oracle/determinism + dedicated equivalence regression test (accumulator == fresh full re-sum, D-03). Gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files), full suite 1241 passed, determinism double-run byte-identical. Gate (b) W1 wall-clock re-freeze = Plan 02.
 - [Phase ?]: [Phase 06]: 06-03 (PERF-06 / D-13 denominator cleanup, PREP before the cursor) — removed the per-bar TIME EVENT debug block from EventHandler._dispatch (eager f-string every bar, discarded at INFO, ~22% W2 CPU) and de-timed run_w2_sweep._run_point into two passes (clean perf_counter wall-clock, NO tracemalloc in the timed region + separate fresh-wired tracemalloc peak-mem, same seed=42); _wire_system helper factored, return dict shape + 06-02 --check/--baseline-out flags unchanged. Behavior-neutral: gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files); re-baselines NOTHING numeric (cleaned baselines re-freeze 06-05). Commits 15834d7 + 43e5e72.
 - [Phase 06]: 06-04 (PERF-06 / D-10 monotonic cursor) — BacktestBarFeed.window() resolves the cutoff via a per-(ticker,alias) forward int64 cursor over frame.index.asi8 (`iv_i8[pos] <= cutoff_i8`, `cutoff_i8 = pd.Timestamp(cutoff).value`) replacing the per-tick searchsorted (13.2% W2); byte-identical to searchsorted(side="right"). Cold key OR `cutoff_i8 < last_cut` → silent safe searchsorted rebuild (never leak a future bar, D-10 reset-safety). The `iloc[start:pos]` read-only view + D-06 empty short-circuit are KEPT cursor-only (D-11 cheaper-slice empirically infeasible — every candidate slower than iloc, D-07 forbids reconstruction; D-12 built on 06-01 9168cae, NOT reverted). D-16: cursor==searchsorted + no-future-bar proven in the EXTENDED D-08 test suite only, NO hot-loop runtime assert. Deviation (Rule 3): `cutoff.value` → `pd.Timestamp(cutoff).value` for mypy --strict (asof typed `datetime`, no `.value`). Gate (a) byte-exact 134/46189.87730727451, determinism double-run identical (SHA-256), mypy --strict clean (187 files), full suite 1262 passed. Commits d034ea3 + 00c5480. Gate (b) W2/W1 re-freeze deferred to 06-05 (cool machine, D-14).
+- [Phase 05]: 05-01 (PERF-05, Plan A — shared recent-bars feed data layer, BYTE-EXACT plumbing) — `BarFeed` now owns the shared recent-bars API: (1) new pure `itrader/price_handler/feed/cache_registration.py::derive` — derive-once-at-wiring mirror of `universe/instruments.py::derive_instruments` (no class/state/queue/feed/store import, sorted/deduped/laddered), keys cache capacity off **RAW-BAR consumers NOT indicator min_period** (P5-D07/D22: indicators self-buffer under Model B); empty consumer set → newest-bar-only depth 1, deep multi-bar cache DEFERRED to the first raw-bar consumer (`.planning/todos/deep-shared-bar-history.md`). (2) G5 newest-bar unify (P5-D16a): the cache newest-row write rides the **EXISTING** `current_bars` per-symbol walk so `newest_bar(ticker)` IS `BarEvent.bars[ticker]` (one source of truth) — NO second loop (for-ticker count stays 2). (3) G1 (P5-D16b): module-level `assert_update_trigger` interface-only `base_timeframe <= min(timeframe)` causality guard; golden 1d==base collapses to "every tick"; multi-timeframe consolidator deferred. **A3 byte-exact held**: `window()` D-08/D-10 monotonic int64 cursor + 7-rule bar-timing contract byte-for-byte unchanged (git diff shows no window-body edits), SMA_MACD oracle byte-exact 134/46189.87730727451, mypy --strict clean (188 files), 61 price+integration tests green + 6 new Plan-A tests. Deviation (Rule 3): narrow `.gitignore` negations un-ignore the two `*cache*`-named tracked files (the broad `**cache**` rule matched them by filename; plan mandates the exact filenames). Plan B (stateful indicators, P5-D07 self-buffer, does NOT read this cache) unblocked structurally — still gated only on the G2 seeding decision P5-D04. Commits 5be5047 + 86ff5b2 + 484724f.
 
 ### Pending Todos
 
@@ -310,6 +311,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 03 P01 | 5 | 3 tasks | 4 files |
 | Phase 06 P03 | 2 | 2 tasks | 2 files |
 | Phase 06 P04 | 5 | 2 tasks | 2 files |
+| v1.5 Phase 05 P01 | ~10 | 3 tasks | 5 files |
 
 ## Bookkeeping
 
@@ -351,9 +353,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T20:17:41.231Z
-Stopped at: Phase 5 context gathered (reframed: stateful indicators + shared bar cache, oracle re-baselined)
-Resume file: .planning/phases/05-incremental-indicators-fragile-oracle-gated-last/05-CONTEXT.md
+Last session: 2026-06-24T21:08:11.638Z
+Stopped at: Completed 05-01-PLAN.md (Plan A shared recent-bars feed data layer — byte-exact plumbing, oracle held)
+Resume file: None
 Carried todo: re-freeze W1-BASELINE.json on a verified-cool isolated run (the 06-05 W1 re-freeze was thermally inflated to 259.1s and deferred; baseline kept at 238.5s). See 06-05-SUMMARY.md.
 
 ## Operator Next Steps

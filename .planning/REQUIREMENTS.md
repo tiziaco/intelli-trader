@@ -65,6 +65,8 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
   class, not re-resolved on every signal snapshot. *(Hotspot #6, ~2% W1 / ~14% W2.)*
 - [ ] **PERF-05**: SMA & MACD indicators compute incrementally (rolling/memoized) instead of a
   full-window `ta` rebuild every bar, reproducing `[BYTE-EXACT]` output. **Oracle-gated, done LAST.**
+  *(05-01 Plan A shipped the shared recent-bars feed DATA LAYER, byte-exact; the incremental SMA/MACD
+  compute itself lands with Plans B/C — keep open until then.)*
   *(Hotspots #2+#7, ~24% CPU — highest-care item.)*
 - [x] **PERF-06** *(optional)*: Per-tick bar-feed window `iloc` frame copies are reduced (reusable
   view / cached slice bounds), preserving the look-ahead bar-timing contract (the 7 rules in
@@ -114,7 +116,7 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | PERF-02 | Phase 3 — Running PnL Accumulator | Complete |
 | PERF-03 | Phase 4 — Hot-Path Discipline | Complete |
 | PERF-04 | Phase 4 — Hot-Path Discipline | Complete |
-| PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | Pending |
+| PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | In Progress (05-01 Plan A data layer done; B/C pending) |
 | PERF-06 | Phase 6 — Bar-Feed Window Copies (OPTIONAL) | Complete |
 
 **Coverage:**

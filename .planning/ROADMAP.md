@@ -209,7 +209,7 @@ phase). Plan A is plannable byte-exact in parallel; only Plan B is blocked by th
   4. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
      baseline, re-frozen as the new locked reference (attribute via same-machine A/B; re-freeze cool).
 **Plans**: 3 plans (A→B→C per spec §5 / CONTEXT P5-D01..D22)
-  - [ ] 05-01-PLAN.md — Plan A: shared recent-bars feed (newest-bar + registration/capacity interface, G5 unify, G1 trigger seam interface-only; deep cache deferred) — byte-exact
+  - [x] 05-01-PLAN.md — Plan A: shared recent-bars feed (newest-bar + registration/capacity interface, G5 unify, G1 trigger seam interface-only; deep cache deferred) — byte-exact
   - [ ] 05-02-PLAN.md — Plan B: all four indicators -> O(1) stateful recurrences (ta dropped on runtime path), per-symbol fan-out + readiness + reset() + causal guard, ta-convergence test, SMA_MACD oracle RE-BASELINE (cross-val gated)
   - [ ] 05-03-PLAN.md — Plan C: drop the per-tick self.bars/feed.window slice (handler loop restructure), pair β fit-once-frozen / z bounded-window migration, count/date fixture migration
 
@@ -336,7 +336,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 2. Order-Storage Indexing | 2/2 | Complete   | 2026-06-23 |
 | 3. Running PnL Accumulator | 2/2 | Complete   | 2026-06-24 |
 | 4. Hot-Path Discipline | 3/3 | Complete   | 2026-06-24 |
-| 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
+| 5. Incremental Indicators (FRAGILE) | 1/3 | In Progress|  |
 | 6. Bar-Feed Window Copies (OPTIONAL) | 5/5 | Complete   | 2026-06-24 |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
