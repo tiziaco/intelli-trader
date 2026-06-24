@@ -484,6 +484,19 @@ def test_cursor_universe_reentry(duo_feed):
     assert w2.index[-1] == ts('2020-01-07')
 
 
+def test_cursor_repeated_identical_asof_forward_branch(daily_feed):
+    # IN-03: two CONSECUTIVE calls with an IDENTICAL asof exercise the
+    # `cutoff_i8 == last_cut` case — it takes the forward branch (NOT the
+    # `cutoff_i8 < last_cut` rebuild) with pos == last_pos and a non-advancing
+    # while loop. Regression-lock that the second window is byte-identical to the
+    # first (the forward branch must not advance or skew on an unchanged cutoff).
+    tf = timedelta(days=1)
+    asof = ts('2020-01-05')
+    first = daily_feed.window('BTCUSD', tf, 3, asof=asof)
+    second = daily_feed.window('BTCUSD', tf, 3, asof=asof)  # same cutoff
+    pd.testing.assert_frame_equal(first, second, check_freq=False)
+
+
 # -- 8. BarEvent factory (relocated from DynamicUniverse — Plan 07-02, D-20) ------
 
 def test_generate_bar_event_unbound_returns_the_bar_event(daily_feed):
