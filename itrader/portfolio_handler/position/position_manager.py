@@ -323,12 +323,53 @@ class PositionManager:
         self._realised_pnl_accumulator += increment
 
     def get_total_realized_pnl(self) -> Decimal:
-        """Calculate total realized P&L from open and closed positions."""
+        """Return the running realised-PnL accumulator (O(1) cached field).
+
+        IN-03: this returns the cached ``_realised_pnl_accumulator`` field and does
+        NOT inspect open/closed positions — do not "fix" a suspected desync by
+        re-adding a per-position loop here (that re-pays the O(positions) cost
+        PERF-02 removed). To verify the accumulator against the prior re-sum, call
+        ``assert_accumulator_consistent`` (a gated test seam — see WR-03), never
+        change this getter back to a loop.
+        """
         # PERF-02 (D-01): return the running accumulator (fed via
         # apply_realised_increment from the Portfolio close funnel) instead of the
         # per-bar dual open+closed re-sum. The dead dual loop is collapsed here
         # (D-04 intrinsic cleanup). Empty-portfolio value stays Decimal('0.00').
         return self._realised_pnl_accumulator
+
+    def assert_accumulator_consistent(self) -> None:
+        """WR-03 enforcement seam: assert the accumulator equals a fresh re-sum.
+
+        The running accumulator's correctness is coupled to EVERY position-close
+        path feeding ``apply_realised_increment`` exactly once with the right
+        increment (the Portfolio settle arms + ``close_all_positions``). The
+        prior self-correcting re-sum could never desync; the accumulator can, if
+        a caller drives the manager outside the funnel (the docstrings assert
+        this contract in prose but nothing on the hot path enforces it).
+
+        This recomputes the dual open+closed re-sum (the exact prior loop, seeded
+        ``Decimal('0.00')``) and raises ``PositionCalculationError`` on any
+        divergence so a desync fails LOUD in tests rather than producing a quietly
+        wrong total. It is a GATED test/debug seam — deliberately NOT called on the
+        per-bar hot path (D-03: no runtime re-sum guard, that would re-pay the
+        O(positions) cost PERF-02 removed). Equality is value-``==`` (D-05):
+        byte-identical seed + no mid-sum quantize.
+        """
+        resum = Decimal('0.00')
+        for position in self._storage.get_positions().values():
+            resum += position.realised_pnl
+        for position in self._storage.get_closed_positions():
+            resum += position.realised_pnl
+        if self._realised_pnl_accumulator != resum:
+            raise PositionCalculationError(
+                "Realised-PnL accumulator desync: a close path bypassed the "
+                "increment funnel (WR-03).",
+                {
+                    "accumulator": str(self._realised_pnl_accumulator),
+                    "resum": str(resum),
+                },
+            )
     
     def calculate_position_metrics(self, position_id: PositionId) -> Optional[PositionMetrics]:
         """Calculate comprehensive metrics for a position."""
