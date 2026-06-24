@@ -261,3 +261,40 @@ def test_admission_line_warning_renders_same_content_as_error():
     assert "Quantity below minimum 0.001" in rendered_warning["event"]
     assert rendered_error["level"] == "error"
     assert rendered_warning["level"] == "warning"
+
+
+def test_admission_demoted_warning_gates_out_at_error_emits_at_info(
+    monkeypatch, capture_records
+):
+    """D-01: the demoted admission line (warning) gates OUT at the ERROR benchmark level.
+
+    Reproduces the EXACT call shape the admission manager now uses
+    (``self.logger.warning('%s - %s', error_msg, [m.message for m in errors])``)
+    through the real ``ITraderStructLogger`` wrapper:
+
+    * At ``ITRADER_LOG_LEVEL=ERROR`` (the benchmark level) the warning gates out ->
+      zero records: this gating is exactly what realizes the W1 win.
+    * At ``INFO`` (the real-run default) it still emits -> operators keep
+      out-of-cash visibility.
+    """
+    error_msg = "Signal validation failed: Quantity below minimum 0.001"
+    errors = ["Quantity below minimum 0.001"]
+
+    # ERROR benchmark level: warning gates out.
+    monkeypatch.delenv("ITRADER_JSON_LOGS", raising=False)
+    monkeypatch.setenv("ITRADER_LOG_LEVEL", "ERROR")
+    _reset_module_disable_flag(monkeypatch, False)
+    init_logger()
+    log = get_itrader_logger().bind(component="AdmissionManager")
+    log.warning("%s - %s", error_msg, errors)
+    assert [r for r in capture_records if error_msg in r.getMessage()] == []
+
+    # INFO real-run level: warning emits.
+    capture_records.clear()
+    monkeypatch.setenv("ITRADER_LOG_LEVEL", "INFO")
+    init_logger()
+    log = get_itrader_logger().bind(component="AdmissionManager")
+    log.warning("%s - %s", error_msg, errors)
+    emitted = [r for r in capture_records if error_msg in r.getMessage()]
+    assert len(emitted) == 1
+    assert "Quantity below minimum 0.001" in emitted[0].getMessage()
