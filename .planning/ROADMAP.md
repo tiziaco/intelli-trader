@@ -159,7 +159,7 @@ numeric surface, so they bundle cleanly into one discipline phase.
 **Plans**: 3 plans
 - [x] 04-01-PLAN.md — PERF-03 hot-loop logging: central level-gate (D-02) + admission demote (D-01) + ITRADER_DISABLE_LOGS (D-08) + curated debug deletes (D-04) + drift test/audit (D-06)
 - [x] 04-02-PLAN.md — PERF-04: memoize get_type_hints via _declared_hints @cache (D-05) + equivalence/snapshot drift tests (D-07)
-- [ ] 04-03-PLAN.md — gate (b): same-machine A/B attribution + owner-signed re-freeze of W1-BASELINE.json
+- [x] 04-03-PLAN.md — gate (b): same-machine A/B attribution + owner-signed re-freeze of W1-BASELINE.json
 
 > **Note — captured during Phase 1 (2026-06-23), concrete instance of criterion #1:** the W1 timed run
 > emits frequent `error`-level `OrderHandler` logs `Signal validation failed: Market validation failed -
@@ -314,7 +314,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 1. Perf Tooling & Baseline | 2/2 | Complete   | 2026-06-23 |
 | 2. Order-Storage Indexing | 2/2 | Complete   | 2026-06-23 |
 | 3. Running PnL Accumulator | 2/2 | Complete   | 2026-06-24 |
-| 4. Hot-Path Discipline | 2/3 | In Progress|  |
+| 4. Hot-Path Discipline | 3/3 | Complete   | 2026-06-24 |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
 | 6. Bar-Feed Window Copies (OPTIONAL) | 0/TBD | Not started | - |
 
