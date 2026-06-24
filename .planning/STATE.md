@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: ready_to_plan
-stopped_at: Phase 04 complete (3/3), verified — ready to discuss Phase 5
+stopped_at: Phase 04 complete (3/3), verified — ready to discuss Phase 6 (deliberate reorder: 6 before 5; Phase 5 kept LAST per its FRAGILE/oracle-gated designation; Phase 6 is independent of 2-5)
 last_updated: 2026-06-24T11:29:32.075Z
 last_activity: 2026-06-24 -- Phase 04 complete & verified (PERF-03 + PERF-04, gate (b) PASS)
 progress:
@@ -21,11 +21,11 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 5 — Incremental Indicators (PERF-05, FRAGILE/oracle-gated, LAST optimization phase)
+**Current focus:** Phase 6 — Bar-Feed Window Copies (PERF-06, OPTIONAL/slip-able) — taken before Phase 5 by owner decision (2026-06-24); Phase 5 (Incremental Indicators, FRAGILE) deferred to LAST.
 
 ## Current Position
 
-Phase: 5
+Phase: 6
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-06-24
