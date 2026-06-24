@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: executing
-stopped_at: Completed 05-03-PLAN.md (Plan C — per-tick feed.window() slice removed ENTIRELY; update->is_ready->generate loop; pair on β fit-once-frozen + z bounded-window; oracle byte-exact 134/46189.87730727451)
-last_updated: "2026-06-24T22:30:00.000Z"
+status: ready_to_plan
+stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 06
+last_updated: 2026-06-24T22:13:41.453Z
 last_activity: 2026-06-24
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 17
   completed_plans: 17
-  percent: 67
+  percent: 63
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** Phase 05 — incremental-indicators-fragile-oracle-gated-last
+**Current focus:** Phase 06 — bar feed window copies optional slip able
 
 ## Current Position
 
-Phase: 05 (incremental-indicators-fragile-oracle-gated-last) — EXECUTING
-Plan: 3 of 3 — COMPLETE
-Status: Phase 5 plans all executed (gate (a) correctness GREEN); gate (b) W1/W2 re-freeze on a cool machine is the carried thermal todo
+Phase: 06
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-24
 
 > NOTE: `phase.complete` advanced Current Position to the `999.2` backlog placeholder because no
@@ -108,7 +108,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 70
+- Total plans completed: 73
 - Average duration: — min
 - Total execution time: 0.0 hours
 
