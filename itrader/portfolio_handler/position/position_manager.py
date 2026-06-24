@@ -7,7 +7,6 @@ from decimal import Decimal
 from datetime import datetime
 from typing import Any, Optional, List, Dict, Mapping
 from dataclasses import dataclass
-import numpy as np
 
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction
@@ -82,6 +81,10 @@ class PositionManager:
         
         # Risk management
         self.max_concentration_pct = Decimal('0.20')  # Max 20% of portfolio in one position
+        # IN-02: named Decimal tunable for the price-change sanity check (was an
+        # inline `0.5` float literal in a Decimal comparison context). Compared
+        # Decimal-to-Decimal at the call site.
+        self.large_price_change_ratio = Decimal('0.5')  # 50% price change warning
         
         # Calculation precision
         self.precision = Decimal('0.00000001')  # 8 decimal places for calculations
@@ -195,15 +198,6 @@ class PositionManager:
         # Validate position consistency after update
         self._validate_position_consistency(position, transaction)
         
-        self.logger.debug("Position updated",
-            position_id=position.id,
-            ticker=transaction.ticker,
-            old_quantity=str(original_quantity),
-            new_quantity=str(position.net_quantity),
-            old_avg_price=str(original_avg_price),
-            new_avg_price=str(position.avg_price)
-        )
-        
         return position
     
     def _should_close_position(self, position: Position) -> bool:
@@ -249,7 +243,7 @@ class PositionManager:
         
         # Check for extreme price changes (potential data error)
         price_change_ratio = abs(transaction.price - position.avg_price) / position.avg_price
-        if price_change_ratio > 0.5:  # 50% price change
+        if price_change_ratio > self.large_price_change_ratio:  # IN-02: named Decimal tunable
             self.logger.warning("Large price change detected",
                 position_id=position.id,
                 ticker=position.ticker,
@@ -270,11 +264,6 @@ class PositionManager:
                 position.update_current_price_time(current_price, timestamp)
                 updated_count += 1
 
-        self.logger.debug("Position market values updated",
-            updated_positions=updated_count,
-            total_positions=len(positions)
-        )
-    
     def get_position(self, ticker: str) -> Optional[Position]:
         """Get active position for a ticker."""
         return self._storage.get_position(ticker)
@@ -399,8 +388,16 @@ class PositionManager:
         initial_investment = Decimal(str(position.avg_price * abs(position.net_quantity)))
         return_pct = (total_pnl / initial_investment * 100) if initial_investment > 0 else Decimal('0.00')
         
-        # Calculate holding period
-        end_time = position.exit_date if position.exit_date else datetime.now()
+        # Calculate holding period (WR-01/IN-01): for an OPEN position
+        # (exit_date is None) derive "now" with the SAME tz-awareness as
+        # entry_date. entry_date is event-derived and tz-AWARE on the run path
+        # (position.py: entry_date = transaction.time), so a bare naive
+        # datetime.now() raised TypeError on the aware-minus-naive subtraction
+        # and was a wall-clock determinism smell. Matching entry_date.tzinfo
+        # keeps the subtraction valid for both aware and naive entry_dates.
+        end_time = position.exit_date
+        if end_time is None:
+            end_time = datetime.now(position.entry_date.tzinfo)
         holding_period = (end_time - position.entry_date).days
         
         # Basic metrics (advanced metrics like Sharpe ratio would need price history)

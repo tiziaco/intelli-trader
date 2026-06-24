@@ -57,7 +57,7 @@ research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADM
 - [x] **Phase 1: Perf Tooling & Baseline** — root-Makefile `perf-*` targets, two-mode benchmark/Scalene-profile runner, re-freeze the baseline to a committed `W1-BASELINE.json` + soft regression guard (gate (b) = ≥5% wall-clock) (TOOL-01, TOOL-02, TOOL-04 — TOOL-03 cross-val dropped 2026-06-23)
 - [x] **Phase 2: Order-Storage Indexing** — derived secondary indexes over the flat `{id: order}` dict (D-20 source of truth), Postgres-extensible interface (PERF-01, ~37% CPU)
 - [x] **Phase 3: Running PnL Accumulator** — maintain realised PnL on close, stop the per-bar re-sum; opportunistic in-file CONCERNS cleanups allowed (PERF-02, ~13% CPU)
-- [ ] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
+- [x] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
 - [ ] **Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)** — rolling/memoized SMA & MACD replacing the per-bar full-window `ta` rebuild, byte-exact (PERF-05, ~24% CPU)
 - [ ] **Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)** — reduce per-tick `iloc` frame copies, preserving the look-ahead bar-timing contract (PERF-06, ~4% W1 / ~22% W2)
 
@@ -156,7 +156,10 @@ numeric surface, so they bundle cleanly into one discipline phase.
      --strict` clean; determinism double-run byte-identical.
   5. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
      baseline, re-frozen as the new locked reference.
-**Plans**: TBD
+**Plans**: 3 plans
+- [x] 04-01-PLAN.md — PERF-03 hot-loop logging: central level-gate (D-02) + admission demote (D-01) + ITRADER_DISABLE_LOGS (D-08) + curated debug deletes (D-04) + drift test/audit (D-06)
+- [x] 04-02-PLAN.md — PERF-04: memoize get_type_hints via _declared_hints @cache (D-05) + equivalence/snapshot drift tests (D-07)
+- [x] 04-03-PLAN.md — gate (b): same-machine A/B attribution + owner-signed re-freeze of W1-BASELINE.json
 
 > **Note — captured during Phase 1 (2026-06-23), concrete instance of criterion #1:** the W1 timed run
 > emits frequent `error`-level `OrderHandler` logs `Signal validation failed: Market validation failed -
@@ -311,7 +314,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 1. Perf Tooling & Baseline | 2/2 | Complete   | 2026-06-23 |
 | 2. Order-Storage Indexing | 2/2 | Complete   | 2026-06-23 |
 | 3. Running PnL Accumulator | 2/2 | Complete   | 2026-06-24 |
-| 4. Hot-Path Discipline | 0/TBD | Not started | - |
+| 4. Hot-Path Discipline | 3/3 | Complete   | 2026-06-24 |
 | 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
 | 6. Bar-Feed Window Copies (OPTIONAL) | 0/TBD | Not started | - |
 

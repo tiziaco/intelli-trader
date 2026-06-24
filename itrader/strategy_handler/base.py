@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 from datetime import timedelta
 from enum import Enum
+from functools import cache
 from typing import Any, cast, get_type_hints
 
 import pandas as pd
@@ -57,6 +58,23 @@ def _json_safe(val: Any) -> Any:
 		return {str(k): _json_safe(x) for k, x in val.items()}
 	return repr(val)
 
+
+# D-05 (PERF-04): memoize get_type_hints per concrete Strategy subclass. The
+# declared-attr annotations are CONSTANT per class (fixed at import), yet to_dict
+# (hot — per signal snapshot) re-walked the MRO and re-resolved them on every
+# call. `type(self)` keys the cache on the concrete subclass so each class
+# resolves exactly once; functools.cache is thread-safe (locks internally) for
+# live mode, and no manual invalidation is needed (the strategy-class count is
+# bounded and annotations never change after import). Resolution is memoized,
+# NOT removed: neither call site uses the resolved TYPES (both only iterate keys
+# and enum coercion is driven by _COERCE), but a names-only MRO walk would risk
+# snapshot key-ordering in this byte-exact phase, so removal is deferred. Both
+# sites only iterate keys (never mutate / .pop), so the shared cached dict is
+# read-only-safe (T-04-04).
+@cache
+def _declared_hints(cls: type["Strategy"]) -> dict[str, Any]:
+	return get_type_hints(cls)
+
 # D-08: ONLY these three engine fields coerce a str off their annotation to an
 # enum (via the enum's case-insensitive _missing_). Every other knob is left as
 # supplied — e.g. short_window="50" stays a str, never silently int()-ed.
@@ -90,7 +108,8 @@ class Strategy(ABC):
 	# the resolved consumer type; the bare annotation (no value) still marks it
 	# REQUIRED for get_type_hints-driven detection (D-07).
 	# EVERY engine-facing knob is ANNOTATED — `_apply_params` iterates
-	# `get_type_hints(type(self))`, which returns ONLY annotated names, so an
+	# `_declared_hints(type(self))` (memoized get_type_hints, D-05), which
+	# returns ONLY annotated names, so an
 	# unannotated class attr would be invisible to the engine (un-overridable by
 	# kwarg, and its enum coercion would never fire). The three bare annotations
 	# (no value) are REQUIRED (D-07); the rest carry defaults.
@@ -127,7 +146,8 @@ class Strategy(ABC):
 	def _apply_params(self, **kwargs: Any) -> None:
 		"""Apply ``**kwargs`` over the declared class-attr surface (D-06/D-07/D-08).
 
-		``get_type_hints(type(self))`` merges the full MRO so the base-owned
+		``_declared_hints(type(self))`` (memoized ``get_type_hints``, D-05)
+		merges the full MRO so the base-owned
 		names and the subclass's params are introspected together. For each
 		declared name, resolution order is: the kwarg if present, else the prior
 		INSTANCE value on a reconfigure (RESEARCH Open Question 1 — a partial
@@ -143,11 +163,21 @@ class Strategy(ABC):
 		timeframe_supplied = "timeframe" in kwargs
 		# Has _apply_params run before? (reconfigure path — fall back to instance)
 		reconfiguring = hasattr(self, "_timeframe")
-		hints = get_type_hints(type(self))
+		hints = _declared_hints(type(self))
+		# WR-02: resolve + coerce + validate the FULL kwarg set into a local dict
+		# FIRST, committing to `self` only after every check (resolution,
+		# coercion, unknown/missing, malformed-tickers) passes. Previously each
+		# value was setattr'd inside the loop, so a coercion failure or the
+		# post-loop tickers guard left the instance partially mutated on a
+		# rejected reconfigure. Mutating `kwargs` (pop) only affects the local
+		# copy below, never `self`, so resolution stays side-effect-free until
+		# the commit phase.
+		remaining = dict(kwargs)
+		resolved: dict[str, Any] = {}
 		for nm in hints:
 			default = getattr(type(self), nm, _MISSING)
-			if nm in kwargs:
-				val = kwargs.pop(nm)
+			if nm in remaining:
+				val = remaining.pop(nm)
 			elif nm == "timeframe" and reconfiguring:
 				# self.timeframe is a timedelta after the first pass — fall back
 				# to the stashed ENUM so the prior timeframe is preserved.
@@ -177,23 +207,28 @@ class Strategy(ABC):
 			coerce = _COERCE.get(nm)
 			if coerce is not None and not isinstance(val, coerce):
 				val = coerce(val)  # enum _missing_ (str -> enum); raises on bogus
-			setattr(self, nm, val)
-		if kwargs:
-			raise UnknownParamError(sorted(kwargs))
+			resolved[nm] = val
+		if remaining:
+			raise UnknownParamError(sorted(remaining))
 		# IN-02: reject a malformed-but-present `tickers`. A bare `str` is
 		# iterable char-by-char, so `for ticker in strategy.tickers` would
 		# silently request windows for "B", "T", … (producing nothing) rather
 		# than failing loudly; an empty list trades nothing. Extend the engine's
 		# "reject loudly" philosophy from unknown/missing to malformed values.
-		# Checked against the resolved instance value so it covers both the
-		# kwarg and class-attr-default paths.
-		tickers = getattr(self, "tickers", _MISSING)
+		# Checked against the RESOLVED value (WR-02) so it covers both the kwarg
+		# and class-attr-default paths and fires BEFORE any commit to self.
+		tickers = resolved.get("tickers", _MISSING)
 		if tickers is not _MISSING:
 			if isinstance(tickers, str) or not isinstance(tickers, list) \
 					or not tickers or not all(isinstance(t, str) for t in tickers):
 				raise ValueError(
 					"tickers must be a non-empty list[str] (a bare str is rejected)"
 				)
+		# WR-02 commit phase: every check above passed — now mutate self. A
+		# rejected reconfigure raised before reaching this line, leaving prior
+		# instance state intact.
+		for nm, val in resolved.items():
+			setattr(self, nm, val)
 		# Pitfall 1 (the #1 oracle trap): self.timeframe is consumed as a
 		# TIMEDELTA by check_timeframe / min_timeframe and SMA's
 		# `last_time - self.timeframe * self.short_window`. The coerced
@@ -315,12 +350,29 @@ class Strategy(ABC):
 		leave ``self.now`` as ``None`` and skip the repopulate loop — the strategy
 		still runs (count/date fixtures guard on ``self.bars.empty`` / ``len``).
 		"""
-		self.bars: pd.DataFrame = window
-		self.now = window.index[-1] if len(window) else None
-		if self.now is not None:
-			for handle in self._handles:
-				handle.repopulate(self.bars, self.now, self.timeframe)
-		return self.generate_signal(ticker)
+		# IN-06: cheap debug-build re-entrancy guard. The single-writer contract
+		# above is enforced only by prose; in a perf milestone where parallel
+		# strategy evaluation is a plausible future optimization, a second writer
+		# would silently race on the per-tick snapshot (self.bars/self.now/the
+		# handles). Set a flag around the body and assert it is clear on entry so
+		# a future re-entrant/concurrent call on the SAME instance trips LOUDLY
+		# instead of corrupting the snapshot. The `assert` compiles out under
+		# `python -O`, and on the synchronous single-writer oracle/live path the
+		# flag is always clear on entry — so this is a pure no-op there.
+		assert not getattr(self, "_evaluating", False), (
+			"Strategy.evaluate is not re-entrant — a second writer raced on the "
+			"per-tick snapshot (IN-06 single-writer contract)."
+		)
+		self._evaluating = True
+		try:
+			self.bars: pd.DataFrame = window
+			self.now = window.index[-1] if len(window) else None
+			if self.now is not None:
+				for handle in self._handles:
+					handle.repopulate(self.bars, self.now, self.timeframe)
+			return self.generate_signal(ticker)
+		finally:
+			self._evaluating = False
 
 	def reconfigure(self, **kwargs: Any) -> None:
 		"""Re-apply + re-coerce kwargs, re-validate, re-run init() (D-12/D-13).
@@ -346,14 +398,15 @@ class Strategy(ABC):
 		# WR-02: a faithful "params snapshot" (SIG-02 queryability) must capture
 		# the FULL declared surface — timeframe / tickers / max_window / warmup
 		# AND every subclass tuning knob (short_window, long_window, …) — not a
-		# hand-listed subset. Introspect get_type_hints(type(self)) so the
+		# hand-listed subset. Introspect _declared_hints(type(self)) (memoized
+		# get_type_hints, D-05) so the
 		# snapshot can interpret a signal (which timeframe, which tickers, which
 		# windows). The identity/runtime fields below (strategy_id,
 		# strategy_name, is_active, subscribed_portfolios) and the bespoke
 		# serializations (enum .value, policy repr, timeframe_alias instead of
 		# the timedelta) take precedence over the raw declared value.
 		snapshot: dict[str, Any] = {}
-		for nm in get_type_hints(type(self)):
+		for nm in _declared_hints(type(self)):
 			# `timeframe` resolves to a timedelta at runtime — skip it here and
 			# serialize via the stable `timeframe_alias` below (the str the
 			# snapshot can round-trip). `name` is surfaced as `strategy_name`.

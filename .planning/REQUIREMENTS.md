@@ -59,9 +59,9 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
   *(Hotspot #1, ~37% CPU.)*
 - [x] **PERF-02**: Realised PnL is maintained as a running accumulator updated on position close —
   no per-bar re-summation over all open+closed positions. *(Hotspot #3, ~13% CPU. Decimal preserved.)*
-- [ ] **PERF-03**: Hot-path logging is level-gated; per-bar admission-rejection warnings are
+- [x] **PERF-03**: Hot-path logging is level-gated; per-bar admission-rejection warnings are
   demoted/sampled; `debug()` calls are removed from the per-bar path. *(Hotspot #4, ~6% W1 / ~22% W2.)*
-- [ ] **PERF-04**: `get_type_hints` is memoized per class in `Strategy.to_dict` — resolved once per
+- [x] **PERF-04**: `get_type_hints` is memoized per class in `Strategy.to_dict` — resolved once per
   class, not re-resolved on every signal snapshot. *(Hotspot #6, ~2% W1 / ~14% W2.)*
 - [ ] **PERF-05**: SMA & MACD indicators compute incrementally (rolling/memoized) instead of a
   full-window `ta` rebuild every bar, reproducing `[BYTE-EXACT]` output. **Oracle-gated, done LAST.**
@@ -112,8 +112,8 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | TOOL-04 | Phase 1 — Perf Tooling & Baseline | Complete |
 | PERF-01 | Phase 2 — Order-Storage Indexing | Complete |
 | PERF-02 | Phase 3 — Running PnL Accumulator | Complete |
-| PERF-03 | Phase 4 — Hot-Path Discipline | Pending |
-| PERF-04 | Phase 4 — Hot-Path Discipline | Pending |
+| PERF-03 | Phase 4 — Hot-Path Discipline | Complete |
+| PERF-04 | Phase 4 — Hot-Path Discipline | Complete |
 | PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | Pending |
 | PERF-06 | Phase 6 — Bar-Feed Window Copies (OPTIONAL) | Pending |
 

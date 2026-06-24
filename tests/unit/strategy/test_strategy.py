@@ -260,6 +260,74 @@ def test_to_dict_json_safe_for_nested_non_native_containers():
     assert isinstance(dumped, str)
 
 
+def test_to_dict_snapshot_regression_full_surface():
+    """D-07 (PERF-04): full to_dict snapshot is byte-identical after the cache swap.
+
+    PERF-04 routed to_dict's ``get_type_hints(type(self))`` walk through the
+    memoized ``_declared_hints`` helper. Because it is the SAME function (cached),
+    the snapshot's keys + order + values are byte-identical by construction. The
+    equivalence test locks the resolution; THIS test locks the full serialized
+    snapshot end-to-end so any drift in the declared-surface introspection (key
+    set, order, or a bespoke-serialization regression) fails loudly. ``strategy_id``
+    is a per-run UUIDv7 — assert it is a stringified id, not a fixed value.
+    """
+    import json
+
+    strategy = SMAMACDStrategy(**_sma_kwargs())
+    snapshot = strategy.to_dict()
+
+    # Full declared-surface key set + order (the property the cached helper must
+    # preserve byte-exact). Introspected declared knobs come first (annotation
+    # order across the MRO), then the identity/runtime fields appended by update().
+    assert list(snapshot.keys()) == [
+        "tickers",
+        "sizing_policy",
+        "direction",
+        "allow_increase",
+        "max_positions",
+        "sltp_policy",
+        "max_window",
+        "warmup",
+        "short_window",
+        "long_window",
+        "fast_window",
+        "slow_window",
+        "signal_window",
+        "strategy_id",
+        "strategy_name",
+        "timeframe_alias",
+        "subscribed_portfolios",
+        "is_active",
+    ]
+
+    # Declared-surface values (the introspected snapshot the memoized helper feeds).
+    assert snapshot["tickers"] == [_TICKER]
+    assert snapshot["sizing_policy"] == repr(FractionOfCash(Decimal("0.95")))
+    assert snapshot["direction"] == TradingDirection.LONG_ONLY.value
+    assert snapshot["allow_increase"] is False
+    assert snapshot["max_positions"] == 1
+    assert snapshot["sltp_policy"] is None
+    assert snapshot["max_window"] == 100
+    assert snapshot["warmup"] == 100
+    assert snapshot["short_window"] == 50
+    assert snapshot["long_window"] == 100
+    assert snapshot["fast_window"] == 6
+    assert snapshot["slow_window"] == 12
+    assert snapshot["signal_window"] == 3
+
+    # Bespoke identity/runtime fields.
+    assert snapshot["strategy_name"] == "SMA_MACD"
+    assert snapshot["timeframe_alias"] == "1d"
+    assert snapshot["subscribed_portfolios"] == []
+    assert snapshot["is_active"] is True
+    # strategy_id is a per-run UUIDv7 stringified at the serialization edge.
+    assert isinstance(snapshot["strategy_id"], str)
+    assert snapshot["strategy_id"] == str(strategy.strategy_id)
+
+    # The full snapshot still round-trips through json (serialization contract).
+    assert isinstance(json.dumps(snapshot), str)
+
+
 def test_reconfigure_reapplies_and_revalidates():
     """D-12: reconfigure(**kwargs) re-applies + re-validates + preserves timeframe."""
     strategy = SMAMACDStrategy(**_sma_kwargs())

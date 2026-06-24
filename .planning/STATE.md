@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: ready_to_plan
-stopped_at: Phase 03 complete (2/2) — ready to discuss/plan Phase 4 (Hot-Path Discipline)
-last_updated: 2026-06-24T07:58:29.343Z
-last_activity: 2026-06-24 -- Phase 03 complete (2/2): gate (a) byte-exact, gate (b) proven (Scalene 16.21%->0%, A/B -15.4%); W1 re-freeze deferred
+stopped_at: Phase 04 complete (3/3), verified — ready to discuss Phase 6 (deliberate reorder: 6 before 5; Phase 5 kept LAST per its FRAGILE/oracle-gated designation; Phase 6 is independent of 2-5)
+last_updated: 2026-06-24T11:29:32.075Z
+last_activity: 2026-06-24 -- Phase 04 complete & verified (PERF-03 + PERF-04, gate (b) PASS)
 progress:
   total_phases: 8
-  completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
-  percent: 38
+  completed_phases: 4
+  total_plans: 9
+  completed_plans: 9
+  percent: 50
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 4 — Hot-Path Discipline (PERF-03, PERF-04). NOTE: `phase.complete` jumped the pointer to backlog dir 999.2 because the `04-*` phase dir does not exist yet; 999.2/999.3 are FUTURE-milestone (N+3/N+4) backlog placeholders, NOT the next v1.5 phase. Corrected manually to Phase 4.
+**Current focus:** Phase 6 — Bar-Feed Window Copies (PERF-06, OPTIONAL/slip-able) — taken before Phase 5 by owner decision (2026-06-24); Phase 5 (Incremental Indicators, FRAGILE) deferred to LAST.
 
 ## Current Position
 
-Phase: 4
+Phase: 6
 Plan: Not started
-Status: Ready to discuss/plan (Hot-Path Discipline — PERF-03, PERF-04)
-Last activity: 2026-06-24 -- Phase 03 complete (gate (a)+(b)); next: discuss/plan Phase 4
+Status: Ready to plan
+Last activity: 2026-06-24
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
@@ -99,7 +99,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 62
+- Total plans completed: 65
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -338,9 +338,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T06:18:39.366Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-running-pnl-accumulator/03-CONTEXT.md
+Last session: 2026-06-24T09:42:45.458Z
+Stopped at: Phase 4 context gathered
+Resume file: .planning/phases/04-hot-path-discipline/04-CONTEXT.md
 
 ## Operator Next Steps
 

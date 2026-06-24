@@ -42,6 +42,27 @@ def _env_json_logs() -> bool:
     return raw.strip().lower() in ("1", "true", "yes")
 
 
+def _env_disable_logs() -> bool:
+    """Resolve the D-08 full-off kill-switch from ``ITRADER_DISABLE_LOGS`` (default off).
+
+    Mirrors the ``_env_json_logs`` idiom: read ``os.environ`` directly and never
+    construct a ``Settings`` instance here — ``ITRADER_DATABASE_URL`` is a
+    required-no-default ``SecretStr`` so instantiating ``Settings`` at import time
+    would raise ``ValidationError`` on every ``import itrader`` (Pitfall 8). The env
+    name matches the pydantic-settings ``ITRADER_`` prefix so ``Settings.disable_logs``
+    stays the documented knob.
+    """
+    raw = os.environ.get("ITRADER_DISABLE_LOGS", "false")
+    return raw.strip().lower() in ("1", "true", "yes")
+
+
+# D-08: resolve the kill-switch ONCE at import into a module-level cached bool. The
+# central guards check this FIRST (a cached bool, marginally cheaper than
+# ``isEnabledFor``) to short-circuit ALL logging unconditionally. For a fully-silent
+# backtest set ``ITRADER_DISABLE_LOGS=true``.
+_DISABLE_LOGS: bool = _env_disable_logs()
+
+
 def _json_default(obj: object) -> str:
     """Fallback serializer for ``JSONRenderer`` (WR-01).
 
@@ -72,7 +93,12 @@ def _uuid_safe_json_serializer(obj: Any, **kw: Any) -> str:
         except TypeError:
             if structlog_default is not None:
                 return structlog_default(value)  # type: ignore[no-any-return]
-            raise
+            # WR-04: a log sink must never crash on a stray field. When structlog
+            # injected no chained default (future structlog version, or a direct
+            # call), repr-coerce instead of re-raising so a single
+            # non-serializable context value (Decimal/datetime/custom object) on
+            # the ERROR route cannot crash the last-resort error sink.
+            return repr(value)
 
     return json.dumps(obj, default=_default, **kw)
 
@@ -195,6 +221,10 @@ class ITraderStructLogger:
 
     def __init__(self, log_name: str = "itrader"):
         self.logger = structlog.stdlib.get_logger(log_name)
+        # D-02: cache the stdlib logger so each wrapper method can short-circuit
+        # below-level calls via ``isEnabledFor`` BEFORE the 9-processor structlog
+        # pipeline runs (hotspot #4 — the pipeline runs on below-level calls today).
+        self._stdlib = logging.getLogger(log_name)
 
     def bind(self, **new_values: Any) -> "ITraderStructLogger":
         """
@@ -203,40 +233,62 @@ class ITraderStructLogger:
 
         Args:
             **new_values: Key-value pairs to bind to the context
-            
+
         Returns:
             ITraderStructLogger: New logger instance with bound context
-            
+
         Example:
             self.logger = get_itrader_logger().bind(component="PortfolioHandler")
         """
         # Create a new bound logger using structlog's bind method
         bound_structlog = self.logger.bind(**new_values)
-        
+
         # Create a new ITraderStructLogger instance with the bound logger
         new_logger = ITraderStructLogger.__new__(ITraderStructLogger)
         new_logger.logger = bound_structlog
-        
+        # D-02: bind() builds via __new__ which skips __init__, so the cached
+        # stdlib reference MUST be carried over explicitly — otherwise the gate on
+        # the bound instance would AttributeError on its first call. The stdlib
+        # logger name is unchanged by bind() (only structlog context is bound), so
+        # reuse the same cached reference.
+        new_logger._stdlib = self._stdlib
+
         return new_logger
 
     def debug(self, event: str | None = None, *args: Any, **kw: Any) -> None:
+        # D-08 kill-switch first (cached bool), then D-02 level-gate.
+        if _DISABLE_LOGS or not self._stdlib.isEnabledFor(logging.DEBUG):
+            return
         self.logger.debug(event, *args, **kw)
 
     def info(self, event: str | None = None, *args: Any, **kw: Any) -> None:
+        if _DISABLE_LOGS or not self._stdlib.isEnabledFor(logging.INFO):
+            return
         self.logger.info(event, *args, **kw)
 
     def warning(self, event: str | None = None, *args: Any, **kw: Any) -> None:
+        if _DISABLE_LOGS or not self._stdlib.isEnabledFor(logging.WARNING):
+            return
         self.logger.warning(event, *args, **kw)
 
     warn = warning
 
     def error(self, event: str | None = None, *args: Any, **kw: Any) -> None:
+        if _DISABLE_LOGS or not self._stdlib.isEnabledFor(logging.ERROR):
+            return
         self.logger.error(event, *args, **kw)
 
     def critical(self, event: str | None = None, *args: Any, **kw: Any) -> None:
+        if _DISABLE_LOGS or not self._stdlib.isEnabledFor(logging.CRITICAL):
+            return
         self.logger.critical(event, *args, **kw)
 
     def exception(self, event: str | None = None, *args: Any, **kw: Any) -> None:
+        # exception() is an always-emit path: exceptions are logged regardless of
+        # level (D-02 leaves it routed straight through). The D-08 kill-switch still
+        # applies for a true full-off.
+        if _DISABLE_LOGS:
+            return
         self.logger.exception(event, *args, **kw)
 
 

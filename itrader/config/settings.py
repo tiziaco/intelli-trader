@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     environment: str = "backtest"
 
+    # ITRADER_DISABLE_LOGS — D-08 full-off kill-switch (Phase 4, PERF-03). Default
+    # False keeps the backtest path env-free; pydantic-settings coerces
+    # "true"/"1"/"yes" natively. This is the documented knob surface; the logger
+    # reads the same env var cache-once via os.environ (Pitfall 8 — it must NOT
+    # instantiate Settings() at import, database_url is required-no-default).
+    disable_logs: bool = False
+
     # Secrets: NO default -> ValidationError if a live path ever instantiates Settings
     # without ITRADER_DATABASE_URL set. Access only via database_url.get_secret_value().
     database_url: SecretStr

@@ -28,6 +28,7 @@ manager returns OperationResults/OrderEvents and the handler performs all queue
 puts. Money is Decimal end-to-end via `to_money` (NEVER `Decimal(float)`).
 """
 
+import logging
 from decimal import Decimal
 from typing import Any, Callable, List, Optional
 
@@ -233,8 +234,19 @@ class AdmissionManager:
 				validation_result = self.order_validator.validate_order_pipeline(primary)
 				if not validation_result.success:
 					error_msg = f"Signal validation failed: {validation_result.summary}"
-					self.logger.error('%s - %s', error_msg,
-									[msg.message for msg in validation_result.errors])
+					# D-01 (Phase 4, PERF-03): demote error→warning. An out-of-cash /
+					# dust-quantity admission rejection is real and noteworthy but NOT a
+					# system error. WARNING (30) < ERROR (40) so it gates OUT at the
+					# ITRADER_LOG_LEVEL=ERROR benchmark level (the demotion IS the W1 win)
+					# while still emitting at the INFO real-run default for operator
+					# out-of-cash visibility. The eager f-string + list-comp is the ONE
+					# hot callsite with an expensive eager arg (D-03), so guard it behind
+					# a cached isEnabledFor(WARNING): the central wrapper gate (D-02) cannot
+					# skip eager args because Python evaluates them before the call. The
+					# emitted CONTENT is unchanged — only the level/volume changes.
+					if self.logger._stdlib.isEnabledFor(logging.WARNING):
+						self.logger.warning('%s - %s', error_msg,
+										[msg.message for msg in validation_result.errors])
 					# Audited PENDING→REJECTED transition; the timestamp defaults to
 					# the order's own event-derived time (M2-09 — never wall clock).
 					primary.add_state_change(
@@ -379,9 +391,6 @@ class AdmissionManager:
 					reserved_primary.portfolio_id,
 					reserved_primary.id)
 			results.extend(assembled)
-
-			self.logger.debug('Processed signal for %s %s: %d operations completed',
-							signal_event.ticker, signal_event.action, len(results))
 
 		except Exception as e:
 			error_msg = f"Error processing signal: {e}"
