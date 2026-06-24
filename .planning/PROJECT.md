@@ -426,7 +426,7 @@ Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-lo
 (forex / equities / ETF) is deferred indefinitely.
 
 ---
-*Last updated: 2026-06-23 — v1.5 Phase 2 (Order-Storage Indexing, PERF-01) COMPLETE: index-backed active queries, gate (a) byte-exact, gate (b) re-froze W1-BASELINE.json 247.5 s → 199.4 s (−19.4 %). Phase 3 (Running PnL Accumulator, PERF-02) next.*
+*Last updated: 2026-06-24 — v1.5 Phase 4 (Hot-Path Discipline, PERF-03 + PERF-04) COMPLETE: central `isEnabledFor` log gate + `ITRADER_DISABLE_LOGS` kill-switch + admission error→warning demote + curated hot-path `debug()` deletes, and `get_type_hints` memoized per strategy class via `@cache _declared_hints`. Gate (a) byte-exact (134 / `46189.87730727451`), mypy --strict clean, full suite 1256. Gate (b) PASS via same-machine A/B (−7.8 % mean, attributed to PERF-03 + PERF-04); W1-BASELINE.json re-frozen at 238.5 s under owner sign-off on a CONTENDED machine (provenance in 04-PERF-ATTRIBUTION.md — read Phase-5 deltas against it accordingly, or re-freeze cool first). Phase 5 (Incremental Indicators, PERF-05 — FRAGILE/oracle-gated, LAST) next.*
 *v1.5 (Backtest Performance Optimization) STARTED. Promoted the performance
 half of Backlog 999.2 and split Persistence out into its own following milestone. Goal: cut the frozen
 W1 baseline (240.8 s / 167.3 MB) via profiler-ranked, oracle-gated hot-path optimizations without
