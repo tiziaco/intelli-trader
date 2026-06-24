@@ -35,6 +35,7 @@ cycle).
 
 from collections import deque
 from datetime import datetime, timedelta
+from typing import Any
 
 import pandas as pd
 
@@ -97,6 +98,29 @@ class IndicatorHandle:
 		# Feed the window's input column one value at a time (Model B push).
 		for x in bars[self._input].to_numpy():
 			self.update(float(x))
+
+	def snapshot_state(self) -> tuple[Any, "deque[float]"]:
+		"""Return ``(state, buffer)`` for per-symbol fan-out save/restore (P5-D10).
+
+		The per-symbol fan-out (P5-D14) drives ONE set of registration handles (the
+		author-bound ``self.short_sma`` etc.) and swaps each ticker's recurrence
+		state in/out before dispatch — so the read surface (``self.short_sma[-1]``)
+		always reflects the ACTIVE ticker. ``snapshot_state`` hands out the live
+		``(state, buffer)`` to stash; ``load_state`` swaps a stashed pair back in. A
+		fresh (just-constructed) ticker gets a fresh state via ``fresh_state``.
+		"""
+		return (self._state, self._buffer)
+
+	def load_state(self, state: Any, buffer: "deque[float]") -> None:
+		"""Swap a previously-snapshotted ``(state, buffer)`` back in (P5-D10)."""
+		self._state = state
+		self._buffer = buffer
+
+	def fresh_state(self) -> tuple[Any, "deque[float]"]:
+		"""Mint + install a fresh ``(state, buffer)`` for a never-seen ticker (P5-D10a)."""
+		self._state = self._adapter.new_state(self._params)
+		self._buffer = deque(maxlen=self._depth)
+		return (self._state, self._buffer)
 
 	def __getitem__(self, idx: int) -> float:
 		"""Positional read ([-1]/[-2]); ``float`` at the read edge (D-03)."""

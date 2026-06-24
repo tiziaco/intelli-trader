@@ -26,6 +26,28 @@ from .indicators import IndicatorAdapter, IndicatorHandle
 # with NO value — from a class attr whose default happens to be None.
 _MISSING = object()
 
+
+class _RowBar:
+	"""Bar-shaped adapter over a pandas (row, timestamp) for the legacy ``evaluate``.
+
+	P5-D13: the per-tick run path drives ``update(ticker, bar)`` with real ``Bar``
+	objects. The legacy window-driven ``evaluate`` (test/back-compat only) replays a
+	pandas frame row-by-row, so it wraps each ``(row, ts)`` in this shim exposing the
+	two attributes ``update`` reads — the declared ``input_col`` (e.g. ``close``) and
+	``time`` (the row's index timestamp). It is NOT used on the run path.
+	"""
+
+	__slots__ = ("_row", "time")
+
+	def __init__(self, row: "pd.Series[Any]", ts: Any) -> None:
+		self._row = row
+		self.time = ts
+
+	def __getattr__(self, name: str) -> Any:
+		# Column access by attribute (e.g. bar.close -> row["close"]). __getattr__
+		# fires only for names not in __slots__, so ``time`` is served directly.
+		return self._row[name]
+
 # WR-04: JSON-native types the to_dict() introspection loop may emit as-is.
 # Anything else (Decimal/datetime/custom object) is coerced to repr() at the
 # serialization edge so json.dumps(strategy.to_dict()) never raises.
@@ -345,7 +367,30 @@ class Strategy(ABC):
 		# auto-fans-out one stateful handle-set per symbol on that symbol's FIRST
 		# bar (P5-D10a), with independent per-symbol readiness (P5-D10b).
 		self._handle_specs: list[tuple[IndicatorAdapter, str, tuple[int, ...]]] = []
-		self._handle_sets: dict[str, list[IndicatorHandle]] = {}
+		# P5-D10/D14 per-symbol fan-out via state-swap on the SINGLE registration
+		# handle-set. The author binds self.short_sma etc. to the registration
+		# handles (self._handles, returned by self.indicator()). To fan out one
+		# independent recurrence per symbol WITHOUT re-binding those attrs (whose
+		# names the base does not know — P5-D21 keeps the author surface untouched),
+		# each ticker's (state, buffer) per handle is stashed in _handle_state_store
+		# and swapped INTO the registration handles before that ticker's update /
+		# generate_signal. _active_ticker tracks which ticker's state is currently
+		# loaded so a switch saves the outgoing ticker first (independent per-symbol
+		# state + readiness, P5-D10b).
+		self._handle_state_store: dict[str, list[tuple[Any, Any]]] = {}
+		self._active_ticker: str | None = None
+		# P5-D13/D13a: per-symbol bar bookkeeping replacing the removed per-tick
+		# self.bars master-frame slice. update(ticker,bar) increments a per-ticker
+		# completed-bar count and stashes the latest bar, so a zero-handle COUNT/
+		# DATE-keyed fixture (SingleMarketBuy/ScriptedEmitter) derives its firing
+		# from bar_count(ticker)/latest_bar(ticker) instead of len(self.bars). The
+		# decision anchor self.now is the dispatched bar's open-time (a tz-aware
+		# pandas Timestamp — the SAME value the legacy window.index[-1] carried, so
+		# every e2e scenario's self.now.tz_convert("UTC") keeps working).
+		self._bar_counts: dict[str, int] = {}
+		self._latest_bar: dict[str, Any] = {}
+		self.now: Any = None
+		self.current_bar: Any = None
 		self.init()
 		derived = max((h.min_period() for h in self._handles), default=0)
 		self.warmup = derived
@@ -353,21 +398,34 @@ class Strategy(ABC):
 		# fixtures' wide window; the reference's deleted hand-set is 0 -> derived).
 		self.max_window = max(derived, type(self).max_window)
 
-	def _handle_set_for(self, ticker: str) -> list[IndicatorHandle]:
-		"""Return ticker's stateful handle-set, minting it lazily on first bar (P5-D10a).
+	def _activate_ticker(self, ticker: str) -> None:
+		"""Load ``ticker``'s per-symbol recurrence state into the registration handles.
 
-		One independent stateful set per symbol (P5-D10): each declared recipe
-		(``self._handle_specs``) becomes a fresh ``IndicatorHandle`` for THIS ticker,
-		so per-symbol state + readiness never cross-contaminate (P5-D10b).
+		The per-symbol fan-out (P5-D10/D14) keeps ONE set of registration handles
+		(the author-bound ``self.short_sma`` etc.) and swaps each ticker's
+		``(state, buffer)`` in/out so the read surface always reflects the active
+		ticker WITHOUT re-binding the author's attrs (P5-D21). Switching from a
+		different active ticker SAVES the outgoing ticker's live state first
+		(independent per-symbol state, P5-D10b); a never-seen ticker gets a fresh
+		state minted on the handles (P5-D10a). A no-op when ``ticker`` is already
+		active. Handle-free strategies have an empty registration set, so this is a
+		no-op loop for them.
 		"""
-		handles = self._handle_sets.get(ticker)
-		if handles is None:
-			handles = [
-				IndicatorHandle(adapter, input_col, params)
-				for adapter, input_col, params in self._handle_specs
+		if self._active_ticker == ticker:
+			return
+		# Save the currently-loaded ticker's live state back to its slot.
+		if self._active_ticker is not None:
+			self._handle_state_store[self._active_ticker] = [
+				h.snapshot_state() for h in self._handles
 			]
-			self._handle_sets[ticker] = handles
-		return handles
+		stored = self._handle_state_store.get(ticker)
+		if stored is None:
+			# Never-seen ticker: mint a fresh state on each registration handle.
+			self._handle_state_store[ticker] = [h.fresh_state() for h in self._handles]
+		else:
+			for handle, (state, buffer) in zip(self._handles, stored):
+				handle.load_state(state, buffer)
+		self._active_ticker = ticker
 
 	def update(self, ticker: str, bar: Any) -> None:
 		"""Push ``ticker``'s latest completed bar into its handle-set (P5-D07/D10/D14).
@@ -380,9 +438,43 @@ class Strategy(ABC):
 		bar is absent — P5-D10c, state frozen, count increments on REAL bars only —
 		so this method never fabricates a bar).
 		"""
-		handles = self._handle_set_for(ticker)
-		for handle, (_adapter, input_col, _params) in zip(handles, self._handle_specs):
+		# P5-D13a: per-symbol completed-bar bookkeeping (replaces the removed
+		# self.bars slice). Count increments on REAL bars only (gap bar = caller
+		# skips update -> count frozen, P5-D10c); the latest bar + decision anchor
+		# self.now (the bar's tz-aware open-time Timestamp, the SAME value the
+		# legacy window.index[-1] carried) are stashed for the count/date fixtures
+		# and generate_signal.
+		self._bar_counts[ticker] = self._bar_counts.get(ticker, 0) + 1
+		self._latest_bar[ticker] = bar
+		self.now = bar.time
+		self.current_bar = bar
+		# P5-D10/D14: load this ticker's recurrence state into the registration
+		# handles (the author-bound self.short_sma etc.), then push the bar value.
+		self._activate_ticker(ticker)
+		for handle, (_adapter, input_col, _params) in zip(self._handles, self._handle_specs):
 			handle.update(float(getattr(bar, input_col)))
+
+	def bar_count(self, ticker: str) -> int:
+		"""Completed-bar count seen for ``ticker`` (P5-D13a count seam).
+
+		Replaces ``len(self.bars)`` for the zero-handle COUNT-keyed fixtures
+		(SingleMarketBuy): the count increments once per consumed bar in
+		``update`` (REAL bars only — a gap bar is skipped by the caller, so the
+		count is frozen, P5-D10c), so ``bar_count(ticker)`` on the decision tick
+		equals the number of completed bars visible — byte-identically to the old
+		``len(self.bars)`` against a wide ``max_window``.
+		"""
+		return self._bar_counts.get(ticker, 0)
+
+	def latest_bar(self, ticker: str) -> Any:
+		"""Latest completed bar pushed for ``ticker`` (P5-D13a latest-bar seam).
+
+		Replaces ``self.bars.index[-1]`` / ``self.bars["close"].iloc[-1]`` for the
+		zero-handle DATE-keyed fixture (ScriptedEmitter): the decision bar IS the
+		latest pushed bar. Returns ``None`` before any bar is seen (the fixtures
+		guard the empty case, mirroring the old ``self.bars.empty`` skip).
+		"""
+		return self._latest_bar.get(ticker)
 
 	def is_ready(self, ticker: str) -> bool:
 		"""True iff ALL of ``ticker``'s handles are ready (P5-D06/D10b).
@@ -392,72 +484,94 @@ class Strategy(ABC):
 		independent across symbols (P5-D10b) — one ticker being ready never gates
 		another. A ticker that has never received a bar is NOT ready.
 		"""
-		handles = self._handle_sets.get(ticker)
-		if handles is None:
+		stored = self._handle_state_store.get(ticker)
+		if stored is None:
 			# No bar seen yet for this ticker -> not ready (unless handle-free).
 			return not self._handle_specs
-		return all(h.is_ready for h in handles)
+		# Readiness reads the per-ticker stored states directly (no need to load
+		# them onto the registration handles) — each stored entry is (state, buffer)
+		# and the state carries is_ready (count >= min_period, P5-D06).
+		return all(state.is_ready for state, _buffer in stored)
 
 	def reset(self) -> None:
-		"""Clear every per-symbol handle-set AND the fan-out map (P5-D19).
+		"""Clear every per-symbol recurrence state AND the fan-out store (P5-D19).
 
-		Each stateful handle's scalar/ring/count/output-buffer is cleared and the
-		per-ticker map is emptied, returning the strategy's indicator state to a
+		Each stored per-symbol ``(state, buffer)`` is dropped and the registration
+		handles are reset, returning the strategy's indicator state to a
 		just-constructed shape (so a re-feed reproduces a fresh run, P5-D19).
 		"""
-		for handles in self._handle_sets.values():
-			for handle in handles:
-				handle.reset()
-		self._handle_sets.clear()
+		for handle in self._handles:
+			handle.reset()
+		self._handle_state_store.clear()
+		self._active_ticker = None
+		# P5-D13a/D19: clear the per-symbol bar bookkeeping + decision anchors so a
+		# re-feed reproduces a fresh run (the count/latest-bar fixtures see no prior
+		# bars after reset).
+		self._bar_counts.clear()
+		self._latest_bar.clear()
+		self.now = None
+		self.current_bar = None
 
 	def evaluate(self, ticker: str, window: pd.DataFrame) -> SignalIntent | None:
-		"""Orchestration seam: stash the window, repopulate handles, dispatch (D-06).
+		"""LEGACY window-driven seam (P5-D13 — OFF the per-tick run path).
 
-		IN-03: ``evaluate`` is NOT re-entrant. It mutates shared instance state
-		(``self.bars``/``self.now`` and the registered handles) before dispatch,
-		so a single ``Strategy`` instance must be evaluated by one writer at a time
-		(the single-writer contract — the backtest loop is synchronous and live
-		mode processes on one daemon thread). Concurrent/re-entrant evaluation of
-		the same instance would race on this shared mutable state.
+		Plan C removed the per-tick ``feed.window()`` slice: the handler now drives
+		value production via ``update(ticker, bar)`` per tick and gates on
+		``is_ready(ticker)`` (P5-D14), so ``evaluate`` is NO LONGER called from
+		``StrategiesHandler.calculate_signals``. It survives ONLY as a direct
+		window-driven test/back-compat seam (e.g. ``test_strategy`` feeds a
+		synthetic frame): it RESETS ``ticker``'s state, replays the window's bars
+		through the SAME ``update`` push (Model B — value-identical to the old
+		``repopulate``), then dispatches ``generate_signal``. The per-tick
+		master-frame stash and the window-replay handle-rebuild are both GONE
+		(removed by P5-D13); ``update`` sets the per-symbol count/latest-bar/
+		``self.now`` anchors the fixtures and ``generate_signal`` read.
 
-		The handler calls this (NOT ``generate_signal`` directly). It stashes the
-		pushed completed-bar window on ``self.bars`` and the decision anchor on
-		``self.now`` (``window.index[-1]`` — Pitfall 4, the SAME anchor the legacy
-		``last_time`` used, so the SMA ``start_dt`` arithmetic is unchanged), then
-		re-populates every registered handle BEFORE dispatching to
-		``generate_signal``. For an indicator-free strategy ``self._handles`` is
-		empty so the repopulate loop is a no-op (Pitfall 6 — no AttributeError).
+		IN-03: still NOT re-entrant — it mutates shared per-symbol state (the
+		handle-set + count/latest-bar + ``self.now``) before dispatch, so one writer
+		at a time (the single-writer contract; the backtest loop is synchronous and
+		live mode processes on one daemon thread).
 
-		Empty-window guard: a zero-warmup strategy can be dispatched with an empty
-		window (``feed.window`` returns ``frame.iloc[pos:pos]`` when max_window is
-		small and the cutoff is at the frame start). ``window.index[-1]`` would
-		raise ``IndexError`` on a size-0 frame, so when the window is empty we
-		leave ``self.now`` as ``None`` and skip the repopulate loop — the strategy
-		still runs (count/date fixtures guard on ``self.bars.empty`` / ``len``).
+		Empty-window guard: a zero-warmup strategy can be handed an empty frame; the
+		replay loop is then a no-op (no bar pushed -> count stays 0, ``self.now``
+		stays ``None``) and the strategy still runs (count/date fixtures guard the
+		empty case).
 		"""
-		# IN-06: cheap debug-build re-entrancy guard. The single-writer contract
-		# above is enforced only by prose; in a perf milestone where parallel
-		# strategy evaluation is a plausible future optimization, a second writer
-		# would silently race on the per-tick snapshot (self.bars/self.now/the
-		# handles). Set a flag around the body and assert it is clear on entry so
-		# a future re-entrant/concurrent call on the SAME instance trips LOUDLY
-		# instead of corrupting the snapshot. The `assert` compiles out under
-		# `python -O`, and on the synchronous single-writer oracle/live path the
-		# flag is always clear on entry — so this is a pure no-op there.
+		# IN-06: cheap debug-build re-entrancy guard (see class docstring). The
+		# `assert` compiles out under `python -O`; on the synchronous single-writer
+		# path the flag is always clear on entry, so this is a pure no-op there.
 		assert not getattr(self, "_evaluating", False), (
 			"Strategy.evaluate is not re-entrant — a second writer raced on the "
 			"per-tick snapshot (IN-06 single-writer contract)."
 		)
 		self._evaluating = True
 		try:
-			self.bars: pd.DataFrame = window
-			self.now = window.index[-1] if len(window) else None
-			if self.now is not None:
-				for handle in self._handles:
-					handle.repopulate(self.bars, self.now, self.timeframe)
+			# Replay the window through the per-tick update() push so the legacy
+			# frame-driven callers (tests) get value-identical handle state without
+			# the removed self.bars slice. Reset ticker state first so a repeated
+			# evaluate(ticker, window) is idempotent (mirrors the old repopulate's
+			# mint-fresh-state behavior).
+			self._reset_ticker(ticker)
+			for _ts, row in window.iterrows():
+				self.update(ticker, _RowBar(row, _ts))
 			return self.generate_signal(ticker)
 		finally:
 			self._evaluating = False
+
+	def _reset_ticker(self, ticker: str) -> None:
+		"""Drop ``ticker``'s recurrence state + bar bookkeeping (legacy evaluate replay).
+
+		Keeps the legacy window-driven ``evaluate`` idempotent: a fresh
+		``evaluate(ticker, window)`` rebuilds state from scratch, matching the old
+		``repopulate`` (mint-fresh-state) semantics for the single ticker. Dropping
+		the stored state + clearing the active marker forces ``_activate_ticker`` to
+		mint a fresh state on the next ``update``.
+		"""
+		self._handle_state_store.pop(ticker, None)
+		if self._active_ticker == ticker:
+			self._active_ticker = None
+		self._bar_counts.pop(ticker, None)
+		self._latest_bar.pop(ticker, None)
 
 	def reconfigure(self, **kwargs: Any) -> None:
 		"""Re-apply + re-coerce kwargs, re-validate, re-run init() (D-12/D-13).
@@ -561,13 +675,16 @@ class Strategy(ABC):
 		"""
 		Evaluate market data for ``ticker`` and return a trading intent.
 
-		The pure-alpha contract (D-06/D-12, M5-06): the ``bars`` param is dropped
-		— ``evaluate`` has already stashed the pushed completed-bar window on
-		``self.bars`` (and ``self.now`` = ``window.index[-1]``) and re-populated
-		every declared indicator handle. A concrete strategy reads its handles
-		(``self.short_sma[-1]``) and ``self.bars``, and returns a ``SignalIntent``
-		(typically via the ``buy()`` / ``sell()`` sugar) or ``None`` when there is
-		nothing to do. No queue, no event construction, no portfolio knowledge.
+		The pure-alpha contract (D-06/D-12/P5-D13/D14, M5-06): the ``bars`` param is
+		dropped — the handler has already pushed ``ticker``'s latest completed bar
+		via ``update(ticker, bar)`` (driving the declared indicator handles) and
+		gated on ``is_ready(ticker)``. A concrete strategy reads its handles
+		(``self.short_sma[-1]``) and the per-symbol decision anchors
+		(``self.now`` / ``self.current_bar``; the zero-handle COUNT/DATE fixtures use
+		``self.bar_count(ticker)`` / ``self.latest_bar(ticker)``), and returns a
+		``SignalIntent`` (typically via the ``buy()`` / ``sell()`` sugar) or ``None``
+		when there is nothing to do. No queue, no event construction, no portfolio
+		knowledge. The per-tick ``self.bars`` master-frame slice is GONE (P5-D13).
 		"""
 		raise NotImplementedError("Should implement generate_signal()")
 

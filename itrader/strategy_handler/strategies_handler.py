@@ -118,26 +118,29 @@ class StrategiesHandler(object):
 				# bar.close).
 				bar = event.bars.get(ticker)
 				if bar is None:
+					# P5-D10c/D14 gap skip (KEPT): a missing bar this tick means no
+					# indicator update — the per-symbol O(1) state stays frozen
+					# (count does NOT advance) and nothing fires. The feed owns bar
+					# existence; a sparse universe / data gap drops the ticker from
+					# event.bars (M5-02). LOAD-BEARING: price is stamped from
+					# bar.close in _emit_intent below.
 					continue
-				# Push-based window delivery (D-20): asof comes ONLY from the
-				# event — strategies never choose the as-of time (T-06-18).
-				# Completed bars only; zero resample on this path (M5-03).
-				data = self.feed.window(ticker, strategy.timeframe, strategy.max_window, asof=event.time)
-				# D-15 framework warmup short-circuit: skip the tick when fewer
-				# than the strategy's declared warmup of completed bars are
-				# visible. This replaces the in-strategy guard removed from
-				# SMA_MACD (`if len(bars) < self.max_window: return None`). It
-				# guards on strategy.warmup (a dedicated threshold), NOT
-				# max_window (fetch width): SMA_MACD sets warmup == its old
-				# guard value so the firing tick is byte-identical (HARD-04,
-				# RESEARCH Pitfall 1), while count-based canaries keep warmup=0
-				# with a wide max_window.
-				if len(data) < strategy.warmup:
+				# P5-D13/D14 restructured per-tick loop: push the latest completed
+				# bar through the strategy's per-symbol stateful state, gate on the
+				# per-INDICATOR readiness (NOT a window-width len-gate), then read
+				# the handles in generate_signal. The removed feed.window() slice +
+				# len(data) < warmup gate are now `update -> is_ready -> generate`:
+				#   - update(ticker, bar) drives the O(1) recurrences (P5-D07) and
+				#     stashes the count/latest-bar/now anchors (P5-D13a);
+				#   - is_ready(ticker) = all declared handles warm (P5-D06/D10b) — a
+				#     zero-handle COUNT/DATE fixture is always ready (its own logic
+				#     gates the firing). This is byte-identical to the old warmup
+				#     short-circuit: SMA_MACD's warmup==100 is now "all three handles
+				#     ready at >=100 bars" (HARD-04, the firing tick is preserved).
+				strategy.update(ticker, bar)
+				if not strategy.is_ready(ticker):
 					continue
-				# D-06: dispatch through the evaluate() orchestration seam — it
-				# stashes self.bars/self.now and repopulates the declared handles
-				# before calling generate_signal(ticker) (the bars param is dropped).
-				intent = strategy.evaluate(ticker, data)
+				intent = strategy.generate_signal(ticker)
 				if intent is None:
 					continue
 				# D-09/D-12: record + per-portfolio fan-out for this single-leg

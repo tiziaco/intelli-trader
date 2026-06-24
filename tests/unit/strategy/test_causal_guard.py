@@ -92,10 +92,16 @@ def test_causal_adapter_registers_fine():
 # --- Task 2: per-symbol fan-out + independent readiness (P5-D10/D10b) -------
 
 class _Bar:
-	"""Minimal bar stub exposing the input columns the adapters read."""
+	"""Minimal bar stub exposing the input columns the adapters read.
 
-	def __init__(self, close: float) -> None:
+	Plan C (P5-D13a): ``update`` now also stashes the decision anchor
+	``self.now = bar.time``, so the stub carries a ``time`` (a plain int tick here —
+	readiness/fan-out is what these tests exercise, the anchor value is unused).
+	"""
+
+	def __init__(self, close: float, time: int = 0) -> None:
 		self.close = close
+		self.time = time
 
 
 def _make_dual_sma():
