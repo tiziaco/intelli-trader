@@ -56,6 +56,7 @@ log the missing-ticker warning (RESEARCH OQ4).
 
 import functools
 import queue
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -69,7 +70,7 @@ from itrader.logger import get_itrader_logger
 from itrader.price_handler.store.base import PriceStore
 from itrader.universe import is_active
 
-from .base import BarFeed
+from .base import BarFeed, assert_update_trigger
 
 # OHLCV aggregation spec for resampled buckets (RESEARCH Pattern 2,
 # verified against pandas 2.3.3).
@@ -263,6 +264,16 @@ class BacktestBarFeed(BarFeed):
         self._cursor: dict[tuple[str, str], int] = {}
         self._cursor_cut: dict[tuple[str, str], int] = {}
 
+        # Shared recent-bars newest-row cache (P5-D16 / G5 — newest-bar provision
+        # only; the deep multi-bar buffer is DEFERRED, P5-D16/P5-D22). Written by
+        # the SINGLE per-symbol walk in current_bars (P5-D16a) that also builds the
+        # BarEvent payload — one source of truth, NOT a second parallel pass.
+        # Read back via newest_bar(ticker). Empty until the first tick produces a
+        # bar for a symbol (newest_bar returns None before then). This is the
+        # newest-bar floor of the cache (capacity NEWEST_BAR_ONLY); a deep buffer
+        # lands with the first raw-bar consumer registered through the ABC seam.
+        self._newest_bars: dict[str, Bar] = {}
+
         # Run-path bindings for the BarEvent factory (Plan 07-02, D-20) —
         # set by the trading system at wiring time via ``bind``. The queue
         # is optional (unbound: the factory RETURNS the event); membership
@@ -427,13 +438,57 @@ class BacktestBarFeed(BarFeed):
         D-09: this is "structural hot-loop de-pandas, bit-identical" — the Bar
         values are identical to the old per-tick ``Bar.from_row`` path; the
         conversions were front-loaded to ``__init__``, not eliminated.
+
+        G5 unify (P5-D16a): this SINGLE existing per-symbol walk ALSO writes the
+        shared recent-bars newest-row cache (``self._newest_bars[ticker] = bar``)
+        — one walk, not two. The cache row and the returned ``BarEvent`` payload
+        come from the SAME ``bar`` for the SAME tick, so ``newest_bar(ticker)``
+        is provably ``bars[ticker]`` for every present symbol (one source of
+        truth). No second per-symbol loop is added for the cache write — it rides
+        this same walk.
         """
         bars: dict[str, Bar] = {}
         for ticker in self._symbols:
             bar = self._prebuilt[ticker].get(time)
             if bar is not None:
                 bars[ticker] = bar
+                self._newest_bars[ticker] = bar  # G5: same walk feeds the cache
         return bars
+
+    # -- Shared recent-bars: newest-bar provision (P5-D16 / G5) ----------------
+
+    def newest_bar(self, ticker: str) -> Bar | None:
+        """Return the newest completed ``Bar`` written for ``ticker``, or ``None``.
+
+        Pure dict read of the G5-written newest-row cache (``_newest_bars``): the
+        value the SINGLE ``current_bars`` walk last stored for ``ticker`` (P5-D16a
+        — same ``bar`` as the ``BarEvent`` payload, one source of truth). Returns
+        ``None`` before the symbol's first bar. The deep multi-bar history is
+        DEFERRED (P5-D16/P5-D22) — this is the newest-bar provision only.
+        """
+        return self._newest_bars.get(ticker)
+
+    def assert_update_trigger(self, timeframes: Iterable[timedelta]) -> None:
+        """G1 update-trigger wiring guard (P5-D16b) — asserts the causality order.
+
+        Delegates to the interface-only ``base.assert_update_trigger`` with THIS
+        feed's ``base_timeframe``: every consumed timeframe must satisfy
+        ``base_timeframe <= min(timeframe)`` so no consumer drives off a bar the
+        base feed has not produced (a non-causal sub-base trigger). For golden
+        SMA_MACD (``1d == base == 1d``) this collapses to "every tick" and holds
+        trivially. The full multi-timeframe consolidator is DEFERRED.
+
+        Parameters
+        ----------
+        timeframes : Iterable[timedelta]
+            Every timeframe a registered consumer drives its update off.
+
+        Raises
+        ------
+        ValueError
+            If ``base_timeframe > min(timeframe)`` for any consumed timeframe.
+        """
+        assert_update_trigger(self._base_timeframe, timeframes)
 
     # -- History windows (strategy push path, D-20) ---------------------------
 
