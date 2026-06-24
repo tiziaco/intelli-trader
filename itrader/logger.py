@@ -93,7 +93,12 @@ def _uuid_safe_json_serializer(obj: Any, **kw: Any) -> str:
         except TypeError:
             if structlog_default is not None:
                 return structlog_default(value)  # type: ignore[no-any-return]
-            raise
+            # WR-04: a log sink must never crash on a stray field. When structlog
+            # injected no chained default (future structlog version, or a direct
+            # call), repr-coerce instead of re-raising so a single
+            # non-serializable context value (Decimal/datetime/custom object) on
+            # the ERROR route cannot crash the last-resort error sink.
+            return repr(value)
 
     return json.dumps(obj, default=_default, **kw)
 
