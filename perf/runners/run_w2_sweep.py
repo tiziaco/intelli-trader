@@ -140,6 +140,14 @@ def _run_point(n_symbols: int, tmpdir: Path) -> dict[str, Any]:
             end = (frame.index[-1] + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
     tickers = list(frames.keys())
 
+    # WR-02 guard: start/end are only assigned inside the per-frame loop, so an
+    # empty frames dict would leave them None and pass None into _wire_system's
+    # typed `start: str, end: str` signature (latent TypeError/silent misbehavior).
+    # Currently unreachable (_N_SYMBOLS_SWEEP is always non-empty) — fail loudly
+    # rather than carry the None forward.
+    if start is None or end is None:
+        raise RuntimeError("W2 sweep produced no frames — cannot wire the system")
+
     # PASS 1 — clean wall-clock: NO tracemalloc anywhere in the timed region.
     system = _wire_system(csv_paths, start, end, tickers)
     t0 = time.perf_counter()
