@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: executing
-stopped_at: 06 PAUSED for re-plan — Gate (b) measured ~0% W2 win (06-01's alias/copy levers negligible); Scalene shows real hotspot is per-tick searchsorted; planning incremental-cursor window()
-last_updated: "2026-06-24T13:45:00.000Z"
-last_activity: 2026-06-24 -- Gate (b) A/B + Scalene profile (see 06-PROFILE-FINDINGS.md); 06-01 safe but ~0% W2 win; user chose to plan incremental-cursor fix
+status: "Gate (b) ≥10% W2 win NOT met by 06-01 (~0%, profile-confirmed). Next: plan incremental-cursor window() that replaces per-tick searchsorted. See 06-PROFILE-FINDINGS.md."
+stopped_at: Phase 06 context PIVOTED to incremental-cursor window() (D-10–D-16); ready to replan cursor fix
+last_updated: "2026-06-24T14:15:37.660Z"
+last_activity: 2026-06-24 -- Gate (b) measurement + Scalene profile; user chose to plan the cursor fix
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 11
-  completed_plans: 9
+  completed_plans: 10
   percent: 50
 ---
 
@@ -338,9 +338,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T13:22:11.000Z
-Stopped at: 06-02 Task 1 committed (f51d7c6); BLOCKING human-verify checkpoint (Task 2 — cool-machine W2 before/after capture + W1/W1-baseline re-freeze)
-Resume file: .planning/phases/06-bar-feed-window-copies-optional-slip-able/06-02-PLAN.md
+Last session: 2026-06-24T14:15:37.651Z
+Stopped at: Phase 06 context PIVOTED to incremental-cursor window() (D-10–D-16); ready to replan cursor fix
+Resume file: .planning/phases/06-bar-feed-window-copies-optional-slip-able/06-CONTEXT.md
 
 ## Operator Next Steps
 
