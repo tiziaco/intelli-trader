@@ -133,3 +133,68 @@
 - `megaframe()` / screener concat optimization → revisit with the production screener (N+4).
 - Monotonic per-(ticker,tf) cursor replacing `searchsorted` → microsecond gain, not worth the state now.
 - Removing in-strategy/adapter re-slicing (`catalog.py` `bars[start_dt:]`) → byte-identity risk, future non-byte-exact cleanup.
+
+---
+
+# PIVOT SESSION — 2026-06-24 (post Gate-(b) profile)
+
+**Trigger:** `06-PROFILE-FINDINGS.md` — 06-01's view/alias measured ~0% W2; real hotspot is per-tick
+`searchsorted` (13.2%) + `iloc` slice (7.9%). Re-discussed to pivot the mechanism.
+**Areas discussed:** Gate (b) realism, Fallback if cursor falls short, Cursor change scope, 06-01
+disposition, W1 re-baseline + non-regression, Defensive correctness guard.
+
+## Gate (b) realism / denominator cleanup (D-13/D-14)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Clean denominator first | Remove per-bar TIME-EVENT debug log + de-time tracemalloc/synth-gen; re-baseline; gate ≥10% on cleaned engine | ✓ |
+| Keep ≥10% on raw sweep | Gate on full diluted wall-clock | |
+| Lower threshold | Drop to ≥5% on raw sweep | |
+
+**Follow-up:** user confirmed the per-bar log is DEBUG (`full_event_handler.py:116`, eager f-string
+discarded at INFO) and chose to **remove it completely** (not just disable during the timed run).
+Sub-decision: **remove log → re-baseline → gate the cursor alone** (isolate the cursor's win), not a
+combined-win gate.
+
+## Fallback if cursor falls short (D-15)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Ship as correctness+modest-perf, re-frame gate (b) | Record actual W2 %, re-frame to "measurable W2 win + W1 non-regress" | ✓ |
+| Slip the whole phase | Revert/park, defer Phase 6 | |
+| Keep iterating | Chase more hotspots until ≥10% | |
+
+## Cursor change scope (D-10/D-11)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Searchsorted only (slice as stretch) | Cursor replaces searchsorted; iloc slice only if needed | |
+| Cursor + slice together | Cursor for bounds AND cheaper slice path for the 7.9% iloc | ✓ |
+| Searchsorted only, slice never | Leave iloc exactly as 06-01 | |
+
+## 06-01 disposition (D-12)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Keep as foundation | Cursor builds on 06-01's read-only master frames + view; D-08 drift test carries | ✓ |
+| Revert 06-01 first | Rebuild window path clean from base | |
+
+## W1 re-baseline + non-regression (D-14)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Re-freeze on cleaned engine, then non-regress | Re-freeze W1 post-cleanup; cursor held to ±5% soft band; cool machine | ✓ |
+| Single end re-freeze | One re-freeze after cursor, no intermediate | |
+| Require W1 improvement too | Hold cursor to an actual W1 win | |
+
+## Defensive correctness guard (D-16)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Dedicated test only (extend D-08) | Assert cursor (start,pos) == fresh searchsorted + no-future-bar invariant | ✓ |
+| Test + optional debug-flag runtime assert | Add opt-in runtime check off by default | |
+| Runtime assert always on | Verify every tick (re-pays searchsorted) | |
+
+**Skipped (folded as carry-forward defaults, not separate decisions):** cursor reset/non-monotonic
+semantics (→ safe rebuild via searchsorted, never leak a future bar — D-10); plan split/sequencing
+(→ planner's call).
