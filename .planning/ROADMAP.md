@@ -134,7 +134,9 @@ sequenced after it by payoff order.
      --strict` clean; determinism double-run byte-identical.
   5. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
      baseline, re-frozen as the new locked reference.
-**Plans**: TBD
+**Plans**: 2 plans
+  - [ ] 03-01-PLAN.md — D-02 invariant audit + accumulator field/apply method + wire both spot & margin close arms + collapse the dead dual-loop + D-03 equivalence test + gate (a) (PERF-02)
+  - [ ] 03-02-PLAN.md — gate (b): human-run make perf-w1 (>= 5% wall-clock vs 199.4 s), re-freeze W1-BASELINE.json (PERF-02)
 
 ### Phase 4: Hot-Path Discipline
 **Goal**: The per-bar path stops paying structural waste on two behavior-only sinks — hot-loop
