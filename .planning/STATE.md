@@ -20,8 +20,8 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 5 — Incremental Indicators (FRAGILE, oracle-gated, LAST) — the final remaining v1.5 phase
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
+**Current focus:** Phase 5 — **Stateful Indicators + Shared Bar Cache** (FRAGILE, oracle RE-BASELINED, LAST) — DISCUSSED 2026-06-24, reframed by spec (`05-CONTEXT.md` P5-D01..D22); ready to plan (A→B→C)
 
 ## Current Position
 
@@ -37,12 +37,16 @@ Last activity: 2026-06-24
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
-**This is the perf analog of v1.2 Consolidation: it re-baselines NOTHING.** Every optimization phase
-(2-6) is gated on BOTH:
+**This is the perf analog of v1.2 Consolidation: it re-baselines NOTHING — EXCEPT Phase 5.** Every
+optimization phase **2, 3, 4, 6** is gated on BOTH gates below with byte-exact Gate (a). **Phase 5
+is the exception** (reframed by spec 2026-06-24, `05-CONTEXT.md` P5-D01): it drops `ta` on the runtime
+path and **deliberately re-baselines the SMA_MACD oracle** — its Gate (a) becomes a re-baseline +
+cross-validation freeze (backtesting.py + backtrader, 1% rel tol), not byte-identity (P5-D02). Trade
+dates/count (134) are expected to stay identical (firing tick preserved); numeric equity/PnL drift.
 
-1. **Gate (a) — byte-exact oracle stays green:** `tests/integration/test_backtest_oracle.py` —
-   SMA_MACD **134 trades / `final_equity 46189.87730727451`**. No golden is re-baselined anywhere in
-   v1.5.
+1. **Gate (a) — oracle lock:** `tests/integration/test_backtest_oracle.py` — SMA_MACD **134 trades /
+   `final_equity 46189.87730727451`** for Phases 2/3/4/6 (byte-exact). **Phase 5 re-baselines this
+   number** via cross-val freeze (P5-D02) — the new reference is frozen + regression-locked.
 
 2. **Gate (b) — measurable, locked W1 improvement:** the clean W1 benchmark shows a real wall-clock
    and/or peak-memory reduction vs the frozen baseline (**240.8 s / 167.3 MB**), **re-frozen after

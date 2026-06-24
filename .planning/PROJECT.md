@@ -42,13 +42,21 @@ hotspot map + §6 phase breakdown. The spike IS this milestone's research (no fu
 - **P3 — Hot-path logging discipline (~6% W1 / ~22% W2):** level-gate hot-loop logs; demote/sample
   per-bar admission-rejection warnings; drop `debug()` from the per-bar path.
 - **P4 — Cache `get_type_hints` in `to_dict` (~2% W1 / ~14% W2):** per-class memoization.
-- **P5 — Incremental indicators (~24%, oracle-gated, LAST):** rolling/memoized SMA & MACD replacing
-  the per-bar full-window `ta` rebuild; must reproduce `[BYTE-EXACT]` output, the oracle as the lock.
+- **P5 — Stateful indicators + shared bar cache (~24%, oracle RE-BASELINED, LAST):** stateful
+  incremental indicators (drop `ta` on the runtime path) + feed-centric per-symbol fan-out + shared
+  recent-bars feed, replacing the per-bar full-window `ta` rebuild. **SUPERSEDED-BY-SPEC**
+  (`docs/superpowers/specs/2026-06-24-stateful-indicator-design.md` + phase `05-CONTEXT.md`): this is
+  a structural refactor that **deliberately RE-BASELINES** the SMA_MACD oracle (cross-validated vs
+  backtesting.py/backtrader, NOT byte-exact). The "Held throughout" byte-exact invariant carries a
+  **Phase-5 carve-out** (P5-D01).
 - **P6 — Bar-feed window copies (optional, ~4% W1 / ~22% W2):** reduce per-tick `iloc` frame copies
   (reusable view / cached bounds), preserving the look-ahead bar-timing contract.
 
-**Held throughout:** byte-exact SMA_MACD oracle (134 / `46189.87730727451`); `mypy --strict` clean;
-Decimal end-to-end (no new float-for-money); single UUIDv7; determinism double-run byte-identical.
+**Held throughout (P0–P4, P6):** byte-exact SMA_MACD oracle (134 / `46189.87730727451`); `mypy
+--strict` clean; Decimal end-to-end (no new float-for-money); single UUIDv7; determinism double-run
+byte-identical. **Phase-5 carve-out (P5-D01):** Phase 5 deliberately re-baselines the oracle (drops
+`ta` on the runtime path); its lock is cross-validation (backtesting.py + backtrader, 1% rel tol) +
+a re-frozen reference, NOT byte-identity. `mypy --strict` / Decimal / UUIDv7 / determinism still hold.
 
 **Progress:** P0 (Phase 1 — perf tooling & baseline) and P1 (Phase 2 — order-storage indexing)
 shipped. Phase 2 replaced the flat `{id: order}` linear scan with derived secondary indexes
@@ -427,6 +435,14 @@ Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-lo
 
 ---
 *Last updated: 2026-06-24 — v1.5 Phase 4 (Hot-Path Discipline, PERF-03 + PERF-04) COMPLETE: central `isEnabledFor` log gate + `ITRADER_DISABLE_LOGS` kill-switch + admission error→warning demote + curated hot-path `debug()` deletes, and `get_type_hints` memoized per strategy class via `@cache _declared_hints`. Gate (a) byte-exact (134 / `46189.87730727451`), mypy --strict clean, full suite 1256. Gate (b) PASS via same-machine A/B (−7.8 % mean, attributed to PERF-03 + PERF-04); W1-BASELINE.json re-frozen at 238.5 s under owner sign-off on a CONTENDED machine (provenance in 04-PERF-ATTRIBUTION.md — read Phase-5 deltas against it accordingly, or re-freeze cool first). Phase 5 (Incremental Indicators, PERF-05 — FRAGILE/oracle-gated, LAST) next.*
+*Context update: 2026-06-24 — Phase 5 DISCUSSED + reframed. The design spec
+(`docs/superpowers/specs/2026-06-24-stateful-indicator-design.md`) + `05-CONTEXT.md` (P5-D01..D22)
+**supersede** the byte-exact ROADMAP entry: Phase 5 is now **Stateful Indicators + Shared Bar Cache**,
+a structural refactor that **deliberately RE-BASELINES** the SMA_MACD oracle (cross-validated, not
+byte-exact) — Gate (a) becomes a re-baseline + cross-val freeze (P5-D02), the v1.5 "change numbers
+nowhere" invariant gets a Phase-5 carve-out. Locked: feed-centric stateful indicators (Nautilus/LEAN
+Model B), per-symbol/per-pair lazy fan-out, EMA seed-from-first + SMA running-sum, drop per-tick
+`self.bars`, A→B→C plan split. 4 deferrals tracked in `.planning/todos/`. Next: /gsd:plan-phase 5.*
 *v1.5 (Backtest Performance Optimization) STARTED. Promoted the performance
 half of Backlog 999.2 and split Persistence out into its own following milestone. Goal: cut the frozen
 W1 baseline (240.8 s / 167.3 MB) via profiler-ranked, oracle-gated hot-path optimizations without
@@ -435,5 +451,7 @@ benchmark/Scalene-HTML-profile runner, backtesting.py/backtrader cross-val runne
 P1 order-storage indexing, P2 running PnL accumulator, P3 hot-path logging discipline, P4
 `get_type_hints` cache, P5 incremental indicators (oracle-gated, last), P6 optional bar-feed window
 copies. Every phase gated on the byte-exact SMA_MACD oracle (134 / 46189.87730727451) staying green +
-a measurable W1 improvement. Source: `perf/results/PERF-BASELINE-RESULTS.md` (spike = the research).
+a measurable W1 improvement — **EXCEPT Phase 5 (reframed 2026-06-24), which deliberately re-baselines
+the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a re-frozen reference
+(P5-D01/D02), not byte-identity. Source: `perf/results/PERF-BASELINE-RESULTS.md` (spike = the research).
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
