@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: ready_to_plan
-stopped_at: Phase 06 complete (5/5) — ready to discuss Phase 999.2
+stopped_at: Phase 06 complete (D-15 ship-and-reframe) — Phase 5 (Incremental Indicators) is the LAST remaining v1.5 phase (6-before-5 reorder); 999.2 jump is the phase.complete backlog-scan artifact, corrected
 last_updated: 2026-06-24T15:42:12.372Z
 last_activity: 2026-06-24
 progress:
@@ -21,14 +21,19 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** Phase 5 — Incremental Indicators (FRAGILE, oracle-gated, LAST) — the final remaining v1.5 phase
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
+Phase: 5 (Incremental Indicators — PERF-05; deferred to run AFTER Phase 6 per the 6-before-5 reorder)
+Plan: Not started (no Phase 5 dir yet — needs discuss/plan)
 Status: Ready to plan
 Last activity: 2026-06-24
+
+> NOTE: `phase.complete` advanced Current Position to the `999.2` backlog placeholder because no
+> `05-*` phase dir exists yet (scanner artifact — see memory `phase-complete-jumps-to-backlog`).
+> Corrected manually: the next v1.5 phase is **Phase 5 (Incremental Indicators)**, not 999.2.
+> 999.2/999.3 remain FUTURE-milestone backlog seeds. v1.5 = Phases 1-4 + 6 done; Phase 5 remaining.
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
@@ -343,8 +348,9 @@ files under `milestones/`.
 ## Session Continuity
 
 Last session: 2026-06-24T15:06:52.157Z
-Stopped at: Completed 06-04-PLAN.md (D-10 monotonic int64 cursor); ready to execute 06-05 gate-(b) re-freeze
+Stopped at: Phase 06 COMPLETE — all 5 plans done (06-02 closed-out-superseded; 06-03 cleanup; 06-04 cursor; 06-05 D-15 ship-and-reframe verdict +1.9% W2). Verification passed 6/6. Next: Phase 5 (Incremental Indicators), the last v1.5 phase.
 Resume file: None
+Carried todo: re-freeze W1-BASELINE.json on a verified-cool isolated run (the 06-05 W1 re-freeze was thermally inflated to 259.1s and deferred; baseline kept at 238.5s). See 06-05-SUMMARY.md.
 
 ## Operator Next Steps
 
