@@ -27,8 +27,9 @@ As of Phase 5 (D-01) the per-bar ``SignalIntent`` carries its OWN ``order_type``
 + ``entry_price`` (the per-instance ``Strategy.order_type`` class attr was
 retired). This fixture preserves its prior behavior by routing each scripted
 intent through the matching typed factory: a LIMIT/STOP emitter rests the entry
-at the DECISION-bar close (``self.bars["close"].iloc[-1]``) — value-identical to
-the legacy ``SignalEvent.price = to_money(decision_bar.close)`` fan-out — so
+at the DECISION-bar close (``self.latest_bar(ticker).close``, P5-D13a) —
+value-identical to the legacy ``SignalEvent.price = to_money(decision_bar.close)``
+fan-out — so
 every existing golden stays byte-exact. Bracket SL/TP **children** get their
 STOP/LIMIT types from the bracket assembler regardless of the entry type, so a
 MARKET-entry bracket still works.
@@ -121,19 +122,22 @@ class ScriptedEmitter(Strategy):
         self.order_type = order_type
 
     def generate_signal(self, ticker: str) -> SignalIntent | None:
-        # D-06: bars dropped — evaluate() stashed the window on self.bars. This
-        # fixture registers no indicators, so evaluate's repopulate loop is a
-        # no-op (Pitfall 6); the date-keyed script logic is unchanged.
-        if self.bars.empty:
+        # P5-D13a: the per-tick self.bars master-frame slice is GONE — the handler
+        # drives update(ticker,bar) and the strategy reads the LATEST (decision) bar
+        # via self.latest_bar(ticker). A None means no bar seen yet (the old
+        # self.bars.empty skip). The decision bar IS the latest pushed bar.
+        bar = self.latest_bar(ticker)
+        if bar is None:
             return None
         # D-04: key off the CURRENT (decision) bar's date, not len(bars).
         # WR-03: anchor the date key to a FIXED frame (UTC), independent of the
         # Settings.timezone default, consistent with _make_on_tick in conftest.py.
-        # csv_store localizes the bar index to TIMEZONE (Europe/Paris); converting
+        # csv_store localizes the bar time to TIMEZONE (Europe/Paris); converting
         # back to UTC here keeps the emitter's date key and the operator hook's key
         # in the same frame so scripted firings and operator actions agree on a
-        # boundary-safe date independent of the config default.
-        decision_date = self.bars.index[-1].tz_convert("UTC").strftime("%Y-%m-%d")
+        # boundary-safe date independent of the config default. bar.time is the SAME
+        # tz-aware Timestamp the old self.bars.index[-1] carried (byte-identical key).
+        decision_date = bar.time.tz_convert("UTC").strftime("%Y-%m-%d")
         action = self.script.get(decision_date)
         if action is None:
             return None
@@ -150,7 +154,10 @@ class ScriptedEmitter(Strategy):
             if is_buy:
                 return self.buy(ticker, sl=sl, tp=tp, exit_fraction=exit_fraction)
             return self.sell(ticker, sl=sl, tp=tp, exit_fraction=exit_fraction)
-        entry = self.bars["close"].iloc[-1]
+        # P5-D13a: the LIMIT/STOP entry rests at the DECISION-bar close — read it
+        # from the latest pushed bar (bar.close, a Decimal), the SAME value the old
+        # self.bars["close"].iloc[-1] carried (byte-identical resting price).
+        entry = bar.close
         if self.order_type is OrderType.LIMIT:
             if is_buy:
                 return self.buy_limit(ticker, price=entry, sl=sl, tp=tp,

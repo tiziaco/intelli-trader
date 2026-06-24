@@ -54,12 +54,12 @@ class SMAMACDStrategy(Strategy):
 		)
 
 	def generate_signal(self, ticker: str) -> SignalIntent | None:
-		# D-06: bars dropped — evaluate() stashed self.bars/self.now and
-		# repopulated the handles. D-01: read entirely through handles +
-		# primitives. [BYTE-EXACT] the MACD eager-vs-lazy reorder (now both SMAs
-		# AND MACDHist are repopulated every tick, whereas the legacy code
-		# computed MACD lazily inside the SMA guard) is value-identical — the
-		# firing tick reads the same handle values; proven by the oracle in Plan 03.
+		# D-06/P5-D14: bars dropped — the handler pushed the latest bar via
+		# update(ticker,bar) (driving the per-symbol stateful handles) and gated on
+		# is_ready(ticker). D-01: read entirely through handles + primitives.
+		# [BYTE-EXACT] both SMAs AND MACDHist advance every tick via the O(1)
+		# recurrences; the firing tick reads the same handle values — proven byte-
+		# identical by the oracle (134 / 46189.87730727451).
 
 		### LONG signals
 		# Entry

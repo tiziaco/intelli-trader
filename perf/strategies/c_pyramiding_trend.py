@@ -66,8 +66,11 @@ class PyramidingTrendStrategy(Strategy):
     def generate_signal(self, ticker: str) -> SignalIntent | None:
         # Trend-continuation: uptrend filter + a rising close vs the prior bar.
         if is_above(self.short_sma, self.long_sma):
-            close = float(self.bars["close"].iloc[-1])
-            prev = float(self.bars["close"].iloc[-2]) if len(self.bars) >= 2 else close
+            # P5-D13a: read the trailing closes via the base's recent_closes seam
+            # (the per-tick self.bars window is gone). [-1] current, [-2] prior bar.
+            closes = self.recent_closes(ticker)
+            close = float(closes[-1])
+            prev = float(closes[-2]) if len(closes) >= 2 else close
             if close > prev:
                 sl = Decimal(str(close)) * (Decimal("1") - _SL_PCT)
                 tp = Decimal(str(close)) * (Decimal("1") + _TP_PCT)

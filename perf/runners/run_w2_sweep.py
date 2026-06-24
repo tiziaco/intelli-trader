@@ -63,10 +63,13 @@ class _TrivialBuyStrategy(Strategy):
         ...
 
     def generate_signal(self, ticker: str) -> SignalIntent | None:
-        if self.bars.empty or len(self.bars) < 2:
+        # P5-D13a: the per-tick self.bars window is gone — read the trailing closes
+        # via the base's recent_closes seam ([-1] current, [-2] prior bar).
+        closes = self.recent_closes(ticker)
+        if len(closes) < 2:
             return None
-        close = float(self.bars["close"].iloc[-1])
-        prev = float(self.bars["close"].iloc[-2])
+        close = float(closes[-1])
+        prev = float(closes[-2])
         if close > prev:
             return self.buy(ticker)
         return None

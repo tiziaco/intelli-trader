@@ -105,9 +105,10 @@ class EthBtcPairStrategy(PairStrategy):
 			)
 
 	def init(self) -> None:
-		# Handle-FREE: the β/z alpha reads self.bars windows via statsmodels/numpy
-		# directly (no IndicatorHandle). _run_init leaves warmup == 0; the dispatch
-		# gates on beta_warmup + z_lookback (NOT the handle-derived warmup).
+		# Handle-FREE: the β/z alpha reads the pair's bounded per-leg buffers
+		# (rendered as win_A/win_B by PairStrategy._buffers_as_windows, P5-D15) via
+		# statsmodels/numpy directly (no IndicatorHandle). _run_init leaves warmup
+		# == 0; the dispatch gates on the pair's own is_pair_ready (buffer fill).
 		# Reset the fit-once cache + in-pair flag so a reconfigure is idempotent.
 		self._beta: float | None = None
 		self._in_pair = False

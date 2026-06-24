@@ -1,5 +1,6 @@
 import copy
 from abc import ABC, abstractmethod
+from collections import deque
 from decimal import Decimal
 from datetime import timedelta
 from enum import Enum
@@ -389,6 +390,15 @@ class Strategy(ABC):
 		# every e2e scenario's self.now.tz_convert("UTC") keeps working).
 		self._bar_counts: dict[str, int] = {}
 		self._latest_bar: dict[str, Any] = {}
+		# P5-D13a: a small per-ticker bounded recent-CLOSE buffer for the handful of
+		# indicator-free strategies that read more than the latest bar (a prior-bar
+		# compare, e.g. close vs close[-2], or a short rolling z over the last
+		# `max_window` closes). It replaces those strategies' old `self.bars["close"]`
+		# window reads. Depth = max(max_window, 2) so a `[-2]` prior-bar read is
+		# always available even when max_window < 2. NOTE: max_window is derived in
+		# the post-init() pass below, so the deques are (re)sized in update() lazily
+		# against the resolved depth (init() runs before max_window is known).
+		self._recent_closes: dict[str, deque[float]] = {}
 		self.now: Any = None
 		self.current_bar: Any = None
 		self.init()
@@ -446,6 +456,14 @@ class Strategy(ABC):
 		# and generate_signal.
 		self._bar_counts[ticker] = self._bar_counts.get(ticker, 0) + 1
 		self._latest_bar[ticker] = bar
+		# P5-D13a: maintain the per-ticker bounded recent-close buffer for the
+		# multi-bar indicator-free strategies (recent_closes seam). Depth is
+		# max(max_window, 2) — created lazily here (max_window is resolved by now).
+		recent = self._recent_closes.get(ticker)
+		if recent is None:
+			recent = deque(maxlen=max(self.max_window, 2))
+			self._recent_closes[ticker] = recent
+		recent.append(float(bar.close))
 		self.now = bar.time
 		self.current_bar = bar
 		# P5-D10/D14: load this ticker's recurrence state into the registration
@@ -475,6 +493,20 @@ class Strategy(ABC):
 		guard the empty case, mirroring the old ``self.bars.empty`` skip).
 		"""
 		return self._latest_bar.get(ticker)
+
+	def recent_closes(self, ticker: str) -> list[float]:
+		"""Last ``max(max_window, 2)`` closes for ``ticker``, oldest-first (P5-D13a).
+
+		The multi-bar read seam for the handful of indicator-free strategies that
+		need a small trailing close window (a prior-bar compare ``[-2]`` or a short
+		rolling z over the last ``max_window`` closes) — replacing their old
+		``self.bars["close"]`` window. Returns the bounded buffer as a plain list
+		(empty before any bar). The buffer is depth ``max(max_window, 2)``, so
+		``[-2]`` is always available once two bars have arrived and the rolling
+		window covers ``max_window`` closes.
+		"""
+		recent = self._recent_closes.get(ticker)
+		return list(recent) if recent is not None else []
 
 	def is_ready(self, ticker: str) -> bool:
 		"""True iff ALL of ``ticker``'s handles are ready (P5-D06/D10b).
@@ -509,6 +541,7 @@ class Strategy(ABC):
 		# bars after reset).
 		self._bar_counts.clear()
 		self._latest_bar.clear()
+		self._recent_closes.clear()
 		self.now = None
 		self.current_bar = None
 
@@ -572,6 +605,7 @@ class Strategy(ABC):
 			self._active_ticker = None
 		self._bar_counts.pop(ticker, None)
 		self._latest_bar.pop(ticker, None)
+		self._recent_closes.pop(ticker, None)
 
 	def reconfigure(self, **kwargs: Any) -> None:
 		"""Re-apply + re-coerce kwargs, re-validate, re-run init() (D-12/D-13).
