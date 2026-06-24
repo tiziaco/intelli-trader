@@ -105,3 +105,27 @@ foreground contention present today.
   re-freeze now using a clean run on this (un-throttled but contended) machine, or (b) defer the
   freeze to a confirmed-quiet machine — to avoid baking contention noise into the locked
   Phase-5 reference. The executor will NOT auto-freeze: the freeze is gated on explicit sign-off.
+
+## 7. Re-freeze record (Task 2 — owner-approved, executed 2026-06-24)
+
+**Owner signed off "approved" with full awareness of the contention caveat — re-freeze NOW, do
+NOT defer.** Executed exactly as gated:
+
+- Gate (a) re-confirmed green at the freeze: oracle 3/3 passed on a determinism double-run (134 /
+  46189.87730727451, byte-identical across both runs); `mypy itrader` clean (165 source files).
+- Single clean freeze run (the `make perf-baseline` equivalent in-worktree): **238.5s wall /
+  162.7 MB peak**, topology byte-identical (1578 fills / 659 closed).
+- `W1-BASELINE.json` updated: `frozen_at` → 2026-06-24, `metric.wall_clock_s` 199.4→**238.5**,
+  `metric.peak_mem_mb` 169.8→**162.7**; schema v1 + window + seed preserved;
+  `oracle_provenance.final_equity` UNCHANGED STRING constant **46189.87730727451** (never W1-derived).
+- Soft guard (`--check`, the `make perf-w1` equivalent): **234.9s, Δ −1.5%** vs the new 238.5s
+  baseline — within ±5%, **exit 0**. The reference reproduces within noise (not a lucky low).
+- File kept trackable (`git check-ignore` → not ignored, Pitfall 4); committed in `01cb764`.
+
+**PROVENANCE ON RECORD (load-bearing):** this baseline (238.5s) was frozen on a **CONTENDED**
+machine (~238–270s range today; foreground Safari/Slack/another Python live), NOT the
+cool-night ~199s. It is intentionally **slower** than the prior frozen 199.4s — the number
+reflects today's machine state per the owner's explicit decision, not a regression. A future
+cool-machine re-freeze would legitimately read faster; do NOT misread that as a Phase-5 "win".
+The honest gate-(b) attribution is the same-machine A/B above (mean −7.8% / best −9.8%), which
+is independent of this absolute number.
