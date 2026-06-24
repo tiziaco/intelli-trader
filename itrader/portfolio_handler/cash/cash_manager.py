@@ -175,8 +175,9 @@ class CashManager:
         # Execute deposit
         self._balance = new_balance
             
-        # Record operation
-        operation = self._create_operation(
+        # Record operation (IN-04: return value discarded — the record is
+        # appended to storage inside the helper).
+        self._create_operation(
             CashOperationType.DEPOSIT,
             amount_decimal,
             description,
@@ -235,8 +236,9 @@ class CashManager:
         # Execute withdrawal
         self._balance = new_balance
             
-        # Record operation
-        operation = self._create_operation(
+        # Record operation (IN-04: return value discarded — the record is
+        # appended to storage inside the helper).
+        self._create_operation(
             CashOperationType.WITHDRAWAL,
             amount_decimal,
             description,
@@ -296,8 +298,9 @@ class CashManager:
         # Execute cash flow
         self._balance = new_balance
             
-        # Record operation
-        operation = self._create_operation(
+        # Record operation (IN-04: return value discarded — the record is
+        # appended to storage inside the helper).
+        self._create_operation(
             operation_type,
             amount_decimal,
             description,
@@ -645,7 +648,10 @@ class CashManager:
         if amount <= 0:
             raise InvalidTransactionError(
                 f"Amount for {operation_type} must be positive",
-                {"amount": amount}
+                # IN-05: convert at the serialization edge so a binary-float
+                # artifact from an incoming float `amount` does not surface in
+                # the structured error/audit payload ("Decimal until the edge").
+                {"amount": str(to_money(amount))}
             )
         
         # Convert to Decimal with proper precision (D-04 string entry).
