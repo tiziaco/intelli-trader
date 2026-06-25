@@ -382,3 +382,4 @@ Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready f
 ## Operator Next Steps
 
 - Start the next milestone with /gsd-new-milestone
+| 2026-06-25 | fast | Switch W1 on_tick to indexed get_active_orders (de-noise profile) | ✅ |
