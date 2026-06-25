@@ -107,6 +107,18 @@ class PairStrategy(Strategy):
 		- ``max_window >= beta_warmup + z_lookback`` (Pitfall 3 — a too-narrow
 		  fetch width yields a window that can never satisfy the fit/z warmup).
 
+		WR-04 — why the base allows ``>=`` and NOT ``==``. The "β fits the
+		OLDEST ``beta_warmup`` of a fixed-width window" contract is owned by
+		``_run_init``, which sizes the per-leg buffer to EXACTLY
+		``beta_warmup + z_lookback`` (line below) regardless of ``max_window``.
+		That buffer — not ``max_window`` — IS the window the β/z math reads, so
+		a larger ``max_window`` cannot slide the fit window off dataset-start in
+		the buffered (Model B push) path. A subclass that bypasses the buffer and
+		fits β off a raw ``feed.window(max_window)`` slice (as
+		``EthBtcPairStrategy`` historically reasoned about) MUST pin
+		``max_window == beta_warmup + z_lookback`` itself — that subclass-local
+		invariant is asserted in ``EthBtcPairStrategy.validate`` (WR-01 there).
+
 		A subclass overriding ``validate`` SHOULD call ``super().validate()`` to
 		keep these invariants.
 		"""
