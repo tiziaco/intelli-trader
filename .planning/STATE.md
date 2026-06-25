@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: ready_to_plan
-stopped_at: Phase 08 complete (6/6) — ready to discuss Phase 999.2
+stopped_at: Phase 08 complete (6/6) — v1.5 + Phase 8 add-on done; next step is milestone close (999.2 is a future-milestone backlog seed, NOT next)
 last_updated: 2026-06-25T16:34:34.817Z
-last_activity: 2026-06-25 -- Phase 08 execution started
+last_activity: 2026-06-25 -- Phase 08 complete (msgspec + hot-path wins, owner-signed-off)
 progress:
   total_phases: 10
   completed_phases: 7
@@ -21,16 +21,30 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Current focus:** v1.5 COMPLETE incl. the Phase 8 hot-path add-on — next step is milestone close (`/gsd-complete-milestone`)
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-25
+Phase: — (v1.5 COMPLETE — Phases 1-6 + 07 + Phase 8 hot-path add-on all done)
+Plan: —
+Status: Ready for milestone close
+Last activity: 2026-06-25 -- Phase 08 complete
 
-> NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
+> NOTE (2026-06-25, Phase 8 add-on): `phase.complete` again advanced Current Position to **Phase 999.2**
+> (the SAME scanner artifact — memory `phase-complete-jumps-to-backlog`). Corrected manually: 999.2/999.3
+> are FUTURE-milestone backlog seeds, NOT the next phase. **Phase 8 (hot-path fusion/prebuild/msgspec,
+> branch `v1.5/phase-8-hot-path-improvments`) is COMPLETE (6/6 plans):** kept Position cache (+15% W1) +
+> to_dict cache (+2% W1) + itertuples (owner override) + `_aligned` audit; the Req-1 "fusion" was an
+> A/B-measured **−15% W1 regression** and was REVERTED (keep-only-measured; proper single-pass design
+> deferred to `.planning/todos/pending/single-pass-portfolio-valuation.md`); the **msgspec.Struct
+> migration** (Bar + full Event chain + 5 DTOs, Decimal contract intact) cleared a fresh cool A/B at
+> **+7.06% W1 / +10.64% W2@50**. Final Phase-8 locked baselines (owner sign-off tiziaco 2026-06-25):
+> **W1 15.736 s / 152.79 MB**, **W2@50 2.303 s / 163.47 MB**; gate (a) byte-exact 134/46189.87730727451,
+> mypy --strict clean (188 files), full suite 1340. Code review 0 blocker / 2 warning (both FIXED) / 3 info.
+> Next step: milestone close (`/gsd-complete-milestone`). 999.2/999.3 remain future-milestone seeds.
+>
+> --- (prior v1.5 close note, retained) ---
+> `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
 > `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
 > 6-before-5 reorder), so it is NOT "next". With Phase 5 now complete, ALL SIX v1.5 phases (1-6) are
 > Complete — **v1.5 (Backtest Performance Optimization) is finished**. The next step is milestone close
