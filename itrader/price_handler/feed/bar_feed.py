@@ -58,6 +58,7 @@ import functools
 import queue
 from collections.abc import Iterable
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Optional
 
 import numpy as np
@@ -241,7 +242,7 @@ class BacktestBarFeed(BarFeed):
             # poisoning a future tick (the look-ahead invariant, hard-enforced
             # at the feed source — subsumes D-02 view-safety). The consolidation
             # is byte-identical to the store frame (Pitfall 3: the index[0]/[-1]
-            # reads and frame.iterrows() below both work on a non-writeable
+            # reads and frame.itertuples() below both work on a non-writeable
             # frame). The store frame is returned UNTOUCHED — we lock our copy.
             frame = _readonly_master(store.read_bars(ticker))
             # WR-01: an empty store frame (sparse universe / mis-keyed CSV)
@@ -252,9 +253,30 @@ class BacktestBarFeed(BarFeed):
                     ticker, "store returned an empty frame for ticker")
             self._frames[(ticker, self._base_alias)] = frame
             self._spans[ticker] = (frame.index[0], frame.index[-1])
+            # Req 3 (08-03, Claude's-Discretion): build the {ts: Bar} prebuild
+            # via itertuples instead of frame.iterrows(). iterrows() materializes
+            # one throwaway pandas Series PER ROW (~69k across the golden run);
+            # itertuples yields a lightweight NamedTuple per row with no Series
+            # allocation. Body byte-unchanged: str() parity verified — for the
+            # float64 OHLCV columns str(native scalar) == str(series_value), so
+            # the Bar.from_row D-14 Decimal(str(...)) string path receives a
+            # byte-identical string (test_bar_prebuild_equivalence pins this
+            # field-for-field + an explicit str_parity assertion). The column
+            # labels (open/high/low/close/volume) are valid identifiers, so the
+            # NamedTuple exposes them as attributes (r.open, ...); r.Index is the
+            # timestamp. Construct Bar directly via the SAME Decimal(str(...))
+            # path so the D-14 contract is preserved without re-routing through a
+            # Series-shaped mapping.
             self._prebuilt[ticker] = {
-                ts: Bar.from_row(ts, row)
-                for ts, row in frame.iterrows()
+                r.Index: Bar(
+                    time=r.Index,
+                    open=Decimal(str(r.open)),
+                    high=Decimal(str(r.high)),
+                    low=Decimal(str(r.low)),
+                    close=Decimal(str(r.close)),
+                    volume=Decimal(str(r.volume)),
+                )
+                for r in frame.itertuples(index=True)
             }
 
         # D-10 (PERF-06): monotonic forward-cursor state for window(), keyed
