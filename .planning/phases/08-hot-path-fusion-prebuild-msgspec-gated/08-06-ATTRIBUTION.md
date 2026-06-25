@@ -155,10 +155,17 @@ are owner-gated):
 > STATE.md / ROADMAP.md NOT modified; 08-06-SUMMARY.md NOT yet created — the plan is not complete
 > until after sign-off + re-freeze. This is the FINAL Phase-8 gate.
 
-**Owner sign-off:** **PENDING** — tiziaco (tiziano.iaco@gmail.com).
+**Owner sign-off:** **APPROVED** — tiziaco (tiziano.iaco@gmail.com), 2026-06-25.
 
-Cool-box re-freeze (to be accepted as the new locked Phase-8 references):
-- **W1 ______ s / ______ MB** (workload byte-identical 1578 fills / 659 closed) → `perf/results/W1-BASELINE.json`
-- **W2 @50 ______ s / ______ MB** (n_bars=3000, seed=42) → `perf/results/W2-BASELINE.json`
+Cool-box re-freeze accepted as the new locked Phase-8 references:
+- **W1 15.736 s / 152.79 MB** (workload byte-identical 1578 fills / 659 closed) → `perf/results/W1-BASELINE.json`
+- **W2 @50 2.303 s / 163.47 MB** (n_bars=3000, seed=42) → `perf/results/W2-BASELINE.json`
 
-**Signed by:** _______________  **Date:** _______________
+msgspec headline A/B: **W1 +7.06%**, **W2@50 +10.64%** (both exceed the +3.82%/+6.72% spike expectation,
+clean separation — every OPT beats every BASE). Scalene construction frame 13.32% → 5.13%. Regression
+guard re-run PASS (W1 15.7 s, Δ −0.1% vs new baseline, exit 0); gate (a) byte-exact (oracle 134 /
+46189.87730727451, mypy --strict clean 188 files, full suite 1340 passed, determinism double-run
+identical); `pmset -g therm` clean before/during/after. Extra DTOs kept per the D-02 carve-out (not
+reverted for noise).
+
+**Signed by:** tiziaco (tiziano.iaco@gmail.com)  **Date:** 2026-06-25
