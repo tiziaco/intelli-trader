@@ -107,13 +107,17 @@ class MetricsManager:
                 pass
         self._storage: PortfolioStateStorage = storage
 
-        # Performance metrics cache
-        self._metrics_cache: Dict[str, PerformanceMetrics] = {}
-        self._cache_timestamp: Dict[str, datetime] = {}
-        
+        # D-04: the in-memory metrics cache (_metrics_cache / _cache_timestamp /
+        # cache_duration_minutes / _is_cache_valid) is removed entirely.
+        # calculate_performance_metrics now recomputes from the snapshot history
+        # on each call (it has zero per-bar callers, so recompute-on-call is free).
+        # This also kills the wall-clock TTL stamp (determinism smell,
+        # inconsistent with the WR-01 no-wall-clock guard below) and the WR-03
+        # unbounded-growth class. Live metrics will be Postgres-backed, not an
+        # in-memory cache (owner decision, deferred to the Live Trading milestone).
+
         # Configuration
-        self.cache_duration_minutes = 5  # Cache metrics for 5 minutes
-        self.max_snapshots = 10000       # Maximum snapshots to keep
+        self.max_snapshots = 10000       # Maximum snapshots to keep (feeds deque maxlen plumbing)
         self.risk_free_rate = Decimal('0.02')  # 2% annual risk-free rate
         self.trading_days_per_year = 252
         
@@ -121,7 +125,6 @@ class MetricsManager:
         self.benchmark_prices: Dict[datetime, Decimal] = {}
         
         self.logger.info("MetricsManager initialized",
-            cache_duration=self.cache_duration_minutes,
             max_snapshots=self.max_snapshots
         )
     
@@ -171,32 +174,16 @@ class MetricsManager:
             portfolio_return=portfolio_return
         )
             
-        # Store snapshot (via the seam)
+        # Store snapshot (via the seam).
+        # D-03: snapshot retention is now the storage deque's maxlen — the
+        # per-bar snapshot_count()>max_snapshots trim + whole-list slice-copy is
+        # removed (the bounded deque auto-evicts the oldest on append, O(1)).
+        # D-04: no per-bar metrics-cache clear() (the cache is gone).
+        # D-02: no per-bar debug log — the snapshot already stores the raw
+        # Timestamp + total_equity/total_pnl, so the log duplicated stored data
+        # and only paid the per-bar isoformat()/str() arg construction.
         self._storage.add_snapshot(snapshot)
 
-        # Manage snapshot history size.
-        # D-06: count-only guard — check the size without copying the whole
-        # list on the per-tick path. The trim still never fires on the golden
-        # run, but no longer pays the per-tick whole-list copy.
-        if self._storage.snapshot_count() > self.max_snapshots:
-            self._storage.set_snapshots(
-                self._storage.get_snapshots()[-self.max_snapshots:]
-            )
-            
-        # Invalidate cache when new data is added.
-        # WR-03: clear both dicts together so cached PerformanceMetrics entries
-        # (each holding a daily_returns list) are freed, not just made
-        # unreadable. Clearing only the timestamp left _metrics_cache growing
-        # unbounded over a long run with many distinct (period, date) keys.
-        self._metrics_cache.clear()
-        self._cache_timestamp.clear()
-            
-        self.logger.debug("Portfolio snapshot recorded",
-            timestamp=timestamp.isoformat(),
-            total_equity=str(total_equity),
-            total_pnl=str(total_pnl)
-        )
-            
         return snapshot
     
     def get_current_metrics(self, timestamp: Optional[datetime] = None) -> Dict[str, Any]:
@@ -268,12 +255,7 @@ class MetricsManager:
                     "determinism (WR-01)"
                 )
         
-        cache_key = f"{period.name}_{end_date.date()}"
-        
-        # Check cache first
-        if self._is_cache_valid(cache_key):
-            return self._metrics_cache[cache_key]
-        
+        # D-04: no cache lookup — recompute from the snapshot history each call.
         # Determine start date based on period
         start_date = self._get_period_start_date(period, end_date)
             
@@ -287,15 +269,13 @@ class MetricsManager:
             )
             return None
             
-        # Calculate metrics
+        # Calculate metrics.
+        # D-04: return the freshly computed object each call (no cache populate,
+        # no wall-clock stamp).
         metrics = self._calculate_metrics_from_snapshots(
             period, start_date, end_date, period_snapshots
         )
-            
-        # Cache results
-        self._metrics_cache[cache_key] = metrics
-        self._cache_timestamp[cache_key] = datetime.now()
-            
+
         return metrics
     
     def get_drawdown_analysis(self, start_date: Optional[datetime] = None) -> Dict[str, Any]:
@@ -533,14 +513,6 @@ class MetricsManager:
         if self.initial_equity > 0:
             return ((current_equity - self.initial_equity) / self.initial_equity) * 100
         return Decimal('0.00')
-    
-    def _is_cache_valid(self, cache_key: str) -> bool:
-        """Check if cached metrics are still valid."""
-        if cache_key not in self._cache_timestamp:
-            return False
-        
-        cache_age = datetime.now() - self._cache_timestamp[cache_key]
-        return cache_age.total_seconds() < (self.cache_duration_minutes * 60)
     
     def _get_period_start_date(self, period: MetricsPeriod, end_date: datetime) -> datetime:
         """Calculate start date for a given period."""
