@@ -4,15 +4,15 @@ Inverted contract — this file previously asserted that SignalEvent /
 OrderEvent / FillEvent stay structurally mutable during the transition;
 the new ``events_handler/events/`` package supersedes that:
 
-- ALL event classes are ``frozen=True``/``slots=True``/``kw_only=True``
-  ``Event`` subclasses: reassigning any field raises
-  ``dataclasses.FrozenInstanceError``.
+- ALL event classes are ``frozen=True``/``kw_only=True`` ``Event``
+  subclasses (``msgspec.Struct``): reassigning any field raises
+  ``AttributeError``.
 - Linkage IDs are required at construction (D-12): ``OrderEvent`` without
   ``order_id``, and ``FillEvent`` without ``fill_id`` or ``order_id``,
   raise ``TypeError``.
 - Every event carries a unique, time-ordered UUIDv7 ``event_id`` (D-01)
   and a ``created_at`` defaulting to business time (D-02).
-- ``type`` is a real field holding the correct ``EventType`` member.
+- ``type`` is a ``ClassVar`` holding the correct ``EventType`` member.
 - ``action`` / ``order_type`` are enum-typed (``Side`` / ``OrderType``,
   D-05).
 - ``ErrorEvent`` is a concrete instantiable base; ``PortfolioErrorEvent``
@@ -21,7 +21,6 @@ the new ``events_handler/events/`` package supersedes that:
 """
 
 import uuid
-from dataclasses import FrozenInstanceError
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Callable
@@ -136,38 +135,38 @@ _ALL_EVENTS: list[Any] = [
 @pytest.mark.parametrize("factory", _ALL_EVENTS)
 def test_event_is_frozen(factory: Callable[[], Event]) -> None:
     event = factory()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         event.time = datetime(2025, 1, 1)  # type: ignore[misc]
 
 
 def test_signal_event_payload_fields_are_frozen() -> None:
     signal = _signal()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         signal.quantity = 2.5  # type: ignore[misc]
 
 
 def test_order_event_payload_fields_are_frozen() -> None:
     order = _order()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         order.price = 99.0  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         order.quantity = 3.0  # type: ignore[misc]
 
 
 def test_fill_event_payload_fields_are_frozen() -> None:
     fill = _fill()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         fill.price = 43.0  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         fill.quantity = 2.0  # type: ignore[misc]
 
 
 def test_bar_event_payload_fields_are_frozen() -> None:
     # M5-02: immutability covers the bars field AND the Bar struct inside it.
     bar = _bar()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         bar.bars = {}  # type: ignore[misc]
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(AttributeError):
         bar.bars["BTCUSDT"].close = Decimal("99")  # type: ignore[misc]
 
 
@@ -254,8 +253,11 @@ def test_type_is_real_field_with_correct_member(
 ) -> None:
     event = factory()
     assert event.type is expected_type
-    # real field, not a bare class attribute: instance carries it via slots
-    assert "type" in {f for f in Event.__slots__}
+    # msgspec migration: ``type`` is a ClassVar discriminator (not a struct
+    # field) — it resolves to the class constant the dispatcher reads, and
+    # is therefore absent from the per-instance ``__struct_fields__``.
+    assert "type" not in type(event).__struct_fields__
+    assert type(event).type is expected_type
 
 
 # ---------------------------------------------------------------------------

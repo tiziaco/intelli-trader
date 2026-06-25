@@ -5,7 +5,6 @@ is now ``dict[str, Bar]`` — one immutable Decimal OHLCV struct per ticker,
 absent key = no bar at T (sparse universe), direct field access only.
 """
 
-import dataclasses
 from datetime import datetime
 from decimal import Decimal
 
@@ -47,13 +46,13 @@ def test_missing_ticker_absent_from_dict(bar):
 
 
 def test_bar_event_is_frozen(bar):
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(AttributeError):
         bar.bars = {}  # type: ignore[misc]
 
 
 def test_payload_bar_struct_is_frozen(bar):
     # Immutability reaches INTO the payload: the Bar struct itself is frozen.
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(AttributeError):
         bar.bars["BTCUSDT"].close = Decimal("99")  # type: ignore[misc]
 
 

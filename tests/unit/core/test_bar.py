@@ -9,11 +9,11 @@ Locks the contracts ``itrader/core/bar.py`` must satisfy:
    Decimals are bit-identical.
 3. Micro-price precision survives: ``0.000005`` enters as exactly
    ``Decimal("0.000005")`` (renders as 5E-6 — compare with ``==``).
-4. Frozen immutability: assignment raises ``FrozenInstanceError``.
-5. ``slots=True``: setting an unknown attribute raises.
+4. Frozen immutability: assignment raises ``AttributeError`` (frozen
+   ``msgspec.Struct``).
+5. Unknown attribute: setting an undeclared field raises.
 """
 
-import dataclasses
 from datetime import datetime
 from decimal import Decimal
 
@@ -92,7 +92,7 @@ def test_from_row_micro_price_precision():
 
 def test_frozen_immutability():
     bar = _make_bar()
-    with pytest.raises(dataclasses.FrozenInstanceError):
+    with pytest.raises(AttributeError):
         bar.close = Decimal("1")  # type: ignore[misc]
 
 

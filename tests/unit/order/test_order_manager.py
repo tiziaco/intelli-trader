@@ -212,9 +212,9 @@ def test_partial_quantity_fill_is_rejected_by_mirror(harness):
     """Full-quantity contract (D-06, plan 06-04): the float-roundtrip clamp is
     deleted — a fill event whose quantity is below the order's remaining is
     rejected by add_fill and the mirror is left unchanged (warning logged)."""
-    import dataclasses
+    import msgspec
     order = harness.rest_a_stop()  # quantity 1.0
-    partial = dataclasses.replace(
+    partial = msgspec.structs.replace(
         harness.fill(order, "EXECUTED"), quantity=Decimal("0.4")
     )
     harness.handler.on_fill(partial)
@@ -227,12 +227,12 @@ def test_full_precision_decimal_quantity_marks_filled(harness):
     """Decimal-native matching (D-12): a full fill carrying the order's own
     full-precision Decimal quantity reconciles to FILLED exactly — no float
     roundtrip exists anywhere on the path anymore."""
-    import dataclasses
+    import msgspec
     order = harness.rest_a_stop()
     order.quantity = Decimal("0.123456789012345678901234567")
     order.filled_quantity = Decimal("0")
     harness.storage.update_order(order)
-    full = dataclasses.replace(
+    full = msgspec.structs.replace(
         harness.fill(order, "EXECUTED"), quantity=order.quantity
     )
     harness.handler.on_fill(full)
@@ -243,10 +243,10 @@ def test_full_precision_decimal_quantity_marks_filled(harness):
 
 def test_unknown_order_id_is_safe(harness):
     # A fill for an order not in storage must not raise.
-    import dataclasses
+    import msgspec
     order = harness.rest_a_stop()
     # Events are frozen (M3-01) — build the unknown-id variant via replace.
-    fake = dataclasses.replace(harness.fill(order, "EXECUTED"), order_id=999999)
+    fake = msgspec.structs.replace(harness.fill(order, "EXECUTED"), order_id=999999)
     harness.handler.on_fill(fake)  # should be a no-op, no exception
     assert harness.storage.get_order_by_id(999999, harness.portfolio_id) is None
     # The real order remains untouched (still active/PENDING).
