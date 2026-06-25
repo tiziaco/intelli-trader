@@ -7,7 +7,7 @@
 - ✅ **v1.2 — Consolidation** — Phases 1-6 (shipped 2026-06-12; numbering reset for v1.2, matching v1.1)
 - ✅ **v1.3 — Engine Surface Completion** — Phases 1-6 (shipped 2026-06-14; numbering reset; promoted Backlog 999.5)
 - ✅ **v1.4 — Margin, Leverage, Shorts & Trailing Stops** — Phases 1-6 + 5.1 (shipped 2026-06-22; numbering reset; promoted Backlog 999.4 / N+2)
-- 🚧 **v1.5 — Backtest Performance Optimization** — Phases 1-7 (active; numbering reset; performance half of Backlog 999.2, split out from Persistence; Phase 7 added 2026-06-25 from the post-Phase-6 re-profile)
+- 🚧 **v1.5 — Backtest Performance Optimization** — Phases 1-8 (active; numbering reset; performance half of Backlog 999.2, split out from Persistence; Phase 7 added 2026-06-25 from the post-Phase-6 re-profile; Phase 8 added 2026-06-25 from the post-Phase-7 re-profile)
 - 📋 **N+3b — Persistence** — Backlog (the persistence half of 999.2, split out; follows v1.5)
 - 📋 **N+4 — Live Trading Readiness** — Backlog (planned)
 
@@ -41,7 +41,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 under
 
 ## Phases
 
-### 🚧 v1.5 — Backtest Performance Optimization (Phases 1-7) — ACTIVE
+### 🚧 v1.5 — Backtest Performance Optimization (Phases 1-8) — ACTIVE
 
 Phase numbering reset to Phase 1 (matching v1.1/v1.2/v1.3/v1.4). The performance analog of v1.2
 Consolidation: a **behavior-preserving** milestone that cuts the frozen W1 baseline (240.8 s /
@@ -61,6 +61,7 @@ research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADM
 - [ ] **Phase 5: Stateful Indicators + Shared Bar Cache (FRAGILE, oracle RE-BASELINED, LAST)** — stateful incremental indicators (drop `ta` on the runtime path) + feed-centric per-symbol fan-out + shared recent-bars feed, replacing the per-bar full-window `ta` rebuild; **re-baselines the SMA_MACD oracle** (cross-validated, NOT byte-exact) per `docs/superpowers/specs/2026-06-24-stateful-indicator-design.md`, which **supersedes** this entry (PERF-05, ~24% CPU)
 - [ ] **Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)** — reduce per-tick `iloc` frame copies, preserving the look-ahead bar-timing contract (PERF-06, ~4% W1 / ~22% W2)
 - [ ] **Phase 7: Per-Bar Metrics & Timestamp Polish (BYTE-EXACT)** — memoize `_aligned`, drop the per-bar snapshot `debug` log's eager arg-eval, snapshot retention → `deque(maxlen)` (kills a latent O(n²)), and eliminate the per-bar `_metrics_cache.clear()` churn; surfaced by the post-Phase-6 logging-disabled re-profile (PERF-07, ~24% W1 CPU combined)
+- [ ] **Phase 8: Hot-Path Fusion, Bar Prebuild & msgspec-Gated Spike (BYTE-EXACT)** — fuse the per-bar portfolio mark-to-market passes (market-value + unrealised-PnL + locked-margin), cache `Position.net_quantity`/`avg_price` (fill-invalidated), build prebuilt `Bar`s via `itertuples`/vectorized (drop `iterrows`' ~69k throwaway Series), cache `Strategy.to_dict` static snapshot, and precompute per-tick `check_aligned`; plus a **measure-first msgspec.Struct spike** (Bar + per-tick events) folded in iff it clears ≥5% W1 (PERF-08, ~26% W1 CPU combined; surfaced by the post-Phase-7 re-profile)
 
 ## Phase Details
 
@@ -270,6 +271,42 @@ numbers — the SMA_MACD oracle stays byte-exact.
 - [x] 07-01-PLAN.md — D-01: memoize `_aligned` with bounded `lru_cache(maxsize=32)` + equivalence/bounded-memo tests
 - [x] 07-02-PLAN.md — D-02/D-03/D-04: drop per-bar debug log, snapshot retention → `deque(maxlen)`, remove the metrics-cache layer; fix all 5 breaking tests
 - [x] 07-03-PLAN.md — Gate (a) byte-exact lock (oracle/suite/mypy/determinism) + Gate (b) W1 re-profile/A-B/re-freeze (non-autonomous)
+
+### Phase 8: Hot-Path Fusion, Bar Prebuild & msgspec-Gated Spike (BYTE-EXACT)
+> **Surfaced post-Phase-7 (2026-06-25):** with all seven prior v1.5 optimizations in, a fresh Scalene
+> profile of W1 (`make perf-profile`, logging disabled) exposed the next tier of per-bar hotspots —
+> the shared frozen-dataclass `__init__` codegen (~13% aggregate, dominated by the `Bar` prebuild +
+> per-tick events), the redundant per-bar portfolio mark-to-market passes (~12.5%, scales on the W2
+> symbol axis), recomputed `Position` Decimal properties (~7.3%), per-signal `to_dict` re-introspection
+> (~3.3%), and per-tick `check_aligned` (~3%). All targets have ZERO numeric surface — this phase is
+> **byte-exact** (NOT a re-baseline like Phase 5). See `08-SPEC.md` for the locked requirements.
+
+**Goal**: Cut the post-Phase-7 profiler-confirmed per-bar hotspots with no change to engine numbers —
+the SMA_MACD oracle stays byte-exact — keeping only the changes that show a measured same-machine-A/B
+contribution; the msgspec.Struct migration is folded in iff a measure-first spike clears ≥5% W1.
+**Depends on**: Phase 1 (harness/baseline). Independent of Phases 2-7 (different subsystems).
+**Requirements**: PERF-08
+**Success Criteria** (what must be TRUE):
+  1. The per-bar portfolio mark-to-market path computes total market value, total unrealised PnL, and
+     locked margin in a SINGLE pass over the positions (no longer 2-3 separate full iterations).
+  2. `Position.net_quantity` / `avg_price` are cached and fill-invalidated (no per-access Decimal
+     recompute); `market_value` still reflects the per-bar `current_price`.
+  3. Prebuilt `Bar`s are built without `frame.iterrows()` (via `itertuples`/vectorized column reads) —
+     no ~69k throwaway pandas Series per run.
+  4. `Strategy.to_dict` no longer re-introspects `_declared_hints` + JSON-walks every field per signal
+     (static snapshot cached, only runtime fields refreshed).
+  5. Per-tick `check_aligned` no longer recomputes the `astimezone`/`replace`/`total_seconds` work
+     identically every tick (precomputed/cached against the int64-ns grid).
+  6. **msgspec gate:** the measure-first `msgspec.Struct` spike (Bar + per-tick events) is run; the
+     migration is folded into this phase IFF it clears ≥5% W1 wall-clock (same-machine A/B) — else the
+     migration is deferred to a follow-up and the spike result is recorded.
+  7. **Keep-only-measured:** any of items 1-5 that lands in measurement noise (no attributable A/B
+     contribution) is REVERTED rather than shipped (Phase 6 discipline).
+  8. **Gate (a) — BYTE-EXACT:** the SMA_MACD oracle is green (134 trades / `46189.87730727451`); the
+     e2e suite is green; `mypy --strict` clean; determinism double-run byte-identical.
+  9. **Gate (b):** the clean W1 benchmark shows a measurable wall-clock improvement vs the current
+     re-frozen baseline (attribute via same-machine A/B; re-freeze cool per the thermal-drift caveat).
+**Plans**: TBD (set at plan-phase)
 
 <details>
 <summary>✅ v1.4 — Margin, Leverage, Shorts & Trailing Stops (Phases 1-6 + 5.1) — SHIPPED 2026-06-22</summary>
