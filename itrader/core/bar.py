@@ -20,14 +20,14 @@ replaces the per-ticker pandas Series payload on ``BarEvent``:
 fact, feed = query").
 """
 
-from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Mapping
 
+import msgspec
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Bar:
+
+class Bar(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """Immutable OHLCV bar fact for one ticker at one tick.
 
     Fields

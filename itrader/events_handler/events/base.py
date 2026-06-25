@@ -3,28 +3,29 @@ Frozen Event base for the iTrader event system (D-01/D-02).
 
 Every event on the global queue is an immutable fact (M3-01): once
 constructed, no field can be rewritten — mutation raises
-``dataclasses.FrozenInstanceError``. Concrete events subclass ``Event``
-and pin their ``type`` via ``field(default=EventType.X, init=False)``.
+``AttributeError`` (frozen ``msgspec.Struct``). Concrete events subclass
+``Event`` and pin their ``type`` via ``type: ClassVar[EventType] =
+EventType.X``.
 """
 
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime
+from typing import ClassVar
 
+import msgspec
 import uuid_utils.compat as uuid_compat
 
 from itrader.core.enums import EventType
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class Event:
+class Event(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """Immutable event fact. All concrete events subclass this.
 
     Fields
     ------
     type:
-        Real (``init=False``) field — no base default; each subclass sets
-        it via ``field(default=EventType.X, init=False)``.
+        ``ClassVar`` discriminator — no base default; each subclass sets
+        it via ``type: ClassVar[EventType] = EventType.X``.
     time:
         Business time of the event (the simulation clock, never wall clock).
     event_id:
@@ -35,13 +36,14 @@ class Event:
         on the engine path).
     """
 
-    type: EventType = field(init=False)
+    type: ClassVar[EventType]
     time: datetime
-    event_id: uuid.UUID = field(default_factory=uuid_compat.uuid7)
+    event_id: uuid.UUID = msgspec.field(default_factory=uuid_compat.uuid7)
     created_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.created_at is None:
-            # stdlib-documented idiom for frozen dataclass __post_init__;
-            # works with slots=True (verified on Python 3.13.1).
+            # frozen msgspec.Struct honours object.__setattr__ inside
+            # __post_init__ (msgspec 0.21.1 / Python 3.13.1) — the idiom
+            # ports verbatim from the prior frozen dataclass.
             object.__setattr__(self, "created_at", self.time)
