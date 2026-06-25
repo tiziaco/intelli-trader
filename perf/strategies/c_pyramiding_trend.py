@@ -69,8 +69,13 @@ class PyramidingTrendStrategy(Strategy):
             # P5-D13a: read the trailing closes via the base's recent_closes seam
             # (the per-tick self.bars window is gone). [-1] current, [-2] prior bar.
             closes = self.recent_closes(ticker)
+            # WR-02: guard both indices up front (matching run_w2_sweep and
+            # d_short_zscore) instead of leaving [-1] unguarded on a
+            # cross-module is_ready -> non-empty invariant.
+            if len(closes) < 2:
+                return None
             close = float(closes[-1])
-            prev = float(closes[-2]) if len(closes) >= 2 else close
+            prev = float(closes[-2])
             if close > prev:
                 sl = Decimal(str(close)) * (Decimal("1") - _SL_PCT)
                 tp = Decimal(str(close)) * (Decimal("1") + _TP_PCT)
