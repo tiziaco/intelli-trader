@@ -74,6 +74,19 @@ class Position(object):
 		# until the carry hook first reads it (then it falls back to entry_date).
 		# Decimal carry never folds into realised_pnl (D-08).
 		self._last_accrual_time: Optional[datetime] = None
+		# D-05 (PERF-08): explicit fill-invalidated caches for the two fill-derived
+		# hot properties. net_quantity / avg_price recompute Decimal arithmetic on
+		# every access and are hit repeatedly per bar (market_value /
+		# aggregate_notional / unrealised_pnl). They depend ONLY on the six
+		# fill-mutated inputs (buy_quantity / sell_quantity / commissions /
+		# avg_bought / avg_sold), so an explicit None-until-first-read field
+		# (mirroring _last_accrual_time, CARRY-01) is safe: it is reset to None at
+		# the single input mutator (update_position). NOT functools.cached_property
+		# (D-05 rejected the descriptor route on this hand-written class). Cached
+		# values stay Decimal (Decimal end-to-end). current_price is NOT an input
+		# here, so market_value / aggregate_notional stay live on the per-bar price.
+		self._net_quantity_cache: Optional[Decimal] = None
+		self._avg_price_cache: Optional[Decimal] = None
 
 	def __repr__(self) -> str:
 		rep = ('%s, %s, %s'%(self.ticker, self.side.name, self.net_quantity))
@@ -114,17 +127,25 @@ class Position(object):
 		# DEF-01-A reconciled here (M2a #17/#22): commissions are now Decimal
 		# end-to-end, so the former float(self.*_commission) coercion is removed —
 		# the whole expression stays in the Decimal domain.
-		if self.side == PositionSide.LONG:
-			return (self.avg_bought * self.buy_quantity + self.buy_commission) / self.buy_quantity
-		else: # side = 'SHORT'
-			return (self.avg_sold * self.sell_quantity - self.sell_commission) / self.sell_quantity
+		# D-05 (PERF-08): serve from the fill-invalidated cache; the expression
+		# below is byte-unchanged from the pre-cache property. Reset in
+		# update_position (the only input mutator).
+		if self._avg_price_cache is None:
+			if self.side == PositionSide.LONG:
+				self._avg_price_cache = (self.avg_bought * self.buy_quantity + self.buy_commission) / self.buy_quantity
+			else: # side = 'SHORT'
+				self._avg_price_cache = (self.avg_sold * self.sell_quantity - self.sell_commission) / self.sell_quantity
+		return self._avg_price_cache
 
 	@property
 	def net_quantity(self) -> Decimal:
 		"""
 		The difference in the quantity of assets bought and sold to date.
 		"""
-		return abs(self.buy_quantity - self.sell_quantity)
+		# D-05 (PERF-08): fill-invalidated cache; abs(buy-sell) is byte-unchanged.
+		if self._net_quantity_cache is None:
+			self._net_quantity_cache = abs(self.buy_quantity - self.sell_quantity)
+		return self._net_quantity_cache
 
 	@property
 	def total_bought(self) -> Decimal:
@@ -260,6 +281,12 @@ class Position(object):
 			self.avg_sold = ((self.avg_sold * self.sell_quantity) + (transaction.quantity * transaction.price)) / (self.sell_quantity + (transaction.quantity))
 			self.sell_quantity += transaction.quantity
 			self.sell_commission += transaction.commission
+		# D-05 (PERF-08): this is the ONLY site that mutates the six fill-derived
+		# inputs (buy/sell_quantity, buy/sell_commission, avg_bought/avg_sold), so
+		# both caches are invalidated here. A grep audit confirms no other mutator
+		# exists outside __init__ construction.
+		self._net_quantity_cache = None
+		self._avg_price_cache = None
 		self.update_current_price_time(transaction.price, transaction.time)
 
 	def close_position(self, price: MoneyInput, time: datetime) -> None:
