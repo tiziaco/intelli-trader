@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_complete_milestone
-stopped_at: Phase 07 complete (3/3) — v1.5 add-on done; next step is milestone close (NOT Phase 999.2)
-last_updated: 2026-06-25T11:19:57.561Z
-last_activity: 2026-06-25 -- Phase 07 execution complete (both gates pass, verified 8/8)
+status: Ready for milestone close — NOT Phase 999.2 (scanner artifact; 999.x are future-milestone backlog seeds)
+stopped_at: Phase 8 context gathered
+last_updated: "2026-06-25T13:34:48.663Z"
+last_activity: 2026-06-25 -- Phase 07 complete (per-bar-metrics-timestamp-polish, both gates pass, verified 8/8)
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 7
   total_plans: 20
   completed_plans: 20
-  percent: 78
+  percent: 70
 ---
 
 # Project State
@@ -378,9 +378,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-25T09:28:33.982Z
-Stopped at: Phase 7 context gathered
-Resume file: .planning/phases/07-per-bar-metrics-timestamp-polish/07-CONTEXT.md
+Last session: 2026-06-25T13:34:48.650Z
+Stopped at: Phase 8 context gathered
+Resume file: .planning/phases/08-hot-path-fusion-prebuild-msgspec-gated/08-CONTEXT.md
 Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready for `/gsd-complete-milestone`.
 
 ## Operator Next Steps
