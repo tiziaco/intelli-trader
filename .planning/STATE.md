@@ -4,8 +4,8 @@ milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: executing
 stopped_at: Phase 7 context gathered
-last_updated: "2026-06-25T10:14:31.942Z"
-last_activity: 2026-06-25 -- Phase 07 planning complete
+last_updated: "2026-06-25T10:16:27.984Z"
+last_activity: 2026-06-25 -- Phase 07 execution started
 progress:
   total_phases: 9
   completed_phases: 6
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** Phase 06 — bar feed window copies optional slip able
+**Current focus:** Phase 07 — per-bar-metrics-timestamp-polish
 
 ## Current Position
 
-Phase: — (v1.5 COMPLETE)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-06-25 -- Phase 07 planning complete
+Phase: 07 (per-bar-metrics-timestamp-polish) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 07
+Last activity: 2026-06-25 -- Phase 07 execution started
 
 > NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
 > `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
