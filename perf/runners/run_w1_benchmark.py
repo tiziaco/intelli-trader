@@ -57,9 +57,15 @@ def _make_on_tick(system: Any, topo: W1Topology) -> Any:
     _CHASE_STEP = Decimal("1.002")  # re-price 0.2% UP toward price each bar
 
     def on_tick(_runner: Any, _time_event: Any) -> None:
+        # Query the indexed active-order path (get_active_orders -> the
+        # _active_by_portfolio bucket, O(active orders for pid_b)) instead of
+        # get_orders_by_status(PENDING) (a full _by_id scan, O(all orders ever)).
+        # Filtering status==PENDING reproduces the IDENTICAL set the by-status
+        # query returned, so the trade breakdown stays byte-identical — this only
+        # removes the benchmark probe's per-bar full-dict scan from the profile.
         resting = [
-            o for o in oh.get_orders_by_status(OrderStatus.PENDING, pid_b)
-            if o.type == OrderType.LIMIT
+            o for o in oh.get_active_orders(pid_b)
+            if o.status == OrderStatus.PENDING and o.type == OrderType.LIMIT
         ]
         live_ids = {o.id for o in resting}
         # Drop age entries for orders that filled / cancelled (no longer resting).
