@@ -628,4 +628,95 @@ def test_short_pnl_unrealised_is_avg_minus_current_times_net(env):
     expected = (marked.avg_price - marked.current_price) * marked.net_quantity
     assert marked.unrealised_pnl == expected
     # A price fall on a short is a profit.
+
+
+# --- PERF-08 (Req 1 / D-04): single-pass fused valuation equivalence ---------
+
+
+def _build_mixed_positions(env):
+    """A representative multi-position set (mix of LONG/SHORT, varied prices),
+    marked to current prices. Returns the PositionManager."""
+    pm = env.position_manager
+
+    # LONG BTC (from the env buy_transaction) — entry 50000, qty 1.0
+    pm.process_position_update(env.buy_transaction)
+
+    # LONG ETH — entry 3000, qty 2.0
+    eth_long = Transaction(
+        time=datetime.now(), type=TransactionType.BUY, ticker="ETHUSDT",
+        price=3000.0, quantity=2.0, commission=15.0,
+        portfolio_id=env.portfolio.portfolio_id,
+        id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
+    )
+    pm.process_position_update(eth_long)
+
+    # SHORT SOL — entry 150, qty 10.0
+    sol_short = Transaction(
+        time=datetime.now(), type=TransactionType.SELL, ticker="SOLUSDT",
+        price=150.0, quantity=10.0, commission=5.0,
+        portfolio_id=env.portfolio.portfolio_id,
+        id=idgen.generate_transaction_id(), fill_id=uuid_compat.uuid7(),
+    )
+    pm.process_position_update(sol_short)
+
+    # Mark all three to varied current prices.
+    pm.update_position_market_values(
+        {"BTCUSDT": 52000.0, "ETHUSDT": 2800.0, "SOLUSDT": 160.0},
+        datetime.now(),
+    )
+    return pm
+
+
+def test_fusion_equivalence_market_value(env):
+    """PERF-08/D-04: the fused get_total_market_value() equals a separate
+    reference loop, Decimal byte-identical (same Decimal('0.00') seed + += order)."""
+    pm = _build_mixed_positions(env)
+
+    reference = Decimal('0.00')
+    for position in pm._storage.get_positions().values():
+        reference += position.market_value
+
+    fused = pm.get_total_market_value()
+    assert fused == reference
+    assert str(fused) == str(reference)  # byte-identical Decimal repr
+
+
+def test_fusion_equivalence_unrealized(env):
+    """PERF-08/D-04: the fused get_total_unrealized_pnl() equals the reference
+    sum of position.unrealised_pnl, byte-identical."""
+    pm = _build_mixed_positions(env)
+
+    reference = Decimal('0.00')
+    for position in pm._storage.get_positions().values():
+        reference += position.unrealised_pnl
+
+    fused = pm.get_total_unrealized_pnl()
+    assert fused == reference
+    assert str(fused) == str(reference)
+
+
+def test_fusion_margin_basis(env):
+    """PERF-08/D-04: the fused pass's locked-margin basis equals the reference
+    sum of position.aggregate_notional, byte-identical."""
+    pm = _build_mixed_positions(env)
+
+    reference = Decimal('0.00')
+    for position in pm._storage.get_positions().values():
+        reference += position.aggregate_notional
+
+    _mv, _pnl, basis = pm._fused_valuation()
+    assert basis == reference
+    assert str(basis) == str(reference)
+
+
+def test_fusion_empty_portfolio(env):
+    """PERF-08: with no positions both accessors return Decimal('0.00') and the
+    fused basis is Decimal('0.00')."""
+    pm = env.position_manager
+    assert pm.get_total_market_value() == Decimal('0.00')
+    assert pm.get_total_unrealized_pnl() == Decimal('0.00')
+    mv, pnl, basis = pm._fused_valuation()
+    assert mv == Decimal('0.00')
+    assert pnl == Decimal('0.00')
+    assert basis == Decimal('0.00')
     assert marked.unrealised_pnl > 0
