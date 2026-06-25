@@ -266,7 +266,10 @@ numbers — the SMA_MACD oracle stays byte-exact.
      e2e suite is green; `mypy --strict` clean; determinism double-run byte-identical.
   6. **Gate (b):** the clean W1 benchmark shows a measurable wall-clock improvement vs the current
      re-frozen baseline (attribute via same-machine A/B; re-freeze cool per the thermal-drift caveat).
-**Plans**: TBD (set at plan-phase)
+**Plans**: 3 plans
+- [ ] 07-01-PLAN.md — D-01: memoize `_aligned` with bounded `lru_cache(maxsize=32)` + equivalence/bounded-memo tests
+- [ ] 07-02-PLAN.md — D-02/D-03/D-04: drop per-bar debug log, snapshot retention → `deque(maxlen)`, remove the metrics-cache layer; fix all 5 breaking tests
+- [ ] 07-03-PLAN.md — Gate (a) byte-exact lock (oracle/suite/mypy/determinism) + Gate (b) W1 re-profile/A-B/re-freeze (non-autonomous)
 
 <details>
 <summary>✅ v1.4 — Margin, Leverage, Shorts & Trailing Stops (Phases 1-6 + 5.1) — SHIPPED 2026-06-22</summary>
