@@ -122,9 +122,9 @@ snapshot → **+2.08% W1, clean separation** (smaller, but consistent and one-di
 
 | Req | Win | Verdict | Action | Rationale |
 |---|---|---|---|---|
-| 1 | valuation fusion | **REGRESSION** | **REVERTED** | −15% W1 / −5% W2@50, clean separation both axes; mechanism = discarded per-bar `aggregate_notional` Decimal term + still-two-pass. A win that makes the engine slower must not ship. |
+| 1 | valuation fusion | **REGRESSION** | **REVERTED** (proper fix deferred) | −15% W1 / −5% W2@50, clean separation both axes; mechanism = discarded per-bar `aggregate_notional` Decimal term + still-two-pass. A win that makes the engine slower must not ship. The *correct* single-pass valuation design is captured in `.planning/todos/pending/single-pass-portfolio-valuation.md` (profile-first gated). |
 | 2 | Position cache | **ATTRIBUTABLE** | **KEPT** | +15% W1, every OPT < every BASE. Real, byte-exact. |
-| 3 | itertuples prebuild | **NOISE** | **REVERTED** | W1 +0.65% (noise), W2@50 OVERLAP. Wiring-time build, never in the hot loop → no measurable contribution. |
+| 3 | itertuples prebuild | **NOISE (W1/W2)** | **KEPT — owner override** | W1 +0.65% (noise), W2@50 OVERLAP — but the prebuild runs ONCE at wiring, outside the timed hot loop, so the benchmark is structurally blind to it (not evidence it's worthless). Kept on code-quality + allocation grounds (~69k fewer throwaway pandas Series), byte-exact (str() parity 0 diffs/3076 rows). **Owner (tiziaco) override of keep-only-measured for this item, 2026-06-25** — labeled NOT as a measured W1 win but as an idiomatic/allocation improvement. Equivalence test retained (standalone str-path byte-exactness lock). |
 | 4 | to_dict cache | **ATTRIBUTABLE** | **KEPT** | +2.08% W1, clean one-directional separation. Small but real. |
 | 5 | `_aligned` audit | **n/a (no prod code)** | **KEPT (as-is)** | Test-only audit; keep-only-measured satisfied by construction (no new cache was added — the int64-ns grid lever was correctly NOT pre-added). Nothing to revert. |
 
@@ -134,13 +134,18 @@ snapshot → **+2.08% W1, clean separation** (smaller, but consistent and one-di
   `_build_mixed_positions` helper from `tests/unit/portfolio/test_position_manager.py` (they reference the
   removed `_fused_valuation`; no standalone value once the method is gone — the per-accessor sums are
   already covered by the existing position-manager tests, 32 passing).
-- **Req 3 itertuples** — `bar_feed.py` restored to pre-prebuild (`1419a8e^`): `frame.iterrows()` +
-  `Bar.from_row` build. Deleted `tests/unit/price/test_bar_prebuild_equivalence.py` (it pinned the
-  itertuples build; with the build reverted to iterrows the equivalence test compares iterrows-to-iterrows
-  — vacuous).
+- **Req 3 itertuples** — initially reverted with Req 1 in `6b2117b`, then **RESTORED in `45b61e9`** per
+  owner decision (2026-06-25): `bar_feed.py` itertuples build + `tests/unit/price/test_bar_prebuild_equivalence.py`
+  kept. See the owner-override rationale in the Keep/Revert table (Req 3 row). Fusion (Req 1) stays reverted.
 
-> No external code depends on `_fused_valuation` or the itertuples build (grep-confirmed: 0 hits outside
-> the reverted files and their tests). The reverts are self-contained.
+> No external code depends on `_fused_valuation` (grep-confirmed: 0 hits outside the reverted files and
+> their tests). The fusion revert is self-contained. The itertuples build is retained (owner override).
+
+### Owner overrides (keep-only-measured exceptions)
+- **Req 3 itertuples — KEPT despite noise-band W1**, owner tiziaco 2026-06-25. Justification: improvement
+  lives at wiring time (outside the benchmark's timed region), so "noise" is a measurement-scope artifact,
+  not evidence of no value; idiomatic + lower-allocation + byte-exact. Documented as a code-quality keep,
+  not a measured perf win.
 
 ## Gate (a) byte-exact on the KEPT set (after reverts)
 
@@ -151,8 +156,10 @@ snapshot → **+2.08% W1, clean separation** (smaller, but consistent and one-di
 | Affected unit suites (position_manager, price feed, to_dict, position cache) | **80 passed** |
 | Full test collection | **1337 collected, 0 errors** (the removed prebuild test no longer collected) |
 
-The kept set (Req 2 + Req 4 + Req 5-audit) is gate-(a) byte-exact. The engine to be re-frozen is the
-SHIPPED engine, not a reverted one.
+The kept set (Req 2 + Req 3 itertuples + Req 4 + Req 5-audit; Req 1 fusion reverted) is gate-(a)
+byte-exact. The engine to be re-frozen is the SHIPPED engine, not a reverted one. (Re-confirmed after
+the Req-3 itertuples restore `45b61e9`: oracle 3 passed 134/46189.87730727451 + prebuild test 3 passed,
+mypy --strict clean 188 files.)
 
 ---
 
