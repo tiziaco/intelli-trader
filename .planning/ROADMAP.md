@@ -7,7 +7,7 @@
 - ✅ **v1.2 — Consolidation** — Phases 1-6 (shipped 2026-06-12; numbering reset for v1.2, matching v1.1)
 - ✅ **v1.3 — Engine Surface Completion** — Phases 1-6 (shipped 2026-06-14; numbering reset; promoted Backlog 999.5)
 - ✅ **v1.4 — Margin, Leverage, Shorts & Trailing Stops** — Phases 1-6 + 5.1 (shipped 2026-06-22; numbering reset; promoted Backlog 999.4 / N+2)
-- 🚧 **v1.5 — Backtest Performance Optimization** — Phases 1-6 (active; numbering reset; performance half of Backlog 999.2, split out from Persistence)
+- 🚧 **v1.5 — Backtest Performance Optimization** — Phases 1-7 (active; numbering reset; performance half of Backlog 999.2, split out from Persistence; Phase 7 added 2026-06-25 from the post-Phase-6 re-profile)
 - 📋 **N+3b — Persistence** — Backlog (the persistence half of 999.2, split out; follows v1.5)
 - 📋 **N+4 — Live Trading Readiness** — Backlog (planned)
 
@@ -41,7 +41,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 under
 
 ## Phases
 
-### 🚧 v1.5 — Backtest Performance Optimization (Phases 1-6) — ACTIVE
+### 🚧 v1.5 — Backtest Performance Optimization (Phases 1-7) — ACTIVE
 
 Phase numbering reset to Phase 1 (matching v1.1/v1.2/v1.3/v1.4). The performance analog of v1.2
 Consolidation: a **behavior-preserving** milestone that cuts the frozen W1 baseline (240.8 s /
@@ -60,6 +60,7 @@ research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADM
 - [x] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
 - [ ] **Phase 5: Stateful Indicators + Shared Bar Cache (FRAGILE, oracle RE-BASELINED, LAST)** — stateful incremental indicators (drop `ta` on the runtime path) + feed-centric per-symbol fan-out + shared recent-bars feed, replacing the per-bar full-window `ta` rebuild; **re-baselines the SMA_MACD oracle** (cross-validated, NOT byte-exact) per `docs/superpowers/specs/2026-06-24-stateful-indicator-design.md`, which **supersedes** this entry (PERF-05, ~24% CPU)
 - [ ] **Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)** — reduce per-tick `iloc` frame copies, preserving the look-ahead bar-timing contract (PERF-06, ~4% W1 / ~22% W2)
+- [ ] **Phase 7: Per-Bar Metrics & Timestamp Polish (BYTE-EXACT)** — memoize `_aligned`, drop the per-bar snapshot `debug` log's eager arg-eval, snapshot retention → `deque(maxlen)` (kills a latent O(n²)), and eliminate the per-bar `_metrics_cache.clear()` churn; surfaced by the post-Phase-6 logging-disabled re-profile (PERF-07, ~24% W1 CPU combined)
 
 ## Phase Details
 
@@ -235,6 +236,37 @@ contract-gated item.
   - [x] 06-03-PLAN.md — D-13 denominator cleanup (prep): remove per-bar TIME EVENT debug log + de-time run_w2_sweep two-pass; Gate (a) held (PERF-06)
   - [x] 06-04-PLAN.md — D-10 monotonic int64 cursor in window() (replaces per-tick searchsorted) + D-16 drift-test extension; D-11 recorded infeasible (iloc kept, cursor-only); D-12 builds on kept 06-01; Gate (a) byte-exact (PERF-06)
   - [x] 06-05-PLAN.md — D-14/D-15 gate (b): re-freeze BOTH baselines on the cleaned engine (cool machine) + cursor-alone ≥10% W2 verdict (or D-15 ship-and-reframe); absorbs 06-02 Tasks 2/3 (PERF-06)
+
+### Phase 7: Per-Bar Metrics & Timestamp Polish (BYTE-EXACT)
+> **Surfaced post-Phase-6 (2026-06-25):** with all six v1.5 optimizations in and the W1 benchmark
+> de-noised (indexed `get_active_orders` probe) + logging disabled (`ITRADER_DISABLE_LOGS`), the
+> Scalene re-profile (`perf/results/scalene-w1.json`) exposed four per-bar hotspots the order-storage
+> scan and logging volume had been masking. All four have ZERO numeric surface (timestamp / metrics /
+> reporting only) — this phase is **byte-exact** (NOT a re-baseline like Phase 5).
+
+**Goal**: Cut four profiler-confirmed per-bar CPU hotspots (~24% W1 combined) with no change to engine
+numbers — the SMA_MACD oracle stays byte-exact.
+**Depends on**: Phase 1 (harness/baseline). Independent of Phases 2-6 (different subsystems).
+**Requirements**: PERF-07
+**Success Criteria** (what must be TRUE):
+  1. `_aligned` (`itrader/outils/time_parser.py`) no longer recomputes the per-bar
+     `astimezone`/`replace`/`total_seconds` alignment identically every tick (memoized per
+     `(timestamp, timeframe)`); behavior identical (~8.7% CPU).
+  2. The per-bar `MetricsManager.record_snapshot` `logger.debug(...)` call no longer eagerly evaluates
+     `timestamp.isoformat()` / `str(total_equity)` / `str(total_pnl)` when logging is gated/disabled
+     (the snapshot itself already stores the raw `Timestamp`) (~8.6% CPU).
+  3. Portfolio snapshot retention uses `collections.deque(maxlen=max_snapshots)` (O(1) append +
+     auto-evict); the per-bar full-list-copy trim (`set_snapshots(get_snapshots()[-N:])`) is removed,
+     killing the latent O(n²) on runs longer than `max_snapshots` bars; last-N retention + all
+     consumers (`get_latest_snapshot` `[-1]`, `get_snapshots`, reporting slices) preserved (~5% CPU).
+  4. The per-bar `_metrics_cache.clear()` / `_cache_timestamp.clear()` churn is eliminated while the
+     cache stays bounded (no WR-03 unbounded-growth regression) — fix-or-remove decided at plan time
+     (~2.9% CPU).
+  5. **Gate (a) — BYTE-EXACT:** the SMA_MACD oracle is green (134 trades / `46189.87730727451`); the
+     e2e suite is green; `mypy --strict` clean; determinism double-run byte-identical.
+  6. **Gate (b):** the clean W1 benchmark shows a measurable wall-clock improvement vs the current
+     re-frozen baseline (attribute via same-machine A/B; re-freeze cool per the thermal-drift caveat).
+**Plans**: TBD (set at plan-phase)
 
 <details>
 <summary>✅ v1.4 — Margin, Leverage, Shorts & Trailing Stops (Phases 1-6 + 5.1) — SHIPPED 2026-06-22</summary>
