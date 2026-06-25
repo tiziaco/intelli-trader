@@ -83,7 +83,7 @@ class BracketedMomentumStrategy(Strategy):
             if crossover(self.macd_hist, 0):
                 # P5-D13a: the per-tick self.bars window is gone — read the decision
                 # close off the latest pushed bar (bar.close is already Decimal).
-                close = Decimal(str(self.latest_bar(ticker).close))
+                close = self.latest_bar(ticker).close  # IN-02: bar.close is already Decimal
                 sl = close * (Decimal("1") - _SL_PCT)
                 tp = close * (Decimal("1") + _TP_PCT)
                 # Both sl and tp -> bracket / OCO children (the path A owns).
