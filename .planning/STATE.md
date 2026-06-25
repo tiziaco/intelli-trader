@@ -57,8 +57,12 @@ dates/count (134) are expected to stay identical (firing tick preserved); numeri
 2. **Gate (b) — measurable, locked W1 improvement:** the clean W1 benchmark shows a real wall-clock
    and/or peak-memory reduction vs the frozen baseline (**240.8 s / 167.3 MB**), **re-frozen after
    the phase** as the new locked reference the next phase is judged against. **v1.5-final locked
-   reference (re-frozen cool 2026-06-25, quick `260625-0qj`): W1 153.7 s / 162.3 MB · W2 4.05 s @50 /
-   210.87 MB.**
+   reference: W1 28.3 s / 162.3 MB (re-frozen 2026-06-25 on branch `perf/w1-benchmark-indexed-active-query`
+   after a W1-benchmark-probe bug fix) · W2 4.05 s @50 / 210.87 MB (re-frozen cool 2026-06-25, quick
+   `260625-0qj`).** NOTE: the W1 28.3 s figure is NOT comparable to the prior 153.7 s — the drop is a
+   benchmark-probe fix (per-bar `get_orders_by_status` full-scan → indexed `get_active_orders`),
+   workload byte-identical (1578 fills / 659 closed), engine untouched. Do NOT diff post-fix W1
+   numbers against any pre-fix figure.
 
 Phase 1 (tooling) **builds** gate (b)'s measurement harness and re-freezes the baseline; it changes
 no engine code and is held to gate (a) only.
@@ -374,8 +378,8 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-25T00:50:00.000Z
-Stopped at: Quick `260625-0qj` — re-froze the v1.5 Gate (b) baselines on a verified-cool box and attributed Phase 5. W1 153.7 s / 162.3 MB, W2 4.05 s @50 / 210.87 MB (frozen_at 2026-06-25); cool same-machine A/B (de2e19f vs HEAD, identical 1578-fill workload, HEAD drift +0.9%) gives W1 −40.1% (255.4→153.0 s) and W2@50 −70.2% (13.61→4.05 s). Gate (a) byte-exact 134/46189.87730727451 (3 passed). Owner sign-off tiziaco. The carried cool-machine re-freeze todo is now CLEARED.
+Last session: 2026-06-25
+Stopped at: Re-froze W1-BASELINE.json after a W1-benchmark-probe bug fix (branch `perf/w1-benchmark-indexed-active-query`). The probe's per-bar `get_orders_by_status(PENDING)` full `_by_id` scan (O(all-orders-ever), quadratic over the run) was replaced by the indexed `get_active_orders` path — harness-only, engine untouched. W1 153.7 s → **28.3 s / 162.3 MB**, workload byte-identical (1578 fills / 659 closed), oracle byte-exact 134/46189.87730727451 (3 passed). NOTE: 28.3 s is NOT comparable to the pre-fix 153.7 s. W2 unchanged (4.05 s @50 / 210.87 MB, quick `260625-0qj` — verified clean of the same probe pattern). The W1-BASELINE.json change is in the working tree, to be committed manually by the owner.
 Resume file: None
 Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready for `/gsd-complete-milestone`.
 
