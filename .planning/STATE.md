@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: executing
-stopped_at: Phase 8 context gathered
-last_updated: "2026-06-25T14:05:31.109Z"
+status: ready_to_plan
+stopped_at: Phase 08 complete (6/6) — ready to discuss Phase 999.2
+last_updated: 2026-06-25T16:34:34.817Z
 last_activity: 2026-06-25 -- Phase 08 execution started
 progress:
   total_phases: 10
   completed_phases: 7
   total_plans: 26
-  completed_plans: 20
+  completed_plans: 26
   percent: 70
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** Phase 08 — hot-path-fusion-prebuild-msgspec-gated
+**Current focus:** Phase 999.2 — nplus2 persistence and performance
 
 ## Current Position
 
-Phase: 08 (hot-path-fusion-prebuild-msgspec-gated) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 08
-Last activity: 2026-06-25 -- Phase 08 execution started
+Phase: 999.2
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-25
 
 > NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
 > `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
@@ -120,7 +120,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 76
+- Total plans completed: 82
 - Average duration: — min
 - Total execution time: 0.0 hours
 
