@@ -324,10 +324,16 @@ class PortfolioStateStorage(ABC):
         MUST NOT mutate — D-19 single-writer; copy yourself if you need
         ownership).
 
-        D-03: the backtest backend returns the live internal container (no
-        per-tick copy). D-06: the per-tick trim/last reads in
-        ``MetricsManager`` consume ``snapshot_count()`` / ``get_latest_snapshot()``
-        instead of this whole-list accessor.
+        D-03: the backtest backend stores snapshots in a bounded
+        ``deque(maxlen=max_snapshots)`` and ``get_snapshots()`` returns
+        ``list(self._snapshots)`` — a materialized copy, NOT the live deque.
+        This is the ONE accessor that copies (diverging from the four sibling
+        "return the live container" accessors): the bounded deque auto-evicts on
+        append, so handing out the live container is a mutation-during-iteration
+        hazard, and the ``List[Any]`` contract (deque raises on slices) requires
+        a list. Readers get a stable snapshot. D-06: the per-tick last read in
+        ``MetricsManager`` consumes ``snapshot_count()`` / ``get_latest_snapshot()``
+        instead of this whole-list accessor (which is no longer on the per-tick path).
 
         Returns
         -------
@@ -339,6 +345,10 @@ class PortfolioStateStorage(ABC):
     @abstractmethod
     def set_snapshots(self, snapshots: List[Any]) -> None:
         """Replace the metrics-snapshot history (e.g. to trim to a max size).
+
+        D-03: the backtest backend rebuilds a bounded
+        ``deque(snapshots, maxlen=self._max_snapshots)`` — never a plain list
+        (a list reassignment would silently drop ``maxlen``).
 
         Parameters
         ----------

@@ -11,6 +11,7 @@ Plan 05-05 (D-11): the pending-transaction container died with the saga
 machinery — settlements are validate-first atomic, no in-flight context.
 """
 
+from collections import deque
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -24,7 +25,12 @@ if TYPE_CHECKING:
 class InMemoryPortfolioStateStorage(PortfolioStateStorage):
     """Dict/list-backed in-memory portfolio state. One instance per Portfolio."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_snapshots: int = 10000) -> None:
+        # D-03: snapshot retention bound. Stored so set_snapshots can rebuild a
+        # bounded deque (Pitfall 2 — a plain-list reassignment drops maxlen).
+        # Default 10000 matches MetricsManager.max_snapshots byte-for-byte and
+        # keeps both storage-factory construction sites unchanged.
+        self._max_snapshots = max_snapshots
         # Open positions (working state, keyed by ticker) — was PositionManager._positions
         self._positions: Dict[str, 'Position'] = {}
         # Closed positions (append-only history) — was PositionManager._closed_positions
@@ -41,8 +47,11 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         self._locked_margin: Dict[str, Decimal] = {}
         # Cash operations (append-only audit) — was CashManager._cash_operations
         self._cash_operations: List[Any] = []
-        # Metrics snapshots (append-only history) — was MetricsManager._snapshots
-        self._snapshots: List[Any] = []
+        # Metrics snapshots (append-only history) — was MetricsManager._snapshots.
+        # D-03: bounded deque(maxlen) — O(1) append + automatic oldest-eviction.
+        # The maxlen IS the retention trim now (the per-bar slice-copy trim in
+        # MetricsManager.record_snapshot is removed).
+        self._snapshots: deque[Any] = deque(maxlen=max_snapshots)
 
     # -- Positions -----------------------------------------------------------
 
@@ -118,11 +127,19 @@ class InMemoryPortfolioStateStorage(PortfolioStateStorage):
         self._snapshots.append(snapshot)
 
     def get_snapshots(self) -> List[Any]:
-        # D-03/D-19: live read-only view, no per-tick copy (single-writer contract).
-        return self._snapshots
+        # D-03: the ONE accessor that copies (diverges from the four sibling
+        # "return the live container" accessors). The deque is bounded and
+        # auto-evicts on append; handing the live deque to a reader is a
+        # mutation-during-iteration hazard under the live RLock model, and the
+        # -> List[Any] ABC contract requires a list (deque raises on slices).
+        # Readers get a stable materialized snapshot. Not on the per-bar path
+        # (the trim that used to call this is removed), so the copy is immaterial.
+        return list(self._snapshots)
 
     def set_snapshots(self, snapshots: List[Any]) -> None:
-        self._snapshots = list(snapshots)
+        # D-03: rebuild a bounded deque, never a plain list (Pitfall 2 — a list
+        # reassignment silently drops maxlen and re-opens the unbounded-growth class).
+        self._snapshots = deque(snapshots, maxlen=self._max_snapshots)
 
     def snapshot_count(self) -> int:
         # D-06: count-only accessor — lets the metrics-manager per-tick trim guard
