@@ -195,7 +195,6 @@ class BracketManager:
 			))
 
 			if sl_order is not None:
-				self.logger.debug(f'Stop-loss order created: {sl_order.ticker} at {sl_order.price}')
 				results.append(OperationResult.success_result(
 					f"Stop-loss order created: {sl_order.ticker} at {sl_order.price}",
 					order_events=[OrderEvent.new_order_event(sl_order)],
@@ -204,16 +203,12 @@ class BracketManager:
 				))
 
 			if tp_order is not None:
-				self.logger.debug(f'Take-profit order created: {tp_order.ticker} at {tp_order.price}')
 				results.append(OperationResult.success_result(
 					f"Take-profit order created: {tp_order.ticker} at {tp_order.price}",
 					order_events=[OrderEvent.new_order_event(tp_order)],
 					operation_type=OrderOperationType.CREATE_TAKE_PROFIT,
 					affected_order_ids=[tp_order.id]
 				))
-
-			success_count = sum(1 for r in results if r.success)
-			self.logger.debug(f'Created {success_count}/{len(results)} orders from signal: {signal_event.ticker} {signal_event.action}')
 
 		except Exception as e:
 			# WR-03 (part 2): the PercentFromFill pending entry is registered at

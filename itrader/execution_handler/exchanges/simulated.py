@@ -295,9 +295,6 @@ class SimulatedExchange(AbstractExchange):
 
 		self._orders_executed += 1
 		self._total_volume += executed_price * quantity
-		self.logger.debug('Order executed: %s %s %.4f @ $%.4f (slippage: %.4f%%)',
-						event.action, event.ticker, quantity, executed_price,
-						(slippage_factor - Decimal("1")) * 100)
 
 	def on_market_data(self, bar: "BarEvent") -> None:
 		"""Match resting orders against a new bar; emit EXECUTED fills and OCO cancels.
