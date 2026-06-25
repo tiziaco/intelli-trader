@@ -8,8 +8,11 @@ backtest, and capture wall-clock + peak memory. Prints a
 (n_symbols, wall_clock_s, peak_mem_mb) table.
 
 This is a SCALING test, not a realism test (realism lives in W1), so GBM + a
-trivial strategy is sufficient. Determinism: seed 42 throughout. Profiling
-(Scalene) is Step 2, NOT here.
+trivial strategy is sufficient. Determinism (WR-05): synthetic-frame seed 42
+(``_SEED``, passed to ``make_synthetic_ohlcv``); backtest reproducibility relies
+on the default ``performance.rng_seed`` (also 42), which ``_wire_system`` does
+NOT set explicitly — if that default ever changes the W2 baseline drifts.
+Profiling (Scalene) is Step 2, NOT here.
 """
 
 import argparse
@@ -214,7 +217,9 @@ def _to_w2_baseline_schema(points: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _write_w2_baseline(points: list[dict[str, Any]], out_path: str) -> None:
     """Freeze a sweep as the committed W2-BASELINE.json (mirrors _write_baseline)."""
-    with open(out_path, "w") as fh:
+    # WR-05: pin UTF-8 so the baseline JSON round-trip cannot corrupt/fail
+    # under a non-UTF-8 locale.
+    with open(out_path, "w", encoding="utf-8") as fh:
         json.dump(_to_w2_baseline_schema(points), fh, indent=2)
         fh.write("\n")
 
@@ -233,7 +238,8 @@ def _check_w2(
     zeroed/malformed/hand-edited baseline (non-positive base50) must degrade
     gracefully — print a message and return 1, never raise a ZeroDivisionError.
     """
-    with open(baseline_path) as fh:
+    # WR-05: pin UTF-8 (match _write_w2_baseline) for a locale-safe round-trip.
+    with open(baseline_path, encoding="utf-8") as fh:
         base = json.load(fh)
     base50 = base["metric"]["wall_clock_s_at_50"]
     now50 = next(p for p in points if p["n_symbols"] == 50)["wall_clock_s"]
