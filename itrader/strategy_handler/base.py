@@ -667,9 +667,16 @@ class Strategy(ABC):
 		# on the backtest run path → zero backtest cost, byte-exact preserved.
 		if self._to_dict_static_cache is None:
 			self._to_dict_static_cache = self._build_to_dict_snapshot()
-		# Return a shallow copy so a caller mutating the result never poisons the
-		# cache; refresh the two runtime keys in place (order preserved).
-		snapshot = dict(self._to_dict_static_cache)
+		# WR-01 (08-REVIEW): deep-copy the cached static snapshot per serve. A
+		# shallow dict() copy would SHARE the snapshot's nested mutables (e.g. a
+		# declared `tickers` list, any list/dict knob walked by _json_safe) across
+		# the cache and every returned dict — so a caller mutating result["tickers"]
+		# would poison the cache and all other callers (the pre-cache code rebuilt a
+		# fresh dict per call, so each got its own nested lists). deepcopy restores
+		# that per-call isolation; output stays byte-identical (same types/values),
+		# test_to_dict_snapshot still pins it. The two runtime keys are rebuilt fresh
+		# below so they need no copy.
+		snapshot = copy.deepcopy(self._to_dict_static_cache)
 		snapshot["subscribed_portfolios"] = [str(pid) for pid in self.subscribed_portfolios]
 		snapshot["is_active"] = self.is_active
 		return snapshot

@@ -65,7 +65,11 @@ import numpy as np
 import pandas as pd
 
 from itrader.core.bar import Bar
-from itrader.core.exceptions import ConfigurationError, MissingPriceDataError
+from itrader.core.exceptions import (
+    ConfigurationError,
+    MalformedDataError,
+    MissingPriceDataError,
+)
 from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.logger import get_itrader_logger
 from itrader.price_handler.store.base import PriceStore
@@ -267,6 +271,25 @@ class BacktestBarFeed(BarFeed):
             # timestamp. Construct Bar directly via the SAME Decimal(str(...))
             # path so the D-14 contract is preserved without re-routing through a
             # Series-shaped mapping.
+            # WR-02 (08-REVIEW): the str() parity that makes itertuples
+            # byte-identical to the iterrows path is a float64-column property
+            # (verified for all golden values, but dataset-specific, not
+            # structurally enforced). Assert the precondition so a future non-float
+            # OHLCV dtype (object/Decimal/int) fails LOUD here instead of silently
+            # feeding a differently-formatted str() into the Bar Decimal(str(...))
+            # path and drifting the oracle.
+            _ohlcv = ("open", "high", "low", "close", "volume")
+            _bad_dtypes = {
+                c: str(frame[c].dtype)
+                for c in _ohlcv
+                if not pd.api.types.is_float_dtype(frame[c])
+            }
+            if _bad_dtypes:
+                raise MalformedDataError(
+                    ticker,
+                    f"itertuples prebuild requires float OHLCV columns "
+                    f"(str-parity precondition); got non-float dtypes: {_bad_dtypes}",
+                )
             self._prebuilt[ticker] = {
                 r.Index: Bar(
                     time=r.Index,
