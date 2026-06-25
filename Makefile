@@ -120,8 +120,9 @@ perf-w2-baseline:
 	poetry run python -m perf.runners.run_w2_sweep --baseline-out perf/results/W2-BASELINE.json
 
 # Scalene CPU profile (manual review). NEVER wraps the gated run.
-# Two steps: run (writes JSON) then `scalene view` (native viewer) — it serves the
-# GUI assets itself and prints a localhost URL to open in the VS Code Simple Browser.
+# Writes the profile JSON only — viewing is a separate, deliberate `make perf-view`.
+# The viewer (`scalene view`) serves the GUI assets itself and prints a localhost
+# URL to open in the VS Code Simple Browser.
 # Do NOT use `view --html`: the standalone file references jquery/bootstrap by
 # relative path, so it only half-renders unless those assets sit next to it.
 # `scalene run --html` does NOT parse in 2.3.0 (Pitfall 1). $(CURDIR) = repo root.
@@ -130,12 +131,12 @@ perf-profile:
 	@echo "🔬 Scalene CPU profile — NOT the gated run..."
 	poetry run python -m scalene run --cpu-only --program-path $(CURDIR) \
 		-o perf/results/scalene-w1.json -m perf.runners.run_w1_benchmark
-	@echo "   → opening native viewer (paste the printed localhost URL into the VS Code browser)..."
 	@test -s perf/results/scalene-w1.json || { echo "scalene-w1.json missing/empty — profile run failed"; exit 1; }
-	poetry run python -m scalene view perf/results/scalene-w1.json
+	@echo "   → run 'make perf-view' to open the native viewer."
 
 # Re-open the native viewer against an EXISTING profile JSON (no re-run).
 perf-view:
+	@test -s perf/results/scalene-w1.json || { echo "scalene-w1.json missing/empty — run 'make perf-profile' first"; exit 1; }
 	@echo "🔬 Opening Scalene viewer for existing perf/results/scalene-w1.json..."
 	@echo "   → paste the printed localhost URL into the VS Code browser..."
 	poetry run python -m scalene view perf/results/scalene-w1.json
