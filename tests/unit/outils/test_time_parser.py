@@ -221,6 +221,57 @@ def test_aligned_seam_midnight_relative():
 
 
 # --------------------------------------------------------------------------- #
+# _aligned — D-01 (PERF-07) bounded-memo: equivalence, memo-active, bounded    #
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize(
+    "ts, tf, expected",
+    [
+        # daily 00:00 UTC -> seconds-since-midnight 0 % 86400 == 0 -> aligned
+        (datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc), timedelta(days=1), True),
+        # intraday non-aligned: 12:00 is not on the 5-minute grid? 12:00 IS on the
+        # 5m grid (43200 % 300 == 0); use 12:03 to be off the 5-minute grid.
+        (datetime(2018, 1, 1, 12, 3, 0, tzinfo=pytz.utc), timedelta(minutes=5), False),
+        # weekly tf fires on every midnight (midnight-of-the-day anchor) -> aligned
+        (datetime(2018, 1, 4, 0, 0, 0, tzinfo=pytz.utc), timedelta(weeks=1), True),
+        # 7h non-divisor of a day: 07:00 UTC aligns (25200 % 25200 == 0)
+        (datetime(2018, 1, 1, 7, 0, 0, tzinfo=pytz.utc), timedelta(hours=7), True),
+        # 7h non-divisor: 03:00 UTC does NOT align (10800 % 25200 != 0)
+        (datetime(2018, 1, 1, 3, 0, 0, tzinfo=pytz.utc), timedelta(hours=7), False),
+    ],
+)
+def test_aligned_equivalence_sampled_grid(ts, tf, expected):
+    """T1: _aligned returns the documented alignment boolean for a sampled grid.
+
+    Mirrors the docstring examples at time_parser.py:127-145 — daily 00:00,
+    intraday non-aligned, weekly-on-midnight, and a 7h non-divisor case.
+    """
+    assert _aligned(ts, tf) is expected
+
+
+def test_aligned_memo_active_and_bounded():
+    """T2: the lru_cache is bounded at 32 and a repeat call is a cache hit."""
+    _aligned.cache_clear()  # isolate from other tests' cache state
+    assert _aligned.cache_info().maxsize == 32
+
+    ts = datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc)
+    tf = timedelta(days=1)
+    _aligned(ts, tf)  # miss -> populates the memo
+    _aligned(ts, tf)  # identical args -> cache hit, not a recompute
+    assert _aligned.cache_info().hits >= 1
+
+
+def test_aligned_memo_bounded_currsize():
+    """T3: with many distinct (ts, tf) the memo never exceeds maxsize=32."""
+    _aligned.cache_clear()
+    tf = timedelta(days=1)
+    base = datetime(2018, 1, 1, 0, 0, 0, tzinfo=pytz.utc)
+    for i in range(150):  # >100 distinct timestamps
+        _aligned(base + timedelta(hours=i), tf)
+    assert _aligned.cache_info().currsize <= 32
+
+
+# --------------------------------------------------------------------------- #
 # Dead helpers are gone                                                        #
 # --------------------------------------------------------------------------- #
 
