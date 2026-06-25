@@ -319,7 +319,7 @@ Wave structure (D-03 sequencing: 5 deterministic wins → cool re-freeze gate �
 - Wave 3 (msgspec second layer on the new baseline):
   - [x] 08-05-PLAN.md — Req 6: msgspec.Struct migration (Bar + full Event chain together; 5 standalone DTOs; Position EXCLUDED, D-01) + pyproject runtime-dep promotion + ~29 mechanical test updates; gate (a)
 - Wave 4 (gate):
-  - [ ] 08-06-PLAN.md — fresh msgspec W1/W2 A/B (D-03) + final Phase-8 cool re-freeze + owner sign-off (checkpoint)
+  - [x] 08-06-PLAN.md — fresh msgspec W1/W2 A/B (D-03) + final Phase-8 cool re-freeze + owner sign-off (checkpoint)
 
 <details>
 <summary>✅ v1.4 — Margin, Leverage, Shorts & Trailing Stops (Phases 1-6 + 5.1) — SHIPPED 2026-06-22</summary>
