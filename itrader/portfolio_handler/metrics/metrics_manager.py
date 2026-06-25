@@ -87,6 +87,17 @@ class MetricsManager:
         # only for a lightweight test portfolio exposing a raw float.
         self.initial_equity = self._as_decimal(portfolio.total_equity)
 
+        # Configuration
+        # WR-01: this is the single source of truth for the snapshot-retention
+        # bound. It is threaded into the storage backend below (directly via the
+        # factory) so the deque(maxlen) the manager reads/writes is governed by
+        # THIS value rather than silently diverging from a hardcoded storage
+        # default. A real Portfolio injects its own state_storage (whose bound it
+        # owns); a standalone-constructed manager fabricates one bounded by this.
+        self.max_snapshots = 10000       # Maximum snapshots to keep (feeds deque maxlen plumbing)
+        self.risk_free_rate = Decimal('0.02')  # 2% annual risk-free rate
+        self.trading_days_per_year = 252
+
         # M2-08: metrics snapshots (append-only history) now live in the injected
         # state-storage seam. This manager no longer owns the container — it routes
         # reads/writes through self._storage. A real Portfolio always injects a
@@ -96,7 +107,11 @@ class MetricsManager:
         from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
         storage = getattr(portfolio, "state_storage", None)
         if storage is None:
-            storage = PortfolioStateStorageFactory.create("backtest")
+            # WR-01: thread max_snapshots through so the fabricated backend's
+            # deque bound matches this manager's configured retention.
+            storage = PortfolioStateStorageFactory.create(
+                "backtest", max_snapshots=self.max_snapshots
+            )
             # WR-02: share the fabricated seam with sibling managers so a
             # standalone-constructed portfolio does not end up with disjoint
             # per-manager backends (which would silently break cross-manager
@@ -116,11 +131,6 @@ class MetricsManager:
         # unbounded-growth class. Live metrics will be Postgres-backed, not an
         # in-memory cache (owner decision, deferred to the Live Trading milestone).
 
-        # Configuration
-        self.max_snapshots = 10000       # Maximum snapshots to keep (feeds deque maxlen plumbing)
-        self.risk_free_rate = Decimal('0.02')  # 2% annual risk-free rate
-        self.trading_days_per_year = 252
-        
         # Benchmark tracking (optional)
         self.benchmark_prices: Dict[datetime, Decimal] = {}
         

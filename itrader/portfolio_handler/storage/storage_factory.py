@@ -21,7 +21,8 @@ class PortfolioStateStorageFactory:
     """
 
     @staticmethod
-    def create(environment: str, db_url: Optional[str] = None) -> PortfolioStateStorage:
+    def create(environment: str, db_url: Optional[str] = None,
+               max_snapshots: int = 10000) -> PortfolioStateStorage:
         """
         Create a PortfolioStateStorage instance based on the environment.
 
@@ -31,6 +32,11 @@ class PortfolioStateStorageFactory:
             The environment type ('backtest', 'live', 'test')
         db_url : str, optional
             Database URL for persistent storage (required for 'live' environment)
+        max_snapshots : int, optional
+            Snapshot-retention bound for the in-memory backend's bounded deque
+            (D-03). WR-01: threaded through so the caller's retention bound (e.g.
+            ``MetricsManager.max_snapshots``) actually governs the live deque
+            instead of silently diverging from a hardcoded default.
 
         Returns
         -------
@@ -47,7 +53,7 @@ class PortfolioStateStorageFactory:
         environment = environment.lower()
 
         if environment in ('backtest', 'test'):
-            return InMemoryPortfolioStateStorage()
+            return InMemoryPortfolioStateStorage(max_snapshots=max_snapshots)
         elif environment == 'live':
             if not db_url:
                 raise ValueError("Database URL is required for live environment")
