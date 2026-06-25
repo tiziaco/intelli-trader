@@ -317,7 +317,7 @@ Wave structure (D-03 sequencing: 5 deterministic wins → cool re-freeze gate �
 - Wave 2 (gate):
   - [x] 08-04-PLAN.md — per-req same-machine A/B attribution + keep-only-measured revert (D-02) + cool W1/W2 re-freeze + owner sign-off (checkpoint)
 - Wave 3 (msgspec second layer on the new baseline):
-  - [ ] 08-05-PLAN.md — Req 6: msgspec.Struct migration (Bar + full Event chain together; 5 standalone DTOs; Position EXCLUDED, D-01) + pyproject runtime-dep promotion + ~29 mechanical test updates; gate (a)
+  - [x] 08-05-PLAN.md — Req 6: msgspec.Struct migration (Bar + full Event chain together; 5 standalone DTOs; Position EXCLUDED, D-01) + pyproject runtime-dep promotion + ~29 mechanical test updates; gate (a)
 - Wave 4 (gate):
   - [ ] 08-06-PLAN.md — fresh msgspec W1/W2 A/B (D-03) + final Phase-8 cool re-freeze + owner sign-off (checkpoint)
 
