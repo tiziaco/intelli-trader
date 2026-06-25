@@ -481,7 +481,7 @@ hot-path refactor with a byte-exact correctness gate.
 | A3 | `set_snapshots` should be made deque-maxlen-aware via `__init__` plumbing | Gap B/Pitfall 2 | If the planner instead keeps `set_snapshots` test-only-unbounded, document it; the only production caller (the trim) is removed anyway. LOW. |
 | A4 | No production code path reads the removed cache fields | Gap C | VERIFIED by grep (all non-test refs are inside metrics_manager.py). LOW. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Is `max_snapshots` reachable from `InMemoryPortfolioStateStorage` for the deque `maxlen`?**
    - What we know: `max_snapshots=10000` lives on `MetricsManager.__init__` (metrics_manager.py:116);
@@ -490,6 +490,10 @@ hot-path refactor with a byte-exact correctness gate.
    - Recommendation: plumb `max_snapshots` into `InMemoryPortfolioStateStorage.__init__` (default
      10000) so both `__init__`'s `deque(maxlen=…)` and `set_snapshots`'s rebuild share one source.
      The planner reads the storage's construction site (PortfolioHandler/Portfolio wiring) to confirm.
+   - **RESOLVED (2026-06-25):** plumb `max_snapshots=10000` into `InMemoryPortfolioStateStorage.__init__`;
+     both the deque init and `set_snapshots`'s rebuild share `self._max_snapshots`. Captured in
+     `07-PATTERNS.md` (storage plumbing site `storage_factory.py:49-76` + storage `__init__`) and
+     implemented in Plan 07-02 Task 1.
 
 ## Environment Availability
 
