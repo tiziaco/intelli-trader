@@ -39,6 +39,7 @@ look-ahead-safe values the primitives compare, never routed through ``to_money``
 SMA running-sum is the INTENDED re-baseline driver P5-D05, not a defect to "fix").
 """
 
+import math
 from collections import deque
 from typing import Protocol, runtime_checkable
 
@@ -111,6 +112,14 @@ class _SMAState:
 		self.value: float | None = None
 
 	def update(self, x: float) -> None:
+		# CR-01: a NaN/Inf close permanently poisons the O(1) running sum and is
+		# unrecoverable (is_ready stays GREEN -> silent dead strategy /
+		# non-deterministic run). Fail loud at the source.
+		if not math.isfinite(x):
+			raise ValueError(
+				f"{type(self).__name__} received non-finite input {x!r} — "
+				"a NaN/Inf close permanently poisons the O(1) recurrence "
+				"(silent dead strategy / non-deterministic run)")
 		self._ring.append(x)
 		self._sum += x
 		if len(self._ring) > self._n:
@@ -150,6 +159,13 @@ class _EMAState:
 		self.value: float | None = None
 
 	def update(self, x: float) -> None:
+		# CR-01: a NaN/Inf close propagates through y += alpha*(x - y) and never
+		# recovers (is_ready stays GREEN). Fail loud at the source.
+		if not math.isfinite(x):
+			raise ValueError(
+				f"{type(self).__name__} received non-finite input {x!r} — "
+				"a NaN/Inf close permanently poisons the O(1) recurrence "
+				"(silent dead strategy / non-deterministic run)")
 		if self.value is None:
 			self.value = x  # y[0] = x[0]
 		else:
@@ -185,16 +201,28 @@ class _MACDHistState:
 		self.value: float | None = None
 
 	def update(self, x: float) -> None:
+		# CR-01: a NaN/Inf close poisons the underlying fast/slow/signal EMAs
+		# (is_ready stays GREEN). Fail loud at the source, naming this class.
+		if not math.isfinite(x):
+			raise ValueError(
+				f"{type(self).__name__} received non-finite input {x!r} — "
+				"a NaN/Inf close permanently poisons the O(1) recurrence "
+				"(silent dead strategy / non-deterministic run)")
 		self._fast.update(x)
 		self._slow.update(x)
 		# Both seeded from bar 0 -> .value is non-None from the first bar.
 		fast_v = self._fast.value
 		slow_v = self._slow.value
-		assert fast_v is not None and slow_v is not None  # seeded bar 0
+		# IN-03: explicit raise (not assert) so the "seeded from bar 0" invariant
+		# survives -O / PYTHONOPTIMIZE, matching the file's own runtime-contract
+		# discipline (handle.py WR-01, base.py _intent/_emit_intent).
+		if fast_v is None or slow_v is None:
+			raise ValueError("_MACDHistState: fast/slow EMA not seeded (bar 0)")
 		macd_line = fast_v - slow_v
 		self._signal.update(macd_line)
 		signal_v = self._signal.value
-		assert signal_v is not None
+		if signal_v is None:
+			raise ValueError("_MACDHistState: signal EMA not seeded (bar 0)")
 		self.value = macd_line - signal_v
 		self._count += 1
 
@@ -236,6 +264,13 @@ class _RSIState:
 		self.value: float | None = None
 
 	def update(self, close: float) -> None:
+		# CR-01: a NaN/Inf close poisons the up/dn factored-RMA and never
+		# recovers (is_ready stays GREEN). Fail loud at the source.
+		if not math.isfinite(close):
+			raise ValueError(
+				f"{type(self).__name__} received non-finite input {close!r} — "
+				"a NaN/Inf close permanently poisons the O(1) recurrence "
+				"(silent dead strategy / non-deterministic run)")
 		if self._prev_close is None:  # bar 0: ta's up[0]=dn[0]=0.0 SEED (Pitfall 1)
 			self._prev_close = close
 			self._up = 0.0
