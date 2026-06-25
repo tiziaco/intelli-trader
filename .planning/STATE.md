@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: executing
-stopped_at: Phase 7 context gathered
-last_updated: "2026-06-25T10:16:27.984Z"
-last_activity: 2026-06-25 -- Phase 07 execution started
+status: ready_to_complete_milestone
+stopped_at: Phase 07 complete (3/3) — v1.5 add-on done; next step is milestone close (NOT Phase 999.2)
+last_updated: 2026-06-25T11:19:57.561Z
+last_activity: 2026-06-25 -- Phase 07 execution complete (both gates pass, verified 8/8)
 progress:
   total_phases: 9
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 20
-  completed_plans: 17
-  percent: 67
+  completed_plans: 20
+  percent: 78
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** Phase 07 — per-bar-metrics-timestamp-polish
+**Current focus:** v1.5 COMPLETE incl. Phase 07 add-on — next step is milestone close (`/gsd-complete-milestone`)
 
 ## Current Position
 
-Phase: 07 (per-bar-metrics-timestamp-polish) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 07
-Last activity: 2026-06-25 -- Phase 07 execution started
+Phase: — (v1.5 COMPLETE — Phases 1-6 + 07 add-on all done)
+Plan: —
+Status: Ready for milestone close — NOT Phase 999.2 (scanner artifact; 999.x are future-milestone backlog seeds)
+Last activity: 2026-06-25 -- Phase 07 complete (per-bar-metrics-timestamp-polish, both gates pass, verified 8/8)
 
 > NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
 > `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
@@ -120,7 +120,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 73
+- Total plans completed: 76
 - Average duration: — min
 - Total execution time: 0.0 hours
 
