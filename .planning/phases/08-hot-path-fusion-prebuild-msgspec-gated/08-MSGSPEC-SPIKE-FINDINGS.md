@@ -5,19 +5,25 @@
 **Resolves:** 08-SPEC.md Requirement 6 — "msgspec.Struct migration — DECISION-GATED".
 **msgspec:** 0.21.1 (already present, dev-only transitive via nautilus-trader; no `pyproject.toml` change for the spike).
 
-## TL;DR — DECISION: **DEFER**
+## TL;DR — DECISION: **INCLUDE in Phase 8** (owner override of the strict W1 gate, 2026-06-25)
 
-| Gate | Threshold | Measured (position-averaged A/B) | Verdict |
-|------|-----------|----------------------------------|---------|
-| **W1 wall-clock (THE gate)** | **≥ 5%** | **+3.82% faster** | ❌ below → **DEFER** |
-| W2 @ 50 symbols (corroboration only) | — | +6.72% faster | ✅ but not the gate metric |
+| Gate | Threshold | Measured (position-averaged A/B) | Note |
+|------|-----------|----------------------------------|------|
+| **W1 wall-clock (the SPEC gate)** | **≥ 5%** | **+3.82% faster** | below the strict line |
+| W2 @ 50 symbols (scaling axis) | — | **+6.72% faster** | **already clears 5%**; win grows with symbol count |
 
-The msgspec conversion is **correct, mypy-clean, and a genuine, consistently-measurable win** — but on the
-W1 workload (4 symbols / 6 portfolios) it lands at **3.82%**, short of the **≥5% W1** bar that Req 6 requires
-to fold the migration into Phase 8. Per the SPEC's keep-only-measured / gate-(b) discipline → **DEFER to a
-follow-up phase.** `pyproject.toml` runtime deps stay unchanged; msgspec stays dev-only.
+> **DECISION OVERRIDE (owner, 2026-06-25):** Req 6 resolves to **INCLUDE**, not DEFER. The W1 number
+> (+3.82%) sits just under the strict ≥5% line, but: (a) **W2 @ 50 symbols already clears it at +6.72%** and
+> the win provably *scales with symbol count*; (b) a planned **optimization module** will run hundreds of
+> backtests over a wider universe, where even a sub-5% per-run win **compounds materially**; (c) the change is
+> `mypy --strict` clean, frozen-compatible, low-friction (one engine `replace` call + ~29 mechanical test
+> assertions). The strict W1 gate was calibrated for *this one small 4-symbol workload* and is conservative
+> for the real usage profile. **msgspec is promoted to a runtime dependency of `itrader/`.** The original
+> measured-DEFER reasoning is retained below for the record; the conclusion is superseded by this override.
 
-The win is real and **scales with symbol count** (6.72% at 50 symbols), so the deferred migration is a strong
+The msgspec conversion is **correct, mypy-clean, and a genuine, consistently-measurable win**. On the W1
+workload (4 symbols / 6 portfolios) it lands at **3.82%** — just under the strict **≥5% W1** line — but the
+win is real and **scales with symbol count** (6.72% at 50 symbols), so the migration is a strong
 follow-up candidate — see Recommendation.
 
 ---
@@ -161,8 +167,12 @@ drop is the signal.)
 
 > "ships in Phase 8 IFF it clears **≥5% W1 wall-clock** AND msgspec is promoted to a runtime dependency."
 
-W1 = **+3.82% < 5%** → **DEFER.** No msgspec on the shipped runtime path; `pyproject.toml` runtime deps
-unchanged. Spike code discarded; this doc is the recorded delta + recommendation.
+Strict-gate reading: W1 = +3.82% < 5%. **Owner override (2026-06-25): INCLUDE in Phase 8** — see the
+DECISION OVERRIDE banner at the top. The strict W1 line is conservative for the real usage profile (W2@50
+already clears it at +6.72%, the win scales with symbols, and a future optimization module compounds it over
+hundreds of runs). **msgspec is promoted to a runtime dependency of `itrader/`.** The spike code was discarded;
+the migration is re-implemented cleanly as part of Phase 8 execution (8 files → `msgspec.Struct`, the
+`matching_engine.py` `replace`, the runtime-dep promotion, and the ~29 mechanical test updates enumerated above).
 
 ## Recommendation for the follow-up
 
