@@ -46,10 +46,10 @@ Phase 7 (M5b) risk layer per D-07. Documentation only; no matching behavior
 encodes margin.
 """
 
-import dataclasses
-from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Tuple
+
+import msgspec
 
 from itrader.core.ids import OrderId
 from itrader.core.money import to_money
@@ -58,13 +58,12 @@ from itrader.config import TrailType
 from itrader.core.enums import OrderType, Side
 
 
-@dataclass(slots=True)
-class TrailState:
+class TrailState(msgspec.Struct, gc=False):
     """Mutable per-trailing-order ratchet bookkeeping (D-TRAIL-6).
 
     Lives in a ``MatchingEngine``-owned side-table parallel to ``_resting`` —
-    NOT on the frozen ``OrderEvent`` (which is ``frozen=True, slots=True`` and
-    would raise ``FrozenInstanceError``). The static trail declaration
+    NOT on the frozen ``OrderEvent`` (a ``frozen=True`` ``msgspec.Struct`` that
+    would raise ``AttributeError`` on set). The static trail declaration
     (``trail_type``/``trail_value``) stays on the immutable event; the running
     extreme and the active stop level are the only mutable state and live here.
 
@@ -78,8 +77,7 @@ class TrailState:
     current_stop: Decimal  # active ratcheted stop, derived from bars <= N-1
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class FillDecision:
+class FillDecision(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """One resting order has matched and should be filled.
 
     Full-quantity contract (D-06): a fill always covers the order's entire
@@ -93,8 +91,7 @@ class FillDecision:
     reason: str
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CancelDecision:
+class CancelDecision(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """One resting order should be cancelled (OCO sibling of a fill)."""
     order_event: OrderEvent
     reason: str
@@ -149,7 +146,7 @@ class MatchingEngine:
         """Replace a resting order with an updated copy. Returns True if present.
 
         Replace-in-book: the stored OrderEvent is never mutated in place —
-        ``dataclasses.replace`` builds an updated copy from the None-guarded
+        ``msgspec.structs.replace`` builds an updated copy from the None-guarded
         changed kwargs and stores it back under the same key. ``replace``
         deliberately PRESERVES ``order_id`` (and ``event_id`` once events
         carry one): a MODIFY changes an order's terms, not its identity —
@@ -163,7 +160,7 @@ class MatchingEngine:
         if order is None:
             return False
         # None-guarded: an omitted kwarg keeps the resting order's own value.
-        updated = dataclasses.replace(
+        updated = msgspec.structs.replace(
             order,
             price=order.price if new_price is None else to_money(new_price),
             quantity=order.quantity if new_quantity is None else to_money(new_quantity),
