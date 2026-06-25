@@ -16,6 +16,7 @@ from itrader.portfolio_handler.metrics.metrics_manager import (
     PortfolioSnapshot,
     PerformanceMetrics,
 )
+from itrader.portfolio_handler.storage import InMemoryPortfolioStateStorage
 
 
 class MockPortfolio:
@@ -52,7 +53,7 @@ def test_metrics_manager_initialization(env):
     """Test MetricsManager initialization."""
     mm = env.metrics_manager
     assert len(mm._storage.get_snapshots()) == 0
-    assert mm.cache_duration_minutes == 5
+    # D-04: cache_duration_minutes removed with the in-memory metrics cache.
     assert mm.max_snapshots == 10000
     assert mm.risk_free_rate == Decimal("0.02")
 
@@ -109,23 +110,32 @@ def test_record_multiple_snapshots(env):
     assert second_snapshot.realized_pnl == Decimal("1000.0")
 
 
-def test_snapshot_history_limit(env):
-    """Test snapshot history size limit."""
-    mm = env.metrics_manager
-    mm.max_snapshots = 5
+def test_snapshot_history_limit():
+    """Test snapshot history size limit.
+
+    D-03: the retention bound is now the storage deque's ``maxlen``, FIXED at
+    construction — mutating ``mm.max_snapshots`` after the fact no longer re-bounds
+    the live deque (the per-bar trim block that used to honor the attribute is
+    gone). So the storage is constructed pre-bounded at 5; pushing 10 retains the
+    last 5, oldest auto-evicted by the deque.
+    """
+    portfolio = MockPortfolio(initial_equity=100000.0)
+    # Bound the deque at construction (the maxlen IS the trim under D-03).
+    portfolio.state_storage = InMemoryPortfolioStateStorage(max_snapshots=5)
+    mm = MetricsManager(portfolio)
 
     base_time = datetime.now()
     for i in range(10):
-        env.portfolio.update_values(
+        portfolio.update_values(
             equity=100000.0 + i * 1000.0, cash=80000.0, market_value=20000.0 + i * 1000.0,
             unrealized_pnl=i * 100.0, realized_pnl=0.0, positions=1,
         )
         mm.record_snapshot(base_time + timedelta(days=i))
 
-    # Should only keep the last 5 snapshots
+    # Should only keep the last 5 snapshots (days 5..9; oldest five auto-evicted).
     assert len(mm._storage.get_snapshots()) == 5
 
-    # First snapshot should be from day 5 (index 5)
+    # First retained snapshot should be from day 5 (equity 100000 + 5*1000).
     first_snapshot = mm._storage.get_snapshots()[0]
     assert first_snapshot.total_equity == Decimal("105000.0")
 
@@ -281,8 +291,10 @@ def test_calculate_performance_metrics_with_data(env):
     assert len(metrics.daily_returns) > 0
 
 
-def test_performance_metrics_caching(env):
-    """Test performance metrics caching."""
+def test_performance_metrics_recompute_stable(env):
+    """D-04: calculate_performance_metrics recomputes from the snapshot history
+    each call (the in-memory metrics cache is removed) and returns value-equal
+    metrics on repeated calls — deterministic recompute, no memoization."""
     mm = env.metrics_manager
     base_time = datetime.now()
 
@@ -296,9 +308,8 @@ def test_performance_metrics_caching(env):
     metrics1 = mm.calculate_performance_metrics(MetricsPeriod.WEEKLY)
     metrics2 = mm.calculate_performance_metrics(MetricsPeriod.WEEKLY)
 
-    # Should return same object from cache
+    # Recompute-stable: equal metric values on repeated calls (no cache needed).
     assert metrics1.total_return == metrics2.total_return
-    assert len(mm._metrics_cache) == 1
 
 
 def test_drawdown_analysis(env):
@@ -497,11 +508,22 @@ def test_portfolio_return_calculation(env):
     assert snapshot.portfolio_return == Decimal("20.0")
 
 
-def test_metrics_cache_invalidation(env):
-    """Test that cache is invalidated when new snapshots are added."""
+def test_metrics_cache_removed_recompute_reflects_new_snapshots(env):
+    """D-04 (T7): the in-memory metrics cache is GONE — no _metrics_cache /
+    _cache_timestamp / _is_cache_valid / cache_duration_minutes attribute
+    survives, and there is no cache to invalidate. calculate_performance_metrics
+    recomputes from the live snapshot history each call, so a metric over a
+    fixed period is recompute-stable, and a recompute after appending new
+    snapshots simply reflects the larger history (no stale cached value)."""
     mm = env.metrics_manager
-    base_time = datetime.now()
 
+    # The cache layer is fully removed (D-04).
+    assert not hasattr(mm, "_metrics_cache")
+    assert not hasattr(mm, "_cache_timestamp")
+    assert not hasattr(mm, "_is_cache_valid")
+    assert not hasattr(mm, "cache_duration_minutes")
+
+    base_time = datetime.now()
     for i in range(5):
         env.portfolio.update_values(
             equity=100000.0 + i * 1000.0, cash=80000.0, market_value=20000.0 + i * 1000.0,
@@ -509,17 +531,21 @@ def test_metrics_cache_invalidation(env):
         )
         mm.record_snapshot(base_time + timedelta(days=i))
 
-    mm.calculate_performance_metrics(MetricsPeriod.WEEKLY)
-    assert len(mm._cache_timestamp) == 1
+    # Recompute-stable over a fixed period (no memoization, equal values).
+    m1 = mm.calculate_performance_metrics(MetricsPeriod.WEEKLY)
+    m2 = mm.calculate_performance_metrics(MetricsPeriod.WEEKLY)
+    assert m1.total_return == m2.total_return
 
+    # After a new snapshot, recompute reflects the updated history (not a stale
+    # cached value) — proving the result is always freshly computed.
     env.portfolio.update_values(
         equity=110000, cash=80000, market_value=30000,
         unrealized_pnl=7500, realized_pnl=2500, positions=1,
     )
     mm.record_snapshot(base_time + timedelta(days=5))
-
-    # Cache should be invalidated
-    assert len(mm._cache_timestamp) == 0
+    m3 = mm.calculate_performance_metrics(MetricsPeriod.WEEKLY)
+    assert m3 is not None
+    assert m3.total_return != m1.total_return
 
 
 def test_period_start_date_calculation(env):
