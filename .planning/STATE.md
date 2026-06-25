@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_plan
-stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 06
-last_updated: 2026-06-24T22:13:41.453Z
-last_activity: 2026-06-24
+status: completed
+stopped_at: Phase 7 context gathered
+last_updated: "2026-06-25T09:28:33.993Z"
+last_activity: 2026-06-25 -- Phase 05 executed, verified (12/12), and completed
 progress:
-  total_phases: 8
-  completed_phases: 5
+  total_phases: 9
+  completed_phases: 6
   total_plans: 17
   completed_plans: 17
-  percent: 63
+  percent: 67
 ---
 
 # Project State
@@ -378,12 +378,13 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-25
-Stopped at: Re-froze W1-BASELINE.json after a W1-benchmark-probe bug fix (branch `perf/w1-benchmark-indexed-active-query`). The probe's per-bar `get_orders_by_status(PENDING)` full `_by_id` scan (O(all-orders-ever), quadratic over the run) was replaced by the indexed `get_active_orders` path — harness-only, engine untouched. W1 153.7 s → **28.3 s / 162.3 MB**, workload byte-identical (1578 fills / 659 closed), oracle byte-exact 134/46189.87730727451 (3 passed). NOTE: 28.3 s is NOT comparable to the pre-fix 153.7 s. W2 unchanged (4.05 s @50 / 210.87 MB, quick `260625-0qj` — verified clean of the same probe pattern). The W1-BASELINE.json change is in the working tree, to be committed manually by the owner.
-Resume file: None
+Last session: 2026-06-25T09:28:33.982Z
+Stopped at: Phase 7 context gathered
+Resume file: .planning/phases/07-per-bar-metrics-timestamp-polish/07-CONTEXT.md
 Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready for `/gsd-complete-milestone`.
 
 ## Operator Next Steps
 
 - Start the next milestone with /gsd-new-milestone
+
 | 2026-06-25 | fast | Switch W1 on_tick to indexed get_active_orders (de-noise profile) | ✅ |
