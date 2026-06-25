@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_plan
-stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 06
-last_updated: 2026-06-24T22:13:41.453Z
-last_activity: 2026-06-24
+status: ready_to_complete_milestone
+stopped_at: Phase 07 complete (3/3) — v1.5 add-on done; next step is milestone close (NOT Phase 999.2)
+last_updated: 2026-06-25T11:19:57.561Z
+last_activity: 2026-06-25 -- Phase 07 execution complete (both gates pass, verified 8/8)
 progress:
-  total_phases: 8
-  completed_phases: 5
-  total_plans: 17
-  completed_plans: 17
-  percent: 63
+  total_phases: 9
+  completed_phases: 7
+  total_plans: 20
+  completed_plans: 20
+  percent: 78
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** Phase 06 — bar feed window copies optional slip able
+**Current focus:** v1.5 COMPLETE incl. Phase 07 add-on — next step is milestone close (`/gsd-complete-milestone`)
 
 ## Current Position
 
-Phase: — (v1.5 COMPLETE)
+Phase: — (v1.5 COMPLETE — Phases 1-6 + 07 add-on all done)
 Plan: —
-Status: Milestone v1.5 complete — ready for milestone close
-Last activity: 2026-06-25 -- Phase 05 executed, verified (12/12), and completed
+Status: Ready for milestone close — NOT Phase 999.2 (scanner artifact; 999.x are future-milestone backlog seeds)
+Last activity: 2026-06-25 -- Phase 07 complete (per-bar-metrics-timestamp-polish, both gates pass, verified 8/8)
 
 > NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
 > `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
@@ -120,7 +120,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 73
+- Total plans completed: 76
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -378,12 +378,14 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-25
-Stopped at: Re-froze W1-BASELINE.json after a W1-benchmark-probe bug fix (branch `perf/w1-benchmark-indexed-active-query`). The probe's per-bar `get_orders_by_status(PENDING)` full `_by_id` scan (O(all-orders-ever), quadratic over the run) was replaced by the indexed `get_active_orders` path — harness-only, engine untouched. W1 153.7 s → **28.3 s / 162.3 MB**, workload byte-identical (1578 fills / 659 closed), oracle byte-exact 134/46189.87730727451 (3 passed). NOTE: 28.3 s is NOT comparable to the pre-fix 153.7 s. W2 unchanged (4.05 s @50 / 210.87 MB, quick `260625-0qj` — verified clean of the same probe pattern). The W1-BASELINE.json change is in the working tree, to be committed manually by the owner.
-Resume file: None
+Last session: 2026-06-25T09:28:33.982Z
+Stopped at: Phase 7 context gathered
+Resume file: .planning/phases/07-per-bar-metrics-timestamp-polish/07-CONTEXT.md
 Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready for `/gsd-complete-milestone`.
 
 ## Operator Next Steps
 
 - Start the next milestone with /gsd-new-milestone
+
 | 2026-06-25 | fast | Switch W1 on_tick to indexed get_active_orders (de-noise profile) | ✅ |
+| 2026-06-25 | fast | Drop 4 hot-path eager-arg debug logs (bracket_manager x3, simulated x1) | ✅ |

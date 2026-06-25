@@ -1,4 +1,5 @@
 import re
+import functools
 import pytz
 import pandas as pd
 from typing import Union, cast
@@ -124,6 +125,18 @@ def timedelta_to_str(delta: timedelta) -> Union[str, None]:
 
 	return ' '.join(parts) if parts else None
 
+# D-01 (PERF-07): memoize the per-bar alignment math — `_aligned` is called once
+# per registered strategy per tick, all sharing the same `event.time`, so the same
+# `(ts, tf)` is recomputed N times intra-tick. Bounded `lru_cache(maxsize=32)` is
+# used (NOT bare `functools.cache`): the `ts` key space is unbounded (~17.3k distinct
+# per-bar timestamps over a run), so an unbounded cache would violate the SPEC
+# bounded-memory constraint; maxsize=32 (>30x headroom over the distinct registered
+# timeframes, few-KB bounded) caps it while still capturing every intra-tick repeat.
+# The function BODY is byte-unchanged — only this decorator was added. lru_cache does
+# NOT cache exceptions (the function raises nothing). lru_cache is thread-safe (locks
+# internally) for live mode, and the keys are deterministic business values (`ts` is
+# `event.time`, never wall-clock), so memoization is reproducible.
+@functools.lru_cache(maxsize=32)
 def _aligned(ts: datetime, tf: timedelta) -> bool:
 	"""
 	Single replaceable alignment seam (D-06): is `ts` on the midnight-relative

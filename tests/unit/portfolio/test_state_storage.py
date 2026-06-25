@@ -171,11 +171,42 @@ def test_get_cash_operations_returns_live_container_no_copy():
     assert backend.get_cash_operations() is backend.get_cash_operations()
 
 
-def test_get_snapshots_returns_live_container_no_copy():
-    """D-03: get_snapshots() returns the live list (identity) — no .copy()."""
+def test_get_snapshots_returns_value_equal_copy():
+    """D-03: get_snapshots() is the ONE accessor that copies — it returns a NEW
+    materialized list each call (value-equal, NOT object-identical), diverging
+    from the four sibling "return the live container" accessors.
+
+    Rationale (D-03): snapshots are stored in a bounded ``deque(maxlen)`` that
+    auto-evicts on append; handing out the live deque is a mutation-during-
+    iteration hazard, and the ``List[Any]`` ABC contract (a deque raises on
+    slices) requires a list. So this accessor returns ``list(self._snapshots)``.
+    """
     backend = InMemoryPortfolioStateStorage()
-    backend.add_snapshot(object())
-    assert backend.get_snapshots() is backend.get_snapshots()
+    snap = object()
+    backend.add_snapshot(snap)
+    # Value-equal contents...
+    assert backend.get_snapshots() == [snap]
+    # ...but a fresh object each call (the intentional copy, not the live deque).
+    assert backend.get_snapshots() is not backend.get_snapshots()
+
+
+def test_snapshots_bounded_deque_retains_last_n():
+    """D-03 (T5): a run exceeding max_snapshots retains exactly the last
+    max_snapshots; the oldest are auto-evicted by the deque maxlen (the per-bar
+    trim block in MetricsManager is gone — the maxlen IS the trim)."""
+    max_snapshots = 3
+    k = 4  # push max_snapshots + k beyond the bound
+    backend = InMemoryPortfolioStateStorage(max_snapshots=max_snapshots)
+    for i in range(max_snapshots + k):
+        backend.add_snapshot(i)
+    # Exactly max_snapshots retained, oldest evicted.
+    assert backend.snapshot_count() == max_snapshots
+    snaps = backend.get_snapshots()
+    assert len(snaps) == max_snapshots
+    # The newest is the last pushed; the oldest retained is the (k+1)-th pushed.
+    assert backend.get_latest_snapshot() == max_snapshots + k - 1
+    assert snaps[0] == k
+    assert snaps == [k, k + 1, k + 2]
 
 
 def test_snapshot_count_and_latest():
