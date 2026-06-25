@@ -428,8 +428,12 @@ class MetricsManager:
             
         if limit:
             snapshots = snapshots[-limit:]
-            
-        return snapshots.copy()
+
+        # IN-03: storage.get_snapshots() already hands out a fresh
+        # list(self._snapshots) each call, and the filter/limit branches above
+        # rebind to new lists — so the result is always a caller-owned copy.
+        # The trailing .copy() was a redundant allocation; return directly.
+        return snapshots
     
     def export_metrics_to_dict(self, period: MetricsPeriod) -> Optional[Dict[str, Any]]:
         """Export performance metrics to dictionary format."""
