@@ -315,7 +315,7 @@ Wave structure (D-03 sequencing: 5 deterministic wins → cool re-freeze gate �
   - [x] 08-02-PLAN.md — Req 2: Position net_quantity/avg_price fill-invalidated cache (D-05) + Req 5: _aligned audit/equivalence (already lru_cache'd, Phase 7 D-01); gate (a)
   - [x] 08-03-PLAN.md — Req 3: itertuples Bar prebuild (drop iterrows) + Req 4: to_dict per-instance static cache (D-06); gate (a)
 - Wave 2 (gate):
-  - [ ] 08-04-PLAN.md — per-req same-machine A/B attribution + keep-only-measured revert (D-02) + cool W1/W2 re-freeze + owner sign-off (checkpoint)
+  - [x] 08-04-PLAN.md — per-req same-machine A/B attribution + keep-only-measured revert (D-02) + cool W1/W2 re-freeze + owner sign-off (checkpoint)
 - Wave 3 (msgspec second layer on the new baseline):
   - [ ] 08-05-PLAN.md — Req 6: msgspec.Struct migration (Bar + full Event chain together; 5 standalone DTOs; Position EXCLUDED, D-01) + pyproject runtime-dep promotion + ~29 mechanical test updates; gate (a)
 - Wave 4 (gate):
