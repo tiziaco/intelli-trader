@@ -34,8 +34,24 @@ findings:
   warning: 6
   info: 5
   total: 12
-status: issues_found
+status: resolved
+fix:
+  applied: 10
+  skipped: 2
+  mode: "--fix --all --auto"
+  iterations: 2
+  oracle_byte_exact: true
+  final_equity: 46189.87730727451
 ---
+
+> **FIX STATUS (--fix --all --auto, 2 iterations):** All 10 in-scope code findings
+> applied across 9 atomic commits (`f6135af` CR-01+IN-03, `2bb0e16` WR-01,
+> `a3e6cba` WR-02, `f51d9d0` WR-03, `357b85e` WR-04, `b3ec303` WR-05, `82fc036`
+> WR-06, `d6fdf5e` IN-01, `51884a9` IN-02). IN-04 and IN-05 intentionally skipped
+> (reviewer marked "no change required"). Iteration-2 re-review confirmed every
+> Critical/Warning RESOLVED with zero new findings. SMA_MACD oracle byte-exact
+> at final_equity 46189.87730727451 (3 oracle + 127 strategy/integration + 3
+> feed-cache tests green); all new guards are dormant on the golden happy path.
 
 # Phase 05: Code Review Report
 
