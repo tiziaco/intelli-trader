@@ -283,25 +283,60 @@ class PositionManager:
         """Get count of active positions."""
         return len(self._storage.get_positions())
 
-    def get_total_market_value(self) -> Decimal:
-        """Calculate total market value of all positions."""
+    def _fused_valuation(self) -> tuple[Decimal, Decimal, Decimal]:
+        """Single-pass per-bar mark-to-market over the open positions (PERF-08/D-04).
+
+        Iterate ``self._storage.get_positions()`` EXACTLY ONCE and accumulate the
+        three per-bar valuation quantities together:
+          - total market value      (Σ position.market_value)
+          - total unrealised PnL     (Σ position.unrealised_pnl)
+          - locked-margin basis      (Σ position.aggregate_notional)
+
+        D-04: ``position_manager`` is the single owner of per-bar position
+        iteration. The public ``get_total_market_value`` / ``get_total_unrealized_pnl``
+        delegate to this fused result instead of each running their own pass; the
+        margin basis is exposed here from the SAME pass so no caller iterates
+        positions a third time.
+
+        Byte-exactness (D-05, mirrors ``apply_realised_increment``): each total is
+        seeded ``Decimal('0.00')`` and folded with ``+=`` in iteration order —
+        full precision, NO quantize, NO mid-sum rounding — so each component stays
+        byte-identical to the prior independent two-pass build. W1-08:
+        ``position.market_value`` / ``position.unrealised_pnl`` are already Decimal
+        at source (position.py); no re-wrap.
+
+        IN-03: do NOT "optimise" by re-adding a per-accessor loop in
+        ``get_total_market_value`` / ``get_total_unrealized_pnl`` — that re-pays the
+        O(positions) cost this fusion removed. Keep the single owner here.
+        """
         total_value = Decimal('0.00')
+        total_pnl = Decimal('0.00')
+        total_basis = Decimal('0.00')
 
         for position in self._storage.get_positions().values():
-            # W1-08: position.market_value is already -> Decimal at source
-            # (position.py:70); the Decimal(str(...)) re-wrap was a no-op.
             total_value += position.market_value
+            total_pnl += position.unrealised_pnl
+            total_basis += position.aggregate_notional
 
+        return total_value, total_pnl, total_basis
+
+    def get_total_market_value(self) -> Decimal:
+        """Calculate total market value of all positions.
+
+        Delegates to the fused single-pass valuation (PERF-08/D-04): the returned
+        Decimal is byte-identical to the prior dedicated loop. Do NOT re-add a
+        per-position loop here (IN-03) — ``_fused_valuation`` is the single owner.
+        """
+        total_value, _total_pnl, _total_basis = self._fused_valuation()
         return total_value
 
     def get_total_unrealized_pnl(self) -> Decimal:
-        """Calculate total unrealized P&L across all positions."""
-        total_pnl = Decimal('0.00')
+        """Calculate total unrealized P&L across all positions.
 
-        for position in self._storage.get_positions().values():
-            # W1-08: position.unrealised_pnl is already -> Decimal at source.
-            total_pnl += position.unrealised_pnl
-
+        Delegates to the fused single-pass valuation (PERF-08/D-04): byte-identical
+        to the prior dedicated loop. Do NOT re-add a per-position loop here (IN-03).
+        """
+        _total_value, total_pnl, _total_basis = self._fused_valuation()
         return total_pnl
 
     def apply_realised_increment(self, increment: Decimal) -> None:

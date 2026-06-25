@@ -628,6 +628,7 @@ def test_short_pnl_unrealised_is_avg_minus_current_times_net(env):
     expected = (marked.avg_price - marked.current_price) * marked.net_quantity
     assert marked.unrealised_pnl == expected
     # A price fall on a short is a profit.
+    assert marked.unrealised_pnl > 0
 
 
 # --- PERF-08 (Req 1 / D-04): single-pass fused valuation equivalence ---------
@@ -719,4 +720,3 @@ def test_fusion_empty_portfolio(env):
     assert mv == Decimal('0.00')
     assert pnl == Decimal('0.00')
     assert basis == Decimal('0.00')
-    assert marked.unrealised_pnl > 0
