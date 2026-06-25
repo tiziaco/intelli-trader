@@ -63,8 +63,10 @@ Held throughout: `mypy --strict` clean; Decimal end-to-end (no new float-for-mon
   demoted/sampled; `debug()` calls are removed from the per-bar path. *(Hotspot #4, ~6% W1 / ~22% W2.)*
 - [x] **PERF-04**: `get_type_hints` is memoized per class in `Strategy.to_dict` — resolved once per
   class, not re-resolved on every signal snapshot. *(Hotspot #6, ~2% W1 / ~14% W2.)*
-- [ ] **PERF-05**: SMA & MACD indicators compute incrementally (rolling/memoized) instead of a
+- [x] **PERF-05**: SMA & MACD indicators compute incrementally (rolling/memoized) instead of a
   full-window `ta` rebuild every bar, reproducing `[BYTE-EXACT]` output. **Oracle-gated, done LAST.**
+  *(05-01 Plan A shipped the shared recent-bars feed DATA LAYER, byte-exact; the incremental SMA/MACD
+  compute itself lands with Plans B/C — keep open until then.)*
   *(Hotspots #2+#7, ~24% CPU — highest-care item.)*
 - [x] **PERF-06** *(optional)*: Per-tick bar-feed window `iloc` frame copies are reduced (reusable
   view / cached slice bounds), preserving the look-ahead bar-timing contract (the 7 rules in
@@ -114,7 +116,7 @@ Every v1 requirement maps to exactly one phase (100% coverage). See `ROADMAP.md`
 | PERF-02 | Phase 3 — Running PnL Accumulator | Complete |
 | PERF-03 | Phase 4 — Hot-Path Discipline | Complete |
 | PERF-04 | Phase 4 — Hot-Path Discipline | Complete |
-| PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | Pending |
+| PERF-05 | Phase 5 — Incremental Indicators (FRAGILE, LAST) | Complete — gate (a) GREEN (05-01 Plan A data layer + 05-02 Plan B O(1) stateful indicators + 05-03 Plan C per-tick window slice cut & pair migration; SMA_MACD oracle byte-exact 134/46189.87730727451); gate (b) W1/W2 re-freeze = carried thermal todo |
 | PERF-06 | Phase 6 — Bar-Feed Window Copies (OPTIONAL) | Complete |
 
 **Coverage:**

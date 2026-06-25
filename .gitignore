@@ -30,6 +30,10 @@ credentials*
 
 # cache
 **cache**
+# ...but the shared-bar-cache capacity-derivation source is tracked (P5-D16);
+# the broad **cache** rule above would otherwise ignore it by filename.
+!itrader/price_handler/feed/cache_registration.py
+!tests/integration/test_bar_cache_registration.py
 
 #UserData
 output/

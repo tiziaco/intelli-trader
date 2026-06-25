@@ -73,11 +73,15 @@ class SingleMarketBuy(Strategy):
         self.exit_on_bar = exit_on_bar
 
     def generate_signal(self, ticker: str) -> SignalIntent | None:
-        # D-06: bars dropped — evaluate() stashed the window on self.bars. No
-        # indicators registered, so evaluate's repopulate loop is a no-op
-        # (Pitfall 6); the count-based fire/exit logic is unchanged.
-        if len(self.bars) == self.fire_on_bar:
+        # P5-D13a: the per-tick self.bars master-frame slice is GONE — the handler
+        # now drives update(ticker,bar) and the strategy reads the per-ticker
+        # completed-bar COUNT via self.bar_count(ticker). This count increments once
+        # per consumed bar (REAL bars only — a gap bar is skipped, P5-D10c), so it
+        # is byte-identical to the old len(self.bars) against the wide max_window:
+        # the fire/exit ticks (count == fire_on_bar / exit_on_bar) are UNCHANGED.
+        count = self.bar_count(ticker)
+        if count == self.fire_on_bar:
             return self.buy(ticker)
-        if len(self.bars) == self.exit_on_bar:
+        if count == self.exit_on_bar:
             return self.sell(ticker)
         return None

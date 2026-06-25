@@ -32,6 +32,8 @@ admission + fan-out paths, D uses a rolling z-score of the ETHUSDT close itself
 
 from decimal import Decimal
 
+import numpy as np
+
 from itrader.core.enums import TradingDirection
 from itrader.core.sizing import FractionOfCash, SignalIntent
 from itrader.strategy_handler.base import Strategy
@@ -79,14 +81,15 @@ class ShortZScoreStrategy(Strategy):
         ...
 
     def generate_signal(self, ticker: str) -> SignalIntent | None:
-        # warmup == 0 (no declared indicators) means the base may dispatch us with
-        # an empty window (feed.window returns frame.iloc[pos:pos] at the frame
-        # start). Guard the empty read; self-gate until the window fills.
-        if self.bars.empty or len(self.bars) < self.z_window:
+        # P5-D13a: the per-tick self.bars window is GONE — read the trailing closes
+        # via the base's recent_closes(ticker) seam (depth == max_window == z_window).
+        # Self-gate until z_window bars have arrived (the old len(self.bars) guard).
+        closes_list = self.recent_closes(ticker)
+        if len(closes_list) < self.z_window:
             return None
         # Rolling z-score of the close over the last z_window bars (cheap, pure
-        # numpy off the window the feed already handed us).
-        closes = self.bars["close"].to_numpy()[-self.z_window:]
+        # numpy off the bounded recent-close buffer).
+        closes = np.asarray(closes_list[-self.z_window:], dtype=float)
         close = float(closes[-1])
         mean = float(closes.mean())
         std = float(closes.std())  # population std (ddof=0)

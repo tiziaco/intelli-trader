@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
 status: ready_to_plan
-stopped_at: Phase 06 complete (D-15 ship-and-reframe) — Phase 5 (Incremental Indicators) is the LAST remaining v1.5 phase (6-before-5 reorder); 999.2 jump is the phase.complete backlog-scan artifact, corrected
-last_updated: 2026-06-24T15:42:12.372Z
+stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 06
+last_updated: 2026-06-24T22:13:41.453Z
 last_activity: 2026-06-24
 progress:
   total_phases: 8
-  completed_phases: 4
-  total_plans: 14
-  completed_plans: 14
-  percent: 50
+  completed_phases: 5
+  total_plans: 17
+  completed_plans: 17
+  percent: 63
 ---
 
 # Project State
@@ -20,33 +20,45 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere.
-**Current focus:** Phase 5 — Incremental Indicators (FRAGILE, oracle-gated, LAST) — the final remaining v1.5 phase
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
+**Current focus:** Phase 06 — bar feed window copies optional slip able
 
 ## Current Position
 
-Phase: 5 (Incremental Indicators — PERF-05; deferred to run AFTER Phase 6 per the 6-before-5 reorder)
-Plan: Not started (no Phase 5 dir yet — needs discuss/plan)
-Status: Ready to plan
-Last activity: 2026-06-24
+Phase: — (v1.5 COMPLETE)
+Plan: —
+Status: Milestone v1.5 complete — ready for milestone close
+Last activity: 2026-06-25 -- Phase 05 executed, verified (12/12), and completed
 
-> NOTE: `phase.complete` advanced Current Position to the `999.2` backlog placeholder because no
-> `05-*` phase dir exists yet (scanner artifact — see memory `phase-complete-jumps-to-backlog`).
-> Corrected manually: the next v1.5 phase is **Phase 5 (Incremental Indicators)**, not 999.2.
-> 999.2/999.3 remain FUTURE-milestone backlog seeds. v1.5 = Phases 1-4 + 6 done; Phase 5 remaining.
+> NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
+> `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
+> 6-before-5 reorder), so it is NOT "next". With Phase 5 now complete, ALL SIX v1.5 phases (1-6) are
+> Complete — **v1.5 (Backtest Performance Optimization) is finished**. The next step is milestone close
+> (`/gsd-complete-milestone`), not a new phase. 999.2/999.3 remain FUTURE-milestone backlog seeds.
+> Carried todo **CLEARED 2026-06-25** (quick `260625-0qj`): Gate (b) W1/W2 baselines re-frozen on a
+> verified-cool box (`pmset` clean, in-battery HEAD drift +0.9%) — **W1 153.7 s / 162.3 MB**, **W2 4.05 s
+> @50 / 210.87 MB**. Cool same-machine A/B attributes Phase 5: **W1 −40.1%** (255.4 s→153.0 s) and
+> **W2@50 −70.2%** (13.61 s→4.05 s), Gate (a) byte-exact 134/46189.87730727451, owner sign-off tiziaco.
+> See `.planning/quick/260625-0qj-refreeze-w1-w2-baseline-cool/ATTRIBUTION.md`. v1.5 ready for milestone close.
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 
-**This is the perf analog of v1.2 Consolidation: it re-baselines NOTHING.** Every optimization phase
-(2-6) is gated on BOTH:
+**This is the perf analog of v1.2 Consolidation: it re-baselines NOTHING — EXCEPT Phase 5.** Every
+optimization phase **2, 3, 4, 6** is gated on BOTH gates below with byte-exact Gate (a). **Phase 5
+is the exception** (reframed by spec 2026-06-24, `05-CONTEXT.md` P5-D01): it drops `ta` on the runtime
+path and **deliberately re-baselines the SMA_MACD oracle** — its Gate (a) becomes a re-baseline +
+cross-validation freeze (backtesting.py + backtrader, 1% rel tol), not byte-identity (P5-D02). Trade
+dates/count (134) are expected to stay identical (firing tick preserved); numeric equity/PnL drift.
 
-1. **Gate (a) — byte-exact oracle stays green:** `tests/integration/test_backtest_oracle.py` —
-   SMA_MACD **134 trades / `final_equity 46189.87730727451`**. No golden is re-baselined anywhere in
-   v1.5.
+1. **Gate (a) — oracle lock:** `tests/integration/test_backtest_oracle.py` — SMA_MACD **134 trades /
+   `final_equity 46189.87730727451`** for Phases 2/3/4/6 (byte-exact). **Phase 5 re-baselines this
+   number** via cross-val freeze (P5-D02) — the new reference is frozen + regression-locked.
 
 2. **Gate (b) — measurable, locked W1 improvement:** the clean W1 benchmark shows a real wall-clock
    and/or peak-memory reduction vs the frozen baseline (**240.8 s / 167.3 MB**), **re-frozen after
-   the phase** as the new locked reference the next phase is judged against.
+   the phase** as the new locked reference the next phase is judged against. **v1.5-final locked
+   reference (re-frozen cool 2026-06-25, quick `260625-0qj`): W1 153.7 s / 162.3 MB · W2 4.05 s @50 /
+   210.87 MB.**
 
 Phase 1 (tooling) **builds** gate (b)'s measurement harness and re-freezes the baseline; it changes
 no engine code and is held to gate (a) only.
@@ -104,7 +116,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 70
+- Total plans completed: 73
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -133,6 +145,15 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 Active decisions live in PROJECT.md Key Decisions. Load-bearing program constraints + the v1.4 locked
 scope decisions:
+
+- **Phase 5 / 05-02 (LOCKED):** all four indicators (SMA/EMA/MACD/RSI) are now hand-written O(1)
+  stateful recurrences (`ta` DROPPED on the runtime path, P5-D11/D12). The SMA_MACD oracle re-baseline
+  (P5-D02) was confirmed **BYTE-IDENTICAL** (134 / 46189.87730727451 unchanged) — numerically
+  transparent because the indicators gate decisions via boolean primitives only and never enter the
+  money arithmetic; cross-validated PASS (backtesting.py −0.35%, backtrader exact, 134 both); owner
+  sign-off: tiziaco (tiziano.iaco@gmail.com), 2026-06-24, P5-D02. No golden re-freeze was required.
+  RSI Pitfall-1 landmine: `ta` seeds `up[0]=dn[0]=0.0` at bar 0 (diff[0]=NaN → `.where` → 0.0), NOT
+  bar-1 first-gain.
 
 - Money = Decimal end-to-end; float money is a correctness defect — applies to the liquidation formula
   and interest accrual (`float()` only at the serialization/logging edge).
@@ -212,6 +233,9 @@ scope decisions:
 - [Phase 03]: 03-01 (PERF-02) — running Decimal realised-PnL accumulator on PositionManager (_realised_pnl_accumulator, seed Decimal('0.00'), no mid-sum quantize) replaces the per-bar dual open+closed re-sum in get_total_realized_pnl (now a bare `return self._realised_pnl_accumulator`, D-01/D-04 dead-loop collapse). Fed via apply_realised_increment from BOTH Portfolio settle arms — the SPOT arm (SMA_MACD oracle path) had NO explicit realised_increment today and was wired with pre/post capture (audit finding, 03-INVARIANT-AUDIT.md §5); MARGIN arm reuses the existing increment on the CLOSE branch only (D-02). Three-layer correctness lock: written single-funnel invariant audit (03-INVARIANT-AUDIT.md) + byte-exact oracle/determinism + dedicated equivalence regression test (accumulator == fresh full re-sum, D-03). Gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files), full suite 1241 passed, determinism double-run byte-identical. Gate (b) W1 wall-clock re-freeze = Plan 02.
 - [Phase ?]: [Phase 06]: 06-03 (PERF-06 / D-13 denominator cleanup, PREP before the cursor) — removed the per-bar TIME EVENT debug block from EventHandler._dispatch (eager f-string every bar, discarded at INFO, ~22% W2 CPU) and de-timed run_w2_sweep._run_point into two passes (clean perf_counter wall-clock, NO tracemalloc in the timed region + separate fresh-wired tracemalloc peak-mem, same seed=42); _wire_system helper factored, return dict shape + 06-02 --check/--baseline-out flags unchanged. Behavior-neutral: gate (a) byte-exact 134/46189.87730727451, mypy --strict clean (187 files); re-baselines NOTHING numeric (cleaned baselines re-freeze 06-05). Commits 15834d7 + 43e5e72.
 - [Phase 06]: 06-04 (PERF-06 / D-10 monotonic cursor) — BacktestBarFeed.window() resolves the cutoff via a per-(ticker,alias) forward int64 cursor over frame.index.asi8 (`iv_i8[pos] <= cutoff_i8`, `cutoff_i8 = pd.Timestamp(cutoff).value`) replacing the per-tick searchsorted (13.2% W2); byte-identical to searchsorted(side="right"). Cold key OR `cutoff_i8 < last_cut` → silent safe searchsorted rebuild (never leak a future bar, D-10 reset-safety). The `iloc[start:pos]` read-only view + D-06 empty short-circuit are KEPT cursor-only (D-11 cheaper-slice empirically infeasible — every candidate slower than iloc, D-07 forbids reconstruction; D-12 built on 06-01 9168cae, NOT reverted). D-16: cursor==searchsorted + no-future-bar proven in the EXTENDED D-08 test suite only, NO hot-loop runtime assert. Deviation (Rule 3): `cutoff.value` → `pd.Timestamp(cutoff).value` for mypy --strict (asof typed `datetime`, no `.value`). Gate (a) byte-exact 134/46189.87730727451, determinism double-run identical (SHA-256), mypy --strict clean (187 files), full suite 1262 passed. Commits d034ea3 + 00c5480. Gate (b) W2/W1 re-freeze deferred to 06-05 (cool machine, D-14).
+- [Phase 05]: 05-01 (PERF-05, Plan A — shared recent-bars feed data layer, BYTE-EXACT plumbing) — `BarFeed` now owns the shared recent-bars API: (1) new pure `itrader/price_handler/feed/cache_registration.py::derive` — derive-once-at-wiring mirror of `universe/instruments.py::derive_instruments` (no class/state/queue/feed/store import, sorted/deduped/laddered), keys cache capacity off **RAW-BAR consumers NOT indicator min_period** (P5-D07/D22: indicators self-buffer under Model B); empty consumer set → newest-bar-only depth 1, deep multi-bar cache DEFERRED to the first raw-bar consumer (`.planning/todos/deep-shared-bar-history.md`). (2) G5 newest-bar unify (P5-D16a): the cache newest-row write rides the **EXISTING** `current_bars` per-symbol walk so `newest_bar(ticker)` IS `BarEvent.bars[ticker]` (one source of truth) — NO second loop (for-ticker count stays 2). (3) G1 (P5-D16b): module-level `assert_update_trigger` interface-only `base_timeframe <= min(timeframe)` causality guard; golden 1d==base collapses to "every tick"; multi-timeframe consolidator deferred. **A3 byte-exact held**: `window()` D-08/D-10 monotonic int64 cursor + 7-rule bar-timing contract byte-for-byte unchanged (git diff shows no window-body edits), SMA_MACD oracle byte-exact 134/46189.87730727451, mypy --strict clean (188 files), 61 price+integration tests green + 6 new Plan-A tests. Deviation (Rule 3): narrow `.gitignore` negations un-ignore the two `*cache*`-named tracked files (the broad `**cache**` rule matched them by filename; plan mandates the exact filenames). Plan B (stateful indicators, P5-D07 self-buffer, does NOT read this cache) unblocked structurally — still gated only on the G2 seeding decision P5-D04. Commits 5be5047 + 86ff5b2 + 484724f.
+
+- [Phase 05]: 05-03 (PERF-05, Plan C — per-tick window slice CUT, pair migrated, BYTE-EXACT vs the Plan-02 re-baseline) — the per-tick `feed.window()` master-frame slice + the `len(data)<warmup` gate are removed ENTIRELY for BOTH the single-leg and pair paths (P5-D13/D14). The handler loop is now `strategy.update(ticker,bar)` -> `if not strategy.is_ready(ticker): continue` -> `generate_signal(ticker)`; the bar-is-None gap skip STAYS (= no-update, state frozen, P5-D10c). Per-symbol fan-out is a STATE-SWAP on the SINGLE registration handle-set (`_activate_ticker` + `IndicatorHandle.snapshot_state/load_state/fresh_state`) — the author-bound `self.short_sma` reflects the active ticker WITHOUT the base knowing the attr name (P5-D21); this FIXED a Plan-B design bug where separate per-ticker handle objects left `self.short_sma` reading an un-updated handle (read-before-warm crash). `self.now = bar.time` (a tz-aware Timestamp byte-identical to the legacy `window.index[-1]`), NOT the literal `event.time` (a plain datetime with no `.tz_convert` — would break ~12 e2e scenarios). The pair runs on β fit-once-frozen over the oldest 250 of a bounded `maxlen=280` per-leg buffer + z bounded-window over 30, fed by multi-input `update_pair(bar_A,bar_B)` (P5-D09); `_buffers_as_windows()` renders the bounded buffers as the `(win_A,win_B)` the PRESERVED window-based β/z helpers read — byte-identical to the removed `feed.window(280)` (β/z math, `_crosses_into/_inside` band logic, `_in_pair` flag, non-finite-z guard, β→`to_money` fence all UNTOUCHED). Count/date fixtures migrated off `self.bars` onto `bar_count`/`latest_bar` (firing preserved, P5-D13a); the indicator-free multi-bar strategies (limit_entry_crossval + perf a/b/c/d + run_w2_sweep) migrated onto a new `recent_closes(ticker)` seam (Rule-3, required for the full-suite gate). GATE (a) GREEN: SMA_MACD oracle byte-exact 134/46189.87730727451 (behavioral + numeric), pair flagship snapshot byte-for-byte, full suite 1287 passed, mypy --strict clean (188 files), determinism double-run BYTE-IDENTICAL (SHA-256). Commits 37f6a4e + 44222bb + 094a345.
 
 ### Pending Todos
 
@@ -282,6 +306,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | 260623-bmg | Fix perf coverage instruments B/C/D so positions recycle (boost trade density): added the missing exit leg to each (D short tp+sl bracket, B limit-long sl + tightened tp, C pyramiding tp) — 30d-slice fills jumped ~11→759, closed 0→291 across P2_B/P3_C/P4-6_D; coverage semantics unchanged | 2026-06-23 | 4cd2be7 | | [260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p](./quick/260623-bmg-fix-perf-coverage-instruments-b-c-d-so-p/) |
 | 260623-f80 | Fix perf coverage instrument A over-selling: removed the cash-sized discretionary crossunder exit (sized off FractionOfCash(0.95), not the held qty → sold 65 vs held 1 → net-short inventory mislabeled LONG → $100k→$10M phantom equity → fills froze after Jan); now bracket-only (OCO sl/tp) so longs close cleanly & recycle. A-only full-window: fills spread Dec–Jun (251, was frozen 184), closed 61→125, equity sane $76,452 (was phantom $10M). Surfaced a SEPARATE engine anomaly (spot LONG_ONLY over-sell allowed) → /gsd:debug | 2026-06-23 | 3657d30 | | [260623-f80-fix-perf-coverage-instrument-a-over-sell](./quick/260623-f80-fix-perf-coverage-instrument-a-over-sell/) |
 | 260623-gao | Engine over-sell protection A+B (TDD, oracle-gated) for the spot LONG_ONLY over-sell / phantom-equity bug (diagnosed in .planning/debug/spot-long-only-oversell.md). A: ported the CR-02 over-close guard into the SPOT settlement path (portfolio.py _process_transaction_spot) — a reducing SELL exceeding held qty now raises InvalidTransactionError (was silent corruption). B: cancel orphaned bracket children on flatten-by-fill in the order domain (reconcile on_fill), scoped to (portfolio_id, ticker). Fix C (sign-aware net_quantity/market_value) left owner-gated/out-of-scope. Oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1231 green; mypy --strict clean | 2026-06-23 | c004672 | Verified | [260623-gao-engine-over-sell-protection-a-b-spot-set](./quick/260623-gao-engine-over-sell-protection-a-b-spot-set/) |
+| 260625-0qj | Re-froze v1.5 Gate (b) baselines on a verified-cool box (clears the carried thermal-defer todo) + attributed Phase 5. `pmset -g therm` clean; cool same-machine A/B (de2e19f vs HEAD via `make perf-w1`, identical 1578-fill workload, OLD bracketed between two HEAD runs → in-battery HEAD drift +0.9%, no throttle): **W1 −40.1%** (255.4→153.0 s), peak-mem flat. New frozen W1 153.7 s / 162.3 MB (was stale Phase-6 238.5 s) + W2 4.05 s @50 / 210.87 MB (was 13.61 s → **W2@50 −70.2%**). Gate (a) byte-exact 134/46189.87730727451 (3 passed). Owner sign-off tiziaco 2026-06-25. No engine code touched | 2026-06-25 | 7a630b2 | Verified | [260625-0qj-refreeze-w1-w2-baseline-cool](./quick/260625-0qj-refreeze-w1-w2-baseline-cool/) |
 | 260623-h6i | Refine the over-close guard (spot + margin twin, portfolio.py) to compare the over-sell excess against the existing PositionManager.tolerance (1e-5) instead of strict `>`. Surfaced when the full W1 re-run fail-fast aborted on coverage instrument C (pyramiding): the "over-sell" was 1E-27 BTC — last-digit Decimal noise from independent per-add bracket-child quantization after partial closes, NOT a real over-sell (A/B completed with sane equity). Now sub-close-tolerance dust is absorbed as a clean full close; a GROSS over-sell (the 64-BTC phantom-equity case) still raises loudly at both sites. TDD; oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1233 green; mypy --strict clean | 2026-06-23 | 09d49b1 | Verified | [260623-h6i-refine-over-close-guard-with-tolerance-a](./quick/260623-h6i-refine-over-close-guard-with-tolerance-a/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
@@ -306,6 +331,8 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | Phase 03 P01 | 5 | 3 tasks | 4 files |
 | Phase 06 P03 | 2 | 2 tasks | 2 files |
 | Phase 06 P04 | 5 | 2 tasks | 2 files |
+| v1.5 Phase 05 P01 | ~10 | 3 tasks | 5 files |
+| v1.5 Phase 05 P03 | ~40 | 3 tasks | 16 files |
 
 ## Bookkeeping
 
@@ -347,10 +374,10 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-24T15:06:52.157Z
-Stopped at: Phase 06 COMPLETE — all 5 plans done (06-02 closed-out-superseded; 06-03 cleanup; 06-04 cursor; 06-05 D-15 ship-and-reframe verdict +1.9% W2). Verification passed 6/6. Next: Phase 5 (Incremental Indicators), the last v1.5 phase.
+Last session: 2026-06-25T00:50:00.000Z
+Stopped at: Quick `260625-0qj` — re-froze the v1.5 Gate (b) baselines on a verified-cool box and attributed Phase 5. W1 153.7 s / 162.3 MB, W2 4.05 s @50 / 210.87 MB (frozen_at 2026-06-25); cool same-machine A/B (de2e19f vs HEAD, identical 1578-fill workload, HEAD drift +0.9%) gives W1 −40.1% (255.4→153.0 s) and W2@50 −70.2% (13.61→4.05 s). Gate (a) byte-exact 134/46189.87730727451 (3 passed). Owner sign-off tiziaco. The carried cool-machine re-freeze todo is now CLEARED.
 Resume file: None
-Carried todo: re-freeze W1-BASELINE.json on a verified-cool isolated run (the 06-05 W1 re-freeze was thermally inflated to 259.1s and deferred; baseline kept at 238.5s). See 06-05-SUMMARY.md.
+Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready for `/gsd-complete-milestone`.
 
 ## Operator Next Steps
 

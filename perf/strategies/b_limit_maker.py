@@ -69,8 +69,10 @@ class LimitMakerStrategy(Strategy):
         self.ma = self.indicator(SMA, "close", self.ma_window)
 
     def generate_signal(self, ticker: str) -> SignalIntent | None:
-        close = Decimal(str(self.bars["close"].iloc[-1]))
-        ma = Decimal(str(self.ma[-1]))
+        # P5-D13a: the per-tick self.bars window is gone — read the decision close
+        # off the latest pushed bar (bar.close is already Decimal).
+        close = self.latest_bar(ticker).close  # IN-02: bar.close is already Decimal
+        ma = Decimal(str(self.ma[-1]))  # self.ma[-1] IS a float -> str round-trip needed
         # Mean reversion: when close sits a band below the MA, rest a limit a bit
         # lower still (a maker order that fills on a further dip).
         threshold = ma * (Decimal("1") - _BAND_PCT)

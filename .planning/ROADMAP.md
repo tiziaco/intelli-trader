@@ -58,7 +58,7 @@ research). Full detail in [`milestones/v1.5-ROADMAP.md`](./milestones/v1.5-ROADM
 - [x] **Phase 2: Order-Storage Indexing** — derived secondary indexes over the flat `{id: order}` dict (D-20 source of truth), Postgres-extensible interface (PERF-01, ~37% CPU)
 - [x] **Phase 3: Running PnL Accumulator** — maintain realised PnL on close, stop the per-bar re-sum; opportunistic in-file CONCERNS cleanups allowed (PERF-02, ~13% CPU)
 - [x] **Phase 4: Hot-Path Discipline** — level-gate hot-loop logs + drop per-bar `debug()`; memoize `get_type_hints` in `Strategy.to_dict` (PERF-03 + PERF-04, ~8% W1 / ~36% W2)
-- [ ] **Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)** — rolling/memoized SMA & MACD replacing the per-bar full-window `ta` rebuild, byte-exact (PERF-05, ~24% CPU)
+- [ ] **Phase 5: Stateful Indicators + Shared Bar Cache (FRAGILE, oracle RE-BASELINED, LAST)** — stateful incremental indicators (drop `ta` on the runtime path) + feed-centric per-symbol fan-out + shared recent-bars feed, replacing the per-bar full-window `ta` rebuild; **re-baselines the SMA_MACD oracle** (cross-validated, NOT byte-exact) per `docs/superpowers/specs/2026-06-24-stateful-indicator-design.md`, which **supersedes** this entry (PERF-05, ~24% CPU)
 - [ ] **Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)** — reduce per-tick `iloc` frame copies, preserving the look-ahead bar-timing contract (PERF-06, ~4% W1 / ~22% W2)
 
 ## Phase Details
@@ -179,23 +179,39 @@ numeric surface, so they bundle cleanly into one discipline phase.
 > Phase 1 (do NOT revisit):** do NOT change `min_order_size` or the coverage-strategy sizing to silence
 > it — that is the wrong lever and would re-bake the frozen W1 baseline.
 
-### Phase 5: Incremental Indicators (FRAGILE, oracle-gated, LAST)
-**Goal**: SMA & MACD compute incrementally (rolling/memoized) instead of a full-window `ta` rebuild
-every bar — the largest single CPU chunk (~24%, hotspots #2+#7) — reproducing `[BYTE-EXACT]` output,
-isolated as the last and highest-care phase with the oracle as the lock.
-**Depends on**: Phase 1 (harness/baseline). Sequenced LAST and isolated (the byte-exact constraint
-makes any bundled change unattributable).
+### Phase 5: Stateful Indicators + Shared Bar Cache (FRAGILE, oracle RE-BASELINED, LAST)
+> **SUPERSEDED-BY-SPEC (2026-06-24):** this entry was scoped as a byte-exact perf tweak before the
+> design spec. The design of record is `docs/superpowers/specs/2026-06-24-stateful-indicator-design.md`
+> + `.planning/phases/05-.../05-CONTEXT.md` (decisions P5-D01…P5-D22), which **supersede** the
+> byte-exact framing below. Phase 5 is a structural refactor that **deliberately RE-BASELINES** the
+> SMA_MACD oracle (cross-validated, not byte-exact). The v1.5 "change the numbers nowhere" invariant
+> carries a **Phase-5 carve-out** (P5-D01).
+
+**Goal**: Replace the per-tick full-series `ta` recompute with **stateful incremental indicators**
+(O(1)/tick, `ta` dropped on the runtime path), feed-centric with **per-symbol/per-pair state**, on a
+**shared recent-bars feed**; then cut the per-tick master-frame window slice. Delivered as 3 plans
+**A→B→C** (data layer → stateful indicators + re-baseline → pair migration + drop per-tick window).
+**Depends on**: Phase 1 (harness/baseline). Sequenced LAST and isolated (the FRAGILE oracle-gated
+phase). Plan A is plannable byte-exact in parallel; only Plan B is blocked by the EMA-seed decision
+(P5-D04).
 **Requirements**: PERF-05
 **Success Criteria** (what must be TRUE):
-  1. `_SMA.compute` and `_MACDHist.compute` produce values **bit-identical** to the full-window `ta`
-     rebuild they replace (no fresh `ta` object / re-slice / `dropna` copy per bar).
-  2. The incremental state is look-ahead-safe and deterministic (no future bars visible; same
-     warmup/visibility semantics as the framework-derived `warmup == max_window`).
-  3. **Gate (a):** the byte-exact SMA_MACD oracle is green (134 / `46189.87730727451`) — this is the
-     lock for the entire phase; `mypy --strict` clean; determinism double-run byte-identical.
+  1. SMA/EMA/MACD/RSI are hand-written O(1) recurrences (no `ta` / fresh object / re-slice / `dropna`
+     per tick); `ta`/pandas retained ONLY as a post-warmup convergence test oracle (P5-D17).
+  2. The stateful state is look-ahead-safe and deterministic (no future bars; per-indicator
+     readiness `count >= min_period`; missing bar = no update; causality guard rejects non-causal).
+  3. **Gate (a) — RE-BASELINE (replaces byte-exact):** the SMA_MACD oracle is re-run and the new
+     trade log + equity are **cross-validated within 1% rel tol against backtesting.py + backtrader**
+     (`tests/golden/CROSS-VALIDATION.md`) and frozen as the new locked reference; trade dates/count
+     (134) are expected to stay identical (firing tick preserved) with numeric drift only — any
+     trade-SET change requires explicit cross-val corroboration before freezing (P5-D02). `mypy
+     --strict` clean; determinism double-run byte-identical.
   4. **Gate (b):** the clean W1 benchmark shows a measurable improvement vs the prior re-frozen
-     baseline, re-frozen as the new locked reference.
-**Plans**: TBD
+     baseline, re-frozen as the new locked reference (attribute via same-machine A/B; re-freeze cool).
+**Plans**: 3 plans (A→B→C per spec §5 / CONTEXT P5-D01..D22)
+  - [x] 05-01-PLAN.md — Plan A: shared recent-bars feed (newest-bar + registration/capacity interface, G5 unify, G1 trigger seam interface-only; deep cache deferred) — byte-exact
+  - [x] 05-02-PLAN.md — Plan B: all four indicators -> O(1) stateful recurrences (ta dropped on runtime path), per-symbol fan-out + readiness + reset() + causal guard, ta-convergence test, SMA_MACD oracle RE-BASELINE (cross-val gated)
+  - [x] 05-03-PLAN.md — Plan C: drop the per-tick self.bars/feed.window slice (handler loop restructure), pair β fit-once-frozen / z bounded-window migration, count/date fixture migration
 
 ### Phase 6: Bar-Feed Window Copies (OPTIONAL, slip-able)
 **Goal**: Per-tick bar-feed window `iloc` frame copies are reduced (reusable view / cached slice
@@ -320,7 +336,7 @@ in [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 | 2. Order-Storage Indexing | 2/2 | Complete   | 2026-06-23 |
 | 3. Running PnL Accumulator | 2/2 | Complete   | 2026-06-24 |
 | 4. Hot-Path Discipline | 3/3 | Complete   | 2026-06-24 |
-| 5. Incremental Indicators (FRAGILE) | 0/TBD | Not started | - |
+| 5. Incremental Indicators (FRAGILE) | 3/3 | Complete   | 2026-06-24 |
 | 6. Bar-Feed Window Copies (OPTIONAL) | 5/5 | Complete   | 2026-06-24 |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
@@ -440,6 +456,13 @@ Scope (intent only):
     externally; the engine stays owner-agnostic, keyed by its own domain IDs. Removing
     `Portfolio.user_id` is an independent cleanup (constructor-signature ripple) — kept OUT of v1.4
     to avoid muddying that milestone's golden-master re-baseline.
+- **Live-start indicator backfill through the same `update(bar)` path** (deferred out of v1.5
+  Phase 5 — stateful indicators; surfaced 2026-06-24). When `LiveBarFeed` is built, historical
+  warmup at live-start MUST replay bars through the **identical `update(bar)` path** the backtest
+  uses (Nautilus `request_bars()` analog) — no separate bulk `warmup_from(series)` fast-path, which
+  would be a second state-building path that diverges and re-opens the look-ahead/parity audit the
+  single-code-path stateful design closes. See `.planning/todos/live-backfill-through-update.md` +
+  `docs/superpowers/specs/2026-06-24-stateful-indicator-design.md` §10.D-3.
 
 Plans:
 

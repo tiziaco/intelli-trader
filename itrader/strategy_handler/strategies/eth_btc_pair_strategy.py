@@ -105,9 +105,10 @@ class EthBtcPairStrategy(PairStrategy):
 			)
 
 	def init(self) -> None:
-		# Handle-FREE: the β/z alpha reads self.bars windows via statsmodels/numpy
-		# directly (no IndicatorHandle). _run_init leaves warmup == 0; the dispatch
-		# gates on beta_warmup + z_lookback (NOT the handle-derived warmup).
+		# Handle-FREE: the β/z alpha reads the pair's bounded per-leg buffers
+		# (rendered as win_A/win_B by PairStrategy._buffers_as_windows, P5-D15) via
+		# statsmodels/numpy directly (no IndicatorHandle). _run_init leaves warmup
+		# == 0; the dispatch gates on the pair's own is_pair_ready (buffer fill).
 		# Reset the fit-once cache + in-pair flag so a reconfigure is idempotent.
 		self._beta: float | None = None
 		self._in_pair = False
@@ -168,7 +169,16 @@ class EthBtcPairStrategy(PairStrategy):
 		return float(p_value)
 
 	def _zscore(self, spread: pd.Series, lookback: int) -> pd.Series:
-		"""Rolling z-score of ``spread`` over ``lookback`` (pandas ddof=1, D-06)."""
+		"""Rolling z-score of ``spread`` over ``lookback`` (pandas ddof=1, D-06).
+
+		WR-03 WARNING — MAY RETURN NON-FINITE; CALLERS MUST GUARD. A
+		zero-variance window makes ``rolling_std`` 0, so the division yields
+		``±inf``/``NaN``. The non-finite handling is NOT done here (doing it
+		here would perturb the byte-exact oracle's z path); the sole on-path
+		caller ``evaluate_pair`` guards the final value (the non-finite check
+		below). Any future caller or subclass reusing ``_zscore`` MUST apply the
+		same guard-at-the-caller check or it inherits the spurious-entry defect.
+		"""
 		rolling_mean = spread.rolling(lookback).mean()
 		rolling_std = spread.rolling(lookback).std()
 		return (spread - rolling_mean) / rolling_std

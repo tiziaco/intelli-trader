@@ -1,18 +1,26 @@
-"""Indicator adapter catalog + IndicatorHandle tests (Plan 03-01, D-03/D-04/D-07/D-08).
+"""Indicator adapter catalog + IndicatorHandle tests (Plan 05-02, D-03/D-04/D-07/D-08).
+
+PERF-05 re-baseline (P5-D11/D12): the adapters are now STATEFUL O(1) recurrences
+(``new_state()`` push contract, Model B) — ``ta`` is DROPPED on the runtime path and
+survives ONLY as the convergence oracle. These EMA/RSI/SMA/MACD value tests are
+RE-BASELINED to the incremental values, asserting the stateful recurrence converges
+to ``ta``'s batch output post-warmup (the deep convergence harness lives in
+``test_indicator_convergence.py``; here we keep a focused unit check).
 
 Covers:
 - ``min_period`` first-valid formulas (D-08): SMA/EMA/RSI -> w, MACDHist -> slow+signal.
   For the reference params SMA(50)->50, SMA(100)->100, MACDHist(6,12,3)->15 => max == 100.
-- EMA/RSI ``compute`` value-equality against a direct ``ta`` call (additive, D-07, oracle-dark).
-- ``IndicatorHandle`` (D-03): ``__len__`` is 0 pre-repopulate; ``[-1]``/``[-2]`` return the
-  Series tail floats post-repopulate; ``min_period()`` delegates to the wrapped adapter.
+- EMA/RSI/SMA/MACD ``new_state()`` value-equality vs a direct ``ta`` call post-warmup
+  (additive, D-07; P5-D12 re-baseline — the stateful recurrence is the runtime path).
+- ``IndicatorHandle`` (D-03/P5-D08): ``__len__`` is 0 pre-warm; ``[-1]``/``[-2]``
+  read the bounded output buffer post-warm; ``min_period()`` delegates to the adapter.
 
-No SMA_MACD value test here — the oracle is the only MACD guard (RESEARCH Pitfall 2).
-TAB-indented (D-05 / plan instruction).
+TAB-indented (D-05 / RESEARCH Pitfall 6).
 """
 
 from datetime import datetime, timedelta, timezone
 
+import numpy as np
 import pandas as pd
 import pytest
 from ta import momentum, trend
@@ -26,7 +34,7 @@ from itrader.strategy_handler.indicators import (
 )
 
 
-def _close_frame(n: int = 120) -> pd.DataFrame:
+def _close_frame(n: int = 200) -> pd.DataFrame:
 	"""Synthetic daily-UTC OHLC frame with a non-trivial close path."""
 	start = datetime(2020, 1, 1, tzinfo=timezone.utc)
 	idx = pd.DatetimeIndex([start + timedelta(days=i) for i in range(n)])
@@ -35,6 +43,30 @@ def _close_frame(n: int = 120) -> pd.DataFrame:
 		index=idx,
 	)
 	return pd.DataFrame({"close": close}, index=idx)
+
+
+def _feed(adapter, params, closes: np.ndarray) -> np.ndarray:
+	"""Feed closes one-by-one through a fresh adapter state; collect running value."""
+	state = adapter.new_state(params)
+	out = np.full(len(closes), np.nan, dtype="float64")
+	for i, c in enumerate(closes):
+		state.update(float(c))
+		if state.value is not None:
+			out[i] = state.value
+	return out
+
+
+def _assert_converges(inc, ta_series, min_period, *, atol=1e-9, rtol=1e-6):
+	ta = np.asarray(ta_series, dtype="float64")
+	compared = 0
+	for i in range(min_period, len(inc)):
+		if np.isnan(ta[i]) or np.isnan(inc[i]):
+			continue
+		assert abs(ta[i] - inc[i]) <= atol + rtol * abs(ta[i]), (
+			f"bar {i}: ta={ta[i]!r} inc={inc[i]!r}"
+		)
+		compared += 1
+	assert compared > 0, "vacuous — no post-warmup overlap compared"
 
 
 # --- min_period (D-08, first-valid only) -----------------------------------
@@ -66,65 +98,61 @@ def test_reference_max_window_is_100():
 	) == 100
 
 
-# --- EMA/RSI compute value-equality (additive, D-07, oracle-dark) ----------
+# --- all v1 adapters are causal (P5-D20) -----------------------------------
 
-def test_ema_compute_matches_direct_ta():
+def test_v1_adapters_declare_causal():
+	assert SMA.causal is True
+	assert EMA.causal is True
+	assert MACDHist.causal is True
+	assert RSI.causal is True
+
+
+# --- stateful value-equality vs ta post-warmup (P5-D12 re-baseline) --------
+
+def test_ema_state_converges_to_ta():
 	frame = _close_frame()
-	now = frame.index[-1]
-	tf = timedelta(days=1)
-	got = EMA.compute(frame, "close", (20,), now, tf)
-	expected = trend.EMAIndicator(frame["close"], 20, fillna=False).ema_indicator().dropna()
-	pd.testing.assert_series_equal(got, expected)
+	closes = frame["close"].to_numpy()
+	inc = _feed(EMA, (20,), closes)
+	ta_series = trend.EMAIndicator(frame["close"], 20, fillna=False).ema_indicator()
+	_assert_converges(inc, ta_series.to_numpy(), 20)
 
 
-def test_rsi_compute_matches_direct_ta():
+def test_rsi_state_converges_to_ta():
 	frame = _close_frame()
-	now = frame.index[-1]
-	tf = timedelta(days=1)
-	got = RSI.compute(frame, "close", (14,), now, tf)
-	expected = momentum.RSIIndicator(frame["close"], 14, fillna=False).rsi().dropna()
-	pd.testing.assert_series_equal(got, expected)
+	closes = frame["close"].to_numpy()
+	inc = _feed(RSI, (14,), closes)
+	ta_series = momentum.RSIIndicator(frame["close"], 14, fillna=False).rsi()
+	_assert_converges(inc, ta_series.to_numpy(), 14)
 
 
-# --- SMA compute slice semantics (Pitfall 1) -------------------------------
-
-def test_sma_compute_slices_input():
+def test_sma_state_converges_to_ta():
 	frame = _close_frame()
-	now = frame.index[-1]
-	tf = timedelta(days=1)
-	window = 50
-	got = SMA.compute(frame, "close", (window,), now, tf)
-	start_dt = now - tf * window
-	expected = (
-		trend.SMAIndicator(frame[start_dt:]["close"], window, True)
-		.sma_indicator()
-		.dropna()
-	)
-	pd.testing.assert_series_equal(got, expected)
+	closes = frame["close"].to_numpy()
+	inc = _feed(SMA, (50,), closes)
+	ta_series = frame["close"].rolling(window=50, min_periods=50).mean()
+	_assert_converges(inc, ta_series.to_numpy(), 50)
 
 
-def test_macdhist_compute_uses_full_window():
+def test_macdhist_state_converges_to_ta_post_warmup():
 	frame = _close_frame()
-	now = frame.index[-1]
-	tf = timedelta(days=1)
-	got = MACDHist.compute(frame, "close", (6, 12, 3), now, tf)
-	expected = (
-		trend.MACD(
-			frame["close"],
-			window_fast=6,
-			window_slow=12,
-			window_sign=3,
-			fillna=False,
-		)
-		.macd_diff()
-		.dropna()
-	)
-	pd.testing.assert_series_equal(got, expected)
+	closes = frame["close"].to_numpy()
+	inc = _feed(MACDHist, (6, 12, 3), closes)
+	ta_series = trend.MACD(
+		frame["close"],
+		window_fast=6,
+		window_slow=12,
+		window_sign=3,
+		fillna=False,
+	).macd_diff()
+	# Pitfall 4: assert past the slow-EMA transient (>= ~5x the slow span); the
+	# stateful EMA seeds once vs ta's per-tick sliding re-seed, so the transient
+	# region is legitimately different (the oracle reads macd_hist only at bar 100+).
+	_assert_converges(inc, ta_series.to_numpy(), 5 * 12)
 
 
-# --- IndicatorHandle (D-03) ------------------------------------------------
+# --- IndicatorHandle (D-03 / P5-D08) ---------------------------------------
 
-def test_handle_len_zero_before_repopulate():
+def test_handle_len_zero_before_warm():
 	handle = IndicatorHandle(SMA, "close", (50,))
 	assert len(handle) == 0
 
@@ -134,18 +162,20 @@ def test_handle_min_period_delegates_to_adapter():
 	assert handle.min_period() == 50
 
 
-def test_handle_repopulate_exposes_series_tail():
+def test_handle_repopulate_exposes_recurrence_tail():
 	frame = _close_frame()
 	now = frame.index[-1]
 	tf = timedelta(days=1)
 	handle = IndicatorHandle(SMA, "close", (50,))
 	handle.repopulate(frame, now, tf)
 
-	series = SMA.compute(frame, "close", (50,), now, tf)
-	assert len(handle) == len(series)
-	assert handle[-1] == float(series.iloc[-1])
-	assert handle[-2] == float(series.iloc[-2])
+	# The handle's [-1] is the stateful SMA value at the window's last bar — equal
+	# to ta's batch SMA at that bar within the running-sum ULP margin (P5-D05).
+	ta_series = frame["close"].rolling(window=50, min_periods=50).mean()
+	assert handle[-1] == pytest.approx(float(ta_series.iloc[-1]), abs=1e-9, rel=1e-6)
 	assert isinstance(handle[-1], float)
+	# Depth-2 bounded buffer: [-2] is the prior bar's value.
+	assert handle[-2] == pytest.approx(float(ta_series.iloc[-2]), abs=1e-9, rel=1e-6)
 
 
 def test_handle_repopulate_is_re_runnable():
@@ -159,13 +189,32 @@ def test_handle_repopulate_is_re_runnable():
 	assert handle[-1] == first
 
 
-def test_handle_getitem_before_repopulate_raises():
-	# WR-01 (orig): the read-before-repopulate contract must raise UNCONDITIONALLY
-	# (it was an `assert`, stripped under `-O`/PYTHONOPTIMIZE — turning the
-	# violation into a confusing 'NoneType' has no attribute 'iloc'). A fresh
-	# handle (never repopulated) must raise RuntimeError on __getitem__, not
-	# AttributeError. `__len__` stays 0 (covered separately); this locks the
-	# `[idx]` guard.
+def test_handle_update_drives_buffer():
+	# P5-D07: the push contract — update() advances the recurrence + buffer.
+	handle = IndicatorHandle(SMA, "close", (3,))
+	for px in (10.0, 20.0, 30.0):
+		handle.update(px)
+	assert len(handle) == 1
+	assert handle[-1] == pytest.approx(20.0)  # (10+20+30)/3
+	handle.update(40.0)
+	assert handle[-1] == pytest.approx(30.0)  # (20+30+40)/3
+	assert handle[-2] == pytest.approx(20.0)
+
+
+def test_handle_reset_clears_buffer_and_state():
+	handle = IndicatorHandle(SMA, "close", (3,))
+	for px in (10.0, 20.0, 30.0):
+		handle.update(px)
+	assert len(handle) == 1
+	handle.reset()
+	assert len(handle) == 0
+	assert handle.is_ready is False
+	with pytest.raises(RuntimeError):
+		_ = handle[-1]
+
+
+def test_handle_getitem_before_warm_raises():
+	# WR-01: read-before-warm must raise RuntimeError unconditionally (survives -O).
 	handle = IndicatorHandle(SMA, "close", (50,))
 	with pytest.raises(RuntimeError):
 		_ = handle[-1]

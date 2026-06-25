@@ -129,19 +129,21 @@ class LimitEntryStrategy(Strategy):
         )
 
     def generate_signal(self, ticker: str) -> SignalIntent | None:
-        # evaluate() stashed the look-ahead-safe completed-bar window on
-        # self.bars; this strategy registers no indicators so the repopulate loop
-        # is a no-op. Key off the CURRENT (decision) bar's date in UTC — the same
-        # fixed frame ScriptedEmitter uses (csv_store localizes to Europe/Paris;
-        # tz_convert("UTC") keeps the date key boundary-safe and independent of the
-        # Settings.timezone default).
-        if self.bars.empty:
+        # P5-D13a: the per-tick self.bars master-frame slice is GONE — the handler
+        # drives update(ticker,bar) and this (indicator-free) strategy reads the
+        # LATEST (decision) bar via self.latest_bar(ticker). Key off the CURRENT
+        # (decision) bar's date in UTC — the same fixed frame ScriptedEmitter uses
+        # (csv_store localizes to Europe/Paris; tz_convert("UTC") keeps the date key
+        # boundary-safe and independent of the Settings.timezone default). bar.time
+        # is the SAME tz-aware Timestamp the old self.bars.index[-1] carried.
+        bar = self.latest_bar(ticker)
+        if bar is None:
             return None
-        decision_date = self.bars.index[-1].tz_convert("UTC").strftime("%Y-%m-%d")
+        decision_date = bar.time.tz_convert("UTC").strftime("%Y-%m-%d")
         kind = SCRIPT.get(decision_date)
         if kind is None:
             return None
-        close = Decimal(str(self.bars["close"].iloc[-1]))
+        close = Decimal(str(bar.close))
         if kind == "resting":
             trigger = close * LIMIT_OFFSET
         else:  # marketable: place the buy-limit ABOVE market -> fills at open
