@@ -80,8 +80,26 @@ def derive_required_depths(consumers: Iterable[RawBarConsumer]) -> list[int]:
     list[int]
         The distinct declared depths, ascending. Empty when no consumer is
         registered (the deferral case).
+
+    Raises
+    ------
+    ValueError
+        If any consumer declares ``required_history_depth < 1`` (WR-06). The
+        contract is ``>= 1``; silently flooring an invalid depth via ``max``
+        would mask a real consumer bug (undersized shared cache -> the consumer
+        reads missing/stale bars with no error).
     """
-    return sorted({consumer.required_history_depth for consumer in consumers})
+    depths: set[int] = set()
+    for consumer in consumers:
+        d = consumer.required_history_depth
+        # WR-06: reject a malformed declaration loudly (matching base.py IN-02),
+        # never silently floor it to 1 in derive().
+        if d < 1:
+            raise ValueError(
+                f"raw-bar consumer {consumer!r} declared "
+                f"required_history_depth={d} (must be >= 1)")
+        depths.add(d)
+    return sorted(depths)
 
 
 def derive(consumers: Iterable[RawBarConsumer] = ()) -> int:
