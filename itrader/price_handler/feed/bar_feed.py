@@ -244,6 +244,12 @@ class BacktestBarFeed(BarFeed):
             # reads and frame.iterrows() below both work on a non-writeable
             # frame). The store frame is returned UNTOUCHED — we lock our copy.
             frame = _readonly_master(store.read_bars(ticker))
+            # WR-01: an empty store frame (sparse universe / mis-keyed CSV)
+            # would make frame.index[0] raise a bare IndexError naming nothing.
+            # Fail loud with a typed, ticker-named error.
+            if frame.empty:
+                raise MissingPriceDataError(
+                    ticker, "store returned an empty frame for ticker")
             self._frames[(ticker, self._base_alias)] = frame
             self._spans[ticker] = (frame.index[0], frame.index[-1])
             self._prebuilt[ticker] = {
@@ -357,6 +363,12 @@ class BacktestBarFeed(BarFeed):
             raise MissingPriceDataError(
                 ticker, "ticker not loaded in BacktestBarFeed")
         resampled = base.resample(alias, label="left", closed="left").agg(_AGG)
+        # WR-01: a resample yielding an empty result would make downstream
+        # index reads raise a bare IndexError naming nothing. Fail loud with a
+        # typed, ticker-named error.
+        if resampled.empty:
+            raise MissingPriceDataError(
+                ticker, f"resample to {alias!r} produced an empty frame")
         # D-09 (PERF-06): resample produced a NEW writeable frame, so lock it
         # (single-block + read-only buffer) before any window() view aliases it.
         # Same one-time, out-of-hot-loop mark as the __init__ base load.
