@@ -180,6 +180,18 @@ Claude has automated all attribution + revert decisions. The owner-gated re-free
 > NOT run by Claude. STATE.md / ROADMAP.md NOT modified; 08-04-SUMMARY.md NOT yet created — the plan is not
 > complete until after sign-off + re-freeze.
 
-**Owner sign-off:** _PENDING_
+**Owner sign-off:** **APPROVED** — tiziaco (tiziano.iaco@gmail.com), 2026-06-25.
+
+Cool-box re-freeze accepted as the new locked v1.5 references:
+- **W1 17.436 s / 153.44 MB** (workload byte-identical 1578 fills / 659 closed) → `perf/results/W1-BASELINE.json`
+- **W2 @50 2.686 s / 164.62 MB** (n_bars=3000, seed=42) → `perf/results/W2-BASELINE.json`
+
+Regression guard re-run PASS (W1 16.7 s, Δ −4.2% vs new baseline, peak-mem flat, exit 0); gate (a)
+byte-exact (oracle 134 / 46189.87730727451, mypy --strict clean 188 files); `pmset -g therm` clean
+before/during/after. Kept set: Position cache (Req 2, +15% W1) + to_dict cache (Req 4, +2.08% W1) +
+itertuples prebuild (Req 3, owner override) + `_aligned` audit (Req 5). Reverted: valuation fusion
+(Req 1, −15% regression; proper single-pass design deferred to
+`.planning/todos/pending/single-pass-portfolio-valuation.md`). These baselines are the references the
+msgspec A/B (plan 08-05) is measured against (D-03).
 **Signed by:** _______________  **Date:** _______________
 **New locked W1:** _______ s / _______ MB   **New locked W2@50:** _______ s / _______ MB

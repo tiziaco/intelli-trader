@@ -2,8 +2,8 @@
   "schema_version": 1,
   "frozen_at": "2026-06-25",
   "metric": {
-    "wall_clock_s": 19.6,
-    "peak_mem_mb": 162.2
+    "wall_clock_s": 17.4,
+    "peak_mem_mb": 153.4
   },
   "window": {
     "start_date": "2026-04-23",
