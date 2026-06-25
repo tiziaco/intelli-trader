@@ -311,9 +311,9 @@ contribution; the msgspec.Struct migration is folded in iff a measure-first spik
 Wave structure (D-03 sequencing: 5 deterministic wins → cool re-freeze gate → msgspec → final re-freeze):
 
 - Wave 1 (parallel — independent subsystems, disjoint files):
-  - [ ] 08-01-PLAN.md — Req 1: single-pass mark-to-market fusion (D-04) in position_manager + the third-pass audit; gate (a) byte-exact
-  - [ ] 08-02-PLAN.md — Req 2: Position net_quantity/avg_price fill-invalidated cache (D-05) + Req 5: _aligned audit/equivalence (already lru_cache'd, Phase 7 D-01); gate (a)
-  - [ ] 08-03-PLAN.md — Req 3: itertuples Bar prebuild (drop iterrows) + Req 4: to_dict per-instance static cache (D-06); gate (a)
+  - [x] 08-01-PLAN.md — Req 1: single-pass mark-to-market fusion (D-04) in position_manager + the third-pass audit; gate (a) byte-exact
+  - [x] 08-02-PLAN.md — Req 2: Position net_quantity/avg_price fill-invalidated cache (D-05) + Req 5: _aligned audit/equivalence (already lru_cache'd, Phase 7 D-01); gate (a)
+  - [x] 08-03-PLAN.md — Req 3: itertuples Bar prebuild (drop iterrows) + Req 4: to_dict per-instance static cache (D-06); gate (a)
 - Wave 2 (gate):
   - [ ] 08-04-PLAN.md — per-req same-machine A/B attribution + keep-only-measured revert (D-02) + cool W1/W2 re-freeze + owner sign-off (checkpoint)
 - Wave 3 (msgspec second layer on the new baseline):
