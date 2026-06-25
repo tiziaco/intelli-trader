@@ -133,3 +133,9 @@ trimming plumbing with the calculation logic intact.
   determinism double-run are verified in Plan 03 (Wave 2). This plan touched only timestamp/metrics/
   reporting surfaces — no money/position/order/fill code — so the byte-exact oracle is expected to hold.
 - Gate (b) W1 re-profile + clean-benchmark re-freeze (thermal-aware) is Plan 03 / the phase exit.
+
+## Self-Check: PASSED
+
+- `07-02-SUMMARY.md` exists at `.planning/phases/07-per-bar-metrics-timestamp-polish/`.
+- All task commits present: `5abb4d7` (Task 1), `47247b6` (Task 2), `f576006` (Task 3), `64a59d6` (docs).
+- Working tree clean.
