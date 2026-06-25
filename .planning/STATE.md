@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: Ready for milestone close — NOT Phase 999.2 (scanner artifact; 999.x are future-milestone backlog seeds)
+status: executing
 stopped_at: Phase 8 context gathered
-last_updated: "2026-06-25T13:34:48.663Z"
-last_activity: 2026-06-25 -- Phase 07 complete (per-bar-metrics-timestamp-polish, both gates pass, verified 8/8)
+last_updated: "2026-06-25T14:03:01.555Z"
+last_activity: 2026-06-25 -- Phase 08 planning complete
 progress:
   total_phases: 10
   completed_phases: 7
-  total_plans: 20
+  total_plans: 26
   completed_plans: 20
   percent: 70
 ---
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Opti
 
 Phase: — (v1.5 COMPLETE — Phases 1-6 + 07 add-on all done)
 Plan: —
-Status: Ready for milestone close — NOT Phase 999.2 (scanner artifact; 999.x are future-milestone backlog seeds)
-Last activity: 2026-06-25 -- Phase 07 complete (per-bar-metrics-timestamp-polish, both gates pass, verified 8/8)
+Status: Ready to execute
+Last activity: 2026-06-25 -- Phase 08 planning complete
 
 > NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
 > `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
