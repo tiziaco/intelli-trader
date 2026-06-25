@@ -47,7 +47,16 @@ class _RowBar:
 	def __getattr__(self, name: str) -> Any:
 		# Column access by attribute (e.g. bar.close -> row["close"]). __getattr__
 		# fires only for names not in __slots__, so ``time`` is served directly.
-		return self._row[name]
+		# IN-01: a typo'd declared ``input_col`` (e.g. "clse") would otherwise
+		# raise a bare pandas KeyError far from the declaration site. Re-raise
+		# naming the column and that it is the declared input_col.
+		try:
+			return self._row[name]
+		except KeyError as exc:
+			raise KeyError(
+				f"_RowBar: column {name!r} not found in the replayed row — "
+				f"check the strategy's declared input_col"
+			) from exc
 
 # WR-04: JSON-native types the to_dict() introspection loop may emit as-is.
 # Anything else (Decimal/datetime/custom object) is coerced to repr() at the
