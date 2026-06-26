@@ -91,6 +91,24 @@ def _json_safe(val: Any) -> Any:
 	return repr(val)
 
 
+# WR-01 (260626-dnq): per-call isolating copy for the to_dict static-snapshot
+# cache, replacing copy.deepcopy at the serve site (~5% W1 hot-path). The cached
+# snapshot's value domain is normalized by _json_safe to scalars (str/int/float/
+# bool/None — immutable) plus plain list/dict containers; there are NO custom
+# mutable leaf objects. A recursive structural copy over ONLY list/dict (returning
+# scalars unchanged, since immutables need no copy) therefore reproduces deepcopy's
+# per-call isolation at ANY nesting depth, byte-identically (same types/values),
+# without deepcopy's memo dict / introspection / immutable-copying overhead.
+# `type(...) is list/dict` (identity, matching the to_money fast-path style) keeps
+# the walk tight and conservative against container subclasses.
+def _isolating_copy(val: Any) -> Any:
+	if type(val) is list:
+		return [_isolating_copy(x) for x in val]
+	if type(val) is dict:
+		return {k: _isolating_copy(v) for k, v in val.items()}
+	return val
+
+
 # D-05 (PERF-04): memoize get_type_hints per concrete Strategy subclass. The
 # declared-attr annotations are CONSTANT per class (fixed at import), yet to_dict
 # (hot — per signal snapshot) re-walked the MRO and re-resolved them on every
@@ -167,6 +185,16 @@ class Strategy(ABC):
 		self.strategy_id: StrategyId = StrategyId(idgen.generate_strategy_id())
 		self.is_active = True
 		self.subscribed_portfolios: list[PortfolioId | int] = []
+		# D-06 (PERF-04 / 08-03 Req 4): per-INSTANCE cache of the serialized STATIC
+		# portion of to_dict (the _declared_hints introspection + _json_safe walk +
+		# the bespoke set-once serializations). None until the first to_dict call
+		# builds it lazily (avoids __init__-ordering fragility — the declared params
+		# are committed by _apply_params just below). PER-INSTANCE, never per-class:
+		# a per-class cache would leak one instance's declared windows
+		# (short_window=10 vs 20) into another (a correctness bug). Invalidated by
+		# _invalidate_to_dict_cache (called by reconfigure, the only declared-param
+		# mutator). Never invalidated in backtest (no reconfigure on the run path).
+		self._to_dict_static_cache: dict[str, Any] | None = None
 		# D-06/D-07/D-08: required/unknown detection + enum coercion + setattr.
 		self._apply_params(**kwargs)
 		# D-09: cross-field validation hook (no-op by default).
@@ -635,8 +663,52 @@ class Strategy(ABC):
 		self.validate()
 		# D-08/D-10: re-register handles + re-derive warmup (idempotent).
 		self._run_init()
+		# D-06 (08-03 Req 4): _apply_params re-commits DECLARED params, so the
+		# per-instance static to_dict cache is now stale — drop it so the next
+		# to_dict re-introspects the new declared values. reconfigure is the ONLY
+		# declared-param mutator in Phase 8; it is never on the backtest run path.
+		self._invalidate_to_dict_cache()
 
 	def to_dict(self) -> dict[str, Any]:
+		# D-06 (PERF-04 / 08-03 Req 4): the FULL snapshot is re-introspected +
+		# re-walked (_declared_hints loop + _json_safe) PER SIGNAL — a ~3.3%
+		# hotspot, all of it static except two runtime fields. Build the static
+		# snapshot ONCE per instance (lazily, on first call), stash it on self,
+		# and on every call return a COPY with ONLY the two genuinely runtime-
+		# mutable keys refreshed IN PLACE: is_active (activate/deactivate) and
+		# subscribed_portfolios (subscribe/unsubscribe). Both keys already exist
+		# in the cached dict at their original positions, so assigning to them
+		# preserves key ordering — the output stays byte-identical to the pre-
+		# change dict (test_to_dict_snapshot pins this). All other fields are
+		# set-once in __init__/_apply_params with no setter except reconfigure
+		# (which calls _invalidate_to_dict_cache). The cache is never invalidated
+		# on the backtest run path → zero backtest cost, byte-exact preserved.
+		if self._to_dict_static_cache is None:
+			self._to_dict_static_cache = self._build_to_dict_snapshot()
+		# WR-01 (08-REVIEW; 260626-dnq): isolate the cached static snapshot per
+		# serve. A shallow dict() copy would SHARE the snapshot's nested mutables
+		# (e.g. a declared `tickers` list, any list/dict knob walked by _json_safe)
+		# across the cache and every returned dict — so a caller mutating
+		# result["tickers"] would poison the cache and all other callers (the
+		# pre-cache code rebuilt a fresh dict per call, so each got its own nested
+		# lists). The snapshot value domain is scalars + plain list/dict (normalized
+		# by _json_safe — no custom mutable leaves), so the recursive list/dict copy
+		# in _isolating_copy gives the SAME per-call nested-container isolation
+		# copy.deepcopy gave (a caller mutating result["tickers"] cannot poison the
+		# cache) while staying byte-identical (same types/values) and skipping
+		# deepcopy's memo/introspection overhead (~5% W1 hot-path). The top-level
+		# cache is a dict, so the dict branch copies the top level.
+		# test_to_dict_snapshot still pins this. The two runtime keys are rebuilt
+		# fresh below so they need no copy.
+		# Explicit annotation: _isolating_copy is recursively heterogeneous and
+		# returns Any; the top-level cache is a dict, so pin the concrete type
+		# here to keep `return snapshot` strict-clean (no-any-return).
+		snapshot: dict[str, Any] = _isolating_copy(self._to_dict_static_cache)
+		snapshot["subscribed_portfolios"] = [str(pid) for pid in self.subscribed_portfolios]
+		snapshot["is_active"] = self.is_active
+		return snapshot
+
+	def _build_to_dict_snapshot(self) -> dict[str, Any]:
 		# WR-02: a faithful "params snapshot" (SIG-02 queryability) must capture
 		# the FULL declared surface — timeframe / tickers / max_window / warmup
 		# AND every subclass tuning knob (short_window, long_window, …) — not a
@@ -646,7 +718,10 @@ class Strategy(ABC):
 		# windows). The identity/runtime fields below (strategy_id,
 		# strategy_name, is_active, subscribed_portfolios) and the bespoke
 		# serializations (enum .value, policy repr, timeframe_alias instead of
-		# the timedelta) take precedence over the raw declared value.
+		# the timedelta) take precedence over the raw declared value. The two
+		# runtime fields (is_active, subscribed_portfolios) are written here with
+		# their CURRENT values so the cached dict carries the keys at the correct
+		# positions; to_dict overwrites them in place per call (D-06 / 08-03).
 		snapshot: dict[str, Any] = {}
 		for nm in _declared_hints(type(self)):
 			# `timeframe` resolves to a timedelta at runtime — skip it here and
@@ -703,6 +778,16 @@ class Strategy(ABC):
 			"sltp_policy" : repr(self.sltp_policy) if self.sltp_policy is not None else None,
 		})
 		return snapshot
+
+	def _invalidate_to_dict_cache(self) -> None:
+		# D-06 (08-03 Req 4): drop the per-instance static to_dict cache so the
+		# next to_dict rebuilds it. ANY setter that mutates a DECLARED param
+		# (anything serialized in _build_to_dict_snapshot other than the two
+		# runtime fields is_active/subscribed_portfolios) MUST call this. In
+		# Phase 8 the only such setter is reconfigure (_apply_params re-commits
+		# declared params); the backtest run path never reconfigures, so this is
+		# never called on the hot path → zero backtest cost, byte-exact preserved.
+		self._to_dict_static_cache = None
 
 	def __str__(self) -> str:
 		# D-14: generalize the per-strategy shape (was f'{self.name}_{self.timeframe}'

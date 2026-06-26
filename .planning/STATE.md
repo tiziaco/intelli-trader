@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_complete_milestone
-stopped_at: Phase 07 complete (3/3) — v1.5 add-on done; next step is milestone close (NOT Phase 999.2)
-last_updated: 2026-06-25T11:19:57.561Z
-last_activity: 2026-06-25 -- Phase 07 execution complete (both gates pass, verified 8/8)
+status: ready_to_plan
+stopped_at: Phase 08 complete (6/6) — v1.5 + Phase 8 add-on done; next step is milestone close (999.2 is a future-milestone backlog seed, NOT next)
+last_updated: 2026-06-25T16:34:34.817Z
+last_activity: 2026-06-25 -- Phase 08 complete (msgspec + hot-path wins, owner-signed-off)
 progress:
-  total_phases: 9
+  total_phases: 10
   completed_phases: 7
-  total_plans: 20
-  completed_plans: 20
-  percent: 78
+  total_plans: 26
+  completed_plans: 26
+  percent: 70
 ---
 
 # Project State
@@ -21,16 +21,30 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** v1.5 COMPLETE incl. Phase 07 add-on — next step is milestone close (`/gsd-complete-milestone`)
+**Current focus:** v1.5 COMPLETE incl. the Phase 8 hot-path add-on — next step is milestone close (`/gsd-complete-milestone`)
 
 ## Current Position
 
-Phase: — (v1.5 COMPLETE — Phases 1-6 + 07 add-on all done)
+Phase: — (v1.5 COMPLETE — Phases 1-6 + 07 + Phase 8 hot-path add-on all done)
 Plan: —
-Status: Ready for milestone close — NOT Phase 999.2 (scanner artifact; 999.x are future-milestone backlog seeds)
-Last activity: 2026-06-25 -- Phase 07 complete (per-bar-metrics-timestamp-polish, both gates pass, verified 8/8)
+Status: Ready for milestone close
+Last activity: 2026-06-26 -- Completed quick task 260626-dnq: byte-exact perf hot-path fixes (to_money fast-path + to_dict targeted copy)
 
-> NOTE: `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
+> NOTE (2026-06-25, Phase 8 add-on): `phase.complete` again advanced Current Position to **Phase 999.2**
+> (the SAME scanner artifact — memory `phase-complete-jumps-to-backlog`). Corrected manually: 999.2/999.3
+> are FUTURE-milestone backlog seeds, NOT the next phase. **Phase 8 (hot-path fusion/prebuild/msgspec,
+> branch `v1.5/phase-8-hot-path-improvments`) is COMPLETE (6/6 plans):** kept Position cache (+15% W1) +
+> to_dict cache (+2% W1) + itertuples (owner override) + `_aligned` audit; the Req-1 "fusion" was an
+> A/B-measured **−15% W1 regression** and was REVERTED (keep-only-measured; proper single-pass design
+> deferred to `.planning/todos/pending/single-pass-portfolio-valuation.md`); the **msgspec.Struct
+> migration** (Bar + full Event chain + 5 DTOs, Decimal contract intact) cleared a fresh cool A/B at
+> **+7.06% W1 / +10.64% W2@50**. Final Phase-8 locked baselines (owner sign-off tiziaco 2026-06-25):
+> **W1 15.736 s / 152.79 MB**, **W2@50 2.303 s / 163.47 MB**; gate (a) byte-exact 134/46189.87730727451,
+> mypy --strict clean (188 files), full suite 1340. Code review 0 blocker / 2 warning (both FIXED) / 3 info.
+> Next step: milestone close (`/gsd-complete-milestone`). 999.2/999.3 remain future-milestone seeds.
+>
+> --- (prior v1.5 close note, retained) ---
+> `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
 > `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
 > 6-before-5 reorder), so it is NOT "next". With Phase 5 now complete, ALL SIX v1.5 phases (1-6) are
 > Complete — **v1.5 (Backtest Performance Optimization) is finished**. The next step is milestone close
@@ -120,7 +134,7 @@ gate (b)); P2-P6 are otherwise independent subsystems sequenced by payoff.
 
 **Velocity (v1.3):**
 
-- Total plans completed: 76
+- Total plans completed: 82
 - Average duration: — min
 - Total execution time: 0.0 hours
 
@@ -312,6 +326,7 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 | 260623-gao | Engine over-sell protection A+B (TDD, oracle-gated) for the spot LONG_ONLY over-sell / phantom-equity bug (diagnosed in .planning/debug/spot-long-only-oversell.md). A: ported the CR-02 over-close guard into the SPOT settlement path (portfolio.py _process_transaction_spot) — a reducing SELL exceeding held qty now raises InvalidTransactionError (was silent corruption). B: cancel orphaned bracket children on flatten-by-fill in the order domain (reconcile on_fill), scoped to (portfolio_id, ticker). Fix C (sign-aware net_quantity/market_value) left owner-gated/out-of-scope. Oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1231 green; mypy --strict clean | 2026-06-23 | c004672 | Verified | [260623-gao-engine-over-sell-protection-a-b-spot-set](./quick/260623-gao-engine-over-sell-protection-a-b-spot-set/) |
 | 260625-0qj | Re-froze v1.5 Gate (b) baselines on a verified-cool box (clears the carried thermal-defer todo) + attributed Phase 5. `pmset -g therm` clean; cool same-machine A/B (de2e19f vs HEAD via `make perf-w1`, identical 1578-fill workload, OLD bracketed between two HEAD runs → in-battery HEAD drift +0.9%, no throttle): **W1 −40.1%** (255.4→153.0 s), peak-mem flat. New frozen W1 153.7 s / 162.3 MB (was stale Phase-6 238.5 s) + W2 4.05 s @50 / 210.87 MB (was 13.61 s → **W2@50 −70.2%**). Gate (a) byte-exact 134/46189.87730727451 (3 passed). Owner sign-off tiziaco 2026-06-25. No engine code touched | 2026-06-25 | 7a630b2 | Verified | [260625-0qj-refreeze-w1-w2-baseline-cool](./quick/260625-0qj-refreeze-w1-w2-baseline-cool/) |
 | 260623-h6i | Refine the over-close guard (spot + margin twin, portfolio.py) to compare the over-sell excess against the existing PositionManager.tolerance (1e-5) instead of strict `>`. Surfaced when the full W1 re-run fail-fast aborted on coverage instrument C (pyramiding): the "over-sell" was 1E-27 BTC — last-digit Decimal noise from independent per-add bracket-child quantization after partial closes, NOT a real over-sell (A/B completed with sane equity). Now sub-close-tolerance dust is absorbed as a clean full close; a GROSS over-sell (the 64-BTC phantom-equity case) still raises loudly at both sites. TDD; oracle byte-exact 134/46189.87730727451; e2e 72, full suite 1233 green; mypy --strict clean | 2026-06-23 | 09d49b1 | Verified | [260623-h6i-refine-over-close-guard-with-tolerance-a](./quick/260623-h6i-refine-over-close-guard-with-tolerance-a/) |
+| 260626-dnq | Two byte-exact perf hot-path fixes from scalene-w1.json: (1) `to_money()` Decimal fast-path — `type(x) is Decimal` identity return skips the stringify/reparse round-trip (~2.7% W1 CPU); (2) replaced `copy.deepcopy` at the `Strategy.to_dict()` serve site with a recursive list/dict-only `_isolating_copy` helper — same per-call nested-container isolation, no memo/introspection overhead (~5% W1 CPU). `import copy` retained (still used at base.py:263). Oracle byte-exact 134/46189.87730727451 (3 passed); to_dict snapshot pin 6/6 incl. nested-isolation probe; money tests 23/23; mypy --strict clean (166 files); spaces-only money.py / tabs-only base.py diff | 2026-06-26 | be34f25 | Verified | [260626-dnq-byte-exact-perf-hot-path-fixes-to-money-](./quick/260626-dnq-byte-exact-perf-hot-path-fixes-to-money-/) |
 | Phase 01 P01 | 4 | 2 tasks | 4 files |
 | Phase 01 P02 | 5 | 2 tasks | 11 files |
 | Phase 01 P03 | 2 | 1 tasks | 0 files |
@@ -378,9 +393,9 @@ files under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-25T09:28:33.982Z
-Stopped at: Phase 7 context gathered
-Resume file: .planning/phases/07-per-bar-metrics-timestamp-polish/07-CONTEXT.md
+Last session: 2026-06-25T13:34:48.650Z
+Stopped at: Phase 8 context gathered
+Resume file: .planning/phases/08-hot-path-fusion-prebuild-msgspec-gated/08-CONTEXT.md
 Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready for `/gsd-complete-milestone`.
 
 ## Operator Next Steps

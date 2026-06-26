@@ -2,8 +2,8 @@
   "schema_version": 1,
   "frozen_at": "2026-06-25",
   "metric": {
-    "wall_clock_s_at_50": 4.05,
-    "peak_mem_mb_at_50": 210.87
+    "wall_clock_s_at_50": 2.3,
+    "peak_mem_mb_at_50": 163.47
   },
   "sweep": {
     "n_symbols": [
@@ -17,18 +17,18 @@
   "points": [
     {
       "n_symbols": 1,
-      "wall_clock_s": 0.16572216601343825,
-      "peak_mem_mb": 6.266572952270508
+      "wall_clock_s": 0.12029508300474845,
+      "peak_mem_mb": 5.8523149490356445
     },
     {
       "n_symbols": 10,
-      "wall_clock_s": 0.796300040994538,
-      "peak_mem_mb": 40.185997009277344
+      "wall_clock_s": 0.5232580000010785,
+      "peak_mem_mb": 34.83631229400635
     },
     {
       "n_symbols": 50,
-      "wall_clock_s": 4.05046562498319,
-      "peak_mem_mb": 210.86857223510742
+      "wall_clock_s": 2.3034862499916926,
+      "peak_mem_mb": 163.46839809417725
     }
   ]
 }

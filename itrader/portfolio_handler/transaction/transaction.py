@@ -1,9 +1,9 @@
 import uuid
-from enum import Enum
 from datetime import datetime
-from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
+
+import msgspec
 
 from itrader import idgen
 from itrader.events_handler.events import FillEvent
@@ -11,8 +11,7 @@ from itrader.core.enums import TransactionType
 from itrader.core.ids import PortfolioId, PositionId, TransactionId
 from itrader.core.money import to_money
 
-@dataclass
-class Transaction(object):
+class Transaction(msgspec.Struct, gc=False):
 	"""
 	Instance of a Transaction, generated when a FillOrder event
 	is recived from the ExecutionHandler.
@@ -36,15 +35,18 @@ class Transaction(object):
 	# both at this boundary (the full retype is deferred — not mandated by Task 2).
 	portfolio_id: "PortfolioId | int"
 	id: TransactionId
-	fill_id: uuid.UUID = field(kw_only=True)
+	# msgspec.Struct has no per-field kw_only; fill_id (no default) is ordered
+	# before the defaulted fields so msgspec's "defaults come last" rule holds.
+	# new_transaction still passes it by keyword — construction is unchanged.
+	fill_id: uuid.UUID
 	position_id: Optional[PositionId] = None
 	# LEV-03 (Finding B): the admission-clamped EFFECTIVE leverage carried from
-	# the FillEvent. kw_only with a Decimal("1") default keeps the positional
-	# construction (price/quantity/commission/portfolio_id/id) and the spot path
-	# byte-exact (oracle-dark). Position.open_position reads this via getattr so
-	# the position-life locked margin (aggregate_notional / leverage) EQUALS the
+	# the FillEvent. A Decimal("1") default keeps the positional construction
+	# (price/quantity/commission/portfolio_id/id) and the spot path byte-exact
+	# (oracle-dark). Position.open_position reads this via getattr so the
+	# position-life locked margin (aggregate_notional / leverage) EQUALS the
 	# admission reservation (notional / effective_leverage).
-	leverage: Decimal = field(kw_only=True, default_factory=lambda: Decimal("1"))
+	leverage: Decimal = msgspec.field(default_factory=lambda: Decimal("1"))
 
 	def __post_init__(self) -> None:
 		"""Enter the Decimal money domain at the construction boundary (D-04).

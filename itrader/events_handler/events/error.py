@@ -9,8 +9,7 @@ shape (concrete base + narrowing children). The whole tree is frozen —
 mixing frozen/non-frozen in one inheritance chain is a stdlib TypeError.
 """
 
-from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from itrader.core.enums import ErrorSeverity, EventType
 from itrader.core.ids import CorrelationId, PortfolioId
@@ -18,8 +17,7 @@ from itrader.core.ids import CorrelationId, PortfolioId
 from .base import Event
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class ErrorEvent(Event):
+class ErrorEvent(Event, frozen=True, kw_only=True, gc=False):
     """
     Concrete, instantiable error event (D-06).
 
@@ -44,7 +42,7 @@ class ErrorEvent(Event):
         Optional structured extra context.
     """
 
-    type: EventType = field(default=EventType.ERROR, init=False)
+    type: ClassVar[EventType] = EventType.ERROR
     source: str
     error_type: str
     error_message: str
@@ -63,8 +61,7 @@ class ErrorEvent(Event):
         return str(self)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class PortfolioErrorEvent(ErrorEvent):
+class PortfolioErrorEvent(ErrorEvent, frozen=True, kw_only=True, gc=False):
     """
     Portfolio-domain error event for monitoring and alerting.
 

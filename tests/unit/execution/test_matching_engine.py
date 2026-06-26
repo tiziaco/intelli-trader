@@ -69,8 +69,8 @@ def test_modify_replaces_in_book_without_mutating_original(engine):
 
 
 def test_modify_preserves_order_identity(engine):
-    """dataclasses.replace deliberately preserves order_id (and event_id once
-    events carry one): a MODIFY amends the order's terms, not its identity."""
+    """msgspec.structs.replace deliberately preserves order_id (and event_id):
+    a MODIFY amends the order's terms, not its identity."""
     oe = make_order_event(OrderType.LIMIT, "SELL", 50.0, order_id=2,
                           parent_order_id=100)
     engine.submit(oe)
@@ -267,7 +267,9 @@ def test_fill_decision_has_no_fill_quantity(engine, make_bar):
     engine.submit(make_order_event(OrderType.STOP, "SELL", 30.0, order_id=1))
     fills, _ = engine.on_bar(make_bar(open_=35, high=36, low=20, close=25))
     assert not hasattr(fills[0], "fill_quantity")
-    assert "fill_quantity" not in {f.name for f in __import__("dataclasses").fields(FillDecision)}
+    # msgspec migration: FillDecision is a msgspec.Struct — fields live on
+    # ``__struct_fields__`` (no quantity field at all, D-06 full-quantity).
+    assert "fill_quantity" not in FillDecision.__struct_fields__
 
 
 def test_modify_accepts_decimal_and_stores_decimal(engine):

@@ -8,7 +8,7 @@ entity's id-defaulting pattern but lives in the strategy domain.
 
 Design decisions:
 
-- **D-08 — dedicated entity.** ``SignalRecord`` is its own frozen dataclass, not
+- **D-08 — dedicated entity.** ``SignalRecord`` is its own frozen ``msgspec.Struct``, not
   a reused ``SignalEvent`` / ``SignalIntent`` — the persisted shape is distinct
   from the on-the-wire event and the strategy-return intent.
 - **D-09 — per-intent, pre-fan-out capture, no portfolio_id.** One record per
@@ -25,18 +25,18 @@ Design decisions:
 Pitfall 6).
 """
 
-from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
+
+import msgspec
 
 from itrader import idgen
 from itrader.core.enums import OrderType, Side
 from itrader.core.ids import SignalId, StrategyId
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SignalRecord:
+class SignalRecord(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """The persisted fact for a single strategy signal decision (D-08).
 
     Captured once per non-None ``SignalIntent``, before the per-portfolio
@@ -77,7 +77,7 @@ class SignalRecord:
         deleted. Already serialization-ready (SIG-02 queryability).
     """
 
-    signal_id: SignalId = field(
+    signal_id: SignalId = msgspec.field(
         default_factory=lambda: SignalId(idgen.generate_signal_id())
     )
     strategy_id: StrategyId

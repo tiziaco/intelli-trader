@@ -4,8 +4,8 @@ verdict flag; the validator verdict lives on the Order entity, never
 on the event).
 """
 
-from dataclasses import dataclass, field
 from decimal import Decimal
+from typing import ClassVar
 
 from itrader.core.enums import EventType, OrderType, Side
 from itrader.core.ids import PortfolioId, StrategyId
@@ -16,8 +16,7 @@ from itrader.core.sizing import SizingPolicy, SLTPPolicy, TradingDirection
 from .base import Event
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class SignalEvent(Event):
+class SignalEvent(Event, frozen=True, kw_only=True, gc=False):
     """
     Signal event generated from a Strategy object.
     This is received by the Order handler object that validates and
@@ -77,7 +76,7 @@ class SignalEvent(Event):
         caller-supplied positive quantity is used as-is.
     """
 
-    type: EventType = field(default=EventType.SIGNAL, init=False)
+    type: ClassVar[EventType] = EventType.SIGNAL
     ticker: str
     action: Side
     order_type: OrderType

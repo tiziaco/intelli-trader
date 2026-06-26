@@ -27,6 +27,7 @@ pyyaml = "^6.0.3"
 uuid-utils = "^0.16.0"
 pydantic = "^2.13"
 pydantic-settings = "^2.14"
+msgspec = "^0.21.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"

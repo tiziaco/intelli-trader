@@ -34,6 +34,8 @@ credentials*
 # the broad **cache** rule above would otherwise ignore it by filename.
 !itrader/price_handler/feed/cache_registration.py
 !tests/integration/test_bar_cache_registration.py
+# Phase 8 Req 2/D-05 Position-cache fill-invalidation test (mandated artifact name).
+!tests/unit/portfolio/positions/test_position_cache.py
 
 #UserData
 output/
