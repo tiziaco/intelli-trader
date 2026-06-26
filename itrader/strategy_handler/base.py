@@ -91,6 +91,24 @@ def _json_safe(val: Any) -> Any:
 	return repr(val)
 
 
+# WR-01 (260626-dnq): per-call isolating copy for the to_dict static-snapshot
+# cache, replacing copy.deepcopy at the serve site (~5% W1 hot-path). The cached
+# snapshot's value domain is normalized by _json_safe to scalars (str/int/float/
+# bool/None — immutable) plus plain list/dict containers; there are NO custom
+# mutable leaf objects. A recursive structural copy over ONLY list/dict (returning
+# scalars unchanged, since immutables need no copy) therefore reproduces deepcopy's
+# per-call isolation at ANY nesting depth, byte-identically (same types/values),
+# without deepcopy's memo dict / introspection / immutable-copying overhead.
+# `type(...) is list/dict` (identity, matching the to_money fast-path style) keeps
+# the walk tight and conservative against container subclasses.
+def _isolating_copy(val: Any) -> Any:
+	if type(val) is list:
+		return [_isolating_copy(x) for x in val]
+	if type(val) is dict:
+		return {k: _isolating_copy(v) for k, v in val.items()}
+	return val
+
+
 # D-05 (PERF-04): memoize get_type_hints per concrete Strategy subclass. The
 # declared-attr annotations are CONSTANT per class (fixed at import), yet to_dict
 # (hot — per signal snapshot) re-walked the MRO and re-resolved them on every
@@ -667,16 +685,25 @@ class Strategy(ABC):
 		# on the backtest run path → zero backtest cost, byte-exact preserved.
 		if self._to_dict_static_cache is None:
 			self._to_dict_static_cache = self._build_to_dict_snapshot()
-		# WR-01 (08-REVIEW): deep-copy the cached static snapshot per serve. A
-		# shallow dict() copy would SHARE the snapshot's nested mutables (e.g. a
-		# declared `tickers` list, any list/dict knob walked by _json_safe) across
-		# the cache and every returned dict — so a caller mutating result["tickers"]
-		# would poison the cache and all other callers (the pre-cache code rebuilt a
-		# fresh dict per call, so each got its own nested lists). deepcopy restores
-		# that per-call isolation; output stays byte-identical (same types/values),
-		# test_to_dict_snapshot still pins it. The two runtime keys are rebuilt fresh
-		# below so they need no copy.
-		snapshot = copy.deepcopy(self._to_dict_static_cache)
+		# WR-01 (08-REVIEW; 260626-dnq): isolate the cached static snapshot per
+		# serve. A shallow dict() copy would SHARE the snapshot's nested mutables
+		# (e.g. a declared `tickers` list, any list/dict knob walked by _json_safe)
+		# across the cache and every returned dict — so a caller mutating
+		# result["tickers"] would poison the cache and all other callers (the
+		# pre-cache code rebuilt a fresh dict per call, so each got its own nested
+		# lists). The snapshot value domain is scalars + plain list/dict (normalized
+		# by _json_safe — no custom mutable leaves), so the recursive list/dict copy
+		# in _isolating_copy gives the SAME per-call nested-container isolation
+		# copy.deepcopy gave (a caller mutating result["tickers"] cannot poison the
+		# cache) while staying byte-identical (same types/values) and skipping
+		# deepcopy's memo/introspection overhead (~5% W1 hot-path). The top-level
+		# cache is a dict, so the dict branch copies the top level.
+		# test_to_dict_snapshot still pins this. The two runtime keys are rebuilt
+		# fresh below so they need no copy.
+		# Explicit annotation: _isolating_copy is recursively heterogeneous and
+		# returns Any; the top-level cache is a dict, so pin the concrete type
+		# here to keep `return snapshot` strict-clean (no-any-return).
+		snapshot: dict[str, Any] = _isolating_copy(self._to_dict_static_cache)
 		snapshot["subscribed_portfolios"] = [str(pid) for pid in self.subscribed_portfolios]
 		snapshot["is_active"] = self.is_active
 		return snapshot
