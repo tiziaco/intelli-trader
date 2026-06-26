@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_complete
-stopped_at: v1.5 milestone audit PASSED (tech_debt — 9/9 reqs, integration clean, oracle byte-exact); next step is milestone close (999.2/999.3 are future-milestone backlog seeds, NOT next)
-last_updated: 2026-06-26T11:19:42Z
-last_activity: 2026-06-26 -- v1.5 milestone audit complete (.planning/v1.5-MILESTONE-AUDIT.md); all 8 phases verified, ready for /gsd-complete-milestone
+status: milestone_complete
+stopped_at: v1.5 SHIPPED & archived 2026-06-26 (tag v1.5). No active milestone — next is N+3b Persistence via /gsd:new-milestone (999.2 persistence half / 999.3 live are backlog seeds)
+last_updated: 2026-06-26T14:30:00Z
+last_activity: 2026-06-26 -- v1.5 milestone CLOSED via /gsd-complete-milestone: archived ROADMAP/REQUIREMENTS/AUDIT to milestones/, MILESTONES.md + PROJECT.md + RETROSPECTIVE.md updated, PERF-07/08 ID collision resolved, tagged v1.5
 progress:
   total_phases: 8
   completed_phases: 8
@@ -18,10 +18,10 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-23 — v1.5 Backtest Performance Optimization STARTED; Persistence split out to a following milestone)
+See: .planning/PROJECT.md (updated 2026-06-26 — v1.5 Backtest Performance Optimization SHIPPED & archived; no active milestone)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 makes that run **faster** — profiler-ranked, oracle-gated hot-path optimizations against the frozen W1 baseline (240.8 s / 167.3 MB), changing the numbers nowhere — **except Phase 5, which deliberately re-baselines the oracle (cross-validated), see carve-out below.**
-**Current focus:** v1.5 COMPLETE incl. the Phase 8 hot-path add-on — next step is milestone close (`/gsd-complete-milestone`)
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers. v1.5 made that run **faster** — profiler-ranked, oracle-gated hot-path optimizations changing the numbers nowhere (oracle held byte-exact 134 / `46189.87730727451` across all 8 phases; Phase 5's re-baseline carve-out proved unnecessary). Final W1 baseline 15.7 s / 152.8 MB.
+**Current focus:** No active milestone — v1.5 shipped 2026-06-26. Next: **N+3b — Persistence** (Backlog 999.2 persistence half) via `/gsd:new-milestone`.
 
 ## Current Position
 
@@ -368,10 +368,13 @@ records archived under `milestones/v1.1-phases/`, `milestones/v1.2-phases/`, `mi
 
 ## Deferred Items
 
-Program-level items out of scope for v1.4, with their target milestone:
+Program-level items deferred across milestones, with their target milestone:
 
 | Category | Item | Status | Target |
 |----------|------|--------|--------|
+| Perf (v1.5) | Correct single-pass per-bar portfolio valuation (`single-pass-portfolio-valuation.md`) — the naive Phase-8 fusion was reverted at −15% W1; correct design is profile-first gated (re-profile W1/W2 first, else keep-only-measured rejects it) | Deferred | future perf phase (profile-gated) |
+| Perf (v1.5) | Nyquist VALIDATION.md gaps — missing 03/04/08, partial 05/06/07 (advisory; the byte-exact oracle + same-machine A/B perf gate are the real regression lock and ran green every phase) | Deferred | optional `/gsd:validate-phase` backfill |
+| Deferred perf (v2) | PERF-09 (EthBtc `_fit_beta`/`_coint_pvalue` dedup — strategy-level, not W1-measured), PERF-10 (O(n²)-in-symbol guard at n≫50) — renumbered from PERF-07/08 at v1.5 close | Deferred | future (only if large universes become a target) |
 | Perp realism (Phase B) | Funding-rate accrual (FUND-01), mark-price liquidation trigger (FUND-02), funding-data pipeline (FUND-03), `freqtrade` 4th oracle (FUND-04) | Deferred | future / N+4 data work (additive on the v1.4 core) |
 | Live account | `Account` reconciliation mirror (`CashAccount`/`MarginAccount`) (ACCT-01) | Deferred | N+4 Live Readiness (Backlog 999.3) |
 | Live execution | Trailing-stop native-vs-synthetic capability seam on `AbstractExchange` | Deferred | N+4 (Backlog 999.3) |
@@ -380,27 +383,30 @@ Program-level items out of scope for v1.4, with their target milestone:
 | Perps | Inverse / coin-margined perps; bankruptcy price / insurance fund / ADL; hedge mode | Deferred | each its own milestone (crypto-first linear USD) |
 | Cleanup | `Portfolio.user_id` removal (app-layer multi-tenancy concern) | Deferred | N+4 (with the connector); kept out of v1.4 to protect the re-baseline |
 | Live coverage | `LiveTradingSystem`/`TradingInterface` test coverage (FL-13) | Deferred | N+4 Live Readiness (Backlog 999.3) |
-| Persistence/security | SQL injection + hardcoded creds in `SqlHandler` (FL-06) | Deferred | N+3 Persistence (Backlog 999.2) |
-| D-sql | SQL persistence backends (order/price/reporting/config) | Deferred | N+3 (Backlog 999.2) |
+| Persistence/security | SQL injection + hardcoded creds in `SqlHandler` (FL-06) | Deferred | N+3b Persistence (Backlog 999.2) |
+| D-sql | SQL persistence backends (order/price/reporting/config) — the v1.5 PERF-01 `OrderStorage` interface is designed for this | Deferred | N+3b Persistence (Backlog 999.2) |
 | D-screener | Production screener / ranking / rebalance loop (minimal `membership` shipped v1.1) | Deferred | N+4 (Backlog 999.3) |
 | D-live | Live mode (streaming, TradingInterface modify/cancel, live threading, secrets) | Deferred | N+4 |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions (forex/equities/ETF) | Deferred | indefinite (crypto-first) |
-| Indicators | IND-02 incremental/stateful indicator backends (behind the IND-01 stable interface) | Deferred | future (post-v1.3) |
+| Indicators | IND-02 incremental/stateful indicator backends (behind the IND-01 stable interface) | ✅ Delivered v1.5 (PERF-05) — hand-written O(1) stateful SMA/EMA/MACD/RSI on the runtime path | done |
 | OUT | `my_strategies/*` (relocated to separate repo by user) | Out-of-band | — |
 
-v1.0/v1.1/v1.2/v1.3 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md
-files under `milestones/`.
+v1.0/v1.1/v1.2/v1.3/v1.4/v1.5 milestone-close acknowledgments are recorded in the respective
+MILESTONE-AUDIT.md files under `milestones/`. At v1.5 close: the PERF-07/08 ID collision was resolved
+(deferred items → PERF-09/10), the 7 `audit-open` quick-task false-positives were cleared with
+completion markers, and the stale Phase-01/03 verification + Phase-03 UAT statuses were flipped to
+reflect already-completed work.
 
 ## Session Continuity
 
-Last session: 2026-06-25T13:34:48.650Z
-Stopped at: Phase 8 context gathered
-Resume file: .planning/phases/08-hot-path-fusion-prebuild-msgspec-gated/08-CONTEXT.md
-Carried todo: none — the v1.5 Gate (b) cool re-freeze is done. v1.5 is ready for `/gsd-complete-milestone`.
+Last session: 2026-06-26 — v1.5 milestone CLOSED via /gsd-complete-milestone
+Stopped at: v1.5 SHIPPED & archived (tag v1.5); no active milestone
+Resume file: — (start the next milestone)
+Carried todo: none — v1.5 is closed. The only carried-forward work is the deferred single-pass valuation (profile-gated) + advisory Nyquist backfill; see Deferred Items.
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Start the next milestone (N+3b — Persistence) with `/gsd:new-milestone`
 
 | 2026-06-25 | fast | Switch W1 on_tick to indexed get_active_orders (de-noise profile) | ✅ |
 | 2026-06-25 | fast | Drop 4 hot-path eager-arg debug logs (bracket_manager x3, simulated x1) | ✅ |

@@ -1,7 +1,8 @@
 ---
 phase: 01-perf-tooling-baseline
 verified: 2026-06-23T20:30:00Z
-status: human_needed
+status: passed
+resolved: 2026-06-26
 score: 9/9
 overrides_applied: 1
 overrides:
@@ -13,6 +14,7 @@ human_verification:
   - test: "Run `make perf-profile` and inspect the native Scalene viewer output"
     expected: "Scalene viewer opens (local-server URL printed to stdout), renders per-line CPU attribution over itrader/ + perf/ — no Thread.run bucket dominating (which would indicate --profile-all leaked in). Hotspots visible: in_memory_storage ~48%, indicators/catalog ~18%, position_manager ~17%."
     why_human: "The profiler artifact is a running local server launched by `scalene view` — cannot be inspected programmatically in a read-only verification pass. The ~2-5x profiler overhead makes this a long manual run (~10min+). Confirmed approved in plan 01-01 Task 3 checkpoint but requires human to re-run and inspect if re-verifying."
+    resolution: "CLOSED 2026-06-26 at milestone close — owner-approved deferred manual check (Task 3 checkpoint, tiziaco). All 9/9 automated checks pass; the profiler harness was exercised in practice across every subsequent phase's gate-(b) re-profile (Phases 5-8 all ran make perf-profile), so the harness is empirically validated. Non-blocking; closed per v1.5-MILESTONE-AUDIT.md tech_debt item 4."
 ---
 
 # Phase 01: Perf Tooling & Baseline — Verification Report

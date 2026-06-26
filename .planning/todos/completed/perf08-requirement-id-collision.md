@@ -1,10 +1,17 @@
 ---
-status: pending
+status: resolved
 created: "2026-06-25"
+resolved: "2026-06-26"
 source: Phase 8 verification (08-VERIFICATION.md advisory) — REQUIREMENTS.md PERF-08 ID reused
 tags: [docs, requirements, traceability, perf-08, naming-collision]
 resolves_phase: ""
 ---
+
+> **RESOLVED 2026-06-26 at v1.5 milestone close (option 2 — renumber the deferred items).** The
+> delivered Phase 7/8 hot-path work keeps PERF-07 (Phase 7) / PERF-08 (Phase 8); the two
+> still-deferred v2 items formerly under those IDs were renumbered PERF-09 (EthBtc dedup) / PERF-10
+> (O(n²) guard). REQUIREMENTS.md v1 PERF list + traceability table updated (now 11 v1 reqs across
+> Phases 1-8, 100% coverage) and archived to `milestones/v1.5-REQUIREMENTS.md`.
 
 # Resolve the PERF-08 requirement-ID collision in REQUIREMENTS.md
 
