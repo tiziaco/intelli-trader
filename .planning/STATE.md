@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Backtest Performance Optimization
-status: ready_to_plan
-stopped_at: Phase 08 complete (6/6) — v1.5 + Phase 8 add-on done; next step is milestone close (999.2 is a future-milestone backlog seed, NOT next)
-last_updated: 2026-06-25T16:34:34.817Z
-last_activity: 2026-06-25 -- Phase 08 complete (msgspec + hot-path wins, owner-signed-off)
+status: ready_to_complete
+stopped_at: v1.5 milestone audit PASSED (tech_debt — 9/9 reqs, integration clean, oracle byte-exact); next step is milestone close (999.2/999.3 are future-milestone backlog seeds, NOT next)
+last_updated: 2026-06-26T11:19:42Z
+last_activity: 2026-06-26 -- v1.5 milestone audit complete (.planning/v1.5-MILESTONE-AUDIT.md); all 8 phases verified, ready for /gsd-complete-milestone
 progress:
-  total_phases: 10
-  completed_phases: 7
+  total_phases: 8
+  completed_phases: 8
   total_plans: 26
   completed_plans: 26
-  percent: 70
+  percent: 100
 ---
 
 # Project State
