@@ -130,36 +130,43 @@ Explicitly excluded. Documented to prevent scope creep.
 
 ## Traceability
 
-Populated during roadmap creation (Step 10). Each v1 requirement maps to exactly one phase.
+Each v1 requirement maps to exactly one phase. Roadmap created 2026-06-27 (`.planning/ROADMAP.md`,
+phase numbering reset to 1 for v1.6).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SPINE-01 | TBD | Pending |
-| SPINE-02 | TBD | Pending |
-| SPINE-03 | TBD | Pending |
-| RESULT-01 | TBD | Pending |
-| RESULT-02 | TBD | Pending |
-| RESULT-03 | TBD | Pending |
-| RESULT-04 | TBD | Pending |
-| OPS-01 | TBD | Pending |
-| OPS-02 | TBD | Pending |
-| OPS-03 | TBD | Pending |
-| OPS-04 | TBD | Pending |
-| RETAIN-01 | TBD | Pending |
-| RETAIN-02 | TBD | Pending |
-| RETAIN-03 | TBD | Pending |
-| CACHE-01 | TBD | Pending |
-| CACHE-02 | TBD | Pending |
-| MIG-01 | TBD | Pending |
-| SEC-01 | TBD | Pending |
-| GATE-01 | TBD | Pending |
-| GATE-02 | TBD | Pending |
+| SPINE-01 | Phase 1 | Pending |
+| SPINE-02 | Phase 1 | Pending |
+| SPINE-03 | Phase 1 | Pending |
+| RESULT-01 | Phase 2 | Pending |
+| RESULT-02 | Phase 2 | Pending |
+| RESULT-03 | Phase 2 | Pending |
+| RESULT-04 | Phase 2 | Pending |
+| OPS-01 | Phase 3 | Pending |
+| OPS-02 | Phase 3 | Pending |
+| OPS-03 | Phase 3 | Pending |
+| OPS-04 | Phase 3 | Pending |
+| RETAIN-01 | Phase 4 | Pending |
+| RETAIN-02 | Phase 4 | Pending |
+| RETAIN-03 | Phase 4 | Pending |
+| CACHE-01 | Phase 5 | Pending |
+| CACHE-02 | Phase 5 | Pending |
+| MIG-01 | Phase 1 | Pending |
+| SEC-01 | Phase 1 | Pending |
+| GATE-01 | Phase 4 (bound) + recurring every phase | Pending |
+| GATE-02 | Phase 1 (bound) + recurring every phase | Pending |
 
 **Coverage:**
 - v1 requirements: 20 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 20 ⚠️ (resolved at roadmap step)
+- Mapped to phases: 20 ✓
+- Unmapped: 0 ✓
+
+**Phase distribution:** Phase 1 (SPINE-01/02/03, SEC-01, MIG-01, GATE-02) · Phase 2 (RESULT-01/02/03/04) ·
+Phase 3 (OPS-01/02/03/04) · Phase 4 (RETAIN-01/02/03, GATE-01) · Phase 5 (CACHE-01/02). GATE-01 and
+GATE-02 are recurring milestone-wide gates: each is *bound* to its most load-bearing phase (GATE-01 →
+Phase 4 where live write-through lands; GATE-02 → Phase 1 where the test harness/substrate is
+established) and *restated* as a recurring success criterion in EVERY phase.
 
 ---
 *Requirements defined: 2026-06-27 after the v1.6 ecosystem research (Q1–Q10) + owner scoping clarification*
-*Last updated: 2026-06-27 after initial definition*
+*Last updated: 2026-06-27 after roadmap creation (traceability populated, 20/20 mapped)*
