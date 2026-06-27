@@ -46,6 +46,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import Column, Float, String, Table, bindparam, insert, select
 
+from itrader.config import TIMEZONE
 from itrader.logger import get_itrader_logger
 from itrader.storage import SqlBackend, UtcIsoText
 
@@ -147,7 +148,10 @@ class SqlHandler:
             )
         if "symbol" in df.columns:
             df = df.drop(columns=["symbol"])
-        df.index = pd.to_datetime(df.index, utc=True).tz_convert("Europe/Paris")
+        # Use the authoritative project timezone (Settings.timezone) so this store's index
+        # tz matches its CsvPriceStore sibling and the rest of the system (WR-01). The two
+        # stores were accidentally equal only because the default resolves to Europe/Paris.
+        df.index = pd.to_datetime(df.index, utc=True).tz_convert(TIMEZONE)
         try:
             df.index.freq = df.index.inferred_freq
         except ValueError:
