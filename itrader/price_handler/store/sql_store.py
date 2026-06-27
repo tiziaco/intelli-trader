@@ -25,6 +25,17 @@ OHLCV is analytical market data (pandas float64) → ``Float`` columns, NOT mone
 ``Decimal`` (D-13: money never touches a SQLite-family backend this milestone). Business
 time is encoded uniformly via ``UtcIsoText`` (deterministic UTC-isoformat).
 
+**Single canonical credential source (T-01-15).** The ONE credential seam is
+``Settings.database_url`` (env ``ITRADER_DATABASE_URL``, a ``SecretStr``), resolved lazily
+on the Postgres arm of ``SqlSettings.engine_url()``. This module adds NO new credential
+source. The legacy ``live_trading_system.py`` ``SYSTEM_DB_URL`` env var is a *separate*
+D-live seam reading a *different* variable; reconciling it onto ``Settings.database_url``
+is document-and-deferred to the live-wiring phase (Open Q4, D-09) — it is intentionally
+not re-wired here, so exactly one canonical source exists for this store.
+
+This file is ``mypy --strict`` clean and out of the D-sql override (GATE-02, D-09); no
+broad/module-level ignore was added.
+
 The store stays quarantined: it is deliberately NOT re-exported from
 ``price_handler/store/__init__.py`` (importing it pulls SQLAlchemy), so the backtest
 import path stays SQL-free (GATE-01 inertness).

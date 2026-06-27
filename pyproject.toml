@@ -91,7 +91,6 @@ files = ["itrader"]
 module = [
     "itrader.trading_system.live_trading_system",        # D-live
     "itrader.trading_system.trading_interface",          # D-live
-    "itrader.price_handler.store.sql_store",             # D-sql
     "itrader.price_handler.providers.ccxt_provider",     # D-oanda
     "itrader.price_handler.providers.oanda_provider",    # D-oanda
     "itrader.price_handler.providers.exchange_base",     # D-oanda — legacy provider ABC the adapters import
