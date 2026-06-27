@@ -3,10 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
 status: planning
-last_updated: "2026-06-27T17:00:00.000Z"
-last_activity: 2026-06-27
+stopped_at: Phase 1 context gathered
+last_updated: "2026-06-27T15:26:13.561Z"
+last_activity: 2026-06-27 — Roadmap created (5 phases, 20/20 requirements mapped, 100% coverage)
 progress:
-  total_phases: 5
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -92,6 +93,7 @@ validated surface. Phases 1/2/3/5 are standard patterns (plan-time research opti
   orphans). Backlog 999.2 marked PROMOTED-TO-v1.6 (design intent retained as the historical seed, like
   999.4 → v1.4); 999.3 (N+4 Live) kept intact. GATE-01 bound to Phase 4 + GATE-02 to Phase 1, both
   restated as recurring success criteria in every phase.
+
 - Owner Decisions (locked 2026-06-27) supersede the research seed where they differ: SQLite-default
   research + Postgres-only operational + Turso-opt-in-LATER (no `sqlalchemy-libsql` driver this
   milestone); results store all-`Float` (no `DecimalAsText`); frames as JSON/gzip'd-text (no
@@ -105,11 +107,14 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 - **Spine = composition, not inheritance (research Q1):** one shared `SqlBackend` held by reference by
   four `Sql<Concern>Storage` classes; the three existing domain ABCs stay UNCHANGED, a new `ResultsStore`
   ABC is added. NO cross-concern god base.
+
 - **Backend-selection write-through, NOT a hot-path flag (research Q9, PITFALLS 3):** the backtest
   backend contains no serialization code at all — zero hot-path cost is structural, not disciplined.
+
 - **No `DecimalAsText`, no `pyarrow`, no libSQL this milestone (Owner Decisions):** money on the
   operational path is Postgres-native `Numeric`; frames are JSON/gzip'd-text; the libSQL driver is
   deferred (interface stays Turso-ready via one engine-URL swap).
+
 - **Money = Decimal end-to-end on the real-money path; determinism; single UUIDv7** — all carried
   unchanged onto the persistence layer (persisted timestamps use business `time`, never wall-clock).
 
@@ -119,6 +124,7 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 
 - Correct single-pass per-bar portfolio valuation (`single-pass-portfolio-valuation.md`) — deferred
   v1.5, profile-first gated (future perf phase, not v1.6).
+
 - Live-start indicator backfill through the same `update(bar)` path (`live-backfill-through-update.md`)
   — N+4 when `LiveBarFeed` is built.
 
@@ -127,18 +133,23 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 - **Hot-path inertness is the load-bearing risk (Gate a):** a serialize/`write_through` call must never
   land on the per-tick backtest loop. Enforce via backend-selection (two classes, not one flagged class);
   the in-memory backend imports no SQLAlchemy/serialization symbol. W1/W2 within v1.5 ±5% is the proof.
+
 - **Cross-backend divergence:** stay on SQLAlchemy Core constructs + portable types; scalar-promote
   filterable `runs` params to indexed columns (no JSON-path filtering in cross-sweep queries); run the
   persistence suite on BOTH SQLite and Postgres. UUIDv7 in one canonical encoding so a `run_id` written
   under SQLite reads equal under Postgres.
+
 - **Phase 4 retention is novel + unvalidated** (live path unbuilt) — design before wiring; plan-time
   research recommended. Bracket-parent safety + crash-safe write ordering + open-only rehydration.
+
 - **Indentation hazard:** `config/`, `core/`, `itrader/storage/`, `itrader/results/`,
   `strategy_handler/storage/` use 4 spaces; `order_handler/storage/` + `portfolio_handler/storage/` use
   tabs. New `Sql<Concern>Storage` files MUST match the existing sibling — a mixed-indent tab file fails
   to import.
+
 - **FL-06 creds:** rotate/scrub the exposed `SqlHandler` credential when reworking onto `SecretStr`;
   never log the resolved secret URL.
+
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
 
@@ -172,14 +183,15 @@ under `milestones/`.
 - **v1.5 phase dirs archived (2026-06-26, at milestone close):** the v1.5 phase working directories
   were `git mv`'d to `.planning/milestones/v1.5-phases/`. Only the `999.x` backlog seed dirs
   (`999.2`/`999.3`) remain in `.planning/phases/`, so the new v1.6 `01-*..05-*` dirs will not collide.
+
 - **At v1.6 close (reminder):** `git mv` the v1.6 phase dirs to `milestones/v1.6-phases/` and archive
   `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` as `milestones/v1.6-*`.
 
 ## Session Continuity
 
-Last session: 2026-06-27 — v1.6 roadmap created (`/gsd:new-project` → roadmapper)
-Stopped at: ROADMAP.md + STATE.md written, REQUIREMENTS.md traceability populated (20/20 mapped)
-Resume file: — (start Phase 1 planning)
+Last session: 2026-06-27T15:26:13.554Z
+Stopped at: Phase 1 context gathered
+Resume file: .planning/phases/01-sql-spine-security-hardening/01-CONTEXT.md
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
 ## Operator Next Steps
