@@ -22,12 +22,11 @@ spine's migration tooling stays off the hot-loop import graph (GATE-01 inertness
 
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import MetaData, engine_from_config, pool
 
 from alembic import context
 
 from itrader.config.sql import SqlDriver, SqlSettings
-from itrader.storage.backend import SqlBackend
 
 # The Alembic Config object — access to the values within the .ini file in use.
 config = context.config
@@ -40,11 +39,14 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-# Autogenerate target: the spine's SqlBackend MetaData. The default (SQLite, ``:memory:``)
-# settings build the backend ENV-FREE — no ``Settings()`` is touched here — so future
-# autogen sees exactly the Tables registered on the spine. No operational tables exist yet
-# (empty ``versions/``, D-14).
-target_metadata = SqlBackend(SqlSettings.default()).metadata
+# Autogenerate target: a bare, empty ``MetaData`` (WR-05). No operational tables are
+# registered yet (empty ``versions/``, D-14), so the autogen target is just an empty
+# ``MetaData``. Using ``MetaData()`` directly — instead of building a transient
+# ``SqlBackend`` and discarding it — avoids creating, and then LEAKING, an undisposed
+# SQLite engine (its ``SingletonThreadPool``) at import time, which could trip a
+# GC-finalised ResourceWarning under ``filterwarnings=["error"]``. No ``Settings()`` is
+# touched here; the module stays fully import-inert (T-01-11 / GATE-01).
+target_metadata = MetaData()
 
 
 def _resolve_url() -> str:
