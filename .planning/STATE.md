@@ -4,13 +4,13 @@ milestone: v1.6
 milestone_name: N+3b Persistence Foundation
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-27T16:46:30.820Z"
-last_activity: 2026-06-27 -- Phase 01 execution started
+last_updated: "2026-06-27T17:10:30.717Z"
+last_activity: 2026-06-27
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundati
 ## Current Position
 
 Phase: 01 (sql-spine-security-hardening) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 01
-Last activity: 2026-06-27 -- Phase 01 execution started
+Plan: 2 of 5
+Status: Ready to execute
+Last activity: 2026-06-27
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 20%
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
@@ -118,6 +118,9 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 - **Money = Decimal end-to-end on the real-money path; determinism; single UUIDv7** — all carried
   unchanged onto the persistence layer (persisted timestamps use business `time`, never wall-clock).
 
+- [Phase 01]: 01-01: GATE-02 cross-backend test substrate established — session-scoped testcontainers Postgres pg_engine + indirect-parametrized sqlite/postgres engine fixture under tests/integration/storage/ (D-10/D-11); Docker-absent skips, never hard-fails.
+- [Phase 01]: 01-01: alembic ^1.18.5 + testcontainers[postgresql] ^4.14.2 added as dev-deps behind the blocking-human supply-chain gate (T-01-SC); kept off the runtime path to preserve GATE-01 inertness. GATE-02 left Pending (recurring gate, substrate-only).
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — carried, not v1.6-blocking]
@@ -177,6 +180,7 @@ promoted INTO this milestone marked):
 
 v1.0–v1.5 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md files
 under `milestones/`.
+| Phase 01 P01 | 11m | 3 tasks | 5 files |
 
 ## Bookkeeping
 
@@ -189,9 +193,9 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-27T15:26:13.554Z
+Last session: 2026-06-27T17:07:21.870Z
 Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-sql-spine-security-hardening/01-CONTEXT.md
+Resume file: None
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
 ## Operator Next Steps
