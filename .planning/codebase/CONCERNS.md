@@ -1,251 +1,157 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-06-22
+**Analysis Date:** 2026-06-27
 
----
+> **Scope note.** iTrader is a brownfield backtest-correctness refactor. The
+> backtest golden path (`SMA_MACD` over `data/BTCUSD_1d_ohlcv_2018_2026.csv`) is
+> the trusted, regression-locked surface (oracle: **134 trades / final_equity
+> `46189.87730727451`**). Most concerns below live in *deferred* subsystems (live
+> trading, SQL stores, providers, screeners, `my_strategies`) that are
+> intentionally out of the current trust boundary, NOT in the golden path. Two
+> items (dual-layer order validator, tab/space indentation) are **documented-by-
+> decision** and are explicitly NOT bugs — they are listed here only so future
+> work does not "fix" them and break an invariant.
 
 ## Tech Debt
 
-### Deferred: Flip/Split Full-Settlement Economics (CR-02-residual from Phase 2)
+**PostgreSQL order storage is a pure stub:**
+- Issue: `PostgreSQLOrderStorage` raises `NotImplementedError("...Phase 2")` from `__init__` and every method. The "Phase 2" it references is from a superseded plan and never landed. Live order persistence has no real backend — only `in_memory` is functional.
+- Files: `itrader/order_handler/storage/postgresql_storage.py`
+- Impact: Selecting the `postgresql` order-storage backend (the live-mode default per `OrderStorageFactory`) throws on construction. Live mode cannot persist orders.
+- Fix approach: Implement against the same `OrderStorage` ABC the in-memory backend satisfies (`itrader/order_handler/storage/in_memory_storage.py` is the reference shape), backed by SQLAlchemy (already a dependency). Owned by the live-trading milestone.
 
-- Issue: A fill that would flip a position direction (over-close) raises `InvalidTransactionError` before any mutation as a fail-loud guard. The correct economics — split a flip fill into full-close + fresh-open, or clamp `realised_increment` to the closed quantity — are not implemented.
-- Files: `itrader/portfolio_handler/portfolio.py` (on-fill settlement path), `itrader/order_handler/reconcile/reconcile_manager.py`
-- Impact: A flip fill in backtest aborts the run via the fail-fast error policy. In live mode (`publish-and-continue`) the over-close order is rejected but no fill settles. Pair strategies and any strategy that issues a same-bar direction reversal via a direct opposite order cannot use the engine until this is addressed.
-- Fix approach: In `portfolio.py` on-fill settlement, detect when `transaction.quantity > position.net_quantity` (over-close); split into a close transaction (settling realized PnL for the full existing size) followed by a fresh-open transaction for the remainder. Track tagged as `CR-02-residual` in `.planning/milestones/v1.4-phases/02-margin-accounting-leverage/deferred-items.md`.
+**Deferred subsystems excluded from `mypy --strict`:**
+- Issue: Eight module groups carry `ignore_errors = true` overrides — live trading (`live_trading_system`, `trading_interface`, `binance_stream`), SQL stores (`sql_store`, `postgresql_storage`), providers (`ccxt_provider`, `oanda_provider`, `exchange_base`), all of `screeners_handler.*`, and all of `my_strategies.*`. Third-party stubless libs are separately `ignore_missing_imports`.
+- Files: `pyproject.toml` (`[[tool.mypy.overrides]]`, lines ~88–122)
+- Impact: Type debt in these modules is suppressed, not resolved. The strict gate is green only because these are masked; new code added inside them gets no type checking.
+- Fix approach: Each override is tagged with the milestone that owns its un-deferral (`D-live`, `D-sql`, `D-oanda`, `D-screener`, OUT/relocated). Strict-clean each module group when its milestone activates; do not add new modules to the override lists.
 
-### Deferred: Single Global Maintenance-Margin Rate (`_DEFAULT_MAINTENANCE_MARGIN_RATE`)
+**Inherited legacy TODOs in deferred subsystems (mixed-language):**
+- Issue: Scattered Italian-language TODOs flag known-incomplete logic — `# TODO: da modificare`, `# TODO: da testare`, `# TODO: da spostare in order_handler.compliance` (long-only filtering hardcoded in strategies instead of centralized in order admission), `# TODO: non prende window come argomento` (a screener bug), `TODO: to be tested` (custom indicators).
+- Files: `itrader/price_handler/providers/oanda_provider.py` (lines 36, 74), `itrader/price_handler/providers/ccxt_provider.py:57`, `itrader/screeners_handler/screeners/volume_spyke.py:40`, `itrader/screeners_handler/screeners/base.py:29`, `itrader/strategy_handler/my_strategies/**` (multiple `da spostare in order_handler.compliance`), `itrader/strategy_handler/my_strategies/custom_indicators/ehlers_indicators.py:228`
+- Impact: None on the golden path (all in deferred/relocated code). Signals that `compliance`/long-only logic is duplicated across strategies rather than owned by the order handler.
+- Fix approach: When the screener/live milestones activate, centralize long-only/compliance into order admission and remove the per-strategy duplication.
 
-- Issue: `universe/instruments.py:62` defines `_DEFAULT_MAINTENANCE_MARGIN_RATE = Decimal("0.005")` as a single hard-coded global that applies to every symbol when no per-symbol override is declared. All liquidation logic (`PortfolioHandler.maintenance_margin`, `_collect_breaches_over_prices`) reads `Instrument.maintenance_margin_rate` which for most symbols falls back to this magic constant. No per-instrument MMR table or configuration surface exists.
-- Files: `itrader/universe/instruments.py:62`, `itrader/portfolio_handler/portfolio_handler.py:458`
-- Impact: A real multi-asset portfolio would use wildly wrong liquidation thresholds if symbols are not individually declared with a correct `maintenance_margin_rate` in the `Universe`. The Phase 4 liquidation cross-validation passes because it uses a single explicitly-declared test symbol.
-- Fix approach: Expose a `maintenance_margin_rate` column in the universe declaration table (e.g. `settings/domains/instruments.yaml`) and validate at `derive_instruments` that every production symbol has a declared rate. Tracked as `IN-03` in `.planning/milestones/v1.4-phases/02-margin-accounting-leverage/deferred-items.md`.
+**Reverted "fusion" left a captured-but-unbuilt design:**
+- Issue: Phase 8 plan 08-01 shipped a `_fused_valuation()` that was measured as a -15% W1 / -5% W2@50 regression and reverted (keep-only-measured, D-02). The *correct* single-pass per-bar valuation design is captured but not built.
+- Files: `.planning/todos/pending/single-pass-portfolio-valuation.md`; touch points `itrader/portfolio_handler/position/position_manager.py` (`update_position_market_values`), `itrader/portfolio_handler/portfolio.py` (`get_total_market_value` / `get_total_unrealized_pnl`)
+- Impact: Three per-bar iterations over open positions (1 write + 2 read) where 1 would suffice. Likely noise on W1 (few concurrent SMA_MACD positions); the W2 many-symbol axis is the real payoff.
+- Fix approach: Compute market-value + unrealized-PnL accumulators inside the existing write pass; accessors become O(1) field reads. **Byte-exactness landmine:** accumulation order + quantization must match per-accessor summation exactly (seed `Decimal('0.00')`, preserve `+=` order, no mid-sum quantize) or the oracle drifts. Profile-first gate: confirm an attributable W2 CPU share before building.
 
-### Deferred: `order_type_map` / `order_status_map` / `order_command_map` Dead Weight
+## Documented-by-Decision (NOT bugs — do not "fix")
 
-- Issue: `itrader/core/enums/order.py:63-117` defines three string→enum dicts that duplicate what `OrderType(value)` (via `_missing_`) already provides case-insensitively. `TRAILING_STOP` was added to the map to keep it in sync, but the maps themselves have no remaining call sites that cannot use the enum's own string parse. They are re-exported in `core/enums/__init__.py`.
-- Files: `itrader/core/enums/order.py:63`, `itrader/core/enums/__init__.py:42-44,93-95`
-- Impact: Low — dead code, no behavioral risk. Each new `OrderType` member must be added to two places (enum + map), creating a maintenance hazard.
-- Fix approach: Confirm no callers use the maps directly (grep confirms no `order_type_map[` usage in production code), then remove the three dicts and their `__init__.py` exports. Tracked as `IN-02` in `.planning/milestones/v1.4-phases/05-engine-native-trailing-stops/05-REVIEW.md`.
+**Dual-layer order validator overlap (D-03a):**
+- What: Order validation exists in two places — the domain `EnhancedOrderValidator` (`itrader/order_handler/order_validator.py`) and exchange-side admission (`itrader/execution_handler/exchanges/simulated.py`). They overlap by design (defense-in-depth).
+- Why kept: The live `TradingInterface`/`OrderEvent` path bypasses the domain validator, so the exchange-side check is the only guard on that path. The dead `create_order` second path was removed in Phase 6 (W4-09); the live-path bypass alone justifies the remaining overlap. Decision tags `D-03a` are present in `admission_manager.py`, `bracket_manager.py`, `simulated.py`.
+- Action: Do NOT remove the overlap. It is documented in `.planning/codebase/CONVENTIONS.md` and `CLAUDE.md`.
 
-### Deferred: Dead `Portfolio.update_market_value` Entry Point
+**Tab/space indentation split:**
+- What: Handler/manager modules use **tabs**; `config/`, `core/`, `price_handler/feed/`, and `events_handler/events/` use **4 spaces**.
+- Why a hazard: A normalization diff that mixes tabs and spaces in a tab file breaks the file. There is no autoformatter to catch it.
+- Action: ALWAYS match the indentation of the file being edited. Never normalize. Documented in `CONVENTIONS.md` and the v1.1 cleanup standard (`.planning/codebase/CLEANUP-STANDARD.md`).
 
-- Issue: `itrader/portfolio_handler/portfolio.py:503` defines `update_market_value(bar_event: BarEvent)`. The only live caller on the run path is `PortfolioHandler.update_portfolios_market_value` which calls `portfolio.update_market_value_of_portfolio(prices, bar_time, self._universe)` instead. The `bar_event` variant is never called on the run path.
-- Files: `itrader/portfolio_handler/portfolio.py:503-515`
-- Impact: Dead code only. Future maintainers may add a second call site to the wrong method, bypassing the carry-bearing `update_market_value_of_portfolio` and silently skipping borrow-carry accrual.
-- Fix approach: Remove `update_market_value(bar_event)` or fold it into `update_market_value_of_portfolio` with a deprecation note. Tracked as `IN-01` in `.planning/milestones/v1.4-phases/03-shorts-borrow-carry/deferred-items.md`.
-
-### Deferred: Unreachable `net_quantity < 0` Branch in `_validate_position_consistency`
-
-- Issue: `itrader/portfolio_handler/position/position_manager.py:228` checks `position.net_quantity < 0 and abs(position.net_quantity) > Decimal("0.000001")`. Since `net_quantity` is derived as the absolute value of long `buy_qty - sell_qty`, this branch is structurally unreachable for a `LONG` position and is the wrong guard to catch signed-read accidents.
-- Files: `itrader/portfolio_handler/position/position_manager.py:228`
-- Impact: A future change that introduces a signed `net_quantity` read would silently bypass the guard. The branch reads as if it protects against negative quantity but never fires.
-- Fix approach: Convert to an assertion documenting the unsigned invariant: `assert position.net_quantity >= 0, "net_quantity must be unsigned"`. Tracked as `IN-02` in `.planning/milestones/v1.4-phases/03-shorts-borrow-carry/deferred-items.md`.
-
-### Deferred: Inconsistent Zero-Exponent Seeds in Cash/Margin Getters
-
-- Issue: `itrader/portfolio_handler/storage/in_memory_storage.py:82` seeds `get_reserved_cash` with `Decimal("0.00")` (two decimal places) while `:96` seeds `get_locked_margin` with `Decimal("0")` (no places). Both are byte-exact today because `sum()` carries more precision, but the inconsistency is a readability trap.
-- Files: `itrader/portfolio_handler/storage/in_memory_storage.py:82,96`
-- Impact: No current correctness impact. Future arithmetic on these returns may propagate the exponent difference into surprising precision behavior.
-- Fix approach: Pick `Decimal("0")` (idiomatic) or `Decimal("0.00")` uniformly across both. Tracked as `IN-04` in `.planning/milestones/v1.4-phases/03-shorts-borrow-carry/deferred-items.md`.
-
-### Deferred: `position_manager.py:171` Uses Raw `Decimal(str())` Instead of `to_money`
-
-- Issue: `itrader/portfolio_handler/position/position_manager.py:171` calls `Decimal(str(signal_leverage))` directly when comparing against `position.leverage`. The project money convention requires entering the Decimal domain via `to_money(x)` (`itrader/core/money.py`) to avoid binary-float representation artifacts if a float slips through.
-- Files: `itrader/portfolio_handler/position/position_manager.py:171`
-- Impact: Correctness only if `signal_leverage` is ever a float (currently it is typed `Decimal`). Convention violation, not a current bug.
-- Fix approach: Replace `Decimal(str(signal_leverage))` with `to_money(signal_leverage)`. Tracked as `IN-02` in `.planning/milestones/v1.4-phases/02-margin-accounting-leverage/deferred-items.md`.
-
-### Deferred: `process_signal` Step-0 Docstring Omits the Short SELL-Add Case
-
-- Issue: `itrader/order_handler/admission/admission_manager.py:125-133` step-0 docstring enumerates the `LONG_ONLY` direction case, the `BUY-while-long allow_increase=False` case, and the `max_positions` case, but does not mention the `SELL-add-while-short allow_increase=False` audited rejection gate added in Phase 5.1.
-- Files: `itrader/order_handler/admission/admission_manager.py:125`
-- Impact: Doc-only. In a codebase where decision-anchored docstrings are load-bearing references (CLAUDE.md), an incomplete step-0 summary misleads maintainers adding short-specific logic.
-- Fix approach: Add a clause covering the symmetric short SELL-add gate. Tracked as `IN-01` in `.planning/milestones/v1.4-phases/05.1-short-position-scale-in-margin-increase/05.1-REVIEW.md`.
-
-### Deferred: `get_config_dict` Inconsistent Serialization Shape
-
-- Issue: `itrader/execution_handler/exchanges/simulated.py:775-792` calls `float()` for `failure_rate`, `min_order_size`, `max_order_size` at the serialization edge but returns `fee_rate`, `maker_rate`, `taker_rate`, `base_slippage_pct`, `slippage_pct` as raw `Decimal` (or `None`). A caller JSON-encoding this dict receives a mixed-type map.
-- Files: `itrader/execution_handler/exchanges/simulated.py:781-791`
-- Impact: Any caller that JSON-encodes `get_config_dict()` will raise on the raw `Decimal` fields. Currently no production caller does this; it is a monitoring/diagnostic method only.
-- Fix approach: Apply `float()` uniformly to rate fields at the serialization boundary, or return raw `Decimal` for all (and document that callers must serialize explicitly). Tracked as `IN-01` in `.planning/milestones/v1.4-phases/05-engine-native-trailing-stops/05-REVIEW.md`.
-
-### Deferred: `Portfolio.user_id` — Unmapped Persistence Field
-
-- Issue: `itrader/portfolio_handler/portfolio.py:52` stores `self.user_id: int`. This is an application-level user identifier with no corresponding persistence or auth layer. It is required in `add_portfolio` signature (`portfolio_handler.py:152`) and `system_spec.py:46`. Removal was deferred to an independent cleanup pass at v1.4 close.
-- Files: `itrader/portfolio_handler/portfolio.py:52`, `itrader/portfolio_handler/portfolio_handler.py:152`, `itrader/trading_system/system_spec.py:46`
-- Impact: Low. Adds an unnecessary required constructor parameter that callers must supply with a meaningless integer. Cleanup deferred per STATE.md.
-
----
-
-## Known Bugs
-
-### Market-Hours Validator Uses Tz-Naive Time Comparison
-
-- Symptoms: `_validate_market_hours` in `EnhancedOrderValidator` calls `order.time.time()` (strips timezone) and compares against naive `time(9,30)` / `time(16,0)` market-hours bounds.
-- Files: `itrader/order_handler/order_validator.py:328-351`
-- Trigger: Only reached when the portfolio's exchange is `"NYSE"` or `"NASDAQ"` — never reached on the crypto/csv backtest path (exchange is `"simulated"` or `"csv"`). Oracle-dark.
-- Workaround: None. The comparison is always skipped on current run paths.
-- Fix: When activating NYSE/NASDAQ validation, convert `order.time` to the exchange's local timezone before extracting `.time()`. Tracked as `IN-04` in `.planning/milestones/v1.4-phases/05-engine-native-trailing-stops/05-REVIEW.md`.
-
-### Live System Falls Back to In-Memory Order Storage Silently
-
-- Symptoms: `LiveTradingSystem.__init__` (line 137) catches `NotImplementedError` from `OrderStorageFactory.create('live', ...)` and falls back to in-memory storage with only a `logger.warning`. Orders are lost across restarts without operator awareness.
-- Files: `itrader/trading_system/live_trading_system.py:130-140`, `itrader/order_handler/storage/postgresql_storage.py` (all methods raise `NotImplementedError`)
-- Trigger: Any live run when `SYSTEM_DB_URL` is set but the PostgreSQL storage class has not been implemented.
-- Workaround: Ensure `SYSTEM_DB_URL` is unset; the code takes the in-memory path explicitly.
-
----
-
-## Security Considerations
-
-### Live Trading Interface Validates Quantity/Price as `float()` — Entry Boundary Gap
-
-- Risk: `itrader/trading_system/trading_interface.py:180,189` converts incoming order parameters to `float` for validation. If an external API passes a string like `"1e300"` or `"NaN"`, the float cast succeeds, passing the `> 0` check. The float value is then used to construct an `OrderEvent` before the Decimal money domain begins.
-- Files: `itrader/trading_system/trading_interface.py:170-198`
-- Current mitigation: None at this boundary; the `EnhancedOrderValidator` downstream rejects extreme prices via `_validate_price_ranges`, but a NaN would not fail `> 0`.
-- Recommendations: Replace `float(quantity)` / `float(price)` with `to_money(quantity)` / `to_money(price)` at the `TradingInterface` boundary; wrap in a `try/except (InvalidOperation, ValueError)` and return an error. This also eliminates the float-for-money policy gap at this site.
-
-### Environment Secrets Only Validated at Import Time
-
-- Risk: `itrader/__init__.py` initializes `config = SystemConfig.default()` on import, loading env vars via `pydantic-settings`. The `.env` file at repo root is loaded by `Makefile` and available to all `make` targets. No runtime secret rotation is possible without a process restart.
-- Files: `itrader/__init__.py`, `itrader/config/settings.py`
-- Current mitigation: `.env` is gitignored in production. The settings layer validates structure but does not scrub secrets from process memory.
-- Recommendations: For live trading, source secrets from a secrets manager rather than `.env` files. No change needed for the backtest path.
-
----
-
-## Performance Bottlenecks
-
-### `_fit_beta` and `_coint_pvalue` Duplicate Log-Array Computation in `EthBtcPairStrategy`
-
-- Problem: `itrader/strategy_handler/strategies/eth_btc_pair_strategy.py:129-130` and `:165-166` each independently compute `np.log(win_A["close"].to_numpy(dtype=float)[:self.beta_warmup])` and `np.log(win_B["close"].to_numpy(dtype=float)[:self.beta_warmup])`. Both are called from `evaluate_pair` on every bar during the fit-once gate, doubling the log computation.
-- Files: `itrader/strategy_handler/strategies/eth_btc_pair_strategy.py:121,149`
-- Cause: `_fit_beta` and `_coint_pvalue` are separate methods without a shared intermediate.
-- Improvement: Extract the shared log arrays into a helper or cache the result as an instance attribute after the first fit. Tracked as `IN-03` in `.planning/milestones/v1.4-phases/06-pair-trading-flagship/06-REVIEW.md` (accepted deferral — fit-once, dormant after warmup).
-
-### Carry Accrual Charges Full Multi-Day Gap at Current Close Mark
-
-- Problem: `itrader/portfolio_handler/portfolio.py:671` computes short carry as `days × current_price × |net_quantity| × borrow_rate / 365`. For a gap of N days (e.g. weekend) it charges the full interval at the CURRENT bar's close, not a per-day interpolation. For instruments with significant price movement over the gap, carry is over- or under-stated.
-- Files: `itrader/portfolio_handler/portfolio.py:666-742`
-- Cause: The bar feed delivers only close prices; no per-day mark feed exists.
-- Improvement: A per-day borrow-rate time-series with per-day price marks ("Phase B" perp realism). Tracked as `IN-03` in `.planning/milestones/v1.4-phases/03-shorts-borrow-carry/deferred-items.md`.
-
----
+**Broad `except Exception` clauses (run-mode policy):**
+- What: ~30 broad `except Exception` sites across handlers (`portfolio_handler.py`, `execution_handler.py`, `simulated.py`, `admission_manager.py`, `reconcile_manager.py`, `live_trading_system.py`, etc.).
+- Why intentional: Backtest is fail-fast (`EventHandler._on_handler_error` re-raises, `itrader/events_handler/full_event_handler.py`); live is publish-and-continue (emit `ErrorEvent`, keep draining). Execution rejections surface as `FillEvent(REFUSED)` (e.g. `simulated.py:226` catch → `_emit_rejection`), not lost exceptions, so the order mirror reconciles. This is intentional, not an inconsistency.
+- Action: Preserve the per-mode policy. The `except` breadth is the mechanism, not a smell.
 
 ## Fragile Areas
 
-### Screeners Subsystem: Untyped, Untested, Not Mypy-Strict
+**Wall-clock `datetime.now(UTC)` embedded in otherwise-deterministic portfolio state:**
+- Files: `itrader/portfolio_handler/portfolio.py` (lines 135, 598, 619, 657, 705), `itrader/portfolio_handler/portfolio_handler.py` (126–129, 174, 824, 846), `itrader/portfolio_handler/cash/cash_manager.py` (187, 248, 310), `itrader/reporting/cash_operations.py:19`
+- Why fragile: Money/event timestamps are business-time end-to-end (an injected `BacktestClock`, `core/clock.py`), but several health-metric, state-transition, reservation-row, and snapshot-timestamp fields still stamp `datetime.now(UTC)`. In-code comments assert these are "admin path — not oracle-serialized" or "cannot fire during a green oracle run." Determinism holds only by the invariant that none of these wall-clock fields ever reaches a serialized/compared oracle field.
+- Safe modification: Before surfacing any of these timestamps into a reported frame, equity snapshot, or serialized record, route it through the injected clock / business time. Do not assume "admin path" stays admin-only.
+- Test coverage: Determinism double-run guards the aggregate oracle, but there is no targeted test asserting these specific fields never leak into a compared surface.
 
-- Files: `itrader/screeners_handler/screeners_handler.py`, `itrader/screeners_handler/screeners/volume_spyke.py`, `itrader/screeners_handler/screeners/base.py`
-- Why fragile: The `ScreenersHandler` is excluded from `mypy --strict` via `[[tool.mypy.overrides]]` (`ignore_errors = true`). It has no dedicated unit tests (no `tests/unit/screeners/` directory). The `volume_spyke.py` screener uses a `TODO` noting the `sma` call does not accept the `window` argument as expected. `init_screeners` calls `get_timenow_awere()` (wall-clock) at wiring time, violating the determinism contract.
-- Safe modification: Any change to `ScreenersHandler` must be hand-verified — no test catches regressions. Do not add `screen_markets` to the BAR route in backtest without adding unit tests first.
-- Test coverage: No screener-specific unit tests; only incidental coverage via the event-wiring integration test.
+**Strategy filter / compliance logic duplicated across strategies:**
+- Files: multiple `itrader/strategy_handler/my_strategies/**` (long-only flags, `da spostare in order_handler.compliance` TODOs)
+- Why fragile: Trade-admission concerns (long-only) are reimplemented per strategy instead of centralized in order admission. Each new strategy re-derives the rule and can get it subtly wrong.
+- Safe modification: Centralize in `order_handler` admission when the screener/strategy milestone activates; strategies should emit signals and let admission enforce compliance.
 
-### PostgreSQL Order Storage: Entire Interface Raises `NotImplementedError`
+## Security Considerations
 
-- Files: `itrader/order_handler/storage/postgresql_storage.py`
-- Why fragile: All 15 methods of `PostgreSQLOrderStorage` raise `NotImplementedError("To be implemented in Phase 2")`. The `OrderStorageFactory` selects it for `environment='live'`. Any live trading path that reaches order storage will raise immediately.
-- Safe modification: Do not expose `environment='live'` to operators until PostgreSQL storage is implemented. The live system currently catches the `NotImplementedError` in `__init__` and falls back to in-memory (itself a fragile silent degradation — see Known Bugs).
+**Exchange/DB credentials in `.env` (present, gitignored):**
+- Risk: Live exchange API keys and DB URLs live in `.env` at repo root, loaded by `Makefile` (`include .env`, `.EXPORT_ALL_VARIABLES`).
+- Files: `.env` (present locally, listed in `.gitignore`, NOT committed — verified clean in `git ls-files`)
+- Current mitigation: `.env` is gitignored; `pydantic-settings` reads `ITRADER_`-prefixed vars. No secrets found committed to the repo.
+- Recommendations: Keep `.env` out of version control. Never read or echo its contents in tooling. Rotate any key that ever appears in a log.
 
-### `my_strategies/` — Compliance TODOs Not Hooked to the Engine
+**`oanda.cfg` referenced but not gitignored:**
+- Risk: The OANDA provider (`itrader/price_handler/providers/oanda_provider.py`, via `tpqoa`) expects an `oanda.cfg` credentials file at repo root. `.gitignore` lists `.env` but NOT `oanda.cfg`.
+- Files: `.gitignore` (covers `.env` only), `itrader/price_handler/providers/oanda_provider.py`
+- Current mitigation: `oanda.cfg` does not currently exist in the working tree (deferred provider), so nothing is exposed today.
+- Recommendations: Add `oanda.cfg` (and `*.cfg` credential patterns) to `.gitignore` *before* the live/OANDA milestone creates the file, to prevent an accidental credential commit.
 
-- Files: `itrader/strategy_handler/my_strategies/scalping/Stoch_RSI_Keltner_strategy.py:67`, `itrader/strategy_handler/my_strategies/momentum/ATR_Hawkes_Momentum_strategy.py:129`, `itrader/strategy_handler/my_strategies/scalping/RSI_scalping_strategy.py:56`, `itrader/strategy_handler/my_strategies/scalping/VWAP_BB_RSI_scalping_strategy.py:38`
-- Why fragile: Multiple strategies contain `# TODO: da spostare in order_handler.compliance` comments next to inline long-only enforcement logic. These strategies implement their own direction filtering rather than declaring `direction = Direction.LONG_ONLY` on the strategy class. If any of these strategies are wired into a short-capable run, the engine will not enforce the direction gate and the strategy's own inline logic will be the only safeguard.
-- Safe modification: These strategies are under `my_strategies/` (excluded from mypy-strict). Do not wire them into production runs without migrating the compliance logic to the `direction` class attribute.
+## Performance Bottlenecks
 
-### Pair Strategy Re-Entry After Single-Leg Liquidation (D-07×D-12 Gap)
+**Per-bar portfolio valuation: 3 iterations where 1 suffices:**
+- Problem: See the deferred single-pass valuation item above. `update_position_market_values` (write) + `get_total_market_value` + `get_total_unrealized_pnl` (two reads) each iterate open positions per bar.
+- Files: `itrader/portfolio_handler/position/position_manager.py`, `itrader/portfolio_handler/portfolio.py`
+- Cause: Accessors recompute instead of reading a per-tick snapshot.
+- Improvement path: O(1) accessors fed by accumulation inside the existing write pass; gated on a measured W2 win (the W1 hotspot was already collapsed in Phase 3).
 
-- Files: `itrader/strategy_handler/strategies/eth_btc_pair_strategy.py`, `itrader/strategy_handler/pair_base.py`
-- Why fragile: `PairStrategy._in_pair` tracks whether a pair is open using the `PortfolioReadModel`. If one leg is force-liquidated while the other remains open, `_in_pair` may still read as True (because one position exists), blocking a fresh entry; OR the open leg triggers an unbalanced `evaluate_pair` close signal. The D-07×D-12 interaction is documented as accepted for the current flagship (ETH/BTC has never been simultaneously levered to the liquidation threshold in the golden data), but is an unguarded edge.
-- Safe modification: Before using the pair strategy in a liquidation-possible margin configuration, add a pair-consistency guard: if one leg is missing, log and skip `evaluate_pair` rather than potentially firing a half-close.
-
-### Trailing-Stop `PercentFromFill` Cross-Val Script Uses a 500%-TP Sentinel
-
-- Files: `scripts/crossval/trailing_run.py:100-105`
-- Why fragile: `PercentFromFill(tp_pct=Decimal("5"), ...)` sets the TP 500% above the fill to keep it unreachable. A maintainer copying this snippet into a real strategy would place a reachable TP at 500%, not 5%.
-- Safe modification: Add an explicit inline comment: `# tp_pct=5 is intentionally 500% — an unreachable sentinel so only the trailing SL exits`. Tracked as `IN-03` in `.planning/milestones/v1.4-phases/05-engine-native-trailing-stops/05-REVIEW.md`.
-
----
-
-## Scaling Limits
-
-### Bar-Close Liquidation — No Intrabar Mark Feed
-
-- Current behavior: Maintenance-margin breach is detected once per bar using the bar's `close` price (`PortfolioHandler._collect_breaches_over_prices`, `portfolio_handler.py:613`). A large intrabar gap (open-to-low) that would breach maintenance margin does NOT trigger liquidation until close.
-- Files: `itrader/portfolio_handler/portfolio_handler.py:574-640`
-- Limit: For daily OHLCV data this is the documented honest approximation (Phase 4 design decision). For intraday data, a position could sustain losses far beyond the maintenance margin before liquidation fires.
-- Scaling path: Phase-B perp realism — a mark-price feed delivering intrabar mid-prices + a finer trigger cadence (per-minute or per-tick). Tagged `FUND-01..04` in ROADMAP.md.
-
-### In-Memory Order and Portfolio Storage — No Restart Survival
-
-- Current behavior: Backtest uses `InMemoryOrderStorage` and `PortfolioStateStorageFactory.create("backtest")`. All order and portfolio state is held in process memory.
-- Files: `itrader/order_handler/storage/in_memory_storage.py`, `itrader/portfolio_handler/storage/storage_factory.py`
-- Limit: No persistence between runs for live mode. An accidental process kill loses all live positions and orders (no reconcile on restart).
-- Scaling path: Implement `PostgreSQLOrderStorage` (currently all `NotImplementedError`) and a corresponding `PortfolioStateStorage` backed by PostgreSQL. Tagged as backlog phase `999.2-nplus2-persistence-and-performance`.
-
----
-
-## Dependencies at Risk
-
-### `pandas-ta 0.4.71b0` — Pinned Beta, Abandoned Upstream
-
-- Risk: `pyproject.toml:18` pins `pandas-ta = "0.4.71b0"`, a beta release of a library whose upstream repository has been inactive. The `b0` suffix indicates a pre-release, and the package cannot be upgraded without potentially breaking the custom indicator calls in `my_strategies/`.
-- Impact: `itrader/screeners_handler/screeners/volume_spyke.py`, `itrader/strategy_handler/my_strategies/filters/` and the scalping strategies under `my_strategies/` all import from `pandas_ta` internals (`from pandas_ta import overlap`, `from pandas_ta.volatility import atr`). These internal sub-package imports break on version bumps.
-- Migration plan: Migrate the `my_strategies/` and screener indicators to the `ta` library (already a dependency at `^0.11.0`) or to raw `pandas`/`numpy` equivalents, then drop `pandas-ta`.
-
----
-
-## Missing Critical Features
-
-### Perpetual Funding Rate / Mark-Price Liquidation (Phase B — Deferred to N+4)
-
-- Problem: `Instrument.settles_funding` is an inert flag (`instrument.py:96`, always `False`). No funding-rate data pipeline, funding accrual mechanism, or mark-price liquidation trigger exists. Crypto perpetuals accrue funding every 8 hours; the engine charges daily borrow-carry as a static approximation instead.
-- Blocks: Correct simulation of BTC/ETH perpetual contracts (BTCUSD, ETHUSD), which are the most liquid crypto derivatives. Current borrow-carry is a useful but imprecise proxy.
-
-### Live-Mode PostgreSQL Order Persistence (Deferred — N+3)
-
-- Problem: `PostgreSQLOrderStorage` raises `NotImplementedError` for all 15 methods. Live trading uses in-memory fallback silently.
-- Blocks: Any live deployment that must survive a process restart or reconcile the live order mirror with the exchange.
-
----
+**W1 benchmark is thermally sensitive (measurement hazard, not a code defect):**
+- Problem: The v1.5 W1 wall-clock benchmark drifts with machine thermal state; a throttled box understates wins.
+- Files: benchmark probe / `.planning` perf artifacts (v1.5 shipped 2026-06-26)
+- Cause: Wall-clock micro-benchmark sensitivity, compounded by a since-fixed quadratic probe bug (baseline re-frozen 153.7s → 28.3s on 2026-06-25).
+- Improvement path: Attribute future wins via same-machine A/B + Scalene CPU-share, not against a frozen baseline on a hot machine. Defer any re-freeze to a cool box.
 
 ## Test Coverage Gaps
 
-### Screeners Handler — No Unit or Integration Tests
+**Trading-system entry points have no direct unit tests:**
+- What's not tested: Composition roots and the run loop — covered only transitively by the integration oracle.
+- Files: `itrader/trading_system/backtest_trading_system.py`, `itrader/trading_system/backtest_runner.py`, `itrader/trading_system/compose.py`, `itrader/trading_system/system_spec.py`, `itrader/trading_system/live_trading_system.py`, `itrader/trading_system/trading_interface.py`
+- Risk: Wiring regressions (a mis-ordered route, a dropped injection) surface only as an oracle drift, with no narrow failing test to localize them. Live composition (`live_trading_system`, `trading_interface`) is wholly untested AND mypy-deferred.
+- Priority: Medium (backtest path is oracle-guarded); High for the live path when it activates.
 
-- What's not tested: `ScreenersHandler.screen_markets`, `add_screener`, `init_screeners`, `get_screeners_universe`; the `VolumeSpyke` screener; the `Screener` base class.
-- Files: `itrader/screeners_handler/screeners_handler.py`, `itrader/screeners_handler/screeners/volume_spyke.py`
-- Risk: Regressions in the screener dispatch (TIME event → `screen_markets`) go undetected. The `init_screeners` wall-clock call also makes deterministic testing non-trivial.
-- Priority: Medium (screener subsystem is deferred/inert in backtest; it is wired in the live path).
+**Event dispatch core has no direct test:**
+- What's not tested: `EventHandler.process_events` / `_dispatch` / `_on_handler_error` (the data-driven `_routes` table and the fail-fast vs publish-and-continue seam).
+- Files: `itrader/events_handler/full_event_handler.py`
+- Risk: The `NotImplementedError`-on-unrouted-type guard and the per-mode error policy are load-bearing but unverified by a unit test.
+- Priority: Medium.
 
-### `my_strategies/` — No Tests, Not mypy-Strict
+**Reporting builders are near-untested:**
+- What's not tested: Frame/order builders have no dedicated tests; only a plots smoke test and a metrics test exist (`tests/unit/reporting/test_metrics.py`, `test_plots_smoke.py`, `test_cash_operations.py`).
+- Files: `itrader/reporting/frames.py`, `itrader/reporting/orders.py`, `itrader/reporting/plots.py`
+- Risk: Reported trade-log/equity-curve artifacts (the project's core deliverable) can drift in shape without a failing test.
+- Priority: Medium.
 
-- What's not tested: All strategies under `itrader/strategy_handler/my_strategies/` (Stoch RSI Keltner, ATR Hawkes, RSI scalping, VWAP/BB/RSI scalping, SuperSmoothed, SuperTrend, pair-strategy filters).
-- Files: `itrader/strategy_handler/my_strategies/`
-- Risk: These strategies use the old signal contract style and contain inline compliance logic that should be migrated to the engine's direction/admission model. Connecting any of them to a backtest run without testing is likely to produce silent incorrect behavior.
-- Priority: High before any `my_strategies/` strategy is wired to a real run.
+**Deferred subsystems are untested by design:**
+- What's not tested: Providers (`ccxt_provider`, `oanda_provider`, `binance_stream`, `exchange_base`), screeners (`screeners_handler` + all screeners), SQL stores (`sql_store`).
+- Files: `itrader/price_handler/providers/*`, `itrader/screeners_handler/*`, `itrader/price_handler/store/sql_store.py`
+- Risk: Acceptable while deferred; these will need test scaffolding before their owning milestone can trust them.
+- Priority: Low now, High at activation.
 
-### Live Trading System — No Integration or E2E Tests
+## Scaling Limits
 
-- What's not tested: `LiveTradingSystem.start()`, `stop()`, `_process_events()`, `_publish_and_continue` error policy; `TradingInterface.create_order()`, `cancel_order()`, `get_portfolio_status()`.
-- Files: `itrader/trading_system/live_trading_system.py`, `itrader/trading_system/trading_interface.py`
-- Risk: The live system's threading model, start/stop lifecycle, and continue-on-error policy are entirely untested. The `_publish_and_continue` error path is injected via `_on_handler_error = self._publish_and_continue` — a method-assign suppressed by `type: ignore[method-assign]` — which is also untested.
-- Priority: High before any live deployment.
+**Backtest is a single-threaded synchronous for-loop:**
+- Current capacity: Comfortable for SMA_MACD on a single symbol over the golden daily dataset; the run is one `for` loop over a `TimeGenerator` grid with in-memory storage and no locking (D-19 single-writer contract).
+- Limit: The symbol axis (W2 — many concurrent markets) is the scaling pressure, not bar count. Per-bar work that is O(open positions)/O(symbols) (valuation, screening) compounds as symbols grow.
+- Scaling path: Collapse per-bar valuation to O(1) accessors (deferred todo); keep the single-writer contract (no premature parallelism — it would forfeit determinism guarantees).
 
-### Pair Strategy — Snapshot Generates-and-Passes on First Run
+## Dependencies at Risk
 
-- What's not tested: `tests/integration/test_pair_flagship_snapshot.py:195-200` silently generates the baseline CSV on the first run and returns `pass`, so the first execution after wiping `tests/golden/pair/` is always green regardless of what the engine produces.
-- Files: `tests/integration/test_pair_flagship_snapshot.py:195-200`
-- Risk: Deleting `tests/golden/pair/` before a run corrupts the oracle silently — the next committed CSV reflects whatever the engine produced, not a hand-verified correct output.
-- Priority: Low (the committed CSVs are the actual mitigation; risk only opens if the golden directory is wiped). Tracked as `IN-02` in `.planning/milestones/v1.4-phases/06-pair-trading-flagship/06-REVIEW.md`.
+**`pandas-ta` pinned to a beta:**
+- Risk: `pandas-ta 0.4.71b0` is a pinned beta release used in strategy filters / SLTP models and custom indicators.
+- Impact: Pre-release API instability; upstream churn could break strategy indicators on upgrade.
+- Migration plan: Keep pinned; treat any bump as a behavior-affecting change requiring an oracle re-run. The `ta` library (`ta ^0.11.0`) covers some overlapping indicators if migration is needed.
 
-### `_coint_pvalue` OLS Slope — Cross-Platform Reproducibility is a Snapshot Limitation
+**Cross-validation oracles are external gating dependencies:**
+- Risk: `backtesting.py 0.6.5` and `backtrader 1.9.78.123` are *gating* cross-validation oracles (`tests/golden/CROSS-VALIDATION.md`); `nautilus-trader 1.227.0` is non-gating.
+- Impact: An incompatible upgrade to either gating lib could block the validation gate independent of iTrader correctness.
+- Migration plan: Pin exactly (already pinned); upgrade only deliberately with a cross-validation re-baseline.
 
-- What's not tested: `EthBtcPairStrategy._coint_pvalue` uses `statsmodels.tsa.stattools.coint` and `sm.OLS`, whose numerical outputs may differ across OS/BLAS combinations. The pair flagship snapshot test asserts trade-count and column equality but does not assert specific PnL or trade prices to full Decimal precision. In-process determinism is proven; cross-platform is not.
-- Files: `itrader/strategy_handler/strategies/eth_btc_pair_strategy.py:149-170`
-- Risk: CI on a different OS (e.g. Linux ARM vs macOS x86) may see different cointegration p-values, leading to different entry signals, drifting the snapshot.
-- Priority: Low (documented accepted limitation). Tracked as `CR-02 advisory` in the v1.4 milestone audit.
+**`psycopg2-binary` carried for an unimplemented backend:**
+- Risk: `psycopg2-binary ^2.9.12` and SQLAlchemy are dependencies for PostgreSQL price/order storage, but `PostgreSQLOrderStorage` is an unimplemented stub.
+- Impact: Dependency surface (and `-binary` packaging caveats) carried for code that does not yet run.
+- Migration plan: Retain — it is needed by the SQL price store on the live path and will back the order store when implemented.
+
+## Missing Critical Features
+
+**Live order persistence:**
+- Problem: No working `OrderStorage` backend for live mode (`postgresql_storage` is all `NotImplementedError`).
+- Blocks: Durable live trading — orders cannot survive a process restart in live mode.
 
 ---
 
-*Concerns audit: 2026-06-22*
+*Concerns audit: 2026-06-27*
