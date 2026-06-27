@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
-status: verifying
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-06-27T18:06:06.574Z"
+status: ready_to_plan
+stopped_at: Phase 01 complete (5/5) — ready to discuss Phase 2 (Results Store)
+last_updated: 2026-06-27T18:26:45.637Z
 last_activity: 2026-06-27
 progress:
   total_phases: 7
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundation ACTIVE; scope locked via owner clarification 2026-06-27)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). v1.6 adds the durable-storage + caching foundation **without disturbing that** — the backtest path stays byte-exact and N+4 Live inherits a persistent, restart-safe system of record.
-**Current focus:** Phase 01 — sql-spine-security-hardening
+**Current focus:** Phase 2 — Results Store (#1)
 
 ## Current Position
 
-Phase: 01 (sql-spine-security-hardening) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
+Phase: 2
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-06-27
 
-Progress: [██████████] 100%
+Progress: [░░░░░░░░░░] 0%
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
@@ -79,7 +79,7 @@ validated surface. Phases 1/2/3/5 are standard patterns (plan-time research opti
 
 **Velocity (program cumulative through v1.5):**
 
-- Total plans completed: 194 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
+- Total plans completed: 199 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
 - v1.6 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
