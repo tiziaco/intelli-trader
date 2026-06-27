@@ -24,7 +24,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   strategy `SignalStore`) plus a new `ResultsStore` ABC are each implemented by exactly one
   `Sql<Concern>Storage` class that **composes** the shared `SqlBackend` — one class per concern, no
   cross-concern god base.
-- [ ] **SPINE-03**: UUIDv7 ids and business-time timestamps persist and round-trip **losslessly**
+- [x] **SPINE-03**: UUIDv7 ids and business-time timestamps persist and round-trip **losslessly**
   through the SQL layer on both SQLite and Postgres — single UUIDv7 scheme and determinism preserved, no
   wall-clock writes, no second ID scheme.
 
@@ -137,7 +137,7 @@ phase numbering reset to 1 for v1.6).
 |-------------|-------|--------|
 | SPINE-01 | Phase 1 | Complete |
 | SPINE-02 | Phase 1 | Pending |
-| SPINE-03 | Phase 1 | Pending |
+| SPINE-03 | Phase 1 | Complete |
 | RESULT-01 | Phase 2 | Pending |
 | RESULT-02 | Phase 2 | Pending |
 | RESULT-03 | Phase 2 | Pending |

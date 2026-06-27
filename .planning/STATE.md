@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
 status: executing
-stopped_at: Phase 1 context gathered
-last_updated: "2026-06-27T17:24:06.131Z"
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-06-27T17:36:51.508Z"
 last_activity: 2026-06-27
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundati
 ## Current Position
 
 Phase: 01 (sql-spine-security-hardening) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-06-27
 
-Progress: [████░░░░░░] 40%
+Progress: [██████░░░░] 60%
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
@@ -122,6 +122,8 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 - [Phase 01]: 01-01: alembic ^1.18.5 + testcontainers[postgresql] ^4.14.2 added as dev-deps behind the blocking-human supply-chain gate (T-01-SC); kept off the runtime path to preserve GATE-01 inertness. GATE-02 left Pending (recurring gate, substrate-only).
 - [Phase 01]: 01-02: SQL spine shipped — SqlBackend (Engine+MetaData, composed not inherited, no SqlStorageBase god base) + storage/types.py (UtcIsoText deterministic UTC-isoformat business-time, json_variant JSON/JSONB, direct Uuid(as_uuid=True); no money type per D-13) + config/sql.py SqlSettings (driver-by-config, lazy SecretStr Postgres creds, unwired SQLITE_LIBSQL Turso slot). mypy --strict clean, oracle byte-exact.
 - [Phase 01]: 01-02: Only SPINE-01 marked complete; SPINE-02 (all four Sql<Concern>Storage + ResultsStore ABC), SPINE-03 (cross-backend SQLite+Postgres round-trip, plan 01-03) and GATE-02 (recurring) left Pending — structural/encoding halves established, full criteria span later plans/phases.
+- [Phase 01]: 01-03: SPINE-03 proven — UUIDv7 id + business-time round-trip lossless and value-EQUAL on BOTH in-process SQLite and testcontainers Postgres (live PG arm ran), byte-identical encoded TEXT across runs (D-03/D-04/D-05, D-10/D-11); SPINE-03 marked complete in REQUIREMENTS.md.
+- [Phase 01]: 01-03: ResultsStore(ABC) added as the spine's 4th composable concern — 4 @abstractmethods mapped 1:1 to RESULT-01/02/03, composes SqlBackend (no god base); impl deferred to Phase 2 so SPINE-02 stays Pending. No tests/unit/results/__init__.py created (package-less tests/unit convention, ref 30c0f61).
 
 ### Pending Todos
 
@@ -184,6 +186,7 @@ v1.0–v1.5 milestone-close acknowledgments are recorded in the respective MILES
 under `milestones/`.
 | Phase 01 P01 | 11m | 3 tasks | 5 files |
 | Phase 01 P02 | 8min | 3 tasks | 8 files |
+| Phase 01 P03 | 4min | 2 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -196,8 +199,8 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-27T17:23:33.380Z
-Stopped at: Phase 1 context gathered
+Last session: 2026-06-27T17:36:51.501Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
