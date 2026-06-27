@@ -20,7 +20,13 @@ Mirrors the narrow-ABC shape of ``strategy_handler/storage/base.py::SignalStore`
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, List
+from typing import Any, List, Literal
+
+# Allow-list of rankable summary metrics (WR-04). ``top_runs`` selects an ``ORDER BY``
+# column, and column names CANNOT be bound parameters — constraining the type at this ABC
+# forces every concrete implementation onto a fixed allow-list, so the SQL-injection
+# pattern (interpolating a free ``metric`` string into ``ORDER BY``) can never be written.
+MetricName = Literal["sharpe", "total_return", "max_drawdown", "calmar"]
 
 
 class ResultsStore(ABC):
@@ -82,14 +88,16 @@ class ResultsStore(ABC):
         ...
 
     @abstractmethod
-    def top_runs(self, metric: str, n: int) -> List[Any]:
+    def top_runs(self, metric: MetricName, n: int) -> List[Any]:
         """Return the top-``n`` runs ranked by a summary ``metric`` (RESULT-03 cross-run query).
 
         Parameters
         ----------
-        metric : str
-            The summary-metric column to rank by (a scalar-promoted indexed ``Float`` column —
-            no JSON-path filtering in the cross-run query surface).
+        metric : MetricName
+            The summary-metric column to rank by — constrained to the ``MetricName``
+            allow-list (WR-04) because column names cannot be bound parameters; a
+            scalar-promoted indexed ``Float`` column, no JSON-path filtering in the
+            cross-run query surface.
         n : int
             How many top runs to return.
 
