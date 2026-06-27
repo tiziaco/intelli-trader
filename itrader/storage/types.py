@@ -49,6 +49,13 @@ class UtcIsoText(TypeDecorator[datetime]):
     def process_bind_param(self, value: datetime | None, dialect: Dialect) -> str | None:
         if value is None:
             return None
+        if value.tzinfo is None:
+            # A naive datetime would be coerced against the host's system-local tz by
+            # ``astimezone(utc)`` — silently shifting the stored instant and breaking the
+            # "explicit UTC" + "identical bytes across runs" guarantees (WR-02). Reject it.
+            raise ValueError(
+                f"UtcIsoText requires a timezone-aware datetime; got naive: {value!r}"
+            )
         return value.astimezone(timezone.utc).isoformat()
 
     def process_result_value(self, value: str | None, dialect: Dialect) -> datetime | None:
