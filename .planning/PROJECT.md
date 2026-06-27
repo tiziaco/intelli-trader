@@ -31,41 +31,62 @@ state, strategy/signal), and a classified cache — so the backtest path stays b
 Trading inherits a persistent, restart-safe system of record. Persistence half of Backlog 999.2 (the
 performance half shipped as v1.5); precedes N+4 Live Trading (999.3).
 
-**Target features:**
-- **Swappable SQL interface (the spine):** one interface, three drivers — Turso (research/optimization
-  default), SQLite (free fallback, dialect sibling), Postgres (live) — backend = config via
-  `SqlSettings`. Getting this interface right so the backend swap is config-not-code is THE win
-  (research Q1/Q2).
-- **Results store (#1):** all-SQL `runs` (lean indexed summary metrics + JSONB module settings) +
-  `run_artifacts` (one serialized frame blob per run — equity curve, trade log); every
-  backtest/optimization run persisted so a parameter sweep never lives in memory. **Substrate only** —
-  the sweep/optimization loop (Optuna sampler) is a later milestone. Frame-blob format = research Q5;
-  cross-backend JSON filtering = Q3.
+**Target features (scope locked through owner clarification 2026-06-27 — these refinements supersede
+the seed where they differ; see "Owner Decisions" below):**
+- **Swappable SQL interface (the spine):** one storage interface, backend = config via `SqlSettings`.
+  This milestone ships **SQLite** (research store default) + **Postgres** (operational store) drivers;
+  **Turso/libSQL is opt-in *later*** — the interface stays Turso-ready, but the beta `sqlalchemy-libsql`
+  driver is NOT added now (research Q2: its perf edge didn't hold for our batch-dump workload and the
+  driver is beta/stale). Spine = **composition, not inheritance** (research Q1): the 3 existing domain
+  ABCs + a new `ResultsStore` ABC, each implemented by ONE `Sql<Concern>Storage` that composes a shared
+  `SqlBackend`.
+- **Results store (#1):** all-SQL `runs` (lean indexed summary metrics + a JSON settings column) +
+  `run_artifacts` (the equity-curve / trade-log frame as a **JSON / gzip'd-text column — NOT Parquet**,
+  so `pyarrow` is not added). Every backtest/optimization run persisted so a parameter sweep never lives
+  in memory. **All-`Float` typing** (analytical store, float-tolerant — no exact-reproduction need).
+  Backend = **SQLite**, schema via `create_all()` (ephemeral, no Alembic). **Substrate only** — the
+  sweep/optimization loop (Optuna sampler) is a later milestone; schema stays Optuna-FK-ready (research Q6).
 - **Live operational store (#2):** a concrete SQL storage class for EACH of the three existing
   operational seams, all on the shared spine — order mirror (`PostgreSQLOrderStorage`, currently a
   `NotImplementedError` stub), portfolio state (new `SqlPortfolioStateStorage` —
   cash/position/transaction/metrics; the `PortfolioStateStorageFactory` has no SQL backend today), and
   strategy/signal (new `SqlSignalStorage`; the `SignalStorageFactory` has no SQL backend today).
+  **Postgres-only** (live), schema via **Alembic**; backtest keeps the in-memory backend unchanged
+  (factories stay `in_memory` vs `postgresql`, mirroring the existing `OrderStorageFactory`). Money =
+  **native `Numeric`** on Postgres (Decimal end-to-end preserved on the real-money path; no
+  `DecimalAsText` needed since money never lands on a SQLite-family backend). Tests via **testcontainers**.
   **Two-knob mode-awareness:** backtest = retain-all in-memory + optional end-of-run dump (write-through
-  off, zero hot-path cost); live = working-set cache + write-through + purge-on-terminalize +
-  read-through + restart rehydration (Nautilus model; research Q9/Q10).
+  off, **zero hot-path cost** — the backtest backend contains no serialization code at all); live =
+  working-set cache + write-through + purge-on-terminalize + read-through + restart rehydration (Nautilus
+  model; research Q9/Q10).
 - **Cache classification (#3):** inventory every ad-hoc cache / `lru_cache`, classify into (a) hot-path
-  data cache, (b) storage-index lookups already solved by v1.5 secondary indexes, (c) legitimate
-  pure-function memoization — route each to its correct home; do NOT collapse into one cache (research
-  Q7/Q8).
-- **Migrations + security:** a dual embedded (Turso/SQLite) + server (Postgres) migration story
-  (Alembic vs alternatives — research Q4); FL-06 SQL-injection / hardcoded-creds hardening in
-  `SqlHandler`.
+  data cache (leave the v1.5 hot path alone — research Q7), (b) storage-index lookups already solved by
+  v1.5 secondary indexes, (c) legitimate pure-function memoization — route each home; **classify, do not
+  rewrite or unify** (research Q8: ~14 sites, most already correct; the only genuinely new cache is the
+  live working-set cache).
+- **Migrations + security:** Alembic for the live Postgres store only, `create_all()` for the ephemeral
+  research DB (research Q4); FL-06 hardening in `SqlHandler` (`sql_store.py`) — confirmed hardcoded creds
+  (L17), f-string `DROP TABLE` (L35), symbol-as-table-name (L56/58/69).
+
+**Owner Decisions (research-time, supersede the seed):** (1) backends = SQLite-default research +
+Postgres-only operational + Turso-opt-in-later (not the seed's "Turso default / 3 live drivers");
+(2) results store is **all-`Float`** — the locked money-policy applies to the operational store (real
+money), the results store is the analytical edge where float is allowed; (3) **no Parquet / no `pyarrow`**
+— frames are a JSON/gzip'd-text column; (4) **no `DecimalAsText`** and the seed's "Turso native DECIMAL"
+premise is RETRACTED as false — money fidelity is preserved by Postgres-native `Numeric`, and money never
+touches SQLite; (5) optimization sweep loop OUT (substrate only).
 
 **Correctness discipline (DB-gated milestone — NOT backtest-oracle-covered):** the lock is two-part —
 (a) the SMA_MACD backtest oracle stays **byte-exact** (`134 / 46189.87730727451`), proving the
 persistence layer adds **zero hot-path cost when write-through is off**, with no W1/W2 perf regression
-vs the v1.5 frozen baseline (15.7 s / 152.8 MB); plus (b) new DB round-trip / restart-rehydration /
-cross-backend parity tests for the genuinely new persistence code. Decimal end-to-end (Turso native
-DECIMAL preserves the money policy), single UUIDv7, determinism all carried.
+vs the v1.5 frozen baseline (15.7 s / 152.8 MB); plus (b) new DB round-trip / restart-rehydration tests
+for the genuinely new persistence code (in-process SQLite for the results store; testcontainers Postgres
+for the operational store). Money policy preserved on the live path (Postgres-native `Numeric`); single
+UUIDv7, determinism all carried.
 
-**Design source:** `.planning/notes/persistence-milestone-design.md` (converged seed); the open
-questions Q1–Q10 in `.planning/research/questions.md` are answered by this milestone's ecosystem research.
+**Design source:** `.planning/notes/persistence-milestone-design.md` (converged seed) + the four research
+docs in `.planning/research/` (`STACK`/`FEATURES`/`ARCHITECTURE`/`PITFALLS`/`SUMMARY`, Q1–Q10 resolved,
+committed `e4ad7c9`). Where the seed and the Owner Decisions differ, the Owner Decisions win.
 
 ## Shipped Milestone: v1.5 Backtest Performance Optimization (2026-06-26)
 
