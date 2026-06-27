@@ -66,8 +66,17 @@ class SqlSettings(BaseModel):
         On the Postgres arm the URL is resolved lazily from the ``Settings`` secret seam
         (``database_url.get_secret_value()``) — ``Settings()`` is constructed here, never at
         import. Every other (SQLite-family) arm builds a fully local URL with NO env access.
+
+        On the Postgres arm ``driver`` selects this branch ONLY: the env URL's scheme/driver
+        is authoritative and is NOT validated against the enum member (IN-02).
         """
         if self.driver is SqlDriver.POSTGRESQL_PSYCOPG2:
+            # IN-02 — on the Postgres arm ``driver`` is a BRANCH SELECTOR ONLY: the returned
+            # URL is ``Settings.database_url`` VERBATIM, so its scheme/driver (e.g. whether it
+            # carries ``+psycopg2``) is whatever ``ITRADER_DATABASE_URL`` supplies — the env
+            # URL is authoritative and is NOT reconciled against this enum member (a mismatched
+            # env scheme is honored as-is). Contrast the SQLite-family arm below, which builds
+            # the URL from ``driver.value`` itself.
             # BaseSettings populates required fields from the ITRADER_* env at runtime;
             # mypy (via pydantic's dataclass_transform) treats database_url as a required
             # ctor arg, so the no-arg env-driven construction needs a narrow ignore.
