@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: Backtest Performance Optimization
-status: milestone_complete
-stopped_at: v1.5 SHIPPED & archived 2026-06-26 (tag v1.5). No active milestone — next is N+3b Persistence via /gsd:new-milestone (999.2 persistence half / 999.3 live are backlog seeds)
-last_updated: 2026-06-26T14:30:00Z
-last_activity: 2026-06-26 -- v1.5 milestone CLOSED via /gsd-complete-milestone: archived ROADMAP/REQUIREMENTS/AUDIT to milestones/, MILESTONES.md + PROJECT.md + RETROSPECTIVE.md updated, PERF-07/08 ID collision resolved, tagged v1.5
+milestone: v1.6
+milestone_name: N+3b Persistence Foundation
+status: planning
+last_updated: "2026-06-27T13:34:53.447Z"
+last_activity: 2026-06-27
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 26
-  completed_plans: 26
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,35 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-26 — v1.5 Backtest Performance Opti
 
 ## Current Position
 
-Phase: — (v1.5 COMPLETE — Phases 1-6 + 07 + Phase 8 hot-path add-on all done)
+Phase: Not started (defining requirements)
 Plan: —
-Status: Ready for milestone close
-Last activity: 2026-06-26 -- Completed quick task 260626-dnq: byte-exact perf hot-path fixes (to_money fast-path + to_dict targeted copy)
-
-> NOTE (2026-06-25, Phase 8 add-on): `phase.complete` again advanced Current Position to **Phase 999.2**
-> (the SAME scanner artifact — memory `phase-complete-jumps-to-backlog`). Corrected manually: 999.2/999.3
-> are FUTURE-milestone backlog seeds, NOT the next phase. **Phase 8 (hot-path fusion/prebuild/msgspec,
-> branch `v1.5/phase-8-hot-path-improvments`) is COMPLETE (6/6 plans):** kept Position cache (+15% W1) +
-> to_dict cache (+2% W1) + itertuples (owner override) + `_aligned` audit; the Req-1 "fusion" was an
-> A/B-measured **−15% W1 regression** and was REVERTED (keep-only-measured; proper single-pass design
-> deferred to `.planning/todos/pending/single-pass-portfolio-valuation.md`); the **msgspec.Struct
-> migration** (Bar + full Event chain + 5 DTOs, Decimal contract intact) cleared a fresh cool A/B at
-> **+7.06% W1 / +10.64% W2@50**. Final Phase-8 locked baselines (owner sign-off tiziaco 2026-06-25):
-> **W1 15.736 s / 152.79 MB**, **W2@50 2.303 s / 163.47 MB**; gate (a) byte-exact 134/46189.87730727451,
-> mypy --strict clean (188 files), full suite 1340. Code review 0 blocker / 2 warning (both FIXED) / 3 info.
-> Next step: milestone close (`/gsd-complete-milestone`). 999.2/999.3 remain future-milestone seeds.
->
-> --- (prior v1.5 close note, retained) ---
-> `phase.complete` advanced Current Position to **Phase 06** (scanner artifact — see memory
-> `phase-complete-jumps-to-backlog`). Corrected manually: Phase 6 already ran BEFORE Phase 5 (the
-> 6-before-5 reorder), so it is NOT "next". With Phase 5 now complete, ALL SIX v1.5 phases (1-6) are
-> Complete — **v1.5 (Backtest Performance Optimization) is finished**. The next step is milestone close
-> (`/gsd-complete-milestone`), not a new phase. 999.2/999.3 remain FUTURE-milestone backlog seeds.
-> Carried todo **CLEARED 2026-06-25** (quick `260625-0qj`): Gate (b) W1/W2 baselines re-frozen on a
-> verified-cool box (`pmset` clean, in-battery HEAD drift +0.9%) — **W1 153.7 s / 162.3 MB**, **W2 4.05 s
-> @50 / 210.87 MB**. Cool same-machine A/B attributes Phase 5: **W1 −40.1%** (255.4 s→153.0 s) and
-> **W2@50 −70.2%** (13.61 s→4.05 s), Gate (a) byte-exact 134/46189.87730727451, owner sign-off tiziaco.
-> See `.planning/quick/260625-0qj-refreeze-w1-w2-baseline-cool/ATTRIBUTION.md`. v1.5 ready for milestone close.
+Status: Defining requirements
+Last activity: 2026-06-27 — Milestone v1.6 started
 
 ## Milestone Gate (v1.5 — behavior-preserving performance; applies to EVERY optimization phase)
 

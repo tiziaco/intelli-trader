@@ -22,6 +22,51 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
+## Current Milestone: v1.6 — N+3b Persistence Foundation
+
+**Goal:** Build the durable-storage + caching foundation — one swappable SQL interface
+(Turso / SQLite / Postgres selected by config, not code), a results store for backtest/optimization
+runs, concrete SQL backends for all three live operational storage seams (order mirror, portfolio
+state, strategy/signal), and a classified cache — so the backtest path stays byte-exact and N+4 Live
+Trading inherits a persistent, restart-safe system of record. Persistence half of Backlog 999.2 (the
+performance half shipped as v1.5); precedes N+4 Live Trading (999.3).
+
+**Target features:**
+- **Swappable SQL interface (the spine):** one interface, three drivers — Turso (research/optimization
+  default), SQLite (free fallback, dialect sibling), Postgres (live) — backend = config via
+  `SqlSettings`. Getting this interface right so the backend swap is config-not-code is THE win
+  (research Q1/Q2).
+- **Results store (#1):** all-SQL `runs` (lean indexed summary metrics + JSONB module settings) +
+  `run_artifacts` (one serialized frame blob per run — equity curve, trade log); every
+  backtest/optimization run persisted so a parameter sweep never lives in memory. **Substrate only** —
+  the sweep/optimization loop (Optuna sampler) is a later milestone. Frame-blob format = research Q5;
+  cross-backend JSON filtering = Q3.
+- **Live operational store (#2):** a concrete SQL storage class for EACH of the three existing
+  operational seams, all on the shared spine — order mirror (`PostgreSQLOrderStorage`, currently a
+  `NotImplementedError` stub), portfolio state (new `SqlPortfolioStateStorage` —
+  cash/position/transaction/metrics; the `PortfolioStateStorageFactory` has no SQL backend today), and
+  strategy/signal (new `SqlSignalStorage`; the `SignalStorageFactory` has no SQL backend today).
+  **Two-knob mode-awareness:** backtest = retain-all in-memory + optional end-of-run dump (write-through
+  off, zero hot-path cost); live = working-set cache + write-through + purge-on-terminalize +
+  read-through + restart rehydration (Nautilus model; research Q9/Q10).
+- **Cache classification (#3):** inventory every ad-hoc cache / `lru_cache`, classify into (a) hot-path
+  data cache, (b) storage-index lookups already solved by v1.5 secondary indexes, (c) legitimate
+  pure-function memoization — route each to its correct home; do NOT collapse into one cache (research
+  Q7/Q8).
+- **Migrations + security:** a dual embedded (Turso/SQLite) + server (Postgres) migration story
+  (Alembic vs alternatives — research Q4); FL-06 SQL-injection / hardcoded-creds hardening in
+  `SqlHandler`.
+
+**Correctness discipline (DB-gated milestone — NOT backtest-oracle-covered):** the lock is two-part —
+(a) the SMA_MACD backtest oracle stays **byte-exact** (`134 / 46189.87730727451`), proving the
+persistence layer adds **zero hot-path cost when write-through is off**, with no W1/W2 perf regression
+vs the v1.5 frozen baseline (15.7 s / 152.8 MB); plus (b) new DB round-trip / restart-rehydration /
+cross-backend parity tests for the genuinely new persistence code. Decimal end-to-end (Turso native
+DECIMAL preserves the money policy), single UUIDv7, determinism all carried.
+
+**Design source:** `.planning/notes/persistence-milestone-design.md` (converged seed); the open
+questions Q1–Q10 in `.planning/research/questions.md` are answered by this milestone's ecosystem research.
+
 ## Shipped Milestone: v1.5 Backtest Performance Optimization (2026-06-26)
 
 **SHIPPED 2026-06-26.** 8 phases (1–8, numbering reset), 26 plans, all 11 v1 requirements satisfied at
@@ -278,20 +323,18 @@ v1 requirements satisfied at audit (`milestones/v1.5-MILESTONE-AUDIT.md`):
      v1.3 (Engine Surface Completion) SHIPPED 2026-06-14 — 10 requirements.
      v1.4 (Margin, Leverage, Shorts & Trailing Stops) SHIPPED 2026-06-22 — 23 requirements.
      v1.5 (Backtest Performance Optimization) SHIPPED 2026-06-26 — 11 requirements.
-     Next: N+3b Persistence — fresh REQUIREMENTS.md created by /gsd:new-milestone. -->
+     v1.6 (N+3b — Persistence Foundation) ACTIVE from 2026-06-27 — requirements being defined. -->
 
-**No active milestone.** v1.5 (Backtest Performance Optimization) shipped 2026-06-26 — see the
-**Shipped Milestone: v1.5** section above. The next milestone is **N+3b — Persistence** (the
-split-out persistence half of Backlog 999.2); start it with `/gsd:new-milestone`, which creates a
-fresh `.planning/REQUIREMENTS.md`. v1.0 (45 reqs), v1.1 (51 reqs), v1.2 (18 reqs), v1.3 (10 reqs),
-v1.4 (23 reqs), and v1.5 (11 reqs) are shipped and recorded in the Validated section above and under
-`milestones/`.
-
-**Next milestone — Persistence** (the other half of Backlog 999.2): durable
-PostgreSQL state (orders, signals, fills, equity; `PostgreSQLOrderStorage` is currently a
-`NotImplementedError` placeholder) + FL-06 (SQL injection / hardcoded creds in `SqlHandler`). Split
-out from Performance because it is a live-path, DB-gated concern not covered by the backtest oracle,
-and sequenced AFTER the performance work so we are not persisting unvalidated behavior.
+**ACTIVE: v1.6 — N+3b Persistence Foundation** (started 2026-06-27) — see the **Current Milestone:
+v1.6** section near the top for the full goal, target features, and correctness discipline.
+Requirements are being defined (`/gsd:new-milestone` → research → `REQUIREMENTS.md` → roadmap). The
+milestone builds the durable-storage + caching foundation: one swappable SQL interface (Turso research
+/ SQLite fallback / Postgres live), an all-SQL results store (#1), concrete SQL backends for all three
+operational seams (order mirror, portfolio state, strategy/signal — #2), and a classified cache (#3) —
+a live-path, DB-gated concern **not covered by the backtest oracle**, sequenced AFTER the v1.5
+performance work so we are not persisting unvalidated behavior. v1.0 (45 reqs), v1.1 (51 reqs),
+v1.2 (18 reqs), v1.3 (10 reqs), v1.4 (23 reqs), and v1.5 (11 reqs) are shipped and recorded in the
+Validated section above and under `milestones/`.
 
 ### Out of Scope
 
@@ -449,7 +492,8 @@ Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-lo
 (forex / equities / ETF) is deferred indefinitely.
 
 ---
-*Last updated: 2026-06-26 after the **v1.5 — Backtest Performance Optimization** milestone (SHIPPED 2026-06-26). 8 phases / 26 plans / 11 v1 requirements; behavior-preserving — oracle byte-exact (134 / `46189.87730727451`) across all 8 phases, 1340/1340 suite green, `mypy --strict` clean, final W1 baseline 15.7 s / 152.8 MB. Profiler-ranked hot-path wins (order-storage indexes, running PnL accumulator, stateful O(1) indicators, int64 window cursor, msgspec migration) under keep-only-measured discipline. PERF-07/08 ID collision resolved at close (deferred items → PERF-09/10). Next: N+3b — Persistence (`/gsd:new-milestone`). v1.0/v1.1/v1.2/v1.3/v1.4/v1.5 SHIPPED — archived under `milestones/`.*
+*Last updated: 2026-06-27 — **v1.6 — N+3b Persistence Foundation** STARTED via `/gsd:new-milestone`. Scope locked through clarification: all three concerns IN (#1 all-SQL results store, #2 live operational store with a concrete SQL backend for ALL THREE seams — order mirror / portfolio state / strategy-signal — on a shared spine, #3 cache inventory & classify). Backends: Turso (research default) + SQLite (free fallback, dialect sibling) + Postgres (live), backend = config not code. Optimization sweep loop OUT (substrate only). Correctness lock is DB-gated two-part: (a) backtest oracle byte-exact (134 / `46189.87730727451`) + no W1/W2 regression (proves write-through-off inertness) + (b) new DB round-trip / rehydration / cross-backend parity tests. Seed: `.planning/notes/persistence-milestone-design.md`; research answers Q1–Q10 (`.planning/research/questions.md`). Next: ecosystem research → requirements → roadmap. v1.0–v1.5 SHIPPED — archived under `milestones/`.*
+*Earlier: 2026-06-26 after the **v1.5 — Backtest Performance Optimization** milestone (SHIPPED 2026-06-26). 8 phases / 26 plans / 11 v1 requirements; behavior-preserving — oracle byte-exact (134 / `46189.87730727451`) across all 8 phases, 1340/1340 suite green, `mypy --strict` clean, final W1 baseline 15.7 s / 152.8 MB. Profiler-ranked hot-path wins (order-storage indexes, running PnL accumulator, stateful O(1) indicators, int64 window cursor, msgspec migration) under keep-only-measured discipline. PERF-07/08 ID collision resolved at close (deferred items → PERF-09/10). Next: N+3b — Persistence (`/gsd:new-milestone`). v1.0/v1.1/v1.2/v1.3/v1.4/v1.5 SHIPPED — archived under `milestones/`.*
 *Earlier: 2026-06-25 — v1.5 Phase 5 (Incremental Indicators, PERF-05 — FRAGILE/oracle-gated, LAST) COMPLETE: all four indicators (SMA/EMA/MACD/RSI) converted to hand-written O(1) stateful float64 recurrences (`ta` dropped on the runtime path), a shared recent-bars feed layer added, and the per-tick master-frame window slice removed ENTIRELY (handler loop = `update(ticker,bar)`→`is_ready`→`generate_signal`). The SMA_MACD oracle was deliberately RE-BASELINED under owner sign-off (tiziaco, P5-D02) and came out **byte-IDENTICAL** (134 / `46189.87730727451` unchanged — the indicators only gate boolean decisions, never enter money arithmetic); cross-val PASS within 1% rel tol (backtesting.py −0.35%, backtrader exact) with no new divergence. Gate (a) correctness PASS; `mypy --strict` clean (188 files), full suite 1287, determinism double-run byte-identical. **Gate (b) (W1/W2 perf re-freeze) is the one carried-over thermal todo** — re-freeze on a verified-cool machine. With Phase 5 done, **ALL SIX v1.5 phases (1-6) are Complete → v1.5 (Backtest Performance Optimization) is FINISHED**; next step is milestone close (`/gsd-complete-milestone`). PERF-05 validated.*
 *Context update: 2026-06-24 — Phase 5 DISCUSSED + reframed. The design spec
 (`docs/superpowers/specs/2026-06-24-stateful-indicator-design.md`) + `05-CONTEXT.md` (P5-D01..D22)
