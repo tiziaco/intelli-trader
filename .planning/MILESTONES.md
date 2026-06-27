@@ -1,5 +1,91 @@
 # Milestones
 
+## v1.5 — Backtest Performance Optimization (Shipped: 2026-06-26)
+
+**Scope:** 8 phases (Phases 1–8, numbering reset), 26 plans. Promoted from the **performance half**
+of Backlog 999.2 (split out from Persistence, which becomes its own following milestone). The
+performance analog of v1.2 Consolidation: a **behavior-preserving** milestone — profiler-ranked,
+oracle-gated hot-path optimizations that make the SMA_MACD backtest materially faster while **changing
+no numbers**. Phases 7–8 were added 2026-06-25 from post-phase re-profiles. The spike
+(`perf/results/PERF-BASELINE-RESULTS.md`) IS the milestone's research.
+
+**Delivered:** The backtest hot path is faster across the board with the engine's numbers untouched.
+Every optimization phase was gated on BOTH (a) the byte-exact SMA_MACD oracle staying green AND (b) a
+measured **same-machine-A/B** W1 wall-clock improvement, re-frozen after the phase (the milestone
+deliberately attributes wins by A/B rather than the frozen-baseline diff, because the absolute W1
+number shifted mid-milestone when the Phase-1 benchmark-probe quadratic bug was fixed). The big wins:
+the #1 order-storage linear scan (~37% CPU) replaced by derived secondary indexes; the per-bar
+realised-PnL re-summation (~13%) collapsed to a running Decimal accumulator; the full-window `ta`
+indicator rebuild (~24%) replaced by hand-written O(1) stateful SMA/EMA/MACD/RSI recurrences on a
+shared recent-bars feed; per-tick `searchsorted` window slicing replaced by a monotonic int64 cursor;
+a latent O(n²) snapshot-retention copy killed via `deque(maxlen)`; and a `msgspec.Struct` migration of
+the `Bar` + full event chain (Decimal contract intact). Final W1 baseline re-frozen at **15.7 s /
+152.8 MB** on a verified-cool box.
+
+**Definition of done — achieved:** SMA_MACD oracle **byte-exact** (134 trades /
+`final_equity 46189.87730727451`) across all 8 phases — Phase 5 carried a deliberate re-baseline
+carve-out (cross-validation gated) that proved **unnecessary**, the oracle held byte-exact · full
+suite **1340/1340** green, zero warnings · `mypy --strict` clean · Decimal end-to-end (no new
+float-for-money — every fix is *less repeated work*) · single UUIDv7 · determinism double-run
+byte-identical · gate-(b) cool-machine re-freeze done.
+
+**Key accomplishments:**
+
+- **Perf measurement harness (TOOL-01/02/04, Phase 1)** — a root-Makefile `perf-*` command surface
+  (`perf-w1`/`perf-w2`/`perf-baseline`/`perf-profile`) with two cleanly separated modes (a
+  profiler-free clean benchmark that produces the gated number, and a separate Scalene
+  `--cpu-only --program-path` profile), a committed machine-readable `W1-BASELINE.json` + soft
+  regression guard (gate (b) = ≥5% wall-clock). TOOL-03 cross-validation was dropped — a
+  behavior-preserving milestone proves correctness by *invariance* (the oracle), not external agreement.
+- **Order-storage indexing (PERF-01, Phase 2)** — `get_orders_by_status`/by-portfolio/active queries
+  resolve via derived secondary indexes maintained over the flat `{id: order}` dict (which stays the
+  D-20 source of truth), eliminating the single largest W1 hotspot (~37% CPU); the `OrderStorage`
+  interface is designed so a future Postgres backend satisfies the same contract.
+- **Running PnL accumulator (PERF-02, Phase 3)** — realised PnL maintained as a running Decimal
+  accumulator updated on position close, removing the per-bar re-summation over all positions (~13% CPU),
+  mathematically equal to the prior sum at every bar.
+- **Hot-path discipline (PERF-03/04, Phase 4)** — hot-loop logging level-gated + per-bar `debug()`
+  removed + by-design admission-rejection spam demoted; `get_type_hints` memoized per class in
+  `Strategy.to_dict` — behavior-only, no numeric or log-content surface the oracle/e2e observe.
+- **Stateful indicators + shared bar cache (PERF-05, Phase 5, FRAGILE/LAST)** — SMA/EMA/MACD/RSI
+  rewritten as hand-written O(1) recurrences (dropping `ta` on the runtime path), feed-centric with
+  per-symbol/per-pair state on a shared recent-bars feed, then the per-tick master-frame window slice
+  cut; look-ahead-safe and deterministic, oracle held byte-exact under the re-baseline carve-out
+  (~24% CPU, the largest single chunk).
+- **Bar-feed window copies (PERF-06, Phase 6, optional)** — view-returning `window()` + memoized
+  offset alias + a monotonic int64 cursor replacing per-tick `searchsorted`, with all 7 look-ahead
+  bar-timing rules preserved (most visible on the W2 symbol sweep).
+- **Per-bar metrics & timestamp polish (PERF-07, Phase 7, byte-exact)** — memoized `_aligned`
+  (bounded `lru_cache`), dropped the per-bar snapshot debug log's eager arg-eval, snapshot retention →
+  `collections.deque(maxlen)` (killing a latent O(n²)), and removed the per-bar metrics-cache churn
+  (~24% W1 CPU combined; surfaced by the post-Phase-6 re-profile).
+- **Hot-path fusion, bar prebuild & msgspec (PERF-08, Phase 8, byte-exact)** — `Position`
+  net-quantity/avg-price fill-invalidated cache (+15% W1), `Strategy.to_dict` static-snapshot cache
+  (+2% W1), `itertuples` `Bar` prebuild (dropping `iterrows`' ~69k throwaway Series), and a
+  `msgspec.Struct` migration of the `Bar` + full event chain (Decimal contract intact) that cleared a
+  measure-first ≥5% W1 A/B. **Keep-only-measured discipline:** the naive mark-to-market "fusion"
+  (Req 1) was A/B-measured as a **−15% W1 regression** and **REVERTED** — the correct single-pass
+  design is deferred (`.planning/todos/pending/single-pass-portfolio-valuation.md`, profile-first gated).
+
+**Audit:** `tech_debt` status — 11/11 v1 requirements satisfied (3-source cross-referenced; TOOL ×3 +
+PERF ×8, TOOL-03 dropped), 8/8 phases verified, integration clean (the 8 independent hot-path
+optimizations compose; oracle byte-exact), full suite 1340/1340 green, 0 blockers. The non-`passed`
+status reflected only well-tracked, non-blocking tech debt — chiefly the PERF-07/08 traceability
+collision, **resolved at this close**. See `milestones/v1.5-MILESTONE-AUDIT.md`.
+
+**Tech-debt resolved at close:** the PERF-07/PERF-08 requirement-ID collision (delivered Phase 7/8
+work kept PERF-07/08; the originally-deferred items renumbered PERF-09/PERF-10 — REQUIREMENTS.md
+traceability updated) and the stale `human_needed`/`partial` status on Phase 01 verification (manual
+profiler inspection, owner-approved-deferred) and Phase 03 verification/UAT (cool-machine re-freeze,
+completed via quick task 260625-0qj + Phase 8) were all cleared. **Deferred (carried forward):** the
+correct single-pass per-bar portfolio valuation (profile-first gated, future phase); advisory Nyquist
+VALIDATION.md gaps on phases 03/04/08 (the byte-exact oracle + same-machine A/B perf gate are the real
+regression lock and ran green every phase).
+
+**Archived:** `milestones/v1.5-ROADMAP.md`, `milestones/v1.5-REQUIREMENTS.md`, `milestones/v1.5-MILESTONE-AUDIT.md`.
+
+---
+
 ## v1.4 — Margin, Leverage, Shorts & Trailing Stops (Shipped: 2026-06-22)
 
 **Scope:** 7 phases (Phases 1–6 + inserted 05.1), 35 plans, 45 tasks. Promoted from N+2 Backlog

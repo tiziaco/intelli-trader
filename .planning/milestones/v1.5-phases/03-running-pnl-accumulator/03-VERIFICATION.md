@@ -1,13 +1,15 @@
 ---
 phase: 03-running-pnl-accumulator
 verified: 2026-06-24T07:55:54Z
-status: human_needed
-score: 5/6 must-haves verified
+status: passed
+resolved: 2026-06-26
+score: 6/6 must-haves verified
 overrides_applied: 0
 human_verification:
   - test: "Re-freeze W1-BASELINE.json on a cool/quiet machine before Phase 4 gate (b)"
     expected: "W1-BASELINE.json records a wall_clock_s <= ~189.4 s (>= 5% below the current 199.4 s) with oracle_provenance final_equity 46189.87730727451 / 134 trades unchanged; the file is not gitignored."
     why_human: "The improvement is proven (same-machine A/B -15.4%, Scalene 16.21%->0%), but make perf-baseline was deliberately NOT run because the machine was thermally throttled (old code itself read 317.5 s vs 199.4 s). Re-freezing 268 s would corrupt Phase 4's reference. Requires a human run on a cool/quiet machine (main checkout, not worktree) — tracked in STATE.md line 211-216."
+    resolution: "RESOLVED 2026-06-26 — cool-machine re-freeze completed via quick task 260625-0qj (owner sign-off tiziaco, pmset -g therm clean) and superseded by Phase 8's final cool re-freeze (W1-BASELINE.json now 15.7 s / 152.8 MB, oracle stamp 46189.87730727451 / 134 intact). Confirmed in v1.5-MILESTONE-AUDIT.md footnote 2."
 ---
 
 # Phase 3: Running PnL Accumulator — Verification Report

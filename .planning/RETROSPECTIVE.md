@@ -194,6 +194,45 @@
 
 ---
 
+## Milestone: v1.5 — Backtest Performance Optimization
+
+**Shipped:** 2026-06-26
+**Phases:** 8 (Phases 1–8, numbering reset; 7–8 added mid-milestone from re-profiles) | **Plans:** 26
+
+### What Was Built
+- The profiler-guided hot-path pass over the frozen W1 baseline: a `perf-*` measurement harness (clean benchmark vs separate Scalene profile, committed `W1-BASELINE.json` + soft ≥5% guard); derived secondary order-storage indexes over the flat `{id: order}` dict (killed the #1 ~37% CPU linear scan, D-20 preserved); a running Decimal PnL accumulator (~13%); level-gated logging + memoized `get_type_hints`.
+- Hand-written O(1) stateful SMA/EMA/MACD/RSI recurrences on a shared recent-bars feed (~24%, `ta` dropped on the runtime path); a monotonic int64 window cursor replacing per-tick `searchsorted`; `_aligned` memoization + `deque(maxlen)` snapshot retention (killed a latent O(n²)); a `msgspec.Struct` migration of the `Bar` + full event chain (Decimal contract intact).
+- Behavior-preserving throughout: the SMA_MACD oracle held byte-exact (134 / `46189.87730727451`) across all 8 phases; final W1 baseline re-frozen at 15.7 s / 152.8 MB.
+
+### What Worked
+- **Keep-only-measured discipline.** Every optimization had to show an attributable same-machine-A/B win or be reverted. The Phase-8 naive mark-to-market "fusion" looked clean but A/B-measured at −15% W1 and was reverted with zero residual code — the discipline caught a plausible-but-wrong change that a frozen-baseline diff would have rubber-stamped.
+- **Attributing wins by same-machine A/B + Scalene CPU-share, not the frozen-baseline diff.** The box is thermally sensitive and a Phase-1 benchmark-probe quadratic bug shifted the absolute number mid-milestone; A/B attribution made every phase's contribution honest despite an unstable absolute reference.
+- **Isolating the FRAGILE stateful-indicator phase LAST, alone, with a pre-authorized re-baseline carve-out.** Dropping `ta` for hand-written recurrences was the one change that *could* break byte-exactness; isolating it made the (as it turned out, byte-identical) result fully attributable, and the carve-out meant a cross-validated re-baseline was ready if needed.
+- **The spike WAS the research.** `perf/results/PERF-BASELINE-RESULTS.md` (frozen baseline + ranked hotspot map + phase breakdown) drove the whole milestone — no separate research pass. The profile→fix→re-profile loop then organically surfaced Phases 7 and 8 as the next hotspot tiers.
+
+### What Was Inefficient
+- **The benchmark-probe quadratic bug cost real debugging time.** Early W1 baselines were inflated by an O(n²) full-scan in the probe itself; it masqueraded as thermal throttling for a while before being root-caused and re-frozen (153.7 s → 28.3 s). Lesson banked: validate the *measurement* harness as carefully as the code it measures.
+- **Planning-metadata drift recurred for the SIXTH milestone running.** Phases 7–8 reused the PERF-07/PERF-08 IDs that REQUIREMENTS.md already defined as deferred-v2 items; Phase 03's verification/UAT stayed `human_needed`/`partial` after the re-freeze that cleared them was done elsewhere (quick task + Phase 8). All reconciled by hand at this close. The mechanical phase-close gate proposed since v1.0 is still unbuilt.
+- **The `audit-open` quick-task false-positive recurred for the FIFTH close** — 7 complete quick tasks read `[missing]` because the scanner globs `quick/<dir>/SUMMARY.md` not `<slug>-SUMMARY.md`. Cleared again with completion markers; the durable fix is in the SDK scanner.
+- **Nyquist Wave-0 still lags** — VALIDATION.md missing on 03/04/08, partial on 05/06/07. Advisory only here: the byte-exact oracle + same-machine A/B perf gate ARE the regression lock and ran green every phase.
+
+### Patterns Established
+- **Keep-only-measured: revert any optimization that lands in A/B noise.** A "clean" change with no attributable win is churn (risk, no payoff). The revert keeps the milestone diff honest and the baseline trustworthy.
+- **Attribute perf wins by same-machine A/B + Scalene CPU-share, never the frozen-baseline diff** when the machine is thermally sensitive or the absolute number shifted mid-milestone. Re-freeze the absolute baseline only on a verified-cool box.
+- **A behavior-preserving perf milestone gates on the byte-exact oracle exactly like a cleanup milestone** (the v1.2 analog) — speed is the *only* thing allowed to change, so the oracle is the lock that makes every optimization attributable.
+
+### Key Lessons
+1. **Measure the measurement.** The biggest time sink wasn't an optimization — it was a quadratic bug in the benchmark probe that corrupted the baseline. A perf milestone's harness needs the same correctness scrutiny as the engine.
+2. **Keep-only-measured beats looks-correct.** The reverted Phase-8 fusion was clean, well-typed, byte-exact — and a −15% regression. Only same-machine A/B caught it. Attributable measurement is the real gate, not code review.
+3. **Metadata drift is now a SIX-milestone confirmed process bug and the `audit-open` lie a FIVE-close tooling bug.** Both paid again by hand. The fixes remain mechanical: a phase-close gate on `requirements-completed`/traceability, and an SDK scanner that globs `*-SUMMARY.md`.
+
+### Cost Observations
+- Model mix: not instrumented this milestone.
+- Sessions: ~4 calendar days (2026-06-22 → 2026-06-26); much of the work executed in isolated worktrees and merged via PRs (#54–#61). 18 commits on `v1.4..HEAD`; ~2.5k LOC under `itrader/` (+3.1k tests) — small, surgical, hot-path-focused diffs.
+- Notable: the oracle held byte-exact (134 / 46189.87730727451) across all 8 phases — a perf milestone that changed no numbers; the only "result change" attempted (Phase-8 fusion) was reverted.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -205,6 +244,7 @@
 | v1.2 | 6 | 23 | Consolidation via pure code-motion under the oracle — god-module split as a sequenced, isolated, LAST phase; zero re-baselines |
 | v1.3 | 6 | 20 | Two re-baseline disciplines (byte-exact vs owner-gated) in SEPARATE phases; cross-milestone enabling surface (v1.2 reconcile/) touched once; result changes attributed + cross-validated |
 | v1.4 | 7 | 35 | Large result-changing family (margin/shorts/leverage/liquidation/trailing/scale-in/pairs) reusing one side-agnostic settlement core — zero new correctness branches, spot oracle byte-exact across all 7 phases; 3 owner-signed cross-validated re-baselines; weak-oracle honesty for the pair flagship |
+| v1.5 | 8 | 26 | Behavior-preserving perf milestone (the v1.2 analog) — profiler-ranked, oracle-gated hot-path wins under **keep-only-measured** (revert anything that lands in A/B noise); per-phase attribution by same-machine A/B + Scalene CPU-share, not the frozen-baseline diff (thermally sensitive + a probe bug shifted the absolute number); FRAGILE stateful-indicator phase isolated LAST; oracle byte-exact across all 8 phases |
 
 ### Cumulative Quality
 
@@ -215,12 +255,14 @@
 | v1.2 | 58 e2e + 3 integration oracle green (full suite 851) | --strict clean (172 files) | none on result path |
 | v1.3 | 59 e2e + integration oracle green (full suite 995) | --strict clean (182 files) | none on result path |
 | v1.4 | integration oracle byte-exact + pair flagship snapshot green (full suite 1193) | --strict clean (187 files) | none on result path |
+| v1.5 | integration oracle byte-exact across all 8 phases (full suite 1340) | --strict clean | none on result path |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. **Golden-master gating with minimal sanctioned re-baselines keeps refactors trustworthy** — confirmed across v1.0 (two owner-gated re-freezes), v1.1 (zero re-baselines via additive oracle-dark leaves), and v1.2 (zero re-baselines via pure code-motion). Under a byte-exact oracle, even a 1279-line god-module split lands on first attempt.
-2. **Planning-metadata drift is a recurring process gap — now confirmed across FIVE milestones** — stale checkboxes/traceability/inconsistent SUMMARY frontmatter required manual reconciliation at close in v1.0, v1.1, v1.2, v1.3, AND v1.4 (v1.4 added a non-standard `requirements:` field name that hid INST-01/02/03 from tooling). This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty/misnamed or traceability lags VERIFICATION.md.
+2. **Planning-metadata drift is a recurring process gap — now confirmed across SIX milestones** — stale checkboxes/traceability/inconsistent SUMMARY frontmatter required manual reconciliation at close in v1.0, v1.1, v1.2, v1.3, v1.4, AND v1.5 (v1.4 hid INST-01/02/03 behind a non-standard `requirements:` field; v1.5 reused the deferred PERF-07/08 IDs for delivered work and left Phase-03 verification/UAT stale after the re-freeze that cleared it landed elsewhere). This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty/misnamed or traceability lags VERIFICATION.md.
 3. **Isolate the fragile change, move it intact, ship it last and alone — and plan its enabling surface a milestone ahead** — v1.2 Phase 6 moved `on_fill` into a bounded `reconcile/` collaborator with zero drift; v1.3 RECON-01 then refactored that exact bounded surface in a single touch, co-phased with SIG-03 under one owner-gated re-baseline. The template for any future fragile change.
-4. **Boundary tooling that lied once will lie again — now ROOT-CAUSED** — the quick-task false positive recurred verbatim in v1.1, v1.2, v1.3, and v1.4. The cause is now pinned: the `audit-open` scanner reads `quick/<dir>/SUMMARY.md` but GSD writes `<slug>-SUMMARY.md`, so completion is never seen. Fix the scanner to glob `*-SUMMARY.md`; until then, completion markers clear it.
+4. **Boundary tooling that lied once will lie again — now ROOT-CAUSED** — the quick-task false positive recurred verbatim in v1.1, v1.2, v1.3, v1.4, and v1.5. The cause is now pinned: the `audit-open` scanner reads `quick/<dir>/SUMMARY.md` but GSD writes `<slug>-SUMMARY.md`, so completion is never seen. Fix the scanner to glob `*-SUMMARY.md`; until then, completion markers clear it.
 5. **Mixing intentional result changes with cleanup is safe only when the two disciplines live in separate phases** — v1.3's byte-exact phases (1–4) and owner-gated phases (5–6) each had an unambiguous gate; v1.4 extended this to 3 owner-gated re-baselines (P4/P5/P5.1), each individually attributed and externally cross-validated.
 6. **A large feature family stays trustworthy when every new case reuses ONE validated settlement path** — v1.4 added margin/shorts/leverage/liquidation/trailing/scale-in/pairs with the spot oracle byte-exact across all 7 phases because nothing forked the side-agnostic accounting core. "No new correctness branch" as an explicit milestone constraint is the proof discipline for feature-heavy result-changing work.
+7. **For a performance milestone, attributable measurement is the gate — not code review, and not the frozen-baseline diff** — v1.5 reverted a clean, byte-exact, well-typed Phase-8 "fusion" because same-machine A/B measured it at −15% W1. When the machine is thermally sensitive (or the measurement harness itself has a bug, as v1.5's quadratic probe did), attribute every win by same-machine A/B + Scalene CPU-share and re-freeze the absolute baseline only on a verified-cool box. Keep-only-measured: revert anything that lands in A/B noise.

@@ -10,8 +10,11 @@ backtest mode** end-to-end on one reference strategy (`SMA_MACD`) over a fixed g
 v1.1): the resting-order book, brackets/OCO, fee/slippage variants, SLTP policies, sizing,
 scale in/out, and multi-strategy/multi-ticker/multi-portfolio runs are now each exercised
 end-to-end by a 58-leaf frozen golden E2E matrix — all behavior-preserving against the v1.0
-oracle. The result is a backtest engine whose results are trustworthy and regression-locked
-across the whole surface, ready for the margin/shorts and live work ahead.
+oracle. The engine then gained its **authoring + contract surfaces** (v1.3), **margin, leverage,
+first-class shorts and engine-native trailing stops** (v1.4 — it now trades on margin), and a
+**profiler-guided hot-path optimization pass** (v1.5 — materially faster with the numbers unchanged).
+The result is a backtest engine that is trustworthy, regression-locked across the whole surface, and
+fast — ready for the persistence and live work ahead.
 
 ## Core Value
 
@@ -19,96 +22,65 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
-## Current Milestone: v1.5 Backtest Performance Optimization
+## Shipped Milestone: v1.5 Backtest Performance Optimization (2026-06-26)
 
-**Goal:** Cut the frozen W1 performance baseline (240.8 s / 167.3 MB) via profiler-ranked,
-oracle-gated hot-path optimizations — **without changing a single number**. Every optimization phase
-is gated on (a) the byte-exact oracle (`tests/integration/test_backtest_oracle.py`) staying green AND
-(b) the W1 benchmark showing a measurable, locked improvement vs the frozen baseline.
+**SHIPPED 2026-06-26.** 8 phases (1–8, numbering reset), 26 plans, all 11 v1 requirements satisfied at
+audit (`milestones/v1.5-MILESTONE-AUDIT.md` — 11/11 requirements, 8/8 phases verified, integration
+clean, 1/1 E2E flow). The performance analog of v1.2 Consolidation — a **behavior-preserving**
+milestone that made the SMA_MACD backtest materially faster while **changing no numbers**. **Next
+milestone:** N+3b — Persistence (the split-out half of Backlog 999.2); start with `/gsd:new-milestone`.
 
-**Source:** `perf/results/PERF-BASELINE-RESULTS.md` — the v1.5 spike's frozen baseline + ranked
-hotspot map + §6 phase breakdown. The spike IS this milestone's research (no further research pass run).
+**Delivered:** Profiler-ranked, oracle-gated hot-path optimizations across the engine. The #1
+order-storage linear scan (~37% CPU) was replaced by derived secondary indexes over the flat
+`{id: order}` dict (D-20 source of truth preserved, Postgres-extensible interface); the per-bar
+realised-PnL re-summation (~13%) collapsed to a running Decimal accumulator; the full-window `ta`
+indicator rebuild (~24%) replaced by hand-written O(1) stateful SMA/EMA/MACD/RSI recurrences on a
+shared recent-bars feed (dropping `ta` on the runtime path); per-tick `searchsorted` window slicing
+replaced by a monotonic int64 cursor (view-returning `window()`); hot-loop logging level-gated +
+`get_type_hints` memoized; a latent O(n²) snapshot-retention copy killed via `deque(maxlen)`; and a
+`msgspec.Struct` migration of the `Bar` + full event chain (Decimal contract intact). Every phase was
+gated on BOTH (a) the byte-exact oracle staying green AND (b) a measured **same-machine-A/B** W1
+improvement, re-frozen after the phase. Final W1 baseline re-frozen at **15.7 s / 152.8 MB** on a
+verified-cool box.
 
-**Target work (ordered by payoff × safety):**
-- **P0 — Perf tooling & baseline:** root-Makefile `perf-*` targets; a two-mode runner (clean
-  *benchmark* = the gate, vs a separate Scalene `--cpu-only --html` *profile* command that is never
-  gated and never wraps the timed run); `backtesting.py` + `backtrader` cross-validation runners;
-  re-freeze the baseline before any optimization.
-- **P1 — Order-storage indexing (~37% CPU):** derived secondary indexes (portfolio/status/active)
-  over the flat `{id: order}` dict, which stays source of truth (D-20); interface designed for
-  extension so a future Postgres backend satisfies the same contract.
-- **P2 — Running PnL accumulator (~13%):** maintain realised PnL as a running total updated on
-  position close; stop the per-bar re-sum (Decimal preserved — less re-summation, never float).
-- **P3 — Hot-path logging discipline (~6% W1 / ~22% W2):** level-gate hot-loop logs; demote/sample
-  per-bar admission-rejection warnings; drop `debug()` from the per-bar path.
-- **P4 — Cache `get_type_hints` in `to_dict` (~2% W1 / ~14% W2):** per-class memoization.
-- **P5 — Stateful indicators + shared bar cache (~24%, oracle RE-BASELINED, LAST):** stateful
-  incremental indicators (drop `ta` on the runtime path) + feed-centric per-symbol fan-out + shared
-  recent-bars feed, replacing the per-bar full-window `ta` rebuild. **SUPERSEDED-BY-SPEC**
-  (`docs/superpowers/specs/2026-06-24-stateful-indicator-design.md` + phase `05-CONTEXT.md`): this is
-  a structural refactor that **deliberately RE-BASELINES** the SMA_MACD oracle (cross-validated vs
-  backtesting.py/backtrader, NOT byte-exact). The "Held throughout" byte-exact invariant carries a
-  **Phase-5 carve-out** (P5-D01).
-- **P6 — Bar-feed window copies (optional, ~4% W1 / ~22% W2):** reduce per-tick `iloc` frame copies
-  (reusable view / cached bounds), preserving the look-ahead bar-timing contract.
+**Re-baseline discipline (honored):** the SMA_MACD oracle held **byte-exact** (134 trades /
+`final_equity 46189.87730727451`) across all 8 phases. Phase 5 carried a deliberate re-baseline
+carve-out (cross-validation gated, owner sign-off) that proved **unnecessary** — the indicators only
+gate boolean decisions, never enter money arithmetic, so the oracle came out byte-identical.
+**Keep-only-measured** discipline was enforced: the naive Phase-8 mark-to-market "fusion" was
+A/B-measured as a −15% W1 regression and **reverted** (the correct single-pass design deferred,
+profile-first gated). `mypy --strict` clean, full suite **1340/1340** green (zero warnings), Decimal
+end-to-end (no new float-for-money), determinism double-run byte-identical.
 
-**Held throughout (P0–P4, P6):** byte-exact SMA_MACD oracle (134 / `46189.87730727451`); `mypy
---strict` clean; Decimal end-to-end (no new float-for-money); single UUIDv7; determinism double-run
-byte-identical. **Phase-5 carve-out (P5-D01):** Phase 5 deliberately re-baselines the oracle (drops
-`ta` on the runtime path); its lock is cross-validation (backtesting.py + backtrader, 1% rel tol) +
-a re-frozen reference, NOT byte-identity. `mypy --strict` / Decimal / UUIDv7 / determinism still hold.
+**Measurement caveat:** absolute pre/post W1 wall-clocks are not directly comparable across the
+milestone, because the Phase-1 benchmark **probe had a quadratic bug** that inflated early numbers
+(re-froze 153.7 s → 28.3 s on 2026-06-25 once fixed); per-phase wins were therefore attributed by
+same-machine A/B and Scalene CPU-share, never the frozen-baseline diff.
 
-**Progress:** P0 (Phase 1 — perf tooling & baseline) and P1 (Phase 2 — order-storage indexing)
-shipped. Phase 2 replaced the flat `{id: order}` linear scan with derived secondary indexes
-(`_active_by_portfolio` + active-only `_by_status` + shadow registry) maintained at the 5 write
-seams — the flat dict stays the source of truth (D-20), the `OrderStorage` ABC is unchanged
-(Postgres-extensible), output is byte-identical (D-06/D-08/D-09, locked by a code-review fix to the
-active `get_orders_by_status` ordering). Gate (a) byte-exact; gate (b) re-froze `W1-BASELINE.json`
-247.5 s → 199.4 s (−19.4 %), prior baseline preserved as `W1-BASELINE-phase1.json`. Phase 3 (P2 —
-running PnL accumulator, PERF-02) is next.
+**Tech-debt resolved at close:** the PERF-07/PERF-08 requirement-ID collision (delivered Phase 7/8
+work keeps PERF-07/08; the originally-deferred items renumbered PERF-09/PERF-10). **Deferred:** the
+correct single-pass per-bar portfolio valuation (`single-pass-portfolio-valuation.md`, profile-first
+gated); advisory Nyquist VALIDATION.md gaps (the byte-exact oracle + same-machine A/B perf gate are
+the real regression lock and ran green every phase).
 
-**Explicitly DEFERRED to a separate next milestone — Persistence:** PostgreSQL storage (orders,
-signals, fills, equity; `PostgreSQLOrderStorage` is a `NotImplementedError` placeholder) + FL-06
-(SQL-injection / hardcoded creds). The original Backlog 999.2 "Persistence & Performance" is **split** —
-Performance ships as v1.5; Persistence follows as its own milestone (a live-path, DB-gated concern not
-covered by the backtest oracle — a different North Star). General CONCERNS.md tech debt also stays OUT
-(its own future sweep), with opportunistic zero-behavior in-file cleanups allowed only where a perf
-phase already edits the file (notably P2 in `position_manager.py` / `portfolio.py`).
+<details>
+<summary>✅ v1.4 Margin, Leverage, Shorts & Trailing Stops — SHIPPED 2026-06-22</summary>
 
-## Shipped Milestone: v1.4 Margin, Leverage, Shorts & Trailing Stops (2026-06-22)
+7 phases (1–6 + inserted 5.1), 35 plans, all 23 requirements validated at audit
+(`milestones/v1.4-MILESTONE-AUDIT.md`). The matching-engine / risk-execution milestone — the engine
+now trades on margin. A frozen per-symbol `Instrument` value object is the single source of
+price/quantity scales, `max_leverage`, and `maintenance_margin_rate` (INST-01/02/03); positions open
+on reserved margin with effective leverage threaded signal→order→fill→transaction→position
+(MARGIN/LEV); the `LONG_ONLY` guard is gone — shorts are first-class with PnL + daily borrow-carry
+(SHORT/CARRY); bar-close maintenance-margin breach liquidates with capped loss, cross-validated
+(LIQ/XVAL); `TRAILING_STOP` ratchets favorably-only from closed-bar extremes (TRAIL); short scale-in
+through the side-agnostic SCALE-IN branch (SCALE); a market-neutral ETH/BTC pair flagship runs both
+legs end-to-end (PAIR). The SMA_MACD spot oracle held byte-exact (134 / `46189.87730727451`) across
+all 7 phases; the three result-changing re-baselines (accounting P4, trailing P5, scale-in P5.1) were
+each owner-signed (tiziaco) + externally cross-validated. `mypy --strict` clean (187 files), full
+suite 1193, determinism double-run byte-identical. Full detail in `milestones/v1.4-ROADMAP.md`.
 
-**SHIPPED 2026-06-22.** 7 phases (1–6 + inserted 5.1), 35 plans, all 23 requirements validated at
-audit (`milestones/v1.4-MILESTONE-AUDIT.md` — 23/23 requirements, 7/7 cross-phase seams, 3/3 E2E
-flows). The matching-engine / risk-execution milestone — the engine now trades on margin. **Next
-milestone:** N+3 — Persistence & Performance (Backlog 999.2); start with `/gsd:new-milestone`.
-
-**Delivered:** A frozen per-symbol `Instrument` value object (deletes the hard-coded
-`_INSTRUMENT_SCALES` table) is the single source of price/quantity scales, `max_leverage`, and
-`maintenance_margin_rate` for all downstream consumers (INST-01/02/03). Positions open on reserved
-margin (`initial_margin = notional / leverage`) with effective leverage threaded
-signal→order→fill→transaction→position across MARKET/LIMIT/STOP, over-margin routed to the audited
-REJECTED path (MARGIN-01/02/03, LEV-01/02/03). The `LONG_ONLY` guard is gone — shorts are
-first-class with short PnL and daily borrow-carry settling through the accounting core
-(SHORT-01/02/03, CARRY-01). A maintenance-margin breach is checked on bar close (honest daily-OHLCV
-proxy) and liquidates with capped loss, cross-validated against `backtesting.py`/`backtrader`
-(LIQ-01/02/03, XVAL-01). `TRAILING_STOP` is a first-class order type whose `MatchingEngine` ratchets
-favorably-only from closed-bar extremes (TRAIL-01/02/03). A short can be increased through the
-side-agnostic SCALE-IN branch with an admission-side solvency gate symmetric to the long arm
-(SCALE-01/02/03). A market-neutral ETH/BTC pair strategy runs end-to-end (94 round trips, both legs)
-through the unchanged accounting core (PAIR-01) — the flagship short-side demonstration.
-
-**Re-baseline discipline (honored):** the SMA_MACD spot oracle held byte-exact (134 trades /
-`final_equity 46189.87730727451`) across all 7 phases; the three result-changing re-baselines
-(accounting core P4, trailing P5, scale-in P5.1) were each frozen ONLY under explicit owner sign-off
-(tiziaco, 2026-06-16 / 06-17) + external cross-validation. The pair flagship is additive (a stability
-snapshot, NOT a correctness oracle). `mypy --strict` clean (187 files), full suite 1193, determinism
-double-run byte-identical.
-
-**Deferred OUT of v1.4 (tracked → N+3/N+4):** Phase B perp realism — funding-rate accrual, mark-price
-liquidation trigger, funding-data pipeline, `freqtrade` as a 4th oracle (`notes/...999.4.md` §8); the
-`Account` reconciliation abstraction (→ N+4 live); the trailing-stop native-vs-synthetic live seam (→
-N+4); `Portfolio.user_id` removal (independent cleanup); the single-sided-liquidation pair re-entry
-guard (D-07×D-12, accepted+documented for the flagship).
+</details>
 
 <details>
 <summary>✅ v1.3 Engine Surface Completion — SHIPPED 2026-06-14</summary>
@@ -123,6 +95,7 @@ BTCUSD oracle (134 / `46189.87730727451`); owner-gated (5–6) re-baselined unde
 (tiziaco, 2026-06-13) + external cross-validation. Full detail in `milestones/v1.3-ROADMAP.md`.
 
 </details>
+
 
 ## Requirements
 
@@ -265,6 +238,38 @@ cross-validated; 23/23 requirements validated at audit (`milestones/v1.4-MILESTO
   Wave-0 partial/absent (behavioral net = spot oracle + crafted scenarios + 1193 suite). See
   `milestones/v1.4-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
+**Validated in v1.5 — Backtest Performance Optimization (Phases 1–8), 2026-06-26** — the
+profiler-guided hot-path pass; behavior-preserving, SMA_MACD oracle **byte-exact** (134 /
+`46189.87730727451`) across all 8 phases, full suite 1340/1340 green, `mypy --strict` clean; 11/11
+v1 requirements satisfied at audit (`milestones/v1.5-MILESTONE-AUDIT.md`):
+- ✓ **TOOL-01/02/04 — perf measurement harness (Phase 1):** root-Makefile `perf-*` surface, a
+  two-mode runner (clean profiler-free benchmark = the gate, vs a separate Scalene `--cpu-only
+  --program-path` profile), committed `W1-BASELINE.json` + soft ≥5% regression guard. TOOL-03
+  cross-validation dropped — a behavior-preserving milestone proves correctness by *invariance*.
+- ✓ **PERF-01 — order-storage indexing (Phase 2):** derived secondary indexes over the flat
+  `{id: order}` dict (D-20 source of truth), removing the #1 ~37% CPU linear scan; Postgres-extensible.
+- ✓ **PERF-02 — running PnL accumulator (Phase 3):** realised PnL maintained on close, removing the
+  per-bar re-summation (~13%); Decimal preserved, mathematically equal at every bar.
+- ✓ **PERF-03/04 — hot-path discipline (Phase 4):** level-gated hot-loop logging + per-bar `debug()`
+  removed + admission-spam demoted; `get_type_hints` memoized per class — behavior-only.
+- ✓ **PERF-05 — stateful indicators + shared bar cache (Phase 5, FRAGILE/LAST):** SMA/EMA/MACD/RSI as
+  hand-written O(1) recurrences (dropping `ta` on the runtime path) on a shared recent-bars feed,
+  per-symbol fan-out, per-tick window slice cut; ~24% CPU. Re-baseline carve-out proved unnecessary —
+  oracle byte-identical.
+- ✓ **PERF-06 — bar-feed window copies (Phase 6, optional):** view-returning `window()` + memoized
+  offset alias + monotonic int64 cursor replacing per-tick `searchsorted`; all 7 look-ahead rules held.
+- ✓ **PERF-07 — per-bar metrics & timestamp polish (Phase 7, byte-exact):** memoized `_aligned`,
+  dropped eager snapshot-log arg-eval, snapshot retention → `deque(maxlen)` (killed a latent O(n²)),
+  removed metrics-cache churn (~24% W1 CPU combined; from the post-Phase-6 re-profile).
+- ✓ **PERF-08 — hot-path fusion, bar prebuild & msgspec (Phase 8, byte-exact):** `Position` cache
+  (+15% W1), `to_dict` static-snapshot cache, `itertuples` `Bar` prebuild, and the `msgspec.Struct`
+  migration (Bar + full event chain, Decimal intact, cleared a ≥5% W1 A/B). Keep-only-measured: the
+  naive mark-to-market "fusion" was reverted as a measured −15% W1 regression.
+- ⚠ Non-blocking at close: the PERF-07/PERF-08 ID collision was **resolved** at close (delivered work
+  keeps PERF-07/08; deferred items renumbered PERF-09/10); the correct single-pass per-bar valuation
+  is deferred (profile-first gated); advisory Nyquist VALIDATION.md gaps (the byte-exact oracle +
+  same-machine A/B perf gate are the regression lock). See `milestones/v1.5-MILESTONE-AUDIT.md`.
+
 ### Active
 
 <!-- v1.0 (Backtest-Correctness Refactor) SHIPPED 2026-06-08 — 45 requirements.
@@ -272,15 +277,17 @@ cross-validated; 23/23 requirements validated at audit (`milestones/v1.4-MILESTO
      v1.2 (Consolidation) SHIPPED 2026-06-12 — 18 requirements.
      v1.3 (Engine Surface Completion) SHIPPED 2026-06-14 — 10 requirements.
      v1.4 (Margin, Leverage, Shorts & Trailing Stops) SHIPPED 2026-06-22 — 23 requirements.
-     Next: N+3 — fresh REQUIREMENTS.md created by /gsd:new-milestone. -->
+     v1.5 (Backtest Performance Optimization) SHIPPED 2026-06-26 — 11 requirements.
+     Next: N+3b Persistence — fresh REQUIREMENTS.md created by /gsd:new-milestone. -->
 
-**Active milestone: v1.5 Backtest Performance Optimization** — see the **Current Milestone** section
-above; requirements tracked in `.planning/REQUIREMENTS.md`. This is the profiler-guided performance
-half of Backlog 999.2, promoted and **split out from Persistence**. v1.0 (45 reqs), v1.1 (51 reqs),
-v1.2 (18 reqs), v1.3 (10 reqs), and v1.4 (23 reqs) are shipped and recorded in the Validated section
-above and under `milestones/`.
+**No active milestone.** v1.5 (Backtest Performance Optimization) shipped 2026-06-26 — see the
+**Shipped Milestone: v1.5** section above. The next milestone is **N+3b — Persistence** (the
+split-out persistence half of Backlog 999.2); start it with `/gsd:new-milestone`, which creates a
+fresh `.planning/REQUIREMENTS.md`. v1.0 (45 reqs), v1.1 (51 reqs), v1.2 (18 reqs), v1.3 (10 reqs),
+v1.4 (23 reqs), and v1.5 (11 reqs) are shipped and recorded in the Validated section above and under
+`milestones/`.
 
-**Deferred to a separate next milestone — Persistence** (the other half of Backlog 999.2): durable
+**Next milestone — Persistence** (the other half of Backlog 999.2): durable
 PostgreSQL state (orders, signals, fills, equity; `PostgreSQLOrderStorage` is currently a
 `NotImplementedError` placeholder) + FL-06 (SQL injection / hardcoded creds in `SqlHandler`). Split
 out from Performance because it is a live-path, DB-gated concern not covered by the backtest oracle,
@@ -377,6 +384,10 @@ and sequenced AFTER the performance work so we are not persisting unvalidated be
 | v1.4: shorts/leverage reuse the side-agnostic accounting core (no new correctness branches) | A second settlement path for shorts/levered/scaled positions would double the surface to validate; the lock-and-settle model is already direction-agnostic | ✓ Good — shipped v1.4; LONG_ONLY guard removed via cover-arm, short scale-in and both pair legs settle through the unchanged SCALE-IN branch (SHORT/SCALE/PAIR), zero new engine branches |
 | v1.4: bar-close maintenance-margin breach check (no intrabar mark feed) | Daily OHLCV has no mark price; checking on bar close is the honest, documented proxy — mark-price liquidation is Phase-B perp realism, deferred | ✓ Good — shipped v1.4 (LIQ-01/02/03); capped-loss liquidation at fill-at-liq-price, cross-validated; mark-price trigger → N+4 Phase B |
 | v1.4: pair flagship is additive (a stability snapshot, NOT the correctness oracle) | A two-leg strategy partially cancels its own sign errors → a weak oracle by construction; the crafted XVAL-01 scenarios are the oracle | ✓ Good — shipped v1.4 (PAIR-01); ETH/BTC runs end-to-end both sides (94 round trips), snapshot-locked for drift detection only, re-baselines nothing |
+| v1.5: behavior-preserving perf milestone (re-baselines nothing) — the perf analog of v1.2 | Speed wins must not change the numbers; the byte-exact oracle is the lock so every optimization is attributable and trustworthy | ✓ Good — shipped v1.5; oracle byte-exact (134 / `46189.87730727451`) across all 8 phases, 1340/1340 suite green |
+| v1.5: attribute per-phase wins by same-machine A/B + Scalene CPU-share, NOT the frozen-baseline diff | The box is thermally sensitive AND a Phase-1 benchmark-probe quadratic bug shifted absolute numbers mid-milestone — frozen-baseline compares would over/under-credit phases | ✓ Good — every gate-(b) win attributed by A/B; baseline re-frozen only on a verified-cool box (final 15.7 s / 152.8 MB) |
+| v1.5: keep-only-measured — revert any optimization that lands in A/B noise | A "clean" optimization that shows no attributable win is churn (risk with no payoff); reverting keeps the diff honest | ✓ Good — the Phase-8 naive mark-to-market fusion was A/B-measured at −15% W1 and reverted; correct single-pass design deferred (profile-first gated) |
+| v1.5: stateful indicators isolated as a dedicated LAST phase with a re-baseline carve-out | Dropping `ta` for hand-written O(1) recurrences is FRAGILE; isolating it makes any byte-exactness regression attributable, and the carve-out pre-authorized a cross-validated re-baseline if needed | ✓ Good — shipped v1.5 (PERF-05); carve-out proved unnecessary (indicators only gate boolean decisions) — oracle came out byte-identical |
 
 ## Evolution
 
@@ -415,17 +426,21 @@ This document evolves at phase transitions and milestone boundaries.
 
 **Tech debt at v1.4 close (non-blocking, tracked):** flip/split full-settlement economics (out of scope, over-close fails loud); Phase-B perp realism (funding/mark-price liquidation) deferred to N+4; pair-strategy advisory review items (no negative/NaN β guard in `_fit_beta`, dormant for ETH/BTC; coint OLS cross-platform reproducibility snapshot limitation) — none affect the 94-round-trip flagship; the D-07×D-12 single-sided-liquidation pair re-entry guard (accepted+documented for the flagship); Nyquist Wave-0 partial/absent across phases (behavioral net = spot oracle + crafted scenarios + 1193 suite). 6 completed quick tasks were flagged only by the `gsd-sdk audit-open` filename-convention bug (it reads `quick/<dir>/SUMMARY.md` vs the GSD `<slug>-SUMMARY.md`); resolved at close with completion markers. See `milestones/v1.4-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
-## Next Milestones (after v1.4)
+**v1.5 — Backtest Performance Optimization — SHIPPED 2026-06-26.** 8 phases (numbering reset to Phase 1), 26 plans, all 11 v1 requirements satisfied at milestone audit (11/11 requirements, 8/8 phases verified, integration clean, 1/1 E2E flow — `milestones/v1.5-MILESTONE-AUDIT.md`). The performance analog of v1.2 Consolidation: a behavior-preserving milestone that made the SMA_MACD backtest materially faster while changing no numbers — the byte-exact oracle held (134 / `46189.87730727451`) across all 8 phases. Headline wins: derived secondary order-storage indexes (killed the #1 ~37% CPU linear scan, D-20 source of truth preserved), a running Decimal PnL accumulator (~13%), hand-written O(1) stateful SMA/EMA/MACD/RSI on a shared recent-bars feed (~24%, `ta` dropped on the runtime path), a monotonic int64 window cursor replacing per-tick `searchsorted`, level-gated logging + memoized `get_type_hints`, a `deque(maxlen)` snapshot retention that killed a latent O(n²), and a `msgspec.Struct` migration of the `Bar` + full event chain (Decimal intact). Every phase gated on the byte-exact oracle + a measured same-machine-A/B W1 win; **keep-only-measured** enforced (the Phase-8 naive mark-to-market fusion was reverted at −15% W1). `mypy --strict` clean, full suite 1340/1340 green, determinism double-run byte-identical. Final W1 baseline 15.7 s / 152.8 MB on a verified-cool box. Milestone v1.5 closed and archived 2026-06-26; next milestone N+3b — Persistence (Backlog 999.2 persistence half).
 
-N+2 (Margin, Leverage, Shorts & Trailing Stops) shipped as **v1.4** (2026-06-22) — see the
-**Shipped Milestone: v1.4** section above. Remaining backlog, in promotion order (full intent in
-`ROADMAP.md` Backlog); **N+3 is next**:
+**Tech debt at v1.5 close (non-blocking, tracked):** the correct single-pass per-bar portfolio valuation is deferred (`single-pass-portfolio-valuation.md`, profile-first gated — re-profile W1/W2 before building, else keep-only-measured rejects it); advisory Nyquist VALIDATION.md gaps on phases 03/04/08 + partial 05/06/07 (the byte-exact oracle + same-machine A/B perf gate are the real regression lock and ran green every phase). **Resolved at close:** the PERF-07/PERF-08 requirement-ID collision (delivered work keeps PERF-07/08; deferred items renumbered PERF-09/10), the stale `human_needed` status on Phase 01 (owner-approved-deferred profiler inspection) and Phase 03 verification/UAT (cool-machine re-freeze, done via quick task 260625-0qj + Phase 8), and 7 completed quick tasks flagged only by the `gsd-sdk audit-open` filename bug (cleared with completion markers). See `milestones/v1.5-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
-- **N+3 — Performance** (Backlog 999.2, performance half) — promoted as **v1.5** (active); the
-  profiler-guided hot-path pass over the frozen W1 baseline, oracle-gated. See **Current Milestone**.
+## Next Milestones (after v1.5)
+
+N+2 (Margin, Leverage, Shorts & Trailing Stops) shipped as **v1.4** (2026-06-22) and N+3 Performance
+shipped as **v1.5** (2026-06-26) — see the **Shipped Milestone** sections above. Remaining backlog, in
+promotion order (full intent in
+`ROADMAP.md` Backlog); **N+3b is next**:
+
 - **N+3b — Persistence** (Backlog 999.2, persistence half, split out) — durable PostgreSQL state
-  (orders, signals, fills, equity), FL-06 (SQL injection / hardcoded creds); follows v1.5 as its own
-  milestone (live-path, DB-gated, not oracle-covered).
+  (orders, signals, fills, equity; `PostgreSQLOrderStorage` is a `NotImplementedError` placeholder),
+  FL-06 (SQL injection / hardcoded creds); follows v1.5 as its own milestone (live-path, DB-gated, not
+  oracle-covered). The v1.5 order-storage indexing (PERF-01) designed its interface for this backend.
 - **N+4 — Live Trading Readiness** (Backlog 999.3) — real-time data engine, live execution, the
   `Account` reconciliation abstraction, production screener / dynamic universe membership, FL-13
   live-system test coverage, the trailing-stop native-vs-synthetic capability seam.
@@ -434,7 +449,8 @@ Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-lo
 (forex / equities / ETF) is deferred indefinitely.
 
 ---
-*Last updated: 2026-06-25 — v1.5 Phase 5 (Incremental Indicators, PERF-05 — FRAGILE/oracle-gated, LAST) COMPLETE: all four indicators (SMA/EMA/MACD/RSI) converted to hand-written O(1) stateful float64 recurrences (`ta` dropped on the runtime path), a shared recent-bars feed layer added, and the per-tick master-frame window slice removed ENTIRELY (handler loop = `update(ticker,bar)`→`is_ready`→`generate_signal`). The SMA_MACD oracle was deliberately RE-BASELINED under owner sign-off (tiziaco, P5-D02) and came out **byte-IDENTICAL** (134 / `46189.87730727451` unchanged — the indicators only gate boolean decisions, never enter money arithmetic); cross-val PASS within 1% rel tol (backtesting.py −0.35%, backtrader exact) with no new divergence. Gate (a) correctness PASS; `mypy --strict` clean (188 files), full suite 1287, determinism double-run byte-identical. **Gate (b) (W1/W2 perf re-freeze) is the one carried-over thermal todo** — re-freeze on a verified-cool machine. With Phase 5 done, **ALL SIX v1.5 phases (1-6) are Complete → v1.5 (Backtest Performance Optimization) is FINISHED**; next step is milestone close (`/gsd-complete-milestone`). PERF-05 validated.*
+*Last updated: 2026-06-26 after the **v1.5 — Backtest Performance Optimization** milestone (SHIPPED 2026-06-26). 8 phases / 26 plans / 11 v1 requirements; behavior-preserving — oracle byte-exact (134 / `46189.87730727451`) across all 8 phases, 1340/1340 suite green, `mypy --strict` clean, final W1 baseline 15.7 s / 152.8 MB. Profiler-ranked hot-path wins (order-storage indexes, running PnL accumulator, stateful O(1) indicators, int64 window cursor, msgspec migration) under keep-only-measured discipline. PERF-07/08 ID collision resolved at close (deferred items → PERF-09/10). Next: N+3b — Persistence (`/gsd:new-milestone`). v1.0/v1.1/v1.2/v1.3/v1.4/v1.5 SHIPPED — archived under `milestones/`.*
+*Earlier: 2026-06-25 — v1.5 Phase 5 (Incremental Indicators, PERF-05 — FRAGILE/oracle-gated, LAST) COMPLETE: all four indicators (SMA/EMA/MACD/RSI) converted to hand-written O(1) stateful float64 recurrences (`ta` dropped on the runtime path), a shared recent-bars feed layer added, and the per-tick master-frame window slice removed ENTIRELY (handler loop = `update(ticker,bar)`→`is_ready`→`generate_signal`). The SMA_MACD oracle was deliberately RE-BASELINED under owner sign-off (tiziaco, P5-D02) and came out **byte-IDENTICAL** (134 / `46189.87730727451` unchanged — the indicators only gate boolean decisions, never enter money arithmetic); cross-val PASS within 1% rel tol (backtesting.py −0.35%, backtrader exact) with no new divergence. Gate (a) correctness PASS; `mypy --strict` clean (188 files), full suite 1287, determinism double-run byte-identical. **Gate (b) (W1/W2 perf re-freeze) is the one carried-over thermal todo** — re-freeze on a verified-cool machine. With Phase 5 done, **ALL SIX v1.5 phases (1-6) are Complete → v1.5 (Backtest Performance Optimization) is FINISHED**; next step is milestone close (`/gsd-complete-milestone`). PERF-05 validated.*
 *Context update: 2026-06-24 — Phase 5 DISCUSSED + reframed. The design spec
 (`docs/superpowers/specs/2026-06-24-stateful-indicator-design.md`) + `05-CONTEXT.md` (P5-D01..D22)
 **supersede** the byte-exact ROADMAP entry: Phase 5 is now **Stateful Indicators + Shared Bar Cache**,
