@@ -214,7 +214,7 @@ else compiles without.
   5. (GATE-02 bound here + recurring) The new spine code is `mypy --strict` clean and the full suite is green under `filterwarnings=["error"]` with no new broad ignore; (GATE-01 recurring) the SMA_MACD backtest oracle holds byte-exact 134 / `46189.87730727451` with no W1/W2 regression vs the v1.5 baseline (15.7 s / 152.8 MB) — the spine is inert on the hot path.
 **Plans**: 5 plans across 2 waves (wave 1: 01-01, 01-02 — parallel; wave 2: 01-03, 01-04, 01-05)
 - [x] 01-01-deps-pg-harness-PLAN.md — Dev-deps (alembic, testcontainers) behind a package-legitimacy gate + the session-scoped testcontainers Postgres test harness (D-10/D-11; GATE-02 substrate)
-- [ ] 01-02-spine-core-PLAN.md — The SQL spine: storage/types.py (Uuid/UtcIsoText/json_variant, no DecimalAsText) + storage/backend.py (SqlBackend) + config/sql.py (SqlSettings, libsql slot) — composition not inheritance (SPINE-01/02/03, GATE-02)
+- [x] 01-02-spine-core-PLAN.md — The SQL spine: storage/types.py (Uuid/UtcIsoText/json_variant, no DecimalAsText) + storage/backend.py (SqlBackend) + config/sql.py (SqlSettings, libsql slot) — composition not inheritance (SPINE-01/02/03, GATE-02)
 - [ ] 01-03-spine03-roundtrip-PLAN.md — SPINE-03 cross-backend UUIDv7 + business-time round-trip (SQLite + testcontainers Postgres + determinism) + ResultsStore ABC seam (SPINE-02/03)
 - [ ] 01-04-alembic-skeleton-PLAN.md — Alembic skeleton (render_as_batch=True, empty versions/) for live Postgres; create_all() for the research store, no alembic_version (MIG-01)
 - [ ] 01-05-fl06-hardening-PLAN.md — FL-06: rework SqlHandler onto the spine — single `prices` table, SecretStr creds, parameterized; mypy-strict (SEC-01, GATE-02)
@@ -288,7 +288,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. SQL Spine + Security Hardening | 1/5 | In Progress|  |
+| 1. SQL Spine + Security Hardening | 2/5 | In Progress|  |
 | 2. Results Store (#1) | 0/TBD | Not started | - |
 | 3. Operational SQL Backends (#2) | 0/TBD | Not started | - |
 | 4. Retention + Live Write-Through (#2 live path) | 0/TBD | Not started | - |

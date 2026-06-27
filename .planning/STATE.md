@@ -4,13 +4,13 @@ milestone: v1.6
 milestone_name: N+3b Persistence Foundation
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-27T17:10:30.717Z"
+last_updated: "2026-06-27T17:24:06.131Z"
 last_activity: 2026-06-27
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundati
 ## Current Position
 
 Phase: 01 (sql-spine-security-hardening) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-06-27
 
-Progress: [██░░░░░░░░] 20%
+Progress: [████░░░░░░] 40%
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
@@ -120,6 +120,8 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 
 - [Phase 01]: 01-01: GATE-02 cross-backend test substrate established — session-scoped testcontainers Postgres pg_engine + indirect-parametrized sqlite/postgres engine fixture under tests/integration/storage/ (D-10/D-11); Docker-absent skips, never hard-fails.
 - [Phase 01]: 01-01: alembic ^1.18.5 + testcontainers[postgresql] ^4.14.2 added as dev-deps behind the blocking-human supply-chain gate (T-01-SC); kept off the runtime path to preserve GATE-01 inertness. GATE-02 left Pending (recurring gate, substrate-only).
+- [Phase 01]: 01-02: SQL spine shipped — SqlBackend (Engine+MetaData, composed not inherited, no SqlStorageBase god base) + storage/types.py (UtcIsoText deterministic UTC-isoformat business-time, json_variant JSON/JSONB, direct Uuid(as_uuid=True); no money type per D-13) + config/sql.py SqlSettings (driver-by-config, lazy SecretStr Postgres creds, unwired SQLITE_LIBSQL Turso slot). mypy --strict clean, oracle byte-exact.
+- [Phase 01]: 01-02: Only SPINE-01 marked complete; SPINE-02 (all four Sql<Concern>Storage + ResultsStore ABC), SPINE-03 (cross-backend SQLite+Postgres round-trip, plan 01-03) and GATE-02 (recurring) left Pending — structural/encoding halves established, full criteria span later plans/phases.
 
 ### Pending Todos
 
@@ -181,6 +183,7 @@ promoted INTO this milestone marked):
 v1.0–v1.5 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md files
 under `milestones/`.
 | Phase 01 P01 | 11m | 3 tasks | 5 files |
+| Phase 01 P02 | 8min | 3 tasks | 8 files |
 
 ## Bookkeeping
 
@@ -193,7 +196,7 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-27T17:07:21.870Z
+Last session: 2026-06-27T17:23:33.380Z
 Stopped at: Phase 1 context gathered
 Resume file: None
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)

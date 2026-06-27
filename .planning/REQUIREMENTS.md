@@ -16,7 +16,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### SPINE — Swappable SQL interface (the spine)
 
-- [ ] **SPINE-01**: A single `SqlBackend` + `SqlSettings` selects the SQL driver by config, not code —
+- [x] **SPINE-01**: A single `SqlBackend` + `SqlSettings` selects the SQL driver by config, not code —
   SQLite for the research store, Postgres for the operational store; the interface is shaped so a
   Turso/libSQL driver can be slotted in later without changing storage code (driver NOT added this
   milestone).
@@ -135,7 +135,7 @@ phase numbering reset to 1 for v1.6).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SPINE-01 | Phase 1 | Pending |
+| SPINE-01 | Phase 1 | Complete |
 | SPINE-02 | Phase 1 | Pending |
 | SPINE-03 | Phase 1 | Pending |
 | RESULT-01 | Phase 2 | Pending |
