@@ -94,6 +94,11 @@ def test_alembic_chain_creates_alembic_version_postgres(engine) -> None:
     ``alembic_version`` table is dropped afterwards so the shared session container stays
     clean for the other storage tests.
     """
+    # SECURITY (IN-01): ``hide_password=False`` renders the credential in PLAINTEXT. This is
+    # safe ONLY because ``engine`` is the throwaway testcontainers Postgres — a disposable,
+    # ephemeral container password with no value outside this test run. Do NOT copy this
+    # pattern to a real or shared/CI credential: keep the default ``hide_password=True`` and
+    # pass the live ``engine``/connection to Alembic instead of a rendered URL string.
     url = engine.url.render_as_string(hide_password=False)
     try:
         command.upgrade(_alembic_config(url), "head")
