@@ -96,8 +96,12 @@ class SqlHandler:
         self.logger.info("Price Database connected")
 
     def stop_engine(self) -> None:
-        """Dispose the shared backend engine (closes pooled connections)."""
-        self.engine.dispose()
+        """Dispose the shared backend engine (closes pooled connections).
+
+        Delegates to the backend that OWNS the engine (WR-03) rather than disposing the
+        shared engine directly.
+        """
+        self.backend.dispose()
 
     def to_database(self, symbol: str, prices: pd.DataFrame, replace: bool = True) -> None:
         """Store OHLCV prices for ``symbol`` in the single ``prices`` table.

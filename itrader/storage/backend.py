@@ -28,3 +28,13 @@ class SqlBackend:
     def __init__(self, settings: SqlSettings) -> None:
         self.engine: Engine = create_engine(settings.engine_url())
         self.metadata = MetaData()
+
+    def dispose(self) -> None:
+        """Dispose the engine and close all pooled connections.
+
+        Lifecycle lives on the layer that OWNS the engine (WR-03): composing storage
+        concerns must delegate here rather than each calling ``self.engine.dispose()`` on
+        the shared backend, so one concern's shutdown never flushes the pool out from under
+        the others.
+        """
+        self.engine.dispose()

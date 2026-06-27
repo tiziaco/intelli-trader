@@ -31,13 +31,15 @@ def test_backend_exposes_engine_and_metadata_no_business_logic() -> None:
     assert str(backend.engine.url) == "sqlite+pysqlite:///:memory:"
     # Instance state is exactly engine + metadata — no query caches, no business state.
     assert {name for name in vars(backend) if not name.startswith("_")} == {"engine", "metadata"}
-    # The class defines NO public methods — it is a pure Engine+MetaData holder.
+    # The ONLY public method is the engine-lifecycle ``dispose()`` (WR-03): the backend
+    # OWNS the engine, so it owns the engine's teardown. There is still NO query/business
+    # logic — it remains a pure Engine+MetaData holder otherwise.
     public_methods = {
         name
         for name in dir(SqlBackend)
         if not name.startswith("_") and callable(getattr(SqlBackend, name))
     }
-    assert public_methods == set()
+    assert public_methods == {"dispose"}
 
 
 def test_concrete_store_composes_backend_without_god_base() -> None:
