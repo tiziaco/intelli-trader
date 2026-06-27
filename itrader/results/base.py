@@ -20,7 +20,7 @@ Mirrors the narrow-ABC shape of ``strategy_handler/storage/base.py::SignalStore`
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, List, Literal
+from typing import Any, Literal
 
 # Allow-list of rankable summary metrics (WR-04). ``top_runs`` selects an ``ORDER BY``
 # column, and column names CANNOT be bound parameters — constraining the type at this ABC
@@ -88,7 +88,7 @@ class ResultsStore(ABC):
         ...
 
     @abstractmethod
-    def top_runs(self, metric: MetricName, n: int) -> List[Any]:
+    def top_runs(self, metric: MetricName, n: int) -> list[Any]:
         """Return the top-``n`` runs ranked by a summary ``metric`` (RESULT-03 cross-run query).
 
         Parameters
@@ -103,7 +103,7 @@ class ResultsStore(ABC):
 
         Returns
         -------
-        List[Any]
+        list[Any]
             The top-``n`` run summaries, best first (stable ``ORDER BY`` for determinism).
         """
         ...
