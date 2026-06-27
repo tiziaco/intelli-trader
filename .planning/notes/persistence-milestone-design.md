@@ -60,19 +60,43 @@ distinct stores but **share the one SQL interface** — that sharing IS the win.
   JSONB; SQLite/Turso JSON1. Caveat to verify: SQLite stores JSON as text (PG binary) → cross-backend
   JSON *query/filter* semantics need checking (storage is fine).
 
-### Operational write-through cache (#2): mode-switched, free in backtest
+### Operational store + cache (#2): TWO retention models, not one (cache ≠ store)
 
-Confirmed the NautilusTrader model (Cache + optional DB backend):
+NautilusTrader model (Cache as a *bounded working set* + DB as system of record). The cache and the
+store are **not** the same retention model — conflating them leaks memory in live:
 
-- **Backtest:** in-memory only, **no write-through**; optional single batch dump to SQL at end of run.
-- **Live:** write-through to Postgres active.
-- The operational cache and the storage backend are **one interface** — backtest binds it to the
-  in-memory impl (the existing `InMemoryStorage` pattern → **zero I/O on the hot path → zero perf cost**);
-  live binds it to in-memory + write-through. This is the existing `OrderStorageFactory` seam, extended
-  to portfolio/position state and made mode-aware.
-- **The one perf rule:** the hot path must never synchronously serialize when write-through is off. The
-  end-of-run dump is a single batch write. If any design forces sync serialization on the hot path,
-  reconsider — the no-perf-impact requirement is a hard constraint.
+- **Durable store = system of record.** Holds *everything*, including full closed/terminal history. SQL
+  (Postgres in live).
+- **Working-set cache = hot memory.** Holds *only what the engine needs now*: open positions,
+  pending/working orders + brackets, current account/portfolio snapshot, recent-bars window, running
+  metric accumulators. **Bounded by construction** — size tracks active trading, not run length.
+
+**Live lifecycle:**
+1. create/mutate working record → cache **and** write-through to store
+2. record **terminalizes** (order FILLED/CANCELLED/REJECTED, position CLOSED) → final state to store →
+   **evicted from the working-set cache** (optional bounded recent-N / recent-T window for status/recon)
+3. need a cold record later → **read-through** to store (off hot path; terminal records only)
+4. restart → cache empty → **rehydrate working set from store** (open positions + working orders). Cache
+   is rebuildable; store is truth.
+
+**Backtest lifecycle:** retain-all in memory (finite run, want it resident for speed), optional
+end-of-run batch dump, **no eviction**. The current `InMemoryStorage` IS this retain-all store — correct
+**because backtest is finite**, and exactly the *wrong* model for a long-running live process.
+
+**⇒ The backtest↔live difference is TWO knobs, not one:**
+
+| Knob | Backtest | Live |
+|---|---|---|
+| write-through | off (dump at end) | on |
+| **retention** | **retain-all** (finite run) | **working-set + purge-on-terminalize** |
+
+This is the existing `OrderStorageFactory` seam extended to portfolio/position state and made
+mode-aware on *both* knobs.
+
+- **Perf rule:** the hot path must never synchronously serialize when write-through is off (backtest);
+  end-of-run dump is a single batch write. No-perf-impact is a hard constraint.
+- **Memory rule (live):** the working-set cache must NOT accumulate terminal records unboundedly —
+  purge-on-terminalize (or age/count threshold) with read-through fallback to the store.
 
 ### Cache (#3): the "mess" is three different things — inventory + classify, don't unify into one class
 

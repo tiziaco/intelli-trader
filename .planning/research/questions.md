@@ -53,3 +53,10 @@ start generic.
 - **Q9.** Write-through cache pattern (NautilusTrader-style) that guarantees **zero hot-path cost when
   off** (backtest) and correct durability when on (live). Async vs sync write-through; how to keep
   serialization off the hot path; end-of-run batch-dump mechanics.
+- **Q10.** **Live retention / memory-bounding** (the second knob — cache ≠ store). How does the
+  working-set cache stay bounded in a long-running live process: purge-on-terminalize vs age/count
+  threshold (cf. Nautilus `purge_closed_orders` / `purge_closed_positions` / `purge_account_events`)?
+  What stays resident (open positions, working orders, account snapshot, running accumulators) vs is
+  evicted (closed positions, terminal orders, full transaction/metric history)? **Read-through**
+  fallback for evicted records, and **restart rehydration** of the working set from the store
+  (cache rebuildable; store = system of record). Backtest keeps retain-all (finite run).
