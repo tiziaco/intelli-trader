@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
-status: executing
+status: verifying
 stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-06-27T17:52:20.288Z"
+last_updated: "2026-06-27T18:06:06.574Z"
 last_activity: 2026-06-27
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 4
-  percent: 0
+  completed_plans: 5
+  percent: 14
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundati
 
 Phase: 01 (sql-spine-security-hardening) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-27
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
@@ -126,6 +126,7 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 - [Phase 01]: 01-03: ResultsStore(ABC) added as the spine's 4th composable concern — 4 @abstractmethods mapped 1:1 to RESULT-01/02/03, composes SqlBackend (no god base); impl deferred to Phase 2 so SPINE-02 stays Pending. No tests/unit/results/__init__.py created (package-less tests/unit convention, ref 30c0f61).
 - [Phase 01]: 01-04: MIG-01 Alembic skeleton shipped — live-Postgres chain only (one chain, render_as_batch=True both paths, empty versions/), target_metadata = spine SqlBackend MetaData, alembic.ini sqlalchemy.url BLANK with the URL resolved lazily in env.py (no Settings() at import, no credential in config; T-01-09/T-01-11). Research store uses create_all() and carries NO alembic_version — split proven by test_migrations.py on SQLite + testcontainers Postgres. MIG-01 marked complete.
 - [Phase 01]: 01-04: Fixed the stock Alembic env.py fileConfig footgun (disable_existing_loggers=False) so in-process Alembic does not disable iTrader structlog-backed stdlib loggers (caplog contamination); migration tooling kept off the runtime import graph (GATE-01 inert — import itrader.storage does not pull alembic).
+- [Phase 01]: 01-05: FL-06/SEC-01 closed — SqlHandler reworked onto SqlBackend (5th consumer), single parameterized prices table (symbol VALUE column, D-07), creds from Settings.database_url SecretStr, f-string DROP TABLE removed; lifted into mypy --strict (D-sql override dropped, zero ignores). SEC-01 COMPLETE; GATE-02 left Pending (recurring). No tests/unit/price_handler/__init__.py (package-less dir, ref 30c0f61). Oracle byte-exact, suite 1373 green.
 
 ### Pending Todos
 
@@ -190,6 +191,7 @@ under `milestones/`.
 | Phase 01 P02 | 8min | 3 tasks | 8 files |
 | Phase 01 P03 | 4min | 2 tasks | 4 files |
 | Phase 01 P04 | 7min | 2 tasks | 5 files |
+| Phase 01 P05 | 7min | 3 tasks | 3 files |
 
 ## Bookkeeping
 
@@ -202,7 +204,7 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-27T17:50:07.243Z
+Last session: 2026-06-27T18:05:13.697Z
 Stopped at: Completed 01-03-PLAN.md
 Resume file: None
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)

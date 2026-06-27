@@ -85,7 +85,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### SEC — Security hardening (FL-06)
 
-- [ ] **SEC-01**: `SqlHandler` (`itrader/price_handler/store/sql_store.py`) uses parameterized queries +
+- [x] **SEC-01**: `SqlHandler` (`itrader/price_handler/store/sql_store.py`) uses parameterized queries +
   safe quoted identifiers and sources credentials from settings/secrets — no hardcoded credentials
   (L17), no f-string DDL / `DROP TABLE` injection (L35), no unsanitized symbol-as-table-name
   (L56/58/69).
@@ -152,7 +152,7 @@ phase numbering reset to 1 for v1.6).
 | CACHE-01 | Phase 5 | Pending |
 | CACHE-02 | Phase 5 | Pending |
 | MIG-01 | Phase 1 | Complete |
-| SEC-01 | Phase 1 | Pending |
+| SEC-01 | Phase 1 | Complete |
 | GATE-01 | Phase 4 (bound) + recurring every phase | Pending |
 | GATE-02 | Phase 1 (bound) + recurring every phase | Pending |
 

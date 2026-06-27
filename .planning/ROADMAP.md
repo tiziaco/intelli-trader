@@ -217,7 +217,7 @@ else compiles without.
 - [x] 01-02-spine-core-PLAN.md — The SQL spine: storage/types.py (Uuid/UtcIsoText/json_variant, no DecimalAsText) + storage/backend.py (SqlBackend) + config/sql.py (SqlSettings, libsql slot) — composition not inheritance (SPINE-01/02/03, GATE-02)
 - [x] 01-03-spine03-roundtrip-PLAN.md — SPINE-03 cross-backend UUIDv7 + business-time round-trip (SQLite + testcontainers Postgres + determinism) + ResultsStore ABC seam (SPINE-02/03)
 - [x] 01-04-alembic-skeleton-PLAN.md — Alembic skeleton (render_as_batch=True, empty versions/) for live Postgres; create_all() for the research store, no alembic_version (MIG-01)
-- [ ] 01-05-fl06-hardening-PLAN.md — FL-06: rework SqlHandler onto the spine — single `prices` table, SecretStr creds, parameterized; mypy-strict (SEC-01, GATE-02)
+- [x] 01-05-fl06-hardening-PLAN.md — FL-06: rework SqlHandler onto the spine — single `prices` table, SecretStr creds, parameterized; mypy-strict (SEC-01, GATE-02)
 
 ### Phase 2: Results Store (#1)
 **Goal**: Every backtest/optimization run persists end-to-end on an ephemeral SQLite database — a `runs`
@@ -288,7 +288,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. SQL Spine + Security Hardening | 4/5 | In Progress|  |
+| 1. SQL Spine + Security Hardening | 5/5 | Complete   | 2026-06-27 |
 | 2. Results Store (#1) | 0/TBD | Not started | - |
 | 3. Operational SQL Backends (#2) | 0/TBD | Not started | - |
 | 4. Retention + Live Write-Through (#2 live path) | 0/TBD | Not started | - |
