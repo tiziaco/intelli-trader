@@ -629,7 +629,7 @@ def test_uuid_and_business_time_lossless_and_equal(engine):
 | A5 | testcontainers `PostgresContainer` API + Docker-absent skip pattern works as expected on this macOS box | Validation Architecture / D-10/D-11 | MEDIUM — not run in this session (testcontainers not installed). Standard usage, but the exact skip-on-`DockerException` wiring is a plan-time implementation detail to validate |
 | A6 | The Pitfall-1 `SAWarning` (Decimal→float on SQLite) is a hard failure under `filterwarnings` | (noted, out of Phase-1 scope) | LOW for Phase 1 — could NOT reproduce the SAWarning on SQLAlchemy 2.0.50 with a fractional Decimal this session; irrelevant here (no money on SQLite, D-13) but Phase 2/3 planners should re-verify rather than assume |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **D-05 — business-time format (RESOLVED, planner confirms):**
    - What we know: business `time` is a **tz-aware Python `datetime`** (microsecond max precision);
@@ -660,7 +660,7 @@ def test_uuid_and_business_time_lossless_and_equal(engine):
      Prefer (a) for a clean single SQL pattern (matches D-06's "do the rework properly"). Either way,
      GATE-02 requires the reworked code strict-clean.
 
-4. **`SYSTEM_DB_URL` reconciliation (planner scopes):**
+4. **`SYSTEM_DB_URL` reconciliation (RESOLVED — document-and-defer; `Settings.database_url` is the sole canonical source, no third source added; see 01-05 Task 2):**
    - What we know: `live_trading_system.py:34` reads a *different* env var (`SYSTEM_DB_URL`) than the
      canonical `ITRADER_DATABASE_URL`/`Settings.database_url`. `live_trading_system` is D-live, mypy-
      deferred, out of Phase-1 scope.
@@ -668,7 +668,7 @@ def test_uuid_and_business_time_lossless_and_equal(engine):
      Either point `_SYSTEM_DB_URL` derivation at `Settings` now (small, low-risk) or document-and-defer
      to the live-wiring phase. Pick one and record it so the inconsistency is not silently carried.
 
-5. **Does Phase 1 add the `ResultsStore` ABC seam now, or defer the whole `results/` package to Phase 2?**
+5. **`ResultsStore` ABC seam timing (RESOLVED — added in Phase 1 per 01-03 Task 2: just `results/base.py::ResultsStore(ABC)`, no impl; results package proper deferred to Phase 2):**
    - What we know: CONTEXT.md scope says "only the new ABC seam, if any, is touched here." SPINE-02's
      "four concerns compose the spine" is realized incrementally (impls Phases 2–3).
    - Recommendation: adding just `results/base.py::ResultsStore(ABC)` (no impl) is cheap and makes the
