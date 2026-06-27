@@ -80,7 +80,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### MIG — Migrations
 
-- [ ] **MIG-01**: The live Postgres operational store has Alembic-managed schema migrations (one chain);
+- [x] **MIG-01**: The live Postgres operational store has Alembic-managed schema migrations (one chain);
   the ephemeral research store uses `create_all()` (no Alembic).
 
 ### SEC — Security hardening (FL-06)
@@ -151,7 +151,7 @@ phase numbering reset to 1 for v1.6).
 | RETAIN-03 | Phase 4 | Pending |
 | CACHE-01 | Phase 5 | Pending |
 | CACHE-02 | Phase 5 | Pending |
-| MIG-01 | Phase 1 | Pending |
+| MIG-01 | Phase 1 | Complete |
 | SEC-01 | Phase 1 | Pending |
 | GATE-01 | Phase 4 (bound) + recurring every phase | Pending |
 | GATE-02 | Phase 1 (bound) + recurring every phase | Pending |
