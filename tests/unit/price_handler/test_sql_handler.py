@@ -17,6 +17,7 @@ package-less (no ``__init__.py``) — test basenames are unique and a ``price_ha
 package would collide on collection (ref 30c0f61).
 """
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -130,42 +131,67 @@ def test_delete_prices_removes_only_the_named_symbol(handler):
 
 # --- FL-06 grep gates (SEC-01) ----------------------------------------------
 #
-# Build the forbidden patterns from fragments so this module never embeds the literal
-# anti-pattern strings (it must not self-trip the gate it enforces).
+# Structural regex gates that match the SHAPE of the anti-pattern (not just the specific
+# legacy literal), assembled from fragments so this module never embeds the literal
+# anti-pattern strings (it must not self-trip the gate it enforces). The scan covers only
+# ``itrader/`` — this test file lives under ``tests/`` and is excluded by construction.
 
 
-def _hardcoded_credential_patterns() -> list[str]:
-    """Assemble the hardcoded-credential signatures without embedding them literally."""
-    return ["user" + ":" + "pass" + "@", ":" + "1234" + "@"]
+def _hardcoded_credential_pattern() -> "re.Pattern[str]":
+    """A structural regex for an embedded ``scheme://user:password@host`` credential.
+
+    Matches a colon-separated user/password pair wedged between ``://`` and ``@`` — the
+    SHAPE of any hardcoded DB credential (e.g. ``postgres:password@``, ``itrader:itrader123@``),
+    not just the narrow ``user:pass@`` / ``:1234@`` literals the old substring check looked
+    for. Assembled from fragments so the pattern is never embedded literally.
+    """
+    sep = "://"
+    user = "[^:" + r"\s" + "/@]+"  # one+ non-(colon/space/slash/at) chars
+    pwd = "[^@" + r"\s" + "/]+"  # one+ non-(at/space/slash) chars
+    return re.compile(sep + user + ":" + pwd + "@")
 
 
-def _fstring_in_text_patterns() -> list[str]:
-    """Assemble the ``text(<f-string>)`` injection signatures without embedding them."""
-    open_call = "text("
-    return [open_call + "f'", open_call + 'f"']
+def _fstring_in_text_pattern() -> "re.Pattern[str]":
+    """A structural regex for an f-string interpolated into a ``text(...)`` call.
+
+    Matches a ``text(`` call followed by optional whitespace/newline and an f-string prefix
+    (``f'`` or ``f"``) — so ``text( f"..."`` and a line-broken ``text(`` then ``f"...")`` are
+    both caught, which the old whitespace-free substring check missed. A negative lookbehind
+    keeps it from tripping on unrelated identifiers that merely END in ``text`` (e.g.
+    ``_operation_context(...)``). Assembled from fragments to avoid self-tripping.
+    """
+    boundary = r"(?<![A-Za-z0-9_])"  # not preceded by an identifier char
+    call = "text" + r"\("
+    fprefix = "f[" + "\"'" + "]"  # an f" or f' prefix
+    return re.compile(boundary + call + r"\s*" + fprefix)
 
 
 def _itrader_python_sources() -> list[Path]:
     return sorted(_ITRADER_DIR.rglob("*.py"))
 
 
-def _scan_for(patterns: list[str]) -> list[tuple[str, str]]:
+def _scan_for(pattern: "re.Pattern[str]") -> list[tuple[str, str]]:
+    """Scan every ``itrader/`` source for ``pattern`` over whole-file text.
+
+    Whole-file (not line-by-line) so a ``\\s`` in the pattern can span a newline, catching
+    a line-broken ``text(`` / ``f"..."`` injection. Returns ``(path, matched-text)`` pairs.
+    """
     offenders: list[tuple[str, str]] = []
     for path in _itrader_python_sources():
         content = path.read_text(encoding="utf-8")
-        for pattern in patterns:
-            if pattern in content:
-                offenders.append((str(path), pattern))
+        match = pattern.search(content)
+        if match:
+            offenders.append((str(path), match.group(0)))
     return offenders
 
 
 def test_no_hardcoded_db_credentials_anywhere_in_itrader():
     """FL-06 L17: no source file under ``itrader/`` carries a hardcoded DB credential."""
-    offenders = _scan_for(_hardcoded_credential_patterns())
+    offenders = _scan_for(_hardcoded_credential_pattern())
     assert not offenders, f"hardcoded credential pattern found: {offenders}"
 
 
 def test_no_fstring_inside_a_text_call_anywhere_in_itrader():
     """FL-06 L35: no source file under ``itrader/`` interpolates an f-string into text()."""
-    offenders = _scan_for(_fstring_in_text_patterns())
+    offenders = _scan_for(_fstring_in_text_pattern())
     assert not offenders, f"f-string inside text() found: {offenders}"
