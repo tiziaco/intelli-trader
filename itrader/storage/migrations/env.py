@@ -33,8 +33,12 @@ from itrader.storage.backend import SqlBackend
 config = context.config
 
 # Interpret the config file for Python logging (sets up loggers).
+# disable_existing_loggers=False so running Alembic IN-PROCESS (the migrations test, or
+# any embedded ops tooling) does NOT clobber the host application's already-configured
+# loggers — the stock template default (True) would disable iTrader's structlog-backed
+# stdlib loggers and contaminate later caplog assertions in the same interpreter.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Autogenerate target: the spine's SqlBackend MetaData. The default (SQLite, ``:memory:``)
 # settings build the backend ENV-FREE — no ``Settings()`` is touched here — so future
