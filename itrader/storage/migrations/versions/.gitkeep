@@ -1,0 +1,3 @@
+# Intentionally empty: no operational migrations exist until Phase 3 (D-14).
+# `alembic upgrade head` on this empty chain creates an empty `alembic_version` table
+# (zero applied revisions); the ephemeral research/results store never runs Alembic.
