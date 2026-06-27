@@ -13,7 +13,9 @@ Asserts the four behaviors of the config-not-code backend selector:
 4. Extra keys are forbidden (mass-assignment defense).
 """
 
-import importlib
+import os
+import subprocess
+import sys
 
 import pytest
 from pydantic import ValidationError
@@ -61,15 +63,22 @@ def test_postgres_arm_resolves_unmasked_secret_via_get_secret_value(
     assert "**********" not in resolved
 
 
-def test_import_does_not_instantiate_settings(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Re-exec the module body with the secret env unset — must NOT raise (Pitfall 8)."""
-    monkeypatch.delenv("ITRADER_DATABASE_URL", raising=False)
-    import itrader.config.sql as sql_module
+def test_import_does_not_instantiate_settings() -> None:
+    """Import the module in a fresh interpreter with the secret env unset (Pitfall 8).
 
-    importlib.reload(sql_module)  # would raise pydantic.ValidationError if Settings() ran at import
-    assert sql_module.SqlSettings().engine_url() == "sqlite+pysqlite:///:memory:"
+    If ``config/sql.py`` (or the ``itrader`` import chain) instantiated ``Settings()`` at
+    import, the required-no-default ``database_url`` would raise ``ValidationError`` and the
+    subprocess would exit non-zero. A clean exit proves lazy, env-free import.
+    """
+    env = {key: value for key, value in os.environ.items() if key != "ITRADER_DATABASE_URL"}
+    result = subprocess.run(
+        [sys.executable, "-c", "import itrader.config.sql; print('imported-ok')"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "imported-ok" in result.stdout
 
 
 def test_extra_keys_are_forbidden() -> None:
