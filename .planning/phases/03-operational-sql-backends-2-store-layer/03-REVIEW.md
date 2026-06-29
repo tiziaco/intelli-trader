@@ -1,8 +1,8 @@
 ---
 phase: 03-operational-sql-backends-2-store-layer
-reviewed: 2026-06-29T00:00:00Z
+reviewed: 2026-06-29T16:51:30Z
 depth: standard
-files_reviewed: 20
+files_reviewed: 19
 files_reviewed_list:
   - itrader/order_handler/storage/models.py
   - itrader/order_handler/storage/sql_storage.py
@@ -17,7 +17,6 @@ files_reviewed_list:
   - itrader/strategy_handler/storage/sql_storage.py
   - itrader/strategy_handler/storage/storage_factory.py
   - itrader/trading_system/live_trading_system.py
-  - pyproject.toml
   - tests/integration/storage/conftest.py
   - tests/integration/storage/test_migrations.py
   - tests/integration/storage/test_sql_order_storage.py
@@ -25,210 +24,125 @@ files_reviewed_list:
   - tests/integration/storage/test_sql_signal_storage.py
   - tests/unit/order/test_order_storage.py
 findings:
-  critical: 1
-  warning: 4
-  info: 4
-  total: 9
+  critical: 0
+  warning: 1
+  info: 1
+  total: 2
 status: issues_found
 ---
 
-# Phase 3: Code Review Report
+# Phase 3: Code Review Report (iteration 2)
 
-**Reviewed:** 2026-06-29
+**Reviewed:** 2026-06-29T16:51:30Z
 **Depth:** standard
-**Files Reviewed:** 20
+**Files Reviewed:** 19
 **Status:** issues_found
 
 ## Summary
 
-The store layer is well-structured: SQLAlchemy Core throughout (no f-string SQL — SEC-01 holds),
-`bindparam`-parameterized reads, idempotent `build_*_tables` registrars, a clean composition-over-
-inheritance spine, and a deterministic UUIDv7/`UtcIsoText` type vocabulary. I verified GATE-01
-inertness empirically — importing all three storage factories does **not** pull SQLAlchemy
-(`sqlalchemy loaded: False`), and the lazy-import quarantine in the `'live'` arms is correct.
-Round-trip equality for `Order`/`SignalRecord`/`Transaction`/`CashOperation`/`PortfolioSnapshot`
-is sound (constructors do not duplicate `state_changes` or override supplied timestamps).
+Re-review of the operational SQL store layer after the 7 prior fixes (CR-01 partial,
+WR-01..04, IN-01..02). I traced each applied fix against its target and against the
+entities the columns persist. **No regressions were introduced by the fixes**, and the
+fixes are correctly reflected in both `models.py` and the regenerated Alembic baseline:
 
-The dominant problem is **not** in the SQL codecs but in backend selection: the `'live'` factory
-arm and `LiveTradingSystem` default to `SqlSettings.default()`, which is SQLite `:memory:`. That
-backend (a) decays Decimal money columns to float — the exact OPS-04/Pitfall-2 hazard the design
-gates its money tests against — and (b) is ephemeral, so the "persistent audit trail" live store
-silently persists nothing. The operator's `SYSTEM_DB_URL` value is read only as a boolean and then
-discarded. Secondary issues: the self-referential bracket FK has no delete handling (Postgres
-`IntegrityError` on parent removal), and the `orders`/`signals` schema omits `NOT NULL` on
-logically-required columns.
+- **WR-01 (FK `ondelete="SET NULL"`)** — present on `orders.parent_order_id` and mirrored
+  verbatim in the migration (`fk_orders_parent_order_id_orders ... ondelete='SET NULL'`).
+  The `_delete_active` / `remove_order` paths delete child `order_state_changes` before the
+  parent and rely on SET NULL to orphan terminal children cleanly. Logic is sound.
+- **WR-02 (NOT NULL columns)** — I verified every `nullable=False` column against its source
+  entity's actual optionality: `Order` (price/quantity/filled_quantity forced through
+  `to_money` in `__post_init__`, `leverage` default `Decimal("1")`, `modification_count`
+  default 0, `created_at`/`updated_at` backfilled from `time`), `CashOperation`
+  (`fee=Decimal("0")` default; only `balance_*`/`reference_id` Optional → `nullable=True`),
+  `PortfolioSnapshot` (only `benchmark_return` Optional → `nullable=True`), `SignalRecord`
+  (money fields stay `nullable=True`). No valid entity can produce a NULL into a
+  `nullable=False` column — WR-02 is safe, no write-path regression.
+- **WR-03 (naive-datetime UTC coercion)** — `_ensure_utc` correctly normalizes the
+  `get_orders_by_time_range` bounds to tz-aware UTC, consistent with `UtcIsoText`'s
+  naive-rejection and UTC-normalizing codec; the ISO-text range/ORDER-BY comparisons stay
+  chronologically correct (Python `isoformat` emits 0-or-6 fractional digits, and the fixed
+  `+00:00` offset keeps lexicographic == chronological).
+- **WR-04 (typed `ConfigurationError`)** — all three factories raise `ConfigurationError`
+  for unknown environments; the portfolio factory also raises it for a missing
+  `portfolio_id` on the live arm. Consistent.
+- **IN-01/IN-02** — `sys`/`ErrorEvent` are module-level in `live_trading_system.py` and used
+  in `_publish_and_continue`; no unused import remains.
 
-## Critical Issues
+The single remaining issue is the unfixed *other half* of CR-01: the call site
+(`live_trading_system`) was hardened to "Postgres-or-raise," but the factory defaults it
+delegates to still silently fall back to a money-decaying SQLite backend on the `'live'`
+arm. See WR-01 below.
 
-### CR-01: `'live'` storage factories default to SQLite `:memory:` — money decays to float, nothing persists, `SYSTEM_DB_URL` value is ignored
+## Deferred-by-design (NOT re-flagged)
 
-**File:** `itrader/order_handler/storage/storage_factory.py:60`, `itrader/strategy_handler/storage/storage_factory.py:77-79`, `itrader/portfolio_handler/storage/storage_factory.py:83-87`, `itrader/trading_system/live_trading_system.py:126-144`
-
-**Issue:**
-All three `'live'` arms build a default backend from `SqlSettings.default()` when no `backend` is
-injected:
-```python
-resolved = backend if backend is not None else SqlBackend(SqlSettings.default())
-```
-`SqlSettings.default()` is hard-pinned to SQLite `:memory:` (`itrader/config/sql.py:109-116` —
-`driver=SQLITE_PYSQLITE, database=":memory:"`). Three concrete consequences:
-
-1. **Money decays to float (locked-defect violation).** Order `price`/`quantity`/`leverage`,
-   reservation/locked-margin amounts, and signal money are `sqlalchemy.Numeric`. On a SQLite
-   backend `Numeric` rides REAL affinity and loses precision (e.g. the
-   `Decimal("1234.567890123456789")` reservation in `test_reservation_money_exact_full_precision`).
-   The test suite **gates every money assertion to the `pg_backend` Postgres arm precisely because
-   SQLite decays it** — yet the production default backend is SQLite. This contradicts the
-   project's locked "Decimal end-to-end; float-for-money is a correctness defect" rule.
-
-2. **No durability.** `:memory:` SQLite vanishes when the engine is disposed / the process exits.
-   The `'live'` arm is documented as "persistent, audit trail" (storage_factory docstrings), but a
-   live run stores orders/positions/signals into an in-process database that is lost on restart —
-   the opposite of the contract.
-
-3. **`SYSTEM_DB_URL` is silently discarded.** `LiveTradingSystem.__init__` reads
-   `_SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")` and uses it only as a truthiness switch
-   (line 126), then calls `OrderStorageFactory.create('live')` with **no backend** (line 140). The
-   actual connection string the operator configured is never passed to the factory (the legacy
-   `db_url` arg was removed), so setting `SYSTEM_DB_URL=postgresql://…` produces a SQLite `:memory:`
-   store, not the requested Postgres. The `except NotImplementedError` fallback (lines 141-144) is
-   dead code — the factory no longer raises it — so the misconfiguration is completely silent.
-
-**Fix:**
-Make the `'live'` arm fail loud instead of silently materializing a SQLite store (consistent with
-the config layer's "no working secret defaults" philosophy), and thread the real backend/URL:
-```python
-# storage_factory.py (all three) — require an operational backend, do not invent a sqlite default
-elif environment == 'live':
-    if backend is None:
-        raise ConfigurationError(
-            "backend", None,
-            "the 'live' storage arm requires an injected operational SqlBackend "
-            "(Postgres); refusing to default to SQLite :memory: (money decay + no durability)",
-        )
-    from .sql_storage import SqlOrderStorage
-    return SqlOrderStorage(backend)
-```
-```python
-# live_trading_system.py — build the Postgres backend from the configured URL and inject it
-from itrader.config.sql import SqlSettings, SqlDriver
-from itrader.storage import SqlBackend
-from pydantic import SecretStr
-backend = SqlBackend(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2, url=SecretStr(_SYSTEM_DB_URL)))
-order_storage = OrderStorageFactory.create('live', backend=backend)
-```
-If Phase 4 truly owns the wiring, the interim default must still be Postgres-or-raise, never SQLite.
+IN-03 / IN-04 were intentionally skipped to preserve documented SQL/in-memory backend
+parity. I reviewed the parity contract (e.g. `_delete_active` ACTIVE-only deletes mirroring
+the in-memory `is_active` semantics; `search_orders` allow-list mirroring the in-memory
+`hasattr` guard; `count_orders_by_status` returning status `.name` keys) and the skip
+rationale holds — diverging the SQL backend from the in-memory contract would break the
+GATE-02 cross-backend parity these stores are built against. Not actionable.
 
 ## Warnings
 
-### WR-01: Bracket parent deletion can raise `IntegrityError` on Postgres (self-ref FK, no `ON DELETE`)
+### WR-01: `'live'` factory arm defaults to a money-decaying SQLite backend (CR-01 remainder)
 
-**File:** `itrader/order_handler/storage/models.py:84-90`, `itrader/order_handler/storage/sql_storage.py:299-347`
+**File:** `itrader/order_handler/storage/storage_factory.py:60`
+**Also:** `itrader/portfolio_handler/storage/storage_factory.py:89-92`,
+`itrader/strategy_handler/storage/storage_factory.py:77-78`
 
-**Issue:**
-`orders.parent_order_id` is `ForeignKey("orders.id")` with no `ondelete=` and no `child_order_ids`
-column. The delete paths (`remove_order`, `_delete_active` → `remove_orders_by_ticker` /
-`clear_portfolio_orders`) delete a matched order without nulling or cascading its children. On
-Postgres, deleting a bracket **parent** while a child row still references it raises
-`IntegrityError` (FK RESTRICT). This is reachable: `_delete_active` filters to ACTIVE orders only,
-so an active parent whose child has already gone terminal (FILLED/CANCELLED) is deleted while the
-terminal child still points at it. The in-memory backend has no FK and removes freely, so this is
-also a behavioral divergence the parity tests do not cover (the round-trip tests never delete a
-bracket).
+**Issue:** All three `'live'` arms build `SqlBackend(SqlSettings.default())` when no
+`backend` is injected, and `SqlSettings.default()` pins `driver=SQLITE_PYSQLITE,
+database=":memory:"` (`itrader/config/sql.py:109-116`). The order, portfolio-state, and
+signal stores persist **Decimal money** (`price`, `quantity`, `leverage`, reservation /
+locked-margin / snapshot amounts, `stop_loss`, etc.) into `Numeric` columns. On a
+SQLite-family backend `Numeric` decays to float storage (the project's own "Pitfall 2 —
+money never lands on SQLite"; the round-trip tests gate every money assertion to the
+`pg_backend` Postgres arm precisely for this reason). So `OrderStorageFactory.create('live')`
+with no backend returns a store that silently loses money precision on read — the exact
+defect CR-01 documented ("`create('live')` with no backend … silently materialized a SQLite
+:memory: store (money decay + no durability)"). CR-01's fix patched only the
+`live_trading_system` call site (Postgres-or-raise, no SQLite fallback); the factory default
+it delegates to still embodies the trap. It is reachable today:
+`test_create_live_storage_returns_sql_backend` constructs exactly this SQLite-backed
+`SqlOrderStorage` (it just never asserts money), and any Phase-4 / direct caller invoking
+`create('live')` without a backend inherits the decay.
 
-**Fix:** Either declare `ForeignKey("orders.id", ondelete="SET NULL")` (and reflect it in the
-migration) so children are orphaned cleanly, or in the delete paths null the children's
-`parent_order_id` (or delete the whole bracket) before deleting the parent. Add a deletion test
-over a parent+child bracket on the `pg_backend` arm.
+**Fix:** Make the operational `'live'` arm fail-closed instead of defaulting to SQLite,
+matching the CR-01 "Postgres-or-raise (no SQLite fallback)" decision. Either require an
+injected `backend`, or default to the Postgres driver so the credential validator fires:
 
-### WR-02: `orders` / `signals` / `order_state_changes` schema allows NULL on logically-required columns
+```python
+elif environment == 'live':
+    from itrader.config.sql import SqlDriver, SqlSettings
+    from itrader.storage import SqlBackend
+    from .sql_storage import SqlOrderStorage
 
-**File:** `itrader/order_handler/storage/models.py:64-96`, `itrader/strategy_handler/storage/models.py:58-69`, migration `…operational_baseline.py:73-101,129-176`
+    if backend is None:
+        # Operational money-bearing store must never silently land on SQLite
+        # (Numeric -> float decay). Default to the Postgres arm, whose
+        # _require_pg_credentials validator fails loud when unconfigured.
+        backend = SqlBackend(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
+    return SqlOrderStorage(backend)
+```
 
-**Issue:**
-The `positions`/`transactions`/`cash_operations`/`equity_snapshots` tables correctly mark required
-columns `nullable=False`, but the `orders` table leaves `time`, `type`, `status`, `ticker`,
-`action`, `price`, `quantity`, `exchange`, `strategy_id`, `portfolio_id`, `filled_quantity`,
-`created_at`, `updated_at`, `modification_count`, and `leverage` at the implicit `nullable=True`
-default — likewise `signals` and `order_state_changes`. The `Order`/`SignalRecord` entities treat
-these as non-null, so the database silently fails to enforce an invariant the rest of the system
-relies on (defense-in-depth gap; a partial write or a future buggy caller can persist a NULL where
-`_row_to_order` will then crash on `OrderType(None)`).
-
-**Fix:** Add `nullable=False` to the logically-required columns in `build_order_tables` /
-`build_signal_tables`, regenerate the Alembic baseline so DDL matches, and keep the model the single
-source of truth.
-
-### WR-03: `get_orders_by_time_range` raises mid-query on naive datetimes; range relies on text ordering
-
-**File:** `itrader/order_handler/storage/sql_storage.py:407-420`
-
-**Issue:**
-`created_at` is `UtcIsoText` (a `String`-backed `TypeDecorator`). The clauses
-`created_at >= start_time` / `<= end_time` bind the bounds through
-`UtcIsoText.process_bind_param`, which **raises `ValueError` on any timezone-naive datetime**
-(types.py:52-58). A caller passing a naive `datetime` (a common default) gets an exception thrown
-from inside the query method rather than a clean empty/filtered result. Additionally the predicate
-is a lexicographic comparison over ISO text; it is correct only while every row is UTC isoformat —
-a latent fragility if the encoding ever admits a non-UTC offset.
-
-**Fix:** Validate/normalize the bounds at the method boundary (raise a typed domain error, or
-coerce naive→UTC explicitly) so the failure mode is documented and not a raw `ValueError` from the
-codec; add a test covering naive and tz-aware bounds.
-
-### WR-04: `PortfolioStateStorageFactory` raises plain `ValueError`, diverging from the typed-exception convention
-
-**File:** `itrader/portfolio_handler/storage/storage_factory.py:73-75,88-92`
-
-**Issue:**
-`OrderStorageFactory` and `SignalStorageFactory` raise `ConfigurationError` for an unknown
-environment, but `PortfolioStateStorageFactory` raises a bare `ValueError` both for an unknown
-environment and for a missing `portfolio_id`. The project convention (CLAUDE.md error-handling
-section) is "raise typed exceptions, not bare `Exception`." This inconsistency means callers cannot
-catch storage-construction failures uniformly across the three factories.
-
-**Fix:** Raise `ConfigurationError("environment", environment, …)` and
-`ConfigurationError("portfolio_id", None, …)` to match the sibling factories.
+Apply the same change to the portfolio-state and signal factories.
 
 ## Info
 
-### IN-01: Unused `import json` in `live_trading_system.py`
+### IN-01: `get_order_history` uses truthiness instead of `is not None` for `from_status`
 
-**File:** `itrader/trading_system/live_trading_system.py:6`
-
-**Issue:** `json` is imported but never referenced in the module.
-**Fix:** Remove the import.
-
-### IN-02: Stale docstring in `PortfolioStateStorageFactory`
-
-**File:** `itrader/portfolio_handler/storage/storage_factory.py:26`
-
-**Issue:** The class docstring still reads "PostgreSQL backend for live trading (deferred to
-D-sql)", but the `'live'` arm is now implemented (`SqlPortfolioStateStorage`).
-**Fix:** Update the docstring to describe the implemented SQL spine backend.
-
-### IN-03: `get_pending_orders(portfolio_id)` keys the nested dict by the argument, not `order.portfolio_id`
-
-**File:** `itrader/order_handler/storage/sql_storage.py:371-375`
-
-**Issue:** The filtered path returns `{portfolio_id: {...}}` using the literal argument, while the
-`None` path keys by the rebuilt `order.portfolio_id`. If a caller ever passes a non-UUID `IdLike`
-(`str`/`int`) the key type diverges from the unfiltered path.
-**Fix:** Key by `order.portfolio_id` in both branches for parity.
-
-### IN-04: SQL stores silently no-op for non-UUID `IdLike` order ids
-
-**File:** `itrader/order_handler/storage/sql_storage.py:299-302,350-355,422-425`
-
-**Issue:** `IdLike = Union[str, int, uuid.UUID]`, but `remove_order` / `get_order_by_id` /
-`get_order_history` early-return `False`/`None`/`[]` for any non-`uuid.UUID`. A caller passing a
-string UUID gets a silent miss rather than a coercion or error — a quiet divergence from the ABC's
-declared `IdLike` contract.
-**Fix:** Either narrow the SQL-store signatures to `uuid.UUID`, or coerce string/int inputs via
-`uuid.UUID(...)` before querying.
+**File:** `itrader/order_handler/storage/sql_storage.py:447`
+**Issue:** `OrderStatus(from_value).name if from_value else None` relies on every
+`OrderStatus.value` being truthy. It is today (all enum values are non-empty strings), so
+this is currently equivalent to `is not None`, but it is a latent fragility: if a status
+with a falsy `.value` (e.g. `""`) were ever added, a present-but-falsy `from_status` would
+be misreported as `None`. The sibling `_load_state_changes` (line 217) already uses the
+explicit `is not None` guard.
+**Fix:** `OrderStatus(from_value).name if from_value is not None else None` for consistency
+with the rest of the codec.
 
 ---
 
-_Reviewed: 2026-06-29_
+_Reviewed: 2026-06-29T16:51:30Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
