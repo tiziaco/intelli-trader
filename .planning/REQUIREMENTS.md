@@ -16,7 +16,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### SPINE — Swappable SQL interface (the spine)
 
-- [ ] **SPINE-01**: A single `SqlBackend` + `SqlSettings` selects the SQL driver by config, not code —
+- [x] **SPINE-01**: A single `SqlBackend` + `SqlSettings` selects the SQL driver by config, not code —
   SQLite for the research store, Postgres for the operational store; the interface is shaped so a
   Turso/libSQL driver can be slotted in later without changing storage code (driver NOT added this
   milestone).
@@ -24,7 +24,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   strategy `SignalStore`) plus a new `ResultsStore` ABC are each implemented by exactly one
   `Sql<Concern>Storage` class that **composes** the shared `SqlBackend` — one class per concern, no
   cross-concern god base.
-- [ ] **SPINE-03**: UUIDv7 ids and business-time timestamps persist and round-trip **losslessly**
+- [x] **SPINE-03**: UUIDv7 ids and business-time timestamps persist and round-trip **losslessly**
   through the SQL layer on both SQLite and Postgres — single UUIDv7 scheme and determinism preserved, no
   wall-clock writes, no second ID scheme.
 
@@ -80,12 +80,12 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### MIG — Migrations
 
-- [ ] **MIG-01**: The live Postgres operational store has Alembic-managed schema migrations (one chain);
+- [x] **MIG-01**: The live Postgres operational store has Alembic-managed schema migrations (one chain);
   the ephemeral research store uses `create_all()` (no Alembic).
 
 ### SEC — Security hardening (FL-06)
 
-- [ ] **SEC-01**: `SqlHandler` (`itrader/price_handler/store/sql_store.py`) uses parameterized queries +
+- [x] **SEC-01**: `SqlHandler` (`itrader/price_handler/store/sql_store.py`) uses parameterized queries +
   safe quoted identifiers and sources credentials from settings/secrets — no hardcoded credentials
   (L17), no f-string DDL / `DROP TABLE` injection (L35), no unsanitized symbol-as-table-name
   (L56/58/69).
@@ -135,9 +135,9 @@ phase numbering reset to 1 for v1.6).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SPINE-01 | Phase 1 | Pending |
+| SPINE-01 | Phase 1 | Complete |
 | SPINE-02 | Phase 1 | Pending |
-| SPINE-03 | Phase 1 | Pending |
+| SPINE-03 | Phase 1 | Complete |
 | RESULT-01 | Phase 2 | Pending |
 | RESULT-02 | Phase 2 | Pending |
 | RESULT-03 | Phase 2 | Pending |
@@ -151,8 +151,8 @@ phase numbering reset to 1 for v1.6).
 | RETAIN-03 | Phase 4 | Pending |
 | CACHE-01 | Phase 5 | Pending |
 | CACHE-02 | Phase 5 | Pending |
-| MIG-01 | Phase 1 | Pending |
-| SEC-01 | Phase 1 | Pending |
+| MIG-01 | Phase 1 | Complete |
+| SEC-01 | Phase 1 | Complete |
 | GATE-01 | Phase 4 (bound) + recurring every phase | Pending |
 | GATE-02 | Phase 1 (bound) + recurring every phase | Pending |
 
