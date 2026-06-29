@@ -34,7 +34,19 @@ from typing import Any
 
 import pandas as pd
 
-from itrader.reporting.metrics import PERIODS
+from itrader.outils.time_parser import to_timedelta
+from itrader.reporting.metrics import (
+    PERIODS,
+    cagr,
+    calmar,
+    compute_returns,
+    max_drawdown,
+    profit_factor,
+    sharpe,
+    sortino,
+    total_return,
+    win_rate,
+)
 from itrader.results.records import RunMetrics
 
 # The result-relevant per-strategy knobs kept in ``run_portfolios.params`` (D-11).
@@ -172,7 +184,29 @@ def build_run_metrics(
     never reimplemented), incl. the two derived metrics ``total_return`` and
     ``calmar``. All 11 ``METRIC_NAMES`` are populated.
     """
-    raise NotImplementedError
+    # astype(float) keeps the empty-run path warning-free (an empty frame's column is
+    # object-dtype) and the populated path float-native (mirrors reporting/summary.py).
+    equity = equity_frame["total_equity"].astype(float)
+    returns = compute_returns(equity)
+    final_equity = float(equity.iloc[-1]) if not equity.empty else 0.0
+    total_realised_pnl = (
+        float(trades_frame["realised_pnl"].sum()) if not trades_frame.empty else 0.0)
+    # Every value comes from reporting/metrics.py — the single formula source (D-08).
+    # total_return and calmar are the two derived metrics, obtained from the metrics
+    # helpers so the formula stays single-sourced (never reimplemented here).
+    return RunMetrics(
+        sharpe=float(sharpe(returns, periods)),
+        sortino=float(sortino(returns, periods)),
+        cagr=float(cagr(equity, periods)),
+        calmar=float(calmar(equity, periods)),
+        max_drawdown=float(max_drawdown(equity)),
+        profit_factor=float(profit_factor(trades_frame)),
+        win_rate=float(win_rate(trades_frame)),
+        total_return=float(total_return(equity)),
+        final_equity=final_equity,
+        total_realised_pnl=total_realised_pnl,
+        trade_count=float(len(trades_frame)),
+    )
 
 
 def build_aggregate_equity_curve(equity_frames: list[pd.DataFrame]) -> pd.Series:
@@ -182,7 +216,23 @@ def build_aggregate_equity_curve(equity_frames: list[pd.DataFrame]) -> pd.Series
     forward-fills (leading region = that portfolio's starting cash), and sums across
     portfolios — mixed-timeframe-safe.
     """
-    raise NotImplementedError
+    # Outer-join is the only mixed-timeframe-correct join: an inner-join would discard
+    # the fine-resolution bars that the coarse series lacks, and an identical-grid
+    # assumption would raise on a mixed run. Each portfolio's total_equity is indexed by
+    # timestamp; concat(axis=1, join="outer") aligns them on the UNION index.
+    columns: list[pd.Series] = []
+    for position, frame in enumerate(equity_frames):
+        series = frame.set_index("timestamp")["total_equity"].astype(float)
+        series.name = position  # unique column label so concat never collides
+        columns.append(series)
+    combined = pd.concat(columns, axis=1, join="outer").sort_index()
+    # ffill carries each portfolio's last observed equity across the gaps where a
+    # coarser series has no bar; bfill then fills each column's LEADING NaN region with
+    # its first observed value (that portfolio's starting cash — pre-activity = start).
+    combined = combined.ffill().bfill()
+    aggregate = combined.sum(axis=1)
+    aggregate.name = "total_equity"
+    return aggregate
 
 
 def annual_periods(timeframes: list[str]) -> int:
@@ -191,4 +241,15 @@ def annual_periods(timeframes: list[str]) -> int:
     Returns ``PERIODS`` (365) for an empty or all-daily run, and the FINEST
     timeframe's periods-per-year (max across the run) for a mixed-timeframe run.
     """
-    raise NotImplementedError
+    if not timeframes:
+        return PERIODS
+    best = 0
+    for timeframe in timeframes:
+        bar_seconds = to_timedelta(timeframe).total_seconds()
+        if bar_seconds <= 0:
+            continue
+        # Periods-per-year for this bar; the FINEST timeframe (most bars/year) wins.
+        best = max(best, round(_SECONDS_PER_YEAR / bar_seconds))
+    # An all-daily run resolves to round(31_536_000 / 86_400) == 365 == PERIODS, so the
+    # byte-compatible daily basis is preserved; empty/degenerate falls back to PERIODS.
+    return best if best > 0 else PERIODS
