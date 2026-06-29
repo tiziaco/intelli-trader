@@ -28,12 +28,68 @@ engine run. The ``exchange`` / ``strategies`` parameters stay DUCK-TYPED. 4-spac
 indentation (matches the ``itrader/results`` layer).
 """
 
+from decimal import Decimal
+from enum import Enum
 from typing import Any
 
 import pandas as pd
 
 from itrader.reporting.metrics import PERIODS
 from itrader.results.records import RunMetrics
+
+# The result-relevant per-strategy knobs kept in ``run_portfolios.params`` (D-11).
+# A subset of ``strategy.to_dict()`` — the alpha windows present plus the risk knobs.
+# Keys absent from a given strategy's ``to_dict()`` are simply skipped.
+_PARAM_KEYS: tuple[str, ...] = (
+    "strategy_name",
+    "fast_window",
+    "slow_window",
+    "signal_window",
+    "short_window",
+    "long_window",
+    "sizing_policy",
+    "sltp_policy",
+    "direction",
+    "allow_increase",
+    "max_positions",
+)
+
+#: Seconds in a (365-day) year — the annualization numerator (D-14).
+_SECONDS_PER_YEAR = 31_536_000
+
+
+def _json_scalar(value: Any) -> Any:
+    """Narrow a value to a JSON-safe scalar (D-11 serialization edge).
+
+    ``Decimal`` -> ``float`` (the results store is all-``Float``); ``bool``/``int``/
+    ``float``/``str``/``None`` pass through; anything else (datetime, Timestamp, custom
+    object) is ``str``-coerced so the curated dict stays ``json.dumps``-safe and never
+    leaks a non-native leaf (e.g. a ``SecretStr``).
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None or isinstance(value, (int, float, str)):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    return str(value)
+
+
+def _enum_value(value: Any) -> Any:
+    """Serialize an ``Enum`` as its ``.value``; pass any other value through."""
+    return value.value if isinstance(value, Enum) else value
+
+
+def _model_envelope(model: Any) -> dict[str, Any]:
+    """Build the ``{"type","params"}`` envelope for a fee/slippage model (D-11).
+
+    ``type`` is the model class name; ``params`` is its public instance attributes
+    (non-underscore keys, sorted for determinism), each narrowed to a JSON-safe scalar.
+    Duck-typed: any object with a ``__dict__`` works (no model-specific accessor).
+    """
+    raw = vars(model) if hasattr(model, "__dict__") else {}
+    params = {key: _json_scalar(raw[key]) for key in sorted(raw) if not key.startswith("_")}
+    return {"type": type(model).__name__, "params": params}
 
 
 def curate_run_settings(
@@ -55,7 +111,27 @@ def curate_run_settings(
     CURATED serializer, NOT a ``model_dump``: it MUST NOT read ``Settings.database_url``
     or any ``SecretStr`` (credential-leak guard, T-02-03).
     """
-    raise NotImplementedError
+    # Hand-picked, flat envelope — NOT a ``model_dump`` (D-11). Every value is narrowed
+    # to a JSON-safe scalar at this serialization edge. The fee/slippage models are read
+    # off the LIVE exchange at persist time (late values), then enveloped as
+    # ``{"type","params"}``. No ``Settings``/``database_url``/``SecretStr`` is ever read.
+    return {
+        "tickers": list(tickers),
+        "timeframe": timeframe,
+        "start_date": _json_scalar(start_date),
+        "end_date": _json_scalar(end_date),
+        "starting_cash": float(starting_cash),
+        "rng_seed": int(rng_seed),
+        "fee_model": _model_envelope(exchange.fee_model),
+        "slippage_model": _model_envelope(exchange.slippage_model),
+        "market_execution": _enum_value(order_config.market_execution),
+        # Decimal venue limits narrow to float; supported symbols sort for determinism.
+        "min_order_size": float(exchange._min_order_size),
+        "max_order_size": float(exchange._max_order_size),
+        "supported_symbols": sorted(exchange._supported_symbols),
+        "simulate_failures": bool(exchange.simulate_failures),
+        "failure_rate": float(exchange.failure_rate),
+    }
 
 
 def curate_portfolio_params(strategies: list[Any]) -> dict[str, Any]:
@@ -66,7 +142,22 @@ def curate_portfolio_params(strategies: list[Any]) -> dict[str, Any]:
     lone curated dict directly; a multi-strategy portfolio returns
     ``{"strategies": [<curated dict>, ...]}``.
     """
-    raise NotImplementedError
+    curated = [_curate_one_strategy(strategy) for strategy in strategies]
+    if len(curated) == 1:
+        # Single-strategy common case — return the lone curated dict directly.
+        return curated[0]
+    # Multi-strategy portfolio — wrap so each strategy's knobs stay distinct.
+    return {"strategies": curated}
+
+
+def _curate_one_strategy(strategy: Any) -> dict[str, Any]:
+    """Keep only the result-relevant ``_PARAM_KEYS`` from ``strategy.to_dict()`` (D-06).
+
+    ``to_dict()`` already produces JSON-safe leaves (windows, ``sizing_policy`` repr,
+    ``direction.value``, ``strategy_name``), so no re-introspection is needed.
+    """
+    full = strategy.to_dict()
+    return {key: full[key] for key in _PARAM_KEYS if key in full}
 
 
 def build_run_metrics(
