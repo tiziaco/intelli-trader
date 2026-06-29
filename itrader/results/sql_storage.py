@@ -15,8 +15,9 @@ Writes (D-13):
 
 Frame codec (D-10 / RESULT-04, research PITFALLS 10/11) — byte-deterministic gzip: both
 ``mtime=0`` AND a fixed ``compresslevel`` are pinned so the same DataFrame encodes to
-byte-identical blobs across runs; the ``orient="split"`` JSON round-trips to a value-equal
-DataFrame.
+byte-identical blobs across runs; the ``orient="table"`` JSON (Table Schema) round-trips to
+a DTYPE-stable, value-equal DataFrame (CR-01 — ``orient="split"`` was lossy: datetime and
+integral-float columns decoded back as ``int64``).
 
 The store stays quarantined: it is NOT re-exported from ``itrader/results/__init__.py``
 (importing it pulls SQLAlchemy), so the backtest import path stays SQL-free (GATE-01
@@ -106,10 +107,17 @@ class SqlResultsStore(ResultsStore):
 
         Pinning BOTH ``mtime=0`` AND a fixed ``compresslevel`` is the byte-determinism
         requirement: the gzip header carries an mtime that would otherwise default to the
-        wall clock, making two encodes of the same frame differ. ``orient="split"`` is the
-        round-trip-stable JSON orientation.
+        wall clock, making two encodes of the same frame differ.
+
+        ``orient="table"`` (NOT ``"split"``) is the DTYPE-STABLE orientation (CR-01): it
+        embeds the Table Schema so ``read_json`` restores every column's dtype EXACTLY.
+        ``orient="split"`` carried no schema, so ``read_json`` fell back to a name-based
+        date heuristic — ``entry_date``/``exit_date`` decoded back as ``int64`` epoch-millis
+        and integral-valued ``float`` columns collapsed to ``int64``, breaking the D-15
+        value-equal round-trip. ``orient="table"`` is still byte-deterministic (the schema
+        is a pure function of the frame's columns/dtypes; no wall-clock content).
         """
-        payload = frame.to_json(orient="split").encode("utf-8")
+        payload = frame.to_json(orient="table", index=True).encode("utf-8")
         buf = io.BytesIO()
         with gzip.GzipFile(
             fileobj=buf, mode="wb", compresslevel=_COMPRESSLEVEL, mtime=0
@@ -120,7 +128,7 @@ class SqlResultsStore(ResultsStore):
     def _decode_frame(self, blob: bytes) -> pd.DataFrame:
         """Decode a gzip blob back to a value-equal DataFrame (D-10 / D-15 round-trip)."""
         text = gzip.decompress(blob).decode("utf-8")
-        return pd.read_json(io.StringIO(text), orient="split")
+        return pd.read_json(io.StringIO(text), orient="table")
 
     def _metric_values(self, metrics: RunMetrics) -> dict[str, Any]:
         """Read the 11 metric floats off a ``RunMetrics`` by ``METRIC_NAMES`` (D-08)."""

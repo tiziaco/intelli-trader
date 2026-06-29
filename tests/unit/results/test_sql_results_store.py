@@ -111,6 +111,31 @@ def test_codec_byte_determinism(store: SqlResultsStore) -> None:
     assert store._encode_frame(frame) == store._encode_frame(frame)
 
 
+def test_codec_roundtrip_preserves_datetime_and_integral_float_dtypes(
+    store: SqlResultsStore,
+) -> None:
+    """CR-01 — the codec is DTYPE-stable for real artifact frames.
+
+    A trade-log-shaped frame carries ``entry_date``/``exit_date`` datetime columns AND an
+    integral-valued ``float`` column (``realised_pnl``). Under the old ``orient="split"``
+    codec these decoded back as ``int64`` (epoch-millis dates / collapsed integral floats),
+    silently changing dtype. The round-trip is asserted against the **ORIGINAL** frame (not
+    a re-encoded copy), so the asymmetry the lossy codec hid is now caught.
+    """
+    frame = pd.DataFrame(
+        {
+            "entry_date": pd.to_datetime(["2020-01-01", "2020-02-01"]),
+            "exit_date": pd.to_datetime(["2020-01-15", "2020-02-15"]),
+            "side": ["BUY", "SELL"],
+            "realised_pnl": [100.0, 200.0],  # integral-valued floats
+            "avg_price": [1.5, 2.5],
+        }
+    )
+    decoded = store._decode_frame(store._encode_frame(frame))
+    # Compare against the ORIGINAL frame — the dtypes (datetime64[ns], float64) must survive.
+    assert_frame_equal(decoded, frame)
+
+
 def test_save_run_atomic_persists_run_and_portfolios(store: SqlResultsStore) -> None:
     """``save_run`` lands the ``runs`` row AND both ``run_portfolios`` rows (D-13)."""
     run_id = _run_id()
