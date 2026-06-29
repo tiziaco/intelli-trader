@@ -48,6 +48,13 @@ from itrader.storage import SqlBackend
 # byte-deterministic across runs (RESULT-04 / D-10). Changing this value changes the bytes.
 _COMPRESSLEVEL = 6
 
+# D-18 — best-first ranking is DESC for EVERY metric in this set, INCLUDING ``max_drawdown``:
+# drawdown is stored NEGATIVE (``reporting/metrics.py`` L47-56), so the value closest to zero
+# is the LEAST-bad drawdown and the LARGEST signed value → DESC. An ASC on negative drawdown
+# would surface the WORST runs. Tiebreak is ``run_id`` ASC (applied in the queries below). The
+# map is documentation + a single home for the direction invariant; every entry is "desc".
+_METRIC_DIRECTION: dict[str, str] = {name: "desc" for name in METRIC_NAMES}
+
 
 class SqlResultsStore(ResultsStore):
     """Concrete results store composing the shared SQL spine (SPINE-02, D-06/D-12/D-13).
@@ -169,14 +176,85 @@ class SqlResultsStore(ResultsStore):
         with self.engine.begin() as connection:
             connection.execute(insert(self.run_artifacts), [row])
 
-    # ------------------------------------------------------------------ reads (Task 2)
+    # ------------------------------------------------------------------ reads
     def get_artifact(
         self, run_id: uuid.UUID
     ) -> dict[tuple[uuid.UUID | None, str], pd.DataFrame]:
-        raise NotImplementedError  # implemented in Task 2
+        """Read a run's artifact frames as ``{(portfolio_id, artifact_type): frame}`` (D-15).
+
+        Parameterized read (``bindparam`` against the constant ``run_artifacts`` table). An
+        unknown ``run_id`` (no rows) raises ``ResultsNotFound`` (D-16); otherwise each row's
+        gzip blob is decoded back to a value-equal DataFrame and keyed by its identity.
+        """
+        statement = select(self.run_artifacts).where(
+            self.run_artifacts.c.run_id == bindparam("run_id")
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement, {"run_id": run_id}).mappings().all()
+        if not rows:
+            raise ResultsNotFound(run_id)
+        return {
+            (row["portfolio_id"], row["artifact_type"]): self._decode_frame(row["blob"])
+            for row in rows
+        }
 
     def top_runs(self, metric: MetricName, n: int) -> list[RunRecord]:
-        raise NotImplementedError  # implemented in Task 2
+        """Return the top-``n`` runs ranked best-first by ``metric`` (D-18).
+
+        The ORDER BY column is resolved through the ``MetricName`` → ``Column`` allow-list
+        map (NEVER an f-string, T-02-01); ``column.desc()`` is best-first for every metric
+        (drawdown is stored negative — see ``_METRIC_DIRECTION``). Tiebreak: ``run_id`` ASC.
+        An empty / short table returns ``[]`` (D-16). The ranking projection sets
+        ``per_portfolio=[]`` (the per-portfolio rows are not joined for the cross-run query).
+        """
+        column = self._run_metric_columns[metric]
+        statement = (
+            select(self.runs)
+            .order_by(column.desc(), self.runs.c.run_id.asc())
+            .limit(n)
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).mappings().all()
+        return [self._row_to_run_record(row) for row in rows]
 
     def top_portfolios(self, metric: MetricName, n: int) -> list[PortfolioRecord]:
-        raise NotImplementedError  # implemented in Task 2
+        """Return the top-``n`` per-strategy portfolios ranked best-first by ``metric`` (D-06/D-18).
+
+        Same allow-list-resolved DESC ranking as ``top_runs`` but against ``run_portfolios``;
+        tiebreak ``run_id`` ASC then ``portfolio_id`` ASC. Empty table returns ``[]``.
+        """
+        column = self._portfolio_metric_columns[metric]
+        statement = (
+            select(self.run_portfolios)
+            .order_by(
+                column.desc(),
+                self.run_portfolios.c.run_id.asc(),
+                self.run_portfolios.c.portfolio_id.asc(),
+            )
+            .limit(n)
+        )
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).mappings().all()
+        return [self._row_to_portfolio_record(row) for row in rows]
+
+    def _row_to_run_record(self, row: Any) -> RunRecord:
+        """Rebuild a ``RunRecord`` from a ``runs`` result row (ranking projection)."""
+        metrics = RunMetrics(**{name: row[name] for name in METRIC_NAMES})
+        return RunRecord(
+            run_id=row["run_id"],
+            metrics=metrics,
+            settings=row["settings"] or {},
+            per_portfolio=[],
+            study_id=row["study_id"],
+            trial_id=row["trial_id"],
+        )
+
+    def _row_to_portfolio_record(self, row: Any) -> PortfolioRecord:
+        """Rebuild a ``PortfolioRecord`` from a ``run_portfolios`` result row."""
+        metrics = RunMetrics(**{name: row[name] for name in METRIC_NAMES})
+        return PortfolioRecord(
+            portfolio_id=row["portfolio_id"],
+            name=row["name"],
+            metrics=metrics,
+            params=row["params"] or {},
+        )

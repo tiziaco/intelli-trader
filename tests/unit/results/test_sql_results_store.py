@@ -133,3 +133,43 @@ def test_save_run_atomic_persists_run_and_portfolios(store: SqlResultsStore) -> 
     assert runs[0]["run_id"] == run_id
     assert len(portfolios) == 2
     assert {row["name"] for row in portfolios} == {"p1", "p2"}
+
+
+# ------------------------------------------------------------------ Task 2: reads
+def test_get_artifact_roundtrip_keyed_collection(store: SqlResultsStore) -> None:
+    """``get_artifact`` returns ``{(portfolio_id, type): frame}`` value-equal (D-15)."""
+    run_id = _run_id()
+    portfolio = _portfolio(_metrics(), "p1")
+    store.save_run(_run(run_id, _metrics(), portfolios=(portfolio,)))
+
+    frame = _frame()
+    store.save_artifact(run_id, portfolio.portfolio_id, "equity_curve", frame)
+
+    artifacts = store.get_artifact(run_id)
+    assert set(artifacts) == {(portfolio.portfolio_id, "equity_curve")}
+    assert_frame_equal(artifacts[(portfolio.portfolio_id, "equity_curve")], frame)
+
+
+def test_get_artifact_handles_null_portfolio_key(store: SqlResultsStore) -> None:
+    """An aggregate-level frame (``portfolio_id=None``) keys on ``(None, type)`` (D-07)."""
+    run_id = _run_id()
+    store.save_run(_run(run_id, _metrics()))
+    frame = _frame()
+    store.save_artifact(run_id, None, "trade_log", frame)
+
+    artifacts = store.get_artifact(run_id)
+    assert (None, "trade_log") in artifacts
+    assert_frame_equal(artifacts[(None, "trade_log")], frame)
+
+
+def test_get_artifact_unknown_run_raises(store: SqlResultsStore) -> None:
+    """``get_artifact`` on an unknown ``run_id`` raises ``ResultsNotFound`` (D-16)."""
+    store.save_run(_run(_run_id(), _metrics()))  # populate so the table is non-empty
+    with pytest.raises(ResultsNotFound):
+        store.get_artifact(uuid.uuid4())
+
+
+def test_top_runs_empty_table_returns_empty(store: SqlResultsStore) -> None:
+    """``top_runs`` on a fresh store returns ``[]`` (empty-safe, D-16)."""
+    assert store.top_runs("sharpe", 5) == []
+    assert store.top_portfolios("sharpe", 5) == []
