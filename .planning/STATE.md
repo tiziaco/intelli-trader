@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
-status: ready_to_plan
-stopped_at: Phase 01 complete (5/5) — ready to discuss Phase 2 (Results Store)
-last_updated: 2026-06-27T18:26:45.637Z
+status: planning
+stopped_at: Phase 2 context gathered
+last_updated: "2026-06-29T08:27:53.282Z"
 last_activity: 2026-06-27
 progress:
   total_phases: 7
@@ -204,9 +204,9 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-27T18:05:13.697Z
-Stopped at: Completed 01-03-PLAN.md
-Resume file: None
+Last session: 2026-06-29T08:27:53.269Z
+Stopped at: Phase 2 context gathered
+Resume file: .planning/phases/02-results-store-1/02-CONTEXT.md
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
 ## Operator Next Steps
