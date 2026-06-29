@@ -53,17 +53,29 @@ def test_portfolio_config_default_factory():
 def test_settings_missing_required_secret_raises_validation_error():
     """M2-06 (D-02): Settings() fails loud when the required secret is absent.
 
-    ``database_url`` is required-no-default; with no ITRADER_DATABASE_URL in the env and
-    ``_env_file=None`` (ignore any local .env), instantiation must raise — never
-    silently default to a working secret.
+    260629-jh2 (supersedes IN-02): ``database_password`` is now the required-no-default
+    secret (``database_url`` became an optional verbatim override). With no
+    ITRADER_DATABASE_PASSWORD in the env and ``_env_file=None`` (ignore any local .env),
+    instantiation must raise — never silently default to a working secret.
     """
     with pytest.raises(pydantic.ValidationError):
         Settings(_env_file=None)
 
 
 def test_settings_secret_is_masked_when_provided():
-    """M2-06 (D-02): a provided secret is a SecretStr — masked in repr, value via getter."""
-    settings = Settings(_env_file=None, database_url="postgresql://u:p@host/db")
+    """M2-06 (D-02): a provided secret is a SecretStr — masked in repr, value via getter.
+
+    260629-jh2: ``database_password`` is the required secret; ``database_url`` stays a
+    SecretStr when supplied as the optional verbatim override. Both mask in repr.
+    """
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://u:p@host/db",
+        database_password="s3cr3t",
+    )
     # SecretStr masks repr/str so the secret never appears in logs/serialization.
+    assert "s3cr3t" not in repr(settings)
     assert "p@host" not in repr(settings)
+    assert settings.database_password.get_secret_value() == "s3cr3t"
+    assert settings.database_url is not None
     assert settings.database_url.get_secret_value() == "postgresql://u:p@host/db"
