@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundati
 Phase: 3 — Operational SQL Backends (#2)
 Plan: Not started
 Status: Ready to discuss/plan
-Last activity: 2026-06-29
+Last activity: 2026-06-29 - Completed quick task 260629-jh2: parametrize Postgres connection via env vars
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -162,6 +162,12 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260629-jh2 | Parametrize Postgres connection via `ITRADER_DATABASE_*` env vars (default port 5544) on the `Settings` seam; `ITRADER_DATABASE_URL` demoted to verbatim escape hatch; `.env.example` added; supersedes IN-02 | 2026-06-29 | 075837b | [260629-jh2-parametrize-postgres-env](./quick/260629-jh2-parametrize-postgres-env/) |
 
 ## Deferred Items
 
