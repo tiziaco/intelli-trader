@@ -128,6 +128,11 @@ Each task was committed atomically:
 - RESULT-01 is closed end-to-end on in-process SQLite. Phase 3 (operational SQL backends, testcontainers Postgres) can build on the same spine; the results store proves the composition seam before any live path touches it.
 - No stubs; no threat flags (the curated settings credential-free path is owned + tested in 02-02; this plan only forwards the curated dict).
 
+## Self-Check: PASSED
+
+- Created files exist: `tests/integration/test_results_persist.py`, `02-04-SUMMARY.md`
+- All commits present: `ac9c5ff`, `d84c22b`, `639601e`, `6bee04d`, `ad2c557`
+
 ---
 *Phase: 02-results-store-1*
 *Completed: 2026-06-29*
