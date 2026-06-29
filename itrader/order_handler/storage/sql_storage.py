@@ -444,7 +444,7 @@ class SqlOrderStorage(OrderStorage):
             timestamp = r["timestamp"]
             history.append(
                 {
-                    "from_status": OrderStatus(from_value).name if from_value else None,
+                    "from_status": OrderStatus(from_value).name if from_value is not None else None,
                     "to_status": OrderStatus(r["to_status"]).name,
                     "timestamp": timestamp.isoformat() if timestamp is not None else None,
                     "reason": r["reason"],
