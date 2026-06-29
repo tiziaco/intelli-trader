@@ -51,6 +51,14 @@ class IDGenerator:
 		"""Generate unique signal ID (D-10 — single UUIDv7 scheme)."""
 		return self._uuid7()
 
+	def generate_run_id(self) -> uuid.UUID:
+		"""Generate unique run ID (RESULT-01 — single UUIDv7 scheme).
+
+		The results store's ``runs`` primary key and the stable ``ORDER BY``
+		tiebreak for cross-run ranking (no DB autoincrement / second ID scheme).
+		"""
+		return self._uuid7()
+
 	def generate_correlation_id(self) -> uuid.UUID:
 		"""Generate unique correlation ID (D-01/D-02 — single UUIDv7 scheme)."""
 		return self._uuid7()

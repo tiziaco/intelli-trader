@@ -89,6 +89,13 @@ class SystemSpec:
 
 	``actions`` (default empty tuple) is oracle-inert — an empty timeline wires
 	no operator hook, so the run stays byte-identical to today.
+
+	``results_store`` (default ``None``, RESULT-01/D-04) is the OPTIONAL results
+	sink the factory forwards into the engine. It is typed ``Any`` deliberately so
+	the spec NEVER imports the SQL surface (GATE-01 import inertness — the spec
+	stays SQL-free); the concrete ``ResultsStore`` annotation lives on the
+	``compose_engine`` seam. Kept LAST so existing positional/by-name e2e + oracle
+	call-sites stay store-free (default ``None`` → byte-exact, D-04).
 	"""
 
 	start: str
@@ -101,3 +108,4 @@ class SystemSpec:
 	portfolios: list[PortfolioSpec]
 	exchange: Any = None
 	actions: tuple[Action, ...] = field(default_factory=tuple)
+	results_store: Any = None

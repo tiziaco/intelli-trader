@@ -10,11 +10,12 @@ future ALTER is emitted in batch ("move-and-copy") form — portable across SQLi
 whose in-place ALTER support is limited.
 
 Import-time inertness (T-01-11 / Pitfall 8): the DB URL is resolved LAZILY inside the run
-functions, never at import. On the operational arm the URL comes from the spine's
-``SqlSettings`` Postgres arm, which only touches ``Settings.database_url`` at run time — an
-unset ``ITRADER_DATABASE_URL`` therefore cannot break import or collection. A URL supplied
-on the Alembic ``Config`` (tests / ops override) takes precedence. No credential-bearing
-URL is ever written into ``alembic.ini`` (T-01-09 / SEC-01).
+functions, never at import. On the operational arm the URL comes from the spine's unified
+``SqlSettings`` Postgres arm, which assembles the URL from the ``ITRADER_DATABASE_*`` fields
+(or the verbatim ``ITRADER_DATABASE_URL`` override) at run time — an unset DB env therefore
+cannot break import or collection. A URL supplied on the Alembic ``Config`` (tests / ops
+override) takes precedence. No credential-bearing URL is ever written into ``alembic.ini``
+(T-01-09 / SEC-01).
 
 This module is executed by Alembic, never imported on the backtest runtime path, so the
 spine's migration tooling stays off the hot-loop import graph (GATE-01 inertness).
@@ -53,9 +54,10 @@ def _resolve_url() -> str:
     """Lazily resolve the operational DB URL (T-01-11 — never at import).
 
     Precedence: an explicit ``sqlalchemy.url`` on the Alembic ``Config`` (tests / ops
-    override) wins; otherwise the live operational URL is built from the spine's
-    ``SqlSettings`` Postgres arm, which reads ``Settings.database_url`` only here at
-    migration time. The chain is scoped to live Postgres (D-14).
+    override) wins; otherwise the live operational URL is built from the spine's unified
+    ``SqlSettings`` Postgres arm, which reads the ``ITRADER_DATABASE_*`` env only here at
+    migration time (fail-loud if neither password nor verbatim url is set). The chain is
+    scoped to live Postgres (D-14).
     """
     configured = config.get_main_option("sqlalchemy.url")
     if configured:

@@ -26,6 +26,10 @@ class SqlBackend:
     """
 
     def __init__(self, settings: SqlSettings) -> None:
+        # WR-03 — provision the on-disk SQLite parent directory BEFORE create_engine: a
+        # file-backed SQLite URL with a missing parent dir raises OperationalError on first
+        # connect. No-op for :memory: and Postgres arms.
+        settings.ensure_local_storage()
         self.engine: Engine = create_engine(settings.engine_url())
         self.metadata = MetaData()
 

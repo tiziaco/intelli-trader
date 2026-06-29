@@ -65,7 +65,7 @@ sweep loop OUT (substrate only). Full requirements: [`REQUIREMENTS.md`](./REQUIR
 [`research/SUMMARY.md`](./research/SUMMARY.md).
 
 - [x] **Phase 1: SQL Spine + Security Hardening** - Config-selected `SqlBackend`/`SqlSettings` (SQLite + Postgres, Turso-ready), composition layering (3 existing ABCs + new `ResultsStore` ABC), lossless UUIDv7/timestamp round-trip, FL-06 `SqlHandler` hardening, Alembic skeleton + `create_all()` strategy — completed 2026-06-27 (5/5 plans)
-- [ ] **Phase 2: Results Store (#1)** - Every backtest/optimization run persisted on ephemeral SQLite (`runs` Float + JSON settings, `run_artifacts` JSON/gzip text frame, cross-run query, Optuna-FK-ready); validates the spine oracle-dark
+- [x] **Phase 2: Results Store (#1)** - Every backtest/optimization run persisted on ephemeral SQLite (`runs` Float + JSON settings, `run_artifacts` JSON/gzip text frame, cross-run query, Optuna-FK-ready); validates the spine oracle-dark — completed 2026-06-29 (4/4 plans)
 - [ ] **Phase 3: Operational SQL Backends (#2)** - One Postgres SQL backend per existing seam (order mirror, portfolio state, signal), money as native `Numeric`, testcontainers round-trip; backtest in-memory backends unchanged
 - [ ] **Phase 4: Retention + Live Write-Through (#2 live path)** - Two-knob model (write-through OFF in backtest = zero hot-path cost; live = write-through + working-set cache + purge-on-terminalize + read-through + restart rehydration); built + integration-tested on testcontainers (NEEDS plan-time research)
 - [ ] **Phase 5: Cache Classification (#3)** - Inventory + classify (a/b/c) every cache/`lru_cache`; leave the v1.5 hot path alone; classify, do not rewrite or unify
@@ -230,7 +230,11 @@ depends on it.
   2. A user can query the cross-run surface — e.g. top-N runs by a summary metric — against the `runs` table, and the schema carries the nullable Optuna study/trial FK columns without the sweep loop being built (substrate only).
   3. The results store runs on SQLite by default with schema via `create_all()` (ephemeral; no `alembic_version` table), and a DB round-trip test (write → read → assert equality) on an in-process SQLite database passes deterministically — the same frame encodes to identical bytes across two runs (`sort_keys`, business-time not wall-clock, stable `ORDER BY`).
   4. (recurring gates) Oracle byte-exact 134 / `46189.87730727451` with no W1/W2 regression vs the v1.5 baseline — the end-of-run batch dump is post-loop, off the hot path (the backtest hot loop touches no SQL); `mypy --strict` clean and `filterwarnings=["error"]` green.
-**Plans**: TBD
+**Plans**: 4 plans across 3 waves (wave 1: 02-01; wave 2: 02-02, 02-03 — parallel; wave 3: 02-04)
+- [x] 02-01-PLAN.md — Contracts + schema: ResultsNotFound, SqlSettings strict_persist/on-disk path, RunMetrics/PortfolioRecord/RunRecord DTOs, runs/run_portfolios/run_artifacts Core tables, widened 5-method ResultsStore ABC (RESULT-01/02/03)
+- [x] 02-02-PLAN.md — Pure serializers: curated runs.settings + run_portfolios.params envelopes, RunMetrics builder (derived total_return/calmar), mixed-timeframe aggregate equity curve + annualization basis (RESULT-01)
+- [x] 02-03-PLAN.md — Concrete SqlResultsStore: composition + create_all, gzip byte-deterministic codec, atomic save_run/save_artifact, keyed get_artifact + ResultsNotFound, injection-safe top_runs/top_portfolios, in-process SQLite round-trip tests (RESULT-02/03/04)
+- [x] 02-04-PLAN.md — Composition wiring + run(persist=) post-loop dump (direct store construction, D-03 guard, D-17 policy, UUIDv7 run_id) + oracle/import inertness integration test (RESULT-01/04)
 
 ### Phase 3: Operational SQL Backends (#2 — store layer)
 **Goal**: Each of the three existing operational seams (order mirror, portfolio state, strategy/signal)
@@ -289,7 +293,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. SQL Spine + Security Hardening | 5/5 | Complete   | 2026-06-27 |
-| 2. Results Store (#1) | 0/TBD | Not started | - |
+| 2. Results Store (#1) | 4/4 | Complete   | 2026-06-29 |
 | 3. Operational SQL Backends (#2) | 0/TBD | Not started | - |
 | 4. Retention + Live Write-Through (#2 live path) | 0/TBD | Not started | - |
 | 5. Cache Classification (#3) | 0/TBD | Not started | - |

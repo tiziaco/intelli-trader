@@ -5,10 +5,11 @@ injection / disclosure defects, all removed here:
 
 1. **Hardcoded credential (closed).** The old ``init_engine`` built the engine from a
    credential literal embedded in the connection URL (a secret living in VCS history).
-   The credential is now sourced exclusively from the spine's secret seam:
-   ``Settings.database_url.get_secret_value()`` resolved lazily inside
-   ``SqlSettings.engine_url()`` (``SecretStr`` masks ``repr``/``str``/logs). ``SqlHandler``
-   composes an injected ``SqlBackend`` and NEVER constructs an engine from a literal URL.
+   The credential is now sourced exclusively from the spine's secret seam: the unified
+   ``SqlSettings`` ``ITRADER_DATABASE_*`` fields (``password``/``url`` are ``SecretStr``)
+   resolved lazily inside ``SqlSettings.engine_url()`` (``SecretStr`` masks
+   ``repr``/``str``/logs). ``SqlHandler`` composes an injected ``SqlBackend`` and NEVER
+   constructs an engine from a literal URL.
 
 2. **Dynamic-identifier DDL (closed).** The old purge interpolated each symbol into a
    ``DROP TABLE`` statement built by formatting an identifier into a SQL string — a DDL
@@ -25,11 +26,11 @@ OHLCV is analytical market data (pandas float64) → ``Float`` columns, NOT mone
 ``Decimal`` (D-13: money never touches a SQLite-family backend this milestone). Business
 time is encoded uniformly via ``UtcIsoText`` (deterministic UTC-isoformat).
 
-**Single canonical credential source (T-01-15).** The ONE credential seam is
-``Settings.database_url`` (env ``ITRADER_DATABASE_URL``, a ``SecretStr``), resolved lazily
-on the Postgres arm of ``SqlSettings.engine_url()``. This module adds NO new credential
-source. The legacy ``live_trading_system.py`` ``SYSTEM_DB_URL`` env var is a *separate*
-D-live seam reading a *different* variable; reconciling it onto ``Settings.database_url``
+**Single canonical credential source (T-01-15).** The ONE credential seam is the unified
+``SqlSettings`` ``ITRADER_DATABASE_*`` surface (``password``/``url`` are ``SecretStr``),
+resolved lazily on the Postgres arm of ``SqlSettings.engine_url()``. This module adds NO new
+credential source. The legacy ``live_trading_system.py`` ``SYSTEM_DB_URL`` env var is a
+*separate* D-live seam reading a *different* variable; reconciling it onto ``SqlSettings``
 is document-and-deferred to the live-wiring phase (Open Q4, D-09) — it is intentionally
 not re-wired here, so exactly one canonical source exists for this store.
 

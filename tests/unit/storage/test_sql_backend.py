@@ -15,6 +15,7 @@ Asserts the three behaviors of the composition spine:
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import uuid_utils.compat as uc
 from sqlalchemy import Column, MetaData, Table, Uuid, insert, select
@@ -40,6 +41,26 @@ def test_backend_exposes_engine_and_metadata_no_business_logic() -> None:
         if not name.startswith("_") and callable(getattr(SqlBackend, name))
     }
     assert public_methods == {"dispose"}
+
+
+def test_backend_creates_missing_sqlite_parent_dir(tmp_path: Path) -> None:
+    """WR-03 — a file-backed SQLite URL self-provisions its missing parent directory.
+
+    Without this, ``create_engine`` raises ``OperationalError: unable to open database
+    file`` on first connect for the documented ``results_default()`` path (``output/``
+    absent on a fresh checkout / CI runner).
+    """
+    db_path = tmp_path / "missing_dir" / "results.db"
+    assert not db_path.parent.exists()
+
+    backend = SqlBackend(SqlSettings(database=str(db_path)))
+    try:
+        # The parent dir now exists, and a real connection actually opens the file.
+        assert db_path.parent.is_dir()
+        with backend.engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT 1").scalar_one() == 1
+    finally:
+        backend.dispose()
 
 
 def test_concrete_store_composes_backend_without_god_base() -> None:

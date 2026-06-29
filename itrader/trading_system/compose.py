@@ -44,6 +44,7 @@ from itrader.outils.time_parser import to_timedelta
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.price_handler.store.csv_store import CsvPriceStore
+from itrader.results import ResultsStore
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.strategy_handler.storage import SignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
@@ -104,6 +105,12 @@ class Engine:
 	# Trap-4 wiring point in the runner (_initialise_backtest_session) and set
 	# onto the engine there. None until wiring — populated before the run loop.
 	universe: Optional[Universe] = None
+	# RESULT-01 (D-02/D-14a): the OPTIONAL results sink, forwarded already-built by
+	# the FACTORY (build_backtest_system) — this seam NEVER constructs one. Default
+	# None keeps the oracle path store-free (D-04). Only the ResultsStore ABC is
+	# referenced here (SQL-free); the concrete SqlResultsStore stays out of the
+	# import graph so persist=False is SQL-import-inert (GATE-01).
+	results_store: Optional[ResultsStore] = None
 
 
 def compose_engine(
@@ -116,6 +123,7 @@ def compose_engine(
 	timeframe: str = "1d",
 	exchange_config: Optional[ExchangeConfig] = None,
 	order_config: Optional[OrderConfig] = None,
+	results_store: Optional[ResultsStore] = None,
 ) -> Engine:
 	"""Wire the shared component graph mode-agnostically (D-14/D-14a).
 
@@ -148,6 +156,10 @@ def compose_engine(
 	order_config : OrderConfig, optional
 		Order-domain config (``market_execution``). None defaults to
 		``OrderConfig.default()`` ("immediate").
+	results_store : ResultsStore, optional
+		The OPTIONAL results sink selected by the FACTORY (D-14a) and forwarded
+		onto the ``Engine`` unchanged — this seam never constructs one. None
+		(the default) keeps the run store-free / byte-exact (D-04).
 	"""
 	global_queue: "queue.Queue[Any]" = queue.Queue()
 
@@ -246,4 +258,5 @@ def compose_engine(
 		order_handler=order_handler,
 		event_handler=event_handler,
 		time_generator=time_generator,
+		results_store=results_store,
 	)
