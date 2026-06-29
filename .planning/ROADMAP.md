@@ -231,7 +231,7 @@ depends on it.
   3. The results store runs on SQLite by default with schema via `create_all()` (ephemeral; no `alembic_version` table), and a DB round-trip test (write → read → assert equality) on an in-process SQLite database passes deterministically — the same frame encodes to identical bytes across two runs (`sort_keys`, business-time not wall-clock, stable `ORDER BY`).
   4. (recurring gates) Oracle byte-exact 134 / `46189.87730727451` with no W1/W2 regression vs the v1.5 baseline — the end-of-run batch dump is post-loop, off the hot path (the backtest hot loop touches no SQL); `mypy --strict` clean and `filterwarnings=["error"]` green.
 **Plans**: 4 plans across 3 waves (wave 1: 02-01; wave 2: 02-02, 02-03 — parallel; wave 3: 02-04)
-- [ ] 02-01-PLAN.md — Contracts + schema: ResultsNotFound, SqlSettings strict_persist/on-disk path, RunMetrics/PortfolioRecord/RunRecord DTOs, runs/run_portfolios/run_artifacts Core tables, widened 5-method ResultsStore ABC (RESULT-01/02/03)
+- [x] 02-01-PLAN.md — Contracts + schema: ResultsNotFound, SqlSettings strict_persist/on-disk path, RunMetrics/PortfolioRecord/RunRecord DTOs, runs/run_portfolios/run_artifacts Core tables, widened 5-method ResultsStore ABC (RESULT-01/02/03)
 - [ ] 02-02-PLAN.md — Pure serializers: curated runs.settings + run_portfolios.params envelopes, RunMetrics builder (derived total_return/calmar), mixed-timeframe aggregate equity curve + annualization basis (RESULT-01)
 - [ ] 02-03-PLAN.md — Concrete SqlResultsStore: composition + create_all, gzip byte-deterministic codec, atomic save_run/save_artifact, keyed get_artifact + ResultsNotFound, injection-safe top_runs/top_portfolios, in-process SQLite round-trip tests (RESULT-02/03/04)
 - [ ] 02-04-PLAN.md — Composition wiring + run(persist=) post-loop dump (direct store construction, D-03 guard, D-17 policy, UUIDv7 run_id) + oracle/import inertness integration test (RESULT-01/04)
@@ -293,7 +293,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. SQL Spine + Security Hardening | 5/5 | Complete   | 2026-06-27 |
-| 2. Results Store (#1) | 0/TBD | Not started | - |
+| 2. Results Store (#1) | 1/4 | In Progress|  |
 | 3. Operational SQL Backends (#2) | 0/TBD | Not started | - |
 | 4. Retention + Live Write-Through (#2 live path) | 0/TBD | Not started | - |
 | 5. Cache Classification (#3) | 0/TBD | Not started | - |
