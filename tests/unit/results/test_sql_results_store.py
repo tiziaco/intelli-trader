@@ -173,3 +173,61 @@ def test_top_runs_empty_table_returns_empty(store: SqlResultsStore) -> None:
     """``top_runs`` on a fresh store returns ``[]`` (empty-safe, D-16)."""
     assert store.top_runs("sharpe", 5) == []
     assert store.top_portfolios("sharpe", 5) == []
+
+
+# ----------------------------------------------------------------- Task 3: ranking (D-18)
+def test_top_runs_orders_best_first(store: SqlResultsStore) -> None:
+    """``top_runs`` returns the highest-``metric`` runs, best first (DESC)."""
+    low = uuid.UUID(int=1)
+    mid = uuid.UUID(int=2)
+    high = uuid.UUID(int=3)
+    store.save_run(_run(low, _metrics(sharpe=0.5)))
+    store.save_run(_run(high, _metrics(sharpe=2.0)))
+    store.save_run(_run(mid, _metrics(sharpe=1.0)))
+
+    top = store.top_runs("sharpe", 2)
+    assert [r.run_id for r in top] == [high, mid]
+    assert [r.metrics.sharpe for r in top] == [2.0, 1.0]
+
+
+def test_top_runs_runid_asc_tiebreak(store: SqlResultsStore) -> None:
+    """Equal-metric runs break ties by ``run_id`` ASC (deterministic ordering, D-18)."""
+    run_a = uuid.UUID(int=10)
+    run_b = uuid.UUID(int=20)
+    # Insert the higher run_id first to prove the ORDER BY (not insert order) decides.
+    store.save_run(_run(run_b, _metrics(sharpe=3.0)))
+    store.save_run(_run(run_a, _metrics(sharpe=3.0)))
+
+    top = store.top_runs("sharpe", 2)
+    assert [r.run_id for r in top] == [run_a, run_b]
+
+
+def test_top_runs_max_drawdown_direction(store: SqlResultsStore) -> None:
+    """``max_drawdown`` ranks DESC: the least-bad (closest-to-zero) drawdown wins (D-18).
+
+    Drawdown is stored NEGATIVE, so an ASC ordering would surface the WORST run; the
+    largest-signed (least-negative) value is the best and must come first.
+    """
+    worst = uuid.UUID(int=100)
+    least_bad = uuid.UUID(int=200)
+    mid = uuid.UUID(int=300)
+    store.save_run(_run(worst, _metrics(max_drawdown=-0.9)))
+    store.save_run(_run(least_bad, _metrics(max_drawdown=-0.1)))
+    store.save_run(_run(mid, _metrics(max_drawdown=-0.5)))
+
+    top = store.top_runs("max_drawdown", 1)
+    assert len(top) == 1
+    assert top[0].run_id == least_bad
+    assert top[0].metrics.max_drawdown == -0.1
+
+
+def test_top_portfolios_orders_best_first(store: SqlResultsStore) -> None:
+    """``top_portfolios`` ranks ``run_portfolios`` rows best-first by ``metric`` (D-06/D-18)."""
+    run_id = _run_id()
+    best = _portfolio(_metrics(sortino=5.0), "best")
+    worst = _portfolio(_metrics(sortino=0.5), "worst")
+    store.save_run(_run(run_id, _metrics(), portfolios=(worst, best)))
+
+    top = store.top_portfolios("sortino", 2)
+    assert [p.name for p in top] == ["best", "worst"]
+    assert [p.metrics.sortino for p in top] == [5.0, 0.5]
