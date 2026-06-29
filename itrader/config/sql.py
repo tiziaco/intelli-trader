@@ -6,20 +6,31 @@ engine URL. Mirrors the ``config/order.py`` analog (``BaseModel`` + ``ConfigDict
 deliberately minimal this milestone — driver enum + URL builder only; write-through /
 retention knobs are deferred to a later phase (D-12).
 
-Credential discipline (FL-06 / T-01-03): on the Postgres arm the URL is sourced from
-``Settings.database_url.get_secret_value()`` — the single canonical secret seam. ``SecretStr``
-masks ``repr``/``str``/``model_dump``; the resolved URL is never logged.
+Credential discipline (FL-06 / T-01-03): on the Postgres arm the URL is assembled from the
+component-level ``Settings`` secret seam (``database_password.get_secret_value()`` plus the
+host/port/user/name fields) — the single canonical secret seam. ``SecretStr`` masks
+``repr``/``str``/``model_dump``; the resolved URL is never logged.
 
-Import-side-effect trap (Pitfall 8 / T-01-04): ``Settings.database_url`` is required-no-default,
-so ``Settings()`` raises ``ValidationError`` when ``ITRADER_DATABASE_URL`` is unset. This module
-therefore NEVER instantiates ``Settings()`` at import time — it is resolved lazily inside
-``engine_url()`` on the Postgres arm only, so the SQLite/backtest path stays env-free.
+Connection model (260629-jh2 — supersedes IN-02): on the Postgres arm the URL is now PRIMARILY
+assembled from component-level ``ITRADER_DATABASE_*`` env vars (host/port/user/name/password,
+default port ``5544``) via ``sqlalchemy.URL.create`` — which URL-escapes special chars in the
+password (``@ : / # ?`` → ``%40 %3A %2F %23 %3F``). ``ITRADER_DATABASE_URL`` remains an OPTIONAL
+verbatim escape hatch: when set it is returned as-is (its scheme/driver authoritative), preserving
+the original IN-02 path. This supersedes IN-02 ("driver is a branch selector only and the env URL
+is authoritative"): the env URL is now the override, not the sole source.
+
+Import-side-effect trap (Pitfall 8 / T-01-04): ``Settings.database_password`` is
+required-no-default, so ``Settings()`` raises ``ValidationError`` when
+``ITRADER_DATABASE_PASSWORD`` is unset. This module therefore NEVER instantiates ``Settings()``
+at import time — it is resolved lazily inside ``engine_url()`` on the Postgres arm only, so the
+SQLite/backtest path stays env-free.
 """
 
 from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import URL
 
 from itrader.config.settings import Settings
 
@@ -100,23 +111,35 @@ class SqlSettings(BaseModel):
     def engine_url(self, settings: Settings | None = None) -> str:
         """Build the SQLAlchemy engine URL for the selected driver.
 
-        On the Postgres arm the URL is resolved lazily from the ``Settings`` secret seam
-        (``database_url.get_secret_value()``) — ``Settings()`` is constructed here, never at
-        import. Every other (SQLite-family) arm builds a fully local URL with NO env access.
+        On the Postgres arm the URL is resolved lazily from the ``Settings`` secret seam —
+        ``Settings()`` is constructed here, never at import. Every other (SQLite-family) arm
+        builds a fully local URL with NO env access.
 
-        On the Postgres arm ``driver`` selects this branch ONLY: the env URL's scheme/driver
-        is authoritative and is NOT validated against the enum member (IN-02).
+        Postgres URL resolution (260629-jh2 — supersedes IN-02):
+        1. If ``Settings.database_url`` is set, it is returned VERBATIM (the optional escape
+           hatch — its scheme/driver authoritative, NOT reconciled against the enum member;
+           this is the original IN-02 path, now demoted to an override).
+        2. Otherwise the URL is ASSEMBLED from the component-level ``ITRADER_DATABASE_*`` fields
+           (host/port/user/name/password, default port 5544) via ``sqlalchemy.URL.create``,
+           which URL-escapes special chars in the password (an f-string would NOT escape
+           ``@ : / # ?``).
         """
         if self.driver is SqlDriver.POSTGRESQL_PSYCOPG2:
-            # IN-02 — on the Postgres arm ``driver`` is a BRANCH SELECTOR ONLY: the returned
-            # URL is ``Settings.database_url`` VERBATIM, so its scheme/driver (e.g. whether it
-            # carries ``+psycopg2``) is whatever ``ITRADER_DATABASE_URL`` supplies — the env
-            # URL is authoritative and is NOT reconciled against this enum member (a mismatched
-            # env scheme is honored as-is). Contrast the SQLite-family arm below, which builds
-            # the URL from ``driver.value`` itself.
-            # BaseSettings populates required fields from the ITRADER_* env at runtime;
-            # mypy (via pydantic's dataclass_transform) treats database_url as a required
-            # ctor arg, so the no-arg env-driven construction needs a narrow ignore.
+            # BaseSettings populates required fields from the ITRADER_* env at runtime; mypy
+            # (via pydantic's dataclass_transform) treats database_password as a required ctor
+            # arg, so the no-arg env-driven construction needs a narrow ignore.
             resolved = settings or Settings()  # type: ignore[call-arg]
-            return resolved.database_url.get_secret_value()
+            # 260629-jh2 — supersedes IN-02: ITRADER_DATABASE_URL is now an OPTIONAL verbatim
+            # escape hatch (scheme/driver authoritative, honored as-is). When unset, the URL is
+            # assembled from the ITRADER_DATABASE_* components below (the primary source).
+            if resolved.database_url is not None:
+                return resolved.database_url.get_secret_value()
+            return URL.create(
+                drivername="postgresql+psycopg2",
+                username=resolved.database_user,
+                password=resolved.database_password.get_secret_value(),
+                host=resolved.database_host,
+                port=resolved.database_port,
+                database=resolved.database_name,
+            ).render_as_string(hide_password=False)
         return f"{self.driver.value}:///{self.database}"
