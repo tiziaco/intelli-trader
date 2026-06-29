@@ -103,6 +103,10 @@ None - no external service configuration required (tests use ephemeral testconta
 - OPS-03 closed and OPS-04 (the cross-cutting money contract) proven on the third operational backend.
 - Phase 4 (Retention + Live Write-Through) can compose `SqlSignalStorage` via the factory `'live'` arm or by injecting a Postgres `SqlBackend`.
 
+## Self-Check: PASSED
+
+All created files exist on disk; both task commits (`14a451c`, `5e7b7f6`) present in git history.
+
 ---
 *Phase: 03-operational-sql-backends-2-store-layer*
 *Completed: 2026-06-29*
