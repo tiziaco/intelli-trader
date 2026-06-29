@@ -3,7 +3,6 @@ import queue
 import sys
 import threading
 import time
-import json
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
@@ -132,12 +131,23 @@ class LiveTradingSystem:
             )
             order_storage = OrderStorageFactory.create('backtest')
         else:
-            try:
-                order_storage = OrderStorageFactory.create('live', _SYSTEM_DB_URL)
-            except NotImplementedError:
-                # Fallback to in-memory during Phase 1
-                self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")
-                order_storage = OrderStorageFactory.create('backtest')
+            # CR-01: the operator set SYSTEM_DB_URL — honor it. Build a Postgres backend
+            # from the configured URL and INJECT it into the factory, instead of calling
+            # create('live') with no backend (which silently materialized a SQLite :memory:
+            # store — money decay + no durability + the configured URL discarded). The SQL
+            # imports stay LAZY inside this 'live' arm so the backtest import path remains
+            # SQLAlchemy-free (GATE-01 inertness). Phase 4 owns the shared operational-backend
+            # composition root; this is the interim Postgres-or-raise (no SQLite fallback).
+            from pydantic import SecretStr
+
+            from itrader.config.sql import SqlDriver, SqlSettings
+            from itrader.storage import SqlBackend
+
+            backend = SqlBackend(SqlSettings(
+                driver=SqlDriver.POSTGRESQL_PSYCOPG2,
+                url=SecretStr(_SYSTEM_DB_URL),
+            ))
+            order_storage = OrderStorageFactory.create('live', backend=backend)
         
         # Execution handler constructed BEFORE the order handler so the
         # admission gate's commission estimator can adapt the simulated

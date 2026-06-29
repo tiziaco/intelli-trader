@@ -66,7 +66,7 @@ sweep loop OUT (substrate only). Full requirements: [`REQUIREMENTS.md`](./REQUIR
 
 - [x] **Phase 1: SQL Spine + Security Hardening** - Config-selected `SqlBackend`/`SqlSettings` (SQLite + Postgres, Turso-ready), composition layering (3 existing ABCs + new `ResultsStore` ABC), lossless UUIDv7/timestamp round-trip, FL-06 `SqlHandler` hardening, Alembic skeleton + `create_all()` strategy — completed 2026-06-27 (5/5 plans)
 - [x] **Phase 2: Results Store (#1)** - Every backtest/optimization run persisted on ephemeral SQLite (`runs` Float + JSON settings, `run_artifacts` JSON/gzip text frame, cross-run query, Optuna-FK-ready); validates the spine oracle-dark — completed 2026-06-29 (4/4 plans)
-- [ ] **Phase 3: Operational SQL Backends (#2)** - One Postgres SQL backend per existing seam (order mirror, portfolio state, signal), money as native `Numeric`, testcontainers round-trip; backtest in-memory backends unchanged
+- [x] **Phase 3: Operational SQL Backends (#2)** - One Postgres SQL backend per existing seam (order mirror, portfolio state, signal), money as native `Numeric`, testcontainers round-trip; backtest in-memory backends unchanged — completed 2026-06-29 (5/5 plans)
 - [ ] **Phase 4: Retention + Live Write-Through (#2 live path)** - Two-knob model (write-through OFF in backtest = zero hot-path cost; live = write-through + working-set cache + purge-on-terminalize + read-through + restart rehydration); built + integration-tested on testcontainers (NEEDS plan-time research)
 - [ ] **Phase 5: Cache Classification (#3)** - Inventory + classify (a/b/c) every cache/`lru_cache`; leave the v1.5 hot path alone; classify, do not rewrite or unify
 
@@ -247,7 +247,12 @@ validated on testcontainers Postgres — with the backtest in-memory backends un
   2. Each factory returns the in-memory backend for `backtest` (UNCHANGED, importing no SQLAlchemy/serialization symbol) and the SQL backend for `live`/`postgresql` — the no-serialization-in-backtest-backend rule holds structurally (backend-selection at wiring, not a hot-path `write_through` flag).
   3. Operational money persists as Postgres-native `Numeric` (Decimal end-to-end on the real-money path — no float-for-money, no `DecimalAsText` needed) and round-trips as an exact `Decimal` — validated by DB round-trip tests on a testcontainers Postgres.
   4. (recurring gates) Oracle byte-exact 134 / `46189.87730727451` with no W1/W2 regression vs the v1.5 baseline (the backtest path still routes through the in-memory backends); each new handler-storage file imports clean with indentation matched to its sibling (tabs in `order_handler`/`portfolio_handler` storage; 4 spaces in `strategy_handler` storage); `mypy --strict` clean and `filterwarnings=["error"]` green.
-**Plans**: TBD
+**Plans**: 5 plans across 3 waves (wave 1: 03-01; wave 2: 03-02, 03-03, 03-04 — parallel; wave 3: 03-05)
+- [x] 03-01-PLAN.md — Test substrate + naming-convention foundation: pg_backend fixture (testcontainers SqlBackend) + NAMING_CONVENTION on SqlBackend.metadata for deterministic autogenerate (GATE-02)
+- [x] 03-02-PLAN.md — SqlOrderStorage (OPS-01): orders + order_state_changes tables, self-ref bracket FK (D-02), D-08 indexes, factory 'live' arm, delete postgresql_storage stub, native-Numeric money (OPS-04), Postgres round-trip
+- [x] 03-03-PLAN.md — SqlPortfolioStateStorage (OPS-02): six normalized tables (D-03), bound portfolio_id isolation (Pitfall 1), Position projection equality, factory 'live' arm, native-Numeric money (OPS-04), Postgres round-trip
+- [x] 03-04-PLAN.md — SqlSignalStorage (OPS-03): signals table (config json_variant), by_strategy/by_ticker filters, factory 'live' arm, native-Numeric money (OPS-04), Postgres round-trip
+- [x] 03-05-PLAN.md — Operational Alembic baseline: env.py target_metadata from build_*_tables on NAMING_CONVENTION MetaData, autogenerate + review the single-chain baseline migration (D-09 / MIG-01 continuation)
 
 ### Phase 4: Retention + Live Write-Through (#2 — live path)
 **Goal**: The two-knob retention model — write-through OFF in backtest (zero hot-path serialization),
@@ -294,7 +299,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 |-------|----------------|--------|-----------|
 | 1. SQL Spine + Security Hardening | 5/5 | Complete   | 2026-06-27 |
 | 2. Results Store (#1) | 4/4 | Complete   | 2026-06-29 |
-| 3. Operational SQL Backends (#2) | 0/TBD | Not started | - |
+| 3. Operational SQL Backends (#2) | 5/5 | Complete   | 2026-06-29 |
 | 4. Retention + Live Write-Through (#2 live path) | 0/TBD | Not started | - |
 | 5. Cache Classification (#3) | 0/TBD | Not started | - |
 

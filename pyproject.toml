@@ -107,7 +107,6 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = [
     "itrader.strategy_handler.my_strategies.*",          # OUT — relocated to a separate repo (STATE.md)
-    "itrader.order_handler.storage.postgresql_storage", # D-sql — live order persistence (sibling of sql_handler)
 ]
 ignore_errors = true
 

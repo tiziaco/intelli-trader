@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
 status: ready_to_plan
-stopped_at: Phase 02 complete (4/4) — ready to discuss Phase 3
-last_updated: 2026-06-29T11:45:58.564Z
-last_activity: 2026-06-29 -- Phase 02 execution complete (4/4 plans, verified, code-review fixed)
+stopped_at: Phase 03 complete (5/5) — ready to discuss Phase 4
+last_updated: 2026-06-29T16:57:31.946Z
+last_activity: 2026-06-29 -- Phase 03 execution started
 progress:
   total_phases: 7
-  completed_phases: 2
-  total_plans: 9
-  completed_plans: 9
-  percent: 14
+  completed_phases: 3
+  total_plans: 14
+  completed_plans: 14
+  percent: 43
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundation ACTIVE; scope locked via owner clarification 2026-06-27)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). v1.6 adds the durable-storage + caching foundation **without disturbing that** — the backtest path stays byte-exact and N+4 Live inherits a persistent, restart-safe system of record.
-**Current focus:** Phase 3 — Operational SQL Backends (#2)
+**Current focus:** Phase 4 — Retention + Live Write-Through
 
 ## Current Position
 
-Phase: 3 — Operational SQL Backends (#2)
+Phase: 4
 Plan: Not started
-Status: Ready to discuss/plan
-Last activity: 2026-06-29 - Completed quick task 260629-l0q: unify DB config into one self-contained SqlSettings
+Status: Ready to plan
+Last activity: 2026-06-29
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -79,7 +79,7 @@ validated surface. Phases 1/2/3/5 are standard patterns (plan-time research opti
 
 **Velocity (program cumulative through v1.5):**
 
-- Total plans completed: 203 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
+- Total plans completed: 208 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
 - v1.6 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
@@ -211,9 +211,9 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-29T08:27:53.269Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-results-store-1/02-CONTEXT.md
+Last session: 2026-06-29T15:04:31.523Z
+Stopped at: Phase 3 context gathered
+Resume file: .planning/phases/03-operational-sql-backends-2-store-layer/03-CONTEXT.md
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
 ## Operator Next Steps

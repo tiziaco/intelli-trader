@@ -28,6 +28,10 @@ from sqlalchemy import MetaData, engine_from_config, pool
 from alembic import context
 
 from itrader.config.sql import SqlDriver, SqlSettings
+from itrader.order_handler.storage.models import build_order_tables
+from itrader.portfolio_handler.storage.models import build_portfolio_tables
+from itrader.storage.backend import NAMING_CONVENTION
+from itrader.strategy_handler.storage.models import build_signal_tables
 
 # The Alembic Config object — access to the values within the .ini file in use.
 config = context.config
@@ -40,14 +44,21 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-# Autogenerate target: a bare, empty ``MetaData`` (WR-05). No operational tables are
-# registered yet (empty ``versions/``, D-14), so the autogen target is just an empty
-# ``MetaData``. Using ``MetaData()`` directly — instead of building a transient
-# ``SqlBackend`` and discarding it — avoids creating, and then LEAKING, an undisposed
-# SQLite engine (its ``SingletonThreadPool``) at import time, which could trip a
-# GC-finalised ResourceWarning under ``filterwarnings=["error"]``. No ``Settings()`` is
-# touched here; the module stays fully import-inert (T-01-11 / GATE-01).
-target_metadata = MetaData()
+# Autogenerate target: the operational MetaData (D-09, MIG-01 continuation). The three
+# ``build_*_tables`` registrars are the SINGLE SOURCE OF TRUTH for the operational schema —
+# the same functions the test-path ``create_all`` consumers call — so the deploy-path
+# ``--autogenerate`` and the test-path ``create_all`` derive from one definition (T-03-19).
+# ``NAMING_CONVENTION`` (imported from the spine) pins constraint/index names so autogenerate
+# is deterministic and does not churn across regenerations (Pitfall 5 / T-03-18).
+#
+# Import-inertness (T-01-11 / Pitfall 8 / GATE-01): each registrar only constructs ``Table``
+# objects on a fresh ``MetaData`` — no Engine, no ``Settings()``, no connection — so the
+# module stays fully import-inert. Building a bare ``MetaData`` here (not a transient
+# ``SqlBackend``) also avoids leaking an undisposed SQLite engine at import.
+target_metadata = MetaData(naming_convention=NAMING_CONVENTION)
+build_order_tables(target_metadata)
+build_portfolio_tables(target_metadata)
+build_signal_tables(target_metadata)
 
 
 def _resolve_url() -> str:

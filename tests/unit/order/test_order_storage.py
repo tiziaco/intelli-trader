@@ -488,11 +488,20 @@ def test_create_in_memory_directly():
     assert isinstance(storage, InMemoryOrderStorage)
 
 
-def test_create_live_storage_without_db_url():
-    """Test creating live storage without database URL raises error."""
-    with pytest.raises(ConfigurationError) as exc_info:
-        OrderStorageFactory.create("live")
-    assert "Database URL is required" in str(exc_info.value)
+def test_create_live_storage_returns_sql_backend():
+    """The 'live' arm routes to SqlOrderStorage on the shared SQL spine (D-06).
+
+    With no backend supplied the factory builds a default ``SqlBackend`` (Phase 4 injects
+    the shared operational backend). The store is disposed to avoid a ResourceWarning under
+    ``filterwarnings=["error"]`` (WR-03 / Pitfall 4).
+    """
+    from itrader.order_handler.storage.sql_storage import SqlOrderStorage
+
+    storage = OrderStorageFactory.create("live")
+    try:
+        assert isinstance(storage, SqlOrderStorage)
+    finally:
+        storage.dispose()
 
 
 def test_unsupported_environment():
