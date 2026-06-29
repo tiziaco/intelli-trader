@@ -24,7 +24,7 @@ indentation (matches the existing ``order_handler/storage`` siblings).
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -410,7 +410,15 @@ class SqlOrderStorage(OrderStorage):
         end_time: datetime,
         portfolio_id: Optional[IdLike] = None,
     ) -> List[Order]:
-        """Get orders whose ``created_at`` falls within ``[start_time, end_time]``."""
+        """Get orders whose ``created_at`` falls within ``[start_time, end_time]``.
+
+        WR-03 — ``created_at`` binds through ``UtcIsoText``, which RAISES ``ValueError`` on a
+        timezone-naive datetime. Normalize the bounds to tz-aware UTC at this method boundary
+        (documented + deterministic) so a naive bound does not escape as a raw codec error
+        mid-query; the lexicographic ISO-text compare is then a consistent UTC comparison.
+        """
+        start_time = self._ensure_utc(start_time)
+        end_time = self._ensure_utc(end_time)
         clauses: List[Any] = [
             self.orders.c.created_at >= start_time,
             self.orders.c.created_at <= end_time,
@@ -460,6 +468,18 @@ class SqlOrderStorage(OrderStorage):
         if portfolio_id is not None:
             clauses.append(self.orders.c.portfolio_id == portfolio_id)
         return self._query_orders(*clauses)
+
+    @staticmethod
+    def _ensure_utc(bound: datetime) -> datetime:
+        """Coerce a time-range bound to a tz-aware UTC datetime (WR-03).
+
+        A naive bound is assumed UTC and stamped tz-aware; an aware bound is converted to
+        UTC. This keeps ``get_orders_by_time_range`` from leaking the ``UtcIsoText``
+        ``ValueError`` (naive-datetime rejection) out of the query method.
+        """
+        if bound.tzinfo is None:
+            return bound.replace(tzinfo=timezone.utc)
+        return bound.astimezone(timezone.utc)
 
     @staticmethod
     def _encode_criteria(value: Any) -> Any:
