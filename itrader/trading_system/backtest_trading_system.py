@@ -281,84 +281,99 @@ class BacktestTradingSystem(object):
 				"results_store",
 				reason="run(persist=True) requires a results store injected at composition")
 
+		# WR-02 — short-circuit when there are NO active portfolios. The aggregate
+		# builder runs build_aggregate_equity_curve([]) -> pd.concat([], axis=1) ->
+		# ValueError, which would propagate out of run() even with strict_persist=False,
+		# contradicting the D-17 swallow policy. There is nothing to dump anyway, so
+		# warn-and-return before any assembly.
+		active = list(self.portfolio_handler.get_active_portfolios())
+		if not active:
+			self.logger.warning(
+				"persist requested but no active portfolios; nothing to dump")
+			return
+
 		run_id = idgen.generate_run_id()
 
-		# Map each active portfolio -> the strategies subscribed to it (mirror the
-		# strategy/subscribed_portfolios walk the print block already performs).
-		strategies_by_pid: dict[Any, list[Any]] = {}
-		for strategy in self.strategies_handler.strategies:
-			for pid in strategy.subscribed_portfolios:
-				strategies_by_pid.setdefault(pid, []).append(strategy)
-
-		portfolio_records: list[PortfolioRecord] = []
-		equity_frames: list[pd.DataFrame] = []
-		trades_frames: list[pd.DataFrame] = []
-		# (portfolio_id, equity_frame, trades_frame) for the per-portfolio artifacts.
-		artifacts: list[tuple[Any, pd.DataFrame, pd.DataFrame]] = []
-		timeframe_aliases: list[str] = []
-		tickers: list[str] = []
-		starting_cash_total = 0.0
-
-		for portfolio in self.portfolio_handler.get_active_portfolios():
-			trades = build_trade_log(portfolio)
-			equity = build_equity_curve(portfolio)
-			metrics = build_run_metrics(equity, trades)
-			strategies_for_pid = strategies_by_pid.get(portfolio.portfolio_id, [])
-			params = curate_portfolio_params(strategies_for_pid)
-			portfolio_records.append(PortfolioRecord(
-				portfolio_id=portfolio.portfolio_id,
-				name=portfolio.name,
-				metrics=metrics,
-				params=params))
-			equity_frames.append(equity)
-			trades_frames.append(trades)
-			artifacts.append((portfolio.portfolio_id, equity, trades))
-			# Annualization basis + run-level settings inputs from subscribed strategies.
-			for strategy in strategies_for_pid:
-				timeframe_aliases.append(strategy.timeframe_alias)
-				for ticker in strategy.tickers:
-					if ticker not in tickers:
-						tickers.append(ticker)
-			equity_series = equity["total_equity"].astype(float)
-			starting_cash_total += (
-				float(equity_series.iloc[0]) if not equity_series.empty else 0.0)
-
-		# Aggregate metrics across portfolios (D-14): the aggregate equity curve is a
-		# total_equity Series indexed by timestamp; to_frame() yields the total_equity
-		# column build_run_metrics reads, reset_index() yields the persistable frame.
-		aggregate_series = build_aggregate_equity_curve(equity_frames)
-		aggregate_equity_frame = aggregate_series.reset_index()
-		aggregate_trades = (
-			pd.concat(trades_frames, ignore_index=True)
-			if trades_frames else pd.DataFrame())
-		periods = annual_periods(timeframe_aliases)
-		aggregate_metrics = build_run_metrics(
-			aggregate_series.to_frame(), aggregate_trades, periods=periods)
-
-		# Curated run settings (D-11, credential-free): the fee/slippage models are
-		# read off the LIVE simulated exchange; market_execution off the order handler.
-		exchange = self.execution_handler.exchanges.get('simulated')
-		order_config = OrderConfig(market_execution=self.order_handler.market_execution)
-		settings = curate_run_settings(
-			exchange,
-			order_config,
-			tickers=tickers,
-			timeframe=timeframe_aliases[0] if timeframe_aliases else "1d",
-			start_date=self.start_date,
-			end_date=self.end_date,
-			starting_cash=starting_cash_total,
-			rng_seed=config.performance.rng_seed)
-
-		record = RunRecord(
-			run_id=run_id,
-			metrics=aggregate_metrics,
-			settings=settings,
-			per_portfolio=portfolio_records)
-
-		# Write (D-13/D-17): runs + run_portfolios atomically, then the artifacts. A
-		# write failure re-raises only when the store opts into strict_persist;
-		# otherwise it is logged and swallowed so good in-memory runs are not lost.
+		# WR-02 — the ENTIRE assembly+write body lives inside the strict_persist-gated
+		# try/except, NOT just the store writes. D-17 promises a persist failure is
+		# re-raised only when strict_persist is True; otherwise it is logged-and-swallowed
+		# so a sweep never loses good in-memory runs to one bad dump. A builder failure
+		# (metrics/serializer) is just as much a "persist failure" as a write failure and
+		# must honour the same contract — so the whole body is guarded.
 		try:
+			# Map each active portfolio -> the strategies subscribed to it (mirror the
+			# strategy/subscribed_portfolios walk the print block already performs).
+			strategies_by_pid: dict[Any, list[Any]] = {}
+			for strategy in self.strategies_handler.strategies:
+				for pid in strategy.subscribed_portfolios:
+					strategies_by_pid.setdefault(pid, []).append(strategy)
+
+			portfolio_records: list[PortfolioRecord] = []
+			equity_frames: list[pd.DataFrame] = []
+			trades_frames: list[pd.DataFrame] = []
+			# (portfolio_id, equity_frame, trades_frame) for the per-portfolio artifacts.
+			artifacts: list[tuple[Any, pd.DataFrame, pd.DataFrame]] = []
+			timeframe_aliases: list[str] = []
+			tickers: list[str] = []
+			starting_cash_total = 0.0
+
+			for portfolio in active:
+				trades = build_trade_log(portfolio)
+				equity = build_equity_curve(portfolio)
+				metrics = build_run_metrics(equity, trades)
+				strategies_for_pid = strategies_by_pid.get(portfolio.portfolio_id, [])
+				params = curate_portfolio_params(strategies_for_pid)
+				portfolio_records.append(PortfolioRecord(
+					portfolio_id=portfolio.portfolio_id,
+					name=portfolio.name,
+					metrics=metrics,
+					params=params))
+				equity_frames.append(equity)
+				trades_frames.append(trades)
+				artifacts.append((portfolio.portfolio_id, equity, trades))
+				# Annualization basis + run-level settings inputs from subscribed strategies.
+				for strategy in strategies_for_pid:
+					timeframe_aliases.append(strategy.timeframe_alias)
+					for ticker in strategy.tickers:
+						if ticker not in tickers:
+							tickers.append(ticker)
+				equity_series = equity["total_equity"].astype(float)
+				starting_cash_total += (
+					float(equity_series.iloc[0]) if not equity_series.empty else 0.0)
+
+			# Aggregate metrics across portfolios (D-14): the aggregate equity curve is a
+			# total_equity Series indexed by timestamp; to_frame() yields the total_equity
+			# column build_run_metrics reads, reset_index() yields the persistable frame.
+			aggregate_series = build_aggregate_equity_curve(equity_frames)
+			aggregate_equity_frame = aggregate_series.reset_index()
+			aggregate_trades = (
+				pd.concat(trades_frames, ignore_index=True)
+				if trades_frames else pd.DataFrame())
+			periods = annual_periods(timeframe_aliases)
+			aggregate_metrics = build_run_metrics(
+				aggregate_series.to_frame(), aggregate_trades, periods=periods)
+
+			# Curated run settings (D-11, credential-free): the fee/slippage models are
+			# read off the LIVE simulated exchange; market_execution off the order handler.
+			exchange = self.execution_handler.exchanges.get('simulated')
+			order_config = OrderConfig(market_execution=self.order_handler.market_execution)
+			settings = curate_run_settings(
+				exchange,
+				order_config,
+				tickers=tickers,
+				timeframe=timeframe_aliases[0] if timeframe_aliases else "1d",
+				start_date=self.start_date,
+				end_date=self.end_date,
+				starting_cash=starting_cash_total,
+				rng_seed=config.performance.rng_seed)
+
+			record = RunRecord(
+				run_id=run_id,
+				metrics=aggregate_metrics,
+				settings=settings,
+				per_portfolio=portfolio_records)
+
+			# Write (D-13/D-17): runs + run_portfolios atomically, then the artifacts.
 			store.save_run(record)
 			for portfolio_id, equity, trades in artifacts:
 				store.save_artifact(run_id, portfolio_id, "equity_curve", equity)
