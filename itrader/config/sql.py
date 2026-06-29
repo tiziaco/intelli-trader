@@ -17,6 +17,7 @@ therefore NEVER instantiates ``Settings()`` at import time — it is resolved la
 """
 
 from enum import Enum
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
@@ -77,6 +78,24 @@ class SqlSettings(BaseModel):
         ``:memory:`` so other consumers and the tests are unaffected.
         """
         return cls(database="output/results.db")
+
+    def ensure_local_storage(self) -> None:
+        """Create the parent directory for an on-disk SQLite database (WR-03).
+
+        A file-backed SQLite URL (e.g. ``sqlite+pysqlite:///output/results.db``, the
+        ``results_default()`` path) creates the database FILE but NOT its parent directory;
+        on a fresh checkout / CI runner without ``output/`` the first ``create_engine``
+        connection raises ``OperationalError: unable to open database file``. Creating the
+        parent up front makes the documented results-store default self-provisioning.
+
+        No-op on the Postgres arm (no local parent) and on the in-memory ``:memory:`` arm
+        (no file). Idempotent (``exist_ok=True``).
+        """
+        if self.driver is SqlDriver.POSTGRESQL_PSYCOPG2:
+            return
+        if not self.database or self.database == ":memory:":
+            return
+        Path(self.database).parent.mkdir(parents=True, exist_ok=True)
 
     def engine_url(self, settings: Settings | None = None) -> str:
         """Build the SQLAlchemy engine URL for the selected driver.
