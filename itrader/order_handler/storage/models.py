@@ -81,10 +81,14 @@ def build_order_tables(metadata: MetaData) -> dict[str, Table]:
             Column("expiry_time", UtcIsoText, nullable=True),
             # D-02 — nullable, indexed, self-referential bracket FK. child_order_ids is
             # NOT a column; it is rebuilt on read from this FK (Pitfall 6).
+            # WR-01 — ``ondelete="SET NULL"`` so deleting a bracket PARENT orphans its
+            # children cleanly instead of raising Postgres FK-RESTRICT ``IntegrityError``
+            # (the delete paths filter to ACTIVE orders, so a terminal child can still
+            # reference an about-to-be-deleted active parent).
             Column(
                 "parent_order_id",
                 Uuid(as_uuid=True),
-                ForeignKey("orders.id"),
+                ForeignKey("orders.id", ondelete="SET NULL"),
                 nullable=True,
                 index=True,
             ),

@@ -96,7 +96,7 @@ def upgrade() -> None:
     sa.Column('leverage', sa.Numeric(), nullable=True),
     sa.Column('trail_type', sa.String(), nullable=True),
     sa.Column('trail_value', sa.Numeric(), nullable=True),
-    sa.ForeignKeyConstraint(['parent_order_id'], ['orders.id'], name=op.f('fk_orders_parent_order_id_orders')),
+    sa.ForeignKeyConstraint(['parent_order_id'], ['orders.id'], name=op.f('fk_orders_parent_order_id_orders'), ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_orders'))
     )
     with op.batch_alter_table('orders', schema=None) as batch_op:
