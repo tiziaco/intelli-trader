@@ -25,7 +25,8 @@ class PortfolioStateStorageFactory:
 
     This factory enables seamless switching between storage backends:
     - InMemoryPortfolioStateStorage for backtesting (fast, no persistence)
-    - PostgreSQL backend for live trading (deferred to D-sql)
+    - SqlPortfolioStateStorage on the shared SQL spine for live trading (OPS-02, D-06 —
+      the ``'live'`` arm is now implemented; no separate ``'postgresql'`` arm)
     """
 
     @staticmethod
