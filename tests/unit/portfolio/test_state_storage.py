@@ -4,7 +4,8 @@ Phase 3 (M2b) Plan 03-07, Task 1. These assert the storage-seam behavior the wav
 delivers, generalizing the proven ``order_handler/storage/`` pattern to portfolio state:
 
   * ``PortfolioStateStorageFactory.create("backtest"|"test")`` returns the in-memory backend.
-  * ``create("live")`` raises (D-sql deferred); ``create("bogus")`` raises ``ValueError``.
+  * ``create("live")`` with no portfolio_id and ``create("bogus")`` raise ``ConfigurationError``
+    (WR-04 — typed exception parity with the sibling Order/Signal factories).
   * The backend round-trips all four managers' containers: open/closed positions,
     pending/history transactions, reserved cash + cash operations, metrics snapshots.
   * After routing, the four managers hold NO state containers of their own — they read
@@ -19,6 +20,7 @@ from decimal import Decimal
 
 import pytest
 
+from itrader.core.exceptions import ConfigurationError
 from itrader.portfolio_handler.storage import (
     PortfolioStateStorage,
     InMemoryPortfolioStateStorage,
@@ -50,14 +52,18 @@ def test_factory_is_case_insensitive():
 
 
 def test_factory_live_raises():
-    """M2-08: live backend is deferred to D-sql — must raise, not return a stub."""
-    with pytest.raises((NotImplementedError, ValueError)):
+    """M2-08 / WR-04: live arm with no portfolio_id raises the typed ConfigurationError."""
+    with pytest.raises(ConfigurationError):
         PortfolioStateStorageFactory.create("live")
 
 
-def test_factory_unknown_environment_raises_value_error():
-    """M2-08: an unsupported environment raises ValueError with the supported list."""
-    with pytest.raises(ValueError) as exc:
+def test_factory_unknown_environment_raises_configuration_error():
+    """M2-08 / WR-04: an unsupported environment raises ConfigurationError with the supported list.
+
+    Now a typed ``ConfigurationError`` (matching the sibling Order/Signal factories) rather
+    than a bare ``ValueError`` — see CLAUDE.md error-handling convention.
+    """
+    with pytest.raises(ConfigurationError) as exc:
         PortfolioStateStorageFactory.create("bogus")
     assert "backtest" in str(exc.value)
 

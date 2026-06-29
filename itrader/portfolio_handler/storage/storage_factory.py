@@ -10,6 +10,8 @@ import is lazy (inside the ``'live'`` arm) so the backtest import path stays SQL
 import uuid
 from typing import Optional, TYPE_CHECKING
 
+from itrader.core.exceptions import ConfigurationError
+
 from ..base import PortfolioStateStorage
 from .in_memory_storage import InMemoryPortfolioStateStorage
 
@@ -62,8 +64,10 @@ class PortfolioStateStorageFactory:
 
         Raises
         ------
-        ValueError
-            If environment is not supported or required parameters are missing
+        ConfigurationError
+            If environment is not supported or required parameters are missing (WR-04 —
+            typed exception matching the sibling Order/Signal factories, per the CLAUDE.md
+            "raise typed exceptions, not bare ``Exception``" convention).
         """
         environment = environment.lower()
 
@@ -71,7 +75,8 @@ class PortfolioStateStorageFactory:
             return InMemoryPortfolioStateStorage(max_snapshots=max_snapshots)
         elif environment == 'live':
             if portfolio_id is None:
-                raise ValueError(
+                raise ConfigurationError(
+                    "portfolio_id", None,
                     "portfolio_id is required for the live SQL portfolio-state backend"
                 )
             # D-06 / GATE-01: lazy import keeps the SQL backend off the backtest
@@ -86,7 +91,8 @@ class PortfolioStateStorageFactory:
             )
             return SqlPortfolioStateStorage(sql_backend, portfolio_id)
         else:
-            raise ValueError(
+            raise ConfigurationError(
+                "environment", environment,
                 f"Unknown environment: {environment}. "
                 f"Supported environments are: 'backtest', 'live', 'test'"
             )
