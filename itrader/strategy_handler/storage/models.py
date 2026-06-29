@@ -55,18 +55,22 @@ def build_signal_tables(metadata: MetaData) -> dict[str, Table]:
         tables["signals"] = Table(
             "signals",
             metadata,
+            # WR-02 — logically-required columns carry ``nullable=False`` so the DB enforces
+            # the non-null invariant the ``SignalRecord`` entity already guarantees (the
+            # money columns stop_loss/take_profit/quantity/entry_price are genuinely Optional
+            # and stay ``nullable=True``).
             Column("signal_id", Uuid(as_uuid=True), primary_key=True),
-            Column("strategy_id", Uuid(as_uuid=True), index=True),
-            Column("ticker", String, index=True),
-            Column("time", UtcIsoText),
-            Column("action", String),
-            Column("order_type", String),
+            Column("strategy_id", Uuid(as_uuid=True), index=True, nullable=False),
+            Column("ticker", String, index=True, nullable=False),
+            Column("time", UtcIsoText, nullable=False),
+            Column("action", String, nullable=False),
+            Column("order_type", String, nullable=False),
             Column("stop_loss", Numeric, nullable=True),
             Column("take_profit", Numeric, nullable=True),
-            Column("exit_fraction", Numeric),
+            Column("exit_fraction", Numeric, nullable=False),
             Column("quantity", Numeric, nullable=True),
             Column("entry_price", Numeric, nullable=True),
-            Column("config", json_variant()),
+            Column("config", json_variant(), nullable=False),
         )
 
     return tables

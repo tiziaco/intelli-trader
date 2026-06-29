@@ -61,20 +61,25 @@ def build_order_tables(metadata: MetaData) -> dict[str, Table]:
         tables["orders"] = Table(
             "orders",
             metadata,
+            # WR-02 — logically-required columns carry ``nullable=False`` so the DB enforces
+            # the same non-null invariant the ``Order`` entity already guarantees (defense in
+            # depth; a partial write / buggy caller can no longer persist a NULL that would
+            # later crash ``_row_to_order`` on e.g. ``OrderType(None)``). The genuinely-optional
+            # lifecycle columns below stay ``nullable=True``.
             Column("id", Uuid(as_uuid=True), primary_key=True),
-            Column("time", UtcIsoText),
-            Column("type", String),
-            Column("status", String),
-            Column("ticker", String),
-            Column("action", String),
-            Column("price", Numeric),
-            Column("quantity", Numeric),
-            Column("exchange", String),
-            Column("strategy_id", Uuid(as_uuid=True)),
-            Column("portfolio_id", Uuid(as_uuid=True)),
-            Column("filled_quantity", Numeric),
-            Column("created_at", UtcIsoText),
-            Column("updated_at", UtcIsoText),
+            Column("time", UtcIsoText, nullable=False),
+            Column("type", String, nullable=False),
+            Column("status", String, nullable=False),
+            Column("ticker", String, nullable=False),
+            Column("action", String, nullable=False),
+            Column("price", Numeric, nullable=False),
+            Column("quantity", Numeric, nullable=False),
+            Column("exchange", String, nullable=False),
+            Column("strategy_id", Uuid(as_uuid=True), nullable=False),
+            Column("portfolio_id", Uuid(as_uuid=True), nullable=False),
+            Column("filled_quantity", Numeric, nullable=False),
+            Column("created_at", UtcIsoText, nullable=False),
+            Column("updated_at", UtcIsoText, nullable=False),
             Column("filled_at", UtcIsoText, nullable=True),
             Column("cancelled_at", UtcIsoText, nullable=True),
             Column("expired_at", UtcIsoText, nullable=True),
@@ -93,9 +98,9 @@ def build_order_tables(metadata: MetaData) -> dict[str, Table]:
                 index=True,
             ),
             Column("rejection_reason", String, nullable=True),
-            Column("modification_count", Integer),
+            Column("modification_count", Integer, nullable=False),
             Column("last_modification_time", UtcIsoText, nullable=True),
-            Column("leverage", Numeric),
+            Column("leverage", Numeric, nullable=False),
             Column("trail_type", String, nullable=True),
             Column("trail_value", Numeric, nullable=True),
             # D-08 — composite index over the hot active-set predicate (portfolio_id, status).
@@ -119,11 +124,13 @@ def build_order_tables(metadata: MetaData) -> dict[str, Table]:
                 primary_key=True,
             ),
             Column("seq", Integer, primary_key=True),
+            # WR-02 — from_status is genuinely Optional (a brand-new order has no prior
+            # status); the rest are non-null on every OrderStateChange.
             Column("from_status", String, nullable=True),
-            Column("to_status", String),
-            Column("timestamp", UtcIsoText),
-            Column("reason", String),
-            Column("triggered_by", String),
+            Column("to_status", String, nullable=False),
+            Column("timestamp", UtcIsoText, nullable=False),
+            Column("reason", String, nullable=False),
+            Column("triggered_by", String, nullable=False),
             Column("additional_data", json_variant(), nullable=True),
         )
 
