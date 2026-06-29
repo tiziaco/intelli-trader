@@ -252,7 +252,7 @@ validated on testcontainers Postgres — with the backtest in-memory backends un
 - [x] 03-02-PLAN.md — SqlOrderStorage (OPS-01): orders + order_state_changes tables, self-ref bracket FK (D-02), D-08 indexes, factory 'live' arm, delete postgresql_storage stub, native-Numeric money (OPS-04), Postgres round-trip
 - [x] 03-03-PLAN.md — SqlPortfolioStateStorage (OPS-02): six normalized tables (D-03), bound portfolio_id isolation (Pitfall 1), Position projection equality, factory 'live' arm, native-Numeric money (OPS-04), Postgres round-trip
 - [x] 03-04-PLAN.md — SqlSignalStorage (OPS-03): signals table (config json_variant), by_strategy/by_ticker filters, factory 'live' arm, native-Numeric money (OPS-04), Postgres round-trip
-- [ ] 03-05-PLAN.md — Operational Alembic baseline: env.py target_metadata from build_*_tables on NAMING_CONVENTION MetaData, autogenerate + review the single-chain baseline migration (D-09 / MIG-01 continuation)
+- [x] 03-05-PLAN.md — Operational Alembic baseline: env.py target_metadata from build_*_tables on NAMING_CONVENTION MetaData, autogenerate + review the single-chain baseline migration (D-09 / MIG-01 continuation)
 
 ### Phase 4: Retention + Live Write-Through (#2 — live path)
 **Goal**: The two-knob retention model — write-through OFF in backtest (zero hot-path serialization),
@@ -299,7 +299,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 |-------|----------------|--------|-----------|
 | 1. SQL Spine + Security Hardening | 5/5 | Complete   | 2026-06-27 |
 | 2. Results Store (#1) | 4/4 | Complete   | 2026-06-29 |
-| 3. Operational SQL Backends (#2) | 4/5 | In Progress|  |
+| 3. Operational SQL Backends (#2) | 5/5 | Complete   | 2026-06-29 |
 | 4. Retention + Live Write-Through (#2 live path) | 0/TBD | Not started | - |
 | 5. Cache Classification (#3) | 0/TBD | Not started | - |
 
