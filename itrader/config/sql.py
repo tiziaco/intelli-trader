@@ -54,11 +54,29 @@ class SqlSettings(BaseModel):
 
     driver: SqlDriver = SqlDriver.SQLITE_PYSQLITE
     database: str = ":memory:"
+    strict_persist: bool = False
+    """Dump-failure policy for the results store (D-17).
+
+    ``False`` (the default) → log-and-warn: a persist failure is logged
+    (``self.logger.error(..., exc_info=True)``) and swallowed so a results-store dump
+    can never abort the run. ``True`` → re-raise so the failure is surfaced. This knob
+    lives on the store/settings, NOT on ``run()`` (the run loop stays persist-agnostic).
+    """
 
     @classmethod
     def default(cls) -> "SqlSettings":
         """The backtest/research default — in-process SQLite, env-free."""
         return cls()
+
+    @classmethod
+    def results_default(cls) -> "SqlSettings":
+        """The results-store default — an on-disk SQLite file (D-12).
+
+        Unlike the generic ``default()`` (``:memory:``), the results store gets its OWN
+        on-disk path that accumulates runs across invocations. ``default()`` stays
+        ``:memory:`` so other consumers and the tests are unaffected.
+        """
+        return cls(database="output/results.db")
 
     def engine_url(self, settings: Settings | None = None) -> str:
         """Build the SQLAlchemy engine URL for the selected driver.
