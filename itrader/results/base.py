@@ -19,14 +19,32 @@ Mirrors the narrow-ABC shape of ``strategy_handler/storage/base.py::SignalStore`
 ``itrader/storage`` / ``itrader/config`` layer it sits beside).
 """
 
+import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Literal
+from typing import Literal
 
-# Allow-list of rankable summary metrics (WR-04). ``top_runs`` selects an ``ORDER BY``
-# column, and column names CANNOT be bound parameters — constraining the type at this ABC
-# forces every concrete implementation onto a fixed allow-list, so the SQL-injection
-# pattern (interpolating a free ``metric`` string into ``ORDER BY``) can never be written.
-MetricName = Literal["sharpe", "total_return", "max_drawdown", "calmar"]
+import pandas as pd
+
+from itrader.results.records import PortfolioRecord, RunRecord
+
+# Allow-list of rankable summary metrics (WR-04/D-08/D-18). ``top_runs``/``top_portfolios``
+# select an ``ORDER BY`` column, and column names CANNOT be bound parameters — constraining
+# the type at this ABC forces every concrete implementation onto a fixed allow-list, so the
+# SQL-injection pattern (interpolating a free ``metric`` string into ``ORDER BY``) can never
+# be written. Mirrors ``records.METRIC_NAMES`` (the single metric-name source).
+MetricName = Literal[
+    "sharpe",
+    "sortino",
+    "cagr",
+    "calmar",
+    "max_drawdown",
+    "profit_factor",
+    "win_rate",
+    "total_return",
+    "final_equity",
+    "total_realised_pnl",
+    "trade_count",
+]
 
 
 class ResultsStore(ABC):
@@ -40,55 +58,68 @@ class ResultsStore(ABC):
     """
 
     @abstractmethod
-    def save_run(self, run: Any) -> Any:
-        """Persist one run's summary row and return its ``run_id`` (RESULT-01).
+    def save_run(self, run: RunRecord) -> uuid.UUID:
+        """Persist one run's summary row + its per-portfolio rows, return ``run_id`` (D-13).
 
         Parameters
         ----------
-        run : Any
-            The run summary (Phase-2 type): summary metrics destined for ``Float`` columns
-            plus a JSON settings blob. A single UUIDv7 ``run_id`` is the primary key — no DB
-            autoincrement / second ID scheme.
+        run : RunRecord
+            The run summary: aggregate ``RunMetrics`` destined for ``Float`` columns, a
+            curated JSON settings envelope, and the ``per_portfolio`` rows. The single
+            UUIDv7 ``run.run_id`` is the primary key — no DB autoincrement / second ID scheme.
 
         Returns
         -------
-        Any
+        uuid.UUID
             The persisted run's ``run_id`` (a native ``uuid.UUID``).
         """
         ...
 
     @abstractmethod
-    def save_artifact(self, run_id: Any, frame: Any) -> None:
-        """Persist a run's equity-curve / trade-log frame as a text blob (RESULT-02).
+    def save_artifact(
+        self,
+        run_id: uuid.UUID,
+        portfolio_id: uuid.UUID | None,
+        artifact_type: str,
+        frame: pd.DataFrame,
+    ) -> None:
+        """Persist one equity-curve / trade-log frame as a gzip blob row (D-13).
 
         Parameters
         ----------
-        run_id : Any
+        run_id : uuid.UUID
             The owning run's UUIDv7 id.
-        frame : Any
-            The pandas DataFrame (equity curve / trade log) to persist as a JSON/gzip'd-text
-            ``run_artifacts`` column — a text blob, not a columnar binary format.
+        portfolio_id : uuid.UUID | None
+            The owning portfolio, or ``None`` for an aggregate-level frame (D-07).
+        artifact_type : str
+            The frame kind — ``"equity_curve"`` or ``"trade_log"``.
+        frame : pd.DataFrame
+            The pandas DataFrame to persist as one gzip-blob ``run_artifacts`` row (D-09 —
+            one row per frame, not exploded per-bar).
         """
         ...
 
     @abstractmethod
-    def get_artifact(self, run_id: Any) -> Any:
-        """Read a run's artifact frame back to a pandas DataFrame (RESULT-02 round-trip).
+    def get_artifact(
+        self, run_id: uuid.UUID
+    ) -> dict[tuple[uuid.UUID | None, str], pd.DataFrame]:
+        """Read a run's artifact frames back as a keyed collection (D-15 round-trip).
 
         Parameters
         ----------
-        run_id : Any
-            The run whose artifact frame to load.
+        run_id : uuid.UUID
+            The run whose artifact frames to load.
 
         Returns
         -------
-        Any
-            The reconstructed pandas DataFrame, value-equal to what ``save_artifact`` stored.
+        dict[tuple[uuid.UUID | None, str], pd.DataFrame]
+            ``{(portfolio_id, artifact_type): frame}`` — each frame value-equal to what
+            ``save_artifact`` stored. A missing ``run_id`` raises ``ResultsNotFound`` (D-16).
         """
         ...
 
     @abstractmethod
-    def top_runs(self, metric: MetricName, n: int) -> list[Any]:
+    def top_runs(self, metric: MetricName, n: int) -> list[RunRecord]:
         """Return the top-``n`` runs ranked by a summary ``metric`` (RESULT-03 cross-run query).
 
         Parameters
@@ -103,7 +134,30 @@ class ResultsStore(ABC):
 
         Returns
         -------
-        list[Any]
+        list[RunRecord]
             The top-``n`` run summaries, best first (stable ``ORDER BY`` for determinism).
+        """
+        ...
+
+    @abstractmethod
+    def top_portfolios(self, metric: MetricName, n: int) -> list[PortfolioRecord]:
+        """Return the top-``n`` per-strategy portfolios ranked by ``metric`` (D-08/D-18).
+
+        A dedicated method for per-strategy ranking on ``run_portfolios`` — kept separate
+        from ``top_runs`` so each return type stays clean (a ``PortfolioRecord`` list rather
+        than overloading ``top_runs`` with a target argument).
+
+        Parameters
+        ----------
+        metric : MetricName
+            The summary-metric column to rank by — same ``MetricName`` allow-list as
+            ``top_runs`` (column names cannot be bound parameters, WR-04).
+        n : int
+            How many top portfolios to return.
+
+        Returns
+        -------
+        list[PortfolioRecord]
+            The top-``n`` portfolios, best first (stable ``ORDER BY`` for determinism).
         """
         ...
