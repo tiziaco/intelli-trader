@@ -206,17 +206,31 @@ class SqlResultsStore(ResultsStore):
     ) -> dict[tuple[uuid.UUID | None, str], pd.DataFrame]:
         """Read a run's artifact frames as ``{(portfolio_id, artifact_type): frame}`` (D-15).
 
-        Parameterized read (``bindparam`` against the constant ``run_artifacts`` table). An
-        unknown ``run_id`` (no rows) raises ``ResultsNotFound`` (D-16); otherwise each row's
-        gzip blob is decoded back to a value-equal DataFrame and keyed by its identity.
+        Parameterized read (``bindparam`` against the constant ``run_artifacts`` table).
+        Each matching row's gzip blob is decoded back to a value-equal DataFrame and keyed
+        by its identity.
+
+        IN-02 — when there are no artifact rows, a TRULY unknown ``run_id`` (absent from
+        ``runs``) raises ``ResultsNotFound`` (D-16), but a KNOWN run that legitimately holds
+        no artifact frames returns an empty ``{}`` — the two conditions are no longer
+        conflated.
         """
         statement = select(self.run_artifacts).where(
             self.run_artifacts.c.run_id == bindparam("run_id")
         )
         with self.engine.connect() as connection:
             rows = connection.execute(statement, {"run_id": run_id}).mappings().all()
-        if not rows:
-            raise ResultsNotFound(run_id)
+            if not rows:
+                # IN-02 — disambiguate "unknown run" from "known run, no artifacts".
+                run_exists = connection.execute(
+                    select(self.runs.c.run_id).where(
+                        self.runs.c.run_id == bindparam("run_id")
+                    ),
+                    {"run_id": run_id},
+                ).first() is not None
+                if run_exists:
+                    return {}
+                raise ResultsNotFound(run_id)
         return {
             (self._key_portfolio_id(row["portfolio_id"]), row["artifact_type"]):
                 self._decode_frame(row["blob"])
@@ -240,7 +254,13 @@ class SqlResultsStore(ResultsStore):
         (drawdown is stored negative — see ``_METRIC_DIRECTION``). Tiebreak: ``run_id`` ASC.
         An empty / short table returns ``[]`` (D-16). The ranking projection sets
         ``per_portfolio=[]`` (the per-portfolio rows are not joined for the cross-run query).
+
+        IN-01 — ``n <= 0`` returns ``[]`` up front: a negative ``n`` is a no-limit
+        (``LIMIT -1``) on SQLite but an error on Postgres, and ``n == 0`` selects nothing;
+        normalizing here removes the cross-dialect footgun.
         """
+        if n <= 0:
+            return []
         column = self._run_metric_columns[metric]
         statement = (
             select(self.runs)
@@ -256,7 +276,12 @@ class SqlResultsStore(ResultsStore):
 
         Same allow-list-resolved DESC ranking as ``top_runs`` but against ``run_portfolios``;
         tiebreak ``run_id`` ASC then ``portfolio_id`` ASC. Empty table returns ``[]``.
+
+        IN-01 — ``n <= 0`` returns ``[]`` up front (same cross-dialect ``LIMIT`` guard as
+        ``top_runs``).
         """
+        if n <= 0:
+            return []
         column = self._portfolio_metric_columns[metric]
         statement = (
             select(self.run_portfolios)

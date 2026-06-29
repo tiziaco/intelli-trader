@@ -220,6 +220,33 @@ def test_get_artifact_unknown_run_raises(store: SqlResultsStore) -> None:
         store.get_artifact(uuid.uuid4())
 
 
+def test_get_artifact_known_run_without_artifacts_returns_empty(
+    store: SqlResultsStore,
+) -> None:
+    """IN-02 — a known run that holds no artifact frames returns ``{}`` (not ResultsNotFound).
+
+    ``save_run`` writes ``runs`` + ``run_portfolios`` but NO ``run_artifacts``. A run that
+    exists yet legitimately has zero artifacts must be distinguishable from a truly unknown
+    ``run_id`` (which still raises).
+    """
+    run_id = _run_id()
+    store.save_run(_run(run_id, _metrics()))  # known run, but no save_artifact call
+
+    assert store.get_artifact(run_id) == {}
+    # ... while a genuinely unknown run_id still raises.
+    with pytest.raises(ResultsNotFound):
+        store.get_artifact(uuid.uuid4())
+
+
+def test_top_runs_non_positive_n_returns_empty(store: SqlResultsStore) -> None:
+    """IN-01 — ``n <= 0`` returns ``[]`` without hitting ``LIMIT`` (cross-dialect guard)."""
+    store.save_run(_run(_run_id(), _metrics()))
+    assert store.top_runs("sharpe", 0) == []
+    assert store.top_runs("sharpe", -1) == []
+    assert store.top_portfolios("sharpe", 0) == []
+    assert store.top_portfolios("sharpe", -5) == []
+
+
 def test_top_runs_empty_table_returns_empty(store: SqlResultsStore) -> None:
     """``top_runs`` on a fresh store returns ``[]`` (empty-safe, D-16)."""
     assert store.top_runs("sharpe", 5) == []
