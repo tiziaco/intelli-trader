@@ -3,7 +3,6 @@ import queue
 import sys
 import threading
 import time
-import json
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
