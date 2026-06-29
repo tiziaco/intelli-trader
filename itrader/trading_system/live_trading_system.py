@@ -132,11 +132,15 @@ class LiveTradingSystem:
             )
             order_storage = OrderStorageFactory.create('backtest')
         else:
+            # The 'live' arm now routes to SqlOrderStorage on the shared SQL spine (D-06).
+            # Phase 4 wires the shared operational SqlBackend at the live composition root;
+            # until then the factory builds a default backend internally (legacy db_url arg
+            # removed — the spine is selected by SqlSettings, not a raw URL string).
             try:
-                order_storage = OrderStorageFactory.create('live', _SYSTEM_DB_URL)
+                order_storage = OrderStorageFactory.create('live')
             except NotImplementedError:
-                # Fallback to in-memory during Phase 1
-                self.logger.warning("PostgreSQL storage not yet implemented, using in-memory storage")
+                # Defensive fallback (no longer raised; retained until Phase 4 wiring lands).
+                self.logger.warning("SQL order storage unavailable, using in-memory storage")
                 order_storage = OrderStorageFactory.create('backtest')
         
         # Execution handler constructed BEFORE the order handler so the
