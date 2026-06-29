@@ -30,14 +30,14 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### RESULT — Research/optimization results store (#1)
 
-- [ ] **RESULT-01**: Every backtest/optimization run persists a `runs` row (summary metrics as `Float`
+- [x] **RESULT-01**: Every backtest/optimization run persists a `runs` row (summary metrics as `Float`
   columns + a JSON settings column) so a full parameter sweep is never held in memory.
-- [ ] **RESULT-02**: Each run's equity-curve / trade-log frame persists as a `run_artifacts`
+- [x] **RESULT-02**: Each run's equity-curve / trade-log frame persists as a `run_artifacts`
   JSON/gzip'd-text column (**no Parquet, no `pyarrow`**) and round-trips back to a pandas DataFrame.
-- [ ] **RESULT-03**: The results store runs on **SQLite** by default (schema via `create_all()`,
+- [x] **RESULT-03**: The results store runs on **SQLite** by default (schema via `create_all()`,
   ephemeral) and supports the cross-run query surface (e.g. top-N runs by a summary metric); the `runs`
   schema is Optuna-FK-ready (nullable study/trial ids) without building the sweep loop.
-- [ ] **RESULT-04**: Results-store reads/writes are validated by DB round-trip tests on an in-process
+- [x] **RESULT-04**: Results-store reads/writes are validated by DB round-trip tests on an in-process
   SQLite database (write → read → assert equality).
 
 ### OPS — Operational store backends (#2, store layer)
@@ -138,10 +138,10 @@ phase numbering reset to 1 for v1.6).
 | SPINE-01 | Phase 1 | Complete |
 | SPINE-02 | Phase 1 | Pending |
 | SPINE-03 | Phase 1 | Complete |
-| RESULT-01 | Phase 2 | Pending |
-| RESULT-02 | Phase 2 | Pending |
-| RESULT-03 | Phase 2 | Pending |
-| RESULT-04 | Phase 2 | Pending |
+| RESULT-01 | Phase 2 | Complete |
+| RESULT-02 | Phase 2 | Complete |
+| RESULT-03 | Phase 2 | Complete |
+| RESULT-04 | Phase 2 | Complete |
 | OPS-01 | Phase 3 | Pending |
 | OPS-02 | Phase 3 | Pending |
 | OPS-03 | Phase 3 | Pending |

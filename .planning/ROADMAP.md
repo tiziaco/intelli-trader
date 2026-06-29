@@ -65,7 +65,7 @@ sweep loop OUT (substrate only). Full requirements: [`REQUIREMENTS.md`](./REQUIR
 [`research/SUMMARY.md`](./research/SUMMARY.md).
 
 - [x] **Phase 1: SQL Spine + Security Hardening** - Config-selected `SqlBackend`/`SqlSettings` (SQLite + Postgres, Turso-ready), composition layering (3 existing ABCs + new `ResultsStore` ABC), lossless UUIDv7/timestamp round-trip, FL-06 `SqlHandler` hardening, Alembic skeleton + `create_all()` strategy — completed 2026-06-27 (5/5 plans)
-- [ ] **Phase 2: Results Store (#1)** - Every backtest/optimization run persisted on ephemeral SQLite (`runs` Float + JSON settings, `run_artifacts` JSON/gzip text frame, cross-run query, Optuna-FK-ready); validates the spine oracle-dark
+- [x] **Phase 2: Results Store (#1)** - Every backtest/optimization run persisted on ephemeral SQLite (`runs` Float + JSON settings, `run_artifacts` JSON/gzip text frame, cross-run query, Optuna-FK-ready); validates the spine oracle-dark — completed 2026-06-29 (4/4 plans)
 - [ ] **Phase 3: Operational SQL Backends (#2)** - One Postgres SQL backend per existing seam (order mirror, portfolio state, signal), money as native `Numeric`, testcontainers round-trip; backtest in-memory backends unchanged
 - [ ] **Phase 4: Retention + Live Write-Through (#2 live path)** - Two-knob model (write-through OFF in backtest = zero hot-path cost; live = write-through + working-set cache + purge-on-terminalize + read-through + restart rehydration); built + integration-tested on testcontainers (NEEDS plan-time research)
 - [ ] **Phase 5: Cache Classification (#3)** - Inventory + classify (a/b/c) every cache/`lru_cache`; leave the v1.5 hot path alone; classify, do not rewrite or unify
