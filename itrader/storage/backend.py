@@ -15,6 +15,23 @@ from sqlalchemy.engine import Engine
 from itrader.config.sql import SqlSettings
 
 
+# NAMING_CONVENTION — the SQLAlchemy-standard constraint/index naming convention applied
+# to the spine MetaData (research Pitfall 5 / A5). With it, ALL constraint and index names
+# become EXPLICIT and DETERMINISTIC for every create_all consumer (results store, price
+# store) AND for Plan-05 Alembic ``--autogenerate``, so the test-path ``create_all`` and the
+# deploy-path autogenerate emit byte-IDENTICAL names. This module is the SINGLE SOURCE OF
+# TRUTH for those names: ``itrader/storage/migrations/env.py`` (Plan 05) imports this constant
+# for the autogen MetaData. Cosmetic for existing consumers (names are simply made explicit),
+# so GATE-01 inertness is preserved.
+NAMING_CONVENTION: dict[str, str] = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+
 class SqlBackend:
     """Shared SQL spine: a configured Engine + a fresh MetaData. No business logic.
 
@@ -31,7 +48,10 @@ class SqlBackend:
         # connect. No-op for :memory: and Postgres arms.
         settings.ensure_local_storage()
         self.engine: Engine = create_engine(settings.engine_url())
-        self.metadata = MetaData()
+        # MetaData carries the stable NAMING_CONVENTION so test-path create_all and
+        # deploy-path Alembic autogenerate (Plan 05) produce byte-identical constraint /
+        # index names (research Pitfall 5 / A5).
+        self.metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
     def dispose(self) -> None:
         """Dispose the engine and close all pooled connections.
