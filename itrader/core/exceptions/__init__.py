@@ -48,6 +48,11 @@ from .data import (
     MissingPriceDataError
 )
 
+# Results exceptions
+from .results import (
+    ResultsNotFound
+)
+
 __all__ = [
     # Base exceptions
     'ITraderError',
@@ -80,5 +85,8 @@ __all__ = [
     # Data exceptions
     'DataError',
     'MalformedDataError',
-    'MissingPriceDataError'
+    'MissingPriceDataError',
+
+    # Results exceptions
+    'ResultsNotFound'
 ]
