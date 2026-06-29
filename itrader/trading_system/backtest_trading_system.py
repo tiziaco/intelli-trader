@@ -24,9 +24,22 @@ Indentation: TABS (``trading_system/`` package convention).
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import pandas as pd
+
+from itrader import config, idgen
 from itrader.config import ExchangeConfig, OrderConfig, get_exchange_preset
+from itrader.core.exceptions import ConfigurationError
 from itrader.order_handler.storage import OrderStorageFactory
+from itrader.reporting.frames import build_equity_curve, build_trade_log
 from itrader.reporting.summary import print_metrics_summary
+from itrader.results.records import PortfolioRecord, RunRecord
+from itrader.results.serializers import (
+	annual_periods,
+	build_aggregate_equity_curve,
+	build_run_metrics,
+	curate_portfolio_params,
+	curate_run_settings,
+)
 from itrader.strategy_handler.storage import SignalStorageFactory, SignalStore
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.trading_system.backtest_runner import BacktestRunner
@@ -181,8 +194,9 @@ class BacktestTradingSystem(object):
 		return self.engine.time_generator
 
 	def run(self, print_summary: bool = True,
-			on_tick: Optional[Callable[["BacktestTradingSystem", Any], None]] = None) -> None:
-		"""Run the backtest, then optionally print the lifted metrics summary.
+			on_tick: Optional[Callable[["BacktestTradingSystem", Any], None]] = None,
+			persist: bool = False) -> None:
+		"""Run the backtest, then optionally print the summary and persist results.
 
 		Delegates the session setup + for-loop to the ``BacktestRunner`` (the
 		byte-exact ordering lives there, Trap 4). When ``print_summary`` is True
@@ -194,6 +208,14 @@ class BacktestTradingSystem(object):
 		argument — preserving the e2e ``on_tick(system, time_event)`` contract
 		(the harness reaches ``system.order_handler`` from it). Default ``None`` is
 		byte-exact (oracle-dark).
+
+		``persist`` (RESULT-01, D-01/D-04) is the POST-LOOP results dump switch.
+		It defaults to ``False`` — the run loop touches NO SQL and the dump code is
+		never reached, so the SMA_MACD oracle stays byte-exact and the path stays
+		SQL-import-inert (GATE-01). When True (and a results store was injected at
+		composition, D-03), a complete ``RunRecord`` + artifact frames are assembled
+		from post-run portfolio state and written through the injected store AFTER
+		the loop — structurally off the hot path.
 		"""
 		wrapped: Optional[Callable[[Any, Any], None]] = None
 		if on_tick is not None:
@@ -201,6 +223,12 @@ class BacktestTradingSystem(object):
 				on_tick(self, time_event)
 
 		self.runner.run(on_tick=wrapped)
+
+		# POST-LOOP results dump (D-01): structurally after the run loop, guarded by
+		# ``persist`` so the default path executes no dump code at all (byte-exact,
+		# GATE-01). The D-03 store guard lives first inside ``_persist_results``.
+		if persist:
+			self._persist_results()
 
 		if print_summary:
 			# 260623-ajs: assemble the three run-level header inputs from
@@ -227,6 +255,119 @@ class BacktestTradingSystem(object):
 				duration_seconds=duration,
 				period=period,
 				portfolio_tickers=portfolio_tickers)
+
+	def _persist_results(self) -> None:
+		"""Assemble + write the post-loop ``RunRecord`` through the injected store.
+
+		The POST-LOOP dump (D-01/D-05/D-06/D-13). Guard first (D-03): persistence
+		requires a results store injected at composition. Then, for each active
+		portfolio, build its run-artifact frames (the SAME pure ``reporting.frames``
+		builders the print block uses), compute its per-portfolio ``RunMetrics`` and
+		curate its strategy ``params``; assemble the AGGREGATE ``RunMetrics`` from the
+		multi-portfolio aggregate equity curve (D-14, mixed-timeframe-safe) and the
+		concatenated trades; curate the run-level ``settings`` (credential-free, the
+		02-02 serializer); and write ``runs`` + ``run_portfolios`` atomically plus the
+		equity_curve/trade_log artifacts. ``run_id`` is a single-UUIDv7 idgen value
+		(the stable ORDER BY tiebreak).
+
+		Dump-failure policy (D-17): a write failure re-raises when the store's
+		``strict_persist`` is True; otherwise it is logged-and-swallowed so a sweep
+		never loses good in-memory runs to one bad write.
+		"""
+		# D-03 — persistence requires a store injected at composition (clear error).
+		store = self.engine.results_store
+		if store is None:
+			raise ConfigurationError(
+				"results_store",
+				reason="run(persist=True) requires a results store injected at composition")
+
+		run_id = idgen.generate_run_id()
+
+		# Map each active portfolio -> the strategies subscribed to it (mirror the
+		# strategy/subscribed_portfolios walk the print block already performs).
+		strategies_by_pid: dict[Any, list[Any]] = {}
+		for strategy in self.strategies_handler.strategies:
+			for pid in strategy.subscribed_portfolios:
+				strategies_by_pid.setdefault(pid, []).append(strategy)
+
+		portfolio_records: list[PortfolioRecord] = []
+		equity_frames: list[pd.DataFrame] = []
+		trades_frames: list[pd.DataFrame] = []
+		# (portfolio_id, equity_frame, trades_frame) for the per-portfolio artifacts.
+		artifacts: list[tuple[Any, pd.DataFrame, pd.DataFrame]] = []
+		timeframe_aliases: list[str] = []
+		tickers: list[str] = []
+		starting_cash_total = 0.0
+
+		for portfolio in self.portfolio_handler.get_active_portfolios():
+			trades = build_trade_log(portfolio)
+			equity = build_equity_curve(portfolio)
+			metrics = build_run_metrics(equity, trades)
+			strategies_for_pid = strategies_by_pid.get(portfolio.portfolio_id, [])
+			params = curate_portfolio_params(strategies_for_pid)
+			portfolio_records.append(PortfolioRecord(
+				portfolio_id=portfolio.portfolio_id,
+				name=portfolio.name,
+				metrics=metrics,
+				params=params))
+			equity_frames.append(equity)
+			trades_frames.append(trades)
+			artifacts.append((portfolio.portfolio_id, equity, trades))
+			# Annualization basis + run-level settings inputs from subscribed strategies.
+			for strategy in strategies_for_pid:
+				timeframe_aliases.append(strategy.timeframe_alias)
+				for ticker in strategy.tickers:
+					if ticker not in tickers:
+						tickers.append(ticker)
+			equity_series = equity["total_equity"].astype(float)
+			starting_cash_total += (
+				float(equity_series.iloc[0]) if not equity_series.empty else 0.0)
+
+		# Aggregate metrics across portfolios (D-14): the aggregate equity curve is a
+		# total_equity Series indexed by timestamp; to_frame() yields the total_equity
+		# column build_run_metrics reads, reset_index() yields the persistable frame.
+		aggregate_series = build_aggregate_equity_curve(equity_frames)
+		aggregate_equity_frame = aggregate_series.reset_index()
+		aggregate_trades = (
+			pd.concat(trades_frames, ignore_index=True)
+			if trades_frames else pd.DataFrame())
+		periods = annual_periods(timeframe_aliases)
+		aggregate_metrics = build_run_metrics(
+			aggregate_series.to_frame(), aggregate_trades, periods=periods)
+
+		# Curated run settings (D-11, credential-free): the fee/slippage models are
+		# read off the LIVE simulated exchange; market_execution off the order handler.
+		exchange = self.execution_handler.exchanges.get('simulated')
+		order_config = OrderConfig(market_execution=self.order_handler.market_execution)
+		settings = curate_run_settings(
+			exchange,
+			order_config,
+			tickers=tickers,
+			timeframe=timeframe_aliases[0] if timeframe_aliases else "1d",
+			start_date=self.start_date,
+			end_date=self.end_date,
+			starting_cash=starting_cash_total,
+			rng_seed=config.performance.rng_seed)
+
+		record = RunRecord(
+			run_id=run_id,
+			metrics=aggregate_metrics,
+			settings=settings,
+			per_portfolio=portfolio_records)
+
+		# Write (D-13/D-17): runs + run_portfolios atomically, then the artifacts. A
+		# write failure re-raises only when the store opts into strict_persist;
+		# otherwise it is logged and swallowed so good in-memory runs are not lost.
+		try:
+			store.save_run(record)
+			for portfolio_id, equity, trades in artifacts:
+				store.save_artifact(run_id, portfolio_id, "equity_curve", equity)
+				store.save_artifact(run_id, portfolio_id, "trade_log", trades)
+			store.save_artifact(run_id, None, "equity_curve", aggregate_equity_frame)
+		except Exception:
+			if getattr(store, "_strict_persist", False):
+				raise
+			self.logger.error("results persist failed", exc_info=True)
 
 	def get_signal_records(self) -> list[SignalRecord]:
 		"""Return the signals captured during the run (Plan 05-03, SIG-02).
@@ -265,7 +406,19 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	tickers = {str(t) for t in spec.data.keys()}
 	exchange_config = _seed_supported_symbols(exchange_config, tickers)
 
-	# 3. Wire the graph mode-agnostically through the shared seam.
+	# 3. Wire the graph mode-agnostically through the shared seam. The results
+	#    store is passed straight through from the spec (D-04/D-19, GATE-01): it is
+	#    commonly None, so the oracle path stays store-free AND SQL-import-inert —
+	#    this module imports NO SQL surface at top level. A persistence caller builds
+	#    the store DIRECTLY (NO factory, D-19) and injects it on the spec, e.g.
+	#    ``SqlResultsStore(SqlBackend(SqlSettings.results_default()),
+	#    strict_persist=SqlSettings.results_default().strict_persist)`` with the SQL
+	#    surface imported on THAT path only — never here.
+	#
+	#    ``getattr`` (NOT ``spec.results_store``): the e2e harness duck-types its own
+	#    ``ScenarioSpec`` (no ``results_store`` field) into this factory by name, so a
+	#    hard attribute read would break it. Absent → None → store-free / byte-exact.
+	results_store = getattr(spec, "results_store", None)
 	engine = compose_engine(
 		order_storage=order_storage,
 		signal_store=signal_store,
@@ -275,6 +428,7 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		timeframe=spec.timeframe,
 		exchange_config=exchange_config,
 		order_config=OrderConfig.default(),
+		results_store=results_store,
 	)
 	runner = BacktestRunner(engine)
 
