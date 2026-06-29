@@ -414,6 +414,11 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	#    ``SqlResultsStore(SqlBackend(SqlSettings.results_default()),
 	#    strict_persist=SqlSettings.results_default().strict_persist)`` with the SQL
 	#    surface imported on THAT path only — never here.
+	#
+	#    ``getattr`` (NOT ``spec.results_store``): the e2e harness duck-types its own
+	#    ``ScenarioSpec`` (no ``results_store`` field) into this factory by name, so a
+	#    hard attribute read would break it. Absent → None → store-free / byte-exact.
+	results_store = getattr(spec, "results_store", None)
 	engine = compose_engine(
 		order_storage=order_storage,
 		signal_store=signal_store,
@@ -423,7 +428,7 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		timeframe=spec.timeframe,
 		exchange_config=exchange_config,
 		order_config=OrderConfig.default(),
-		results_store=spec.results_store,
+		results_store=results_store,
 	)
 	runner = BacktestRunner(engine)
 
