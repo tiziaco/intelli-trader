@@ -87,8 +87,11 @@ def build_results_tables(metadata: MetaData) -> dict[str, Table]:
         )
 
     # run_artifacts — one gzip-blob row per frame (D-09, NOT exploded per-bar). Composite
-    # PK (run_id, portfolio_id, artifact_type); portfolio_id NULLABLE for aggregate-level
-    # frames (D-07); artifact_type ∈ {"equity_curve", "trade_log"}; blob is gzip bytes (D-10).
+    # PK (run_id, portfolio_id, artifact_type); aggregate-level frames (D-07) carry the
+    # ALL-ZEROS sentinel portfolio_id (storage maps None <-> sentinel), so portfolio_id is
+    # NOT NULL — a nullable PK column is implicitly NOT NULL on Postgres and rejects a NULL
+    # insert there (WR-01). artifact_type ∈ {"equity_curve", "trade_log"}; blob is gzip
+    # bytes (D-10).
     if "run_artifacts" in metadata.tables:
         tables["run_artifacts"] = metadata.tables["run_artifacts"]
     else:
@@ -101,7 +104,7 @@ def build_results_tables(metadata: MetaData) -> dict[str, Table]:
                 ForeignKey("runs.run_id"),
                 primary_key=True,
             ),
-            Column("portfolio_id", Uuid(as_uuid=True), primary_key=True, nullable=True),
+            Column("portfolio_id", Uuid(as_uuid=True), primary_key=True),
             Column("artifact_type", String, primary_key=True),
             Column("blob", LargeBinary),
         )

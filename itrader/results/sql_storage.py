@@ -49,6 +49,14 @@ from itrader.storage import SqlBackend
 # byte-deterministic across runs (RESULT-04 / D-10). Changing this value changes the bytes.
 _COMPRESSLEVEL = 6
 
+# WR-01 — the all-zeros UUID sentinel for the aggregate-level artifact's ``portfolio_id``.
+# ``run_artifacts.portfolio_id`` is part of the composite PK, so it MUST be NOT NULL to work
+# on Postgres (a nullable PK column is implicitly NOT NULL there and rejects a NULL insert).
+# A UUIDv7 portfolio id can never be all-zeros (version/timestamp bits are always set), so
+# this sentinel never collides with a real portfolio. The store maps None <-> sentinel at
+# the write/read boundary, so callers still key the aggregate frame on ``(None, type)``.
+_AGGREGATE_PORTFOLIO_ID = uuid.UUID(int=0)
+
 # D-18 — best-first ranking is DESC for EVERY metric in this set, INCLUDING ``max_drawdown``:
 # drawdown is stored NEGATIVE (``reporting/metrics.py`` L47-56), so the value closest to zero
 # is the LEAST-bad drawdown and the LARGEST signed value → DESC. An ASC on negative drawdown
@@ -174,10 +182,18 @@ class SqlResultsStore(ResultsStore):
         artifact_type: str,
         frame: pd.DataFrame,
     ) -> None:
-        """Persist one frame as a gzip-blob ``run_artifacts`` row (separate txn, D-13)."""
+        """Persist one frame as a gzip-blob ``run_artifacts`` row (separate txn, D-13).
+
+        WR-01 — an aggregate-level frame (``portfolio_id=None``) is stored under the
+        all-zeros sentinel so the composite-PK ``portfolio_id`` column stays NOT NULL on
+        Postgres; ``get_artifact`` maps it back to ``None``.
+        """
+        stored_portfolio_id = (
+            _AGGREGATE_PORTFOLIO_ID if portfolio_id is None else portfolio_id
+        )
         row: dict[str, Any] = {
             "run_id": run_id,
-            "portfolio_id": portfolio_id,
+            "portfolio_id": stored_portfolio_id,
             "artifact_type": artifact_type,
             "blob": self._encode_frame(frame),
         }
@@ -202,9 +218,19 @@ class SqlResultsStore(ResultsStore):
         if not rows:
             raise ResultsNotFound(run_id)
         return {
-            (row["portfolio_id"], row["artifact_type"]): self._decode_frame(row["blob"])
+            (self._key_portfolio_id(row["portfolio_id"]), row["artifact_type"]):
+                self._decode_frame(row["blob"])
             for row in rows
         }
+
+    @staticmethod
+    def _key_portfolio_id(stored: uuid.UUID | None) -> uuid.UUID | None:
+        """Map the stored ``portfolio_id`` back to the caller key (WR-01).
+
+        The all-zeros sentinel (written for an aggregate-level frame) maps back to ``None``
+        so callers continue to key the aggregate frame on ``(None, artifact_type)``.
+        """
+        return None if stored == _AGGREGATE_PORTFOLIO_ID else stored
 
     def top_runs(self, metric: MetricName, n: int) -> list[RunRecord]:
         """Return the top-``n`` runs ranked best-first by ``metric`` (D-18).

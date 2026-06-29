@@ -187,6 +187,32 @@ def test_get_artifact_handles_null_portfolio_key(store: SqlResultsStore) -> None
     assert_frame_equal(artifacts[(None, "trade_log")], frame)
 
 
+def test_aggregate_artifact_stored_portfolio_id_is_not_null(
+    store: SqlResultsStore,
+) -> None:
+    """WR-01 — an aggregate frame (``portfolio_id=None``) stores a NOT-NULL sentinel.
+
+    ``run_artifacts.portfolio_id`` is part of the composite PK, so a NULL would be rejected
+    on Postgres (a nullable PK column is implicitly NOT NULL there). The store maps ``None``
+    to the all-zeros sentinel on write — so the persisted column is never NULL — and maps it
+    back to ``None`` on read. This proves the Postgres-incompatible NULL-PK insert is gone
+    while the ``(None, type)`` caller key is preserved.
+    """
+    run_id = _run_id()
+    store.save_run(_run(run_id, _metrics()))
+    store.save_artifact(run_id, None, "equity_curve", _frame())
+
+    with store.engine.connect() as connection:
+        rows = connection.execute(select(store.run_artifacts)).mappings().all()
+    assert len(rows) == 1
+    # The persisted PK column is the all-zeros sentinel, NEVER NULL.
+    assert rows[0]["portfolio_id"] == uuid.UUID(int=0)
+
+    # ... yet the read API still keys the aggregate frame on None.
+    artifacts = store.get_artifact(run_id)
+    assert (None, "equity_curve") in artifacts
+
+
 def test_get_artifact_unknown_run_raises(store: SqlResultsStore) -> None:
     """``get_artifact`` on an unknown ``run_id`` raises ``ResultsNotFound`` (D-16)."""
     store.save_run(_run(_run_id(), _metrics()))  # populate so the table is non-empty
