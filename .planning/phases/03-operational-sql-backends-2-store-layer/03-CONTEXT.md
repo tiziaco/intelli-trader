@@ -162,6 +162,18 @@ should not land before Phase 2 validates the spine oracle-dark.
   NO money TypeDecorator), `config/sql.py` `SqlSettings`, Alembic skeleton (`render_as_batch=True`,
   empty `versions/`), testcontainers harness (D-10/D-11), composition-not-inheritance.
 
+### ⚠️ Config wiring CHANGED since Phase 1 (Phase 2 + quick-tasks 260629-jh2/l0q — read this, not Phase 1's account)
+- `itrader/config/sql.py` — **unified `SqlSettings(BaseSettings)`** (`env_prefix="ITRADER_DATABASE_"`)
+  now owns the ENTIRE DB connection surface: the `SqlDriver` switch (sqlite/postgresql/libsql-slot),
+  component env vars (host/port/user/name/password, **default Postgres port 5544 — NOT 5432**), the
+  `sqlalchemy.URL.create` engine-URL builder (URL-escapes the password), the optional
+  `ITRADER_DATABASE_URL` verbatim escape hatch, and a **fail-loud `_require_pg_credentials`** validator.
+  Factories: `SqlSettings.default()` (operational) / `SqlSettings.results_default()` (SQLite research,
+  pin driver+db via init kwargs so env can't flip them). NEVER constructs at import time (Pitfall 8).
+  ⚠️ This **supersedes** Phase-1 D-02/D-08's "`SqlSettings` consumes `Settings.database_url: SecretStr`"
+  — there is **no `database_url` field on `Settings` anymore**. The `Sql*Storage` backends source their
+  engine/`SqlBackend` from `SqlSettings` (Postgres arm), NOT from `Settings`.
+
 ### Research (HIGH-confidence; PREDATES Owner Decisions — apply with the precedence note)
 - `.planning/research/SUMMARY.md` §"Phase 3" + §Research Flags — operational backend deliverables.
 - `.planning/research/ARCHITECTURE.md` — the three existing ABCs + composition spine design.
