@@ -28,6 +28,7 @@ from decimal import Decimal
 
 import pytest
 import uuid_utils.compat as uc
+from sqlalchemy import text
 
 from itrader.core.enums import CashOperationType, PositionSide, TransactionType
 from itrader.core.ids import PositionId, TransactionId
@@ -45,6 +46,37 @@ _T2 = datetime(2021, 6, 9, tzinfo=timezone.utc)
 
 
 # --------------------------------------------------------------------------- fixtures
+# The seven portfolio tables the ``wrapper`` fixture builds via ``create_all`` on the shared
+# session container (child tables irrelevant — CASCADE handles any FK).
+_PORTFOLIO_TABLES = (
+    "cash_operations",
+    "cash_reservations",
+    "equity_snapshots",
+    "locked_margin",
+    "positions",
+    "transactions",
+    "portfolio_account_state",
+)
+
+
+@pytest.fixture(autouse=True)
+def _drop_operational_portfolio_tables(pg_backend):
+    """Keep the shared session Postgres container pristine for sibling storage tests.
+
+    The ``wrapper`` fixture builds the seven portfolio tables via ``create_all`` on the
+    session-scoped container. This file sorts alphabetically BEFORE ``test_migrations.py``,
+    whose ``alembic upgrade head`` would raise ``ProgrammingError`` on the pre-existing
+    tables. Drop them in teardown (CASCADE covers any FK) so the container is left clean —
+    the same pristine-container discipline ``test_migrations`` follows with its
+    ``downgrade base``. Teardown runs before ``pg_backend`` disposes (LIFO), so the engine is
+    still live.
+    """
+    yield
+    with pg_backend.engine.begin() as conn:
+        for table in _PORTFOLIO_TABLES:
+            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
+
+
 @pytest.fixture
 def portfolio_id():
     """A fresh UUIDv7 portfolio id per test (no cross-test row leakage)."""

@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 import uuid_utils.compat as uc
+from sqlalchemy import text
 
 from itrader.core.enums import OrderType, Side
 from itrader.core.ids import StrategyId
@@ -40,6 +41,22 @@ _CONFIG: dict[str, Any] = {
     "signal_window": 9,
     "name": "SMA_MACD",
 }
+
+
+@pytest.fixture(autouse=True)
+def _drop_operational_signal_table(pg_backend):
+    """Keep the shared session Postgres container pristine for sibling storage tests.
+
+    ``_wrapper`` builds the ``signals`` table via ``create_all`` on the session-scoped
+    container. This file sorts alphabetically BEFORE ``test_migrations.py``, whose
+    ``alembic upgrade head`` would raise ``ProgrammingError`` on the pre-existing ``signals``
+    table. Drop it in teardown (CASCADE covers any FK) so the container is left clean — the
+    same pristine-container discipline ``test_migrations`` follows with its ``downgrade base``.
+    Teardown runs before ``pg_backend`` disposes (LIFO), so the engine is still live.
+    """
+    yield
+    with pg_backend.engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS signals CASCADE"))
 
 
 def _make_record(strategy_id, ticker, *, time):
