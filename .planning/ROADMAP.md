@@ -104,7 +104,12 @@ may merge against `Account` until the backtest is re-confirmed byte-exact.
      refactor is pure code-motion behind the `PortfolioReadModel` seam (does not ripple into the order domain).
 **Research flag**: SKIP — v1.2 MOD-01 OrderManager-decomposition playbook; `PortfolioReadModel` seam
 already in place; code-motion only (plan-time research optional).
-**Plans**: TBD
+**Plans**: 5 plans
+- [ ] 01-01-PLAN.md — Interface scaffold: Account ABC + VenueAccount stub + LiveConnector Protocol + D-04 resolution (Wave 1)
+- [ ] 01-02-PLAN.md — SimulatedCashAccount + SimulatedMarginAccount byte-exact code-motion (Wave 2)
+- [ ] 01-03-PLAN.md — Re-point Portfolio/PortfolioHandler to Account; strip user_id; delete CashManager (Wave 3)
+- [ ] 01-04-PLAN.md — Delete TradingInterface (LX-14) (Wave 1)
+- [ ] 01-05-PLAN.md — Oracle byte-exact re-confirmation terminal gate (Wave 4)
 
 ### Phase 2: OKX Connector
 **Goal**: Implement `OkxConnector` against our `LiveConnector` interface — ccxt.pro `watch_ohlcv` by
