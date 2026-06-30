@@ -102,6 +102,7 @@ def derive_required_depths(consumers: Iterable[RawBarConsumer]) -> list[int]:
     return sorted(depths)
 
 
+# CACHE-CLASS: (a-infra) shared-bar-cache capacity (wiring-time) — see docs/CACHE-CLASSIFICATION.md
 def derive(consumers: Iterable[RawBarConsumer] = ()) -> int:
     """Derive the shared recent-bars cache capacity at wiring time (P5-D16/P5-D22).
 

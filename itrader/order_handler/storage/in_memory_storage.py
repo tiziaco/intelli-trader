@@ -59,6 +59,7 @@ class InMemoryOrderStorage(OrderStorage):
         is touched so no entry ever leaks or drifts.
         """
         self._by_id: Dict[uuid.UUID, 'Order'] = {}                          # SOURCE OF TRUTH (D-20)
+        # CACHE-CLASS: (b) storage-index lookup — solved by Phase-3 SQL WHERE/indexes — see docs/CACHE-CLASSIFICATION.md
         self._active_by_portfolio: Dict[uuid.UUID, Dict[uuid.UUID, None]] = {}   # derived cache (D-02)
         self._by_status: Dict['OrderStatus', Dict[uuid.UUID, None]] = {}         # derived cache, active-only (D-10)
         self._last_indexed_status: Dict[uuid.UUID, 'OrderStatus'] = {}           # shadow registry (D-03): one entry per LIVE order (active OR terminal)
