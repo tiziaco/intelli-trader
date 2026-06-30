@@ -136,6 +136,7 @@ def timedelta_to_str(delta: timedelta) -> Union[str, None]:
 # NOT cache exceptions (the function raises nothing). lru_cache is thread-safe (locks
 # internally) for live mode, and the keys are deterministic business values (`ts` is
 # `event.time`, never wall-clock), so memoization is reproducible.
+# CACHE-CLASS: (c) pure-function memo — see docs/CACHE-CLASSIFICATION.md
 @functools.lru_cache(maxsize=32)
 def _aligned(ts: datetime, tf: timedelta) -> bool:
 	"""

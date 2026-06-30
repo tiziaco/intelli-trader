@@ -85,6 +85,7 @@ class Position(object):
 		# (D-05 rejected the descriptor route on this hand-written class). Cached
 		# values stay Decimal (Decimal end-to-end). current_price is NOT an input
 		# here, so market_value / aggregate_notional stay live on the per-bar price.
+		# CACHE-CLASS: (c) fill-invalidated memo [pair: _net_quantity_cache / _avg_price_cache] — see docs/CACHE-CLASSIFICATION.md
 		self._net_quantity_cache: Optional[Decimal] = None
 		self._avg_price_cache: Optional[Decimal] = None
 

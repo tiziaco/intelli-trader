@@ -111,6 +111,7 @@ class SimulatedExchange(AbstractExchange):
 		self._last_ping: Optional[datetime] = None
 		
 		# Exchange limits and settings
+		# CACHE-CLASS: (c-config) venue config snapshot [family: _supported_symbols / _min_order_size / _max_order_size] — see docs/CACHE-CLASSIFICATION.md
 		self._supported_symbols = self.config.limits.supported_symbols
 		# DEC-02 / D-06: size limits carried as Decimal end-to-end (no float() — float money
 		# is a correctness defect). config.limits.* are already Decimal (Pydantic ExchangeLimits);
