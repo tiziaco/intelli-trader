@@ -58,11 +58,11 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 - [x] **RETAIN-01**: A mode-aware write-through toggle — backtest = retain-all in-memory + optional
   end-of-run batch dump (**write-through OFF**: the backtest backend contains no per-tick serialization
   code); live = write-through ON to the Postgres system of record.
-- [ ] **RETAIN-02**: A bounded live working-set cache — open positions, working orders + brackets, the
+- [x] **RETAIN-02**: A bounded live working-set cache — open positions, working orders + brackets, the
   current account/portfolio snapshot, and running accumulators stay resident; terminal records (closed
   positions, terminal orders, full history) are purged on terminalize with a bounded read-through
   fallback, so the working set stays bounded in a long-running process.
-- [ ] **RETAIN-03**: Restart rehydration reconstructs the live working set (open positions + working
+- [x] **RETAIN-03**: Restart rehydration reconstructs the live working set (open positions + working
   orders + brackets) from the store — store is the system of record, cache is rebuildable —
   deterministically, without replaying terminal history; a bracket parent stays resident until its
   children terminalize. (Built + integration-tested here on testcontainers Postgres; driven by a real
@@ -147,8 +147,8 @@ phase numbering reset to 1 for v1.6).
 | OPS-03 | Phase 3 | Pending |
 | OPS-04 | Phase 3 | Pending |
 | RETAIN-01 | Phase 4 | Complete |
-| RETAIN-02 | Phase 4 | Pending |
-| RETAIN-03 | Phase 4 | Pending |
+| RETAIN-02 | Phase 4 | Complete |
+| RETAIN-03 | Phase 4 | Complete |
 | CACHE-01 | Phase 5 | Pending |
 | CACHE-02 | Phase 5 | Pending |
 | MIG-01 | Phase 1 | Complete |
