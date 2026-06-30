@@ -285,7 +285,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 **Plans**: 3 plans (waves 1-3)
 - [x] 05-01-PLAN.md — Committed cache-classification map (docs/CACHE-CLASSIFICATION.md) + SC2 grep-matches-inventory check (wave 1)
 - [x] 05-02-PLAN.md — Per-site `# CACHE-CLASS:` anchors at the 14 live sites, indentation-matched (wave 2)
-- [ ] 05-03-PLAN.md — D-02 vestigial-knob removal + recurring SC3 gate (oracle/mypy/filterwarnings) (wave 3)
+- [x] 05-03-PLAN.md — D-02 vestigial-knob removal + recurring SC3 gate (oracle/mypy/filterwarnings) (wave 3)
 
 ## Progress
 
@@ -308,7 +308,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 | 2. Results Store (#1) | 4/4 | Complete   | 2026-06-29 |
 | 3. Operational SQL Backends (#2) | 5/5 | Complete   | 2026-06-29 |
 | 4. Retention + Live Write-Through (#2 live path) | 4/4 | Complete   | 2026-06-30 |
-| 5. Cache Classification (#3) | 2/3 | In Progress|  |
+| 5. Cache Classification (#3) | 3/3 | Complete   | 2026-06-30 |
 
 **Next:** plan Phase 1 with `/gsd:plan-phase 1`.
 
