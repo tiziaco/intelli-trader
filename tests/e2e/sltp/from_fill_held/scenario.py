@@ -122,6 +122,6 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT,
                                 sltp_policy=_SLTP)],
-    portfolios=[PortfolioSpec(user_id=1, name="sltp02_held_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="sltp02_held_pf", cash=_CASH)],
     exchange=None,  # D-14: zero-fee / zero-slippage.
 )

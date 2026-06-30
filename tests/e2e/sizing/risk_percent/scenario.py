@@ -131,6 +131,6 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT,
                                 sizing_policy=_SIZING)],
-    portfolios=[PortfolioSpec(user_id=1, name="size02_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="size02_pf", cash=_CASH)],
     exchange=None,  # D-14: zero-fee / zero-slippage — sizing is the only moving part.
 )

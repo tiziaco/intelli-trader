@@ -165,6 +165,6 @@ SCENARIO = ScenarioSpec(
         ScriptedEmitter(_TIMEFRAME, [_AAVE], script=_AAVE_SCRIPT,
                         sizing_policy=FixedQuantity(qty=Decimal("10"))),
     ],
-    portfolios=[PortfolioSpec(user_id=1, name="union_window_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="union_window_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the listing edge is the moving part.
 )

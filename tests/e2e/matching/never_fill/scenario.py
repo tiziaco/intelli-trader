@@ -84,7 +84,7 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT,
                                 order_type=OrderType.LIMIT)],
-    portfolios=[PortfolioSpec(user_id=1, name="never_fill_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="never_fill_pf", cash=_CASH)],
     exchange=None,  # D-14: zero-fee / zero-slippage.
     # NO actions: this is the as-is never-fill assertion (D-10), not an operator
     # scenario. An empty actions tuple keeps the run oracle-dark (no on_tick hook).

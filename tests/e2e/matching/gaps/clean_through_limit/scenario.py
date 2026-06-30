@@ -114,6 +114,6 @@ SCENARIO = ScenarioSpec(
     # FractionOfCash(0.95) is safe: a BUY LIMIT fills at-or-below its trigger.
     strategies=[ScriptedEmitter(
         _TIMEFRAME, [_TICKER], script=_SCRIPT, order_type=OrderType.LIMIT)],
-    portfolios=[PortfolioSpec(user_id=1, name="gap_limit_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="gap_limit_pf", cash=_CASH)],
     exchange=None,  # D-14: zero-fee / zero-slippage.
 )

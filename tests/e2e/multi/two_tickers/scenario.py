@@ -137,6 +137,6 @@ SCENARIO = ScenarioSpec(
         ScriptedEmitter(_TIMEFRAME, [_BTC, _ETH], script=_SCRIPT,
                         sizing_policy=_SIZING),
     ],
-    portfolios=[PortfolioSpec(user_id=1, name="two_tickers_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="two_tickers_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the two round-trips are the only moving part.
 )

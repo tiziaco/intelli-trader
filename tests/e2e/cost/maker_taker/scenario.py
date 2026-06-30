@@ -154,6 +154,6 @@ SCENARIO = ScenarioSpec(
         ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_TAKER_SCRIPT,
                         order_type=OrderType.MARKET),
     ],
-    portfolios=[PortfolioSpec(user_id=1, name="cost02_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="cost02_pf", cash=_CASH)],
     exchange=_EXCHANGE,  # D-14: MAKER_TAKER fee model applied to the run.
 )

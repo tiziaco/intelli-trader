@@ -107,7 +107,7 @@ def _build_system():
     strategy = _TrailingLongStrategy(timeframe="1d", tickers=[_TICKER])
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1, name="trailing_long_pf", exchange="csv", cash=_CASH)
+        name="trailing_long_pf", exchange="csv", cash=_CASH)
     strategy.subscribe_portfolio(portfolio_id)
     system.runner._initialise_backtest_session()
     return system, portfolio_id

@@ -66,6 +66,7 @@ The position is STILL OPEN after the partial cover (NOT closed, NOT flipped).
 import pathlib
 from decimal import Decimal
 
+from itrader.config import PortfolioConfig, deep_merge, get_portfolio_preset
 from itrader.core.enums import Side
 from itrader.core.enums.order import OrderStatus, OrderType
 from itrader.core.enums.trading import TradingDirection
@@ -134,7 +135,14 @@ def _build_pcov_system():
     strategy = _PartialCoverStrategy(timeframe="1d", tickers=[_TICKER])
     sh.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1, name="partial_cover_pf", exchange="csv", cash=_CASH)
+        # 01-03 D-03 (sibling 01-03b finding): the account leaf is selected at
+        # CONSTRUCTION from enable_margin; the post-construction config swap below
+        # refines the rest but no longer rebuilds the leaf — so margin must be on
+        # in the constructor config to get a SimulatedMarginAccount.
+        name="partial_cover_pf", exchange="csv", cash=_CASH,
+        portfolio_config=PortfolioConfig.model_validate(deep_merge(
+            get_portfolio_preset("default").model_dump(),
+            {"trading_rules": {"enable_margin": True}})))
     strategy.subscribe_portfolio(portfolio_id)
 
     portfolio = system.portfolio_handler.get_portfolio(portfolio_id)

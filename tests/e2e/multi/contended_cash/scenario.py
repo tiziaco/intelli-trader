@@ -176,6 +176,6 @@ SCENARIO = ScenarioSpec(
         ScriptedEmitter(_TIMEFRAME, [_BTC], script=_BTC_SCRIPT,
                         sizing_policy=_LOSER_SIZING),
     ],
-    portfolios=[PortfolioSpec(user_id=1, name="contended_cash_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="contended_cash_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the cash contention is the only moving part.
 )

@@ -101,6 +101,6 @@ SCENARIO = ScenarioSpec(
     starting_cash=_CASH,
     data={_TICKER: _DATASET},
     strategies=[LimitEntryStrategy(_TIMEFRAME, [_TICKER])],
-    portfolios=[PortfolioSpec(user_id=1, name="limit_entry_crossval_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="limit_entry_crossval_pf", cash=_CASH)],
     exchange=None,  # D-14: zero-fee / zero-slippage.
 )

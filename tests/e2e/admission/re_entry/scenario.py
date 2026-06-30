@@ -124,6 +124,6 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT,
                                 sizing_policy=_SIZING)],
-    portfolios=[PortfolioSpec(user_id=1, name="re_entry_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="re_entry_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the re-entry lifecycle is the only moving part.
 )

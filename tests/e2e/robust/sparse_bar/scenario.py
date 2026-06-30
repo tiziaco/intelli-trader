@@ -123,6 +123,6 @@ SCENARIO = ScenarioSpec(
         # ONE emitter, SOLUSD only. ETH is data-only (the dense grid co-asset).
         ScriptedEmitter(_TIMEFRAME, [_SOL], script=_SOL_SCRIPT),
     ],
-    portfolios=[PortfolioSpec(user_id=1, name="sparse_bar_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="sparse_bar_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the gap is the only moving part.
 )

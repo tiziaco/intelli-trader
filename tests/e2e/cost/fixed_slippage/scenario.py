@@ -118,6 +118,6 @@ SCENARIO = ScenarioSpec(
     starting_cash=_CASH,
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT)],
-    portfolios=[PortfolioSpec(user_id=1, name="cost03_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="cost03_pf", cash=_CASH)],
     exchange=_EXCHANGE,  # D-14: FIXED slippage (deterministic) applied to the run.
 )

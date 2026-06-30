@@ -118,6 +118,6 @@ SCENARIO = ScenarioSpec(
         _TIMEFRAME, [_TICKER], script=_SCRIPT,
         order_type=OrderType.STOP,
         sizing_policy=FractionOfCash(Decimal("0.5")))],
-    portfolios=[PortfolioSpec(user_id=1, name="gap_stop_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="gap_stop_pf", cash=_CASH)],
     exchange=None,  # D-14: zero-fee / zero-slippage.
 )

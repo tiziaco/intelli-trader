@@ -131,6 +131,6 @@ SCENARIO = ScenarioSpec(
         ScriptedEmitter(_TIMEFRAME, [_ETH], script=_ETH_SCRIPT,
                         sizing_policy=_SIZING),
     ],
-    portfolios=[PortfolioSpec(user_id=1, name="two_strategies_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="two_strategies_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — both fills are the only moving part.
 )
