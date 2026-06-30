@@ -255,6 +255,33 @@ mapping externally; the engine stays owner-agnostic. Removing it is an independe
 4. **Re-baseline timing** — when in the milestone the owner re-baselines the golden master.
 5. **Where Phase B is tracked** — keep it in this doc only, or also add an explicit backlog entry
    in `.planning/ROADMAP.md` / a GSD capture.
+6. **WR-01 — margin-mode `total_equity` / `margin_ratio` formula (DEFERRED FROM PHASE 1 CODE REVIEW).**
+   Phase 1's code review (`.planning/phases/01-account-abstraction-portfolio-handler-refactor/01-REVIEW.md`,
+   finding WR-01) found that `total_equity` is computed as `account.balance + position_manager.get_total_market_value()`,
+   which **double-counts the borrowed notional** for a leveraged position: opening a leveraged long
+   debits only commission and *locks* margin (the full notional is never removed from `balance`), while
+   `Position.market_value` returns the **full** notional — so `total_equity ≈ cash + full_notional`,
+   overstating true equity (`cash + unrealised_pnl`) by the borrowed amount. `SimulatedMarginAccount.margin_ratio`
+   reads this inflated equity and would never read a sub-1 margin-call value. **Shielded today only because
+   margin mode is deferred/dark** (the spot oracle path degenerates to the correct `cash + market_value`,
+   and the actual liquidation engine uses `_isolated_liq_price` against bar close, not `margin_ratio`).
+   The futures-correct formula is `equity = wallet balance + unrealised PnL`.
+   - **Owner decision (2026-07-01, tiziaco): DEFER to this milestone** — not fixed in Phase 1 (behavior-preserving,
+     backtest-correctness-scoped; margin dark; spot oracle byte-exact 134 / 46189.87730727451 unaffected).
+   - **Why it cannot be fixed by an automated pass:** the corrected formula **breaks 6 owner-approved FROZEN
+     accounting-core golden tests** (D-17, "Approved-by: tiziaco, 2026-06-16") that hand-assert open-position
+     margin equity as `balance + market_value` — `tests/e2e/levered_long/`, `tests/e2e/partial_cover/`,
+     `tests/e2e/short_roundtrip/`, `tests/e2e/short_scale_in/`, `tests/e2e/short_scale_in_partial_cover/`,
+     `tests/integration/test_pair_flagship_snapshot.py`. E.g. `levered_long` asserts `equity == 30000` at fill
+     (`10000 + 200*100`) and `28000` on the adverse mark; the corrected formula yields `10000` / `8000` (cash +
+     unrealised), the delta being exactly the borrowed notional.
+   - **Crucially, the disputed open-position values were NEVER externally cross-validated** —
+     `tests/golden/CROSS-VALIDATION-ACCOUNTING.md` only corroborates **final/flat** equity (14000, agreed by
+     backtesting.py + backtrader). The open-position 30000/28000 figures are iTrader-internal hand-computation only.
+   - **Must-do when this milestone enables margin:** decide the canonical open-position margin-equity formula
+     (recommend the futures-correct `cash + Σ unrealised PnL`), apply the code fix (gate on `enable_margin` so the
+     spot arm stays byte-exact), **correct + re-freeze the 6 goldens with owner sign-off**, and ideally refresh
+     the cross-validation note so the open-position equity is oracle-backed, not just hand-computed.
 
 ---
 
