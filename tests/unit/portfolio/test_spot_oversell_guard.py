@@ -28,7 +28,7 @@ from itrader import idgen
 @pytest.fixture
 def spot_portfolio():
     """A fresh SPOT simulated portfolio (enable_margin defaults False)."""
-    return Portfolio(1, "spot_pf", "simulated", 150000, datetime.now())
+    return Portfolio("spot_pf", "simulated", 150000, datetime.now())
 
 
 def _txn(txn_type, ticker, price, qty):

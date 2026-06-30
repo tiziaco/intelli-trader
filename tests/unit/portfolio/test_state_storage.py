@@ -240,7 +240,6 @@ def test_snapshot_count_and_latest():
 def portfolio():
     from itrader.portfolio_handler.portfolio import Portfolio
     return Portfolio(
-        user_id=1,
         name="Seam Test",
         exchange="binance",
         cash=Decimal("100000.00"),

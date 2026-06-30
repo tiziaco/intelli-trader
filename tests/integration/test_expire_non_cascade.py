@@ -45,7 +45,7 @@ def _btcusd_spec() -> SystemSpec:
         starting_cash=100_000,
         data={"BTCUSD": _GOLDEN_CSV},
         strategies=[],
-        portfolios=[PortfolioSpec(user_id=1, name="pf", cash=100_000)],
+        portfolios=[PortfolioSpec(name="pf", cash=100_000)],
     )
 
 

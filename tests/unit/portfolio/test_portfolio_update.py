@@ -28,7 +28,7 @@ def env():
     """A PortfolioHandler with one funded ($1000) simulated portfolio."""
     queue = Queue()
     ptf_handler = PortfolioHandler(queue)
-    portfolio_id = ptf_handler.add_portfolio(1, "test_ptf", "simulated", 1000)
+    portfolio_id = ptf_handler.add_portfolio("test_ptf", "simulated", 1000)
     yield SimpleNamespace(queue=queue, ptf_handler=ptf_handler, portfolio_id=portfolio_id)
     while not queue.empty():
         queue.get_nowait()

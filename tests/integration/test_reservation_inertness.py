@@ -77,7 +77,6 @@ def traced_run(tmp_path_factory):
     )
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1,
         name="oracle_pf",
         exchange="csv",
         cash=module.CASH,

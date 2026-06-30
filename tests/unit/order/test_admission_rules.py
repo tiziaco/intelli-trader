@@ -58,7 +58,7 @@ class _AdmissionHarness:
         self.ptf_handler = PortfolioHandler(self.queue)
         self.order_storage = OrderStorageFactory.create("test")
         self.order_handler = OrderHandler(self.queue, self.ptf_handler, self.order_storage)
-        self.last_ptf_id = self.ptf_handler.add_portfolio(1, "test_ptf", "default", 10000)
+        self.last_ptf_id = self.ptf_handler.add_portfolio("test_ptf", "default", 10000)
 
     def create_mock_signal(
         self, action, ticker="BTCUSDT", quantity=None, price=40.0,

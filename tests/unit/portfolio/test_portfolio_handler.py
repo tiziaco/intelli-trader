@@ -16,7 +16,17 @@ import pytest
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.portfolio import Portfolio, Position
 from itrader.core.enums import PortfolioState, PositionSide
-from itrader.config import PortfolioConfig
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+
+
+def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
+    """enable_margin=True config — maintenance_margin / margin_ratio delegate to
+    the margin leaf, which 01-03 selects at construction (a spot leaf returns
+    Decimal('0') for these); set margin in the constructor config."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
+    ))
 from itrader.core.exceptions import (
     PortfolioNotFoundError, PortfolioValidationError, StateError,
 )
@@ -37,7 +47,6 @@ def _fill_event(ticker, action, price, quantity, commission, portfolio_id, time=
 
 
 # Legacy-compatibility test data.
-_USER_ID = 1
 _PORTFOLIO_NAME = "test_pf"
 _EXCHANGE = "simulated"
 _CASH = 150000
@@ -64,7 +73,7 @@ def env():
 
 def test_add_portfolio(env):
     """Test basic portfolio creation (legacy compatibility)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
 
     # Assert if the portfolio has been created (ids are now native UUIDv7)
     assert env.handler.get_portfolio_count() == 1
@@ -73,7 +82,7 @@ def test_add_portfolio(env):
 
 def test_get_portfolio(env):
     """Test portfolio retrieval (legacy compatibility)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
     portfolio = env.handler.get_portfolio(portfolio_id)
 
     assert isinstance(portfolio, Portfolio)
@@ -85,13 +94,12 @@ def test_get_portfolio(env):
 def test_portfolio_creation_success(env):
     """Test successful portfolio creation with enhanced features."""
     portfolio_id = env.handler.add_portfolio(
-        user_id=1, name="Test Portfolio", exchange="NYSE", cash=10000.0
+        name="Test Portfolio", exchange="NYSE", cash=10000.0
     )
 
     assert isinstance(portfolio_id, uuid.UUID)
 
     portfolio = env.handler.get_portfolio(portfolio_id)
-    assert portfolio.user_id == 1
     assert portfolio.name == "Test Portfolio"
     assert portfolio.exchange == "NYSE"
     assert portfolio.cash == 10000.0
@@ -111,7 +119,7 @@ def test_portfolio_creation_with_custom_config(env):
     )
 
     portfolio_id = env.handler.add_portfolio(
-        user_id=2, name="Custom Config Portfolio", exchange="NASDAQ",
+        name="Custom Config Portfolio", exchange="NASDAQ",
         cash=25000.0, portfolio_config=custom_config,
     )
 
@@ -125,7 +133,7 @@ def test_portfolio_creation_invalid_cash(env):
     """Test portfolio creation with invalid cash amount."""
     with pytest.raises(PortfolioValidationError):
         env.handler.add_portfolio(
-            user_id=1, name="Invalid Portfolio", exchange="NYSE", cash=-1000.0
+            name="Invalid Portfolio", exchange="NYSE", cash=-1000.0
         )
 
 
@@ -142,7 +150,7 @@ def test_portfolio_not_found_error(env):
 
 def test_portfolio_state_management(env):
     """Test portfolio state transitions."""
-    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 10000.0)
+    portfolio_id = env.handler.add_portfolio("Test", "NYSE", 10000.0)
     portfolio = env.handler.get_portfolio(portfolio_id)
 
     # Test initial state
@@ -170,7 +178,7 @@ def test_portfolio_state_management(env):
 
 def test_portfolio_deletion_with_state_validation(env):
     """Test portfolio deletion with proper state validation."""
-    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 10000.0)
+    portfolio_id = env.handler.add_portfolio("Test", "NYSE", 10000.0)
 
     # Withdraw all cash to allow deletion
     portfolio = env.handler.get_portfolio(portfolio_id)
@@ -186,9 +194,9 @@ def test_portfolio_deletion_with_state_validation(env):
 
 def test_active_portfolios_filtering(env):
     """Test filtering active portfolios."""
-    p1 = env.handler.add_portfolio(1, "Active1", "NYSE", 10000.0)
-    p2 = env.handler.add_portfolio(2, "Active2", "NYSE", 20000.0)
-    p3 = env.handler.add_portfolio(3, "Inactive", "NYSE", 15000.0)
+    p1 = env.handler.add_portfolio("Active1", "NYSE", 10000.0)
+    p2 = env.handler.add_portfolio("Active2", "NYSE", 20000.0)
+    p3 = env.handler.add_portfolio("Inactive", "NYSE", 15000.0)
 
     # Make one inactive
     portfolio3 = env.handler.get_portfolio(p3)
@@ -210,7 +218,7 @@ def test_active_portfolios_filtering(env):
 
 def test_buy_fill(env):
     """Test buy fill event processing (legacy compatibility)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
 
     # Bought 1 BTC over one filled event from the execution handler
     buy_fill = _fill_event("BTCUSDT", Side.BUY, 40000, 1, 0, portfolio_id)
@@ -236,7 +244,7 @@ def test_buy_fill(env):
 
 def test_sell_fill(env):
     """Test sell fill event processing (legacy compatibility - SHORT position)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
 
     # Sold 1 BTC (short position) over one filled event from the execution handler
     sell_fill = _fill_event("BTCUSDT", Side.SELL, 40000, 1, 0, portfolio_id)
@@ -262,7 +270,7 @@ def test_sell_fill(env):
 
 def test_fill_event_processing_success(env):
     """Test successful fill event processing (enhanced)."""
-    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 10000.0)
+    portfolio_id = env.handler.add_portfolio("Test", "NYSE", 10000.0)
 
     fill_event = _fill_event("AAPL", Side.BUY, 50.0, 100, 1.0, portfolio_id,
                              time=datetime.now(UTC))
@@ -277,7 +285,7 @@ def test_fill_event_processing_success(env):
 
 def test_on_fill_returns_none(env):
     """D-10 contract propagation: on_fill is raise/None — no bool channel."""
-    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 100000.0)
+    portfolio_id = env.handler.add_portfolio("Test", "NYSE", 100000.0)
     fill_event = _fill_event("AAPL", Side.BUY, 50.0, 100, 1.0, portfolio_id,
                              time=datetime.now(UTC))
 
@@ -287,7 +295,7 @@ def test_on_fill_returns_none(env):
 def test_on_fill_transaction_carries_fill_id(env):
     """D-11: the recorded Transaction's fill_id matches the originating
     FillEvent's (fill -> order -> strategy audit chain)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
     buy_fill = _fill_event("BTCUSDT", Side.BUY, 40000, 1, 0, portfolio_id)
 
     env.handler.on_fill(buy_fill)
@@ -298,7 +306,7 @@ def test_on_fill_transaction_carries_fill_id(env):
 
 def test_fill_event_processing_inactive_portfolio(env):
     """Test fill event processing with inactive portfolio."""
-    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 10000.0)
+    portfolio_id = env.handler.add_portfolio("Test", "NYSE", 10000.0)
     portfolio = env.handler.get_portfolio(portfolio_id)
     portfolio.set_state(PortfolioState.INACTIVE)
 
@@ -327,7 +335,7 @@ def test_fill_event_processing_invalid_portfolio(env):
 
 def test_portfolios_to_dict(env):
     """Test portfolios to dictionary conversion (legacy compatibility)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
 
     # Add a transaction to test with data
     buy_fill = _fill_event("BTCUSDT", Side.SELL, 40000, 1, 0, portfolio_id)
@@ -342,7 +350,7 @@ def test_portfolios_to_dict(env):
 def test_portfolios_to_dict_thread_safety(env):
     """Test portfolios_to_dict method thread safety."""
     for i in range(3):
-        env.handler.add_portfolio(i, f"Portfolio {i}", "NYSE", 10000.0)
+        env.handler.add_portfolio(f"Portfolio {i}", "NYSE", 10000.0)
 
     def get_portfolios_dict():
         return env.handler.portfolios_to_dict()
@@ -364,7 +372,7 @@ def test_portfolios_to_dict_thread_safety(env):
 
 def test_portfolio_health_validation(env):
     """Test portfolio health validation."""
-    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 10000.0)
+    portfolio_id = env.handler.add_portfolio("Test", "NYSE", 10000.0)
     portfolio = env.handler.get_portfolio(portfolio_id)
 
     health = portfolio.validate_health()
@@ -460,10 +468,10 @@ def test_thread_safety_concurrent_creation(env):
     results = []
     errors = []
 
-    def create_portfolio(user_id):
+    def create_portfolio(idx):
         try:
             portfolio_id = env.handler.add_portfolio(
-                user_id=user_id, name=f"Portfolio {user_id}", exchange="NYSE", cash=10000.0
+                name=f"Portfolio {idx}", exchange="NYSE", cash=10000.0
             )
             results.append(portfolio_id)
         except Exception as e:
@@ -485,7 +493,7 @@ def test_thread_safety_concurrent_creation(env):
 
 def test_thread_safety_concurrent_access(env):
     """Test thread safety during concurrent portfolio access."""
-    portfolio_id = env.handler.add_portfolio(1, "Test", "NYSE", 10000.0)
+    portfolio_id = env.handler.add_portfolio("Test", "NYSE", 10000.0)
 
     results = []
     errors = []
@@ -545,7 +553,7 @@ def test_update_config_partial_nested_preserves_siblings(env):
 @pytest.fixture
 def portfolio():
     return Portfolio(
-        user_id=1, name="Test Portfolio", exchange="NYSE",
+        name="Test Portfolio", exchange="NYSE",
         cash=10000.0, time=datetime.now(UTC),
     )
 
@@ -572,7 +580,7 @@ def test_portfolio_enhanced_to_dict(portfolio):
     portfolio_dict = portfolio.to_dict()
 
     required_fields = [
-        "portfolio_id", "user_id", "name", "exchange", "creation_time",
+        "portfolio_id", "name", "exchange", "creation_time",
         "current_time", "state", "cash", "total_market_value", "total_equity",
         "n_open_positions", "config", "health_metrics", "last_activity",
     ]
@@ -580,7 +588,6 @@ def test_portfolio_enhanced_to_dict(portfolio):
     for field in required_fields:
         assert field in portfolio_dict
 
-    assert portfolio_dict["user_id"] == 1
     assert portfolio_dict["name"] == "Test Portfolio"
     assert portfolio_dict["state"] == PortfolioState.ACTIVE.value
     assert portfolio_dict["cash"] == 10000.0
@@ -606,7 +613,8 @@ def _fake_universe(rates):
 
 def test_maintenance_margin_sums_mmr_times_size_times_price(env):
     """maintenance_margin = Σ (mmr × |size| × current_price) over open positions (D-13)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(
+        _PORTFOLIO_NAME, _EXCHANGE, _CASH, portfolio_config=_margin_config())
     # Position A: |size| 2 @ 100, mmr 0.01 -> 2 ; Position B: |size| 1 @ 50, mmr 0.02 -> 1
     env.handler.on_fill(_fill_event("AAA", Side.BUY, 100, 2, 0, portfolio_id))
     env.handler.on_fill(_fill_event("BBB", Side.BUY, 50, 1, 0, portfolio_id))
@@ -622,14 +630,15 @@ def test_maintenance_margin_sums_mmr_times_size_times_price(env):
 
 def test_maintenance_margin_zero_with_no_open_positions(env):
     """No open positions -> Decimal('0') maintenance margin (no margin required)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
     env.handler.set_universe(_fake_universe({}))
     assert env.handler.maintenance_margin(portfolio_id) == Decimal("0")
 
 
 def test_margin_ratio_equals_equity_over_maintenance(env):
     """margin_ratio = total_equity() / maintenance_margin (D-12 mark-to-market)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(
+        _PORTFOLIO_NAME, _EXCHANGE, _CASH, portfolio_config=_margin_config())
     env.handler.on_fill(_fill_event("AAA", Side.BUY, 100, 2, 0, portfolio_id))
     env.handler.on_fill(_fill_event("BBB", Side.BUY, 50, 1, 0, portfolio_id))
     env.handler.set_universe(_fake_universe({
@@ -646,14 +655,15 @@ def test_margin_ratio_equals_equity_over_maintenance(env):
 
 def test_margin_ratio_zero_sentinel_when_no_maintenance(env):
     """Zero maintenance (no open positions) -> deterministic Decimal('0') sentinel, no div0."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
     env.handler.set_universe(_fake_universe({}))
     assert env.handler.margin_ratio(portfolio_id) == Decimal("0")
 
 
 def test_margin_ratio_reads_honestly_when_breached(env):
     """When equity drops below maintenance, margin_ratio < 1 and is NOT clamped (D-16)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, 100)
+    portfolio_id = env.handler.add_portfolio(
+        _PORTFOLIO_NAME, _EXCHANGE, 100, portfolio_config=_margin_config())
     # One position whose maintenance margin exceeds tiny equity:
     # |size| 1 @ 50, mmr 0.99 -> maintenance 49.5; with starting cash 100 the
     # mmr is set high enough that equity/maintenance is small but, more directly,
@@ -680,7 +690,8 @@ def test_margin_ratio_reads_honestly_when_breached(env):
 def test_universe_unwired_maintenance_margin_raises_state_error(env):
     """WR-02: maintenance_margin with open positions but `_universe is None`
     raises a context-rich StateError, NOT a bare AttributeError."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(
+        _PORTFOLIO_NAME, _EXCHANGE, _CASH, portfolio_config=_margin_config())
     # Open a position WITHOUT wiring the universe (set_universe never called).
     env.handler.on_fill(_fill_event("AAA", Side.BUY, 100, 2, 0, portfolio_id))
 
@@ -694,6 +705,6 @@ def test_universe_unwired_no_positions_is_not_an_error(env):
     """WR-02: with NO open positions, an unwired universe is benign — the sum is
     Decimal('0') and no StateError is raised (the guard only fires when there is
     something to read)."""
-    portfolio_id = env.handler.add_portfolio(_USER_ID, _PORTFOLIO_NAME, _EXCHANGE, _CASH)
+    portfolio_id = env.handler.add_portfolio(_PORTFOLIO_NAME, _EXCHANGE, _CASH)
     # No positions, no set_universe — must NOT raise.
     assert env.handler.maintenance_margin(portfolio_id) == Decimal("0")

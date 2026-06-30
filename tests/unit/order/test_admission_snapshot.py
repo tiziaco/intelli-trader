@@ -52,7 +52,7 @@ def test_position_snapshot_captured_once_per_process_signal():
     ptf_handler = PortfolioHandler(queue)
     storage = OrderStorageFactory.create("test")
     order_handler = OrderHandler(queue, ptf_handler, storage)
-    portfolio_id = ptf_handler.add_portfolio(1, "test_ptf", "default", 10000)
+    portfolio_id = ptf_handler.add_portfolio("test_ptf", "default", 10000)
 
     admission = order_handler.order_manager.admission_manager
     # Scope the count to the admission gates/sizing only — the validator runs its

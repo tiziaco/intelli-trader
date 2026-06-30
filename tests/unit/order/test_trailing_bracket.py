@@ -52,7 +52,7 @@ class _TrailHarness:
         self.ptf_handler = PortfolioHandler(self.queue)
         self.order_storage = OrderStorageFactory.create("test")
         self.order_handler = OrderHandler(self.queue, self.ptf_handler, self.order_storage)
-        self.last_ptf_id = self.ptf_handler.add_portfolio(1, "trail_ptf", "default", 100000)
+        self.last_ptf_id = self.ptf_handler.add_portfolio("trail_ptf", "default", 100000)
 
     def create_signal(self, action, ticker="BTCUSDT", quantity=1.0, price=100.0,
                       sltp_policy=None, direction=TradingDirection.LONG_ONLY):

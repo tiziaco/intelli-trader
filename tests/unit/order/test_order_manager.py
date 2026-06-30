@@ -70,7 +70,7 @@ class _Harness:
         self.ptf_handler = PortfolioHandler(self.queue)
         self.storage = OrderStorageFactory.create("test")
         self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
-        self.portfolio_id = self.ptf_handler.add_portfolio(1, "p", "default", 100000)
+        self.portfolio_id = self.ptf_handler.add_portfolio("p", "default", 100000)
 
     def signal(self, stop_loss=0.0, take_profit=0.0):
         return SignalEvent(

@@ -18,6 +18,7 @@ from typing import Any, List
 
 import uuid_utils.compat as uuid_compat
 
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
 from itrader.core.enums import FillStatus, OrderStatus, OrderTriggerSource
 from itrader.events_handler.events import FillEvent
 from itrader.order_handler.reconcile.reconcile_manager import ReconcileManager
@@ -26,6 +27,15 @@ from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+
+
+def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
+    """enable_margin=True config — the position-keyed lock surface lives on the
+    margin leaf, which 01-03 selects at construction (not via update_config)."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
+    ))
 
 
 _TICKER = "LIQUSD"
@@ -74,7 +84,8 @@ def _build() -> tuple[PortfolioHandler, InMemoryOrderStorage, ReconcileManager]:
 
 
 def _open_long(h: PortfolioHandler) -> tuple[Any, Position]:
-    pid = h.add_portfolio(user_id=1, name="liq", exchange="simulated", cash=1000000.0)
+    pid = h.add_portfolio(name="liq", exchange="simulated", cash=1000000.0,
+                          portfolio_config=_margin_config())
     portfolio: Portfolio = h.get_portfolio(pid)
     txn = Transaction(
         datetime(2024, 1, 1), TransactionType.BUY, _TICKER, _ENTRY, _SIZE, 0,
@@ -83,6 +94,12 @@ def _open_long(h: PortfolioHandler) -> tuple[Any, Position]:
     position = Position.open_position(txn)
     portfolio.position_manager._storage.set_position(_TICKER, position)
     portfolio.account.lock_margin(str(position.id), _WB)
+    # 01-03 moved the margin/liq math onto the account, which reads its OWN
+    # injected Universe; set_universe only propagates to accounts that already
+    # exist when it runs. This portfolio is created AFTER _build()'s set_universe,
+    # so re-propagate the handler's universe down to the new account.
+    if h._universe is not None:
+        portfolio.account.set_universe(h._universe)
     return pid, position
 
 

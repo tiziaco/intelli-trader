@@ -53,7 +53,6 @@ def test_backtest_smoke_produces_nonzero_trade(backtest_engine):
 
     # Add a single long-only portfolio with $10k starting cash.
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1,
         name="smoke_pf",
         exchange="csv",
         cash=CASH,

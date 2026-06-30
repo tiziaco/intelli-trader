@@ -87,7 +87,7 @@ def test_persist_end_to_end_writes_runs_portfolios_and_artifacts() -> None:
         starting_cash=10_000,
         data={"BTCUSD": _GOLDEN_CSV},
         strategies=[_make_strategy()],
-        portfolios=[PortfolioSpec(user_id=1, name="persist_pf", cash=10_000)],
+        portfolios=[PortfolioSpec(name="persist_pf", cash=10_000)],
         results_store=store,
     )
     system = build_backtest_system(spec)
@@ -141,7 +141,7 @@ def test_persist_true_without_store_raises_configuration_error() -> None:
     strategy = _make_strategy()
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1, name="guard_pf", exchange="csv", cash=10_000)
+        name="guard_pf", exchange="csv", cash=10_000)
     strategy.subscribe_portfolio(portfolio_id)
 
     assert system.engine.results_store is None
@@ -159,7 +159,7 @@ def test_oracle_byte_exact_under_persist_false() -> None:
     strategy = _make_strategy()
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1, name="oracle_pf", exchange="csv", cash=10_000)
+        name="oracle_pf", exchange="csv", cash=10_000)
     strategy.subscribe_portfolio(portfolio_id)
 
     # persist defaults False — NO dump code executes, so the numbers are byte-exact.

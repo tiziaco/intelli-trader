@@ -81,7 +81,7 @@ def test_handler_partial_nested_update_preserves_siblings(handler):
 @pytest.fixture
 def portfolio():
     return Portfolio(
-        user_id=1, name="test_pf", exchange="simulated",
+        name="test_pf", exchange="simulated",
         cash=Decimal("100000"), time=datetime.now(UTC),
     )
 

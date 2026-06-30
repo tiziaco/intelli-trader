@@ -11,13 +11,25 @@ from itrader.core.exceptions import (
 )
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
 from itrader import idgen
+
+
+def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
+    """A PortfolioConfig with enable_margin=True. 01-03 selects the account leaf
+    at construction (SimulatedCashAccount vs SimulatedMarginAccount), so margin
+    must be set in the constructor config — the former post-construction
+    ``update_config`` toggle no longer rebuilds the leaf."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
+    ))
 
 
 @pytest.fixture
 def portfolio():
     """A fresh simulated portfolio funded with $150000."""
-    return Portfolio(1, "test_pf", "simulated", 150000, datetime.now())
+    return Portfolio("test_pf", "simulated", 150000, datetime.now())
 
 
 def test_long_position(portfolio):
@@ -288,9 +300,9 @@ def test_cash_property_is_read_only(portfolio):
 @pytest.fixture
 def margin_portfolio():
     """A $150000 portfolio with enable_margin=True (lock-and-settle on)."""
-    pf = Portfolio(1, "margin_pf", "simulated", 150000, datetime.now())
-    pf.update_config({"trading_rules": {"enable_margin": True, "max_leverage": Decimal("10")}})
-    return pf
+    return Portfolio(
+        "margin_pf", "simulated", 150000, datetime.now(), config=_margin_config()
+    )
 
 
 def _levered_txn(type_, ticker, price, quantity, commission, leverage):
@@ -543,7 +555,9 @@ def test_spot_mode_process_transaction_unchanged_byte_exact(portfolio):
 
     portfolio.process_transaction(buy)
 
-    # Full notional debited (spot), no lock.
+    # Full notional debited (spot), no lock. The spot leaf
+    # (SimulatedCashAccount) has NO margin surface at all — structurally it
+    # cannot lock margin, a stronger guarantee than a 0 total (01-03 leaf split).
     assert portfolio.cash == Decimal("150000") - Decimal("40100")
-    assert portfolio.account.locked_margin_total == Decimal("0")
+    assert not hasattr(portfolio.account, "locked_margin_total")
     assert portfolio.account.available_balance == portfolio.cash

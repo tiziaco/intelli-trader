@@ -27,7 +27,18 @@ import pytest
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.position.position_manager import PositionManager
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
 from itrader import idgen
+
+
+def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
+    """enable_margin=True config — 01-03 selects the account leaf at construction,
+    so margin must be set in the constructor config (update_config no longer
+    rebuilds the leaf)."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
+    ))
 
 
 # IN-01: a fixed business timestamp (not wall-clock datetime.now()) for the
@@ -41,17 +52,16 @@ _FIXED_TIME = datetime(2024, 1, 1, tzinfo=timezone.utc)
 def portfolio():
     """A fresh simulated portfolio funded with $150000 (mirrors test_portfolio.py)."""
     # IN-02: Decimal cash (money is Decimal end-to-end); IN-01: fixed timestamp.
-    return Portfolio(1, "test_pf", "simulated", Decimal("150000"), _FIXED_TIME)
+    return Portfolio("test_pf", "simulated", Decimal("150000"), _FIXED_TIME)
 
 
 @pytest.fixture
 def margin_portfolio():
     """A $150000 portfolio with enable_margin=True (lock-and-settle on, WR-02)."""
-    pf = Portfolio(1, "margin_pf", "simulated", Decimal("150000"), _FIXED_TIME)
-    pf.update_config(
-        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal("10")}}
+    return Portfolio(
+        "margin_pf", "simulated", Decimal("150000"), _FIXED_TIME,
+        config=_margin_config(),
     )
-    return pf
 
 
 def _resum_realised(pm: PositionManager) -> Decimal:
