@@ -28,9 +28,9 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 - [x] **ACCT-02**: Margin/liquidation math (maintenance_margin, margin_ratio, liq price/penalty,
   liquidation *decision*, reserve/release) lives in the Account; the liquidation *emission*
   (`global_queue.put`) stays in `PortfolioHandler` (queue-only rule preserved).
-- [ ] **ACCT-03**: The backtest oracle is re-confirmed **byte-exact** (134 / `46189.87730727451`)
+- [x] **ACCT-03**: The backtest oracle is re-confirmed **byte-exact** (134 / `46189.87730727451`)
   after the extraction — determinism double-run identical, `mypy --strict` clean, no float-for-money.
-- [ ] **ACCT-04**: `Portfolio.user_id` is removed (app-layer multi-tenancy concern; NOT relocated onto
+- [x] **ACCT-04**: `Portfolio.user_id` is removed (app-layer multi-tenancy concern; NOT relocated onto
   `Account`); the constructor-signature ripple is resolved with the oracle held byte-exact.
 - [x] **ACCT-05**: `TradingInterface` is evaluated and removed (or deliberately slimmed) per LX-14 —
   the surviving engine command surface is decided, scoping the FL-13 live-test coverage.
@@ -171,8 +171,8 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 |-------------|-------|--------|
 | ACCT-01 | Phase 1 | Complete |
 | ACCT-02 | Phase 1 | Complete |
-| ACCT-03 | Phase 1 | Pending |
-| ACCT-04 | Phase 1 | Pending |
+| ACCT-03 | Phase 1 | Complete |
+| ACCT-04 | Phase 1 | Complete |
 | ACCT-05 | Phase 1 | Complete |
 | ACCT-06 | Phase 1 | Complete |
 | CONN-01 | Phase 2 | Pending |
