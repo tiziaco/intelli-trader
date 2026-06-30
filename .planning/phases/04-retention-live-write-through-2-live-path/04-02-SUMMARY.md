@@ -92,3 +92,7 @@ None. The wrapper is fully functional and integration-tested. Per A3/D-01, resto
 account-state scalars INTO `CashManager._balance` / `PositionManager._realised_pnl_accumulator`
 and wiring `save_account_state` on every fill is explicitly deferred to N+4 — this is a planned
 boundary, not a stub: the wrapper's persist/return/rehydrate ability is built and tested.
+
+## Self-Check: PASSED
+
+All 4 created/modified key files exist on disk and all 4 commits (8275525, 42c3fad, 44aac40, f057aa0) are present in the git history. Working tree clean.
