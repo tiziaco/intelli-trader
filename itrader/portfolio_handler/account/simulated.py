@@ -241,8 +241,8 @@ class SimulatedCashAccount(Account):
         # Check sufficient funds
         if available < amount_decimal:
             raise InsufficientFundsError(
-                required_cash=float(amount_decimal),
-                available_cash=float(available)
+                required_cash=amount_decimal,
+                available_cash=available
             )
 
         new_balance = old_balance - amount_decimal
@@ -305,8 +305,8 @@ class SimulatedCashAccount(Account):
             available = self.available_balance
             if available < amount_decimal:
                 raise InsufficientFundsError(
-                    required_cash=float(amount_decimal),
-                    available_cash=float(available)
+                    required_cash=amount_decimal,
+                    available_cash=available
                 )
 
             new_balance = old_balance - amount_decimal
@@ -406,8 +406,8 @@ class SimulatedCashAccount(Account):
         """
         if required > self._balance:
             raise InsufficientFundsError(
-                required_cash=float(required),
-                available_cash=float(self._balance),
+                required_cash=required,
+                available_cash=self._balance,
             )
 
     def reserve(self, order_id: OrderId, amount: Decimal) -> None:
@@ -444,8 +444,8 @@ class SimulatedCashAccount(Account):
 
         if available < amount_decimal:
             raise InsufficientFundsError(
-                required_cash=float(amount_decimal),
-                available_cash=float(available)
+                required_cash=amount_decimal,
+                available_cash=available
             )
 
         self._storage.add_reservation(str(order_id), amount_decimal)
@@ -783,8 +783,8 @@ class SimulatedMarginAccount(SimulatedCashAccount):
         buying_power = self.available_balance + own_prior_lock
         if lock_amount > buying_power:
             raise InsufficientFundsError(
-                required_cash=float(lock_amount),
-                available_cash=float(buying_power),
+                required_cash=lock_amount,
+                available_cash=buying_power,
             )
 
     # ------------------------------------------------------------------
