@@ -80,6 +80,7 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
         # Carry the store's bound portfolio id — the cross-portfolio-isolation boundary
         # (Pitfall 1 / V4): the account-state + rehydration row-reads scope to it.
         self._portfolio_id: uuid.UUID = store._portfolio_id
+        # CACHE-CLASS: (d) live-retention working-set cache (built in Phase 4) — see docs/CACHE-CLASSIFICATION.md
         self._cache = InMemoryPortfolioStateStorage(max_snapshots=max_snapshots)
         # One RLock taken briefly around cache mutation / read-through lookups. Uncontended
         # in the as-wired daemon-only system; built API-thread-safe for the FastAPI layer (A4).

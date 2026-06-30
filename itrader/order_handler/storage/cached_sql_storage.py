@@ -63,6 +63,7 @@ class CachedSqlOrderStorage(OrderStorage):
 
     def __init__(self, store: "SqlOrderStorage") -> None:
         self._store: "SqlOrderStorage" = store
+        # CACHE-CLASS: (d) live-retention working-set cache (built in Phase 4) — see docs/CACHE-CLASSIFICATION.md
         self._cache = InMemoryOrderStorage()
         # A4 — one RLock guards cache mutation + read-through lookup; uncontended in the
         # daemon-only Phase-4 wiring, API-thread-safe for the imminent FastAPI layer.
