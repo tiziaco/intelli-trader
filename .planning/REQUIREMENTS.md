@@ -109,18 +109,22 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 - [ ] **UNIV-02**: Warmup-on-add replays the new symbol's history through the same `update(bar)` path
   (reuses the Phase 3 backfill machinery); the open-position-handling-on-remove policy is defined.
 
-### Cross-Cutting (woven through Phases 2–5)
+### Cross-Cutting (woven through Phases 2–5; each has one definite home phase)
 
-- [ ] **RUN-01**: The live runtime/deployment topology is decided (LX-15) **before Phase 4 wires the
-  runtime** — a separate worker process (ship option (b) architected as (c) with N=1), with Postgres
-  `LISTEN/NOTIFY` as the default command/status channel (zero new dep, reuses the v1.6 store).
-- [ ] **RES-01**: Live resilience is in place — websocket reconnect with gap recovery, rate-limit
-  handling (coordinated across ccxt + native paths), partial-fill handling, and stream-gap recovery;
-  `LiveTradingSystem`'s publish-and-continue error policy is hardened for live.
-- [ ] **COV-01**: The surviving live surface (`LiveTradingSystem` + the engine command surface from
-  ACCT-05) has test coverage (**FL-13**) via mocked/recorded connectors, with `pytest-asyncio`
-  configured (`asyncio_mode`, `asyncio_default_fixture_loop_scope`) so `filterwarnings=["error"]`
-  stays green — the global filter is never relaxed.
+- [ ] **RUN-01** (home: Phase 4): The live runtime/deployment topology is decided (LX-15) **before
+  Phase 4 wires the runtime** — a separate worker process (ship option (b) architected as (c) with
+  N=1), with Postgres `LISTEN/NOTIFY` as the default command/status channel (zero new dep, reuses the
+  v1.6 store). Decided in the Phase 3→4 handoff; architected for Phases 2–5.
+- [ ] **RES-01** (home: Phase 5): Live resilience is in place — websocket reconnect with gap recovery,
+  rate-limit handling (coordinated across ccxt + native paths), partial-fill handling, and stream-gap
+  recovery; `LiveTradingSystem`'s publish-and-continue error policy is hardened for live. Pieces build
+  across Phases 2 (rate-limit) / 3 (reconnect+gap-recovery, FEED-04); fully verified on the real path.
+- [ ] **COV-01** (home: Phase 4): The surviving live surface (`LiveTradingSystem` + the engine command
+  surface from ACCT-05) has test coverage (**FL-13**) via mocked/recorded connectors, with
+  `pytest-asyncio` configured (`asyncio_mode`, `asyncio_default_fixture_loop_scope`) so
+  `filterwarnings=["error"]` stays green — the global filter is never relaxed. Established on the first
+  end-to-end live surface (Phase 4); the `pytest-asyncio` infra lands in Phase 2; real-path surface
+  coverage extends into Phase 5.
 
 ## v2 Requirements
 
@@ -160,8 +164,8 @@ Explicitly excluded for v1.7. Documented to prevent scope creep (anti-features f
 
 ## Traceability
 
-Which phases cover which requirements. Pre-populated from the locked design + research; the roadmapper
-finalizes.
+Which phases cover which requirements. Every v1 requirement maps to exactly one phase (the 3
+cross-cutting requirements each have a definite home phase, flagged cross-cutting in the phase notes).
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -194,15 +198,20 @@ finalizes.
 | RECON-06 | Phase 5 | Pending |
 | UNIV-01 | Phase 6 | Pending |
 | UNIV-02 | Phase 6 | Pending |
-| RUN-01 | Phase 4 (decided by) / cross-cutting 2–5 | Pending |
-| RES-01 | cross-cutting (Phases 2–5) | Pending |
-| COV-01 | cross-cutting (Phases 1–5) | Pending |
+| RUN-01 | Phase 4 (home; decided in Phase 3→4 handoff, cross-cutting 2–5) | Pending |
+| RES-01 | Phase 5 (home; pieces build in Phases 2–3, cross-cutting 2–5) | Pending |
+| COV-01 | Phase 4 (home; infra in Phase 2, extends to Phase 5, cross-cutting 1–5) | Pending |
 
 **Coverage:**
-- v1 requirements: 31 total
-- Mapped to phases: 31
+- v1 requirements: 32 total (29 phase-specific + 3 cross-cutting)
+- Mapped to phases: 32 (Phase 1: 6, Phase 2: 6, Phase 3: 5, Phase 4: 6, Phase 5: 7, Phase 6: 2)
 - Unmapped: 0
+
+> **Count note (2026-06-30, roadmapper):** the pre-map coverage summary stated "31 total"; the
+> traceability table enumerates **32** requirement IDs (ACCT ×6, CONN ×6, FEED ×5, PAPER ×4, RECON ×6,
+> UNIV ×2 = 29 phase-specific; RUN-01 / RES-01 / COV-01 = 3 cross-cutting). The earlier "31" was an
+> off-by-one; the actual count is 32, all mapped (0 orphans).
 
 ---
 *Requirements defined: 2026-06-30*
-*Last updated: 2026-06-30 after milestone v1.7 start (research-informed, design LX-01..LX-15)*
+*Last updated: 2026-06-30 — roadmap created (6 phases, numbering reset to Phase 1); cross-cutting homes finalized (RUN-01→P4, RES-01→P5, COV-01→P4); 32/32 mapped, 0 orphans.*

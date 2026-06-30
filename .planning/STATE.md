@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: planning
-last_updated: "2026-06-30T16:52:35.231Z"
+last_updated: "2026-06-30T17:30:00.000Z"
 last_activity: 2026-06-30
 progress:
-  total_phases: 0
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,68 +17,69 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-30 — v1.6 N+3b Persistence Foundation SHIPPED; no active milestone)
+See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness active; roadmap created)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). v1.6 added the durable-storage + caching foundation **without disturbing that** — the backtest path stayed byte-exact (W1 −2.8%) and N+4 Live inherits a persistent, restart-safe system of record.
-**Current focus:** No active milestone — define N+4 (Live Trading Readiness, Backlog 999.3) via `/gsd:new-milestone`.
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
+deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
+152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
+(**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
+**Current focus:** Phase 1 — Account Abstraction + Portfolio/Handler refactor (oracle-gated). Ready to plan.
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-06-30 — Milestone v1.7 started
+Phase: 1 of 6 (Account Abstraction + Portfolio/Handler Refactor)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-06-30 — v1.7 roadmap created (6 phases, numbering reset to Phase 1); 32/32 requirements mapped
 
-## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
+Progress: [░░░░░░░░░░] 0%
 
-This milestone is **NOT covered by the backtest oracle alone** — it is DB-gated. Each phase carries a
-**two-part gate**:
+## Milestone Gate (v1.7 — applies to EVERY phase)
 
-1. **Gate (a) — hot-path inertness:** the SMA_MACD oracle stays **byte-exact** (134 /
-   `46189.87730727451`) AND there is **no W1/W2 perf regression** vs the v1.5 frozen baseline
-   (15.7 s / 152.8 MB). Persistence adds zero hot-path cost when write-through is off (backend-selection
-   at wiring — the backtest backend contains NO serialization code; an end-of-run batch dump is off the
-   loop). **GATE-01** is bound to Phase 4 (where live write-through lands) and recurs every phase.
+The live machinery is **inert on the backtest hot path**. Each phase carries the recurring gate:
 
-2. **Gate (b) — DB verification on the right substrate:** the phase's own DB round-trip / rehydration /
-   cross-backend-parity tests pass — **in-process SQLite** for the results store (#1), **testcontainers
-   Postgres** for the operational store (#2). **GATE-02** is bound to Phase 1 (test harness/substrate
-   established) and recurs every phase.
+1. **Oracle byte-exact** — SMA_MACD stays **134 / `46189.87730727451`** (`check_exact=True`),
+   determinism double-run identical.
+2. **No W1/W2 perf regression** vs the v1.5 frozen baseline (15.7 s / 152.8 MB) — the backtest path
+   imports no async/connector code.
 
-**Held throughout, all phases:** Decimal money on the live path (Postgres-native `Numeric`, no
-float-for-money, no `DecimalAsText`); single UUIDv7 (no DB autoincrement / second ID scheme);
-determinism (business `time` not wall-clock, `sort_keys`, stable `ORDER BY`); `mypy --strict` clean;
-`filterwarnings=["error"]` green with no new broad ignore; tabs/spaces indentation matched to the file.
+**Phase-specific gates:** Phase 1 = oracle re-confirmed byte-exact after the Account extraction (ACCT-03);
+Phase 4 = **paper-parity gate (DoD)** — golden dataset replayed through the live-paper path yields the
+oracle byte-exact (PAPER-04); Phase 5 = sandbox-validated real path (RECON-06).
 
-## Phase Map (v1.6 — Phases 1-5)
+**Held throughout, all phases:** Decimal money end-to-end (`to_money` at the connector edge — ccxt
+returns floats); single UUIDv7; determinism (business `time`, never wall-clock); single seeded RNG +
+injected clock; `mypy --strict` clean on new code; `filterwarnings=["error"]` green (`pytest-asyncio`
+configured, global filter never relaxed); tabs/spaces indentation matched to the file.
 
-Execution order: 1 → 2 → 3 → 4 (Phase 5 is largely independent — may run parallel to Phases 2-3; listed
-last). Hard build-order constraints (research ARCHITECTURE): spine before every backend; the results
-store validates the spine before any live path touches it; the retention model is designed before live
-write-through is wired. Numbering reset to Phase 1 (matching v1.1–v1.5); the only dir in
-`.planning/phases/` is the `999.3` backlog placeholder (N+4 Live; 999.x prefix — no collision with the
-new `01-*..05-*` dirs). The `999.2` placeholder was removed 2026-06-30 — Backlog 999.2 is fully
-consumed (performance half → v1.5, persistence half → v1.6).
+## Phase Map (v1.7 — Phases 1-6, numbering reset)
 
-| Phase | Name | Requirements | Substrate | Depends on |
-|-------|------|--------------|-----------|------------|
-| 1 | SQL Spine + Security Hardening | SPINE-01/02/03, SEC-01, MIG-01, GATE-02 | SQLite + Postgres | — |
-| 2 | Results Store (#1) | RESULT-01/02/03/04 | in-process SQLite | 1 |
-| 3 | Operational SQL Backends (#2) | OPS-01/02/03/04 | testcontainers Postgres | 2 |
-| 4 | Retention + Live Write-Through (#2 live) | RETAIN-01/02/03, GATE-01 | testcontainers Postgres | 3 |
-| 5 | Cache Classification (#3) | CACHE-01/02 | (doc + grep) | 1 |
+Execution order: 1 (gates all) → 2 → 3 → 4 (DoD) → 5 → 6. Hard dependencies (design §7 / research
+ARCHITECTURE): Phase 1 oracle-gated, gates everything; Phase 2 data arm feeds Phase 3; **Phase 4 DoD
+reachable on 1 + 3 + connector data arm only (NOT the order arm)**; Phase 5 needs Phase 2 order arm +
+Phase 1 `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3 backfill. LX-15 topology (RUN-01)
+decided in the Phase 3→4 handoff before Phase 4 wiring. Phase dirs `01-*..06-*` will not collide with the
+`999.3` backlog placeholder (different prefix).
 
-**Research flag:** Phase 4 NEEDS DEEPER PLAN-TIME RESEARCH (`/gsd:plan-phase --research-phase`) — the
-live retention design (write-through transaction boundary, bracket-parent safety, read-through scope,
-rehydration query surface, single-daemon-thread vs API-thread interaction) is the most novel + least
-validated surface. Phases 1/2/3/5 are standard patterns (plan-time research optional).
+| Phase | Name | Requirements | Research flag |
+|-------|------|--------------|---------------|
+| 1 | Account Abstraction + Portfolio/Handler Refactor | ACCT-01..06 | SKIP (v1.2 MOD-01 playbook) |
+| 2 | OKX Connector | CONN-01..06 | **NEEDS plan-time research** (OKX confirm + ccxt.pro gap list) |
+| 3 | LiveBarFeed | FEED-01..05 | **NEEDS plan-time research** (ring capacity, reconnect, correction policy) |
+| 4 | Paper Path (DoD) | PAPER-01..04, RUN-01, COV-01 | **NEEDS plan-time research** (parity harness + LX-15 topology) |
+| 5 | Real/Sandbox + Reconciliation + Persistence Live-Drive | RECON-01..06, RES-01 | **NEEDS plan-time research SPRINT** (reconciliation + write-through boundary) |
+| 6 | Dynamic Universe Membership | UNIV-01, UNIV-02 | SKIP (reuses Phase 3 backfill) |
+
+**Cross-cutting homes:** RUN-01 → Phase 4 (decided before wiring), RES-01 → Phase 5 (pieces in 2–3),
+COV-01 → Phase 4 (infra in 2, extends to 5). Coverage: **32/32 mapped, 0 orphans** (the pre-map "31"
+was an off-by-one — see REQUIREMENTS.md count note).
 
 ## Performance Metrics
 
-**Velocity (program cumulative through v1.5):**
+**Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 215 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
-- v1.6 plans completed: 0
+- Total plans completed: 236 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
 
@@ -86,145 +87,113 @@ validated surface. Phases 1/2/3/5 are standard patterns (plan-time research opti
 
 ### Roadmap Evolution
 
-- v1.6 roadmap created 2026-06-27 (promotes the persistence half of Backlog 999.2): 5 phases derived
-  from the 20 v1.6 requirements + the research 5-phase build order; all 20 mapped (100% coverage, no
-  orphans). Backlog 999.2 marked PROMOTED-TO-v1.6 (design intent retained as the historical seed, like
-  999.4 → v1.4); 999.3 (N+4 Live) kept intact. GATE-01 bound to Phase 4 + GATE-02 to Phase 1, both
-  restated as recurring success criteria in every phase.
+- v1.7 roadmap created 2026-06-30 (promotes Backlog 999.3 / N+4 Live, trimmed): 6 phases derived from the
+  LOCKED design sketch §4 (LX-01..LX-15) + research SUMMARY/ARCHITECTURE build order; all 32 requirements
+  mapped (100% coverage, 0 orphans). Numbering reset to Phase 1 (matching v1.1–v1.6). Backlog 999.3 marked
+  PROMOTED-TO-v1.7 (design intent retained as historical seed). The recurring milestone gate (oracle
+  byte-exact + no W1/W2 regression — live machinery inert on the backtest hot path) is restated as a
+  success criterion in every phase.
 
-- Owner Decisions (locked 2026-06-27) supersede the research seed where they differ: SQLite-default
-  research + Postgres-only operational + Turso-opt-in-LATER (no `sqlalchemy-libsql` driver this
-  milestone); results store all-`Float` (no `DecimalAsText`); frames as JSON/gzip'd-text (no
-  Parquet/`pyarrow`); money fidelity via Postgres-native `Numeric` (money never touches SQLite);
-  optimization sweep loop OUT (substrate only, schema stays Optuna-FK-ready).
+- Cross-cutting requirements given definite home phases: RUN-01 → Phase 4 (LX-15 topology decided before
+  Phase 4 wires the runtime), RES-01 → Phase 5 (resilience fully verified on the real path; rate-limit
+  built in Phase 2, reconnect+gap-recovery in Phase 3 FEED-04), COV-01 → Phase 4 (FL-13 on the first
+  end-to-end live surface; `pytest-asyncio` infra lands Phase 2; real-path coverage extends to Phase 5).
 
 ### Decisions
 
-Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisions:
+Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (design LX-01..LX-15):
 
-- **Spine = composition, not inheritance (research Q1):** one shared `SqlBackend` held by reference by
-  four `Sql<Concern>Storage` classes; the three existing domain ABCs stay UNCHANGED, a new `ResultsStore`
-  ABC is added. NO cross-concern god base.
-
-- **Backend-selection write-through, NOT a hot-path flag (research Q9, PITFALLS 3):** the backtest
-  backend contains no serialization code at all — zero hot-path cost is structural, not disciplined.
-
-- **No `DecimalAsText`, no `pyarrow`, no libSQL this milestone (Owner Decisions):** money on the
-  operational path is Postgres-native `Numeric`; frames are JSON/gzip'd-text; the libSQL driver is
-  deferred (interface stays Turso-ready via one engine-URL swap).
-
-- **Money = Decimal end-to-end on the real-money path; determinism; single UUIDv7** — all carried
-  unchanged onto the persistence layer (persisted timestamps use business `time`, never wall-clock).
-
-- [Phase 01]: 01-01: GATE-02 cross-backend test substrate established — session-scoped testcontainers Postgres pg_engine + indirect-parametrized sqlite/postgres engine fixture under tests/integration/storage/ (D-10/D-11); Docker-absent skips, never hard-fails.
-- [Phase 01]: 01-01: alembic ^1.18.5 + testcontainers[postgresql] ^4.14.2 added as dev-deps behind the blocking-human supply-chain gate (T-01-SC); kept off the runtime path to preserve GATE-01 inertness. GATE-02 left Pending (recurring gate, substrate-only).
-- [Phase 01]: 01-02: SQL spine shipped — SqlBackend (Engine+MetaData, composed not inherited, no SqlStorageBase god base) + storage/types.py (UtcIsoText deterministic UTC-isoformat business-time, json_variant JSON/JSONB, direct Uuid(as_uuid=True); no money type per D-13) + config/sql.py SqlSettings (driver-by-config, lazy SecretStr Postgres creds, unwired SQLITE_LIBSQL Turso slot). mypy --strict clean, oracle byte-exact.
-- [Phase 01]: 01-02: Only SPINE-01 marked complete; SPINE-02 (all four Sql<Concern>Storage + ResultsStore ABC), SPINE-03 (cross-backend SQLite+Postgres round-trip, plan 01-03) and GATE-02 (recurring) left Pending — structural/encoding halves established, full criteria span later plans/phases.
-- [Phase 01]: 01-03: SPINE-03 proven — UUIDv7 id + business-time round-trip lossless and value-EQUAL on BOTH in-process SQLite and testcontainers Postgres (live PG arm ran), byte-identical encoded TEXT across runs (D-03/D-04/D-05, D-10/D-11); SPINE-03 marked complete in REQUIREMENTS.md.
-- [Phase 01]: 01-03: ResultsStore(ABC) added as the spine's 4th composable concern — 4 @abstractmethods mapped 1:1 to RESULT-01/02/03, composes SqlBackend (no god base); impl deferred to Phase 2 so SPINE-02 stays Pending. No tests/unit/results/__init__.py created (package-less tests/unit convention, ref 30c0f61).
-- [Phase 01]: 01-04: MIG-01 Alembic skeleton shipped — live-Postgres chain only (one chain, render_as_batch=True both paths, empty versions/), target_metadata = spine SqlBackend MetaData, alembic.ini sqlalchemy.url BLANK with the URL resolved lazily in env.py (no Settings() at import, no credential in config; T-01-09/T-01-11). Research store uses create_all() and carries NO alembic_version — split proven by test_migrations.py on SQLite + testcontainers Postgres. MIG-01 marked complete.
-- [Phase 01]: 01-04: Fixed the stock Alembic env.py fileConfig footgun (disable_existing_loggers=False) so in-process Alembic does not disable iTrader structlog-backed stdlib loggers (caplog contamination); migration tooling kept off the runtime import graph (GATE-01 inert — import itrader.storage does not pull alembic).
-- [Phase 01]: 01-05: FL-06/SEC-01 closed — SqlHandler reworked onto SqlBackend (5th consumer), single parameterized prices table (symbol VALUE column, D-07), creds from Settings.database_url SecretStr, f-string DROP TABLE removed; lifted into mypy --strict (D-sql override dropped, zero ignores). SEC-01 COMPLETE; GATE-02 left Pending (recurring). No tests/unit/price_handler/__init__.py (package-less dir, ref 30c0f61). Oracle byte-exact, suite 1373 green.
+- **Paper-first DoD (LX-01) + refactor-first (LX-02):** Phase 1 extracts the Account abstraction
+  (oracle-gated, behavior-preserving) BEFORE any live code depends on it; the milestone DoD is the
+  paper-parity gate (Phase 4), reachable on the connector **data arm only**.
+- **Account owns balance/margin truth (LX-03), 1 account : 1 portfolio (LX-04):** `Simulated*` leaves
+  compute, `Venue*` leaves cache; the order domain reads through the existing `PortfolioReadModel` seam,
+  so Phase 1 is pure code-motion (no ripple into `OrderManager`/validator).
+- **`LiveConnector` is ours over ccxt.pro (LX-05) + native escape hatch:** ccxt's unified `watchOHLCV`
+  drops the OKX `confirm` flag (ccxt #21885) — the native read is mandatory before the feed can emit
+  `BarEvent`s. Single `sandbox: bool` routes both ccxt + native (no split-brain).
+- **`PaperConnector` reuses the pure `MatchingEngine` (LX-06) + a shared `apply_costs` helper** extracted
+  byte-exact from `SimulatedExchange._emit_fill` (one matching core + one cost core; no dual fill-pricing).
+- **`LiveBarFeed` = ring-buffer `BarFeed` (LX-07); confirm-flag closed-bar (LX-08); warmup through the
+  identical `update(bar)` path, no bulk fast-path (LX-09); monotonic-forward-only (LX-10).**
+- **Topology (LX-15):** ship separate worker process (option (b) architected as (c) with N=1), Postgres
+  `LISTEN/NOTIFY` command/status channel (zero new dep, reuses the v1.6 store). Decide before Phase 4 wiring.
+- **`TradingInterface` deleted (LX-14)** — no production consumer; replaced by a thin typed engine command
+  surface routing through the real order domain. `Portfolio.user_id` stripped (app-layer concern).
 
 ### Pending Todos
 
-[From .planning/todos/pending/ — carried, not v1.6-blocking]
-
-- Correct single-pass per-bar portfolio valuation (`single-pass-portfolio-valuation.md`) — deferred
-  v1.5, profile-first gated (future perf phase, not v1.6).
+[From .planning/todos/pending/ — carried; both now in-scope for v1.7]
 
 - Live-start indicator backfill through the same `update(bar)` path (`live-backfill-through-update.md`)
-  — N+4 when `LiveBarFeed` is built.
+  — **now Phase 3 (FEED-03 / LX-09)**: REST warmup replayed one-by-one through `update(bar)`, no bulk
+  `warmup_from` fast-path.
+- Correct single-pass per-bar portfolio valuation (`single-pass-portfolio-valuation.md`) — deferred
+  v1.5, profile-first gated (future perf phase, NOT v1.7).
 
 ### Blockers/Concerns
 
-- **Hot-path inertness is the load-bearing risk (Gate a):** a serialize/`write_through` call must never
-  land on the per-tick backtest loop. Enforce via backend-selection (two classes, not one flagged class);
-  the in-memory backend imports no SQLAlchemy/serialization symbol. W1/W2 within v1.5 ±5% is the proof.
-
-- **Cross-backend divergence:** stay on SQLAlchemy Core constructs + portable types; scalar-promote
-  filterable `runs` params to indexed columns (no JSON-path filtering in cross-sweep queries); run the
-  persistence suite on BOTH SQLite and Postgres. UUIDv7 in one canonical encoding so a `run_id` written
-  under SQLite reads equal under Postgres.
-
-- **Phase 4 retention is novel + unvalidated** (live path unbuilt) — design before wiring; plan-time
-  research recommended. Bracket-parent safety + crash-safe write ordering + open-only rehydration.
-
-- **Indentation hazard:** `config/`, `core/`, `itrader/storage/`, `itrader/results/`,
-  `strategy_handler/storage/` use 4 spaces; `order_handler/storage/` + `portfolio_handler/storage/` use
-  tabs. New `Sql<Concern>Storage` files MUST match the existing sibling — a mixed-indent tab file fails
-  to import.
-
-- **FL-06 creds:** rotate/scrub the exposed `SqlHandler` credential when reworking onto `SecretStr`;
-  never log the resolved secret URL.
-
+- **Confirm-flag / forming-bar risk (research Pitfall 1):** the single most likely source of
+  paper-parity failure — ccxt.pro does not surface OKX's `confirm` flag. The native escape hatch is
+  mandatory; produce the OKX native-vs-ccxt gap list at Phase 2 plan time before locking the design.
+- **ccxt returns floats everywhere (Pitfall 2):** every new connector price/amount/fee/balance must
+  route through `to_money` (= `Decimal(str(x))`); failure is invisible until reconciliation drift accrues.
+- **Wall-clock in business `time` is contagious (Pitfall 3):** existing `LiveTradingSystem` has multiple
+  `datetime.now(UTC)` usages; audit every new `datetime.now` on the live path before merge.
+- **Phase 5 reconciliation is the most under-specified area:** do not start coding without decisions on
+  auto-correct tolerance, halt-and-alert triggers, bracket parent/child restart, write-through boundary
+  (the v1.6 carried flag). Build a research sprint into Phase 5 planning.
+- **`filterwarnings=["error"]` + async tests:** unclosed ccxt.pro session/transport or unset
+  `asyncio_default_fixture_loop_scope` fails the whole suite. Use mocked/recorded connectors; never
+  relax the global filter (`pytest-asyncio` configured in Phase 2).
+- **Hot-path inertness (carried from v1.6):** the live machinery must add zero backtest hot-path cost —
+  the backtest path imports no async/connector code. W1/W2 within v1.5 ±5% is the proof, every phase.
+- **Indentation hazard:** handler modules use tabs; `config/`, `core/`, `price_handler/feed/`,
+  `itrader/storage/`, events package use 4 spaces. New files MUST match the sibling — a mixed-indent tab
+  file fails to import.
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
 
-### Quick Tasks Completed
-
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260629-jh2 | Parametrize Postgres connection via `ITRADER_DATABASE_*` env vars (default port 5544) on the `Settings` seam; `ITRADER_DATABASE_URL` demoted to verbatim escape hatch; `.env.example` added; supersedes IN-02 | 2026-06-29 | 075837b | [260629-jh2-parametrize-postgres-env](./quick/260629-jh2-parametrize-postgres-env/) |
-| 260629-l0q | Unify DB config into ONE self-contained `SqlSettings(BaseSettings)` (`env_prefix=ITRADER_DATABASE_`): connection params + driver-conditional fail-loud validator + guard-clause `engine_url()`; DB fields removed from `Settings`; env names unchanged; supersedes 260629-jh2 (and IN-02) | 2026-06-29 | aaf4d76 | [260629-l0q-unify-sql-settings](./quick/260629-l0q-unify-sql-settings/) |
-| Phase 04 P04 | 7min | 2 tasks | 2 files |
-
 ## Deferred Items
 
-**Acknowledged at v1.6 milestone close (2026-06-30):** the open-artifact audit was resolved before
-close — the 2 quick-task "missing" flags (scanner filename bug) and the Phase 02 stale W1/W2 UAT +
-verification items (resolved by Phase 4's −2.8% measurement) were fixed; the remaining open item is
-the deliberately-deferred single-pass per-bar valuation todo (profile-first gated, row below). The
-v1.6 audit (`tech_debt`, no blockers) deferred items — **live composition-root wiring → N+4** (D-01;
-`CachedSql*`/`Sql*` built + testcontainers-verified, live root hardcodes `'backtest'` for 2/3 concerns,
-by design per RETAIN-03), **draft Nyquist VALIDATION.md records on all 5 phases** (process-artifact
-gap; full VERIFICATION.md evidence per phase), and **~13 WR-/IN- non-blocking review warnings** — are
-consciously accepted and recorded in `milestones/v1.6-MILESTONE-AUDIT.md`.
-
-Program-level items deferred across milestones, with their target milestone (v1.6-relevant rows
-promoted INTO this milestone marked):
+Program-level items deferred across milestones; v1.7-relevant rows promoted INTO this milestone are marked.
 
 | Category | Item | Status | Target |
 |----------|------|--------|--------|
-| Persistence/security | SQL injection + hardcoded creds in `SqlHandler` (FL-06) | ✅ **Shipped in v1.6** (SEC-01, Phase 1) | v1.6 |
-| D-sql | SQL persistence backends (order/portfolio/signal/results) — v1.5 PERF-01 `OrderStorage` interface designed for this | ✅ **Shipped in v1.6** (SPINE/RESULT/OPS, Phases 1-3) | v1.6 |
-| Optimization | Optuna sampler + sweep loop (OPT-01) — v1.6 ships the Optuna-FK-ready substrate only | Deferred | future (v2) |
-| Turso/libSQL | `sqlalchemy-libsql` opt-in research backend (TURSO-01) — interface stays Turso-ready | Deferred | future (v2, post-beta + measured) |
-| Live drive | Persistence driven by a real live feed + venue reconciliation (operational store built/tested on testcontainers in v1.6) | Deferred | N+4 (Backlog 999.3) |
+| Live drive | Persistence driven by a real live feed + venue reconciliation (v1.6 store built/tested on testcontainers) | ⏳ **Promoted to v1.7** (Phase 5, RECON-04/05) | v1.7 |
+| Live account | `Account` abstraction + reconciliation mirror (ACCT) | ⏳ **Promoted to v1.7** (Phase 1 + Phase 5 `VenueAccount`) | v1.7 |
+| Live coverage | `LiveTradingSystem` test coverage (FL-13) | ⏳ **Promoted to v1.7** (COV-01, Phase 4→5) | v1.7 |
+| Cleanup | `Portfolio.user_id` removal (app-layer multi-tenancy) | ⏳ **Promoted to v1.7** (ACCT-04, Phase 1) | v1.7 |
+| D-screener | Production screener / ranking / rebalance loop | Deferred (v1.7 ships only the lean poll seam, Phase 6) | v2 |
+| Optimization | Optuna sampler + sweep loop (OPT-01) — v1.6 ships the FK-ready substrate only | Deferred | v2 |
+| Turso/libSQL | `sqlalchemy-libsql` opt-in backend (TURSO-01) — interface stays Turso-ready | Deferred | v2 (post-beta + measured) |
+| Perp realism (Phase B) | FUND-01..04 (funding accrual, mark-price liq, funding pipeline, freqtrade oracle) | Deferred | v2 |
+| Live data fidelity | TRADE-01 trade-aggregation bar source (LX-12; klines now, trades later) | Deferred | v2 |
 | Perf (v1.5) | Correct single-pass per-bar portfolio valuation (profile-first gated) | Deferred | future perf phase |
 | Perf (v1.5) | Nyquist VALIDATION.md gaps (advisory; oracle + A/B perf gate are the real lock) | Deferred | optional `/gsd:validate-phase` backfill |
-| Deferred perf (v2) | PERF-09 / PERF-10 (strategy-level dedup, O(n²)-in-symbol guard) | Deferred | future (large universes only) |
-| Perp realism (Phase B) | FUND-01..04 (funding accrual, mark-price liq, funding pipeline, freqtrade oracle) | Deferred | N+4 data work |
-| Live account | `Account` reconciliation mirror (ACCT-01) | Deferred | N+4 (Backlog 999.3) |
-| Live coverage | `LiveTradingSystem`/`TradingInterface` test coverage (FL-13) | Deferred | N+4 (Backlog 999.3) |
-| Cleanup | `Portfolio.user_id` removal (app-layer multi-tenancy concern) | Deferred | N+4 (with the connector) |
-| D-screener | Production screener / ranking / rebalance loop | Deferred | N+4 (Backlog 999.3) |
+| Deferred perf (v2) | PERF-09 / PERF-10 (strategy-level dedup, O(n²)-in-symbol guard) | Deferred | future (large universes) |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions | Deferred | indefinite (crypto-first) |
 
-v1.0–v1.5 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md files
-under `milestones/`.
-| Phase 01 P01 | 11m | 3 tasks | 5 files |
-| Phase 01 P02 | 8min | 3 tasks | 8 files |
-| Phase 01 P03 | 4min | 2 tasks | 4 files |
-| Phase 01 P04 | 7min | 2 tasks | 5 files |
-| Phase 01 P05 | 7min | 3 tasks | 3 files |
+v1.0–v1.6 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md files under
+`milestones/`. v1.6 audit (`tech_debt`, no blockers): live composition-root wiring → promoted to v1.7
+Phase 5 (D-01); draft Nyquist VALIDATION.md records on all 5 phases; ~13 WR-/IN- non-blocking review
+warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`).
 
 ## Bookkeeping
 
-- **v1.5 phase dirs archived (2026-06-26, at milestone close):** the v1.5 phase working directories
-  were `git mv`'d to `.planning/milestones/v1.5-phases/`. Only the `999.x` backlog seed dirs
-  (`999.2`/`999.3`) remain in `.planning/phases/`, so the new v1.6 `01-*..05-*` dirs will not collide.
-
-- **At v1.6 close (reminder):** `git mv` the v1.6 phase dirs to `milestones/v1.6-phases/` and archive
-  `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` as `milestones/v1.6-*`.
+- **At v1.6 close (done 2026-06-30):** v1.6 phase dirs `git mv`'d to `milestones/v1.6-phases/`;
+  `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` archived as `milestones/v1.6-*`. Only the `999.3` backlog
+  seed dir remains in `.planning/phases/`, so the new v1.7 `01-*..06-*` dirs will not collide.
+- **At v1.7 close (reminder):** `git mv` the v1.7 phase dirs to `milestones/v1.7-phases/` and archive
+  `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` as `milestones/v1.7-*`.
 
 ## Session Continuity
 
-Last session: 2026-06-30T12:17:06.378Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-cache-classification-3/05-CONTEXT.md
-Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
+Last session: 2026-06-30T17:30:00.000Z
+Stopped at: v1.7 roadmap created (ROADMAP.md + STATE.md + REQUIREMENTS.md traceability written)
+Resume file: None
+Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 1 (Account Abstraction) with `/gsd:plan-phase 1`.
