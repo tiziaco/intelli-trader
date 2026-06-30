@@ -42,8 +42,6 @@ class PerformanceSettings(BaseModel):
     enable_async: bool = True
     connection_pool_size: int = 20
     timeout_seconds: int = 30
-    enable_caching: bool = True
-    cache_size_mb: int = 512
     # Determinism seed for stochastic components (D-11, #5/PERF2). Constant default;
     # drives only failure-simulation + slippage jitter, never a security value.
     rng_seed: int = 42
