@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-30T21:37:43.483Z"
+last_updated: "2026-06-30T21:52:53.082Z"
 last_activity: 2026-06-30
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 7
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 01 (account-abstraction-portfolio-handler-refactor) — EXECUTING
-Plan: 6 of 7
+Plan: 7 of 7
 Status: Ready to execute
 Last activity: 2026-06-30
 
-Progress: [███████░░░] 71%
+Progress: [█████████░] 86%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -134,6 +134,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 01]: 01-02: SimulatedCashAccount = CashManager moved byte-for-byte (D-05); .available is a thin Decimal alias of verbatim available_balance to satisfy the Account ABC without altering internals (byte-exact)
 - [Phase 01]: 01-02: SimulatedMarginAccount gains set_universe/_universe — the margin/liq math-pulldown (ACCT-02) moves its Universe dependency down with the math; dark this wave, wired in 01-03. Liquidation emission shell stays in PortfolioHandler
 - [Phase ?]: 01-03: Portfolio/PortfolioHandler delegate all balance/margin/liq truth to the injected Account leaf behind the FROZEN PortfolioReadModel seam; margin surface narrowed via cast/isinstance; liquidation shells skip spot accounts; CashManager deleted; oracle held byte-exact.
+- [Phase ?]: 01-03c: e2e margin scenarios construct the SimulatedMarginAccount leaf at CONSTRUCTION via enable_margin portfolio_config (01-03 D-03) — the post-construction update_config toggle no longer rebuilds the leaf; account caches no config at construction so a minimal enable_margin config suffices. e2e suite green (72 passed); user_id grep-zero across tests/e2e.
 
 ### Pending Todos
 
@@ -205,6 +206,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 | Phase 01 P02 | 4min | 2 tasks | 2 files |
 | Phase 1 P3 | 10 | 3 tasks | 11 files |
 | Phase 01 P03b | 26min | 3 tasks | 38 files |
+| Phase 01 P03c | 5min | 2 tasks | 59 files |
 
 ## Bookkeeping
 
@@ -217,7 +219,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-06-30T21:37:23.451Z
+Last session: 2026-06-30T21:52:31.185Z
 Stopped at: Phase 1 context gathered
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
