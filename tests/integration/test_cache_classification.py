@@ -12,9 +12,10 @@ and cross-checks it against a fresh grep of ``itrader/`` at HEAD. It enforces:
     count the doc declares (D-01 home #2);
   * the doc records the Q7 no-Arrow decision and the ``(d)`` live-retention label.
 
-EXPECTED RED (Wave-0 RED->GREEN sequence, NOT a failure): the
-``test_cache_class_anchors_match_live_inventory`` arm fails until plan **05-02** places
-the per-site ``# CACHE-CLASS:`` annotations. The other arms pass against the committed doc.
+GREEN at HEAD (Wave-0 RED->GREEN sequence is complete): plan **05-02** placed the
+per-site ``# CACHE-CLASS:`` annotations, so the
+``test_cache_class_anchors_match_live_inventory`` arm now passes and locks the live
+anchor count to the doc inventory. All four arms pass against the committed doc.
 
 Uses pathlib + re only (no subprocess, no third-party import) so it emits no warnings under
 ``filterwarnings=["error"]`` and never triggers the ``itrader`` import-time singletons.
@@ -143,22 +144,24 @@ def test_doc_records_q7_no_arrow_decision_and_d_label() -> None:
     assert "classify, do not rewrite or unify" in doc, "scope boundary statement missing"
 
 
-# --------------------------------------------------------------------------- arm 3 (RED)
+# --------------------------------------------------------------------------- arm 3 (GREEN)
 
 
 def test_cache_class_anchors_match_live_inventory() -> None:
-    """EXPECTED RED until 05-02: one `# CACHE-CLASS:` anchor per live inventoried site.
+    """GREEN at HEAD: one `# CACHE-CLASS:` anchor per live inventoried site.
 
-    This arm is the Wave-0 RED state. It turns GREEN once plan 05-02 annotates each live
-    definition line. The other arms in this module pass against the committed doc today.
+    Anchors were placed by plan 05-02; the Wave-0 RED->GREEN sequence is complete. This
+    arm locks the per-site anchor count to the doc inventory so a dropped or stray anchor
+    fails the suite. The other arms in this module also pass against the committed doc.
     """
     inventory = _live_inventory()
     expected = sum(len(lines) for lines in inventory.values())
     anchors = _scan_itrader(_ANCHOR_RE, whole_file=True)
 
     assert len(anchors) == expected, (
-        f"CACHE-CLASS anchors not yet placed — 05-02 must annotate each live site "
-        f"({len(anchors)}/{expected} placed). This RED is the intended Wave-0 state."
+        f"CACHE-CLASS anchor count drifted from the doc inventory "
+        f"({len(anchors)}/{expected}). 05-02 placed one anchor per live site; re-sync "
+        f"the anchors and docs/CACHE-CLASSIFICATION.md so the counts match."
     )
     for f, _ in anchors:
         assert f in inventory, f"CACHE-CLASS anchor on an undocumented file: {f}"
