@@ -36,6 +36,10 @@ credentials*
 !tests/integration/test_bar_cache_registration.py
 # Phase 8 Req 2/D-05 Position-cache fill-invalidation test (mandated artifact name).
 !tests/unit/portfolio/positions/test_position_cache.py
+# v1.6 Phase 4 cached-SQL write-through wrappers (mandated artifact names); the broad
+# **cache** rule above would otherwise ignore them by filename ("cached").
+!itrader/strategy_handler/storage/cached_sql_storage.py
+!tests/integration/storage/test_cached_sql_signal_storage.py
 
 #UserData
 output/
