@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
-status: ready_to_plan
-stopped_at: Phase 04 complete (4/4) — ready to discuss Phase 5 (Cache Classification)
-last_updated: 2026-06-30T10:56:54.590Z
+status: planning
+stopped_at: Phase 5 context gathered
+last_updated: "2026-06-30T12:17:06.386Z"
 last_activity: 2026-06-30
 progress:
-  total_phases: 5
+  total_phases: 7
   completed_phases: 4
   total_plans: 18
   completed_plans: 18
-  percent: 80
+  percent: 57
 ---
 
 # Project State
@@ -212,9 +212,9 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-30T10:21:17.949Z
-Stopped at: Completed 04-04-PLAN.md
-Resume file: None
+Last session: 2026-06-30T12:17:06.378Z
+Stopped at: Phase 5 context gathered
+Resume file: .planning/phases/05-cache-classification-3/05-CONTEXT.md
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
 ## Operator Next Steps
