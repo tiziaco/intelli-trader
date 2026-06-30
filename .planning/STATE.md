@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-06-30T09:47:42.669Z"
-last_activity: 2026-06-30 -- Phase 04 execution started
+stopped_at: Completed 04-04-PLAN.md
+last_updated: "2026-06-30T10:21:17.956Z"
+last_activity: 2026-06-30
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 18
-  completed_plans: 14
-  percent: 43
+  completed_plans: 18
+  percent: 57
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundati
 ## Current Position
 
 Phase: 04 (retention-live-write-through-2-live-path) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 04
-Last activity: 2026-06-30 -- Phase 04 execution started
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-06-30
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
@@ -169,6 +169,7 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 |---|-------------|------|--------|-----------|
 | 260629-jh2 | Parametrize Postgres connection via `ITRADER_DATABASE_*` env vars (default port 5544) on the `Settings` seam; `ITRADER_DATABASE_URL` demoted to verbatim escape hatch; `.env.example` added; supersedes IN-02 | 2026-06-29 | 075837b | [260629-jh2-parametrize-postgres-env](./quick/260629-jh2-parametrize-postgres-env/) |
 | 260629-l0q | Unify DB config into ONE self-contained `SqlSettings(BaseSettings)` (`env_prefix=ITRADER_DATABASE_`): connection params + driver-conditional fail-loud validator + guard-clause `engine_url()`; DB fields removed from `Settings`; env names unchanged; supersedes 260629-jh2 (and IN-02) | 2026-06-29 | aaf4d76 | [260629-l0q-unify-sql-settings](./quick/260629-l0q-unify-sql-settings/) |
+| Phase 04 P04 | 7min | 2 tasks | 2 files |
 
 ## Deferred Items
 
@@ -211,9 +212,9 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-30T07:56:00.857Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-retention-live-write-through-2-live-path/04-CONTEXT.md
+Last session: 2026-06-30T10:21:17.949Z
+Stopped at: Completed 04-04-PLAN.md
+Resume file: None
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
 ## Operator Next Steps

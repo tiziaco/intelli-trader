@@ -270,7 +270,7 @@ Postgres (driven by a real live feed only in N+4).
 - [x] 04-01-PLAN.md — CachedSqlOrderStorage: store-first write-through, purge-on-terminalize gate + bracket-parent-resident (D-02), read-through split, open-only rehydration, factory 'live' arm wired end-to-end (RETAIN-01/02/03)
 - [x] 04-02-PLAN.md — CachedSqlPortfolioStateStorage + dedicated portfolio_account_state carrier (A2) + migration: store-first, read-through split, open-only rehydration, synchronous accumulator persistence (D-03), cross-portfolio isolation; built + component-tested, root left for N+4 (D-01) (RETAIN-01/02/03)
 - [x] 04-03-PLAN.md — CachedSqlSignalStorage: append-only store-first mirror (no purge/read-through), factory 'live' arm; built + component-tested, hardcode left for N+4 (D-01) (RETAIN-01)
-- [ ] 04-04-PLAN.md — GATE-01 inertness: clean-interpreter import-quarantine + phase gate (oracle byte-exact, W1/W2 A/B, mypy --strict, full suite) (GATE-01, GATE-02 recurring)
+- [x] 04-04-PLAN.md — GATE-01 inertness: clean-interpreter import-quarantine + phase gate (oracle byte-exact, W1/W2 A/B, mypy --strict, full suite) (GATE-01, GATE-02 recurring)
 **Research flag**: NEEDS DEEPER PLAN-TIME RESEARCH (`/gsd:plan-phase --research-phase`). The live retention design is the most architecturally novel work of the milestone and the least-validated surface (the live path is unbuilt). Nail down the write-through transaction-boundary design (create/terminalize sync vs append-heavy), the bracket-parent safety invariant, the read-through scope, the rehydration query surface, and the `LiveTradingSystem` single-daemon-thread vs `TradingInterface` API-thread interaction before implementation (research SUMMARY §Research Flags; PITFALLS 7/8).
 
 ### Phase 5: Cache Classification (#3)
@@ -304,7 +304,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 | 1. SQL Spine + Security Hardening | 5/5 | Complete   | 2026-06-27 |
 | 2. Results Store (#1) | 4/4 | Complete   | 2026-06-29 |
 | 3. Operational SQL Backends (#2) | 5/5 | Complete   | 2026-06-29 |
-| 4. Retention + Live Write-Through (#2 live path) | 3/4 | In Progress|  |
+| 4. Retention + Live Write-Through (#2 live path) | 4/4 | Complete   | 2026-06-30 |
 | 5. Cache Classification (#3) | 0/TBD | Not started | - |
 
 **Next:** plan Phase 1 with `/gsd:plan-phase 1`.
