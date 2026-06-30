@@ -471,18 +471,23 @@ def rehydrate(self) -> None:
 | A4 | Read-through is **daemon-only in the as-wired Phase-4 system** (the API thread never calls storage today) but built API-thread-safe with one `RLock` for the imminent FastAPI layer. | Read-Through Scope & Thread-Safety | Over-locking would add (uncontended) cost; under-locking would break the future FastAPI read path. RLock is the safe middle. |
 | A5 | `CachedSql*Storage` modules enter `mypy --strict` now (the Phase-3 `Sql*Storage` siblings already are — not in any `pyproject.toml` override). | Project Constraints | If deferred, GATE-02's "mypy --strict clean" would need an override entry; keeping strict matches the siblings and is the lower-debt path. |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+All three were settled during planning (CONTEXT delegates them to planner's discretion); each recommendation was adopted by a plan, cited below.
 
 1. **Cross-method atomicity vs the locked scope (A1).**
    - What we know: bracket = 3 `add_order` calls, fill = independent manager writes; the FK forces parent-first; the ABC has no cross-method txn.
    - What's unclear: whether the owner accepts per-write store-first + N+4 reconciliation, or wants an atomic boundary now (which breaks D-01/D-04).
    - Recommendation: accept per-write store-first; document the partial-bracket-on-crash window as N+4-closed. Confirm with the planner before building the atomicity test (it must target within-method atomicity).
+   - **RESOLVED:** adopted in Plan 04-01 — per-write store-first, FK-ordered; the Pitfall-8 atomicity test targets within-method atomicity; cross-method bracket atomicity documented as N+4 venue reconciliation. This is in fact FORCED by locked D-01/D-04 (true cross-method atomicity would require changing the ABC + rewiring the root, both forbidden).
 
 2. **Account-state carrier: new table vs reuse `equity_snapshots` (A2).**
    - Recommendation: dedicated `portfolio_account_state` upsert table (cleaner, O(1) latest, matches RETAIN-02). Accept the small framework-chain migration.
+   - **RESOLVED:** adopted in Plan 04-02 — dedicated `portfolio_account_state` upsert table + one small framework-chain Alembic migration.
 
 3. **Does the Phase-4 portfolio/signal wrapper need a `rehydrate()` entry-point at all, given it isn't wired (D-01)?**
    - Recommendation: yes — build `rehydrate()` and component-test it (it IS a success criterion: open-only rehydration on testcontainers Postgres). The *caller* is N+4; the *method* is Phase 4.
+   - **RESOLVED:** adopted in Plan 04-02 — the `rehydrate()` method + `save_account_state`/`load_account_state` are built and component-tested this phase; restoring the scalars into the managers (the *caller*) is N+4 (A3).
 
 ## Environment Availability
 
