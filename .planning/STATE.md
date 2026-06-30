@@ -56,9 +56,10 @@ determinism (business `time` not wall-clock, `sort_keys`, stable `ORDER BY`); `m
 Execution order: 1 → 2 → 3 → 4 (Phase 5 is largely independent — may run parallel to Phases 2-3; listed
 last). Hard build-order constraints (research ARCHITECTURE): spine before every backend; the results
 store validates the spine before any live path touches it; the retention model is designed before live
-write-through is wired. Numbering reset to Phase 1 (matching v1.1–v1.5); the only dirs in
-`.planning/phases/` are the `999.2`/`999.3` backlog placeholders (999.x prefix — no collision with the
-new `01-*..05-*` dirs).
+write-through is wired. Numbering reset to Phase 1 (matching v1.1–v1.5); the only dir in
+`.planning/phases/` is the `999.3` backlog placeholder (N+4 Live; 999.x prefix — no collision with the
+new `01-*..05-*` dirs). The `999.2` placeholder was removed 2026-06-30 — Backlog 999.2 is fully
+consumed (performance half → v1.5, persistence half → v1.6).
 
 | Phase | Name | Requirements | Substrate | Depends on |
 |-------|------|--------------|-----------|------------|
