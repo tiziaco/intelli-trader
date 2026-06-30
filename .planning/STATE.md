@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
 status: ready_to_plan
-stopped_at: Phase 03 complete (5/5) — ready to discuss Phase 4
-last_updated: 2026-06-29T16:57:31.946Z
-last_activity: 2026-06-29 -- Phase 03 execution started
+stopped_at: Phase 04 complete (4/4) — ready to discuss Phase 5 (Cache Classification)
+last_updated: 2026-06-30T10:56:54.590Z
+last_activity: 2026-06-30
 progress:
-  total_phases: 7
-  completed_phases: 3
-  total_plans: 14
-  completed_plans: 14
-  percent: 43
+  total_phases: 5
+  completed_phases: 4
+  total_plans: 18
+  completed_plans: 18
+  percent: 80
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundation ACTIVE; scope locked via owner clarification 2026-06-27)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). v1.6 adds the durable-storage + caching foundation **without disturbing that** — the backtest path stays byte-exact and N+4 Live inherits a persistent, restart-safe system of record.
-**Current focus:** Phase 4 — Retention + Live Write-Through
+**Current focus:** Phase 5 — Cache Classification (#3)
 
 ## Current Position
 
-Phase: 4
+Phase: 5
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-06-29
+Last activity: 2026-06-30
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
@@ -79,7 +79,7 @@ validated surface. Phases 1/2/3/5 are standard patterns (plan-time research opti
 
 **Velocity (program cumulative through v1.5):**
 
-- Total plans completed: 208 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
+- Total plans completed: 212 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
 - v1.6 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
@@ -169,6 +169,7 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 |---|-------------|------|--------|-----------|
 | 260629-jh2 | Parametrize Postgres connection via `ITRADER_DATABASE_*` env vars (default port 5544) on the `Settings` seam; `ITRADER_DATABASE_URL` demoted to verbatim escape hatch; `.env.example` added; supersedes IN-02 | 2026-06-29 | 075837b | [260629-jh2-parametrize-postgres-env](./quick/260629-jh2-parametrize-postgres-env/) |
 | 260629-l0q | Unify DB config into ONE self-contained `SqlSettings(BaseSettings)` (`env_prefix=ITRADER_DATABASE_`): connection params + driver-conditional fail-loud validator + guard-clause `engine_url()`; DB fields removed from `Settings`; env names unchanged; supersedes 260629-jh2 (and IN-02) | 2026-06-29 | aaf4d76 | [260629-l0q-unify-sql-settings](./quick/260629-l0q-unify-sql-settings/) |
+| Phase 04 P04 | 7min | 2 tasks | 2 files |
 
 ## Deferred Items
 
@@ -211,9 +212,9 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-29T15:04:31.523Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-operational-sql-backends-2-store-layer/03-CONTEXT.md
+Last session: 2026-06-30T10:21:17.949Z
+Stopped at: Completed 04-04-PLAN.md
+Resume file: None
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
 ## Operator Next Steps

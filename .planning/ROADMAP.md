@@ -67,7 +67,7 @@ sweep loop OUT (substrate only). Full requirements: [`REQUIREMENTS.md`](./REQUIR
 - [x] **Phase 1: SQL Spine + Security Hardening** - Config-selected `SqlBackend`/`SqlSettings` (SQLite + Postgres, Turso-ready), composition layering (3 existing ABCs + new `ResultsStore` ABC), lossless UUIDv7/timestamp round-trip, FL-06 `SqlHandler` hardening, Alembic skeleton + `create_all()` strategy — completed 2026-06-27 (5/5 plans)
 - [x] **Phase 2: Results Store (#1)** - Every backtest/optimization run persisted on ephemeral SQLite (`runs` Float + JSON settings, `run_artifacts` JSON/gzip text frame, cross-run query, Optuna-FK-ready); validates the spine oracle-dark — completed 2026-06-29 (4/4 plans)
 - [x] **Phase 3: Operational SQL Backends (#2)** - One Postgres SQL backend per existing seam (order mirror, portfolio state, signal), money as native `Numeric`, testcontainers round-trip; backtest in-memory backends unchanged — completed 2026-06-29 (5/5 plans)
-- [ ] **Phase 4: Retention + Live Write-Through (#2 live path)** - Two-knob model (write-through OFF in backtest = zero hot-path cost; live = write-through + working-set cache + purge-on-terminalize + read-through + restart rehydration); built + integration-tested on testcontainers (NEEDS plan-time research)
+- [x] **Phase 4: Retention + Live Write-Through (#2 live path)** - Two-knob model (write-through OFF in backtest = zero hot-path cost; live = write-through + working-set cache + purge-on-terminalize + read-through + restart rehydration); built + integration-tested on testcontainers — completed 2026-06-30 (4/4 plans)
 - [ ] **Phase 5: Cache Classification (#3)** - Inventory + classify (a/b/c) every cache/`lru_cache`; leave the v1.5 hot path alone; classify, do not rewrite or unify
 
 <details>
@@ -266,7 +266,11 @@ Postgres (driven by a real live feed only in N+4).
   2. The live working-set cache keeps only the active set resident (open positions, working orders + brackets, current snapshot, running accumulators); terminal records are purged on terminalize with a bounded read-through fallback, and a bracket parent stays resident until its children terminalize — proven by an evict-then-read-through test and a flat-RSS long-run test.
   3. Restart rehydration reconstructs the live working set (open positions + working orders + brackets) from the store deterministically, without replaying terminal history — proven by an open-only rehydration test and a crash-after-emit/restart test (rehydrated working set equals pre-crash state), on testcontainers Postgres.
   4. (GATE-01 bound here) With write-through OFF, the SMA_MACD oracle stays byte-exact 134 / `46189.87730727451` with no W1/W2 perf regression vs the v1.5 baseline (15.7 s / 152.8 MB) — proving the persistence layer is inert on the hot path; (GATE-02 recurring) the new live persistence code is covered by round-trip + rehydration tests on testcontainers Postgres, `mypy --strict` clean, `filterwarnings=["error"]` green.
-**Plans**: TBD
+**Plans**: 4 plans across 2 waves (wave 1: 04-01, 04-02, 04-03 — parallel, no file overlap; wave 2: 04-04)
+- [x] 04-01-PLAN.md — CachedSqlOrderStorage: store-first write-through, purge-on-terminalize gate + bracket-parent-resident (D-02), read-through split, open-only rehydration, factory 'live' arm wired end-to-end (RETAIN-01/02/03)
+- [x] 04-02-PLAN.md — CachedSqlPortfolioStateStorage + dedicated portfolio_account_state carrier (A2) + migration: store-first, read-through split, open-only rehydration, synchronous accumulator persistence (D-03), cross-portfolio isolation; built + component-tested, root left for N+4 (D-01) (RETAIN-01/02/03)
+- [x] 04-03-PLAN.md — CachedSqlSignalStorage: append-only store-first mirror (no purge/read-through), factory 'live' arm; built + component-tested, hardcode left for N+4 (D-01) (RETAIN-01)
+- [x] 04-04-PLAN.md — GATE-01 inertness: clean-interpreter import-quarantine + phase gate (oracle byte-exact, W1/W2 A/B, mypy --strict, full suite) (GATE-01, GATE-02 recurring)
 **Research flag**: NEEDS DEEPER PLAN-TIME RESEARCH (`/gsd:plan-phase --research-phase`). The live retention design is the most architecturally novel work of the milestone and the least-validated surface (the live path is unbuilt). Nail down the write-through transaction-boundary design (create/terminalize sync vs append-heavy), the bracket-parent safety invariant, the read-through scope, the rehydration query surface, and the `LiveTradingSystem` single-daemon-thread vs `TradingInterface` API-thread interaction before implementation (research SUMMARY §Research Flags; PITFALLS 7/8).
 
 ### Phase 5: Cache Classification (#3)
@@ -300,7 +304,7 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
 | 1. SQL Spine + Security Hardening | 5/5 | Complete   | 2026-06-27 |
 | 2. Results Store (#1) | 4/4 | Complete   | 2026-06-29 |
 | 3. Operational SQL Backends (#2) | 5/5 | Complete   | 2026-06-29 |
-| 4. Retention + Live Write-Through (#2 live path) | 0/TBD | Not started | - |
+| 4. Retention + Live Write-Through (#2 live path) | 4/4 | Complete   | 2026-06-30 |
 | 5. Cache Classification (#3) | 0/TBD | Not started | - |
 
 **Next:** plan Phase 1 with `/gsd:plan-phase 1`.

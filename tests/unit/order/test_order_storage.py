@@ -488,20 +488,27 @@ def test_create_in_memory_directly():
     assert isinstance(storage, InMemoryOrderStorage)
 
 
-def test_create_live_storage_returns_sql_backend():
-    """The 'live' arm routes to SqlOrderStorage on the shared SQL spine (D-06).
+def test_create_live_storage_returns_cached_sql_wrapper():
+    """The 'live' arm returns the cache wrapper composing SqlOrderStorage (D-04/D-06).
 
-    With no backend supplied the factory builds a default ``SqlBackend`` (Phase 4 injects
-    the shared operational backend). The store is disposed to avoid a ResourceWarning under
-    ``filterwarnings=["error"]`` (WR-03 / Pitfall 4).
+    Phase 4 (04-01) rewired the ``'live'`` arm to return
+    ``CachedSqlOrderStorage(SqlOrderStorage(...))`` — the store-first live decorator over the
+    untouched Phase-3 system of record (D-04). With no backend supplied the factory builds a
+    default ``SqlBackend`` (Phase 4 injects the shared operational backend at the live
+    composition root). The composed store's engine is disposed to avoid a ResourceWarning
+    under ``filterwarnings=["error"]`` (WR-03 / Pitfall 4).
     """
+    from itrader.order_handler.storage.cached_sql_storage import CachedSqlOrderStorage
     from itrader.order_handler.storage.sql_storage import SqlOrderStorage
 
     storage = OrderStorageFactory.create("live")
     try:
-        assert isinstance(storage, SqlOrderStorage)
+        assert isinstance(storage, CachedSqlOrderStorage)
+        # The wrapper composes the untouched Phase-3 SQL store (system of record).
+        assert isinstance(storage._store, SqlOrderStorage)
     finally:
-        storage.dispose()
+        # Dispose the underlying shared backend engine (the wrapper delegates to the store).
+        storage._store.dispose()
 
 
 def test_unsupported_environment():
