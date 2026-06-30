@@ -584,3 +584,335 @@ class SimulatedCashAccount(Account):
 
         self._storage.add_cash_operation(operation)
         return operation
+
+
+class SimulatedMarginAccount(SimulatedCashAccount):
+    """
+    Simulated margin account — the strict *superset* of cash (D-01 / D-02,
+    ACCT-02).
+
+    Margin needs everything the cash leaf provides (balance / available /
+    reserve / release + the full cash-flow audit trail) AND adds the margin-only
+    surface: position-keyed margin locks, short borrow-interest carry, and the
+    margin/liquidation MATH pulled DOWN from ``PortfolioHandler`` (ACCT-02 — the
+    pure-Decimal math moves here; the liquidation ``global_queue.put`` emission
+    and the ``_liquidate_position`` / ``_run_liquidation_pass`` event-minting
+    shell STAY in the handler, queue-only rule preserved). Inheritance expresses
+    the superset honestly with ZERO cash-logic duplication (D-02).
+
+    Dark-but-verbatim (D-04): the SMA_MACD oracle runs the SPOT path, so this
+    leaf is not on the byte-exact hot path — but the math is byte-for-byte the
+    ``PortfolioHandler`` / ``CashManager`` code-motion and stays mypy-clean. The
+    lock / borrow-interest paths carry full precision (no 2dp quantize, Pitfall
+    1); the liq price is quantized only at the FillEvent boundary in the handler
+    mint step, never mid-formula.
+    """
+
+    def __init__(self, portfolio: Any, initial_cash: float | Decimal = 0.0) -> None:
+        super().__init__(portfolio, initial_cash)
+        # The Universe read-model used to resolve per-symbol Instruments for the
+        # margin/liquidation math. Wired by the runner via ``set_universe`` (the
+        # math-pulldown moves the universe seam with it); 01-03 re-points the
+        # handler to call DOWN into the account once this leaf is consumed.
+        self._universe: Any = None
+        self.logger = get_itrader_logger().bind(component="SimulatedMarginAccount")
+
+    def set_universe(self, universe: Any) -> None:
+        """Inject the Universe read-model used to resolve per-symbol Instruments.
+
+        D-13: stores the reference; ``maintenance_margin`` reads
+        ``universe.instrument(ticker).maintenance_margin_rate`` per open
+        position. Mirrors the handler's ``set_universe`` seam (the math-pulldown
+        moves the universe dependency down with the math, ACCT-02).
+        """
+        self._universe = universe
+
+    @property
+    def locked_margin_total(self) -> Decimal:
+        """Total margin currently locked across all open positions (D-10).
+
+        Position-keyed, a DISTINCT lifecycle from the order-keyed reservation
+        (Pitfall 2). Returns a clean ``Decimal('0')`` when nothing is locked
+        (Pitfall 6) — never a float, never a quantized zero.
+        """
+        return self._storage.get_locked_margin()
+
+    def get_locked_margin_for(self, position_id: str) -> Decimal:
+        """Return the isolated margin locked for one position id (WR-03).
+
+        Public read-surface delegator over the storage seam so sibling handlers
+        (the liquidation engine's ``_liq_inputs``) read a single position's
+        locked margin WITHOUT reaching through the private ``_storage``
+        attribute — a refactor of the pluggable storage backend then surfaces as
+        a typed contract change here, not a silent ``AttributeError`` across a
+        domain boundary. Returns a clean ``Decimal('0')`` when nothing is locked.
+        """
+        return self._storage.get_locked_margin_for(position_id)
+
+    def lock_margin(self, position_id: str, amount: Decimal) -> None:
+        """Lock (insert or replace) margin for a position, keyed by id (D-10).
+
+        The margin-mode analogue of ``reserve`` (Pitfall 2 — a DISTINCT,
+        position-lifetime container, not the order-keyed reservation). Held at
+        FULL precision (no 2dp quantize, same discipline as ``reserve``)
+        so a later ``release_margin`` returns the EXACT locked amount with no
+        rounding drift. The ledger balance is unchanged — only buying power
+        (``available_balance``) moves. A scale-in replaces the prior lock with
+        the recomputed ``new_aggregate_notional / L``.
+
+        No audit ``CashOperation`` is recorded here: the lock is working state
+        (like a reservation move), and the open/close fill that drives it
+        already records its own commission/PnL settlement entry.
+
+        Args:
+            position_id: The position the margin is locked under.
+            amount: The locked margin (full precision, no quantization).
+        """
+        self._storage.add_locked_margin(position_id, amount)
+
+    def release_margin(self, position_id: str) -> Decimal:
+        """Release the margin locked for a position id, returning the amount.
+
+        Idempotent: releasing an unknown or already-released position is a
+        silent no-op that returns a clean ``Decimal('0')`` (no exception). When
+        a lock existed, the EXACT locked amount (full precision) is released and
+        returned — the caller settles PnL + releases the lock together on close
+        (Plan 02-04, D-11).
+
+        Args:
+            position_id: The position whose locked margin is released.
+
+        Returns:
+            The released amount (full precision), or ``Decimal('0')`` if no
+            lock existed.
+        """
+        released = self._storage.pop_locked_margin(position_id)
+        if released is None:
+            return Decimal("0")
+
+        return released
+
+    def accrue_borrow_interest(self, amount: Decimal, reference_id: str,
+                               description: str, timestamp: datetime) -> None:
+        """Debit a short's per-bar borrow-interest carry (CARRY-01/D-03/D-08).
+
+        The financing-cost analogue of ``apply_fill_cash_flow`` for the short
+        side: a REAL ledger outflow (carry erodes equity as it accrues so the
+        P4 liquidation trigger sees carry-eroded equity), recorded as a
+        first-class ``BORROW_INTEREST`` ``CashOperation`` so the drag is an
+        attributable ledger line DISTINCT from trade PnL (D-08 — carry never
+        folds into ``Position.realised_pnl``).
+
+        Full precision, like ``apply_fill_cash_flow`` (Pitfall 1: routing
+        through ``_validate_and_convert_amount``'s 2dp quantize would shift the
+        equity curve → byte-exact oracle FAIL). ``timestamp`` is the bar's
+        BUSINESS time supplied by the caller — NEVER ``datetime.now(UTC)``
+        (Pitfall 5 / D-04 — a wall-clock stamp breaks the determinism double-run
+        gate).
+
+        A zero ``amount`` (rate-0 / no-short under default-off) is a silent
+        no-op — no balance change, no audit entry — keeping SMA_MACD byte-exact.
+
+        Args:
+            amount: Decimal carry magnitude to debit (positive outflow). A
+                non-positive amount is a no-op.
+            reference_id: Reference id (e.g. position id) keying the audit line.
+            description: Audit description.
+            timestamp: Bar business time (event-derived — never wall clock).
+        """
+        if amount <= Decimal("0"):
+            return
+
+        old_balance = self._balance
+        new_balance = old_balance - amount
+        self._balance = new_balance
+
+        self._create_operation(
+            CashOperationType.BORROW_INTEREST,
+            amount,
+            description,
+            reference_id,
+            old_balance,
+            new_balance,
+            timestamp=timestamp,
+        )
+
+        self.logger.debug("Borrow interest accrued",
+            amount=str(amount),
+            old_balance=str(old_balance),
+            new_balance=str(new_balance),
+            reference_id=reference_id
+        )
+
+    def assert_lock_fits_buying_power(self, lock_amount: Decimal,
+                                      position_id: str) -> None:
+        """WR-01 (T-03-15): assert a margin lock fits available buying power.
+
+        A settlement-side solvency assertion run BEFORE a position-keyed margin
+        lock is applied: the lock (``aggregate_notional / L``) must fit the
+        buying power that remains AFTER releasing any prior lock on the SAME
+        position (a scale-in replaces its own lock, so its already-locked amount
+        is not double-counted). Fails LOUD — a silent over-lock beyond buying
+        power on the short/levered path is a solvency leak the D-02 admission
+        reservation should have caught upstream; if it reaches here it is an
+        engine bug and the backtest stops loudly.
+
+        Available buying power for this check =
+            ``available_balance + own_prior_lock``
+        (``available_balance`` already nets reserved + locked; the position's
+        own prior lock is about to be released and re-locked, so it is added
+        back). A lock within that figure settles normally.
+
+        WR-04 (Plan 04-02) — CALL-ORDER CONTRACT: callers MUST invoke this
+        assertion while the position's prior lock is STILL present (i.e. assert
+        BEFORE ``release_margin``). The add-back reads
+        ``get_locked_margin_for(position_id)`` to credit the position's own prior
+        lock; if the prior lock has already been popped by ``release_margin`` it
+        reads ``0`` and the add-back is silently dropped. The ``portfolio.py``
+        margin-lock sites (open/scale-in and partial/full close) honour this
+        order — assert, then release, then re-lock.
+
+        Args:
+            lock_amount: The margin about to be locked (``aggregate_notional / L``).
+            position_id: The position the lock is keyed under.
+
+        Raises:
+            InsufficientFundsError: When ``lock_amount`` exceeds buying power.
+        """
+        own_prior_lock = self._storage.get_locked_margin_for(position_id)
+        buying_power = self.available_balance + own_prior_lock
+        if lock_amount > buying_power:
+            raise InsufficientFundsError(
+                required_cash=float(lock_amount),
+                available_cash=float(buying_power),
+            )
+
+    # ------------------------------------------------------------------
+    # Margin / liquidation MATH pulled DOWN from PortfolioHandler (ACCT-02,
+    # D-13/MARGIN-03 + LIQ-01/02). Pure Decimal end-to-end (Pitfall 5 — NEVER
+    # Decimal(float)); the liq price is quantized to the instrument price scale
+    # ONLY at the FillEvent boundary in the handler mint step, never mid-formula.
+    # Receiver references adapted from the handler's
+    # ``self.get_portfolio(portfolio_id)`` form to the account's own state — the
+    # account IS the single account under LX-04 (1:1). The emission shell stays
+    # in PortfolioHandler this wave; 01-03 re-points it to call DOWN here.
+    # ------------------------------------------------------------------
+
+    def maintenance_margin(self) -> Decimal:
+        """Return maintenance margin computed on demand (D-13/MARGIN-03).
+
+        ``maintenance_margin = Σ (Instrument.maintenance_margin_rate × |size| ×
+        current_price)`` over the portfolio's OPEN positions, resolving each
+        ticker's Instrument via the injected Universe. Decimal end-to-end
+        (RESEARCH Pitfall 8 — Position.net_quantity is already |size| Decimal and
+        current_price is Decimal; the rate is Decimal). NOT a stored Position
+        field (D-13a). With no open positions the sum is ``Decimal("0")``.
+        """
+        portfolio = self.portfolio
+        total = Decimal("0")
+        positions = portfolio.position_manager.get_all_positions()
+        # WR-02 (T-03-17): the per-symbol Instrument read dereferences the
+        # injected Universe. If positions exist but the Universe was never wired
+        # (``set_universe`` not called), fail LOUD with a context-rich StateError
+        # — never a bare ``AttributeError: 'NoneType' has no attribute
+        # 'instrument'``. With NO open positions the read is never reached, so an
+        # unwired Universe is benign and the sum is ``Decimal("0")``.
+        if positions and self._universe is None:
+            raise StateError(
+                portfolio.portfolio_id,
+                "universe-unwired",
+                required_state="universe-wired (call set_universe)",
+                operation="maintenance_margin",
+            )
+        for position in positions.values():
+            instrument = self._universe.instrument(position.ticker)
+            total += (
+                instrument.maintenance_margin_rate
+                * abs(position.net_quantity)
+                * position.current_price
+            )
+        return total
+
+    def margin_ratio(self) -> Decimal:
+        """Return ``total_equity / maintenance_margin`` (D-12/D-13).
+
+        Mark-to-market equity over maintenance margin — the figure a UI/live layer
+        (deferred N+4) reads for margin-call warnings. Reads HONESTLY even when
+        breached: an equity drop below maintenance returns a ratio < 1 with NO
+        clamp (D-16 — the honest sub-1 reading is the P4 liquidation input). When
+        maintenance margin is ``Decimal("0")`` (no open positions, no margin
+        required) it returns the deterministic sentinel ``Decimal("0")`` rather
+        than dividing by zero.
+        """
+        maintenance = self.maintenance_margin()
+        if maintenance == Decimal("0"):
+            return Decimal("0")
+        # Bind to a Decimal-typed local: self.portfolio is Any here (the handler's
+        # typed PortfolioHandler.total_equity(portfolio_id) -> Decimal source kept
+        # this strict-clean), so pin the type at the boundary.
+        equity: Decimal = self.portfolio.total_equity
+        return equity / maintenance
+
+    @staticmethod
+    def _isolated_liq_price(position: Position, wb: Decimal, mmr: Decimal) -> Decimal:
+        """Corrected isolated liquidation price (D-01-CORR — HAND-VERIFIED).
+
+        ``margin_per_unit = wb / |size|`` where ``wb`` is the position-keyed
+        locked isolated margin (``get_locked_margin_for``) and
+        ``|size| = abs(net_quantity)``. With ``entry = avg_price``:
+
+        * LONG : ``(entry − margin_per_unit) / (1 − mmr)``
+        * SHORT: ``(entry + margin_per_unit) / (1 + mmr)``
+
+        The corrected formula (NOT the literal CONTEXT D-01 string, which yields
+        a negative price). For Entry=100, |size|=200, WB=4000, MMR=0.01 it gives
+        the long 80.808080… / short 118.811881… worked numbers. Full Decimal
+        precision is carried; quantization happens only at the FillEvent price
+        boundary (the mint step).
+        """
+        size = abs(position.net_quantity)
+        entry = position.avg_price
+        margin_per_unit = wb / size
+        if position.side == PositionSide.LONG:
+            return (entry - margin_per_unit) / (Decimal("1") - mmr)
+        return (entry + margin_per_unit) / (Decimal("1") + mmr)
+
+    @staticmethod
+    def _is_breached(position: Position, close: Decimal, liq_price: Decimal) -> bool:
+        """Return True when the bar close crosses the liquidation price.
+
+        LONG breaches when ``close <= liq`` (price fell into the maintenance
+        floor); SHORT breaches when ``close >= liq`` (price rose into it). The
+        liq price is computed once by the breach pass and passed in.
+        """
+        if position.side == PositionSide.LONG:
+            return close <= liq_price
+        return close >= liq_price
+
+    @staticmethod
+    def _liquidation_penalty(fee_rate: Decimal, size: Decimal, liq_price: Decimal) -> Decimal:
+        """Forced-close penalty = ``fee_rate × |size| × liq_price`` (D-05/LIQ-02).
+
+        Rides ``FillEvent.commission`` (no new FillStatus). Full Decimal
+        precision; defaults to ``Decimal("0")`` for a 0 fee rate (oracle-dark).
+        """
+        return fee_rate * size * liq_price
+
+    def _liq_inputs(self, position: Position) -> "tuple[Decimal, Decimal, Decimal]":
+        """Resolve ``(wb, mmr, fee_rate)`` for a position from cash + Universe.
+
+        ``wb`` = the position-keyed locked isolated margin
+        (``get_locked_margin_for(str(position.id))`` — the account's OWN margin
+        surface, the account being the single account under LX-04 1:1); ``mmr`` =
+        ``Instrument.maintenance_margin_rate``; ``fee_rate`` resolved
+        Instrument-first (``instrument.liquidation_fee_rate``) — the Universe
+        Instrument is the single per-symbol source of truth (the
+        ``TradingRules`` config fallback is consulted by the caller only when no
+        Universe Instrument carries the rate; here the Instrument always does
+        since it defaults to ``Decimal("0")``).
+        """
+        wb = self.get_locked_margin_for(str(position.id))
+        instrument = self._universe.instrument(position.ticker)
+        mmr = instrument.maintenance_margin_rate
+        fee_rate = instrument.liquidation_fee_rate
+        return wb, mmr, fee_rate
