@@ -2,35 +2,33 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
-status: ready_to_plan
-stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 999.2
-last_updated: 2026-06-30T13:27:40.631Z
-last_activity: 2026-06-30 -- Phase 05 execution started
+status: Awaiting next milestone
+stopped_at: Milestone v1.6 complete and archived
+last_updated: "2026-06-30T14:05:59.431Z"
+last_activity: 2026-06-30 — Milestone v1.6 completed and archived
 progress:
-  total_phases: 7
-  completed_phases: 4
+  total_phases: 5
+  completed_phases: 5
   total_plans: 21
   completed_plans: 21
-  percent: 57
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundation ACTIVE; scope locked via owner clarification 2026-06-27)
+See: .planning/PROJECT.md (updated 2026-06-30 — v1.6 N+3b Persistence Foundation SHIPPED; no active milestone)
 
-**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). v1.6 adds the durable-storage + caching foundation **without disturbing that** — the backtest path stays byte-exact and N+4 Live inherits a persistent, restart-safe system of record.
-**Current focus:** Phase 999.2 — nplus2 persistence and performance
+**Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). v1.6 added the durable-storage + caching foundation **without disturbing that** — the backtest path stayed byte-exact (W1 −2.8%) and N+4 Live inherits a persistent, restart-safe system of record.
+**Current focus:** No active milestone — define N+4 (Live Trading Readiness, Backlog 999.3) via `/gsd:new-milestone`.
 
 ## Current Position
 
-Phase: 999.2
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-30
-
-Progress: [██████████] 100%
+Phase: Milestone v1.6 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-30 — Milestone v1.6 completed and archived
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
@@ -58,9 +56,10 @@ determinism (business `time` not wall-clock, `sort_keys`, stable `ORDER BY`); `m
 Execution order: 1 → 2 → 3 → 4 (Phase 5 is largely independent — may run parallel to Phases 2-3; listed
 last). Hard build-order constraints (research ARCHITECTURE): spine before every backend; the results
 store validates the spine before any live path touches it; the retention model is designed before live
-write-through is wired. Numbering reset to Phase 1 (matching v1.1–v1.5); the only dirs in
-`.planning/phases/` are the `999.2`/`999.3` backlog placeholders (999.x prefix — no collision with the
-new `01-*..05-*` dirs).
+write-through is wired. Numbering reset to Phase 1 (matching v1.1–v1.5); the only dir in
+`.planning/phases/` is the `999.3` backlog placeholder (N+4 Live; 999.x prefix — no collision with the
+new `01-*..05-*` dirs). The `999.2` placeholder was removed 2026-06-30 — Backlog 999.2 is fully
+consumed (performance half → v1.5, persistence half → v1.6).
 
 | Phase | Name | Requirements | Substrate | Depends on |
 |-------|------|--------------|-----------|------------|
@@ -173,13 +172,23 @@ Active program constraints live in PROJECT.md. v1.6-specific load-bearing decisi
 
 ## Deferred Items
 
+**Acknowledged at v1.6 milestone close (2026-06-30):** the open-artifact audit was resolved before
+close — the 2 quick-task "missing" flags (scanner filename bug) and the Phase 02 stale W1/W2 UAT +
+verification items (resolved by Phase 4's −2.8% measurement) were fixed; the remaining open item is
+the deliberately-deferred single-pass per-bar valuation todo (profile-first gated, row below). The
+v1.6 audit (`tech_debt`, no blockers) deferred items — **live composition-root wiring → N+4** (D-01;
+`CachedSql*`/`Sql*` built + testcontainers-verified, live root hardcodes `'backtest'` for 2/3 concerns,
+by design per RETAIN-03), **draft Nyquist VALIDATION.md records on all 5 phases** (process-artifact
+gap; full VERIFICATION.md evidence per phase), and **~13 WR-/IN- non-blocking review warnings** — are
+consciously accepted and recorded in `milestones/v1.6-MILESTONE-AUDIT.md`.
+
 Program-level items deferred across milestones, with their target milestone (v1.6-relevant rows
 promoted INTO this milestone marked):
 
 | Category | Item | Status | Target |
 |----------|------|--------|--------|
-| Persistence/security | SQL injection + hardcoded creds in `SqlHandler` (FL-06) | **Promoted INTO v1.6** (SEC-01, Phase 1) | v1.6 |
-| D-sql | SQL persistence backends (order/portfolio/signal/results) — v1.5 PERF-01 `OrderStorage` interface designed for this | **Promoted INTO v1.6** (SPINE/RESULT/OPS, Phases 1-3) | v1.6 |
+| Persistence/security | SQL injection + hardcoded creds in `SqlHandler` (FL-06) | ✅ **Shipped in v1.6** (SEC-01, Phase 1) | v1.6 |
+| D-sql | SQL persistence backends (order/portfolio/signal/results) — v1.5 PERF-01 `OrderStorage` interface designed for this | ✅ **Shipped in v1.6** (SPINE/RESULT/OPS, Phases 1-3) | v1.6 |
 | Optimization | Optuna sampler + sweep loop (OPT-01) — v1.6 ships the Optuna-FK-ready substrate only | Deferred | future (v2) |
 | Turso/libSQL | `sqlalchemy-libsql` opt-in research backend (TURSO-01) — interface stays Turso-ready | Deferred | future (v2, post-beta + measured) |
 | Live drive | Persistence driven by a real live feed + venue reconciliation (operational store built/tested on testcontainers in v1.6) | Deferred | N+4 (Backlog 999.3) |
@@ -219,5 +228,4 @@ Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill
 
 ## Operator Next Steps
 
-- Plan Phase 1 (SQL Spine + Security Hardening) with `/gsd:plan-phase 1`
-- Phase 4 (Retention + Live Write-Through) — plan with `/gsd:plan-phase --research-phase` when reached
+- Start the next milestone with /gsd-new-milestone

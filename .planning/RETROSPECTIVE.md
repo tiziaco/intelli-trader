@@ -233,6 +233,45 @@
 
 ---
 
+## Milestone: v1.6 — N+3b Persistence Foundation
+
+**Shipped:** 2026-06-30
+**Phases:** 5 (Phases 1–5, numbering reset) | **Plans:** 21
+
+### What Was Built
+- The durable-storage + caching foundation N+4 Live Trading will inherit, built **without disturbing the backtest path**: a config-selected SQL spine (`SqlBackend`/`SqlSettings`, SQLite research + Postgres operational, Turso-ready but driver NOT added) *composed* — not inherited — by all four storage concerns (the 3 existing domain ABCs + a new `ResultsStore` ABC), with lossless cross-dialect UUIDv7 + business-time round-trip (SPINE-03, the load-bearing correctness check).
+- An all-SQL results store (#1, `runs` Float + JSON settings, `run_artifacts` JSON/gzip frame, cross-run query, Optuna-FK-ready); three concrete Postgres operational backends (#2 — `SqlOrderStorage` filling the old `NotImplementedError` stub, `SqlPortfolioStateStorage`, `SqlSignalStorage`) with native-`Numeric` money + one framework-owned baseline Alembic migration over 9 tables; a two-knob write-through + retention model (#2 live — write-through OFF in backtest via backend-selection, ON to Postgres in live with bounded working-set cache + purge-on-terminalize + read-through + open-only restart rehydration, built + testcontainers-verified); a classified cache (#3); and FL-06 closed (SEC-01).
+- DB-gated discipline held: SMA_MACD oracle byte-exact (134 / `46189.87730727451`) with **W1 −2.8%** (no regression) vs the v1.5 baseline; full suite 1463 green, `mypy --strict` clean (210 files); Decimal end-to-end on the real-money path (Postgres-native `Numeric`).
+
+### What Worked
+- **Backend-selection write-through, not a hot-path flag.** Making zero hot-path cost *structural* (the backtest in-memory backend imports no SQLAlchemy symbol) rather than a disciplined `if write_through:` branch is what let GATE-01 be proven by a clean-interpreter import-quarantine subprocess test — the strongest possible inertness proof, not a timing argument.
+- **Composition over inheritance for the spine.** One shared `SqlBackend` held by reference by four independent `Sql<Concern>Storage` classes kept the three existing domain ABCs unchanged and never inverted the core→config/domain dependency. No god base, no cross-concern coupling.
+- **Proving the spine "oracle-dark" in Phase 2 before any live path depended on it.** The results store validated the full encode/round-trip/determinism surface on in-process SQLite first; the operational Postgres backends (Phase 3) then built on a spine already proven correct.
+- **Owner Decisions locked at research time and honored verbatim.** SQLite-research + Postgres-only-operational + Turso-opt-in-later, all-`Float` results, JSON/gzip frames (no Parquet), native-`Numeric` money (no `DecimalAsText`), sweep loop OUT — every one held through execution; the substrate stayed Optuna-FK-ready and Turso-ready (one engine-URL swap) without adding the driver.
+
+### What Was Inefficient
+- **Traceability lag was the worst yet — 8 requirements** (SPINE-02, OPS-01..04, RETAIN-02/03, GATE-02) carried stale `Pending`/`[ ]` markers in REQUIREMENTS.md despite being fully implemented and verified, because the SUMMARYs explicitly deferred the doc flip to the orchestrator/verifier. All 8 were reconciled by hand during the milestone audit — the SEVENTH consecutive milestone paying this tax.
+- **Phase 02's W1/W2 human item was resolved in Phase 4 but never written back** — the UAT/VERIFICATION files sat `human_needed`/`partial` after Phase 4's −2.8% measurement closed the gate. Reconciled by hand at close. Same class of stale-cross-phase-status bug as v1.5 Phase 03.
+- **The `audit-open` quick-task false-positive recurred for the SIXTH close** — 2 complete quick tasks read `[missing]` because the scanner still globs `quick/<dir>/SUMMARY.md` not `<slug>-SUMMARY.md`. Cleared again with completion markers; the SDK fix is still unbuilt.
+- **Nyquist VALIDATION.md left in `draft` on all 5 phases** — never re-run post-execution. Process-artifact gap only (every phase carries full VERIFICATION.md evidence), but it's now a chronic non-completion.
+
+### Patterns Established
+- **Zero-hot-path-cost is proven structurally, not measured.** When a new subsystem must be inert on a hot path, gate it with an import-quarantine subprocess test (the backend that runs the hot path imports none of the new machinery) rather than relying on a timing delta. Structural inertness can't thermally drift.
+- **Build + integration-test a live subsystem on testcontainers a milestone before it has a live driver.** The operational store is complete and Postgres-verified in v1.6; N+4 wires the live root and drives it with a real feed. Deferring only the *wiring* (D-01), not the *components*, keeps each milestone shippable and the live work de-risked.
+- **A DB-gated milestone needs a two-part gate** — (a) the existing oracle stays byte-exact + no perf regression (the new layer is inert on the proven path) AND (b) the new code's own round-trip/rehydration/parity tests on the right substrate (in-process SQLite vs testcontainers Postgres). The oracle alone does not cover a live-path concern.
+
+### Key Lessons
+1. **Make inertness structural and it becomes un-regressable.** Backend-selection (two classes) instead of a runtime flag turned "persistence adds zero hot-path cost" from a discipline into a property a subprocess test verifies. The single best decision of the milestone.
+2. **Traceability drift is now a SEVEN-milestone confirmed process bug.** v1.6's was the largest (8 requirements) and the root cause is structural: SUMMARYs legitimately defer the REQUIREMENTS.md flip to a later actor who doesn't always run. The fix remains mechanical — a phase-close gate that fails when `requirements-completed` frontmatter lags VERIFICATION.md.
+3. **Cross-phase status resolution must write back to the originating phase.** A gate bound to Phase 4 that resolves a Phase 2 human item has to flip Phase 2's UAT/VERIFICATION too, or the open-artifact audit flags it at close. Same bug shape as v1.5.
+
+### Cost Observations
+- Model mix: not instrumented this milestone.
+- Sessions: ~4 calendar days (2026-06-27 → 2026-06-30); executed in isolated worktrees, merged via PRs (#63–#68). 166 files changed (+25,966/−349) on `c7e5dda..HEAD` — a large additive milestone (new `itrader/storage/`, `itrader/results/`, operational backends, migrations, classification doc + tests).
+- Notable: oracle byte-exact with W1 −2.8% — the persistence layer is faster-than-neutral on the hot path (the W1 win is incidental, from unrelated v1.5 tail effects on the cool box), and all 20 requirements landed with no blocker.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -245,6 +284,7 @@
 | v1.3 | 6 | 20 | Two re-baseline disciplines (byte-exact vs owner-gated) in SEPARATE phases; cross-milestone enabling surface (v1.2 reconcile/) touched once; result changes attributed + cross-validated |
 | v1.4 | 7 | 35 | Large result-changing family (margin/shorts/leverage/liquidation/trailing/scale-in/pairs) reusing one side-agnostic settlement core — zero new correctness branches, spot oracle byte-exact across all 7 phases; 3 owner-signed cross-validated re-baselines; weak-oracle honesty for the pair flagship |
 | v1.5 | 8 | 26 | Behavior-preserving perf milestone (the v1.2 analog) — profiler-ranked, oracle-gated hot-path wins under **keep-only-measured** (revert anything that lands in A/B noise); per-phase attribution by same-machine A/B + Scalene CPU-share, not the frozen-baseline diff (thermally sensitive + a probe bug shifted the absolute number); FRAGILE stateful-indicator phase isolated LAST; oracle byte-exact across all 8 phases |
+| v1.6 | 5 | 21 | First DB-gated milestone (oracle alone doesn't cover it) — two-part gate per phase: (a) oracle byte-exact + no perf regression proving hot-path inertness STRUCTURALLY (backend-selection, not a flag; import-quarantine subprocess test) AND (b) the new code's own round-trip/rehydration tests on the right substrate (in-process SQLite vs testcontainers Postgres); a live subsystem built + Postgres-verified a milestone before its live driver exists (wiring deferred, not components) |
 
 ### Cumulative Quality
 
@@ -256,13 +296,14 @@
 | v1.3 | 59 e2e + integration oracle green (full suite 995) | --strict clean (182 files) | none on result path |
 | v1.4 | integration oracle byte-exact + pair flagship snapshot green (full suite 1193) | --strict clean (187 files) | none on result path |
 | v1.5 | integration oracle byte-exact across all 8 phases (full suite 1340) | --strict clean | none on result path |
+| v1.6 | oracle byte-exact + W1 −2.8% + testcontainers Postgres round-trip/rehydration green (full suite 1463) | --strict clean (210 files) | none on result path (operational money = Postgres-native `Numeric`) |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. **Golden-master gating with minimal sanctioned re-baselines keeps refactors trustworthy** — confirmed across v1.0 (two owner-gated re-freezes), v1.1 (zero re-baselines via additive oracle-dark leaves), and v1.2 (zero re-baselines via pure code-motion). Under a byte-exact oracle, even a 1279-line god-module split lands on first attempt.
-2. **Planning-metadata drift is a recurring process gap — now confirmed across SIX milestones** — stale checkboxes/traceability/inconsistent SUMMARY frontmatter required manual reconciliation at close in v1.0, v1.1, v1.2, v1.3, v1.4, AND v1.5 (v1.4 hid INST-01/02/03 behind a non-standard `requirements:` field; v1.5 reused the deferred PERF-07/08 IDs for delivered work and left Phase-03 verification/UAT stale after the re-freeze that cleared it landed elsewhere). This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty/misnamed or traceability lags VERIFICATION.md.
+2. **Planning-metadata drift is a recurring process gap — now confirmed across SEVEN milestones** — stale checkboxes/traceability/inconsistent SUMMARY frontmatter required manual reconciliation at close in v1.0–v1.6 (v1.4 hid INST-01/02/03 behind a non-standard `requirements:` field; v1.5 reused the deferred PERF-07/08 IDs for delivered work and left Phase-03 verification/UAT stale; v1.6 was the largest yet — 8 requirements carried stale `Pending` markers because the SUMMARYs deferred the REQUIREMENTS.md flip to a later actor, plus Phase-02's W1/W2 UAT/verification stayed stale after Phase 4 resolved it). This is no longer a coaching problem; it needs a mechanical phase-close gate that fails when `requirements-completed` is empty/misnamed or traceability lags VERIFICATION.md.
 3. **Isolate the fragile change, move it intact, ship it last and alone — and plan its enabling surface a milestone ahead** — v1.2 Phase 6 moved `on_fill` into a bounded `reconcile/` collaborator with zero drift; v1.3 RECON-01 then refactored that exact bounded surface in a single touch, co-phased with SIG-03 under one owner-gated re-baseline. The template for any future fragile change.
-4. **Boundary tooling that lied once will lie again — now ROOT-CAUSED** — the quick-task false positive recurred verbatim in v1.1, v1.2, v1.3, v1.4, and v1.5. The cause is now pinned: the `audit-open` scanner reads `quick/<dir>/SUMMARY.md` but GSD writes `<slug>-SUMMARY.md`, so completion is never seen. Fix the scanner to glob `*-SUMMARY.md`; until then, completion markers clear it.
+4. **Boundary tooling that lied once will lie again — now ROOT-CAUSED** — the quick-task false positive recurred verbatim in v1.1, v1.2, v1.3, v1.4, v1.5, and v1.6 (SIX closes). The cause is pinned: the `audit-open` scanner reads `quick/<dir>/SUMMARY.md` but GSD writes `<slug>-SUMMARY.md`, so completion is never seen. Fix the scanner to glob `*-SUMMARY.md`; until then, completion markers clear it.
 5. **Mixing intentional result changes with cleanup is safe only when the two disciplines live in separate phases** — v1.3's byte-exact phases (1–4) and owner-gated phases (5–6) each had an unambiguous gate; v1.4 extended this to 3 owner-gated re-baselines (P4/P5/P5.1), each individually attributed and externally cross-validated.
 6. **A large feature family stays trustworthy when every new case reuses ONE validated settlement path** — v1.4 added margin/shorts/leverage/liquidation/trailing/scale-in/pairs with the spot oracle byte-exact across all 7 phases because nothing forked the side-agnostic accounting core. "No new correctness branch" as an explicit milestone constraint is the proof discipline for feature-heavy result-changing work.
 7. **For a performance milestone, attributable measurement is the gate — not code review, and not the frozen-baseline diff** — v1.5 reverted a clean, byte-exact, well-typed Phase-8 "fusion" because same-machine A/B measured it at −15% W1. When the machine is thermally sensitive (or the measurement harness itself has a bug, as v1.5's quadratic probe did), attribute every win by same-machine A/B + Scalene CPU-share and re-freeze the absolute baseline only on a verified-cool box. Keep-only-measured: revert anything that lands in A/B noise.
