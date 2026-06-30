@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-30T20:33:14.670Z"
+last_updated: "2026-06-30T20:37:14.080Z"
 last_activity: 2026-06-30
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 7
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 01 (account-abstraction-portfolio-handler-refactor) — EXECUTING
-Plan: 2 of 7
+Plan: 3 of 7
 Status: Ready to execute
 Last activity: 2026-06-30
 
-Progress: [█░░░░░░░░░] 14%
+Progress: [███░░░░░░░] 29%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -130,6 +130,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
   surface routing through the real order domain. `Portfolio.user_id` stripped (app-layer concern).
 
 - [Phase ?]: D-04 resolved: SMA_MACD oracle runs the SPOT path — SimulatedCashAccount is the verbatim-critical leaf for plan 01-02 (enable_margin=False default + run_backtest.py LONG_ONLY)
+- [Phase ?]: [Phase 1 / 01-04] D-09 recorded: only the surviving engine-command-surface PRINCIPLE is locked (FastAPI -> thin typed command surface, never into LiveTradingSystem internals); concrete method set deferred to Phase 4 (scopes FL-13). TradingInterface deleted (D-08/LX-14) — dead pre-FastAPI bridge with a quantity: float live-path leak; removal helps the no-float-money gate (ACCT-05).
 
 ### Pending Todos
 
@@ -197,6 +198,7 @@ v1.0–v1.6 milestone-close acknowledgments are recorded in the respective MILES
 Phase 5 (D-01); draft Nyquist VALIDATION.md records on all 5 phases; ~13 WR-/IN- non-blocking review
 warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`).
 | Phase 01 P01 | 3min | 3 tasks | 5 files |
+| Phase 01 P04 | 2min | 2 tasks | 3 files |
 
 ## Bookkeeping
 
@@ -209,7 +211,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-06-30T20:32:54.388Z
+Last session: 2026-06-30T20:36:40.830Z
 Stopped at: Phase 1 context gathered
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)

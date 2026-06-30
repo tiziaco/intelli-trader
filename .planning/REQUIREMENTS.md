@@ -32,7 +32,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   after the extraction — determinism double-run identical, `mypy --strict` clean, no float-for-money.
 - [ ] **ACCT-04**: `Portfolio.user_id` is removed (app-layer multi-tenancy concern; NOT relocated onto
   `Account`); the constructor-signature ripple is resolved with the oracle held byte-exact.
-- [ ] **ACCT-05**: `TradingInterface` is evaluated and removed (or deliberately slimmed) per LX-14 —
+- [x] **ACCT-05**: `TradingInterface` is evaluated and removed (or deliberately slimmed) per LX-14 —
   the surviving engine command surface is decided, scoping the FL-13 live-test coverage.
 - [x] **ACCT-06**: The `LiveConnector` interface is defined (interface-only), with the `VenueAccount`
   leaf shaped interface-only, so Phases 2–5 implement against a stable contract.
@@ -173,7 +173,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | ACCT-02 | Phase 1 | Pending |
 | ACCT-03 | Phase 1 | Pending |
 | ACCT-04 | Phase 1 | Pending |
-| ACCT-05 | Phase 1 | Pending |
+| ACCT-05 | Phase 1 | Complete |
 | ACCT-06 | Phase 1 | Complete |
 | CONN-01 | Phase 2 | Pending |
 | CONN-02 | Phase 2 | Pending |
