@@ -3,10 +3,11 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: planning
-last_updated: "2026-06-30T17:30:00.000Z"
-last_activity: 2026-06-30
+stopped_at: Phase 1 context gathered
+last_updated: "2026-06-30T18:00:45.302Z"
+last_activity: 2026-06-30 — v1.7 roadmap created (6 phases, numbering reset to Phase 1); 32/32 requirements mapped
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -40,6 +41,7 @@ The live machinery is **inert on the backtest hot path**. Each phase carries the
 
 1. **Oracle byte-exact** — SMA_MACD stays **134 / `46189.87730727451`** (`check_exact=True`),
    determinism double-run identical.
+
 2. **No W1/W2 perf regression** vs the v1.5 frozen baseline (15.7 s / 152.8 MB) — the backtest path
    imports no async/connector code.
 
@@ -106,18 +108,24 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - **Paper-first DoD (LX-01) + refactor-first (LX-02):** Phase 1 extracts the Account abstraction
   (oracle-gated, behavior-preserving) BEFORE any live code depends on it; the milestone DoD is the
   paper-parity gate (Phase 4), reachable on the connector **data arm only**.
+
 - **Account owns balance/margin truth (LX-03), 1 account : 1 portfolio (LX-04):** `Simulated*` leaves
   compute, `Venue*` leaves cache; the order domain reads through the existing `PortfolioReadModel` seam,
   so Phase 1 is pure code-motion (no ripple into `OrderManager`/validator).
+
 - **`LiveConnector` is ours over ccxt.pro (LX-05) + native escape hatch:** ccxt's unified `watchOHLCV`
   drops the OKX `confirm` flag (ccxt #21885) — the native read is mandatory before the feed can emit
   `BarEvent`s. Single `sandbox: bool` routes both ccxt + native (no split-brain).
+
 - **`PaperConnector` reuses the pure `MatchingEngine` (LX-06) + a shared `apply_costs` helper** extracted
   byte-exact from `SimulatedExchange._emit_fill` (one matching core + one cost core; no dual fill-pricing).
+
 - **`LiveBarFeed` = ring-buffer `BarFeed` (LX-07); confirm-flag closed-bar (LX-08); warmup through the
   identical `update(bar)` path, no bulk fast-path (LX-09); monotonic-forward-only (LX-10).**
+
 - **Topology (LX-15):** ship separate worker process (option (b) architected as (c) with N=1), Postgres
   `LISTEN/NOTIFY` command/status channel (zero new dep, reuses the v1.6 store). Decide before Phase 4 wiring.
+
 - **`TradingInterface` deleted (LX-14)** — no production consumer; replaced by a thin typed engine command
   surface routing through the real order domain. `Portfolio.user_id` stripped (app-layer concern).
 
@@ -128,6 +136,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - Live-start indicator backfill through the same `update(bar)` path (`live-backfill-through-update.md`)
   — **now Phase 3 (FEED-03 / LX-09)**: REST warmup replayed one-by-one through `update(bar)`, no bulk
   `warmup_from` fast-path.
+
 - Correct single-pass per-bar portfolio valuation (`single-pass-portfolio-valuation.md`) — deferred
   v1.5, profile-first gated (future perf phase, NOT v1.7).
 
@@ -136,21 +145,28 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - **Confirm-flag / forming-bar risk (research Pitfall 1):** the single most likely source of
   paper-parity failure — ccxt.pro does not surface OKX's `confirm` flag. The native escape hatch is
   mandatory; produce the OKX native-vs-ccxt gap list at Phase 2 plan time before locking the design.
+
 - **ccxt returns floats everywhere (Pitfall 2):** every new connector price/amount/fee/balance must
   route through `to_money` (= `Decimal(str(x))`); failure is invisible until reconciliation drift accrues.
+
 - **Wall-clock in business `time` is contagious (Pitfall 3):** existing `LiveTradingSystem` has multiple
   `datetime.now(UTC)` usages; audit every new `datetime.now` on the live path before merge.
+
 - **Phase 5 reconciliation is the most under-specified area:** do not start coding without decisions on
   auto-correct tolerance, halt-and-alert triggers, bracket parent/child restart, write-through boundary
   (the v1.6 carried flag). Build a research sprint into Phase 5 planning.
+
 - **`filterwarnings=["error"]` + async tests:** unclosed ccxt.pro session/transport or unset
   `asyncio_default_fixture_loop_scope` fails the whole suite. Use mocked/recorded connectors; never
   relax the global filter (`pytest-asyncio` configured in Phase 2).
+
 - **Hot-path inertness (carried from v1.6):** the live machinery must add zero backtest hot-path cost —
   the backtest path imports no async/connector code. W1/W2 within v1.5 ±5% is the proof, every phase.
+
 - **Indentation hazard:** handler modules use tabs; `config/`, `core/`, `price_handler/feed/`,
   `itrader/storage/`, events package use 4 spaces. New files MUST match the sibling — a mixed-indent tab
   file fails to import.
+
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
 
@@ -184,14 +200,15 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 - **At v1.6 close (done 2026-06-30):** v1.6 phase dirs `git mv`'d to `milestones/v1.6-phases/`;
   `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` archived as `milestones/v1.6-*`. Only the `999.3` backlog
   seed dir remains in `.planning/phases/`, so the new v1.7 `01-*..06-*` dirs will not collide.
+
 - **At v1.7 close (reminder):** `git mv` the v1.7 phase dirs to `milestones/v1.7-phases/` and archive
   `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` as `milestones/v1.7-*`.
 
 ## Session Continuity
 
-Last session: 2026-06-30T17:30:00.000Z
-Stopped at: v1.7 roadmap created (ROADMAP.md + STATE.md + REQUIREMENTS.md traceability written)
-Resume file: None
+Last session: 2026-06-30T18:00:45.295Z
+Stopped at: Phase 1 context gathered
+Resume file: .planning/phases/01-account-abstraction-portfolio-handler-refactor/01-CONTEXT.md
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps
