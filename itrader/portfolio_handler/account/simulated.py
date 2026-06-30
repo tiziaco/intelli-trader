@@ -551,7 +551,10 @@ class SimulatedCashAccount(Account):
         if amount_decimal <= 0:
             raise InvalidTransactionError(
                 f"Amount for {operation_type} too small after precision rounding",
-                {"amount": amount, "rounded_amount": float(amount_decimal)}
+                # IN-05/WR-03: mirror the positivity branch — serialize at the
+                # edge so an incoming float `amount` (and the rounded Decimal)
+                # do not leak a binary-float artifact into the audit payload.
+                {"amount": str(to_money(amount)), "rounded_amount": str(amount_decimal)}
             )
 
         return amount_decimal
