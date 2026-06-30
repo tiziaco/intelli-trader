@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: executing
+status: verifying
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-30T21:52:53.082Z"
+last_updated: "2026-06-30T21:58:53.326Z"
 last_activity: 2026-06-30
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 7
-  completed_plans: 6
-  percent: 0
+  completed_plans: 7
+  percent: 14
 ---
 
 # Project State
@@ -30,10 +30,10 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 
 Phase: 01 (account-abstraction-portfolio-handler-refactor) — EXECUTING
 Plan: 7 of 7
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-30
 
-Progress: [█████████░] 86%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -135,6 +135,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 01]: 01-02: SimulatedMarginAccount gains set_universe/_universe — the margin/liq math-pulldown (ACCT-02) moves its Universe dependency down with the math; dark this wave, wired in 01-03. Liquidation emission shell stays in PortfolioHandler
 - [Phase ?]: 01-03: Portfolio/PortfolioHandler delegate all balance/margin/liq truth to the injected Account leaf behind the FROZEN PortfolioReadModel seam; margin surface narrowed via cast/isinstance; liquidation shells skip spot accounts; CashManager deleted; oracle held byte-exact.
 - [Phase ?]: 01-03c: e2e margin scenarios construct the SimulatedMarginAccount leaf at CONSTRUCTION via enable_margin portfolio_config (01-03 D-03) — the post-construction update_config toggle no longer rebuilds the leaf; account caches no config at construction so a minimal enable_margin config suffices. e2e suite green (72 passed); user_id grep-zero across tests/e2e.
+- [Phase ?]: 01-05: Terminal gate PASSED (ACCT-03) — Account extraction proven behavior-preserving: oracle byte-exact (134 / 46189.87730727451), determinism double-run identical, mypy --strict clean (214 files), full suite 1463 passed under filterwarnings=[error], no float-money introduced (edge casts only), no orphaned cash_manager/user_id reference, W1 oracle run within the 15.7s baseline
 
 ### Pending Todos
 
@@ -207,6 +208,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 | Phase 1 P3 | 10 | 3 tasks | 11 files |
 | Phase 01 P03b | 26min | 3 tasks | 38 files |
 | Phase 01 P03c | 5min | 2 tasks | 59 files |
+| Phase 01 P05 | 3min | 2 tasks | 1 files |
 
 ## Bookkeeping
 
@@ -219,7 +221,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-06-30T21:52:31.185Z
+Last session: 2026-06-30T21:58:47.938Z
 Stopped at: Phase 1 context gathered
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
