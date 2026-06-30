@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.6
-milestone_name: N+3b Persistence Foundation
-status: Awaiting next milestone
-stopped_at: Milestone v1.6 complete and archived
-last_updated: "2026-06-30T14:05:59.431Z"
-last_activity: 2026-06-30 — Milestone v1.6 completed and archived
+milestone: v1.7
+milestone_name: Live Trading Readiness
+status: planning
+last_updated: "2026-06-30T16:52:35.231Z"
+last_activity: 2026-06-30
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 21
-  completed_plans: 21
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.6 N+3b Persistence Foundati
 
 ## Current Position
 
-Phase: Milestone v1.6 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-30 — Milestone v1.6 completed and archived
+Status: Defining requirements
+Last activity: 2026-06-30 — Milestone v1.7 started
 
 ## Milestone Gate (v1.6 — DB-gated; applies to EVERY phase)
 
