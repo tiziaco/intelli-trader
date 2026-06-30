@@ -45,6 +45,9 @@ credentials*
 !tests/integration/storage/test_cached_sql_portfolio_storage.py
 !itrader/strategy_handler/storage/cached_sql_storage.py
 !tests/integration/storage/test_cached_sql_signal_storage.py
+# v1.6 Phase 5 planning dir slug contains "cache" — the broad **cache** rule
+# above would otherwise ignore the whole phase directory and its artifacts.
+!.planning/phases/05-cache-classification-3/
 
 #UserData
 output/
