@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 
 import pytest
 import uuid_utils.compat as uc
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from itrader.core.enums import OrderStatus, OrderTriggerSource, OrderType, Side
@@ -42,6 +43,24 @@ from itrader.order_handler.storage.sql_storage import SqlOrderStorage
 
 # A business time (never wall clock) reused so derived created_at/updated_at are deterministic.
 _BT = datetime(2020, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _drop_operational_order_tables(pg_backend):
+    """Keep the shared session Postgres container pristine for sibling storage tests.
+
+    ``_make_storage`` builds the order schema via ``create_all`` on the session-scoped
+    container. This file sorts alphabetically BEFORE ``test_migrations.py``, whose
+    ``alembic upgrade head`` would raise ``ProgrammingError`` on the pre-existing ``orders`` /
+    ``order_state_changes`` tables. Drop them in teardown (child table first for the FK) so the
+    container is left clean — the same pristine-container discipline ``test_migrations`` follows
+    with its ``downgrade base``. This fixture's teardown runs before ``pg_backend`` disposes
+    (LIFO), so the engine is still live.
+    """
+    yield
+    with pg_backend.engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS order_state_changes CASCADE"))
+        conn.execute(text("DROP TABLE IF EXISTS orders CASCADE"))
 
 
 def _make_storage(pg_backend):
