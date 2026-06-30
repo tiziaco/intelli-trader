@@ -55,10 +55,12 @@ class OrderStorageFactory:
             from itrader.config.sql import SqlSettings
             from itrader.storage import SqlBackend
 
+            from .cached_sql_storage import CachedSqlOrderStorage
             from .sql_storage import SqlOrderStorage
 
             resolved = backend if backend is not None else SqlBackend(SqlSettings.default())
-            return SqlOrderStorage(resolved)
+            # D-04 — the live arm returns the cache wrapper composing the untouched SQL store.
+            return CachedSqlOrderStorage(SqlOrderStorage(resolved))
         else:
             raise ConfigurationError(
                 "environment", environment,
