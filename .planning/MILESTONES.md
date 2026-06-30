@@ -1,5 +1,73 @@
 # Milestones
 
+## v1.6 — N+3b Persistence Foundation (Shipped: 2026-06-30)
+
+**Scope:** 5 phases (Phases 1–5, numbering reset), 21 plans. Promoted from the **persistence half**
+of Backlog 999.2 (its performance half shipped as v1.5). A **DB-gated** milestone — NOT covered by the
+backtest oracle alone — that builds the durable-storage + caching foundation N+4 Live Trading will
+inherit, **without disturbing the backtest path**. Every phase carried a two-part gate: (a) the
+SMA_MACD oracle stays byte-exact with no W1/W2 regression vs the v1.5 baseline (the persistence layer
+is inert on the hot path), AND (b) the phase's own DB round-trip / rehydration / parity tests on the
+right substrate — in-process SQLite for the results store, testcontainers Postgres for the operational
+store. Owner Decisions (locked 2026-06-27) won where they differed from the research seed: SQLite
+research + Postgres-only operational + Turso-opt-in-later (driver not added), results store all-`Float`
+(no `DecimalAsText`), frames as JSON/gzip'd-text (no Parquet/`pyarrow`), optimization sweep loop OUT
+(substrate only, schema Optuna-FK-ready).
+
+**Delivered:** A swappable SQL foundation with the backtest engine's numbers untouched. The headline
+work, by phase:
+
+- **Phase 1 — SQL Spine + Security Hardening (5 plans):** one config-selected `SqlBackend`/`SqlSettings`
+  (SQLite + Postgres, Turso-ready, driver not added) that all four storage concerns *compose* (no god
+  base) — the three existing domain ABCs plus a new `ResultsStore` ABC; lossless cross-dialect UUIDv7 +
+  business-time round-trip (SPINE-03, the load-bearing correctness check); the Alembic skeleton for the
+  live store (`create_all()` for the ephemeral research store); and FL-06 closed — `SqlHandler` reworked
+  onto the spine, single parameterized `prices` table, `SecretStr` creds, f-string `DROP TABLE` removed,
+  lifted into `mypy --strict`.
+- **Phase 2 — Results Store #1 (4 plans):** every run persists a `runs` row (Float metrics + JSON
+  settings, Optuna-FK-ready) and a `run_artifacts` JSON/gzip'd-text frame that round-trips to an equal
+  DataFrame, with a cross-run top-N query surface — validated by in-process SQLite round-trip tests,
+  proving the spine "oracle-dark" before any live path touches it.
+- **Phase 3 — Operational SQL Backends #2 (5 plans):** one concrete Postgres backend per existing seam
+  (`SqlOrderStorage` filling the old `NotImplementedError` stub, `SqlPortfolioStateStorage`,
+  `SqlSignalStorage`), money as native `Numeric` (Decimal end-to-end, no float-for-money), one
+  framework-owned baseline migration building all 9 operational tables — validated on testcontainers
+  Postgres; backtest in-memory backends unchanged.
+- **Phase 4 — Retention + Live Write-Through (4 plans):** the two-knob model — write-through OFF in
+  backtest (zero per-tick serialization, enforced by backend-selection not a hot-path flag), write-through
+  ON to Postgres in live with a bounded working-set cache, purge-on-terminalize + bracket-parent-resident
+  retention, read-through fallback, and open-only restart rehydration; built + integration-tested on
+  testcontainers (driven by a real live feed only in N+4).
+- **Phase 5 — Cache Classification #3 (3 plans):** every `lru_cache` / ad-hoc cache across `itrader/`
+  inventoried and classified (a/b/c) with a committed `docs/CACHE-CLASSIFICATION.md` + per-site anchors
+  + a grep-matches-inventory test — classify, do not rewrite or unify; the v1.5 hot path left untouched.
+
+**Definition of done — achieved:** all 20 v1 requirements satisfied and verified · SMA_MACD oracle
+**byte-exact** (134 trades / `final_equity 46189.87730727451`) throughout · **W1 = −2.8% (no
+regression)** vs the v1.5 baseline (15.7 s / 152.8 MB) with write-through OFF, proven inert by a
+clean-interpreter import-quarantine subprocess test (no SQLAlchemy on the backtest path) · full suite
+**1463** green, zero warnings under `filterwarnings=["error"]` · `mypy --strict` clean (210 files) ·
+Decimal end-to-end on the real-money path (Postgres-native `Numeric`) · single UUIDv7 · determinism
+(business `time`, `sort_keys`, stable `ORDER BY`) · testcontainers Postgres round-trip + rehydration
+green.
+
+**Milestone audit:** `tech_debt` (no blockers; all requirements satisfied) — see
+[`milestones/v1.6-MILESTONE-AUDIT.md`](./milestones/v1.6-MILESTONE-AUDIT.md).
+
+**Known deferred items at close** (consciously accepted; full list in STATE.md → Deferred Items):
+
+- **Live composition-root wiring → N+4 (D-01):** the `CachedSql*`/`Sql*` operational components are
+  built and testcontainers-verified, but the live root (`portfolio.py`, `live_trading_system.py`)
+  hardcodes `'backtest'` for the portfolio-state and signal concerns (order storage is
+  `SYSTEM_DB_URL`-conditional). By design per RETAIN-03 — built + tested here, driven by a real live
+  feed in N+4 (Backlog 999.3). Not a v1.6 requirement gap.
+- **Nyquist VALIDATION.md records left in `draft`** — a process-artifact gap only; every phase carries
+  full VERIFICATION.md test evidence. Optionally formalize with `/gsd:validate-phase {1..5}`.
+- **~13 non-blocking review warnings** (WR-/IN- items across Phases 1/3/5) catalogued in the audit.
+- **Single-pass per-bar portfolio valuation** (v1.5 carry, profile-first gated) — future perf phase.
+
+---
+
 ## v1.5 — Backtest Performance Optimization (Shipped: 2026-06-26)
 
 **Scope:** 8 phases (Phases 1–8, numbering reset), 26 plans. Promoted from the **performance half**
@@ -37,28 +105,35 @@ byte-identical · gate-(b) cool-machine re-freeze done.
   `--cpu-only --program-path` profile), a committed machine-readable `W1-BASELINE.json` + soft
   regression guard (gate (b) = ≥5% wall-clock). TOOL-03 cross-validation was dropped — a
   behavior-preserving milestone proves correctness by *invariance* (the oracle), not external agreement.
+
 - **Order-storage indexing (PERF-01, Phase 2)** — `get_orders_by_status`/by-portfolio/active queries
   resolve via derived secondary indexes maintained over the flat `{id: order}` dict (which stays the
   D-20 source of truth), eliminating the single largest W1 hotspot (~37% CPU); the `OrderStorage`
   interface is designed so a future Postgres backend satisfies the same contract.
+
 - **Running PnL accumulator (PERF-02, Phase 3)** — realised PnL maintained as a running Decimal
   accumulator updated on position close, removing the per-bar re-summation over all positions (~13% CPU),
   mathematically equal to the prior sum at every bar.
+
 - **Hot-path discipline (PERF-03/04, Phase 4)** — hot-loop logging level-gated + per-bar `debug()`
   removed + by-design admission-rejection spam demoted; `get_type_hints` memoized per class in
   `Strategy.to_dict` — behavior-only, no numeric or log-content surface the oracle/e2e observe.
+
 - **Stateful indicators + shared bar cache (PERF-05, Phase 5, FRAGILE/LAST)** — SMA/EMA/MACD/RSI
   rewritten as hand-written O(1) recurrences (dropping `ta` on the runtime path), feed-centric with
   per-symbol/per-pair state on a shared recent-bars feed, then the per-tick master-frame window slice
   cut; look-ahead-safe and deterministic, oracle held byte-exact under the re-baseline carve-out
   (~24% CPU, the largest single chunk).
+
 - **Bar-feed window copies (PERF-06, Phase 6, optional)** — view-returning `window()` + memoized
   offset alias + a monotonic int64 cursor replacing per-tick `searchsorted`, with all 7 look-ahead
   bar-timing rules preserved (most visible on the W2 symbol sweep).
+
 - **Per-bar metrics & timestamp polish (PERF-07, Phase 7, byte-exact)** — memoized `_aligned`
   (bounded `lru_cache`), dropped the per-bar snapshot debug log's eager arg-eval, snapshot retention →
   `collections.deque(maxlen)` (killing a latent O(n²)), and removed the per-bar metrics-cache churn
   (~24% W1 CPU combined; surfaced by the post-Phase-6 re-profile).
+
 - **Hot-path fusion, bar prebuild & msgspec (PERF-08, Phase 8, byte-exact)** — `Position`
   net-quantity/avg-price fill-invalidated cache (+15% W1), `Strategy.to_dict` static-snapshot cache
   (+2% W1), `itertuples` `Bar` prebuild (dropping `iterrows`' ~69k throwaway Series), and a

@@ -22,7 +22,14 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
-## Current Milestone: v1.6 — N+3b Persistence Foundation
+## Shipped Milestone: v1.6 — N+3b Persistence Foundation (2026-06-30)
+
+**Shipped 2026-06-30** — all 20 v1 requirements satisfied and verified; SMA_MACD oracle byte-exact
+(134 / `46189.87730727451`) with **W1 = −2.8% (no regression)** vs the v1.5 baseline (write-through
+proven inert by an import-quarantine subprocess test); full suite 1463 green, `mypy --strict` clean
+(210 files). Audit `tech_debt` (no blockers; live composition-root wiring deferred to N+4 per
+RETAIN-03/D-01). See `milestones/v1.6-ROADMAP.md` + `milestones/v1.6-MILESTONE-AUDIT.md`. The full
+goal/target-features/discipline below is retained as the historical record.
 
 **Goal:** Build the durable-storage + caching foundation — one swappable SQL interface
 (Turso / SQLite / Postgres selected by config, not code), a results store for backtest/optimization
@@ -336,6 +343,44 @@ v1 requirements satisfied at audit (`milestones/v1.5-MILESTONE-AUDIT.md`):
   is deferred (profile-first gated); advisory Nyquist VALIDATION.md gaps (the byte-exact oracle +
   same-machine A/B perf gate are the regression lock). See `milestones/v1.5-MILESTONE-AUDIT.md`.
 
+**Validated in v1.6 — N+3b Persistence Foundation (Phases 1–5), 2026-06-30** — the durable-storage +
+caching foundation; DB-gated, behavior-preserving on the backtest path; SMA_MACD oracle **byte-exact**
+(134 / `46189.87730727451`) with **W1 = −2.8%** vs the v1.5 baseline; full suite 1463 green,
+`mypy --strict` clean (210 files); 20/20 v1 requirements satisfied at audit
+(`milestones/v1.6-MILESTONE-AUDIT.md`):
+- ✓ **SPINE-01/02/03 — swappable SQL spine (Phase 1):** one config-selected `SqlBackend`/`SqlSettings`
+  (SQLite + Postgres, Turso-ready, driver NOT added) *composed* (no god base) by all four storage
+  concerns — the three existing domain ABCs + a new `ResultsStore` ABC; UUIDv7 ids + business-time
+  round-trip lossless and value-EQUAL on both dialects (SPINE-03, the load-bearing correctness check).
+- ✓ **MIG-01 + SEC-01 — migrations & security (Phase 1):** Alembic skeleton for the live store
+  (`create_all()` for the ephemeral research store, no `alembic_version`); FL-06 closed — `SqlHandler`
+  reworked onto the spine (single parameterized `prices` table, `SecretStr` creds, f-string `DROP TABLE`
+  removed), lifted into `mypy --strict`.
+- ✓ **RESULT-01/02/03/04 — results store #1 (Phase 2):** every run persists a `runs` row (Float metrics
+  + JSON settings, Optuna-FK-ready) + a `run_artifacts` JSON/gzip'd-text frame that round-trips to an
+  equal DataFrame, with a cross-run top-N query surface; validated by in-process SQLite round-trip,
+  proving the spine oracle-dark.
+- ✓ **OPS-01/02/03/04 — operational backends #2 (Phase 3):** one concrete Postgres backend per seam
+  (`SqlOrderStorage` filling the old `NotImplementedError` stub, `SqlPortfolioStateStorage`,
+  `SqlSignalStorage`), money as native `Numeric` (Decimal end-to-end, no float-for-money), one
+  framework-owned baseline migration building all 9 operational tables; validated on testcontainers
+  Postgres; backtest in-memory backends unchanged.
+- ✓ **RETAIN-01/02/03 — two-knob retention (Phase 4):** write-through OFF in backtest (zero per-tick
+  serialization via backend-selection, NOT a hot-path flag), write-through ON to Postgres in live with a
+  bounded working-set cache, purge-on-terminalize + bracket-parent-resident retention, read-through, and
+  open-only restart rehydration; built + integration-tested on testcontainers (live-driven only in N+4).
+- ✓ **CACHE-01/02 — cache classification #3 (Phase 5):** every `lru_cache` / ad-hoc cache inventoried
+  and classified (a/b/c) in a committed `docs/CACHE-CLASSIFICATION.md` + per-site anchors + a
+  grep-matches-inventory test; the v1.5 hot path left untouched — classify, do not rewrite or unify.
+- ✓ **GATE-01/02 — DB-gate discipline (recurring):** write-through inert on the hot path (oracle
+  byte-exact, W1 −2.8%, import-quarantine subprocess test green); all new persistence code covered by
+  round-trip + rehydration tests on the right substrate, `mypy --strict` clean, `filterwarnings=["error"]`
+  green.
+- ⚠ Non-blocking at close: live composition-root wiring deferred to N+4 (D-01 — built + testcontainers-
+  verified, but the live root hardcodes `'backtest'` for 2/3 concerns; by design per RETAIN-03); draft
+  Nyquist VALIDATION.md records (every phase carries full VERIFICATION.md evidence); ~13 WR-/IN- review
+  warnings catalogued in the audit; single-pass valuation carry (v1.5). See `milestones/v1.6-MILESTONE-AUDIT.md`.
+
 ### Active
 
 <!-- v1.0 (Backtest-Correctness Refactor) SHIPPED 2026-06-08 — 45 requirements.
@@ -344,18 +389,16 @@ v1 requirements satisfied at audit (`milestones/v1.5-MILESTONE-AUDIT.md`):
      v1.3 (Engine Surface Completion) SHIPPED 2026-06-14 — 10 requirements.
      v1.4 (Margin, Leverage, Shorts & Trailing Stops) SHIPPED 2026-06-22 — 23 requirements.
      v1.5 (Backtest Performance Optimization) SHIPPED 2026-06-26 — 11 requirements.
-     v1.6 (N+3b — Persistence Foundation) ACTIVE from 2026-06-27 — requirements being defined. -->
+     v1.6 (N+3b — Persistence Foundation) SHIPPED 2026-06-30 — 20 requirements. -->
 
-**ACTIVE: v1.6 — N+3b Persistence Foundation** (started 2026-06-27) — see the **Current Milestone:
-v1.6** section near the top for the full goal, target features, and correctness discipline.
-Requirements are being defined (`/gsd:new-milestone` → research → `REQUIREMENTS.md` → roadmap). The
-milestone builds the durable-storage + caching foundation: one swappable SQL interface (Turso research
-/ SQLite fallback / Postgres live), an all-SQL results store (#1), concrete SQL backends for all three
-operational seams (order mirror, portfolio state, strategy/signal — #2), and a classified cache (#3) —
-a live-path, DB-gated concern **not covered by the backtest oracle**, sequenced AFTER the v1.5
-performance work so we are not persisting unvalidated behavior. v1.0 (45 reqs), v1.1 (51 reqs),
-v1.2 (18 reqs), v1.3 (10 reqs), v1.4 (23 reqs), and v1.5 (11 reqs) are shipped and recorded in the
-Validated section above and under `milestones/`.
+**No active milestone.** v1.6 — N+3b Persistence Foundation shipped 2026-06-30 (20 reqs, recorded in
+the Validated section above). The logical next milestone is **N+4 — Live Trading Readiness** (Backlog
+999.3): land the new operating mode — a real-time data engine + live execution loop + venue
+reconciliation that *drives* the v1.6 operational store (built + testcontainers-verified, live-driven
+only here), plus the `Account` reconciliation mirror, production screener, and live test coverage
+(FL-13). Define it via `/gsd:new-milestone` → research → `REQUIREMENTS.md` → roadmap. v1.0 (45 reqs),
+v1.1 (51 reqs), v1.2 (18 reqs), v1.3 (10 reqs), v1.4 (23 reqs), v1.5 (11 reqs), and v1.6 (20 reqs) are
+shipped and recorded in the Validated section above and under `milestones/`.
 
 ### Out of Scope
 
@@ -364,9 +407,10 @@ Validated section above and under `milestones/`.
 - **Live mode** (`D-live`) — Binance streaming, WebSocket reconnection, restart sync, venue
   reconciliation, `TradingInterface`/API order path, live threading lifecycle, env-only secrets —
   whole separate risk surface; this program is backtest-first
-- **SQL persistence** (`D-sql`) — order storage Postgres backend, price store, reporting-to-SQL,
-  config JSONB, table-injection hardening — backtest uses in-memory + golden CSV; SQL is a
-  live/persistence concern
+- ~~**SQL persistence** (`D-sql`)~~ — **DELIVERED in v1.6** (2026-06-30): the swappable SQL spine,
+  results store, the three operational Postgres backends (order/portfolio-state/signal), FL-06
+  `SqlHandler` hardening, and Alembic migrations all shipped. Live-DRIVE of the operational store
+  (real feed + venue reconciliation) remains out of scope → N+4. Backtest still uses in-memory + golden CSV.
 - **Screener wiring** (`D-screener`) — rebalance loop (screener→universe→strategy) — a feature, not
   a correctness blocker; backtest runs a fixed ticker set
 - **Compliance layer** (`D-compliance`) — `long_only`/`short_only` centralization — tied to strategy
@@ -452,6 +496,11 @@ Validated section above and under `milestones/`.
 | v1.5: attribute per-phase wins by same-machine A/B + Scalene CPU-share, NOT the frozen-baseline diff | The box is thermally sensitive AND a Phase-1 benchmark-probe quadratic bug shifted absolute numbers mid-milestone — frozen-baseline compares would over/under-credit phases | ✓ Good — every gate-(b) win attributed by A/B; baseline re-frozen only on a verified-cool box (final 15.7 s / 152.8 MB) |
 | v1.5: keep-only-measured — revert any optimization that lands in A/B noise | A "clean" optimization that shows no attributable win is churn (risk with no payoff); reverting keeps the diff honest | ✓ Good — the Phase-8 naive mark-to-market fusion was A/B-measured at −15% W1 and reverted; correct single-pass design deferred (profile-first gated) |
 | v1.5: stateful indicators isolated as a dedicated LAST phase with a re-baseline carve-out | Dropping `ta` for hand-written O(1) recurrences is FRAGILE; isolating it makes any byte-exactness regression attributable, and the carve-out pre-authorized a cross-validated re-baseline if needed | ✓ Good — shipped v1.5 (PERF-05); carve-out proved unnecessary (indicators only gate boolean decisions) — oracle came out byte-identical |
+| v1.6: SQL spine = composition, not inheritance (one shared `SqlBackend`, no god base) | Four storage concerns need the same engine/metadata without a cross-concern base that inverts the domain ABCs; composition keeps each `Sql<Concern>Storage` independent and the existing ABCs unchanged | ✓ Good — shipped v1.6 (SPINE-01/02); 3 existing ABCs untouched + new `ResultsStore` ABC, all composing one `SqlBackend` |
+| v1.6: write-through is backend-selection at wiring, NOT a hot-path flag | A per-tick `if write_through:` branch on the backtest loop is the load-bearing regression risk; selecting the in-memory backend (which imports no SQLAlchemy) makes zero hot-path cost *structural*, not disciplined | ✓ Good — shipped v1.6 (RETAIN-01); import-quarantine subprocess test proves no SQLAlchemy on the backtest path; W1 −2.8% (no regression) |
+| v1.6 Owner Decisions: SQLite-research + Postgres-only-operational + Turso-opt-in-LATER; results all-`Float`; frames JSON/gzip (no Parquet/`pyarrow`); no `DecimalAsText`; sweep loop OUT | The research seed's "Turso-default / native DECIMAL / Parquet" premises didn't hold for our batch-dump workload; money fidelity is preserved by Postgres-native `Numeric` (money never touches SQLite), and the optimization loop is a later milestone | ✓ Good — shipped v1.6 exactly as scoped; substrate stays Optuna-FK-ready + Turso-ready (one engine-URL swap) without adding the driver |
+| v1.6: live composition-root wiring deferred to N+4 (D-01) | The operational store has no live feed to drive it in v1.6; building + testcontainers-verifying the components now, and wiring the live root when N+4 builds the feed, avoids dead live wiring against an unbuilt loop | — Pending — `CachedSql*`/`Sql*` built + verified; live root hardcodes `'backtest'` for 2/3 concerns; resolves in N+4 per RETAIN-03 |
+| v1.6: classify caches, do not rewrite or unify (#3) | Most of the ~14 cache sites are already correct; a "unify into one Arrow-backed object" rewrite would risk the v1.5 hot path for no measured win | ✓ Good — shipped v1.6 (CACHE-01/02); committed classification map + per-site anchors + grep-matches-inventory test; v1.5 hot path untouched |
 
 ## Evolution
 
@@ -494,26 +543,31 @@ This document evolves at phase transitions and milestone boundaries.
 
 **Tech debt at v1.5 close (non-blocking, tracked):** the correct single-pass per-bar portfolio valuation is deferred (`single-pass-portfolio-valuation.md`, profile-first gated — re-profile W1/W2 before building, else keep-only-measured rejects it); advisory Nyquist VALIDATION.md gaps on phases 03/04/08 + partial 05/06/07 (the byte-exact oracle + same-machine A/B perf gate are the real regression lock and ran green every phase). **Resolved at close:** the PERF-07/PERF-08 requirement-ID collision (delivered work keeps PERF-07/08; deferred items renumbered PERF-09/10), the stale `human_needed` status on Phase 01 (owner-approved-deferred profiler inspection) and Phase 03 verification/UAT (cool-machine re-freeze, done via quick task 260625-0qj + Phase 8), and 7 completed quick tasks flagged only by the `gsd-sdk audit-open` filename bug (cleared with completion markers). See `milestones/v1.5-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
-## Next Milestones (after v1.5)
+**v1.6 — N+3b Persistence Foundation — SHIPPED 2026-06-30.** 5 phases (numbering reset to Phase 1), 21 plans, all 20 v1 requirements satisfied at milestone audit (20/20 requirements, 5/5 phases passed, 5/6 cross-phase seams wired, 2/3 E2E flows — `milestones/v1.6-MILESTONE-AUDIT.md`, status `tech_debt`, no blockers). The durable-storage + caching foundation N+4 Live Trading will inherit, built **without disturbing the backtest path**: a swappable SQL spine (SQLite research + Postgres operational, Turso-ready, driver NOT added) composed — not inherited — by all four storage concerns (3 existing ABCs + new `ResultsStore` ABC), with lossless cross-dialect UUIDv7 + business-time round-trip (SPINE-03); an all-SQL results store (#1, `runs` Float + JSON settings, `run_artifacts` JSON/gzip frame, cross-run query, Optuna-FK-ready); concrete Postgres backends for the three operational seams (#2 — `SqlOrderStorage` filling the old `NotImplementedError` stub, `SqlPortfolioStateStorage`, `SqlSignalStorage`, money as native `Numeric`, one framework-owned baseline migration over 9 tables); a two-knob write-through + retention model (#2 live — write-through OFF in backtest via backend-selection = zero hot-path cost, ON to Postgres in live with bounded working-set cache + purge-on-terminalize + read-through + open-only restart rehydration, built + testcontainers-verified); a classified cache (#3 — committed map + per-site anchors + grep-matches-inventory test, v1.5 hot path untouched); and FL-06 closed (SEC-01). DB-gated discipline held: SMA_MACD oracle **byte-exact** (134 / `46189.87730727451`) with **W1 = −2.8%** (no regression) vs the v1.5 baseline, write-through inertness proven by an import-quarantine subprocess test; `mypy --strict` clean (210 files), full suite 1463 green, `filterwarnings=["error"]`; Decimal end-to-end on the real-money path (Postgres-native `Numeric`), single UUIDv7, determinism preserved. Milestone v1.6 closed and archived 2026-06-30; next milestone N+4 — Live Trading Readiness (Backlog 999.3).
 
-N+2 (Margin, Leverage, Shorts & Trailing Stops) shipped as **v1.4** (2026-06-22) and N+3 Performance
-shipped as **v1.5** (2026-06-26) — see the **Shipped Milestone** sections above. Remaining backlog, in
-promotion order (full intent in
-`ROADMAP.md` Backlog); **N+3b is next**:
+**Tech debt at v1.6 close (non-blocking, tracked):** live composition-root wiring deferred to N+4 (D-01 — the `CachedSql*`/`Sql*` components are built + testcontainers-verified, but the live root hardcodes `'backtest'` for the portfolio-state + signal concerns and order storage is `SYSTEM_DB_URL`-conditional; by design per RETAIN-03 — built + tested here, driven by a real live feed in N+4); draft Nyquist VALIDATION.md records on all 5 phases (process-artifact gap only — every phase carries full VERIFICATION.md test evidence); ~13 WR-/IN- non-blocking review warnings catalogued in the audit; the v1.5 single-pass per-bar valuation carry (profile-first gated). **Resolved at close:** the Phase 02 stale W1/W2 UAT + verification items (resolved by Phase 4's −2.8% measurement) and 2 completed quick tasks flagged only by the `gsd-sdk audit-open` filename bug (cleared with completion markers). See `milestones/v1.6-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
-- **N+3b — Persistence** (Backlog 999.2, persistence half, split out) — durable PostgreSQL state
-  (orders, signals, fills, equity; `PostgreSQLOrderStorage` is a `NotImplementedError` placeholder),
-  FL-06 (SQL injection / hardcoded creds); follows v1.5 as its own milestone (live-path, DB-gated, not
-  oracle-covered). The v1.5 order-storage indexing (PERF-01) designed its interface for this backend.
-- **N+4 — Live Trading Readiness** (Backlog 999.3) — real-time data engine, live execution, the
-  `Account` reconciliation abstraction, production screener / dynamic universe membership, FL-13
-  live-system test coverage, the trailing-stop native-vs-synthetic capability seam.
+## Next Milestones (after v1.6)
+
+N+2 (Margin, Leverage, Shorts & Trailing Stops) shipped as **v1.4** (2026-06-22), N+3 Performance
+shipped as **v1.5** (2026-06-26), and N+3b Persistence shipped as **v1.6** (2026-06-30) — see the
+**Shipped Milestone** sections above. Backlog 999.2 is now fully consumed. Remaining backlog (full
+intent in `ROADMAP.md` Backlog); **N+4 is next**:
+
+- **N+4 — Live Trading Readiness** (Backlog 999.3, capstone) — land the new operating mode as one
+  coherent, testable thing: a real-time data engine (#6) + live execution loop (#2) + production
+  universe/screener (#7) that **drives** the v1.6 operational store (built + testcontainers-verified,
+  live-driven only here), a first-class `Account` reconciliation mirror (the venue becomes source of
+  truth), live-start indicator backfill through the same `update(bar)` path, `LiveTradingSystem`/
+  `TradingInterface` test coverage (FL-13), and optional Phase-B perp realism (funding/mark-price
+  liquidation, FUND-01..04). Depends on validated multi-scenario behavior (N+1), the margin model (N+2),
+  and durable storage (N+3 perf v1.5 + N+3b persistence v1.6) — all now shipped.
 
 Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-locate). Multi-asset
 (forex / equities / ETF) is deferred indefinitely.
 
 ---
-*Last updated: 2026-06-30 — v1.6 in progress: all 5 phases complete (21 plans) — Phase 5 Cache Classification done, CACHE-01/02 validated (verification passed 9/9; oracle byte-exact, mypy --strict clean, suite green). **v1.6 — N+3b Persistence Foundation** STARTED via `/gsd:new-milestone`. Scope locked through clarification: all three concerns IN (#1 all-SQL results store, #2 live operational store with a concrete SQL backend for ALL THREE seams — order mirror / portfolio state / strategy-signal — on a shared spine, #3 cache inventory & classify). Backends: Turso (research default) + SQLite (free fallback, dialect sibling) + Postgres (live), backend = config not code. Optimization sweep loop OUT (substrate only). Correctness lock is DB-gated two-part: (a) backtest oracle byte-exact (134 / `46189.87730727451`) + no W1/W2 regression (proves write-through-off inertness) + (b) new DB round-trip / rehydration / cross-backend parity tests. Seed: `.planning/notes/persistence-milestone-design.md`; research answers Q1–Q10 (`.planning/research/questions.md`). v1.0–v1.5 SHIPPED — archived under `milestones/`.*
+*Last updated: 2026-06-30 after the **v1.6 — N+3b Persistence Foundation** milestone (SHIPPED 2026-06-30). 5 phases / 21 plans / 20 v1 requirements (audit `tech_debt`, no blockers — 20/20 requirements, 5/5 phases, 5/6 seams, 2/3 E2E flows). DB-gated, behavior-preserving on the backtest path: oracle byte-exact (134 / `46189.87730727451`) with W1 −2.8% (no regression) vs the v1.5 baseline, write-through inertness proven by an import-quarantine subprocess test; `mypy --strict` clean (210 files), full suite 1463 green. Delivered: the swappable SQL spine (composition, SQLite + Postgres, Turso-ready), the all-SQL results store (#1), the three operational Postgres backends (#2) with native-`Numeric` money + Alembic migrations, the two-knob write-through + retention model (#2 live, built + testcontainers-verified), the classified cache (#3), and FL-06 closed. Live composition-root wiring + the operational store's live drive deferred to N+4 (D-01 / RETAIN-03). Next: N+4 — Live Trading Readiness (`/gsd:new-milestone`, Backlog 999.3). v1.0–v1.6 SHIPPED — archived under `milestones/`.*
 
 *Updated 2026-06-30 — v1.6 roadmap created (5 phases); **Phases 1–4 complete**: SQL spine + security hardening, all-SQL results store, operational SQL backends (3 seams), and Phase 4 retention + live write-through (`CachedSql{Order,PortfolioState,Signal}Storage` — store-first write-through, purge-on-terminalize + bracket-parent-resident, read-through, open-only rehydration; integration-tested on testcontainers Postgres). GATE-01 inertness held byte-exact (134 / `46189.87730727451`) with write-through OFF; RETAIN-01/02/03 + GATE-01 validated. Next: Phase 5 (Cache Classification #3).*
 *Earlier: 2026-06-26 after the **v1.5 — Backtest Performance Optimization** milestone (SHIPPED 2026-06-26). 8 phases / 26 plans / 11 v1 requirements; behavior-preserving — oracle byte-exact (134 / `46189.87730727451`) across all 8 phases, 1340/1340 suite green, `mypy --strict` clean, final W1 baseline 15.7 s / 152.8 MB. Profiler-ranked hot-path wins (order-storage indexes, running PnL accumulator, stateful O(1) indicators, int64 window cursor, msgspec migration) under keep-only-measured discipline. PERF-07/08 ID collision resolved at close (deferred items → PERF-09/10). Next: N+3b — Persistence (`/gsd:new-milestone`). v1.0/v1.1/v1.2/v1.3/v1.4/v1.5 SHIPPED — archived under `milestones/`.*
