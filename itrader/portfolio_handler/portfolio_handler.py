@@ -14,6 +14,7 @@ from contextlib import contextmanager
 
 from .portfolio import Portfolio
 from .position import Position
+from .account import SimulatedMarginAccount
 from itrader.core.exceptions import (
     PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError,
@@ -149,8 +150,14 @@ class PortfolioHandler:
         yield correlation_id
     
     # Main portfolio management methods (keeping same names for compatibility)
-    def add_portfolio(self, user_id: int, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> PortfolioId:
-        """Create a new portfolio with enhanced capabilities."""
+    def add_portfolio(self, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> PortfolioId:
+        """Create a new portfolio with enhanced capabilities.
+
+        ACCT-04: the ``user_id`` first positional parameter was dropped — the
+        owning-user mapping is an app-layer (FastAPI) concern, not a Portfolio
+        concern, and is not relocated onto the Account. The surviving signature
+        is ``(name, exchange, cash, portfolio_config=None)``.
+        """
         
         with self._operation_context("add_portfolio") as correlation_id:
             try:
@@ -167,7 +174,6 @@ class PortfolioHandler:
                 
                 # Create portfolio instance
                 portfolio = Portfolio(
-                    user_id=user_id,
                     name=name,
                     exchange=exchange,
                     cash=to_money(cash),
@@ -181,7 +187,6 @@ class PortfolioHandler:
                 self.logger.info(
                     "Portfolio created successfully",
                     portfolio_id=portfolio.portfolio_id,
-                    user_id=user_id,
                     name=name,
                     initial_cash=cash,
                     correlation_id=correlation_id
@@ -259,7 +264,7 @@ class PortfolioHandler:
 
     def available_cash(self, portfolio_id: PortfolioId) -> Decimal:
         """Return the portfolio's buying power (balance minus reservations, D-14)."""
-        return self.get_portfolio(portfolio_id).cash_manager.available_balance
+        return self.get_portfolio(portfolio_id).account.available_balance
 
     def get_position(self, portfolio_id: PortfolioId, ticker: str) -> Optional[PositionView]:
         """Return a frozen snapshot of the open position, or None when flat (D-15)."""
@@ -274,14 +279,24 @@ class PortfolioHandler:
         )
 
     def reserve(self, portfolio_id: PortfolioId, order_id: OrderId, amount: Decimal) -> None:
-        """Reserve cash for a pending order (per-reference, full precision — OQ4)."""
-        self.get_portfolio(portfolio_id).cash_manager.reserve_cash(
-            amount, "order cash reservation", str(order_id)
-        )
+        """Reserve cash for a pending order (per-reference, full precision — OQ4).
+
+        D-06/D-07: the ``PortfolioReadModel.reserve(portfolio_id, order_id,
+        amount)`` Protocol signature stays FROZEN (keyed by ``portfolio_id``,
+        which the Account has no notion of); only the delegation re-points to the
+        Account-level ``reserve(order_id, amount)`` (the fixed "order cash
+        reservation" description + ``str(order_id)`` reference are folded into the
+        account method). Zero order-domain ripple.
+        """
+        self.get_portfolio(portfolio_id).account.reserve(order_id, amount)
 
     def release(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
-        """Release the cash reservation keyed by an order id (idempotent)."""
-        self.get_portfolio(portfolio_id).cash_manager.release_reservation(str(order_id))
+        """Release the cash reservation keyed by an order id (idempotent).
+
+        D-06/D-07: Protocol signature FROZEN; delegation re-points to the
+        Account-level ``release(order_id)``.
+        """
+        self.get_portfolio(portfolio_id).account.release(order_id)
 
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
         """Return the exchange the portfolio trades on (admission metadata, OQ1)."""
@@ -306,7 +321,7 @@ class PortfolioHandler:
         """
         portfolio = self.get_portfolio(portfolio_id)
         return (
-            portfolio.cash_manager.balance
+            portfolio.account.balance
             + portfolio.position_manager.get_total_market_value()
         )
 
@@ -317,8 +332,20 @@ class PortfolioHandler:
         the Universe is built, mirroring the exchange/order-domain set_universe
         seam from Plan 02-03). Stores the reference; maintenance_margin reads
         ``universe.instrument(ticker).maintenance_margin_rate`` per open position.
+
+        ACCT-02: the margin/liquidation MATH now lives on
+        ``SimulatedMarginAccount`` and reads the account's OWN injected Universe
+        (the math-pulldown moved the universe seam down with it, 01-02). Propagate
+        the reference down to each existing margin account so the delegated math is
+        wired. Spot (``SimulatedCashAccount``) accounts have no margin surface and
+        are skipped. Backtest adds all portfolios before this Trap-4 call, so every
+        margin account is reached; this is oracle-dark (the golden run is spot).
         """
         self._universe = universe
+        for portfolio in self._portfolios.values():
+            account = portfolio.account
+            if isinstance(account, SimulatedMarginAccount):
+                account.set_universe(universe)
 
     def set_order_storage(self, order_storage: OrderStorage) -> None:
         """Inject the shared order mirror for the liquidation forced-close (LIQ-03).
@@ -339,125 +366,50 @@ class PortfolioHandler:
     def maintenance_margin(self, portfolio_id: PortfolioId) -> Decimal:
         """Return maintenance margin computed on demand (D-13/MARGIN-03).
 
-        ``maintenance_margin = Σ (Instrument.maintenance_margin_rate × |size| ×
-        current_price)`` over the portfolio's OPEN positions, resolving each
-        ticker's Instrument via the injected Universe. Decimal end-to-end
-        (RESEARCH Pitfall 8 — Position.net_quantity is already |size| Decimal and
-        current_price is Decimal; the rate is Decimal). NOT a stored Position
-        field (D-13a). With no open positions the sum is ``Decimal("0")``.
+        ACCT-02: the inline computation was pulled DOWN to
+        ``SimulatedMarginAccount.maintenance_margin`` (the math reads the
+        account's OWN injected Universe + the portfolio's open positions). This
+        handler method is now a thin pass-through delegating to the portfolio's
+        account. A spot (``SimulatedCashAccount``) account has no margin
+        requirement and returns ``Decimal("0")``. The PortfolioReadModel
+        signature ``maintenance_margin(portfolio_id) -> Decimal`` is FROZEN.
         """
-        portfolio = self.get_portfolio(portfolio_id)
-        total = Decimal("0")
-        positions = portfolio.position_manager.get_all_positions()
-        # WR-02 (T-03-17): the per-symbol Instrument read dereferences the
-        # injected Universe. If positions exist but the Universe was never wired
-        # (``set_universe`` not called), fail LOUD with a context-rich StateError
-        # — never a bare ``AttributeError: 'NoneType' has no attribute
-        # 'instrument'``. With NO open positions the read is never reached, so an
-        # unwired Universe is benign and the sum is ``Decimal("0")``.
-        if positions and self._universe is None:
-            raise StateError(
-                portfolio_id,
-                "universe-unwired",
-                required_state="universe-wired (call set_universe)",
-                operation="maintenance_margin",
-            )
-        for position in positions.values():
-            instrument = self._universe.instrument(position.ticker)
-            total += (
-                instrument.maintenance_margin_rate
-                * abs(position.net_quantity)
-                * position.current_price
-            )
-        return total
+        account = self.get_portfolio(portfolio_id).account
+        if not isinstance(account, SimulatedMarginAccount):
+            return Decimal("0")
+        return account.maintenance_margin()
 
     def margin_ratio(self, portfolio_id: PortfolioId) -> Decimal:
-        """Return ``total_equity() / maintenance_margin`` (D-12/D-13).
+        """Return ``total_equity / maintenance_margin`` (D-12/D-13).
 
-        Mark-to-market equity over maintenance margin — the figure a UI/live layer
-        (deferred N+4) reads for margin-call warnings. Reads HONESTLY even when
-        breached: an equity drop below maintenance returns a ratio < 1 with NO
-        clamp (D-16 — the honest sub-1 reading is the P4 liquidation input). When
-        maintenance margin is ``Decimal("0")`` (no open positions, no margin
-        required) it returns the deterministic sentinel ``Decimal("0")`` rather
-        than dividing by zero.
+        ACCT-02: pulled DOWN to ``SimulatedMarginAccount.margin_ratio``; this is a
+        thin pass-through. A spot account returns the deterministic ``Decimal("0")``
+        sentinel (no margin required). Signature FROZEN (PortfolioReadModel).
         """
-        maintenance = self.maintenance_margin(portfolio_id)
-        if maintenance == Decimal("0"):
+        account = self.get_portfolio(portfolio_id).account
+        if not isinstance(account, SimulatedMarginAccount):
             return Decimal("0")
-        return self.total_equity(portfolio_id) / maintenance
+        return account.margin_ratio()
 
     # ------------------------------------------------------------------
     # Isolated-margin liquidation engine (LIQ-01/02, D-01-CORR/D-03-CORR/D-04/
     # D-05/D-07). The BAR-route per-position breach check runs AFTER the per-
     # portfolio mark + P3 carry pass (D-02 placement — breach sees carry-eroded
-    # equity). The math is Decimal end-to-end (Pitfall 5 — NEVER Decimal(float));
-    # the liq price is quantized to the instrument price scale ONLY at the
-    # FillEvent boundary in the mint step, never mid-formula.
+    # equity).
+    #
+    # ACCT-02: the pure-Decimal MATH (``_isolated_liq_price`` / ``_is_breached`` /
+    # ``_liquidation_penalty`` / ``_liq_inputs`` + the ``maintenance_margin`` /
+    # ``margin_ratio`` bodies above) was pulled DOWN onto ``SimulatedMarginAccount``.
+    # The EMISSION SHELL stays HERE (``_liquidate_position`` /
+    # ``_run_liquidation_pass`` / ``_collect_breaches_over_prices``): it keeps the
+    # ``order_storage.add_order`` + ``OrderEvent``/``FillEvent`` mint +
+    # ``global_queue.put`` + log, and calls DOWN into the portfolio's margin
+    # account for the math. The queue-only rule is preserved (the account has no
+    # queue). Spot accounts have no margin/liquidation surface, so they are skipped
+    # — byte-identical to the prior wb==0 continue (oracle-dark). The liq price is
+    # quantized to the instrument price scale ONLY at the FillEvent boundary in the
+    # mint step, never mid-formula.
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _isolated_liq_price(position: Position, wb: Decimal, mmr: Decimal) -> Decimal:
-        """Corrected isolated liquidation price (D-01-CORR — HAND-VERIFIED).
-
-        ``margin_per_unit = wb / |size|`` where ``wb`` is the position-keyed
-        locked isolated margin (``CashManager.get_locked_margin_for``) and
-        ``|size| = abs(net_quantity)``. With ``entry = avg_price``:
-
-        * LONG : ``(entry − margin_per_unit) / (1 − mmr)``
-        * SHORT: ``(entry + margin_per_unit) / (1 + mmr)``
-
-        The corrected formula (NOT the literal CONTEXT D-01 string, which yields
-        a negative price). For Entry=100, |size|=200, WB=4000, MMR=0.01 it gives
-        the long 80.808080… / short 118.811881… worked numbers. Full Decimal
-        precision is carried; quantization happens only at the FillEvent price
-        boundary (the mint step).
-        """
-        size = abs(position.net_quantity)
-        entry = position.avg_price
-        margin_per_unit = wb / size
-        if position.side == PositionSide.LONG:
-            return (entry - margin_per_unit) / (Decimal("1") - mmr)
-        return (entry + margin_per_unit) / (Decimal("1") + mmr)
-
-    @staticmethod
-    def _is_breached(position: Position, close: Decimal, liq_price: Decimal) -> bool:
-        """Return True when the bar close crosses the liquidation price.
-
-        LONG breaches when ``close <= liq`` (price fell into the maintenance
-        floor); SHORT breaches when ``close >= liq`` (price rose into it). The
-        liq price is computed once by the breach pass and passed in.
-        """
-        if position.side == PositionSide.LONG:
-            return close <= liq_price
-        return close >= liq_price
-
-    @staticmethod
-    def _liquidation_penalty(fee_rate: Decimal, size: Decimal, liq_price: Decimal) -> Decimal:
-        """Forced-close penalty = ``fee_rate × |size| × liq_price`` (D-05/LIQ-02).
-
-        Rides ``FillEvent.commission`` (no new FillStatus). Full Decimal
-        precision; defaults to ``Decimal("0")`` for a 0 fee rate (oracle-dark).
-        """
-        return fee_rate * size * liq_price
-
-    def _liq_inputs(self, portfolio: Portfolio, position: Position) -> "tuple[Decimal, Decimal, Decimal]":
-        """Resolve ``(wb, mmr, fee_rate)`` for a position from cash + Universe.
-
-        ``wb`` = the position-keyed locked isolated margin
-        (``get_locked_margin_for(str(position.id))``); ``mmr`` =
-        ``Instrument.maintenance_margin_rate``; ``fee_rate`` resolved
-        Instrument-first (``instrument.liquidation_fee_rate``) — the Universe
-        Instrument is the single per-symbol source of truth (the
-        ``TradingRules`` config fallback is consulted by the caller only when no
-        Universe Instrument carries the rate; here the Instrument always does
-        since it defaults to ``Decimal("0")``).
-        """
-        wb = portfolio.cash_manager.get_locked_margin_for(str(position.id))
-        instrument = self._universe.instrument(position.ticker)
-        mmr = instrument.maintenance_margin_rate
-        fee_rate = instrument.liquidation_fee_rate
-        return wb, mmr, fee_rate
 
     def _liquidate_position(self, portfolio: Portfolio, position: Position,
                             liq_price: Decimal, fee_rate: Decimal,
@@ -491,7 +443,9 @@ class PortfolioHandler:
         size = abs(position.net_quantity)
         # Opposite side closes the position: SELL closes a long, BUY a short.
         close_side = Side.SELL if position.side == PositionSide.LONG else Side.BUY
-        penalty = self._liquidation_penalty(fee_rate, size, liq_price)
+        # ACCT-02: the penalty math now lives on the margin account (static — no
+        # instance state needed). Reached only for breached margin positions.
+        penalty = SimulatedMarginAccount._liquidation_penalty(fee_rate, size, liq_price)
 
         # Quantize the liq price to the instrument price scale ONLY here, at the
         # FillEvent money boundary (Pitfall 5 — never mid-formula). The Universe
@@ -594,9 +548,15 @@ class PortfolioHandler:
             if (marked_portfolio_ids is not None
                     and portfolio.portfolio_id not in marked_portfolio_ids):
                 continue
+            # ACCT-02: the liq math lives on the margin account. A spot account has
+            # no margin/liquidation surface — skip it (byte-identical to the prior
+            # wb==0 continue; oracle-dark since the golden run is all-spot).
+            account = portfolio.account
+            if not isinstance(account, SimulatedMarginAccount):
+                continue
             for position in self._collect_breaches_over_prices(portfolio, closes, bar_time):
-                wb, mmr, fee_rate = self._liq_inputs(portfolio, position)
-                liq_price = self._isolated_liq_price(position, wb, mmr)
+                wb, mmr, fee_rate = account._liq_inputs(position)
+                liq_price = account._isolated_liq_price(position, wb, mmr)
                 # WR-04 / CR-01 (LOAD-BEARING): the breach is DETECTED on the
                 # bar close (``_is_breached``) but the position is SETTLED at
                 # ``liq_price`` (the maintenance liq price), NOT at the breaching
@@ -627,6 +587,12 @@ class PortfolioHandler:
         positions = portfolio.position_manager.get_all_positions()
         if not positions:
             return []
+        # ACCT-02: a spot (SimulatedCashAccount) account has no margin/liquidation
+        # surface — it is never breached (byte-identical to the prior wb==0
+        # continue; oracle-dark). The margin math is delegated to the account.
+        account = portfolio.account
+        if not isinstance(account, SimulatedMarginAccount):
+            return []
         if self._universe is None:
             raise StateError(
                 portfolio.portfolio_id,
@@ -641,11 +607,11 @@ class PortfolioHandler:
             close = closes.get(ticker)
             if close is None or close <= Decimal("0"):
                 continue
-            wb, mmr, _fee_rate = self._liq_inputs(portfolio, position)
+            wb, mmr, _fee_rate = account._liq_inputs(position)
             if wb <= Decimal("0"):
                 continue
-            liq_price = self._isolated_liq_price(position, wb, mmr)
-            if self._is_breached(position, close, liq_price):
+            liq_price = account._isolated_liq_price(position, wb, mmr)
+            if account._is_breached(position, close, liq_price):
                 breached.append(position)
         breached.sort(key=lambda p: (p.ticker, p.entry_date, str(p.id)))
         return breached
