@@ -571,9 +571,9 @@ def test_release_on_never_reserved_sell_is_silent_noop(harness):
     stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)
     assert stored.status == OrderStatus.FILLED
     portfolio = harness.ptf_handler.get_portfolio(harness.portfolio_id)
-    assert portfolio.cash_manager.reserved_balance == 0
+    assert portfolio.account.reserved_balance == 0
     release_ops = [
-        op for op in portfolio.cash_manager.get_cash_operations()
+        op for op in portfolio.account.get_cash_operations()
         if op.operation_type.name == "RELEASE_RESERVATION"
     ]
     assert release_ops == []

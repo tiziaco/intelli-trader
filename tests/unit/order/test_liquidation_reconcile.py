@@ -82,7 +82,7 @@ def _open_long(h: PortfolioHandler) -> tuple[Any, Position]:
     )
     position = Position.open_position(txn)
     portfolio.position_manager._storage.set_position(_TICKER, position)
-    portfolio.cash_manager.lock_margin(str(position.id), _WB)
+    portfolio.account.lock_margin(str(position.id), _WB)
     return pid, position
 
 

@@ -54,7 +54,7 @@ def test_gap_up_settlement_above_reservation_succeeds_and_releases():
     handler = PortfolioHandler(Queue())
     pid = handler.add_portfolio(1, "p", "simulated", 10000)
     portfolio = handler.get_portfolio(pid)
-    cash = portfolio.cash_manager
+    cash = portfolio.account
     order_id = uuid_compat.uuid7()
 
     # Admission gate: decision-bar close 100 x qty 10 -> reserve 1000.
@@ -85,7 +85,7 @@ def test_release_after_gap_up_settle_is_idempotent():
     uniform terminal release in on_fill reconciliation can never double-free."""
     handler = PortfolioHandler(Queue())
     pid = handler.add_portfolio(1, "p", "simulated", 10000)
-    cash = handler.get_portfolio(pid).cash_manager
+    cash = handler.get_portfolio(pid).account
     order_id = uuid_compat.uuid7()
 
     handler.reserve(pid, order_id, Decimal("1000"))

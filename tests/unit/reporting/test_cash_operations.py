@@ -18,7 +18,7 @@ from decimal import Decimal
 import pandas as pd
 
 from itrader.core.enums import CashOperationType
-from itrader.portfolio_handler.cash.cash_manager import CashOperation
+from itrader.portfolio_handler.account import CashOperation
 from itrader.reporting.cash_operations import (
     CASH_OPERATION_COLUMNS,
     build_cash_operations,

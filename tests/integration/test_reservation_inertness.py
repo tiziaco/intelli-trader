@@ -143,7 +143,7 @@ def test_reserve_never_rejects_in_golden_run(traced_run):
 def test_reserved_balance_zero_after_run(traced_run):
     """(b) Every reservation was released: reserved == 0 post-run (T-05-17)."""
     portfolio = traced_run["portfolio"]
-    assert portfolio.cash_manager.reserved_balance == Decimal("0")
+    assert portfolio.account.reserved_balance == Decimal("0")
 
 
 def test_trade_log_identical_to_golden(traced_run):

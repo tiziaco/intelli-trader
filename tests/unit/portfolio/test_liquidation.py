@@ -84,7 +84,7 @@ def _open_position(handler: PortfolioHandler, *, side: str, ticker: str = _TICKE
     # Lock the isolated margin (WB) keyed by the position id — the WB source the
     # liquidation floor reads via get_locked_margin_for.
     wb = entry * size / leverage
-    portfolio.cash_manager.lock_margin(str(position.id), wb)
+    portfolio.account.lock_margin(str(position.id), wb)
     return portfolio.portfolio_id, position
 
 
@@ -158,7 +158,7 @@ def test_multi_breach_deterministic():
         )
         pos = Position.open_position(txn)
         portfolio.position_manager._storage.set_position(ticker, pos)
-        portfolio.cash_manager.lock_margin(str(pos.id), _WB)
+        portfolio.account.lock_margin(str(pos.id), _WB)
         return pos
 
     _add("ZZZUSD", datetime(2024, 1, 2))

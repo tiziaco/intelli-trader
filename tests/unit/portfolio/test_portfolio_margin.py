@@ -72,7 +72,7 @@ def test_funds_invariant_lock_admits_affordable_lock(margin_portfolio):
 
     pf.process_transaction(buy)  # must NOT raise
 
-    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+    assert pf.account.locked_margin_total == Decimal("20000")
     assert pf.cash == Decimal("150000")
 
 
@@ -112,5 +112,5 @@ def test_open_commission_accumulator_no_drift_on_staged_partial_closes(margin_po
     # The cumulative round-trip cash delta == realized PnL (commission netted
     # exactly once — no drift from the staged partial closes).
     assert pf.cash == start + closed.realised_pnl
-    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert pf.account.locked_margin_total == Decimal("0")
     assert len(pf.positions) == 0

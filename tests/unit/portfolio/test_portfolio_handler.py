@@ -174,7 +174,7 @@ def test_portfolio_deletion_with_state_validation(env):
 
     # Withdraw all cash to allow deletion
     portfolio = env.handler.get_portfolio(portfolio_id)
-    portfolio.cash_manager.withdraw(portfolio.cash_manager.balance, "Test withdrawal")
+    portfolio.account.withdraw(portfolio.account.balance, "Test withdrawal")
 
     # Delete portfolio (should archive first)
     assert env.handler.delete_portfolio(portfolio_id)

@@ -233,7 +233,7 @@ def test_successful_settlement_orders_ledger_and_history(portfolio):
 
     # Exactly one ledger entry for the fill: signed net delta + fee (D-06),
     # event-derived timestamp (Pitfall 5), transaction-id reference.
-    debits = portfolio.cash_manager.get_cash_operations(
+    debits = portfolio.account.get_cash_operations(
         operation_type=CashOperationType.TRANSACTION_DEBIT
     )
     assert len(debits) == 1
@@ -318,9 +318,9 @@ def test_locked_margin_open_debits_only_commission(margin_portfolio):
     # Zero commission -> balance unchanged; ONLY the lock moves buying power.
     assert pf.cash == Decimal("150000")
     # locked = notional / L = (50000 * 2) / 5 = 20000.
-    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+    assert pf.account.locked_margin_total == Decimal("20000")
     # available = balance - reserved - locked = 150000 - 0 - 20000 = 130000.
-    assert pf.cash_manager.available_balance == Decimal("130000")
+    assert pf.account.available_balance == Decimal("130000")
 
 
 def test_locked_margin_open_with_commission_debits_only_commission(margin_portfolio):
@@ -334,7 +334,7 @@ def test_locked_margin_open_with_commission_debits_only_commission(margin_portfo
     assert pf.cash == Decimal("150000") - Decimal("50")
     # Lock = aggregate_notional / L (avg_price is commission-inflated: D-11 basis).
     position = pf.positions["BTCUSDT"]
-    assert pf.cash_manager.locked_margin_total == position.aggregate_notional / Decimal("5")
+    assert pf.account.locked_margin_total == position.aggregate_notional / Decimal("5")
 
 
 def test_locked_margin_full_close_settles_pnl_and_releases(margin_portfolio):
@@ -349,7 +349,7 @@ def test_locked_margin_full_close_settles_pnl_and_releases(margin_portfolio):
     pf.process_transaction(sell)
 
     # Lock fully released.
-    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert pf.account.locked_margin_total == Decimal("0")
     # Balance change over the round trip == realised PnL (10000).
     assert pf.cash == Decimal("150000") + Decimal("10000")
     assert pf.total_realised_pnl == Decimal("10000")
@@ -371,7 +371,7 @@ def test_locked_margin_full_close_with_commission_round_trip(margin_portfolio):
     closed = pf.closed_positions[0]
     # Round-trip cash delta == realized PnL (commissions netted exactly once).
     assert pf.cash == Decimal("150000") + closed.realised_pnl
-    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert pf.account.locked_margin_total == Decimal("0")
 
 
 def test_scale_in_margin_recomputes_lock(margin_portfolio):
@@ -380,7 +380,7 @@ def test_scale_in_margin_recomputes_lock(margin_portfolio):
     pf = margin_portfolio
     buy1 = _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, 2, 0, 5)
     pf.process_transaction(buy1)
-    assert pf.cash_manager.locked_margin_total == Decimal("20000")  # 100000/5
+    assert pf.account.locked_margin_total == Decimal("20000")  # 100000/5
 
     # Scale in: +1 unit at 50000. New aggregate notional recomputed off the
     # position (avg_price * net_quantity). Lock = new_aggregate_notional / 5.
@@ -389,9 +389,9 @@ def test_scale_in_margin_recomputes_lock(margin_portfolio):
 
     position = pf.positions["BTCUSDT"]
     expected_lock = position.aggregate_notional / Decimal("5")
-    assert pf.cash_manager.locked_margin_total == expected_lock
+    assert pf.account.locked_margin_total == expected_lock
     # 3 units @ 50000 / 5 = 30000.
-    assert pf.cash_manager.locked_margin_total == Decimal("30000")
+    assert pf.account.locked_margin_total == Decimal("30000")
     # Zero commission -> balance never moved on either open.
     assert pf.cash == Decimal("150000")
 
@@ -403,7 +403,7 @@ def test_partial_close_margin_releases_fraction_and_settles_fraction(margin_port
     # Open 4 units @ 50000, L=5, zero commission. notional=200000, locked=40000.
     buy = _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, 4, 0, 5)
     pf.process_transaction(buy)
-    assert pf.cash_manager.locked_margin_total == Decimal("40000")
+    assert pf.account.locked_margin_total == Decimal("40000")
 
     # Partial close: sell 1 of 4 (p = 1/4) @ 55000, zero commission.
     sell = _levered_txn(TransactionType.SELL, "BTCUSDT", 55000, 1, 0, 5)
@@ -415,7 +415,7 @@ def test_partial_close_margin_releases_fraction_and_settles_fraction(margin_port
 
     # Lock recomputed to the remaining notional / L: 3*50000/5 = 30000
     # (== (1 - 1/4) * 40000); i.e. p × 40000 = 10000 was released.
-    assert pf.cash_manager.locked_margin_total == Decimal("30000")
+    assert pf.account.locked_margin_total == Decimal("30000")
 
     # realised_pnl increment for the closed unit (zero commission):
     #   (55000-50000)*1 = 5000. Balance change == 5000.
@@ -433,7 +433,7 @@ def test_margin_over_close_fill_fails_loud(margin_portfolio):
     # Open 2 units @ 50000, L=5, zero commission. locked = 100000/5 = 20000.
     buy = _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, 2, 0, 5)
     pf.process_transaction(buy)
-    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+    assert pf.account.locked_margin_total == Decimal("20000")
 
     # Over-close: SELL 3 of an open 2 (would leave a residual SHORT == flip).
     over_close = _levered_txn(TransactionType.SELL, "BTCUSDT", 55000, 3, 0, 5)
@@ -459,7 +459,7 @@ def test_margin_sub_tolerance_over_close_absorbs_as_clean_close(margin_portfolio
     pf.process_transaction(sell)
 
     assert len(pf.positions) == 0
-    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert pf.account.locked_margin_total == Decimal("0")
 
 
 def test_margin_exact_full_close_still_succeeds(margin_portfolio):
@@ -472,7 +472,7 @@ def test_margin_exact_full_close_still_succeeds(margin_portfolio):
     sell = _levered_txn(TransactionType.SELL, "BTCUSDT", 55000, 2, 0, 5)
     pf.process_transaction(sell)  # must NOT raise
 
-    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert pf.account.locked_margin_total == Decimal("0")
     assert pf.cash == Decimal("150000") + Decimal("10000")
     assert len(pf.positions) == 0
 
@@ -490,7 +490,7 @@ def test_margin_partial_close_still_succeeds(margin_portfolio):
     position = pf.positions["BTCUSDT"]
     assert position.is_open
     assert position.net_quantity == Decimal("3")
-    assert pf.cash_manager.locked_margin_total == Decimal("30000")
+    assert pf.account.locked_margin_total == Decimal("30000")
 
 
 def test_margin_short_over_cover_fill_fails_loud(margin_portfolio):
@@ -509,7 +509,7 @@ def test_margin_short_over_cover_fill_fails_loud(margin_portfolio):
     pf.process_transaction(short)
     position = pf.positions["BTCUSDT"]
     assert position.side is PositionSide.SHORT
-    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+    assert pf.account.locked_margin_total == Decimal("20000")
 
     # Over-cover: BUY 3 of an open short 2 (would leave a residual LONG == flip).
     over_cover = _levered_txn(TransactionType.BUY, "BTCUSDT", 45000, 3, 0, 5)
@@ -529,7 +529,7 @@ def test_margin_short_exact_full_cover_still_succeeds(margin_portfolio):
     cover = _levered_txn(TransactionType.BUY, "BTCUSDT", 45000, 2, 0, 5)
     pf.process_transaction(cover)  # must NOT raise — settles to flat
 
-    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert pf.account.locked_margin_total == Decimal("0")
     assert len(pf.positions) == 0
 
 
@@ -545,5 +545,5 @@ def test_spot_mode_process_transaction_unchanged_byte_exact(portfolio):
 
     # Full notional debited (spot), no lock.
     assert portfolio.cash == Decimal("150000") - Decimal("40100")
-    assert portfolio.cash_manager.locked_margin_total == Decimal("0")
-    assert portfolio.cash_manager.available_balance == portfolio.cash
+    assert portfolio.account.locked_margin_total == Decimal("0")
+    assert portfolio.account.available_balance == portfolio.cash
