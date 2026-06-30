@@ -72,7 +72,7 @@ configured so the global filter is never relaxed); tabs/spaces indentation match
 
 ### Phase Summary
 
-- [ ] **Phase 1: Account Abstraction + Portfolio/Handler Refactor** — Oracle-gated, behavior-preserving extraction of an `Account` truth surface; the universal gate before any live code.
+- [x] **Phase 1: Account Abstraction + Portfolio/Handler Refactor** — Oracle-gated, behavior-preserving extraction of an `Account` truth surface; the universal gate before any live code. — completed 2026-06-30
 - [ ] **Phase 2: OKX Connector** — `OkxConnector` over our `LiveConnector` interface (ccxt.pro + native confirm-flag escape hatch); data arm + order arm; async bottled at the connector edge.
 - [ ] **Phase 3: LiveBarFeed** — Ring-buffer `BarFeed` impl; closed-bar emission off the confirm flag; warmup/backfill through the identical `update(bar)` path; monotonic-forward-only.
 - [ ] **Phase 4: Paper Path (milestone DoD)** — `PaperConnector` reusing the pure `MatchingEngine`; live runtime wired; **paper-parity gate vs the oracle**.
