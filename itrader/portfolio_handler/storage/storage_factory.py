@@ -84,13 +84,20 @@ class PortfolioStateStorageFactory:
             # import path. The live arm IS the Postgres path — no 'postgresql' arm.
             from itrader.config.sql import SqlSettings
             from itrader.storage import SqlBackend
+            from .cached_sql_storage import CachedSqlPortfolioStateStorage
             from .sql_storage import SqlPortfolioStateStorage
 
             sql_backend = (
                 backend if backend is not None
                 else SqlBackend(SqlSettings.default())
             )
-            return SqlPortfolioStateStorage(sql_backend, portfolio_id)
+            # D-04/A3: the live arm constructs the store-first cache wrapper over the
+            # untouched Phase-3 store. The composition root is NOT rewired this phase
+            # (portfolio.py:93 stays "backtest", D-01) — this arm is built + component-tested.
+            return CachedSqlPortfolioStateStorage(
+                SqlPortfolioStateStorage(sql_backend, portfolio_id),
+                max_snapshots=max_snapshots,
+            )
         else:
             raise ConfigurationError(
                 "environment", environment,
