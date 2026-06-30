@@ -108,7 +108,7 @@ already in place; code-motion only (plan-time research optional).
 - [x] 01-01-PLAN.md — Interface scaffold: Account ABC + VenueAccount stub + LiveConnector Protocol + D-04 resolution (Wave 1)
 - [x] 01-02-PLAN.md — SimulatedCashAccount + SimulatedMarginAccount byte-exact code-motion + CashOperation barrel (Wave 2)
 - [x] 01-03-PLAN.md — Re-point Portfolio/PortfolioHandler to Account; strip user_id (production); re-point sql_storage CashOperation; delete CashManager (Wave 3)
-- [ ] 01-03b-PLAN.md — Migrate unit + integration test consumers (cash_manager→account, CashOperation home, user_id strip) (Wave 4)
+- [x] 01-03b-PLAN.md — Migrate unit + integration test consumers (cash_manager→account, CashOperation home, user_id strip) (Wave 4)
 - [ ] 01-03c-PLAN.md — Migrate e2e test consumers + harness (cash_manager→account, user_id strip) (Wave 4)
 - [x] 01-04-PLAN.md — Delete TradingInterface (LX-14) (Wave 1)
 - [ ] 01-05-PLAN.md — Oracle byte-exact + full-suite re-confirmation terminal gate (Wave 5)
@@ -413,7 +413,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 4/7 | In Progress|  |
+| 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 5/7 | In Progress|  |
 | 2. OKX Connector | v1.7 | 0/TBD | Not started | - |
 | 3. LiveBarFeed | v1.7 | 0/TBD | Not started | - |
 | 4. Paper Path (DoD) | v1.7 | 0/TBD | Not started | - |
