@@ -14,10 +14,10 @@ Business columns ONLY: a DERIVED ``correlation`` label, ``operation_type``,
 ``amount``, ``balance_before``, ``balance_after``. THREE source fields are EXCLUDED
 because they are non-deterministic across runs:
 
-* ``operation_id`` — a UUIDv7 minted per record (cash_manager.py:34).
+* ``operation_id`` — a UUIDv7 minted per record (the account leaf).
 * ``reference_id`` — the raw order id (a UUIDv7) keying the reservation.
 * ``timestamp`` — RESERVATION / RELEASE_RESERVATION rows stamp ``datetime.now(UTC)``
-  (admission audit wall-clock — cash_manager.py:409,441), NOT an event-derived
+  (admission audit wall-clock — the account leaf), NOT an event-derived
   business time, so it is never oracle-safe to freeze.
 
 To keep a RESERVATION matchable to its RELEASE WITHOUT exposing the raw id, the
@@ -66,7 +66,7 @@ def build_cash_operations(operations: Any) -> pd.DataFrame:
     """Serialize the cash-operation ledger to a deterministic business-columns frame.
 
     ``operations`` is a duck-typed list of ``CashOperation``-shaped objects (the
-    harness passes ``portfolio.cash_manager.get_cash_operations()``). Empty-safe;
+    harness passes ``portfolio.account.get_cash_operations()``). Empty-safe;
     sorted by a stable business key so row order is reproducible. The raw
     ``reference_id`` is collapsed to a stable per-reference ordinal (``ORDER-{n}``
     in first-appearance order; a ``None`` reference → ``ACCOUNT``) so a RESERVATION
