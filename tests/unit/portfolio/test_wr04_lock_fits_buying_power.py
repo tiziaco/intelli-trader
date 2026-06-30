@@ -34,11 +34,22 @@ import pytest
 import uuid_utils.compat as uuid_compat
 
 from itrader import idgen
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
 from itrader.core.enums import TransactionType
 from itrader.core.exceptions import InsufficientFundsError
-from itrader.portfolio_handler.cash.cash_manager import CashManager
+from itrader.portfolio_handler.account import SimulatedMarginAccount
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction
+
+
+def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
+    """A PortfolioConfig with enable_margin=True (01-03 selects the account leaf
+    at construction, so margin must be set in the constructor config — the old
+    post-construction ``update_config`` toggle no longer rebuilds the leaf)."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +58,7 @@ from itrader.portfolio_handler.transaction import Transaction
 
 
 class _MockPortfolio:
-    """Minimal portfolio stub for the isolated CashManager guard test."""
+    """Minimal portfolio stub for the isolated margin-account guard test."""
 
     def __init__(self):
         self.portfolio_id = 12345
@@ -55,18 +66,20 @@ class _MockPortfolio:
 
 @pytest.fixture
 def cm():
-    """A CashManager seeded with $10000 on a mock portfolio."""
-    return CashManager(_MockPortfolio(), 10000.0)
+    """A SimulatedMarginAccount seeded with $10000 on a mock portfolio.
+
+    The margin leaf — ``assert_lock_fits_buying_power`` / ``lock_margin`` live
+    on the margin superset after the 01-02 split.
+    """
+    return SimulatedMarginAccount(_MockPortfolio(), 10000.0)
 
 
 @pytest.fixture
 def margin_portfolio():
     """A $100000 portfolio with enable_margin=True (lock-and-settle on)."""
-    pf = Portfolio(1, "wr04_pf", "simulated", 100000, datetime.now())
-    pf.update_config(
-        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal("10")}}
+    return Portfolio(
+        "wr04_pf", "simulated", 100000, datetime.now(), config=_margin_config()
     )
-    return pf
 
 
 def _levered_txn(type_, ticker, price, quantity, commission, leverage):
@@ -89,7 +102,7 @@ def _spy_prior_lock_seen_by_assert(pf):
     TRUE prior lock (> 0 on a scale-in / partial close).
     """
     seen: list[Decimal] = []
-    cmgr = pf.cash_manager
+    cmgr = pf.account
     original = cmgr.assert_lock_fits_buying_power
 
     def _wrapped(lock_amount, position_id):
@@ -114,7 +127,7 @@ def test_scale_in_assert_sees_true_prior_lock(margin_portfolio):
     pf.process_transaction(
         _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, 1, 0, 5)
     )
-    assert pf.cash_manager.locked_margin_total == Decimal("10000")
+    assert pf.account.locked_margin_total == Decimal("10000")
 
     seen = _spy_prior_lock_seen_by_assert(pf)
 
@@ -126,7 +139,7 @@ def test_scale_in_assert_sees_true_prior_lock(margin_portfolio):
     assert len(seen) == 1
     # The guard must have seen the TRUE prior lock (10000), not 0.
     assert seen[0] == Decimal("10000")
-    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+    assert pf.account.locked_margin_total == Decimal("20000")
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +172,7 @@ def test_partial_close_assert_sees_true_prior_lock(margin_portfolio):
     pf.process_transaction(
         _levered_txn(TransactionType.BUY, "BTCUSDT", 50000, 2, 0, 5)
     )
-    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+    assert pf.account.locked_margin_total == Decimal("20000")
 
     seen = _spy_prior_lock_seen_by_assert(pf)
 
@@ -171,4 +184,4 @@ def test_partial_close_assert_sees_true_prior_lock(margin_portfolio):
     assert len(seen) == 1
     # The guard must have seen the TRUE prior whole lock (20000), not 0.
     assert seen[0] == Decimal("20000")
-    assert pf.cash_manager.locked_margin_total == Decimal("10000")
+    assert pf.account.locked_margin_total == Decimal("10000")
