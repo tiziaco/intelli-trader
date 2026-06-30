@@ -1,19 +1,19 @@
 # Project Research Summary
 
-**Project:** iTrader v1.6 — N+3b Persistence Foundation
-**Domain:** Durable storage + caching substrate for an event-driven backtest/live trading engine (swappable SQL spine, all-SQL results store, three live operational backends, classified cache)
-**Researched:** 2026-06-27
-**Confidence:** HIGH
+**Project:** iTrader v1.7 — Live Trading Readiness (paper-first OKX, trimmed N+4)
+**Domain:** Live crypto trading deployment layer over an event-driven, Decimal-exact, deterministic backtest engine
+**Researched:** 2026-06-30
+**Confidence:** HIGH (all four researchers grounded in the locked design LX-01..LX-15 + direct source reading; MEDIUM on two OKX/ccxt externals called out below)
 
 ---
 
 ## Executive Summary
 
-v1.6 adds the durable-storage + caching foundation to an already oracle-locked, `mypy --strict`-clean, Decimal-end-to-end engine. The approach is the NautilusTrader model: cache != store, two independently-controlled retention knobs (write-through x retention), and one shared SQL spine that makes the SQLite / libSQL / Postgres swap a config-not-code change. Three concerns are in scope: (#1) an all-SQL results store for every backtest/optimization run; (#2) concrete SQL backends for the three existing live operational seams (order mirror, portfolio state, strategy/signal); and (#3) a cache inventory + classification that preserves the v1.5 performance wins. The milestone is DB-gated, not oracle-gated: the byte-exact oracle (134 / 46189.87730727451) and the v1.5 frozen baseline (15.7 s / 152.8 MB) prove the persistence layer adds zero hot-path cost when write-through is off, while new DB round-trip / restart-rehydration / cross-backend parity tests cover the genuinely new persistence code.
+iTrader v1.7 adds live OKX trading to a proven event-driven backtest engine — paper-first, with a correctness gate anchored to the byte-exact oracle (`134 trades / 46189.87730727451`). The defining structural insight from all four researchers is that **v1.5's BarFeed ABC and MatchingEngine were built for this**: the engine above the feed already speaks one contract, and switching the backing store from a precomputed frame to a ring buffer is the bulk of Phase 3's work. Similarly, the `PortfolioReadModel` Protocol seam means the Phase 1 Account abstraction extraction does not ripple into the order domain at all — it is code-motion, not re-architecture. The headline stack finding is equally reassuring: **almost nothing new is strictly required**. ccxt.pro is already inside the free `ccxt` package you ship; the asyncio bridge is stdlib; `pytest-asyncio` is the only real addition. OkxSettings and the order-arm secrets module are deferred to Phase 5.
 
-The single most load-bearing finding of this research is a correction to the design seed. The seed asserts "Turso native DECIMAL preserves the money policy" -- this is false. libSQL is a byte-compatible SQLite fork with the same type system: it has no lossless DECIMAL storage class. Numeric(asdecimal=True) on SQLite/libSQL emits SAWarning: Dialect ... does not support Decimal objects natively, which under this project's filterwarnings=["error"] is a hard test failure. Money on every SQLite-family backend must be stored via a DecimalAsText TypeDecorator in storage/types.py, never Numeric. This single primitive gates every downstream SQL class; it must land first in Phase 1 or the entire test suite goes red the moment a SQLite/libSQL path runs.
+The six-phase structure is load-bearing: Phase 1 is the universal oracle-gated gate (everything live depends on Account abstraction being behavior-preserving), Phase 3 is where complexity concentrates on the data path (monotonic-forward-only delivery + reconnect gap-fill + warmup-through-update), and Phase 5 is the reconciliation cluster (partial fills, broker-side restart, write-through ordering, VenueAccount drift policy). Phase 4 (PaperConnector + paper-parity gate) is the milestone DoD and is reachable with only the data arm of the connector — no live order I/O required.
 
-Backend decision requires owner confirmation. STACK research finds that Turso/libSQL's perf edge does NOT hold for this project's single-process batch-dump + occasional-read workload. Plain stdlib SQLite is as fast or faster with none of the beta risk (sqlalchemy-libsql 0.2.0 is Beta, last released 2025-05-30, pins a sub-0.1 Rust binding, Linux/macOS only). The recommendation is to make SQLite the proven results-store default and treat libSQL as an optional, config-selected extra -- a safe choice because the two are dialect siblings and the entire libSQL risk is escapable by reverting one engine URL with zero code change. This contradicts the PROJECT.md "Turso (research/optimization default)" language. The owner must decide at requirements time; the research does not silently override that choice.
+The dominant risk is the forming-bar / confirm-flag problem: ccxt's unified `watchOHLCV` does not surface OKX's `confirm` field (ccxt issue #21885), so a native escape hatch at the connector edge is mandatory before the feed can safely emit `BarEvent`s. This single fact — verified against the OKX v5 docs and ccxt tracker — is the anchor for LX-05/LX-08 and must be plumbed in Phase 2 before Phase 3 can close. The second dominant risk is the Phase 5 reconciliation cluster, where broker-side restart, partial fills, fee ingest, and write-through ordering converge and interact; that phase warrants its own plan-time research sprint.
 
 ---
 
@@ -21,223 +21,223 @@ Backend decision requires owner confirmation. STACK research finds that Turso/li
 
 ### Recommended Stack
 
-SQLAlchemy 2.0 Core (already present at ^2.0.50) is the correct single unifier. All three backends are SQLAlchemy dialects (sqlite+pysqlite, sqlite+libsql, postgresql+psycopg2); SqlSettings builds the engine URL and a single create_engine() call selects the backend -- config, not code. Two new libraries must be added to pyproject.toml: pyarrow 24.0.0 for the run_artifacts Parquet-bytes blob, and alembic 1.18.5 for the live Postgres migration chain. sqlalchemy-libsql 0.2.0 is added as an optional Poetry extra (not a hard dep). No other additions. Optuna is explicitly deferred -- the sweep loop is a later milestone; the runs schema is built Optuna-FK-ready from day one (nullable study_id / trial_id / objective_value columns).
+The existing stack needs only a minor ccxt bump (`^4.5.56` -> `^4.5.62`), stdlib `asyncio` for the bridge (no new library), and `pytest-asyncio ^1.4.0` in the dev group. ccxt.pro is free, in-package, and already shipped; `import ccxt.pro as ccxtpro` unlocks `watch_ohlcv`, `watch_orders`, `watch_balance`, and `create_order_ws` with zero additional install. The asyncio bridge follows a proven, dependency-free pattern: connector owns `asyncio.new_event_loop()` on a daemon thread; `run_coroutine_threadsafe` submits work into the loop; outbound `global_queue.put(event)` is thread-safe stdlib. OkxSettings (`ITRADER_OKX_*` env prefix, `SecretStr` for all three credentials including the mandatory passphrase, `sandbox: bool`) is deferred to Phase 5.
 
 **Core technologies:**
-- SQLAlchemy 2.0 Core (2.0.51, already present): the shared SQL spine -- Engine + MetaData + Core SQL constructs that swap SQLite/libSQL/Postgres by engine URL alone
-- pyarrow 24.0.0 (ADD): Parquet-bytes encoding for the run_artifacts blob column; explicit decimal128(p,s) schema pinned to core/money.py instrument scales -- never inferred
-- alembic 1.18.5 (ADD): live Postgres migration chain only; render_as_batch=True for SQLite/libSQL ALTER limits; create_all() for the ephemeral results/backtest DB
-- sqlalchemy-libsql 0.2.0 (ADD as optional extra): sqlite+libsql:// dialect for the Turso/libSQL backend slot; beta / stale / Linux+macOS only -- SQLite is the zero-cost escape path (revert one URL)
-- DecimalAsText TypeDecorator (NEW, in storage/types.py): the money-fidelity primitive -- stores Decimal as TEXT via str(), loads via Decimal(); applied uniformly on all three dialects; Numeric is acceptable only on the Postgres-only path, but the decorator is preferred everywhere for byte-exact cross-backend parity
-- psycopg2-binary 2.9.12, pydantic-settings SecretStr, msgspec (all already present): no version changes needed
+- `ccxt ^4.5.62` (bump existing pin): ccxt.pro live data + order arm via in-package async/WS surface — no new install, no license key
+- Python stdlib `asyncio` (3.13): connector event loop on daemon thread, `run_coroutine_threadsafe` bridge — zero new dependencies
+- `pytest-asyncio ^1.4.0`: async test driver — required; must be configured with `asyncio_mode` + `asyncio_default_fixture_loop_scope` or `filterwarnings=["error"]` escalates its deprecation warnings
+- `aiohttp` (transitive via ccxt async): verify it resolves in `poetry.lock`; do not pin explicitly
+- `python-okx 0.4.1` / `janus 2.0.0` / `redis ^5`: do NOT add up front — each is a flagged candidate only on a proven, documented gap
 
-**DO NOT ADD this milestone:** optuna (sweep loop deferred); the libsql 0.1.x package directly (the dialect pins libsql-experimental, not libsql).
+**Critical version interaction:** `pytest-asyncio` emits `PytestDeprecationWarning` when `asyncio_default_fixture_loop_scope` is unset; under `filterwarnings=["error"]` this fails the suite. Set both `asyncio_mode = "auto"` and `asyncio_default_fixture_loop_scope = "function"` in `pyproject.toml`. Do not redefine the `event_loop` fixture.
 
 ### Expected Features
 
-Three concerns are in scope; the optimization/sweep loop is explicitly OUT.
+The 26 identified behaviors split cleanly across the six phases. The DoD is Phase 4 (paper-parity gate). Phase 5 is the "should-have in-milestone" cluster; Phase 6 is the lean poll seam only.
 
-**Must have (table stakes):**
-- Swappable SQL interface (the spine) -- gates every other feature; backend selected by SqlSettings
-- Results store: runs (indexed summary metrics + scalar-promoted sweepable params + JSONB settings archival + Optuna FK columns) and run_artifacts (one Parquet-bytes blob per run, no per-bar row explosion)
-- Three concrete SQL operational backends on the shared spine: fill PostgreSQLOrderStorage stub, new SqlPortfolioStateStorage, new SqlSignalStorage
-- Two-knob mode-awareness on all three seams: write-through x retention (backtest = off + retain-all; live = on + working-set + purge-on-terminalize)
-- Restart rehydration: load only open positions + working orders from the store; rebuild snapshot + running accumulators from the last persisted snapshot row -- not a full-history replay
-- Zero hot-path cost when write-through is off (oracle + W1/W2 gate)
-- Purge-on-terminalize (event-driven, primary) + age/count sweep (safety net) with bracket-parent safety invariant (never evict a bracket parent while children are open)
-- Read-through fallback for evicted terminal records (off hot path -- an open position is always resident)
-- Migration / schema-versioning story for the live Postgres store (Alembic); create_all() for the ephemeral results DB
-- FL-06 SQL-injection + hardcoded-creds hardening in SqlHandler
-- Cache inventory + classification (the deliverable is the map + routing, not a rewrite)
+**Must have — Phase 1 (gates everything):**
+- Account ABC + `SimulatedCashAccount` / `SimulatedMarginAccount` leaves (code-motion, byte-exact)
+- `Portfolio` receives injected `self.account`; `cash` -> `account.balance`
+- Margin/liq math moved from `PortfolioHandler` to `SimulatedMarginAccount`; liquidation *emission* stays in the handler (queue-only rule preserved)
+- `Portfolio.user_id` stripped (app-layer concern); `TradingInterface` deleted (replaced by typed engine command surface)
+- `LiveConnector` Protocol defined (interface-only in Phase 1)
+- Oracle re-confirmed byte-exact after extraction
 
-**Should have (competitive / Nautilus-grade design):**
-- Cross-backend parity test suite (same suite runs green on SQLite AND Postgres)
-- Bracket-aware purge safety formally verified
-- runs schema Optuna-FK-ready from day one (nullable FK columns, no future migration needed)
-- Vestigial config knobs removed (PerformanceSettings.enable_caching/cache_size_mb -- no consumer)
+**Must have — Phases 2 + 3 (feed pipeline):**
+- `OkxConnector` data arm: `watch_ohlcv` via ccxt.pro + native OKX `confirm` flag via escape hatch (LX-05/LX-08) — the confirm field is the enabling prerequisite for the whole feed
+- `LiveBarFeed(BarFeed)` ring buffer: `deque(maxlen=cap)` per `(symbol, timeframe)`, capacity derived from `cache_capacity()` same as backtest
+- Bar-close detection emits `BarEvent` only on `confirm == 1`; bar `time` = venue bar-open stamp (not wall-clock)
+- Warmup/backfill: REST `fetch_ohlcv` last-K, replayed one-by-one through the identical `update(bar)` path (LX-09) — no bulk fast-path exists
+- Monotonic-forward-only delivery: gap -> REST-backfill-and-replay; duplicate -> drop; stale/OOO -> reject; reconnect -> gap-fill
+- WS reconnect with gap recovery; rate-limit handling coordinated across ccxt and native paths
 
-**Defer (N+4 / v2+):**
-- Optimization / parameter-sweep loop (Optuna sampler writing to the substrate)
-- Venue reconciliation on restart (cache <-> broker) -- needs a live broker adapter (N+4)
-- Async / buffered write-through for append-heavy live writes -- only if profiling justifies it (keep-only-measured)
-- Redis cache backend -- only if live engine goes multi-process
-- DuckDB cross-run analytical queries over exported frames
+**Must have — Phase 4 (the DoD):**
+- `PaperConnector(LiveConnector)`: composes `MatchingEngine` + `apply_costs` helper (extracted from `_emit_fill`) + `SimulatedAccount` — no OKX I/O
+- Paper-parity gate: replay fixed dataset -> assert `134 / 46189.87730727451`; byte-exact, not tolerance-based
+- `TimeEvent` synthesized on each closed-bar arrival so existing `_routes` TIME-before-BAR ordering holds
+- Determinism seams: seeded RNG + business-time stamping thread through the paper path
 
-**Anti-features (explicitly rejected):**
-- Collapsing all three caches into one Arrow-backed object -- three different lifetimes/owners, not one cache
-- Per-bar synchronous write-through in backtest -- regresses the v1.5 baseline; backtest backend must contain zero serialization code
-- Exploding equity/trade frames into per-bar SQL rows -- 20M-row bloat at large sweeps; one Parquet blob per run
-- Reusing Optuna's storage schema as our results warehouse -- float-only schema, couples us to Optuna migration schedule
-- Pure age/count eviction without a terminal-state gate -- can evict a still-open position
-- Second ID scheme (DB autoincrement PKs) -- violates single-UUIDv7 locked decision
-- Arrow/pyarrow on the per-tick hot path -- adds array<->scalar overhead every tick, risks Decimal drift against the oracle
+**Must have — Phase 5 (real/sandbox path):**
+- `OkxConnector` order arm: `create_order` (async REST) + `watch_orders` / `watch_fills`; single `sandbox: bool` routes both ccxt (`set_sandbox_mode`) and native (`x-simulated-trading` header)
+- `VenueAccount` impl: caches venue balance/margin/position streams, reconciles per-symbol drift (LX-04 1:1)
+- Partial-fill handling: accumulate by fill ID; terminalize only at full fill or venue-reported closed
+- Restart rehydration two-sided: store + broker reconcile (not store-only)
+- Write-through live-drive: create/terminalize sync-durable; append/metrics writes buffered only if profiled necessary
+- Halt-and-alert drift policy; auto-correct only within defined tolerance
+- `OkxSettings(BaseSettings)` with `SecretStr` for all three OKX credentials
+
+**Must have — Phase 6:**
+- Warmup-on-add (reuses Phase 3 `update(bar)` backfill path per-symbol)
+- Open-position-handling-on-remove (force-close vs orphan-and-track policy defined)
+- Lean universe membership poll seam only — not the production screener
+
+**Defer (explicitly out of scope — do not build):**
+- Tick-level local-paper fills (LX-13: bar-based only; sub-bar realism lives in OKX sandbox)
+- Bulk `warmup_from(series)` fast-path (LX-09: forbidden — opens parity audit)
+- Wall-clock bar-close inference (LX-08: always drive from `confirm`)
+- Perp realism Phase B (FUND-01..04): own future milestone
+- Full production screener: lean poll seam only
+- Multi-venue / multi-asset: connector interface *shaped* for a 2nd venue but only OKX implemented
+- Cross-margin pooling: deferred beyond N+2 Phase B
+- In-process engine inside FastAPI (LX-15: separate worker process)
+- Auto-correct-everything reconciliation: halt-and-alert is the safe default
 
 ### Architecture Approach
 
-The spine is SqlBackend (a new itrader/storage/ package), shared via composition -- not inheritance -- across four concrete Sql<Concern>Storage classes. The three existing domain ABCs (OrderStorage, PortfolioStateStorage, SignalStore) are unchanged; a fourth ResultsStore ABC is added for concern #1. Each SQL class composes SqlBackend (Engine + MetaData + DecimalAsText + JSON-variant + UUIDv7 type + Core SQL constructs) and implements its own Table definitions. SqlSettings (new, config/sql.py, 4-space) carries the driver/URL, write-through toggle, and retention knobs; factories read it and return the matching backend class. This is backend-selection at wiring -- the backtest backend contains no serialization code at all, making zero hot-path cost a structural guarantee, not a discipline.
+The integration spine is the `PortfolioReadModel` Protocol at the center: the order domain already reads through it, so re-homing balance/margin truth into an `Account` abstraction does not ripple into `OrderManager` or the validator. Phase 1 is pure code-motion behind an existing seam. The async->sync boundary is bottled entirely at the connector edge: the connector runs its own asyncio loop on its own daemon thread and only calls `global_queue.put(frozen_event)` — the existing D-19 single-writer contract is never crossed. All state mutation stays on the engine's dispatch thread.
 
-The live working-set cache (Q9/Q10) is a separate construct composing an in-memory working set + SqlBackend; it is only built on the live path. The existing InMemoryOrderStorage IS the correct backtest retain-all store; it does not change. The results/ package is its own top-level concern (write-once analytical store with no event-loop caller) separate from the handler storage/ packages.
+**Major new/modified components:**
+1. `Account` ABC + `portfolio_handler/account/` package — NEW; `SimulatedCashAccount` (CashManager code-motion), `SimulatedMarginAccount` (liq math from PortfolioHandler); `VenueAccount` interface-only in P1, implemented in P5
+2. `Portfolio` — MODIFIED: inject `self.account`; `cash` -> `account.balance`; `user_id` stripped
+3. `PortfolioHandler` — MODIFIED: margin/liq math moved out; `_run_liquidation_pass` emission stays (queue-only rule)
+4. `TradingInterface` — DELETED; replaced by typed engine command surface consuming from Postgres command channel
+5. `LiveConnector` Protocol — NEW: data arm (`watch_ohlcv` / `fetch_ohlcv`), order arm (`submit` / `cancel` / `watch_fills`), account arm (`fetch_balances` / `watch_balances` / `fetch_positions`)
+6. `OkxConnector` — NEW: ccxt.pro default + native OKX escape hatch behind the interface; single `sandbox: bool` routes both arms
+7. `LiveBarFeed(BarFeed)` — NEW: `price_handler/feed/live_bar_feed.py`; ring buffer; same ABC the engine already consumes
+8. `apply_costs` helper — NEW: extracted from `SimulatedExchange._emit_fill` (byte-exact); shared by both `SimulatedExchange` and `PaperConnector`; eliminates dual fill-pricing drift
+9. `PaperConnector(LiveConnector)` — NEW: `MatchingEngine` + `apply_costs` + `SimulatedAccount`; no OKX I/O; bar-based fills only
+10. `VenueAccount` impl — NEW (Phase 5): caches + reconciles connector balance/position/fill streams under LX-04
+11. Worker process + Postgres command/status channel — NEW (Phase 5): ships as (b) architected as (c) with N=1
 
-**Major components:**
-1. itrader/storage/ (NEW) -- backend.py (SqlBackend), types.py (DecimalAsText, UUIDv7 type, JSON-variant helper), migrations/ (Alembic chain, live Postgres only)
-2. config/sql.py (NEW, 4-space) -- SqlSettings(driver, url, write_through, retention knobs); consumes Settings.database_url: SecretStr (FL-06)
-3. Sql{Order,PortfolioState,Signal}Storage (NEW x3) -- one per concern, each composing SqlBackend, each beside its in-memory sibling in the domain's storage/ package
-4. itrader/results/ (NEW) -- base.py (ResultsStore ABC), sql_storage.py (runs + run_artifacts), frame_codec.py (pyarrow Parquet-bytes encode/decode with explicit decimal128 schema)
-5. Live working-set cache (NEW) -- working-set in-memory layer + write-through + purge-on-terminalize + read-through; only on the live factory arm
-6. price_handler/store/sql_store.py (REWORK) -- FL-06: creds from SecretStr, Core constructs replace f-string DDL, symbol-as-table-name eliminated
+**Runtime topology recommendation (LX-15):** Ship option (b) — separate worker — architected as (c) per-portfolio with N=1. Rationale: (a) in-process couples FastAPI + connector asyncio + engine sync thread in one OS process; (b)/(c) activates the v1.6 store-as-truth investment; LX-04's 1:1 constraint makes per-portfolio process isolation natural from day one. Decide before Phase 4 wiring. Default IPC: Postgres LISTEN/NOTIFY (zero new dep, reuses v1.6).
 
 ### Critical Pitfalls
 
-1. **Decimal money silently round-tripped through float on SQLite/libSQL (Numeric column)** -- the #1 landmine; Numeric(asdecimal=True) on SQLite/libSQL emits SAWarning (= hard test failure under filterwarnings=["error"]) and coerces money through a float. Prevention: DecimalAsText TypeDecorator in storage/types.py, applied uniformly. Address in Stage 1 before any downstream SQL class exists.
+1. **Forming-bar acted on (confirm-flag gap in ccxt)** — ccxt's `watchOHLCV` does not surface OKX's `confirm` field (ccxt #21885); paper-parity fails immediately and silently. Prevention: `OkxConnector` reads native OKX candle `confirm` field via escape hatch; `LiveBarFeed` emits `BarEvent` only on `confirm == 1`. Plumbed in Phase 2; enforced in Phase 3.
 
-2. **pyarrow infers decimal128 precision/scale -> non-deterministic blob bytes** -- two runs with the same frame values can produce different blob bytes if pyarrow infers different precision/scale. Prevention: explicit pa.schema(...) with decimal128(p,s) matching core/money.py instrument scales in frame_codec.py. Verify: encode same frame twice -> identical bytes.
+2. **ccxt returns floats — Decimal boundary violation** — every ccxt price/amount/fee/balance is a float; `Decimal(some_ccxt_float)` is binary-float poison. Prevention: all ccxt->Decimal conversion at connector edge through `to_money(x)` = `Decimal(str(x))` (D-04); string precision helpers for outbound quantities. Applies Phase 2 + Phase 5.
 
-3. **A serialize/write call lands on the per-tick hot path** -- a write_through flag checked inside add_order/update_order (even when False) puts serialization code on the byte-exact backtest loop, risking W1/W2 regression. Prevention: backend-selection at wiring (two classes, not one flagged class); the backtest backend must import no SQLAlchemy/serialization symbol. Verify: oracle byte-exact + W1/W2 within v1.5 +-5% gate.
+3. **Wall-clock leaking into business `time`** — existing `LiveTradingSystem` already has multiple `datetime.now(UTC)` usages; the pattern is contagious. Prevention: connector stamps domain events from venue bar-open timestamps; audit every `datetime.now` on the live path before merge. Business time never equals wall clock.
 
-4. **Cross-backend divergence (SQLite-only tests)** -- code that uses JSON-path filtering (settings->>'x'), bare JSONB DDL, or raw f-string SQL passes on SQLite and breaks on Postgres (or vice versa). Prevention: SQLAlchemy Core constructs + portable types + scalar-promoted filter params; run the persistence suite against both backends.
+4. **Backfill divergence from a fast-path (LX-09 violation)** — a bulk `warmup_from(series)` alongside `update()` is a second state-building path; stateful indicators have no rewind. Prevention: LX-09 is absolute — one-by-one `update(bar)` only; never add `warmup_from`/`seed`/`prime` to any indicator or feed API.
 
-5. **libSQL beta-driver gotchas** -- sqlalchemy-libsql 0.2.0 is Beta, stale (2025-05-30), pins a sub-0.1 Rust binding, Linux+macOS only. Making it a hard core dep breaks CI on Windows and locks the project to a stale driver. Prevention: optional Poetry extra; SQLite is the proven default; the escape path is reverting one engine URL with zero code change.
-
-6. **Live retention bugs (evict-then-need, unbounded growth, over-loaded rehydration, bracket-parent eviction)** -- four ways the two-knob model is mis-implemented. Prevention: purge-on-terminalize (primary) + age/count sweep (safety net) + bracket-parent safety invariant; read-through fallback; rehydrate open working set only (not full terminal history). Verify: evict-then-read-through test; flat-RSS long-run test; open-only rehydration test.
-
-7. **Write-through durability ordering** -- cache mutated and event emitted before the write commits; restart rehydrates stale state. Prevention: synchronous write-through inside a transaction for create/terminalize -- store commits before the engine acknowledges the state change. Defer async batching to append-only writes only if profiling justifies it.
+5. **Phase 5 reconciliation cluster — broker-side restart gap** — v1.6 restart rehydration was store-only; a live restart on store-only resurrects positions the venue closed. Prevention: two-sided restart: store rehydration + live venue fetch + idempotent downtime fill replay + bracket parent/child re-establishment from venue truth.
 
 ---
 
 ## Implications for Roadmap
 
-The ARCHITECTURE build-order constraint is absolute: the spine before any backend; the results store validates the spine before any live path touches it; the retention model is specified before live write-through is wired. The five-phase structure below is the direct read-out of that ordering constraint cross-referenced with the PITFALLS prevention-stage mapping.
+### Phase 1: Account Abstraction Extraction (Oracle-Gated Refactor)
 
-### Phase 1: SQL Spine + FL-06
+**Rationale:** The universal prerequisite. Every live component depends on `Account` being the stable truth surface. Behavior-preserving code-motion behind the existing `PortfolioReadModel` seam — does not ripple into the order domain. Must be oracle-confirmed byte-exact before any live code merges.
 
-**Rationale:** The hard dependency root. Nothing else compiles without the DecimalAsText TypeDecorator, UUIDv7 column type, JSON-variant helper, SqlBackend, and SqlSettings. FL-06 reworks the only existing SQL file (SqlHandler) onto the spine -- it costs almost nothing to bundle here and eliminates an injection vector before any new SQL code lands. Alembic skeleton also goes here (scoped to live Postgres only; render_as_batch=True; results DB is create_all()).
+**Delivers:** `Account` ABC + `SimulatedCashAccount` (CashManager code-motion) + `SimulatedMarginAccount` (liq math from PortfolioHandler); `Portfolio` receives `self.account`; `PortfolioHandler` emission path untouched; `Portfolio.user_id` stripped; `TradingInterface` deleted; `LiveConnector` Protocol defined (interface-only); oracle byte-exact confirmed (`134 / 46189.87730727451`).
 
-**Delivers:**
-- itrader/storage/types.py -- DecimalAsText TypeDecorator (the money-fidelity primitive), UUIDv7 column type (TEXT canonical, uniform across dialects), JSON().with_variant(JSONB,'postgresql') helper
-- itrader/storage/backend.py -- SqlBackend (Engine + MetaData + Core SQL; no business logic)
-- itrader/config/sql.py -- SqlSettings (driver enum, URL builder, write_through bool, retention knobs; consumes Settings.database_url: SecretStr)
-- itrader/storage/migrations/ -- Alembic env.py skeleton with render_as_batch=True; empty versions/
-- price_handler/store/sql_store.py -- FL-06 rework: creds from database_url.get_secret_value(), parameterized Core constructs replacing f-string DDL, symbol-as-column pattern
+**Key constraint:** `_process_transaction_spot` is byte-exact site #2 — operand-for-operand identical Decimal ops, in order; `apply_fill_cash_flow` full-precision no-quantize contract preserved. Gate: oracle numbers + determinism double-run + `mypy --strict`.
 
-**Features addressed:** Swappable SQL interface (spine), FL-06 hardening, migration story skeleton
-**Pitfalls prevented:** 1 (DecimalAsText), 4 (portable types), 5 (libSQL as optional extra), 6 (Alembic batch mode), 9 (filterwarnings gate), 10 (UUIDv7/JSON determinism), 11 (UUIDv7 uniform type), 13 (FL-06 injection/creds)
+**Avoids:** Liquidation math left in PortfolioHandler (A6); user_id on Account (A5); downstream parity failures from mis-homed truth.
 
-**Verification:** Decimal round-trip test on SQLite asserts isinstance(value, Decimal) and exact value under filterwarnings=["error"], no SAWarning; libSQL optional extra in pyproject.toml; no hardcoded user:pass@ in any source file.
-
-**Research flag:** STANDARD patterns (SQLAlchemy Core TypeDecorator, Alembic batch mode, UUIDv7-as-TEXT). Plan-time research is optional; this phase is primarily implementation of well-documented primitives.
+**Research flag:** Skip — v1.2 MOD-01 OrderManager-decomposition playbook; well-established pattern.
 
 ---
 
-### Phase 2: Results Store (#1)
+### Phase 2: OKX Connector (Data Arm + Order Arm)
 
-**Rationale:** The simplest consumer of the spine; validates it end-to-end on an ephemeral SQLite DB before any live path touches it (oracle-dark -- no hot-loop risk). The results store is write-once-read-later, has no retention model complexity, and exercises DecimalAsText + the Parquet-blob format + Q3 scalar-promotion in isolation. A cross-backend parity test here proves the spine is actually portable before the three operational backends depend on it.
+**Rationale:** The connector supplies the closed-bar stream Phase 3 consumes and the order arm Phase 5 exercises. The data arm's native `confirm` flag read is the enabling prerequisite for the whole feed. Must precede Phase 3.
 
-**Delivers:**
-- itrader/results/base.py -- ResultsStore ABC (add_run, add_artifact, query methods)
-- itrader/results/frame_codec.py -- pyarrow Parquet-bytes encode/decode with EXPLICIT decimal128(p,s) schema matched to core/money.py instrument scales; never inferred
-- itrader/results/sql_storage.py -- SqlResultsStore: runs table (run_id UUIDv7, strategy, scalar-promoted indexed params, summary metrics, settings JSON archival column, Optuna FK columns study_id/trial_id/objective_value, kind discriminator) + run_artifacts table (run_id FK, Parquet-bytes BLOB)
-- End-of-run batch dump wired in backtest_trading_system.py (post-loop, single transaction, optional, alongside the existing run-end EXPIRE sweep)
+**Delivers:** `OkxConnector(LiveConnector)` with ccxt.pro `watch_ohlcv` + native OKX `confirm` field; REST `fetch_ohlcv`; async REST `create_order` + `watch_orders`/`watch_fills` (order arm for Phase 5); single `sandbox: bool` routes both ccxt and native paths; `load_markets` lot/tick/contract-size validation; idempotent client order IDs via `idgen` UUIDv7; rate-limit coordination; `SecretStr` secret loading.
 
-**Features addressed:** Results store (every run persisted), Optuna-FK-ready schema, frame-blob format, scalar-promoted filter params (Q3)
-**Stack used:** pyarrow 24.0.0 (first use), alembic create_all() for ephemeral DB
-**Pitfalls prevented:** 2 (explicit pyarrow schema), 10 (no datetime.now in storage; sort_keys; explicit schema = deterministic bytes)
+**Architecture:** connector owns its asyncio loop on a daemon thread; only calls `global_queue.put(...)` on the engine side (D-19 preserved). `pytest-asyncio` unit tests use mocked transports.
 
-**Verification:** Encode the same frame twice -> identical bytes; decode -> identical Decimal objects; a runs row filtered by promoted scalar column returns identically on SQLite AND Postgres (cross-backend parity test); results DB has no alembic_version table.
+**Avoids:** Pitfalls 1 (forming bar), 6 (ccxt float), 7 (OKX rounding), 8 (async races), 9 (blocking loop), 15 (split-brain), 16 (secrets leakage), 18 (strict-suite warnings).
 
-**Research flag:** STANDARD -- pyarrow Parquet-bytes with explicit schema is well-documented. Cross-backend parity test setup is the only novel element; plan-time research not needed.
+**Research flag:** NEEDS PLAN-TIME RESEARCH — OKX `confirm` exact behavior + ccxt.pro gap list; `set_sandbox_mode` WS header verification; demo key requirements.
 
 ---
 
-### Phase 3: Operational SQL Backends (#2 -- store layer)
+### Phase 3: LiveBarFeed (Real-Time Data Engine)
 
-**Rationale:** The spine and results store are now proven. Each of the three existing seams gets one SQL implementation on the shared spine. The v1.5 secondary indexes (_active_by_portfolio, _by_status, _last_indexed_status) translate directly to SQL WHERE + indexes -- the OrderStorage ABC docstring already audited this. The no-serialization-in-backtest-backend rule is enforced structurally here: each new SQL class lives in the factory's 'live'/'sql' arm only; the backtest arm continues to return the existing in-memory class unchanged.
+**Rationale:** Most unique live complexity concentrates here. Monotonic-forward-only delivery with reconnect gap-fill has no backtest equivalent. Must follow Phase 2.
 
-**Delivers:**
-- order_handler/storage/sql_storage.py -- SqlOrderStorage implementing OrderStorage; fills the PostgreSQLOrderStorage NotImplementedError stub; v1.5 index queries become WHERE status IN (...) + WHERE portfolio_id=?
-- portfolio_handler/storage/sql_storage.py -- SqlPortfolioStateStorage implementing PortfolioStateStorage; ~20 methods; every money column is DecimalAsText (reservations, locked margin, cash operations, metrics)
-- strategy_handler/storage/sql_storage.py -- SqlSignalStorage implementing SignalStore; append-heavy; DecimalAsText for stop/take/qty/entry; JSON-variant for the config dict
-- Factory extensions: OrderStorageFactory, PortfolioStateStorageFactory, SignalStorageFactory each gain a 'live'/'sql' arm returning the SQL class; 'backtest' arm unchanged
+**Delivers:** `LiveBarFeed(BarFeed)` ring buffer (`deque(maxlen=cap)` per symbol/tf, same capacity derivation as backtest); bar-close detection on `confirm == 1`; warmup/backfill through `update(bar)` one-by-one (LX-09); monotonic-forward-only enforcement; `TimeEvent` synthesized on each closed bar (recommended — preserves TIME-before-BAR route ordering); event-driven time source replaces `TimeGenerator` on the live path.
 
-**Features addressed:** Three live operational SQL backends, zero hot-path cost (backtest backend unchanged, no serialization code path)
-**Pitfalls prevented:** 3 (no serialize in backtest backend), 12 (tab/space indentation -- handler storage files match their tab-indented in-memory siblings)
+**Key seam decision at plan time:** emit paired `TimeEvent` on bar close (recommended) vs. move metric recording to BAR route.
 
-**Verification:** Oracle byte-exact (134 / 46189.87730727451); W1/W2 within v1.5 +-5% gate against the frozen 15.7 s / 152.8 MB baseline; static check that in_memory_storage.py imports no SQLAlchemy symbol; cross-backend suite green on SQLite + Postgres.
+**Avoids:** Pitfalls 1 (forming bar), 4 (backfill fast-path), 5 (backward indicator feed).
 
-**Research flag:** MODERATE -- the portfolio-state schema has the largest surface area (~20 methods, four manager domains, all Decimal). A plan-time schema design step for the portfolio_handler tables is warranted. Order and signal backends follow established patterns.
+**Research flag:** NEEDS PLAN-TIME RESEARCH — ring-buffer capacity with multiple timeframes/consumers; reconnect debounce strategy; after-the-fact venue bar correction policy (re-warm vs forward-only-and-log).
 
 ---
 
-### Phase 4: Retention Model + Live Write-Through (#2 -- live path)
+### Phase 4: Paper Path + Parity Gate (The DoD)
 
-**Rationale:** The retention model MUST be fully specified before write-through is wired -- you cannot design purge-on-terminalize, read-through, or restart rehydration until "what stays vs evicts" is locked. This phase is the most architecturally novel work of the milestone and the one with the most unvalidated surface (the live path is not running in production yet). Scope write-through wiring and rehydration here; venue reconciliation (cache <-> broker) remains N+4.
+**Rationale:** The milestone DoD. Requires Phase 1 + Phase 3 + connector data arm only — no order arm, no OKX credentials. The paper path is reachable without any live order I/O.
 
-**Delivers:**
-- Two-knob retention model fully specified and wired: write-through x retention independently controlled; backtest stays in-memory retain-all (cost provably zero); live uses working-set cache + write-through + purge-on-terminalize
-- Live working-set cache composing in-memory working set + SqlBackend: add_order() -> cache + write-through INSERT; terminalize() -> store upsert + cache evict (purge-on-terminalize); query miss -> read-through SELECT
-- Bracket-parent safety invariant: never evict a bracket parent while any child order is non-terminal
-- Age/count sweep safety net (periodic interval catching missed terminalize events)
-- Read-through fallback for cold/terminal records (off hot path)
-- Restart rehydration: get_active_orders() + get_positions(WHERE closed_at IS NULL) -> rebuild working orders, open positions, account snapshot, running accumulators from last persisted snapshot row
+**Delivers:** `PaperConnector(LiveConnector)` composing `MatchingEngine` + shared `apply_costs` helper (byte-exact extraction) + `SimulatedAccount`; bar-based fills only (LX-13); `FillEvent.time = T + tf_base` (next-bar-open via reused `MatchingEngine`); determinism seams throughout (seeded RNG + business-time stamping); paper-parity gate: `134 / 46189.87730727451`, `check_exact=True`.
 
-**Features addressed:** Two-knob mode-awareness, purge-on-terminalize, read-through, restart rehydration, bracket-aware purge safety
-**Pitfalls prevented:** 7 (live retention bugs), 8 (write-through durability ordering)
+**Pre-wiring requirement:** LX-15 topology decision must be committed before Phase 4 wires the live runtime.
 
-**Scope note:** Synchronous write-through is the starting implementation. Async batching for append-heavy writes is deferred to N+4 unless profiling against the live loop reveals a measured stall (keep-only-measured discipline). The live path is wired and integration-tested here but not exercised in production until N+4.
+**Avoids:** Pitfalls 2 (next-bar-open off-by-one), 3 (wall-clock in business time), A3 (dual fill pricing from two separate cost implementations).
 
-**Verification:** Evict-then-read-through test (purge a terminal order, assert it reads through from the store); flat-RSS long-run test (RSS stable as terminal count grows); open-only rehydration test (restart loads only open working set, not terminal history); bracket-parent-resident test; crash-after-emit / restart test (rehydrated working set equals pre-crash state).
-
-**Research flag:** NEEDS DEEPER RESEARCH at plan time. The live retention design has non-trivial complexity: bracket-parent safety + read-through + crash-safe write ordering + rehydration scope are all novel for this codebase. A plan-time research phase (/gsd:plan-phase --research-phase) is recommended to nail down the specific transaction boundary design and the rehydration query surface before implementation starts.
+**Research flag:** NEEDS PLAN-TIME RESEARCH — parity harness design (offline replay of fixed dataset recommended); LX-15 topology decision + Postgres LISTEN/NOTIFY vs Redis; determinism seam threading in live runtime.
 
 ---
 
-### Phase 5: Cache Classification (#3)
+### Phase 5: Real/Sandbox Path + Reconciliation + Persistence Live-Drive
 
-**Rationale:** Largely independent of the SQL stores and can run in parallel with Phases 2-3. It converges with the storage work only where concern #3(b) -- order/position state lookups -- turns out to be already solved by the v1.5 secondary indexes (those route to the SQL storage interface, not a new Python cache). The Q8 cache inventory (14 sites, all classified in ARCHITECTURE.md) establishes that there is essentially no cache-consolidation code to write -- the deliverable is the classification + the routing, not a rewrite.
+**Rationale:** The reconciliation cluster — heaviest phase by unique live complexity. Five concerns converge: VenueAccount, partial fills, broker-side restart, write-through ordering, fee ingest. Warrants its own plan-time research sprint.
 
-**Delivers:**
-- Authoritative cache classification map (14 sites inventoried; each tagged (a) hot-path data cache, (b) already solved by v1.5 storage indexes, or (c) correct pure-function memoization)
-- Routing decisions documented: class (a) and (c) explicitly LEFT ALONE; class (b) routes to the SQL storage interface's WHERE clauses/indexes in Phase 3 -- no new Python cache
-- "Do NOT unify into one Arrow-backed object" decision recorded and cross-referenced to FEATURES anti-features
-- Optional cleanup: remove two vestigial config knobs (PerformanceSettings.enable_caching/cache_size_mb) that have no consumer
-- One genuinely new cache documented: the live working-set cache (Q9/Q10) -- a separate construct built in Phase 4, not a unification of the above
+**Delivers:** `OkxConnector` order arm vs OKX demo; `VenueAccount` implementation (per-symbol drift under LX-04 1:1); partial-fill handling (fill-ID dedup, `accFillSz` accumulation, terminalize on venue-closed); two-sided restart reconciliation; halt-and-alert drift policy; v1.6 SQL store driven by real feed (create/terminalize sync-durable; writes buffered only if profiled stalling); venue fee ingest via `to_money`; `OkxSettings` with three `SecretStr` credentials.
 
-**Features addressed:** Cache classification deliverable, preserving v1.5 perf wins (no Arrow on the hot path)
-**Pitfalls prevented:** Confirms no Arrow/serialize call on the per-tick path (closes Pitfall 3 as a structural fact)
+**Avoids:** Pitfalls 6 (ccxt float in VenueAccount), 10 (engine as source of truth), 11 (partial/duplicate fills), 12 (fee drift), 13 (broker-side restart gap), 14 (write ordering / loop stall).
 
-**Verification:** Written classification map committed (the primary deliverable); grepping itrader/ for lru_cache/functools.cache/ad-hoc _cache fields matches the inventory exactly; ARCHITECTURE Q7/Q8 resolutions referenced.
+**Research flag:** NEEDS PLAN-TIME RESEARCH — reconciliation drift/repair policy (tolerance thresholds, halt triggers, auto-correct scope); write-through transaction boundary design; OKX partial-fill field cadence; bracket restart from venue truth.
 
-**Research flag:** STANDARD -- the Q8 classification is already complete in ARCHITECTURE.md. Plan-time research is not needed; this phase is recording + routing decisions.
+---
+
+### Phase 6: Dynamic Universe (Lean Poll Seam)
+
+**Rationale:** Pairs with Phase 3 — warmup-on-add reuses the Phase 3 `update(bar)` backfill path. Cheap only if Phase 3 built the seam generically (per-symbol, not start-only).
+
+**Delivers:** Lean universe membership poll seam; warmup-on-add via `update(bar)` (reuses Phase 3 path); open-position-handling-on-remove policy defined. Does NOT deliver full screener, multi-venue, cross-margin, or perp funding.
+
+**Avoids:** Pitfall 17 (over-building screener/screener chains).
+
+**Research flag:** Skip — reuses Phase 3 backfill seam; standard patterns if Phase 3 is built generically.
 
 ---
 
 ### Phase Ordering Rationale
 
-The ordering is dictated by three hard constraints from the research:
+- **Phase 1 is the hard gate** — oracle-gated; no live code may be written against Account until backtest re-confirmed byte-exact. Non-negotiable.
+- **Phase 2 before Phase 3** — `LiveBarFeed` consumes the connector's data arm + native `confirm` field. Cannot build the feed without the connector.
+- **Phase 4 DoD reachable at Phase 3 + data arm only** — critical sequencing insight: paper-parity requires no order arm, no OKX sandbox access, no live credentials. Fastest path to the milestone gate.
+- **Phase 5 after Phase 4** — order arm + VenueAccount + reconciliation require the paper path proven before real money is risked, even on sandbox.
+- **Phase 6 last** — pairs with Phase 3's backfill seam; no new hard dependencies beyond the live path being live.
+- **LX-15 topology decided before Phase 4 wiring** — worker process structure is cross-cutting; wiring Phase 4 without a topology decision creates rework.
 
-1. Spine before every backend (absolute). DecimalAsText, UUIDv7 type, and SqlBackend must exist before any SQL class can be written. The filterwarnings=["error"] gate turns the absence of DecimalAsText into an immediate test failure the moment any SQLite path runs.
+---
 
-2. Results store validates the spine before live paths touch it. The results store is oracle-dark (no per-tick code) and exercises the spine on an ephemeral SQLite DB. It is the lowest-risk integration test for the spine before the three operational backends depend on it.
+### Watch Out For
 
-3. Retention model designed before write-through is wired. The two-knob model (what stays vs evicts; purge-on-terminalize; read-through; rehydration scope) must be fully specified as a design before any write-through code is written. Writing live write-through against an unspecified retention model produces Pitfall 7.
+These are the failure modes all four researchers independently flagged:
 
-The cache classification (Phase 5) is independent and can shift earlier (alongside Phase 2 or 3) if it helps resolve open questions. The ordering above is conservative because the Q8 inventory is already complete.
+1. **Forming-bar / confirm-flag paper-parity risk** — the single most likely source of parity failure; the native escape hatch is mandatory. Plan-time: produce the OKX ccxt-vs-native gap list before Phase 2 design is locked.
 
-### Recurring Verifications (apply at every phase gate)
+2. **ccxt returns floats everywhere** — no `to_money` call exists yet in any ccxt order/balance/fee path (existing providers only convert OHLCV rows). Every new connector method handling prices/amounts/fees/balances must route through `to_money`. The failure mode is invisible until reconciliation drift accumulates.
 
-**(a) Backtest oracle + perf:** Oracle byte-exact (134 / 46189.87730727451); W1 / W2 within v1.5 +-5% gate vs frozen 15.7 s / 152.8 MB baseline.
-**(b) Cross-backend parity:** Persistence test suite runs green on sqlite+pysqlite:// AND postgresql+psycopg2://.
-**(c) DB-specific domain tests:** money round-trip (Decimal type + exact value under filterwarnings=["error"]); determinism double-run byte-identical including persisted artifacts; no datetime.now/time.time in storage modules.
+3. **Wall-clock in business time is contagious** — the existing `LiveTradingSystem` has multiple `datetime.now(UTC)` usages. Audit every new `datetime.now` before merge; especially likely in error-handling paths.
 
-### Research Flags Summary
+4. **Phase 5 reconciliation policy is the most under-specified area** — do not start Phase 5 without decisions on: (a) auto-correct tolerance thresholds, (b) halt-and-alert trigger conditions, (c) bracket parent/child restart re-establishment, (d) write-through transaction boundary. Build a research sprint into Phase 5 planning.
 
-Needs deeper plan-time research:
-- Phase 4 (Retention Model + Live Write-Through): novel for this codebase; bracket-parent safety + crash-safe write ordering + rehydration query scope need design-before-implementation. Recommend /gsd:plan-phase --research-phase.
+5. **`filterwarnings=["error"]` + async tests** — any unclosed ccxt.pro session/transport or unset `asyncio_default_fixture_loop_scope` fails the entire suite. Use mocked/recorded connectors for unit tests. Never relax the global filter.
 
-Standard patterns (plan-time research optional):
-- Phase 1 (SQL Spine): SQLAlchemy Core TypeDecorator + Alembic batch mode are well-documented; implementation is mostly mechanical.
-- Phase 2 (Results Store): pyarrow Parquet-bytes with explicit schema is documented; cross-backend parity test setup is the only novel element.
-- Phase 3 (Operational Backends): the v1.5 index queries map directly to SQL WHERE clauses; the schema surface is the main design task for portfolio-state.
-- Phase 5 (Cache Classification): Q8 classification is already done; this is a documentation + routing-decision phase.
+6. **Scope creep is the second most likely derailer** — the connector interface invites generalization; sub-bar fills feel "more real"; screener seam looks half-built. The trimmed-N+4 posture is explicit: paper-parity DoD at Phase 4, one venue, bar-based only, lean screener. Every "while I'm here" must be deferred with a note, not absorbed.
+
+---
+
+### Research Flags
+
+**Needs plan-time research sprint:**
+- **Phase 2:** OKX `confirm` flag exact behavior + ccxt.pro gap list; `set_sandbox_mode` WS header; demo key requirements
+- **Phase 4:** Parity harness design (offline replay recommended); LX-15 topology decision; determinism seam in live runtime
+- **Phase 5:** Reconciliation drift/repair policy; write-through transaction boundary; OKX partial-fill field cadence; bracket restart from venue truth
+
+**Standard patterns (skip dedicated research phase):**
+- **Phase 1:** v1.2 MOD-01 playbook; `PortfolioReadModel` seam already in place; code-motion only
+- **Phase 3:** `BarFeed` ABC seam exists; ring buffer is bounded deque; monotonic enforcement mirrors BacktestBarFeed cursor discipline
+- **Phase 6:** Reuses Phase 3 backfill-through-update; lean membership seam is well-scoped
 
 ---
 
@@ -245,51 +245,53 @@ Standard patterns (plan-time research optional):
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Versions verified via PyPI JSON API; SQLAlchemy/SQLite/Postgres mechanics from official docs; Decimal correction from SQLAlchemy source + SQLite type-affinity spec; pyarrow decimal128 from official Arrow Python docs. The only shaky point is the libSQL beta driver -- but its risk is fully mitigated by the optional-extra design. |
-| Features | HIGH | Reference-framework survey against current docs (NautilusTrader, LEAN, Optuna) with source links. Feature landscape grounded in the converged seed + Q6/Q10 resolutions. Anti-features are explicit and justified. |
-| Architecture | HIGH | Grounded in code: the three existing ABCs and factory pattern read from the actual tree; the v1.5 secondary indexes read from in_memory_storage.py; the Q8 cache inventory grepped and classified against real source paths. MEDIUM-HIGH on the live write-through design (live path is unbuilt -- design is sound but unvalidated against a running live loop). |
-| Pitfalls | HIGH | Critical pitfalls 1 and 3 are grounded in code (FL-06 creds/injection paths verified at sql_store.py L17/L35/L56/L69; filterwarnings=["error"] verified in pyproject.toml). Pitfall 2 grounded in pyarrow precision-inference behavior in official Arrow docs. Moderate pitfalls 7/8 are Nautilus-precedented but unvalidated against live execution. |
+| Stack | HIGH | ccxt.pro packaging verified (in-package, free, merged v1.95); asyncio bridge pattern (stdlib, dependency-free, canonical); `pytest-asyncio` filterwarnings interaction documented. MEDIUM: `python-okx`/`janus` as candidates — flagged, not selected |
+| Features | HIGH | All 26 behaviors grounded in locked design LX-01..LX-15 + existing engine code. LOW flag: OKX partial-fill field cadence (consistent across docs, not freshly re-verified live) |
+| Architecture | HIGH | Account layering read from source (`portfolio.py`, `portfolio_handler.py`, `cash/cash_manager.py`, `core/portfolio_read_model.py`); `TradingInterface` deletion grep-confirmed no production consumers; BarFeed ABC seam; MatchingEngine purity. MEDIUM: OKX confirm-flag exposure in ccxt.pro (web-sourced; verify at Phase 2 plan time) |
+| Pitfalls | HIGH (engine-internal) / MEDIUM-HIGH (OKX/ccxt) | Engine-internal pitfalls read directly from source. OKX/ccxt pitfalls verified against ccxt issues + OKX v5 docs; exact behavior confirmed at plan time |
 
-**Overall confidence: HIGH**
+**Overall confidence:** HIGH on Phase 1 (pure internal refactor); HIGH on Phases 2-4 except confirm-flag gap-list detail (MEDIUM); MEDIUM-HIGH on Phase 5 (reconciliation policy and write-through boundary are the under-specified areas).
 
 ### Gaps to Address
 
-- Backend default decision (owner-required): The "Turso (research/optimization default)" language in PROJECT.md conflicts with the STACK research recommendation (SQLite as proven default, libSQL as opt-in extra). The owner must decide at requirements time before SqlSettings.driver default is specified.
+The following five open questions were flagged independently by all four researchers (sketch §8 convergent open items):
 
-- Portfolio-state schema design (plan time): The PortfolioStateStorage ABC has ~20 methods covering cash/position/transaction/metrics -- all Decimal. The exact table shape (which snapshot rows to persist, which columns to index, what the snapshot cadence is) needs a plan-time design step in Phase 3.
+1. **OKX `confirm` flag reliability + native-vs-ccxt gap list** — determine the full list of OKX behaviors ccxt.pro does not surface; validate `set_sandbox_mode(True)` applies `x-simulated-trading` on both REST and WS. How to handle: Phase 2 plan-time research; block Phase 2 design until resolved.
 
-- Live write-through transaction boundary (plan time): Which operations are create/terminalize (synchronous, must commit before the engine acknowledges) vs append-heavy (could be batched)? This is the core Phase 4 design question that warrants a plan-time research step.
+2. **Reconciliation drift/repair policy** — specific tolerance thresholds, halt-and-alert triggers, auto-correct scope, bracket parent/child re-establishment on restart. How to handle: Phase 5 plan-time research sprint; do not start Phase 5 coding until decided and documented.
 
-- Working-set cache threading model (plan time): The live system runs on a single daemon thread (LiveTradingSystem). The synchronous write-through assumption must be confirmed against the actual threading model -- specifically, whether any storage call can be triggered from a second thread (e.g., TradingInterface injecting orders from the API thread).
+3. **Parity harness design** — offline replay of a fixed dataset (recommended: CI-runnable, deterministic) vs. record-a-live-session-then-replay (non-deterministic, network-bound). How to handle: decide in Phase 4 planning; offline replay strongly recommended, aligns with byte-exact oracle discipline.
 
-- libSQL embedded-replica consistency semantics (if opted in): Embedded-replica mode has only beta Python support and different consistency semantics (a write may not be visible immediately after commit). If the owner elects libSQL as the results-store default, this needs validation before Phase 2 uses it as the primary test backend.
+4. **Write-through transaction boundary** — which operations are sync-durable before the irreversible venue action (create, terminalize), which can be buffered (append, metrics), and when buffering is profile-gated vs. always-on. This is the v1.6 carried flag. How to handle: Phase 5 plan-time; default sync for create/terminalize, measure before buffering anything else.
+
+5. **LX-15 topology decision before Phase 4 wiring** — option (b) separate worker architected as (c) with N=1 is recommended; Postgres LISTEN/NOTIFY default (zero new dep). How to handle: decide in Phase 3/4 planning handoff; default to Postgres LISTEN/NOTIFY and revisit only if a concrete latency/durability gap is proven.
 
 ---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- PyPI JSON API -- verified current versions for SQLAlchemy 2.0.51, pyarrow 24.0.0, alembic 1.18.5, optuna 4.9.0, sqlalchemy-libsql 0.2.0 (Beta, 2025-05-30), libsql-experimental 0.0.55 (sub-0.1), libsql 0.1.11
-- https://docs.turso.tech/sdk/python/orm/sqlalchemy -- sqlite+libsql:// scheme, embedded-replica/remote modes
-- https://docs.sqlalchemy.org/en/20/core/type_basics.html -- SQLite has no lossless DECIMAL; TypeDecorator (TEXT/scaled-int) workaround
-- https://arrow.apache.org/docs/python/generated/pyarrow.decimal128.html -- pyarrow decimal128 round-trip; explicit schema required for deterministic precision/scale
-- https://nautilustrader.io/docs/latest/concepts/cache/ + /concepts/live/ + /api_reference/config/ -- NautilusTrader Cache: purge APIs, bracket-parent safety, restart rehydration, purge scheduling params
-- https://optuna.readthedocs.io/en/stable/reference/generated/optuna.storages.RDBStorage.html + github.com/optuna/optuna/blob/master/optuna/storages/_rdb/models.py -- Optuna RDB schema (float-only), ask-and-tell interface
-- https://www.quantconnect.com/docs/v2/writing-algorithms/object-store -- LEAN ObjectStore (key-value blob persistence)
-- itrader/price_handler/store/sql_store.py (read) -- FL-06 targets confirmed at L17/L35/L56/L58/L69
-- itrader/config/settings.py -- database_url: SecretStr already present (M2-06)
+- `docs/superpowers/specs/2026-06-30-live-trading-milestone-design.md` (LX-01..LX-15) — locked design, phase structure, parity spine
+- `itrader/portfolio_handler/portfolio.py`, `portfolio_handler.py`, `cash/cash_manager.py` — Account layering source analysis
+- `itrader/core/portfolio_read_model.py` — seam confirmation
+- `itrader/price_handler/feed/bar_feed.py` — 7-rule bar-timing contract; BacktestBarFeed cursor discipline; BarFeed ABC
+- `itrader/execution_handler/matching_engine.py`, `exchanges/simulated.py` — MatchingEngine purity; `_emit_fill` cost helper extraction site
+- `itrader/trading_system/live_trading_system.py`, `trading_interface.py` — `TradingInterface` no-consumer grep; existing `datetime.now` wall-clock usages
+- `itrader/core/money.py` — D-04 `to_money(x)` = `Decimal(str(x))`
+- https://docs.ccxt.com/docs/pro-manual — ccxt.pro `watch_*` surface, `createOrderWs`, import structure
+- https://pypi.org/project/ccxt/ — ccxt 4.5.62; in-package ccxt.pro (free, merged v1.95, issue #15171)
+- https://www.okx.com/docs-v5/en/ — OKX v5 WS candle `confirm` field; `x-simulated-trading` header; passphrase requirement
+- https://pypi.org/project/pytest-asyncio/ — `asyncio_default_fixture_loop_scope` config; `event_loop` fixture deprecation
 
-### Secondary (MEDIUM-HIGH confidence)
-- https://github.com/tursodatabase/sqlalchemy-libsql -- Beta status, Linux/macOS-only, pins libsql-experimental
-- https://github.com/tursodatabase/libsql -- libSQL = backwards-compatible SQLite fork, same type system, no native DECIMAL
-- https://github.com/tursodatabase/turso -- Turso DB Rust rewrite (formerly Limbo, v0.6.x, NOT production-ready)
-- https://github.com/nautechsystems/nautilus_trader/issues/3176 -- real-world restart/duplicate-order reconciliation behavior
-
-### Tertiary (project, AUTHORITATIVE for this codebase)
-- .planning/notes/persistence-milestone-design.md -- converged design seed (the FALSE "Turso native DECIMAL" claim identified and corrected here)
-- .planning/research/questions.md -- Q1-Q10 open questions, all resolved in the four research files
-- CLAUDE.md -- filterwarnings=["error"] strictness gate, Decimal-end-to-end + determinism + single-UUIDv7 locked decisions, tab/space indentation hazard, v1.5 frozen baseline 15.7 s / 152.8 MB, oracle 134 / 46189.87730727451
+### Secondary (MEDIUM confidence)
+- https://github.com/ccxt/ccxt/issues/21885 — ccxt `watchOHLCV` does not surface `closed`/`confirm` flag; native escape hatch required
+- https://github.com/ccxt/ccxt/issues/17710 — OKX amount precision / contract-size multiple rejection
+- https://github.com/ccxt/ccxt/issues/7415 — OKX `create_order` `InvalidOperation` (float precision symptom)
+- https://github.com/ccxt/ccxt/issues/11923, /11855, /17295 — OKX `set_sandbox_mode` + demo header + WS demo caveats
+- https://pypi.org/project/python-okx/ (0.4.1), https://github.com/burakoner/okx-sdk (5.5.812) — native escape-hatch candidates (flagged, not selected)
+- https://pypi.org/project/janus/ (2.0.0) — sync/async queue candidate (flagged, not recommended)
+- Framework patterns (Nautilus 1.227.0, freqtrade, Hummingbot, QuantConnect LEAN) — table-stakes feature confirmation; iTrader's distinctive choices mapped against industry norms
 
 ---
-*Research completed: 2026-06-27*
+*Research completed: 2026-06-30*
 *Ready for roadmap: yes*

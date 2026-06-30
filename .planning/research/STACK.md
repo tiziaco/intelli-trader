@@ -1,12 +1,17 @@
-# Stack Research — v1.6 Persistence Foundation
+# Stack Research
 
-**Domain:** Durable storage + caching substrate for an event-driven backtest/live trading engine (swappable SQL spine; all-SQL results store; live operational store; cache classification)
-**Researched:** 2026-06-27
-**Confidence:** HIGH on versions + SQLAlchemy/SQLite/Postgres mechanics (Context7-adjacent official docs + PyPI JSON API verified); MEDIUM-HIGH on Turso/libSQL maturity (web-verified, honestly a moving target); HIGH on the Decimal-fidelity correction (multiple sources + SQLite type-affinity spec).
+**Domain:** Live crypto trading (OKX, paper-first) — additions to an event-driven backtest engine
+**Researched:** 2026-06-30
+**Confidence:** HIGH (ccxt packaging/versions, OKX demo mechanics, asyncio bridge verified against current sources; MEDIUM on native-escape-hatch choice — a plan-time gap-list decision)
 
-> **Scope note.** This is a SUBSEQUENT milestone on a converged design. The backend *set* (Turso/libSQL + SQLite + Postgres), the all-SQL results store, and the cache≠store split are **locked decisions** — not relitigated here. This doc makes the concrete library/version/tooling calls and answers Q1–Q5. The optimization/sweep LOOP (Optuna sampler) is OUT of this milestone; only the storage-library angle of it is weighed.
+> Scope: **only the NEW stack surface for v1.7 live OKX paper-first trading.** The existing
+> validated stack (Python 3.13, Poetry, `ccxt ^4.5.56` read-only providers, `websocket-client`,
+> `sqlalchemy`+`psycopg2-binary`+Postgres, `msgspec`, `structlog`, `pydantic`+`pydantic-settings`,
+> `uuid-utils`, Decimal money) is NOT re-researched. The headline: **almost nothing new is
+> strictly required** — the live capability is mostly *activating async ccxt that you already ship*
+> plus stdlib asyncio glue. Resist scope creep (libSQL-rejection precedent applies).
 
-> **CORRECTION TO DESIGN SEED (load-bearing).** The seed asserts *"Turso native DECIMAL preserves the money policy."* **This is false.** libSQL is a byte-compatible SQLite fork with the *same* type system — it has **no native lossless DECIMAL storage class**; `DECIMAL` columns get NUMERIC affinity and are coerced to REAL/INTEGER. Under SQLAlchemy `Numeric(asdecimal=True)`, SQLite/libSQL emit `SAWarning: Dialect ... does *not* support Decimal objects natively ... must convert from floating point` and round money through a float. **Given this project's `filterwarnings=["error"]`, that warning is a hard test failure — and it silently violates the Decimal-end-to-end money policy.** Money on SQLite/libSQL MUST be stored via a `Decimal`-as-TEXT `TypeDecorator` (or scaled integer), never `Numeric`. See Q5 + Version Compatibility.
+---
 
 ## Recommended Stack
 
@@ -14,201 +19,150 @@
 
 | Technology | Version | Purpose | Why Recommended |
 |------------|---------|---------|-----------------|
-| **SQLAlchemy** (Core) | **2.0.51** (current; already `^2.0.50`) | The single storage interface — Engine/MetaData/Table/Core SQL that swaps SQLite ⇄ libSQL ⇄ Postgres by engine-URL alone | Already a dependency. Provides one dialect-aware abstraction for all three backends; libSQL plugs in *on top of* its native SQLite dialect (dialect siblings). This is THE spine. (Q1) |
-| **SQLite** (stdlib `sqlite3` via `sqlite+pysqlite://`) | bundled w/ CPython 3.13 | Default/primary results-store + ephemeral backtest DB | Zero new deps, C-native synchronous, fastest path for our batch end-of-run dump, and the **dialect sibling that is the libSQL fallback** (swap URL back, no code change). (Q2) |
-| **psycopg2-binary** | **2.9.12** (already present) | Postgres driver for the live operational store (`postgresql+psycopg2://`) | Already a dependency; the live system-of-record backend. No change needed. |
-| **sqlalchemy-libsql** | **0.2.0** (Beta) | `sqlite+libsql://` dialect — the config-selected Turso/libSQL backend | Only supported way to reach libSQL/Turso through SQLAlchemy. **Add as an OPTIONAL extra**, not a hard core dep (beta; see Q2 maturity verdict). |
+| `ccxt` (already pinned) | bump `^4.5.56` → `^4.5.62` (latest 4.5.62, Feb–Mar 2026) | **Live data arm + order arm** via its built-in WebSocket layer (ccxt.pro) and async REST | **ccxt.pro is already inside the free `ccxt` package** (merged at v1.95, 2022) — no separate license, no separate install, no new dependency. You already depend on ccxt for read-only providers; v1.7 just *uses its async + watch\* surface*. OKX is a first-class ccxt venue. This is the LX-05 default. |
+| Python stdlib `asyncio` | stdlib (3.13) | **Async/sync bridge** — run the connector's event loop on its own daemon thread; marshal across the boundary | `asyncio.run_coroutine_threadsafe()` (sync→async commands) + `loop.call_soon_threadsafe()` (loop control) is the canonical, dependency-free pattern. Outbound (async→sync `global_queue`) is just `queue.Queue.put()` — already thread-safe. **No new library needed for the bridge.** |
+| `aiohttp` | transitive via ccxt async (verify resolved ≥ 3.10) | HTTP transport for `ccxt.async_support` / `ccxt.pro` | Ships as a ccxt dependency for the async layer; confirm it resolves in `poetry.lock` rather than adding it explicitly. No direct use in our code. |
 
 ### Supporting Libraries
 
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| **pyarrow** | **24.0.0** (current; Py≥3.10, 3.13 wheels ✓) | Serialize the `run_artifacts` equity-curve / trade-log DataFrame to **Parquet-bytes** for the SQL BLOB column | ADD. The recommended frame-blob format (Q5) — best compression, fast columnar round-trip, Decimal128 fidelity. |
-| **libsql-experimental** | **0.0.55** (sub-0.1, "not production grade") | Native Rust binding pulled in transitively by `sqlalchemy-libsql` 0.2.0 | Only via the dialect. The dialect pins `libsql-experimental>=0.0.53`, NOT the newer `libsql` 0.1.x — a staleness flag (Q2). Linux+macOS only. |
-| **alembic** | **1.18.5** (current, by the SQLAlchemy authors) | Schema migrations for the **live Postgres** store (single chain, batch-mode for SQLite/libSQL) | ADD, but scope to live. Backtest/results DB uses `create_all()` (Q4). |
-| **optuna** | **4.9.0** (current) | (Future milestone) sweep sampler; its `RDBStorage` is SQLAlchemy-backed | **Do NOT add this milestone.** Noted for Q6 schema-readiness only — keep our own `runs` schema; Optuna joins later as just the sampler. |
-| **pydantic-settings** `SecretStr` | already present (`Settings.database_url: SecretStr`, M2-06) | FL-06 hardcoded-creds fix — `SqlHandler`/`SqlSettings` consume `database_url.get_secret_value()` | The scaffolding already exists; wire `SqlHandler` to it (kills the line-17 hardcoded `tizianoiacovelli:1234@...`). |
+| `pytest-asyncio` | `^1.4.0` (requires py ≥3.10 ✓) | Test `async def` connector coroutines (watch-loop parsing, ack handling, reconnect) | **Add to dev group.** Needed the moment you unit-test the connector's async edge in isolation. Configure explicitly (see "Version Compatibility" — interacts with `filterwarnings=["error"]`). |
+| `python-okx` (native escape hatch candidate) | `0.4.1` (okxapi/python-okx, last upload 2026-01-08, py ≥3.7) | LX-05 native OKX v5 escape hatch for *proven* ccxt gaps only | **Do NOT add up front.** Candidate only if a concrete gap is found at Phase 2/3 plan time. Version `0.4.1` is low and the wrapper is community-maintained — treat with the **libSQL-beta caution**. Preferred escape hatch is raw `aiohttp`/`websockets` against OKX v5 (see below). |
+| `janus` | `2.0.0` (py ≥3.9) | Purpose-built mixed sync↔async queue | **Probably NOT needed.** Only reach for it if you discover you need *async-side consumption* of a queue that the *sync side produces into* (the rare reverse direction). The forward path (`queue.Queue` out, `run_coroutine_threadsafe` in) covers the connector design in the sketch. Flag, don't add. |
+| `redis` (py client) | `^5.x` if chosen | LX-15 inter-process command/status channel (option) | Only if the topology decision picks Redis over Postgres LISTEN/NOTIFY. **Topology is an architecture decision (out of scope here)** — inventoried below, not selected. |
 
 ### Development Tools
 
 | Tool | Purpose | Notes |
 |------|---------|-------|
-| Alembic CLI | `alembic revision --autogenerate` / `upgrade head` for the live store | Set `render_as_batch=True` in `env.py` so SQLite/libSQL ALTERs work (move-and-copy). |
-| SQLAlchemy `text()` + bound params / `Table` reflection | FL-06 SQL-injection fix in `SqlHandler` | Replace the f-string `DROP TABLE IF EXISTS {sym}` (line 35) and `to_sql`/`read_sql` symbol-as-table-name (lines 56/69) with quoted-identifier/whitelisted or single-table-with-`symbol`-column patterns. |
-| `pytest` (`filterwarnings=["error"]`) | The strictness gate that turns the SQLite Decimal `SAWarning` into a failure | This is a *feature* here — it will catch any accidental `Numeric` money column on SQLite/libSQL at test time. Lean on it. |
+| `pytest-asyncio` | Async test driver | Set `asyncio_mode = "auto"` (or `"strict"`) AND `asyncio_default_fixture_loop_scope = "function"` in `[tool.pytest.ini_options]` — otherwise it emits a `PytestDeprecationWarning` that the `error` filter can escalate. Do NOT redefine the `event_loop` fixture (deprecated → future error). |
+| ccxt verbose / `exchange.verbose = True` | Inspect raw OKX WS frames during connector bring-up | Use to confirm the kline **confirm flag** payload shape (LX-08) and demo-header routing without writing throwaway scripts. |
 
 ## Installation
 
 ```bash
-# Already present — no action: sqlalchemy ^2.0.50→pin allows 2.0.51, psycopg2-binary 2.9.12, msgspec 0.21.1, pandas 2.3.3
-# ADD (core to this milestone):
-poetry add pyarrow@^24.0.0          # frame-blob serialization (Q5)
-poetry add alembic@^1.18.5          # live-store migrations (Q4)
+# Core: bump the existing ccxt pin (NO new runtime dependency — ccxt.pro is in-package)
+poetry add "ccxt@^4.5.62"
 
-# ADD as an OPTIONAL extra (Turso/libSQL backend — beta; keep out of the hard core dep set):
-poetry add --optional sqlalchemy-libsql@^0.2.0   # pulls libsql-experimental transitively (Linux/macOS only)
-# then expose via [tool.poetry.extras]  turso = ["sqlalchemy-libsql"]
+# Dev: async test driver
+poetry add --group dev "pytest-asyncio@^1.4.0"
 
-# DO NOT ADD this milestone:
-#   optuna           — sweep loop is a later milestone (substrate only)
-#   the `libsql` 0.1.x package directly — the dialect wants libsql-experimental, not this
+# DO NOT add up front (evaluate at plan time only):
+#   poetry add "python-okx@0.4.1"     # native escape hatch — only on a proven gap
+#   poetry add "janus@^2.0.0"         # only if reverse sync->async queue consumption is needed
+#   poetry add "redis@^5"             # only if LX-15 topology picks Redis
 ```
+
+`aiohttp` is pulled transitively by ccxt's async layer — verify it lands in `poetry.lock`; do not pin it directly.
+
+---
+
+## The six questions, answered
+
+### 1. ccxt.pro packaging + OKX surface (LX-05)
+- **Packaging: definitively merged.** ccxt.pro is a **free part of the unified `ccxt` package** since v1.95 (2022). There is **no separate package, no separate install, no license key.** Confirmed against ccxt issue #15171 and the PyPI/docs current pages. The CLAUDE.md note that ccxt is "used today only as read-only providers" is an *internal usage* fact, not a packaging limit — the async + WS surface is already shipped in the wheel you have.
+- **Import structure (Python):**
+  - `import ccxt.pro as ccxtpro` — the **WebSocket** layer (`watch_*` streaming methods).
+  - `import ccxt.async_support as ccxt` — **async REST** (awaitable `create_order`, `fetch_ohlcv`, `fetch_balance`).
+  - `import ccxt` — the legacy **sync REST** layer (what `ccxt_provider.py` uses today).
+- **OKX WS method support (LX-05 data + order arms):** OKX supports `watch_ohlcv` (data arm), and the private streams `watch_orders`, `watch_balance`, `watch_my_trades`, `watch_positions`. Order placement: `create_order` (async REST) and `create_order_ws` (`createOrderWs`, same signature, over WS). `create_order_ws` is an optional optimization — start with async-REST `create_order` + `watch_orders` for the fill stream.
+- **Native escape hatch (LX-05):** the leanest escape hatch is **raw `aiohttp` (REST) + `websockets`/the ccxt-bundled WS client against the OKX v5 API directly** — both transports already ride in via ccxt, so no new dep. The packaged `python-okx 0.4.1` SDK is a *candidate* but is low-version + community-maintained (libSQL-caution); `okx-sdk` (burakoner, 5.5.812) is more complete but is a second third-party surface. **Recommendation: keep the escape hatch as thin hand-rolled v5 calls behind `LiveConnector`, add a native SDK only if a concrete, proven gap justifies it** at Phase 2/3 plan time.
+
+### 2. asyncio bridge
+- **Best practice (verified, dependency-free):** connector owns a `loop = asyncio.new_event_loop()` on a **daemon thread**; `run_coroutine_threadsafe(coro, loop)` to submit work *into* the loop from the sync engine; `loop.call_soon_threadsafe(loop.stop)` for graceful shutdown, then `thread.join()`. Outbound async→sync is `global_queue.put(event)` (stdlib `queue.Queue` is thread-safe). This keeps the async boundary "bottled at the connector edge" exactly as the sketch requires.
+- **No version-pinned dep required.** `janus 2.0.0` exists for the harder sync↔async-queue case but is **not needed** for this topology — flag it, don't add it.
+
+### 3. OKX sandbox/demo (single `sandbox: bool`)
+- **ccxt path:** `exchange.set_sandbox_mode(True)` routes OKX to demo endpoints. For OKX, demo also requires the **`x-simulated-trading: 1` HTTP header**; modern ccxt sets this for OKX when sandbox mode is on, but the header is the underlying mechanism — confirm it is applied on **both REST and WS** during bring-up (historical ccxt issues show drift here).
+- **Native path:** set `headers = {"x-simulated-trading": "1"}` and use the demo base URLs / WS URLs.
+- **Demo requires demo-specific API keys** (created in OKX → Demo Trading), distinct from live keys.
+- **Single-flag routing (LX-05):** one `sandbox: bool` on the connector config should (a) call `set_sandbox_mode(sandbox)` on the ccxt instance AND (b) inject the `x-simulated-trading` header on any native call AND (c) select the sandbox-vs-live **key set**. No split-brain — one flag, three effects.
+
+### 4. Secrets (OKX needs THREE)
+- **OKX auth = apiKey + secret + passphrase** (the "password" in ccxt's config is the OKX **passphrase**). Confirmed. This is unlike key+secret-only venues — the passphrase is mandatory.
+- **Best practice: env-only via the existing `pydantic-settings` `ITRADER_` pattern.** Add a dedicated `OkxSettings(BaseSettings)` mirroring `SqlSettings` (`itrader/config/sql.py`): `env_prefix="ITRADER_OKX_"`, all three credentials as `SecretStr | None`, a `sandbox: bool` field, and a `model_validator` that **fails loud** when live (sandbox=False) is selected without all three creds — the exact "no working secret defaults" discipline already proven in `sql.py`. Keys never in code; sandbox vs live keys separated by the single `sandbox` flag (LX-05 cross-cutting §5).
+
+### 5. Runtime topology IPC channels (LX-15) — INVENTORY ONLY (do not pick)
+| Channel | New dep? | Pros | Cons |
+|---------|----------|------|------|
+| **Postgres `LISTEN/NOTIFY`** (via existing `psycopg2`) | **None** — you already ship `psycopg2-binary` + Postgres (v1.6 store) | Reuses the v1.6 system-of-record as the shared truth; zero new infra; transactional with the state writes; "exactly what v1.6's durable store was built to enable" | NOTIFY payload ≤ 8 KB; not a durable queue (missed while disconnected unless paired with a polled table); LISTEN needs a dedicated connection/poll loop |
+| **Redis** (pub/sub or streams) | `redis` py client + a Redis server | Low-latency; mature pub/sub + durable Streams; natural fit for fan-out | New infra component + new dep + new ops surface; second source of truth alongside Postgres |
+| **Message broker** (RabbitMQ / NATS) | heavy client + broker | Strong delivery semantics, routing | Heaviest ops/dep footprint; overkill for a single-venue, few-process deployment |
+- **Lean read:** the Postgres LISTEN/NOTIFY option adds **zero dependencies** and reuses v1.6 — it is the obvious low-cost default *if* a separate-process topology (LX-15 option b/c) is chosen. **But the topology choice itself is an architecture decision and is out of scope here.**
+
+### 6. Testing libs + `filterwarnings=["error"]` interaction
+- **`pytest-asyncio ^1.4.0`** (py ≥3.10 ✓ for 3.13) is the standard async test driver.
+- **Strictness interaction (the gotcha):** the existing `[tool.pytest.ini_options]` has `filterwarnings = ["error", "ignore::UserWarning", "ignore::DeprecationWarning"]`. pytest-asyncio emits a `PytestDeprecationWarning` if `asyncio_default_fixture_loop_scope` is unset. `PytestDeprecationWarning` subclasses `pytest.PytestWarning` (→ `UserWarning`) **and** `DeprecationWarning` — your current ignores *may* absorb it, but **do not rely on that.** Set both config knobs explicitly:
+  ```toml
+  asyncio_mode = "auto"                          # or "strict"
+  asyncio_default_fixture_loop_scope = "function"
+  ```
+- **Do NOT redefine the `event_loop` fixture** — that override path is deprecated and slated to become a hard error; use the `scope=` arg on the asyncio marker or the `event_loop_policy` fixture instead.
+- Async network code tends to leak `ResourceWarning`/unclosed-session warnings; under `error` these fail the suite. Ensure connector teardown `await exchange.close()` in fixtures, and prefer **mocked transports** for unit tests (real OKX sandbox I/O belongs in `integration`/`e2e`, not unit).
+
+---
 
 ## Alternatives Considered
 
 | Recommended | Alternative | When to Use Alternative |
 |-------------|-------------|-------------------------|
-| SQLAlchemy Core as the unifier | Raw per-driver code paths (sqlite3 + libsql + psycopg2 by hand) | Never for this milestone — defeats the config-not-code spine; only if a backend needs SQL SQLAlchemy can't express (none identified). |
-| SQLite as results-store **default** | libSQL/Turso as default | Choose libSQL when you genuinely need *remote/shared* sweep results across machines or an embedded-replica edge story — not for single-process batch dump (no perf win there; Q2). |
-| Parquet-bytes (pyarrow) for the frame blob | Compressed pickle (stdlib `pickle`+`lzma`) | Use pickle ONLY if pyarrow cannot be added — perfect Decimal fidelity + zero deps, but Python-locked + version-brittle + opaque. (Q5) |
-| Scalar-promote filterable params to indexed columns | Pure JSON filtering (`settings->>'lookback'`) | Pure-JSON is fine for PG-only deployments with GIN indexes; reject for the cross-backend `runs` table (Q3). |
-| Alembic scoped to live Postgres | Alembic gating the backtest/results DB too | Only if the ephemeral results schema becomes long-lived/shared; today it's disposable → `create_all()` (Q4). |
-| psycopg2-binary (live) | psycopg (psycopg3) | Stay on psycopg2 — already present, SQLAlchemy 2.0 fully supports it, no driver to re-validate this milestone. |
+| ccxt.pro (in-package) for OKX | `python-okx 0.4.1` native SDK | Only if a concrete OKX-fidelity gap in ccxt is proven at plan time (e.g. kline confirm-flag unreliability, order-status field loss). Wrap behind `LiveConnector` either way. |
+| Hand-rolled v5 native escape hatch (`aiohttp`/`websockets`) | `okx-sdk 5.5.812` (burakoner) | If the native surface needed is large enough that hand-rolling is more error-prone than a maintained SDK — but that adds a third-party trust + dep surface; bias toward thin hand-rolled. |
+| stdlib `run_coroutine_threadsafe` bridge | `janus 2.0.0` | Only if you need the async side to *consume* from a queue the sync side *produces into* (reverse of the sketch's flow). |
+| Postgres LISTEN/NOTIFY (no dep) | Redis / broker | If/when a separate-process topology needs durable fan-out beyond NOTIFY's 8 KB transient payload, or sub-ms latency. |
 
 ## What NOT to Use
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| `Numeric`/`DECIMAL` SQLAlchemy column for **money on SQLite/libSQL** | No native lossless DECIMAL → float coercion → `SAWarning` (= test failure under `filterwarnings=["error"]`) + money-policy violation | `TypeDecorator` storing `Decimal` as **TEXT** (`String`), or scaled-integer; `Numeric` is fine ONLY on Postgres. |
-| **Turso Database** (the Rust rewrite, formerly "Limbo", `tursodatabase/turso`, v0.6.x) | NOT production-ready as of 2026; different product from libSQL despite the shared "Turso" branding | **libSQL** (production-ready SQLite fork) via `sqlalchemy-libsql` for the "Turso" backend slot. |
-| Old websocket/HTTP driver `libsql-client(-py)` | Superseded; older websocket drivers stopped working after the 2025 Fly.io→AWS migration | The Rust-binding path (`libsql-experimental`/`libsql`) via the dialect. |
-| Parquet/Arrow as **separate files** alongside SQL | Cannot cheaply append for live; breaks backtest↔live symmetry (already REJECTED in the seed) | Parquet **bytes inside** the SQL `run_artifacts` BLOB column. |
-| pyarrow **scale inference** from object-dtype Decimal columns | Inferred `decimal128(p,s)` varies run-to-run → non-deterministic bytes (breaks byte-exact/determinism discipline) | Pin an **explicit pyarrow schema** with per-column `decimal128(precision, scale)` matching `core/money.py` instrument scales. |
-| msgspec for the frame blob | msgspec is a struct/JSON/msgpack codec, not a columnar DataFrame format; Decimal handling would be custom + uncompressed | Keep msgspec for the event chain (its v1.5 home); use pyarrow for DataFrame blobs — complementary, not competing. |
+| A separate "ccxtpro" package install or license | ccxt.pro merged into free `ccxt` in 2022 — a separate package is stale/wrong | `import ccxt.pro as ccxtpro` from the `ccxt` you already have |
+| `python-okx 0.4.1` as a *default* dependency | Low version + community-maintained; mirrors the libSQL beta-driver rejection (v1.6 Q2) — adds risk for capability you mostly already have in ccxt | ccxt.pro by default; native escape hatch only on a proven, documented gap |
+| `websocket-client` (the v1.6 Binance streamer) for OKX | Sync, callback-style, quarantined D-live module; mixing it with the async connector splits the transport model | ccxt.pro async `watch_*` on the connector's asyncio loop |
+| `asyncio.get_event_loop()` / redefining `event_loop` test fixture | Deprecated patterns; will hard-error in future asyncio/pytest-asyncio | `asyncio.new_event_loop()` on the daemon thread; `asyncio_default_fixture_loop_scope` config |
+| Adding `aiohttp` explicitly | It arrives transitively with ccxt async; an explicit pin risks version drift against ccxt's expectation | Let ccxt resolve it; just verify the lockfile |
 
 ## Stack Patterns by Variant
 
-**If results store / backtest / optimization sweep (write-once-read-later):**
-- Default engine `sqlite+pysqlite:///results.db` (or `:memory:` in tests); `create_all()` schema; `run_artifacts` = Parquet-bytes BLOB; `runs` = scalar-promoted indexed params + `JSON` settings archival column.
-- Optional `sqlite+libsql://...` engine selected by `SqlSettings` when remote/shared sweep storage is wanted.
+**If staying paper-first (the DoD, Phases 1–4):**
+- You need **only the ccxt bump + the asyncio-bridge (stdlib) + pytest-asyncio**. The `PaperConnector` reuses the pure `MatchingEngine` (LX-06); it consumes the connector's **data arm** (`watch_ohlcv`) only. No order-arm creds, no secrets module strictly required until Phase 5.
 
-**If live operational store (read-write, restart-safe, system of record):**
-- Engine `postgresql+psycopg2://` from `Settings.database_url` (SecretStr); Alembic-migrated schema; `Numeric` money columns are safe here (PG native NUMERIC); write-through ON; working-set cache purge-on-terminalize.
+**If advancing to the real/sandbox path (Phase 5):**
+- Add the **OkxSettings secrets module** (3 creds + sandbox flag) and exercise the **order arm** (`create_order` + `watch_orders`/`watch_balance`/`watch_positions`) against OKX **demo** first.
 
-**If money column on any SQLite-family backend:**
-- Always the `DecimalAsText` `TypeDecorator`. One decorator, applied uniformly across all three dialects, gives byte-exact cross-backend money + silences the `SAWarning` + holds the money policy.
+**If a separate-process runtime topology is chosen (LX-15, b/c):**
+- Default to **Postgres LISTEN/NOTIFY** (zero new dep, reuses v1.6) before reaching for Redis/broker.
 
 ## Version Compatibility
 
-| Package A | Compatible With | Notes |
-|-----------|-----------------|-------|
-| SQLAlchemy 2.0.51 | Python 3.13 | Production/Stable; current `^2.0.50` constraint already admits it. |
-| sqlalchemy-libsql 0.2.0 | SQLAlchemy ≥2.0, Python 3.13 (via libsql-experimental wheels) | **Beta; last released 2025-05-30** (~13 mo stale). Pins `libsql-experimental>=0.0.53` (sub-0.1) — does NOT track the newer `libsql` 0.1.11. Pulls `greenlet>=3.0.3`. **Risk:** dialect could lag if libsql-experimental is retired for `libsql`; validate the pin on install. |
-| libsql-experimental 0.0.55 | CPython 3.8–3.13 wheels | **Linux + macOS only — no Windows.** Fine for this macOS/Linux project; flag for any CI matrix. |
-| pyarrow 24.0.0 | Python ≥3.10 → 3.13 ✓, pandas 2.3.3 | Decimal128 round-trip is lossless in VALUE; pandas dtype returns as `object`(Decimal) — desired for money. Decimal write ~4× slower than numeric (acceptable for per-run blob). |
-| alembic 1.18.5 | Python ≥3.10, SQLAlchemy ≥1.4 (→2.0.51) | Use `render_as_batch=True` for SQLite/libSQL ALTER limits; `JSON().with_variant(JSONB,'postgresql')` for the settings column. |
-| psycopg2-binary 2.9.12 | SQLAlchemy 2.0, Python 3.13 | Already present; no re-validation needed. |
+| Package | Compatible With | Notes |
+|---------|-----------------|-------|
+| `ccxt 4.5.62` | Python 3.13 ✓ | ccxt does not pin `requires_python`; 4.5.x supports 3.13. Bump is a minor within your existing `^4.5` range — low risk. |
+| `ccxt.pro` (in-package) | `aiohttp` (transitive) | The async/WS layer needs aiohttp; verify it's resolved in `poetry.lock` after the bump. |
+| `pytest-asyncio 1.4.0` | pytest `^9.0.3` (dev), Python 3.13 ✓ | requires py ≥3.10. **Requires** explicit `asyncio_mode` + `asyncio_default_fixture_loop_scope` to coexist with `filterwarnings=["error"]`. |
+| `python-okx 0.4.1` (if added) | py ≥3.7 | Low version; community wrapper — libSQL-caution. Pin exact, behind `LiveConnector`. |
+| `janus 2.0.0` (if added) | py ≥3.9 | `aclose()` required on shutdown or it emits errors. |
 
-**Headline compatibility risk:** the only genuinely shaky pin is **sqlalchemy-libsql 0.2.0 (beta, stale, experimental driver, no Windows)**. The mitigation is structural, not a version bump: SQLite and libSQL are **dialect siblings**, so the *entire* libSQL risk is escapable by changing one engine URL back to `sqlite+pysqlite://` with zero code change. Keep libSQL an optional extra; keep SQLite the proven default.
+## Integration Points With Existing Code
 
----
-
-## Open-Question Resolutions (Q1–Q5)
-
-### Q1 — Interface unifier: SQLAlchemy 2.0 Core, per-dialect engine URLs
-
-**Recommendation: YES — SQLAlchemy 2.0 Core is the correct single abstraction. Use Core (Engine + MetaData/Table + Core SQL expression language) with a per-dialect engine URL selected by `SqlSettings`. libSQL/Turso does NOT need a driver path outside SQLAlchemy.**
-
-Why it works cleanly:
-- All three backends are SQLAlchemy dialects: `postgresql+psycopg2://` (live), `sqlite+pysqlite://` (default/fallback), `sqlite+libsql://` (Turso/libSQL via `sqlalchemy-libsql`).
-- The libSQL dialect is built **on top of SQLAlchemy's native SQLite (pysqlite) dialect** — note the `sqlite+libsql` scheme. SQLite and libSQL therefore share SQL generation, type affinity, and DDL behavior. The SQLite⇄libSQL swap is literally an engine-URL change; the SQLite⇄Postgres swap is a normal cross-dialect Core swap SQLAlchemy is designed for.
-- `SqlSettings` builds the URL (+ `connect_args` like libSQL `sync_url`/`auth_token`) → one `create_engine()` call → backend = config, not code. ✅ achievable.
-
-What breaks the zero-friction swap (and the mitigation for each):
-1. **Decimal/money types (the #1 friction).** SQLite/libSQL NUMERIC-affinity float-coerces money + emits a `SAWarning` (→ test failure here). **Mitigate with a single `DecimalAsText` `TypeDecorator` applied uniformly.** Postgres NUMERIC is lossless; the decorator unifies behavior so the same model is byte-exact on all three.
-2. **JSON semantics** — PG JSONB (binary, indexable) vs SQLite/libSQL JSON-as-TEXT. Storage portable via `JSON().with_variant(JSONB,'postgresql')`; *filtering* is not portable → Q3.
-3. **Dialect-specific DDL/SQL** — `JSONB` type, `ON CONFLICT`/upsert nuances, `RETURNING` (PG yes; SQLite 3.35+/libSQL yes), autoincrement/identity. Stay on Core's portable types + Core's `insert().on_conflict_*` constructs; avoid raw dialect SQL strings. The FL-06 f-string DDL in `SqlHandler` is exactly the anti-pattern to delete.
-
-**Alternative considered:** raw per-driver code (sqlite3/libsql/psycopg2 by hand) — rejected; it throws away the spine and re-implements dialect handling SQLAlchemy already does.
-
----
-
-### Q2 — Turso/libSQL maturity: HONEST verdict — the perf premise does NOT hold for our workload
-
-**Recommendation: Support all three backends (locked), but make SQLite the results-store DEFAULT and treat Turso/libSQL as an OPTIONAL, config-selected backend validated opt-in. Keep SQLite as the zero-cost escape path (dialect sibling). The "Turso is faster" premise is a hypothesis that fails for our batch-dump + occasional-read pattern.**
-
-Landscape (a branding trap to call out): **"Turso" is two products.**
-- **libSQL** — production-ready, byte-compatible SQLite fork; this is what `sqlalchemy-libsql`, `libsql-experimental` (0.0.55), and the newer `libsql` (0.1.11) target. **For this milestone "Turso/libSQL" = libSQL.**
-- **Turso Database** — the Rust-from-scratch rewrite (formerly "Limbo", `tursodatabase/turso`, v0.6.x, 2026-05). Adds `BEGIN CONCURRENT`/MVCC + CDC but is **NOT production-ready**. Do not target it.
-
-Python driver status (honest):
-- `libsql-experimental` **0.0.55** is explicitly *"not production grade"*, sub-0.1, **Linux+macOS only**. It has 3.13 wheels.
-- A successor `libsql` **0.1.11** (Sept 2025) exists, but the SQLAlchemy dialect still pins **libsql-experimental**, not `libsql` — a coupling/staleness flag.
-- The dialect `sqlalchemy-libsql` **0.2.0** is **Beta**, last released **2025-05-30**.
-
-Modes / types / guarantees:
-- **Modes:** local-file (`sqlite+libsql:///x.db`), in-memory, **embedded replica** (local file + `sync_url`+`auth_token`, syncs from remote — Python support is *beta*), remote-only. ACID + single-writer inherited from SQLite (the MVCC concurrent-writes win lives in the Rust rewrite, not libSQL).
-- **Decimal:** NO native lossless DECIMAL (inherits SQLite affinity) → same float-coercion problem as SQLite → **must use the `DecimalAsText` decorator**. The seed's "native DECIMAL" claim is wrong.
-- **JSON:** SQLite JSON1/`json_extract` inherited, stored as TEXT.
-
-**Perf hypothesis verdict — NOT real for our pattern.** Turso/libSQL's headline advantages are edge replication, embedded replicas, and (in the Rust rewrite) concurrent writes — all aimed at *distributed/high-concurrency edge writes*. Our results-store pattern is a **single-process batch dump at end-of-run + occasional analytical read**. For that, plain local SQLite (stdlib `sqlite3`, C-native, synchronous, zero deps) is as fast or **faster** than the async-bridged libSQL Rust binding, with none of the beta risk. libSQL's value here is **operational** (managed remote DB, shared sweep results across machines, a future live-edge story) — not throughput.
-
-**Fallback / escape path:** because SQLite and libSQL are dialect siblings, the entire libSQL risk is escapable by reverting one engine URL to `sqlite+pysqlite://` — no schema or code change. That makes adopting libSQL low-risk *as an option* and makes SQLite the safe default.
-
-> This honestly answers the quality gate's "Turso maturity verdict is a perf hypothesis, not a given." It is a hypothesis, and for this workload it does not hold — so SQLite leads and libSQL rides the same spine as an opt-in.
-
----
-
-### Q3 — Cross-backend JSON: scalar-promote filterable params; keep full settings in an archival JSON column
-
-**Recommendation: Hybrid. Promote the handful of filterable/sweepable params into real typed, indexed columns on `runs` (e.g. `lookback INTEGER`, `fast_window INTEGER`, `slow_window INTEGER`). Keep the FULL heterogeneous module-settings dict in a `settings JSON` column for archival/reproduction only — never filtered in hot cross-sweep queries.**
-
-Why:
-- **Storage** of JSON is portable (SQLAlchemy `JSON` → PG `JSONB` via `.with_variant`, SQLite/libSQL TEXT). Not the problem.
-- **Filtering** is NOT cleanly portable. PG: `settings->>'lookback'` returns *text* → needs a cast for `> 20`; GIN-indexable. SQLite/libSQL: `json_extract(settings,'$.lookback')` (JSON1); no index unless you build an expression index; numeric-vs-text comparison semantics differ from PG. SQLAlchemy renders JSON path access per-dialect, so a single `WHERE settings['lookback'].as_integer() > 20` does not behave identically (or index identically) across all three.
-- Scalar promotion sidesteps all of it: `WHERE lookback > 20 ORDER BY sharpe DESC LIMIT 10` hits plain indexed columns → **identical + fast on all three backends**. The cross-backend JSON-filter portability problem **dissolves** rather than being papered over.
-- This is the standard hybrid relational+JSON pattern: relational columns for the query surface, JSON for the long tail / exact-params reproduction.
-
-**Alternative considered:** pure JSON filtering with PG GIN indexes — fine for a PG-only deployment, rejected for the cross-backend `runs` table. **Optuna-readiness note (Q6, FEATURES owner):** promoting params to columns is also what a future Optuna join wants (params as first-class queryable fields), so this choice is forward-compatible.
-
----
-
-### Q4 — Migrations: Alembic, scoped to the live Postgres store; `create_all()` for the ephemeral results DB
-
-**Recommendation: Adopt Alembic (1.18.5) as ONE migration chain, but apply it as the authoritative schema path only for the LIVE Postgres operational store. Use `MetaData.create_all()` (create-if-not-exists) for the ephemeral/disposable results + backtest DB. Lowest friction: don't gate backtest on migrations; gate live on them.**
-
-Why:
-- Alembic is by the SQLAlchemy authors, emits dialect-aware DDL through SQLAlchemy, and ONE chain *can* target all three dialects — with two required accommodations: (1) `render_as_batch=True` in `env.py` so SQLite/libSQL's limited `ALTER TABLE` works via move-and-copy (libSQL inherits SQLite's ALTER limits); (2) portable types via `JSON().with_variant(JSONB,'postgresql')` so a column isn't PG-only.
-- The **results/backtest DB is ephemeral and re-runnable** — you don't migrate sweep data, you re-run it. Migration tooling there is overhead with no payoff; `create_all()` is faster, simpler, test-friendly (`:memory:`), and adds zero ceremony to the byte-exact backtest path.
-- The **live Postgres store is a durable system of record** — schema evolves, you cannot drop-and-recreate without losing state → migrations are genuinely warranted there.
-
-**Alternative considered:** no migration tool at all (just `create_all()` everywhere) — acceptable until the live schema first changes in production, at which point you need controlled ALTERs; cheaper to stand Alembic up now and scope it to live. Heavier alternatives (sqitch, raw SQL files) add an out-of-ecosystem tool for no benefit over Alembic.
-
----
-
-### Q5 — Frame serialization for `run_artifacts`: Parquet-bytes via pyarrow (explicit Decimal schema)
-
-**Recommendation: Parquet-encoded bytes (pyarrow 24.0.0) stored in the SQL BLOB column, with an EXPLICIT pyarrow schema pinning each money column to `decimal128(precision, scale)` matched to `core/money.py` instrument scales. Fallback: lzma-compressed pickle if pyarrow cannot be added.**
-
-Comparison for the equity-curve / trade-log DataFrame blob:
-
-| Format | Compression | Round-trip → pandas | Decimal fidelity | Cross-backend byte portability | Verdict |
-|---|---|---|---|---|---|
-| **Parquet-bytes (pyarrow)** | **Best** (columnar + dict + zstd) | Fast columnar; money returns as `object`(Decimal) | **Lossless** via decimal128 (value-exact) | Identical bytes → PG `BYTEA` / SQLite/libSQL `BLOB` | **RECOMMENDED** |
-| Arrow IPC / Feather | Worse than Parquet, larger | Fastest write (no Parquet encode) | Same decimal128 support | Portable | Runner-up; pick only if write speed dominates — we dump once/run, so compression wins |
-| JSONB | Worst (text) | Slow parse | Lossy unless Decimal serialized as **string** (JSON numbers are float) → bloated | Portable but huge | Reject for frames |
-| Compressed pickle (stdlib) | Good | Trivial, native objects | **Perfect** (native Python Decimal) | Python-only, version-brittle, opaque | **Fallback only** (zero-dep, perfect fidelity, but not cross-language + pandas/numpy pickle-version risk) |
-
-Rationale:
-- **Compression** keeps `run_artifacts` lean so the hot `runs` metrics table stays fast (PG TOASTs the blob, SQLite/libSQL spill to overflow pages — both free). At large sweeps this is what makes all-SQL scale.
-- **Decimal fidelity (critical).** pyarrow auto-maps object-dtype `Decimal` columns to Parquet decimal128 and back, value-lossless. BUT pin an **explicit schema per money column** — pyarrow's *inferred* precision/scale varies with the data, producing non-deterministic bytes that would break the byte-exact/determinism discipline. Explicit `decimal128(p, s)` from the instrument scales = lossless **and** deterministic.
-- **Portability.** The Parquet bytes are self-describing and identical regardless of which SQL backend stores them → a frame written under SQLite reads back identically from Postgres. Aligns with NautilusTrader's `ParquetDataCatalog` precedent and keeps a DuckDB-over-exported-frames analytical escape hatch open (the seed's "avg equity at bar 500 across all runs" case).
-
-The pyarrow add tradeoff: a sizable wheel, and decimal writes ~4× slower than numeric — both acceptable for a once-per-run blob, and pyarrow is the same engine any future columnar work would use. **msgspec stays in its event-chain lane; it is not a DataFrame columnar codec** — these are complementary.
-
----
+- **`itrader/price_handler/providers/ccxt_provider.py`** — the symbol-formatting (`BTC/USDT` ↔ `BTCUSDT`), market loading, and OHLCV→Decimal `Bar` conversion logic is reusable. The new live connector is a *new seam* (data arm + order arm), not an edit of this read-only provider; mine it for symbol/format helpers and the `fetch_ohlcv` warmup-backfill call (LX-09 REST `fetch_ohlcv` for warmup).
+- **`itrader/price_handler/providers/binance_stream.py`** — the **quarantined D-live** sync `websocket-client` streamer. Its `msg['k']['x']` closed-bar gate is the *concept* mirror for OKX's confirm flag (LX-08), but **replace it, don't extend it** — OKX uses async ccxt.pro, not the sync callback model.
+- **`itrader/config/sql.py`** (`SqlSettings`) — the **template for the new `OkxSettings`**: `env_prefix`, `SecretStr` fields, driver-conditional fail-loud `model_validator`, `extra="forbid"`. Clone this pattern for `ITRADER_OKX_*` (key/secret/passphrase/sandbox).
+- **`itrader/config/settings.py`** — keep OKX creds OUT of the general `Settings` (mirror how DB creds moved to their own `SqlSettings`); a dedicated `OkxSettings` keeps the backtest path credential-free and env-tolerant.
+- **`pyproject.toml [tool.mypy]`** — `ccxt.*` is already `ignore_missing_imports`; `live_trading_system`/`trading_interface`/`binance_stream` are already `ignore_errors`. New live code should target **strict-clean** (DoD §4); add per-module overrides only where a third-party stubless surface forces it, not as a blanket.
 
 ## Sources
 
-- PyPI JSON API (`pypi.org/pypi/<pkg>/json`) — verified current versions/dates/status: SQLAlchemy 2.0.51 (2026-06-15, Stable), pyarrow 24.0.0 (2026-04-21), alembic 1.18.5 (2026-06-25, Stable), optuna 4.9.0 (2026-06-01), sqlalchemy-libsql 0.2.0 (2025-05-30, Beta; deps `libsql-experimental>=0.0.53`, `sqlalchemy>=2.0.0`, `greenlet>=3.0.3`), libsql-experimental 0.0.55 (2025-06-09), libsql 0.1.11 (2025-09-02). **HIGH.**
-- https://docs.turso.tech/sdk/python/orm/sqlalchemy — `sqlite+libsql://` scheme; embedded-replica/remote/memory/local modes. **HIGH.**
-- https://github.com/tursodatabase/sqlalchemy-libsql + https://pypi.org/project/libsql-experimental/ — Beta status, "not production grade", Linux/macOS-only, CPython 3.8–3.13 wheels. **MEDIUM-HIGH.**
-- https://github.com/tursodatabase/libsql + https://docs.turso.tech/libsql — libSQL = backwards-compatible SQLite fork, same file format/type system, no native DECIMAL. **HIGH.**
-- https://github.com/tursodatabase/turso — Turso DB Rust rewrite (formerly Limbo) v0.6.x, NOT production-ready; BEGIN CONCURRENT/MVCC. **MEDIUM-HIGH.**
-- https://docs.sqlalchemy.org/en/20/core/type_basics.html + SQLAlchemy community threads + https://www.pythontutorials.net/blog/how-should-i-handle-decimal-in-sqlalchemy-sqlite/ — SQLite has no lossless DECIMAL; `Numeric(asdecimal=True)` emits `SAWarning` + float-converts on `sqlite+pysqlite`; TypeDecorator (TEXT/scaled-int) workaround. **HIGH** (load-bearing money-policy correction).
-- https://arrow.apache.org/docs/python/generated/pyarrow.decimal128.html + pandas issues #61464/#39334 + Anaconda decimals article — pyarrow object-Decimal ⇄ Parquet decimal128 round-trip lossless in value (returns object dtype), decimal write ~4× slower, explicit schema needed for deterministic precision/scale. **HIGH.**
-- Existing code: `itrader/price_handler/store/sql_store.py` (FL-06 targets: hardcoded creds L17, f-string `DROP TABLE` L35, symbol-as-table-name L56/L69), `itrader/config/settings.py` (`database_url: SecretStr` already present, M2-06). **HIGH.**
+- https://github.com/ccxt/ccxt/issues/15171 — "CCXT Pro Websockets merged with CCXT" (packaging, free, in-package) — HIGH
+- https://docs.ccxt.com/ and https://docs.ccxt.com/docs/pro-manual — ccxt.pro manual, `watch_*` + `createOrderWs`, `import ccxt.pro as ccxtpro` — HIGH
+- https://pypi.org/project/ccxt/ — ccxt 4.5.62 latest (verified via PyPI JSON API) — HIGH
+- https://www.okx.com/en-us/help/api-faq + https://app.okx.com/docs-v5/en/ — OKX demo trading, `x-simulated-trading: 1` header, passphrase requirement — HIGH
+- https://github.com/ccxt/ccxt/issues/11923, /11855, /17295 — OKX `set_sandbox_mode` + demo header + WS demo caveats — MEDIUM (issue threads, version-drift cautions)
+- https://docs.python.org/3/library/asyncio-task.html#asyncio.run_coroutine_threadsafe + https://github.com/aio-libs/janus — asyncio cross-thread bridge + janus — HIGH
+- https://pypi.org/project/python-okx/ (0.4.1, 2026-01-08), https://github.com/burakoner/okx-sdk (5.5.812) — native escape-hatch candidates — MEDIUM
+- https://pypi.org/project/pytest-asyncio/ (1.4.0) + https://pytest-asyncio.readthedocs.io/ — async test driver + loop-scope/event_loop deprecation under strict warnings — HIGH
+- https://pypi.org/project/janus/ (2.0.0) — sync↔async queue (flagged, not recommended) — HIGH
 
 ---
-*Stack research for: v1.6 Persistence Foundation (swappable SQL spine + all-SQL results store + live operational store + cache classification)*
-*Researched: 2026-06-27*
+*Stack research for: live crypto trading (OKX, paper-first) additions to the iTrader backtest engine*
+*Researched: 2026-06-30*

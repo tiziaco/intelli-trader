@@ -22,6 +22,57 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
+## Current Milestone: v1.7 — Live Trading Readiness (trimmed N+4 / Backlog 999.3)
+
+**Goal:** Deploy and run the package **live on one crypto venue (OKX), paper-first**, with a real
+correctness gate (paper-parity vs the backtest oracle) — **without disturbing the byte-exact backtest
+oracle** (134 trades / `final_equity 46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). The
+trimmed N+4: the **minimum surface to deploy live**. One milestone, **refactor-phase-first** (Phase 1
+is an oracle-gated Account-abstraction extraction *before* any live code depends on it).
+
+**Target features (6 phases, numbering reset to Phase 1):**
+- **Phase 1 — Account abstraction + `Portfolio`/`PortfolioHandler` refactor (oracle-gated,
+  behavior-preserving).** Extract an `Account` owning balance/margin truth (`Simulated*` leaves only;
+  `Venue*` interface-only); two orthogonal axes (simulated-vs-venue, cash-vs-margin); strip
+  `Portfolio.user_id` (app-layer); evaluate/likely remove `TradingInterface` (LX-14); shape the
+  `LiveConnector` interface. Backtest stays byte-exact.
+- **Phase 2 — OKX connector** (`OkxConnector` implementing our `LiveConnector`): ccxt.pro by default +
+  native escape hatch behind the interface (LX-05); single `sandbox: bool`; async/sync bridge bottled
+  at the connector edge; data arm + order arm.
+- **Phase 3 — `LiveBarFeed`** (ring-buffer `BarFeed` impl, LX-07): closed-bar detection off OKX's
+  confirm flag (LX-08), warmup/backfill through the *identical* `update(bar)` path (LX-09),
+  monotonic-forward-only delivery (LX-10); replaces `TimeGenerator`'s role.
+- **Phase 4 — Paper path (the milestone DoD):** `PaperConnector` reusing the pure `MatchingEngine` +
+  fee/slippage (LX-06), driven by `LiveBarFeed`; `SimulatedAccount` math; correctness gate =
+  **paper-parity vs the backtest oracle** (LX-11).
+- **Phase 5 — Real/sandbox path:** `VenueAccount` reconciliation (per-symbol drift under 1:1, LX-04),
+  persistence live-drive of the v1.6 operational store, cache↔broker restart reconciliation —
+  **sandbox-validated** on OKX (real-money a gated stretch).
+- **Phase 6 — Dynamic universe membership** (lean poll seam, not the full screener): warmup-on-add +
+  open-position-handling-on-remove.
+- **Cross-cutting (Phases 2–5):** runtime/deployment topology (LX-15 — decide early), live resilience
+  (reconnect/partial-fill/rate-limit/gap recovery), real OKX secrets, FL-13 live-surface test coverage.
+
+**Key locked decisions (sketch §2, LX-01..LX-15):** paper-first DoD (LX-01); one milestone
+refactor-first (LX-02); Account owns balance/margin truth, `Simulated*` computes / `Venue*` caches
+(LX-03); 1 account : 1 portfolio (LX-04); `LiveConnector` is ours over ccxt.pro (LX-05);
+`PaperConnector` reuses the pure `MatchingEngine` (LX-06); `LiveBarFeed` = ring-buffer `BarFeed`
+(LX-07); warmup through the identical `update(bar)` path, no bulk fast-path (LX-09);
+monotonic-forward-only delivery (LX-10); klines-now/trades-later (LX-12); local paper stays bar-based
+(LX-13).
+
+**Out of scope (deferred):** Perp realism Phase B (FUND-01..04), full production screener,
+multi-venue/multi-asset, cross-margin pooling, tick-level local-paper fills.
+
+**Definition of done:** (1) SMA_MACD runs live-paper on a streaming OKX feed, paper-parity holds; (2)
+backtest oracle byte-exact, no W1/W2 regression vs v1.5; (3) real path sandbox-validated (order I/O +
+`VenueAccount` reconciliation + persistence live-drive + restart rehydration on OKX sandbox); (4)
+`mypy --strict` clean on new code, `filterwarnings=["error"]` green, FL-13 coverage on the live surface.
+
+**Design source:** `docs/superpowers/specs/2026-06-30-live-trading-milestone-design.md` (the locked
+sketch). Inherits v1.6 (operational store), v1.5 (stateful indicators / `BarFeed` ABC / perf), v1.4
+(margin model), v1.1 (multi-scenario behavior).
+
 ## Shipped Milestone: v1.6 — N+3b Persistence Foundation (2026-06-30)
 
 **Shipped 2026-06-30** — all 20 v1 requirements satisfied and verified; SMA_MACD oracle byte-exact
@@ -391,14 +442,15 @@ caching foundation; DB-gated, behavior-preserving on the backtest path; SMA_MACD
      v1.5 (Backtest Performance Optimization) SHIPPED 2026-06-26 — 11 requirements.
      v1.6 (N+3b — Persistence Foundation) SHIPPED 2026-06-30 — 20 requirements. -->
 
-**No active milestone.** v1.6 — N+3b Persistence Foundation shipped 2026-06-30 (20 reqs, recorded in
-the Validated section above). The logical next milestone is **N+4 — Live Trading Readiness** (Backlog
-999.3): land the new operating mode — a real-time data engine + live execution loop + venue
-reconciliation that *drives* the v1.6 operational store (built + testcontainers-verified, live-driven
-only here), plus the `Account` reconciliation mirror, production screener, and live test coverage
-(FL-13). Define it via `/gsd:new-milestone` → research → `REQUIREMENTS.md` → roadmap. v1.0 (45 reqs),
-v1.1 (51 reqs), v1.2 (18 reqs), v1.3 (10 reqs), v1.4 (23 reqs), v1.5 (11 reqs), and v1.6 (20 reqs) are
-shipped and recorded in the Validated section above and under `milestones/`.
+**Active milestone: v1.7 — Live Trading Readiness (trimmed N+4 / Backlog 999.3).** Started 2026-06-30.
+Land the new operating mode, **paper-first on OKX**: an `Account` abstraction (oracle-gated refactor),
+the `LiveConnector`/`OkxConnector`, a streaming `LiveBarFeed`, the paper path (the DoD — paper-parity
+vs the backtest oracle), the real/sandbox path that *drives* the v1.6 operational store + `VenueAccount`
+reconciliation, a lean dynamic-universe poll seam, and FL-13 live-surface coverage — all without
+disturbing the byte-exact backtest oracle. Full scope in the **Current Milestone** section above;
+requirements in `REQUIREMENTS.md`, phases in `ROADMAP.md`. v1.0 (45 reqs), v1.1 (51 reqs), v1.2 (18
+reqs), v1.3 (10 reqs), v1.4 (23 reqs), v1.5 (11 reqs), and v1.6 (20 reqs) are shipped and recorded in
+the Validated section above and under `milestones/`.
 
 ### Out of Scope
 
@@ -567,7 +619,9 @@ Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-lo
 (forex / equities / ETF) is deferred indefinitely.
 
 ---
-*Last updated: 2026-06-30 after the **v1.6 — N+3b Persistence Foundation** milestone (SHIPPED 2026-06-30). 5 phases / 21 plans / 20 v1 requirements (audit `tech_debt`, no blockers — 20/20 requirements, 5/5 phases, 5/6 seams, 2/3 E2E flows). DB-gated, behavior-preserving on the backtest path: oracle byte-exact (134 / `46189.87730727451`) with W1 −2.8% (no regression) vs the v1.5 baseline, write-through inertness proven by an import-quarantine subprocess test; `mypy --strict` clean (210 files), full suite 1463 green. Delivered: the swappable SQL spine (composition, SQLite + Postgres, Turso-ready), the all-SQL results store (#1), the three operational Postgres backends (#2) with native-`Numeric` money + Alembic migrations, the two-knob write-through + retention model (#2 live, built + testcontainers-verified), the classified cache (#3), and FL-06 closed. Live composition-root wiring + the operational store's live drive deferred to N+4 (D-01 / RETAIN-03). Next: N+4 — Live Trading Readiness (`/gsd:new-milestone`, Backlog 999.3). v1.0–v1.6 SHIPPED — archived under `milestones/`.*
+*Updated: 2026-06-30 — **v1.7 — Live Trading Readiness (trimmed N+4 / Backlog 999.3) STARTED.** Paper-first live deployment on OKX with a real correctness gate (paper-parity vs the backtest oracle), refactor-phase-first (oracle-gated Account abstraction in Phase 1), 6 phases (numbering reset to Phase 1). Design source: `docs/superpowers/specs/2026-06-30-live-trading-milestone-design.md` (LX-01..LX-15). Backtest oracle must stay byte-exact (134 / `46189.87730727451`), no W1/W2 regression vs v1.5. Defining requirements → roadmap via `/gsd:new-milestone`.*
+
+*Earlier: 2026-06-30 after the **v1.6 — N+3b Persistence Foundation** milestone (SHIPPED 2026-06-30). 5 phases / 21 plans / 20 v1 requirements (audit `tech_debt`, no blockers — 20/20 requirements, 5/5 phases, 5/6 seams, 2/3 E2E flows). DB-gated, behavior-preserving on the backtest path: oracle byte-exact (134 / `46189.87730727451`) with W1 −2.8% (no regression) vs the v1.5 baseline, write-through inertness proven by an import-quarantine subprocess test; `mypy --strict` clean (210 files), full suite 1463 green. Delivered: the swappable SQL spine (composition, SQLite + Postgres, Turso-ready), the all-SQL results store (#1), the three operational Postgres backends (#2) with native-`Numeric` money + Alembic migrations, the two-knob write-through + retention model (#2 live, built + testcontainers-verified), the classified cache (#3), and FL-06 closed. Live composition-root wiring + the operational store's live drive deferred to N+4 (D-01 / RETAIN-03). Next: N+4 — Live Trading Readiness (`/gsd:new-milestone`, Backlog 999.3). v1.0–v1.6 SHIPPED — archived under `milestones/`.*
 
 *Updated 2026-06-30 — v1.6 roadmap created (5 phases); **Phases 1–4 complete**: SQL spine + security hardening, all-SQL results store, operational SQL backends (3 seams), and Phase 4 retention + live write-through (`CachedSql{Order,PortfolioState,Signal}Storage` — store-first write-through, purge-on-terminalize + bracket-parent-resident, read-through, open-only rehydration; integration-tested on testcontainers Postgres). GATE-01 inertness held byte-exact (134 / `46189.87730727451`) with write-through OFF; RETAIN-01/02/03 + GATE-01 validated. Next: Phase 5 (Cache Classification #3).*
 *Earlier: 2026-06-26 after the **v1.5 — Backtest Performance Optimization** milestone (SHIPPED 2026-06-26). 8 phases / 26 plans / 11 v1 requirements; behavior-preserving — oracle byte-exact (134 / `46189.87730727451`) across all 8 phases, 1340/1340 suite green, `mypy --strict` clean, final W1 baseline 15.7 s / 152.8 MB. Profiler-ranked hot-path wins (order-storage indexes, running PnL accumulator, stateful O(1) indicators, int64 window cursor, msgspec migration) under keep-only-measured discipline. PERF-07/08 ID collision resolved at close (deferred items → PERF-09/10). Next: N+3b — Persistence (`/gsd:new-milestone`). v1.0/v1.1/v1.2/v1.3/v1.4/v1.5 SHIPPED — archived under `milestones/`.*
