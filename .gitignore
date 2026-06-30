@@ -48,6 +48,11 @@ credentials*
 # v1.6 Phase 5 planning dir slug contains "cache" — the broad **cache** rule
 # above would otherwise ignore the whole phase directory and its artifacts.
 !.planning/phases/05-cache-classification-3/
+# v1.6 Phase 5 committed cache-classification map + its SC2 check (mandated
+# artifact names per D-01; the broad **cache** rule above would otherwise ignore
+# them by filename "CACHE"/"cache").
+!docs/CACHE-CLASSIFICATION.md
+!tests/integration/test_cache_classification.py
 
 #UserData
 output/
