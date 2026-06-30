@@ -282,7 +282,10 @@ routing decisions documented and the v1.5 hot path left unchanged — classify, 
   1. An authoritative cache-classification map is committed: every ad-hoc cache / `lru_cache` / scattered in-memory lookup across `itrader/` is inventoried and tagged (a) hot-path data cache, (b) storage-index lookup already solved by v1.5 secondary indexes, or (c) legitimate pure-function memoization — a documented classification + routing, NOT a rewrite or a unification.
   2. The v1.5 hot path (stateful indicators / shared recent-bars feed) is left unchanged — the "do NOT unify into one Arrow-backed object" decision is recorded and cross-referenced, and grepping `itrader/` for `lru_cache`/`functools.cache`/ad-hoc `_cache` fields matches the inventory exactly (the only genuinely new cache is the live working-set cache built in Phase 4).
   3. (recurring gates) Oracle byte-exact 134 / `46189.87730727451` with no W1/W2 regression vs the v1.5 baseline (classification is documentation + routing decisions, no hot-path edit); `mypy --strict` clean and `filterwarnings=["error"]` green.
-**Plans**: TBD
+**Plans**: 3 plans (waves 1-3)
+- [ ] 05-01-PLAN.md — Committed cache-classification map (docs/CACHE-CLASSIFICATION.md) + SC2 grep-matches-inventory check (wave 1)
+- [ ] 05-02-PLAN.md — Per-site `# CACHE-CLASS:` anchors at the 14 live sites, indentation-matched (wave 2)
+- [ ] 05-03-PLAN.md — D-02 vestigial-knob removal + recurring SC3 gate (oracle/mypy/filterwarnings) (wave 3)
 
 ## Progress
 
