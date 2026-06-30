@@ -20,7 +20,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
   SQLite for the research store, Postgres for the operational store; the interface is shaped so a
   Turso/libSQL driver can be slotted in later without changing storage code (driver NOT added this
   milestone).
-- [ ] **SPINE-02**: The three existing domain storage ABCs (`OrderStorage`, `PortfolioStateStorage`,
+- [x] **SPINE-02**: The three existing domain storage ABCs (`OrderStorage`, `PortfolioStateStorage`,
   strategy `SignalStore`) plus a new `ResultsStore` ABC are each implemented by exactly one
   `Sql<Concern>Storage` class that **composes** the shared `SqlBackend` — one class per concern, no
   cross-concern god base.
@@ -42,14 +42,14 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### OPS — Operational store backends (#2, store layer)
 
-- [ ] **OPS-01**: `SqlOrderStorage` implements the `OrderStorage` ABC on Postgres — filling the
+- [x] **OPS-01**: `SqlOrderStorage` implements the `OrderStorage` ABC on Postgres — filling the
   `PostgreSQLOrderStorage` `NotImplementedError` stub — selectable via `OrderStorageFactory`
   (`in_memory` backtest / `postgresql` live; backtest backend unchanged).
-- [ ] **OPS-02**: A new `SqlPortfolioStateStorage` implements `PortfolioStateStorage` on Postgres
+- [x] **OPS-02**: A new `SqlPortfolioStateStorage` implements `PortfolioStateStorage` on Postgres
   (cash / position / transaction / metrics state), selectable via `PortfolioStateStorageFactory`.
-- [ ] **OPS-03**: A new `SqlSignalStorage` implements the strategy `SignalStore` ABC on Postgres
+- [x] **OPS-03**: A new `SqlSignalStorage` implements the strategy `SignalStore` ABC on Postgres
   (signal records + config snapshots), selectable via `SignalStorageFactory`.
-- [ ] **OPS-04**: Operational money persists as Postgres-native `Numeric` (Decimal end-to-end on the
+- [x] **OPS-04**: Operational money persists as Postgres-native `Numeric` (Decimal end-to-end on the
   real-money path — no float-for-money, no `DecimalAsText` needed); validated by DB round-trip tests on
   a **testcontainers** Postgres.
 
@@ -95,7 +95,7 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 - [x] **GATE-01**: With write-through off, the SMA_MACD backtest oracle stays **byte-exact** (134 /
   `46189.87730727451`) and there is **no W1/W2 perf regression** vs the v1.5 frozen baseline
   (15.7 s / 152.8 MB) — proving the persistence layer is inert on the hot path.
-- [ ] **GATE-02**: The new persistence code is covered by DB round-trip + restart-rehydration tests on
+- [x] **GATE-02**: The new persistence code is covered by DB round-trip + restart-rehydration tests on
   the right substrate (in-process SQLite for the results store; testcontainers Postgres for the
   operational store), with `mypy --strict` clean and `filterwarnings=["error"]` green.
 
@@ -136,16 +136,16 @@ phase numbering reset to 1 for v1.6).
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | SPINE-01 | Phase 1 | Complete |
-| SPINE-02 | Phase 1 | Pending |
+| SPINE-02 | Phase 1 | Complete |
 | SPINE-03 | Phase 1 | Complete |
 | RESULT-01 | Phase 2 | Complete |
 | RESULT-02 | Phase 2 | Complete |
 | RESULT-03 | Phase 2 | Complete |
 | RESULT-04 | Phase 2 | Complete |
-| OPS-01 | Phase 3 | Pending |
-| OPS-02 | Phase 3 | Pending |
-| OPS-03 | Phase 3 | Pending |
-| OPS-04 | Phase 3 | Pending |
+| OPS-01 | Phase 3 | Complete |
+| OPS-02 | Phase 3 | Complete |
+| OPS-03 | Phase 3 | Complete |
+| OPS-04 | Phase 3 | Complete |
 | RETAIN-01 | Phase 4 | Complete |
 | RETAIN-02 | Phase 4 | Complete |
 | RETAIN-03 | Phase 4 | Complete |
@@ -154,7 +154,7 @@ phase numbering reset to 1 for v1.6).
 | MIG-01 | Phase 1 | Complete |
 | SEC-01 | Phase 1 | Complete |
 | GATE-01 | Phase 4 (bound) + recurring every phase | Complete |
-| GATE-02 | Phase 1 (bound) + recurring every phase | Pending |
+| GATE-02 | Phase 1 (bound) + recurring every phase | Complete |
 
 **Coverage:**
 - v1 requirements: 20 total
