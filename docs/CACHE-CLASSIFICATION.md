@@ -61,6 +61,11 @@ working-set cache (built in Phase 4)** · **(—)** removed / superseded (NON-li
 
 Table columns: **#** · **Site (`file:line`)** · **Construct / what it caches** · **Class** · **Q8 xref**
 · **Invalidation / lifecycle**. Each live `file:line` is backticked so the SC2 check can extract it.
+**Line convention (reconciled at HEAD post-05-02):** the **Site `file:line`** is the **`# CACHE-CLASS:`
+anchor-comment line** (05-02 places each anchor one line *above* the definition it classifies), so the
+Site number matches the machine-readable anchor inventory at the end of this file. Any embedded
+field-family line references inside the *Construct* column (e.g. `_frames:214`) point at the **definition**
+line, not the anchor.
 
 ---
 
@@ -76,8 +81,8 @@ invalidated at the one place their inputs change. **LEFT ALONE — documentation
 | 1 | `price_handler/feed/bar_feed.py:91` | `@functools.cache def _offset_alias` — timeframe→pandas alias (pure) | (c) | #1 | None needed; bounded key space; `functools.cache` does not cache exceptions |
 | 2 | `outils/time_parser.py:139` | `@functools.lru_cache(maxsize=32) _aligned` — epoch alignment `(ts, tf)` | (c) | #2 | Bounded `maxsize=32`; body byte-unchanged; thread-safe |
 | 3 | `strategy_handler/base.py:124` | `@cache def _declared_hints(cls)` — `get_type_hints` per subclass | (c) | #3 | Constant after import; the seed's named correct-memo example |
-| 4 | `strategy_handler/base.py:197` | `self._to_dict_static_cache` — static slice of `to_dict` snapshot | (c) | #4 | Explicitly invalidated via `_invalidate_to_dict_cache` (def L782; called from the mutation path) |
-| 5 | `portfolio_handler/position/position.py:88` | `_net_quantity_cache` / `_avg_price_cache` (L88-89) — two fill-derived `Decimal`s | (c) | #5 | Fill-invalidated in `update_position` (L288-289); NOT `cached_property` (mutable input) |
+| 4 | `strategy_handler/base.py:198` | `self._to_dict_static_cache` — static slice of `to_dict` snapshot | (c) | #4 | Explicitly invalidated via `_invalidate_to_dict_cache` (def L784; called from the mutation path) |
+| 5 | `portfolio_handler/position/position.py:88` | `_net_quantity_cache` / `_avg_price_cache` (L89-90) — two fill-derived `Decimal`s | (c) | #5 | Fill-invalidated in `update_position` (L289-290); NOT `cached_property` (mutable input) |
 
 ## (a) — hot-path data cache  [Q7-PROTECTED — LEAVE ALONE]
 
@@ -86,7 +91,7 @@ Arrow/columnar unification here; the byte-exact oracle depends on these structur
 
 | # | Site (`file:line`) | Construct / what it caches | Class | Q8 xref | Invalidation / lifecycle |
 |---|--------------------|----------------------------|-------|---------|--------------------------|
-| 6 | `price_handler/feed/bar_feed.py:241` | bar-feed precompute **family** — `_frames:213`, `_spans:224`, `_prebuilt:241`, `_cursor_cut:316`, `_newest_bars:326` (resampled frames + per-ticker span index + prebuilt `Bar`s + monotonic window cursor + newest-bar) | (a) | #6 (`_spans` folded in — NEW within family, no new class) | LEAVE — the hot-path data cache; **Q7 = no Arrow here**. Anchor row is `_prebuilt` (L241); the doc carries the full field list |
+| 6 | `price_handler/feed/bar_feed.py:242` | bar-feed precompute **family** — `_frames:214`, `_spans:225`, `_prebuilt:243`, `_cursor_cut:318`, `_newest_bars:328` (resampled frames + per-ticker span index + prebuilt `Bar`s + monotonic window cursor + newest-bar) | (a) | #6 (`_spans` folded in — NEW within family, no new class) | LEAVE — the hot-path data cache; **Q7 = no Arrow here**. Anchor row is `_prebuilt` (L242); the doc carries the full field list |
 | 7 | `strategy_handler/indicators/handle.py:66` | `_buffer: deque(maxlen)` + `indicators/catalog.py` `_SMAState:97` / `_EMAState:143` / `_MACDHistState:184` / `_RSIState:241` — stateful indicator recurrence state | (a) | #7 | LEAVE — hot-path indicator state; the v1.5 Model-B self-buffer win Q7 protects |
 
 ## (a-infra) — wiring-time derive  [LEAVE ALONE]
@@ -104,7 +109,7 @@ rehydrates on restart (Q10) — it is execution truth, not a persistence cache.
 
 | # | Site (`file:line`) | Construct / what it caches | Class | Q8 xref | Invalidation / lifecycle |
 |---|--------------------|----------------------------|-------|---------|--------------------------|
-| 10 | `execution_handler/matching_engine.py:106` | `_resting` (+ `_trails:110`) — resting-order book (truth) + parallel trail state | (a-engine) | #10 | LEAVE — execution working state; in live joins the working set to rehydrate (Q10), not a persistence cache |
+| 10 | `execution_handler/matching_engine.py:106` | `_resting` (+ `_trails:111`) — resting-order book (truth) + parallel trail state | (a-engine) | #10 | LEAVE — execution working state; in live joins the working set to rehydrate (Q10), not a persistence cache |
 
 ## (b) — storage-index lookup  [ALREADY SOLVED — DOCUMENTATION ONLY, ZERO CODE]
 
@@ -114,7 +119,7 @@ equivalent. **No code change** — routing is documentation only.
 
 | # | Site (`file:line`) | Construct / what it caches | Class | Q8 xref | Invalidation / lifecycle |
 |---|--------------------|----------------------------|-------|---------|--------------------------|
-| 9 | `order_handler/storage/in_memory_storage.py:62` | `_active_by_portfolio` / `_by_status` / `_last_indexed_status` (L62-64) — derived secondary indexes over flat `{id:order}` | (b) | #9 | ALREADY SOLVED — Phase-3 `SqlOrderStorage` re-expresses as `WHERE`+indexes; no backtest change |
+| 9 | `order_handler/storage/in_memory_storage.py:62` | `_active_by_portfolio` / `_by_status` / `_last_indexed_status` (L63-65) — derived secondary indexes over flat `{id:order}` | (b) | #9 | ALREADY SOLVED — Phase-3 `SqlOrderStorage` re-expresses as `WHERE`+indexes; no backtest change |
 
 ## (c-config) — venue config snapshot  [LEAVE ALONE]
 
@@ -123,7 +128,7 @@ Plain config snapshot fields refreshed through an explicit config seam (`update_
 
 | # | Site (`file:line`) | Construct / what it caches | Class | Q8 xref | Invalidation / lifecycle |
 |---|--------------------|----------------------------|-------|---------|--------------------------|
-| 11 | `execution_handler/exchanges/simulated.py:114` | `_supported_symbols` (+ `_min_order_size:123`, `_max_order_size:124`) — venue config snapshot | (c-config) | #11 | LEAVE — refreshed via `update_config` / `add_supported_symbol` seam, not domain state |
+| 11 | `execution_handler/exchanges/simulated.py:114` | `_supported_symbols` (+ `_min_order_size:124`, `_max_order_size:125`) — venue config snapshot | (c-config) | #11 | LEAVE — refreshed via `update_config` / `add_supported_symbol` seam, not domain state |
 
 ## (d) live-retention working-set cache (built in Phase 4)  [ROUTED — Phase-4 D-04]
 
@@ -185,9 +190,9 @@ intended Wave-0 RED→GREEN sequence, not a failure.
 price_handler/feed/bar_feed.py:91            (c)  _offset_alias decorator
 outils/time_parser.py:139                    (c)  _aligned lru_cache decorator
 strategy_handler/base.py:124                 (c)  _declared_hints decorator
-strategy_handler/base.py:197                 (c)  _to_dict_static_cache field
+strategy_handler/base.py:198                 (c)  _to_dict_static_cache field
 portfolio_handler/position/position.py:88    (c)  _net_quantity_cache / _avg_price_cache fields
-price_handler/feed/bar_feed.py:241           (a)  bar-feed precompute family (anchor _prebuilt)
+price_handler/feed/bar_feed.py:242           (a)  bar-feed precompute family (anchor _prebuilt)
 strategy_handler/indicators/handle.py:66     (a)  stateful indicator _buffer
 price_handler/feed/cache_registration.py:105 (a-infra)  derive() shared-bar-cache capacity
 order_handler/storage/in_memory_storage.py:62 (b)  derived secondary indexes
