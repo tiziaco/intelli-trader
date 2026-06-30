@@ -22,7 +22,9 @@ findings:
   warning: 2
   info: 1
   total: 4
-status: issues_found
+status: resolved
+resolved: 2026-06-30T11:00:00Z
+resolution: "All 4 findings fixed in commit 5a824da; mypy --strict clean, full suite 1459 passed under filterwarnings=[error], oracle byte-exact."
 ---
 
 # Phase 04: Code Review Report
@@ -30,7 +32,14 @@ status: issues_found
 **Reviewed:** 2026-06-30T10:28:59Z
 **Depth:** standard
 **Files Reviewed:** 13
-**Status:** issues_found
+**Status:** resolved (all 4 findings fixed in commit `5a824da`)
+
+## Resolution (2026-06-30)
+
+- **CR-01 (fixed):** `CachedSqlOrderStorage.add_order` now evicts a *childless* terminal order at add time (the audited REJECTED admission path persists via `add_order`), restoring the purge-on-terminalize / flat-RSS invariant. Gate restricted to childless terminals so a bracket parent added before its children (FK order) is not prematurely evicted. Regression test `test_terminal_add_order_not_resident`.
+- **WR-01 (fixed):** `CachedSqlSignalStorage.add` runs dedup-check + store write + mirror under one lock (no partial-commit `IntegrityError`; no doomed row). Strengthened `test_duplicate_rejected`.
+- **WR-02 (fixed):** `clear_portfolio_orders` / `remove_orders_by_ticker` re-evaluate the bracket parents of cleared children, evicting an orphaned resident terminal parent. Regression tests `test_clear_evicts_orphaned_terminal_parent`, `test_remove_by_ticker_evicts_orphaned_terminal_parent`.
+- **IN-01 (fixed):** `models.py` docstring six → seven portfolio tables.
 
 ## Summary
 
