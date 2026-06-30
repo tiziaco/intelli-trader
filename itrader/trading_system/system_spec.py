@@ -37,13 +37,13 @@ from typing import Any
 
 @dataclass(frozen=True)
 class PortfolioSpec:
-	"""Minimal portfolio spec the factory reads (``user_id`` / ``name`` / ``cash``).
+	"""Minimal portfolio spec the factory reads (``name`` / ``cash``).
 
-	Promoted field-for-field from ``scenario_spec.py::PortfolioSpec`` — the
-	wiring trio the factory consumes via ``add_portfolio`` (D-01).
+	Promoted from ``scenario_spec.py::PortfolioSpec`` — the wiring fields the
+	factory consumes via ``add_portfolio`` (D-01). ACCT-04: the former
+	owning-user field was dropped (an app-layer concern, not a wiring input).
 	"""
 
-	user_id: int
 	name: str
 	cash: int
 
@@ -84,7 +84,7 @@ class SystemSpec:
 	live. Field names match ``ScenarioSpec`` EXACTLY so the Wave-4 e2e collapse
 	maps by name: ``start``, ``end``, ``timeframe``, ``ticker``,
 	``starting_cash``, ``data`` (ticker -> CSV path), ``strategies``,
-	``portfolios`` (each ``user_id`` / ``name`` / ``cash``), ``exchange``
+	``portfolios`` (each ``name`` / ``cash``), ``exchange``
 	(``None`` = zero-fee / no-slippage defaults).
 
 	``actions`` (default empty tuple) is oracle-inert — an empty timeline wires

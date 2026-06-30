@@ -40,7 +40,7 @@ from itrader.logger import get_itrader_logger
 from itrader.storage import SqlBackend
 
 from ..base import PortfolioStateStorage
-from ..cash.cash_manager import CashOperation
+from itrader.portfolio_handler.account import CashOperation
 from ..metrics.metrics_manager import PortfolioSnapshot
 from ..position import Position
 from ..transaction import Transaction

@@ -463,7 +463,6 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		# every other construction site (oracle/integration/scripts + the former
 		# e2e _build_and_run) uses "csv", so the factory must too.
 		pid = engine.portfolio_handler.add_portfolio(
-			user_id=portfolio_spec.user_id,
 			name=portfolio_spec.name,
 			exchange='csv',
 			cash=portfolio_spec.cash,

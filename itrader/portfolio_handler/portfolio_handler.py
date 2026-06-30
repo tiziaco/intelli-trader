@@ -153,10 +153,10 @@ class PortfolioHandler:
     def add_portfolio(self, name: str, exchange: str, cash: float, portfolio_config: Optional[PortfolioConfig] = None) -> PortfolioId:
         """Create a new portfolio with enhanced capabilities.
 
-        ACCT-04: the ``user_id`` first positional parameter was dropped — the
-        owning-user mapping is an app-layer (FastAPI) concern, not a Portfolio
-        concern, and is not relocated onto the Account. The surviving signature
-        is ``(name, exchange, cash, portfolio_config=None)``.
+        ACCT-04: the former owning-user first positional parameter was dropped —
+        that mapping is an app-layer (FastAPI) concern, not a Portfolio concern,
+        and is not relocated onto the Account. The surviving signature is
+        ``(name, exchange, cash, portfolio_config=None)``.
         """
         
         with self._operation_context("add_portfolio") as correlation_id:

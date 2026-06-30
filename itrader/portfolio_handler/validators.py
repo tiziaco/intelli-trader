@@ -75,20 +75,19 @@ class PortfolioValidator:
     
     @staticmethod
     def validate_portfolio_data(
-        user_id: int,
         name: str,
         exchange: str,
         cash: float
     ) -> None:
         """
         Validate portfolio creation data.
-        
+
+        ACCT-04: the former owning-user parameter/check was dropped — owning-user
+        identity is an app-layer concern, not portfolio creation data.
+
         Raises:
             InvalidTransactionError: If any validation fails
         """
-        if not isinstance(user_id, int) or user_id <= 0:
-            raise InvalidTransactionError("User ID must be a positive integer")
-        
         if not name or not isinstance(name, str) or len(name.strip()) == 0:
             raise InvalidTransactionError("Portfolio name must be a non-empty string")
         
