@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 1 context gathered
-last_updated: "2026-06-30T19:01:36.053Z"
-last_activity: 2026-06-30 -- Phase 01 planning complete
+last_updated: "2026-06-30T20:33:14.670Z"
+last_activity: 2026-06-30
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 7
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 1 — Account Abstraction + Portfolio/Handler refactor (oracle-gated). Ready to plan.
+**Current focus:** Phase 01 — account-abstraction-portfolio-handler-refactor
 
 ## Current Position
 
-Phase: 1 of 6 (Account Abstraction + Portfolio/Handler Refactor)
-Plan: — (not yet planned)
+Phase: 01 (account-abstraction-portfolio-handler-refactor) — EXECUTING
+Plan: 2 of 7
 Status: Ready to execute
-Last activity: 2026-06-30 -- Phase 01 planning complete
+Last activity: 2026-06-30
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 14%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -129,6 +129,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - **`TradingInterface` deleted (LX-14)** — no production consumer; replaced by a thin typed engine command
   surface routing through the real order domain. `Portfolio.user_id` stripped (app-layer concern).
 
+- [Phase ?]: D-04 resolved: SMA_MACD oracle runs the SPOT path — SimulatedCashAccount is the verbatim-critical leaf for plan 01-02 (enable_margin=False default + run_backtest.py LONG_ONLY)
+
 ### Pending Todos
 
 [From .planning/todos/pending/ — carried; both now in-scope for v1.7]
@@ -194,6 +196,7 @@ v1.0–v1.6 milestone-close acknowledgments are recorded in the respective MILES
 `milestones/`. v1.6 audit (`tech_debt`, no blockers): live composition-root wiring → promoted to v1.7
 Phase 5 (D-01); draft Nyquist VALIDATION.md records on all 5 phases; ~13 WR-/IN- non-blocking review
 warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`).
+| Phase 01 P01 | 3min | 3 tasks | 5 files |
 
 ## Bookkeeping
 
@@ -206,9 +209,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-06-30T18:00:45.295Z
+Last session: 2026-06-30T20:32:54.388Z
 Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-account-abstraction-portfolio-handler-refactor/01-CONTEXT.md
+Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps

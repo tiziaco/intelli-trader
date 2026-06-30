@@ -22,7 +22,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Account Abstraction — Phase 1 (oracle-gated, behavior-preserving refactor)
 
-- [ ] **ACCT-01**: The engine exposes an `Account` abstraction owning balance/margin truth, with
+- [x] **ACCT-01**: The engine exposes an `Account` abstraction owning balance/margin truth, with
   `SimulatedCashAccount` (CashManager code-motion) and `SimulatedMarginAccount` leaves; `Portfolio`
   delegates accounting to its injected `account` (`Portfolio.cash` → `Portfolio.account`). (LX-03)
 - [ ] **ACCT-02**: Margin/liquidation math (maintenance_margin, margin_ratio, liq price/penalty,
@@ -34,7 +34,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   `Account`); the constructor-signature ripple is resolved with the oracle held byte-exact.
 - [ ] **ACCT-05**: `TradingInterface` is evaluated and removed (or deliberately slimmed) per LX-14 —
   the surviving engine command surface is decided, scoping the FL-13 live-test coverage.
-- [ ] **ACCT-06**: The `LiveConnector` interface is defined (interface-only), with the `VenueAccount`
+- [x] **ACCT-06**: The `LiveConnector` interface is defined (interface-only), with the `VenueAccount`
   leaf shaped interface-only, so Phases 2–5 implement against a stable contract.
 
 ### OKX Connector — Phase 2 (`LiveConnector` / `OkxConnector`)
@@ -169,12 +169,12 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ACCT-01 | Phase 1 | Pending |
+| ACCT-01 | Phase 1 | Complete |
 | ACCT-02 | Phase 1 | Pending |
 | ACCT-03 | Phase 1 | Pending |
 | ACCT-04 | Phase 1 | Pending |
 | ACCT-05 | Phase 1 | Pending |
-| ACCT-06 | Phase 1 | Pending |
+| ACCT-06 | Phase 1 | Complete |
 | CONN-01 | Phase 2 | Pending |
 | CONN-02 | Phase 2 | Pending |
 | CONN-03 | Phase 2 | Pending |
