@@ -70,13 +70,20 @@ class SignalStorageFactory:
             # D-06 — lazy imports keep SQLAlchemy off the backtest import path.
             from itrader.config.sql import SqlSettings
             from itrader.storage import SqlBackend
+            from itrader.strategy_handler.storage.cached_sql_storage import (
+                CachedSqlSignalStorage,
+            )
             from itrader.strategy_handler.storage.sql_storage import (
                 SqlSignalStorage,
             )
 
             if backend is None:
                 backend = SqlBackend(SqlSettings.default())
-            return SqlSignalStorage(backend)
+            # Wrap the untouched system-of-record store in the live-only
+            # store-first cache mirror (D-04 / Pitfall 8). The wrapper import
+            # stays INSIDE this branch so the backtest path pulls no SQLAlchemy
+            # nor the wrapper (GATE-01 quarantine).
+            return CachedSqlSignalStorage(SqlSignalStorage(backend))
         else:
             raise ConfigurationError(
                 "environment", environment,
