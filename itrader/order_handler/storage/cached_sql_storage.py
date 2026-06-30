@@ -111,10 +111,31 @@ class CachedSqlOrderStorage(OrderStorage):
 
     # ------------------------------------------------------------------ writes (store-first)
     def add_order(self, order: "Order") -> None:
-        """Persist store-first, then mirror into the cache (Pitfall 8 persist-then-acknowledge)."""
+        """Persist store-first, then mirror into the cache (Pitfall 8 persist-then-acknowledge).
+
+        An order that is ALREADY terminal at add time is purged on the same terminal-state
+        gate as ``update_order`` (D-02): the admission path persists audited REJECTED records
+        straight through ``add_order`` (admission_manager.py — every sizing / direction /
+        validator rejection), so without this gate each rejection would leave a resident
+        terminal record in the working set forever and break the flat-RSS / purge-on-terminalize
+        invariant. A standalone terminal order is evicted immediately; a (terminal) bracket
+        parent whose children are all terminal is evicted too, with its own parent re-evaluated.
+        """
         self._store.add_order(order)            # one txn (orders row + state_changes)
         with self._lock:
             self._cache.add_order(order)        # mirror into the working set
+            # Evict a terminal order added straight through add_order. The gate is restricted
+            # to orders with NO children of their own (standalone terminals — e.g. an audited
+            # REJECTED admission record, or a terminal bracket child): a bracket PARENT is added
+            # ACTIVE (PENDING) in the real flow and only terminalizes later via update_order, so
+            # applying the child-aware ``_can_evict`` here would wrongly evict a parent whose
+            # children are merely not added yet (FK ordering makes the child store-lookup miss,
+            # which ``_child_is_terminal`` reads as terminal). A terminal child still re-evaluates
+            # its parent so a now-complete bracket parent is purged.
+            if order.is_terminal and not order.child_order_ids:
+                self._cache.remove_order(order.id)
+                if order.parent_order_id is not None:
+                    self._maybe_evict_parent(order.parent_order_id)
 
     def update_order(self, order: "Order") -> bool:
         """Update store-first; on success mirror to cache and purge if now terminal (D-02)."""
@@ -137,17 +158,42 @@ class CachedSqlOrderStorage(OrderStorage):
         return ok
 
     def remove_orders_by_ticker(self, ticker: str, portfolio_id: IdLike) -> int:
-        """Remove active ticker orders store-first, then mirror the removal into the cache."""
-        count = self._store.remove_orders_by_ticker(ticker, portfolio_id)
+        """Remove active ticker orders store-first, then mirror the removal into the cache.
+
+        These removals only ever drop ACTIVE orders, so a terminal bracket PARENT held
+        resident under the bracket-parent-resident invariant is left behind when its last
+        live children are cleared here. Re-evaluate those parents after the removal so an
+        orphaned terminal parent is evicted instead of leaking until restart (D-02).
+        """
         with self._lock:
+            parent_ids = {
+                o.parent_order_id
+                for o in self._cache.get_active_orders(portfolio_id)
+                if o.ticker == ticker and o.parent_order_id is not None
+            }
+            count = self._store.remove_orders_by_ticker(ticker, portfolio_id)
             self._cache.remove_orders_by_ticker(ticker, portfolio_id)
+            for parent_id in parent_ids:
+                self._maybe_evict_parent(parent_id)
         return count
 
     def clear_portfolio_orders(self, portfolio_id: IdLike) -> int:
-        """Clear active portfolio orders store-first, then mirror the removal into the cache."""
-        count = self._store.clear_portfolio_orders(portfolio_id)
+        """Clear active portfolio orders store-first, then mirror the removal into the cache.
+
+        Mirrors ``remove_orders_by_ticker``: clearing only drops ACTIVE orders, so re-evaluate
+        the bracket parents of the cleared children afterward to evict any now-orphaned
+        terminal parent (bracket-parent-resident, D-02).
+        """
         with self._lock:
+            parent_ids = {
+                o.parent_order_id
+                for o in self._cache.get_active_orders(portfolio_id)
+                if o.parent_order_id is not None
+            }
+            count = self._store.clear_portfolio_orders(portfolio_id)
             self._cache.clear_portfolio_orders(portfolio_id)
+            for parent_id in parent_ids:
+                self._maybe_evict_parent(parent_id)
         return count
 
     # ------------------------------------------------------------------ reads (split)

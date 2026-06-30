@@ -127,8 +127,13 @@ def test_filters_from_mirror(pg_backend):
 
 
 def test_duplicate_rejected(pg_backend):
-    """Adding the same signal_id twice raises ValueError (the mirror inherits the contract)."""
-    _store, wrapper = _wrapper(pg_backend)
+    """Adding the same signal_id twice raises ValueError (the mirror inherits the contract).
+
+    WR-01: the dedup-check + store write + mirror run atomically under one lock, so the rejected
+    re-add fails fast with the house ValueError and writes NO doomed row — the store keeps
+    exactly one record (a partial-commit IntegrityError would leave a second, or a stray, row).
+    """
+    store, wrapper = _wrapper(pg_backend)
     strategy_id = StrategyId(uc.uuid7())
     record = _make_record(
         strategy_id, "BTCUSD", time=datetime(2022, 1, 1, tzinfo=timezone.utc)
@@ -137,6 +142,10 @@ def test_duplicate_rejected(pg_backend):
     wrapper.add(record)
     with pytest.raises(ValueError):
         wrapper.add(record)
+
+    # No doomed row: the durable store holds exactly the one originally-added signal.
+    persisted = store.get_all()
+    assert [r.signal_id for r in persisted] == [record.signal_id]
 
 
 def test_rehydrate_full_mirror(pg_backend):

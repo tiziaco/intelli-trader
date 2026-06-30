@@ -1,12 +1,12 @@
 """Core ``Table`` definitions for the portfolio-state operational store (OPS-02, D-03).
 
 SQLAlchemy **Core** (not declarative ORM) — mirroring ``itrader/results/models.py``'s
-idempotent registrar. ``build_portfolio_tables`` registers six normalized tables on the
+idempotent registrar. ``build_portfolio_tables`` registers seven normalized tables on the
 injected ``backend.metadata`` and is idempotent on a shared backend (reuse an
 already-registered table, the same guard as the results store).
 
-The six tables map the four portfolio-manager collections the
-``PortfolioStateStorage`` ABC owns:
+The seven tables map the four portfolio-manager collections the
+``PortfolioStateStorage`` ABC owns (plus the Phase-4 account-state carrier):
 
   * ``positions`` — open + closed positions (D-03 ``is_open`` flag), one row per Position.
   * ``transactions`` — append-only transaction history.

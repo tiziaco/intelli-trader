@@ -64,15 +64,19 @@ class CachedSqlSignalStorage(SignalStore):
     def add(self, record: "SignalRecord") -> None:
         """Persist store-first, then mirror into the cache (Pitfall 8).
 
-        A duplicate ``signal_id`` is rejected against the full mirror BEFORE the store
-        write, so the re-add fails fast with the house ``ValueError`` (the mirror inherits
-        ``InMemorySignalStore``'s contract) and no doomed row is persisted.
+        The duplicate-id check, the store write and the cache mirror all run under ONE lock
+        acquisition so they are atomic: a concurrent second writer of the same ``signal_id``
+        cannot slip between the check and the persist and provoke a partial-commit
+        ``IntegrityError`` — it always sees the resident first record and fails fast with the
+        house ``ValueError`` (the mirror inherits ``InMemorySignalStore``'s contract), and no
+        doomed row is written. Store-first ordering is preserved within the lock (durable write
+        commits before the mirror is touched). The lock is uncontended under the daemon-sole-
+        writer wiring; this holds it across the store I/O to stay correct for the FastAPI layer.
         """
         with self._lock:
             if any(r.signal_id == record.signal_id for r in self._cache.get_all()):
                 raise ValueError(f"duplicate signal_id: {record.signal_id!r}")
-        self._store.add(record)
-        with self._lock:
+            self._store.add(record)
             self._cache.add(record)
 
     def get_all(self) -> List["SignalRecord"]:

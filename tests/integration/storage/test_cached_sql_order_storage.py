@@ -262,3 +262,83 @@ def test_atomic_within_method(pg_backend, monkeypatch):
     assert storage._store.get_order_by_id(order.id) is None
     assert storage._cache.get_order_by_id(order.id) is None
     assert storage._store.get_order_history(order.id) == []
+
+
+def test_terminal_add_order_not_resident(pg_backend):
+    """CR-01 — a terminal order persisted straight through ``add_order`` (the audited REJECTED
+    admission path: admission_manager.py persists every sizing/direction/validator rejection via
+    ``add_order``) is purged on the add-time terminal-state gate, so it never stays resident and
+    repeated rejections do not grow the working set (flat-RSS on the add_order path)."""
+    storage = _make_storage(pg_backend)
+    pid = PortfolioId(uc.uuid7())
+
+    rejected = _make_order(portfolio_id=pid, status=OrderStatus.REJECTED)
+    assert rejected.is_terminal  # guards the precondition the gate keys on
+    storage.add_order(rejected)
+
+    # Not resident in the working set (purged at add time, CR-01) ...
+    assert storage._cache.get_order_by_id(rejected.id) is None
+    assert storage.get_active_orders(pid) == []
+    # ... but durably persisted and served via read-through to the store.
+    got = storage.get_order_by_id(rejected.id)
+    assert got is not None
+    assert got.status == OrderStatus.REJECTED
+
+    # Many rejections never accumulate in the cache; the store keeps every audit row.
+    for _ in range(50):
+        storage.add_order(_make_order(portfolio_id=pid, status=OrderStatus.REJECTED))
+    assert len(storage._cache._by_id) == 0
+    assert sum(storage.count_orders_by_status(pid).values()) == 51
+
+
+def test_clear_evicts_orphaned_terminal_parent(pg_backend):
+    """WR-02 — ``clear_portfolio_orders`` drops only active children; a terminal bracket parent
+    held resident under bracket-parent-resident is re-evaluated and evicted (not leaked until
+    restart) once its live children are cleared."""
+    storage = _make_storage(pg_backend)
+    pid = PortfolioId(uc.uuid7())
+
+    parent = _make_order(portfolio_id=pid, status=OrderStatus.FILLED)
+    child_sl = _make_order(
+        portfolio_id=pid, parent_order_id=parent.id, type=OrderType.STOP, action=Side.SELL
+    )
+    child_tp = _make_order(
+        portfolio_id=pid, parent_order_id=parent.id, type=OrderType.LIMIT, action=Side.SELL
+    )
+    parent.child_order_ids = [child_sl.id, child_tp.id]
+
+    storage.add_order(parent)  # parent FIRST (self-ref FK target)
+    storage.add_order(child_sl)
+    storage.add_order(child_tp)
+    assert storage._cache.get_order_by_id(parent.id) is not None  # terminal parent, live children
+
+    storage.clear_portfolio_orders(pid)  # clears the two live children
+
+    # The now-orphaned terminal parent is evicted (WR-02); the cache is empty ...
+    assert storage._cache.get_order_by_id(parent.id) is None
+    assert len(storage._cache._by_id) == 0
+    # ... and the parent is still served from the store via read-through.
+    assert storage.get_order_by_id(parent.id) is not None
+
+
+def test_remove_by_ticker_evicts_orphaned_terminal_parent(pg_backend):
+    """WR-02 — ``remove_orders_by_ticker`` mirrors ``clear``: an orphaned terminal bracket parent
+    is re-evaluated and evicted after its last live child for the ticker is removed."""
+    storage = _make_storage(pg_backend)
+    pid = PortfolioId(uc.uuid7())
+
+    parent = _make_order(portfolio_id=pid, status=OrderStatus.FILLED, ticker="ETHUSD")
+    child = _make_order(
+        portfolio_id=pid, parent_order_id=parent.id, ticker="ETHUSD",
+        type=OrderType.STOP, action=Side.SELL,
+    )
+    parent.child_order_ids = [child.id]
+
+    storage.add_order(parent)
+    storage.add_order(child)
+    assert storage._cache.get_order_by_id(parent.id) is not None
+
+    storage.remove_orders_by_ticker("ETHUSD", pid)
+
+    assert storage._cache.get_order_by_id(parent.id) is None
+    assert storage.get_order_by_id(parent.id) is not None
