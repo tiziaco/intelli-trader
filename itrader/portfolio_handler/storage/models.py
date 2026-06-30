@@ -16,6 +16,14 @@ The six tables map the four portfolio-manager collections the
   * ``cash_operations`` — append-only cash audit trail.
   * ``equity_snapshots`` — append-only metrics-snapshot history (explicit per-portfolio
     ``seq`` PK-part, Pitfall 7 / A3 — NOT Integer autoincrement, single-UUID rule).
+  * ``portfolio_account_state`` — single-row-per-portfolio account-state carrier (Phase-4
+    A2): the latest persisted ``cash_balance`` / ``realized_pnl`` accumulators + the
+    ``total_equity`` / ``peak_equity`` / ``open_positions_count`` snapshot, upserted
+    synchronously so the latest persisted account state is never behind the working set
+    after a crash (D-03). The ``portfolio_id`` IS the primary key (single UUIDv7 key, no
+    surrogate/autoincrement) — the ``CachedSqlPortfolioStateStorage`` wrapper writes it via
+    ``save_account_state`` and reads it via ``load_account_state``; the untouched
+    ``SqlPortfolioStateStorage`` (D-04) simply ignores the extra table.
 
 Every table carries a ``portfolio_id`` column: the SQL backend binds a ``portfolio_id`` at
 construction (the ABC has NO ``portfolio_id`` parameter) and scopes every query to it
@@ -44,7 +52,7 @@ from itrader.storage import Uuid, UtcIsoText
 
 
 def build_portfolio_tables(metadata: MetaData) -> dict[str, Table]:
-    """Register (idempotently) the six portfolio-state tables on ``metadata`` and return them.
+    """Register (idempotently) the seven portfolio-state tables on ``metadata`` and return them.
 
     Parameters
     ----------
@@ -57,7 +65,7 @@ def build_portfolio_tables(metadata: MetaData) -> dict[str, Table]:
     -------
     dict[str, Table]
         ``{"positions", "transactions", "cash_reservations", "locked_margin",
-        "cash_operations", "equity_snapshots"}``.
+        "cash_operations", "equity_snapshots", "portfolio_account_state"}``.
     """
     tables: dict[str, Table] = {}
 
@@ -182,6 +190,29 @@ def build_portfolio_tables(metadata: MetaData) -> dict[str, Table]:
             Column("open_positions_count", Integer, nullable=False),
             Column("portfolio_return", Numeric, nullable=False),
             Column("benchmark_return", Numeric, nullable=True),
+        )
+
+    # portfolio_account_state — single row per portfolio (A2 / Phase-4). portfolio_id IS
+    # the PK (single UUIDv7 key, no surrogate/autoincrement). Carries the two purge-derived
+    # accumulators (cash_balance, realized_pnl) + the latest account snapshot
+    # (total_equity, peak_equity, open_positions_count) so the latest persisted account
+    # state is never behind the working set after a crash (D-03). updated_time is business
+    # `time` (UtcIsoText), never wall-clock. The CachedSqlPortfolioStateStorage wrapper
+    # upserts it via save_account_state and reads it via load_account_state; the untouched
+    # SqlPortfolioStateStorage (D-04) ignores it.
+    if "portfolio_account_state" in metadata.tables:
+        tables["portfolio_account_state"] = metadata.tables["portfolio_account_state"]
+    else:
+        tables["portfolio_account_state"] = Table(
+            "portfolio_account_state",
+            metadata,
+            Column("portfolio_id", Uuid(as_uuid=True), primary_key=True),
+            Column("cash_balance", Numeric, nullable=False),
+            Column("realized_pnl", Numeric, nullable=False),
+            Column("total_equity", Numeric, nullable=False),
+            Column("peak_equity", Numeric, nullable=False),
+            Column("open_positions_count", Integer, nullable=False),
+            Column("updated_time", UtcIsoText, nullable=False),
         )
 
     return tables
