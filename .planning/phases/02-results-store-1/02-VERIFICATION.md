@@ -1,13 +1,15 @@
 ---
 phase: 02-results-store-1
 verified: 2026-06-29T00:00:00Z
-status: human_needed
+status: verified
+resolved: 2026-06-30T00:00:00Z
 score: 4/4
 overrides_applied: 0
 human_verification:
   - test: "Run the W1 benchmark (`make backtest` or equivalent timing probe) and confirm wall-clock time is not worse than the v1.5 frozen baseline of 15.7 s"
     expected: "Wall-clock time within noise of 15.7 s — no regression from Phase 2's post-loop dump (the hot loop is structurally unchanged; `persist=False` adds only one un-entered `if persist:` branch)"
     why_human: "Timing benchmarks cannot be verified by static analysis or import tests alone; a thermal-clean machine run is the agreed measurement discipline (per MEMORY.md v1.5 gate thermal-drift note and GATE-01 formal binding to Phase 4)"
+    result: "RESOLVED at Phase 4 (the bound phase for GATE-01). 04-04-SUMMARY measured W1 = −2.8% (PASS) vs the v1.5 baseline with write-through OFF; oracle byte-exact (134 / 46189.87730727451), import quarantine green. No regression."
 ---
 
 # Phase 02: Results Store (#1) — Verification Report
