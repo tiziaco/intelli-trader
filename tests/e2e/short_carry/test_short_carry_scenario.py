@@ -165,7 +165,7 @@ def _run_once():
     balance_after) + the final balance — the determinism double-run compares these."""
     system, portfolio, portfolio_id = _build_carry_system()
     engine = system.engine
-    cash = portfolio.cash_manager
+    cash = portfolio.account
     for time_event in engine.time_generator:
         engine.clock.set_time(time_event.time)
         engine.global_queue.put(time_event)

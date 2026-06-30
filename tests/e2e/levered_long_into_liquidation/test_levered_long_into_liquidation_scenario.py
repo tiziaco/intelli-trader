@@ -206,7 +206,7 @@ def test_levered_long_into_liquidation_scenario():
     system, portfolio, portfolio_id = _build_liq_system()
     engine = system.engine
     handler = system.portfolio_handler
-    cash = portfolio.cash_manager
+    cash = portfolio.account
 
     snaps: dict[str, dict] = {}
     for time_event in engine.time_generator:

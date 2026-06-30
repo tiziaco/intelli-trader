@@ -190,7 +190,7 @@ def test_short_roundtrip_scenario_parked():
     system, portfolio, portfolio_id = _build_short_system()
     engine = system.engine
     handler = system.portfolio_handler
-    cash = portfolio.cash_manager
+    cash = portfolio.account
 
     snaps: dict[str, dict] = {}
     for time_event in engine.time_generator:

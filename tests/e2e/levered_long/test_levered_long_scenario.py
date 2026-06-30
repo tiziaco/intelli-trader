@@ -264,7 +264,7 @@ def test_levered_long_scenario_parked():
     system, portfolio, portfolio_id = _build_margin_system()
     engine = system.engine
     handler = system.portfolio_handler
-    cash = portfolio.cash_manager
+    cash = portfolio.account
 
     # Per-bar snapshots keyed by date so the assertions read against the hand-computation.
     snaps: dict[str, dict] = {}

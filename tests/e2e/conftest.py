@@ -369,7 +369,7 @@ def _assemble(spec, system, portfolio, portfolio_id, portfolio_ids):
     # cash_operations.csv golden. Queried AFTER the run (queue-only — D-07) from the
     # portfolio's cash manager. Oracle-dark: the serializer only materializes when a
     # leaf commits the placeholder golden file (the exists() gate in _freeze/_diff).
-    cash_ops = build_cash_operations(portfolio.cash_manager.get_cash_operations())
+    cash_ops = build_cash_operations(portfolio.account.get_cash_operations())
 
     # D-17: post-hoc slippage attribution from the store's close series.
     #

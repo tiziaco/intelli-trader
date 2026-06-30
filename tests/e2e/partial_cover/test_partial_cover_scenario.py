@@ -166,7 +166,7 @@ def test_partial_cover_scenario_parked():
     system, portfolio, portfolio_id = _build_pcov_system()
     engine = system.engine
     handler = system.portfolio_handler
-    cash = portfolio.cash_manager
+    cash = portfolio.account
 
     snaps: dict[str, dict] = {}
     for time_event in engine.time_generator:
