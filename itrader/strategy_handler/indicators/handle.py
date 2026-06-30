@@ -63,6 +63,7 @@ class IndicatorHandle:
 		self._depth = depth
 		self._state = adapter.new_state(params)
 		# Bounded output history; holds the last ``depth`` produced values.
+		# CACHE-CLASS: (a) hot-path indicator state [family: catalog.py _SMAState/_EMAState/_MACDHistState/_RSIState] — see docs/CACHE-CLASSIFICATION.md
 		self._buffer: deque[float] = deque(maxlen=depth)
 
 	def update(self, x: float) -> None:

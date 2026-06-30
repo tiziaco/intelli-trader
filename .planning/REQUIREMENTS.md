@@ -70,11 +70,11 @@ Requirements for this milestone. Each maps to exactly one roadmap phase.
 
 ### CACHE — Cache inventory & classification (#3)
 
-- [ ] **CACHE-01**: Every ad-hoc cache / `lru_cache` / scattered in-memory lookup across `itrader/` is
+- [x] **CACHE-01**: Every ad-hoc cache / `lru_cache` / scattered in-memory lookup across `itrader/` is
   inventoried and classified into (a) hot-path data cache, (b) storage-index lookup already solved by
   v1.5 secondary indexes, or (c) legitimate pure-function memoization — delivered as a documented
   classification + routing, **not a rewrite or a unification**.
-- [ ] **CACHE-02**: The v1.5 hot path (stateful indicators / shared recent-bars feed) is left
+- [x] **CACHE-02**: The v1.5 hot path (stateful indicators / shared recent-bars feed) is left
   unchanged — any columnar/Arrow idea is rejected unless it lives strictly at the serialization boundary
   and does not regress the W1/W2 baseline (research Q7).
 
@@ -149,8 +149,8 @@ phase numbering reset to 1 for v1.6).
 | RETAIN-01 | Phase 4 | Complete |
 | RETAIN-02 | Phase 4 | Complete |
 | RETAIN-03 | Phase 4 | Complete |
-| CACHE-01 | Phase 5 | Pending |
-| CACHE-02 | Phase 5 | Pending |
+| CACHE-01 | Phase 5 | Complete |
+| CACHE-02 | Phase 5 | Complete |
 | MIG-01 | Phase 1 | Complete |
 | SEC-01 | Phase 1 | Complete |
 | GATE-01 | Phase 4 (bound) + recurring every phase | Complete |

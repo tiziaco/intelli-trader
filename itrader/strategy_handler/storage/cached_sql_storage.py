@@ -57,6 +57,7 @@ class CachedSqlSignalStorage(SignalStore):
 
     def __init__(self, store: "SqlSignalStorage") -> None:
         self._store = store
+        # CACHE-CLASS: (d) live-retention working-set cache (built in Phase 4) — see docs/CACHE-CLASSIFICATION.md
         self._cache = InMemorySignalStore()
         self._lock = threading.RLock()
         self.logger = get_itrader_logger().bind(component="CachedSqlSignalStorage")

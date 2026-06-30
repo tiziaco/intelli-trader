@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: N+3b Persistence Foundation
 status: ready_to_plan
-stopped_at: Phase 04 complete (4/4) — ready to discuss Phase 5 (Cache Classification)
-last_updated: 2026-06-30T10:56:54.590Z
-last_activity: 2026-06-30
+stopped_at: Phase 05 complete (3/3) — ready to discuss Phase 999.2
+last_updated: 2026-06-30T13:27:40.631Z
+last_activity: 2026-06-30 -- Phase 05 execution started
 progress:
-  total_phases: 5
+  total_phases: 7
   completed_phases: 4
-  total_plans: 18
-  completed_plans: 18
-  percent: 80
+  total_plans: 21
+  completed_plans: 21
+  percent: 57
 ---
 
 # Project State
@@ -21,11 +21,11 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-27 — v1.6 N+3b Persistence Foundation ACTIVE; scope locked via owner clarification 2026-06-27)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct, deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). v1.6 adds the durable-storage + caching foundation **without disturbing that** — the backtest path stays byte-exact and N+4 Live inherits a persistent, restart-safe system of record.
-**Current focus:** Phase 5 — Cache Classification (#3)
+**Current focus:** Phase 999.2 — nplus2 persistence and performance
 
 ## Current Position
 
-Phase: 5
+Phase: 999.2
 Plan: Not started
 Status: Ready to plan
 Last activity: 2026-06-30
@@ -79,7 +79,7 @@ validated surface. Phases 1/2/3/5 are standard patterns (plan-time research opti
 
 **Velocity (program cumulative through v1.5):**
 
-- Total plans completed: 212 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
+- Total plans completed: 215 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26)
 - v1.6 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
@@ -212,9 +212,9 @@ under `milestones/`.
 
 ## Session Continuity
 
-Last session: 2026-06-30T10:21:17.949Z
-Stopped at: Completed 04-04-PLAN.md
-Resume file: None
+Last session: 2026-06-30T12:17:06.378Z
+Stopped at: Phase 5 context gathered
+Resume file: .planning/phases/05-cache-classification-3/05-CONTEXT.md
 Carried todo: none v1.6-blocking; deferred single-pass valuation + live-backfill carried (see Deferred Items / Pending Todos)
 
 ## Operator Next Steps

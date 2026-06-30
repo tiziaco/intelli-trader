@@ -103,6 +103,7 @@ class MatchingEngine:
     def __init__(self) -> None:
         # Order ids have been UUIDv7-backed since M2 (D-12) — the book is
         # keyed by OrderId, never by int.
+        # CACHE-CLASS: (a-engine) resting-order working state — see docs/CACHE-CLASSIFICATION.md
         self._resting: dict[OrderId, OrderEvent] = {}
         # D-TRAIL-6: mutable ratchet state for resting TRAILING_STOP orders,
         # keyed by the SAME OrderId as ``_resting`` and popped at every

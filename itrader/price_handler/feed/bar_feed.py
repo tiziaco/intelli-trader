@@ -88,6 +88,7 @@ _AGG = {"open": "first", "high": "max", "low": "min",
 # path. timedelta is hashable; functools.cache does NOT cache exceptions, so the
 # raise-on-unsupported ValueError guard inside is preserved (RESEARCH Pitfall 4).
 # The function BODY is byte-unchanged — only this decorator was added.
+# CACHE-CLASS: (c) pure-function memo — see docs/CACHE-CLASSIFICATION.md
 @functools.cache
 def _offset_alias(timeframe: timedelta) -> str:
     """Map a timeframe to its canonical pandas offset alias.
@@ -238,6 +239,7 @@ class BacktestBarFeed(BarFeed):
         # front-loads the SAME conversions, it does not eliminate them. No
         # lazy memoization (D-08): each (ticker, time) is queried exactly once,
         # so a cache would serve zero hits.
+        # CACHE-CLASS: (a) hot-path data cache [family: _frames/_spans/_prebuilt/_cursor/_cursor_cut/_newest_bars] — see docs/CACHE-CLASSIFICATION.md
         self._prebuilt: dict[str, dict[datetime, Bar]] = {}
         for ticker in self._symbols:
             # D-09 (PERF-06): store a SINGLE-BLOCK, read-only master so every

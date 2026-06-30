@@ -121,6 +121,7 @@ def _isolating_copy(val: Any) -> Any:
 # snapshot key-ordering in this byte-exact phase, so removal is deferred. Both
 # sites only iterate keys (never mutate / .pop), so the shared cached dict is
 # read-only-safe (T-04-04).
+# CACHE-CLASS: (c) pure-function memo — see docs/CACHE-CLASSIFICATION.md
 @cache
 def _declared_hints(cls: type["Strategy"]) -> dict[str, Any]:
 	return get_type_hints(cls)
@@ -194,6 +195,7 @@ class Strategy(ABC):
 		# (short_window=10 vs 20) into another (a correctness bug). Invalidated by
 		# _invalidate_to_dict_cache (called by reconfigure, the only declared-param
 		# mutator). Never invalidated in backtest (no reconfigure on the run path).
+		# CACHE-CLASS: (c) explicitly-invalidated memo (via _invalidate_to_dict_cache) — see docs/CACHE-CLASSIFICATION.md
 		self._to_dict_static_cache: dict[str, Any] | None = None
 		# D-06/D-07/D-08: required/unknown detection + enum coercion + setattr.
 		self._apply_params(**kwargs)
