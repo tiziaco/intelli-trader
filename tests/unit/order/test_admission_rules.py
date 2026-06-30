@@ -264,8 +264,8 @@ def test_short_only_unsized_sell_while_short_is_rejected_when_allow_increase_fal
 
 
 def test_long_short_direction_passes_the_gate(harness):
-    """A LONG_SHORT-direction signal (e.g. from TradingInterface) passes the
-    gate — registration, not admission, polices LONG_SHORT."""
+    """A LONG_SHORT-direction signal (e.g. from a live/web entry path) passes
+    the gate — registration, not admission, polices LONG_SHORT."""
     signal = harness.create_mock_signal("SELL", direction=TradingDirection.LONG_SHORT)
 
     harness.order_handler.on_signal(signal)
