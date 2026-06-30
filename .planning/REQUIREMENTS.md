@@ -25,7 +25,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 - [x] **ACCT-01**: The engine exposes an `Account` abstraction owning balance/margin truth, with
   `SimulatedCashAccount` (CashManager code-motion) and `SimulatedMarginAccount` leaves; `Portfolio`
   delegates accounting to its injected `account` (`Portfolio.cash` → `Portfolio.account`). (LX-03)
-- [ ] **ACCT-02**: Margin/liquidation math (maintenance_margin, margin_ratio, liq price/penalty,
+- [x] **ACCT-02**: Margin/liquidation math (maintenance_margin, margin_ratio, liq price/penalty,
   liquidation *decision*, reserve/release) lives in the Account; the liquidation *emission*
   (`global_queue.put`) stays in `PortfolioHandler` (queue-only rule preserved).
 - [ ] **ACCT-03**: The backtest oracle is re-confirmed **byte-exact** (134 / `46189.87730727451`)
@@ -170,7 +170,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | ACCT-01 | Phase 1 | Complete |
-| ACCT-02 | Phase 1 | Pending |
+| ACCT-02 | Phase 1 | Complete |
 | ACCT-03 | Phase 1 | Pending |
 | ACCT-04 | Phase 1 | Pending |
 | ACCT-05 | Phase 1 | Complete |
