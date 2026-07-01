@@ -477,43 +477,54 @@ class LiveTradingSystem:
         timeout : float
             Maximum time to wait for the thread to stop (seconds)
         """
-        if not self._running:
-            self.logger.warning('Live trading system is not running')
-            return True
-        
-        self.logger.info('Stopping live trading system')
-        self._update_status(SystemStatus.STOPPING)
-        
-        # Signal the thread to stop
-        self._stop_event.set()
-        
-        # Wait for the thread to finish
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=timeout)
-            
-            if self._thread.is_alive():
-                self.logger.warning(f'Thread did not stop within {timeout} seconds')
-                self._update_status(SystemStatus.ERROR, 'Failed to stop gracefully')
-                return False
-            else:
-                self.logger.info('Event processing thread stopped')
-
-        # Plan 02-05 (D-04 shutdown): tear down the OKX connector — cancel every
-        # spawned stream task and close the ccxt/native sessions so no leaked
-        # socket / ResourceWarning survives across runs.
+        # CR-01: tear down the OKX connector UNCONDITIONALLY, independent of
+        # _running. The connector is constructed (and, once started, connected) in
+        # the live wiring; any lifecycle that constructs-then-stops without a
+        # successful start() — validation, a failed start(), status inspection, or
+        # GC — must still cancel every spawned stream task and close the
+        # ccxt/native sessions, or an authenticated demo/live socket leaks (a
+        # ResourceWarning under the strict suite, a dangling venue connection in
+        # production). The disconnect therefore lives in a finally so it runs on
+        # every return path, including the early "not running" exit. disconnect()
+        # is a safe no-op when the connector was never connected (its loop is None).
         connector = getattr(self, '_okx_connector', None)
-        if connector is not None:
-            try:
-                connector.disconnect()
-            except Exception as e:
-                self.logger.error(f'Error disconnecting OKX connector: {e}')
+        try:
+            if not self._running:
+                self.logger.warning('Live trading system is not running')
+                return True
 
-        self._running = False
-        self._thread = None
-        self._update_status(SystemStatus.STOPPED)
-        
-        self.logger.info('Live trading system stopped')
-        return True
+            self.logger.info('Stopping live trading system')
+            self._update_status(SystemStatus.STOPPING)
+
+            # Signal the thread to stop
+            self._stop_event.set()
+
+            # Wait for the thread to finish
+            if self._thread and self._thread.is_alive():
+                self._thread.join(timeout=timeout)
+
+                if self._thread.is_alive():
+                    self.logger.warning(f'Thread did not stop within {timeout} seconds')
+                    self._update_status(SystemStatus.ERROR, 'Failed to stop gracefully')
+                    return False
+                else:
+                    self.logger.info('Event processing thread stopped')
+
+            self._running = False
+            self._thread = None
+            self._update_status(SystemStatus.STOPPED)
+
+            self.logger.info('Live trading system stopped')
+            return True
+        finally:
+            # Plan 02-05 (D-04 shutdown): tear down the OKX connector — cancel every
+            # spawned stream task and close the ccxt/native sessions so no leaked
+            # socket / ResourceWarning survives across runs.
+            if connector is not None:
+                try:
+                    connector.disconnect()
+                except Exception as e:
+                    self.logger.error(f'Error disconnecting OKX connector: {e}')
     
     def is_running(self) -> bool:
         """
