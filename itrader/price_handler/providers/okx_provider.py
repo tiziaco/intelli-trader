@@ -262,7 +262,9 @@ class OkxDataProvider:
         page: list[Any] = list(
             self._connector.call(client.fetch_ohlcv(symbol_okx, okx_tf, since, limit)))
         raw.extend(page)
-        while len(page) == limit and page:
+        # IN-02: ``len(page) == limit`` (limit > 0) already implies ``page`` is
+        # truthy, so the ``and page`` clause was dead.
+        while len(page) == limit:
             last_ts = int(page[-1][0])
             page = list(self._connector.call(
                 client.fetch_ohlcv(symbol_okx, okx_tf, last_ts + 1, limit)))
