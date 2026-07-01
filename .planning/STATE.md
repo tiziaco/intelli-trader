@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 3 context gathered
-last_updated: "2026-07-01T19:51:33.508Z"
+last_updated: "2026-07-01T20:04:38.864Z"
 last_activity: 2026-07-01
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 16
-  completed_plans: 13
+  completed_plans: 14
   percent: 29
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 03 (livebarfeed) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-07-01
 
-Progress: [████████░░] 81%
+Progress: [█████████░] 88%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -145,6 +145,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 02-05: VenueAccount LiveConnector import is TYPE_CHECKING-guarded because the account barrel is on the backtest hot path — a runtime connectors-barrel import would pull ccxt.pro and break inertness; body still Phase 5 (RECON-01)
 - [Phase ?]: 02-05: milestone gate green — fresh-subprocess inertness test asserts itrader.connectors.okx + ccxt.pro absent after a backtest-root import; SMA_MACD oracle byte-exact (134 / 46189.87730727451); suite 1498 passed / 1 skipped
 - [Phase ?]: 03-01: D-12 resolved — ClosedBar carries its own (symbol, timeframe) routing keys; live path stamps from self._symbol/self._timeframe, backfill path from method params (ad-hoc symbol correctness); keys never read from the untrusted venue row (T-03-01-TAMPER). Shared socket-free tests/unit/price/conftest.py fixtures (closed_bar, closed_bar_sequence, _StubProvider) stand up the LiveBarFeed offline matrix.
+- [Phase 03]: 03-02: LiveBarFeed(BarFeed) — capacity-sized deque ring per (symbol,timeframe) + FEED-04 monotonic guard (in-sequence/gap-backfill-replay/duplicate/revision/stale, D-06/D-07) + direct single-ticker BarEvent emission (D-02/D-03/D-04); dormant no-op generate_bar_event (D-05); public set_provider seam (D-01/D-13); TYPE_CHECKING ClosedBar import + absent from feed barrel keeps it hot-path-inert
 
 ### Pending Todos
 
@@ -193,6 +194,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 |---|-------------|------|--------|-----------|
 | 260701-l33 | Add `smoke` pytest marker (register + tag 3 files + `make test-smoke` + tagging rule) | 2026-07-01 | 40c13992 | [260701-l33-add-smoke-marker](./quick/260701-l33-add-smoke-marker/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
+| Phase 03 P02 | 9min | 2 tasks | 2 files |
 
 ## Deferred Items
 
@@ -242,7 +244,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-01T19:51:04.104Z
+Last session: 2026-07-01T20:03:10.645Z
 Stopped at: Phase 3 context gathered
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
