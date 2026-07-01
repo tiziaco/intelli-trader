@@ -7,10 +7,12 @@ from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
 
+from dataclasses import dataclass
+
 from itrader.core.enums import ErrorSeverity, SystemStatus
+from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
-from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.strategy_handler.storage import SignalStorageFactory
@@ -32,9 +34,34 @@ from itrader.events_handler.events import EventType, TimeEvent, OrderEvent, Erro
 # and the system falls back to in-memory order storage with a loud warning.
 _SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")
 
+# WR-03: the SINGLE wiring source for the live OKX subscription. The OKX data
+# provider stamps this symbol/timeframe into every ClosedBar (the feed's ring key),
+# the feed warms up on the same pair, and universe membership is checked against it —
+# so the OkxDataProvider constructor args and the feed.warmup() args can never drift
+# into a ring-key vs membership mismatch (which would otherwise surface only as a
+# MissingPriceDataError at first window()). A future D-live wiring sources these from
+# Settings; today they are the one shared constant.
+_OKX_STREAM_SYMBOL = "BTC/USDT"
+_OKX_STREAM_TIMEFRAME = "1d"
+
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
 # imported above; the ``SystemStatus.X`` usages below resolve unchanged.
+
+
+@dataclass(frozen=True)
+class _LiveWarmupConsumer:
+    """D-13 raw-bar consumer: sizes ``LiveBarFeed.cache_capacity()`` at wiring time.
+
+    A minimal frozen ``RawBarConsumer`` (``cache_registration.RawBarConsumer``
+    Protocol — a read-only ``required_history_depth``) registered on the LIVE feed
+    so the ring + warmup derive to the max strategy warmup (100 for SMA_MACD), not
+    the newest-bar floor (1). Without it the indicators never warm and
+    ``calculate_signals`` short-circuits to zero trades — the single most likely
+    correctness failure of the live path (RESEARCH Pitfall 1).
+    """
+
+    required_history_depth: int
 
 
 class LiveTradingSystem:
@@ -103,7 +130,18 @@ class LiveTradingSystem:
         # the module importing and constructing on the same seams.
         self.global_queue = queue.Queue()
         self.store = CsvPriceStore()
-        self.feed = BacktestBarFeed(self.store, to_timedelta('1d'))
+        # Phase 3 (FEED-05): LiveBarFeed replaces the BacktestBarFeed placeholder as
+        # the live driver — the bar's arrival IS the event, so it takes over
+        # TimeGenerator's driver role. LAZY-imported here (mirrors the lazy OKX/SQL
+        # imports below) so the BACKTEST import path never pulls live_bar_feed — the
+        # recurring milestone inertness gate (tests/integration/test_okx_inertness.py).
+        # Constructed provider-less and UNCONDITIONALLY (constructible for every venue);
+        # the real OKX provider is injected into the okx arm below via
+        # self.feed.set_provider(...). The self.feed.generate_bar_event reference in the
+        # EventHandler route literal stays a valid callable because LiveBarFeed defines
+        # its OWN concrete dormant no-op generate_bar_event (D-05).
+        from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
+        self.feed = LiveBarFeed(provider=None, base_timeframe=to_timedelta('1d'))
         # Signal-store sink (Plan 05-03, D-07/D-12): no persistent backend in
         # v1.1, so mirror the in-memory order-storage fallback above — captured
         # signals will NOT survive a restart until a persistent backend lands.
@@ -251,8 +289,20 @@ class LiveTradingSystem:
             # symbol/timeframe are the wiring defaults; Phase 3 (LiveBarFeed) owns the
             # real subscription config.
             self._okx_data_provider = OkxDataProvider(
-                self._okx_connector, symbol='BTC/USDT', timeframe='1d')
+                self._okx_connector, symbol=_OKX_STREAM_SYMBOL,
+                timeframe=_OKX_STREAM_TIMEFRAME)
             self._venue_account = VenueAccount(self._okx_connector)
+
+            # Phase 3 (D-01/D-13 provider->feed seam, FEED-05): inject the real OKX
+            # provider into the LIVE feed via the PUBLIC setter — it assigns
+            # self._provider, the PRIVATE attribute that warmup()/gap-backfill read.
+            # A bare self.feed.provider = ... would create a dead attribute and leave
+            # self._provider None -> AttributeError at warmup. Injection MUST precede
+            # any warmup/start_stream call.
+            self.feed.set_provider(self._okx_data_provider)
+            # Wire the provider's confirm-gated closed-bar sink to the feed's
+            # monotonic-guard ingest so every ClosedBar drives feed.update() -> BarEvent.
+            self._okx_data_provider.set_bar_sink(self.feed.update)
 
         # WR-05: install the documented live error policy (publish-and-continue).
         # The base _on_handler_error re-raises (backtest fail-fast); the live
@@ -373,7 +423,35 @@ class LiveTradingSystem:
             # position's Instrument.maintenance_margin_rate — same Trap-4 ordering
             # as backtest_runner.
             self.portfolio_handler.set_universe(universe)
+            # Phase 3 (D-13): register the raw-bar consumer sized to the max strategy
+            # warmup so cache_capacity() derives to 100 (SMA_MACD) on the LIVE feed.
+            # Without this the ring + warmup collapse to the newest-bar floor (1),
+            # indicators never warm, and the oracle produces zero trades (Pitfall 1).
+            self.feed.register_raw_bar_consumer(_LiveWarmupConsumer(
+                required_history_depth=max(
+                    (s.warmup for s in self.strategies_handler.strategies),
+                    default=1)))
             self.feed.bind(self.global_queue, universe.members)
+
+            # WR-03: the LIVE feed keys its ring on the streamed symbol string
+            # (_OKX_STREAM_SYMBOL, stamped by the provider into ClosedBar['symbol']),
+            # while window() is queried with the ticker drawn from universe.members.
+            # If the two forms diverge (e.g. 'BTC/USDT' vs 'BTCUSD'), _find_ring raises
+            # MissingPriceDataError only at the FIRST window() call — deep on the live
+            # path. Assert the streamed symbol is a member at WIRING time so a ring-key
+            # vs membership format mismatch fails loudly at startup instead. Guarded on
+            # a non-empty membership: an empty universe (no strategy declared an
+            # instrument) streams nothing and has no ticker to mismatch.
+            if (self.exchange == 'okx' and universe.members
+                    and _OKX_STREAM_SYMBOL not in universe.members):
+                raise ConfigurationError(
+                    config_key="okx_stream_symbol",
+                    config_value=_OKX_STREAM_SYMBOL,
+                    reason=(
+                        f"streamed symbol is not a member of the universe "
+                        f"{universe.members!r}; the feed ring key and the strategy's "
+                        "window() ticker would mismatch (MissingPriceDataError at first "
+                        "window()). Align the subscription symbol with the universe."))
 
             # Plan 06-05: the legacy set_symbols/set_timeframe calls died with
             # the price handler — the Store knows its symbols (store.symbols()).
@@ -471,6 +549,15 @@ class LiveTradingSystem:
             # otherwise). stop() tears the connector down unconditionally (CR-01).
             if self._okx_connector is not None:
                 self._okx_connector.connect()
+
+            # Phase 3 (FEED-05, RESEARCH Thread hand-off): warm the LIVE feed BEFORE
+            # the socket goes live so every update() stays on the one thread until the
+            # stream starts (single-writer ring/guard). Gated to the OKX arm — a
+            # non-OKX venue has no provider, so the None provider is never dereferenced
+            # (mirrors the CR-02 venue-guard). Warmup MUST precede start_stream.
+            if self.exchange == 'okx' and self._okx_data_provider is not None:
+                self.feed.warmup(_OKX_STREAM_SYMBOL, _OKX_STREAM_TIMEFRAME)
+                self._okx_data_provider.start_stream()
 
             # Reset the stop event and start the processing thread
             self._stop_event.clear()

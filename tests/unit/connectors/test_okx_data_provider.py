@@ -155,6 +155,10 @@ def test_confirm_gate_only_completed_bar_reaches_sink(
     assert bar["ts"] == int(closed_row[0])
     assert bar["close"] == to_money(str(closed_row[4]))
     assert bar["high"] == to_money(str(closed_row[2]))
+    # D-12: the live path stamps the routing keys from the provider's own trusted
+    # config (self._symbol/self._timeframe) — NOT read from the venue row.
+    assert bar["symbol"] == "BTC-USDT"
+    assert bar["timeframe"] == "1d"
 
 
 def test_confirm_gate_forming_rows_never_reach_sink(
@@ -274,6 +278,10 @@ def test_backfill_returns_decimal_edge_bars(
         assert got["low"] == to_money(str(r[3]))
         assert got["close"] == to_money(str(r[4]))
         assert got["volume"] == to_money(str(r[5]))
+        # D-12: the backfill path stamps the routing keys from the method's own
+        # params (the passed symbol/timeframe), so an ad-hoc backfill routes correctly.
+        assert got["symbol"] == "BTC-USDT"
+        assert got["timeframe"] == "1d"
 
 
 def test_backfill_decimal_no_float_leaks(fake_ccxt_client: Any) -> None:

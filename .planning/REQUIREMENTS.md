@@ -69,17 +69,17 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Live Data Engine — Phase 3 (`LiveBarFeed`)
 
-- [ ] **FEED-01**: `LiveBarFeed` implements the existing `BarFeed` ABC as a ring buffer (bounded
+- [x] **FEED-01**: `LiveBarFeed` implements the existing `BarFeed` ABC as a ring buffer (bounded
   `deque(maxlen)` per `(symbol, timeframe)`, capacity from the same wiring-time `cache_capacity()`
   derivation as backtest); strategies/screeners/execution consume it unchanged. (LX-07)
-- [ ] **FEED-02**: A `BarEvent` is emitted **only on a completed bar** (`confirm == 1`), with bar
+- [x] **FEED-02**: A `BarEvent` is emitted **only on a completed bar** (`confirm == 1`), with bar
   `time` from the venue bar-open stamp (never wall-clock) — the 7-rule look-ahead contract holds. (LX-08)
-- [ ] **FEED-03**: Live-start and gap warmup replay REST-fetched bars **one-by-one through the identical
+- [x] **FEED-03**: Live-start and gap warmup replay REST-fetched bars **one-by-one through the identical
   `update(bar)` path** — there is no bulk `warmup_from()` fast-path (LX-09, parity audit).
-- [ ] **FEED-04**: Bar delivery is **monotonic-forward-only** (LX-10): gap → REST-backfill-and-replay;
+- [x] **FEED-04**: Bar delivery is **monotonic-forward-only** (LX-10): gap → REST-backfill-and-replay;
   duplicate → drop; stale/out-of-order → reject; reconnect → gap-fill the interim (stateful indicators
   never fed backward).
-- [ ] **FEED-05**: `LiveBarFeed` replaces `TimeGenerator`'s role on the live path (event-driven
+- [x] **FEED-05**: `LiveBarFeed` replaces `TimeGenerator`'s role on the live path (event-driven
   closed-bar arrival), preserving the engine's TIME-before-BAR route ordering downstream.
 
 ### Paper Path — Phase 4 (the milestone DoD)
@@ -193,11 +193,11 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | CONN-04 | Phase 2 | Complete |
 | CONN-05 | Phase 2 | Complete |
 | CONN-06 | Phase 2 | Complete |
-| FEED-01 | Phase 3 | Pending |
-| FEED-02 | Phase 3 | Pending |
-| FEED-03 | Phase 3 | Pending |
-| FEED-04 | Phase 3 | Pending |
-| FEED-05 | Phase 3 | Pending |
+| FEED-01 | Phase 3 | Complete |
+| FEED-02 | Phase 3 | Complete |
+| FEED-03 | Phase 3 | Complete |
+| FEED-04 | Phase 3 | Complete |
+| FEED-05 | Phase 3 | Complete |
 | PAPER-01 | Phase 4 | Pending |
 | PAPER-02 | Phase 4 | Pending |
 | PAPER-03 | Phase 4 | Pending |
