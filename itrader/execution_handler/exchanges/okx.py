@@ -212,9 +212,16 @@ class OkxExchange(AbstractExchange):
 		# ``to_money(str(None))`` -> ``Decimal("None")`` raises InvalidOperation,
 		# killing the whole fill stream. Guard the None/missing case BEFORE the
 		# Decimal edge (money policy: never Decimal-parse a non-numeric).
+		# WR-01 (sign): commission is a MAGNITUDE — the portfolio transaction
+		# validator hard-rejects commission < 0 (portfolio_handler/validators.py).
+		# ccxt's unified ``okx.parse_trade`` sign-flips the raw OKX fee so
+		# ``fee.cost`` is normally positive, but a raw/non-unified payload, a
+		# different channel, or a ccxt convention change can yield a negative cost
+		# that would crash the fill at the portfolio boundary and drop it. ``abs()``
+		# normalises to the non-negative magnitude the validator contract requires.
 		fee = trade.get("fee") if isinstance(trade.get("fee"), dict) else {}
 		fee_cost = fee.get("cost")
-		commission = to_money(str(fee_cost)) if fee_cost is not None else Decimal("0")
+		commission = abs(to_money(str(fee_cost))) if fee_cost is not None else Decimal("0")
 
 		fill = FillEvent.new_fill(
 			"EXECUTED", order,

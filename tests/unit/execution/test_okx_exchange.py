@@ -215,7 +215,11 @@ def test_watch_my_trades_fill_becomes_fillevent_on_queue(
     assert isinstance(fill, FillEvent)
     assert fill.price == to_money(str(raw["fillPx"]))
     assert fill.quantity == to_money(str(raw["fillSz"]))
-    assert fill.commission == to_money(str(raw["fee"]))
+    # WR-01 (sign): commission is a magnitude — the arm abs()-normalises ccxt's
+    # ``fee.cost`` (the portfolio validator rejects commission < 0), so the recorded
+    # raw NEGATIVE OKX fee ("-0.084") surfaces as its positive magnitude.
+    assert fill.commission == abs(to_money(str(raw["fee"])))
+    assert fill.commission >= Decimal("0")
     # Venue-timestamp business time, never wall-clock.
     assert fill.time == datetime.fromtimestamp(int(raw["ts"]) / 1000, tz=timezone.utc)
     # Audit chain carried off the originating order.
