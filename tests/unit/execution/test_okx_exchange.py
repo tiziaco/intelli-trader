@@ -270,6 +270,32 @@ def test_malformed_fill_missing_price_is_skipped(
     assert queue.empty()
 
 
+def test_none_fee_cost_coalesces_to_zero_commission(
+    exchange: OkxExchange, queue: "Queue[Any]"
+) -> None:
+    """A ``fee: {"cost": None}`` fill yields a zero commission, not Decimal('None') (WR-01).
+
+    ccxt emits a None fee cost when the fee is not yet known; the None must be coalesced
+    to Decimal('0') BEFORE the ``to_money`` edge or the fill stream crashes on
+    InvalidOperation and silently drops every subsequent fill.
+    """
+    order = _make_order()
+    exchange._orders_by_venue_id["OID-1"] = order
+    unified = {
+        "order": "OID-1",
+        "price": "42000.0",
+        "amount": "0.2",
+        "fee": {"cost": None, "currency": "USDT"},
+        "timestamp": 1704067202000,
+    }
+
+    exchange._handle_trade(unified)
+
+    fill = queue.get_nowait()
+    assert isinstance(fill, FillEvent)
+    assert fill.commission == Decimal("0")
+
+
 # --- on_market_data no-op + cancel routing ------------------------------------
 
 

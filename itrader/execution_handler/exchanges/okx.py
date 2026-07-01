@@ -189,14 +189,20 @@ class OkxExchange(AbstractExchange):
 				"Malformed fill payload for order %s (missing price/amount/timestamp) — skipping",
 				venue_id)
 			return
-		fee = trade.get("fee") or {}
-		fee_cost = fee.get("cost", 0) if isinstance(fee, dict) else 0
+		# WR-01: ccxt frequently emits ``fee: {"cost": None, ...}`` (fee not yet
+		# known). ``fee.get("cost", 0)`` returns None because the key IS present, and
+		# ``to_money(str(None))`` -> ``Decimal("None")`` raises InvalidOperation,
+		# killing the whole fill stream. Guard the None/missing case BEFORE the
+		# Decimal edge (money policy: never Decimal-parse a non-numeric).
+		fee = trade.get("fee") if isinstance(trade.get("fee"), dict) else {}
+		fee_cost = fee.get("cost")
+		commission = to_money(str(fee_cost)) if fee_cost is not None else Decimal("0")
 
 		fill = FillEvent.new_fill(
 			"EXECUTED", order,
 			price=to_money(str(price)),
 			quantity=to_money(str(amount)),
-			commission=to_money(str(fee_cost)),
+			commission=commission,
 			time=self._ms_to_dt(timestamp))
 		# D-07: the EXCHANGE emits the fill; MPSC-safe put from the connector loop thread (D-19).
 		self.global_queue.put(fill)
