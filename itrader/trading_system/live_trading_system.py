@@ -201,7 +201,44 @@ class LiveTradingSystem:
             self.feed.generate_bar_event,
             self.global_queue
         )
-        
+
+        # ------------------------------------------------------------------
+        # OKX live venue wiring (Plan 02-05, D-04 / CONN-04 — composition root).
+        #
+        # This is the ONLY place the concrete OkxConnector is constructed; the
+        # three arms type against the LiveConnector Protocol and receive the
+        # SESSION injected, never the concretion. The whole OKX stack is
+        # LAZY-imported inside __init__ (mirrors the lazy SQL import above,
+        # lines 141-150) so the BACKTEST import path stays async/ccxt/credential-
+        # free — the hot-path inertness gate is proven by
+        # tests/integration/test_okx_inertness.py.
+        #
+        # Stream startup (OkxExchange.connect() / OkxDataProvider.start_stream())
+        # is a Phase 4/5 live-wiring step (02-03 SUMMARY boundary): this plan
+        # constructs the connector, registers the 'okx' venue, and injects the
+        # session into each arm. connector.disconnect() is wired into stop().
+        from itrader.connectors import OkxConnector
+        from itrader.config.okx_settings import OkxSettings
+        from itrader.execution_handler.exchanges.okx import OkxExchange
+        from itrader.price_handler.providers.okx_provider import OkxDataProvider
+        from itrader.portfolio_handler.account import VenueAccount
+
+        self._okx_connector = OkxConnector(OkxSettings())   # constructed ONCE (D-04)
+        self._okx_connector.connect()                       # loop-on-daemon-thread
+
+        # Order arm: register under 'okx' — ExecutionHandler.on_order already
+        # routes by event.exchange, and init_exchanges is UNCHANGED (the backtest
+        # path stays OKX-free). Only THIS root imports the OkxConnector concretion.
+        self._okx_exchange = OkxExchange(self.global_queue, self._okx_connector)
+        self.execution_handler.exchanges['okx'] = self._okx_exchange
+
+        # Data arm + venue account: injected the SAME session Protocol (D-04).
+        # symbol/timeframe are the wiring defaults; Phase 3 (LiveBarFeed) owns the
+        # real subscription config.
+        self._okx_data_provider = OkxDataProvider(
+            self._okx_connector, symbol='BTC/USDT', timeframe='1d')
+        self._venue_account = VenueAccount(self._okx_connector)
+
         # WR-05: install the documented live error policy (publish-and-continue).
         # The base _on_handler_error re-raises (backtest fail-fast); the live
         # system is documented to override THIS method so _dispatch's existing
@@ -460,7 +497,17 @@ class LiveTradingSystem:
                 return False
             else:
                 self.logger.info('Event processing thread stopped')
-        
+
+        # Plan 02-05 (D-04 shutdown): tear down the OKX connector — cancel every
+        # spawned stream task and close the ccxt/native sessions so no leaked
+        # socket / ResourceWarning survives across runs.
+        connector = getattr(self, '_okx_connector', None)
+        if connector is not None:
+            try:
+                connector.disconnect()
+            except Exception as e:
+                self.logger.error(f'Error disconnecting OKX connector: {e}')
+
         self._running = False
         self._thread = None
         self._update_status(SystemStatus.STOPPED)
