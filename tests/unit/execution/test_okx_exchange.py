@@ -32,7 +32,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from itrader.core.enums import OrderCommand, OrderType, Side
+from itrader.core.enums import FillStatus, OrderCommand, OrderType, Side
 from itrader.core.money import to_money
 from itrader.events_handler.events import FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.okx import OkxExchange
@@ -321,3 +321,46 @@ def test_cancel_order_routes_through_call(
 
     fake_client.cancel_order.assert_awaited_once_with("OID-1", "BTC-USDT")
     fake_client.create_order.assert_not_called()
+
+
+# --- WR-02: failed submit/cancel reconciles via FillEvent(REFUSED) ------------
+
+
+def test_submit_failure_emits_refused_fill(
+    exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
+) -> None:
+    """A failed create_order emits FillEvent(REFUSED) so the order mirror reconciles (WR-02).
+
+    The reconciliation contract (mirrored by SimulatedExchange) is that a refused
+    submit flows back as REFUSED — only logging would leave the mirror stuck at PENDING.
+    """
+    fake_client.create_order = AsyncMock(
+        name="create_order", side_effect=RuntimeError("venue rejected")
+    )
+    order = _make_order(order_type=OrderType.LIMIT)
+
+    exchange.on_order(order)
+
+    assert not queue.empty()
+    fill = queue.get_nowait()
+    assert isinstance(fill, FillEvent)
+    assert fill.status is FillStatus.REFUSED
+    assert fill.order_id == order.order_id
+
+
+def test_cancel_failure_emits_refused_fill(
+    exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
+) -> None:
+    """A failed cancel_order also emits FillEvent(REFUSED) for mirror reconciliation (WR-02)."""
+    fake_client.cancel_order = AsyncMock(
+        name="cancel_order", side_effect=RuntimeError("cancel rejected")
+    )
+    exchange._venue_id_by_order_id[1] = "OID-1"
+    cancel = _make_order(order_id=1, command=OrderCommand.CANCEL)
+
+    exchange.on_order(cancel)
+
+    assert not queue.empty()
+    fill = queue.get_nowait()
+    assert isinstance(fill, FillEvent)
+    assert fill.status is FillStatus.REFUSED

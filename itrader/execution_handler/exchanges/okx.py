@@ -133,6 +133,17 @@ class OkxExchange(AbstractExchange):
 			self.logger.error(
 				"OKX order op failed for %s %s: %s",
 				event.action, event.ticker, str(exc), exc_info=True)
+			# WR-02: the reconciliation contract (mirrored by SimulatedExchange's
+			# _emit_rejection) is that a failed/refused submit or cancel flows back
+			# as FillEvent(REFUSED) so OrderHandler.on_fill transitions the stored
+			# order mirror PENDING->REJECTED. Only logging would leave the mirror
+			# stuck at PENDING forever — a silent order-state divergence once the arm
+			# is live-wired. Emit REFUSED with the order's own (Decimal) price/quantity
+			# and commission Decimal("0") (never settled); no time= so it inherits the
+			# order's decision time (admission-time outcome, D-01/D-13).
+			self.global_queue.put(FillEvent.new_fill(
+				"REFUSED", event, price=event.price, quantity=event.quantity,
+				commission=Decimal("0")))
 
 	def _submit_order(self, event: OrderEvent) -> None:
 		"""Round outbound qty/price to OKX lot/tick (string helpers) and submit via the RPC.
