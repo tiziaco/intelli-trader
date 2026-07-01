@@ -1,5 +1,17 @@
 # Pitfalls Research
 
+> ## ⚠ Superseded framing — read `phases/02-okx-connector/02-CONTEXT.md` first
+>
+> The Phase-2 discussion (2026-07-01) revised the live architecture; this snapshot
+> predates it and still describes the **two-arm `LiveConnector`** model. The pitfalls
+> themselves remain valid — only the connector-shape wording is stale. **Superseded framings:**
+> - Connector is a **session/transport primitive**, not a two-arm venue object; the data/order/account arms are **domain adapters** (`OkxDataProvider` / `OkxExchange` / `VenueAccount`), **injected** with the session.
+> - The **`OkxExchange` adapter emits `FillEvent`** — the connector emits no domain events.
+> - Paper needs **no connector**: the paper execution adapter implements **`AbstractExchange`** (not `LiveConnector`).
+> - `OkxSettings` reads **plain `OKX_API_*` (no env prefix)** — not `ITRADER_OKX_*`.
+>
+> See design-doc LX-05/LX-06 revision notes and `02-CONTEXT.md` D-01..D-10.
+
 **Domain:** Adding live crypto (OKX) trading to an event-driven, Decimal-exact, deterministic backtest engine — paper-first, oracle-gated (iTrader v1.7)
 **Researched:** 2026-06-30
 **Confidence:** HIGH on engine-internal pitfalls (read from source + locked sketch); MEDIUM-HIGH on OKX/ccxt integration facts (verified against ccxt issues + OKX v5 docs; firm up at plan-time)

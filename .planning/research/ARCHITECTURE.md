@@ -1,5 +1,19 @@
 # Architecture Research — v1.7 Live Trading Readiness
 
+> ## ⚠ Superseded framing — read `phases/02-okx-connector/02-CONTEXT.md` first
+>
+> The Phase-2 discussion (2026-07-01) revised the live architecture; this snapshot
+> predates it and still describes the **two-arm `LiveConnector`** model (the §2
+> `LiveConnector(Protocol)` code block, the §4 `PaperConnector` section, and the
+> parity-spine table below all reflect the OLD shape). **Superseded framings**
+> (everything else — reuse assets, matching-core reuse, pitfalls — remains valid):
+> - Connector is a **session/transport primitive**, not a two-arm venue object; the data/order/account arms are **domain adapters** (`OkxDataProvider` in `price_handler/providers/` / `OkxExchange` in `execution_handler/exchanges/` impl `AbstractExchange` / `VenueAccount`), **injected** with the session, never cross-domain-imported.
+> - The **`OkxExchange` adapter emits `FillEvent`** — the connector owns no operations and emits no domain events.
+> - Paper needs **no connector**: the paper execution adapter implements **`AbstractExchange`** (not `LiveConnector`), composing `MatchingEngine` + `apply_costs` + `SimulatedAccount`.
+> - `OkxSettings` reads **plain `OKX_API_*` (no env prefix)** — not `ITRADER_OKX_*`.
+>
+> See design-doc LX-05/LX-06 revision notes and `02-CONTEXT.md` D-01..D-10.
+
 **Domain:** Live-trading integration onto an event-driven backtest engine (iTrader, paper-first OKX)
 **Researched:** 2026-06-30
 **Confidence:** HIGH (existing code mapped directly; locked design `2026-06-30-live-trading-milestone-design.md` LX-01..LX-15; one MEDIUM external grounding — OKX confirm-flag in ccxt.pro)
