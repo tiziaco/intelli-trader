@@ -46,12 +46,24 @@ application happens in `tests/conftest.py::pytest_collection_modifyitems`; the
 single **registration** home (the `--strict-markers` source of truth) is the
 `markers` list in `pyproject.toml`. Never register markers in both places.
 
+`smoke` is a **PURPOSE-axis** marker — orthogonal to the folder-derived TYPE axis
+above. It is **NOT** folder-derived: it is applied **by hand** with
+`@pytest.mark.smoke` (or a module-level `pytestmark = pytest.mark.smoke`), and it
+stacks *on top of* whatever TYPE marker the folder confers (so a smoke test under
+`tests/integration/` is both `integration` and `smoke`). It selects the fast
+run-path liveness set via `make test-smoke` / `-m smoke`.
+
+**Durable rule:** any new smoke test MUST be tagged `@pytest.mark.smoke` (or carry
+a module-level `pytestmark`) so it joins the `make test-smoke` selection — the
+marker is never auto-applied.
+
 ## Running
 
 ```bash
 make test              # full suite
 make test-unit         # -m "unit"
 make test-integration  # -m "integration"
+make test-smoke        # -m "smoke"  (PURPOSE axis; hand-tagged)
 make test-portfolio    # tests/unit/portfolio/
 make test-orders       # tests/unit/order/
 make test-execution    # tests/unit/execution/
