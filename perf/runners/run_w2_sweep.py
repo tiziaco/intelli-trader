@@ -116,7 +116,7 @@ def _wire_system(
     strategy = _TrivialBuyStrategy(timeframe=_TIMEFRAME, tickers=tickers)
     system.strategies_handler.add_strategy(strategy)
     pid = system.portfolio_handler.add_portfolio(
-        user_id=1, name="W2_pf", exchange="csv", cash=Decimal("1000000"))
+        name="W2_pf", exchange="csv", cash=Decimal("1000000"))
     strategy.subscribe_portfolio(pid)
     return system
 
