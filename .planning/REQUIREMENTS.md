@@ -43,7 +43,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 > CONN-01/02/04. The connector is a **session/transport primitive**; the arms are **domain adapters**
 > consuming the injected session. Rationale: `phases/02-okx-connector/02-CONTEXT.md` (D-01..D-10).
 
-- [ ] **CONN-01**: The **data arm** `OkxDataProvider` (`price_handler/providers/`) streams OKX candles
+- [x] **CONN-01**: The **data arm** `OkxDataProvider` (`price_handler/providers/`) streams OKX candles
   via a native OKX `business`-endpoint subscription carrying the **`confirm` flag**, with REST
   `fetch_ohlcv` backfill (ccxt's unified `watch_ohlcv` drops `confirm` — the native read is required);
   it feeds closed bars to the Phase-3 `LiveBarFeed`. Consumes the injected `OkxConnector` session. (LX-05/LX-08)
@@ -187,7 +187,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | ACCT-04 | Phase 1 | Complete |
 | ACCT-05 | Phase 1 | Complete |
 | ACCT-06 | Phase 1 | Complete |
-| CONN-01 | Phase 2 | Pending |
+| CONN-01 | Phase 2 | Complete |
 | CONN-02 | Phase 2 | Complete |
 | CONN-03 | Phase 2 | Complete |
 | CONN-04 | Phase 2 | Complete |
