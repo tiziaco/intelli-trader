@@ -170,3 +170,119 @@ def test_window_lookahead_cutoff(closed_bar_sequence: Callable[..., Any]) -> Non
     assert len(frame2) == 4
     with pytest.raises(MissingPriceDataError):
         feed.window("UNKNOWN", _TF_DELTA, max_window=10, asof=asof)
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — the monotonic guard update() + D-06 taxonomy (FEED-02/04)
+# ---------------------------------------------------------------------------
+
+
+def test_in_sequence_delivers(closed_bar_sequence: Callable[..., Any]) -> None:
+    """t == L + tf → appended, L advanced, exactly one BarEvent per bar."""
+    feed, q = make_feed(capacity=10)
+    seq = closed_bar_sequence(3)
+    for cb in seq:
+        feed.update(cb)
+    events = drain(q)
+    assert len(events) == 3
+    assert [e.time for e in events] == [
+        pd.Timestamp(cb["ts"], unit="ms", tz="UTC") for cb in seq
+    ]
+    assert feed._last_delivered[(_SYM, _TF)] == pd.Timestamp(
+        seq[-1]["ts"], unit="ms", tz="UTC")
+
+
+def test_first_bar_delivers(closed_bar: Callable[..., Any]) -> None:
+    """L is None (first bar for a key) → delivered, no gap logic."""
+    feed, q = make_feed()
+    feed.update(closed_bar())
+    assert len(drain(q)) == 1
+
+
+def test_single_ticker_payload(closed_bar_sequence: Callable[..., Any]) -> None:
+    """Every emitted BarEvent carries exactly one ticker (D-04)."""
+    feed, q = make_feed(capacity=10)
+    for cb in closed_bar_sequence(3):
+        feed.update(cb)
+    for e in drain(q):
+        assert list(e.bars.keys()) == [_SYM]
+        assert len(e.bars) == 1
+
+
+def test_duplicate_drop(closed_bar: Callable[..., Any]) -> None:
+    """t == L with identical values → dropped, NO emit, no state mutation."""
+    feed, q = make_feed(capacity=10)
+    feed.update(closed_bar())
+    drain(q)
+    ring_before = list(feed._ring[(_SYM, _TF)])
+    l_before = feed._last_delivered[(_SYM, _TF)]
+    feed.update(closed_bar())  # same ts, same OHLCV
+    assert drain(q) == []
+    assert list(feed._ring[(_SYM, _TF)]) == ring_before
+    assert feed._last_delivered[(_SYM, _TF)] == l_before
+
+
+def test_revision_forward_only(closed_bar: Callable[..., Any]) -> None:
+    """t == L with DIFFERENT values → forward-only drop, NO emit, no mutation (D-07)."""
+    feed, q = make_feed(capacity=10)
+    feed.update(closed_bar())
+    drain(q)
+    ring_before = list(feed._ring[(_SYM, _TF)])
+    newest_before = feed.newest_bar(_SYM)
+    l_before = feed._last_delivered[(_SYM, _TF)]
+    feed.update(closed_bar(close="99999.0"))  # same ts, different close
+    assert drain(q) == []
+    assert list(feed._ring[(_SYM, _TF)]) == ring_before
+    assert feed.newest_bar(_SYM) is newest_before
+    assert feed._last_delivered[(_SYM, _TF)] == l_before
+
+
+def test_stale_reject(
+    closed_bar_sequence: Callable[..., Any],
+    closed_bar: Callable[..., Any],
+) -> None:
+    """t < L → rejected, NO emit, no state mutation."""
+    feed, q = make_feed(capacity=10)
+    seq = closed_bar_sequence(3)
+    for cb in seq:
+        feed.update(cb)
+    drain(q)
+    ring_before = list(feed._ring[(_SYM, _TF)])
+    l_before = feed._last_delivered[(_SYM, _TF)]
+    newest_before = feed.newest_bar(_SYM)
+    feed.update(closed_bar(seq[0]["ts"] - _TF_MS))  # older than L
+    assert drain(q) == []
+    assert list(feed._ring[(_SYM, _TF)]) == ring_before
+    assert feed._last_delivered[(_SYM, _TF)] == l_before
+    assert feed.newest_bar(_SYM) is newest_before
+
+
+def test_gap_backfill_then_deliver(
+    stub_provider: Any,
+    closed_bar: Callable[..., Any],
+) -> None:
+    """t > L + tf → interior backfill fetched + replayed, THEN t delivered (contiguous)."""
+    feed, q = make_feed(provider=stub_provider, capacity=10)
+    feed.update(closed_bar(_START_MS))
+    drain(q)
+    # Jump 3 tf ahead: interior missing = 2 bars (L+tf, L+2tf); t at L+3tf.
+    t_ms = _START_MS + 3 * _TF_MS
+    stub_provider.backfill_bars = [
+        closed_bar(_START_MS + 1 * _TF_MS),
+        closed_bar(_START_MS + 2 * _TF_MS),
+    ]
+    feed.update(closed_bar(t_ms))
+    events = drain(q)
+    # 2 interior + the t bar, contiguous by one tf, none skipped.
+    assert [_ms(e.time) for e in events] == [
+        _START_MS + 1 * _TF_MS,
+        _START_MS + 2 * _TF_MS,
+        _START_MS + 3 * _TF_MS,
+    ]
+    # Exactly one backfill call for the interior range [L+tf .. t-tf].
+    assert len(stub_provider.calls) == 1
+    call = stub_provider.calls[0]
+    assert call["symbol"] == _SYM
+    assert call["timeframe"] == _TF
+    assert call["since"] == _START_MS + _TF_MS  # (L + tf) in ms
+    assert call["limit"] == 2
