@@ -68,6 +68,7 @@ markers = [
     "integration: Integration test — asserts cross-component interaction (tests/integration/)",
     "slow: Slow running test (the full-engine integration runs)",
     "e2e: End-to-end scenario — full engine on a (strategy, data) pair vs frozen goldens (tests/e2e/)",
+    "smoke: Smoke test — fast run-path liveness check; PURPOSE axis, applied by hand with @pytest.mark.smoke, orthogonal to the folder-derived TYPE axis",
 ]
 
 # Minimum version

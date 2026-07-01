@@ -12,6 +12,7 @@ The ``unit`` marker is folder-derived (tests/unit/) — not hand-added here.
 
 import pandas as pd
 import plotly.graph_objects as go
+import pytest
 
 from itrader.reporting.plots import (
     line_drwdwn,
@@ -19,6 +20,9 @@ from itrader.reporting.plots import (
     profit_loss_scatter,
     sub_plots3,
 )
+
+# PURPOSE-axis marker (hand-applied); adds to the folder-derived `unit` TYPE mark.
+pytestmark = pytest.mark.smoke
 
 _INDEX = pd.date_range("2020-01-01", periods=4, freq="D")
 
