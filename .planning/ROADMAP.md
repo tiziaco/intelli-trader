@@ -133,9 +133,10 @@ the Decimal boundary at the edge; async stays bottled at the connector.
      carrying the **`confirm`** flag (ccxt's unified `watch_ohlcv` drops it), with REST `fetch_ohlcv`
      backfill; feeds closed bars to the Phase-3 `LiveBarFeed`. (CONN-01)
   2. **Order arm** (`OkxExchange`, impl `AbstractExchange`): async `create_order` + cancel +
-     `watch_orders`/`watch_fills` implemented; **the exchange translates raw fills → `FillEvent` and
+     `watch_orders`/`watch_my_trades` implemented; **the exchange translates raw fills → `FillEvent` and
      emits them** (the connector emits nothing). A single `sandbox: bool` routes BOTH ccxt
-     (`set_sandbox_mode`) and the native (`x-simulated-trading`) path to OKX demo and selects
+     (`set_sandbox_mode`) and the native WS path (demo host `wss://wspap.okx.com` — the
+     `x-simulated-trading` header is REST-only, corrected per 02-RESEARCH.md) to OKX demo and selects
      demo-vs-live keys — no split-brain. (CONN-02, CONN-03)
   3. **Session** (`OkxConnector`): runs its own asyncio loop on its own daemon thread, owns the one
      `ccxt.pro` client + rate-limit budget, and is **injected** into the three adapters (only the
@@ -149,8 +150,10 @@ the Decimal boundary at the edge; async stays bottled at the connector.
   5. Recurring milestone gate: oracle byte-exact + no W1/W2 regression (connector inert on the backtest
      hot path); `pytest-asyncio` configured (`asyncio_mode`, `asyncio_default_fixture_loop_scope`) so
      `filterwarnings=["error"]` stays green.
-**Research flag**: NEEDS PLAN-TIME RESEARCH — OKX `confirm` exact behavior + ccxt.pro native-vs-unified
-gap list; `set_sandbox_mode` WS-header verification; demo-key requirements. (Block Phase 2 design until resolved.)
+**Research flag**: RESOLVED 2026-07-01 (`02-RESEARCH.md`) — `confirm` = business-channel field index 8
+(`"1"`=closed bar); ccxt 4.5.56 already ships the full surface (no version bump); WS demo is host-based
+(`wspap.okx.com`), NOT the REST-only `x-simulated-trading` header; auth triple = apiKey+secret+passphrase,
+demo selected by host. Design unblocked.
 **Plans**: 5 plans (planned 2026-07-01)
 - [ ] 02-01-PLAN.md — Foundation: pytest-asyncio + async test infra, OkxSettings (CONN-06), LiveConnector Protocol reshape (Wave 1)
 - [ ] 02-02-PLAN.md — OkxConnector session/transport primitive: loop-on-daemon-thread, sandbox->wspap routing, call/spawn bridge (CONN-03/04) (Wave 2)

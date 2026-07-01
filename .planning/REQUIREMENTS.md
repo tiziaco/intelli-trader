@@ -48,10 +48,12 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   `fetch_ohlcv` backfill (ccxt's unified `watch_ohlcv` drops `confirm` — the native read is required);
   it feeds closed bars to the Phase-3 `LiveBarFeed`. Consumes the injected `OkxConnector` session. (LX-05/LX-08)
 - [ ] **CONN-02**: The **order arm** `OkxExchange` (`execution_handler/exchanges/`, impl
-  `AbstractExchange`) implements async `create_order` + cancel + `watch_orders`/`watch_fills` and
-  translates raw fills → `FillEvent` (exercised against sandbox in Phase 5). Consumes the injected session.
+  `AbstractExchange`) implements async `create_order` + cancel + `watch_orders`/`watch_my_trades` (the
+  fill stream — ccxt has no `watch_fills`; corrected per 02-RESEARCH.md) and translates raw fills →
+  `FillEvent` (exercised against sandbox in Phase 5). Consumes the injected session.
 - [ ] **CONN-03**: A single `sandbox: bool` on the connector routes **both** ccxt (`set_sandbox_mode`)
-  and the native path (`x-simulated-trading` header) to OKX demo, and selects demo-vs-live keys — no split-brain.
+  and the native WS path (demo host `wss://wspap.okx.com` — the `x-simulated-trading` header is REST-only,
+  corrected per 02-RESEARCH.md) to OKX demo, and selects demo-vs-live keys — no split-brain.
 - [ ] **CONN-04**: `OkxConnector` is a session/transport primitive running its own asyncio loop on its
   own daemon thread (the engine stays synchronous; the backtest path imports no async/connector code);
   it owns **no venue operations and emits no domain events** — **the `OkxExchange` adapter emits

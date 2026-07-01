@@ -42,13 +42,19 @@ Revisions** note. The success criteria of CONN-01..06 still hold; only their *ho
 - **D-02 — The connector is a shared authenticated *session/transport primitive*, not an
   operations owner.** `OkxConnector` (`itrader/connectors/okx.py`) owns exactly: auth
   (key/secret/passphrase), the single `sandbox: bool` routing (`set_sandbox_mode` **+** the
-  native `x-simulated-trading` header — no split-brain), the one `ccxt.pro` client
+  native WS demo host `wspap.okx.com` — no split-brain), the one `ccxt.pro` client
   instance, the asyncio loop + daemon thread (async containment — CONN-04's real intent),
   the rate-limit/connection budget, and `connect`/`disconnect` lifecycle. It knows nothing
   about orders-vs-candles-vs-balances and **imports/constructs no domain events**. This
   **reshapes D-10**: `LiveConnector` (`connectors/base.py`) shrinks from a "thin two-arm
   marker" to a **session/transport contract**; the "arms" become the *existing domain
   seams*.
+  - **Mechanism corrected post-research (2026-07-01, `02-RESEARCH.md`):** the original wording
+    said `sandbox` routed the native path via the `x-simulated-trading` header. Research refuted
+    this — that header is **REST-only** (ccxt's WS client never reads it); the native/WS demo path
+    is selected by a **different host** (`wss://wspap.okx.com`). The decision's *intent* is
+    unchanged: one `sandbox: bool` still drives both ccxt (`set_sandbox_mode`) and the native
+    socket with **no split-brain** — only the native mechanism is host-based, not header-based.
 
 - **D-03 — Each arm is a domain adapter that owns its own venue I/O, in its home domain:**
   | Arm | Class | Home | Owns |
