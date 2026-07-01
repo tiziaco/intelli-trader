@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: executing
+status: verifying
 stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-07-01T11:45:43.982Z"
+last_updated: "2026-07-01T11:54:18.692Z"
 last_activity: 2026-07-01
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 12
-  completed_plans: 11
-  percent: 14
+  completed_plans: 12
+  percent: 29
 ---
 
 # Project State
@@ -30,10 +30,10 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 
 Phase: 02 (okx-connector) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-01
 
-Progress: [█████████░] 92%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -141,6 +141,9 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 02]: 02-02: OkxConnector = loop-on-daemon-thread + one ccxt.pro client built INSIDE the loop (Pitfall 3); single sandbox bool drives set_sandbox_mode (REST header + ccxt WS wspap host swap) AND the exposed flag the native socket keys off — no split-brain (CONN-03); call/spawn async-sync bridge, stream-task set cancelled on disconnect (CONN-04); no domain-event imports (D-02); exported from barrel (D-04)
 - [Phase 02]: 02-03: OkxExchange = live sibling of SimulatedExchange (AbstractExchange), injected OkxConnector session (D-04, never the concretion); create/cancel via connector.call, watch_orders/watch_my_trades via connector.spawn; the EXCHANGE emits FillEvents on global_queue itself (D-07, D-19 MPSC-safe); Decimal edge held (to_money(str) inbound, ccxt amount/price_to_precision strings outbound, CONN-05); FillEvent.time from venue ms timestamp, never wall-clock; on_market_data no-op for live (CONN-02)
 - [Phase 02]: 02-04: OkxDataProvider data arm — native /ws/v5/business candle socket is the confirm-flag escape hatch (ccxt watch_ohlcv drops confirm); gate on confirm==1 index 8 (forming bars dropped, CONN-01); native host driven off connector.sandbox (wspap vs ws, host not header, CONN-03); REST fetch_ohlcv backfill via shared client with to_money(str) Decimal edge (CONN-05); minimal set_bar_sink seam for Phase-3 LiveBarFeed (D-03); types LiveConnector Protocol only (D-04); mypy --strict clean
+- [Phase ?]: 02-05: OkxConnector constructed ONCE at the LiveTradingSystem composition root and the LiveConnector session injected into the three arms (OkxExchange registered 'okx', OkxDataProvider, VenueAccount) — whole OKX stack lazy-imported inside the live path; init_exchanges unchanged; disconnect() wired into stop() (D-04/CONN-04)
+- [Phase ?]: 02-05: VenueAccount LiveConnector import is TYPE_CHECKING-guarded because the account barrel is on the backtest hot path — a runtime connectors-barrel import would pull ccxt.pro and break inertness; body still Phase 5 (RECON-01)
+- [Phase ?]: 02-05: milestone gate green — fresh-subprocess inertness test asserts itrader.connectors.okx + ccxt.pro absent after a backtest-root import; SMA_MACD oracle byte-exact (134 / 46189.87730727451); suite 1498 passed / 1 skipped
 
 ### Pending Todos
 
@@ -218,6 +221,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 | Phase 02 P02 | 12min | 2 tasks | 3 files |
 | Phase 02 P03 | 9min | 2 tasks | 2 files |
 | Phase 02 P04 | 18min | 2 tasks | 2 files |
+| Phase 02 P05 | 9min | 3 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -230,7 +234,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-01T11:43:57.873Z
+Last session: 2026-07-01T11:53:55.293Z
 Stopped at: Completed 02-03-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)

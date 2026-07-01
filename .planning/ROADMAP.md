@@ -159,7 +159,7 @@ demo selected by host. Design unblocked.
 - [x] 02-02-PLAN.md — OkxConnector session/transport primitive: loop-on-daemon-thread, sandbox->wspap routing, call/spawn bridge (CONN-03/04) (Wave 2)
 - [x] 02-03-PLAN.md — Order arm OkxExchange(AbstractExchange): create/cancel + watch_my_trades -> FillEvent, Decimal edge (CONN-02/05) (Wave 3)
 - [x] 02-04-PLAN.md — Data arm OkxDataProvider: native /business confirm-gated candle socket + REST backfill (CONN-01/03/05) (Wave 3)
-- [ ] 02-05-PLAN.md — Composition-root wiring + VenueAccount seam + recurring milestone gate (CONN-04) (Wave 4)
+- [x] 02-05-PLAN.md — Composition-root wiring + VenueAccount seam + recurring milestone gate (CONN-04) (Wave 4)
 **Cross-cutting**: RES-01 (rate-limit coordination across ccxt + native paths) begins here — home phase is Phase 5.
 
 ### Phase 3: LiveBarFeed
@@ -438,7 +438,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 7/7 | Complete   | 2026-06-30 |
-| 2. OKX Connector | v1.7 | 4/5 | In Progress|  |
+| 2. OKX Connector | v1.7 | 5/5 | Complete   | 2026-07-01 |
 | 3. LiveBarFeed | v1.7 | 0/TBD | Not started | - |
 | 4. Paper Path (DoD) | v1.7 | 0/TBD | Not started | - |
 | 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 0/TBD | Not started | - |
