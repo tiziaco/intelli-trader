@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: verifying
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-07-01T11:54:18.692Z"
-last_activity: 2026-07-01
+stopped_at: Phase 3 context gathered
+last_updated: "2026-07-01T15:56:22.263Z"
+last_activity: "2026-07-01 - Completed quick task 260701-l33: Add `smoke` pytest marker"
 progress:
   total_phases: 7
   completed_phases: 2
@@ -240,9 +240,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-01T11:53:55.293Z
-Stopped at: Completed 02-03-PLAN.md
-Resume file: None
+Last session: 2026-07-01T15:56:22.255Z
+Stopped at: Phase 3 context gathered
+Resume file: .planning/phases/03-livebarfeed/03-CONTEXT.md
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps
