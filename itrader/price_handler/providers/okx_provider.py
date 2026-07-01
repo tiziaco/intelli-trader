@@ -72,6 +72,8 @@ class ClosedBar(TypedDict):
     low: Decimal
     close: Decimal
     volume: Decimal
+    symbol: str        # D-12 (Phase-3 add) — routing key
+    timeframe: str     # D-12 (Phase-3 add) — routing key
 
 
 # OKX business-channel interval tokens (the channel name is ``"candle" + token``). OKX
@@ -237,6 +239,11 @@ class OkxDataProvider:
             "low": to_money(str(row[3])),
             "close": to_money(str(row[4])),
             "volume": to_money(str(row[5])),
+            # D-12: routing keys stamped from the provider's own trusted config
+            # (self._symbol/self._timeframe), NOT read from the untrusted venue row
+            # (T-03-01-TAMPER) — a spoofed row cannot forge the (symbol, timeframe) ring key.
+            "symbol": self._symbol,
+            "timeframe": self._timeframe,
         }
         self._hand_closed_bar(closed)
 
@@ -280,6 +287,11 @@ class OkxDataProvider:
                 "low": to_money(str(row[3])),
                 "close": to_money(str(row[4])),
                 "volume": to_money(str(row[5])),
+                # D-12: stamp the routing keys from the method's own params (NOT
+                # self._symbol) so an ad-hoc backfill for any symbol/timeframe routes
+                # to the correct ring key.
+                "symbol": symbol,
+                "timeframe": timeframe,
             })
         return bars
 
