@@ -41,6 +41,18 @@ from itrader.core.sizing import FixedQuantity, SignalIntent
 from itrader.strategy_handler.base import Strategy
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
 from itrader.universe import Universe
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+
+
+def _margin_config() -> PortfolioConfig:
+    """enable_margin + short selling + max_leverage set in the CONSTRUCTOR config —
+    01-03 selects the account leaf at construction, so a post-construction config
+    edit no longer rebuilds it (the short leg needs the margin leaf)."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "allow_short_selling": True,
+                           "max_leverage": _PORTFOLIO_MAX_LEVERAGE}},
+    ))
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -111,7 +123,8 @@ def _build_system():
     strategy = _CloseOnlyShortStrategy(timeframe="1d", tickers=[_TICKER])
     sh.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1, name="exit_safety_pf", exchange="csv", cash=_CASH)
+        name="exit_safety_pf", exchange="csv", cash=_CASH,
+        portfolio_config=_margin_config())
     strategy.subscribe_portfolio(portfolio_id)
 
     portfolio = system.portfolio_handler.get_portfolio(portfolio_id)

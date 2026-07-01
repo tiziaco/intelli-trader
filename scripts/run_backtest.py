@@ -88,7 +88,6 @@ def main():
 
     # Single long-only portfolio with $10k starting cash (D-04).
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1,
         name="oracle_pf",
         exchange="csv",
         cash=CASH,

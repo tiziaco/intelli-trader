@@ -124,7 +124,7 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT,
                                 sizing_policy=_SIZING, order_type=OrderType.LIMIT)],
-    portfolios=[PortfolioSpec(user_id=1, name="release_cancelled_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="release_cancelled_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the reserve/release is the only moving part.
     # Operator CANCEL (Phase 6 infra): resolve the sole PENDING BTCUSD order at bar2
     # and call the REAL cancel_order(order.id, ...) round-trip (UUID, GAP #2).

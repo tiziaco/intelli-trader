@@ -103,15 +103,14 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 @dataclass(frozen=True)
 class PortfolioSpec:
-    """Minimal portfolio spec the harness reads (``user_id`` / ``name`` / ``cash``).
+    """Minimal portfolio spec the harness reads (``name`` / ``cash``).
 
-    The harness consumes these three attributes via ``add_portfolio`` (Plan 02
+    The harness consumes these attributes via ``add_portfolio`` (Plan 02
     ``_build_and_run``). A real ``PortfolioConfig`` is the Phase 7+ richer form;
-    the canary needs only the wiring trio (D-03 — reuse the real shape, no
+    the canary needs only the wiring pair (D-03 — reuse the real shape, no
     parallel sizing/fee schema here).
     """
 
-    user_id: int
     name: str
     cash: int
 
@@ -122,7 +121,7 @@ class ScenarioSpec:
 
     Field names match EXACTLY what the harness consumes: ``start``, ``end``,
     ``timeframe``, ``data`` (ticker → CSV path), ``strategies``, ``portfolios``
-    (each with ``user_id`` / ``name`` / ``cash``), ``exchange`` (None = zero-fee /
+    (each with ``name`` / ``cash``), ``exchange`` (None = zero-fee /
     no-slippage defaults, Open Q1 deferred to Phase 7), ``ticker``,
     ``starting_cash``.
     """
@@ -151,6 +150,6 @@ SCENARIO = ScenarioSpec(
     starting_cash=_CASH,
     data={_TICKER: HERE / "bars.csv"},
     strategies=[SingleMarketBuy(_TIMEFRAME, [_TICKER], fire_on_bar=2, exit_on_bar=4)],
-    portfolios=[PortfolioSpec(user_id=1, name="canary_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="canary_pf", cash=_CASH)],
     exchange=None,
 )

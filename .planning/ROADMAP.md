@@ -72,7 +72,7 @@ configured so the global filter is never relaxed); tabs/spaces indentation match
 
 ### Phase Summary
 
-- [ ] **Phase 1: Account Abstraction + Portfolio/Handler Refactor** — Oracle-gated, behavior-preserving extraction of an `Account` truth surface; the universal gate before any live code.
+- [x] **Phase 1: Account Abstraction + Portfolio/Handler Refactor** — Oracle-gated, behavior-preserving extraction of an `Account` truth surface; the universal gate before any live code. — completed 2026-06-30
 - [ ] **Phase 2: OKX Connector** — `OkxConnector` over our `LiveConnector` interface (ccxt.pro + native confirm-flag escape hatch); data arm + order arm; async bottled at the connector edge.
 - [ ] **Phase 3: LiveBarFeed** — Ring-buffer `BarFeed` impl; closed-bar emission off the confirm flag; warmup/backfill through the identical `update(bar)` path; monotonic-forward-only.
 - [ ] **Phase 4: Paper Path (milestone DoD)** — `PaperConnector` reusing the pure `MatchingEngine`; live runtime wired; **paper-parity gate vs the oracle**.
@@ -104,7 +104,14 @@ may merge against `Account` until the backtest is re-confirmed byte-exact.
      refactor is pure code-motion behind the `PortfolioReadModel` seam (does not ripple into the order domain).
 **Research flag**: SKIP — v1.2 MOD-01 OrderManager-decomposition playbook; `PortfolioReadModel` seam
 already in place; code-motion only (plan-time research optional).
-**Plans**: TBD
+**Plans**: 7 plans
+- [x] 01-01-PLAN.md — Interface scaffold: Account ABC + VenueAccount stub + LiveConnector Protocol + D-04 resolution (Wave 1)
+- [x] 01-02-PLAN.md — SimulatedCashAccount + SimulatedMarginAccount byte-exact code-motion + CashOperation barrel (Wave 2)
+- [x] 01-03-PLAN.md — Re-point Portfolio/PortfolioHandler to Account; strip user_id (production); re-point sql_storage CashOperation; delete CashManager (Wave 3)
+- [x] 01-03b-PLAN.md — Migrate unit + integration test consumers (cash_manager→account, CashOperation home, user_id strip) (Wave 4)
+- [x] 01-03c-PLAN.md — Migrate e2e test consumers + harness (cash_manager→account, user_id strip) (Wave 4)
+- [x] 01-04-PLAN.md — Delete TradingInterface (LX-14) (Wave 1)
+- [x] 01-05-PLAN.md — Oracle byte-exact + full-suite re-confirmation terminal gate (Wave 5)
 
 ### Phase 2: OKX Connector
 **Goal**: Implement `OkxConnector` against our `LiveConnector` interface — ccxt.pro `watch_ohlcv` by
@@ -406,7 +413,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 0/TBD | Not started | - |
+| 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 7/7 | Complete   | 2026-06-30 |
 | 2. OKX Connector | v1.7 | 0/TBD | Not started | - |
 | 3. LiveBarFeed | v1.7 | 0/TBD | Not started | - |
 | 4. Paper Path (DoD) | v1.7 | 0/TBD | Not started | - |

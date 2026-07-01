@@ -142,6 +142,6 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT,
                                 sizing_policy=_SIZING)],
-    portfolios=[PortfolioSpec(user_id=1, name="release_rejected_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="release_rejected_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the rejected reservation is the only moving part.
 )

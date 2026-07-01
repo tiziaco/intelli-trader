@@ -1,5 +1,5 @@
 from datetime import datetime, UTC
-from typing import Optional, Dict, List, Any, Mapping
+from typing import Optional, Dict, List, Any, Mapping, cast
 from decimal import Decimal
 
 from itrader.portfolio_handler.transaction import Transaction
@@ -13,7 +13,7 @@ from itrader.core.enums import PortfolioState, PositionSide, TransactionType
 # Import the new managers
 from itrader.portfolio_handler.transaction.transaction_manager import TransactionManager
 from itrader.portfolio_handler.position.position_manager import PositionManager
-from itrader.portfolio_handler.cash.cash_manager import CashManager
+from itrader.portfolio_handler.account import SimulatedCashAccount, SimulatedMarginAccount
 from itrader.portfolio_handler.metrics.metrics_manager import MetricsManager
 from itrader.portfolio_handler.storage import (
 	PortfolioStateStorage,
@@ -43,13 +43,16 @@ class Portfolio(object):
 	Maintains backward compatibility with existing interface.
 	"""
 
-	def __init__(self, user_id: int, name: str, exchange: str, cash: Decimal, time: datetime,
+	def __init__(self, name: str, exchange: str, cash: Decimal, time: datetime,
 	             config: Optional[PortfolioConfig] = None) -> None:
 		"""
 		Initialize enhanced portfolio with integrated capabilities.
+
+		ACCT-04: the owning-user identity is NOT a Portfolio concern — it is an
+		app-layer (FastAPI) mapping (owner -> portfolio) and is deliberately
+		absent here; it is NOT relocated onto the Account either.
 		"""
 		# Core portfolio identity
-		self.user_id = user_id
 		self.portfolio_id: PortfolioId = PortfolioId(idgen.generate_portfolio_id())
 		self.name = name
 		self.exchange = exchange
@@ -91,18 +94,29 @@ class Portfolio(object):
 		is a pure backend swap (deferred to D-sql).
 		"""
 		self.state_storage: PortfolioStateStorage = PortfolioStateStorageFactory.create("backtest")
-		self.cash_manager = CashManager(self, initial_cash=initial_cash)
+		# D-03: the runtime enable_margin branch becomes leaf selection at wiring —
+		# construct the account leaf the same way the four managers are built
+		# (ACCT-01). enable_margin=False -> the verbatim-critical spot cash leaf
+		# (SimulatedCashAccount, the SMA_MACD byte-exact oracle path, D-04);
+		# enable_margin=True -> the margin superset. Declared as the cash base type
+		# (the margin leaf is a subclass); margin-only call sites narrow to
+		# SimulatedMarginAccount where the margin surface is needed.
+		self.account: SimulatedCashAccount = (
+			SimulatedMarginAccount(self, initial_cash=initial_cash)
+			if self.config.trading_rules.enable_margin
+			else SimulatedCashAccount(self, initial_cash=initial_cash)
+		)
 		self.transaction_manager = TransactionManager(self)
 		self.position_manager = PositionManager(self)
 		self.metrics_manager = MetricsManager(self)
 
 	def _validate_initial_state(self) -> None:
 		"""Validate initial portfolio state."""
-		if self.cash_manager.balance < 0:
+		if self.account.balance < 0:
 			# FL-01: input validation on the cash field at construction (not a
 			# transaction funds-shortfall — InsufficientFundsError's
 			# (required, available) shape does not fit a negative starting balance).
-			raise ValidationError("cash", str(self.cash_manager.balance), "Portfolio cannot start with negative cash")
+			raise ValidationError("cash", str(self.account.balance), "Portfolio cannot start with negative cash")
 		if not self.name.strip():
 			# FL-01: input validation on the name field at construction.
 			raise ValidationError("name", message="Portfolio name cannot be empty")
@@ -202,8 +216,11 @@ class Portfolio(object):
 		M2-02: money is Decimal end-to-end on the cash path — the former
 		float() cast on the ledger balance is removed so reading cash no longer
 		round-trips money back to float.
+
+		ACCT-01: cash truth is delegated to the account leaf (a receiver-only
+		re-point of the former cash-manager call; no math change).
 		"""
-		return self.cash_manager.balance
+		return self.account.balance
 
 	# D-05 (Plan 05-05): the cash SETTER is deleted — every cash mutation goes
 	# through an audited CashManager primitive (deposit/withdraw/fill flow);
@@ -361,7 +378,7 @@ class Portfolio(object):
 		#    EXACT delta the interim seam computed (value preservation).
 		net_delta = transaction.net_cash_delta
 		if net_delta < 0:
-			self.cash_manager.assert_funds_invariant(-net_delta)
+			self.account.assert_funds_invariant(-net_delta)
 
 		# 3. Position mutation (all checks passed; handles shorts properly).
 		position = self.position_manager.process_position_update(transaction)
@@ -377,7 +394,7 @@ class Portfolio(object):
 
 		# 4. Cash apply — full-precision signed delta, one ledger entry with
 		#    fee field and event-derived timestamp (D-05/D-06, Pitfalls 1/5).
-		self.cash_manager.apply_fill_cash_flow(
+		self.account.apply_fill_cash_flow(
 			amount=net_delta,
 			fee=transaction.commission,
 			description=f"Transaction {transaction.type.name} {transaction.ticker}",
@@ -412,6 +429,13 @@ class Portfolio(object):
 		basis `aggregate_notional / L` rides the margin arm ONLY — the spot arm
 		never divides (Pitfall 4).
 		"""
+		# D-03/ACCT-02: this arm is reached ONLY when enable_margin=True, so the
+		# account leaf is the margin superset — narrow to its margin surface
+		# (lock_margin / release_margin / assert_lock_fits_buying_power). cast is a
+		# type-level no-op (zero runtime effect); the spot byte-exact path
+		# (_process_transaction_spot) never enters here, so this is dark on the
+		# SMA_MACD oracle.
+		account = cast(SimulatedMarginAccount, self.account)
 		ticker = transaction.ticker
 
 		# Capture pre-mutation state for the transition classification.
@@ -468,7 +492,7 @@ class Portfolio(object):
 		# reservation gate, Plan 02-03). Commission is always non-negative.
 		commission = transaction.commission
 		if is_increase and commission > 0:
-			self.cash_manager.assert_funds_invariant(commission)
+			account.assert_funds_invariant(commission)
 
 		# Position mutation (all checks passed; handles shorts properly).
 		position = self.position_manager.process_position_update(transaction)
@@ -495,9 +519,9 @@ class Portfolio(object):
 			# documented to credit back — running the guard while the prior lock is
 			# still present is the correct call order. Fail loud BEFORE applying the
 			# new lock — never silently over-lock.
-			self.cash_manager.assert_lock_fits_buying_power(new_lock, str(position.id))
-			self.cash_manager.release_margin(str(position.id))
-			self.cash_manager.lock_margin(str(position.id), new_lock)
+			account.assert_lock_fits_buying_power(new_lock, str(position.id))
+			account.release_margin(str(position.id))
+			account.lock_margin(str(position.id), new_lock)
 			cash_delta = -commission
 		else:
 			# PARTIAL or FULL CLOSE. Closed fraction p of the prior position.
@@ -516,13 +540,13 @@ class Portfolio(object):
 				# the recomputed remaining lock is checked against buying power
 				# that still credits the position's TRUE prior whole lock (the
 				# add-back reads ``get_locked_margin_for``, not ``0``).
-				self.cash_manager.assert_lock_fits_buying_power(
+				account.assert_lock_fits_buying_power(
 					remaining_lock, str(position.id)
 				)
-				self.cash_manager.release_margin(str(position.id))
-				self.cash_manager.lock_margin(str(position.id), remaining_lock)
+				account.release_margin(str(position.id))
+				account.lock_margin(str(position.id), remaining_lock)
 			else:
-				self.cash_manager.release_margin(str(position.id))
+				account.release_margin(str(position.id))
 
 			# Settle the realized-PnL increment for the closed portion. The
 			# position's realised_pnl already nets BOTH commissions; the open
@@ -553,7 +577,7 @@ class Portfolio(object):
 
 		# ONE ledger entry: signed cash delta + the commission fee field +
 		# event-derived timestamp (D-06, Pitfalls 1/5).
-		self.cash_manager.apply_fill_cash_flow(
+		account.apply_fill_cash_flow(
 			amount=cash_delta,
 			fee=commission,
 			description=f"Margin {transaction.type.name} {transaction.ticker}",
@@ -599,7 +623,7 @@ class Portfolio(object):
 		}
 			
 		# Check cash consistency
-		if self.cash_manager.balance < 0:
+		if self.account.balance < 0:
 			health_report['is_healthy'] = False
 			health_report['issues'].append('Negative cash balance')
 			
@@ -803,7 +827,11 @@ class Portfolio(object):
 				* borrow_rate
 				/ Decimal("365")
 			)
-			self.cash_manager.accrue_borrow_interest(
+			# ACCT-02: borrow carry is a margin-only surface. This loop body is
+			# reached only for an OPEN SHORT with a non-zero borrow_rate (a margin
+			# concept); the account is therefore the margin superset here. cast is
+			# a type-level no-op — never reached on the LONG-only spot oracle.
+			cast(SimulatedMarginAccount, self.account).accrue_borrow_interest(
 				amount=carry,
 				reference_id=str(position.id),
 				description=f"Borrow interest {ticker}",
@@ -847,7 +875,6 @@ class Portfolio(object):
 		base_dict = {
 			'portfolio_id': self.portfolio_id,
 			'id': self.portfolio_id,  # Keep backward compatibility
-			'user_id': self.user_id,
 			'name': self.name,
 			'exchange': self.exchange,
 			'creation_time': self.creation_time.isoformat(),
@@ -858,8 +885,8 @@ class Portfolio(object):
 			# a real, distinct figure (total - reserved), the D-14 single
 			# trading-decision figure. Reporting total here would inflate
 			# buying power by the sum of outstanding reservations.
-			'available_cash': self.cash_manager.available_balance,
-			'reserved_cash': self.cash_manager.reserved_balance,
+			'available_cash': self.account.available_balance,
+			'reserved_cash': self.account.reserved_balance,
 			'total_market_value': self.total_market_value,
 			'total_equity': self.total_equity,
 			'n_open_positions': self.n_open_positions,

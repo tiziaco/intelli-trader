@@ -240,7 +240,6 @@ def test_snapshot_count_and_latest():
 def portfolio():
     from itrader.portfolio_handler.portfolio import Portfolio
     return Portfolio(
-        user_id=1,
         name="Seam Test",
         exchange="binance",
         cash=Decimal("100000.00"),
@@ -277,7 +276,7 @@ def test_transaction_manager_has_no_owned_containers(portfolio):
 
 def test_cash_manager_has_no_owned_containers(portfolio):
     """M2-08: CashManager no longer owns _reserved_cash / _cash_operations."""
-    cm = portfolio.cash_manager
+    cm = portfolio.account
     assert not hasattr(cm, "_reserved_cash")
     assert not hasattr(cm, "_cash_operations")
 
@@ -290,6 +289,6 @@ def test_metrics_manager_has_no_owned_containers(portfolio):
 
 def test_reserved_cash_routes_through_seam(portfolio):
     """M2-08: reserving cash is observable through the injected seam."""
-    portfolio.cash_manager.reserve_cash(Decimal("500.00"), "test reserve", "ref-1")
+    portfolio.account.reserve("ref-1", Decimal("500.00"))
     assert portfolio.state_storage.get_reserved_cash() == Decimal("500.00")
-    assert portfolio.cash_manager.reserved_balance == Decimal("500.00")
+    assert portfolio.account.reserved_balance == Decimal("500.00")

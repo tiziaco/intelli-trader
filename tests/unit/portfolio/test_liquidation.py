@@ -22,12 +22,23 @@ from typing import Any, List
 
 import uuid_utils.compat as uuid_compat
 
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
 from itrader.core.enums import OrderStatus, OrderTriggerSource
 from itrader.events_handler.events import FillEvent
+from itrader.portfolio_handler.account import SimulatedMarginAccount
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+
+
+def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
+    """enable_margin=True config — the isolated-margin lock surface lives on the
+    margin leaf, which 01-03 selects at construction (not via update_config)."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
+    ))
 
 
 # ----- worked scenario constants -------------------------------------------------
@@ -72,7 +83,8 @@ def _open_position(handler: PortfolioHandler, *, side: str, ticker: str = _TICKE
                    cash: Decimal = Decimal("1000000")) -> tuple[Any, Position]:
     """Create a portfolio with one open LONG/SHORT position + a WB margin lock."""
     pid = handler.add_portfolio(
-        user_id=1, name=f"liq-{ticker}", exchange="simulated", cash=float(cash))
+        name=f"liq-{ticker}", exchange="simulated", cash=float(cash),
+        portfolio_config=_margin_config())
     portfolio: Portfolio = handler.get_portfolio(pid)
     txn_type = TransactionType.BUY if side == "long" else TransactionType.SELL
     txn = Transaction(
@@ -84,7 +96,13 @@ def _open_position(handler: PortfolioHandler, *, side: str, ticker: str = _TICKE
     # Lock the isolated margin (WB) keyed by the position id — the WB source the
     # liquidation floor reads via get_locked_margin_for.
     wb = entry * size / leverage
-    portfolio.cash_manager.lock_margin(str(position.id), wb)
+    portfolio.account.lock_margin(str(position.id), wb)
+    # 01-03 moved the margin/liq math onto the account, which reads its OWN
+    # injected Universe. set_universe only reaches accounts that exist when it
+    # runs; this portfolio is created AFTER _handler()'s set_universe, so
+    # re-propagate the handler's universe down to the new account.
+    if handler._universe is not None:
+        portfolio.account.set_universe(handler._universe)
     return portfolio.portfolio_id, position
 
 
@@ -93,7 +111,7 @@ def test_isolated_liq_price_long():
     h = _handler(_StubUniverse({_TICKER: _StubInstrument(_MMR, Decimal("0"))}))
     pid, position = _open_position(h, side="long")
 
-    liq = h._isolated_liq_price(position, _WB, _MMR)
+    liq = SimulatedMarginAccount._isolated_liq_price(position, _WB, _MMR)
 
     assert liq > Decimal("0"), "corrected formula must be positive (D-01-CORR, not CONTEXT D-01)"
     assert liq == _LONG_LIQ
@@ -105,7 +123,7 @@ def test_isolated_liq_price_short():
     h = _handler(_StubUniverse({_TICKER: _StubInstrument(_MMR, Decimal("0"))}))
     pid, position = _open_position(h, side="short")
 
-    liq = h._isolated_liq_price(position, _WB, _MMR)
+    liq = SimulatedMarginAccount._isolated_liq_price(position, _WB, _MMR)
 
     assert liq == _SHORT_LIQ
     assert str(liq).startswith("118.811881")
@@ -118,22 +136,22 @@ def test_liquidation_breach_detected_on_bar_close():
     pid, position = _open_position(h, side="long")
 
     # close above liq → no breach; close at/below liq → breach.
-    assert h._is_breached(position, _LONG_LIQ + Decimal("1"), _LONG_LIQ) is False
-    assert h._is_breached(position, _LONG_LIQ, _LONG_LIQ) is True
-    assert h._is_breached(position, _LONG_LIQ - Decimal("5"), _LONG_LIQ) is True
+    assert SimulatedMarginAccount._is_breached(position, _LONG_LIQ + Decimal("1"), _LONG_LIQ) is False
+    assert SimulatedMarginAccount._is_breached(position, _LONG_LIQ, _LONG_LIQ) is True
+    assert SimulatedMarginAccount._is_breached(position, _LONG_LIQ - Decimal("5"), _LONG_LIQ) is True
 
     h2 = _handler(_StubUniverse({_TICKER: _StubInstrument(_MMR, Decimal("0"))}))
     _, short_pos = _open_position(h2, side="short")
-    assert h2._is_breached(short_pos, _SHORT_LIQ - Decimal("1"), _SHORT_LIQ) is False
-    assert h2._is_breached(short_pos, _SHORT_LIQ, _SHORT_LIQ) is True
-    assert h2._is_breached(short_pos, _SHORT_LIQ + Decimal("5"), _SHORT_LIQ) is True
+    assert SimulatedMarginAccount._is_breached(short_pos, _SHORT_LIQ - Decimal("1"), _SHORT_LIQ) is False
+    assert SimulatedMarginAccount._is_breached(short_pos, _SHORT_LIQ, _SHORT_LIQ) is True
+    assert SimulatedMarginAccount._is_breached(short_pos, _SHORT_LIQ + Decimal("5"), _SHORT_LIQ) is True
 
 
 def test_liquidation_penalty():
     """LIQ-02: penalty = liquidation_fee_rate × |size| × liq_price."""
     h = _handler()
     fee_rate = Decimal("0.0075")
-    penalty = h._liquidation_penalty(fee_rate, _SIZE, _LONG_LIQ)
+    penalty = SimulatedMarginAccount._liquidation_penalty(fee_rate, _SIZE, _LONG_LIQ)
     assert penalty == fee_rate * _SIZE * _LONG_LIQ
 
 
@@ -146,8 +164,12 @@ def test_multi_breach_deterministic():
         "AAAUSD": _StubInstrument(_MMR, Decimal("0")),
     }
     h = _handler(_StubUniverse(instruments))
-    pid = h.add_portfolio(user_id=1, name="multi", exchange="simulated", cash=1000000.0)
+    pid = h.add_portfolio(name="multi", exchange="simulated", cash=1000000.0,
+                          portfolio_config=_margin_config())
     portfolio = h.get_portfolio(pid)
+    # Re-propagate the universe to the account created after set_universe (01-03).
+    if h._universe is not None:
+        portfolio.account.set_universe(h._universe)
 
     # Insert ZZZ first (later open time) then AAA (earlier open time) so the dict
     # iteration order does NOT match the required sort order.
@@ -158,7 +180,7 @@ def test_multi_breach_deterministic():
         )
         pos = Position.open_position(txn)
         portfolio.position_manager._storage.set_position(ticker, pos)
-        portfolio.cash_manager.lock_margin(str(pos.id), _WB)
+        portfolio.account.lock_margin(str(pos.id), _WB)
         return pos
 
     _add("ZZZUSD", datetime(2024, 1, 2))

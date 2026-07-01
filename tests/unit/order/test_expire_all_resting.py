@@ -46,7 +46,7 @@ class _Harness:
         self.storage = OrderStorageFactory.create("test")
         self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
         self.portfolio_ids = [
-            self.ptf_handler.add_portfolio(i + 1, f"p{i}", "default", 100000)
+            self.ptf_handler.add_portfolio(f"p{i}", "default", 100000)
             for i in range(n_portfolios)
         ]
 

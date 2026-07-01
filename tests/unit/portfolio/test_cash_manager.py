@@ -1,6 +1,14 @@
 """
-Test suite for CashManager class.
-Tests cash operations, precision, thread safety, and validation.
+Test suite for the simulated account cash leaf.
+
+Retargeted from the deleted ``CashManager`` (01-03) to the account leaves: the
+cash-only contract is exercised against ``SimulatedCashAccount`` (the ``cm``
+fixture), and the margin-only surface (position-keyed locks + borrow carry) is
+exercised against its ``SimulatedMarginAccount`` superset (the ``mcm`` fixture) —
+those methods live only on the margin leaf after the split, so the same behaviors
+are tested against the correct leaf with no coverage loss.
+
+Tests cash operations, precision, single-writer sequencing, and validation.
 """
 
 import uuid
@@ -9,11 +17,12 @@ from decimal import Decimal
 
 import pytest
 
-from itrader.portfolio_handler.cash.cash_manager import (
-    CashManager,
-    CashOperationType,
+from itrader.portfolio_handler.account import (
+    SimulatedCashAccount,
+    SimulatedMarginAccount,
     CashOperation,
 )
+from itrader.core.enums import CashOperationType
 from itrader.core.exceptions import (
     InvalidTransactionError,
     InsufficientFundsError,
@@ -29,13 +38,25 @@ class MockPortfolio:
 
 @pytest.fixture
 def cm():
-    """A CashManager seeded with $100000 on a mock portfolio."""
+    """A SimulatedCashAccount seeded with $100000 on a mock portfolio."""
     portfolio = MockPortfolio()
-    return CashManager(portfolio, 100000.0)
+    return SimulatedCashAccount(portfolio, 100000.0)
+
+
+@pytest.fixture
+def mcm():
+    """A SimulatedMarginAccount (the cash superset) seeded with $100000.
+
+    The margin-only surface (lock_margin / release_margin / locked_margin_total /
+    accrue_borrow_interest) lives only on the margin leaf after the 01-02 split,
+    so the margin-keyed tests exercise it here.
+    """
+    portfolio = MockPortfolio()
+    return SimulatedMarginAccount(portfolio, 100000.0)
 
 
 def test_cash_manager_initialization(cm):
-    """Test CashManager initialization."""
+    """Test cash account initialization."""
     assert cm.balance == Decimal("100000.00")
     assert cm.available_balance == Decimal("100000.00")
     assert cm.reserved_balance == Decimal("0.00")
@@ -159,7 +180,7 @@ def test_transaction_cash_flow_insufficient_funds(cm):
 
 def test_cash_reservation(cm):
     """Test cash reservation for pending orders."""
-    cm.reserve_cash(30000.0, "Order reservation", "ORDER_123")
+    cm.reserve("ORDER_123", 30000.0)
 
     assert cm.reserved_balance == Decimal("30000.00")
     assert cm.available_balance == Decimal("70000.00")
@@ -174,16 +195,16 @@ def test_cash_reservation(cm):
 def test_cash_reservation_insufficient_funds(cm):
     """Test cash reservation with insufficient available funds."""
     with pytest.raises(InsufficientFundsError):
-        cm.reserve_cash(150000.0, "Large reservation", "ORDER_124")
+        cm.reserve("ORDER_124", 150000.0)
 
 
 def test_release_cash_reservation(cm):
     """Test releasing a cash reservation by reference (Plan 05-03)."""
     # First, make a reservation
-    cm.reserve_cash(20000.0, "Initial reservation", "ORDER_125")
+    cm.reserve("ORDER_125", 20000.0)
 
     # Then release it by reference — the full reserved amount comes back
-    cm.release_reservation("ORDER_125")
+    cm.release("ORDER_125")
 
     assert cm.reserved_balance == Decimal("0.00")
     assert cm.available_balance == Decimal("100000.00")
@@ -219,7 +240,7 @@ def test_get_balance_info(cm):
     """Test getting comprehensive balance information."""
     # Make some operations
     cm.deposit(5000.0, "Test deposit")
-    cm.reserve_cash(15000.0, "Test reservation", "ORDER_127")
+    cm.reserve("ORDER_127", 15000.0)
 
     balance_info = cm.get_balance_info()
 
@@ -273,7 +294,7 @@ def test_balance_consistency_validation(cm):
 
 def test_interleaved_operations_sequential_single_writer(cm):
     """WR-11: the D-19 single-writer contract deliberately removed the
-    CashManager locks — ALL mutations happen on the engine thread. The old
+    cash-leaf locks — ALL mutations happen on the engine thread. The old
     multi-threaded variant of this test asserted a thread-safety property the
     code intentionally no longer provides (a lost-update race). The same
     operation mix, run sequentially on one writer, must be exact."""
@@ -298,10 +319,10 @@ def test_interleaved_reservation_operations_sequential_single_writer(cm):
     # Overlap the reservations (all reserved before any release) to exercise
     # the multi-key reservation accounting, then release them all.
     for i in range(5):
-        cm.reserve_cash(1000.0, f"Reservation {i}", f"ORDER_{i}")
+        cm.reserve(f"ORDER_{i}", 1000.0)
     assert cm.reserved_balance == Decimal("5000.00")
     for i in range(5):
-        cm.release_reservation(f"ORDER_{i}")
+        cm.release(f"ORDER_{i}")
 
     # Final state should have no reservations
     assert cm.reserved_balance == Decimal("0.00")
@@ -315,8 +336,8 @@ def test_interleaved_reservation_operations_sequential_single_writer(cm):
 
 def test_reservations_sum_per_reference(cm):
     """Two reservations under different refs: reserved_balance is the sum."""
-    cm.reserve_cash(Decimal("10000.00"), "order A", "ORDER_A")
-    cm.reserve_cash(Decimal("25000.00"), "order B", "ORDER_B")
+    cm.reserve("ORDER_A", Decimal("10000.00"))
+    cm.reserve("ORDER_B", Decimal("25000.00"))
 
     assert cm.reserved_balance == Decimal("35000.00")
     assert cm.available_balance == Decimal("65000.00")
@@ -325,18 +346,18 @@ def test_reservations_sum_per_reference(cm):
 
 def test_reservation_full_precision_round_trip(cm):
     """OQ4: reservations are stored at FULL precision — no 2dp quantize."""
-    cm.reserve_cash(Decimal("123.45678901"), "full precision", "ORDER_FP")
+    cm.reserve("ORDER_FP", Decimal("123.45678901"))
 
     assert cm.reserved_balance == Decimal("123.45678901")
     assert cm.available_balance == Decimal("100000.00") - Decimal("123.45678901")
 
 
-def test_release_reservation_removes_exactly_that_reference(cm):
-    """release_reservation(ref) pops exactly that reservation, others stay."""
-    cm.reserve_cash(Decimal("10000.00"), "order A", "ORDER_A")
-    cm.reserve_cash(Decimal("5000.00"), "order B", "ORDER_B")
+def test_release_removes_exactly_that_reference(cm):
+    """release(ref) pops exactly that reservation, others stay."""
+    cm.reserve("ORDER_A", Decimal("10000.00"))
+    cm.reserve("ORDER_B", Decimal("5000.00"))
 
-    cm.release_reservation("ORDER_A")
+    cm.release("ORDER_A")
 
     assert cm.reserved_balance == Decimal("5000.00")
     assert cm.available_balance == Decimal("95000.00")
@@ -350,8 +371,8 @@ def test_release_reservation_removes_exactly_that_reference(cm):
 
 def test_release_unknown_reference_is_silent_noop(cm):
     """Releasing an unknown reference is idempotent — no raise, no audit entry."""
-    cm.release_reservation("NEVER_RESERVED")
-    cm.release_reservation("NEVER_RESERVED")  # twice — still a no-op
+    cm.release("NEVER_RESERVED")
+    cm.release("NEVER_RESERVED")  # twice — still a no-op
 
     assert cm.reserved_balance == Decimal("0.00")
     operations = cm.get_cash_operations(
@@ -362,9 +383,9 @@ def test_release_unknown_reference_is_silent_noop(cm):
 
 def test_release_is_idempotent_after_real_reservation(cm):
     """Releasing the same reference twice releases once, second is a no-op."""
-    cm.reserve_cash(Decimal("1000.00"), "order", "ORDER_X")
-    cm.release_reservation("ORDER_X")
-    cm.release_reservation("ORDER_X")  # idempotent
+    cm.reserve("ORDER_X", Decimal("1000.00"))
+    cm.release("ORDER_X")
+    cm.release("ORDER_X")  # idempotent
 
     assert cm.reserved_balance == Decimal("0.00")
     operations = cm.get_cash_operations(
@@ -376,7 +397,7 @@ def test_release_is_idempotent_after_real_reservation(cm):
 def test_reserve_insufficient_funds_reserves_nothing(cm):
     """A failed reservation raises typed InsufficientFundsError and reserves 0."""
     with pytest.raises(InsufficientFundsError):
-        cm.reserve_cash(Decimal("150000.00"), "too large", "ORDER_BIG")
+        cm.reserve("ORDER_BIG", Decimal("150000.00"))
 
     assert cm.reserved_balance == Decimal("0.00")
     assert cm.available_balance == cm.balance
@@ -483,7 +504,7 @@ def test_assert_funds_invariant_ignores_reservations(cm):
     """Pitfall 2: the invariant guard checks BALANCE, never the
     reservation-adjusted buying power — an order's own un-released
     reservation must NOT false-positive under portfolio-first FILL dispatch."""
-    cm.reserve_cash(Decimal("95000.00"), "pending order", "ORDER_RES")
+    cm.reserve("ORDER_RES", Decimal("95000.00"))
     assert cm.available_balance == Decimal("5000.00")
 
     # required > available_balance but <= balance — must NOT raise.
@@ -518,83 +539,84 @@ def test_operation_id_uniqueness(cm):
 
 # ---------------------------------------------------------------------------
 # Position-keyed locked margin (Plan 02-04 Task 1 — D-10/Pitfall 2/Pitfall 6)
+# The margin surface lives only on SimulatedMarginAccount (the ``mcm`` fixture).
 # ---------------------------------------------------------------------------
 
 
-def test_locked_margin_total_clean_zero_when_empty(cm):
+def test_locked_margin_total_clean_zero_when_empty(mcm):
     """Pitfall 6: with no locks the total is a CLEAN Decimal('0') and
     available_balance == balance − reserved byte-exact (x − Decimal('0') == x)."""
-    assert cm.locked_margin_total == Decimal("0")
+    assert mcm.locked_margin_total == Decimal("0")
     # Byte-exact spot identity: subtracting the empty container preserves the value.
-    assert cm.available_balance == cm.balance - cm.reserved_balance
-    assert cm.available_balance == Decimal("100000.00")
+    assert mcm.available_balance == mcm.balance - mcm.reserved_balance
+    assert mcm.available_balance == Decimal("100000.00")
 
 
-def test_lock_margin_subtracts_from_available_balance(cm):
+def test_lock_margin_subtracts_from_available_balance(mcm):
     """available_balance == balance − reserved − locked_margin (D-10)."""
-    cm.lock_margin("POS_1", Decimal("12000.00"))
+    mcm.lock_margin("POS_1", Decimal("12000.00"))
 
-    assert cm.locked_margin_total == Decimal("12000.00")
-    assert cm.reserved_balance == Decimal("0.00")
-    assert cm.balance == Decimal("100000.00")  # ledger balance unchanged
-    assert cm.available_balance == Decimal("88000.00")
+    assert mcm.locked_margin_total == Decimal("12000.00")
+    assert mcm.reserved_balance == Decimal("0.00")
+    assert mcm.balance == Decimal("100000.00")  # ledger balance unchanged
+    assert mcm.available_balance == Decimal("88000.00")
 
 
-def test_lock_release_round_trips_exactly_full_precision(cm):
+def test_lock_release_round_trips_exactly_full_precision(mcm):
     """OQ4/Pitfall: lock/release at FULL precision — release == lock exactly,
     no 2dp quantize drift; releasing returns the exact locked amount."""
     locked = Decimal("9876.54321098")
-    cm.lock_margin("POS_FP", locked)
+    mcm.lock_margin("POS_FP", locked)
 
-    assert cm.locked_margin_total == locked
-    assert cm.available_balance == Decimal("100000.00") - locked
+    assert mcm.locked_margin_total == locked
+    assert mcm.available_balance == Decimal("100000.00") - locked
 
-    released = cm.release_margin("POS_FP")
+    released = mcm.release_margin("POS_FP")
     assert released == locked
 
     # Clean zero again, available restored byte-exact.
-    assert cm.locked_margin_total == Decimal("0")
-    assert cm.available_balance == Decimal("100000.00")
+    assert mcm.locked_margin_total == Decimal("0")
+    assert mcm.available_balance == Decimal("100000.00")
 
 
-def test_locked_margin_is_position_keyed_distinct_from_reservation(cm):
+def test_locked_margin_is_position_keyed_distinct_from_reservation(mcm):
     """Pitfall 2: the locked-margin container is keyed by position_id, a
     DISTINCT lifecycle from the order-keyed reservation — locking under a
     position and reserving under an order id are independent."""
-    cm.lock_margin("POS_A", Decimal("10000.00"))
-    cm.reserve_cash(Decimal("5000.00"), "pending order", "ORDER_A")
+    mcm.lock_margin("POS_A", Decimal("10000.00"))
+    mcm.reserve("ORDER_A", Decimal("5000.00"))
 
-    assert cm.locked_margin_total == Decimal("10000.00")
-    assert cm.reserved_balance == Decimal("5000.00")
+    assert mcm.locked_margin_total == Decimal("10000.00")
+    assert mcm.reserved_balance == Decimal("5000.00")
     # available subtracts BOTH, independently.
-    assert cm.available_balance == Decimal("85000.00")
+    assert mcm.available_balance == Decimal("85000.00")
 
     # Releasing the reservation leaves the lock intact (distinct lifecycle).
-    cm.release_reservation("ORDER_A")
-    assert cm.locked_margin_total == Decimal("10000.00")
-    assert cm.available_balance == Decimal("90000.00")
+    mcm.release("ORDER_A")
+    assert mcm.locked_margin_total == Decimal("10000.00")
+    assert mcm.available_balance == Decimal("90000.00")
 
     # Releasing the margin leaves nothing behind.
-    cm.release_margin("POS_A")
-    assert cm.locked_margin_total == Decimal("0")
-    assert cm.available_balance == Decimal("100000.00")
+    mcm.release_margin("POS_A")
+    assert mcm.locked_margin_total == Decimal("0")
+    assert mcm.available_balance == Decimal("100000.00")
 
 
-def test_locked_margin_total_sums_multiple_positions(cm):
+def test_locked_margin_total_sums_multiple_positions(mcm):
     """Two positions locked: locked_margin_total is the sum (per-position keying)."""
-    cm.lock_margin("POS_1", Decimal("10000.00"))
-    cm.lock_margin("POS_2", Decimal("25000.00"))
+    mcm.lock_margin("POS_1", Decimal("10000.00"))
+    mcm.lock_margin("POS_2", Decimal("25000.00"))
 
-    assert cm.locked_margin_total == Decimal("35000.00")
-    assert cm.available_balance == Decimal("65000.00")
+    assert mcm.locked_margin_total == Decimal("35000.00")
+    assert mcm.available_balance == Decimal("65000.00")
 
 
-def test_release_unknown_position_margin_is_silent_noop(cm):
+def test_release_unknown_position_margin_is_silent_noop(mcm):
     """Releasing an unknown position id returns Decimal('0') and is a no-op."""
-    released = cm.release_margin("NEVER_LOCKED")
+    released = mcm.release_margin("NEVER_LOCKED")
     assert released == Decimal("0")
-    assert cm.locked_margin_total == Decimal("0")
-    assert cm.available_balance == Decimal("100000.00")
+    assert mcm.locked_margin_total == Decimal("0")
+    assert mcm.available_balance == Decimal("100000.00")
 
 
 # ---------------------------------------------------------------------------
@@ -602,33 +624,33 @@ def test_release_unknown_position_margin_is_silent_noop(cm):
 # Seeded by Plan 03-02 so the Plan 03-05 / 03-06 verify selectors
 # (`borrow_interest`, `borrow_interest_op`, `release_symmetry`) each select
 # >=1 test BEFORE any production code is written (D-10). These assert NOTHING
-# yet — the implementing plans turn them green.
+# yet — the implementing plans turn them green. (Margin surface -> ``mcm``.)
 # ---------------------------------------------------------------------------
 
 
-def test_borrow_interest_debits_cash_by_exact_amount(cm):
+def test_borrow_interest_debits_cash_by_exact_amount(mcm):
     """CARRY-01/D-03: accrue_borrow_interest debits realized cash by the exact
     Decimal carry amount (a REAL outflow, not a reservation)."""
     amount = Decimal("0.05479452054794520547945205")  # 2×100×0.10/365 full precision
-    before = cm.balance
-    cm.accrue_borrow_interest(
+    before = mcm.balance
+    mcm.accrue_borrow_interest(
         amount=amount, reference_id="POS_SHORT",
         description="borrow interest", timestamp=_EVENT_TIME,
     )
-    assert cm.balance == before - amount
+    assert mcm.balance == before - amount
 
 
-def test_borrow_interest_records_borrow_interest_op_with_balances_and_time(cm):
+def test_borrow_interest_records_borrow_interest_op_with_balances_and_time(mcm):
     """CARRY-01/D-03: a BORROW_INTEREST CashOperation is recorded with the
     Decimal amount, balance_before/after, and the caller-supplied bar time."""
     amount = Decimal("12.34")
-    before = cm.balance
-    cm.accrue_borrow_interest(
+    before = mcm.balance
+    mcm.accrue_borrow_interest(
         amount=amount, reference_id="POS_SHORT",
         description="borrow interest", timestamp=_EVENT_TIME,
     )
 
-    ops = cm.get_cash_operations(operation_type=CashOperationType.BORROW_INTEREST)
+    ops = mcm.get_cash_operations(operation_type=CashOperationType.BORROW_INTEREST)
     assert len(ops) == 1
     op = ops[0]
     assert op.operation_type is CashOperationType.BORROW_INTEREST
@@ -639,39 +661,39 @@ def test_borrow_interest_records_borrow_interest_op_with_balances_and_time(cm):
     assert op.reference_id == "POS_SHORT"
 
 
-def test_borrow_interest_zero_amount_is_noop(cm):
+def test_borrow_interest_zero_amount_is_noop(mcm):
     """A zero carry (rate-0 / no-short) accrues nothing and records no op —
     keeps the SMA_MACD oracle byte-exact under default-off."""
-    before = cm.balance
-    cm.accrue_borrow_interest(
+    before = mcm.balance
+    mcm.accrue_borrow_interest(
         amount=Decimal("0"), reference_id="POS_SHORT",
         description="borrow interest", timestamp=_EVENT_TIME,
     )
-    assert cm.balance == before
-    assert cm.get_cash_operations(
+    assert mcm.balance == before
+    assert mcm.get_cash_operations(
         operation_type=CashOperationType.BORROW_INTEREST
     ) == []
 
 
-def test_release_symmetry_returns_exact_locked_amount(cm):
+def test_release_symmetry_returns_exact_locked_amount(mcm):
     """WR-03: release_margin returns EXACTLY the locked amount (full precision,
     no rounding drift) — lock/release are symmetric so a release can never leak
     or short-change a position-keyed margin lock (T-03-16)."""
     amount = Decimal("12345.6789012345678901234567")  # full-precision, > 2dp
-    cm.lock_margin("POS_SHORT", amount)
-    assert cm.locked_margin_total == amount
+    mcm.lock_margin("POS_SHORT", amount)
+    assert mcm.locked_margin_total == amount
 
-    released = cm.release_margin("POS_SHORT")
+    released = mcm.release_margin("POS_SHORT")
     assert released == amount  # symmetric — exact round-trip, no quantize drift
-    assert cm.locked_margin_total == Decimal("0")
+    assert mcm.locked_margin_total == Decimal("0")
 
 
-def test_release_symmetry_unlocked_position_is_clean_zero(cm):
+def test_release_symmetry_unlocked_position_is_clean_zero(mcm):
     """WR-03: releasing a position id that was NEVER locked (the assembly-failure
     site — no fill yet → no position-keyed lock can exist) returns a clean
     Decimal('0') and leaks nothing, never an un-paired release (T-03-16)."""
-    before = cm.available_balance
-    released = cm.release_margin("NEVER_LOCKED")
+    before = mcm.available_balance
+    released = mcm.release_margin("NEVER_LOCKED")
     assert released == Decimal("0")
-    assert cm.locked_margin_total == Decimal("0")
-    assert cm.available_balance == before
+    assert mcm.locked_margin_total == Decimal("0")
+    assert mcm.available_balance == before

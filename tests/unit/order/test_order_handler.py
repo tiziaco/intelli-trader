@@ -24,7 +24,7 @@ def order_handler():
     """
     q = Queue()
     ptf_handler = PortfolioHandler(q)
-    ptf_handler.add_portfolio(1, "test_ptf", "default", 10000)
+    ptf_handler.add_portfolio("test_ptf", "default", 10000)
     handler = OrderHandler(q, ptf_handler)
 
     buy_signal = SignalEvent(

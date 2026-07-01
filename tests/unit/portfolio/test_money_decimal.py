@@ -27,7 +27,6 @@ from itrader import idgen
 @pytest.fixture
 def portfolio():
     return Portfolio(
-        user_id=1,
         name="decimal_pf",
         exchange="simulated",
         cash=150000,

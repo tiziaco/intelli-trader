@@ -58,8 +58,9 @@ class PortfolioEventType(Enum):
 class CashOperationType(Enum):
     """Cash operation types for the portfolio cash audit trail.
 
-    Relocated from ``cash_manager.py`` (D-04). Member values preserve the
-    prior class-based definition exactly.
+    Relocated out of the former cash-manager module (D-04); the cash leaf now
+    lives in ``account/simulated.py``. Member values preserve the prior
+    class-based definition exactly.
     """
     DEPOSIT = "DEPOSIT"
     WITHDRAWAL = "WITHDRAWAL"

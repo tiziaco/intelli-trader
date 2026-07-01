@@ -114,6 +114,6 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     # Default MARKET entry; the bracket assembler builds the SL/TP children.
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT)],
-    portfolios=[PortfolioSpec(user_id=1, name="gap_both_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="gap_both_pf", cash=_CASH)],
     exchange=None,  # D-14: zero-fee / zero-slippage.
 )

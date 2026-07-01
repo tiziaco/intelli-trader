@@ -132,6 +132,6 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT,
                                 order_type=OrderType.LIMIT)],
-    portfolios=[PortfolioSpec(user_id=1, name="cost05_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="cost05_pf", cash=_CASH)],
     exchange=_EXCHANGE,  # D-14: FIXED slippage configured but forced to 1 for LIMIT.
 )

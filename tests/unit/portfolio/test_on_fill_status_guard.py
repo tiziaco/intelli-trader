@@ -15,7 +15,7 @@ from itrader.core.enums import FillStatus, Side
 def env():
     queue = Queue()
     ptf = PortfolioHandler(queue)
-    pid = ptf.add_portfolio(1, "p", "default", 100000)
+    pid = ptf.add_portfolio("p", "default", 100000)
 
     def fill(status):
         return FillEvent(

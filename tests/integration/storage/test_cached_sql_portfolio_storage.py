@@ -32,7 +32,7 @@ from sqlalchemy import text
 
 from itrader.core.enums import CashOperationType, PositionSide, TransactionType
 from itrader.core.ids import PositionId, TransactionId
-from itrader.portfolio_handler.cash.cash_manager import CashOperation
+from itrader.portfolio_handler.account import CashOperation
 from itrader.portfolio_handler.position.position import Position
 from itrader.portfolio_handler.storage.cached_sql_storage import (
     CachedSqlPortfolioStateStorage,

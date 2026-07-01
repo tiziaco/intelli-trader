@@ -33,7 +33,7 @@ import uuid_utils.compat as uc
 
 from itrader.core.enums import CashOperationType, PositionSide, TransactionType
 from itrader.core.ids import PositionId, TransactionId
-from itrader.portfolio_handler.cash.cash_manager import CashOperation
+from itrader.portfolio_handler.account import CashOperation
 from itrader.portfolio_handler.metrics.metrics_manager import PortfolioSnapshot
 from itrader.portfolio_handler.position.position import Position
 from itrader.portfolio_handler.storage.sql_storage import SqlPortfolioStateStorage

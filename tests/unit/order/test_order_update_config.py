@@ -56,7 +56,7 @@ def test_manager_bad_value_raises_configuration_error(manager):
 def handler():
     q = Queue()
     ptf_handler = PortfolioHandler(q)
-    ptf_handler.add_portfolio(1, "test_ptf", "default", 10000)
+    ptf_handler.add_portfolio("test_ptf", "default", 10000)
     return OrderHandler(q, ptf_handler)
 
 

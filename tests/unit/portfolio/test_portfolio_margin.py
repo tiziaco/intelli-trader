@@ -22,18 +22,29 @@ import pytest
 import uuid_utils.compat as uuid_compat
 
 from itrader import idgen
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
 from itrader.core.enums import TransactionType
 from itrader.core.exceptions import InsufficientFundsError
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.transaction import Transaction
 
 
+def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
+    """A PortfolioConfig with enable_margin=True. 01-03 selects the account leaf
+    at construction, so margin must be set in the constructor config (the former
+    post-construction ``update_config`` toggle no longer rebuilds the leaf)."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
+    ))
+
+
 @pytest.fixture
 def margin_portfolio():
     """A $150000 portfolio with enable_margin=True (lock-and-settle on)."""
-    pf = Portfolio(1, "margin_pf", "simulated", 150000, datetime.now())
-    pf.update_config({"trading_rules": {"enable_margin": True, "max_leverage": Decimal("10")}})
-    return pf
+    return Portfolio(
+        "margin_pf", "simulated", 150000, datetime.now(), config=_margin_config()
+    )
 
 
 def _levered_txn(type_, ticker, price, quantity, commission, leverage):
@@ -72,7 +83,7 @@ def test_funds_invariant_lock_admits_affordable_lock(margin_portfolio):
 
     pf.process_transaction(buy)  # must NOT raise
 
-    assert pf.cash_manager.locked_margin_total == Decimal("20000")
+    assert pf.account.locked_margin_total == Decimal("20000")
     assert pf.cash == Decimal("150000")
 
 
@@ -112,5 +123,5 @@ def test_open_commission_accumulator_no_drift_on_staged_partial_closes(margin_po
     # The cumulative round-trip cash delta == realized PnL (commission netted
     # exactly once — no drift from the staged partial closes).
     assert pf.cash == start + closed.realised_pnl
-    assert pf.cash_manager.locked_margin_total == Decimal("0")
+    assert pf.account.locked_margin_total == Decimal("0")
     assert len(pf.positions) == 0

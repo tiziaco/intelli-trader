@@ -202,7 +202,7 @@ def handler_with_portfolio():
     from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 
     handler = PortfolioHandler(Queue())
-    portfolio_id = handler.add_portfolio(1, "Conformance", "csv", 100000)
+    portfolio_id = handler.add_portfolio("Conformance", "csv", 100000)
     return handler, portfolio_id
 
 

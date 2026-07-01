@@ -150,6 +150,6 @@ SCENARIO = ScenarioSpec(
         ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_BTC_SCRIPT,
                         sizing_policy=_SIZING, max_positions=1),
     ],
-    portfolios=[PortfolioSpec(user_id=1, name="max_positions_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="max_positions_pf", cash=_CASH)],
     exchange=None,  # zero-fee / zero-slippage — the position-count cap is the only moving part.
 )

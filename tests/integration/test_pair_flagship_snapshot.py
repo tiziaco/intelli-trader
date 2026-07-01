@@ -46,6 +46,18 @@ from itrader.strategy_handler.strategies.eth_btc_pair_strategy import (
     EthBtcPairStrategy,
 )
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
+
+
+def _margin_config() -> PortfolioConfig:
+    """enable_margin + short selling set in the CONSTRUCTOR config — 01-03 selects
+    the account leaf (cash vs margin) at construction, so a post-construction
+    config edit no longer rebuilds the leaf (the short leg needs the margin leaf)."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "allow_short_selling": True}},
+    ))
+
 
 # --- Pinned flagship run configuration (D-10) -------------------------------
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -113,7 +125,8 @@ def _build_flagship_system() -> tuple[BacktestTradingSystem, int]:
     sh.add_strategy(strategy)
 
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1, name="pair_flagship_pf", exchange="csv", cash=_CASH,
+        name="pair_flagship_pf", exchange="csv", cash=_CASH,
+        portfolio_config=_margin_config(),
     )
     strategy.subscribe_portfolio(portfolio_id)
 

@@ -111,8 +111,8 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT)],
     portfolios=[
-        PortfolioSpec(user_id=1, name="pf_a", cash=10_000),
-        PortfolioSpec(user_id=2, name="pf_b", cash=5_000),
+        PortfolioSpec(name="pf_a", cash=10_000),
+        PortfolioSpec(name="pf_b", cash=5_000),
     ],
     exchange=None,
 )

@@ -70,7 +70,7 @@ class _Harness:
         self.ptf_handler = PortfolioHandler(self.queue)
         self.storage = OrderStorageFactory.create("test")
         self.handler = OrderHandler(self.queue, self.ptf_handler, self.storage)
-        self.portfolio_id = self.ptf_handler.add_portfolio(1, "p", "default", 100000)
+        self.portfolio_id = self.ptf_handler.add_portfolio("p", "default", 100000)
 
     def signal(self, stop_loss=0.0, take_profit=0.0):
         return SignalEvent(
@@ -571,9 +571,9 @@ def test_release_on_never_reserved_sell_is_silent_noop(harness):
     stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)
     assert stored.status == OrderStatus.FILLED
     portfolio = harness.ptf_handler.get_portfolio(harness.portfolio_id)
-    assert portfolio.cash_manager.reserved_balance == 0
+    assert portfolio.account.reserved_balance == 0
     release_ops = [
-        op for op in portfolio.cash_manager.get_cash_operations()
+        op for op in portfolio.account.get_cash_operations()
         if op.operation_type.name == "RELEASE_RESERVATION"
     ]
     assert release_ops == []

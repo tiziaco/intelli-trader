@@ -134,6 +134,6 @@ SCENARIO = ScenarioSpec(
     data={_TICKER: HERE / "bars.csv"},
     strategies=[ScriptedEmitter(_TIMEFRAME, [_TICKER], script=_SCRIPT,
                                 sizing_policy=_SIZING)],
-    portfolios=[PortfolioSpec(user_id=1, name="release_refused_pf", cash=_CASH)],
+    portfolios=[PortfolioSpec(name="release_refused_pf", cash=_CASH)],
     exchange=_EXCHANGE,  # NOT None — the deterministic max_order_size REFUSED lever (D-03).
 )

@@ -28,7 +28,7 @@ def env():
     """A PortfolioHandler with one funded ($1000) simulated portfolio."""
     queue = Queue()
     ptf_handler = PortfolioHandler(queue)
-    portfolio_id = ptf_handler.add_portfolio(1, "test_ptf", "simulated", 1000)
+    portfolio_id = ptf_handler.add_portfolio("test_ptf", "simulated", 1000)
     yield SimpleNamespace(queue=queue, ptf_handler=ptf_handler, portfolio_id=portfolio_id)
     while not queue.empty():
         queue.get_nowait()
@@ -90,7 +90,7 @@ def test_update_event_available_cash_is_reservation_adjusted(env):
     from decimal import Decimal
 
     portfolio = env.ptf_handler.get_portfolio(env.portfolio_id)
-    portfolio.cash_manager.reserve_cash(Decimal("100.00"), "pending order", "ORDER_X")
+    portfolio.account.reserve("ORDER_X", Decimal("100.00"))
 
     update_event = env.ptf_handler.generate_portfolios_update_event()
     snapshot = update_event.portfolios[str(env.portfolio_id)]

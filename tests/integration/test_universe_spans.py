@@ -159,7 +159,6 @@ def test_engine_survives_heterogeneous_spans_with_no_look_ahead(tmp_path):
     system.strategies_handler.add_strategy(strategy)
 
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1,
         name="spans_pf",
         exchange="csv",
         cash=1_000_000,

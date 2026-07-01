@@ -13,10 +13,20 @@ from decimal import Decimal
 
 import uuid_utils.compat as uuid_compat
 
+from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
 from itrader.core.enums import CashOperationType
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.position import Position
 from itrader.portfolio_handler.transaction import Transaction, TransactionType
+
+
+def _margin_config(max_leverage: str = "10") -> PortfolioConfig:
+    """enable_margin=True config — borrow-carry lives on the margin leaf, which
+    01-03 selects at construction (not via post-construction update_config)."""
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "max_leverage": Decimal(max_leverage)}},
+    ))
 
 
 _TICKER = "SYNTH"
@@ -42,8 +52,8 @@ class _StubUniverse:
 
 def _portfolio(cash: Decimal = Decimal("100000")) -> Portfolio:
     return Portfolio(
-        user_id=1, name="carry-pf", exchange="simulated",
-        cash=cash, time=datetime(2024, 1, 1),
+        name="carry-pf", exchange="simulated",
+        cash=cash, time=datetime(2024, 1, 1), config=_margin_config(),
     )
 
 
@@ -67,12 +77,12 @@ def test_days_basis_one_day_gap_accrues_one_day():
     universe = _StubUniverse(Decimal("0.10"))
 
     bar_time = entry + timedelta(days=1)
-    balance_before = pf.cash_manager.balance
+    balance_before = pf.account.balance
     pf.update_market_value_of_portfolio({_TICKER: Decimal("100")}, bar_time, universe)
 
     # days == 1: 1 × 100 × 2 × 0.10 / 365
     expected = Decimal("1") * Decimal("100") * Decimal("2") * Decimal("0.10") / Decimal("365")
-    assert pf.cash_manager.balance == balance_before - expected
+    assert pf.account.balance == balance_before - expected
 
 
 def test_days_basis_three_day_gap_accrues_three_days():
@@ -83,11 +93,11 @@ def test_days_basis_three_day_gap_accrues_three_days():
     universe = _StubUniverse(Decimal("0.10"))
 
     bar_time = entry + timedelta(days=3)
-    balance_before = pf.cash_manager.balance
+    balance_before = pf.account.balance
     pf.update_market_value_of_portfolio({_TICKER: Decimal("100")}, bar_time, universe)
 
     expected = Decimal("3") * Decimal("100") * Decimal("2") * Decimal("0.10") / Decimal("365")
-    assert pf.cash_manager.balance == balance_before - expected
+    assert pf.account.balance == balance_before - expected
 
 
 def test_borrow_interest_op_uses_bar_business_time_not_wall_clock():
@@ -100,7 +110,7 @@ def test_borrow_interest_op_uses_bar_business_time_not_wall_clock():
     bar_time = entry + timedelta(days=1)
     pf.update_market_value_of_portfolio({_TICKER: Decimal("100")}, bar_time, universe)
 
-    ops = pf.cash_manager.get_cash_operations(
+    ops = pf.account.get_cash_operations(
         operation_type=CashOperationType.BORROW_INTEREST
     )
     assert len(ops) == 1
@@ -116,10 +126,10 @@ def test_borrow_interest_determinism_double_run_identical():
         universe = _StubUniverse(Decimal("0.10"))
         bar_time = entry + timedelta(days=1)
         pf.update_market_value_of_portfolio({_TICKER: Decimal("100")}, bar_time, universe)
-        op = pf.cash_manager.get_cash_operations(
+        op = pf.account.get_cash_operations(
             operation_type=CashOperationType.BORROW_INTEREST
         )[0]
-        return op.amount, op.timestamp, pf.cash_manager.balance
+        return op.amount, op.timestamp, pf.account.balance
 
     assert run() == run()
 
@@ -138,7 +148,7 @@ def test_short_absent_from_prices_defers_carry_and_does_not_advance_clock():
     _open_short(pf, entry_date=entry, size=Decimal("2"), price=Decimal("100"))
     universe = _StubUniverse(Decimal("0.10"))
 
-    balance_before = pf.cash_manager.balance
+    balance_before = pf.account.balance
 
     # Day 1: a bar that does NOT carry _TICKER's price (sparse/gap bar). The
     # short's current_price stays the stale opening mark (100). No carry must
@@ -147,18 +157,18 @@ def test_short_absent_from_prices_defers_carry_and_does_not_advance_clock():
     pf.update_market_value_of_portfolio({"OTHER": Decimal("999")}, bar_day1, universe)
 
     # No BORROW_INTEREST op booked on the absent-ticker bar.
-    ops_after_day1 = pf.cash_manager.get_cash_operations(
+    ops_after_day1 = pf.account.get_cash_operations(
         operation_type=CashOperationType.BORROW_INTEREST
     )
     assert ops_after_day1 == []
-    assert pf.cash_manager.balance == balance_before
+    assert pf.account.balance == balance_before
 
     # Day 2: a priced bar at the CORRECT mark (120). Because the clock never
     # advanced past the entry, the full TWO-day interval accrues here at 120.
     bar_day2 = entry + timedelta(days=2)
     pf.update_market_value_of_portfolio({_TICKER: Decimal("120")}, bar_day2, universe)
 
-    ops_after_day2 = pf.cash_manager.get_cash_operations(
+    ops_after_day2 = pf.account.get_cash_operations(
         operation_type=CashOperationType.BORROW_INTEREST
     )
     assert len(ops_after_day2) == 1
@@ -166,7 +176,7 @@ def test_short_absent_from_prices_defers_carry_and_does_not_advance_clock():
     expected = Decimal("2") * Decimal("120") * Decimal("2") * Decimal("0.10") / Decimal("365")
     assert ops_after_day2[0].amount == expected
     assert ops_after_day2[0].timestamp == bar_day2
-    assert pf.cash_manager.balance == balance_before - expected
+    assert pf.account.balance == balance_before - expected
 
 
 def test_zero_current_price_skips_carry():
@@ -181,13 +191,13 @@ def test_zero_current_price_skips_carry():
     _open_short(pf, entry_date=entry, size=Decimal("2"), price=Decimal("100"))
     universe = _StubUniverse(Decimal("0.10"))
 
-    balance_before = pf.cash_manager.balance
+    balance_before = pf.account.balance
     bar_time = entry + timedelta(days=1)
     # Mark the short to zero this tick (ticker IS present, so it is re-marked).
     pf.update_market_value_of_portfolio({_TICKER: Decimal("0")}, bar_time, universe)
 
-    ops = pf.cash_manager.get_cash_operations(
+    ops = pf.account.get_cash_operations(
         operation_type=CashOperationType.BORROW_INTEREST
     )
     assert ops == []
-    assert pf.cash_manager.balance == balance_before
+    assert pf.account.balance == balance_before
