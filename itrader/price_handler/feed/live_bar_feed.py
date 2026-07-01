@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import pandas as pd
 
 from itrader.core.bar import Bar
-from itrader.core.exceptions import MissingPriceDataError
+from itrader.core.exceptions import MissingPriceDataError, StateError
 from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.logger import get_itrader_logger
 from itrader.outils.time_parser import to_timedelta
@@ -313,8 +313,18 @@ class LiveBarFeed(BarFeed):
         consolidator can slot in here WITHOUT changing the ``BarEvent`` contract.
         Emission is one ``queue.Queue.put`` (MPSC-safe, no lock — D-19).
         """
-        assert self.global_queue is not None, (
-            "LiveBarFeed.update() requires a bound queue — call bind() first")
+        # WR-02: an `assert` is stripped under `python -O`, which would let a
+        # `None` queue reach `.put(...)` and raise AttributeError — swallowed by the
+        # connector task's broad except and silently drop bars. A bound queue is a
+        # runtime wiring precondition (caller must call bind() first), not an
+        # invariant, so guard it with a typed StateError that always fires.
+        if self.global_queue is None:
+            raise StateError(
+                "LiveBarFeed",
+                "unbound",
+                required_state="queue-bound (call bind() first)",
+                operation="_emit",
+            )
         self.global_queue.put(BarEvent(time=bar.time, bars={sym: bar}))
 
     # -- Newest-bar provision (P5-D16 / G5) -----------------------------------
