@@ -1,0 +1,110 @@
+{
+  "_comment": "DOCUMENTED-SHAPE fixture (Phase 2 / 02-01). Synthetic order->ack->fill sequence for watch_orders / watch_my_trades. Contains NO real credentials, API keys, or account IDs — all IDs are sanitized placeholders. Refinement via a real D-09 capture is opt-in and NEVER gates the offline suite.",
+  "orders": [
+    {
+      "_stage": "ack — order accepted, resting (live), not yet filled",
+      "arg": {"channel": "orders", "instType": "SPOT", "instId": "BTC-USDT"},
+      "data": [{
+        "instType": "SPOT",
+        "instId": "BTC-USDT",
+        "ordId": "PLACEHOLDER-ORD-0001",
+        "clOrdId": "PLACEHOLDER-CLI-0001",
+        "px": "42000.0",
+        "sz": "0.5",
+        "ordType": "limit",
+        "side": "buy",
+        "fillSz": "0",
+        "fillPx": "",
+        "accFillSz": "0",
+        "avgPx": "",
+        "state": "live",
+        "fee": "0",
+        "feeCcy": "USDT",
+        "uTime": "1704067201000",
+        "cTime": "1704067201000"
+      }]
+    },
+    {
+      "_stage": "partial fill",
+      "arg": {"channel": "orders", "instType": "SPOT", "instId": "BTC-USDT"},
+      "data": [{
+        "instType": "SPOT",
+        "instId": "BTC-USDT",
+        "ordId": "PLACEHOLDER-ORD-0001",
+        "clOrdId": "PLACEHOLDER-CLI-0001",
+        "px": "42000.0",
+        "sz": "0.5",
+        "ordType": "limit",
+        "side": "buy",
+        "fillSz": "0.2",
+        "fillPx": "42000.0",
+        "accFillSz": "0.2",
+        "avgPx": "42000.0",
+        "state": "partially_filled",
+        "fee": "-0.084",
+        "feeCcy": "USDT",
+        "uTime": "1704067202000",
+        "cTime": "1704067201000"
+      }]
+    },
+    {
+      "_stage": "final fill — terminal filled state",
+      "arg": {"channel": "orders", "instType": "SPOT", "instId": "BTC-USDT"},
+      "data": [{
+        "instType": "SPOT",
+        "instId": "BTC-USDT",
+        "ordId": "PLACEHOLDER-ORD-0001",
+        "clOrdId": "PLACEHOLDER-CLI-0001",
+        "px": "42000.0",
+        "sz": "0.5",
+        "ordType": "limit",
+        "side": "buy",
+        "fillSz": "0.3",
+        "fillPx": "42000.0",
+        "accFillSz": "0.5",
+        "avgPx": "42000.0",
+        "state": "filled",
+        "fee": "-0.21",
+        "feeCcy": "USDT",
+        "uTime": "1704067203000",
+        "cTime": "1704067201000"
+      }]
+    }
+  ],
+  "my_trades": [
+    {
+      "_stage": "trade fill event 1 (matches the partial fill above)",
+      "arg": {"channel": "fills", "instType": "SPOT", "instId": "BTC-USDT"},
+      "data": [{
+        "instType": "SPOT",
+        "instId": "BTC-USDT",
+        "tradeId": "PLACEHOLDER-TRD-0001",
+        "ordId": "PLACEHOLDER-ORD-0001",
+        "clOrdId": "PLACEHOLDER-CLI-0001",
+        "fillPx": "42000.0",
+        "fillSz": "0.2",
+        "side": "buy",
+        "fee": "-0.084",
+        "feeCcy": "USDT",
+        "ts": "1704067202000"
+      }]
+    },
+    {
+      "_stage": "trade fill event 2 (matches the final fill above)",
+      "arg": {"channel": "fills", "instType": "SPOT", "instId": "BTC-USDT"},
+      "data": [{
+        "instType": "SPOT",
+        "instId": "BTC-USDT",
+        "tradeId": "PLACEHOLDER-TRD-0002",
+        "ordId": "PLACEHOLDER-ORD-0001",
+        "clOrdId": "PLACEHOLDER-CLI-0001",
+        "fillPx": "42000.0",
+        "fillSz": "0.3",
+        "side": "buy",
+        "fee": "-0.126",
+        "feeCcy": "USDT",
+        "ts": "1704067203000"
+      }]
+    }
+  ]
+}
