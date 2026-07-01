@@ -167,7 +167,12 @@ class OkxConnector:
             ready.set()
 
         self._loop.call_soon_threadsafe(_create)
-        ready.wait(timeout=_CALL_TIMEOUT)
+        # WR-04: if the loop never scheduled ``_create`` (congested / not running),
+        # ``holder["task"]`` would raise a bare KeyError that masks the real
+        # "loop not scheduling" failure. Surface the timeout explicitly instead.
+        if not ready.wait(timeout=_CALL_TIMEOUT):
+            raise TimeoutError(
+                "OKX connector loop did not schedule the spawned task in time")
         return holder["task"]
 
     def disconnect(self) -> None:
