@@ -152,6 +152,21 @@ class OkxExchange(AbstractExchange):
 		``price_to_precision`` (ccxt reads OKX ``load_markets`` precision and returns a
 		venue-correct STRING) — never ``Decimal(float)`` and never a hand-rolled quantize.
 		"""
+		# WR-03: only MARKET and LIMIT are translated today. OrderType also defines
+		# STOP and TRAILING_STOP (this framework's brackets are stop/limit children),
+		# which carry their trigger in ``event.price`` — but the ccxt trigger-param
+		# translation (triggerPrice/stopLossPrice) is not wired until the live order
+		# path (Phase 4/5). Rather than silently submit ``type="stop"`` with
+		# ``price=None`` (dropping the trigger, so the venue rejects or mis-fills),
+		# fail loud here: the on_order boundary converts this into a
+		# FillEvent(REFUSED) (WR-02) so the order mirror reconciles instead of the
+		# trigger being silently dropped. Full STOP/TRAILING_STOP translation is
+		# deferred to the live order path.
+		if event.order_type not in (OrderType.MARKET, OrderType.LIMIT):
+			raise NotImplementedError(
+				f"OKX arm does not yet translate {event.order_type.value} orders "
+				"(trigger-price submission lands with the live order path)")
+
 		symbol = self._to_symbol(event.ticker)
 		client = self._connector.client
 		# Outbound precision: venue-rounded STRINGS (CONN-05 — no Decimal(float)).

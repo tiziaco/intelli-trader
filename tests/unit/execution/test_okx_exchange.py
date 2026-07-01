@@ -323,6 +323,41 @@ def test_cancel_order_routes_through_call(
     fake_client.create_order.assert_not_called()
 
 
+# --- WR-03: unsupported order types are refused, not mis-submitted ------------
+
+
+def test_stop_order_type_is_refused_not_mis_submitted(
+    exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
+) -> None:
+    """A STOP order is REFUSED rather than mis-submitted with a dropped trigger (WR-03).
+
+    Trigger-param translation is deferred to the live order path; until then the arm
+    must fail loud (-> FillEvent(REFUSED)) instead of sending type="stop" price=None.
+    """
+    order = _make_order(order_type=OrderType.STOP, price=Decimal("41000.0"))
+
+    exchange.on_order(order)
+
+    fake_client.create_order.assert_not_called()
+    assert not queue.empty()
+    fill = queue.get_nowait()
+    assert isinstance(fill, FillEvent)
+    assert fill.status is FillStatus.REFUSED
+
+
+def test_trailing_stop_order_type_is_refused(
+    exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
+) -> None:
+    """A TRAILING_STOP order is likewise refused, not mis-submitted (WR-03)."""
+    order = _make_order(order_type=OrderType.TRAILING_STOP, price=Decimal("41000.0"))
+
+    exchange.on_order(order)
+
+    fake_client.create_order.assert_not_called()
+    fill = queue.get_nowait()
+    assert fill.status is FillStatus.REFUSED
+
+
 # --- WR-02: failed submit/cancel reconciles via FillEvent(REFUSED) ------------
 
 
