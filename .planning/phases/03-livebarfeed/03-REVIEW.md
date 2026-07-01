@@ -12,7 +12,8 @@ findings:
   warning: 4
   info: 2
   total: 7
-status: issues_found
+status: resolved
+resolution: CR-01 + WR-01..WR-04 fixed and committed (a704a637, deab31d7, 9a44effa, 34049962, 54af1372); CR-01 regression-locked by test_gap_backfill_overfetch_delivers_trigger_bar_once. IN-01/IN-02 (info) deferred.
 ---
 
 # Phase 3: Code Review Report
