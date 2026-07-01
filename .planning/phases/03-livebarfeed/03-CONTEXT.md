@@ -133,6 +133,32 @@ downstream). This discussion settled the **plan-time-flagged HOW** on top of tho
   (else higher-tf bars diverge and parity breaks) → **deferred** (see Deferred →
   `native-tagged-multi-timeframe`). Golden SMA_MACD (BTCUSD, 1d) is the N=1 case.
 
+### Plan-time resolutions (research-grounded, 2026-07-01)
+
+These two items resolve code-vs-decision gaps that plan-time research (03-RESEARCH.md)
+found against the actual current code. Both were confirmed by the user before planning.
+
+- **D-12 — Extend `ClosedBar` with `symbol` + `timeframe` (Phase-2 seam co-shape).** Research
+  verified the actual Phase-2 `ClosedBar` TypedDict carries only `ts, open, high, low, close,
+  volume` — it does NOT carry the routing keys D-01 assumed ("the dict already carries the
+  routing keys" was false against the code). Resolution: add `symbol` and `timeframe` to the
+  `ClosedBar` TypedDict and have `OkxDataProvider` populate them at the provider edge. The
+  provider docstring explicitly invites this co-shape. `update(closed_bar)` then routes to the
+  correct `(symbol, timeframe)` ring from the payload, preserving D-01's push-callback intent.
+  Chosen over a per-provider partial/closure sink (routing keys out-of-band) — keeping the keys
+  in the payload matches D-01.
+
+- **D-13 — Register a `RawBarConsumer(required_history_depth = max strategy warmup)` on the LIVE
+  feed so `cache_capacity()` derives correctly.** Research verified `cache_capacity()` returns
+  `1` today (NEWEST_BAR_ONLY — no raw-bar consumers; indicators self-buffer under Model B).
+  Taking D-09/D-10 literally would size the live ring + warmup to ~1 bar, so SMA_MACD's
+  indicators (min_period=100) would never warm up → zero trades → **oracle fails**. Resolution:
+  register a raw-bar consumer sized to the max strategy warmup (e.g. 100) on the live feed only,
+  making `cache_capacity()` derive to that depth. D-09 (ring holds capacity) and D-10
+  (`K = cache_capacity() + margin`) both become literally correct and self-consistent, using the
+  same wiring-time derivation as backtest (D-09's single-source-of-truth intent preserved). The
+  backtest hot path is untouched (oracle-dark).
+
 ### Claude's Discretion (plan-time)
 - Exact `Bar` construction path from the `ClosedBar` dict inside `update()`.
 - Exact warmup safety-margin value (D-10).
