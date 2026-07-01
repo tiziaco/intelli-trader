@@ -151,7 +151,12 @@ the Decimal boundary at the edge; async stays bottled at the connector.
      `filterwarnings=["error"]` stays green.
 **Research flag**: NEEDS PLAN-TIME RESEARCH — OKX `confirm` exact behavior + ccxt.pro native-vs-unified
 gap list; `set_sandbox_mode` WS-header verification; demo-key requirements. (Block Phase 2 design until resolved.)
-**Plans**: TBD
+**Plans**: 5 plans (planned 2026-07-01)
+- [ ] 02-01-PLAN.md — Foundation: pytest-asyncio + async test infra, OkxSettings (CONN-06), LiveConnector Protocol reshape (Wave 1)
+- [ ] 02-02-PLAN.md — OkxConnector session/transport primitive: loop-on-daemon-thread, sandbox->wspap routing, call/spawn bridge (CONN-03/04) (Wave 2)
+- [ ] 02-03-PLAN.md — Order arm OkxExchange(AbstractExchange): create/cancel + watch_my_trades -> FillEvent, Decimal edge (CONN-02/05) (Wave 3)
+- [ ] 02-04-PLAN.md — Data arm OkxDataProvider: native /business confirm-gated candle socket + REST backfill (CONN-01/03/05) (Wave 3)
+- [ ] 02-05-PLAN.md — Composition-root wiring + VenueAccount seam + recurring milestone gate (CONN-04) (Wave 4)
 **Cross-cutting**: RES-01 (rate-limit coordination across ccxt + native paths) begins here — home phase is Phase 5.
 
 ### Phase 3: LiveBarFeed
