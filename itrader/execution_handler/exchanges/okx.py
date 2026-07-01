@@ -144,12 +144,15 @@ class OkxExchange(AbstractExchange):
 		symbol = self._to_symbol(event.ticker)
 		client = self._connector.client
 		# Outbound precision: venue-rounded STRINGS (CONN-05 — no Decimal(float)).
-		amount = client.amount_to_precision(symbol, float(event.quantity))
+		# IN-03: pass the Decimal's STRING form (not float()) so the outbound value
+		# never enters binary float; ccxt re-rounds to lot/tick and returns the
+		# authoritative string either way.
+		amount = client.amount_to_precision(symbol, str(event.quantity))
 		otype = event.order_type.value.lower()
 		side = event.action.value.lower()
 		price: Optional[str] = None
 		if event.order_type is OrderType.LIMIT and event.price is not None:
-			price = client.price_to_precision(symbol, float(event.price))
+			price = client.price_to_precision(symbol, str(event.price))
 
 		response = self._connector.call(
 			client.create_order(symbol, otype, side, amount, price))

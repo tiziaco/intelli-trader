@@ -163,8 +163,9 @@ def test_create_order_rounds_qty_and_price_and_submits_via_call(
 
     exchange.on_order(order)
 
-    fake_client.amount_to_precision.assert_called_once_with("BTC-USDT", float(order.quantity))
-    fake_client.price_to_precision.assert_called_once_with("BTC-USDT", float(order.price))
+    # IN-03: the outbound value crosses as the Decimal's STRING form, never float().
+    fake_client.amount_to_precision.assert_called_once_with("BTC-USDT", str(order.quantity))
+    fake_client.price_to_precision.assert_called_once_with("BTC-USDT", str(order.price))
     fake_client.create_order.assert_awaited_once()
     # Submitted with venue-rounded STRINGS (no Decimal(float) outbound).
     _sym, otype, side, amount, price = fake_client.create_order.call_args.args
