@@ -42,6 +42,7 @@ nautilus-trader = "1.227.0"
 scalene = "^2.3.0"
 alembic = "^1.18.5"
 testcontainers = {version = "^4.14.2", extras = ["postgresql"]}
+pytest-asyncio = "^1.4.0"
 
 [tool.pytest.ini_options]
 # Test discovery
@@ -67,10 +68,20 @@ markers = [
     "integration: Integration test — asserts cross-component interaction (tests/integration/)",
     "slow: Slow running test (the full-engine integration runs)",
     "e2e: End-to-end scenario — full engine on a (strategy, data) pair vs frozen goldens (tests/e2e/)",
+    "smoke: Smoke test — fast run-path liveness check; PURPOSE axis, applied by hand with @pytest.mark.smoke, orthogonal to the folder-derived TYPE axis",
 ]
 
 # Minimum version
 minversion = "8.0"
+
+# Async test config (Phase 2, D-08) — pytest-asyncio 1.4.0. Both keys are REQUIRED
+# under --strict-config: asyncio_mode="auto" runs every `async def test_*` without a
+# per-test @pytest.mark.asyncio, and asyncio_default_fixture_loop_scope="function"
+# pins the fixture event-loop scope (an unset scope emits a config warning that
+# escalates to an error under filterwarnings=["error"]). The plugin registers its own
+# `asyncio` marker (exempt from --strict-markers), so `markers` is left untouched.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 # Filter warnings
 filterwarnings = [

@@ -1,5 +1,17 @@
 # Stack Research
 
+> ## ⚠ Superseded framing — read `phases/02-okx-connector/02-CONTEXT.md` first
+>
+> The Phase-2 discussion (2026-07-01) revised the live architecture; this snapshot
+> predates it and still describes the **two-arm `LiveConnector`** model. **Superseded
+> framings** (everything else here remains valid):
+> - Connector is a **session/transport primitive**, not a two-arm venue object; the data/order/account arms are **domain adapters** (`OkxDataProvider` / `OkxExchange` / `VenueAccount`), **injected** with the session, never cross-domain-imported.
+> - The **`OkxExchange` adapter emits `FillEvent`** — the connector owns no operations and emits no domain events.
+> - Paper needs **no connector**: the paper execution adapter implements **`AbstractExchange`** (not `LiveConnector`).
+> - `OkxSettings` reads **plain `OKX_API_*` (no env prefix)** — not `ITRADER_OKX_*`; secret manager deferred post-milestone.
+>
+> See design-doc LX-05/LX-06 revision notes and `02-CONTEXT.md` D-01..D-10.
+
 **Domain:** Live crypto trading (OKX, paper-first) — additions to an event-driven backtest engine
 **Researched:** 2026-06-30
 **Confidence:** HIGH (ccxt packaging/versions, OKX demo mechanics, asyncio bridge verified against current sources; MEDIUM on native-escape-hatch choice — a plan-time gap-list decision)

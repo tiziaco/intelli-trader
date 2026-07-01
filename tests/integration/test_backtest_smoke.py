@@ -17,8 +17,13 @@ in the root conftest) — do NOT hand-add markers.
 
 from decimal import Decimal
 
+import pytest
+
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
+
+# PURPOSE-axis marker (hand-applied); adds to the folder-derived `integration` TYPE mark.
+pytestmark = pytest.mark.smoke
 
 
 # Golden-run configuration (D-03/D-04/D-06).

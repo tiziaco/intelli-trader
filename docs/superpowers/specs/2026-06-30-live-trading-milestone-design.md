@@ -64,6 +64,23 @@ features" discipline within a single milestone rather than splitting into two.
 | LX-06 | Local paper reuses the pure `MatchingEngine` (+ fee/slippage), **not** the whole `SimulatedExchange` class | `MatchingEngine` is already I/O-free (`submit`/`on_bar -> decisions`). A thin `PaperConnector` composes it; two adapters over one matching core. |
 | LX-07 | `LiveBarFeed` = ring-buffer `BarFeed` implementation | Same `BarFeed` ABC the engine already consumes; only the backing store changes (precompute → stream). Strategies/screeners/execution unchanged. |
 
+> **Revised 2026-07-01 (Phase 2 discuss — see `.planning/phases/02-okx-connector/02-CONTEXT.md` D-01..D-04).**
+> The original rationale for LX-05/LX-06 stands, but their *shape* changed after discussion:
+> - **LX-05 revised:** the connector is **not** a two-arm venue object. Data source and execution
+>   venue are **independent axes of variation** (validated against `nautilus-trader`, which splits
+>   `OKXDataClient` / `OKXExecutionClient`; and OKX itself streams candles on a separate `/ws/v5/business`
+>   endpoint). `OkxConnector` is a thin **shared authenticated session/transport primitive** (auth,
+>   single `sandbox: bool`, one `ccxt.pro` client, asyncio loop+thread, rate-limit, lifecycle). The
+>   data / order / account "arms" are **domain adapters in their home domains** — `OkxDataProvider`
+>   (`price_handler/providers/`), `OkxExchange` (`execution_handler/exchanges/`, impl `AbstractExchange`),
+>   `VenueAccount` (`portfolio_handler/account/`) — each **injected** with the connector session (typed
+>   against the `LiveConnector` Protocol) at the `LiveTradingSystem` composition root, never
+>   cross-domain-imported. Only the connector authenticates. `LiveConnector` (D-10) shrinks to a
+>   session/transport contract; the "arms" are the existing domain seams.
+> - **LX-06 revised:** the paper execution adapter implements **`AbstractExchange`** (the execution seam),
+>   **not `LiveConnector`** — paper has no venue session, so it needs no connector. Its composition
+>   (reused `MatchingEngine` + shared byte-exact `apply_costs`) is unchanged.
+
 ---
 
 ## 3. The parity spine (why most of this is "fill the seam," not "invent")
@@ -73,11 +90,14 @@ speaks one contract (`current_bars`, `window`, `newest_bar`, `megaframe`, raw-ba
 Backtest backs it with `BacktestBarFeed` (precompute + monotonic cursor); **live backs it with
 `LiveBarFeed` (ring buffer)**. The same symmetry holds at the account and execution layers:
 
-| World | Time source | Account | Execution |
-|---|---|---|---|
-| Backtest | `TimeGenerator` (pinned grid) | `SimulatedAccount` (computes) | `SimulatedExchange` (`MatchingEngine`) |
-| Paper (live feed) | closed-bar arrival | `SimulatedAccount` (computes) | `PaperConnector` (reuses `MatchingEngine`) |
-| Live real | closed-bar arrival | `VenueAccount` (caches + reconciles) | `OkxConnector` |
+| World | Time source | Data | Account | Execution |
+|---|---|---|---|---|
+| Backtest | `TimeGenerator` (pinned grid) | `BacktestBarFeed` | `SimulatedAccount` (computes) | `SimulatedExchange` (`MatchingEngine`) |
+| Paper (live feed) | closed-bar arrival | `LiveBarFeed` ← data provider | `SimulatedAccount` (computes) | paper `AbstractExchange` adapter (reuses `MatchingEngine`) — no connector |
+| Live real | closed-bar arrival | `LiveBarFeed` ← `OkxDataProvider` | `VenueAccount` (caches + reconciles) | `OkxExchange` (impl `AbstractExchange`) |
+
+Data, account, and execution vary independently; on the live real row all three adapters share one
+injected `OkxConnector` **session** (auth/transport), but each is its own domain adapter.
 
 Paper sits in the middle column and shares the **left** column's computation — which is exactly what
 preserves the paper-parity gate.
@@ -128,22 +148,33 @@ keep-slim vs delete (LX-14).
 
 ---
 
-### Phase 2 — OKX connector (`OkxConnector` implementing `LiveConnector`)
-- `LiveConnector` interface (shaped on OKX reality: async submit→ack→fill-stream, balances, positions).
-- `OkxConnector`: **ccxt.pro by default** + **native OKX escape hatch** for proven gaps, both behind
-  the interface (LX-05). Auth, **single `sandbox: bool`** that routes *both* ccxt (`set_sandbox_mode`)
-  **and** native calls (`x-simulated-trading` header) to OKX demo — no split-brain live/demo.
-- **Async/sync bridge:** connector runs its own asyncio loop in its own thread; translates ccxt.pro /
-  native WS messages into domain events onto `global_queue`. The async boundary stays bottled at the
-  connector edge; the engine stays synchronous.
-- **Data arm** (`watch_ohlcv`) and **order arm** (submit/cancel/balances) both land here; the order arm
-  is exercised against sandbox in Phase 5.
-- Reuse plumbing from existing `ccxt_provider.py` / `binance_stream.py` where it fits (those are
-  read-only providers; this is the live-feed + order arm).
+### Phase 2 — OKX connector (session/transport primitive + domain adapters)
+> Revised 2026-07-01 per the LX-05 revision above — decomposition, not a two-arm venue object.
+
+- **`OkxConnector` = the OKX session** (`itrader/connectors/okx.py`): auth (key/secret/passphrase),
+  **single `sandbox: bool`** routing *both* ccxt (`set_sandbox_mode`) **and** native calls
+  (`x-simulated-trading` header) — no split-brain; one `ccxt.pro` client; its own asyncio loop in its
+  own daemon thread; rate-limit/connection budget; `connect`/`disconnect`. It owns **no venue
+  operations** and constructs **no domain events**. `LiveConnector` (`connectors/base.py`) is reshaped
+  to this session/transport contract.
+- **Order arm → `OkxExchange`** (`execution_handler/exchanges/`, impl `AbstractExchange`, sibling of
+  `SimulatedExchange`): async `create_order`/cancel + `watch_orders`/`watch_fills`, Decimal-at-edge +
+  lot/tick rounding, raw fill → frozen `FillEvent` → `global_queue`. **The exchange emits the fill, not
+  the connector.** Fully implemented here; exercised against sandbox in Phase 5.
+- **Data arm → `OkxDataProvider`** (`price_handler/providers/`): a native OKX `business`-endpoint
+  candle subscription carrying the **`confirm`** flag (ccxt's unified `watch_ohlcv` drops it), plus REST
+  `fetch_ohlcv` backfill; Decimal-at-edge. Feeds closed bars to Phase-3 `LiveBarFeed` (which builds the
+  `BarEvent`).
+- **Account arm → `VenueAccount`** (`portfolio_handler/account/`, Phase-1 `Account` leaf): caches the
+  balance/margin/position stream (reconciliation logic lands in Phase 5).
+- **Injection, not import:** the concrete `OkxConnector` is built once at the `LiveTradingSystem`
+  composition root and injected into the three adapters, each typed against the `LiveConnector`
+  Protocol. Only the connector authenticates; the async boundary stays bottled at the connector edge;
+  the engine stays synchronous. Reuse plumbing from `ccxt_provider.py` / `binance_stream.py` where it fits.
 
 **Open items:** exact native-vs-ccxt gap list for OKX (research at plan time — kline confirm-flag
 reliability, stream channels, order-status fidelity); shared rate-limit accounting across ccxt +
-native paths.
+native paths (OKX buckets public/business vs order separately — RES-01 is IP-connection-level, light).
 
 ---
 
@@ -153,7 +184,8 @@ native paths.
   closed bar: append, advance cursor, update `newest_bar`, emit `BarEvent`. `window()` serves the
   trailing N from the ring.
 - **Bar-close detection (LX-08):** emit a `BarEvent` only on a **completed** bar (7-rule contract:
-  completed bars only, no forming bucket). Drive "closed" off OKX's kline **confirm flag**, never
+  completed bars only, no forming bucket). Drive "closed" off OKX's kline **confirm flag** — surfaced by
+  the Phase-2 `OkxDataProvider` (native `business`-channel read), which `LiveBarFeed` consumes — never
   wall-clock inference.
 - **Bar source (LX-12): klines-now, trades-capable-later.** Trust OKX `watch_ohlcv`; shape the
   ingestion seam so a trade-aggregation source could slot in behind the same bar-close interface.
@@ -179,11 +211,15 @@ native paths.
 ---
 
 ### Phase 4 — Paper path (the milestone DoD)
-- `PaperConnector` satisfying `LiveConnector`, composing the **reused `MatchingEngine` + fee/slippage**
-  (LX-06), driven by `LiveBarFeed`'s **closed** bars (bar-based fills only — LX-13).
+> Revised 2026-07-01 per the LX-06 revision above — paper needs **no connector** (no venue session).
+
+- A **paper execution adapter satisfying `AbstractExchange`** (the execution seam — **not**
+  `LiveConnector`), composing the **reused `MatchingEngine` + shared byte-exact `apply_costs`** (LX-06),
+  driven by `LiveBarFeed`'s **closed** bars (bar-based fills only — LX-13). No OKX I/O, no session.
 - `SimulatedAccount` (from Phase 1) provides account math → **same computation as backtest**.
 - Wire `LiveTradingSystem` end-to-end: live feed → strategy (stateful indicators) → order →
-  paper fill → `SimulatedAccount`/`Portfolio`.
+  paper fill → `SimulatedAccount`/`Portfolio`. (Reachable on Phases 1+3 + the Phase-2 data provider;
+  the order arm / connector session is not needed for paper.)
 - **Correctness gate (LX-11): paper-parity vs the backtest oracle** on the same data — local paper is
   deterministic and bar-based precisely so this holds.
 
@@ -193,10 +229,11 @@ recorded live session); how the live thread/clock interacts with determinism sea
 ---
 
 ### Phase 5 — Live real path: reconciliation + persistence live-drive (sandbox-validated)
-- `VenueAccount` (Phase 1 interface → impl): mirrors connector balance/margin/position streams;
-  reconciles. Under **1:1 (LX-04)** this is **per-symbol drift detection** (partial fills, fees,
-  funding, liquidations), not attribution. Assumes the portfolio has **exclusive** control of its
-  venue (sub)account (one OKX subaccount per strategy-portfolio).
+- `VenueAccount` (Phase 1 interface → impl): mirrors the **injected `OkxConnector` session's**
+  balance/margin/position streams; reconciles. (Order I/O lives in `OkxExchange` from Phase 2; this
+  phase adds the account-arm reconciliation logic.) Under **1:1 (LX-04)** this is **per-symbol drift
+  detection** (partial fills, fees, funding, liquidations), not attribution. Assumes the portfolio has
+  **exclusive** control of its venue (sub)account (one OKX subaccount per strategy-portfolio).
 - **Persistence live-drive:** drive the v1.6 operational store (orders / portfolio state / signals)
   with the **real OKX feed** — the store was built + tested on testcontainers Postgres in v1.6 but
   only *driven by a live feed here*.

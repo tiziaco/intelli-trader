@@ -1,0 +1,22 @@
+{
+  "_comment": "DOCUMENTED-SHAPE fixture (Phase 2 / 02-01, RESEARCH lines 279-295). Synthetic — NOT a real D-09 capture; contains NO credentials or account IDs. Refinement via a real OKX business-channel capture is opt-in (D-09) and NEVER gates the offline suite (Assumption A1: the confirm==\"1\" gate is authoritative regardless of the intermediate forming-push cadence).",
+  "_channel": "candle1D business channel — row layout [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]; confirm at index 8 is \"0\"=forming, \"1\"=closed.",
+  "pushes": [
+    {
+      "arg": {"channel": "candle1D", "instId": "BTC-USDT"},
+      "data": [["1704067200000", "42000.0", "42500.0", "41800.0", "42100.0", "1200.5", "50600000.0", "50600000.0", "0"]]
+    },
+    {
+      "arg": {"channel": "candle1D", "instId": "BTC-USDT"},
+      "data": [["1704067200000", "42000.0", "42800.0", "41800.0", "42650.0", "2400.7", "101300000.0", "101300000.0", "0"]]
+    },
+    {
+      "arg": {"channel": "candle1D", "instId": "BTC-USDT"},
+      "data": [["1704067200000", "42000.0", "43100.0", "41750.0", "42900.0", "3600.9", "152100000.0", "152100000.0", "0"]]
+    },
+    {
+      "arg": {"channel": "candle1D", "instId": "BTC-USDT"},
+      "data": [["1704067200000", "42000.0", "43100.0", "41750.0", "43050.0", "3900.2", "165400000.0", "165400000.0", "1"]]
+    }
+  ]
+}

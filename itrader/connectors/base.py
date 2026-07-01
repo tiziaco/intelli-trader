@@ -1,59 +1,85 @@
+"""LiveConnector — the shared session/transport contract for a live venue (D-02 / D-04).
+
+Reshaped from the Phase-1 two-arm marker (``watch_data`` / ``submit_order`` /
+``cancel_order``) into a **session/transport primitive**. Per D-02 the connector owns
+auth (key/secret/passphrase), the single ``ccxt.pro`` client instance, the asyncio loop
+on a daemon thread, rate-limit/connection budget, ``sandbox`` routing, and the
+``connect``/``disconnect`` lifecycle — and NOTHING else. It knows nothing about
+orders-vs-candles-vs-balances and imports/constructs no domain events. The three OKX
+arms (Plans 02-03 order, 02-04/02-05 data) are the operations owners; they type against
+this contract and drive their domain calls *through* it (D-04).
+
+The contract the arms need is the **scheduling seam**, not order/candle ops (RESEARCH
+§Async Containment). Two primitives bottle the async/sync bridge at the connector edge:
+
+- ``call(coro) -> T`` — a synchronous RPC: ``run_coroutine_threadsafe(coro, loop)``
+  then block on ``.result(timeout)``. Used for request/response ops (``create_order``,
+  ``cancel_order``, ``load_markets``).
+- ``spawn(coro) -> handle`` — schedule a long-running stream task (``watch_*`` /the
+  native business candle socket) on the loop; the handle is cancelled at
+  ``disconnect``. It is NEVER ``.result()``-awaited (that would block the caller on an
+  infinite stream).
+
+``sandbox`` (D-02 correction — RESEARCH §Sandbox Routing): a single ``sandbox: bool``
+routes both paths, but the ccxt ``x-simulated-trading`` header is **REST-only** and
+never reaches any WebSocket. OKX WS demo is selected purely by the **demo host**
+(``wss://wspap.okx.com:8443/...`` vs ``wss://ws.okx.com:8443/...``). The native data
+socket therefore keys its host off ``sandbox`` — NOT off a WS header.
+
+This stays a ``runtime_checkable`` ``Protocol`` (not an ABC) — the swap-a-fake
+structural seam (D-04/D-08) that ``OkxConnector`` (Plan 02-02) and the local
+``PaperConnector`` (Phase 4) satisfy, and that the connectors conftest's
+``FakeLiveConnector`` satisfies for tests. There is no shared implementation to inherit;
+the arms only need the structural surface. Method bodies are ``...`` — this is a
+contract, not a base class. ``connectors/__init__.py`` gains ``OkxConnector`` in Plan
+02-02 when the concretion exists; it is not exported here.
 """
-LiveConnector — structural Protocol marker for a live trading venue (D-07 / D-10).
 
-This is a ``runtime_checkable`` ``Protocol`` rather than an ABC — the same
-structural-seam choice as ``AbstractExchange`` (D-07): it describes the swap-a-fake
-boundary that every live venue (Phase 2 ``OkxConnector``) and the local paper venue
-(Phase 4 ``PaperConnector``) must satisfy, with no shared implementation to inherit.
-The ``Account`` family uses an ABC (cash→margin is a real superset to inherit); the
-connector is purely a structural contract, so it uses a Protocol.
+from typing import Any, Awaitable, Protocol, TypeVar, runtime_checkable
 
-Scope this phase (D-10): a **thin marker that names the arm boundaries only** — the
-data arm, the order arm, and lifecycle — so Phase 2 knows the slots to fill. The
-real signatures (async submit → ack → fill, ``watch_ohlcv`` with the OKX ``confirm``
-flag, balances / positions) are shaped against OKX reality in Phase 2 (CONN-*) and
-are deliberately NOT frozen here — freezing OKX-shaped signatures before the
-integration exists would be the premature-interface trap. Method bodies are ``...``
-placeholders that name the slots, not concrete contracts.
-
-This package is top-level ``itrader/connectors/`` (D-13), NOT a portfolio concern:
-it spans the data + order arms (broader than execution) and anticipates Phase 2
-``connectors/okx.py`` and Phase 4 ``connectors/paper.py``. ``VenueAccount`` stays in
-``portfolio_handler/account/venue.py`` — it is an ``Account`` leaf, not a connector.
-"""
-
-from typing import Any, Protocol, runtime_checkable
+_T = TypeVar("_T")
 
 
 @runtime_checkable
 class LiveConnector(Protocol):
+    """Structural session/transport contract for a live venue (D-02 / D-04).
+
+    The swap-a-fake seam the three OKX arms type against: a synchronous ``call`` RPC, a
+    fire-and-track ``spawn`` for long-running streams, the shared ``client`` and
+    ``sandbox`` accessors, and ``connect``/``disconnect`` lifecycle. Carries no
+    order/candle/balance operations — those are arm concerns (D-02).
     """
-    Structural interface marker (D-07 / D-10) for a live trading venue.
 
-    Names the arm boundaries Phase 2 fills; real signatures are deferred to
-    Phase 2 (CONN-*) and shaped against OKX. ``runtime_checkable`` for
-    swap-a-fake consistency with ``AbstractExchange``.
-    """
+    def call(self, coro: Awaitable[_T]) -> _T:
+        """RPC: run ``coro`` on the connector loop and block for its result.
 
-    # Data arm — market-data streaming (Phase 2 CONN-*: watch_ohlcv + OKX confirm flag)
-    def watch_data(self) -> Any:
-        """Stream market data from the venue (slot — Phase 2 CONN-*)."""
+        Bridges async→sync via ``run_coroutine_threadsafe(coro, loop).result(timeout)``
+        for request/response ops (order submit/cancel, market load).
+        """
         ...
 
-    # Order arm — order submission / cancellation (Phase 2 CONN-*: async submit->ack->fill)
-    def submit_order(self, *args: Any, **kwargs: Any) -> Any:
-        """Submit an order to the venue (slot — Phase 2 CONN-*)."""
+    def spawn(self, coro: Awaitable[Any]) -> Any:
+        """Schedule a long-running stream task (``watch_*``/native candle); return a handle.
+
+        The handle is cancelled at ``disconnect``. NEVER ``.result()``-awaited — the
+        underlying stream does not terminate on its own.
+        """
         ...
 
-    def cancel_order(self, *args: Any, **kwargs: Any) -> Any:
-        """Cancel a resting order on the venue (slot — Phase 2 CONN-*)."""
+    @property
+    def client(self) -> Any:
+        """The shared ``ccxt.pro`` client instance the arms call through (D-02)."""
         ...
 
-    # Lifecycle — connection management (Phase 2 CONN-*: sandbox routing)
+    @property
+    def sandbox(self) -> bool:
+        """Demo-routing flag; the native data socket keys its host off this (D-02 correction)."""
+        ...
+
     def connect(self) -> Any:
-        """Open the connection to the venue (slot — Phase 2 CONN-*)."""
+        """Start the loop-on-a-daemon-thread and build the shared client (lifecycle)."""
         ...
 
     def disconnect(self) -> Any:
-        """Close the connection to the venue (slot — Phase 2 CONN-*)."""
+        """Cancel spawned stream tasks and stop the loop (lifecycle)."""
         ...

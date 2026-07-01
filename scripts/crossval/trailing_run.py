@@ -148,7 +148,7 @@ def _build_system(tmpdir: pathlib.Path):
     strategy = _TrailingLongStrategy(timeframe="1d", tickers=[_TICKER])
     system.strategies_handler.add_strategy(strategy)
     portfolio_id = system.portfolio_handler.add_portfolio(
-        user_id=1, name="trailing_xval_pf", exchange="csv", cash=_CASH
+        name="trailing_xval_pf", exchange="csv", cash=_CASH
     )
     strategy.subscribe_portfolio(portfolio_id)
     system.runner._initialise_backtest_session()

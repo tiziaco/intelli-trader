@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: ready_to_plan
-stopped_at: Phase 01 complete (7/7) — ready to discuss Phase 2
-last_updated: 2026-06-30T22:14:51.501Z
-last_activity: 2026-06-30
+status: verifying
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-07-01T11:54:18.692Z"
+last_activity: 2026-07-01
 progress:
   total_phases: 7
-  completed_phases: 1
-  total_plans: 7
-  completed_plans: 7
-  percent: 14
+  completed_phases: 2
+  total_plans: 12
+  completed_plans: 12
+  percent: 29
 ---
 
 # Project State
@@ -24,14 +24,14 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 2 — okx connector
+**Current focus:** Phase 02 — okx-connector
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-30
+Phase: 02 (okx-connector) — EXECUTING
+Plan: 5 of 5
+Status: Phase complete — ready for verification
+Last activity: 2026-07-01 - Completed quick task 260701-l33: Add `smoke` pytest marker
 
 Progress: [██████████] 100%
 
@@ -136,6 +136,14 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 01-03: Portfolio/PortfolioHandler delegate all balance/margin/liq truth to the injected Account leaf behind the FROZEN PortfolioReadModel seam; margin surface narrowed via cast/isinstance; liquidation shells skip spot accounts; CashManager deleted; oracle held byte-exact.
 - [Phase ?]: 01-03c: e2e margin scenarios construct the SimulatedMarginAccount leaf at CONSTRUCTION via enable_margin portfolio_config (01-03 D-03) — the post-construction update_config toggle no longer rebuilds the leaf; account caches no config at construction so a minimal enable_margin config suffices. e2e suite green (72 passed); user_id grep-zero across tests/e2e.
 - [Phase ?]: 01-05: Terminal gate PASSED (ACCT-03) — Account extraction proven behavior-preserving: oracle byte-exact (134 / 46189.87730727451), determinism double-run identical, mypy --strict clean (214 files), full suite 1463 passed under filterwarnings=[error], no float-money introduced (edge casts only), no orphaned cash_manager/user_id reference, W1 oracle run within the 15.7s baseline
+- [Phase 02]: 02-01: OkxSettings binds .api_key/.api_secret/.api_passphrase to plain OKX_API_* via validation_alias while keeping env_prefix='' (a bare field under env_prefix='' would read API_KEY not OKX_API_KEY); SecretStr masks the auth triple; passphrase required; OKX_SANDBOX aliases the demo flag (CONN-06 / D-10)
+- [Phase 02]: 02-01: LiveConnector reshaped from a two-arm marker to a session/transport contract (call sync-RPC / spawn stream-task / client / sandbox / connect / disconnect) — the D-02 seam the three arms type against; async/sync bridge bottled at the connector edge; wspap demo-host correction recorded (WS demo via host, not the REST-only x-simulated-trading header)
+- [Phase 02]: 02-02: OkxConnector = loop-on-daemon-thread + one ccxt.pro client built INSIDE the loop (Pitfall 3); single sandbox bool drives set_sandbox_mode (REST header + ccxt WS wspap host swap) AND the exposed flag the native socket keys off — no split-brain (CONN-03); call/spawn async-sync bridge, stream-task set cancelled on disconnect (CONN-04); no domain-event imports (D-02); exported from barrel (D-04)
+- [Phase 02]: 02-03: OkxExchange = live sibling of SimulatedExchange (AbstractExchange), injected OkxConnector session (D-04, never the concretion); create/cancel via connector.call, watch_orders/watch_my_trades via connector.spawn; the EXCHANGE emits FillEvents on global_queue itself (D-07, D-19 MPSC-safe); Decimal edge held (to_money(str) inbound, ccxt amount/price_to_precision strings outbound, CONN-05); FillEvent.time from venue ms timestamp, never wall-clock; on_market_data no-op for live (CONN-02)
+- [Phase 02]: 02-04: OkxDataProvider data arm — native /ws/v5/business candle socket is the confirm-flag escape hatch (ccxt watch_ohlcv drops confirm); gate on confirm==1 index 8 (forming bars dropped, CONN-01); native host driven off connector.sandbox (wspap vs ws, host not header, CONN-03); REST fetch_ohlcv backfill via shared client with to_money(str) Decimal edge (CONN-05); minimal set_bar_sink seam for Phase-3 LiveBarFeed (D-03); types LiveConnector Protocol only (D-04); mypy --strict clean
+- [Phase ?]: 02-05: OkxConnector constructed ONCE at the LiveTradingSystem composition root and the LiveConnector session injected into the three arms (OkxExchange registered 'okx', OkxDataProvider, VenueAccount) — whole OKX stack lazy-imported inside the live path; init_exchanges unchanged; disconnect() wired into stop() (D-04/CONN-04)
+- [Phase ?]: 02-05: VenueAccount LiveConnector import is TYPE_CHECKING-guarded because the account barrel is on the backtest hot path — a runtime connectors-barrel import would pull ccxt.pro and break inertness; body still Phase 5 (RECON-01)
+- [Phase ?]: 02-05: milestone gate green — fresh-subprocess inertness test asserts itrader.connectors.okx + ccxt.pro absent after a backtest-root import; SMA_MACD oracle byte-exact (134 / 46189.87730727451); suite 1498 passed / 1 skipped
 
 ### Pending Todos
 
@@ -178,6 +186,12 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260701-l33 | Add `smoke` pytest marker (register + tag 3 files + `make test-smoke` + tagging rule) | 2026-07-01 | 40c13992 | [260701-l33-add-smoke-marker](./quick/260701-l33-add-smoke-marker/) |
+
 ## Deferred Items
 
 Program-level items deferred across milestones; v1.7-relevant rows promoted INTO this milestone are marked.
@@ -209,6 +223,11 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 | Phase 01 P03b | 26min | 3 tasks | 38 files |
 | Phase 01 P03c | 5min | 2 tasks | 59 files |
 | Phase 01 P05 | 3min | 2 tasks | 1 files |
+| Phase 02 P01 | 7min | 3 tasks | 8 files |
+| Phase 02 P02 | 12min | 2 tasks | 3 files |
+| Phase 02 P03 | 9min | 2 tasks | 2 files |
+| Phase 02 P04 | 18min | 2 tasks | 2 files |
+| Phase 02 P05 | 9min | 3 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -221,8 +240,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-06-30T21:58:47.938Z
-Stopped at: Phase 1 context gathered
+Last session: 2026-07-01T11:53:55.293Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 

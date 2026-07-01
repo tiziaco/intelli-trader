@@ -27,6 +27,15 @@ applied but neither ``unit`` nor ``integration`` reliably was. The boundary (D-1
                 + several classes from its own domain).
 * integration = asserts interaction ACROSS components (cross-domain, cross-manager,
                 or the full cascade / smoke / oracle).
+
+PURPOSE-axis ``smoke`` marker (NOT folder-derived)
+--------------------------------------------------
+The ``smoke`` marker is a PURPOSE axis, orthogonal to the folder-derived TYPE axis
+above. It is applied MANUALLY (``@pytest.mark.smoke`` or a module-level
+``pytestmark = pytest.mark.smoke``), never folder-derived — so it is intentionally
+ABSENT from ``pytest_collection_modifyitems`` below. Do NOT auto-apply it here; a
+smoke test opts in by hand and thereby joins the ``make test-smoke`` (``-m smoke``)
+selection while retaining its folder-derived TYPE marker.
 """
 
 import pathlib
