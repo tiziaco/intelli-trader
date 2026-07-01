@@ -323,8 +323,14 @@ class OkxExchange(AbstractExchange):
 		``load_markets`` runs in the connector, so a loaded ``markets`` map is the source of
 		truth. When markets are not (yet) a dict we cannot check — accept and let the venue
 		reject a bad symbol at submit time.
+
+		IN-01: normalise through the SAME ``_to_symbol`` helper the submit path uses before
+		the membership check, so a caller-form vs markets-key mismatch cannot inconsistently
+		accept/reject a symbol. ``_to_symbol`` is pass-through today (callers pass the
+		ccxt-unified ``BTC/USDT`` form that keys the loaded ``markets`` map); routing the
+		check through it keeps validate and submit on one normalisation as that helper grows.
 		"""
 		markets = getattr(self._connector.client, "markets", None)
 		if isinstance(markets, dict):
-			return symbol in markets
+			return self._to_symbol(symbol) in markets
 		return True
