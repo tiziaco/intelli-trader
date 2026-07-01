@@ -279,20 +279,34 @@ class LiveBarFeed(BarFeed):
                       last_missing: pd.Timestamp) -> None:
         """Fill a hole ``[first_missing .. last_missing]`` and replay each bar.
 
-        Fetches exactly the interior missing bars (one per ``tf``, inclusive both
-        ends) via the PRIVATE ``self._provider.fetch_ohlcv_backfill`` (injected in
-        the 03-04 OKX arm via :meth:`set_provider`) and replays each returned
-        ``ClosedBar`` through ``update()`` — the single FEED-03 path.
+        Fetches the interior missing bars (one per ``tf``, inclusive both ends) via
+        the PRIVATE ``self._provider.fetch_ohlcv_backfill`` (injected in the 03-04
+        OKX arm via :meth:`set_provider`) and replays each returned ``ClosedBar``
+        through ``update()`` — the single FEED-03 path. The replay is CLAMPED to
+        ``last_missing`` (CR-01): the real provider treats ``limit`` as a per-page
+        size and over-fetches past the interior, so bars beyond ``last_missing`` are
+        dropped here and the trigger bar ``t`` is delivered exactly once by the outer
+        ``update()``.
         """
         tf = to_timedelta(tf_str)
         since_ms = int(first_missing.value // _NS_PER_MS)
+        last_ms = int(last_missing.value // _NS_PER_MS)
         limit = int((last_missing - first_missing) / tf) + 1
         self.logger.info(
             "Gap for %s: backfilling %d interior bar(s) [%s .. %s]",
             sym, limit, str(first_missing), str(last_missing))
         bars = self._provider.fetch_ohlcv_backfill(
             sym, tf_str, since=since_ms, limit=limit)
+        # CR-01: `limit` is a PER-PAGE size on the real provider, NOT a hard cap —
+        # `fetch_ohlcv_backfill` paginates `while len(page) == limit` and over-fetches
+        # PAST the interior into the trigger bar `t` (and beyond) whenever the venue
+        # has more bars. Replaying those here would re-deliver `t` (the outer update()
+        # already delivers it exactly once) and rewind the FEED-04 monotonic stamp `L`.
+        # Clamp to the requested closed interior [first_missing .. last_missing]
+        # (last_missing is INCLUSIVE on both the gap and the reconnect-resume path).
         for cb in bars:
+            if cb["ts"] > last_ms:
+                break
             self.update(cb)
 
     @staticmethod

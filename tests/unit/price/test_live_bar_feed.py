@@ -286,3 +286,45 @@ def test_gap_backfill_then_deliver(
     assert call["timeframe"] == _TF
     assert call["since"] == _START_MS + _TF_MS  # (L + tf) in ms
     assert call["limit"] == 2
+
+
+def test_gap_backfill_overfetch_delivers_trigger_bar_once(
+    stub_provider: Any,
+    closed_bar: Callable[..., Any],
+) -> None:
+    """CR-01: an over-fetching provider must not double-deliver the trigger bar `t`.
+
+    The real ``fetch_ohlcv_backfill`` treats ``limit`` as a per-page size and
+    paginates unbounded above — from ``since=L+tf`` it returns the interior AND the
+    trigger bar ``t`` (and beyond). ``_backfill_gap`` must clamp to the requested
+    interior so the outer ``update()`` delivers ``t`` EXACTLY ONCE: one ring entry,
+    one BarEvent, ``_last_delivered == t``, no rewind. Pre-clamp this over-delivered
+    ``t`` and rewound ``L``.
+    """
+    feed, q = make_feed(provider=stub_provider, capacity=10)
+    feed.update(closed_bar(_START_MS))  # L = _START_MS
+    drain(q)
+    # Jump 3 tf ahead: interior = [L+tf, L+2tf]; trigger t at L+3tf.
+    t_ms = _START_MS + 3 * _TF_MS
+    # The provider OVER-FETCHES: it returns the interior PLUS the trigger bar t and
+    # one bar beyond it (L+4tf) — exactly what unbounded `while len(page)==limit`
+    # pagination does when the venue has bars past the requested interior.
+    stub_provider.backfill_bars = [
+        closed_bar(_START_MS + 1 * _TF_MS),
+        closed_bar(_START_MS + 2 * _TF_MS),
+        closed_bar(_START_MS + 3 * _TF_MS),  # == trigger t — must NOT be replayed here
+        closed_bar(_START_MS + 4 * _TF_MS),  # past t — must NOT be replayed here
+    ]
+    feed.update(closed_bar(t_ms))
+    events = drain(q)
+    # Contiguous [L+tf .. t] with t delivered exactly once — no duplicate, no bar past t.
+    assert [_ms(e.time) for e in events] == [
+        _START_MS + 1 * _TF_MS,
+        _START_MS + 2 * _TF_MS,
+        _START_MS + 3 * _TF_MS,
+    ]
+    # Exactly one ring entry for t (no duplicate append).
+    ring = feed._ring[(_SYM, _TF)]
+    assert [_ms(bar.time) for bar in ring].count(_ms(pd.Timestamp(t_ms, unit="ms", tz="UTC"))) == 1
+    # L lands on t and is NOT rewound/advanced past it.
+    assert feed._last_delivered[(_SYM, _TF)] == pd.Timestamp(t_ms, unit="ms", tz="UTC")

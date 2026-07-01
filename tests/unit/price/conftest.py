@@ -129,7 +129,15 @@ class _StubProvider:
         self.calls.append(
             {"symbol": symbol, "timeframe": timeframe, "since": since, "limit": limit}
         )
-        return list(self.backfill_bars)
+        # CR-01 regression lock: mirror the real provider's pagination semantics —
+        # ``limit`` is a PER-PAGE size, NOT a hard cap, and the provider returns EVERY
+        # bar at or after ``since`` (unbounded above). So filter on ``since`` and never
+        # truncate to ``limit``. A test that programs bars PAST the requested interior
+        # therefore sees the real over-fetch the feed's clamp must defend against.
+        bars = list(self.backfill_bars)
+        if since is not None:
+            bars = [b for b in bars if b["ts"] >= since]
+        return bars
 
 
 @pytest.fixture
