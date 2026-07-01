@@ -20,13 +20,16 @@ import pytest
 _OKX_ENV_VARS = ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE")
 _HAS_OKX_CREDS = all(os.environ.get(var) for var in _OKX_ENV_VARS)
 
-pytestmark = pytest.mark.skipif(
-    not _HAS_OKX_CREDS,
-    reason=(
-        "OKX demo credentials absent — opt-in live smoke test skipped (D-09). "
-        "Set OKX_API_KEY / OKX_API_SECRET / OKX_API_PASSPHRASE (demo env) to enable."
+pytestmark = [
+    pytest.mark.skipif(
+        not _HAS_OKX_CREDS,
+        reason=(
+            "OKX demo credentials absent — opt-in live smoke test skipped (D-09). "
+            "Set OKX_API_KEY / OKX_API_SECRET / OKX_API_PASSPHRASE (demo env) to enable."
+        ),
     ),
-)
+    pytest.mark.smoke,
+]
 
 
 def test_okx_credential_layer_loads() -> None:
