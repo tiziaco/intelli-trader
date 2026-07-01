@@ -54,6 +54,11 @@ if TYPE_CHECKING:
 
 _NS_PER_MS = 1_000_000
 
+# Warmup safety margin (D-10): a small FIXED additive over cache_capacity(), NOT a
+# multiplier — the driver is a readiness threshold (RESEARCH §Warmup safety-margin
+# survey; K = required_warmup + 5 absorbs the REST boundary-bar dedup slack).
+_WARMUP_MARGIN = 5
+
 
 class LiveBarFeed(BarFeed):
     """Push-driven ring-buffer ``BarFeed`` for the live path (FEED-01/02/04).
@@ -165,6 +170,70 @@ class LiveBarFeed(BarFeed):
             if t > last + tf:
                 self._backfill_gap(sym, tf_str, last + tf, t - tf)
         self._deliver(sym, tf_str, t, closed_bar)
+
+    # -- Backfill entry points — both replay one-by-one through update() -------
+
+    def warmup(self, symbol: str, timeframe: str,
+               depth: int | None = None) -> None:
+        """Live-start warmup: REST-fetch ``depth`` bars and replay each via ``update()``.
+
+        The FEED-03 warmup driver. When ``depth`` is not given it resolves to
+        ``self.cache_capacity() + _WARMUP_MARGIN`` (D-10 — the derived ring depth
+        plus a FIXED additive margin, RESEARCH §Warmup safety-margin survey; with the
+        03-04 D-13 registration ``cache_capacity()`` is 100, so K >= 105 fetches
+        enough bars that stateful indicators actually warm — otherwise
+        ``calculate_signals`` short-circuits and the oracle produces zero trades,
+        RESEARCH Pitfall 1).
+
+        Every fetched ``ClosedBar`` is replayed one-by-one through the SAME
+        ``update()`` guard (each advances ``L`` by one ``tf`` → no spurious gap) —
+        there is deliberately NO bulk ``warmup_from`` fast-path (LX-09, the parity
+        audit): a second state-building path would diverge and re-open the parity
+        gate. Timestamps come from the venue bars only (never ``datetime.now()``).
+        """
+        if depth is None:
+            depth = self.cache_capacity() + _WARMUP_MARGIN
+        bars = self._provider.fetch_ohlcv_backfill(
+            symbol, timeframe, limit=depth)
+        self.logger.info(
+            "Warmup for %s/%s: replaying %d bar(s) one-by-one through update()",
+            symbol, timeframe, len(bars))
+        for cb in bars:
+            self.update(cb)
+
+    def backfill_on_resume(self, symbol: str, timeframe: str,
+                           latest_completed_ts: int) -> None:
+        """Reconnect recovery: boundary-gated REST backfill replayed via ``update()``.
+
+        The FEED-04 reconnect case (D-08). Recovery is a completed-bar BOUNDARY
+        check, NOT raw outage duration — a short drop can still straddle a bar close
+        (e.g. a 30 s outage across the 1d midnight boundary). On resume:
+
+        - ``L is None`` (no bar delivered yet) → no-op; warmup owns cold start.
+        - ``latest_completed_ts <= L`` → no boundary crossed → no-op.
+        - ``latest_completed_ts > L`` → REST-backfill ``[L+tf .. latest]`` (inclusive
+          of the boundary bar) and replay each through the SAME ``update()`` gap
+          path. Composes with the resumed stream: a re-sent bar lands on the
+          ``update()`` duplicate branch (D-06), so there is no double-delivery
+          (Pitfall 5).
+
+        ``latest_completed_ts`` is the venue completed-bar open-time in ms (business
+        time), never the process wall-clock.
+        """
+        last = self._last_delivered.get((symbol, timeframe))
+        if last is None:
+            return
+        latest = pd.Timestamp(latest_completed_ts, unit="ms", tz="UTC")
+        if latest <= last:
+            return
+        tf = to_timedelta(timeframe)
+        self.logger.info(
+            "Reconnect boundary crossed for %s/%s: backfilling [%s .. %s] "
+            "(last-delivered=%s)", symbol, timeframe,
+            str(last + tf), str(latest), str(last))
+        # Reuse the ONE shared "fetch range -> replay each via update()" path
+        # (the 03-02 gap helper): range [L+tf .. latest] inclusive.
+        self._backfill_gap(symbol, timeframe, last + tf, latest)
 
     def _reject_stale(self, sym: str, t: pd.Timestamp,
                       last: pd.Timestamp) -> None:
