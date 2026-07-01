@@ -24,6 +24,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from itrader.config import PortfolioConfig, deep_merge, get_portfolio_preset
 from perf.strategies import (
     BracketedMomentumStrategy,
     LimitMakerStrategy,
@@ -87,14 +88,18 @@ def _enable_margin_and_shorts(system: Any) -> None:
     om.order_validator.enable_margin = True
 
 
-def _enable_portfolio_margin(system: Any, portfolio_id: Any) -> None:
-    """Apply per-portfolio trading-rules margin + short flags (recipe step 4)."""
-    portfolio = system.portfolio_handler.get_portfolio(portfolio_id)
-    portfolio.config = portfolio.config.model_copy(update={
-        "trading_rules": portfolio.config.trading_rules.model_copy(update={
-            "enable_margin": True,
-            "allow_short_selling": True,
-        })})
+def _margin_portfolio_config() -> PortfolioConfig:
+    """Per-portfolio trading-rules margin + short config (recipe step 4).
+
+    ACCT-01: the account leaf (``SimulatedCashAccount`` vs ``SimulatedMarginAccount``)
+    is selected once at Portfolio construction from ``trading_rules.enable_margin`` —
+    a post-construction ``config`` mutation no longer rebuilds the leaf, so this must
+    be passed as ``add_portfolio(..., portfolio_config=...)`` up front.
+    """
+    return PortfolioConfig.model_validate(deep_merge(
+        get_portfolio_preset("default").model_dump(),
+        {"trading_rules": {"enable_margin": True, "allow_short_selling": True}},
+    ))
 
 
 def wire_w1(system: Any) -> W1Topology:
@@ -104,9 +109,9 @@ def wire_w1(system: Any) -> W1Topology:
     1. system-wide short/margin handler + admission/validator flags (BEFORE add).
     2. add the four strategies (A/B/C LONG_ONLY, D SHORT_ONLY).
     3. add the six portfolios; subscribe per topology (A->P1, B->P2, C->P3,
-       D->P4/P5/P6 fan-out).
-    4. per-portfolio trading-rules margin/short flags for the D-fed portfolios
-       (P4/P5/P6 at minimum); applied to all six (harmless for the LONG books).
+       D->P4/P5/P6 fan-out). P4/P5/P6 (the D-fed shorts) are constructed with
+       the per-portfolio trading-rules margin/short config (ACCT-01: the
+       account leaf is selected once at construction).
 
     Returns a ``W1Topology`` handle the runner reads after ``run()``.
     """
@@ -128,13 +133,17 @@ def wire_w1(system: Any) -> W1Topology:
     sh.add_strategy(topo.strategy_d)
 
     # 3. Portfolios + subscriptions (P1=A, P2=B, P3=C, P4/P5/P6=D fan-out).
+    # P4/P5/P6 (the D-fed shorts) get the margin trading-rules config AT
+    # CONSTRUCTION (recipe step 4) — ACCT-01 selects the account leaf once,
+    # up front, from ``trading_rules.enable_margin``.
     ph = system.portfolio_handler
-    pid1 = ph.add_portfolio(user_id=1, name="P1_A", exchange="csv", cash=_CASH_A)
-    pid2 = ph.add_portfolio(user_id=2, name="P2_B", exchange="csv", cash=_CASH_B)
-    pid3 = ph.add_portfolio(user_id=3, name="P3_C", exchange="csv", cash=_CASH_C)
-    pid4 = ph.add_portfolio(user_id=4, name="P4_D", exchange="csv", cash=_CASH_D)
-    pid5 = ph.add_portfolio(user_id=5, name="P5_D", exchange="csv", cash=_CASH_D)
-    pid6 = ph.add_portfolio(user_id=6, name="P6_D", exchange="csv", cash=_CASH_D)
+    margin_config = _margin_portfolio_config()
+    pid1 = ph.add_portfolio(name="P1_A", exchange="csv", cash=_CASH_A)
+    pid2 = ph.add_portfolio(name="P2_B", exchange="csv", cash=_CASH_B)
+    pid3 = ph.add_portfolio(name="P3_C", exchange="csv", cash=_CASH_C)
+    pid4 = ph.add_portfolio(name="P4_D", exchange="csv", cash=_CASH_D, portfolio_config=margin_config)
+    pid5 = ph.add_portfolio(name="P5_D", exchange="csv", cash=_CASH_D, portfolio_config=margin_config)
+    pid6 = ph.add_portfolio(name="P6_D", exchange="csv", cash=_CASH_D, portfolio_config=margin_config)
     topo.portfolio_ids = [pid1, pid2, pid3, pid4, pid5, pid6]
 
     topo.strategy_a.subscribe_portfolio(pid1)
@@ -146,18 +155,17 @@ def wire_w1(system: Any) -> W1Topology:
     topo.strategy_d.subscribe_portfolio(pid5)
     topo.strategy_d.subscribe_portfolio(pid6)
 
-    # 4. Per-portfolio trading-rules margin/short flags — ONLY the D-fed shorts
-    #    (P4/P5/P6). The LONG books (P1/P2/P3 = A/B/C) stay SPOT: enabling
-    #    per-portfolio margin on them would route their long settlements through
-    #    the margin lock-and-settle assertion (assert_lock_fits_buying_power),
-    #    which RAISES InsufficientFundsError on an over-extended add (Strategy C)
-    #    and fail-fast aborts the backtest. In SPOT mode that same over-extension
+    # 4. Per-portfolio trading-rules margin/short config was applied AT
+    #    CONSTRUCTION above — ONLY the D-fed shorts (P4/P5/P6). The LONG books
+    #    (P1/P2/P3 = A/B/C) stay SPOT: enabling per-portfolio margin on them
+    #    would route their long settlements through the margin lock-and-settle
+    #    assertion (assert_lock_fits_buying_power), which RAISES
+    #    InsufficientFundsError on an over-extended add (Strategy C) and
+    #    fail-fast aborts the backtest. In SPOT mode that same over-extension
     #    instead produces the graceful admission-side CASH_RESERVATION rejection
     #    (FillEvent(REFUSED) -> mirror reconcile) the benchmark wants to exercise
     #    (spec §6). The system-wide handler/admission/validator margin flags
     #    (steps 1+5) stay on for the SHORT_ONLY registration gate; the PER-PORTFOLIO
     #    trading-rules margin is the one that branches long settlement.
-    for pid in topo.portfolio_ids[3:]:  # P4, P5, P6 (D fan-out) only
-        _enable_portfolio_margin(system, pid)
 
     return topo
