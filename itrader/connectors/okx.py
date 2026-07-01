@@ -205,9 +205,23 @@ class OkxConnector:
         except Exception:
             self.logger.error("Error during OKX disconnect", exc_info=True)
         finally:
-            if self._loop is not None and not self._loop.is_running():
-                self._loop.close()
-            self._stream_tasks.clear()
-            self._loop = None
-            self._thread = None
-            self._client = None
+            # WR-06: only tear the references down after a CONFIRMED clean stop. If
+            # the join timed out (a stream task swallowed CancelledError, or a hung
+            # client.close()), the loop is still running on its daemon thread — nulling
+            # the references here would orphan that loop + thread with no handle left
+            # to recover or close them. On an unclean stop, log a warning and RETAIN
+            # the references so a subsequent disconnect() can retry.
+            thread_alive = self._thread is not None and self._thread.is_alive()
+            loop_running = self._loop is not None and self._loop.is_running()
+            if thread_alive or loop_running:
+                self.logger.warning(
+                    "OKX connector loop did not stop cleanly — retaining references "
+                    "for recovery (loop_running=%s, thread_alive=%s)",
+                    loop_running, thread_alive)
+            else:
+                if self._loop is not None:
+                    self._loop.close()
+                self._stream_tasks.clear()
+                self._loop = None
+                self._thread = None
+                self._client = None
