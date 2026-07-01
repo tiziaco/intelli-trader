@@ -212,7 +212,14 @@ class OkxExchange(AbstractExchange):
 		while True:
 			trades = await self._connector.client.watch_my_trades()
 			for trade in trades:
-				self._handle_trade(trade)
+				# WR-02: a single malformed trade must not kill the forever-loop and
+				# silently drop every subsequent fill. Swallow-and-log per trade,
+				# matching the on_order boundary policy — the stream keeps draining.
+				try:
+					self._handle_trade(trade)
+				except Exception:
+					self.logger.error(
+						"OKX fill translation failed — skipping trade", exc_info=True)
 
 	async def _stream_orders(self) -> None:
 		"""Consume the order-status stream for mirror reconciliation (status only).
