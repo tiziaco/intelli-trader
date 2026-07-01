@@ -34,7 +34,7 @@ from queue import Queue
 from typing import Any, Dict, List, Optional
 
 from itrader.connectors import LiveConnector
-from itrader.core.enums import OrderCommand, OrderType
+from itrader.core.enums import OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
 from itrader.core.ids import OrderId
 from itrader.core.money import to_money
@@ -180,8 +180,19 @@ class OkxExchange(AbstractExchange):
 		if event.order_type is OrderType.LIMIT and event.price is not None:
 			price = client.price_to_precision(symbol, str(event.price))
 
+		# WR-04: ccxt's okx defaults ``createMarketBuyOrderRequiresPrice = True``,
+		# under which a spot market BUY requires a price (to derive cost) or the
+		# explicit override with ``amount`` as base quantity — otherwise ccxt raises
+		# InvalidOrder. The arm already submits ``amount`` as the BASE quantity
+		# (``event.quantity``), so disable that mode for market buys and let the
+		# venue treat the amount as base size. Market sells and limit orders are
+		# unaffected (empty params).
+		params: Dict[str, Any] = {}
+		if event.order_type is OrderType.MARKET and event.action is Side.BUY:
+			params["createMarketBuyOrderRequiresPrice"] = False
+
 		response = self._connector.call(
-			client.create_order(symbol, otype, side, amount, price))
+			client.create_order(symbol, otype, side, amount, price, params=params))
 
 		venue_id = response.get("id") if isinstance(response, dict) else None
 		if venue_id is not None:

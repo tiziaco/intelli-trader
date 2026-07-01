@@ -189,6 +189,50 @@ def test_market_order_omits_price_to_precision(
     assert price is None
 
 
+def test_market_buy_disables_requires_price_param(
+    exchange: OkxExchange, fake_client: MagicMock
+) -> None:
+    """A spot MARKET BUY submits with createMarketBuyOrderRequiresPrice=False (WR-04).
+
+    ccxt's okx defaults that option True — a spot market buy without a price then raises
+    InvalidOrder. The arm submits base ``amount`` and disables the mode so the venue
+    treats the amount as base quantity.
+    """
+    order = _make_order(order_type=OrderType.MARKET, action=Side.BUY)
+
+    exchange.on_order(order)
+
+    _sym, otype, side, _amount, price = fake_client.create_order.call_args.args
+    assert (otype, side, price) == ("market", "buy", None)
+    assert fake_client.create_order.call_args.kwargs["params"] == {
+        "createMarketBuyOrderRequiresPrice": False
+    }
+
+
+def test_market_sell_does_not_set_requires_price_param(
+    exchange: OkxExchange, fake_client: MagicMock
+) -> None:
+    """A MARKET SELL is unaffected — no createMarketBuyOrderRequiresPrice override (WR-04)."""
+    order = _make_order(order_type=OrderType.MARKET, action=Side.SELL)
+
+    exchange.on_order(order)
+
+    assert "createMarketBuyOrderRequiresPrice" not in (
+        fake_client.create_order.call_args.kwargs.get("params") or {}
+    )
+
+
+def test_limit_order_submits_empty_params(
+    exchange: OkxExchange, fake_client: MagicMock
+) -> None:
+    """A LIMIT order carries no createMarketBuyOrderRequiresPrice override (WR-04)."""
+    order = _make_order(order_type=OrderType.LIMIT, action=Side.BUY)
+
+    exchange.on_order(order)
+
+    assert fake_client.create_order.call_args.kwargs["params"] == {}
+
+
 # --- fill stream: raw fill -> FillEvent on global_queue (D-07) -----------------
 
 
