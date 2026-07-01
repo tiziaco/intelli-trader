@@ -79,7 +79,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 - [x] **FEED-04**: Bar delivery is **monotonic-forward-only** (LX-10): gap → REST-backfill-and-replay;
   duplicate → drop; stale/out-of-order → reject; reconnect → gap-fill the interim (stateful indicators
   never fed backward).
-- [ ] **FEED-05**: `LiveBarFeed` replaces `TimeGenerator`'s role on the live path (event-driven
+- [x] **FEED-05**: `LiveBarFeed` replaces `TimeGenerator`'s role on the live path (event-driven
   closed-bar arrival), preserving the engine's TIME-before-BAR route ordering downstream.
 
 ### Paper Path — Phase 4 (the milestone DoD)
@@ -197,7 +197,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | FEED-02 | Phase 3 | Complete |
 | FEED-03 | Phase 3 | Complete |
 | FEED-04 | Phase 3 | Complete |
-| FEED-05 | Phase 3 | Pending |
+| FEED-05 | Phase 3 | Complete |
 | PAPER-01 | Phase 4 | Pending |
 | PAPER-02 | Phase 4 | Pending |
 | PAPER-03 | Phase 4 | Pending |
