@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-07-01T10:28:58.913Z"
-last_activity: 2026-07-01 -- Phase 02 planning complete
+last_updated: "2026-07-01T10:59:12.628Z"
+last_activity: 2026-07-01
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 12
-  completed_plans: 7
+  completed_plans: 8
   percent: 14
 ---
 
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 2 — okx connector
+**Current focus:** Phase 02 — okx-connector
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (okx-connector) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-07-01 -- Phase 02 planning complete
+Last activity: 2026-07-01
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 67%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -136,6 +136,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 01-03: Portfolio/PortfolioHandler delegate all balance/margin/liq truth to the injected Account leaf behind the FROZEN PortfolioReadModel seam; margin surface narrowed via cast/isinstance; liquidation shells skip spot accounts; CashManager deleted; oracle held byte-exact.
 - [Phase ?]: 01-03c: e2e margin scenarios construct the SimulatedMarginAccount leaf at CONSTRUCTION via enable_margin portfolio_config (01-03 D-03) — the post-construction update_config toggle no longer rebuilds the leaf; account caches no config at construction so a minimal enable_margin config suffices. e2e suite green (72 passed); user_id grep-zero across tests/e2e.
 - [Phase ?]: 01-05: Terminal gate PASSED (ACCT-03) — Account extraction proven behavior-preserving: oracle byte-exact (134 / 46189.87730727451), determinism double-run identical, mypy --strict clean (214 files), full suite 1463 passed under filterwarnings=[error], no float-money introduced (edge casts only), no orphaned cash_manager/user_id reference, W1 oracle run within the 15.7s baseline
+- [Phase 02]: 02-01: OkxSettings binds .api_key/.api_secret/.api_passphrase to plain OKX_API_* via validation_alias while keeping env_prefix='' (a bare field under env_prefix='' would read API_KEY not OKX_API_KEY); SecretStr masks the auth triple; passphrase required; OKX_SANDBOX aliases the demo flag (CONN-06 / D-10)
+- [Phase 02]: 02-01: LiveConnector reshaped from a two-arm marker to a session/transport contract (call sync-RPC / spawn stream-task / client / sandbox / connect / disconnect) — the D-02 seam the three arms type against; async/sync bridge bottled at the connector edge; wspap demo-host correction recorded (WS demo via host, not the REST-only x-simulated-trading header)
 
 ### Pending Todos
 
@@ -209,6 +211,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 | Phase 01 P03b | 26min | 3 tasks | 38 files |
 | Phase 01 P03c | 5min | 2 tasks | 59 files |
 | Phase 01 P05 | 3min | 2 tasks | 1 files |
+| Phase 02 P01 | 7min | 3 tasks | 8 files |
 
 ## Bookkeeping
 
@@ -221,9 +224,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-01T07:58:22.336Z
+Last session: 2026-07-01T10:58:51.241Z
 Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-okx-connector/02-CONTEXT.md
+Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps

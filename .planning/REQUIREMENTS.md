@@ -62,7 +62,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 - [ ] **CONN-05**: Every ccxt float (price/amount/fee/balance) crosses the Decimal boundary at the
   adapter edge via `to_money`; outbound quantities are rounded to OKX lot/tick using ccxt's string
   precision helpers (no `Decimal(float)`).
-- [ ] **CONN-06**: OKX secrets (apiKey + secret + **passphrase**) load via an `OkxSettings(BaseSettings)`
+- [x] **CONN-06**: OKX secrets (apiKey + secret + **passphrase**) load via an `OkxSettings(BaseSettings)`
   layer reading plain `OKX_API_*` (**no env prefix** — revised from `ITRADER_OKX_*`; only the connector
   authenticates; a real secret manager is deferred post-milestone); never in code, logs, or fixtures;
   the backtest path stays credential-free.
@@ -192,7 +192,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | CONN-03 | Phase 2 | Pending |
 | CONN-04 | Phase 2 | Pending |
 | CONN-05 | Phase 2 | Pending |
-| CONN-06 | Phase 2 | Pending |
+| CONN-06 | Phase 2 | Complete |
 | FEED-01 | Phase 3 | Pending |
 | FEED-02 | Phase 3 | Pending |
 | FEED-03 | Phase 3 | Pending |

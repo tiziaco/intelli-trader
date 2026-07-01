@@ -155,7 +155,7 @@ the Decimal boundary at the edge; async stays bottled at the connector.
 (`wspap.okx.com`), NOT the REST-only `x-simulated-trading` header; auth triple = apiKey+secret+passphrase,
 demo selected by host. Design unblocked.
 **Plans**: 5 plans (planned 2026-07-01)
-- [ ] 02-01-PLAN.md — Foundation: pytest-asyncio + async test infra, OkxSettings (CONN-06), LiveConnector Protocol reshape (Wave 1)
+- [x] 02-01-PLAN.md — Foundation: pytest-asyncio + async test infra, OkxSettings (CONN-06), LiveConnector Protocol reshape (Wave 1)
 - [ ] 02-02-PLAN.md — OkxConnector session/transport primitive: loop-on-daemon-thread, sandbox->wspap routing, call/spawn bridge (CONN-03/04) (Wave 2)
 - [ ] 02-03-PLAN.md — Order arm OkxExchange(AbstractExchange): create/cancel + watch_my_trades -> FillEvent, Decimal edge (CONN-02/05) (Wave 3)
 - [ ] 02-04-PLAN.md — Data arm OkxDataProvider: native /business confirm-gated candle socket + REST backfill (CONN-01/03/05) (Wave 3)
@@ -438,7 +438,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 7/7 | Complete   | 2026-06-30 |
-| 2. OKX Connector | v1.7 | 0/TBD | Not started | - |
+| 2. OKX Connector | v1.7 | 1/5 | In Progress|  |
 | 3. LiveBarFeed | v1.7 | 0/TBD | Not started | - |
 | 4. Paper Path (DoD) | v1.7 | 0/TBD | Not started | - |
 | 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 0/TBD | Not started | - |
