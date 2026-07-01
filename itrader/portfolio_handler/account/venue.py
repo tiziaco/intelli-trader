@@ -21,10 +21,13 @@ payloads) is explicitly Phase 5 (RECON-01).
 
 Import discipline (inertness gate, CONN-04): this leaf is re-exported from the
 ``account`` barrel, which the backtest hot path imports (``SimulatedCashAccount``).
-``LiveConnector`` is therefore imported ONLY under ``TYPE_CHECKING`` with a string
-annotation — a runtime ``from itrader.connectors import ...`` would pull the
-connectors barrel (and ``ccxt.pro``) onto the backtest import path and fail the
-hot-path inertness gate.
+``LiveConnector`` is therefore imported ONLY under ``TYPE_CHECKING`` — a runtime
+``from itrader.connectors import ...`` would pull the connectors barrel (and
+``ccxt.pro``) onto the backtest import path and fail the hot-path inertness gate.
+IN-01 (defence in depth): the type-only import is sourced from the ccxt-free
+``itrader.connectors.base`` module, not the barrel, so even if this guard were
+ever relaxed to a runtime import it would still not couple the hot path to
+``ccxt.pro``.
 """
 
 from decimal import Decimal
@@ -35,7 +38,7 @@ from itrader.core.ids import OrderId
 from .base import Account
 
 if TYPE_CHECKING:
-    from itrader.connectors import LiveConnector
+    from itrader.connectors.base import LiveConnector
 
 
 class VenueAccount(Account):

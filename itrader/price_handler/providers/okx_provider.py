@@ -52,7 +52,7 @@ from typing import Any, Callable, TypedDict
 
 import aiohttp
 
-from itrader.connectors import LiveConnector
+from itrader.connectors.base import LiveConnector
 from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
 

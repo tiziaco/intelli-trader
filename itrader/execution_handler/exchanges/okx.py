@@ -21,8 +21,10 @@ connector). NEVER ``Decimal(<venue float>)``. Business time: ``FillEvent.time`` 
 the venue fill timestamp, never wall-clock.
 
 Dependency injection (D-04): the arm types against the ``LiveConnector`` session Protocol only —
-it never imports the connector concretion. ``LiveConnector`` is imported from the top-level
-``itrader.connectors`` barrel, exactly the way ``AbstractExchange`` is imported here.
+it never imports the connector concretion. IN-01: ``LiveConnector`` is imported from the
+ccxt-free ``itrader.connectors.base`` module, NOT the ``itrader.connectors`` barrel — the barrel
+eagerly imports ``OkxConnector`` (and therefore ``ccxt.pro``), so importing the pure Protocol
+from ``base`` keeps the Protocol import ccxt-free and cannot couple a consumer to ``ccxt.pro``.
 
 Indentation: this tree is TAB-indented (a mixed-indent diff breaks the file).
 """
@@ -33,7 +35,7 @@ from decimal import Decimal
 from queue import Queue
 from typing import Any, Dict, List, Optional
 
-from itrader.connectors import LiveConnector
+from itrader.connectors.base import LiveConnector
 from itrader.core.enums import OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
 from itrader.core.ids import OrderId
