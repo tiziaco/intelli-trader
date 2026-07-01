@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 3 context gathered
-last_updated: "2026-07-01T19:34:41.562Z"
-last_activity: 2026-07-01 -- Phase 03 planning complete
+last_updated: "2026-07-01T19:51:33.508Z"
+last_activity: 2026-07-01
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 16
-  completed_plans: 12
+  completed_plans: 13
   percent: 29
 ---
 
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 02 — okx-connector
+**Current focus:** Phase 03 — livebarfeed
 
 ## Current Position
 
-Phase: 02 (okx-connector) — EXECUTING
-Plan: 5 of 5
+Phase: 03 (livebarfeed) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
-Last activity: 2026-07-01 -- Phase 03 planning complete
+Last activity: 2026-07-01
 
-Progress: [██████████] 100%
+Progress: [████████░░] 81%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -144,6 +144,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 02-05: OkxConnector constructed ONCE at the LiveTradingSystem composition root and the LiveConnector session injected into the three arms (OkxExchange registered 'okx', OkxDataProvider, VenueAccount) — whole OKX stack lazy-imported inside the live path; init_exchanges unchanged; disconnect() wired into stop() (D-04/CONN-04)
 - [Phase ?]: 02-05: VenueAccount LiveConnector import is TYPE_CHECKING-guarded because the account barrel is on the backtest hot path — a runtime connectors-barrel import would pull ccxt.pro and break inertness; body still Phase 5 (RECON-01)
 - [Phase ?]: 02-05: milestone gate green — fresh-subprocess inertness test asserts itrader.connectors.okx + ccxt.pro absent after a backtest-root import; SMA_MACD oracle byte-exact (134 / 46189.87730727451); suite 1498 passed / 1 skipped
+- [Phase ?]: 03-01: D-12 resolved — ClosedBar carries its own (symbol, timeframe) routing keys; live path stamps from self._symbol/self._timeframe, backfill path from method params (ad-hoc symbol correctness); keys never read from the untrusted venue row (T-03-01-TAMPER). Shared socket-free tests/unit/price/conftest.py fixtures (closed_bar, closed_bar_sequence, _StubProvider) stand up the LiveBarFeed offline matrix.
 
 ### Pending Todos
 
@@ -191,6 +192,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260701-l33 | Add `smoke` pytest marker (register + tag 3 files + `make test-smoke` + tagging rule) | 2026-07-01 | 40c13992 | [260701-l33-add-smoke-marker](./quick/260701-l33-add-smoke-marker/) |
+| Phase 03 P01 | 3min | 2 tasks | 4 files |
 
 ## Deferred Items
 
@@ -240,9 +242,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-01T15:56:22.255Z
+Last session: 2026-07-01T19:51:04.104Z
 Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-livebarfeed/03-CONTEXT.md
+Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps

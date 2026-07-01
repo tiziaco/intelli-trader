@@ -187,7 +187,7 @@ live complexity (no backtest equivalent for reconnect gap-fill).
 reconnect debounce strategy; after-the-fact venue bar-correction policy (re-warm vs forward-only-and-log);
 `TimeEvent`-on-bar-close vs moving metric recording to the BAR route.
 **Plans**: 4 plans (planned 2026-07-01)
-- [ ] 03-01-PLAN.md — Provider D-12 ClosedBar co-shape (symbol+timeframe) + shared offline test fixtures (Wave 1)
+- [x] 03-01-PLAN.md — Provider D-12 ClosedBar co-shape (symbol+timeframe) + shared offline test fixtures (Wave 1)
 - [ ] 03-02-PLAN.md — LiveBarFeed core: ring + monotonic guard (D-06 taxonomy) + direct BarEvent emission (FEED-01/02/04) (Wave 2)
 - [ ] 03-03-PLAN.md — Warmup one-by-one replay (FEED-03) + reconnect boundary backfill (D-08) through the shared update() path (Wave 3)
 - [ ] 03-04-PLAN.md — Composition-root wiring: LiveBarFeed swap + D-13 raw-bar consumer + FEED-05 route order + recurring milestone gate (Wave 4)
@@ -443,7 +443,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 |-------|-----------|----------------|--------|-----------|
 | 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 7/7 | Complete   | 2026-06-30 |
 | 2. OKX Connector | v1.7 | 5/5 | Complete   | 2026-07-01 |
-| 3. LiveBarFeed | v1.7 | 0/4 | Planned | - |
+| 3. LiveBarFeed | v1.7 | 1/4 | In Progress|  |
 | 4. Paper Path (DoD) | v1.7 | 0/TBD | Not started | - |
 | 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 0/TBD | Not started | - |
 | 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
