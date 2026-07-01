@@ -30,7 +30,8 @@ a bulk float cast of the frame. Business time: the bar-open ``ts`` (ms) is kept 
 venue, never the process wall-clock (Phase 3 owns ``BarEvent`` construction from it).
 
 Dependency injection (D-04): the data arm types against the ``LiveConnector`` session
-Protocol only (imported from the ``itrader.connectors`` barrel) — it NEVER imports the
+Protocol only (imported from the ccxt-free ``itrader.connectors.base`` module, not the
+barrel — IN-01) — it NEVER imports the
 concrete session class / its module (grep-guarded in verify). It reads
 ``connector.sandbox`` for the host, drives REST
 backfill through the shared ``connector.client``, and launches the candle loop on the
