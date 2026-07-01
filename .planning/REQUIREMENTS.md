@@ -47,7 +47,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   via a native OKX `business`-endpoint subscription carrying the **`confirm` flag**, with REST
   `fetch_ohlcv` backfill (ccxt's unified `watch_ohlcv` drops `confirm` — the native read is required);
   it feeds closed bars to the Phase-3 `LiveBarFeed`. Consumes the injected `OkxConnector` session. (LX-05/LX-08)
-- [ ] **CONN-02**: The **order arm** `OkxExchange` (`execution_handler/exchanges/`, impl
+- [x] **CONN-02**: The **order arm** `OkxExchange` (`execution_handler/exchanges/`, impl
   `AbstractExchange`) implements async `create_order` + cancel + `watch_orders`/`watch_my_trades` (the
   fill stream — ccxt has no `watch_fills`; corrected per 02-RESEARCH.md) and translates raw fills →
   `FillEvent` (exercised against sandbox in Phase 5). Consumes the injected session.
@@ -59,7 +59,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   it owns **no venue operations and emits no domain events** — **the `OkxExchange` adapter emits
   `FillEvent`** onto `global_queue` (D-19 single-writer preserved: `queue.Queue` is MPSC-safe, portfolio
   state mutates only on the engine thread). The connector is **injected**, never cross-domain-imported.
-- [ ] **CONN-05**: Every ccxt float (price/amount/fee/balance) crosses the Decimal boundary at the
+- [x] **CONN-05**: Every ccxt float (price/amount/fee/balance) crosses the Decimal boundary at the
   adapter edge via `to_money`; outbound quantities are rounded to OKX lot/tick using ccxt's string
   precision helpers (no `Decimal(float)`).
 - [x] **CONN-06**: OKX secrets (apiKey + secret + **passphrase**) load via an `OkxSettings(BaseSettings)`
@@ -188,10 +188,10 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | ACCT-05 | Phase 1 | Complete |
 | ACCT-06 | Phase 1 | Complete |
 | CONN-01 | Phase 2 | Pending |
-| CONN-02 | Phase 2 | Pending |
+| CONN-02 | Phase 2 | Complete |
 | CONN-03 | Phase 2 | Complete |
 | CONN-04 | Phase 2 | Complete |
-| CONN-05 | Phase 2 | Pending |
+| CONN-05 | Phase 2 | Complete |
 | CONN-06 | Phase 2 | Complete |
 | FEED-01 | Phase 3 | Pending |
 | FEED-02 | Phase 3 | Pending |
