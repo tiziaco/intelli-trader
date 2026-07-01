@@ -162,14 +162,25 @@ class LiveBarFeed(BarFeed):
         tf = to_timedelta(tf_str)
         t = pd.Timestamp(closed_bar["ts"], unit="ms", tz="UTC")
         last = self._last_delivered.get((sym, tf_str))
-        if last is not None:
-            if t < last:
-                return self._reject_stale(sym, t, last)
-            if t == last:
-                return self._duplicate_or_revision(sym, tf_str, t, closed_bar)
-            if t > last + tf:
-                self._backfill_gap(sym, tf_str, last + tf, t - tf)
-        self._deliver(sym, tf_str, t, closed_bar)
+        if last is None:
+            return self._deliver(sym, tf_str, t, closed_bar)
+        if t < last:
+            return self._reject_stale(sym, t, last)
+        if t == last:
+            return self._duplicate_or_revision(sym, tf_str, t, closed_bar)
+        if t > last + tf:
+            self._backfill_gap(sym, tf_str, last + tf, t - tf)
+            return self._deliver(sym, tf_str, t, closed_bar)
+        if t == last + tf:
+            return self._deliver(sym, tf_str, t, closed_bar)
+        # WR-01: the remaining region is last < t < last + tf — an off-grid
+        # timestamp (e.g. a sub-timeframe bar from a mis-subscribed channel or a
+        # timeframe mismatch). Delivering it would set L off the tf-grid and make
+        # every subsequent bar spuriously trip the gap branch. Reject explicitly:
+        # WARN and DROP, with no delivery and no state mutation.
+        self.logger.warning(
+            "Off-grid bar for %s at %s (not L+tf, last-delivered=%s) — dropped "
+            "(no delivery, no state mutation)", sym, str(t), str(last))
 
     # -- Backfill entry points — both replay one-by-one through update() -------
 
