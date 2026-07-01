@@ -97,7 +97,13 @@ class FakeLiveConnector:
             ready.set()
 
         self._loop.call_soon_threadsafe(_create)
-        ready.wait(timeout=5.0)
+        # IN-02: mirror the product guard (OkxConnector.spawn) — if the loop never
+        # scheduled ``_create`` (congested / not running), falling through to
+        # ``holder["task"]`` raises a bare KeyError that masks the real
+        # "loop not scheduling" cause. Surface the timeout explicitly instead.
+        if not ready.wait(timeout=5.0):
+            raise TimeoutError(
+                "fake connector loop did not schedule the spawned task in time")
         return holder["task"]
 
     def disconnect(self) -> None:
