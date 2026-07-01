@@ -217,27 +217,42 @@ class LiveTradingSystem:
         # is a Phase 4/5 live-wiring step (02-03 SUMMARY boundary): this plan
         # constructs the connector, registers the 'okx' venue, and injects the
         # session into each arm. connector.disconnect() is wired into stop().
-        from itrader.connectors import OkxConnector
-        from itrader.config.okx_settings import OkxSettings
-        from itrader.execution_handler.exchanges.okx import OkxExchange
-        from itrader.price_handler.providers.okx_provider import OkxDataProvider
-        from itrader.portfolio_handler.account import VenueAccount
+        # CR-02: the OKX arms are wired ONLY when the requested venue is OKX. For
+        # any other venue (the default 'binance') the entire OKX stack stays
+        # untouched — OkxSettings() (which hard-requires the OKX_API_* env triple)
+        # is never constructed and the ccxt.pro/connector modules are never
+        # imported — so constructing a LiveTradingSystem for a non-OKX venue needs
+        # no OKX credentials and performs no OKX network I/O. The blocking network
+        # connect (build client + load_markets) is DEFERRED out of the constructor
+        # into start() so __init__ never performs blocking I/O and a connect
+        # failure surfaces as SystemStatus.ERROR instead of raising out of a
+        # constructor.
+        self._okx_connector: Optional[Any] = None
+        self._okx_exchange: Optional[Any] = None
+        self._okx_data_provider: Optional[Any] = None
+        self._venue_account: Optional[Any] = None
+        if self.exchange == 'okx':
+            from itrader.connectors import OkxConnector
+            from itrader.config.okx_settings import OkxSettings
+            from itrader.execution_handler.exchanges.okx import OkxExchange
+            from itrader.price_handler.providers.okx_provider import OkxDataProvider
+            from itrader.portfolio_handler.account import VenueAccount
 
-        self._okx_connector = OkxConnector(OkxSettings())   # constructed ONCE (D-04)
-        self._okx_connector.connect()                       # loop-on-daemon-thread
+            # Constructed ONCE (D-04). connect() is deferred to start() (CR-02).
+            self._okx_connector = OkxConnector(OkxSettings())
 
-        # Order arm: register under 'okx' — ExecutionHandler.on_order already
-        # routes by event.exchange, and init_exchanges is UNCHANGED (the backtest
-        # path stays OKX-free). Only THIS root imports the OkxConnector concretion.
-        self._okx_exchange = OkxExchange(self.global_queue, self._okx_connector)
-        self.execution_handler.exchanges['okx'] = self._okx_exchange
+            # Order arm: register under 'okx' — ExecutionHandler.on_order already
+            # routes by event.exchange, and init_exchanges is UNCHANGED (the backtest
+            # path stays OKX-free). Only THIS root imports the OkxConnector concretion.
+            self._okx_exchange = OkxExchange(self.global_queue, self._okx_connector)
+            self.execution_handler.exchanges['okx'] = self._okx_exchange
 
-        # Data arm + venue account: injected the SAME session Protocol (D-04).
-        # symbol/timeframe are the wiring defaults; Phase 3 (LiveBarFeed) owns the
-        # real subscription config.
-        self._okx_data_provider = OkxDataProvider(
-            self._okx_connector, symbol='BTC/USDT', timeframe='1d')
-        self._venue_account = VenueAccount(self._okx_connector)
+            # Data arm + venue account: injected the SAME session Protocol (D-04).
+            # symbol/timeframe are the wiring defaults; Phase 3 (LiveBarFeed) owns the
+            # real subscription config.
+            self._okx_data_provider = OkxDataProvider(
+                self._okx_connector, symbol='BTC/USDT', timeframe='1d')
+            self._venue_account = VenueAccount(self._okx_connector)
 
         # WR-05: install the documented live error policy (publish-and-continue).
         # The base _on_handler_error re-raises (backtest fail-fast); the live
@@ -447,7 +462,16 @@ class LiveTradingSystem:
         try:
             # Initialize the live session
             self._initialize_live_session()
-            
+
+            # CR-02: perform the OKX connector's network connect HERE (build client
+            # + load_markets on the daemon-thread loop), deferred out of __init__ so
+            # construction stays I/O-free. A failure propagates to the except below,
+            # which sets SystemStatus.ERROR and returns False — never an unhandled
+            # raise. Only wired when the requested venue is OKX (connector is None
+            # otherwise). stop() tears the connector down unconditionally (CR-01).
+            if self._okx_connector is not None:
+                self._okx_connector.connect()
+
             # Reset the stop event and start the processing thread
             self._stop_event.clear()
             self._thread = threading.Thread(
