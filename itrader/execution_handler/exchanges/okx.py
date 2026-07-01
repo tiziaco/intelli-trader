@@ -27,6 +27,7 @@ it never imports the connector concretion. ``LiveConnector`` is imported from th
 Indentation: this tree is TAB-indented (a mixed-indent diff breaks the file).
 """
 
+import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 from queue import Queue
@@ -81,6 +82,17 @@ class OkxExchange(AbstractExchange):
 		# Venue-id correlation: a streamed fill (watch_my_trades) carries the venue order id;
 		# resolve it back to the originating OrderEvent so FillEvent.new_fill carries the
 		# order_id/strategy_id/portfolio_id audit chain (D-12).
+		# WR-03: the two correlation maps are written on the ENGINE thread (submit /
+		# cancel, via connector.call) and read on the CONNECTOR LOOP thread (streamed
+		# fills, via _handle_trade). Guard every write/read with this lock so the
+		# cross-thread dict access is synchronised. NOTE (latent, streams not started
+		# this phase): a lock alone does not close the fast-fill race — the venue can
+		# push a fill before create_order returns the venue id, so the fill still
+		# resolves to order=None and is dropped. The full fix (register a pending
+		# correlation keyed by clOrdId BEFORE the submit RPC, and/or briefly buffer
+		# unmatched fills for late correlation) lands with OkxExchange.connect() stream
+		# wiring; this guard is the documented minimum until then.
+		self._correlation_lock = threading.Lock()
 		self._orders_by_venue_id: Dict[str, OrderEvent] = {}
 		self._venue_id_by_order_id: Dict[OrderId, str] = {}
 
@@ -144,13 +156,15 @@ class OkxExchange(AbstractExchange):
 
 		venue_id = response.get("id") if isinstance(response, dict) else None
 		if venue_id is not None:
-			self._orders_by_venue_id[venue_id] = event
-			self._venue_id_by_order_id[event.order_id] = venue_id
+			with self._correlation_lock:  # WR-03: cross-thread write guard
+				self._orders_by_venue_id[venue_id] = event
+				self._venue_id_by_order_id[event.order_id] = venue_id
 
 	def _cancel_order(self, event: OrderEvent) -> None:
 		"""Cancel the venue order correlated to ``event.order_id`` via the RPC."""
 		symbol = self._to_symbol(event.ticker)
-		venue_id = self._venue_id_by_order_id.get(event.order_id)
+		with self._correlation_lock:  # WR-03: cross-thread read guard
+			venue_id = self._venue_id_by_order_id.get(event.order_id)
 		if venue_id is None:
 			self.logger.warning(
 				"Cancel for order %s has no known venue id — skipping", event.order_id)
@@ -176,7 +190,8 @@ class OkxExchange(AbstractExchange):
 		price/amount, is skipped-and-logged — never crashed.
 		"""
 		venue_id = trade.get("order") if isinstance(trade, dict) else None
-		order = self._orders_by_venue_id.get(venue_id) if venue_id is not None else None
+		with self._correlation_lock:  # WR-03: cross-thread read guard
+			order = self._orders_by_venue_id.get(venue_id) if venue_id is not None else None
 		if order is None:
 			self.logger.warning("Fill for unknown venue order %s — skipping", venue_id)
 			return
