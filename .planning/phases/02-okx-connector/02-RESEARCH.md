@@ -490,14 +490,14 @@ class OkxSettings(BaseSettings):
 | A3 | For Phase 2, `.env` holds DEMO keys and a single key set suffices (no live/demo dual-key scheme) | Demo keys | LOW — per D-09/D-10; production dual-key is deferred post-milestone |
 | A4 | One shared ccxt.pro client can host both the private order WS and REST without contention (D-02) | Standard Stack | LOW — ccxt.pro keys sockets by URL internally; nautilus shares HTTP similarly |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Exact `confirm="0"` push count/frequency for daily (`candle1D`) bars on the golden dataset timeframe.**
+1. **Exact `confirm="0"` push count/frequency for daily (`candle1D`) bars on the golden dataset timeframe.** _(RESOLVED — fixture pinned per D-09; the closed-bar gate `confirm=="1"` is correct regardless of push cadence; incorporated into Plan 02-04)_
    - What we know: field values + "fastest 1 push/sec".
    - What's unclear: whether a `1D` bar pushes every second or only on trade activity.
    - Recommendation: capture a real demo business-channel payload (D-09) and pin it as the fixture; the closed-bar gate (`confirm=="1"`) is correct either way.
 
-2. **Whether the native business socket should share the connector's single `aiohttp` session or open its own.**
+2. **Whether the native business socket should share the connector's single `aiohttp` session or open its own.** _(RESOLVED — separate socket owned by the data provider, running on the connector's loop; incorporated into Plan 02-04)_
    - What we know: nautilus uses a separate socket for business.
    - Recommendation (Claude's Discretion, plan-time): a separate socket owned by the data provider but running on the connector's loop — matches nautilus and keeps the order-arm ccxt client independent of candle-stream lifecycle.
 
