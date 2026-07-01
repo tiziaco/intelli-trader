@@ -39,21 +39,31 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### OKX Connector — Phase 2 (`LiveConnector` / `OkxConnector`)
 
-- [ ] **CONN-01**: `OkxConnector` implements the `LiveConnector` **data arm** — ccxt.pro `watch_ohlcv`
-  by default plus the native OKX candle **`confirm` flag** via the escape hatch, both behind the
-  interface (LX-05/LX-08). (ccxt's unified `watchOHLCV` drops `confirm` — the native read is required.)
-- [ ] **CONN-02**: `OkxConnector` implements the **order arm** — async `create_order` + cancel +
-  `watch_orders`/`watch_fills` (exercised against sandbox in Phase 5).
-- [ ] **CONN-03**: A single `sandbox: bool` routes **both** ccxt (`set_sandbox_mode`) and the native
-  path (`x-simulated-trading` header) to OKX demo, and selects demo-vs-live keys — no split-brain.
-- [ ] **CONN-04**: The connector runs its own asyncio loop on its own daemon thread and emits domain
-  events onto `global_queue` only (D-19 single-writer preserved); the engine stays synchronous and the
-  backtest path imports no async/connector code.
+> **Revised 2026-07-01** (Phase 2 discuss) — decomposition revises LX-05 / D-10 and reshapes
+> CONN-01/02/04. The connector is a **session/transport primitive**; the arms are **domain adapters**
+> consuming the injected session. Rationale: `phases/02-okx-connector/02-CONTEXT.md` (D-01..D-10).
+
+- [ ] **CONN-01**: The **data arm** `OkxDataProvider` (`price_handler/providers/`) streams OKX candles
+  via a native OKX `business`-endpoint subscription carrying the **`confirm` flag**, with REST
+  `fetch_ohlcv` backfill (ccxt's unified `watch_ohlcv` drops `confirm` — the native read is required);
+  it feeds closed bars to the Phase-3 `LiveBarFeed`. Consumes the injected `OkxConnector` session. (LX-05/LX-08)
+- [ ] **CONN-02**: The **order arm** `OkxExchange` (`execution_handler/exchanges/`, impl
+  `AbstractExchange`) implements async `create_order` + cancel + `watch_orders`/`watch_fills` and
+  translates raw fills → `FillEvent` (exercised against sandbox in Phase 5). Consumes the injected session.
+- [ ] **CONN-03**: A single `sandbox: bool` on the connector routes **both** ccxt (`set_sandbox_mode`)
+  and the native path (`x-simulated-trading` header) to OKX demo, and selects demo-vs-live keys — no split-brain.
+- [ ] **CONN-04**: `OkxConnector` is a session/transport primitive running its own asyncio loop on its
+  own daemon thread (the engine stays synchronous; the backtest path imports no async/connector code);
+  it owns **no venue operations and emits no domain events** — **the `OkxExchange` adapter emits
+  `FillEvent`** onto `global_queue` (D-19 single-writer preserved: `queue.Queue` is MPSC-safe, portfolio
+  state mutates only on the engine thread). The connector is **injected**, never cross-domain-imported.
 - [ ] **CONN-05**: Every ccxt float (price/amount/fee/balance) crosses the Decimal boundary at the
-  connector edge via `to_money`; outbound quantities are rounded to OKX lot/tick using ccxt's string
+  adapter edge via `to_money`; outbound quantities are rounded to OKX lot/tick using ccxt's string
   precision helpers (no `Decimal(float)`).
 - [ ] **CONN-06**: OKX secrets (apiKey + secret + **passphrase**) load via an `OkxSettings(BaseSettings)`
-  `SecretStr` layer (`ITRADER_OKX_*`); never in code or logs; the backtest path stays credential-free.
+  layer reading plain `OKX_API_*` (**no env prefix** — revised from `ITRADER_OKX_*`; only the connector
+  authenticates; a real secret manager is deferred post-milestone); never in code, logs, or fixtures;
+  the backtest path stays credential-free.
 
 ### Live Data Engine — Phase 3 (`LiveBarFeed`)
 
@@ -72,11 +82,11 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Paper Path — Phase 4 (the milestone DoD)
 
-- [ ] **PAPER-01**: `PaperConnector` implements `LiveConnector` by composing the **reused pure
-  `MatchingEngine`** + the shared cost helper + `SimulatedAccount`, with **bar-based fills only**
-  (LX-06/LX-13) and no OKX I/O.
+- [ ] **PAPER-01**: The paper execution adapter implements **`AbstractExchange`** (not `LiveConnector` —
+  paper has no venue session, so no connector) by composing the **reused pure `MatchingEngine`** + the
+  shared cost helper + `SimulatedAccount`, with **bar-based fills only** (LX-06/LX-13) and no OKX I/O.
 - [ ] **PAPER-02**: Fee/slippage is extracted into a shared `apply_costs` helper used by **both**
-  `SimulatedExchange` and `PaperConnector` (one cost core, byte-exact) — no dual fill-pricing drift.
+  `SimulatedExchange` and the paper adapter (one cost core, byte-exact) — no dual fill-pricing drift.
 - [ ] **PAPER-03**: `LiveTradingSystem` is wired end-to-end on the paper path (live feed → strategy →
   order → paper fill → `SimulatedAccount`/`Portfolio`), with the determinism seams (seeded RNG +
   business-time stamping) threaded through.
