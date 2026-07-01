@@ -129,19 +129,97 @@ class LiveBarFeed(BarFeed):
         return Bar(time=t, open=cb["open"], high=cb["high"], low=cb["low"],
                    close=cb["close"], volume=cb["volume"])
 
-    # -- Ingestion (deliver path; the monotonic guard lands in Task 2) --------
+    # -- Ingestion — the FEED-04 monotonic-forward-only guard (D-06/D-07) ------
 
     def update(self, closed_bar: "ClosedBar") -> None:
-        """Ingest one confirm-gated ``ClosedBar`` and deliver it (FEED-02).
+        """Ingest one confirm-gated ``ClosedBar`` through the monotonic guard.
 
-        Task 1 delivers the in-sequence happy path (construct + ring + emit); the
-        FEED-04 monotonic guard (stale/duplicate/revision/gap) is layered on in
-        Task 2 ahead of the delivery.
+        Classifies the incoming open-time ``t`` against the last-delivered stamp
+        ``L`` per ``(symbol, timeframe)`` (D-06 taxonomy):
+
+        - ``L is None`` (first bar) or ``t == L + tf`` (in-sequence) → deliver.
+        - ``t < L`` (stale) → reject + log, NO emit, no state mutation.
+        - ``t == L`` (duplicate/revision) → identical values drop quietly;
+          differing values are a forward-only revision (WARN + drop, NO state
+          mutation — indicator state is never rewound, D-07).
+        - ``t > L + tf`` (gap) → backfill the interior range ``[L+tf .. t-tf]``
+          and replay each bar through ``update()``, THEN deliver ``t``.
+
+        Every incoming bar AND every replayed backfill bar takes this one path
+        (FEED-03 — no bulk fast-path). The gap recursion terminates because each
+        replayed bar advances ``L`` by exactly one ``tf`` (no nested gap; a
+        boundary re-send is absorbed by the duplicate branch, Pitfall 5). Stale /
+        duplicate / revision are LOGGED, never raised — they are legitimate venue
+        events. ``t`` is the venue open-time only (never ``datetime.now()``).
         """
         sym = closed_bar["symbol"]
         tf_str = closed_bar["timeframe"]
+        tf = to_timedelta(tf_str)
         t = pd.Timestamp(closed_bar["ts"], unit="ms", tz="UTC")
+        last = self._last_delivered.get((sym, tf_str))
+        if last is not None:
+            if t < last:
+                return self._reject_stale(sym, t, last)
+            if t == last:
+                return self._duplicate_or_revision(sym, tf_str, t, closed_bar)
+            if t > last + tf:
+                self._backfill_gap(sym, tf_str, last + tf, t - tf)
         self._deliver(sym, tf_str, t, closed_bar)
+
+    def _reject_stale(self, sym: str, t: pd.Timestamp,
+                      last: pd.Timestamp) -> None:
+        """Stale bar (``t < L``) → warn + drop, NO emit, no state mutation (D-06)."""
+        self.logger.warning(
+            "Stale bar rejected for %s: t=%s < last-delivered=%s "
+            "(no emit, no state mutation)", sym, str(t), str(last))
+
+    def _duplicate_or_revision(self, sym: str, tf_str: str, t: pd.Timestamp,
+                               cb: "ClosedBar") -> None:
+        """``t == L`` → duplicate drop (identical) or forward-only revision (D-07).
+
+        A revision (differing OHLCV at the same open-time) is dropped WITHOUT any
+        state mutation — the ``confirm==1`` gate means a forming bar is never
+        delivered to revise, and indicator state is never rewound.
+        """
+        ring = self._ring.get((sym, tf_str))
+        last_bar = ring[-1] if ring else None
+        incoming = self._build_bar(t, cb)
+        if last_bar is not None and self._same_ohlcv(last_bar, incoming):
+            self.logger.debug(
+                "Duplicate bar dropped for %s at %s (identical OHLCV)",
+                sym, str(t))
+            return
+        self.logger.warning(
+            "Revision dropped for %s at %s (forward-only, no state mutation, "
+            "D-07): last-close=%s incoming-close=%s", sym, str(t),
+            str(last_bar.close) if last_bar is not None else None,
+            str(incoming.close))
+
+    def _backfill_gap(self, sym: str, tf_str: str, first_missing: pd.Timestamp,
+                      last_missing: pd.Timestamp) -> None:
+        """Fill a hole ``[first_missing .. last_missing]`` and replay each bar.
+
+        Fetches exactly the interior missing bars (one per ``tf``, inclusive both
+        ends) via the PRIVATE ``self._provider.fetch_ohlcv_backfill`` (injected in
+        the 03-04 OKX arm via :meth:`set_provider`) and replays each returned
+        ``ClosedBar`` through ``update()`` — the single FEED-03 path.
+        """
+        tf = to_timedelta(tf_str)
+        since_ms = int(first_missing.value // _NS_PER_MS)
+        limit = int((last_missing - first_missing) / tf) + 1
+        self.logger.info(
+            "Gap for %s: backfilling %d interior bar(s) [%s .. %s]",
+            sym, limit, str(first_missing), str(last_missing))
+        bars = self._provider.fetch_ohlcv_backfill(
+            sym, tf_str, since=since_ms, limit=limit)
+        for cb in bars:
+            self.update(cb)
+
+    @staticmethod
+    def _same_ohlcv(a: Bar, b: Bar) -> bool:
+        """True iff two Bars carry identical OHLCV (duplicate vs revision, D-06)."""
+        return (a.open == b.open and a.high == b.high and a.low == b.low
+                and a.close == b.close and a.volume == b.volume)
 
     def _deliver(self, sym: str, tf_str: str, t: pd.Timestamp,
                  cb: "ClosedBar") -> None:
