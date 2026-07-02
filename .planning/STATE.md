@@ -31,7 +31,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — EXECUTING
 Plan: 3 of 12
 Status: Ready to execute
-Last activity: 2026-07-02
+Last activity: 2026-07-02 - Completed quick task 260703-030: rewire live operational store onto unified SqlSettings (drop SYSTEM_DB_URL)
 
 Progress: [██████████] 97%
 
@@ -201,6 +201,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 |---|-------------|------|--------|-----------|
 | 260701-l33 | Add `smoke` pytest marker (register + tag 3 files + `make test-smoke` + tagging rule) | 2026-07-01 | 40c13992 | [260701-l33-add-smoke-marker](./quick/260701-l33-add-smoke-marker/) |
 | 260702-m8d | Apply Phase 04 code-review fix-now bucket (IN-01..04, WR-05, WR-03, WR-02 window guard) + sync stale REQUIREMENTS.md | 2026-07-02 | 148836a6 | [260702-m8d-apply-phase-04-code-review-fix-now-bucke](./quick/260702-m8d-apply-phase-04-code-review-fix-now-bucke/) |
+| 260703-030 | Rewire live operational store onto unified SqlSettings, drop legacy SYSTEM_DB_URL | 2026-07-02 | 8947cc27 | [260703-030-rewire-live-operational-store-onto-unifi](./quick/260703-030-rewire-live-operational-store-onto-unifi/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
