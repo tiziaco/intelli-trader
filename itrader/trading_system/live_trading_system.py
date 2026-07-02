@@ -2,7 +2,6 @@ import os
 import queue
 import sys
 import threading
-import time
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
@@ -25,7 +24,7 @@ from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.universe import Universe, derive_instruments, derive_membership
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.events import EventType, TimeEvent, OrderEvent, ErrorEvent
+from itrader.events_handler.events import EventType, ErrorEvent
 
 # Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
 # (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the
@@ -54,6 +53,16 @@ _OKX_STREAM_TIMEFRAME = "1d"
 # with its wiring-time membership assertion.
 _PAPER_STREAM_SYMBOL = "BTCUSD"
 _PAPER_STREAM_TIMEFRAME = "1d"
+
+# WR-02 (assertion half): the canonical golden window the paper-parity gate diffs
+# against. These are the EXACT literals test_paper_parity.py constructs the backtest
+# with (start_date="2018-01-01", end_date="2026-06-03"), which today coincide with the
+# CsvPriceStore class defaults the replay store falls back to. run_paper_replay asserts
+# the replay store's effective window/symbol equals these at wiring time so a future
+# CsvPriceStore default change or window drift fails loudly here instead of surfacing as
+# a confusing count-equality diff in the parity test.
+_PAPER_EXPECTED_START = "2018-01-01"
+_PAPER_EXPECTED_END = "2026-06-03"
 
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
@@ -423,9 +432,10 @@ class LiveTradingSystem:
             if event_type:
                 self._stats['events_processed'] += 1
                 self._stats['last_event_time'] = datetime.now(UTC).isoformat()
-                
-                # TODO: Add more specific event type handling if needed like 'ORDER_FILLED' 'ORDER_CREATED' etc...
-                if event_type == 'ORDER':
+
+                # IN-04: compare against the enum name (caller passes event.type.name,
+                # so EventType.ORDER.name == 'ORDER' holds the same str contract).
+                if event_type == EventType.ORDER.name:
                     self._stats['orders_executed'] += 1
     
     def _initialize_live_session(self):
@@ -533,6 +543,29 @@ class LiveTradingSystem:
                     "run_paper_replay() requires the paper venue (the replay provider "
                     "is not wired) — construct LiveTradingSystem(exchange='paper')."))
 
+        # WR-02 (assertion half, no structural refactor): assert the replay store's
+        # effective window/symbol equals the canonical golden window the backtest in
+        # test_paper_parity.py is constructed with. The two paths are wired from
+        # different sources (test literals vs CsvPriceStore class defaults) and only
+        # happen to agree today — so a future default change or window drift fails
+        # loudly HERE with a clear ConfigurationError instead of surfacing as a
+        # confusing count-equality diff deep in the parity test.
+        _store = self._replay_provider._store
+        if (_store.start_date != _PAPER_EXPECTED_START
+                or _store.end_date != _PAPER_EXPECTED_END
+                or self._replay_provider._symbol != _PAPER_STREAM_SYMBOL):
+            raise ConfigurationError(
+                config_key="paper_replay_window",
+                config_value=(
+                    f"({_store.start_date}, {_store.end_date}, "
+                    f"{self._replay_provider._symbol})"),
+                reason=(
+                    f"replay store window/symbol drifted from the backtest parity "
+                    f"window: expected ({_PAPER_EXPECTED_START}, {_PAPER_EXPECTED_END}, "
+                    f"{_PAPER_STREAM_SYMBOL}) but got ({_store.start_date}, "
+                    f"{_store.end_date}, {self._replay_provider._symbol}). Align the "
+                    "replay store window/symbol with the parity backtest."))
+
         # Step 1 — session init (ORDER-SENSITIVE): derive membership/instruments,
         # inject the Universe into the 'simulated' exchange + order/portfolio handlers,
         # register the _LiveWarmupConsumer that sizes cache_capacity() to the max
@@ -554,6 +587,16 @@ class LiveTradingSystem:
             self.event_handler.process_events()
             newest = self.feed.newest_bar(_PAPER_STREAM_SYMBOL)
             if newest is None:
+                continue
+            # WR-03: only record when the feed's newest-DELIVERED bar IS the bar
+            # replayed THIS iteration. If the LiveBarFeed monotonic guard dropped
+            # this bar (stale/duplicate/off-grid/revision), newest holds the PREVIOUS
+            # bar's stamp — recording it would re-stamp an already-recorded timestamp
+            # (a duplicate/stale equity point). Compare the feed stamp against the
+            # replayed bar-open (cb["ts"], epoch-ms) and skip on mismatch. On the
+            # contiguous golden dataset no bar is ever dropped, so newest always
+            # equals the replayed bar and every bar records exactly once (byte-exact).
+            if int(newest.time.timestamp() * 1000) != cb["ts"]:
                 continue
             bar_time = newest.time
             for portfolio in self.portfolio_handler.get_active_portfolios():
