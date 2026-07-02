@@ -84,19 +84,33 @@ class OkxExchange(AbstractExchange):
 		# Venue-id correlation: a streamed fill (watch_my_trades) carries the venue order id;
 		# resolve it back to the originating OrderEvent so FillEvent.new_fill carries the
 		# order_id/strategy_id/portfolio_id audit chain (D-12).
-		# WR-03: the two correlation maps are written on the ENGINE thread (submit /
+		# WR-03: the correlation maps are written on the ENGINE thread (submit /
 		# cancel, via connector.call) and read on the CONNECTOR LOOP thread (streamed
 		# fills, via _handle_trade). Guard every write/read with this lock so the
-		# cross-thread dict access is synchronised. NOTE (latent, streams not started
-		# this phase): a lock alone does not close the fast-fill race — the venue can
-		# push a fill before create_order returns the venue id, so the fill still
-		# resolves to order=None and is dropped. The full fix (register a pending
-		# correlation keyed by clOrdId BEFORE the submit RPC, and/or briefly buffer
-		# unmatched fills for late correlation) lands with OkxExchange.connect() stream
-		# wiring; this guard is the documented minimum until then.
+		# cross-thread dict access is synchronised. The fast-fill race (a fill pushed
+		# before create_order returns the venue id) is now closed by the clOrdId
+		# pre-correlation + unmatched-fill buffer below (D-12, Pitfall 11) — a lock
+		# alone did not suffice.
 		self._correlation_lock = threading.Lock()
 		self._orders_by_venue_id: Dict[str, OrderEvent] = {}
 		self._venue_id_by_order_id: Dict[OrderId, str] = {}
+
+		# D-12 / Pitfall 11 (RECON-02): fill-ID dedup + fast-fill-race close-out.
+		# Three maps, all guarded by _correlation_lock (cross-thread: engine-thread
+		# submit vs connector-loop-thread fills):
+		# - _seen_trade_ids dedupes a reconnect re-send — the same venue
+		#   ``trade['id']`` seen twice is an idempotent no-op, never double-counted;
+		# - _orders_by_clOrdId is the pending correlation keyed by the CLIENT order
+		#   id, registered BEFORE the create_order RPC (and echoed back on the fill),
+		#   so a fill that streams back before the RPC returns the venue id still
+		#   resolves its originating OrderEvent;
+		# - _pending_fills_by_venue_id BUFFERS a fill that arrived before its
+		#   venue-id correlation landed — _submit_order re-drains it once the
+		#   venue-id map is written, closing the fast-fill race instead of the old
+		#   silent drop (D-13 — never lose a real fill).
+		self._seen_trade_ids: set[str] = set()
+		self._orders_by_clOrdId: Dict[str, OrderEvent] = {}
+		self._pending_fills_by_venue_id: Dict[str, List[Any]] = {}
 
 		# Spawned stream-task handles (cancelled by the connector on disconnect).
 		self._stream_handles: List[Any] = []
@@ -107,6 +121,18 @@ class OkxExchange(AbstractExchange):
 		"""Venue symbol for a ticker. Pass-through today (the OrderEvent carries the venue
 		symbol); a dedicated translation table lands with the data arm if needed."""
 		return ticker
+
+	@staticmethod
+	def _client_order_id(event: OrderEvent) -> str:
+		"""Client order id (clOrdId) for the Pitfall-11 fast-fill-race pre-correlation.
+
+		OKX requires an alphanumeric clOrdId (<=32 chars); the engine order id is
+		rendered to a compact alphanumeric token (hyphens of a UUIDv7 dropped) with
+		an ``it`` prefix. Deterministic so the venue-echoed clOrdId maps straight
+		back to the pending correlation registered before the submit RPC.
+		"""
+		token = "".join(ch for ch in str(event.order_id) if ch.isalnum())
+		return ("it" + token)[:32]
 
 	@staticmethod
 	def _ms_to_dt(ts: Any) -> datetime:
@@ -193,14 +219,33 @@ class OkxExchange(AbstractExchange):
 		if event.order_type is OrderType.MARKET and event.action is Side.BUY:
 			params["createMarketBuyOrderRequiresPrice"] = False
 
+		# Pitfall 11 fast-fill-race fix (D-12): attach a CLIENT order id and
+		# register the pending correlation keyed by it BEFORE the create_order RPC.
+		# OKX echoes clOrdId back on the fill, so a fill that streams in before the
+		# RPC returns the venue id still resolves its OrderEvent in _handle_trade
+		# (which consults _orders_by_clOrdId when the venue-id lookup misses).
+		client_order_id = self._client_order_id(event)
+		params["clOrdId"] = client_order_id
+		with self._correlation_lock:  # WR-03: cross-thread write guard
+			self._orders_by_clOrdId[client_order_id] = event
+
 		response = self._connector.call(
 			client.create_order(symbol, otype, side, amount, price, params=params))
 
 		venue_id = response.get("id") if isinstance(response, dict) else None
+		buffered: List[Any] = []
 		if venue_id is not None:
 			with self._correlation_lock:  # WR-03: cross-thread write guard
 				self._orders_by_venue_id[venue_id] = event
 				self._venue_id_by_order_id[event.order_id] = venue_id
+				# Fast-fill race: drain any fills that streamed back before this
+				# venue-id correlation existed (buffered by _handle_trade, never
+				# dropped — Pitfall 11). Pop under the lock; re-drain outside it.
+				buffered = self._pending_fills_by_venue_id.pop(venue_id, [])
+		# Re-drain OUTSIDE the lock — _handle_trade re-acquires _correlation_lock
+		# and threading.Lock is non-reentrant.
+		for buffered_trade in buffered:
+			self._handle_trade(buffered_trade)
 
 	def _cancel_order(self, event: OrderEvent) -> None:
 		"""Cancel the venue order correlated to ``event.order_id`` via the RPC."""
@@ -224,20 +269,78 @@ class OkxExchange(AbstractExchange):
 	# --- streaming (D-07 — the exchange emits FillEvents itself) ---------------
 
 	def _handle_trade(self, trade: Any) -> None:
-		"""Translate one venue fill (ccxt-unified trade) into a ``FillEvent`` on ``global_queue``.
+		"""Translate one venue fill (ccxt-unified trade) into a ``FillEvent`` (D-07, D-12).
+
+		Idempotent + race-safe (RECON-02, Pitfall 11):
+		- **fill-ID dedup** — a reconnect re-send carries the same ``trade['id']``
+		  and is an idempotent no-op, never double-counted;
+		- **fast-fill race** — a fill that arrives before its ``create_order`` RPC
+		  returns the venue id is resolved via the ``clOrdId`` pending correlation
+		  registered before the submit, or BUFFERED for late correlation (drained by
+		  ``_submit_order`` once the venue-id map lands) — never the old silent drop.
 
 		CONN-05: every inbound float crosses the Decimal boundary via ``to_money(str(x))``.
 		Business time: ``FillEvent.time`` is stamped from the venue trade timestamp.
-		Input validation (T-02-03-VALID): a fill for an unknown order, or one missing
-		price/amount, is skipped-and-logged — never crashed.
+		Input validation (T-02-03-VALID): a fill missing price/amount/timestamp is
+		skipped-and-logged — never crashed.
 		"""
+		trade_id = trade.get("id") if isinstance(trade, dict) else None
 		venue_id = trade.get("order") if isinstance(trade, dict) else None
-		with self._correlation_lock:  # WR-03: cross-thread read guard
-			order = self._orders_by_venue_id.get(venue_id) if venue_id is not None else None
-		if order is None:
-			self.logger.warning("Fill for unknown venue order %s — skipping", venue_id)
-			return
+		with self._correlation_lock:  # WR-03: cross-thread map guard
+			# Dedup (Pitfall 11): an already-seen venue trade id is a re-send.
+			if trade_id is not None and trade_id in self._seen_trade_ids:
+				return
+			order = (self._orders_by_venue_id.get(venue_id)
+			         if venue_id is not None else None)
+			if order is None:
+				# Fast-fill race: fall back to the clOrdId pending correlation
+				# registered BEFORE the submit RPC (the venue echoes clOrdId).
+				clordid = self._extract_client_order_id(trade)
+				if clordid is not None:
+					order = self._orders_by_clOrdId.get(clordid)
+			if order is None:
+				# Still uncorrelated: BUFFER for late correlation rather than drop
+				# (Pitfall 11). _submit_order re-drains once the venue-id map lands.
+				# Only buffer when there is a venue id to key the drain on.
+				if venue_id is not None:
+					self._pending_fills_by_venue_id.setdefault(venue_id, []).append(trade)
+					self.logger.warning(
+						"Fill for not-yet-correlated venue order %s — buffered for late correlation",
+						venue_id)
+				else:
+					self.logger.warning("Fill with no venue order id — skipping")
+				return
+			# Correlated: mark the trade id seen INSIDE the lock so a concurrent
+			# re-send dedupes against it.
+			if trade_id is not None:
+				self._seen_trade_ids.add(trade_id)
+		# Mint + emit OUTSIDE the lock (the FillEvent mint touches no correlation map).
+		self._emit_fill(trade, order, venue_id)
 
+	@staticmethod
+	def _extract_client_order_id(trade: Any) -> Optional[str]:
+		"""Pull the echoed client order id (clOrdId) off a ccxt-unified trade.
+
+		ccxt surfaces it as ``clientOrderId`` at the top level, or the raw OKX
+		``clOrdId``/``clientOrderId`` under ``info``. Returns None when neither is
+		present so the caller falls through to the buffer path.
+		"""
+		if not isinstance(trade, dict):
+			return None
+		cid = trade.get("clientOrderId")
+		if cid is None:
+			info = trade.get("info")
+			if isinstance(info, dict):
+				cid = info.get("clOrdId") or info.get("clientOrderId")
+		return str(cid) if cid else None
+
+	def _emit_fill(self, trade: Any, order: OrderEvent, venue_id: Any) -> None:
+		"""Mint the FillEvent for a correlated venue trade and put it on ``global_queue``.
+
+		Preserves the CONN-05 Decimal edge (``to_money(str(x))``), the WR-01
+		commission None-guard + ``abs()`` magnitude normalisation, and the
+		``_ms_to_dt`` business-time stamp verbatim.
+		"""
 		price = trade.get("price")
 		amount = trade.get("amount")
 		timestamp = trade.get("timestamp")

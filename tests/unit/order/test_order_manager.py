@@ -208,10 +208,12 @@ def test_cancelled_fill_marks_order_cancelled(harness):
     assert stored.status == OrderStatus.CANCELLED
 
 
-def test_partial_quantity_fill_is_rejected_by_mirror(harness):
-    """Full-quantity contract (D-06, plan 06-04): the float-roundtrip clamp is
-    deleted — a fill event whose quantity is below the order's remaining is
-    rejected by add_fill and the mirror is left unchanged (warning logged)."""
+def test_partial_quantity_fill_accumulates_partially_filled(harness):
+    """Partial-fill accumulation (RECON-02, D-12): a fill event whose quantity is
+    BELOW the order's remaining now ACCUMULATES against cumulative-filled and moves
+    the mirror to PARTIALLY_FILLED (staying OPEN) rather than being rejected — the
+    live venue delivers the order in pieces. (Supersedes the old full-quantity
+    reject contract; the completing fill later terminalizes it to FILLED.)"""
     import msgspec
     order = harness.rest_a_stop()  # quantity 1.0
     partial = msgspec.structs.replace(
@@ -219,8 +221,8 @@ def test_partial_quantity_fill_is_rejected_by_mirror(harness):
     )
     harness.handler.on_fill(partial)
     stored = harness.storage.get_order_by_id(order.id, harness.portfolio_id)
-    assert stored.status == OrderStatus.PENDING
-    assert stored.filled_quantity == Decimal("0")
+    assert stored.status == OrderStatus.PARTIALLY_FILLED
+    assert stored.filled_quantity == Decimal("0.4")
 
 
 def test_full_precision_decimal_quantity_marks_filled(harness):
