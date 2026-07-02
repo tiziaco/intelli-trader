@@ -107,9 +107,9 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 - [ ] **RECON-01**: `VenueAccount` caches the connector's balance/margin/position streams and
   reconciles **per-symbol drift** under 1 account : 1 portfolio (LX-03/LX-04) — it caches venue truth,
   it does not compute.
-- [ ] **RECON-02**: Partial-fill handling is correct and idempotent (fill-ID dedup, accumulation,
+- [x] **RECON-02**: Partial-fill handling is correct and idempotent (fill-ID dedup, accumulation,
   terminalize only on full fill or venue-reported closed); the venue is source of truth in live.
-- [ ] **RECON-03**: The drift-repair policy is **halt-and-alert by default**, with auto-correct only
+- [x] **RECON-03**: The drift-repair policy is **halt-and-alert by default**, with auto-correct only
   within a defined tolerance band. Concretized by **D-01**: a precision-epsilon auto-correct band
   (`is_within_single_unit_tolerance`, per-symbol quantity) — any beyond-band, unexplained drift freezes
   the WHOLE engine in place (`SystemStatus.HALTED` + CRITICAL alert, no auto-flatten/auto-cancel).
@@ -142,7 +142,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   "to Phase 5" target — the channel + FastAPI did NOT land in Phase 5). The standalone worker runs without
   them: the `SystemStatus.HALTED` status (D-07) + the persisted operational store carry everything a future
   controller/control-plane needs. Decided in the Phase 3→4 handoff; architected for Phases 2–5.
-- [ ] **RES-01** (home: Phase 5): Live resilience is in place — websocket reconnect with gap recovery,
+- [x] **RES-01** (home: Phase 5): Live resilience is in place — websocket reconnect with gap recovery,
   rate-limit handling (coordinated across ccxt + native paths), partial-fill handling, and stream-gap
   recovery; `LiveTradingSystem`'s publish-and-continue error policy is hardened for live. Pieces build
   across Phases 2 (rate-limit) / 3 (reconnect+gap-recovery, FEED-04); fully verified on the real path.
@@ -218,15 +218,15 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | PAPER-03 | Phase 4 | Complete |
 | PAPER-04 | Phase 4 | Complete |
 | RECON-01 | Phase 5 | Pending |
-| RECON-02 | Phase 5 | Pending |
-| RECON-03 | Phase 5 | Pending |
+| RECON-02 | Phase 5 | Complete |
+| RECON-03 | Phase 5 | Complete |
 | RECON-04 | Phase 5 | Pending |
 | RECON-05 | Phase 5 | Pending |
 | RECON-06 | Phase 5 | Pending |
 | UNIV-01 | Phase 6 | Pending |
 | UNIV-02 | Phase 6 | Pending |
 | RUN-01 | Phase 4 (home; decided in Phase 3→4 handoff, cross-cutting 2–5) | Complete |
-| RES-01 | Phase 5 (home; pieces build in Phases 2–3, cross-cutting 2–5) | Pending |
+| RES-01 | Phase 5 (home; pieces build in Phases 2–3, cross-cutting 2–5) | Complete |
 | COV-01 | Phase 4 (home; infra in Phase 2, extends to Phase 5, cross-cutting 1–5) | Complete |
 
 **Coverage:**
