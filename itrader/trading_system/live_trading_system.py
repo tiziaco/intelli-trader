@@ -44,6 +44,17 @@ _SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")
 _OKX_STREAM_SYMBOL = "BTC/USDT"
 _OKX_STREAM_TIMEFRAME = "1d"
 
+# D-18 (structural half — SINGLE SOURCE OF TRUTH for the paper/backtest parity anchor):
+# the canonical golden window + symbol. BOTH the paper replay store (constructed
+# EXPLICITLY from these in the paper arm of __init__ below) AND the backtest comparand
+# (test_paper_parity.py imports these) derive from THESE literals, so paper/backtest
+# parity can never silently desync. They previously agreed only because the CsvPriceStore
+# class defaults happened to equal the test's own literals (WR-02 coincidental parity) —
+# the replay store window is now wired from this shared constant, not the class default.
+PAPER_PARITY_START_DATE = "2018-01-01"
+PAPER_PARITY_END_DATE = "2026-06-03"
+PAPER_PARITY_SYMBOL = "BTCUSD"
+
 # Phase 4 (D-02/D-09): the SINGLE wiring source for the paper replay subscription.
 # The ReplayDataProvider stamps this symbol/timeframe into every replayed ClosedBar
 # (the feed's ring key), and run_paper_replay() queries newest_bar() on the same
@@ -51,19 +62,16 @@ _OKX_STREAM_TIMEFRAME = "1d"
 # "BTCUSD" (what the strategy's window() queries), NOT the OKX venue form "BTC/USDT":
 # a mismatch surfaces only as a MissingPriceDataError at the first window() call
 # (LiveBarFeed._find_ring). This is the symbol-form trap the OKX arm guards against
-# with its wiring-time membership assertion.
-_PAPER_STREAM_SYMBOL = "BTCUSD"
+# with its wiring-time membership assertion. Sourced from the D-18 parity symbol above.
+_PAPER_STREAM_SYMBOL = PAPER_PARITY_SYMBOL
 _PAPER_STREAM_TIMEFRAME = "1d"
 
-# WR-02 (assertion half): the canonical golden window the paper-parity gate diffs
-# against. These are the EXACT literals test_paper_parity.py constructs the backtest
-# with (start_date="2018-01-01", end_date="2026-06-03"), which today coincide with the
-# CsvPriceStore class defaults the replay store falls back to. run_paper_replay asserts
-# the replay store's effective window/symbol equals these at wiring time so a future
-# CsvPriceStore default change or window drift fails loudly here instead of surfacing as
-# a confusing count-equality diff in the parity test.
-_PAPER_EXPECTED_START = "2018-01-01"
-_PAPER_EXPECTED_END = "2026-06-03"
+# WR-02 (assertion half, now backed by the D-18 structural wiring): run_paper_replay
+# asserts the replay store's effective window/symbol equals these — a defense that the
+# CsvPriceStore honored the window it was EXPLICITLY constructed with (below), no longer
+# a coincidental-class-default check. Aliased to the single-source constants above.
+_PAPER_EXPECTED_START = PAPER_PARITY_START_DATE
+_PAPER_EXPECTED_END = PAPER_PARITY_END_DATE
 
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
@@ -419,7 +427,14 @@ class LiveTradingSystem:
             # so the BACKTEST import path never pulls it — the inertness gate (D-12).
             from itrader.price_handler.providers.replay_provider import ReplayDataProvider
 
+            # D-18 (structural half): construct the replay store EXPLICITLY from the
+            # shared parity window (PAPER_PARITY_START_DATE/END) instead of relying on
+            # the CsvPriceStore class defaults happening to equal the parity window. The
+            # paper store and the backtest comparand (test_paper_parity.py) now read ONE
+            # source, so they can never silently desync (WR-02 coincidental parity gone).
             self._replay_provider = ReplayDataProvider(
+                store=CsvPriceStore(
+                    start_date=PAPER_PARITY_START_DATE, end_date=PAPER_PARITY_END_DATE),
                 symbol=_PAPER_STREAM_SYMBOL, timeframe=_PAPER_STREAM_TIMEFRAME)
             # Inject the replay provider into the LIVE feed via the PUBLIC setter — it
             # assigns self._provider (the private attr warmup()/gap-backfill read); a
@@ -429,14 +444,12 @@ class LiveTradingSystem:
             self.feed.set_provider(self._replay_provider)
             self._replay_provider.set_bar_sink(self.feed.update)
 
-        # WR-05: install the documented live error policy (publish-and-continue).
-        # The base _on_handler_error re-raises (backtest fail-fast); the live
-        # system is documented to override THIS method so _dispatch's existing
-        # error routing emits an ErrorEvent and keeps draining instead of
-        # aborting. Binding it here (rather than swallowing in the loop) means a
-        # failed handler queues an ErrorEvent for the ERROR-route / status
-        # consumers instead of becoming an invisible log line + counter.
-        self.event_handler._on_handler_error = self._publish_and_continue  # type: ignore[method-assign]
+        # D-17 (error-policy split, WR-04): the live publish-and-continue policy is NO
+        # LONGER installed here. It is bound in start() — the daemon/live path ONLY — so
+        # run_paper_replay() (which never calls start()) keeps the base fail-fast re-raise
+        # (EventHandler._on_handler_error). A deterministic replay must abort LOUDLY on a
+        # handler failure so the parity gate can never false-green on a swallowed error
+        # (T-05-28); a live session, by contrast, can't abort on one handler error.
 
         # 05-04 (D-06): construct the pluggable CRITICAL/halt alert sink at the
         # composition root and inject it into the event handler, so a CRITICAL
@@ -957,6 +970,14 @@ class LiveTradingSystem:
         self._update_status(SystemStatus.STARTING)
         
         try:
+            # D-17 (error-policy split, WR-04): install the live publish-and-continue
+            # policy HERE — on the daemon/live path ONLY. A live session can't abort on
+            # one handler error (it must emit an ErrorEvent and keep draining, RES-01
+            # hardening); the deterministic run_paper_replay() driver never reaches this
+            # bind, so it keeps the base fail-fast re-raise so a handler failure aborts
+            # the replay loudly and the parity gate can't false-green (T-05-28).
+            self.event_handler._on_handler_error = self._publish_and_continue  # type: ignore[method-assign]
+
             # Initialize the live session
             self._initialize_live_session()
 
