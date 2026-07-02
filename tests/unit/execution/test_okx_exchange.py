@@ -204,8 +204,10 @@ def test_market_buy_disables_requires_price_param(
 
     _sym, otype, side, _amount, price = fake_client.create_order.call_args.args
     assert (otype, side, price) == ("market", "buy", None)
+    # Pitfall 11: a clOrdId is also attached (pending correlation before the RPC).
     assert fake_client.create_order.call_args.kwargs["params"] == {
-        "createMarketBuyOrderRequiresPrice": False
+        "createMarketBuyOrderRequiresPrice": False,
+        "clOrdId": OkxExchange._client_order_id(order),
     }
 
 
@@ -230,7 +232,11 @@ def test_limit_order_submits_empty_params(
 
     exchange.on_order(order)
 
-    assert fake_client.create_order.call_args.kwargs["params"] == {}
+    # Pitfall 11: the only param on a plain LIMIT order is the clOrdId pending
+    # correlation attached before the submit RPC (no market-buy override).
+    assert fake_client.create_order.call_args.kwargs["params"] == {
+        "clOrdId": OkxExchange._client_order_id(order),
+    }
 
 
 # --- fill stream: raw fill -> FillEvent on global_queue (D-07) -----------------
