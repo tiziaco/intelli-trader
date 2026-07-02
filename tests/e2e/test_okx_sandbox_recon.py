@@ -14,7 +14,7 @@ production venue (T-05-04 mitigation). EVERY live test asserts ``connector.sandb
 BEFORE any order submission or venue-mutating action; that enforced sandbox routing is what
 keeps the demo keys real-money-free.
 
-The three test bodies below are LIVE end-to-end assertions (no scaffold ``_pending``):
+The three test bodies below are LIVE end-to-end assertions (no scaffold skips remain):
 
 * ``test_demo_order_produces_real_fill_event`` — a tiny demo MARKET order flows through the
   sandbox-routed OKX live stack, a real ``FillEvent`` streams back and terminalizes the order
@@ -68,11 +68,6 @@ _FILL_TIMEOUT_S = 30.0
 _POLL_S = 0.5
 _STOP_TIMEOUT_S = 10.0
 _POSITION_PRECISION = 8            # BTC amount precision for the drift-tolerance epsilon
-
-
-def _pending(feature: str, plan: str) -> None:
-    """Skip a scaffold body whose feature has not landed yet (avoids false creds failures)."""
-    pytest.skip(f"scaffold: {feature} not yet implemented — lands in plan {plan}")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -241,6 +236,109 @@ def _cleanup_and_stop(system) -> None:
         system.stop(timeout=_STOP_TIMEOUT_S)
 
 
+# --- restart-reconcile helpers (test (iii) — mirror test_two_sided_restart's shape) ---
+
+_OPERATIONAL_TABLES = ("order_state_changes", "orders", "signals")
+
+
+class _HaltRecorder:
+    """Records every ``halt(reason)`` call so the test can assert no spurious halt fired."""
+
+    def __init__(self) -> None:
+        self.reasons: list = []
+
+    def __call__(self, reason: str) -> None:
+        self.reasons.append(reason)
+
+
+def _build_demo_connector():
+    """Lazily construct + connect a sandbox-routed ``OkxConnector`` (network I/O)."""
+    from itrader.config.okx_settings import OkxSettings
+    from itrader.connectors.okx import OkxConnector
+
+    connector = OkxConnector(OkxSettings())  # type: ignore[call-arg]
+    connector.connect()
+    return connector
+
+
+def _start_pg_container():
+    """Start a testcontainers Postgres (rehydrate substrate); skip if Docker is absent (D-11)."""
+    from testcontainers.postgres import PostgresContainer
+
+    container = None
+    try:
+        container = PostgresContainer("postgres:16")
+        container.start()
+    except Exception as exc:
+        if container is not None:
+            try:
+                container.stop()
+            except Exception:
+                pass
+        pytest.skip(f"PostgreSQL container unavailable — skipped (D-11): {exc}")
+    return container, container.get_connection_url()
+
+
+def _make_backend(pg_url):
+    """Build a fresh ``SqlBackend`` bound to the container DB."""
+    from pydantic import SecretStr
+
+    from itrader.config.sql import SqlDriver, SqlSettings
+    from itrader.storage import SqlBackend
+
+    return SqlBackend(SqlSettings(
+        driver=SqlDriver.POSTGRESQL_PSYCOPG2,
+        url=SecretStr(pg_url),
+    ))
+
+
+def _fresh_cached_store(backend):
+    """Build a ``CachedSqlOrderStorage`` over the backend (idempotent schema create)."""
+    from itrader.order_handler.storage.cached_sql_storage import CachedSqlOrderStorage
+    from itrader.order_handler.storage.sql_storage import SqlOrderStorage
+
+    store = SqlOrderStorage(backend)
+    backend.metadata.create_all(backend.engine, checkfirst=True)
+    return CachedSqlOrderStorage(store)
+
+
+def _drop_operational_tables(pg_url) -> None:
+    """Drop the operational tables so the shared container DB is left pristine."""
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine(pg_url)
+    try:
+        with engine.begin() as conn:
+            for table in _OPERATIONAL_TABLES:
+                conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
+    finally:
+        engine.dispose()
+
+
+def _drain_queue(gq) -> None:
+    """Empty the queue, discarding contents (clears reconciling fills before the drain check)."""
+    while True:
+        try:
+            gq.get_nowait()
+        except queue.Empty:
+            break
+
+
+def _drain_fills(gq):
+    """Drain every ``FillEvent`` currently on the queue."""
+    from itrader.events_handler.events import FillEvent
+
+    fills = []
+    while True:
+        try:
+            event = gq.get_nowait()
+        except queue.Empty:
+            break
+        if isinstance(event, FillEvent):
+            fills.append(event)
+    return fills
+
+
 # --------------------------------------------------------------------------- tests
 
 
@@ -278,20 +376,145 @@ def test_demo_order_produces_real_fill_event() -> None:
 
 
 def test_venue_account_reconciles_post_fill_within_tolerance() -> None:
-    """(ii) ``VenueAccount`` balance/positions reconcile against OKX demo within tolerance.
+    """(ii) ``VenueAccount`` position reconciles against OKX demo within tolerance (RECON-03/04).
 
-    Later: after the demo fill, snapshot ``VenueAccount`` (REST + push) and assert the
-    engine-computed balance/position diff is within the per-symbol drift tolerance under 1:1
-    (LX-04), never a spurious halt (RECON-03/04).
+    Reuses the demo-fill flow, then takes a FRESH ``VenueAccount.snapshot()`` (REST venue truth)
+    and asserts the engine-computed vs venue per-symbol position diff is WITHIN the drift
+    tolerance band via ``is_within_single_unit_tolerance`` (the same predicate
+    ``_compare_symbol_drift`` uses) with NO spurious halt, under 1 account : 1 portfolio (LX-04).
+    Tolerance-based, never exact float equality.
     """
-    _pending("VenueAccount post-fill reconciliation", "05-12 Task 2 (VenueAccount reconcile)")
+    from itrader.core.enums import OrderStatus, SystemStatus
+    from itrader.portfolio_handler.reconcile.drift import is_within_single_unit_tolerance
+
+    system, portfolio_id = _build_live_okx_stack()
+    _assert_sandbox_routed(system)
+    try:
+        # T-05-04: final routing guard — the connector MUST be sandbox is True before we submit.
+        assert system._okx_connector.sandbox is True
+        assert system.start() is True
+
+        order = _submit_min_demo_order(system, portfolio_id)
+        filled = _wait_for_fill(system, order)
+        assert filled is not None
+        assert filled.status == OrderStatus.FILLED
+
+        # Fresh REST snapshot of venue truth (post-fill).
+        system._venue_account.snapshot()
+        venue_positions = system._venue_account.positions
+
+        # Per-symbol engine-vs-venue drift WITHIN one least-significant unit — never beyond band.
+        for symbol, venue_qty in venue_positions.items():
+            engine_view = system.portfolio_handler.get_position(portfolio_id, symbol)
+            engine_qty = engine_view.net_quantity if engine_view is not None else Decimal("0")
+            assert is_within_single_unit_tolerance(
+                engine_qty, venue_qty, _POSITION_PRECISION
+            ), f"engine-vs-venue drift for {symbol} beyond tolerance: {engine_qty} vs {venue_qty}"
+
+        # No spurious halt: 1:1 acct:portfolio within-band reconcile must not HALT (RECON-04).
+        status = system.get_status()
+        assert status["status"] != SystemStatus.HALTED.value
+        assert status["halt_reason"] is None
+    finally:
+        _cleanup_and_stop(system)
 
 
 def test_restart_rehydrate_then_venue_reconcile_no_spurious_halt() -> None:
-    """(iii) Restart rehydration + venue reconcile yields no spurious halt.
+    """(iii) Restart rehydrate + two-sided venue reconcile yields no spurious halt (RECON-05/RES-01).
 
-    Later: rehydrate the operational store (order mirror + portfolio state), run the two-sided
-    restart reconcile against the OKX-demo REST snapshot, and assert in-band deltas adopt
-    cleanly with NO halt-and-alert (RECON-05, RES-01).
+    Parallels the OFFLINE ``tests/integration/test_two_sided_restart.py`` shape but against the
+    REAL demo connector: stand up a rehydrate-capable CachedSql store holding a pre-restart
+    resting order carrying a ``venue_order_id``, then construct/drive
+    ``VenueReconciler.reconcile()`` against the OKX-demo REST snapshot. Asserts (a) in-band venue
+    deltas adopt cleanly with NO halt-and-alert (no ``reconciliation-unresolved``), and (b) via
+    the 05-11 ``adopt_venue_correlation`` seam, a post-restart fill for the rehydrated resting
+    order reaches the mirror (a FillEvent emits) instead of being silently buffered in the
+    unmatched-fill overflow. Requires Docker (testcontainers Postgres) — skips if absent.
     """
-    _pending("two-sided restart reconciliation", "05-12 Task 2 (restart rehydrate + venue reconcile)")
+    from datetime import datetime, timezone
+
+    import uuid_utils.compat as uc
+
+    from itrader.core.enums import OrderStatus, OrderType, Side
+    from itrader.core.ids import PortfolioId, StrategyId
+    from itrader.execution_handler.exchanges.okx import OkxExchange
+    from itrader.order_handler.order import Order
+    from itrader.portfolio_handler.account.venue import VenueAccount
+    from itrader.portfolio_handler.reconcile.venue_reconciler import VenueReconciler
+
+    container, pg_url = _start_pg_container()
+    backend = _make_backend(pg_url)
+    connector = None
+    try:
+        # Store side (INTENT truth): a pre-restart resting order with a persisted venue id.
+        store = _fresh_cached_store(backend)
+        venue_ord = "IT-DEMO-REHYDRATE-0001"
+        order = Order(
+            time=datetime.now(timezone.utc),
+            type=OrderType.LIMIT,
+            status=OrderStatus.PENDING,
+            ticker=_OKX_SYMBOL,
+            action=Side.BUY,
+            price=Decimal("10000"),   # deep out-of-the-money — it rests, never fills on the venue
+            quantity=_MIN_DEMO_QTY,
+            exchange="okx",
+            strategy_id=StrategyId(uc.uuid7()),
+            portfolio_id=PortfolioId(uc.uuid7()),
+            venue_order_id=venue_ord,
+        )
+        store.add_order(order)
+
+        # Venue side (real demo connector): the REST snapshot the reconcile reads.
+        connector = _build_demo_connector()
+        assert connector.sandbox is True   # T-05-04 — demo host only, before any venue read
+
+        gq: "queue.Queue" = queue.Queue()
+        okx_exchange = OkxExchange(gq, connector)
+        venue_account = VenueAccount(connector)
+        halt = _HaltRecorder()
+        reconciler = VenueReconciler(
+            store=store,
+            venue_account=venue_account,
+            connector=connector,
+            global_queue=gq,
+            halt_signal=halt,
+            exchange=okx_exchange,
+        )
+
+        # Two-sided restart reconcile against the OKX-demo REST snapshot.
+        reconciler.reconcile()
+
+        # (a) in-band deltas adopt cleanly — NO halt-and-alert.
+        assert "reconciliation-unresolved" not in halt.reasons
+
+        # (b) the 05-11 adopt seam repopulated the correlation map for the rehydrated order.
+        with okx_exchange._correlation_lock:
+            adopted = okx_exchange._venue_id_by_order_id.get(order.id)
+        assert adopted == venue_ord
+
+        # A post-restart fill for the rehydrated resting order now RESOLVES (emits a FillEvent)
+        # instead of being silently buffered — the ``adopt_venue_correlation`` seam repopulated
+        # the correlation above, so ``_handle_trade`` matches the venue id to the OrderEvent and
+        # mints the fill (the mirror advances) rather than dropping it into the overflow buffer.
+        _drain_queue(gq)   # clear any reconciling fills first
+        post_restart_trade = {
+            "id": "IT-DEMO-TRADE-REHYDRATE-0001",
+            "order": venue_ord,
+            "price": 10000.0,
+            "amount": float(_MIN_DEMO_QTY),
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+            "fee": {"cost": 0.0},
+        }
+        okx_exchange._handle_trade(post_restart_trade)
+        fills = _drain_fills(gq)
+        assert len(fills) == 1               # resolved + emitted, NOT silently buffered
+        assert fills[0].order_id == order.id
+    finally:
+        if connector is not None:
+            try:
+                connector.disconnect()
+            except Exception:
+                pass
+        _drop_operational_tables(pg_url)
+        backend.dispose()
+        container.stop()
