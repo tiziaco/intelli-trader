@@ -561,6 +561,27 @@ class LiveTradingSystem:
                 if event_type == EventType.ORDER.name:
                     self._stats['orders_executed'] += 1
 
+    def _record_bar_metrics(self, event) -> None:
+        """Record the per-bar equity curve on ``EventType.BAR`` (D-16 / WR-01 fix).
+
+        The live daemon previously keyed metric recording on ``EventType.TIME``, but
+        ``LiveBarFeed`` emits ONLY ``BarEvent`` on the live path (no ``TimeEvent`` —
+        the bar's arrival IS the event), so the TIME key never fired and the live
+        equity curve was always empty (WR-01). Key on ``EventType.BAR`` and stamp each
+        snapshot with the bar-open BUSINESS time (``event.time``), never wall-clock
+        (D-09), iterating the active portfolios exactly like the backtest path (the
+        ``run_paper_replay`` direct ``record_metrics`` per bar is the reference).
+
+        Runs on the engine (queue-draining) thread — off the connector asyncio
+        coroutine — on the async/best-effort path (D-10): a lost tail of the equity
+        curve is harmless/recomputable, so recording it must never stall the loop.
+        Non-BAR events are a no-op (guard-clause early exit).
+        """
+        if getattr(event, 'type', None) != EventType.BAR:
+            return
+        for portfolio in self.portfolio_handler.get_active_portfolios():
+            portfolio.record_metrics(event.time)
+
     def _initialize_live_session(self):
         """
         Initialize the live trading session by deriving membership and
@@ -769,13 +790,12 @@ class LiveTradingSystem:
                     # Update statistics
                     self._update_stats(event.type.name if hasattr(event, 'type') else 'UNKNOWN')
 
-                    # Record portfolio metrics if it's a TIME event.
-                    # CR-02: record_metrics lives on Portfolio, not
-                    # PortfolioHandler — iterate the active portfolios exactly
-                    # like the backtest path does.
-                    if hasattr(event, 'type') and event.type == EventType.TIME:
-                        for portfolio in self.portfolio_handler.get_active_portfolios():
-                            portfolio.record_metrics(event.time)
+                    # 05-06 (D-16 / WR-01): record the per-bar equity curve keyed on
+                    # EventType.BAR (the async/best-effort path). LiveBarFeed emits only
+                    # BarEvent, so the old TIME key never fired live — see
+                    # _record_bar_metrics. record_metrics lives on Portfolio, not
+                    # PortfolioHandler, so the helper iterates the active portfolios.
+                    self._record_bar_metrics(event)
 
                 except queue.Empty:
                     # No events in queue, check if we've been idle too long
