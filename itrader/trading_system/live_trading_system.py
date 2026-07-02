@@ -508,6 +508,64 @@ class LiveTradingSystem:
             self._update_status(SystemStatus.ERROR, str(e))
             raise
     
+    def run_paper_replay(self) -> None:
+        """Drive the golden dataset E2E through the live-paper mechanism, synchronously.
+
+        The OFFLINE, single-thread paper driver (D-03): it replays the golden bars
+        one-by-one through the real Phase-3 live seam (replay provider -> feed.update
+        -> BarEvent -> queue) using the EXACT per-tick + run-end discipline of the
+        backtest runner (backtest_runner._run_backtest) — but BAR-driven, not
+        TimeGenerator-driven. There is NO daemon thread and NO start()/stop() call:
+        this is the deterministic, CI-runnable path the 04-04 parity gate diffs
+        against a fresh backtest.
+
+        Determinism is by construction (D-09): the seeded random.Random already lives
+        in the shared ExecutionHandler (config.performance.rng_seed=42) injected into
+        the reused SimulatedExchange — identical to backtest — and every bar's time is
+        the venue/CSV bar-open stamp the feed built (feed.newest_bar(...).time), never
+        wall-clock.
+        """
+        if self._replay_provider is None:
+            raise ConfigurationError(
+                config_key="exchange",
+                config_value=self.exchange,
+                reason=(
+                    "run_paper_replay() requires the paper venue (the replay provider "
+                    "is not wired) — construct LiveTradingSystem(exchange='paper')."))
+
+        # Step 1 — session init (ORDER-SENSITIVE): derive membership/instruments,
+        # inject the Universe into the 'simulated' exchange + order/portfolio handlers,
+        # register the _LiveWarmupConsumer that sizes cache_capacity() to the max
+        # strategy warmup (100 for SMA_MACD — WITHOUT it the ring collapses to 1 and
+        # the run yields zero trades, Pitfall 1), and bind(global_queue, members). The
+        # OKX symbol-membership assertion inside is gated to exchange=='okx', so paper
+        # skips it.
+        self._initialize_live_session()
+
+        # Step 2 — synchronous per-bar drive (mirror backtest_runner._run_backtest
+        # 145-158, BAR-driven): per bar, in this order,
+        #   (a) replay_bar -> registered sink self.feed.update -> BarEvent on queue,
+        #   (b) process_events() drains BAR -> SIGNAL -> ORDER -> FILL in-thread,
+        #   (c) a DIRECT record_metrics per active portfolio using the feed's own
+        #       bar-open stamp (Trap 4 — backtest calls record_metrics directly, never
+        #       via an event reroute). bar_time is tz-aware UTC bar-open (D-09).
+        for cb in self._replay_provider.iter_closed_bars():
+            self._replay_provider.replay_bar(cb)
+            self.event_handler.process_events()
+            newest = self.feed.newest_bar(_PAPER_STREAM_SYMBOL)
+            if newest is None:
+                continue
+            bar_time = newest.time
+            for portfolio in self.portfolio_handler.get_active_portfolios():
+                portfolio.record_metrics(bar_time)
+
+        # Step 3 — run-end time-in-force sweep (byte-exact parity with
+        # backtest_runner 159-169): expire every still-resting order, then ONE final
+        # process_events() drain clears them through the exchange. No record_metrics
+        # after the sweep — the last per-bar record_metrics was the final equity point.
+        self.order_handler.expire_all_resting()
+        self.event_handler.process_events()
+
     def _event_processing_loop(self):
         """
         The main event processing loop that runs in a separate thread.
