@@ -999,6 +999,25 @@ class LiveTradingSystem:
                 self.feed.warmup(_OKX_STREAM_SYMBOL, _OKX_STREAM_TIMEFRAME)
                 self._okx_data_provider.start_stream()
 
+            # CR-01 (RECON-02, RES-01): spawn the order-arm venue streams. This is
+            # the SOLE spawn site for OkxExchange._stream_fills()/_stream_orders()
+            # (okx.py connect() -> connector.spawn) — without it no real FillEvent
+            # ever streams back, the order mirror stays PENDING forever and the
+            # 05-08 order-arm reconnect supervisor is dead code in production.
+            # Done AFTER the connector client + load_markets are live (the watch_*
+            # streams need them) and BEFORE the VenueReconciler.reconcile() below,
+            # so the fill/order streams are live during reconcile (the 05-05 fill-ID
+            # dedup covers the concurrent-stream case). connect() RETURNS a
+            # ConnectionResult and never raises (unlike the connector), so a bare
+            # call would swallow a failure — check .success and re-raise so the
+            # failure flows through the existing except block (SystemStatus.ERROR,
+            # return False); do NOT invent a second error path.
+            if self.exchange == 'okx' and self._okx_exchange is not None:
+                result = self._okx_exchange.connect()
+                if not result.success:
+                    raise RuntimeError(
+                        f'OKX exchange stream connect failed: {result.error_message}')
+
             # 05-04 (D-14): with the connector live, seed the VenueAccount cache
             # from a REST snapshot then start its push stream BEFORE RUNNING, and
             # link the venue-cached account into every active live portfolio so the
