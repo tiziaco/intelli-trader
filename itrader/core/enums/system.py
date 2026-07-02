@@ -17,3 +17,7 @@ class SystemStatus(Enum):
     RUNNING = "running"
     STOPPING = "stopping"
     ERROR = "error"
+    HALTED = "halted"   # D-07: distinct machine-readable halt state, reason ∈
+                        # {drift, reconciliation-unresolved, connector-fatal,
+                        #  paused-on-disconnect}. Not RUNNING/STOPPED/ERROR —
+                        # a reconciliation-driven stop the operator must clear.
