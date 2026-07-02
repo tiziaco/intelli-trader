@@ -87,6 +87,10 @@ class VenueReconciler:
         an unconfident bracket leg.
     quote_currency:
         The quote currency for the venue balance reads (default ``"USDT"``).
+    exchange:
+        The order-arm venue exchange (``OkxExchange``) whose in-memory correlation
+        maps must be repopulated for rehydrated orders (WR-02 / RECON-05). ``None``
+        on the paper/backtest/test paths — a clean skip (the seam is live-only).
     """
 
     def __init__(
@@ -98,6 +102,7 @@ class VenueReconciler:
         global_queue: "Queue[Any]",
         halt_signal: Callable[[str], None],
         quote_currency: str = "USDT",
+        exchange: Optional[Any] = None,
     ) -> None:
         self._store = store
         self._venue_account = venue_account
@@ -105,6 +110,7 @@ class VenueReconciler:
         self._global_queue = global_queue
         self._halt_signal = halt_signal
         self._quote = quote_currency
+        self._exchange = exchange
         self.logger = get_itrader_logger().bind(component="VenueReconciler")
 
     # ------------------------------------------------------------------ entrypoint
@@ -134,6 +140,30 @@ class VenueReconciler:
         #    parent/child legs, per-bracket halt on an unconfidently-linked leg.
         venue_open_orders = self._fetch("fetch_open_orders")
         self._relink_brackets(working, venue_open_orders)
+
+        # 6. WR-02 / RECON-05: repopulate the order-arm venue correlation maps for
+        #    every rehydrated order carrying a venue id. Runs AFTER _relink_brackets
+        #    so freshly re-linked bracket legs (their venue ids just stamped) are
+        #    included via the working set. Without this a post-restart fill for a
+        #    rehydrated resting order is buffered and never drained, and its cancel is
+        #    a silent no-op — the maps are otherwise written ONLY by
+        #    OkxExchange._submit_order, which never ran for a pre-restart order.
+        self._adopt_venue_correlation(working)
+
+    # ------------------------------------------------------------------ correlation adopt
+    def _adopt_venue_correlation(self, working: List["Order"]) -> None:
+        """Repopulate the order-arm venue correlation maps for rehydrated orders (WR-02).
+
+        Calls the injected order-arm seam (``OkxExchange.adopt_venue_correlation``)
+        for each working-set order (including re-linked bracket legs) carrying a
+        persisted ``venue_order_id``. A ``None`` exchange (paper/backtest/test paths)
+        is a clean skip — the seam is live-only.
+        """
+        if self._exchange is None:
+            return
+        for order in working:
+            if order.venue_order_id is not None:
+                self._exchange.adopt_venue_correlation(order)
 
     # ------------------------------------------------------------------ working set
     def _working_set(self) -> List["Order"]:

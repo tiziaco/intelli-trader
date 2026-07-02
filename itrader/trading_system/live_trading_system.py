@@ -1090,6 +1090,7 @@ class LiveTradingSystem:
                         connector=self._okx_connector,
                         global_queue=self.global_queue,
                         halt_signal=self.halt,
+                        exchange=self._okx_exchange,
                     )
                     reconciler.reconcile()
 

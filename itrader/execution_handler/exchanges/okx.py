@@ -295,6 +295,41 @@ class OkxExchange(AbstractExchange):
 			return
 		self._connector.call(self._connector.client.cancel_order(venue_id, symbol))
 
+	def adopt_venue_correlation(self, order: Any) -> None:
+		"""Restart-rehydration correlation seam (WR-02 / RECON-05 / D-12).
+
+		A pre-restart Order never went through ``_submit_order`` — the ONLY writer
+		of the three in-memory correlation maps (``_orders_by_venue_id`` /
+		``_venue_id_by_order_id`` / ``_orders_by_clOrdId``). Consequence once the
+		live fill stream is spawned (CR-01): a post-restart fill for a rehydrated
+		resting order resolves to no OrderEvent and is BUFFERED under
+		``_pending_fills_by_venue_id`` forever (silently lost), and a cancel of a
+		rehydrated order is a silent no-op. ``VenueReconciler.reconcile`` calls this
+		during restart rehydration for each working-set order (and each re-linked
+		bracket leg) carrying a persisted ``venue_order_id``: it repopulates the maps
+		exactly as ``_submit_order`` does, then re-drains any fills that streamed in
+		before adoption — so the fill reaches the mirror and the cancel resolves.
+		"""
+		venue_id = order.venue_order_id
+		if venue_id is None:
+			# Nothing to correlate — an order the venue never acknowledged.
+			return
+		event = OrderEvent.new_order_event(order)
+		venue_id = str(venue_id)
+		buffered: List[Any] = []
+		with self._correlation_lock:  # WR-03: cross-thread write guard
+			self._orders_by_venue_id[venue_id] = event
+			self._venue_id_by_order_id[event.order_id] = venue_id
+			self._orders_by_clOrdId[self._client_order_id(event)] = event
+			# Drain any fills buffered before this correlation landed (mirrors the
+			# _submit_order fast-fill-race drain). Pop under the lock; re-drain
+			# outside it.
+			buffered = self._pending_fills_by_venue_id.pop(venue_id, [])
+		# Re-drain OUTSIDE the lock — _handle_trade re-acquires _correlation_lock
+		# and threading.Lock is non-reentrant.
+		for buffered_trade in buffered:
+			self._handle_trade(buffered_trade)
+
 	def on_market_data(self, bar: Any) -> None:
 		"""No-op for live: the venue matches resting orders, not us (D-06).
 

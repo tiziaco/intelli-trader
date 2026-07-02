@@ -36,6 +36,7 @@ from itrader.core.enums import FillStatus, OrderCommand, OrderType, Side
 from itrader.core.money import to_money
 from itrader.events_handler.events import FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.okx import OkxExchange
+from itrader.order_handler.order import Order
 
 _T = TypeVar("_T")
 
@@ -272,6 +273,97 @@ def test_submit_registers_clordid_pending_correlation(
 
     assert fake_client.create_order.call_args.kwargs["params"]["clOrdId"] == clordid
     assert exchange._orders_by_clOrdId[clordid] is order
+
+
+# --- (ii-b) restart rehydration: adopt_venue_correlation repopulates the maps --
+
+
+def _make_rehydrated_order(*, venue_order_id: str, order_id: int = 55) -> Order:
+    """A REAL Order rehydrated from the store carrying a persisted venue_order_id —
+    one that NEVER went through _submit_order (so its correlation maps are empty)."""
+    order = Order.new_limit_order(
+        time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        ticker="BTC-USDT",
+        action=Side.BUY,
+        price="42000",
+        quantity="0.5",
+        exchange="okx",
+        strategy_id=7,
+        portfolio_id=3,
+    )
+    order.venue_order_id = venue_order_id
+    return order
+
+
+def test_adopt_correlation_drains_prebuffered_fill(
+    exchange: OkxExchange, queue: "Queue[Any]"
+) -> None:
+    """WR-02: a fill delivered BEFORE adoption is buffered; ``adopt_venue_correlation``
+    repopulates the maps and DRAINS it — the fill emits, never silently lost."""
+    order = _make_rehydrated_order(venue_order_id="OID-REHY")
+    fill = {
+        "id": "T-9",
+        "order": "OID-REHY",
+        "price": "42000.0",
+        "amount": "0.5",
+        "fee": {"cost": "0.1", "currency": "USDT"},
+        "timestamp": 1704067202000,
+    }
+    # Post-restart fill arrives before the rehydrated order's correlation is adopted
+    # (the maps are empty — _submit_order never ran for it) -> BUFFERED.
+    exchange._handle_trade(fill)
+    assert queue.empty()
+    assert exchange._pending_fills_by_venue_id.get("OID-REHY") == [fill]
+
+    # Restart rehydration adopts the correlation -> the buffer drains.
+    exchange.adopt_venue_correlation(order)
+
+    fills = _drain_queue(queue)
+    assert len(fills) == 1
+    assert isinstance(fills[0], FillEvent)
+    assert fills[0].order_id == order.id
+    assert fills[0].quantity == to_money("0.5")
+    assert "OID-REHY" not in exchange._pending_fills_by_venue_id
+
+
+def test_adopt_correlation_lets_postrestart_fill_reach_mirror(
+    exchange: OkxExchange, queue: "Queue[Any]"
+) -> None:
+    """WR-02: after adoption, a fresh post-restart fill for the rehydrated order emits a
+    FillEvent (resolves via the repopulated map) instead of being silently buffered."""
+    order = _make_rehydrated_order(venue_order_id="OID-REHY2")
+    exchange.adopt_venue_correlation(order)
+
+    fill = {
+        "id": "T-10",
+        "order": "OID-REHY2",
+        "price": "42000.0",
+        "amount": "0.5",
+        "fee": {"cost": "0.1", "currency": "USDT"},
+        "timestamp": 1704067202000,
+    }
+    exchange._handle_trade(fill)
+
+    fills = _drain_queue(queue)
+    assert len(fills) == 1
+    assert fills[0].order_id == order.id
+    # Resolved via the adopted map — nothing left buffered.
+    assert not exchange._pending_fills_by_venue_id
+
+
+def test_adopt_correlation_none_venue_id_is_noop(
+    exchange: OkxExchange, queue: "Queue[Any]"
+) -> None:
+    """An order with no venue_order_id (never acknowledged) is a clean no-op — no map
+    write, no crash."""
+    order = _make_rehydrated_order(venue_order_id="unused")
+    order.venue_order_id = None
+
+    exchange.adopt_venue_correlation(order)
+
+    assert not exchange._orders_by_venue_id
+    assert not exchange._venue_id_by_order_id
+    assert queue.empty()
 
 
 # --- (iii) stream resilience: a malformed trade does not kill the loop ---------
