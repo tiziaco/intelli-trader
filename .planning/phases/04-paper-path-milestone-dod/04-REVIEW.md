@@ -16,8 +16,33 @@ findings:
   warning: 5
   info: 4
   total: 9
-status: issues_found
+status: resolved
+resolution:
+  resolved_at: 2026-07-02
+  via: quick task 260702-m8d (commits 13d083ef, 8a4a507e)
+  fixed: 6      # IN-01, IN-02, IN-03, IN-04, WR-03, WR-05
+  partial: 1    # WR-02 (assertion/window-guard done; structural shared-config refactor deferred)
+  deferred: 2   # WR-01, WR-04 — deferred to Phase 5 (live-drive path)
 ---
+
+## Resolution (2026-07-02)
+
+Fixes applied via quick task `260702-m8d`; parity gate re-verified byte-exact
+(oracle `134 / 46189.87730727451`), full gate 13 passed, `mypy --strict` clean.
+
+| Finding | Disposition | Where |
+|---------|-------------|-------|
+| WR-01 | **Deferred → Phase 5** | Live daemon metrics belong to the real/sandbox live-drive path Phase 5 builds; record cadence decided there. |
+| WR-02 | **Partially resolved** | Assertion half done — wiring-time window guard added (`13d083ef`). Structural single-shared-config refactor **deferred → Phase 5**. |
+| WR-03 | **Resolved** | `13d083ef` — per-bar metric stamped off the replayed bar; skip-on-mismatch (no stale re-record). |
+| WR-04 | **Deferred → Phase 5** | Error-policy divergence (publish-and-continue vs fail-fast) is a parity-semantics decision for Phase 5. |
+| WR-05 | **Resolved** | `8a4a507e` — `_run_okx_smoke` teardown made unconditional (try/finally). |
+| IN-01 | **Resolved** | `13d083ef` — removed unused `import time`. |
+| IN-02 | **Resolved** | `13d083ef` — trimmed unused `TimeEvent`/`OrderEvent` imports. |
+| IN-03 | **Resolved** | `8a4a507e` — deleted dead `DATASET` literal. |
+| IN-04 | **Resolved** | `13d083ef` — magic `'ORDER'` → `EventType.ORDER.name`; TODO removed. |
+
+The two deferred warnings + the WR-02 structural half are tracked as Phase 5 inputs.
 
 # Phase 4: Code Review Report
 
