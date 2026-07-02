@@ -110,10 +110,15 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 - [ ] **RECON-02**: Partial-fill handling is correct and idempotent (fill-ID dedup, accumulation,
   terminalize only on full fill or venue-reported closed); the venue is source of truth in live.
 - [ ] **RECON-03**: The drift-repair policy is **halt-and-alert by default**, with auto-correct only
-  within a defined tolerance band.
+  within a defined tolerance band. Concretized by **D-01**: a precision-epsilon auto-correct band
+  (`is_within_single_unit_tolerance`, per-symbol quantity) — any beyond-band, unexplained drift freezes
+  the WHOLE engine in place (`SystemStatus.HALTED` + CRITICAL alert, no auto-flatten/auto-cancel).
 - [ ] **RECON-04**: The v1.6 operational store (order / portfolio-state / signal) is **driven by the
   real OKX feed** — the live composition-root wiring is completed (resolves v1.6 D-01 / RETAIN-03),
-  with create/terminalize writes sync-durable.
+  with create/terminalize writes sync-durable. Realized via **split write paths (D-10/D-11)**: the order
+  working set persists **store-first** (sync-durable, restart-rehydratable via `CachedSqlOrderStorage`)
+  while signals + the per-bar equity curve ride the engine-thread **async/best-effort** path so they can
+  never stall the connector asyncio loop.
 - [ ] **RECON-05**: Restart rehydration is **two-sided** — reconstruct the working set from the store
   AND reconcile against the live venue (the broker side the v1.6 store-only tests did not cover).
 - [ ] **RECON-06**: Order I/O + `VenueAccount` reconciliation + persistence live-drive + restart
@@ -133,7 +138,10 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   Phase 4 wires the runtime** — a separate worker process (ship option (b) architected as (c) with
   N=1). Phase 4 ships ONLY the runnable worker + start/stop/status lifecycle; the Postgres
   `LISTEN/NOTIFY` command/status channel (zero new dep, reuses the v1.6 store) + the FastAPI wrapper are
-  **deferred to Phase 5** (D-08). Decided in the Phase 3→4 handoff; architected for Phases 2–5.
+  **deferred PAST Phase 5** to the FastAPI application-layer plan (Phase-5 **D-08** re-defers the earlier
+  "to Phase 5" target — the channel + FastAPI did NOT land in Phase 5). The standalone worker runs without
+  them: the `SystemStatus.HALTED` status (D-07) + the persisted operational store carry everything a future
+  controller/control-plane needs. Decided in the Phase 3→4 handoff; architected for Phases 2–5.
 - [ ] **RES-01** (home: Phase 5): Live resilience is in place — websocket reconnect with gap recovery,
   rate-limit handling (coordinated across ccxt + native paths), partial-fill handling, and stream-gap
   recovery; `LiveTradingSystem`'s publish-and-continue error policy is hardened for live. Pieces build
