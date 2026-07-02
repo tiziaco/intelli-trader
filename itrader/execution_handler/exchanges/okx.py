@@ -29,11 +29,12 @@ from ``base`` keeps the Protocol import ccxt-free and cannot couple a consumer t
 Indentation: this tree is TAB-indented (a mixed-indent diff breaks the file).
 """
 
+import asyncio
 import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 from queue import Queue
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from itrader.connectors.base import LiveConnector
 from itrader.core.enums import OrderCommand, OrderType, Side
@@ -45,6 +46,19 @@ from itrader.logger import get_itrader_logger
 
 from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 from .base import AbstractExchange
+
+
+# 05-08 (RES-01/D-19/D-20) reconnect-supervisor tuning — named module constants,
+# documented [ASSUMED] and tunable from sandbox behaviour (research A3; anchored to
+# nautilus defaults: open_check_missing_retries=5 / position_check_retries=3). A
+# transient socket drop reconnects with exponential backoff (staying running,
+# publish-and-continue); the debounce keeps a sub-second blip from escalating to a
+# pause (D-19); the retry ceiling bounds the retry loop so it never spins forever ->
+# HALT on exhaustion (D-20).
+_STREAM_RECONNECT_DEBOUNCE_SECONDS = 0.25    # A3 [ASSUMED] sub-second blip -> no pause
+_STREAM_RECONNECT_BACKOFF_BASE_SECONDS = 1.0  # A3 [ASSUMED] first backoff step
+_STREAM_RECONNECT_BACKOFF_CAP_SECONDS = 30.0  # A3 [ASSUMED] exponential backoff ceiling
+_STREAM_RECONNECT_RETRY_CEILING = 6           # A3 [ASSUMED] retries exhausted -> HALT (D-20)
 
 
 class OkxExchange(AbstractExchange):
@@ -114,6 +128,29 @@ class OkxExchange(AbstractExchange):
 
 		# Spawned stream-task handles (cancelled by the connector on disconnect).
 		self._stream_handles: List[Any] = []
+
+		# 05-08 (RES-01/D-19/D-20): reconnect-supervisor state. Each stream
+		# consume-loop runs under a bounded-retry supervisor — a transient socket
+		# drop reconnects with exponential backoff instead of the task dying
+		# silently, a fatal error or an exhausted retry ceiling halts the engine
+		# (D-20), and a sustained disconnect pauses new order submission until the
+		# stream reconnects + a fresh REST reconcile completes (D-19).
+		self._reconnect_attempts: Dict[str, int] = {}
+		self._streams_down: set[str] = set()
+		# Per-instance tuning seeded from the module defaults so a test (or a
+		# sandbox tune) can shrink the debounce/backoff without monkeypatching the
+		# module — the module constants stay the documented [ASSUMED] anchor.
+		self._reconnect_debounce_s = _STREAM_RECONNECT_DEBOUNCE_SECONDS
+		self._reconnect_backoff_base_s = _STREAM_RECONNECT_BACKOFF_BASE_SECONDS
+		self._reconnect_backoff_cap_s = _STREAM_RECONNECT_BACKOFF_CAP_SECONDS
+		self._reconnect_ceiling = _STREAM_RECONNECT_RETRY_CEILING
+		# Injected seams (composition root, 05-08 Task 2): the 05-04 freeze-in-place
+		# halt entrypoint (fatal / exhausted -> HALTED + CRITICAL alert) and the
+		# pause/resume-on-disconnect callbacks (D-19). All None on the paper/backtest
+		# path (streams never start there).
+		self._halt_signal: Optional[Callable[[str], None]] = None
+		self._on_stream_down: Optional[Callable[[str], None]] = None
+		self._on_stream_up: Optional[Callable[[str], None]] = None
 
 	# --- symbol / time helpers ------------------------------------------------
 
@@ -374,10 +411,139 @@ class OkxExchange(AbstractExchange):
 		# D-07: the EXCHANGE emits the fill; MPSC-safe put from the connector loop thread (D-19).
 		self.global_queue.put(fill)
 
+	# --- reconnect supervisor (RES-01/D-19/D-20) -------------------------------
+
+	def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
+		"""Inject the 05-04 freeze-in-place halt entrypoint (D-20).
+
+		Called with reason ``'connector-fatal'`` when a stream hits a fatal connector
+		error (auth/permission) OR exhausts the reconnect retry ceiling. The halt
+		entrypoint owns the CRITICAL alert emission and binds only declared ErrorEvent
+		fields; the arm passes NO exception text so no secret leaks (Pitfall 16, T-05-27).
+		"""
+		self._halt_signal = halt_signal
+
+	def set_stream_state_listener(
+		self,
+		on_down: Callable[[str], None],
+		on_up: Callable[[str], None],
+	) -> None:
+		"""Inject the pause/resume-on-disconnect callbacks (D-19).
+
+		``on_down`` fires when a stream stays disconnected past the debounce window
+		(pause NEW order submission); ``on_up`` fires when it reconnects (the callback
+		owns the resume-only-after-fresh-REST-reconcile discipline). Both fire from the
+		connector loop thread, so they must not perform blocking venue I/O (Pitfall 9) —
+		the composition-root wiring flips a thread-safe flag only.
+		"""
+		self._on_stream_down = on_down
+		self._on_stream_up = on_up
+
+	async def _run_stream_supervisor(
+		self, consume: Callable[[str], Awaitable[None]], stream_name: str
+	) -> None:
+		"""Bounded-retry reconnect supervisor wrapping a stream consume-loop (D-19/D-20).
+
+		Runs ``consume`` (a forever ``while True: await watch_*()`` loop that only
+		returns by raising) under a bounded-retry wrapper:
+
+		- **transient** (``ccxt.NetworkError``/``RequestTimeout``/``DDoSProtection``) ->
+		  reconnect with exponential backoff (cap) after a short debounce, staying
+		  running (publish-and-continue). A sustained drop (past the debounce) pauses new
+		  submission (D-19); a sub-second blip that clears on the first retry does not.
+		- **fatal** (``ccxt.AuthenticationError``/``PermissionDenied``) OR the retry
+		  ceiling exhausted -> escalate to the injected halt entrypoint (HALTED +
+		  CRITICAL alert, reason ``'connector-fatal'``), never spin forever (D-20).
+
+		``asyncio.CancelledError`` is re-raised untouched so the connector's disconnect
+		can cancel the task cleanly (Pitfall 4 — no swallowed cancellation).
+		"""
+		import ccxt  # lazy: ccxt already transitively imported on the live path only
+		transient: tuple[type[BaseException], ...] = (
+			ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection)
+		fatal: tuple[type[BaseException], ...] = (
+			ccxt.AuthenticationError, ccxt.PermissionDenied)
+		while True:
+			try:
+				await consume(stream_name)
+				return  # a forever-loop returning cleanly is not expected — stop.
+			except asyncio.CancelledError:
+				raise  # cooperative teardown — never swallow.
+			except fatal as exc:
+				self._escalate_connector_halt(stream_name, exc, "fatal auth/permission error")
+				return
+			except transient as exc:
+				attempt = self._reconnect_attempts.get(stream_name, 0) + 1
+				self._reconnect_attempts[stream_name] = attempt
+				if attempt > self._reconnect_ceiling:
+					self._escalate_connector_halt(
+						stream_name, exc, "reconnect retry ceiling exhausted")
+					return
+				# Debounce first: a blip that clears on the first retry never pauses.
+				await asyncio.sleep(self._reconnect_debounce_s)
+				if attempt > 1:
+					# Still failing past the debounce window -> pause (D-19).
+					self._mark_stream_down(stream_name)
+				backoff = min(
+					self._reconnect_backoff_base_s * (2 ** (attempt - 1)),
+					self._reconnect_backoff_cap_s)
+				# Scrub (T-05-27): log the exception TYPE only, never str(exc) — a
+				# connector error may carry request context / a secret.
+				self.logger.warning(
+					"OKX %s stream dropped (%s) — reconnecting "
+					"(attempt %d/%d, backoff %.1fs)",
+					stream_name, type(exc).__name__, attempt,
+					self._reconnect_ceiling, backoff)
+				await asyncio.sleep(backoff)
+
+	def _escalate_connector_halt(self, stream_name: str, exc: BaseException, cause: str) -> None:
+		"""Halt the engine on an unrecoverable connector failure (D-20).
+
+		Scrub (T-05-27): the log carries the exception TYPE + a fixed cause string, never
+		``str(exc)``; the halt entrypoint is called with the fixed reason
+		``'connector-fatal'`` (no exception text), so no secret can reach the CRITICAL alert.
+		"""
+		self.logger.error(
+			"OKX %s stream unrecoverable (%s: %s) — halting engine",
+			stream_name, type(exc).__name__, cause)
+		if self._halt_signal is not None:
+			self._halt_signal("connector-fatal")
+
+	def _mark_stream_down(self, stream_name: str) -> None:
+		"""Record a sustained disconnect and pause new submission once (D-19)."""
+		if stream_name in self._streams_down:
+			return
+		self._streams_down.add(stream_name)
+		self.logger.warning(
+			"OKX %s stream disconnected — pausing new order submission", stream_name)
+		if self._on_stream_down is not None:
+			self._on_stream_down(stream_name)
+
+	def _on_stream_healthy(self, stream_name: str) -> None:
+		"""A successful ``watch_*`` batch: reset backoff and resume if we were paused (D-19).
+
+		Called by a consume-loop after each successful venue read. Resets the attempt
+		counter; on the transition out of a paused state it fires ``on_stream_up`` so the
+		composition root can resume submission only after a fresh REST reconcile.
+		"""
+		self._reconnect_attempts[stream_name] = 0
+		if stream_name in self._streams_down:
+			self._streams_down.discard(stream_name)
+			self.logger.info(
+				"OKX %s stream reconnected — resuming after REST reconcile", stream_name)
+			if self._on_stream_up is not None:
+				self._on_stream_up(stream_name)
+
 	async def _stream_fills(self) -> None:
-		"""Consume the venue fill stream forever, emitting a FillEvent per trade (D-07)."""
+		"""Consume the venue fill stream under the reconnect supervisor (D-07/D-19/D-20)."""
+		await self._run_stream_supervisor(self._consume_fills, "fills")
+
+	async def _consume_fills(self, stream_name: str) -> None:
+		"""Forever-loop: emit a FillEvent per venue trade (D-07); reconnect-supervised."""
 		while True:
 			trades = await self._connector.client.watch_my_trades()
+			# First success (incl. after a drop) resets backoff + resumes submission (D-19).
+			self._on_stream_healthy(stream_name)
 			for trade in trades:
 				# WR-02: a single malformed trade must not kill the forever-loop and
 				# silently drop every subsequent fill. Swallow-and-log per trade,
@@ -389,13 +555,18 @@ class OkxExchange(AbstractExchange):
 						"OKX fill translation failed — skipping trade", exc_info=True)
 
 	async def _stream_orders(self) -> None:
-		"""Consume the order-status stream for mirror reconciliation (status only).
+		"""Consume the order-status stream under the reconnect supervisor (status only).
 
 		The fill money crosses on ``watch_my_trades`` (``_stream_fills``); this loop tracks
 		order lifecycle transitions for logging/reconciliation and never mints money.
 		"""
+		await self._run_stream_supervisor(self._consume_orders, "orders")
+
+	async def _consume_orders(self, stream_name: str) -> None:
+		"""Forever-loop: log venue order-status updates; reconnect-supervised."""
 		while True:
 			orders = await self._connector.client.watch_orders()
+			self._on_stream_healthy(stream_name)
 			for order in orders:
 				self.logger.debug("OKX order update: %s", order)
 
