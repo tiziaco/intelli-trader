@@ -41,6 +41,8 @@ from itrader.core.money import to_money
 from itrader.events_handler.events import FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 
+from .drift import is_within_single_unit_tolerance
+
 if TYPE_CHECKING:
     from queue import Queue
 
@@ -52,6 +54,14 @@ if TYPE_CHECKING:
 # D-07: the machine-readable halt reason for an unresolved reconciliation (matches the
 # 05-04 halt vocabulary consumed by LiveTradingSystem.halt / get_status).
 _HALT_REASON = "reconciliation-unresolved"
+
+# Conservative precision for the symbol+side+price+qty FALLBACK leg match (D-05). The
+# venue-id-first match is the CONFIDENT path (exact id equality); the fallback only fires
+# when a leg has no persisted venue id, and a one-least-significant-unit tolerance guards
+# the venue-float→Decimal last-digit noise (mirrors drift.py's epsilon rationale). Kept
+# generous — an over-tight epsilon would misfire the fallback into a spurious per-bracket halt.
+_MATCH_PRICE_PRECISION = 2
+_MATCH_QTY_PRECISION = 8
 
 
 class VenueReconciler:
@@ -119,6 +129,11 @@ class VenueReconciler:
 
         # 4. halt-and-alert on a venue position with no stored intent (hand-opened).
         self._halt_on_orphan_positions(working)
+
+        # 5. re-adopt brackets from the venue resting set (D-05): re-link stored
+        #    parent/child legs, per-bracket halt on an unconfidently-linked leg.
+        venue_open_orders = self._fetch("fetch_open_orders")
+        self._relink_brackets(working, venue_open_orders)
 
     # ------------------------------------------------------------------ working set
     def _working_set(self) -> List["Order"]:
@@ -266,6 +281,110 @@ class VenueReconciler:
                     "Venue position %s (%s) has no stored intent — halting", symbol, qty)
                 self._halt_signal(_HALT_REASON)
                 return
+
+    # ------------------------------------------------------------------ bracket re-link (D-05)
+    def _relink_brackets(
+        self, working: List["Order"], venue_open_orders: Any
+    ) -> None:
+        """Re-adopt brackets from the venue resting set; per-bracket halt on an unconfident leg.
+
+        For each rehydrated bracket parent (an order carrying ``child_order_ids``), re-link
+        its still-resting legs against the venue open orders — match by the persisted
+        ``venue_order_id`` FIRST, then fall back to symbol+side+price+qty. A confident match
+        stamps the venue id onto the leg and persists it (so a subsequent restart re-links
+        by id — the Open Question 3 population path) and resumes OCO. A leg that cannot be
+        confidently re-linked escalates THAT bracket to halt-and-alert (D-05) — a per-bracket
+        halt, never a guess (T-05-22).
+        """
+        resting, resting_by_id = self._index_resting_orders(venue_open_orders)
+        for parent in working:
+            if not parent.child_order_ids:
+                continue
+            if not self._relink_bracket(parent, resting, resting_by_id):
+                self.logger.error(
+                    "Bracket %s has an unconfidently-linked leg — halting", parent.id)
+                self._halt_signal(_HALT_REASON)
+
+    @staticmethod
+    def _index_resting_orders(
+        venue_open_orders: Any,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+        """Return (resting-order list, {venue_id: resting_order}) from the venue open orders."""
+        resting: List[Dict[str, Any]] = []
+        by_id: Dict[str, Dict[str, Any]] = {}
+        if not isinstance(venue_open_orders, list):
+            return resting, by_id
+        for order in venue_open_orders:
+            if not isinstance(order, dict):
+                continue
+            resting.append(order)
+            venue_id = order.get("id")
+            if venue_id is not None:
+                by_id[str(venue_id)] = order
+        return resting, by_id
+
+    def _relink_bracket(
+        self,
+        parent: "Order",
+        resting: List[Dict[str, Any]],
+        resting_by_id: Dict[str, Dict[str, Any]],
+    ) -> bool:
+        """Re-link every still-resting leg of ``parent``; return False on an unconfident leg."""
+        for child_id in parent.child_order_ids:
+            child = self._store.get_order_by_id(child_id)
+            if child is None or not child.is_active:
+                # A terminalized / absent leg has nothing resting to re-link.
+                continue
+            matched = self._match_leg(child, resting, resting_by_id)
+            if matched is None:
+                return False
+            # Confident re-link: persist the venue id onto the leg (Open Question 3
+            # population) so the next restart re-links by id, and resume OCO.
+            venue_id = str(matched["id"])
+            if child.venue_order_id != venue_id:
+                child.venue_order_id = venue_id
+                self._store.update_order(child)
+        return True
+
+    def _match_leg(
+        self,
+        child: "Order",
+        resting: List[Dict[str, Any]],
+        resting_by_id: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Match a stored leg to a venue resting order — venue-id first, then attributes.
+
+        Returns the matched resting order, or ``None`` when the match is absent OR ambiguous
+        (more than one attribute-candidate) — an unconfident leg the caller must halt on.
+        """
+        # Venue-id-first (the confident path): an exact persisted-id equality.
+        if child.venue_order_id is not None:
+            by_id = resting_by_id.get(str(child.venue_order_id))
+            if by_id is not None:
+                return by_id
+        # Fallback: symbol + side + price + qty. Confident ONLY when exactly one candidate.
+        candidates = [order for order in resting if self._leg_attributes_match(child, order)]
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    @staticmethod
+    def _leg_attributes_match(child: "Order", resting_order: Dict[str, Any]) -> bool:
+        """Whether a venue resting order matches a stored leg on symbol+side+price+qty."""
+        if resting_order.get("symbol") != child.ticker:
+            return False
+        side = resting_order.get("side")
+        if side is None or str(side).lower() != child.action.value.lower():
+            return False
+        price = resting_order.get("price")
+        amount = resting_order.get("amount")
+        if price is None or amount is None:
+            return False
+        price_ok = is_within_single_unit_tolerance(
+            to_money(str(price)), to_money(child.price), _MATCH_PRICE_PRECISION)
+        qty_ok = is_within_single_unit_tolerance(
+            to_money(str(amount)), to_money(child.quantity), _MATCH_QTY_PRECISION)
+        return price_ok and qty_ok
 
     def _fetch(self, method_name: str) -> Any:
         """Run a venue REST read (``fetch_my_trades`` / ``fetch_open_orders``) via the connector."""
