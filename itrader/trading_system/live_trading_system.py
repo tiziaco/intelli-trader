@@ -27,12 +27,16 @@ from itrader.universe import Universe, derive_instruments, derive_membership
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, ErrorEvent
 
-# Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
-# (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the
-# env var directly here. A future D-live wiring would source this from Settings.
-# WR-10: no hardcoded credential fallback — an unset SYSTEM_DB_URL yields ""
-# and the system falls back to in-memory order storage with a loud warning.
-_SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")
+# Live operational store credential surface (D-live wiring completed). The live order +
+# signal store is selected by ENV-PRESENCE of a Postgres credential on the unified
+# ``ITRADER_DATABASE_*`` surface — ``ITRADER_DATABASE_PASSWORD`` (component-var arm) or the
+# ``ITRADER_DATABASE_URL`` verbatim escape hatch — and built from the unified ``SqlSettings``
+# Postgres arm, the SAME credential source Alembic ``migrations/env.py`` uses (one canonical
+# source; no separate legacy env-var seam). WR-10: no hardcoded credential fallback — an
+# unconfigured env falls back to in-memory order + signal storage with a loud warning. The
+# presence check reads ``os.getenv`` inside ``__init__`` (below) so it honors per-construction
+# env; it MUST gate BEFORE constructing ``SqlSettings(driver=POSTGRESQL_PSYCOPG2)``, which
+# RAISES ``ValidationError`` (``_require_pg_credentials``) when no credential is present.
 
 # WR-03: the SINGLE wiring source for the live OKX subscription. The OKX data
 # provider stamps this symbol/timeframe into every ClosedBar (the feed's ring key),
@@ -186,8 +190,8 @@ class LiveTradingSystem:
         from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
         self.feed = LiveBarFeed(provider=None, base_timeframe=to_timedelta('1d'))
         # Signal-store sink (Plan 05-03 / 05-06, D-11): the live signal store is
-        # wired TOGETHER with the order working set in the SYSTEM_DB_URL-gated store
-        # block below — both share ONE SqlBackend (sync-durable orders on the D-10
+        # wired TOGETHER with the order working set in the ITRADER_DATABASE_*-gated
+        # store block below — both share ONE SqlBackend (sync-durable orders on the D-10
         # path, the advisory signal store on the D-11 async/best-effort path). WR-03:
         # retain the store on self and expose accessors (mirroring the backtest
         # system) — a local variable would leave every captured SignalRecord
@@ -212,16 +216,26 @@ class LiveTradingSystem:
         # live-driven on the async/best-effort path (D-11 — signals are audit records,
         # NOT the restart working set). Both share ONE ``SqlBackend`` built here.
         #
-        # All SQL imports stay LAZY inside the SYSTEM_DB_URL-set arm (mirrors the OKX
+        # All SQL imports stay LAZY inside the Postgres arm (mirrors the OKX
         # lazy imports below) so the BACKTEST import path stays SQLAlchemy-free — the
         # recurring milestone inertness gate (tests/integration/test_okx_inertness.py).
-        if not _SYSTEM_DB_URL:
+        #
+        # Read the credential presence at __init__ time INSIDE the method (not module
+        # scope) so it honors per-construction env. CRITICAL: this env-presence check
+        # MUST gate BEFORE constructing SqlSettings — a bare
+        # SqlSettings(driver=POSTGRESQL_PSYCOPG2) with no password/url RAISES
+        # ValidationError via _require_pg_credentials, so construct-and-catch is NOT
+        # valid control flow here.
+        pg_password = os.getenv("ITRADER_DATABASE_PASSWORD", "")
+        pg_url = os.getenv("ITRADER_DATABASE_URL", "")
+        if not (pg_password or pg_url):
             # WR-10: fail loudly into the in-memory fallback instead of shipping a
             # default connection string with embedded credentials. Both the order
             # working set and the signal store fall back to in-memory — captured
             # orders/signals will NOT survive a restart.
             self.logger.warning(
-                "SYSTEM_DB_URL is not set — using in-memory order + signal storage "
+                "No Postgres credential in env (ITRADER_DATABASE_PASSWORD / "
+                "ITRADER_DATABASE_URL unset) — using in-memory order + signal storage "
                 "(orders/signals will NOT survive a restart)"
             )
             order_storage = OrderStorageFactory.create('backtest')
@@ -231,12 +245,12 @@ class LiveTradingSystem:
             # No SQL spine on the in-memory fallback — nothing to dispose at stop().
             self._system_db_backend: Optional[Any] = None
         else:
-            # CR-01/RECON-04: the operator set SYSTEM_DB_URL — honor it. Build ONE
-            # Postgres ``SqlBackend`` from the configured URL and drive the whole v1.6
-            # operational store off it. The SQL imports stay LAZY inside this arm so the
-            # backtest import path remains SQLAlchemy-free (GATE-01 inertness).
-            from pydantic import SecretStr
-
+            # CR-01/RECON-04: a Postgres credential is present on the unified
+            # ITRADER_DATABASE_* surface — honor it. Build ONE Postgres ``SqlBackend``
+            # from the unified ``SqlSettings`` Postgres arm (the SAME surface Alembic
+            # migrations/env.py uses) and drive the whole v1.6 operational store off it.
+            # The SQL imports stay LAZY inside this arm so the backtest import path
+            # remains SQLAlchemy-free (GATE-01 inertness).
             from itrader.config.sql import SqlDriver, SqlSettings
             from itrader.storage import SqlBackend
             from itrader.order_handler.storage.cached_sql_storage import (
@@ -244,10 +258,10 @@ class LiveTradingSystem:
             )
             from itrader.order_handler.storage.sql_storage import SqlOrderStorage
 
-            backend = SqlBackend(SqlSettings(
-                driver=SqlDriver.POSTGRESQL_PSYCOPG2,
-                url=SecretStr(_SYSTEM_DB_URL),
-            ))
+            # Mirror migrations/env.py:76 — no explicit url=; let pydantic-settings source
+            # ITRADER_DATABASE_* (component vars, default port 5544) or the
+            # ITRADER_DATABASE_URL verbatim escape hatch from env.
+            backend = SqlBackend(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
             # Sync-durable working set (D-10): order create/terminalize persists
             # store-first (persist-then-acknowledge, Pitfall 8) via the CachedSql
             # wrapper composing the untouched Phase-3 ``SqlOrderStorage`` — its
@@ -1079,7 +1093,7 @@ class LiveTradingSystem:
                 # Lazy-imported inside the OKX arm so the backtest import path stays
                 # SQL/async/connector-free (inertness gate). Guarded on the store
                 # exposing rehydrate() (the CachedSql live store; not the in-memory
-                # fallback) so an unset SYSTEM_DB_URL degrades cleanly.
+                # fallback) so an unconfigured ITRADER_DATABASE_* env degrades cleanly.
                 if hasattr(self._order_storage, 'rehydrate'):
                     from itrader.portfolio_handler.reconcile.venue_reconciler import (
                         VenueReconciler,

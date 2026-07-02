@@ -29,10 +29,10 @@ time is encoded uniformly via ``UtcIsoText`` (deterministic UTC-isoformat).
 **Single canonical credential source (T-01-15).** The ONE credential seam is the unified
 ``SqlSettings`` ``ITRADER_DATABASE_*`` surface (``password``/``url`` are ``SecretStr``),
 resolved lazily on the Postgres arm of ``SqlSettings.engine_url()``. This module adds NO new
-credential source. The legacy ``live_trading_system.py`` ``SYSTEM_DB_URL`` env var is a
-*separate* D-live seam reading a *different* variable; reconciling it onto ``SqlSettings``
-is document-and-deferred to the live-wiring phase (Open Q4, D-09) — it is intentionally
-not re-wired here, so exactly one canonical source exists for this store.
+credential source. The live composition root (``live_trading_system.py``) reads this SAME
+unified ``SqlSettings`` ``ITRADER_DATABASE_*`` surface for its operational store — the same
+source Alembic ``migrations/env.py`` uses — so exactly ONE canonical credential source exists
+across the store, the live runtime, and migrations.
 
 This file is ``mypy --strict`` clean and out of the D-sql override (GATE-02, D-09); no
 broad/module-level ignore was added.
