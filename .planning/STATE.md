@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: ready_to_plan
-stopped_at: Phase 03 complete (4/4) — ready to discuss Phase 4
-last_updated: 2026-07-01T20:54:28.084Z
-last_activity: 2026-07-01
+stopped_at: Phase 04 complete (4/4) — ready to discuss Phase 5
+last_updated: 2026-07-02T13:00:20.551Z
+last_activity: 2026-07-02 - Completed quick task 260702-m8d: Phase 04 code-review fix-now bucket
 progress:
   total_phases: 7
-  completed_phases: 3
-  total_plans: 16
-  completed_plans: 16
-  percent: 43
+  completed_phases: 4
+  total_plans: 20
+  completed_plans: 20
+  percent: 57
 ---
 
 # Project State
@@ -24,14 +24,14 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 4 — paper path (milestone dod)
+**Current focus:** Phase 5 — real/sandbox path + reconciliation + persistence live drive
 
 ## Current Position
 
-Phase: 4
+Phase: 5
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-01
+Last activity: 2026-07-02
 
 Progress: [██████████] 100%
 
@@ -80,7 +80,7 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 **Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 247 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- Total plans completed: 251 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
 - v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
@@ -147,6 +147,10 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 03-01: D-12 resolved — ClosedBar carries its own (symbol, timeframe) routing keys; live path stamps from self._symbol/self._timeframe, backfill path from method params (ad-hoc symbol correctness); keys never read from the untrusted venue row (T-03-01-TAMPER). Shared socket-free tests/unit/price/conftest.py fixtures (closed_bar, closed_bar_sequence, _StubProvider) stand up the LiveBarFeed offline matrix.
 - [Phase 03]: 03-02: LiveBarFeed(BarFeed) — capacity-sized deque ring per (symbol,timeframe) + FEED-04 monotonic guard (in-sequence/gap-backfill-replay/duplicate/revision/stale, D-06/D-07) + direct single-ticker BarEvent emission (D-02/D-03/D-04); dormant no-op generate_bar_event (D-05); public set_provider seam (D-01/D-13); TYPE_CHECKING ClosedBar import + absent from feed barrel keeps it hot-path-inert
 - [Phase ?]: 03-04: LiveBarFeed lazy-wired as the live driver at the LiveTradingSystem composition root (FEED-05) — provider-less unconditional construct + okx-arm set_provider injection (writes private _provider warmup reads) + set_bar_sink(feed.update); D-13 _LiveWarmupConsumer(max strategy.warmup) registered before bind so cache_capacity()==100 (Pitfall 1 guard); warmup OKX-gated before start_stream. Inertness probe extended to forbid live_bar_feed on the backtest path; oracle byte-exact.
+- [Phase 04]: 04-01: ReplayDataProvider = offline synchronous stand-in for OkxDataProvider replaying the golden CsvPriceStore as Decimal-edge ClosedBar dicts (to_money(str) edge, ts=int(index.value//1e6) epoch-ms bar-open, symbol/timeframe stamped from config not the row D-12); drop-in on set_bar_sink/fetch_ohlcv_backfill + synchronous replay_bar replacing the async _stream_candles (D-03); ClosedBar imported not redefined; golden rows via CsvPriceStore so iter is byte-identical to backtest (parity anchor D-01/D-02). PAPER-03/COV-01 fixture.
+- [Phase 04]: Paper venue reuses the 'simulated' SimulatedExchange as-is (D-04/D-05/D-06); run_paper_replay() drives golden bars synchronously through the real live seam with backtest per-tick + run-end discipline (parity by construction, D-01/D-09)
+- [Phase ?]: 04-03: RUN-01 runnable paper worker (scripts/run_live_paper.py) delivered per D-08 — offline run_paper_replay (CI-safe default) + opt-in okx manual smoke over start/stop/get_status; channel + web-framework wrapper deferred to Phase 5. COV-01 lifecycle half added (FL-13: clean startup / graceful thread-joining stop / status-before-start, exchange=paper offline).
+- [Phase ?]: 04-04: paper-parity DoD gate shipped (PAPER-04/COV-01) — one test drives run_paper_replay() AND a fresh backtest on the golden dataset, asserts trades+equity frame-equal EXACT (tz-normalized UTC); anchored to the fresh backtest not the frozen 46189 artifact (D-01), survives a backtest-loop rework; inertness _FORBIDDEN extended to replay_provider (D-12), oracle untouched
 
 ### Pending Todos
 
@@ -194,10 +198,15 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260701-l33 | Add `smoke` pytest marker (register + tag 3 files + `make test-smoke` + tagging rule) | 2026-07-01 | 40c13992 | [260701-l33-add-smoke-marker](./quick/260701-l33-add-smoke-marker/) |
+| 260702-m8d | Apply Phase 04 code-review fix-now bucket (IN-01..04, WR-05, WR-03, WR-02 window guard) + sync stale REQUIREMENTS.md | 2026-07-02 | 148836a6 | [260702-m8d-apply-phase-04-code-review-fix-now-bucke](./quick/260702-m8d-apply-phase-04-code-review-fix-now-bucke/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
 | Phase 03 P04 | 14min | 2 tasks | 4 files |
+| Phase 04 P01 | 6min | 2 tasks | 2 files |
+| Phase 04 P02 | 8min | 2 tasks | 1 files |
+| Phase 04 P03 | 6min | 2 tasks | 2 files |
+| Phase Phase 04 P04 P04 | 5min | 2 tasks | 2 files |
 
 ## Deferred Items
 
@@ -247,8 +256,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-01T20:19:49.825Z
-Stopped at: Completed 03-03-PLAN.md
+Last session: 2026-07-02T12:51:57.880Z
+Stopped at: Completed 04-04-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 

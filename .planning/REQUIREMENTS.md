@@ -84,17 +84,23 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Paper Path — Phase 4 (the milestone DoD)
 
-- [ ] **PAPER-01**: The paper execution adapter implements **`AbstractExchange`** (not `LiveConnector` —
-  paper has no venue session, so no connector) by composing the **reused pure `MatchingEngine`** + the
-  shared cost helper + `SimulatedAccount`, with **bar-based fills only** (LX-06/LX-13) and no OKX I/O.
-- [ ] **PAPER-02**: Fee/slippage is extracted into a shared `apply_costs` helper used by **both**
-  `SimulatedExchange` and the paper adapter (one cost core, byte-exact) — no dual fill-pricing drift.
-- [ ] **PAPER-03**: `LiveTradingSystem` is wired end-to-end on the paper path (live feed → strategy →
+- [x] **PAPER-01**: The paper exchange is the **reused `SimulatedExchange` as-is** (D-04, revises
+  LX-06/PAPER-01) — it already implements **`AbstractExchange`**, is account-free (fills flow
+  `FillEvent` → `PortfolioHandler.on_fill`), and is wired under the `'simulated'` key. There is **no new
+  adapter / `PaperExchange` class and no `MatchingEngine`/`apply_costs` re-composition**; **bar-based
+  fills only** and no OKX I/O.
+- [x] **PAPER-02**: The `apply_costs` extraction is **dropped** (D-05) — PAPER-02 is
+  **satisfied-by-reuse**: there is exactly ONE fill-pricing implementation
+  (`SimulatedExchange._emit_fill`, UNTOUCHED), so "no dual fill-pricing drift" holds by construction
+  (nothing to drift).
+- [x] **PAPER-03**: `LiveTradingSystem` is wired end-to-end on the paper path (live feed → strategy →
   order → paper fill → `SimulatedAccount`/`Portfolio`), with the determinism seams (seeded RNG +
   business-time stamping) threaded through.
-- [ ] **PAPER-04**: **Paper-parity gate (DoD)** — replaying the fixed golden dataset through the
-  live-paper path yields the backtest oracle **byte-exact** (134 / `46189.87730727451`,
-  `check_exact=True`). (LX-11)
+- [x] **PAPER-04**: **Paper-parity gate (DoD)** — replaying the fixed golden dataset through the
+  live-paper path yields trades + equity **exactly equal to a fresh backtest run on the same data**
+  (D-01, `check_exact=True`, no tolerance) — **NOT pinned to the frozen `46189…` artifact**, so it
+  survives a backtest-loop rework. The transitive lock (paper == backtest == `46189…`) is held by the
+  separate, unchanged oracle test (`test_backtest_oracle.py`). (LX-11)
 
 ### Real / Sandbox Path + Reconciliation + Persistence Live-Drive — Phase 5
 
@@ -123,15 +129,16 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Cross-Cutting (woven through Phases 2–5; each has one definite home phase)
 
-- [ ] **RUN-01** (home: Phase 4): The live runtime/deployment topology is decided (LX-15) **before
+- [x] **RUN-01** (home: Phase 4): The live runtime/deployment topology is decided (LX-15) **before
   Phase 4 wires the runtime** — a separate worker process (ship option (b) architected as (c) with
-  N=1), with Postgres `LISTEN/NOTIFY` as the default command/status channel (zero new dep, reuses the
-  v1.6 store). Decided in the Phase 3→4 handoff; architected for Phases 2–5.
+  N=1). Phase 4 ships ONLY the runnable worker + start/stop/status lifecycle; the Postgres
+  `LISTEN/NOTIFY` command/status channel (zero new dep, reuses the v1.6 store) + the FastAPI wrapper are
+  **deferred to Phase 5** (D-08). Decided in the Phase 3→4 handoff; architected for Phases 2–5.
 - [ ] **RES-01** (home: Phase 5): Live resilience is in place — websocket reconnect with gap recovery,
   rate-limit handling (coordinated across ccxt + native paths), partial-fill handling, and stream-gap
   recovery; `LiveTradingSystem`'s publish-and-continue error policy is hardened for live. Pieces build
   across Phases 2 (rate-limit) / 3 (reconnect+gap-recovery, FEED-04); fully verified on the real path.
-- [ ] **COV-01** (home: Phase 4): The surviving live surface (`LiveTradingSystem` + the engine command
+- [x] **COV-01** (home: Phase 4): The surviving live surface (`LiveTradingSystem` + the engine command
   surface from ACCT-05) has test coverage (**FL-13**) via mocked/recorded connectors, with
   `pytest-asyncio` configured (`asyncio_mode`, `asyncio_default_fixture_loop_scope`) so
   `filterwarnings=["error"]` stays green — the global filter is never relaxed. Established on the first
@@ -198,10 +205,10 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | FEED-03 | Phase 3 | Complete |
 | FEED-04 | Phase 3 | Complete |
 | FEED-05 | Phase 3 | Complete |
-| PAPER-01 | Phase 4 | Pending |
-| PAPER-02 | Phase 4 | Pending |
-| PAPER-03 | Phase 4 | Pending |
-| PAPER-04 | Phase 4 | Pending |
+| PAPER-01 | Phase 4 | Complete |
+| PAPER-02 | Phase 4 | Complete |
+| PAPER-03 | Phase 4 | Complete |
+| PAPER-04 | Phase 4 | Complete |
 | RECON-01 | Phase 5 | Pending |
 | RECON-02 | Phase 5 | Pending |
 | RECON-03 | Phase 5 | Pending |
@@ -210,9 +217,9 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | RECON-06 | Phase 5 | Pending |
 | UNIV-01 | Phase 6 | Pending |
 | UNIV-02 | Phase 6 | Pending |
-| RUN-01 | Phase 4 (home; decided in Phase 3→4 handoff, cross-cutting 2–5) | Pending |
+| RUN-01 | Phase 4 (home; decided in Phase 3→4 handoff, cross-cutting 2–5) | Complete |
 | RES-01 | Phase 5 (home; pieces build in Phases 2–3, cross-cutting 2–5) | Pending |
-| COV-01 | Phase 4 (home; infra in Phase 2, extends to Phase 5, cross-cutting 1–5) | Pending |
+| COV-01 | Phase 4 (home; infra in Phase 2, extends to Phase 5, cross-cutting 1–5) | Complete |
 
 **Coverage:**
 - v1 requirements: 32 total (29 phase-specific + 3 cross-cutting)

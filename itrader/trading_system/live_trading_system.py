@@ -2,7 +2,6 @@ import os
 import queue
 import sys
 import threading
-import time
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
@@ -25,7 +24,7 @@ from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.universe import Universe, derive_instruments, derive_membership
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.events import EventType, TimeEvent, OrderEvent, ErrorEvent
+from itrader.events_handler.events import EventType, ErrorEvent
 
 # Live system DB URL (D-live deferred). The flat config.py shadow + its ``Config`` class
 # (which read SYSTEM_DB_URL from env) were deleted in the M2b config collapse; read the
@@ -43,6 +42,27 @@ _SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")
 # Settings; today they are the one shared constant.
 _OKX_STREAM_SYMBOL = "BTC/USDT"
 _OKX_STREAM_TIMEFRAME = "1d"
+
+# Phase 4 (D-02/D-09): the SINGLE wiring source for the paper replay subscription.
+# The ReplayDataProvider stamps this symbol/timeframe into every replayed ClosedBar
+# (the feed's ring key), and run_paper_replay() queries newest_bar() on the same
+# symbol for the bar-open stamp. The paper ticker MUST be the universe-member form
+# "BTCUSD" (what the strategy's window() queries), NOT the OKX venue form "BTC/USDT":
+# a mismatch surfaces only as a MissingPriceDataError at the first window() call
+# (LiveBarFeed._find_ring). This is the symbol-form trap the OKX arm guards against
+# with its wiring-time membership assertion.
+_PAPER_STREAM_SYMBOL = "BTCUSD"
+_PAPER_STREAM_TIMEFRAME = "1d"
+
+# WR-02 (assertion half): the canonical golden window the paper-parity gate diffs
+# against. These are the EXACT literals test_paper_parity.py constructs the backtest
+# with (start_date="2018-01-01", end_date="2026-06-03"), which today coincide with the
+# CsvPriceStore class defaults the replay store falls back to. run_paper_replay asserts
+# the replay store's effective window/symbol equals these at wiring time so a future
+# CsvPriceStore default change or window drift fails loudly here instead of surfacing as
+# a confusing count-equality diff in the parity test.
+_PAPER_EXPECTED_START = "2018-01-01"
+_PAPER_EXPECTED_END = "2026-06-03"
 
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
@@ -269,6 +289,9 @@ class LiveTradingSystem:
         self._okx_exchange: Optional[Any] = None
         self._okx_data_provider: Optional[Any] = None
         self._venue_account: Optional[Any] = None
+        # Phase 4 (D-02): paper venue sentinel — None for any non-paper venue so
+        # run_paper_replay() can fail loudly if invoked on a mis-wired system.
+        self._replay_provider: Optional[Any] = None
         if self.exchange == 'okx':
             from itrader.connectors import OkxConnector
             from itrader.config.okx_settings import OkxSettings
@@ -303,6 +326,36 @@ class LiveTradingSystem:
             # Wire the provider's confirm-gated closed-bar sink to the feed's
             # monotonic-guard ingest so every ClosedBar drives feed.update() -> BarEvent.
             self._okx_data_provider.set_bar_sink(self.feed.update)
+
+        elif self.exchange == 'paper':
+            # ------------------------------------------------------------------
+            # Paper venue wiring (Phase 4, D-02/D-04/D-05/D-06/D-09 — composition
+            # root). The paper path REUSES the already-constructed 'simulated'
+            # SimulatedExchange AS-IS (fetched at line 198): it already implements
+            # AbstractExchange, holds no Account (D-06 — fills flow FillEvent ->
+            # PortfolioHandler.on_fill), and ExecutionHandler already routes on_order
+            # by event.exchange and fans on_market_data over self.exchanges.items(),
+            # so the LiveBarFeed BarEvents reach it unchanged (D-04). There is NO new
+            # exchange/adapter class and NO cost-model extraction: with one shared
+            # fill-pricing implementation (the simulated exchange's, UNTOUCHED) there
+            # is nothing to drift, so PAPER-02 is satisfied-by-reuse (D-05).
+            #
+            # The genuinely new surface is the OFFLINE, SYNCHRONOUS replay data arm:
+            # a ReplayDataProvider replaying the golden CsvPriceStore as Decimal-edge
+            # ClosedBar dicts through the SAME Phase-3 feed seam the OKX arm uses. The
+            # import is LAZY inside this arm (mirrors the OKX/LiveBarFeed lazy imports)
+            # so the BACKTEST import path never pulls it — the inertness gate (D-12).
+            from itrader.price_handler.providers.replay_provider import ReplayDataProvider
+
+            self._replay_provider = ReplayDataProvider(
+                symbol=_PAPER_STREAM_SYMBOL, timeframe=_PAPER_STREAM_TIMEFRAME)
+            # Inject the replay provider into the LIVE feed via the PUBLIC setter — it
+            # assigns self._provider (the private attr warmup()/gap-backfill read); a
+            # bare self.feed.provider = ... would leave self._provider None. Then wire
+            # its sink to feed.update so each replayed ClosedBar drives
+            # feed.update() -> BarEvent onto the queue (the real D-02 seam).
+            self.feed.set_provider(self._replay_provider)
+            self._replay_provider.set_bar_sink(self.feed.update)
 
         # WR-05: install the documented live error policy (publish-and-continue).
         # The base _on_handler_error re-raises (backtest fail-fast); the live
@@ -379,9 +432,10 @@ class LiveTradingSystem:
             if event_type:
                 self._stats['events_processed'] += 1
                 self._stats['last_event_time'] = datetime.now(UTC).isoformat()
-                
-                # TODO: Add more specific event type handling if needed like 'ORDER_FILLED' 'ORDER_CREATED' etc...
-                if event_type == 'ORDER':
+
+                # IN-04: compare against the enum name (caller passes event.type.name,
+                # so EventType.ORDER.name == 'ORDER' holds the same str contract).
+                if event_type == EventType.ORDER.name:
                     self._stats['orders_executed'] += 1
     
     def _initialize_live_session(self):
@@ -464,6 +518,97 @@ class LiveTradingSystem:
             self._update_status(SystemStatus.ERROR, str(e))
             raise
     
+    def run_paper_replay(self) -> None:
+        """Drive the golden dataset E2E through the live-paper mechanism, synchronously.
+
+        The OFFLINE, single-thread paper driver (D-03): it replays the golden bars
+        one-by-one through the real Phase-3 live seam (replay provider -> feed.update
+        -> BarEvent -> queue) using the EXACT per-tick + run-end discipline of the
+        backtest runner (backtest_runner._run_backtest) — but BAR-driven, not
+        TimeGenerator-driven. There is NO daemon thread and NO start()/stop() call:
+        this is the deterministic, CI-runnable path the 04-04 parity gate diffs
+        against a fresh backtest.
+
+        Determinism is by construction (D-09): the seeded random.Random already lives
+        in the shared ExecutionHandler (config.performance.rng_seed=42) injected into
+        the reused SimulatedExchange — identical to backtest — and every bar's time is
+        the venue/CSV bar-open stamp the feed built (feed.newest_bar(...).time), never
+        wall-clock.
+        """
+        if self._replay_provider is None:
+            raise ConfigurationError(
+                config_key="exchange",
+                config_value=self.exchange,
+                reason=(
+                    "run_paper_replay() requires the paper venue (the replay provider "
+                    "is not wired) — construct LiveTradingSystem(exchange='paper')."))
+
+        # WR-02 (assertion half, no structural refactor): assert the replay store's
+        # effective window/symbol equals the canonical golden window the backtest in
+        # test_paper_parity.py is constructed with. The two paths are wired from
+        # different sources (test literals vs CsvPriceStore class defaults) and only
+        # happen to agree today — so a future default change or window drift fails
+        # loudly HERE with a clear ConfigurationError instead of surfacing as a
+        # confusing count-equality diff deep in the parity test.
+        _store = self._replay_provider._store
+        if (_store.start_date != _PAPER_EXPECTED_START
+                or _store.end_date != _PAPER_EXPECTED_END
+                or self._replay_provider._symbol != _PAPER_STREAM_SYMBOL):
+            raise ConfigurationError(
+                config_key="paper_replay_window",
+                config_value=(
+                    f"({_store.start_date}, {_store.end_date}, "
+                    f"{self._replay_provider._symbol})"),
+                reason=(
+                    f"replay store window/symbol drifted from the backtest parity "
+                    f"window: expected ({_PAPER_EXPECTED_START}, {_PAPER_EXPECTED_END}, "
+                    f"{_PAPER_STREAM_SYMBOL}) but got ({_store.start_date}, "
+                    f"{_store.end_date}, {self._replay_provider._symbol}). Align the "
+                    "replay store window/symbol with the parity backtest."))
+
+        # Step 1 — session init (ORDER-SENSITIVE): derive membership/instruments,
+        # inject the Universe into the 'simulated' exchange + order/portfolio handlers,
+        # register the _LiveWarmupConsumer that sizes cache_capacity() to the max
+        # strategy warmup (100 for SMA_MACD — WITHOUT it the ring collapses to 1 and
+        # the run yields zero trades, Pitfall 1), and bind(global_queue, members). The
+        # OKX symbol-membership assertion inside is gated to exchange=='okx', so paper
+        # skips it.
+        self._initialize_live_session()
+
+        # Step 2 — synchronous per-bar drive (mirror backtest_runner._run_backtest
+        # 145-158, BAR-driven): per bar, in this order,
+        #   (a) replay_bar -> registered sink self.feed.update -> BarEvent on queue,
+        #   (b) process_events() drains BAR -> SIGNAL -> ORDER -> FILL in-thread,
+        #   (c) a DIRECT record_metrics per active portfolio using the feed's own
+        #       bar-open stamp (Trap 4 — backtest calls record_metrics directly, never
+        #       via an event reroute). bar_time is tz-aware UTC bar-open (D-09).
+        for cb in self._replay_provider.iter_closed_bars():
+            self._replay_provider.replay_bar(cb)
+            self.event_handler.process_events()
+            newest = self.feed.newest_bar(_PAPER_STREAM_SYMBOL)
+            if newest is None:
+                continue
+            # WR-03: only record when the feed's newest-DELIVERED bar IS the bar
+            # replayed THIS iteration. If the LiveBarFeed monotonic guard dropped
+            # this bar (stale/duplicate/off-grid/revision), newest holds the PREVIOUS
+            # bar's stamp — recording it would re-stamp an already-recorded timestamp
+            # (a duplicate/stale equity point). Compare the feed stamp against the
+            # replayed bar-open (cb["ts"], epoch-ms) and skip on mismatch. On the
+            # contiguous golden dataset no bar is ever dropped, so newest always
+            # equals the replayed bar and every bar records exactly once (byte-exact).
+            if int(newest.time.timestamp() * 1000) != cb["ts"]:
+                continue
+            bar_time = newest.time
+            for portfolio in self.portfolio_handler.get_active_portfolios():
+                portfolio.record_metrics(bar_time)
+
+        # Step 3 — run-end time-in-force sweep (byte-exact parity with
+        # backtest_runner 159-169): expire every still-resting order, then ONE final
+        # process_events() drain clears them through the exchange. No record_metrics
+        # after the sweep — the last per-bar record_metrics was the final equity point.
+        self.order_handler.expire_all_resting()
+        self.event_handler.process_events()
+
     def _event_processing_loop(self):
         """
         The main event processing loop that runs in a separate thread.

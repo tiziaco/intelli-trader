@@ -44,6 +44,10 @@ _FORBIDDEN = (
     # hot path. If a future edit hoists it to module scope this probe fails loudly,
     # protecting the oracle byte-exactness + the W1/W2 perf gate.
     "itrader.price_handler.feed.live_bar_feed",
+    # Phase 4 (D-12): the paper replay provider is lazy-imported inside the
+    # LiveTradingSystem(exchange='paper') arm only — it must NEVER be pulled onto
+    # the backtest hot path (protects the oracle byte-exactness + the W1/W2 perf gate).
+    "itrader.price_handler.providers.replay_provider",
 )
 leaked = [name for name in _FORBIDDEN if name in sys.modules]
 assert not leaked, (
