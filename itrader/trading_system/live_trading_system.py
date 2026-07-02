@@ -167,13 +167,13 @@ class LiveTradingSystem:
         # its OWN concrete dormant no-op generate_bar_event (D-05).
         from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
         self.feed = LiveBarFeed(provider=None, base_timeframe=to_timedelta('1d'))
-        # Signal-store sink (Plan 05-03, D-07/D-12): no persistent backend in
-        # v1.1, so mirror the in-memory order-storage fallback above — captured
-        # signals will NOT survive a restart until a persistent backend lands.
-        # WR-03: retain the store on self and expose accessors (mirroring the
-        # backtest system) — a local variable would leave every captured
-        # SignalRecord permanently unreachable (a write-only accumulation).
-        self._signal_store = SignalStorageFactory.create('backtest')
+        # Signal-store sink (Plan 05-03 / 05-06, D-11): the live signal store is
+        # wired TOGETHER with the order working set in the SYSTEM_DB_URL-gated store
+        # block below — both share ONE SqlBackend (sync-durable orders on the D-10
+        # path, the advisory signal store on the D-11 async/best-effort path). WR-03:
+        # retain the store on self and expose accessors (mirroring the backtest
+        # system) — a local variable would leave every captured SignalRecord
+        # permanently unreachable (a write-only accumulation).
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         self.portfolio_handler = PortfolioHandler(self.global_queue)
         # WR-04: declare the universe attribute as a clean "not yet wired"
@@ -183,34 +183,71 @@ class LiveTradingSystem:
         # instead of returning None — an attribute-existence trap for D-live.
         self.universe: Optional[Universe] = None
         
-        # Create order storage for live trading (PostgreSQL)
-        # Note: For now using in-memory until Phase 2 is complete
+        # ------------------------------------------------------------------
+        # v1.6 operational store live-drive (05-06, RECON-04, D-10/D-11).
+        #
+        # Complete the deferred v1.6 D-01/RETAIN-03 wiring: drive the operational
+        # store off the real feed, SPLIT by durability. The SYNC-DURABLE working set
+        # (order lifecycle — create/terminalize) persists store-first via
+        # ``CachedSqlOrderStorage`` so it survives a crash for a correct two-sided
+        # restart (D-10). The DERIVED / advisory state (the signal store) is
+        # live-driven on the async/best-effort path (D-11 — signals are audit records,
+        # NOT the restart working set). Both share ONE ``SqlBackend`` built here.
+        #
+        # All SQL imports stay LAZY inside the SYSTEM_DB_URL-set arm (mirrors the OKX
+        # lazy imports below) so the BACKTEST import path stays SQLAlchemy-free — the
+        # recurring milestone inertness gate (tests/integration/test_okx_inertness.py).
         if not _SYSTEM_DB_URL:
-            # WR-10: fail loudly into the in-memory fallback instead of
-            # shipping a default connection string with embedded credentials.
+            # WR-10: fail loudly into the in-memory fallback instead of shipping a
+            # default connection string with embedded credentials. Both the order
+            # working set and the signal store fall back to in-memory — captured
+            # orders/signals will NOT survive a restart.
             self.logger.warning(
-                "SYSTEM_DB_URL is not set — using in-memory order storage "
-                "(orders will NOT survive a restart)"
+                "SYSTEM_DB_URL is not set — using in-memory order + signal storage "
+                "(orders/signals will NOT survive a restart)"
             )
             order_storage = OrderStorageFactory.create('backtest')
+            # create_in_memory() (not create('backtest')) — the stale unconditional
+            # backtest signal wiring is gone; the live-driven store is on the D-11 arm above.
+            self._signal_store = SignalStorageFactory.create_in_memory()
+            # No SQL spine on the in-memory fallback — nothing to dispose at stop().
+            self._system_db_backend: Optional[Any] = None
         else:
-            # CR-01: the operator set SYSTEM_DB_URL — honor it. Build a Postgres backend
-            # from the configured URL and INJECT it into the factory, instead of calling
-            # create('live') with no backend (which silently materialized a SQLite :memory:
-            # store — money decay + no durability + the configured URL discarded). The SQL
-            # imports stay LAZY inside this 'live' arm so the backtest import path remains
-            # SQLAlchemy-free (GATE-01 inertness). Phase 4 owns the shared operational-backend
-            # composition root; this is the interim Postgres-or-raise (no SQLite fallback).
+            # CR-01/RECON-04: the operator set SYSTEM_DB_URL — honor it. Build ONE
+            # Postgres ``SqlBackend`` from the configured URL and drive the whole v1.6
+            # operational store off it. The SQL imports stay LAZY inside this arm so the
+            # backtest import path remains SQLAlchemy-free (GATE-01 inertness).
             from pydantic import SecretStr
 
             from itrader.config.sql import SqlDriver, SqlSettings
             from itrader.storage import SqlBackend
+            from itrader.order_handler.storage.cached_sql_storage import (
+                CachedSqlOrderStorage,
+            )
+            from itrader.order_handler.storage.sql_storage import SqlOrderStorage
 
             backend = SqlBackend(SqlSettings(
                 driver=SqlDriver.POSTGRESQL_PSYCOPG2,
                 url=SecretStr(_SYSTEM_DB_URL),
             ))
-            order_storage = OrderStorageFactory.create('live', backend=backend)
+            # Sync-durable working set (D-10): order create/terminalize persists
+            # store-first (persist-then-acknowledge, Pitfall 8) via the CachedSql
+            # wrapper composing the untouched Phase-3 ``SqlOrderStorage`` — its
+            # ``rehydrate()`` rebuilds the open set on restart. Constructed EXPLICITLY
+            # here (rather than via ``OrderStorageFactory.create('live')``) so the
+            # store-first working-set wrapper is visible at the composition root.
+            order_storage = CachedSqlOrderStorage(SqlOrderStorage(backend))
+            # Retain the shared spine so stop() can dispose its connection pool (Pitfall 4 —
+            # an undisposed engine leaks a socket / ResourceWarning under filterwarnings=error).
+            self._system_db_backend = backend
+            # Async/best-effort derived state (D-11): the signal store is live-driven
+            # (``CachedSqlSignalStorage`` over the SAME spine, via the factory's 'live'
+            # arm). Signals are advisory audit records, NOT the restart working set, and
+            # are persisted on the engine (queue-draining) thread — never inside a
+            # connector asyncio coroutine (Pitfall 9) — so a write can never stall the
+            # loop. Keep-only-measured: no async buffering is built unless a live stall
+            # is profiled (D-10).
+            self._signal_store = SignalStorageFactory.create('live', backend=backend)
         
         # Execution handler constructed BEFORE the order handler so the
         # admission gate's commission estimator can adapt the simulated
@@ -523,7 +560,7 @@ class LiveTradingSystem:
                 # so EventType.ORDER.name == 'ORDER' holds the same str contract).
                 if event_type == EventType.ORDER.name:
                     self._stats['orders_executed'] += 1
-    
+
     def _initialize_live_session(self):
         """
         Initialize the live trading session by deriving membership and
@@ -884,6 +921,16 @@ class LiveTradingSystem:
                     connector.disconnect()
                 except Exception as e:
                     self.logger.error(f'Error disconnecting OKX connector: {e}')
+            # 05-06: dispose the operational SQL spine (the CachedSql* stores compose it)
+            # so its connection pool is closed at shutdown — an undisposed engine leaks a
+            # socket / ResourceWarning under filterwarnings=["error"]. Safe no-op when the
+            # in-memory fallback was used (backend is None). Runs on every return path.
+            backend = getattr(self, '_system_db_backend', None)
+            if backend is not None:
+                try:
+                    backend.dispose()
+                except Exception as e:
+                    self.logger.error(f'Error disposing operational SQL backend: {e}')
     
     def is_running(self) -> bool:
         """
