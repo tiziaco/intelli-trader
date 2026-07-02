@@ -341,3 +341,84 @@ def test_pause_does_not_fire_while_halted(monkeypatch: Any) -> None:
     status = system.get_status()
     assert status["status"] == SystemStatus.HALTED.value
     assert status["paused"] is False
+
+
+# --- WR-04: resume snapshots venue truth before clearing the pause ------------
+
+
+def test_resume_snapshots_before_clearing_pause(monkeypatch: Any) -> None:
+    """Resume takes a fresh REST snapshot BEFORE clearing the pause; a raise stays paused (WR-04).
+
+    Proves the honest resume path: ``_maybe_resume_after_reconnect`` refreshes venue
+    truth via ``VenueAccount.snapshot()`` and only then clears the pause — and a snapshot
+    that RAISES leaves the pause in place and re-sets the resume flag (never resume blind).
+    A blind mid-session ``VenueReconciler.reconcile()`` would spuriously HALT on legitimate
+    positions from filled non-bracket orders, so resume deliberately snapshots only.
+    """
+    system = _live_system(monkeypatch)
+    venue = MagicMock(name="venue_account")
+    system._venue_account = venue
+
+    # Happy path: pause, flag a resume, drain it — snapshot runs, pause clears.
+    system.pause_submission("paused-on-disconnect")
+    system._pending_stream_resume.set()
+    system._maybe_resume_after_reconnect()
+    venue.snapshot.assert_called_once()
+    assert system.get_status()["paused"] is False
+
+    # Failure path: a snapshot that raises leaves the system paused and re-sets the flag.
+    system.pause_submission("paused-on-disconnect")
+    venue.snapshot.reset_mock()
+    venue.snapshot.side_effect = RuntimeError("venue unreachable")
+    system._pending_stream_resume.set()
+    system._maybe_resume_after_reconnect()
+    venue.snapshot.assert_called_once()
+    assert system.get_status()["paused"] is True          # never resume blind
+    assert system._pending_stream_resume.is_set()          # retried on next iteration
+
+
+# --- WR-01: concurrent halt fires exactly one CRITICAL alert ------------------
+
+
+def test_concurrent_halt_fires_single_alert(monkeypatch: Any) -> None:
+    """N concurrent halt() callers fire exactly ONE CRITICAL alert; first reason wins (WR-01).
+
+    The atomic single-lock check-and-set guarantees only the winning caller flips the
+    status and emits. Reverting halt() to the old two-acquisition form (guard on
+    ``self._status`` but flip in a separate ``_update_status`` lock) makes multiple
+    callers pass the guard and this test FAIL (many CRITICAL ErrorEvents enqueued).
+    """
+    import threading
+
+    system = _live_system(monkeypatch)
+
+    n = 32
+    reasons = [f"drift-{i}" for i in range(n)]
+    barrier = threading.Barrier(n)
+
+    def _halt(reason: str) -> None:
+        barrier.wait()                                     # maximise the race window
+        system.halt(reason)
+
+    threads = [threading.Thread(target=_halt, args=(r,)) for r in reasons]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Exactly ONE CRITICAL EngineHalted ErrorEvent was enqueued despite N callers.
+    critical_halts = []
+    while not system.global_queue.empty():
+        ev = system.global_queue.get_nowait()
+        if (
+            getattr(ev, "type", None) == EventType.ERROR
+            and getattr(ev, "severity", None) == ErrorSeverity.CRITICAL
+            and getattr(ev, "error_type", None) == "EngineHalted"
+        ):
+            critical_halts.append(ev)
+
+    assert len(critical_halts) == 1
+    # First halt wins — the winning reason is one of the racers and matches halt_reason.
+    assert system._halt_reason in reasons
+    assert f"reason={system._halt_reason}" in critical_halts[0].error_message
+    assert system.get_status()["status"] == SystemStatus.HALTED.value

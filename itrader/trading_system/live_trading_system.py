@@ -397,7 +397,8 @@ class LiveTradingSystem:
             # venue stream arms. A fatal connector error or an exhausted retry ceiling
             # escalates to the freeze-in-place halt (reason='connector-fatal', HALTED +
             # CRITICAL alert); a sustained disconnect pauses NEW submission and a
-            # reconnect resumes it only after a fresh REST reconcile (engine thread).
+            # reconnect resumes it only after a fresh REST balance/position snapshot
+            # (engine thread) — NOT a full two-sided reconcile (WR-04, see below).
             # The pause/resume callbacks fire from the connector loop thread, so they
             # only flip thread-safe flags — no blocking venue I/O there (Pitfall 9).
             self._okx_exchange.set_halt_signal(self.halt)
@@ -526,11 +527,22 @@ class LiveTradingSystem:
             Machine-readable halt reason (D-07) ∈ {drift,
             reconciliation-unresolved, connector-fatal, paused-on-disconnect}.
         """
+        # WR-01: atomic check-and-set. The status FLIP happens under the SAME
+        # _status_lock acquisition as the guard, so two concurrent halt() callers can
+        # never BOTH pass the guard. The old form set _halt_reason here but flipped the
+        # status in a SECOND _update_status lock acquisition — both callers saw a
+        # non-HALTED status, both clobbered halt_reason and both fired the CRITICAL
+        # alert. Only the winner (the first to flip the status) reaches the emit below.
         with self._status_lock:
             if self._status == SystemStatus.HALTED:
                 return  # already halted — first reason wins (idempotent).
+            old_status = self._status
+            self._status = SystemStatus.HALTED
             self._halt_reason = reason
-        self._update_status(SystemStatus.HALTED, f'halt: {reason}')
+            self._last_error = f'halt: {reason}'
+        # Winner only past here. Notify + emit the SINGLE CRITICAL alert OUTSIDE the
+        # lock (status_callback / queue.put must never run under _status_lock).
+        self._notify_status_change(old_status, SystemStatus.HALTED, f'halt: {reason}')
         # D-06: CRITICAL egress — routed through the EventHandler's ERROR route to
         # the injected alert sink. Only declared ErrorEvent fields are bound.
         self.global_queue.put(ErrorEvent(
@@ -560,7 +572,8 @@ class LiveTradingSystem:
 
         Distinct from ``halt()``: this is a REVERSIBLE quiesce — streaming, reconciling
         and persisting continue, existing positions/orders are untouched, and
-        ``resume_submission()`` (after reconnect + a fresh REST reconcile) clears it. A
+        ``resume_submission()`` (after reconnect + a fresh REST balance/position
+        snapshot) clears it. A
         terminal HALT supersedes a pause, so this is a no-op while HALTED. Idempotent
         (a second pause with a new reason keeps the first). Thread-safe (a locked flag
         flip) so the connector-loop reconnect callback can call it without blocking I/O.
@@ -579,17 +592,19 @@ class LiveTradingSystem:
             self._paused_reason = reason
         self.logger.warning(
             'Order submission paused (reason=%s) — new SIGNAL/ORDER suppressed until '
-            'reconnect + REST reconcile; positions/orders untouched', reason)
+            'reconnect + a fresh REST balance/position snapshot; positions/orders '
+            'untouched', reason)
 
     def resume_submission(self) -> None:
-        """Clear the reversible pause after reconnect + a fresh REST reconcile (D-19)."""
+        """Clear the reversible pause after reconnect + a fresh REST snapshot (D-19)."""
         with self._status_lock:
             if not self._submission_paused:
                 return
             self._submission_paused = False
             self._paused_reason = None
         self.logger.info(
-            'Order submission resumed — venue stream reconnected + REST reconcile complete')
+            'Order submission resumed — venue stream reconnected + fresh REST '
+            'balance/position snapshot complete')
 
     def _on_venue_stream_down(self, stream_name: str) -> None:
         """Connector-loop callback (D-19): pause NEW submission on a sustained disconnect.
@@ -615,11 +630,21 @@ class LiveTradingSystem:
     def _maybe_resume_after_reconnect(self) -> None:
         """Engine-thread resume after a venue stream reconnected (D-19).
 
-        Runs on the engine (queue-draining) thread: take a fresh REST snapshot +
-        reconcile (don't trade when you can't see the venue) THEN clear the pause. The
+        Runs on the engine (queue-draining) thread: take a fresh REST balance/position
+        SNAPSHOT (don't trade when you can't see the venue) THEN clear the pause. The
         connector-loop reconnect callback only sets the flag; all blocking venue I/O
         happens HERE, off the connector loop (Pitfall 9). A failed snapshot leaves the
         pause in place (retried on the next set) — never resume blind.
+
+        WR-04: resume does a fresh REST balance/position snapshot, NOT the full
+        two-sided ``VenueReconciler.reconcile()``. A blind mid-session reconcile would
+        spuriously HALT: ``VenueReconciler._halt_on_orphan_positions`` treats any venue
+        position whose symbol has no ACTIVE order in the rehydrated working set as an
+        unexplained orphan and halts — correct at startup (pre-RUNNING), but mid-session
+        the engine legitimately holds positions from filled (now-terminal, non-bracket)
+        orders. Re-running ``_adopt_fill_deltas`` against a store whose ``filled_quantity``
+        momentarily lags an in-flight live fill also risks a double-adopt. The full
+        two-sided reconcile is therefore a startup-before-RUNNING contract only.
         """
         if not self._pending_stream_resume.is_set():
             return
@@ -628,11 +653,12 @@ class LiveTradingSystem:
             return
         try:
             if self._venue_account is not None:
-                # Fresh REST snapshot before resuming (engine thread — safe to block).
+                # WR-04: fresh REST balance/position snapshot before resuming (engine
+                # thread — safe to block); NOT a full two-sided reconcile (see docstring).
                 self._venue_account.snapshot()
         except Exception as e:
             self.logger.error(
-                'Resume snapshot/reconcile failed — staying paused: %s', e)
+                'Resume REST snapshot failed — staying paused: %s', e)
             self._pending_stream_resume.set()  # retry on the next engine iteration
             return
         self.resume_submission()
@@ -662,9 +688,23 @@ class LiveTradingSystem:
             self._status = new_status
             if error_msg:
                 self._last_error = error_msg
-        
+
+        self._notify_status_change(old_status, new_status, error_msg)
+
+    def _notify_status_change(
+        self,
+        old_status: SystemStatus,
+        new_status: SystemStatus,
+        error_msg: Optional[str],
+    ) -> None:
+        """Log + fire the status callback OUTSIDE ``_status_lock`` (WR-01).
+
+        Split out of ``_update_status`` so ``halt()`` can flip the status UNDER the
+        lock (atomic check-and-set) and still reuse the exact notification path once,
+        for the winning caller only — the callback/log must never run holding the lock.
+        """
         self.logger.info(f'Status changed from {old_status.value} to {new_status.value}')
-        
+
         # Notify external systems via callback
         if self.status_callback:
             try:
@@ -928,7 +968,7 @@ class LiveTradingSystem:
                     self._record_bar_metrics(event)
 
                     # 05-08 (D-19): resume submission on the ENGINE thread once a venue
-                    # stream reconnected — a fresh REST snapshot/reconcile then clears the
+                    # stream reconnected — a fresh REST balance/position snapshot then clears the
                     # pause. The connector-loop reconnect callback only flagged it here;
                     # the blocking snapshot runs on this thread (Pitfall 9).
                     self._maybe_resume_after_reconnect()
