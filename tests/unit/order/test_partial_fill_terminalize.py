@@ -230,6 +230,32 @@ def test_overfill_after_partial_is_rejected_partial_kept():
     assert portfolio.release_calls == []
 
 
+# --- (WR-03) a rejected partial-fill transition leaves filled_quantity unchanged --
+
+
+def test_rejected_partial_transition_leaves_filled_quantity_unchanged():
+    """WR-03: when the PARTIALLY_FILLED transition is REJECTED, filled_quantity is left
+    unchanged and the call returns (False, False) — the "mirror left unchanged" contract
+    holds literally. Fails against the pre-reorder code (which bumped filled_quantity
+    BEFORE the rejected validation)."""
+    order = _make_order(quantity="1.0")
+    portfolio = _RecordingPortfolio()
+    manager = _make_manager(order, portfolio)
+
+    filled_before = order.filled_quantity
+    assert filled_before == Decimal("0")
+    # Force the transition validator to REJECT the PARTIALLY_FILLED move (add_fill
+    # already rejects a strict shortfall, so control reaches the partial branch).
+    order.add_state_change = lambda *args, **kwargs: False
+
+    out = manager.on_fill(_FakeFill(FillStatus.EXECUTED, order, "0.4"))
+
+    # The mirror did NOT move: no fill applied, nothing terminalized, no release.
+    assert out == []
+    assert order.filled_quantity == filled_before
+    assert portfolio.release_calls == []
+
+
 # --- byte-exact single full fill still terminalizes FILLED -------------------
 
 

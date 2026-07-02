@@ -180,12 +180,18 @@ class ReconcileManager:
 			# the order OPEN at PARTIALLY_FILLED — accumulate the increment, HOLD
 			# the reservation, and impose NO timeout (D-13 — aging is a strategy
 			# concern). add_fill did not mutate, so this does not double-count.
-			order.filled_quantity = to_money(order.filled_quantity + increment)
+			#
+			# WR-03: validate the transition BEFORE mutating filled_quantity.
+			# Compute the prospective total WITHOUT assigning it yet, so a rejected
+			# transition leaves the mirror literally unchanged (the "mirror left
+			# unchanged" contract below now holds — pre-reorder the quantity was
+			# bumped before the validation could reject it).
+			new_filled = to_money(order.filled_quantity + increment)
 			additional_data = {
 				"fill_quantity": increment,
 				"fill_price": fill_price,
 				"fill_time": fill_event.time.isoformat() if fill_event.time is not None else None,
-				"total_filled": order.filled_quantity,
+				"total_filled": new_filled,
 			}
 			# allow_same_status so a SECOND partial (PARTIALLY_FILLED ->
 			# PARTIALLY_FILLED) records without tripping the transition validator;
@@ -197,6 +203,9 @@ class ReconcileManager:
 				self.logger.warning(
 					'Partial-fill transition rejected for order %s; mirror left unchanged', order_id)
 				return False, False
+			# Transition accepted — NOW accumulate the increment (mirror moves only
+			# after the validation passed).
+			order.filled_quantity = new_filled
 			return True, False
 		# Over-fill (increment > remaining) or non-positive increment on an ACTIVE
 		# order: reject-and-log — never crash, and never terminalize on a bad fill.
