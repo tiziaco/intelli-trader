@@ -44,7 +44,6 @@ from itrader.trading_system.live_trading_system import LiveTradingSystem
 
 # --- Pinned paper-worker configuration (parity anchor — verbatim golden literals) ---
 
-DATASET = "data/BTCUSD_1d_ohlcv_2018_2026.csv"  # D-02 (same golden feed as the backtest)
 CASH = 10_000                                    # D-04 (fees 0, slippage 0 — exchange defaults)
 TICKER = "BTCUSD"                                # universe-member form (NOT the venue form)
 TIMEFRAME = "1d"
@@ -131,12 +130,17 @@ def _run_okx_smoke(logger) -> None:
     logger.info("Live smoke start()", started=started)
     print(f"Live smoke start(): {started}")
     if not started:
+        # WR-05: report the failed-start status but DO NOT early-return — fall
+        # through to the try/finally so stop()'s unconditional connector teardown
+        # (CR-01) always runs. The old bare return skipped stop(), leaking a
+        # partially-connected OKX socket (authenticated session / ResourceWarning).
         print(f"Status: {system.get_status()}")
-        return
 
     try:
-        # Let the daemon-thread stream drive briefly, then stop gracefully.
-        time.sleep(5.0)
+        # Let the daemon-thread stream drive briefly, then stop gracefully — only
+        # meaningful when start() succeeded; skip the sleep on a failed start.
+        if started:
+            time.sleep(5.0)
     finally:
         stopped = system.stop(timeout=10.0)
         logger.info("Live smoke stop()", stopped=stopped)
