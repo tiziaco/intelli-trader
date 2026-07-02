@@ -1,16 +1,22 @@
-"""Reconnect supervisor + failure classification for the OKX stream loops (RES-01/D-20).
+"""Reconnect supervisor + failure classification for the OKX stream loops (RES-01/D-19/D-20).
 
 The venue stream consume-loops (``OkxExchange._stream_fills``/``_stream_orders`` and
 ``OkxDataProvider._stream_candles``) had NO reconnect today (a code-verified gap): a socket
 drop killed the task silently. This suite proves the bounded-retry reconnect supervisor that
-now wraps each consume-loop (Task 1):
+now wraps each consume-loop:
 
+Task 1 (supervisor + classification):
 - a **transient** error (``ccxt.NetworkError``/``RequestTimeout``/``DDoSProtection``)
   reconnects with exponential backoff and the stream SURVIVES (publish-and-continue);
 - a **fatal** error (``ccxt.AuthenticationError``/``PermissionDenied``) escalates to the
   injected halt entrypoint (HALTED, reason ``'connector-fatal'``) — never retried;
 - the **retry ceiling exhausted** escalates the same halt — never spins forever (D-20);
 - the CRITICAL alert that the halt emits carries NO secret substring (Pitfall 16, T-05-27).
+
+Task 2 (pause-on-disconnect / resume-after-reconcile, D-19):
+- a sustained disconnect PAUSES new order submission (existing state untouched);
+- a reconnect + a fresh REST snapshot/reconcile RESUMES submission and clears the pause;
+- a sub-second blip (recovers on the first retry, within the debounce) does NOT pause.
 
 Driven offline: the supervisor is exercised directly with a scripted consume coroutine on a
 per-test ``asyncio.run`` loop (created + closed cleanly so nothing escapes into the strict
@@ -25,7 +31,7 @@ from unittest.mock import MagicMock
 import ccxt
 import pytest
 
-from itrader.core.enums import ErrorSeverity
+from itrader.core.enums import ErrorSeverity, EventType, SystemStatus
 from itrader.execution_handler.exchanges.okx import OkxExchange
 from itrader.price_handler.providers.okx_provider import OkxDataProvider
 from itrader.trading_system.live_trading_system import LiveTradingSystem
@@ -257,3 +263,81 @@ def test_fatal_alert_carries_no_secret_substring(monkeypatch: Any) -> None:
     )
     assert _SECRET not in emitted
     assert "supersecret" not in emitted
+
+
+# --- Task 2: pause-on-disconnect / resume-after-reconcile (D-19) --------------
+
+
+def test_blip_within_debounce_does_not_pause(okx_exchange: OkxExchange) -> None:
+    """A single transient that recovers on the first retry does NOT pause (D-19 debounce)."""
+    down = _Recorder()
+    up = _Recorder()
+    okx_exchange.set_stream_state_listener(down, up)
+
+    # One transient (attempt 1, within the debounce), then reconnect.
+    consume = _ScriptedConsume(
+        ["transient", "ok"], on_healthy=okx_exchange._on_stream_healthy)
+    asyncio.run(okx_exchange._run_stream_supervisor(consume, "fills"))
+
+    assert down.calls == []                        # a blip never pauses
+    assert up.calls == []                          # never went down -> no resume
+
+
+def test_pause_submission_suppresses_new_orders_but_not_bar_fill(monkeypatch: Any) -> None:
+    """pause_submission quiesces NEW SIGNAL/ORDER while BAR/FILL continue (freeze-in-place)."""
+    system = _live_system(monkeypatch)
+    system.pause_submission("paused-on-disconnect")
+    system.event_handler._dispatch = MagicMock()
+
+    for etype in (EventType.ORDER, EventType.SIGNAL):
+        ev = MagicMock()
+        ev.type = etype
+        system._dispatch_live(ev)
+    system.event_handler._dispatch.assert_not_called()
+
+    for etype in (EventType.BAR, EventType.FILL):
+        ev = MagicMock()
+        ev.type = etype
+        system._dispatch_live(ev)
+    assert system.event_handler._dispatch.call_count == 2
+
+
+def test_get_status_surfaces_paused_state_distinctly(monkeypatch: Any) -> None:
+    """The paused-on-disconnect state is surfaced distinctly on get_status (not HALTED)."""
+    system = _live_system(monkeypatch)
+    assert system.get_status()["paused"] is False
+
+    system.pause_submission("paused-on-disconnect")
+    status = system.get_status()
+    assert status["paused"] is True
+    assert status["paused_reason"] == "paused-on-disconnect"
+    # Distinct from a terminal halt — the engine is not HALTED, just quiesced.
+    assert status["status"] != SystemStatus.HALTED.value
+
+
+def test_resume_after_reconnect_snapshots_then_clears_pause(monkeypatch: Any) -> None:
+    """The engine-thread resume takes a fresh REST snapshot then clears the pause (D-19)."""
+    system = _live_system(monkeypatch)
+    venue = MagicMock(name="venue_account")
+    system._venue_account = venue
+    system.pause_submission("paused-on-disconnect")
+
+    # The connector-loop reconnect callback only flags a resume (no blocking I/O).
+    system._on_venue_stream_up("fills")
+    assert system.get_status()["paused"] is True   # not resumed on the connector thread
+    venue.snapshot.assert_not_called()
+
+    # The engine thread performs the fresh REST snapshot + reconcile, then resumes.
+    system._maybe_resume_after_reconnect()
+    venue.snapshot.assert_called_once()            # don't trade when you can't see the venue
+    assert system.get_status()["paused"] is False
+
+
+def test_pause_does_not_fire_while_halted(monkeypatch: Any) -> None:
+    """A terminal halt supersedes a reversible pause — pause_submission is a no-op then."""
+    system = _live_system(monkeypatch)
+    system.halt("connector-fatal")
+    system.pause_submission("paused-on-disconnect")
+    status = system.get_status()
+    assert status["status"] == SystemStatus.HALTED.value
+    assert status["paused"] is False
