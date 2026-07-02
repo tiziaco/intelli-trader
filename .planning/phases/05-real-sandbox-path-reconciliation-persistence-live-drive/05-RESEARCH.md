@@ -412,6 +412,13 @@ class LogAlertSink:                              # the ONLY impl this milestone 
 
 ## Open Questions
 
+> **(RESOLVED / OUT OF SCOPE for the 05-10/05-11 gap-closure pass, 2026-07-02.)** All three open
+> questions below were settled during the original 05-01..05-09 execution (VenueAccount reserve/release
+> overlay, 1d on-bar drift-sweep backstop, and bracket-leg re-link by persisted `venue_order_id`), which
+> shipped and passed their plan-level verification. None of them touch the confirmed gap-closure defects
+> (CR-01, WR-01, WR-02, WR-03, WR-04). They are retained here as the original research record and require
+> no further action for the gap-closure re-plan.
+
 1. **VenueAccount.reserve/release semantics.**
    - What we know: the `Account` ABC requires `reserve(order_id, amount)`/`release(order_id)`; `SimulatedCashAccount` tracks reservations locally; the order-admission gate calls `reserve` before submit.
    - What's unclear: on a venue-owned account the venue enforces available balance — does `VenueAccount.reserve` (a) track a local pending-reservation overlay on top of the cached venue available, (b) delegate to the venue's frozen/available, or (c) raise (reservation is meaningless when the venue is truth)?
