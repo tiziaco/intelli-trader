@@ -45,14 +45,21 @@ from itrader.reporting.frames import (
 )
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.trading_system.backtest_trading_system import BacktestTradingSystem
-from itrader.trading_system.live_trading_system import LiveTradingSystem
+from itrader.trading_system.live_trading_system import (
+    PAPER_PARITY_END_DATE,
+    PAPER_PARITY_START_DATE,
+    PAPER_PARITY_SYMBOL,
+    LiveTradingSystem,
+)
 
-# Golden literals — verbatim from scripts/run_backtest.py::main and
-# scripts/run_live_paper.py so both sides run the identical config (parity anchor).
-_START_DATE = "2018-01-01"
-_END_DATE = "2026-06-03"
+# D-18 (structural half — SINGLE SOURCE): the backtest comparand window/symbol are
+# imported from live_trading_system's PAPER_PARITY_* constants — the SAME literals the
+# paper replay store is constructed from — so paper and backtest can never silently
+# desync (they previously agreed only by CsvPriceStore class-default coincidence, WR-02).
+_START_DATE = PAPER_PARITY_START_DATE
+_END_DATE = PAPER_PARITY_END_DATE
 _CASH = 10_000
-_TICKER = "BTCUSD"
+_TICKER = PAPER_PARITY_SYMBOL
 _TIMEFRAME = "1d"
 
 # Sort keys mirroring the oracle's frame-diff mechanic (test_backtest_oracle.py:39-40).
