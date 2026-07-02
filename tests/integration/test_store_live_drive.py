@@ -9,12 +9,18 @@ These integration tests exercise the split-write-path store wiring completed in
 * the DERIVED / advisory signal store is live-driven (``CachedSqlSignalStorage``) and its
   persist runs on the engine (queue-draining) thread — off the connector asyncio coroutine —
   so a signal write can never stall the loop (D-11 / Pitfall 9);
-* the ``SYSTEM_DB_URL``-unset path falls back loudly to in-memory storage and does NOT crash
-  (WR-10 — no hardcoded credential fallback).
+* the unconfigured-env path (no ``ITRADER_DATABASE_PASSWORD``/``ITRADER_DATABASE_URL``) falls
+  back loudly to in-memory storage and does NOT crash (WR-10 — no hardcoded credential fallback).
+
+The live store is selected by ENV-PRESENCE of a Postgres credential on the unified
+``ITRADER_DATABASE_*`` surface (the same surface Alembic ``migrations/env.py`` uses): the
+``ITRADER_DATABASE_URL`` verbatim escape hatch OR the component vars keyed off
+``ITRADER_DATABASE_PASSWORD``. The Postgres arm builds ``SqlSettings(driver=POSTGRESQL_PSYCOPG2)``
+with NO explicit ``url=`` (env-sourced), so no separate legacy env-var seam remains.
 
 Substrate: a module-scoped testcontainers Postgres container (mirrors
 ``tests/integration/storage/conftest.py::pg_engine``). The container-backed tests SKIP (never
-hard-fail) when Docker is absent (D-11); the ``SYSTEM_DB_URL``-unset test needs no container and
+hard-fail) when Docker is absent (D-11); the unconfigured-env test needs no container and
 runs even Dockerless. This file lives at ``tests/integration/`` root (NOT under ``storage/``), so
 it builds its OWN container fixture rather than reusing the ``storage/`` package's ``pg_backend``.
 
@@ -23,6 +29,7 @@ it builds its OWN container fixture rather than reusing the ``storage/`` package
 """
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -226,17 +233,17 @@ def test_signal_store_live_driven_off_engine_critical_path(pg_url):
         backend.dispose()
 
 
-def test_live_system_wires_cached_sql_when_system_db_url_set(pg_url, monkeypatch):
-    """With SYSTEM_DB_URL set, the composition root drives the store via the CachedSql wrappers.
+def test_live_system_wires_cached_sql_from_database_url(pg_url, monkeypatch):
+    """With ITRADER_DATABASE_URL set, the composition root drives the store via CachedSql wrappers.
 
-    The heart of RECON-04: constructing ``LiveTradingSystem`` with ``SYSTEM_DB_URL`` pointing at
-    the operational DB wires the sync-durable order working set (``CachedSqlOrderStorage``) and
-    the live signal store (``CachedSqlSignalStorage``) off ONE shared ``SqlBackend`` — the v1.6
-    operational store driven off the composition root for the first time.
+    The heart of RECON-04 (verbatim-URL escape hatch): constructing ``LiveTradingSystem`` with
+    ``ITRADER_DATABASE_URL`` pointing at the operational DB wires the sync-durable order working
+    set (``CachedSqlOrderStorage``) and the live signal store (``CachedSqlSignalStorage``) off ONE
+    shared ``SqlBackend`` sourced from the unified ``SqlSettings`` ``ITRADER_DATABASE_*`` surface.
     """
     import itrader.trading_system.live_trading_system as lts
 
-    monkeypatch.setattr(lts, "_SYSTEM_DB_URL", pg_url)
+    monkeypatch.setenv("ITRADER_DATABASE_URL", pg_url)
     system = lts.LiveTradingSystem(exchange="binance")
     try:
         assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
@@ -246,19 +253,60 @@ def test_live_system_wires_cached_sql_when_system_db_url_set(pg_url, monkeypatch
         _drop_operational_tables(pg_url)
 
 
-def test_unset_system_db_url_falls_back_to_in_memory(monkeypatch):
-    """SYSTEM_DB_URL unset → loud in-memory fallback for BOTH order and signal stores, no crash.
+def test_live_system_wires_cached_sql_from_component_vars(pg_url, monkeypatch):
+    """Component-var arm: the Postgres store assembles from ITRADER_DATABASE_* with NO url=.
 
-    WR-10: no hardcoded credential fallback. An unset ``SYSTEM_DB_URL`` must not crash the
-    composition root — it falls back to in-memory storage (orders/signals will not survive a
-    restart). Needs no container, so it runs even on a Dockerless box.
+    Proves the store gate is driven by the unified ``SqlSettings`` component fields (the same
+    surface Alembic ``migrations/env.py`` uses) and NOT a verbatim URL: decompose the container URL
+    into its parts, set the ``ITRADER_DATABASE_HOST/PORT/USER/PASSWORD/NAME`` component vars,
+    delete ``ITRADER_DATABASE_URL``, and assert both CachedSql wrappers wire AND the assembled
+    engine URL's database equals the container db — i.e. the Postgres arm built
+    ``SqlSettings(driver=POSTGRESQL_PSYCOPG2)`` with no explicit ``url=`` and sourced the env.
+    """
+    from sqlalchemy import make_url
+
+    import itrader.trading_system.live_trading_system as lts
+
+    u = make_url(pg_url)
+    monkeypatch.delenv("ITRADER_DATABASE_URL", raising=False)
+    monkeypatch.setenv("ITRADER_DATABASE_HOST", u.host)
+    monkeypatch.setenv("ITRADER_DATABASE_PORT", str(u.port))
+    monkeypatch.setenv("ITRADER_DATABASE_USER", u.username)
+    monkeypatch.setenv("ITRADER_DATABASE_PASSWORD", u.password)
+    monkeypatch.setenv("ITRADER_DATABASE_NAME", u.database)
+
+    system = lts.LiveTradingSystem(exchange="binance")
+    try:
+        assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
+        assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"
+        # Proves component assembly (not a verbatim SYSTEM_DB_URL/URL read).
+        assert system._system_db_backend.engine.url.database == u.database
+    finally:
+        system.stop()
+        _drop_operational_tables(pg_url)
+
+
+def test_unconfigured_db_env_falls_back_to_in_memory(monkeypatch, caplog):
+    """No Postgres credential in env → loud in-memory fallback for BOTH stores, no crash (WR-10).
+
+    WR-10: no hardcoded credential fallback. With neither ``ITRADER_DATABASE_PASSWORD`` nor
+    ``ITRADER_DATABASE_URL`` set, the composition root must not crash — it falls back to in-memory
+    storage (orders/signals will not survive a restart) and emits the loud WR-10 warning naming the
+    ``ITRADER_DATABASE_*`` env vars. Needs no container, so it runs even on a Dockerless box.
+
+    NOTE: run under ``poetry run pytest`` (NOT ``make test``, which sets ``ITRADER_DISABLE_LOGS=true``
+    and breaks caplog warn-assertions — see auto-memory).
     """
     import itrader.trading_system.live_trading_system as lts
 
-    monkeypatch.setattr(lts, "_SYSTEM_DB_URL", "")
-    system = lts.LiveTradingSystem(exchange="binance")
+    monkeypatch.delenv("ITRADER_DATABASE_PASSWORD", raising=False)
+    monkeypatch.delenv("ITRADER_DATABASE_URL", raising=False)
+    with caplog.at_level(logging.WARNING):
+        system = lts.LiveTradingSystem(exchange="binance")
     try:
         assert type(system._signal_store).__name__ == "InMemorySignalStore"
         assert type(system.portfolio_handler._order_storage).__name__ == "InMemoryOrderStorage"
+        # WR-10: the fallback fires a loud warning naming the unified credential env vars.
+        assert "ITRADER_DATABASE_PASSWORD" in caplog.text
     finally:
         system.stop()
