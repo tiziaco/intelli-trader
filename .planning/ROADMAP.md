@@ -238,7 +238,7 @@ the `BTCUSD` symbol-form (not `BTC/USDT`) and the tz divergence (backtest `Europ
 **Plans**: 4 plans (planned 2026-07-02)
 - [x] 04-01-PLAN.md — ReplayDataProvider over the golden CsvPriceStore + offline unit coverage (COV-01 fixture) (Wave 1)
 - [x] 04-02-PLAN.md — Paper venue arm (reuse SimulatedExchange) + synchronous run_paper_replay() driver (PAPER-01/02/03) (Wave 2)
-- [ ] 04-03-PLAN.md — Runnable worker entrypoint (RUN-01) + start/stop/status lifecycle tests (COV-01) (Wave 3)
+- [x] 04-03-PLAN.md — Runnable worker entrypoint (RUN-01) + start/stop/status lifecycle tests (COV-01) (Wave 3)
 - [ ] 04-04-PLAN.md — Paper-parity gate (PAPER-04, DoD) = paper ≡ fresh backtest exact + inertness/oracle gate (Wave 3)
 **Cross-cutting**: RUN-01 (topology, LX-15) is decided here but architected for Phases 2–5; COV-01 (FL-13)
 is primarily established here on the first end-to-end live surface and extends into Phase 5 for the real path.
@@ -457,7 +457,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 7/7 | Complete   | 2026-06-30 |
 | 2. OKX Connector | v1.7 | 5/5 | Complete   | 2026-07-01 |
 | 3. LiveBarFeed | v1.7 | 4/4 | Complete   | 2026-07-01 |
-| 4. Paper Path (DoD) | v1.7 | 2/4 | In Progress|  |
+| 4. Paper Path (DoD) | v1.7 | 3/4 | In Progress|  |
 | 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 0/TBD | Not started | - |
 | 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
 

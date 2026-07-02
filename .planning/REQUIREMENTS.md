@@ -123,7 +123,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Cross-Cutting (woven through Phases 2–5; each has one definite home phase)
 
-- [ ] **RUN-01** (home: Phase 4): The live runtime/deployment topology is decided (LX-15) **before
+- [x] **RUN-01** (home: Phase 4): The live runtime/deployment topology is decided (LX-15) **before
   Phase 4 wires the runtime** — a separate worker process (ship option (b) architected as (c) with
   N=1), with Postgres `LISTEN/NOTIFY` as the default command/status channel (zero new dep, reuses the
   v1.6 store). Decided in the Phase 3→4 handoff; architected for Phases 2–5.
@@ -210,7 +210,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | RECON-06 | Phase 5 | Pending |
 | UNIV-01 | Phase 6 | Pending |
 | UNIV-02 | Phase 6 | Pending |
-| RUN-01 | Phase 4 (home; decided in Phase 3→4 handoff, cross-cutting 2–5) | Pending |
+| RUN-01 | Phase 4 (home; decided in Phase 3→4 handoff, cross-cutting 2–5) | Complete |
 | RES-01 | Phase 5 (home; pieces build in Phases 2–3, cross-cutting 2–5) | Pending |
 | COV-01 | Phase 4 (home; infra in Phase 2, extends to Phase 5, cross-cutting 1–5) | Complete |
 
