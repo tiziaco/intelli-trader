@@ -29,6 +29,18 @@ def _strip_okx_env(monkeypatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
 
+def _set_okx_env(monkeypatch) -> None:
+    """Set a dummy OKX credential triple so the OKX arm's ``OkxSettings()`` constructs.
+
+    The connector constructor is I/O-free (``connect()`` is deferred to ``start()``),
+    so a stubbed credential triple is enough to build ``LiveTradingSystem(exchange="okx")``
+    fully offline — no socket, no ``load_markets`` round-trip.
+    """
+    monkeypatch.setenv("OKX_API_KEY", "test-key")
+    monkeypatch.setenv("OKX_API_SECRET", "test-secret")
+    monkeypatch.setenv("OKX_API_PASSPHRASE", "test-pass")
+
+
 def test_construct_non_okx_venue_needs_no_okx_credentials(monkeypatch) -> None:
     """A non-OKX LiveTradingSystem constructs with the OKX creds absent (CR-02)."""
     _strip_okx_env(monkeypatch)
@@ -58,3 +70,63 @@ def test_construct_does_not_connect_in_constructor(monkeypatch) -> None:
     assert system._okx_connector is None
     # stop() before any start() must not raise even though nothing is wired/running.
     assert system.stop() is True
+
+
+def test_okx_arm_injects_real_provider_into_live_feed(monkeypatch) -> None:
+    """The OKX arm injects the real provider into the feed BEFORE warmup/start_stream (D-01/D-13).
+
+    The load-bearing Phase-3 wiring proof: after construction — and BEFORE any
+    ``warmup()``/``start_stream()`` runs — the LIVE feed's INTERNAL provider reference
+    (``self._provider``, the private attr ``warmup()``/gap-backfill read) IS the
+    constructed ``OkxDataProvider``. A dead-attribute mis-wire (``feed.provider = ...``)
+    would leave ``feed._provider is None`` and fail HERE, at the task level, rather than
+    as a runtime ``AttributeError`` at warmup. Fully offline — the connector constructor
+    is I/O-free and ``start()`` (which does the network connect) is never called.
+    """
+    _set_okx_env(monkeypatch)
+
+    system = LiveTradingSystem(exchange="okx")
+
+    # The OKX data arm was constructed for the okx venue.
+    assert system._okx_data_provider is not None
+    # The feed is the LIVE feed, and the real provider was injected via set_provider —
+    # so the PRIVATE _provider the warmup path reads IS the constructed provider.
+    assert system.feed._provider is system._okx_data_provider
+
+
+def test_okx_arm_wires_provider_sink_to_feed_update(monkeypatch) -> None:
+    """The provider's closed-bar sink is wired to ``feed.update`` (the ingest seam).
+
+    Proves the composition-root wire ``set_bar_sink(self.feed.update)``: a confirm-gated
+    ClosedBar pushed from the provider drives the feed's monotonic-guard ingest.
+    """
+    _set_okx_env(monkeypatch)
+
+    system = LiveTradingSystem(exchange="okx")
+
+    assert system._okx_data_provider is not None
+    # The provider holds the feed's update() as its closed-bar sink.
+    assert system._okx_data_provider._bar_sink == system.feed.update
+
+
+def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
+    """After session init the LIVE feed's cache_capacity() derives to the max strategy warmup (D-13).
+
+    The D-13 consumer registration in ``_initialize_live_session`` makes
+    ``cache_capacity()`` equal the deepest registered strategy warmup — for the golden
+    SMA_MACD that is 100, not the newest-bar floor (1). Drives the session init directly
+    (offline; no OKX connect, no stream).
+    """
+    _set_okx_env(monkeypatch)
+
+    system = LiveTradingSystem(exchange="okx")
+    # Pre-registration: no raw-bar consumer yet -> the newest-bar floor.
+    assert system.feed.cache_capacity() == 1
+
+    # Run only the session-init wiring (membership derive + D-13 registration + bind);
+    # this performs no network I/O (the OKX connect lives in start(), not here).
+    system._initialize_live_session()
+
+    expected = max(
+        (s.warmup for s in system.strategies_handler.strategies), default=1)
+    assert system.feed.cache_capacity() == expected

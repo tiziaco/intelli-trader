@@ -35,7 +35,16 @@ import sys
 # stack (lazy-imported inside LiveTradingSystem.__init__, never on this path).
 import itrader.trading_system.backtest_trading_system  # noqa: F401
 
-_FORBIDDEN = ("itrader.connectors.okx", "ccxt.pro", "ccxt")
+_FORBIDDEN = (
+    "itrader.connectors.okx",
+    "ccxt.pro",
+    "ccxt",
+    # Phase 3 (FEED-05 inertness gate): LiveBarFeed is LAZY-imported inside
+    # LiveTradingSystem.__init__ only — it must NEVER be pulled onto the backtest
+    # hot path. If a future edit hoists it to module scope this probe fails loudly,
+    # protecting the oracle byte-exactness + the W1/W2 perf gate.
+    "itrader.price_handler.feed.live_bar_feed",
+)
 leaked = [name for name in _FORBIDDEN if name in sys.modules]
 assert not leaked, (
     "CONN-04 INERTNESS VIOLATION: the backtest import path pulled the OKX/async "

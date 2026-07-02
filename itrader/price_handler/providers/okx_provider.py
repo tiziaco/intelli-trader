@@ -72,6 +72,8 @@ class ClosedBar(TypedDict):
     low: Decimal
     close: Decimal
     volume: Decimal
+    symbol: str        # D-12 (Phase-3 add) — routing key
+    timeframe: str     # D-12 (Phase-3 add) — routing key
 
 
 # OKX business-channel interval tokens (the channel name is ``"candle" + token``). OKX
@@ -230,14 +232,30 @@ class OkxDataProvider:
         if row[_CONFIRM_INDEX] != "1":
             # Forming bar (confirm == "0") — dropped; only completed bars flow downstream.
             return
-        closed: ClosedBar = {
-            "ts": int(row[0]),
-            "open": to_money(str(row[1])),
-            "high": to_money(str(row[2])),
-            "low": to_money(str(row[3])),
-            "close": to_money(str(row[4])),
-            "volume": to_money(str(row[5])),
-        }
+        # Field-validity guard (WR-04): a correct-length row can still carry a
+        # non-numeric/empty cell (a malformed or partial venue frame). Crossing the
+        # Decimal edge on such a field raises ValueError out of _process_row, which
+        # would propagate through _stream_candles' for-loop and KILL the candle task
+        # with no reconnect. Wrap the extraction so a bad row is skipped-and-logged
+        # (matching the length-guard contract) and the async for loop stays alive.
+        try:
+            closed: ClosedBar = {
+                "ts": int(row[0]),
+                "open": to_money(str(row[1])),
+                "high": to_money(str(row[2])),
+                "low": to_money(str(row[3])),
+                "close": to_money(str(row[4])),
+                "volume": to_money(str(row[5])),
+                # D-12: routing keys stamped from the provider's own trusted config
+                # (self._symbol/self._timeframe), NOT read from the untrusted venue row
+                # (T-03-01-TAMPER) — a spoofed row cannot forge the (symbol, timeframe) ring key.
+                "symbol": self._symbol,
+                "timeframe": self._timeframe,
+            }
+        except (ValueError, TypeError, IndexError):
+            self.logger.warning(
+                "Unparseable OKX candle row (bad numeric field) — skipping")
+            return
         self._hand_closed_bar(closed)
 
     # --- REST backfill (Phase-3 warmup path, Decimal edge) --------------------
@@ -280,6 +298,11 @@ class OkxDataProvider:
                 "low": to_money(str(row[3])),
                 "close": to_money(str(row[4])),
                 "volume": to_money(str(row[5])),
+                # D-12: stamp the routing keys from the method's own params (NOT
+                # self._symbol) so an ad-hoc backfill for any symbol/timeframe routes
+                # to the correct ring key.
+                "symbol": symbol,
+                "timeframe": timeframe,
             })
         return bars
 
