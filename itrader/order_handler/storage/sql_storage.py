@@ -137,6 +137,9 @@ class SqlOrderStorage(OrderStorage):
             "leverage": order.leverage,
             "trail_type": order.trail_type.value if order.trail_type is not None else None,
             "trail_value": order.trail_value,
+            # 05-07 (RECON-05 / Open Question 3): the venue order id round-trips (None
+            # on backtest/paper orders) so a rehydrated bracket leg re-links confidently.
+            "venue_order_id": order.venue_order_id,
         }
 
     def _state_change_rows(self, order: Order) -> List[Dict[str, Any]]:
@@ -199,6 +202,8 @@ class SqlOrderStorage(OrderStorage):
             leverage=row["leverage"],
             trail_type=TrailType(trail_raw) if trail_raw is not None else None,
             trail_value=row["trail_value"],
+            # 05-07 (RECON-05 / Open Question 3): round-trip the persisted venue order id.
+            venue_order_id=row["venue_order_id"],
         )
 
     def _load_state_changes(

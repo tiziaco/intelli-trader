@@ -289,6 +289,12 @@ class LiveTradingSystem:
         # real Order in the shared mirror the ReconcileManager reads (mirrors the
         # compose.py backtest wiring). Oracle-dark on the spot path.
         self.portfolio_handler.set_order_storage(order_storage)
+        # 05-07 (RECON-05): retain the order working set so the two-sided restart
+        # VenueReconciler can rehydrate it (INTENT truth) and reconcile against the
+        # venue REST snapshot before RUNNING. Only the CachedSql* live store exposes
+        # rehydrate(); the in-memory fallback does not, so the reconcile is guarded on
+        # hasattr(rehydrate) at start().
+        self._order_storage = order_storage
         # The TIME route's BarEvent source is the feed-owned factory
         # (Plan 07-02, D-20) — mirrors the backtest wiring shape; a real
         # live feed is owned by D-live.
@@ -863,6 +869,28 @@ class LiveTradingSystem:
                 self._venue_account.start_streaming()
                 for portfolio in self.portfolio_handler.get_active_portfolios():
                     portfolio.account = self._venue_account
+
+                # 05-07 (RECON-05, D-03/D-05): two-sided restart reconcile on the
+                # ENGINE thread BEFORE RUNNING. Rehydrate the working set from the
+                # store (INTENT truth), reconcile against the venue REST snapshot,
+                # adopt in-band deltas as reconciling FillEvents (idempotent fill
+                # path), halt on unexplained venue positions, and re-link brackets.
+                # Lazy-imported inside the OKX arm so the backtest import path stays
+                # SQL/async/connector-free (inertness gate). Guarded on the store
+                # exposing rehydrate() (the CachedSql live store; not the in-memory
+                # fallback) so an unset SYSTEM_DB_URL degrades cleanly.
+                if hasattr(self._order_storage, 'rehydrate'):
+                    from itrader.portfolio_handler.reconcile.venue_reconciler import (
+                        VenueReconciler,
+                    )
+                    reconciler = VenueReconciler(
+                        store=self._order_storage,
+                        venue_account=self._venue_account,
+                        connector=self._okx_connector,
+                        global_queue=self.global_queue,
+                        halt_signal=self.halt,
+                    )
+                    reconciler.reconcile()
 
             # Reset the stop event and start the processing thread
             self._stop_event.clear()
