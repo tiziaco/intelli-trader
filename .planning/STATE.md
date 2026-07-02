@@ -31,7 +31,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — EXECUTING
 Plan: 3 of 12
 Status: Ready to execute
-Last activity: 2026-07-02 - fast task: OKX connector hostname configurable (OKX_HOSTNAME) for EEA regional entity
+Last activity: 2026-07-02 - fast task: fix OKX backfill timeframe (unified 1d to ccxt) — unblocks live start() warmup
 
 Progress: [██████████] 97%
 
@@ -203,6 +203,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | 260702-m8d | Apply Phase 04 code-review fix-now bucket (IN-01..04, WR-05, WR-03, WR-02 window guard) + sync stale REQUIREMENTS.md | 2026-07-02 | 148836a6 | [260702-m8d-apply-phase-04-code-review-fix-now-bucke](./quick/260702-m8d-apply-phase-04-code-review-fix-now-bucke/) |
 | 260703-030 | Rewire live operational store onto unified SqlSettings, drop legacy SYSTEM_DB_URL | 2026-07-02 | 8947cc27 | [260703-030-rewire-live-operational-store-onto-unifi](./quick/260703-030-rewire-live-operational-store-onto-unifi/) |
 | fast | Make OKX connector hostname configurable (OKX_HOSTNAME) for EEA regional entity — fixes 50119 on eea.okx.com keys | 2026-07-02 | 3790990f | — (fast, inline) |
+| fast | Fix OKX backfill timeframe: pass unified "1d" (not OKX "1D") to ccxt fetch_ohlcv — unblocks LiveTradingSystem.start() warmup | 2026-07-02 | d6d225b6 | — (fast, inline) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
