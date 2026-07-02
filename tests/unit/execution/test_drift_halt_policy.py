@@ -18,10 +18,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from itrader.core.enums import ErrorSeverity, SystemStatus
+from itrader.core.enums import ErrorSeverity, EventType, SystemStatus
 from itrader.events_handler.events import ErrorEvent, PortfolioErrorEvent
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.trading_system.alert_sink import AlertSink, LogAlertSink
+from itrader.trading_system.live_trading_system import LiveTradingSystem
 
 _TIME = datetime(2024, 1, 1, 12, 0, 0)
 
@@ -171,3 +172,111 @@ def test_log_alert_sink_emits_marked_critical_without_secrets():
     emitted = " ".join(str(v) for v in kwargs.values())
     for secret_marker in ("OKX_API", "api_secret", "passphrase", "api_key"):
         assert secret_marker not in emitted
+
+
+# --- 05-04: LiveTradingSystem freeze-in-place halt (D-01/D-02/D-06/D-07) --------
+#
+# The composition-root half of the drift/halt policy: the halt entrypoint sets a
+# distinct HALTED status + machine-readable reason, escalates a CRITICAL alert
+# through the injected sink, suppresses NEW order submission while BAR/FILL
+# streaming continues, and NEVER auto-flattens/auto-cancels. Constructed offline
+# for the default 'binance' venue — no OKX credentials, no network.
+
+
+def _live_system(monkeypatch) -> LiveTradingSystem:
+    """A credential-free LiveTradingSystem for the default (non-OKX) venue."""
+    for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
+        monkeypatch.delenv(var, raising=False)
+    return LiveTradingSystem(exchange="binance")
+
+
+def test_halt_sets_halted_status_and_machine_readable_reason(monkeypatch):
+    system = _live_system(monkeypatch)
+    system.halt("drift")
+    status = system.get_status()
+    assert status["status"] == SystemStatus.HALTED.value
+    assert status["halt_reason"] == "drift"
+
+
+def test_halt_emits_critical_alert_through_injected_sink(monkeypatch):
+    system = _live_system(monkeypatch)
+    sink = _RecordingSink()
+    system.event_handler._alert_sink = sink
+    system.halt("drift")
+    # Drain the CRITICAL halt ErrorEvent through the ERROR route -> alert sink.
+    system.event_handler.process_events()
+    assert len(sink.received) == 1
+    assert sink.received[0].severity == ErrorSeverity.CRITICAL
+
+
+def test_composition_root_wires_a_log_alert_sink(monkeypatch):
+    system = _live_system(monkeypatch)
+    # The live root injects a LogAlertSink (05-01's None default is the backtest path).
+    assert isinstance(system.event_handler._alert_sink, LogAlertSink)
+
+
+def test_halt_suppresses_new_order_submission_but_not_bar_fill(monkeypatch):
+    system = _live_system(monkeypatch)
+    system.halt("drift")
+    system.event_handler._dispatch = MagicMock()
+
+    order_event = MagicMock()
+    order_event.type = EventType.ORDER
+    signal_event = MagicMock()
+    signal_event.type = EventType.SIGNAL
+    bar_event = MagicMock()
+    bar_event.type = EventType.BAR
+    fill_event = MagicMock()
+    fill_event.type = EventType.FILL
+
+    # SIGNAL/ORDER are suppressed (frozen in place) — never reach the dispatcher.
+    system._dispatch_live(order_event)
+    system._dispatch_live(signal_event)
+    system.event_handler._dispatch.assert_not_called()
+
+    # BAR/FILL streaming + reconciling continue to drain.
+    system._dispatch_live(bar_event)
+    system._dispatch_live(fill_event)
+    assert system.event_handler._dispatch.call_count == 2
+
+
+def test_halt_does_not_auto_flatten_or_cancel(monkeypatch):
+    system = _live_system(monkeypatch)
+    system.halt("drift")
+    # ONLY the CRITICAL halt ErrorEvent is queued — no cancel/flatten OrderEvents.
+    queued = []
+    while not system.global_queue.empty():
+        queued.append(system.global_queue.get_nowait())
+    assert len(queued) == 1
+    assert queued[0].type == EventType.ERROR
+    assert queued[0].severity == ErrorSeverity.CRITICAL
+
+
+def test_halt_is_idempotent_first_reason_wins(monkeypatch):
+    system = _live_system(monkeypatch)
+    system.halt("drift")
+    system.halt("connector-fatal")
+    assert system.get_status()["halt_reason"] == "drift"
+    # No second CRITICAL event was emitted — the second halt is a no-op.
+    count = 0
+    while not system.global_queue.empty():
+        system.global_queue.get_nowait()
+        count += 1
+    assert count == 1
+
+
+def test_portfolio_handler_drift_signal_wired_to_halt(monkeypatch):
+    system = _live_system(monkeypatch)
+    # The composition root wired PortfolioHandler.set_halt_signal(system.halt), so
+    # the engine-thread drift compare's halt signal reaches the freeze-in-place halt.
+    system.portfolio_handler._halt_signal("drift")
+    status = system.get_status()
+    assert status["status"] == SystemStatus.HALTED.value
+    assert status["halt_reason"] == "drift"
+
+
+def test_status_before_halt_has_no_reason(monkeypatch):
+    system = _live_system(monkeypatch)
+    status = system.get_status()
+    assert status["status"] != SystemStatus.HALTED.value
+    assert status["halt_reason"] is None
