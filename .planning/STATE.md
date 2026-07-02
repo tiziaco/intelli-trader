@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-07-02T12:32:01.427Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-07-02T12:39:29.412Z"
 last_activity: 2026-07-02
 progress:
   total_phases: 7
   completed_phases: 3
   total_plans: 20
-  completed_plans: 17
+  completed_plans: 18
   percent: 43
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 04 (paper-path-milestone-dod) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-07-02
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 90%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -148,6 +148,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 03]: 03-02: LiveBarFeed(BarFeed) — capacity-sized deque ring per (symbol,timeframe) + FEED-04 monotonic guard (in-sequence/gap-backfill-replay/duplicate/revision/stale, D-06/D-07) + direct single-ticker BarEvent emission (D-02/D-03/D-04); dormant no-op generate_bar_event (D-05); public set_provider seam (D-01/D-13); TYPE_CHECKING ClosedBar import + absent from feed barrel keeps it hot-path-inert
 - [Phase ?]: 03-04: LiveBarFeed lazy-wired as the live driver at the LiveTradingSystem composition root (FEED-05) — provider-less unconditional construct + okx-arm set_provider injection (writes private _provider warmup reads) + set_bar_sink(feed.update); D-13 _LiveWarmupConsumer(max strategy.warmup) registered before bind so cache_capacity()==100 (Pitfall 1 guard); warmup OKX-gated before start_stream. Inertness probe extended to forbid live_bar_feed on the backtest path; oracle byte-exact.
 - [Phase 04]: 04-01: ReplayDataProvider = offline synchronous stand-in for OkxDataProvider replaying the golden CsvPriceStore as Decimal-edge ClosedBar dicts (to_money(str) edge, ts=int(index.value//1e6) epoch-ms bar-open, symbol/timeframe stamped from config not the row D-12); drop-in on set_bar_sink/fetch_ohlcv_backfill + synchronous replay_bar replacing the async _stream_candles (D-03); ClosedBar imported not redefined; golden rows via CsvPriceStore so iter is byte-identical to backtest (parity anchor D-01/D-02). PAPER-03/COV-01 fixture.
+- [Phase 04]: Paper venue reuses the 'simulated' SimulatedExchange as-is (D-04/D-05/D-06); run_paper_replay() drives golden bars synchronously through the real live seam with backtest per-tick + run-end discipline (parity by construction, D-01/D-09)
 
 ### Pending Todos
 
@@ -200,6 +201,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
 | Phase 03 P04 | 14min | 2 tasks | 4 files |
 | Phase 04 P01 | 6min | 2 tasks | 2 files |
+| Phase 04 P02 | 8min | 2 tasks | 1 files |
 
 ## Deferred Items
 
@@ -249,8 +251,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-02T12:31:07.522Z
-Stopped at: Phase 4 context gathered
+Last session: 2026-07-02T12:39:29.404Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 

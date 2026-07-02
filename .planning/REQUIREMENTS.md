@@ -84,10 +84,10 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Paper Path — Phase 4 (the milestone DoD)
 
-- [ ] **PAPER-01**: The paper execution adapter implements **`AbstractExchange`** (not `LiveConnector` —
+- [x] **PAPER-01**: The paper execution adapter implements **`AbstractExchange`** (not `LiveConnector` —
   paper has no venue session, so no connector) by composing the **reused pure `MatchingEngine`** + the
   shared cost helper + `SimulatedAccount`, with **bar-based fills only** (LX-06/LX-13) and no OKX I/O.
-- [ ] **PAPER-02**: Fee/slippage is extracted into a shared `apply_costs` helper used by **both**
+- [x] **PAPER-02**: Fee/slippage is extracted into a shared `apply_costs` helper used by **both**
   `SimulatedExchange` and the paper adapter (one cost core, byte-exact) — no dual fill-pricing drift.
 - [x] **PAPER-03**: `LiveTradingSystem` is wired end-to-end on the paper path (live feed → strategy →
   order → paper fill → `SimulatedAccount`/`Portfolio`), with the determinism seams (seeded RNG +
@@ -198,8 +198,8 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | FEED-03 | Phase 3 | Complete |
 | FEED-04 | Phase 3 | Complete |
 | FEED-05 | Phase 3 | Complete |
-| PAPER-01 | Phase 4 | Pending |
-| PAPER-02 | Phase 4 | Pending |
+| PAPER-01 | Phase 4 | Complete |
+| PAPER-02 | Phase 4 | Complete |
 | PAPER-03 | Phase 4 | Complete |
 | PAPER-04 | Phase 4 | Pending |
 | RECON-01 | Phase 5 | Pending |
