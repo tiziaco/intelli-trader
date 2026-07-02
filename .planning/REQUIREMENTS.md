@@ -89,7 +89,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   shared cost helper + `SimulatedAccount`, with **bar-based fills only** (LX-06/LX-13) and no OKX I/O.
 - [ ] **PAPER-02**: Fee/slippage is extracted into a shared `apply_costs` helper used by **both**
   `SimulatedExchange` and the paper adapter (one cost core, byte-exact) — no dual fill-pricing drift.
-- [ ] **PAPER-03**: `LiveTradingSystem` is wired end-to-end on the paper path (live feed → strategy →
+- [x] **PAPER-03**: `LiveTradingSystem` is wired end-to-end on the paper path (live feed → strategy →
   order → paper fill → `SimulatedAccount`/`Portfolio`), with the determinism seams (seeded RNG +
   business-time stamping) threaded through.
 - [ ] **PAPER-04**: **Paper-parity gate (DoD)** — replaying the fixed golden dataset through the
@@ -131,7 +131,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   rate-limit handling (coordinated across ccxt + native paths), partial-fill handling, and stream-gap
   recovery; `LiveTradingSystem`'s publish-and-continue error policy is hardened for live. Pieces build
   across Phases 2 (rate-limit) / 3 (reconnect+gap-recovery, FEED-04); fully verified on the real path.
-- [ ] **COV-01** (home: Phase 4): The surviving live surface (`LiveTradingSystem` + the engine command
+- [x] **COV-01** (home: Phase 4): The surviving live surface (`LiveTradingSystem` + the engine command
   surface from ACCT-05) has test coverage (**FL-13**) via mocked/recorded connectors, with
   `pytest-asyncio` configured (`asyncio_mode`, `asyncio_default_fixture_loop_scope`) so
   `filterwarnings=["error"]` stays green — the global filter is never relaxed. Established on the first
@@ -200,7 +200,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | FEED-05 | Phase 3 | Complete |
 | PAPER-01 | Phase 4 | Pending |
 | PAPER-02 | Phase 4 | Pending |
-| PAPER-03 | Phase 4 | Pending |
+| PAPER-03 | Phase 4 | Complete |
 | PAPER-04 | Phase 4 | Pending |
 | RECON-01 | Phase 5 | Pending |
 | RECON-02 | Phase 5 | Pending |
@@ -212,7 +212,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | UNIV-02 | Phase 6 | Pending |
 | RUN-01 | Phase 4 (home; decided in Phase 3→4 handoff, cross-cutting 2–5) | Pending |
 | RES-01 | Phase 5 (home; pieces build in Phases 2–3, cross-cutting 2–5) | Pending |
-| COV-01 | Phase 4 (home; infra in Phase 2, extends to Phase 5, cross-cutting 1–5) | Pending |
+| COV-01 | Phase 4 (home; infra in Phase 2, extends to Phase 5, cross-cutting 1–5) | Complete |
 
 **Coverage:**
 - v1 requirements: 32 total (29 phase-specific + 3 cross-cutting)
