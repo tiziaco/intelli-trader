@@ -40,3 +40,8 @@ class OkxSettings(BaseSettings):
     api_secret: SecretStr = Field(validation_alias="OKX_API_SECRET")
     api_passphrase: SecretStr = Field(validation_alias="OKX_API_PASSPHRASE")
     sandbox: bool = Field(default=True, validation_alias="OKX_SANDBOX")
+    # Regional-entity host (ccxt okx uses the ``https://{hostname}`` template). Default
+    # ``www.okx.com`` is the global entity; the EEA entity (and its demo environment) is
+    # reached via ``eea.okx.com`` — a key issued on one entity returns 50119 "API key
+    # doesn't exist" on another, so the host must match where the key was created.
+    hostname: str = Field(default="www.okx.com", validation_alias="OKX_HOSTNAME")

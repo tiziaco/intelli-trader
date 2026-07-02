@@ -134,6 +134,9 @@ class OkxConnector:
                 "apiKey": self._settings.api_key.get_secret_value(),
                 "secret": self._settings.api_secret.get_secret_value(),
                 "password": self._settings.api_passphrase.get_secret_value(),
+                # Regional-entity host (default www.okx.com; e.g. eea.okx.com for the EEA
+                # entity). ccxt substitutes this into its ``https://{hostname}`` template.
+                "hostname": self._settings.hostname,
                 "enableRateLimit": True,
             }
         )
