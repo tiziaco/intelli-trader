@@ -470,7 +470,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | 2. OKX Connector | v1.7 | 5/5 | Complete   | 2026-07-01 |
 | 3. LiveBarFeed | v1.7 | 4/4 | Complete   | 2026-07-01 |
 | 4. Paper Path (DoD) | v1.7 | 4/4 | Complete   | 2026-07-02 |
-| 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 10/12 | In Progress|  |
+| 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 11/12 | In Progress|  |
 | 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):

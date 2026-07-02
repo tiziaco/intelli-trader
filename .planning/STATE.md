@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Phase 5 context gathered
-last_updated: "2026-07-02T21:01:16.338Z"
+stopped_at: Completed 05-11-PLAN.md
+last_updated: "2026-07-02T21:08:44.128Z"
 last_activity: 2026-07-02
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 32
-  completed_plans: 30
+  completed_plans: 31
   percent: 57
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — EXECUTING
-Plan: 2 of 12
+Plan: 3 of 12
 Status: Ready to execute
 Last activity: 2026-07-02
 
-Progress: [█████████░] 94%
+Progress: [██████████] 97%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -151,6 +151,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 04]: Paper venue reuses the 'simulated' SimulatedExchange as-is (D-04/D-05/D-06); run_paper_replay() drives golden bars synchronously through the real live seam with backtest per-tick + run-end discipline (parity by construction, D-01/D-09)
 - [Phase ?]: 04-03: RUN-01 runnable paper worker (scripts/run_live_paper.py) delivered per D-08 — offline run_paper_replay (CI-safe default) + opt-in okx manual smoke over start/stop/get_status; channel + web-framework wrapper deferred to Phase 5. COV-01 lifecycle half added (FL-13: clean startup / graceful thread-joining stop / status-before-start, exchange=paper offline).
 - [Phase ?]: 04-04: paper-parity DoD gate shipped (PAPER-04/COV-01) — one test drives run_paper_replay() AND a fresh backtest on the golden dataset, asserts trades+equity frame-equal EXACT (tz-normalized UTC); anchored to the fresh backtest not the frozen 46189 artifact (D-01), survives a backtest-loop rework; inertness _FORBIDDEN extended to replay_provider (D-12), oracle untouched
+- [Phase 05]: 05-11: WR-02 closed — OkxExchange.adopt_venue_correlation() repopulates the three correlation maps + drains buffered fills for rehydrated orders; VenueReconciler.reconcile() adopts per working-set order with a venue_order_id (exchange=self._okx_exchange). Post-restart fills reach the mirror instead of being silently buffered.
+- [Phase 05]: 05-11: WR-03 closed — reconcile_manager validates the PARTIALLY_FILLED transition BEFORE mutating filled_quantity; a rejected transition leaves the mirror literally unchanged. WR-05 recorded documented-only (portfolio_handler.py untouched).
 
 ### Pending Todos
 
@@ -208,6 +210,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 04 P03 | 6min | 2 tasks | 2 files |
 | Phase Phase 04 P04 P04 | 5min | 2 tasks | 2 files |
 | Phase 05 P10 | 20min | 3 tasks | 3 files |
+| Phase 05 P11 | ~15min | 2 tasks | 6 files |
 
 ## Deferred Items
 
@@ -257,8 +260,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-02T21:01:07.099Z
-Stopped at: Phase 5 context gathered
+Last session: 2026-07-02T21:08:44.121Z
+Stopped at: Completed 05-11-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 

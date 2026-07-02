@@ -119,7 +119,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   working set persists **store-first** (sync-durable, restart-rehydratable via `CachedSqlOrderStorage`)
   while signals + the per-bar equity curve ride the engine-thread **async/best-effort** path so they can
   never stall the connector asyncio loop.
-- [ ] **RECON-05**: Restart rehydration is **two-sided** — reconstruct the working set from the store
+- [x] **RECON-05**: Restart rehydration is **two-sided** — reconstruct the working set from the store
   AND reconcile against the live venue (the broker side the v1.6 store-only tests did not cover).
 - [ ] **RECON-06**: Order I/O + `VenueAccount` reconciliation + persistence live-drive + restart
   rehydration are **validated against OKX sandbox** (real-money execution is a gated stretch, not in
@@ -221,7 +221,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | RECON-02 | Phase 5 | Complete |
 | RECON-03 | Phase 5 | Complete |
 | RECON-04 | Phase 5 | Pending |
-| RECON-05 | Phase 5 | Pending |
+| RECON-05 | Phase 5 | Complete |
 | RECON-06 | Phase 5 | Pending |
 | UNIV-01 | Phase 6 | Pending |
 | UNIV-02 | Phase 6 | Pending |
