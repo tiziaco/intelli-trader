@@ -5,7 +5,7 @@ milestone_name: Live Trading Readiness
 status: ready_to_plan
 stopped_at: Phase 04 complete (4/4) — ready to discuss Phase 5
 last_updated: 2026-07-02T13:00:20.551Z
-last_activity: 2026-07-02
+last_activity: 2026-07-02 - Completed quick task 260702-m8d: Phase 04 code-review fix-now bucket
 progress:
   total_phases: 7
   completed_phases: 4
@@ -198,6 +198,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260701-l33 | Add `smoke` pytest marker (register + tag 3 files + `make test-smoke` + tagging rule) | 2026-07-01 | 40c13992 | [260701-l33-add-smoke-marker](./quick/260701-l33-add-smoke-marker/) |
+| 260702-m8d | Apply Phase 04 code-review fix-now bucket (IN-01..04, WR-05, WR-03, WR-02 window guard) + sync stale REQUIREMENTS.md | 2026-07-02 | 148836a6 | [260702-m8d-apply-phase-04-code-review-fix-now-bucke](./quick/260702-m8d-apply-phase-04-code-review-fix-now-bucke/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
