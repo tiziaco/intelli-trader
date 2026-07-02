@@ -44,6 +44,17 @@ _SYSTEM_DB_URL = os.getenv("SYSTEM_DB_URL", "")
 _OKX_STREAM_SYMBOL = "BTC/USDT"
 _OKX_STREAM_TIMEFRAME = "1d"
 
+# Phase 4 (D-02/D-09): the SINGLE wiring source for the paper replay subscription.
+# The ReplayDataProvider stamps this symbol/timeframe into every replayed ClosedBar
+# (the feed's ring key), and run_paper_replay() queries newest_bar() on the same
+# symbol for the bar-open stamp. The paper ticker MUST be the universe-member form
+# "BTCUSD" (what the strategy's window() queries), NOT the OKX venue form "BTC/USDT":
+# a mismatch surfaces only as a MissingPriceDataError at the first window() call
+# (LiveBarFeed._find_ring). This is the symbol-form trap the OKX arm guards against
+# with its wiring-time membership assertion.
+_PAPER_STREAM_SYMBOL = "BTCUSD"
+_PAPER_STREAM_TIMEFRAME = "1d"
+
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
 # imported above; the ``SystemStatus.X`` usages below resolve unchanged.
@@ -269,6 +280,9 @@ class LiveTradingSystem:
         self._okx_exchange: Optional[Any] = None
         self._okx_data_provider: Optional[Any] = None
         self._venue_account: Optional[Any] = None
+        # Phase 4 (D-02): paper venue sentinel — None for any non-paper venue so
+        # run_paper_replay() can fail loudly if invoked on a mis-wired system.
+        self._replay_provider: Optional[Any] = None
         if self.exchange == 'okx':
             from itrader.connectors import OkxConnector
             from itrader.config.okx_settings import OkxSettings
@@ -303,6 +317,36 @@ class LiveTradingSystem:
             # Wire the provider's confirm-gated closed-bar sink to the feed's
             # monotonic-guard ingest so every ClosedBar drives feed.update() -> BarEvent.
             self._okx_data_provider.set_bar_sink(self.feed.update)
+
+        elif self.exchange == 'paper':
+            # ------------------------------------------------------------------
+            # Paper venue wiring (Phase 4, D-02/D-04/D-05/D-06/D-09 — composition
+            # root). The paper path REUSES the already-constructed 'simulated'
+            # SimulatedExchange AS-IS (fetched at line 198): it already implements
+            # AbstractExchange, holds no Account (D-06 — fills flow FillEvent ->
+            # PortfolioHandler.on_fill), and ExecutionHandler already routes on_order
+            # by event.exchange and fans on_market_data over self.exchanges.items(),
+            # so the LiveBarFeed BarEvents reach it unchanged (D-04). There is NO new
+            # exchange/adapter class and NO cost-model extraction: with one shared
+            # fill-pricing implementation (the simulated exchange's, UNTOUCHED) there
+            # is nothing to drift, so PAPER-02 is satisfied-by-reuse (D-05).
+            #
+            # The genuinely new surface is the OFFLINE, SYNCHRONOUS replay data arm:
+            # a ReplayDataProvider replaying the golden CsvPriceStore as Decimal-edge
+            # ClosedBar dicts through the SAME Phase-3 feed seam the OKX arm uses. The
+            # import is LAZY inside this arm (mirrors the OKX/LiveBarFeed lazy imports)
+            # so the BACKTEST import path never pulls it — the inertness gate (D-12).
+            from itrader.price_handler.providers.replay_provider import ReplayDataProvider
+
+            self._replay_provider = ReplayDataProvider(
+                symbol=_PAPER_STREAM_SYMBOL, timeframe=_PAPER_STREAM_TIMEFRAME)
+            # Inject the replay provider into the LIVE feed via the PUBLIC setter — it
+            # assigns self._provider (the private attr warmup()/gap-backfill read); a
+            # bare self.feed.provider = ... would leave self._provider None. Then wire
+            # its sink to feed.update so each replayed ClosedBar drives
+            # feed.update() -> BarEvent onto the queue (the real D-02 seam).
+            self.feed.set_provider(self._replay_provider)
+            self._replay_provider.set_bar_sink(self.feed.update)
 
         # WR-05: install the documented live error policy (publish-and-continue).
         # The base _on_handler_error re-raises (backtest fail-fast); the live
