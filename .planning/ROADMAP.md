@@ -279,7 +279,7 @@ nautilus pure-functions; venue order id persisted for bracket re-link; two-sided
 - [x] 05-01-PLAN.md — Reconciliation primitives: drift epsilon (D-01) + SystemStatus.HALTED (D-07) + pluggable AlertSink egress (D-06) (Wave 1)
 - [x] 05-02-PLAN.md — Offline test infra: shared FakeLiveConnector + recorded OKX recon fixtures + opt-in slow sandbox suite scaffold (D-09) (Wave 1)
 - [x] 05-03-PLAN.md — VenueAccount cache body: push stream + REST snapshot + reserve/release overlay (D-14/D-15, RECON-01) (Wave 2)
-- [ ] 05-04-PLAN.md — Drift-compare (engine thread) + freeze-in-place halt + HALTED status/alert + VenueAccount→Portfolio wiring (D-01/D-02/D-04/D-15, RECON-03) (Wave 3)
+- [x] 05-04-PLAN.md — Drift-compare (engine thread) + freeze-in-place halt + HALTED status/alert + VenueAccount→Portfolio wiring (D-01/D-02/D-04/D-15, RECON-03) (Wave 3)
 - [x] 05-05-PLAN.md — Partial-fill idempotency: fill-ID dedup + fast-fill-race fix + partial→CANCELLED terminalization (D-12/D-13, RECON-02) (Wave 2)
 - [ ] 05-06-PLAN.md — Persistence live-drive: split write paths (CachedSql* sync / signal+metrics async) + BAR-keyed metrics (D-10/D-11/D-16, RECON-04) (Wave 4)
 - [ ] 05-07-PLAN.md — Two-sided restart: venue_order_id persistence + VenueReconciler reconciling events + bracket re-link (D-03/D-05, RECON-05) (Wave 5)
@@ -470,7 +470,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | 2. OKX Connector | v1.7 | 5/5 | Complete   | 2026-07-01 |
 | 3. LiveBarFeed | v1.7 | 4/4 | Complete   | 2026-07-01 |
 | 4. Paper Path (DoD) | v1.7 | 4/4 | Complete   | 2026-07-02 |
-| 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 4/9 | In Progress|  |
+| 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 5/9 | In Progress|  |
 | 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
