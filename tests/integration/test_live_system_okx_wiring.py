@@ -20,6 +20,10 @@ the same session may already have imported ``ccxt.pro``); the credential-free co
 + unwired-arm assertions are the load-bearing gate.
 """
 
+from unittest.mock import MagicMock
+
+from itrader.core.enums import ExchangeConnectionStatus, SystemStatus
+from itrader.execution_handler.result_objects import ConnectionResult
 from itrader.trading_system.live_trading_system import LiveTradingSystem
 
 
@@ -130,3 +134,69 @@ def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
     expected = max(
         (s.warmup for s in system.strategies_handler.strategies), default=1)
     assert system.feed.cache_capacity() == expected
+
+
+def _stub_okx_network(system: LiveTradingSystem) -> None:
+    """Stub every network-touching call in start() so it runs fully offline.
+
+    Leaves ``system._okx_exchange.connect`` untouched — that is the call under
+    test (CR-01). The VenueReconciler path is skipped because the in-memory order
+    store does not expose ``rehydrate`` (start() guards on ``hasattr``).
+    """
+    system._okx_connector.connect = MagicMock(name="connector.connect")
+    system.feed.warmup = MagicMock(name="feed.warmup")
+    system._okx_data_provider.start_stream = MagicMock(name="provider.start_stream")
+    system._venue_account = MagicMock(name="venue_account")
+
+
+def test_start_spawns_okx_order_arm_fill_stream(monkeypatch) -> None:
+    """start() invokes _okx_exchange.connect() — the SOLE spawn site of the fill stream (CR-01).
+
+    This is the assertion the verification proved absent (``grep _okx_exchange.connect(``
+    returned 0 across tests/). Removing the Task-1 ``self._okx_exchange.connect()`` call in
+    start() makes ``connect_spy.assert_called_once()`` FAIL — so the test genuinely catches
+    the CR-01 gap (order mirror stays PENDING forever with no fill stream).
+    """
+    _set_okx_env(monkeypatch)
+    system = LiveTradingSystem(exchange="okx")
+    _stub_okx_network(system)
+    connect_spy = MagicMock(
+        name="okx_exchange.connect",
+        return_value=ConnectionResult(
+            success=True,
+            status=ExchangeConnectionStatus.CONNECTED,
+            exchange_name="okx"))
+    system._okx_exchange.connect = connect_spy
+
+    try:
+        started = system.start()
+        assert started is True
+        connect_spy.assert_called_once()          # fill/order streams spawned
+        assert system.get_status()["status"] == SystemStatus.RUNNING.value
+    finally:
+        system.stop()
+
+
+def test_start_fails_when_okx_exchange_connect_fails(monkeypatch) -> None:
+    """A failed ConnectionResult from _okx_exchange.connect() drives ERROR and returns False.
+
+    connect() RETURNS a ConnectionResult (never raises), so start() must check ``.success``
+    and re-raise; the failure then flows through the existing except → SystemStatus.ERROR.
+    """
+    _set_okx_env(monkeypatch)
+    system = LiveTradingSystem(exchange="okx")
+    _stub_okx_network(system)
+    system._okx_exchange.connect = MagicMock(
+        name="okx_exchange.connect",
+        return_value=ConnectionResult(
+            success=False,
+            status=ExchangeConnectionStatus.ERROR,
+            exchange_name="okx",
+            error_message="stream spawn failed"))
+
+    try:
+        started = system.start()
+        assert started is False
+        assert system.get_status()["status"] == SystemStatus.ERROR.value
+    finally:
+        system.stop()
