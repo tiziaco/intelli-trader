@@ -107,6 +107,14 @@ class Order:
 	trail_type: Optional[TrailType] = None
 	trail_value: Optional[Decimal] = None
 
+	# 05-07 (RECON-05 / Open Question 3): the venue's order id, persisted on the
+	# order mirror so a bracket leg re-links CONFIDENTLY across a restart (the
+	# VenueReconciler matches venue resting orders by this id first). Nullable —
+	# backtest/paper orders have no venue id, so it stays None and the spot path is
+	# byte-exact (oracle-dark). Populated on the venue side when the id becomes
+	# known (submit correlation / restart re-link).
+	venue_order_id: Optional[str] = None
+
 	def __post_init__(self) -> None:
 		"""Enter the Decimal money domain at the construction boundary (D-04).
 
