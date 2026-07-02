@@ -92,7 +92,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 - [x] **PAPER-03**: `LiveTradingSystem` is wired end-to-end on the paper path (live feed → strategy →
   order → paper fill → `SimulatedAccount`/`Portfolio`), with the determinism seams (seeded RNG +
   business-time stamping) threaded through.
-- [ ] **PAPER-04**: **Paper-parity gate (DoD)** — replaying the fixed golden dataset through the
+- [x] **PAPER-04**: **Paper-parity gate (DoD)** — replaying the fixed golden dataset through the
   live-paper path yields the backtest oracle **byte-exact** (134 / `46189.87730727451`,
   `check_exact=True`). (LX-11)
 
@@ -201,7 +201,7 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | PAPER-01 | Phase 4 | Complete |
 | PAPER-02 | Phase 4 | Complete |
 | PAPER-03 | Phase 4 | Complete |
-| PAPER-04 | Phase 4 | Pending |
+| PAPER-04 | Phase 4 | Complete |
 | RECON-01 | Phase 5 | Pending |
 | RECON-02 | Phase 5 | Pending |
 | RECON-03 | Phase 5 | Pending |

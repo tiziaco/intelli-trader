@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: executing
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-07-02T12:46:08.153Z"
+status: verifying
+stopped_at: Completed 04-04-PLAN.md
+last_updated: "2026-07-02T12:51:57.888Z"
 last_activity: 2026-07-02
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 20
-  completed_plans: 19
-  percent: 43
+  completed_plans: 20
+  percent: 57
 ---
 
 # Project State
@@ -30,10 +30,10 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 
 Phase: 04 (paper-path-milestone-dod) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-02
 
-Progress: [██████████] 95%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -150,6 +150,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 04]: 04-01: ReplayDataProvider = offline synchronous stand-in for OkxDataProvider replaying the golden CsvPriceStore as Decimal-edge ClosedBar dicts (to_money(str) edge, ts=int(index.value//1e6) epoch-ms bar-open, symbol/timeframe stamped from config not the row D-12); drop-in on set_bar_sink/fetch_ohlcv_backfill + synchronous replay_bar replacing the async _stream_candles (D-03); ClosedBar imported not redefined; golden rows via CsvPriceStore so iter is byte-identical to backtest (parity anchor D-01/D-02). PAPER-03/COV-01 fixture.
 - [Phase 04]: Paper venue reuses the 'simulated' SimulatedExchange as-is (D-04/D-05/D-06); run_paper_replay() drives golden bars synchronously through the real live seam with backtest per-tick + run-end discipline (parity by construction, D-01/D-09)
 - [Phase ?]: 04-03: RUN-01 runnable paper worker (scripts/run_live_paper.py) delivered per D-08 — offline run_paper_replay (CI-safe default) + opt-in okx manual smoke over start/stop/get_status; channel + web-framework wrapper deferred to Phase 5. COV-01 lifecycle half added (FL-13: clean startup / graceful thread-joining stop / status-before-start, exchange=paper offline).
+- [Phase ?]: 04-04: paper-parity DoD gate shipped (PAPER-04/COV-01) — one test drives run_paper_replay() AND a fresh backtest on the golden dataset, asserts trades+equity frame-equal EXACT (tz-normalized UTC); anchored to the fresh backtest not the frozen 46189 artifact (D-01), survives a backtest-loop rework; inertness _FORBIDDEN extended to replay_provider (D-12), oracle untouched
 
 ### Pending Todos
 
@@ -204,6 +205,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 04 P01 | 6min | 2 tasks | 2 files |
 | Phase 04 P02 | 8min | 2 tasks | 1 files |
 | Phase 04 P03 | 6min | 2 tasks | 2 files |
+| Phase Phase 04 P04 P04 | 5min | 2 tasks | 2 files |
 
 ## Deferred Items
 
@@ -253,8 +255,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-02T12:45:35.563Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-07-02T12:51:57.880Z
+Stopped at: Completed 04-04-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
