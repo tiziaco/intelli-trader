@@ -21,6 +21,7 @@ from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
+from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.universe import Universe, derive_instruments, derive_membership
 
 from itrader.logger import get_itrader_logger
@@ -128,6 +129,10 @@ class LiveTradingSystem:
         self._status = SystemStatus.STOPPED
         self._status_lock = threading.Lock()
         self._last_error = None
+        # 05-04 (D-07): machine-readable halt reason surfaced on get_status() when
+        # the engine is HALTED. reason ∈ {drift, reconciliation-unresolved,
+        # connector-fatal, paused-on-disconnect}. None until the first halt.
+        self._halt_reason: Optional[str] = None
         
         # Threading control
         self._running = False
@@ -366,6 +371,21 @@ class LiveTradingSystem:
         # consumers instead of becoming an invisible log line + counter.
         self.event_handler._on_handler_error = self._publish_and_continue  # type: ignore[method-assign]
 
+        # 05-04 (D-06): construct the pluggable CRITICAL/halt alert sink at the
+        # composition root and inject it into the event handler, so a CRITICAL
+        # ErrorEvent (a halt) reaches the operator egress. The sink binds ONLY the
+        # declared ErrorEvent fields — no raw connector context — so no secret can
+        # leak (Pitfall 16, T-05-01). This is the live-path wiring of the seam
+        # 05-01 landed (the attribute defaults to None on the backtest path).
+        self.event_handler._alert_sink = LogAlertSink()
+
+        # 05-04 (D-01/D-02): wire the engine-thread drift-halt signal to the
+        # freeze-in-place halt entrypoint so an unexplained beyond-band per-symbol
+        # drift compare (PortfolioHandler, engine thread) halts the WHOLE engine.
+        # Wired for every live venue; the compare only runs for a live
+        # VenueAccount portfolio, so a non-OKX venue never triggers it.
+        self.portfolio_handler.set_halt_signal(self.halt)
+
         self.logger.info('Live trading system initialized')
         self._update_status(SystemStatus.STOPPED)
 
@@ -402,6 +422,72 @@ class LiveTradingSystem:
             severity=ErrorSeverity.ERROR,
         ))
     
+    def halt(self, reason: str) -> None:
+        """Freeze-in-place halt of the whole engine (D-01/D-02/D-06/D-07).
+
+        The conservative money-first response when the engine can no longer trust
+        its own state (unexplained drift, unresolved reconciliation, a fatal
+        connector error, a disconnect). Sets ``SystemStatus.HALTED`` with a
+        machine-readable ``halt_reason`` and SUPPRESSES all NEW order submission
+        (the SIGNAL/ORDER routes, gated in ``_dispatch_live``) while BAR/FILL
+        streaming, reconciling and persisting CONTINUE to drain. It does NOT
+        auto-flatten or auto-cancel: existing positions and resting orders stay
+        exactly as they are (the engine just declared its own state untrustworthy,
+        so it must not act on it). Idempotent — the first halt wins; a later halt
+        with a different reason is a no-op.
+
+        Emits ONE CRITICAL ``ErrorEvent`` so the halt reaches the operator through
+        the injected alert sink (D-06); only declared ErrorEvent fields are bound,
+        so no connector secret can leak (Pitfall 16, T-05-01).
+
+        Parameters
+        ----------
+        reason : str
+            Machine-readable halt reason (D-07) ∈ {drift,
+            reconciliation-unresolved, connector-fatal, paused-on-disconnect}.
+        """
+        with self._status_lock:
+            if self._status == SystemStatus.HALTED:
+                return  # already halted — first reason wins (idempotent).
+            self._halt_reason = reason
+        self._update_status(SystemStatus.HALTED, f'halt: {reason}')
+        # D-06: CRITICAL egress — routed through the EventHandler's ERROR route to
+        # the injected alert sink. Only declared ErrorEvent fields are bound.
+        self.global_queue.put(ErrorEvent(
+            time=datetime.now(UTC),
+            source='live_trading_system',
+            error_type='EngineHalted',
+            error_message=(
+                f'Engine halted (reason={reason}) — new order submission frozen '
+                'in place; streaming/reconciling/persisting continue, no '
+                'auto-flatten/auto-cancel'),
+            operation='halt',
+            severity=ErrorSeverity.CRITICAL,
+        ))
+
+    def _is_halted(self) -> bool:
+        """Whether the engine is in the freeze-in-place HALTED state (D-02)."""
+        with self._status_lock:
+            return self._status == SystemStatus.HALTED
+
+    def _dispatch_live(self, event) -> None:
+        """Dispatch one event through the live halt gate (D-02).
+
+        The freeze-in-place gate: while HALTED, NEW order submission (the SIGNAL
+        and ORDER routes) is SUPPRESSED, while BAR/FILL/ERROR streaming +
+        reconciling + persisting continue to drain normally (so the venue stays
+        mirrored and the halt itself — a CRITICAL ErrorEvent — is still consumed).
+        Not halted → a transparent pass-through to the event handler's routing.
+        """
+        if self._is_halted() and getattr(event, 'type', None) in (
+                EventType.SIGNAL, EventType.ORDER):
+            event_type = getattr(getattr(event, 'type', None), 'name', 'UNKNOWN')
+            self.logger.warning(
+                'HALTED — new order submission suppressed (freeze-in-place)',
+                event_type=event_type)
+            return
+        self.event_handler._dispatch(event)
+
     def _update_status(self, new_status: SystemStatus, error_msg: Optional[str] = None):
         """Update system status and notify via callback if available."""
         with self._status_lock:
@@ -637,7 +723,11 @@ class LiveTradingSystem:
                     # The task_done() bookkeeping is dropped with it: nothing
                     # joins this queue, and the put-back/internal gets left
                     # unfinished_tasks permanently drifting.
-                    self.event_handler._dispatch(event)
+                    # 05-04 (D-02): route through the freeze-in-place halt gate so
+                    # a HALTED engine suppresses NEW order submission (SIGNAL/ORDER)
+                    # while BAR/FILL/ERROR streaming + reconciling + persisting
+                    # continue to drain.
+                    self._dispatch_live(event)
 
                     # Update statistics
                     self._update_stats(event.type.name if hasattr(event, 'type') else 'UNKNOWN')
@@ -703,6 +793,19 @@ class LiveTradingSystem:
             if self.exchange == 'okx' and self._okx_data_provider is not None:
                 self.feed.warmup(_OKX_STREAM_SYMBOL, _OKX_STREAM_TIMEFRAME)
                 self._okx_data_provider.start_stream()
+
+            # 05-04 (D-14): with the connector live, seed the VenueAccount cache
+            # from a REST snapshot then start its push stream BEFORE RUNNING, and
+            # link the venue-cached account into every active live portfolio so the
+            # engine-thread drift compare reads venue truth. Gated to the OKX arm
+            # (the only venue with a VenueAccount); lazy inside the okx branch, so
+            # no inertness impact. The venue owns balance/positions in live — the
+            # engine caches, it does not recompute (Pitfall 10, D-14).
+            if self.exchange == 'okx' and self._venue_account is not None:
+                self._venue_account.snapshot()
+                self._venue_account.start_streaming()
+                for portfolio in self.portfolio_handler.get_active_portfolios():
+                    portfolio.account = self._venue_account
 
             # Reset the stop event and start the processing thread
             self._stop_event.clear()
@@ -813,6 +916,8 @@ class LiveTradingSystem:
             
             return {
                 'status': self._status.value,
+                # 05-04 (D-07): the machine-readable halt reason (None unless HALTED).
+                'halt_reason': self._halt_reason,
                 'is_running': self.is_running(),
                 'exchange': self.exchange,
                 'queue_size': self.get_queue_size(),
