@@ -300,6 +300,27 @@ def test_backfill_decimal_no_float_leaks(fake_ccxt_client: Any) -> None:
     assert isinstance(bar["ts"], int)
 
 
+def test_backfill_passes_unified_timeframe_to_ccxt(fake_ccxt_client: Any) -> None:
+    """Backfill hands ccxt the UNIFIED timeframe ("1d"), not the OKX channel token ("1D").
+
+    Regression: ccxt's unified ``fetch_ohlcv`` maps "1d" -> OKX "1D" itself; passing the
+    OKX token makes ccxt's ``parse_timeframe`` reject unit "D" ("timeframe unit D is not
+    supported"), which broke ``LiveTradingSystem.start()`` warmup backfill. The
+    ``_okx_interval`` token is for the native business-candle channel name only.
+    """
+    raw = [["1704067200000", "42000.0", "42500.0", "41800.0", "42100.0", "1200.5"]]
+    fake_ccxt_client.fetch_ohlcv = AsyncMock(return_value=raw)
+    provider = OkxDataProvider(
+        _StubConnector(sandbox=True, client=fake_ccxt_client), "BTC-USDT", "1d")
+
+    provider.fetch_ohlcv_backfill("BTC-USDT", "1d")
+
+    # Positional signature: fetch_ohlcv(symbol_okx, timeframe, since, limit)
+    passed_timeframe = fake_ccxt_client.fetch_ohlcv.call_args.args[1]
+    assert passed_timeframe == "1d"
+    assert passed_timeframe != "1D"
+
+
 def test_decimal_edge_no_float_leaks_in_streamed_bar(
     okx_business_candles: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:

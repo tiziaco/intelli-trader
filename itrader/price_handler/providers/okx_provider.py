@@ -441,19 +441,22 @@ class OkxDataProvider:
         feed's ``update(bar)``, LX-09).
         """
         symbol_okx = self._to_okx_symbol(symbol)
-        okx_tf = self._okx_interval(timeframe)
+        # ccxt's unified ``fetch_ohlcv`` takes the UNIFIED timeframe (``"1d"``) and maps it
+        # to OKX's ``"1D"`` itself — passing the OKX token here makes ccxt's
+        # ``parse_timeframe`` reject unit ``"D"``. The ``_okx_interval`` token is for the
+        # native business-candle CHANNEL name only (``start_stream``), never for ccxt.
         client = self._connector.client
 
         raw: list[Any] = []
         page: list[Any] = list(
-            self._connector.call(client.fetch_ohlcv(symbol_okx, okx_tf, since, limit)))
+            self._connector.call(client.fetch_ohlcv(symbol_okx, timeframe, since, limit)))
         raw.extend(page)
         # IN-02: ``len(page) == limit`` (limit > 0) already implies ``page`` is
         # truthy, so the ``and page`` clause was dead.
         while len(page) == limit:
             last_ts = int(page[-1][0])
             page = list(self._connector.call(
-                client.fetch_ohlcv(symbol_okx, okx_tf, last_ts + 1, limit)))
+                client.fetch_ohlcv(symbol_okx, timeframe, last_ts + 1, limit)))
             raw.extend(page)
 
         bars: list[ClosedBar] = []
