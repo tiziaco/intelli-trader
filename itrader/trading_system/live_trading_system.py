@@ -133,6 +133,16 @@ class LiveTradingSystem:
         # the engine is HALTED. reason ∈ {drift, reconciliation-unresolved,
         # connector-fatal, paused-on-disconnect}. None until the first halt.
         self._halt_reason: Optional[str] = None
+        # 05-08 (D-19): REVERSIBLE pause-on-disconnect state — distinct from the
+        # terminal HALT. A sustained venue-stream disconnect quiesces NEW order
+        # submission (don't trade when you can't see the venue) while streaming /
+        # reconciling / persisting continue and existing positions/orders stay
+        # untouched; a reconnect + a fresh REST snapshot/reconcile resumes it.
+        # _pending_stream_resume is SET by the connector-loop reconnect callback and
+        # DRAINED on the ENGINE thread (Pitfall 9 — no blocking venue I/O on the loop).
+        self._submission_paused = False
+        self._paused_reason: Optional[str] = None
+        self._pending_stream_resume = threading.Event()
         
         # Threading control
         self._running = False
@@ -375,6 +385,20 @@ class LiveTradingSystem:
             # monotonic-guard ingest so every ClosedBar drives feed.update() -> BarEvent.
             self._okx_data_provider.set_bar_sink(self.feed.update)
 
+            # 05-08 (RES-01/D-19/D-20): wire the reconnect-supervisor seams on BOTH
+            # venue stream arms. A fatal connector error or an exhausted retry ceiling
+            # escalates to the freeze-in-place halt (reason='connector-fatal', HALTED +
+            # CRITICAL alert); a sustained disconnect pauses NEW submission and a
+            # reconnect resumes it only after a fresh REST reconcile (engine thread).
+            # The pause/resume callbacks fire from the connector loop thread, so they
+            # only flip thread-safe flags — no blocking venue I/O there (Pitfall 9).
+            self._okx_exchange.set_halt_signal(self.halt)
+            self._okx_exchange.set_stream_state_listener(
+                self._on_venue_stream_down, self._on_venue_stream_up)
+            self._okx_data_provider.set_halt_signal(self.halt)
+            self._okx_data_provider.set_stream_state_listener(
+                self._on_venue_stream_down, self._on_venue_stream_up)
+
         elif self.exchange == 'paper':
             # ------------------------------------------------------------------
             # Paper venue wiring (Phase 4, D-02/D-04/D-05/D-06/D-09 — composition
@@ -513,20 +537,107 @@ class LiveTradingSystem:
         with self._status_lock:
             return self._status == SystemStatus.HALTED
 
-    def _dispatch_live(self, event) -> None:
-        """Dispatch one event through the live halt gate (D-02).
+    def _is_submission_paused(self) -> bool:
+        """Whether NEW order submission is reversibly paused on a disconnect (D-19)."""
+        with self._status_lock:
+            return self._submission_paused
 
-        The freeze-in-place gate: while HALTED, NEW order submission (the SIGNAL
-        and ORDER routes) is SUPPRESSED, while BAR/FILL/ERROR streaming +
-        reconciling + persisting continue to drain normally (so the venue stays
-        mirrored and the halt itself — a CRITICAL ErrorEvent — is still consumed).
-        Not halted → a transparent pass-through to the event handler's routing.
+    def pause_submission(self, reason: str) -> None:
+        """Reversibly pause NEW order submission on a venue-stream disconnect (D-19).
+
+        Distinct from ``halt()``: this is a REVERSIBLE quiesce — streaming, reconciling
+        and persisting continue, existing positions/orders are untouched, and
+        ``resume_submission()`` (after reconnect + a fresh REST reconcile) clears it. A
+        terminal HALT supersedes a pause, so this is a no-op while HALTED. Idempotent
+        (a second pause with a new reason keeps the first). Thread-safe (a locked flag
+        flip) so the connector-loop reconnect callback can call it without blocking I/O.
+
+        Parameters
+        ----------
+        reason : str
+            Machine-readable pause reason (D-07), e.g. ``'paused-on-disconnect'``.
         """
-        if self._is_halted() and getattr(event, 'type', None) in (
-                EventType.SIGNAL, EventType.ORDER):
+        with self._status_lock:
+            if self._status == SystemStatus.HALTED:
+                return
+            if self._submission_paused:
+                return
+            self._submission_paused = True
+            self._paused_reason = reason
+        self.logger.warning(
+            'Order submission paused (reason=%s) — new SIGNAL/ORDER suppressed until '
+            'reconnect + REST reconcile; positions/orders untouched', reason)
+
+    def resume_submission(self) -> None:
+        """Clear the reversible pause after reconnect + a fresh REST reconcile (D-19)."""
+        with self._status_lock:
+            if not self._submission_paused:
+                return
+            self._submission_paused = False
+            self._paused_reason = None
+        self.logger.info(
+            'Order submission resumed — venue stream reconnected + REST reconcile complete')
+
+    def _on_venue_stream_down(self, stream_name: str) -> None:
+        """Connector-loop callback (D-19): pause NEW submission on a sustained disconnect.
+
+        Thread-safe (a locked flag flip) — does NO blocking venue I/O on the connector
+        loop (Pitfall 9). Fires once per sustained disconnect (past the debounce).
+        """
+        self.logger.warning(
+            'Venue %s stream disconnected — pausing new order submission', stream_name)
+        self.pause_submission('paused-on-disconnect')
+
+    def _on_venue_stream_up(self, stream_name: str) -> None:
+        """Connector-loop callback (D-19): REQUEST an engine-thread resume on reconnect.
+
+        Only SETS a thread-safe flag — it must not perform the fresh REST snapshot /
+        reconcile here (a ``connector.call`` on the connector loop would deadlock,
+        Pitfall 9). The engine loop drains the flag via ``_maybe_resume_after_reconnect``.
+        """
+        self.logger.info(
+            'Venue %s stream reconnected — requesting engine-thread resume', stream_name)
+        self._pending_stream_resume.set()
+
+    def _maybe_resume_after_reconnect(self) -> None:
+        """Engine-thread resume after a venue stream reconnected (D-19).
+
+        Runs on the engine (queue-draining) thread: take a fresh REST snapshot +
+        reconcile (don't trade when you can't see the venue) THEN clear the pause. The
+        connector-loop reconnect callback only sets the flag; all blocking venue I/O
+        happens HERE, off the connector loop (Pitfall 9). A failed snapshot leaves the
+        pause in place (retried on the next set) — never resume blind.
+        """
+        if not self._pending_stream_resume.is_set():
+            return
+        self._pending_stream_resume.clear()
+        if not self._is_submission_paused():
+            return
+        try:
+            if self._venue_account is not None:
+                # Fresh REST snapshot before resuming (engine thread — safe to block).
+                self._venue_account.snapshot()
+        except Exception as e:
+            self.logger.error(
+                'Resume snapshot/reconcile failed — staying paused: %s', e)
+            self._pending_stream_resume.set()  # retry on the next engine iteration
+            return
+        self.resume_submission()
+
+    def _dispatch_live(self, event) -> None:
+        """Dispatch one event through the live halt/pause gate (D-02/D-19).
+
+        The freeze-in-place gate: while HALTED (terminal) OR paused-on-disconnect
+        (reversible), NEW order submission (the SIGNAL and ORDER routes) is SUPPRESSED,
+        while BAR/FILL/ERROR streaming + reconciling + persisting continue to drain
+        normally (so the venue stays mirrored and the halt itself — a CRITICAL
+        ErrorEvent — is still consumed). Otherwise → a transparent pass-through.
+        """
+        if (self._is_halted() or self._is_submission_paused()) and getattr(
+                event, 'type', None) in (EventType.SIGNAL, EventType.ORDER):
             event_type = getattr(getattr(event, 'type', None), 'name', 'UNKNOWN')
             self.logger.warning(
-                'HALTED — new order submission suppressed (freeze-in-place)',
+                'New order submission suppressed (freeze-in-place / paused-on-disconnect)',
                 event_type=event_type)
             return
         self.event_handler._dispatch(event)
@@ -803,15 +914,25 @@ class LiveTradingSystem:
                     # PortfolioHandler, so the helper iterates the active portfolios.
                     self._record_bar_metrics(event)
 
+                    # 05-08 (D-19): resume submission on the ENGINE thread once a venue
+                    # stream reconnected — a fresh REST snapshot/reconcile then clears the
+                    # pause. The connector-loop reconnect callback only flagged it here;
+                    # the blocking snapshot runs on this thread (Pitfall 9).
+                    self._maybe_resume_after_reconnect()
+
                 except queue.Empty:
+                    # 05-08 (D-19): drain a pending resume even when the queue is idle —
+                    # a reconnect during a quiet spell must still resume submission.
+                    self._maybe_resume_after_reconnect()
+
                     # No events in queue, check if we've been idle too long
                     current_time = datetime.now(UTC)
                     idle_time = (current_time - last_event_time).total_seconds()
-                    
+
                     if idle_time > self.max_idle_time:
                         self.logger.warning(f'No events received for {idle_time:.1f} seconds')
                         last_event_time = current_time
-                    
+
                     continue
                     
             except Exception as e:
@@ -1013,6 +1134,10 @@ class LiveTradingSystem:
                 'status': self._status.value,
                 # 05-04 (D-07): the machine-readable halt reason (None unless HALTED).
                 'halt_reason': self._halt_reason,
+                # 05-08 (D-19): the reversible pause-on-disconnect state, surfaced
+                # DISTINCTLY from the terminal halt (paused != HALTED).
+                'paused': self._submission_paused,
+                'paused_reason': self._paused_reason,
                 'is_running': self.is_running(),
                 'exchange': self.exchange,
                 'queue_size': self.get_queue_size(),
