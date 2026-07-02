@@ -200,7 +200,7 @@ reconnect debounce strategy; after-the-fact venue bar-correction policy (re-warm
 > extraction is **dropped** (D-05: PAPER-02 satisfied-by-reuse); the parity gate re-anchors to **paper ≡
 > a fresh backtest on the same data, exact frame-equality** (D-01: NOT pinned to the frozen `46189…`
 > artifact, revises PAPER-04/LX-11); Phase 4 builds only the **runnable worker + lifecycle** — the
-> Postgres `LISTEN/NOTIFY` channel + FastAPI move to Phase 5 (D-08: revises RUN-01). The prior
+> Postgres `LISTEN/NOTIFY` channel + FastAPI move past Phase 5 to the FastAPI application-layer plan (D-08: revises RUN-01). The prior
 > 2026-07-01 note (paper needs no connector/session, revises LX-06 framing) still holds.
 
 **Goal**: Deliver the paper path by **reusing `SimulatedExchange` as-is** as the paper exchange (it
@@ -209,7 +209,7 @@ under the `'simulated'` key), driven by `LiveBarFeed`, plus a **runnable worker 
 start/stop/status lifecycle — and prove the **paper-parity gate**: replaying the fixed golden dataset
 through the live-paper path yields **the same trades/equity as a fresh backtest run on the same data,
 exact frame-equality**. Reachable on Phases 1+3 (and, for the manual live smoke test only, the Phase-2
-**data arm** `OkxDataProvider`). The LX-15 runtime topology is decided; the channel/FastAPI defer to Phase 5.
+**data arm** `OkxDataProvider`). The LX-15 runtime topology is decided; the channel/FastAPI defer past Phase 5 to the app-layer plan (D-08).
 **Depends on**: Phase 1 (`SimulatedAccount`, portfolio-side) + Phase 3 (`LiveBarFeed`) + Phase 2 **data arm only** (`OkxDataProvider`, manual smoke)
 **Requirements**: PAPER-01, PAPER-02, PAPER-03, PAPER-04, RUN-01, COV-01
 **Success Criteria** (what must be TRUE):
@@ -232,7 +232,7 @@ exact frame-equality**. Reachable on Phases 1+3 (and, for the manual live smoke 
      backtest hot path — the inertness gate forbids `replay_provider` on the backtest import path).
 **Research flag**: RESOLVED 2026-07-02 (`04-CONTEXT.md` + `04-PATTERNS.md`) — parity harness = offline
 synchronous replay of the golden CSV through `LiveBarFeed` vs a fresh in-test backtest (D-01/D-02/D-03);
-LX-15 topology decided (D-07); channel/FastAPI deferred to Phase 5 (D-08). Two load-bearing traps mapped:
+LX-15 topology decided (D-07); channel/FastAPI deferred past Phase 5 to the app-layer plan (D-08). Two load-bearing traps mapped:
 the `BTCUSD` symbol-form (not `BTC/USDT`) and the tz divergence (backtest `Europe/Paris` vs live-feed `UTC`
 — parity test tz-normalizes to UTC before the exact diff).
 **Plans**: 4 plans (planned 2026-07-02)
