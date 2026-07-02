@@ -75,7 +75,7 @@ configured so the global filter is never relaxed); tabs/spaces indentation match
 - [x] **Phase 1: Account Abstraction + Portfolio/Handler Refactor** — Oracle-gated, behavior-preserving extraction of an `Account` truth surface; the universal gate before any live code. — completed 2026-06-30
 - [ ] **Phase 2: OKX Connector** — `OkxConnector` = shared authenticated **session/transport primitive**; data/order/account are **domain adapters** consuming it (`OkxDataProvider` + `OkxExchange` + `VenueAccount`), injected at the composition root; async bottled at the connector edge. (Revised 2026-07-01 — decomposition, revises LX-05; see `phases/02-okx-connector/02-CONTEXT.md`.)
 - [ ] **Phase 3: LiveBarFeed** — Ring-buffer `BarFeed` impl; closed-bar emission off the confirm flag; warmup/backfill through the identical `update(bar)` path; monotonic-forward-only.
-- [ ] **Phase 4: Paper Path (milestone DoD)** — paper execution adapter (impl `AbstractExchange`, reusing the pure `MatchingEngine` + shared `apply_costs`) — **no connector**; live runtime wired; **paper-parity gate vs the oracle**.
+- [ ] **Phase 4: Paper Path (milestone DoD)** — reuse `SimulatedExchange` as-is as the paper exchange (revised 2026-07-02); runnable worker + lifecycle; **paper-parity gate = paper ≡ a fresh backtest on the same data, exact frame-equality**.
 - [ ] **Phase 5: Real/Sandbox Path + Reconciliation + Persistence Live-Drive** — `VenueAccount` reconciliation, partial-fill correctness, v1.6 store driven by the real feed, two-sided restart; sandbox-validated.
 - [ ] **Phase 6: Dynamic Universe Membership** — Lean poll seam for mid-run add/remove; warmup-on-add reuses the Phase-3 backfill.
 
@@ -195,38 +195,51 @@ reconnect debounce strategy; after-the-fact venue bar-correction policy (re-warm
 **Handoff**: the LX-15 runtime topology (RUN-01) must be DECIDED before Phase 4 wires the runtime — settle it in the Phase 3→4 planning handoff.
 
 ### Phase 4: Paper Path (milestone DoD)
-> **Revised 2026-07-01** — paper needs **no connector/session** (revises LX-06 framing); the paper
-> execution adapter implements `AbstractExchange`, not `LiveConnector`. See `02-CONTEXT.md` D-03.
+> **Revised 2026-07-02** (Phase 4 discuss — `04-CONTEXT.md` D-01..D-12) — the paper exchange is the
+> **reused `SimulatedExchange` as-is** (D-04: no new adapter, revises LX-06/PAPER-01); the `apply_costs`
+> extraction is **dropped** (D-05: PAPER-02 satisfied-by-reuse); the parity gate re-anchors to **paper ≡
+> a fresh backtest on the same data, exact frame-equality** (D-01: NOT pinned to the frozen `46189…`
+> artifact, revises PAPER-04/LX-11); Phase 4 builds only the **runnable worker + lifecycle** — the
+> Postgres `LISTEN/NOTIFY` channel + FastAPI move to Phase 5 (D-08: revises RUN-01). The prior
+> 2026-07-01 note (paper needs no connector/session, revises LX-06 framing) still holds.
 
-**Goal**: Deliver the paper path — a **paper execution adapter** (impl `AbstractExchange`) composing the
-**reused pure `MatchingEngine`** + a shared `apply_costs` helper + `SimulatedAccount`, driven by
-`LiveBarFeed`, wired end-to-end through `LiveTradingSystem` — and prove the **paper-parity gate**:
-replaying the fixed golden dataset through the live-paper path yields the backtest oracle byte-exact.
-Reachable on Phases 1+3 + the Phase-2 **data arm only** (`OkxDataProvider` — NOT the order arm or the
-connector session). The LX-15 runtime topology is decided before wiring.
-**Depends on**: Phase 1 (`SimulatedAccount`) + Phase 3 (`LiveBarFeed`) + Phase 2 **data arm only** (`OkxDataProvider`)
+**Goal**: Deliver the paper path by **reusing `SimulatedExchange` as-is** as the paper exchange (it
+already implements `AbstractExchange`, is account-free, and is already half-wired in `LiveTradingSystem`
+under the `'simulated'` key), driven by `LiveBarFeed`, plus a **runnable worker entrypoint** with
+start/stop/status lifecycle — and prove the **paper-parity gate**: replaying the fixed golden dataset
+through the live-paper path yields **the same trades/equity as a fresh backtest run on the same data,
+exact frame-equality**. Reachable on Phases 1+3 (and, for the manual live smoke test only, the Phase-2
+**data arm** `OkxDataProvider`). The LX-15 runtime topology is decided; the channel/FastAPI defer to Phase 5.
+**Depends on**: Phase 1 (`SimulatedAccount`, portfolio-side) + Phase 3 (`LiveBarFeed`) + Phase 2 **data arm only** (`OkxDataProvider`, manual smoke)
 **Requirements**: PAPER-01, PAPER-02, PAPER-03, PAPER-04, RUN-01, COV-01
 **Success Criteria** (what must be TRUE):
-  1. The paper execution adapter implements **`AbstractExchange`** (not `LiveConnector` — paper has no
-     venue session) by composing the reused pure `MatchingEngine` + a shared `apply_costs` helper
-     (extracted **byte-exact** from `SimulatedExchange._emit_fill`, used by BOTH `SimulatedExchange` and
-     the paper adapter) + `SimulatedAccount`, with **bar-based fills only** and no OKX I/O — no dual
-     fill-pricing drift. (PAPER-01, PAPER-02)
+  1. The paper exchange is the **reused `SimulatedExchange`** (D-04, satisfies "impl `AbstractExchange`")
+     with **bar-based fills only** and no OKX I/O; there is exactly ONE fill-pricing implementation
+     (`_emit_fill`, UNTOUCHED — D-05), so "no dual fill-pricing drift" holds by construction. (PAPER-01, PAPER-02)
   2. `LiveTradingSystem` runs end-to-end on the paper path (live feed → strategy → order → paper fill →
      `SimulatedAccount`/`Portfolio`) with the determinism seams (seeded RNG + business-time stamping)
-     threaded through; the **LX-15 topology** (separate worker process architected as (c) with N=1,
-     Postgres `LISTEN/NOTIFY` command/status channel) is decided **before** the runtime is wired. (PAPER-03, RUN-01)
+     threaded through; a **runnable worker entrypoint** with start/stop/status lifecycle exists (LX-15
+     topology (b)-as-(c)-N=1 decided). (PAPER-03, RUN-01)
   3. **Paper-parity gate (DoD)**: replaying the fixed golden dataset through the live-paper path yields
-     the backtest oracle **byte-exact (134 / `46189.87730727451`, `check_exact=True`)**. (PAPER-04)
+     trades + equity **exactly equal to a fresh backtest run on the same data** (`check_exact=True`, no
+     tolerance) — NOT pinned to the frozen `46189…` artifact so it survives a backtest-loop rework; the
+     transitive lock (paper == backtest == `46189…`) is held by the separate, unchanged oracle test. (PAPER-04)
   4. The surviving live surface (`LiveTradingSystem` + the ACCT-05 engine command surface) has FL-13
-     test coverage via mocked/recorded connectors with `filterwarnings=["error"]` green (the global
-     filter is never relaxed); coverage of the real-path surface extends into Phase 5. (COV-01)
+     coverage: the parity gate (anchor E2E) + start/stop/status lifecycle tests + the synthetic replay
+     provider as the fixture, `filterwarnings=["error"]` green; real-connector coverage is manual/opt-in
+     here (network-gated, out of CI) and automated in Phase 5. (COV-01)
   5. Recurring milestone gate: backtest oracle byte-exact + no W1/W2 regression (paper machinery off the
-     backtest hot path).
-**Research flag**: NEEDS PLAN-TIME RESEARCH — parity harness design (offline replay of the fixed dataset
-recommended, CI-runnable + deterministic); LX-15 topology decision + Postgres `LISTEN/NOTIFY` vs Redis;
-determinism seam threading in the live runtime.
-**Plans**: TBD
+     backtest hot path — the inertness gate forbids `replay_provider` on the backtest import path).
+**Research flag**: RESOLVED 2026-07-02 (`04-CONTEXT.md` + `04-PATTERNS.md`) — parity harness = offline
+synchronous replay of the golden CSV through `LiveBarFeed` vs a fresh in-test backtest (D-01/D-02/D-03);
+LX-15 topology decided (D-07); channel/FastAPI deferred to Phase 5 (D-08). Two load-bearing traps mapped:
+the `BTCUSD` symbol-form (not `BTC/USDT`) and the tz divergence (backtest `Europe/Paris` vs live-feed `UTC`
+— parity test tz-normalizes to UTC before the exact diff).
+**Plans**: 4 plans (planned 2026-07-02)
+- [ ] 04-01-PLAN.md — ReplayDataProvider over the golden CsvPriceStore + offline unit coverage (COV-01 fixture) (Wave 1)
+- [ ] 04-02-PLAN.md — Paper venue arm (reuse SimulatedExchange) + synchronous run_paper_replay() driver (PAPER-01/02/03) (Wave 2)
+- [ ] 04-03-PLAN.md — Runnable worker entrypoint (RUN-01) + start/stop/status lifecycle tests (COV-01) (Wave 3)
+- [ ] 04-04-PLAN.md — Paper-parity gate (PAPER-04, DoD) = paper ≡ fresh backtest exact + inertness/oracle gate (Wave 3)
 **Cross-cutting**: RUN-01 (topology, LX-15) is decided here but architected for Phases 2–5; COV-01 (FL-13)
 is primarily established here on the first end-to-end live surface and extends into Phase 5 for the real path.
 
@@ -444,7 +457,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | 1. Account Abstraction + Portfolio/Handler Refactor | v1.7 | 7/7 | Complete   | 2026-06-30 |
 | 2. OKX Connector | v1.7 | 5/5 | Complete   | 2026-07-01 |
 | 3. LiveBarFeed | v1.7 | 4/4 | Complete   | 2026-07-01 |
-| 4. Paper Path (DoD) | v1.7 | 0/TBD | Not started | - |
+| 4. Paper Path (DoD) | v1.7 | 0/4 | Planned | - |
 | 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 0/TBD | Not started | - |
 | 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
 
