@@ -1,6 +1,8 @@
 ---
 slug: cr-01-fill-double-count
-status: awaiting_human_verify
+status: resolved
+resolved: 2026-07-03
+resolution: "Fixed via venue_trade_id cross-emitter idempotency key + per-trade reconciler emission + on_fill bounded dedup; persistence tail (transactions.venue_trade_id column + migration) in quick task 260703-hl5. Committed f5f10496 (code) + a111075b..6ae15d84 (persistence). Deterministic gates green (oracle byte-exact) AND live OKX-demo e2e suite confirmed passing by the user 2026-07-03."
 trigger: "CR-01 (Phase 5) code-review finding — live-trading fill double-count when the restart reconciler and the OKX trade stream both book the same economic venue trade"
 created: 2026-07-03
 updated: 2026-07-03

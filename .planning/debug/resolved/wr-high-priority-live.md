@@ -1,6 +1,8 @@
 ---
 slug: wr-high-priority-live
-status: awaiting_human_verify
+status: resolved
+resolved: 2026-07-03
+resolution: "WR-01 (cancel-branch + ErrorEvent), WR-02 (fail-loud >1 VenueAccount guard, accepted deviation), WR-04 (base62 lossless clOrdId) all fixed. Committed f5f10496 (code) + 73de7a6c (review notes). Deterministic gates green (oracle byte-exact) AND live OKX-demo e2e suite confirmed passing by the user 2026-07-03. WR-03/05/06 remain open (out of scope)."
 trigger: "Phase 5 review WR-01/WR-02/WR-04 — three high-priority live-path warnings, all the CR-01 'promote-a-conflated-concept-to-a-first-class-primitive' pattern"
 created: 2026-07-03
 updated: 2026-07-03
