@@ -18,14 +18,18 @@ domain-shaped:
   ``call``/``spawn`` seam and shared ``client`` — the connector performs no venue operations
   itself.
 
-- **One ``sandbox: bool`` — no split-brain (CONN-03 / D-02 correction).** A single flag
-  drives BOTH ccxt (``set_sandbox_mode(True)`` → REST ``x-simulated-trading`` header AND the
-  ccxt WS host swap to ``wspap.okx.com``) AND is exposed via the ``sandbox`` property so the
-  native business-candle socket (Plan 02-04) keys its own host off the same bool. The
-  ``x-simulated-trading`` header is REST-only and never routes WS — the WS demo host is
-  ``wspap.okx.com`` (RESEARCH §Sandbox Routing, Pitfall 2). A sandbox misroute placing a
-  live order is the phase's highest-severity threat, so the routing lives in exactly one
-  place and is gated by the CONN-03 test.
+- **Region + ``sandbox`` derive BOTH hosts — no split-brain (CONN-03 / D-02 correction /
+  OKX-REGION).** The REST host is the region-derived ``settings.rest_hostname`` (www.okx.com
+  global / eea.okx.com EEA). ``set_sandbox_mode(True)`` still adds the REST
+  ``x-simulated-trading`` header AND performs ccxt's own WS host swap, but that swap only
+  knows the global entity — so ``_build_client`` UNCONDITIONALLY overrides
+  ``client.urls['api']['ws']`` with ``wss://{settings.ws_hostname}:8443/ws/v5``, where
+  ``ws_hostname`` is the (region, sandbox)-derived host (wspap/ws/wseeapap/wseea). That
+  single authoritative WS host is also exposed via the ``ws_hostname`` property so the native
+  business-candle socket (Plan 02-04) keys its own URL off the same value. The
+  ``x-simulated-trading`` header is REST-only and never routes WS (RESEARCH §Sandbox
+  Routing, Pitfall 2). A sandbox/region misroute placing a live order is the phase's
+  highest-severity threat, so the routing lives in exactly one place and is gated by tests.
 
 The scheduling seam (RESEARCH §Async Containment):
 
@@ -93,6 +97,11 @@ class OkxConnector:
         """Demo-routing flag; the native data socket (Plan 02-04) keys its host off this."""
         return self._sandbox
 
+    @property
+    def ws_hostname(self) -> str:
+        """Region+sandbox-derived WS host the native data socket (Plan 02-04) keys its URL off."""
+        return self._settings.ws_hostname
+
     def connect(self) -> None:
         """Start the loop-on-a-daemon-thread and build the ccxt.pro client on that loop.
 
@@ -134,15 +143,20 @@ class OkxConnector:
                 "apiKey": self._settings.api_key.get_secret_value(),
                 "secret": self._settings.api_secret.get_secret_value(),
                 "password": self._settings.api_passphrase.get_secret_value(),
-                # Regional-entity host (default www.okx.com; e.g. eea.okx.com for the EEA
-                # entity). ccxt substitutes this into its ``https://{hostname}`` template.
-                "hostname": self._settings.hostname,
+                # Region-derived REST host (www.okx.com global / eea.okx.com EEA). ccxt
+                # substitutes this into its ``https://{hostname}`` template.
+                "hostname": self._settings.rest_hostname,
                 "enableRateLimit": True,
             }
         )
         if self._sandbox:
-            # Single bool → REST x-simulated-trading header + ccxt WS host swap to wspap.
+            # REST x-simulated-trading header; ccxt also swaps its WS host, but only for
+            # the global entity — the region-aware override below supersedes that swap.
             self._client.set_sandbox_mode(True)
+        # Unconditionally pin the WS host to the (region, sandbox)-derived value so the
+        # region-specific host (wspap/ws/wseeapap/wseea) is authoritative over ccxt's own
+        # global-only demo swap. Both WS consumers key off this single host.
+        self._client.urls["api"]["ws"] = f"wss://{self._settings.ws_hostname}:8443/ws/v5"
         await self._client.load_markets()
 
     def call(self, coro: Awaitable[_T]) -> _T:
