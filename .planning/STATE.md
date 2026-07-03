@@ -31,7 +31,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — COMPLETE
 Plan: 12 of 12
 Status: Phase complete — RECON-06 closed (OKX-demo live e2e `3 passed`, human-observed 2026-07-03)
-Last activity: 2026-07-03 - 05-12 finalized: RECON-06 live-sandbox suite green against real OKX EEA demo venue
+Last activity: 2026-07-03 - Completed quick task 260703-dob: OKX live-connectivity integration test + `live` pytest marker
 
 Progress: [██████████] 100%
 
@@ -207,6 +207,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | fast | Fix OKX backfill timeframe: pass unified "1d" (not OKX "1D") to ccxt fetch_ohlcv — unblocks LiveTradingSystem.start() warmup | 2026-07-02 | d6d225b6 | — (fast, inline) |
 | 260703-bza | Add OKX_REGION config deriving REST+WS hosts (global/eea); wire ws_hostname through connector + native candle socket — enables EEA demo (wseeapap.okx.com) | 2026-07-03 | b5826909 | [260703-bza-add-okx-region-config-deriving-rest-ws-h](./quick/260703-bza-add-okx-region-config-deriving-rest-ws-h/) |
 | fast | Hardcode OKX live pair BTC/USDT->BTC/USDC (EEA restricts USDT/MiCA, sCode 51155); universe phase will make it configurable | 2026-07-03 | f51fc34a | — (fast, inline) |
+| 260703-dob | Add OKX live-connectivity integration test + new `live` pytest marker (creds-free public reachability + creds-gated demo auth via OkxConnector); fence default `make test`/`test-integration` with `not live`, add `make test-live` | 2026-07-03 | b97690d5 | [260703-dob-okx-live-connectivity-marker](./quick/260703-dob-okx-live-connectivity-marker/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
