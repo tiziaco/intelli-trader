@@ -205,6 +205,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | fast | Make OKX connector hostname configurable (OKX_HOSTNAME) for EEA regional entity — fixes 50119 on eea.okx.com keys | 2026-07-02 | 3790990f | — (fast, inline) |
 | fast | Fix OKX backfill timeframe: pass unified "1d" (not OKX "1D") to ccxt fetch_ohlcv — unblocks LiveTradingSystem.start() warmup | 2026-07-02 | d6d225b6 | — (fast, inline) |
 | 260703-bza | Add OKX_REGION config deriving REST+WS hosts (global/eea); wire ws_hostname through connector + native candle socket — enables EEA demo (wseeapap.okx.com) | 2026-07-03 | b5826909 | [260703-bza-add-okx-region-config-deriving-rest-ws-h](./quick/260703-bza-add-okx-region-config-deriving-rest-ws-h/) |
+| fast | Hardcode OKX live pair BTC/USDT->BTC/USDC (EEA restricts USDT/MiCA, sCode 51155); universe phase will make it configurable | 2026-07-03 | f51fc34a | — (fast, inline) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
