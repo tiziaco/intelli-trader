@@ -236,15 +236,16 @@ class OkxDataProvider:
     async def _connect_and_consume_candles(self, symbol_okx: str, channel: str) -> None:
         """One native business-candle connection: subscribe + read, gating on ``confirm``.
 
-        Opens an aiohttp WS to ``wss://{host}:8443/ws/v5/business`` where the host is
-        driven off the injected connector's ``sandbox`` bool (D-02 correction: host, NOT
-        header). Subscribes the ``candle{tf}`` channel for ``instId`` and forwards only
-        completed bars downstream. The ``async with`` guarantees the session closes on task
+        Opens an aiohttp WS to ``wss://{host}:8443/ws/v5/business`` where the host is the
+        connector's region+sandbox-derived ``ws_hostname`` (D-02 correction: host, NOT
+        header; OKX-REGION: the (region, sandbox) pair selects wspap/ws/wseeapap/wseea).
+        Subscribes the ``candle{tf}`` channel for ``instId`` and forwards only completed
+        bars downstream. The ``async with`` guarantees the session closes on task
         cancellation (Pitfall 4 — an unclosed session raises ``ResourceWarning`` and fails
         the strict suite). Returns when the server closes the socket; the supervisor then
         reconnects (a stream is not supposed to end on its own).
         """
-        host = "wspap.okx.com" if self._connector.sandbox else "ws.okx.com"
+        host = self._connector.ws_hostname
         url = f"wss://{host}:8443/ws/v5/business"
         subscribe = {"op": "subscribe",
                      "args": [{"channel": channel, "instId": symbol_okx}]}
