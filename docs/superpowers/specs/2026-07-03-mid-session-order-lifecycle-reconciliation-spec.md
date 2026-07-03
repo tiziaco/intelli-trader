@@ -6,7 +6,12 @@
 **Requirements:** 6 locked
 **Origin:** Design discussion 2026-07-03 (WR-05 leak → reframed as a missing continuous order-lifecycle reconciliation)
 
-> **Note on placement:** written to `docs/superpowers/specs/` (the project's design-spec home) rather than a `.planning/phases/07-*` dir, to avoid mutating the near-closing v1.7 roadmap or creating an orphan phase dir that perturbs GSD phase tooling. To make this a plannable phase, register it as v1.7 Phase 7 in ROADMAP.md + REQUIREMENTS.md, then this file lifts directly into `07-SPEC.md`.
+> **Scope split (decided 2026-07-03):** this work is split in two.
+> - **Narrow WR-05 remediation → new Phase 5 plan `05-13`** (resolves the review warning): Requirements **R1 (VenueCorrelationIndex), R2 (release-on-terminal, fill-driven), R3 (bounded dedup ring)** under the R5/R6 constraints. Localized, live-only, zero backtest impact — matches how WR-01/02/03/04 + CR-01 were resolved within Phase 5.
+> - **Broad continuous-reconciliation capability → future phase (this spec's remaining core):** Requirement **R4 (mid-session order-status signal + out-of-band coverage)**. New capability beyond Phase 5's delivered scope; kept here as the future-phase artifact.
+> The narrow plan leaves a **documented residual**: non-fill terminals (cancel/expire/reject-without-fill) release only at restart until R4 lands — tracked to this spec.
+
+> **Note on placement:** written to `docs/superpowers/specs/` (the project's design-spec home) rather than a `.planning/phases/07-*` dir, to avoid mutating the near-closing v1.7 roadmap or creating an orphan phase dir that perturbs GSD phase tooling. To register the broad capability as a plannable phase, add it to ROADMAP.md + REQUIREMENTS.md, then this file lifts directly into that phase's `SPEC.md`.
 
 ## Goal
 
@@ -27,22 +32,22 @@ Grounded in the code as of 2026-07-03 (symbol-anchored — line numbers rot):
 
 ## Requirements
 
-1. **VenueCorrelationIndex encapsulation**: the venue-correlation concern is a cohesive, unit-testable unit.
+1. **VenueCorrelationIndex encapsulation** _(NARROW — Phase 5 plan 05-13)_: the venue-correlation concern is a cohesive, unit-testable unit.
    - Current: four loose dicts/set + the `_pending_fills_by_venue_id` buffer + `_correlation_lock` live inline in `OkxExchange`; no release path exists.
    - Target: a `VenueCorrelationIndex` class owning those structures, exposing `register / resolve / adopt / release / mark_seen / gc_against_active`; `OkxExchange` delegates to it.
    - Acceptance: unit tests construct the index directly (no socket) and exercise `register → resolve → release` and `adopt → resolve`; `OkxExchange` behavior unchanged for existing fast-fill-race + WR-02 adopt tests; `mypy --strict` clean.
 
-2. **Lifecycle eviction (release on terminal)**: an order's correlation entries are removed when the order terminalizes.
+2. **Lifecycle eviction (release on terminal)** _(NARROW — Phase 5 plan 05-13; fill-driven only)_: an order's correlation entries are removed when the order terminalizes.
    - Current: entries persist for the process lifetime; a filled/cancelled order's three map entries are never dropped.
    - Target: on an order reaching a terminal mirror state, `release` drops its venue-id / order-id / clOrdId entries and any now-empty pending-fills buffer for its venue_id — **draining the buffer first** so a late buffered fill still emits its `FillEvent` (no WR-02 regression).
    - Acceptance: a test fills an order then asserts the index holds 0 entries for it; a test cancels an order then asserts 0 entries; a buffered late fill is drained (emits its `FillEvent`) before the entry is released.
 
-3. **Bounded trade-id dedup ring**: `_seen_trade_ids` is capacity-bounded.
+3. **Bounded trade-id dedup ring** _(NARROW — Phase 5 plan 05-13)_: `_seen_trade_ids` is capacity-bounded.
    - Current: `set[str]`, insert-only, unbounded (grows one entry per fill).
    - Target: a capacity-bounded recency ring (FIFO/LRU — e.g. `OrderedDict`/`deque`, `LiveBarFeed` deque-ring precedent) with a configured maximum; oldest id evicted past capacity.
    - Acceptance: inserting > capacity ids keeps size ≤ capacity; dedup within the window still returns an idempotent no-op; an evicted-then-resent id is still deduped at the durable `venue_trade_id` DB layer (documented backstop — CR-01 tail).
 
-4. **Mid-session order-status signal (the linchpin)**: non-execution terminals (cancel/reject/expire) and out-of-band venue changes terminalize the mirror mid-session.
+4. **Mid-session order-status signal (the linchpin)** _(BROAD — future phase)_: non-execution terminals (cancel/reject/expire) and out-of-band venue changes terminalize the mirror mid-session.
    - Current: `watch_orders` is log-only; `VenueReconciler` is startup-only; these terminals are invisible until the next restart.
    - Target: a **continuous** order-status signal feeds terminalization mid-session, driving Requirement 2's release for non-fill terminals and closing out-of-band coverage. **OPEN MECHANISM FORK (deferred to discuss-phase — "how"):** (a) promote `watch_orders` — `_consume_orders` emits terminal `FillEvent(CANCELLED/REJECTED/EXPIRED)` `SimulatedExchange`-style; **or** (b) a periodic REST order-poll. The *requirement* (a mid-session signal must exist) is locked; the mechanism is a discuss-phase decision.
    - Acceptance: a simulated venue "canceled" order-status update (fake WS or fake poll) terminalizes the mirror to CANCELLED and releases the correlation mid-session; an out-of-band cancel the engine did **not** initiate is detected mid-session (mirror terminalizes, correlation releases) rather than only at restart.
