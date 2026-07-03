@@ -106,18 +106,31 @@ engine fails safe rather than trading on the corrupted state — but portfolio s
 that moment and the run halts on "numbers it cannot trust," defeating the reconcile whose entire
 purpose is a clean, tradeable restart.
 
-**Fix:** Pre-seed the order arm's dedup ledger with every venue `trade['id']` the reconciler
-adopts, so a stream re-send of the same trade is a no-op:
-```python
-# VenueReconciler._adopt_fill_deltas, after selecting the adopted trades for an order:
-if self._exchange is not None:
-    for t in trades:
-        tid = t.get("id")
-        if tid is not None:
-            self._exchange.mark_trade_seen(str(tid))  # new seam, guarded by _correlation_lock
-```
-Alternatively, add fill-ID dedup on the portfolio settlement path — `Transaction.fill_id` is
-already threaded through `on_fill`, so `PortfolioHandler.on_fill` can reject a duplicate `fill_id`.
+**Fix (RESOLVED — debug session `cr-01-fill-double-count`, 2026-07-03):** Promote the venue trade
+id to a first-class cross-emitter idempotency key (FIX ExecID(17)/TradeID(1003); Nautilus
+`TradeId`) and dedup at the portfolio settlement chokepoint. Concretely:
+
+1. `FillEvent` gains an optional `venue_trade_id: str | None = None` (default None so
+   backtest/simulated fills are oracle-dark), threaded through `FillEvent.new_fill`.
+2. `Transaction` carries the same field so the durable settlement record preserves the key.
+   **Persistence tail (quick task `260703-hl5`, 2026-07-03):** the `transactions` table gained a
+   nullable `venue_trade_id` column (chained Alembic migration `hl5_transaction_venue_trade_id`) and
+   both `sql_storage` mappers thread it, so a rehydrated `Transaction` preserves the venue key instead
+   of dropping it — the durable ledger can now be reconciled back to venue executions. Verified by a
+   Postgres round-trip test.
+3. BOTH live emitters stamp it: `OkxExchange._emit_fill` sets `venue_trade_id = trade['id']`, and
+   `VenueReconciler` now emits ONE reconciling fill **per venue trade** (matching the stream's
+   granularity) instead of one aggregated summed-delta fill — each carrying its own
+   `venue_trade_id`, preserving adopt-once via a skip-budget over `order.filled_quantity`.
+4. `PortfolioHandler.on_fill` rejects a fill whose `venue_trade_id` is already in a bounded
+   per-handler settled-set (recorded only after a transaction applies). Fills with
+   `venue_trade_id=None` skip the guard entirely → SMA_MACD byte-exact.
+
+**Do NOT apply the two originally-suggested fixes.** The `mark_trade_seen` order-arm pre-seed only
+covers the OKX stream path (not a second reconciler or a non-OKX venue), and a `Transaction.fill_id`
+dedup is structurally ineffective: `FillEvent.new_fill` mints a fresh `uuid7` `fill_id` on every
+call, so the two duplicate fills for the same venue trade carry DIFFERENT `fill_id`s and a
+`fill_id`-set never matches. The venue trade id is the only stable cross-emitter key.
 
 ## Warnings
 
@@ -142,6 +155,15 @@ except Exception:
     self.global_queue.put(FillEvent.new_fill("REFUSED", event, ...))
 ```
 
+**Status (RESOLVED — debug session `wr-high-priority-live`, 2026-07-03):** `on_order`'s boundary
+`except` now branches on `event.command`. A CANCEL failure leaves the order mirror in its resting
+state and publishes an `ErrorEvent` (the operator/dead-letter channel) so the failed cancel is
+auditable; the next reconcile/drift pass reconciles true venue state — a command-ack failure is no
+longer forced through the execution channel (Nautilus `OrderCancelRejected` semantics; a first-class
+event is the deferred full-parity option). A SUBMIT failure keeps the unchanged `FillEvent(REFUSED)`
+→ REJECTED path. Verified: failed-cancel-leaves-active + failed-submit-still-rejects tests pass;
+oracle byte-exact. Live-sandbox confirmation (transient cancel failure) pending.
+
 ### WR-02: A single shared `VenueAccount` is assigned to every live portfolio
 
 **File:** `itrader/trading_system/live_trading_system.py:1085-1089`
@@ -155,6 +177,17 @@ Latent today (single-portfolio live) but a correctness trap the moment a second 
 
 **Fix:** Build one `VenueAccount` per portfolio (or key the venue cache by sub-account), and assert
 `len(active_portfolios) == 1` at wiring time until per-portfolio venue accounts exist.
+
+**Status (RESOLVED — debug session `wr-high-priority-live`, 2026-07-03):** Extracted
+`_link_venue_account_to_portfolios` with a fail-loud guard. **Deviation from the literal fix (accepted):**
+the guard rejects `len(active_portfolios) > 1` (not strict `== 1`) via a `RuntimeError` (not a
+strippable `assert`, so it survives `python -O`). A strict `== 1` regressed a valid existing test that
+starts a system with **0** portfolios (added post-start); 0 = benign no-op, 1 = supported
+single-portfolio-live, >1 = fail-loud. The actual defect (sharing one `VenueAccount` across multiple
+portfolios) is fully caught. Per-portfolio `VenueAccount` keyed by sub-account with clOrdId/tag position
+attribution remains the deferred multi-portfolio-live design. Verified: two wiring tests pass; oracle
+byte-exact. Known follow-up (out of scope): a portfolio added *post-start* is not linked at this wiring
+point (pre-existing behavior, not a regression).
 
 ### WR-03: Reconnect retry ceiling can never trip when the socket closes cleanly right after subscribe
 
@@ -187,6 +220,15 @@ Collision probability is low but non-zero and rises with order volume.
 **Fix:** Derive a collision-resistant compact token fitting 30 chars after the `it` prefix (base62
 of the UUID bytes, or a wider-alphabet hash-truncate) validated against OKX's 32-char alphanumeric
 clOrdId limit.
+
+**Status (RESOLVED — debug session `wr-high-priority-live`, 2026-07-03):** `_client_order_id` now
+base62-encodes the full 128 bits of the order id (`order_id.bytes`) — a lossless bijection rendering to
+≤22 chars, so `"it"` + token ≤24 chars, under OKX's 32-char alphanumeric limit with **no** entropy
+dropped. Deterministic (the venue-echoed clOrdId still maps straight back to the pending correlation);
+output asserted alphanumeric + ≤32 chars. The internal `order_id` stays a UUIDv7 (locked single-scheme
+decision) — the clOrdId is only its venue-charset rendering; `venue_order_id`/`venue_trade_id` (venue-
+assigned, opaque strings) untouched. Verified: two-UUIDs-differing-only-in-tail-bits produce distinct
+clOrdIds + round-trip-correlation tests pass; oracle byte-exact.
 
 ### WR-05: OKX in-memory correlation maps grow unbounded across a live session
 
