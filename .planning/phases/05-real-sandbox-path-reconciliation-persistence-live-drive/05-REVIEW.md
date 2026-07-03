@@ -1,8 +1,8 @@
 ---
 phase: 05-real-sandbox-path-reconciliation-persistence-live-drive
-reviewed: 2026-07-02T00:00:00Z
+reviewed: 2026-07-03T00:00:00Z
 depth: standard
-files_reviewed: 16
+files_reviewed: 41
 files_reviewed_list:
   - itrader/core/enums/system.py
   - itrader/events_handler/full_event_handler.py
@@ -20,216 +20,251 @@ files_reviewed_list:
   - itrader/storage/migrations/versions/p05_venue_order_id.py
   - itrader/trading_system/alert_sink.py
   - itrader/trading_system/live_trading_system.py
+  - tests/conftest.py
+  - tests/e2e/test_okx_sandbox_recon.py
+  - tests/integration/test_bracket_restart_relink.py
+  - tests/integration/test_live_bar_metrics.py
+  - tests/integration/test_live_system_okx_wiring.py
+  - tests/integration/test_okx_inertness.py
+  - tests/integration/test_paper_parity.py
+  - tests/integration/test_store_live_drive.py
+  - tests/integration/test_two_sided_restart.py
+  - tests/support/__init__.py
+  - tests/support/fake_venue_connector.py
+  - tests/support/fixtures/okx_recon_payloads.json
+  - tests/unit/connectors/test_fake_venue_connector.py
+  - tests/unit/execution/test_drift_halt_policy.py
+  - tests/unit/execution/test_okx_exchange.py
+  - tests/unit/execution/test_okx_fill_idempotency.py
+  - tests/unit/execution/test_reconnect_resilience.py
+  - tests/unit/order/test_order_manager.py
+  - tests/unit/order/test_partial_fill_terminalize.py
+  - tests/unit/portfolio/test_drift_tolerance.py
+  - tests/unit/portfolio/test_venue_account_cache.py
+  - tests/unit/portfolio/test_venue_account_drift.py
 findings:
   critical: 1
-  warning: 5
-  info: 0
-  total: 6
+  warning: 6
+  info: 4
+  total: 11
 status: issues_found
 ---
 
 # Phase 5: Code Review Report
 
-**Reviewed:** 2026-07-02T00:00:00Z
+**Reviewed:** 2026-07-03T00:00:00Z
 **Depth:** standard
-**Files Reviewed:** 16
+**Files Reviewed:** 41
 **Status:** issues_found
 
 ## Summary
 
-Phase 5 wires the live/sandbox OKX path: order arm (`okx.py`), data arm
-(`okx_provider.py`), venue-cached account (`venue.py`), the drift compare and
-two-sided restart reconciler (`portfolio_handler.py`, `venue_reconciler.py`,
-`drift.py`), the SQL order mirror + Alembic migration (`sql_storage.py`,
-`models.py`, `p05_venue_order_id.py`), the alert-sink egress (`alert_sink.py`),
-and the live composition root / halt-pause state machine
-(`live_trading_system.py`).
+Phase 5 wires the real OKX sandbox order/data arms, a cached `VenueAccount`, a two-sided
+restart `VenueReconciler`, engine-thread drift-halt, a reconnect supervisor, and a live SQL
+order mirror. The code is unusually well-documented and defensively written; most edge cases
+(None-guards before the Decimal edge, cross-thread locking, idempotent release, buffered
+fast-fills) are handled thoughtfully. No hardcoded secrets, no injection vectors (the SQL
+storage uses parameterized SQLAlchemy Core with an allow-listed searchable-column map
+throughout), no dangerous `eval`/`exec`, and the inertness discipline (lazy OKX/SQL imports)
+is consistently applied.
 
-Money is Decimal-clean throughout (every venue edge crosses `to_money(str(x))`;
-no `Decimal(float)`), the migration chain is a correct linear single-head
-(`2cbf0bf6b0b6` → `47f2b41f3ffe` → `p05_venue_order_id`), the SQL store is fully
-parameterized (no injection surface), and the connector-loop callbacks correctly
-only flip thread-safe flags. The reconnect supervisors correctly re-raise
-`CancelledError` and scrub exception text.
+The findings below concentrate on the LIVE path, which is oracle-dark (the SMA_MACD golden run
+never exercises it), so none of these perturb the frozen backtest. The most serious is a
+structural gap between the restart reconciler and the live fill stream that can double-apply the
+same economic fill onto portfolio state. The remainder are live-path robustness/correctness
+concerns plus quality items. This review supersedes the earlier 16-file partial pass.
 
-However there is one shipping defect that breaks the live OKX path end-to-end
-(the order-arm fill stream is never started), plus several correctness/robustness
-warnings around halt idempotency, restart-vs-stream fill correlation, and a
-mutate-before-validate ordering in the partial-fill reconcile arm.
+## Narrative Findings (AI reviewer)
 
 ## Critical Issues
 
-### CR-01: OKX order-arm fill/order streams are never started — live fills never arrive
+### CR-01: Restart reconciler can double-count fills against portfolio state
 
-**File:** `itrader/trading_system/live_trading_system.py:990-1000` (and `itrader/execution_handler/execution_handler.py:163-183`)
-**Issue:**
-`OkxExchange.connect()` is the method that spawns the venue order-arm streams
-(`watch_my_trades` / `watch_orders` via `connector.spawn`, `okx.py:575-594`) —
-this is the ONLY place fills stream back from the venue on the order arm
-(`_stream_fills` → `_consume_fills` → `_handle_trade` → `_emit_fill`).
+**File:** `itrader/portfolio_handler/reconcile/venue_reconciler.py:187-218` (cross-refs
+`itrader/execution_handler/exchanges/okx.py:343-390`,
+`itrader/trading_system/live_trading_system.py:1059-1112`)
 
-`OkxExchange.connect()` is never invoked anywhere:
-- `ExecutionHandler.init_exchanges()` (execution_handler.py:168-181) connects only
-  the exchanges it builds at construction time (`simulated`/`csv`/`ccxt`). The
-  `'okx'` arm is registered AFTER construction
-  (`live_trading_system.py:375: self.execution_handler.exchanges['okx'] = self._okx_exchange`),
-  so it is never in that connect loop.
-- `start()` (live_trading_system.py:984-1000) calls `self._okx_connector.connect()`,
-  `self._okx_data_provider.start_stream()`, and `self._venue_account.start_streaming()`
-  — but NOT `self._okx_exchange.connect()`. The data arm (candles) and the venue
-  account (balance/positions) streams start; the order arm (fills) does not.
+**Issue:** At startup the order-arm fill streams are spawned FIRST (`start()` lines 1072-1076 →
+`OkxExchange.connect` → `_stream_fills`), and only AFTER that does `VenueReconciler.reconcile()`
+run (line 1112). `_adopt_fill_deltas` synthesizes a reconciling `FillEvent` for
+`delta = venue_filled - order.filled_quantity` and `global_queue.put`s it. That synthetic fill is
+minted directly (`_emit_reconciling_fill`) and never passes through `OkxExchange._handle_trade`,
+so it is NOT recorded in `_seen_trade_ids`.
 
-Consequence: on the live OKX path, orders submitted through `on_order` rest/execute
-on the venue, but no `FillEvent` ever streams back. `OrderHandler.on_fill` /
-`PortfolioHandler.on_fill` never fire, so the order mirror stays PENDING forever and
-the portfolio never updates positions/cash. The core Phase-5 deliverable (live drive
-with reconciliation) cannot function. The `__init__` comment at
-live_trading_system.py:340 explicitly names `OkxExchange.connect()` as the intended
-live-wiring step, and `start()` wires its sibling `start_stream()` — the omission is
-asymmetric and clearly unintended.
+If `watch_my_trades` re-delivers the same historical trades after (re)subscribe — which the code
+explicitly expects (the dedup at `okx.py:112-124` and the reconciler comment at
+`venue_reconciler.py:20-21` exist precisely for reconnect re-sends) — those trades flow through
+`_handle_trade` and emit their OWN `FillEvent`s. The order-mirror side
+(`ReconcileManager._apply_executed`) will reject the resulting over-fill, but
+`PortfolioHandler.on_fill` (`portfolio_handler.py:782-853`) applies EVERY `EXECUTED` fill as a
+`Transaction` with no fill-ID dedup. Result: the same 0.5 BTC is booked as the reconciler delta
+(0.5) PLUS the stream (0.2 + 0.3) = 1.0 BTC of position/cash.
 
-**Fix:** In `start()`, alongside the existing data-arm / venue-account startup, spawn
-the order-arm streams when the OKX exchange is wired:
+`_seen_trade_ids` structurally cannot cover this cross-path case because the two emitters share no
+dedup key. The subsequent engine-thread drift compare will HALT (engine 1.0 vs venue 0.5), so the
+engine fails safe rather than trading on the corrupted state — but portfolio state IS corrupted at
+that moment and the run halts on "numbers it cannot trust," defeating the reconcile whose entire
+purpose is a clean, tradeable restart.
+
+**Fix:** Pre-seed the order arm's dedup ledger with every venue `trade['id']` the reconciler
+adopts, so a stream re-send of the same trade is a no-op:
 ```python
-if self.exchange == 'okx' and self._okx_exchange is not None:
-    result = self._okx_exchange.connect()
-    if not result.success:
-        raise ConfigurationError(
-            config_key="okx_exchange_connect",
-            config_value=result.error_message,
-            reason="OKX order-arm stream startup failed")
+# VenueReconciler._adopt_fill_deltas, after selecting the adopted trades for an order:
+if self._exchange is not None:
+    for t in trades:
+        tid = t.get("id")
+        if tid is not None:
+            self._exchange.mark_trade_seen(str(tid))  # new seam, guarded by _correlation_lock
 ```
-Place it after `self._okx_connector.connect()` (client + `load_markets` must be up
-first) and before `RUNNING`.
+Alternatively, add fill-ID dedup on the portfolio settlement path — `Transaction.fill_id` is
+already threaded through `on_fill`, so `PortfolioHandler.on_fill` can reject a duplicate `fill_id`.
 
 ## Warnings
 
-### WR-01: `halt()` idempotency guard is not atomic — concurrent halts double-alert and clobber the reason
+### WR-01: `OkxExchange.on_order` emits `FillEvent(REFUSED)` on a failed CANCEL, wrongly terminalizing a still-resting order
 
-**File:** `itrader/trading_system/live_trading_system.py:529-546`
-**Issue:** `halt()` claims "Idempotent — the first halt wins", but the check-and-set
-straddles two separate lock acquisitions. The guard reads `self._status` under
-`_status_lock`, sets `_halt_reason`, then RELEASES the lock; `self._status` is only
-set to `HALTED` later, inside `_update_status()` (line 658-664), under a *second*
-acquisition of the same non-reentrant `threading.Lock`. `halt` is wired to at least
-three producers that run on different threads — the engine-thread drift compare
-(`portfolio_handler.set_halt_signal(self.halt)`), the OKX order-arm supervisor, and
-the OKX data-arm supervisor (both connector-loop threads). Two of them can race:
-both pass the `if self._status == HALTED: return` check (neither has reached
-`_update_status` yet), both write `_halt_reason` (second wins), and both emit a
-CRITICAL `ErrorEvent`. Result: duplicate operator alerts and a `halt_reason` that
-reflects the second caller, not the first.
-**Fix:** Set the status and stamp the reason under one lock acquisition, and guard the
-alert emission on the transition:
+**File:** `itrader/execution_handler/exchanges/okx.py:192-211`
+
+**Issue:** The boundary `except` fires for BOTH `_submit_order` and `_cancel_order` and emits
+`FillEvent("REFUSED", ...)`, which `ReconcileManager._apply_refused` transitions the mirror to
+`REJECTED`. For a submit that never reached the venue this is correct. For a CANCEL RPC that raises
+transiently (network blip), the venue order is very likely STILL RESTING, yet the local mirror is
+now permanently `REJECTED` — a silent divergence that later surfaces as a fill against an order the
+engine believes is dead, or an un-cancellable resting order. The WR-02 comment justifies the submit
+case only; the cancel case is swept in with it.
+
+**Fix:** Branch on `event.command` in the handler; do not synthesize `REFUSED` for a failed cancel:
 ```python
-with self._status_lock:
-    if self._status == SystemStatus.HALTED:
+except Exception:
+    if event.command is OrderCommand.CANCEL:
+        self.logger.error("OKX cancel failed for %s — mirror left active", event.order_id, exc_info=True)
         return
-    self._status = SystemStatus.HALTED
-    self._halt_reason = reason
-# emit exactly-once outside the lock
-self._update_status(SystemStatus.HALTED, f'halt: {reason}')   # make this not re-set status, or split notify from set
-self.global_queue.put(ErrorEvent(...))
-```
-(Decouple the status write from the callback-notification in `_update_status`, or add
-a dedicated `_set_status_locked` helper, so the CRITICAL alert fires only on the
-winning transition.)
-
-### WR-02: restart-rehydrated orders never repopulate the OKX correlation maps — post-restart fills are buffered-and-dropped, cancels silently skipped
-
-**File:** `itrader/execution_handler/exchanges/okx.py:108-127, 308-349, 287-296`
-**Issue:** After a restart, `VenueReconciler.reconcile()` rehydrates the order working
-set from the store, but the `OkxExchange` in-memory correlation maps
-(`_orders_by_venue_id`, `_venue_id_by_order_id`, `_orders_by_clOrdId`) start EMPTY
-and are only ever written by `_submit_order` (okx.py:266-281), which does not run for
-orders that were submitted in a previous process. Consequences on the live restart
-path:
-- A fill that streams back for a rehydrated *resting* order (e.g. a bracket SL/TP that
-  triggers after restart) cannot be correlated in `_handle_trade`: `venue_id` lookup
-  misses, `clOrdId` lookup misses, so it is BUFFERED under `_pending_fills_by_venue_id`
-  (okx.py:342-343) and never drained (no `_submit_order` ever runs for that order) —
-  the fill is effectively lost. `VenueReconciler` runs only once at startup and does
-  not poll, so it does not recover a fill that arrives *after* the reconcile.
-- `_cancel_order` (okx.py:290-295) looks up `_venue_id_by_order_id.get(event.order_id)`,
-  misses for every rehydrated order, and logs "no known venue id — skipping" — so a
-  cancel of a rehydrated resting order is a silent no-op even though the venue still
-  holds the resting order.
-
-This also undercuts the `venue_reconciler.py:20` claim that "the 05-05 fill-ID dedup
-covers the concurrent-stream case": `_seen_trade_ids` is per-process and empty after a
-restart, and the reconciler's synthesized fills (`_emit_reconciling_fill`) carry fresh
-`fill_id`s and never populate `_seen_trade_ids`.
-**Fix:** After `VenueReconciler` re-links a leg to a venue resting order
-(`_relink_bracket`, venue_reconciler.py:326-347) and stamps `venue_order_id`,
-repopulate the `OkxExchange` correlation maps for every rehydrated order that carries a
-`venue_order_id` (add an `OkxExchange.adopt_venue_correlation(order_id, venue_id, event)`
-seam the reconciler calls), so streamed fills correlate and cancels resolve. Persist a
-periodic REST reconcile (not just startup) if post-restart resting fills must be caught.
-
-### WR-03: partial-fill reconcile arm mutates `filled_quantity` before validating the transition
-
-**File:** `itrader/order_handler/reconcile/reconcile_manager.py:177-200`
-**Issue:** In `_apply_executed`, the partial branch writes
-`order.filled_quantity = to_money(order.filled_quantity + increment)` (line 183)
-BEFORE calling `order.add_state_change(...)` (line 193). If `add_state_change` returns
-`False`, the code returns `(False, False)` and logs "mirror left unchanged" (line 198)
-— but `filled_quantity` was already mutated, so the log is false and the in-memory
-`Order` is left inconsistent. Because `on_fill` then sees `applied=False` and skips
-`update_order`, the mutation is not persisted; with the in-memory store (which returns
-the live object, not a copy) the corrupted `filled_quantity` survives in memory, while
-the SQL store (fresh rebuild per read) would not — a backend-dependent divergence.
-The path is currently latent (the `allow_same_status=True` PARTIALLY_FILLED transition
-does not fail), but the ordering is a trap for any future transition-validity change.
-**Fix:** Compute and validate the transition first, mutate only on success:
-```python
-new_filled = to_money(order.filled_quantity + increment)
-additional_data = {..., "total_filled": new_filled}
-if not order.add_state_change(OrderStatus.PARTIALLY_FILLED, "exchange partial fill",
-        additional_data=additional_data, time=fill_event.time, allow_same_status=True):
-    self.logger.warning('Partial-fill transition rejected for order %s; mirror left unchanged', order_id)
-    return False, False
-order.filled_quantity = new_filled
-return True, False
+    self.global_queue.put(FillEvent.new_fill("REFUSED", event, ...))
 ```
 
-### WR-04: `_maybe_resume_after_reconnect` re-snapshots but does not re-reconcile, contradicting its own contract
+### WR-02: A single shared `VenueAccount` is assigned to every live portfolio
 
-**File:** `itrader/trading_system/live_trading_system.py:615-638`
-**Issue:** The docstring states resume takes "a fresh REST snapshot + reconcile" and
-`resume_submission()` logs "venue stream reconnected + REST reconcile complete"
-(line 591-592), but the body only calls `self._venue_account.snapshot()` (line 632) —
-it never re-runs the two-sided `VenueReconciler.reconcile()` that `start()` runs before
-`RUNNING`. A sustained disconnect is exactly the window in which external fills /
-cancels / hand-actions accrue on the venue; resuming submission after only a balance
-snapshot (no fill-delta adoption, no orphan-position halt, no bracket re-link) can
-resume trading against an engine state that has silently drifted from venue truth —
-the precise failure mode the startup reconcile exists to prevent. At minimum the log
-message asserts a reconcile that did not happen.
-**Fix:** Either invoke the same reconcile the startup path uses on resume (construct/
-retain a `VenueReconciler` and call `reconcile()` inside `_maybe_resume_after_reconnect`
-before `resume_submission()`), or downgrade the docstring/log to state that only a
-balance snapshot is performed and document why a full reconcile is not required.
+**File:** `itrader/trading_system/live_trading_system.py:1085-1089`
 
-### WR-05: adopt-and-continue drift path logs adoption without correcting engine state (repeat-fire risk when the resolver is wired)
+**Issue:** `for portfolio in self.portfolio_handler.get_active_portfolios(): portfolio.account =
+self._venue_account` assigns the SAME `VenueAccount` instance to all active portfolios. With more
+than one live portfolio they share one venue balance/available/positions cache, so buying power and
+positions are conflated across portfolios (and `_compare_symbol_drift` would read one venue truth
+for every portfolio). It also silently discards each portfolio's prior `SimulatedAccount` ledger.
+Latent today (single-portfolio live) but a correctness trap the moment a second portfolio exists.
 
-**File:** `itrader/portfolio_handler/portfolio_handler.py:733-743`
-**Issue:** In `_compare_symbol_drift`, when a beyond-band drift "reconciles to a known
-venue event", the code logs "Adopted external venue event" and `return`s — but it does
-NOT bring the engine position into agreement with venue truth. The engine `net_quantity`
-stays diverged from `venue_qty`. On the next fill or bar-sweep compare the same symbol
-is still beyond band; if `_drift_reconciler` again answers `True`, this logs "adopted"
-on every tick without ever converging — and if it later answers `False` (e.g. the venue
-event ages out of the resolver's window) it escalates to a spurious halt. Currently
-dormant because `_drift_reconciler` defaults to `None` (line 123-125) so this branch is
-unreachable this phase, but the branch ships as written and is the documented extension
-point (`set_drift_reconciler`).
-**Fix:** When adopting an external venue event, actually reconcile the engine tally to
-venue truth (e.g. synthesize a reconciling `FillEvent` through the idempotent fill path,
-mirroring `VenueReconciler._emit_reconciling_fill`) so the next compare converges,
-rather than only logging.
+**Fix:** Build one `VenueAccount` per portfolio (or key the venue cache by sub-account), and assert
+`len(active_portfolios) == 1` at wiring time until per-portfolio venue accounts exist.
+
+### WR-03: Reconnect retry ceiling can never trip when the socket closes cleanly right after subscribe
+
+**File:** `itrader/price_handler/providers/okx_provider.py:236-350` (mirrored in
+`itrader/execution_handler/exchanges/okx.py:501-532`)
+
+**Issue:** `_connect_and_consume_candles` calls `_on_stream_healthy("candles")` immediately after a
+successful subscribe (line 260), resetting `_reconnect_attempts[stream] = 0`. If the server then
+closes the socket right away (the `async for` exits), the supervisor treats the clean return as a
+drop and computes `attempt = 0 + 1 = 1` every cycle — so `attempt > self._reconnect_ceiling` is
+never reached and the D-20 "never spin forever → HALT" guarantee is defeated: the loop reconnects
+indefinitely at `backoff_base` and never escalates. The order arm has the same reset-on-each-batch
+behavior.
+
+**Fix:** Reset the attempt counter only after a minimum healthy dwell (or count consecutive
+connect-without-payload cycles separately from payload-bearing successes) so a subscribe-then-close
+storm still exhausts the ceiling and halts.
+
+### WR-04: `_client_order_id` truncation drops entropy, risking clOrdId collisions
+
+**File:** `itrader/execution_handler/exchanges/okx.py:162-172`
+
+**Issue:** `("it" + token)[:32]`, where `token` is the 32 hex chars of a UUIDv7 with hyphens
+stripped, yields `"it"` + 32 = 34 chars truncated to 32 — dropping the last 2 hex chars (tail random
+bits). The clOrdId is a fast-fill-race correlation key (`_orders_by_clOrdId`); two orders whose
+UUIDs differ only in those trailing bits map to the same clOrdId, so an echoed fill could resolve to
+the WRONG originating order (wrong order_id/strategy_id/portfolio_id on the emitted `FillEvent`).
+Collision probability is low but non-zero and rises with order volume.
+
+**Fix:** Derive a collision-resistant compact token fitting 30 chars after the `it` prefix (base62
+of the UUID bytes, or a wider-alphabet hash-truncate) validated against OKX's 32-char alphanumeric
+clOrdId limit.
+
+### WR-05: OKX in-memory correlation maps grow unbounded across a live session
+
+**File:** `itrader/execution_handler/exchanges/okx.py:108-127`
+
+**Issue:** `_orders_by_venue_id`, `_venue_id_by_order_id`, `_orders_by_clOrdId`, and
+`_seen_trade_ids` are only ever inserted into; nothing is removed when an order terminalizes or a
+trade id ages out. Over a long-running session they grow without bound (retaining `OrderEvent`
+references and every trade id). Beyond memory, the ever-growing `_seen_trade_ids` means the dedup
+window is effectively unbounded with no eviction policy.
+
+**Fix:** Prune the venue-id/clOrdId maps when an order reaches a terminal state (reconcile can
+signal it), and bound `_seen_trade_ids` (a bounded LRU/ring keyed by recency — re-sends are only
+plausible within a reconnect window).
+
+### WR-06: Live ERROR-route consumer is not self-protected against its own failure
+
+**File:** `itrader/events_handler/full_event_handler.py:126-195` with
+`itrader/trading_system/live_trading_system.py:490-521`
+
+**Issue:** In live mode `_on_handler_error` is overridden by `_publish_and_continue`, which puts a
+new `ErrorEvent` on the queue; that event is routed to `_log_error_event`, which unconditionally
+reads `event.correlation_id` (180), `event.details` (185), and — for CRITICAL — the alert sink.
+`_publish_and_continue` constructs its `ErrorEvent` WITHOUT `correlation_id`/`details`. If any read
+(or the sink) raises, the exception routes back through `_publish_and_continue`, which emits YET
+ANOTHER `ErrorEvent` — an unbounded error→error feedback loop that floods the engine-thread queue.
+Whether it triggers depends on `ErrorEvent`'s field defaults (outside this diff), but the ERROR
+route is the one place a handler failure must be terminal-safe and it currently is not.
+
+**Fix:** Wrap `_log_error_event` (and the alert-sink call) so a malformed `ErrorEvent` is logged
+once and never re-raised into `_dispatch`, breaking any recursion.
+
+## Info
+
+### IN-01: Stale source-line references in reconcile comments
+
+**File:** `itrader/order_handler/reconcile/reconcile_manager.py:236-238`
+
+**Issue:** `_apply_expired` cites `order.py:307-309` for `VALID_ORDER_TRANSITIONS[EXPIRED] == []`,
+but that table lives in `core/enums` and `order.py` has grown past those lines. Prefer symbolic
+references over line numbers, which rot.
+
+### IN-02: Left-behind `TODO` in the production order lifecycle path
+
+**File:** `itrader/order_handler/order.py:451-452`
+
+**Issue:** `# TODO: check if i have to store the state changes permanently in sql when in live
+trading / production` sits inside `add_state_change`, the single validated transition path now used
+by the live SQL mirror. Phase 5 wires `SqlOrderStorage` (state changes DO round-trip via
+`_state_change_rows`), so this TODO is either resolved or should be an tracked issue, not inline.
+
+**Fix:** Resolve/remove after confirming the SQL round-trip semantics.
+
+### IN-03: `NotImplementedError` raised inside `except` without `from None`
+
+**File:** `itrader/events_handler/full_event_handler.py:134-139`
+
+**Issue:** Raising inside `except KeyError` chains the `KeyError` as `__context__`, producing noisy
+"During handling of the above exception..." tracebacks for an intended signal.
+
+**Fix:** `raise NotImplementedError(...) from None`.
+
+### IN-04: Recon fixture symbol (`BTC/USDT`) diverges from the wired live symbol (`BTC/USDC`)
+
+**File:** `tests/support/fixtures/okx_recon_payloads.json:3` vs
+`itrader/trading_system/live_trading_system.py:48-51`
+
+**Issue:** The recon fixture narrates a `BTC/USDT` scenario, but production hardcodes
+`_OKX_STREAM_SYMBOL = "BTC/USDC"` (MiCA/USDT restriction). The offline recon tests therefore
+exercise a symbol the live path will never stream, leaving the symbol-form membership assertion
+(`_initialize_live_session` 830-839) and symbol-keyed drift/position matching uncovered by the
+fixture.
+
+**Fix:** Parameterize the fixture symbol or add a `BTC/USDC` recon variant matching the wired
+constant.
 
 ---
 
-_Reviewed: 2026-07-02T00:00:00Z_
+_Reviewed: 2026-07-03T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
