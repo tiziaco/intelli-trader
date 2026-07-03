@@ -278,6 +278,20 @@ route is the one place a handler failure must be terminal-safe and it currently 
 **Fix:** Wrap `_log_error_event` (and the alert-sink call) so a malformed `ErrorEvent` is logged
 once and never re-raised into `_dispatch`, breaking any recursion.
 
+**Status (RESOLVED — debug session `wr06-error-route-recursion`, 2026-07-03):** The ERROR route is
+now terminal-safe via two localized parts (backtest fail-fast for non-ERROR events untouched).
+Part A (source) — `live_trading_system.py::_publish_and_continue` returns without republishing when
+the failing `event.type is EventType.ERROR`, so a failure while handling an ErrorEvent is never
+re-queued. Part B (consumer) — `full_event_handler.py::_log_error_event` wraps its body AND the
+alert-sink call in a log-once-and-swallow guard (inner best-effort recovery log), so a raising sink /
+broken logger / malformed field can never re-raise into `_dispatch`. STEP-1 nuance: the *specific*
+direct-field-read crash the issue posited is NOT reachable — `correlation_id`/`details` default to
+`None` and the `details` read is None-guarded — but the recursion-on-ANY-failure path (raising sink /
+broken logger) is real and was confirmed RED→GREEN. Verified: new
+`test_error_route_consumer_failure_does_not_recurse` (republished `1 → []`, sink invoked exactly once);
+`tests/unit/events/` + `test_reconnect_resilience.py` + `test_backtest_oracle.py` → 106 passed, oracle
+byte-exact; mypy strict-clean (226 files). Commit `755305f8`.
+
 ## Info
 
 ### IN-01: Stale source-line references in reconcile comments
