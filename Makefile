@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-e2e test-e2e-live diagnose-okx test-smoke test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
+.PHONY: init-env clean test test-unit test-integration test-e2e test-e2e-live test-live diagnose-okx test-smoke test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -26,7 +26,7 @@ clean:
 # Test commands
 test:
 	@echo "🧪 Running all tests..."
-	poetry run pytest tests/ -v
+	poetry run pytest tests/ -v -m "not live"
 
 test-unit:
 	@echo "🔬 Running unit tests..."
@@ -34,7 +34,7 @@ test-unit:
 
 test-integration:
 	@echo "🔗 Running integration tests..."
-	poetry run pytest tests/ -v -m "integration"
+	poetry run pytest tests/ -v -m "integration and not live"
 
 test-e2e:
 	@echo "🎬 Running e2e scenario tests..."
@@ -43,6 +43,16 @@ test-e2e:
 test-smoke:
 	@echo "💨 Running smoke tests..."
 	poetry run pytest tests/ -v -m "smoke"
+
+# Fast opt-in LIVE-venue connectivity checks (-m live) anywhere under tests/.
+# Loads .env (via include .env + .EXPORT_ALL_VARIABLES above), so local OKX_API_* demo
+# creds are exported and the credential-gated authenticated test runs alongside the
+# credential-free public reachability test. DISTINCT from test-e2e-live: this runs the
+# fast `-m live` connectivity checks (tests/integration/test_okx_connectivity.py),
+# while test-e2e-live runs only the slow OKX-demo recon e2e suite with `-m slow`.
+test-live:
+	@echo "📡 Running LIVE-venue connectivity checks (opt-in, real network round-trip)..."
+	poetry run pytest tests/ -v -m live
 
 # LIVE opt-in OKX-demo reconciliation suite (RECON-06 / 05-12 Task-3 human gate).
 # Loads .env (via include .env above), so OKX_API_* demo creds are exported and the
