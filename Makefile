@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-e2e test-smoke test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
+.PHONY: init-env clean test test-unit test-integration test-e2e test-e2e-live diagnose-okx test-smoke test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -43,6 +43,35 @@ test-e2e:
 test-smoke:
 	@echo "💨 Running smoke tests..."
 	poetry run pytest tests/ -v -m "smoke"
+
+# LIVE opt-in OKX-demo reconciliation suite (RECON-06 / 05-12 Task-3 human gate).
+# Loads .env (via include .env above), so OKX_API_* demo creds are exported and the
+# credential-skipif no longer trips. Runs ONLY the slow-marked live tests against the
+# OKX DEMO venue — the suite asserts connector.sandbox is True before any order, so
+# real-money routing is impossible (T-05-04). Requires OKX_API_KEY/SECRET/PASSPHRASE
+# (demo) and OKX_SANDBOX=true (or unset — default is demo) in .env; test (iii) also
+# needs Docker (testcontainers Postgres) and skips cleanly if Docker is absent.
+#
+# The DB-gate vars are UNSET for this run: tests (i)/(ii) build a full LiveTradingSystem
+# which, when ITRADER_DATABASE_PASSWORD (or ITRADER_DATABASE_URL) is set, takes the
+# Postgres operational-store arm and tries to connect to a real DB (localhost:5544 by
+# default). Those two tests need only the venue round-trip, so we unset them to force the
+# in-memory order/signal fallback. Test (iii) stands up its OWN testcontainers Postgres
+# (explicit url=) and is unaffected. (The store gate reads the env at construction, so the
+# vars must be unset BEFORE the process starts.)
+test-e2e-live:
+	@echo "🛰️  Running LIVE OKX-demo reconciliation suite (opt-in, real demo venue)..."
+	@test -n "$(OKX_API_KEY)" || { echo "❌ OKX_API_KEY not set in .env — cannot run the live demo suite."; exit 1; }
+	env -u ITRADER_DATABASE_PASSWORD -u ITRADER_DATABASE_URL poetry run pytest tests/e2e/test_okx_sandbox_recon.py -m slow -v
+
+# Read-only OKX credential diagnostic (no orders, just fetch_balance). Verifies whether
+# the OKX_API_* triple in .env is recognized by OKX on the DEMO and LIVE endpoints —
+# use it to confirm a key works (or diagnose 50119 "API key doesn't exist") before
+# running the live suite above. Never prints secret values.
+diagnose-okx:
+	@echo "🔑 Diagnosing OKX credentials (read-only fetch_balance, demo + live)..."
+	@test -n "$(OKX_API_KEY)" || { echo "❌ OKX_API_KEY not set in .env."; exit 1; }
+	poetry run python scripts/diagnose_okx_creds.py
 
 test-portfolio:
 	@echo "📊 Running portfolio tests..."
