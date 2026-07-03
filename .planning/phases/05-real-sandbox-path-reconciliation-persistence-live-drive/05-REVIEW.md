@@ -206,6 +206,23 @@ behavior.
 connect-without-payload cycles separately from payload-bearing successes) so a subscribe-then-close
 storm still exhausts the ceiling and halts.
 
+**Status (RESOLVED — debug session `wr-03-reconnect-ceiling-storm`, 2026-07-03):** Two layers.
+Layer 1 (both arms): `_on_stream_healthy` no longer resets `_reconnect_attempts` on a mere
+subscribe/ack — it performs only the D-19 resume transition; the budget resets via a new
+`_reset_reconnect_budget`, called by the real consume loops only on a delivered payload.
+Layer 2 (data arm — surfaced ONLY by the online OKX-demo test): OKX pushes an in-progress-candle
+SNAPSHOT (`confirm='0'`, ~30ms) on EVERY candle subscribe, so plain payload-gating still reset the
+budget every storm cycle. `_connect_and_consume_candles` now carries a per-connection `payload_seen`
+flag and resets the budget only on a payload delivered AFTER the subscribe snapshot (real streaming);
+the order arm needs no such guard (ccxt.pro `watch_my_trades`/`watch_orders` never emit on bare
+subscribe). A subscribe-then-close storm's `attempt` now climbs monotonically to
+`_escalate_connector_halt('connector-fatal')` (D-20 restored) on both arms; a genuine streaming
+reconnect still clears the budget. Verified: `test_reconnect_resilience.py` 17 passed (adds order+data
+storm tests + a snapshot-on-subscribe test driving the REAL `_connect_and_consume_candles` via a fake
+WS, RED→GREEN); oracle byte-exact; mypy strict-clean. ONLINE (OKX demo, sandbox asserted): storm reset
+budget 0/3 (was 3/3 pre-fix) → HALT; healthy post-snapshot update reset it 1/1 → survives. Commit
+`21899dca`.
+
 ### WR-04: `_client_order_id` truncation drops entropy, risking clOrdId collisions
 
 **File:** `itrader/execution_handler/exchanges/okx.py:162-172`
