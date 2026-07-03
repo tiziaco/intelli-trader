@@ -19,7 +19,8 @@ _PASSPHRASE = "demo-pass-ghi789"
 @pytest.fixture
 def okx_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear then set the OKX demo auth triple in the environment (synthetic values)."""
-    for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE", "OKX_SANDBOX"):
+    for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE",
+                "OKX_SANDBOX", "OKX_REGION"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("OKX_API_KEY", _KEY)
     monkeypatch.setenv("OKX_API_SECRET", _SECRET)
@@ -88,3 +89,54 @@ def test_unrelated_env_ignored(monkeypatch: pytest.MonkeyPatch, okx_env: None) -
     assert settings.api_key.get_secret_value() == _KEY
     assert not hasattr(settings, "log_level")
     assert not hasattr(settings, "password")
+
+
+# --------------------------------------------------------------------------- region (OKX-REGION)
+
+
+def test_region_defaults_to_global(okx_env: None) -> None:
+    """region defaults to global -> REST host www.okx.com."""
+    settings = OkxSettings()
+
+    assert settings.region == "global"
+    assert settings.rest_hostname == "www.okx.com"
+
+
+@pytest.mark.parametrize(
+    ("region", "sandbox", "rest_host", "ws_host"),
+    [
+        ("global", True, "www.okx.com", "wspap.okx.com"),
+        ("global", False, "www.okx.com", "ws.okx.com"),
+        ("eea", True, "eea.okx.com", "wseeapap.okx.com"),
+        ("eea", False, "eea.okx.com", "wseea.okx.com"),
+    ],
+)
+def test_region_sandbox_derive_both_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+    okx_env: None,
+    region: str,
+    sandbox: bool,
+    rest_host: str,
+    ws_host: str,
+) -> None:
+    """All 4 (region, sandbox) combos derive the VERIFIED REST + WS hosts."""
+    monkeypatch.setenv("OKX_REGION", region)
+    monkeypatch.setenv("OKX_SANDBOX", "true" if sandbox else "false")
+
+    settings = OkxSettings()
+
+    assert settings.rest_hostname == rest_host
+    assert settings.ws_hostname == ws_host
+
+
+def test_invalid_region_raises(monkeypatch: pytest.MonkeyPatch, okx_env: None) -> None:
+    """A non-{global,eea} OKX_REGION fails loud with a pydantic ValidationError."""
+    monkeypatch.setenv("OKX_REGION", "apac")
+
+    with pytest.raises(ValidationError):
+        OkxSettings()
+
+
+def test_hostname_field_removed(okx_env: None) -> None:
+    """The old OKX_HOSTNAME/hostname field no longer exists on OkxSettings."""
+    assert not hasattr(OkxSettings(), "hostname")

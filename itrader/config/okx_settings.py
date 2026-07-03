@@ -17,13 +17,38 @@ environment into the connector here, and NOWHERE else. Two disciplines are load-
   ``API_KEY`` rather than ``OKX_API_KEY``. ``extra="ignore"`` drops unrelated env vars
   (``ITRADER_*`` / ``DATABASE_*``) instead of erroring.
 
+- **Region derives BOTH hosts (OKX-REGION):** a single ``OKX_REGION`` knob
+  (``global`` | ``eea``) derives the REST host AND the WebSocket host. An EEA-issued
+  key returns 50119 "API key doesn't exist" on the global host (and vice versa), and the
+  demo WS host differs per entity (``wspap`` vs ``wseeapap``). The region knob fixes the
+  misroute class the old ``sandbox``-only WS ternary could not express. ``rest_hostname``
+  and ``ws_hostname`` are derived read-only properties (NOT env-sourced fields):
+  ``rest_hostname`` keys off region alone; ``ws_hostname`` keys off ``(region, sandbox)``.
+
 This is env-only — there is deliberately NO YAML layer (unlike the domain configs).
 Only the connector reads it, so it stays import-by-path (no ``config`` barrel export).
 Construction is where the env-source pipeline runs; importing this module is inert.
 """
 
+from typing import Literal
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# REST host by region (the ccxt okx ``https://{hostname}`` template substitutes this).
+_REST_HOSTNAME_BY_REGION: dict[str, str] = {
+    "global": "www.okx.com",
+    "eea": "eea.okx.com",
+}
+
+# WS host by (region, sandbox). sandbox=True == demo, sandbox=False == prod. Both WS
+# consumers (ccxt.pro client + native business-candle socket) build their URL off this.
+_WS_HOSTNAME_BY_REGION_SANDBOX: dict[tuple[str, bool], str] = {
+    ("global", True): "wspap.okx.com",
+    ("global", False): "ws.okx.com",
+    ("eea", True): "wseeapap.okx.com",
+    ("eea", False): "wseea.okx.com",
+}
 
 
 class OkxSettings(BaseSettings):
@@ -40,8 +65,20 @@ class OkxSettings(BaseSettings):
     api_secret: SecretStr = Field(validation_alias="OKX_API_SECRET")
     api_passphrase: SecretStr = Field(validation_alias="OKX_API_PASSPHRASE")
     sandbox: bool = Field(default=True, validation_alias="OKX_SANDBOX")
-    # Regional-entity host (ccxt okx uses the ``https://{hostname}`` template). Default
-    # ``www.okx.com`` is the global entity; the EEA entity (and its demo environment) is
-    # reached via ``eea.okx.com`` — a key issued on one entity returns 50119 "API key
-    # doesn't exist" on another, so the host must match where the key was created.
-    hostname: str = Field(default="www.okx.com", validation_alias="OKX_HOSTNAME")
+    # Regional entity (OKX-REGION). ``global`` (default) is reached via www.okx.com;
+    # ``eea`` via eea.okx.com. A key issued on one entity returns 50119 "API key doesn't
+    # exist" on the other, and the demo WS host differs per entity, so region — not a bare
+    # sandbox ternary — derives BOTH hosts. The ``Literal`` makes an invalid OKX_REGION
+    # fail loud with a pydantic ValidationError (no silent coercion).
+    region: Literal["global", "eea"] = Field(
+        default="global", validation_alias="OKX_REGION")
+
+    @property
+    def rest_hostname(self) -> str:
+        """Region-derived REST host (ccxt ``https://{hostname}`` template)."""
+        return _REST_HOSTNAME_BY_REGION[self.region]
+
+    @property
+    def ws_hostname(self) -> str:
+        """(region, sandbox)-derived WS host both WS consumers key their URL off."""
+        return _WS_HOSTNAME_BY_REGION_SANDBOX[(self.region, self.sandbox)]
