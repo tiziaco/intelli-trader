@@ -621,19 +621,33 @@ class OkxExchange(AbstractExchange):
 			self._on_stream_down(stream_name)
 
 	def _on_stream_healthy(self, stream_name: str) -> None:
-		"""A successful ``watch_*`` batch: reset backoff and resume if we were paused (D-19).
+		"""A successful subscribe: resume if we were paused (D-19). Does NOT reset backoff.
 
-		Called by a consume-loop after each successful venue read. Resets the attempt
-		counter; on the transition out of a paused state it fires ``on_stream_up`` so the
-		composition root can resume submission only after a fresh REST reconcile.
+		Called by a consume-loop after a successful venue subscribe/read. On the transition
+		out of a paused state it fires ``on_stream_up`` so the composition root can resume
+		submission only after a fresh REST reconcile.
+
+		WR-03: a subscribe is NOT proof of health — it does NOT reset the reconnect retry
+		budget. Only a delivered payload does (see ``_reset_reconnect_budget``). Resetting on
+		a mere subscribe let a subscribe-then-close storm pin ``attempt`` at 1 forever and
+		silently defeat the D-20 never-spin-forever HALT guarantee.
 		"""
-		self._reconnect_attempts[stream_name] = 0
 		if stream_name in self._streams_down:
 			self._streams_down.discard(stream_name)
 			self.logger.info(
 				"OKX %s stream reconnected — resuming after REST reconcile", stream_name)
 			if self._on_stream_up is not None:
 				self._on_stream_up(stream_name)
+
+	def _reset_reconnect_budget(self, stream_name: str) -> None:
+		"""WR-03: a delivered payload proves the connection — reset the retry budget.
+
+		A subscribe alone (``_on_stream_healthy``) no longer resets ``_reconnect_attempts``;
+		only >=1 delivered payload does. This keeps the D-20 ceiling able to trip under a
+		subscribe-then-close storm while a genuine, payload-carrying reconnect still clears
+		the accumulated attempts.
+		"""
+		self._reconnect_attempts[stream_name] = 0
 
 	async def _stream_fills(self) -> None:
 		"""Consume the venue fill stream under the reconnect supervisor (D-07/D-19/D-20)."""
@@ -643,8 +657,12 @@ class OkxExchange(AbstractExchange):
 		"""Forever-loop: emit a FillEvent per venue trade (D-07); reconnect-supervised."""
 		while True:
 			trades = await self._connector.client.watch_my_trades()
-			# First success (incl. after a drop) resets backoff + resumes submission (D-19).
+			# Subscribe/ack: resume submission if we were paused (D-19).
 			self._on_stream_healthy(stream_name)
+			# WR-03: only a delivered payload (>=1 trade) resets the retry budget — a
+			# subscribe-then-close storm must never keep the ceiling from tripping.
+			if trades:
+				self._reset_reconnect_budget(stream_name)
 			for trade in trades:
 				# WR-02: a single malformed trade must not kill the forever-loop and
 				# silently drop every subsequent fill. Swallow-and-log per trade,
@@ -668,6 +686,9 @@ class OkxExchange(AbstractExchange):
 		while True:
 			orders = await self._connector.client.watch_orders()
 			self._on_stream_healthy(stream_name)
+			# WR-03: payload-gated retry-budget reset (>=1 order update).
+			if orders:
+				self._reset_reconnect_budget(stream_name)
 			for order in orders:
 				self.logger.debug("OKX order update: %s", order)
 

@@ -255,14 +255,28 @@ class OkxDataProvider:
                 self.logger.info(
                     "OKX candle stream subscribed",
                     host=host, channel=channel, instId=symbol_okx)
-                # Subscribed successfully — reset the backoff and, if we were paused on
-                # a prior disconnect, resume after the fresh reconcile (D-19).
+                # Subscribed successfully — if we were paused on a prior disconnect,
+                # resume after the fresh reconcile (D-19). WR-03: a subscribe does NOT
+                # reset the retry budget (see _reset_reconnect_budget).
                 self._on_stream_healthy("candles")
+                # WR-03 (data arm): OKX pushes an in-progress-candle SNAPSHOT (confirm='0')
+                # within ~30ms of EVERY subscribe — verified against the demo venue. That
+                # snapshot is delivered ON subscribe, so it is NOT proof of a connection that
+                # stays up: a subscribe-then-close storm delivers exactly that one payload each
+                # cycle. Reset the retry budget only on a payload delivered AFTER the subscribe
+                # snapshot (evidence of real streaming); otherwise the D-20 never-spin-forever
+                # ceiling could never trip on the candle arm (plain payload-gating is defeated
+                # by the snapshot — the order arm has no such subscribe-time push).
+                payload_seen = False
                 async for msg in ws:
                     if msg.type is not aiohttp.WSMsgType.TEXT:
                         continue
                     payload: Any = json.loads(msg.data)
                     rows: Any = payload.get("data", []) if isinstance(payload, dict) else []
+                    if rows:
+                        if payload_seen:
+                            self._reset_reconnect_budget("candles")
+                        payload_seen = True
                     for row in rows:
                         self._process_row(row)
 
@@ -375,14 +389,31 @@ class OkxDataProvider:
             self._on_stream_down(stream_name)
 
     def _on_stream_healthy(self, stream_name: str) -> None:
-        """A successful subscribe: reset backoff and resume if we were paused (D-19)."""
-        self._reconnect_attempts[stream_name] = 0
+        """A successful subscribe: resume if we were paused (D-19). Does NOT reset backoff.
+
+        WR-03: a subscribe is NOT proof of health — it does NOT reset the reconnect retry
+        budget. Only a delivered payload does (see ``_reset_reconnect_budget``). Resetting
+        on a mere subscribe let a subscribe-then-close storm pin ``attempt`` at 1 forever
+        and silently defeat the D-20 never-spin-forever HALT guarantee.
+        """
         if stream_name in self._streams_down:
             self._streams_down.discard(stream_name)
             self.logger.info(
                 "OKX %s stream reconnected — resuming after REST reconcile", stream_name)
             if self._on_stream_up is not None:
                 self._on_stream_up(stream_name)
+
+    def _reset_reconnect_budget(self, stream_name: str) -> None:
+        """WR-03: a POST-SNAPSHOT payload proves the connection — reset the retry budget.
+
+        Neither a subscribe (``_on_stream_healthy``) nor the OKX in-progress-candle SNAPSHOT
+        that arrives on every subscribe resets ``_reconnect_attempts``; only a candle row
+        delivered AFTER that snapshot does (see the ``payload_seen`` gate in
+        ``_connect_and_consume_candles``). This keeps the D-20 ceiling able to trip under a
+        subscribe-then-close storm — where OKX still pushes the snapshot each cycle — while a
+        genuine, streaming reconnect still clears the accumulated attempts.
+        """
+        self._reconnect_attempts[stream_name] = 0
 
     def _process_row(self, row: Any) -> None:
         """Validate one raw business row, gate on ``confirm``, cross the Decimal edge.

@@ -24,10 +24,12 @@ per-test ``asyncio.run`` loop (created + closed cleanly so nothing escapes into 
 """
 
 import asyncio
+import json
 import queue
 from typing import Any, Callable, Optional
 from unittest.mock import MagicMock
 
+import aiohttp
 import ccxt
 import pytest
 
@@ -83,6 +85,108 @@ class _ScriptedConsume:
         if step == "ok_stop":
             raise _StopSupervisor()
         return
+
+
+class _SubscribeCloseStorm:
+    """Models an OKX subscribe-then-close storm (server-side churn, WR-03).
+
+    Each supervisor iteration signals a healthy *subscribe* (via ``on_healthy``) and then
+    the connection drops WITHOUT ever delivering a payload. Pre-WR-03 the subscribe reset
+    the retry budget (``_on_stream_healthy`` zeroed ``_reconnect_attempts``), pinning
+    ``attempt`` at 1 forever so the D-20 ceiling could never trip and the loop reconnected
+    endlessly. A hard ``cap`` raises ``_StopSupervisor`` so the pre-fix forever-loop cannot
+    hang the strict suite.
+
+    ``drop='transient'`` -> raise ``ccxt.NetworkError`` (the order-arm consume never
+    returns cleanly; a drop raises). ``drop='clean'`` -> return cleanly (the provider arm
+    treats a clean return as a server-closed socket and reconnects).
+    """
+
+    def __init__(
+        self, on_healthy: Callable[[str], None], *, drop: str, cap: int = 50
+    ) -> None:
+        self._on_healthy = on_healthy
+        self._drop = drop
+        self._cap = cap
+        self.calls = 0
+
+    async def __call__(self, stream_name: str) -> None:
+        self.calls += 1
+        if self.calls > self._cap:
+            raise _StopSupervisor()          # safety valve: never hang the pre-fix loop
+        self._on_healthy(stream_name)        # subscribe ack — NO payload delivered
+        if self._drop == "transient":
+            raise ccxt.NetworkError("socket closed right after subscribe")
+        return                                # 'clean' — server closed the socket
+
+
+class _SnapshotThenCloseSession:
+    """Fake ``aiohttp.ClientSession`` modelling OKX's candle SNAPSHOT-on-subscribe (WR-03).
+
+    Verified against the OKX demo venue: subscribing ``candle{tf}`` pushes the subscribe ACK
+    plus an in-progress-candle SNAPSHOT (one row, ``confirm='0'``) within ~30ms, BEFORE any
+    real streaming, then — in a server-side churn storm — the socket closes. Each ``__call__``
+    (one ``aiohttp.ClientSession()`` per supervisor reconnect) yields ``[ACK, snapshot]`` then
+    ends iteration (clean socket close). A shared ``cap`` raises ``_StopSupervisor`` so the
+    PRE-fix forever-loop (snapshot resets the budget every cycle -> ceiling never trips) cannot
+    hang the strict suite; POST-fix the snapshot no longer resets, so the ceiling trips first.
+    """
+
+    def __init__(self, state: dict[str, int], *, cap: int = 50) -> None:
+        self._state = state
+        self._cap = cap
+        self._msgs = [
+            {"event": "subscribe", "arg": {"channel": "candle1D", "instId": "BTC-USDT"}},
+            # one in-progress snapshot row (>=9 fields, confirm='0' at index 8) — dropped by
+            # the confirm gate, but it IS a delivered `data` payload on subscribe.
+            {"arg": {"channel": "candle1D", "instId": "BTC-USDT"},
+             "data": [["1700000000000", "1", "2", "0.5", "1.5", "10", "10", "10", "0"]]},
+        ]
+
+    def __call__(self) -> "_SnapshotThenCloseSession":
+        return self
+
+    async def __aenter__(self) -> "_SnapshotThenCloseSession":
+        return self
+
+    async def __aexit__(self, *exc: Any) -> bool:
+        return False
+
+    def ws_connect(self, url: str, **kwargs: Any) -> "_SnapshotThenCloseSession":
+        self._state["connects"] = self._state.get("connects", 0) + 1
+        if self._state["connects"] > self._cap:
+            raise _StopSupervisor()          # safety valve: never hang the pre-fix loop
+        return self
+
+    async def send_json(self, payload: Any) -> None:
+        return None
+
+    def __aiter__(self) -> "_SnapshotThenCloseSession":
+        self._it = iter(self._msgs)
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            raw = next(self._it)
+        except StopIteration:
+            raise StopAsyncIteration      # socket closed -> supervisor reconnects
+        msg = MagicMock()
+        msg.type = aiohttp.WSMsgType.TEXT
+        msg.data = json.dumps(raw)
+        return msg
+
+
+def _drive_storm(coro: Any) -> None:
+    """Run a supervisor coroutine, swallowing the pre-fix safety-valve stop.
+
+    Pre-WR-03 a subscribe-then-close storm never halts, so the storm double's ``cap``
+    raises ``_StopSupervisor`` to break the forever loop. Swallowing it lets the assertion
+    (``halt`` fired) report the defect as a clean failure rather than an error.
+    """
+    try:
+        asyncio.run(coro)
+    except _StopSupervisor:
+        pass
 
 
 def _fast(component: Any) -> None:
@@ -214,6 +318,81 @@ def test_okx_provider_retry_ceiling_exhausted_halts(okx_provider: OkxDataProvide
 
     assert halt.calls == ["connector-fatal"]
     assert consume.calls == 4
+
+
+# --- WR-03: subscribe-then-close storm exhausts the ceiling and halts ---------
+
+
+def test_okx_exchange_subscribe_close_storm_exhausts_ceiling_and_halts(
+    okx_exchange: OkxExchange,
+) -> None:
+    """A subscribe-then-close storm exhausts the retry ceiling and HALTS (WR-03/D-20).
+
+    A subscribe is not proof of health — only a delivered payload may reset the retry
+    budget. Pre-fix ``_on_stream_healthy`` reset the budget on every subscribe, pinning
+    ``attempt`` at 1 so the ceiling could never trip and the supervisor reconnected
+    forever (silently defeating the D-20 never-spin-forever HALT guarantee).
+    """
+    halt = _Recorder()
+    okx_exchange.set_halt_signal(halt)
+    okx_exchange._reconnect_ceiling = 3
+
+    storm = _SubscribeCloseStorm(okx_exchange._on_stream_healthy, drop="transient")
+    _drive_storm(okx_exchange._run_stream_supervisor(storm, "fills"))
+
+    assert halt.calls == ["connector-fatal"]   # ceiling tripped despite the subscribe storm
+    assert storm.calls == 4                     # attempts 1..3 retried, attempt 4 > ceiling -> halt
+
+
+def test_okx_provider_subscribe_close_storm_exhausts_ceiling_and_halts(
+    okx_provider: OkxDataProvider,
+) -> None:
+    """The candle arm halts on a subscribe-then-close storm too (mirror of the order arm)."""
+    halt = _Recorder()
+    okx_provider.set_halt_signal(halt)
+    okx_provider._reconnect_ceiling = 3
+
+    storm = _SubscribeCloseStorm(okx_provider._on_stream_healthy, drop="clean")
+    _drive_storm(okx_provider._run_stream_supervisor(storm, "candles"))
+
+    assert halt.calls == ["connector-fatal"]
+    assert storm.calls == 4
+
+
+def test_okx_provider_snapshot_on_subscribe_storm_exhausts_ceiling_and_halts(
+    okx_provider: OkxDataProvider,
+    monkeypatch: Any,
+) -> None:
+    """A subscribe-then-close storm HALTS even though OKX pushes a SNAPSHOT on subscribe (WR-03).
+
+    The offline ``_SubscribeCloseStorm`` above models a subscribe with NO payload; ONLINE the
+    OKX candle channel ALWAYS delivers an in-progress-candle snapshot (confirm='0', ~30ms) on
+    subscribe — verified against the demo venue. That snapshot is a delivered ``data`` payload,
+    so plain payload-gating would reset the retry budget every reconnect cycle and the D-20
+    ceiling could never trip on the candle arm. This drives the REAL
+    ``_connect_and_consume_candles`` against a fake WS that reproduces the snapshot-then-close
+    shape (the path the scripted-consume harness cannot reach).
+
+    RED before the ``payload_seen`` fix: the snapshot resets the budget, ``attempt`` is pinned
+    at 1 forever, the loop reconnects endlessly until the ``cap`` safety valve fires and NO halt
+    is recorded. GREEN after: the snapshot no longer resets, so the ceiling trips -> HALT.
+    """
+    halt = _Recorder()
+    okx_provider.set_halt_signal(halt)
+    okx_provider._reconnect_ceiling = 3
+
+    state: dict[str, int] = {}
+    session = _SnapshotThenCloseSession(state)
+    monkeypatch.setattr(
+        "itrader.price_handler.providers.okx_provider.aiohttp.ClientSession", session)
+
+    async def _consume(_stream_name: str) -> None:
+        await okx_provider._connect_and_consume_candles("BTC-USDT", "candle1D")
+
+    _drive_storm(okx_provider._run_stream_supervisor(_consume, "candles"))
+
+    assert halt.calls == ["connector-fatal"]   # ceiling tripped despite snapshot-on-subscribe
+    assert state["connects"] == 4              # attempts 1..3 retried, attempt 4 > ceiling -> halt
 
 
 # --- no secret leaks into the CRITICAL alert (Pitfall 16, T-05-27) ------------
