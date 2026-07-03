@@ -45,7 +45,10 @@ from itrader.events_handler.events import EventType, ErrorEvent
 # into a ring-key vs membership mismatch (which would otherwise surface only as a
 # MissingPriceDataError at first window()). A future D-live wiring sources these from
 # Settings; today they are the one shared constant.
-_OKX_STREAM_SYMBOL = "BTC/USDT"
+# BTC/USDC (not BTC/USDT): the OKX EEA entity restricts USDT spot pairs under MiCA —
+# an order on BTC/USDT returns sCode 51155 "local compliance restrictions". Hardcoded
+# for now; the pair becomes configurable via the universe subsystem in the next phase.
+_OKX_STREAM_SYMBOL = "BTC/USDC"
 _OKX_STREAM_TIMEFRAME = "1d"
 
 # D-18 (structural half — SINGLE SOURCE OF TRUTH for the paper/backtest parity anchor):

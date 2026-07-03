@@ -58,7 +58,9 @@ pytestmark = [
 ]
 
 # --- Pinned demo-order parameters (min-size, liquid demo symbol — T-05-12-02) ---
-_OKX_SYMBOL = "BTC/USDT"          # the _OKX_STREAM_SYMBOL — a liquid demo spot pair
+_OKX_SYMBOL = "BTC/USDC"          # must equal _OKX_STREAM_SYMBOL (drives strategy tickers ->
+                                  # universe.members AND the order symbol). BTC/USDC, not USDT:
+                                  # OKX EEA restricts USDT spot pairs under MiCA (sCode 51155).
 _MIN_DEMO_QTY = Decimal("0.0001")  # tiny base quantity, comfortably above the venue min lot
 _PRICE_ESTIMATE = Decimal("100000")  # cosmetic decision-price estimate (market fill uses venue px)
 _DEMO_PORTFOLIO_CASH = 100_000     # superseded by the VenueAccount cache on start()
