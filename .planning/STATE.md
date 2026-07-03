@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Completed 05-12-PLAN.md
+stopped_at: Phase 05 reopened for 05-13 (WR-05 remediation) — 05-SPEC.md staged
 last_updated: "2026-07-03T00:00:00.000Z"
 last_activity: 2026-07-03
 progress:
   total_phases: 7
-  completed_phases: 5
-  total_plans: 32
+  completed_phases: 4
+  total_plans: 33
   completed_plans: 32
-  percent: 71
+  percent: 57
 ---
 
 # Project State
@@ -28,12 +28,12 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 
 ## Current Position
 
-Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — COMPLETE
-Plan: 12 of 12
-Status: Phase complete — RECON-06 closed (OKX-demo live e2e `3 passed`, human-observed 2026-07-03)
-Last activity: 2026-07-03 - Completed quick task 260703-hl5: persist venue_trade_id on the transactions table (CR-01 persistence tail)
+Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — IN PROGRESS (reopened 2026-07-03 for WR-05 remediation)
+Plan: 13 of 13 (05-13 pending — WR-05 correlation-state remediation; `05-SPEC.md` staged, R1–R3 narrow slice)
+Status: Reopened — WR-05 (unbounded OkxExchange correlation) carved into plan 05-13. Next: /gsd:discuss-phase 5 (resolve 3 "how" decisions) → /gsd:plan-phase 5 (produce 05-13-PLAN.md). Full design: docs/superpowers/specs/2026-07-03-mid-session-order-lifecycle-reconciliation-spec.md
+Last activity: 2026-07-03 - Reopened Phase 05 for 05-13: staged 05-SPEC.md (narrow WR-05 R1–R3), backed up 05-CONTEXT.md → .bak; broad R4 (mid-session order-status signal + out-of-band) deferred to a future phase
 
-Progress: [██████████] 100%
+Progress: [█████████░] 12/13 plans (05-13 pending)
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
