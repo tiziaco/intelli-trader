@@ -26,6 +26,7 @@ per-test ``asyncio.run`` loop (created + closed cleanly so nothing escapes into 
 import asyncio
 import json
 import queue
+from datetime import UTC, datetime
 from typing import Any, Callable, Optional
 from unittest.mock import MagicMock
 
@@ -34,6 +35,7 @@ import ccxt
 import pytest
 
 from itrader.core.enums import ErrorSeverity, EventType, SystemStatus
+from itrader.events_handler.events import ErrorEvent
 from itrader.execution_handler.exchanges.okx import OkxExchange
 from itrader.price_handler.providers.okx_provider import OkxDataProvider
 from itrader.trading_system.live_trading_system import LiveTradingSystem
@@ -442,6 +444,70 @@ def test_fatal_alert_carries_no_secret_substring(monkeypatch: Any) -> None:
     )
     assert _SECRET not in emitted
     assert "supersecret" not in emitted
+
+
+# --- WR-06: the ERROR route is terminal-safe (no error->error recursion) ------
+
+
+class _RaisingSink:
+    """An alert sink whose egress is down — .alert() always raises."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def alert(self, event: Any) -> None:
+        self.calls += 1
+        raise RuntimeError("alert egress down")
+
+
+def test_error_route_consumer_failure_does_not_recurse(monkeypatch: Any) -> None:
+    """WR-06: a failure WHILE consuming an ErrorEvent must be terminal — no recursion.
+
+    If the ERROR-route consumer (``_log_error_event`` / its injected alert sink) raises,
+    the live publish-and-continue seam MUST NOT publish a fresh ErrorEvent routed straight
+    back to the same failing consumer. That is an unbounded error->error feedback loop that
+    floods the engine-thread queue (and, when the failure repeats on the re-consumed event,
+    livelocks a single ``process_events()`` drain forever).
+
+    Drives a CRITICAL ErrorEvent through ``process_events()`` with the live
+    ``_publish_and_continue`` policy bound (as ``start()`` binds it) and a raising alert sink.
+    The sink fires exactly once (the original event); the failure is logged and swallowed; and
+    crucially NO fresh ErrorEvent is enqueued by the failure path.
+    """
+    system = _live_system(monkeypatch)
+    # Bind the live handler-failure policy exactly as start() does (line ~1071),
+    # without launching the daemon thread.
+    system.event_handler._on_handler_error = system._publish_and_continue  # type: ignore[method-assign]
+    sink = _RaisingSink()
+    system.event_handler._alert_sink = sink
+
+    # The original CRITICAL ErrorEvent — enqueued BEFORE we start recording puts,
+    # so only republished (recursion) events are captured.
+    system.global_queue.put(ErrorEvent(
+        time=datetime.now(UTC),
+        source="test",
+        error_type="Boom",
+        error_message="original failure",
+        severity=ErrorSeverity.CRITICAL,
+    ))
+
+    republished: list[Any] = []
+    orig_put = system.global_queue.put
+
+    def recording_put(item: Any, *args: Any, **kwargs: Any) -> None:
+        republished.append(item)
+        orig_put(item, *args, **kwargs)
+
+    monkeypatch.setattr(system.global_queue, "put", recording_put)
+
+    system.event_handler.process_events()   # must TERMINATE (no livelock)
+
+    # The sink was invoked exactly once — for the original CRITICAL event.
+    assert sink.calls == 1
+    # No error->error recursion: the failing ErrorEvent must NOT spawn a fresh ErrorEvent.
+    assert republished == []
+    # Queue fully drained; nothing left circulating.
+    assert system.global_queue.empty()
 
 
 # --- Task 2: pause-on-disconnect / resume-after-reconcile (D-19) --------------

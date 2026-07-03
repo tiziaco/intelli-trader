@@ -508,6 +508,15 @@ class LiveTradingSystem:
         )
         with self._stats_lock:
             self._stats['errors_count'] += 1
+        # WR-06: the ERROR route is TERMINAL. If the FAILING event is itself an
+        # ErrorEvent, publishing a fresh ErrorEvent would route it straight back to
+        # the same failing ERROR-route consumer (_log_error_event) — an unbounded
+        # error->error feedback loop flooding the engine-thread queue (and, when the
+        # failure repeats on the re-consumed event, livelocking a single
+        # process_events() drain forever). The failure is already logged once above;
+        # stop here rather than republish.
+        if getattr(event, 'type', None) is EventType.ERROR:
+            return
         self.global_queue.put(ErrorEvent(
             # WR-05: prefer the event's own business time; fall back to a
             # tz-aware UTC wall clock (never naive) to stay consistent with the
