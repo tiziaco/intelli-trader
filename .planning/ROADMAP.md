@@ -285,6 +285,9 @@ nautilus pure-functions; venue order id persisted for bracket re-link; two-sided
 - [x] 05-07-PLAN.md — Two-sided restart: venue_order_id persistence + VenueReconciler reconciling events + bracket re-link (D-03/D-05, RECON-05) (Wave 5)
 - [x] 05-08-PLAN.md — Live resilience: reconnect supervisor + failure classification + pause-on-disconnect (RES-01/D-19/D-20) (Wave 6)
 - [x] 05-09-PLAN.md — Error-policy split (D-17) + shared-parity-config + doc-sync (D-18) + terminal milestone gate (oracle byte-exact + inertness + RECON-06 sandbox evidence) (Wave 7)
+- [x] 05-10-PLAN.md — Gap-closure: CR-01 live-fill wiring (start() spawns OkxExchange.connect()) + honest resume snapshot (WR-04) + atomic halt (WR-01) (Wave 8)
+- [x] 05-11-PLAN.md — Gap-closure: adopt_venue_correlation seam (WR-02, rehydrated-order fill reaches mirror) + validate-before-mutate partial fill (WR-03) (Wave 8)
+- [x] 05-12-PLAN.md — Gap-closure: RECON-06 OKX-demo live e2e suite (order->fill->reconcile->restart loop, human-gated `3 passed` against real EEA demo venue) (Wave 8)
 **Cross-cutting**: RES-01 home phase (resilience pieces also built in Phases 2 rate-limit / 3 reconnect+gap-recovery);
 COV-01 real-path surface coverage completes here.
 
@@ -470,7 +473,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | 2. OKX Connector | v1.7 | 5/5 | Complete   | 2026-07-01 |
 | 3. LiveBarFeed | v1.7 | 4/4 | Complete   | 2026-07-01 |
 | 4. Paper Path (DoD) | v1.7 | 4/4 | Complete   | 2026-07-02 |
-| 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 11/12 | In Progress|  |
+| 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 12/12 | Complete   | 2026-07-03 |
 | 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):

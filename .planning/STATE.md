@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Completed 05-11-PLAN.md
-last_updated: "2026-07-02T21:08:44.128Z"
-last_activity: 2026-07-02
+stopped_at: Completed 05-12-PLAN.md
+last_updated: "2026-07-03T00:00:00.000Z"
+last_activity: 2026-07-03
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 32
-  completed_plans: 31
-  percent: 57
+  completed_plans: 32
+  percent: 71
 ---
 
 # Project State
@@ -28,12 +28,12 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 
 ## Current Position
 
-Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — EXECUTING
-Plan: 3 of 12
-Status: Ready to execute
-Last activity: 2026-07-03 - quick task 260703-bza: OKX_REGION config derives REST+WS hosts (EEA demo enabled)
+Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — COMPLETE
+Plan: 12 of 12
+Status: Phase complete — RECON-06 closed (OKX-demo live e2e `3 passed`, human-observed 2026-07-03)
+Last activity: 2026-07-03 - 05-12 finalized: RECON-06 live-sandbox suite green against real OKX EEA demo venue
 
-Progress: [██████████] 97%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -153,6 +153,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 04-04: paper-parity DoD gate shipped (PAPER-04/COV-01) — one test drives run_paper_replay() AND a fresh backtest on the golden dataset, asserts trades+equity frame-equal EXACT (tz-normalized UTC); anchored to the fresh backtest not the frozen 46189 artifact (D-01), survives a backtest-loop rework; inertness _FORBIDDEN extended to replay_provider (D-12), oracle untouched
 - [Phase 05]: 05-11: WR-02 closed — OkxExchange.adopt_venue_correlation() repopulates the three correlation maps + drains buffered fills for rehydrated orders; VenueReconciler.reconcile() adopts per working-set order with a venue_order_id (exchange=self._okx_exchange). Post-restart fills reach the mirror instead of being silently buffered.
 - [Phase 05]: 05-11: WR-03 closed — reconcile_manager validates the PARTIALLY_FILLED transition BEFORE mutating filled_quantity; a rejected transition leaves the mirror literally unchanged. WR-05 recorded documented-only (portfolio_handler.py untouched).
+- [Phase 05]: 05-12: RECON-06 closed — tests/e2e/test_okx_sandbox_recon.py runs `3 passed` against the real OKX EEA demo venue (order->fill->reconcile->restart loop, human-observed 2026-07-03). Reaching green needed 4 follow-on integration fixes (committed separately): OKX_REGION=eea host derivation (REST eea.okx.com / WS wseeapap.okx.com — 50119/60032 otherwise), unified `1d` timeframe to ccxt backfill, live pair BTC/USDT->BTC/USDC (EEA/MiCA sCode 51155; make pair configurable via universe next phase), and store rewired onto unified ITRADER_DATABASE_* (dropped SYSTEM_DB_URL).
 
 ### Pending Todos
 
@@ -265,11 +266,13 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-02T21:08:44.121Z
-Stopped at: Completed 05-11-PLAN.md
+Last session: 2026-07-03T00:00:00.000Z
+Stopped at: Completed 05-12-PLAN.md — Phase 05 complete (RECON-06 closed)
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps
 
-- Plan Phase 1 (Account Abstraction) with `/gsd:plan-phase 1`.
+- Phase 05 is COMPLETE (12/12, RECON-06 closed). Plan Phase 6 (Dynamic Universe Membership) with
+  `/gsd:plan-phase 6` — carry the "make the live trading pair configurable (currently hardcoded
+  BTC/USDC for OKX EEA/MiCA)" item into its scope.
