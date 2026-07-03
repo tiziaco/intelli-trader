@@ -31,7 +31,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — EXECUTING
 Plan: 3 of 12
 Status: Ready to execute
-Last activity: 2026-07-02 - fast task: fix OKX backfill timeframe (unified 1d to ccxt) — unblocks live start() warmup
+Last activity: 2026-07-03 - quick task 260703-bza: OKX_REGION config derives REST+WS hosts (EEA demo enabled)
 
 Progress: [██████████] 97%
 
@@ -204,6 +204,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | 260703-030 | Rewire live operational store onto unified SqlSettings, drop legacy SYSTEM_DB_URL | 2026-07-02 | 8947cc27 | [260703-030-rewire-live-operational-store-onto-unifi](./quick/260703-030-rewire-live-operational-store-onto-unifi/) |
 | fast | Make OKX connector hostname configurable (OKX_HOSTNAME) for EEA regional entity — fixes 50119 on eea.okx.com keys | 2026-07-02 | 3790990f | — (fast, inline) |
 | fast | Fix OKX backfill timeframe: pass unified "1d" (not OKX "1D") to ccxt fetch_ohlcv — unblocks LiveTradingSystem.start() warmup | 2026-07-02 | d6d225b6 | — (fast, inline) |
+| 260703-bza | Add OKX_REGION config deriving REST+WS hosts (global/eea); wire ws_hostname through connector + native candle socket — enables EEA demo (wseeapap.okx.com) | 2026-07-03 | b5826909 | [260703-bza-add-okx-region-config-deriving-rest-ws-h](./quick/260703-bza-add-okx-region-config-deriving-rest-ws-h/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
