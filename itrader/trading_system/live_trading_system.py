@@ -520,6 +520,41 @@ class LiveTradingSystem:
             severity=ErrorSeverity.ERROR,
         ))
     
+    def _link_venue_account_to_portfolios(self) -> None:
+        """Link the venue-cached account into the active live portfolio (WR-02).
+
+        The ``VenueAccount`` is a FIRST-CLASS KEYED entity — one venue sub-account
+        (AccountId), owning that sub-account's balance / available / positions
+        cache — NOT a shared singleton. Assigning the SAME ``self._venue_account``
+        instance to every active portfolio conflates their buying power and
+        positions (``_compare_symbol_drift`` would read one venue truth for all)
+        and silently discards each portfolio's prior ``SimulatedAccount`` ledger.
+
+        Real multi-portfolio-live needs a per-portfolio ``VenueAccount`` resolved
+        by venue sub-account, with position attribution by clOrdId/tag — a bigger
+        design, correctly DEFERRED. Until it exists, FAIL LOUD here on MORE THAN
+        ONE active portfolio: refuse to share one venue account across portfolios
+        so a second portfolio can never silently mis-attribute buying power /
+        positions or have its ``SimulatedAccount`` ledger discarded. A
+        ``RuntimeError`` (not a strippable ``assert``) is used so the guard holds
+        even under ``python -O``. Zero active portfolios is a benign no-op (a
+        system may start before any portfolio is added — nothing to attribute);
+        exactly one is the supported single-portfolio-live path (account linked).
+        """
+        active_portfolios = self.portfolio_handler.get_active_portfolios()
+        if len(active_portfolios) > 1:
+            raise RuntimeError(
+                'Live venue-account wiring supports at most one active portfolio '
+                f'(found {len(active_portfolios)}). Sharing one VenueAccount '
+                'across portfolios would conflate their buying power / positions '
+                'and discard each SimulatedAccount ledger. Multi-portfolio-live '
+                'requires a per-portfolio VenueAccount keyed by venue sub-account '
+                '(AccountId) with position attribution by clOrdId/tag — deferred '
+                'work; wire that before running more than one live portfolio.')
+        # Zero -> no-op; exactly one -> link the venue-cached account onto it.
+        for portfolio in active_portfolios:
+            portfolio.account = self._venue_account
+
     def halt(self, reason: str) -> None:
         """Freeze-in-place halt of the whole engine (D-01/D-02/D-06/D-07).
 
@@ -1085,8 +1120,7 @@ class LiveTradingSystem:
             if self.exchange == 'okx' and self._venue_account is not None:
                 self._venue_account.snapshot()
                 self._venue_account.start_streaming()
-                for portfolio in self.portfolio_handler.get_active_portfolios():
-                    portfolio.account = self._venue_account
+                self._link_venue_account_to_portfolios()
 
                 # 05-07 (RECON-05, D-03/D-05): two-sided restart reconcile on the
                 # ENGINE thread BEFORE RUNNING. Rehydrate the working set from the

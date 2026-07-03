@@ -7,6 +7,7 @@ events. Composite reads are consistent because nothing mutates concurrently.
 Live cross-thread reads are a D-live design item.
 """
 from queue import Queue
+from collections import OrderedDict
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Dict, Optional, Any, List, Generator, Union, Callable
@@ -123,6 +124,18 @@ class PortfolioHandler:
         self._drift_reconciler: Optional[
             Callable[[Any, str, Decimal, Decimal], bool]
         ] = None
+
+        # CR-01: bounded per-handler set of already-settled venue trade ids — the
+        # cross-emitter fill-dedup ledger. The live OKX stream and the restart
+        # VenueReconciler can both book the SAME economic venue trade (they share
+        # no other idempotency key: fill_id is a fresh uuid7 per emit). on_fill
+        # rejects a fill whose venue_trade_id is already here so the position/cash
+        # settles exactly once. An OrderedDict is used as a bounded FIFO (oldest
+        # evicted past the cap) so a long-running live session cannot grow it
+        # unbounded. Backtest/simulated fills carry venue_trade_id=None and NEVER
+        # touch this ledger — the SMA_MACD oracle stays byte-exact (oracle-dark).
+        self._settled_venue_trade_ids: "OrderedDict[str, None]" = OrderedDict()
+        self._max_settled_venue_trade_ids = 100_000
 
         # Global logger
         self.logger = get_itrader_logger().bind(component="PortfolioHandler")
@@ -778,6 +791,18 @@ class PortfolioHandler:
                 self._compare_symbol_drift(
                     portfolio, ticker, self._generate_correlation_id())
 
+    def _mark_venue_trade_settled(self, venue_trade_id: str) -> None:
+        """Record a venue trade id as settled in the bounded FIFO dedup ledger (CR-01).
+
+        Evicts the oldest id once the ledger exceeds its cap so a long-running live
+        session cannot grow it without bound. Re-inserting an already-present id
+        refreshes its recency (moves it to the newest end).
+        """
+        self._settled_venue_trade_ids[venue_trade_id] = None
+        self._settled_venue_trade_ids.move_to_end(venue_trade_id)
+        while len(self._settled_venue_trade_ids) > self._max_settled_venue_trade_ids:
+            self._settled_venue_trade_ids.popitem(last=False)
+
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
         """Process fill event for the appropriate portfolio.
@@ -797,6 +822,23 @@ class PortfolioHandler:
             self.logger.debug(
                 "Ignoring non-executed fill",
                 status=str(fill_event.status),
+                ticker=fill_event.ticker,
+            )
+            return
+
+        # CR-01: cross-emitter fill-dedup at the settlement chokepoint. The venue
+        # trade id is the ONE idempotency key shared by the two live emitters (the
+        # OKX trade stream and the restart VenueReconciler); a fill whose
+        # venue_trade_id was already settled is a duplicate booking of the SAME
+        # economic venue trade — reject it BEFORE it mutates position/cash, so
+        # 0.5 BTC is never booked as 1.0 (the CR-01 double-count). Backtest and
+        # simulated fills carry venue_trade_id=None and SKIP the guard entirely —
+        # the SMA_MACD oracle takes no new branch (oracle-dark).
+        venue_trade_id = getattr(fill_event, "venue_trade_id", None)
+        if venue_trade_id is not None and venue_trade_id in self._settled_venue_trade_ids:
+            self.logger.warning(
+                "Rejecting duplicate venue trade fill (already settled)",
+                venue_trade_id=venue_trade_id,
                 ticker=fill_event.ticker,
             )
             return
@@ -835,9 +877,19 @@ class PortfolioHandler:
                     # the admission reservation (notional / effective_leverage).
                     # getattr default keeps spot fills byte-exact (oracle-dark).
                     leverage=getattr(fill_event, "leverage", Decimal("1")),
+                    # CR-01: carry the venue trade id onto the durable settlement
+                    # record (None for backtest/simulated fills — oracle-dark).
+                    venue_trade_id=venue_trade_id,
                 )
 
                 portfolio.transact_shares(transaction)
+
+                # CR-01: record the venue trade id as settled ONLY after the
+                # transaction applied — a later re-delivery (stream re-send or the
+                # restart reconciler) of the SAME venue trade is then a no-op at
+                # the guard above. None-keyed backtest/simulated fills never record.
+                if venue_trade_id is not None:
+                    self._mark_venue_trade_settled(venue_trade_id)
 
                 self.logger.debug(
                     "Fill event processed",

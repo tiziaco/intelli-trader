@@ -69,6 +69,13 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
     # the originating order. Default Decimal("1") is unlevered (oracle-dark);
     # EXECUTED and REFUSED/CANCELLED fills all carry it for the Transaction hop.
     leverage: Decimal = Decimal("1")
+    # CR-01: the venue's own TRADE id (FIX ExecID(17)/TradeID(1003); Nautilus
+    # TradeId) — the ONLY stable idempotency key shared across the two live
+    # emitters (the OKX trade stream and the restart VenueReconciler). Default
+    # None so backtest/simulated fills carry no venue key and take NO new branch
+    # at the settlement chokepoint — the SMA_MACD oracle stays byte-exact
+    # (oracle-dark). Stamped live-only from the ccxt-unified ``trade['id']``.
+    venue_trade_id: 'str | None' = None
 
     def __str__(self) -> str:
         return f'{self.type} ({self.ticker}, {self.action}, {round(self.quantity, 4)}, {round(self.price, 4)} $)'
@@ -80,7 +87,8 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
     def new_fill(cls, status: str, order: OrderEvent, *,
                  price: 'Decimal | float', quantity: 'Decimal | float',
                  commission: 'Decimal | float',
-                 time: 'datetime | None' = None) -> 'FillEvent':
+                 time: 'datetime | None' = None,
+                 venue_trade_id: 'str | None' = None) -> 'FillEvent':
         """
         Generate a complete FillEvent from the originating order.
 
@@ -122,6 +130,11 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
             The fill's event time — the matching bar's time for fills
             decided by a bar (D-01/D-13). Defaults to the order's
             decision time for admission-time outcomes.
+        venue_trade_id : `str`, optional (keyword-only)
+            The venue's own trade id (CR-01) — the cross-emitter idempotency
+            key. Defaults to None: backtest/simulated fills carry no venue key
+            and are unaffected (oracle-dark). Live emitters (OkxExchange stream,
+            VenueReconciler) stamp it from the ccxt-unified ``trade['id']``.
 
         Returns
         -------
@@ -146,4 +159,6 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
             # getattr default keeps hand-built order stubs (predating the field)
             # working — they degrade to Decimal("1") (oracle-dark).
             leverage=getattr(order, "leverage", Decimal("1")),
+            # CR-01: the venue trade id (None for backtest/simulated fills).
+            venue_trade_id=venue_trade_id,
         )

@@ -187,12 +187,15 @@ class VenueReconciler:
     def _adopt_fill_deltas(
         self, working: List["Order"], venue_trades: Any
     ) -> None:
-        """Adopt each in-band venue fill delta as a reconciling ``FillEvent`` (D-03).
+        """Adopt each in-band venue fill as a per-trade reconciling ``FillEvent`` (D-03/CR-01).
 
         Groups the venue trades by venue order id, matches each stored order by its
-        persisted ``venue_order_id``, and for a positive ``venue_filled − order.filled``
-        delta synthesizes an EXECUTED reconciling fill driven through the idempotent fill
-        path. A zero/negative delta (already applied) emits nothing — adopt-once.
+        persisted ``venue_order_id``, and emits ONE reconciling fill PER not-yet-applied
+        venue trade — each carrying its OWN ``venue_trade_id`` (CR-01). Per-trade emission
+        (matching the live stream's granularity) is what lets the portfolio settlement
+        chokepoint dedup a reconciler-adopted trade against a stream re-delivery of the
+        SAME ``trade['id']`` — an aggregated summed-delta fill has no single venue key and
+        cannot dedup, so it double-counts (the CR-01 defect).
         """
         by_venue_id = self._group_trades_by_venue_id(venue_trades)
         for order in working:
@@ -202,20 +205,45 @@ class VenueReconciler:
             trades = by_venue_id.get(str(venue_id))
             if not trades:
                 continue
-            venue_filled, avg_price, total_commission, last_ts = self._aggregate(trades)
-            delta = venue_filled - to_money(order.filled_quantity)
-            if delta <= 0:
-                # Already applied (or nothing new) — no phantom fill (idempotent, T-05-20).
+            self._adopt_order_trades(order, venue_id, trades)
+
+    def _adopt_order_trades(
+        self, order: "Order", venue_id: Any, trades: List[Dict[str, Any]]
+    ) -> None:
+        """Emit one reconciling fill per not-yet-applied venue trade (adopt-once, CR-01).
+
+        Walks the order's venue trades in venue order and skips the leading quantity
+        already reflected in the persisted ``filled_quantity`` (the skip budget), then
+        emits the remaining trades one-for-one. A second restart re-reads the now-updated
+        ``filled_quantity`` and skips every trade — adopt-once by construction (T-05-20).
+        A trade that straddles the applied/unapplied boundary emits only its unapplied
+        remainder (commission prorated); the far more common whole-trade case emits the
+        trade verbatim with its own ``venue_trade_id``.
+        """
+        skip_budget = to_money(order.filled_quantity)
+        for trade in self._order_trades(trades):
+            amount = trade.get("amount")
+            price = trade.get("price")
+            if amount is None or price is None:
                 continue
-            commission = (
-                total_commission * (delta / venue_filled)
-                if venue_filled > 0
-                else Decimal("0")
-            )
-            self._emit_reconciling_fill(order, delta, avg_price, commission, last_ts)
+            qty = to_money(str(amount))
+            if qty <= 0:
+                continue
+            if skip_budget >= qty:
+                # This whole trade is already reflected in filled_quantity — skip it.
+                skip_budget -= qty
+                continue
+            emit_qty = qty - skip_budget
+            skip_budget = Decimal("0")
+            px = to_money(str(price))
+            commission = self._trade_commission(trade, qty, emit_qty)
+            trade_id = trade.get("id")
+            venue_trade_id = str(trade_id) if trade_id is not None else None
+            self._emit_reconciling_fill(
+                order, emit_qty, px, commission, trade.get("timestamp"), venue_trade_id)
             self.logger.info(
-                "Adopted venue fill delta for order %s (venue_id=%s): +%s @ %s",
-                order.id, venue_id, delta, avg_price)
+                "Adopted venue trade for order %s (venue_id=%s, trade_id=%s): +%s @ %s",
+                order.id, venue_id, venue_trade_id, emit_qty, px)
 
     @staticmethod
     def _group_trades_by_venue_id(venue_trades: Any) -> Dict[str, List[Dict[str, Any]]]:
@@ -233,38 +261,37 @@ class VenueReconciler:
         return grouped
 
     @staticmethod
-    def _aggregate(
-        trades: List[Dict[str, Any]]
-    ) -> tuple[Decimal, Decimal, Decimal, Optional[Any]]:
-        """Aggregate a venue order's trades → (filled_qty, avg_price, commission, last_ts).
+    def _order_trades(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Order an order's venue trades deterministically (timestamp, then trade id).
 
-        Every venue float crosses the Decimal edge via ``to_money(str(x))``; a missing
-        price/amount is skipped. Commission is the non-negative magnitude sum (WR-01),
-        stamped-time is the last trade's venue timestamp (business time).
+        The skip-budget adopt-once walk needs a stable order so the SAME trades are
+        skipped/emitted on every restart. Timestamp is the venue's fill order; the trade
+        id breaks ties for same-millisecond fills.
         """
-        total_qty = Decimal("0")
-        weighted = Decimal("0")
-        total_commission = Decimal("0")
-        last_ts: Optional[Any] = None
-        for trade in trades:
-            amount = trade.get("amount")
-            price = trade.get("price")
-            if amount is None or price is None:
-                continue
-            qty = to_money(str(amount))
-            px = to_money(str(price))
-            total_qty += qty
-            weighted += qty * px
-            fee_obj = trade.get("fee")
-            fee: Dict[str, Any] = fee_obj if isinstance(fee_obj, dict) else {}
-            fee_cost = fee.get("cost")
-            if fee_cost is not None:
-                total_commission += abs(to_money(str(fee_cost)))
-            ts = trade.get("timestamp")
-            if ts is not None:
-                last_ts = ts
-        avg_price = (weighted / total_qty) if total_qty > 0 else Decimal("0")
-        return total_qty, avg_price, total_commission, last_ts
+        return sorted(
+            trades,
+            key=lambda t: (t.get("timestamp") or 0, str(t.get("id") or "")),
+        )
+
+    @staticmethod
+    def _trade_commission(
+        trade: Dict[str, Any], full_qty: Decimal, emit_qty: Decimal
+    ) -> Decimal:
+        """The non-negative commission magnitude for the emitted portion of a trade (WR-01).
+
+        Uses the trade's own fee; for a boundary-straddling trade it prorates the fee by
+        the emitted fraction (``emit_qty / full_qty``). Every venue float crosses the
+        Decimal edge via ``to_money(str(x))``.
+        """
+        fee_obj = trade.get("fee")
+        fee: Dict[str, Any] = fee_obj if isinstance(fee_obj, dict) else {}
+        fee_cost = fee.get("cost")
+        if fee_cost is None:
+            return Decimal("0")
+        full_commission = abs(to_money(str(fee_cost)))
+        if emit_qty >= full_qty or full_qty <= 0:
+            return full_commission
+        return full_commission * (emit_qty / full_qty)
 
     def _emit_reconciling_fill(
         self,
@@ -273,20 +300,23 @@ class VenueReconciler:
         price: Decimal,
         commission: Decimal,
         venue_ts: Optional[Any],
+        venue_trade_id: Optional[str],
     ) -> None:
-        """Mint an EXECUTED reconciling ``FillEvent`` and put it on the queue (D-03).
+        """Mint an EXECUTED reconciling ``FillEvent`` and put it on the queue (D-03/CR-01).
 
         Ported in concept from nautilus ``create_inferred_order_filled_event`` (NEVER
         imported): the fill drives the SAME idempotent fill path the live stream uses, so
         state is never mutated directly. ``FillEvent.time`` is stamped from the venue
-        trade timestamp (business time), never wall-clock.
+        trade timestamp (business time), never wall-clock. ``venue_trade_id`` carries the
+        venue's own trade id so the settlement chokepoint dedups a stream re-delivery of
+        the same economic trade (CR-01).
         """
         order_event = OrderEvent.new_order_event(order)
         fill_time = self._venue_ts_to_dt(venue_ts) if venue_ts is not None else None
         fill = FillEvent.new_fill(
             "EXECUTED", order_event,
             price=price, quantity=quantity, commission=commission,
-            time=fill_time)
+            time=fill_time, venue_trade_id=venue_trade_id)
         self._global_queue.put(fill)
 
     @staticmethod

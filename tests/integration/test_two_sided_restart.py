@@ -10,8 +10,9 @@ Three scenarios:
   produces NO phantom reconciling fill, and its symbol covers the venue position so there is
   NO halt.
 * **downtime fill** — a store order the venue filled during downtime is ADOPTED as ONE
-  reconciling ``FillEvent`` (``venue_filled − order.filled``); re-running the reconcile after
-  the delta is applied emits nothing (adopt-once, idempotent).
+  reconciling ``FillEvent`` PER not-yet-applied venue trade (CR-01: per-trade granularity, each
+  carrying its own ``venue_trade_id``), summing to ``venue_filled − order.filled``; re-running
+  the reconcile after the delta is applied emits nothing (adopt-once, idempotent).
 * **orphan position** — a venue position with NO matching stored intent (a hand-opened
   position) HALTS-and-alerts (reason='reconciliation-unresolved'), never auto-adopted.
 
@@ -190,7 +191,14 @@ def test_store_and_venue_agree_no_halt_no_phantom_fill(pg_url, fake_venue_connec
 
 
 def test_downtime_fill_is_adopted_once(pg_url, fake_venue_connector):
-    """A venue fill that landed during downtime is adopted as ONE reconciling FillEvent."""
+    """A venue fill that landed during downtime is adopted PER venue trade (CR-01).
+
+    The canned recon fixture narrates the 0.5 downtime fill as TWO venue trades
+    (0.2 + 0.3). Post-CR-01 the reconciler emits ONE reconciling FillEvent per trade,
+    each carrying its own ``venue_trade_id`` (so a stream re-delivery of the same trade
+    dedups at the settlement chokepoint) — summing to the ``venue_filled − order.filled``
+    delta. Re-running after the delta is applied emits nothing (adopt-once, idempotent).
+    """
     backend = _make_backend(pg_url)
     try:
         seed = _fresh_store(backend)
@@ -204,15 +212,19 @@ def test_downtime_fill_is_adopted_once(pg_url, fake_venue_connector):
         reconciler.reconcile()
 
         fills = _drain_fills(gq)
-        assert len(fills) == 1                              # adopted the downtime delta
-        adopted = fills[0]
-        assert adopted.quantity == Decimal("0.5")          # venue_filled − order.filled
-        assert adopted.price == Decimal("42000")
-        assert adopted.order_id == order.id
+        assert len(fills) == 2                             # one reconciling fill per venue trade
+        assert all(f.order_id == order.id for f in fills)
+        assert all(f.price == Decimal("42000") for f in fills)
+        # Per-trade granularity: the two trades (0.2 + 0.3) sum to the 0.5 delta,
+        # each carrying its OWN venue trade id (the CR-01 cross-emitter dedup key).
+        assert sum(f.quantity for f in fills) == Decimal("0.5")
+        assert {f.quantity for f in fills} == {Decimal("0.2"), Decimal("0.3")}
+        assert {f.venue_trade_id for f in fills} == {
+            "PLACEHOLDER-TRD-0001", "PLACEHOLDER-TRD-0002"}
         assert halt.calls == []                            # position is explained
 
         # Adopt-once: apply the delta to the store (engine-thread fill path analog),
-        # then re-run the reconcile — the recomputed delta is zero, nothing re-emitted.
+        # then re-run the reconcile — the skip budget covers every trade, nothing re-emitted.
         order.filled_quantity = Decimal("0.5")
         order.status = OrderStatus.PARTIALLY_FILLED
         assert restarted.update_order(order) is True

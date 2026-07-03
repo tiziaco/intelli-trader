@@ -37,11 +37,11 @@ from queue import Queue
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from itrader.connectors.base import LiveConnector
-from itrader.core.enums import OrderCommand, OrderType, Side
+from itrader.core.enums import ErrorSeverity, OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
 from itrader.core.ids import OrderId
 from itrader.core.money import to_money
-from itrader.events_handler.events import FillEvent, OrderEvent
+from itrader.events_handler.events import ErrorEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 
 from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
@@ -59,6 +59,16 @@ _STREAM_RECONNECT_DEBOUNCE_SECONDS = 0.25    # A3 [ASSUMED] sub-second blip -> n
 _STREAM_RECONNECT_BACKOFF_BASE_SECONDS = 1.0  # A3 [ASSUMED] first backoff step
 _STREAM_RECONNECT_BACKOFF_CAP_SECONDS = 30.0  # A3 [ASSUMED] exponential backoff ceiling
 _STREAM_RECONNECT_RETRY_CEILING = 6           # A3 [ASSUMED] retries exhausted -> HALT (D-20)
+
+# WR-04: OKX clOrdId charset. The client order id is the fast-fill-race
+# correlation key (``_orders_by_clOrdId``) and MUST be unique per order.
+# Base62 of the order id's 128 bits is LOSSLESS (a bijection on the 16 raw
+# UUID bytes) and renders to <=22 chars, so ``"it"`` + token stays under
+# OKX's 32-char alphanumeric clOrdId limit with the full 128-bit entropy
+# preserved. The old ``("it" + hex_token)[:32]`` dropped the UUID tail bits,
+# so two orders differing only there collided on one clOrdId (wrong-order
+# fill correlation).
+_CLORDID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 
 class OkxExchange(AbstractExchange):
@@ -163,13 +173,32 @@ class OkxExchange(AbstractExchange):
 	def _client_order_id(event: OrderEvent) -> str:
 		"""Client order id (clOrdId) for the Pitfall-11 fast-fill-race pre-correlation.
 
-		OKX requires an alphanumeric clOrdId (<=32 chars); the engine order id is
-		rendered to a compact alphanumeric token (hyphens of a UUIDv7 dropped) with
-		an ``it`` prefix. Deterministic so the venue-echoed clOrdId maps straight
-		back to the pending correlation registered before the submit RPC.
+		OKX requires an alphanumeric clOrdId (<=32 chars). The engine order id
+		(a UUIDv7 — the locked single-UUID-scheme decision) is rendered LOSSLESSLY
+		to a compact alphanumeric token by base62-encoding its 128 bits, with an
+		``it`` prefix. Lossless + deterministic (WR-04): distinct order ids yield
+		distinct clOrdIds — no truncation collision — and the venue-echoed clOrdId
+		maps straight back to the pending correlation registered before the submit
+		RPC. ``order_id`` is a ``uuid.UUID`` on every live path (``.bytes``); the
+		``int`` fallback keeps the encoder total for the int-id test doubles.
 		"""
-		token = "".join(ch for ch in str(event.order_id) if ch.isalnum())
-		return ("it" + token)[:32]
+		oid = event.order_id
+		n = (int.from_bytes(oid.bytes, "big")
+		     if hasattr(oid, "bytes") else int(oid))
+		if n == 0:
+			token = "0"
+		else:
+			digits: List[str] = []
+			while n > 0:
+				n, rem = divmod(n, 62)
+				digits.append(_CLORDID_ALPHABET[rem])
+			token = "".join(reversed(digits))
+		clordid = "it" + token
+		# WR-04 rendering contract: alphanumeric + within OKX's 32-char clOrdId
+		# limit. A full 128-bit base62 token is <=22 chars, so "it" + token <=24.
+		assert clordid.isalnum() and len(clordid) <= 32, (
+			f"clOrdId {clordid!r} violates the OKX charset/length contract")
+		return clordid
 
 	@staticmethod
 	def _ms_to_dt(ts: Any) -> datetime:
@@ -198,14 +227,42 @@ class OkxExchange(AbstractExchange):
 			self.logger.error(
 				"OKX order op failed for %s %s: %s",
 				event.action, event.ticker, str(exc), exc_info=True)
-			# WR-02: the reconciliation contract (mirrored by SimulatedExchange's
-			# _emit_rejection) is that a failed/refused submit or cancel flows back
-			# as FillEvent(REFUSED) so OrderHandler.on_fill transitions the stored
-			# order mirror PENDING->REJECTED. Only logging would leave the mirror
-			# stuck at PENDING forever — a silent order-state divergence once the arm
-			# is live-wired. Emit REFUSED with the order's own (Decimal) price/quantity
-			# and commission Decimal("0") (never settled); no time= so it inherits the
-			# order's decision time (admission-time outcome, D-01/D-13).
+			# WR-01: branch on the command — a failed CANCEL is NOT an execution
+			# event and must not travel the fill/execution channel.
+			if event.command is OrderCommand.CANCEL:
+				# A cancel-ack failure is a command-ack failure: the venue order
+				# is very likely STILL RESTING. Emitting FillEvent(REFUSED) here
+				# would drive ReconcileManager._apply_refused -> REJECTED, wrongly
+				# terminalizing a live resting order (later a real fill arrives
+				# against an order the engine believes is dead). Leave the mirror
+				# in its resting state and publish an ErrorEvent on the existing
+				# operator/dead-letter channel (ERROR route -> _log_error_event) so
+				# the failed cancel is AUDITABLE; the next reconcile / drift pass
+				# reconciles true venue state. (Nautilus OrderCancelRejected leaves
+				# order state untouched; a first-class OrderCancelRejected event is
+				# the full-parity option, DEFERRED — ErrorEvent gets correctness
+				# now.) Scrub (T-05-27): bind the exception TYPE only, never
+				# ``str(exc)`` — a connector error may carry request context /
+				# a secret.
+				self.global_queue.put(ErrorEvent(
+					time=event.time,
+					source="okx_exchange",
+					error_type=type(exc).__name__,
+					error_message=(
+						f"OKX cancel failed for order {event.order_id} "
+						f"({event.ticker}) — mirror left resting, "
+						"deferred to reconcile"),
+					operation="cancel_order",
+					severity=ErrorSeverity.ERROR))
+				return
+			# SUBMIT failure: keep the existing reconciliation contract (mirrored
+			# by SimulatedExchange's _emit_rejection) — a submit that never reached
+			# the venue flows back as FillEvent(REFUSED) so OrderHandler.on_fill /
+			# ReconcileManager transitions the stored mirror PENDING->REJECTED.
+			# Only logging would leave the mirror stuck at PENDING forever. Emit
+			# REFUSED with the order's own (Decimal) price/quantity and commission
+			# Decimal("0") (never settled); no time= so it inherits the order's
+			# decision time (admission-time outcome, D-01/D-13).
 			self.global_queue.put(FillEvent.new_fill(
 				"REFUSED", event, price=event.price, quantity=event.quantity,
 				commission=Decimal("0")))
@@ -437,12 +494,21 @@ class OkxExchange(AbstractExchange):
 		fee_cost = fee.get("cost")
 		commission = abs(to_money(str(fee_cost))) if fee_cost is not None else Decimal("0")
 
+		# CR-01: carry the venue trade id onto the FillEvent as the cross-emitter
+		# idempotency key. The exchange-local ``_seen_trade_ids`` dedups a stream
+		# re-send BEFORE mint; stamping ``trade['id']`` here lets the portfolio
+		# settlement chokepoint ALSO dedup the same economic trade adopted by the
+		# restart VenueReconciler (which bypasses ``_seen_trade_ids``).
+		trade_id = trade.get("id") if isinstance(trade, dict) else None
+		venue_trade_id = str(trade_id) if trade_id is not None else None
+
 		fill = FillEvent.new_fill(
 			"EXECUTED", order,
 			price=to_money(str(price)),
 			quantity=to_money(str(amount)),
 			commission=commission,
-			time=self._ms_to_dt(timestamp))
+			time=self._ms_to_dt(timestamp),
+			venue_trade_id=venue_trade_id)
 		# D-07: the EXCHANGE emits the fill; MPSC-safe put from the connector loop thread (D-19).
 		self.global_queue.put(fill)
 
