@@ -31,7 +31,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — COMPLETE
 Plan: 12 of 12
 Status: Phase complete — RECON-06 closed (OKX-demo live e2e `3 passed`, human-observed 2026-07-03)
-Last activity: 2026-07-03 - Completed quick task 260703-dob: OKX live-connectivity integration test + `live` pytest marker
+Last activity: 2026-07-03 - Completed quick task 260703-hl5: persist venue_trade_id on the transactions table (CR-01 persistence tail)
 
 Progress: [██████████] 100%
 
@@ -209,6 +209,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | fast | Hardcode OKX live pair BTC/USDT->BTC/USDC (EEA restricts USDT/MiCA, sCode 51155); universe phase will make it configurable | 2026-07-03 | f51fc34a | — (fast, inline) |
 | 260703-dob | Add OKX live-connectivity integration test + new `live` pytest marker (creds-free public reachability + creds-gated demo auth via OkxConnector); fence default `make test`/`test-integration` with `not live`, add `make test-live` | 2026-07-03 | b97690d5 | [260703-dob-okx-live-connectivity-marker](./quick/260703-dob-okx-live-connectivity-marker/) |
 | fast | Remove OKX cred diagnostic script + diagnose-okx make target (redundant — test_okx_connectivity.py auth test now verifies creds via OkxConnector) | 2026-07-03 | 8f7acd0c | — (fast, inline) |
+| 260703-hl5 | Persist `venue_trade_id` on the transactions table (tail of CR-01 fill-dedup): nullable column + chained Alembic migration + both sql_storage mappers + Postgres round-trip test | 2026-07-03 | b142cbc5 | [260703-hl5-persist-venue-trade-id-on-the-transactio](./quick/260703-hl5-persist-venue-trade-id-on-the-transactio/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
