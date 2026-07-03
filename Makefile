@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-e2e test-e2e-live test-live diagnose-okx test-smoke test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
+.PHONY: init-env clean test test-unit test-integration test-e2e test-e2e-live test-live test-smoke test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -73,15 +73,6 @@ test-e2e-live:
 	@echo "🛰️  Running LIVE OKX-demo reconciliation suite (opt-in, real demo venue)..."
 	@test -n "$(OKX_API_KEY)" || { echo "❌ OKX_API_KEY not set in .env — cannot run the live demo suite."; exit 1; }
 	env -u ITRADER_DATABASE_PASSWORD -u ITRADER_DATABASE_URL poetry run pytest tests/e2e/test_okx_sandbox_recon.py -m slow -v
-
-# Read-only OKX credential diagnostic (no orders, just fetch_balance). Verifies whether
-# the OKX_API_* triple in .env is recognized by OKX on the DEMO and LIVE endpoints —
-# use it to confirm a key works (or diagnose 50119 "API key doesn't exist") before
-# running the live suite above. Never prints secret values.
-diagnose-okx:
-	@echo "🔑 Diagnosing OKX credentials (read-only fetch_balance, demo + live)..."
-	@test -n "$(OKX_API_KEY)" || { echo "❌ OKX_API_KEY not set in .env."; exit 1; }
-	poetry run python scripts/diagnose_okx_creds.py
 
 test-portfolio:
 	@echo "📊 Running portfolio tests..."
