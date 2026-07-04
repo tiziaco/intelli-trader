@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 5 (05-13 WR-05) context gathered
-last_updated: "2026-07-04T19:10:15.369Z"
+last_updated: "2026-07-04T19:26:23.818Z"
 last_activity: 2026-07-04
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 42
-  completed_plans: 36
+  completed_plans: 37
   percent: 50
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 05.1 (live-path-remediation) — EXECUTING
-Plan: 4 of 9
+Plan: 5 of 9
 Status: Ready to execute
 Last activity: 2026-07-04
 
-Progress: [█████████░] 86%
+Progress: [█████████░] 88%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -159,6 +159,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05.1]: 05.1-01: CONF-A RED spine slice 1 — A1 3-leaf account-conformance (V17-01/D-01,D-02) + A4 spot-no-drift-halt (V17-04/D-03,D-04) authored RED; AUD-7 spot/derivative fixture split. Spot fixture is the NEW-cluster default (legacy fixture kept for full-suite green). A4 seeds venue truth via snapshot() from fetch_balance total[BTC] so it is RED now and GREEN after the D-03 base-balance adapter.
 - [Phase 05.1]: 05.1-02: CONF-A RED spine slice 2 — A3 halt-latch (V17-03/D-05), A2 venue_order_id persistence (V17-02/D-06), A5 redeliver-dedup (V17-06/D-08) authored RED. A3 injects the reconcile halt by wrapping _initialize_live_session on the offline paper venue; A2/A5 encode observable end-state so the 05.2 fixes turn them GREEN without rewrite. A3 GREEN in 05.1-05; A2/A5 GREEN in Phase 05.2.
 - [Phase ?]: [Phase 05.1]: 05.1-03: CONF-A RED spine slice 3 — A6 supervisor-catchall (V17-07/D-11), A7 submit-timeout-in-flight (V17-09/D-13), A8 pause-defer-replay (V17-11/D-14) authored RED. A6 covers 3 silent-death surfaces (unclassified ExchangeError, unguarded json.loads, bare-while-True VenueAccount stream); A7/A8 carry control arms (definitive-rejection still REFUSED; entry stays suppressed) to force the fix to branch. All GREEN in Phase 05.3; CONF-A spine A1..A8 complete.
+- [Phase ?]: 05.1-04: D-01 delivered — 7-member Account ABC settlement surface; VenueAccount as a locally-ledgered account (balance = cached venue balance + local fill-delta; snapshot reconciles the delta). available_balance nets settled balance not the venue free field; assert_funds_invariant raises before any mutation. A1 GREEN all 3 leaves; oracle byte-exact.
+- [Phase ?]: 05.1-04: A1 BUY facet made leaf-relative (before-10) — hardcoded 149990 assumed a 150000 start absent on the venue leaf (fixture total[USDC]=78999.79). test_venue_account_cache .available renames deferred to 05.1-06; A4 spot-drift RED deferred to 05.1-08.
 
 ### Pending Todos
 
@@ -228,6 +230,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.1 P01 | 18min | 3 tasks | 4 files |
 | Phase 05.1 P02 | 16min | 3 tasks | 3 files |
 | Phase 05.1 P03 | 17min | 3 tasks | 3 files |
+| Phase 05.1 P04 | 15min | 2 tasks | 4 files |
 
 ## Deferred Items
 
@@ -277,7 +280,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T19:09:57.268Z
+Last session: 2026-07-04T19:26:12.892Z
 Stopped at: Phase 5 (05-13 WR-05) context gathered
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
