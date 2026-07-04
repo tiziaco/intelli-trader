@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Completed 05.1-05-PLAN.md
-last_updated: "2026-07-04T20:37:14.887Z"
+stopped_at: Completed 05.1-08-PLAN.md
+last_updated: "2026-07-04T20:49:27.432Z"
 last_activity: 2026-07-04
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 42
-  completed_plans: 40
+  completed_plans: 41
   percent: 50
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 05.1 (live-path-remediation) — EXECUTING
-Plan: 8 of 9
+Plan: 9 of 9
 Status: Ready to execute
 Last activity: 2026-07-04
 
-Progress: [██████████] 95%
+Progress: [██████████] 98%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -164,6 +164,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05.1]: D-05: HALTED is a latched state — VALID_STATUS_TRANSITIONS (HALTED->set()) enforced at the single _update_status seam; halt() routed through it; start() refuses RUNNING-from-HALTED post-reconcile; reset_halt() is the sole off-table exit (verify-then-trust)
 - [Phase 05.1]: 05.1-06: D-02 delivered — Portfolio.account re-typed to the Account ABC; both cast(SimulatedMarginAccount,...) narrowings replaced by a single _require_margin_account isinstance guard raising a typed StateError BEFORE any mutation (closes V17-14 partial-mutation cast arm). F/U-4 resolved to a typed conformance module (account/conformance.py) making mypy --strict see the ABC-vs-concretion live wiring; pyproject untouched. A1 permanent gate 16 passed (incl. venue+margin guard case); 7 venue-cache .available->available_balance renames GREEN; oracle byte-exact; mypy clean 228 files.
 - [Phase ?]: 05.1-07: D-03 truth arm — VenueAccount venue-type-aware; spot derives per-symbol position truth from total[BASE] (fetch_positions [] on spot), derivative channel unchanged. market_type/symbol ctor params (base from symbol left leg); spot skips _stream_positions/fetch_positions. A4 spot_drift stays RED (GREEN in 05.1-08); oracle byte-exact; mypy strict clean.
+- [Phase 05.1]: D-03/D-04: real quote + spot market-type wired into VenueAccount at the composition root; post-reconcile baseline guard latches halt('baseline-residual') on unexplained base-asset residual (never auto-adopts)
+- [Phase 05.1]: D-04 spurious-halt band: on-fill compare absorbs the just-applied-fill vs not-yet-refreshed-venue-snapshot transient via a signed fill delta; periodic sweep + baseline guard remain the drift backstops
 
 ### Pending Todos
 
@@ -237,6 +239,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.1 P05 | 35min | 2 tasks | 3 files |
 | Phase 05.1 P06 | 90min | 2 tasks | 4 files |
 | Phase 05.1 P07 | 12min | 1 tasks | 2 files |
+| Phase 05.1 P08 | 20min | 2 tasks | 3 files |
 
 ## Deferred Items
 
@@ -286,8 +289,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T20:37:06.073Z
-Stopped at: Completed 05.1-05-PLAN.md
+Last session: 2026-07-04T20:49:27.182Z
+Stopped at: Completed 05.1-08-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
