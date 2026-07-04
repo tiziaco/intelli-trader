@@ -151,17 +151,6 @@ class SimulatedCashAccount(Account):
         )
 
     @property
-    def available(self) -> Decimal:
-        """Account ABC contract (D-05): buying power = ``available_balance``.
-
-        The ABC names the property ``available``; the verbatim ``CashManager``
-        internals (withdraw / process_transaction_cash_flow / reserve) keep
-        reading ``available_balance``. This is a thin alias — same Decimal value,
-        no math change (byte-exact).
-        """
-        return self.available_balance
-
-    @property
     def reserved_balance(self) -> Decimal:
         """Get reserved cash balance."""
         return self._storage.get_reserved_cash()

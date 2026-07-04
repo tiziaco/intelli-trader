@@ -160,14 +160,14 @@ def test_reserve_release_conforms(leaf):
     is specifically the settlement surface, not the admission overlay.
     """
     portfolio, account = leaf
-    before = account.available
+    before = account.available_balance
     order_id = OrderId(uuid.uuid4())
 
     account.reserve(order_id, Decimal("1000"))
-    assert account.available == before - Decimal("1000")
+    assert account.available_balance == before - Decimal("1000")
 
     account.release(order_id)
-    assert account.available == before
+    assert account.available_balance == before
 
 
 # --- (c) BUY settle through Portfolio.transact_shares ------------------------

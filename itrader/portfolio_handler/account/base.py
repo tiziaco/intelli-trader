@@ -26,6 +26,7 @@ fails the byte-exact oracle).
 """
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from decimal import Decimal
 
 from itrader.core.ids import OrderId
@@ -64,17 +65,92 @@ class Account(ABC):
 
     @property
     @abstractmethod
-    def available(self) -> Decimal:
+    def available_balance(self) -> Decimal:
         """
         Cash available for new commitments — balance net of outstanding
         reservations (and, for margin leaves, locked margin).
+
+        The single buying-power authority (D-10) read by the order-admission
+        gate (``PortfolioHandler.on_signal``) and serialization
+        (``Portfolio.to_dict``). This is the D-01 settlement-surface member —
+        the old ABC member ``available`` was renamed here (its verbatim
+        alias on ``SimulatedCashAccount`` is deleted; the ``VenueAccount``
+        overlay-netted read is renamed to match).
 
         Returns
         -------
         Decimal
             The available amount (full precision, Decimal end-to-end).
         """
-        raise NotImplementedError("Subclasses must implement available")
+        raise NotImplementedError("Subclasses must implement available_balance")
+
+    @property
+    @abstractmethod
+    def reserved_balance(self) -> Decimal:
+        """
+        Total cash currently reserved against outstanding admission
+        reservations (D-01 settlement surface, read by ``to_dict``).
+
+        Returns
+        -------
+        Decimal
+            The reserved amount (full precision, Decimal end-to-end).
+        """
+        raise NotImplementedError("Subclasses must implement reserved_balance")
+
+    @abstractmethod
+    def assert_funds_invariant(self, required: Decimal) -> None:
+        """
+        Assert that a settlement debit of ``required`` does not exceed settled
+        funds — the D-10 engine-bug guard on the fill debit side (D-01
+        settlement surface).
+
+        Raised on the fill path BEFORE any mutation (``Portfolio.transact_shares``
+        asserts here first) so a failed invariant can never leave a partial
+        mutation. The D-02 admission reservation gate should have prevented this
+        state upstream; if this fires it is an engine bug and the caller stops
+        loudly.
+
+        Parameters
+        ----------
+        required : Decimal
+            The actual net cash cost of the settlement debit (full precision).
+
+        Raises
+        ------
+        InsufficientFundsError
+            When ``required`` exceeds the settled balance.
+        """
+        raise NotImplementedError("Subclasses must implement assert_funds_invariant")
+
+    @abstractmethod
+    def apply_fill_cash_flow(self, amount: Decimal, fee: Decimal, description: str,
+                             reference_id: str, timestamp: datetime) -> None:
+        """
+        Apply a fill settlement's signed, full-precision cash delta — the ONE
+        trade-path cash primitive (D-01 / D-05 / D-06 settlement surface).
+
+        Deliberately skips the 2dp quantize path (Pitfall 1: a mid-stream
+        quantize would shift the balance → equity curve → break the byte-exact
+        oracle on 8dp instrument costs). ``amount`` is the SIGNED net cash delta
+        (negative for a BUY outflow, positive for a SELL inflow); ``fee`` the
+        commission portion already included in it; ``timestamp`` the
+        caller-supplied event-derived time (never wall clock).
+
+        Parameters
+        ----------
+        amount : Decimal
+            Signed full-precision net cash delta. No quantization.
+        fee : Decimal
+            Commission portion already included in ``amount``.
+        description : str
+            Audit description.
+        reference_id : str
+            Reference id (e.g. transaction id).
+        timestamp : datetime
+            Event-derived time (transaction/fill time).
+        """
+        raise NotImplementedError("Subclasses must implement apply_fill_cash_flow")
 
     @abstractmethod
     def reserve(self, order_id: OrderId, amount: Decimal) -> None:
