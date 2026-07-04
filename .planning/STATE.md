@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Completed 05.1-08-PLAN.md
-last_updated: "2026-07-04T20:49:27.432Z"
+stopped_at: 05.1-09 Task 1 committed (b9e5c541) — Task 2 online CONF-B run CHECKPOINT-PENDING (human)
+last_updated: "2026-07-04T21:10:00.000Z"
 last_activity: 2026-07-04
 progress:
   total_phases: 10
@@ -30,7 +30,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 
 Phase: 05.1 (live-path-remediation) — EXECUTING
 Plan: 9 of 9
-Status: Ready to execute
+Status: 05.1-09 Task 1 done (CONF-B assertions + ARCH-3 capture committed); Task 2 online run CHECKPOINT-PENDING (human-gated) — plan NOT fully complete
 Last activity: 2026-07-04
 
 Progress: [██████████] 98%
@@ -166,6 +166,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 05.1-07: D-03 truth arm — VenueAccount venue-type-aware; spot derives per-symbol position truth from total[BASE] (fetch_positions [] on spot), derivative channel unchanged. market_type/symbol ctor params (base from symbol left leg); spot skips _stream_positions/fetch_positions. A4 spot_drift stays RED (GREEN in 05.1-08); oracle byte-exact; mypy strict clean.
 - [Phase 05.1]: D-03/D-04: real quote + spot market-type wired into VenueAccount at the composition root; post-reconcile baseline guard latches halt('baseline-residual') on unexplained base-asset residual (never auto-adopts)
 - [Phase 05.1]: D-04 spurious-halt band: on-fill compare absorbs the just-applied-fill vs not-yet-refreshed-venue-snapshot transient via a signed fill delta; periodic sweep + baseline guard remain the drift backstops
+- [Phase 05.1]: 05.1-09 (D-20) Task 1: CONF-B sandbox e2e extended with 4 Wave-1 settlement assertions (position/cash/not-HALTED/spot fetch_positions()==[]) closing the V17-01 blind spot + venue_order_id recorded soft-check (pending D-06/05.2) + ARCH-3 finalization capture to .planning/debug/05.1-confb-<date>.md. Added pytest.mark.live so make test (-m 'not live') fences the network. Task 2 online GREEN run is CHECKPOINT-PENDING (human): `poetry run pytest tests/e2e/test_okx_sandbox_recon.py -k demo_order -x -m live` (verify sandbox=True). Plan NOT fully complete until approved.
 
 ### Pending Todos
 
@@ -289,9 +290,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T20:49:27.182Z
-Stopped at: Completed 05.1-08-PLAN.md
-Resume file: None
+Last session: 2026-07-04T21:10:00.000Z
+Stopped at: 05.1-09 Task 1 committed (b9e5c541) — Task 2 online CONF-B run CHECKPOINT-PENDING (human-gated)
+Resume file: .planning/phases/05.1-live-path-remediation/05.1-09-PLAN.md (Task 2 checkpoint)
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps

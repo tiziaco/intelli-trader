@@ -350,7 +350,7 @@ Plans:
 - [x] 05.1-06-PLAN.md — D-02: re-type Portfolio.account to ABC + isinstance-guard margin casts + mypy visibility + permanent conformance gate (Wave 3)
 - [x] 05.1-07-PLAN.md — D-03: per-market-type venue-truth adapter (spot base-balance positions; parameterized quote) (Wave 3)
 - [x] 05.1-08-PLAN.md — D-04 + D-03 wiring: thread real quote + post-reconcile baseline guard + spurious-halt drift band -> A4 GREEN (Wave 4)
-- [ ] 05.1-09-PLAN.md — D-20: extend CONF-B sandbox e2e assertions + human-gated online run (Wave-1 GREEN exit gate + ARCH-3 finalization capture) (Wave 5)
+- [~] 05.1-09-PLAN.md — D-20: extend CONF-B sandbox e2e assertions + human-gated online run (Wave-1 GREEN exit gate + ARCH-3 finalization capture) (Wave 5) — Task 1 DONE (b9e5c541: assertions + ARCH-3 capture + live-marker fence); Task 2 online run CHECKPOINT-PENDING (human)
 
 ### Phase 05.2: Live-Path Remediation — Wave 2 (Restart Real) (INSERTED)
 
