@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: executing
-stopped_at: 05.1-09 Task 1 committed (b9e5c541) — Task 2 online CONF-B run CHECKPOINT-PENDING (human)
-last_updated: "2026-07-04T21:10:00.000Z"
+status: ready_to_plan
+stopped_at: Phase 05.1 complete (9/9) — ready to discuss Phase 05.2
+last_updated: 2026-07-04T21:43:53.971Z
 last_activity: 2026-07-04
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 42
-  completed_plans: 41
+  completed_plans: 42
   percent: 50
 ---
 
@@ -24,13 +24,13 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 05.1 — live-path-remediation
+**Current focus:** Phase 05.2 — live path remediation wave 2 restart real durable engine led
 
 ## Current Position
 
-Phase: 05.1 (live-path-remediation) — EXECUTING
-Plan: 9 of 9
-Status: 05.1-09 Task 1 done (CONF-B assertions + ARCH-3 capture committed); Task 2 online run CHECKPOINT-PENDING (human-gated) — plan NOT fully complete
+Phase: 05.2
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-07-04
 
 Progress: [██████████] 98%
@@ -80,7 +80,7 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 **Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 264 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- Total plans completed: 273 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
 - v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
