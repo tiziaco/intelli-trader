@@ -33,6 +33,7 @@ ever relaxed to a runtime import it would still not couple the hot path to
 """
 
 import threading
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -102,6 +103,16 @@ class VenueAccount(Account):
         # The venue owns the real reservation; this keeps the admission gate
         # working pre-fill and is reconciled to venue truth on the next snapshot.
         self._pending: dict[str, Decimal] = {}
+
+        # D-01 (ARCH-1) locally-ledgered settlement: the venue is source of truth
+        # but we do NOT recompute from it on every read (cache-not-recompute,
+        # D-14). ``_ledger_delta`` is the signed sum of locally-applied fill cash
+        # flows since the last venue reconcile — settled cash = cached venue
+        # balance + this delta. ``apply_fill_cash_flow`` mutates it (so a fill
+        # settles into the account exploiting the 1:1 VenueAccount<->portfolio
+        # topology, live_trading_system.py:554); ``snapshot()`` resets it to zero
+        # (the fresh REST balance already reflects the settled fills — reconcile).
+        self._ledger_delta: Decimal = Decimal("0")
 
         # Spawned stream-task handles (cancelled by the connector on disconnect).
         self._stream_handles: list[Any] = []
@@ -210,6 +221,10 @@ class VenueAccount(Account):
         with self._lock:
             if balance is not None:
                 self._venue_balance = balance
+                # D-01: the fresh REST balance is venue truth AFTER settlement —
+                # reconcile the local fill-delta back to zero (never double-count
+                # a fill that the venue snapshot already reflects).
+                self._ledger_delta = Decimal("0")
             if available is not None:
                 self._venue_available = available
             self._venue_positions = positions
@@ -218,10 +233,14 @@ class VenueAccount(Account):
 
     @property
     def balance(self) -> Decimal:
-        """Cached venue balance (D-14) — reads the cache under the lock.
+        """Settled cash balance — cached venue balance + local fill-delta (D-01/D-14).
 
-        Raises ``StateError`` when the cache is still unsnapshotted (never a silent
-        0 that could authorize a bad order — T-05-07).
+        ``cached_venue_balance + _ledger_delta`` (cache-not-recompute): the venue
+        snapshot/stream is the source of the cached balance; locally-applied fills
+        move ``_ledger_delta`` so a fill settles into the account (1:1
+        VenueAccount<->portfolio topology). Raises ``StateError`` when the cache is
+        still unsnapshotted (never a silent 0 that could authorize a bad order —
+        T-05-07).
         """
         with self._lock:
             if self._venue_balance is None:
@@ -231,25 +250,40 @@ class VenueAccount(Account):
                     required_state="snapshotted (call snapshot() or start_streaming())",
                     operation="balance",
                 )
-            return self._venue_balance
+            return self._venue_balance + self._ledger_delta
 
     @property
-    def available(self) -> Decimal:
-        """Cached venue available net of the local pending-reservation overlay (D-14).
+    def available_balance(self) -> Decimal:
+        """Settled balance net of the local pending-reservation overlay (D-01/D-14).
 
-        ``cached_venue_available − Σ local_pending`` (Open Question 1) so the
-        order-admission gate keeps working pre-fill. Raises ``StateError`` when the
-        cache is still unsnapshotted (never a silent 0 — T-05-07).
+        ``balance − Σ local_pending`` (Open Question 1) so the order-admission gate
+        keeps working pre-fill. This is the D-01 settlement-surface member (renamed
+        from the old ``available``); it nets against the settled ``balance`` — NOT
+        the venue ``free`` field — so ``available_balance == balance`` when no
+        reservations are outstanding (the admission-read invariant). Raises
+        ``StateError`` when the cache is still unsnapshotted (never a silent 0 —
+        T-05-07).
         """
         with self._lock:
-            if self._venue_available is None:
+            if self._venue_balance is None:
                 raise StateError(
                     "venue-account",
                     "unsnapshotted",
                     required_state="snapshotted (call snapshot() or start_streaming())",
-                    operation="available",
+                    operation="available_balance",
                 )
-            return self._venue_available - self._pending_total()
+            return self._venue_balance + self._ledger_delta - self._pending_total()
+
+    @property
+    def reserved_balance(self) -> Decimal:
+        """Total cash reserved by the local pending-reservation overlay (D-01).
+
+        ``Σ local_pending`` — a clean ``Decimal('0')`` when nothing is reserved. The
+        venue owns the real reservation; this is the local admission-overlay figure
+        read by ``Portfolio.to_dict``.
+        """
+        with self._lock:
+            return self._pending_total()
 
     @property
     def positions(self) -> dict[str, Decimal]:
@@ -269,6 +303,67 @@ class VenueAccount(Account):
             total += amount
         return total
 
+    # --- settlement surface (D-01 — locally-ledgered, ARCH-1) ------------------
+
+    def assert_funds_invariant(self, required: Decimal) -> None:
+        """D-01/D-10 engine-bug guard: raise BEFORE any mutation on a bad debit.
+
+        Compares ``required`` against the settled ``balance`` (cached venue balance
+        + local fill-delta) — NOT the reservation-adjusted buying power (the fill
+        settles portfolio-first, so the order's own un-released reservation would
+        false-positive here, mirroring ``SimulatedCashAccount``). The D-02
+        admission reservation gate should have prevented this state; if it fires it
+        is an engine bug and the caller stops loudly. Raising here (before
+        ``apply_fill_cash_flow`` mutates the ledger) is what keeps a failed
+        settlement from leaving a partial mutation (T-05.1-01).
+
+        Args:
+            required: The actual net cash cost of the settlement debit.
+
+        Raises:
+            InsufficientFundsError: When ``required`` exceeds the settled balance.
+            StateError: When the cache is still unsnapshotted (cannot settle
+                against an unknown balance).
+        """
+        with self._lock:
+            if self._venue_balance is None:
+                raise StateError(
+                    "venue-account",
+                    "unsnapshotted",
+                    required_state="snapshotted (call snapshot() or start_streaming())",
+                    operation="assert_funds_invariant",
+                )
+            balance = self._venue_balance + self._ledger_delta
+        if required > balance:
+            raise InsufficientFundsError(
+                required_cash=required,
+                available_cash=balance,
+            )
+
+    def apply_fill_cash_flow(self, amount: Decimal, fee: Decimal, description: str,
+                             reference_id: str, timestamp: datetime) -> None:
+        """Apply a fill settlement's signed, full-precision cash delta (D-01/D-05/D-06).
+
+        The ONE trade-path cash primitive on the venue leaf: mutates the local
+        ``_ledger_delta`` by the SIGNED net cash delta so the fill settles into the
+        account (negative for a BUY outflow, positive for a SELL inflow). Full
+        precision — deliberately NO 2dp quantize (Pitfall 1: a mid-stream quantize
+        would shift the equity curve). ``fee`` is the commission portion already
+        included in ``amount`` (single net delta, no separate debit). The delta is
+        reconciled back to zero on the next ``snapshot()`` (the fresh REST balance
+        already reflects the settled fill).
+
+        Args:
+            amount: Signed full-precision net cash delta. No quantization.
+            fee: Commission portion already included in ``amount``.
+            description: Audit description (unused on the cache leaf — the
+                transaction record is the audit home).
+            reference_id: Reference id (e.g. transaction id).
+            timestamp: Event-derived time (transaction/fill time).
+        """
+        with self._lock:
+            self._ledger_delta += amount
+
     # --- reserve / release (Open Question 1 — local pending overlay) -----------
 
     def reserve(self, order_id: OrderId, amount: Decimal) -> None:
@@ -276,10 +371,10 @@ class VenueAccount(Account):
 
         The venue is the TRUE owner of the reservation; this is a LOCAL admission
         aid that lets the order-admission gate work pre-fill. Validates ``amount``
-        against ``cached_venue_available − Σ local_pending`` (copying the
-        ``SimulatedCashAccount.reserve`` validation/raise shape) and records the
-        pending entry keyed by ``order_id`` at FULL precision. The overlay is
-        reconciled to venue truth on the next ``snapshot()``.
+        against ``available_balance`` (settled ``balance − Σ local_pending``,
+        copying the ``SimulatedCashAccount.reserve`` validation/raise shape) and
+        records the pending entry keyed by ``order_id`` at FULL precision. The
+        overlay is reconciled to venue truth on the next ``snapshot()``.
 
         Raises
         ------
@@ -297,14 +392,14 @@ class VenueAccount(Account):
                 {"amount": str(amount_decimal)},
             )
         with self._lock:
-            if self._venue_available is None:
+            if self._venue_balance is None:
                 raise StateError(
                     "venue-account",
                     "unsnapshotted",
                     required_state="snapshotted (call snapshot() or start_streaming())",
                     operation="reserve",
                 )
-            available = self._venue_available - self._pending_total()
+            available = self._venue_balance + self._ledger_delta - self._pending_total()
             if available < amount_decimal:
                 raise InsufficientFundsError(
                     required_cash=amount_decimal,

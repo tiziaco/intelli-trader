@@ -177,18 +177,22 @@ def test_buy_settlement_through_transact_shares(leaf):
     """A BUY settle exercises ``assert_funds_invariant`` then ``apply_fill_cash_flow``.
 
     RED on ``VenueAccount``: the spot settle path calls ``assert_funds_invariant``
-    on the debit side → ``AttributeError`` BEFORE any mutation (V17-01). The two
-    Simulated leaves settle identically here: a 0.1 @ 100 open commits 10 of buying
-    power (cash leaf debits balance, margin leaf locks notional), so buying power
-    lands at 149990 for both.
+    on the debit side → ``AttributeError`` BEFORE any mutation (V17-01). All three
+    leaves settle identically here: a 0.1 @ 100 open commits exactly 10 of buying
+    power (cash leaf debits balance, margin leaf locks notional, venue leaf moves
+    its local fill-ledger). Asserting the delta (``before − 10``) rather than an
+    absolute figure holds uniformly across leaves with different starting balances
+    (the two Simulated leaves start at 150000 → 149990; the venue leaf starts at
+    its snapshotted venue balance).
     """
     portfolio, account = leaf
+    before = account.available_balance
     portfolio.transact_shares(_txn(TransactionType.BUY, qty="0.1", price="100"))
 
     position = portfolio.get_open_position(_TICKER)
     assert position is not None
     assert position.net_quantity == Decimal("0.1")
-    assert account.available_balance == Decimal("149990")
+    assert account.available_balance == before - Decimal("10")
 
 
 # --- (d) SELL settle against an existing position (atomicity) ----------------
