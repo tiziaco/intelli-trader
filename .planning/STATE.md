@@ -4,8 +4,8 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 5 (05-13 WR-05) context gathered
-last_updated: "2026-07-04T09:16:09.901Z"
-last_activity: 2026-07-04 -- Phase 05 planning complete
+last_updated: "2026-07-04T09:24:43.968Z"
+last_activity: 2026-07-04 -- Phase 05 execution started
 progress:
   total_phases: 7
   completed_phases: 4
@@ -28,10 +28,10 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 
 ## Current Position
 
-Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — IN PROGRESS (reopened 2026-07-03 for WR-05 remediation)
-Plan: 13 of 13 (05-13 pending — WR-05 correlation-state remediation; `05-SPEC.md` staged, R1–R3 narrow slice)
-Status: Ready to execute
-Last activity: 2026-07-04 -- Phase 05 planning complete
+Phase: 05 (real-sandbox-path-reconciliation-persistence-live-drive) — EXECUTING
+Plan: 1 of 13
+Status: Executing Phase 05
+Last activity: 2026-07-04 -- Phase 05 execution started
 
 Progress: [█████████░] 12/13 plans (05-13 pending)
 
