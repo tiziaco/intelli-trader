@@ -1,37 +1,36 @@
 ---
 phase: 02-okx-connector
-verified: 2026-07-01T14:20:00Z
-status: gaps_found
-score: 5/6 must-haves verified
+verified: 2026-07-04T00:00:00Z
+status: passed
+score: 6/6 must-haves verified
 overrides_applied: 0
-gaps:
-  - truth: "The three domain adapters (OkxDataProvider, OkxExchange, VenueAccount) are safely injected with the shared OkxConnector session at the LiveTradingSystem composition root"
-    status: failed
-    reason: >-
-      LiveTradingSystem.__init__ unconditionally constructs OkxSettings() + OkxConnector
-      and calls connector.connect() (a live network round-trip via load_markets())
-      regardless of the `exchange` constructor argument. Reproduced directly: running
-      `LiveTradingSystem(exchange='binance')` with no OKX_API_* env vars set raises
-      `pydantic.ValidationError` out of the constructor before any other failure path —
-      constructing a live system for ANY non-OKX venue now hard-requires OKX credentials
-      and network reachability (CR-02). Separately, `stop()` returns True before reaching
-      the connector-teardown block whenever `self._running` is False (e.g. a failed
-      `start()`, or `stop()` called without a prior `start()`), permanently leaking the
-      authenticated ccxt.pro session, its daemon thread, and its event loop (CR-01). No
-      test in the phase constructs a `LiveTradingSystem` (grep-verified), so neither
-      defect is caught by the phase's own test suite.
-    artifacts:
-      - path: "itrader/trading_system/live_trading_system.py"
-        issue: >-
-          Lines 220-240 (__init__): unconditional `OkxConnector(OkxSettings())` +
-          `connector.connect()` regardless of `self.exchange`, no try/except around
-          construction. Lines 480-482 (stop()): early `return True` before the
-          connector-teardown block at lines 501-509 executes.
-    missing:
-      - "Gate the OKX wiring behind `if self.exchange == 'okx':` in __init__, and move connector.connect() out of the constructor into start() (paired with the stop() teardown) — or at minimum wrap connect() so a failure sets SystemStatus.ERROR instead of raising out of __init__"
-      - "Make stop() disconnect the connector unconditionally (e.g. a try/finally around the whole method) regardless of the _running early-return, so a never-started or failed-to-start system still releases the session"
-      - "Add at least one test that constructs LiveTradingSystem() end-to-end (with a stubbed/mocked connector) to catch this class of composition-root regression — none exists today"
+gaps: []
 human_verification: []
+reverification:
+  - date: 2026-07-04
+    prior_status: gaps_found
+    outcome: passed
+    note: >-
+      The 2026-07-01 gaps (CR-01 session leak on non-running stop(), CR-02
+      unconditional OKX credential/network requirement in __init__) were closed by
+      later milestone work (Phases 3–5) and re-verified against the current codebase.
+      CR-02: OKX wiring is now gated behind `if self.exchange == 'okx':`
+      (live_trading_system.py:378) and `connector.connect()` is deferred out of the
+      constructor into `start()` with the failure flowing through the ERROR path
+      (lines 1085-1092, 1171-1175). CR-01: `stop()` now tears the connector down in a
+      `finally` block (lines 1225-1243) fetched before the try, so `disconnect()` runs
+      on every return path including the `not self._running` early exit. The missing
+      composition-root test now exists — `tests/integration/test_live_system_okx_wiring.py`
+      (9 tests) constructs `LiveTradingSystem` for both a non-OKX venue (no OKX creds,
+      no constructor I/O) and OKX, and explicitly locks CR-01 (stop()-before-start()
+      no-op + fill-stream spawn) and CR-02. The WR-01/WR-02 fill-stream fragility is
+      also fixed: `okx.py:452-453` guards an explicit `fee.cost is None`, and
+      `_consume_fills` (lines 645-652) wraps `_handle_trade` in a per-trade
+      try/except so one malformed trade no longer kills the stream. Evidence: 47/47
+      relevant tests pass (`test_live_system_okx_wiring`, `test_okx_inertness`,
+      `test_paper_parity`, `test_okx_exchange` [19], `test_okx_settings` [14],
+      `test_backtest_oracle` [3, byte-exact]). tests/unit/connectors excluded
+      (pre-existing socket/asyncio hang).
 ---
 
 # Phase 2: OKX Connector Verification Report
@@ -39,9 +38,9 @@ human_verification: []
 **Phase Goal:** `OkxConnector` = shared authenticated session/transport primitive; data/order/account
 are domain adapters consuming it (`OkxDataProvider` + `OkxExchange` + `VenueAccount`), injected at the
 composition root; async bottled at the connector edge.
-**Verified:** 2026-07-01T14:20:00Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-07-04 (re-verification; initial 2026-07-01T14:20:00Z)
+**Status:** passed
+**Re-verification:** Yes — the 2026-07-01 CR-01/CR-02 gaps were resolved by Phases 3–5 work and re-confirmed against the current codebase (see `reverification` in frontmatter; original gap analysis retained below for the audit trail)
 
 ## Goal Achievement
 
