@@ -156,3 +156,58 @@ bracket re-link mechanics; VenueAccount cache data structures + push mechanism.
 - Async/buffered write-through → keep-only-measured.
 - ROADMAP + REQUIREMENTS doc-sync (stale RUN-01 + PAPER-01/02/04) → fold into Phase-5 planning (D-18).
 - Reviewed-not-folded: margin-equity WR-01 valuation gap; single-pass-portfolio-valuation.
+
+---
+
+# Plan 05-13 (WR-05 correlation-state remediation) — Discussion Log
+
+**Date:** 2026-07-04
+**Phase:** 05-real-sandbox-path-reconciliation-persistence-live-drive (reopened)
+**Areas discussed:** Release-hook placement, Dedup-ring structure/capacity, Late-echo safety
+**Requirements locked upstream:** R1–R3 + zero-backtest-impact gate (05-SPEC.md) — not re-decided.
+
+---
+
+## Release-hook placement (WR05-D1)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| (a) OkxExchange / VenueCorrelationIndex self-managed | Track cumulative-filled per venue_id in the index; self-release on cumulative == quantity. Live-isolated, zero backtest touch; "duplicates" the fully-filled check. | ✓ |
+| (b) ReconcileManager terminal transition | Single terminalization authority; but shared engine-thread code that also runs backtest → needs an injected release-callback (None/no-op in backtest), inverting the order→execution dependency. | |
+
+**User's choice:** (a), refined — after asking "what's the *most correct* option, does it need a read-class like portfolios, and what's the risk?"
+**Notes:** User initially leaned (b) to avoid duplication. Boundary analysis flipped it: (b) is a cross-domain write (queue-only contract + EventType ban forbid the clean routes), and release is a WRITE to the exchange's own memory — NOT a `PortfolioReadModel`-style read seam. The "duplication" folds into R1's `VenueCorrelationIndex` (per-venue_id counter). Risk (counter drift → entry never released) mitigated: same trades feed both, cleanup-only concern, never affects money correctness; non-fill terminals are the already-carved R4 residual.
+
+---
+
+## Dedup-ring structure/capacity (WR05-D2)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| deque(maxlen)+set, cap 10000 | O(1) membership via set, FIFO eviction via deque — mirrors LiveBarFeed deque-ring precedent; DB venue_trade_id backstop for evicted ids. | ✓ |
+| OrderedDict as LRU, cap 10000 | Single-structure LRU (move_to_end / popitem). Less code, but not the codebase precedent. | |
+
+**User's choice:** deque(maxlen)+set, cap 10000.
+**Notes:** Capacity configurable; in-memory ring only needs to cover the reconnect re-send window.
+
+---
+
+## Late-echo safety (WR05-D3)
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Drain buffer → emit → then evict | Drain pending-fills buffer for the venue_id and emit those FillEvents before dropping entries; mint/emit outside the lock; idempotent release. | ✓ |
+| Evict immediately, DB dedup backstop | Drop entries on terminal, rely on DB dedup; risks dropping a genuinely-late buffered fill (the WR-02 failure mode). | |
+
+**User's choice:** Drain buffer, emit, then evict.
+**Notes:** Matches the existing `_submit_order`/`adopt` re-drain-outside-lock pattern; guarantees no WR-02 regression.
+
+## Claude's Discretion (Plan 05-13)
+- Exact home/type of the cumulative-filled counter inside `VenueCorrelationIndex` + its Decimal-equality guard (WR05-D1).
+- Config key/surface for the ring capacity (WR05-D2).
+- Whether `register/resolve/adopt/release/mark_seen` lock internally or expose the lock (R1 detail; keep WR-03 guarantees).
+
+## Deferred Ideas (Plan 05-13 → R4 / future phase)
+- Non-fill terminal release (partial-then-cancel / expire / reject-without-fill) mid-session.
+- Out-of-band (web-UI) cancel coverage.
+- Native OKX OCO/algo orders; multi-venue.

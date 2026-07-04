@@ -3,6 +3,13 @@
 **Gathered:** 2026-07-02
 **Status:** Ready for planning
 
+> **REOPENED 2026-07-04 for Plan 05-13 (WR-05 correlation-state remediation).** The
+> decisions below (D-01…D-20) are the LOCKED original Phase-5 reconciliation cluster
+> (plans 05-01…05-12, executed). The narrow WR-05 slice adds three new "how" decisions —
+> see the **`## Plan 05-13 (WR-05 remediation)`** section at the end of this file. Its
+> requirements are locked by `05-SPEC.md`; only the three implementation decisions were
+> open, and they are now resolved.
+
 <domain>
 ## Phase Boundary
 
@@ -373,5 +380,140 @@ wall-clock); D-19 single-writer (portfolio state mutates only on the engine thre
 
 ---
 
+## Plan 05-13 (WR-05 remediation)
+
+**Discussed:** 2026-07-04
+**Scope:** the NARROW WR-05 slice — bound the live `OkxExchange` venue-correlation state.
+Requirements R1–R3 + the zero-backtest-impact gate are **locked by `05-SPEC.md`** and NOT
+re-litigated here. Discussion resolved only the three "how" decisions the SPEC flagged.
+
+<spec_lock>
+### Locked by 05-SPEC.md (do NOT re-decide — read the SPEC)
+
+- **R1 — `VenueCorrelationIndex` encapsulation:** one cohesive, unit-testable class owning
+  the three correlation maps + `_pending_fills_by_venue_id` buffer + bounded dedup ring +
+  `_correlation_lock`, exposing `register / resolve / adopt / release / mark_seen`;
+  `OkxExchange` delegates to it.
+- **R2 — release-on-terminal (fill-driven):** a fill that terminalizes an order (cumulative
+  == quantity) drops that order's venue-id / order-id / clOrdId entries (drain-first).
+- **R3 — bounded trade-id dedup ring:** `_seen_trade_ids` is capacity-bounded.
+- **Zero-backtest-impact gate:** all changes live-only (`okx.py`, `connectors/`); `release_`/
+  index NOT on the `AbstractExchange` Protocol → `SimulatedExchange` untouched; **no new
+  `EventType`**; oracle byte-exact `134 / 46189.87730727451`; determinism double-run
+  identical; inertness test green; W1/W2 within the v1.5 baseline (15.7 s / 152.8 MB).
+- **R4 residual (future phase, NOT this plan):** non-fill terminals (cancel/expire/reject-
+  without-fill) + out-of-band venue changes have no mid-session terminal signal today
+  (`watch_orders` log-only, `VenueReconciler` startup-only) → their correlation releases only
+  at restart until R4. This plan closes the **fill-driven common path** + bounds the ring.
+</spec_lock>
+
+<decisions>
+### Implementation Decisions (the three "how" gaps)
+
+- **WR05-D1 — Release hook = `VenueCorrelationIndex` self-releases; do NOT couple to
+  `ReconcileManager`.** The index owns a **per-`venue_id` cumulative-filled counter** as part
+  of its `register/resolve/release` lifecycle; when cumulative == `order.quantity` it
+  self-releases that order's entries. Entirely inside the **execution domain** — zero
+  backtest-path touch (structural oracle safety, not "proven no-op" vigilance), zero
+  cross-domain coupling.
+  - **Why not (b) ReconcileManager (the single-terminalization-authority option):** the
+    mirror lives in `order_handler`, runs on the engine thread, and is **shared with
+    backtest**; releasing from it is a **cross-domain write** into `execution_handler`
+    (forbidden by the queue-only contract — `OrderManager` holds no exchange ref) and the
+    `EventType` ban rules out routing it through the queue. The only boundary-respecting form
+    is an **injected write-callback** (mirroring the existing `OkxExchange.set_halt_signal` /
+    `set_stream_state_listener` seams), `None`/no-op in backtest — which **inverts** the
+    `order → execution` dependency and threads a **live-only concern through backtest-shared
+    code**, making oracle-safety a vigilance concern, all to save one `cumulative == quantity`
+    compare.
+  - **Not a read-model (unlike `PortfolioReadModel`):** release is a **write to the exchange's
+    own memory**, not a cross-domain read — the exchange already receives every partial fill
+    in `_handle_trade`, so it has the data **locally**. No read-model seam is needed or
+    appropriate. The apparent "duplication" of the fully-filled check is not duplicated
+    business logic: the mirror compares cumulative-vs-quantity to drive the **order state
+    machine**; the index compares it to drive **its own entries' memory-liveness**. Different
+    domains, different state, same arithmetic.
+  - **Risk + mitigation:** (i) index counter could diverge from the mirror → an order never
+    hits "done" → its entries never release (WR-05 persists for that order). *Mitigation:* the
+    counter is fed by the **exact same trades** that drive the mirror (agree by construction);
+    and it is a **cleanup** concern only — a drift never affects fill/position/cash
+    correctness (mirror + portfolio stay authoritative). (ii) non-fill terminals never reach
+    full quantity so self-release won't fire → **exactly the R4 residual already carved out**,
+    not a new gap.
+
+- **WR05-D2 — Dedup ring = `deque(maxlen=10000)` + companion `set`, capacity configurable.**
+  O(1) membership via the set; FIFO eviction via `deque(maxlen=N)` (mirrors the
+  `live_bar_feed.py` `deque(maxlen=cache_capacity())` ring precedent). On overflow the deque
+  auto-drops the oldest id and we `discard` it from the set. Capacity **10 000**, configurable.
+  An evicted-then-resent id is still deduped at the durable `venue_trade_id` DB layer
+  (documented backstop — CR-01 tail); the in-memory ring only needs to cover the reconnect
+  re-send window.
+
+- **WR05-D3 — `release` is drain-then-evict, idempotent, emit-outside-lock.** `release` first
+  drains any `_pending_fills_by_venue_id` for that `venue_id` and **emits those `FillEvent`s**,
+  THEN drops the correlation entries — mint/emit **outside** `_correlation_lock`, matching the
+  existing `_submit_order` / `adopt_venue_correlation` re-drain-outside-lock pattern. `release`
+  is **idempotent** (releasing already-gone entries is a harmless no-op). Guarantees no WR-02
+  regression: a late buffered fill still fires before its correlation is released.
+
+### Claude's Discretion (plan-time mechanics)
+- Exact home of the cumulative-filled counter inside `VenueCorrelationIndex` (per-`venue_id`
+  running `Decimal` vs recompute from a fill list) and its `Decimal`-equality guard — WR05-D1.
+- Config key + surface for the ring capacity (constant vs a `config/` setting) — WR05-D2.
+- Whether `register/resolve/adopt/release/mark_seen` take the lock internally or expose it —
+  R1 encapsulation detail; keep the current cross-thread guarantees (WR-03).
+</decisions>
+
+<canonical_refs>
+### Canonical References (Plan 05-13 — MUST read before planning/implementing)
+
+- `.planning/phases/05-real-sandbox-path-reconciliation-persistence-live-drive/05-SPEC.md` —
+  **LOCKED requirements** R1–R3 + the zero-backtest-impact gate + acceptance criteria. Read first.
+- `docs/superpowers/specs/2026-07-03-mid-session-order-lifecycle-reconciliation-spec.md` —
+  the full 6-requirement design; this plan is the **R1–R3 narrow slice** (R4 broad capability
+  = future phase). Read for the WR-05 → continuous-reconciliation reframing + framework precedent.
+- `itrader/execution_handler/exchanges/okx.py` — **the implementation target.** Ctor
+  correlation structures (`_orders_by_venue_id` / `_venue_id_by_order_id` / `_orders_by_clOrdId`
+  / `_seen_trade_ids` / `_pending_fills_by_venue_id` / `_correlation_lock`), `_submit_order`
+  (register + re-drain), `adopt_venue_correlation` (the inbound seam; add the symmetric
+  `release_venue_correlation`), `_handle_trade` (dedup + resolve + buffer — where the cumulative
+  counter feeds), `_emit_fill`. **Tabs — match the file, never normalize.**
+- `itrader/price_handler/feed/live_bar_feed.py` — `deque(maxlen=cache_capacity())` ring
+  precedent for WR05-D2 (see `_ring`, `cache_capacity`).
+- `itrader/order_handler/order_manager.py` (`on_fill` → `ReconcileManager`) — the mirror
+  terminalization authority this plan **deliberately does NOT couple to** (WR05-D1 rationale).
+- `tests/integration/test_backtest_oracle.py` — the byte-exact gate (`134 / 46189.87730727451`).
+- Backtest-inertness test (no `connectors` / `ccxt.pro` after a backtest-root import) — the
+  structural guard WR05-D1 keeps green by staying in the live-only module.
+- `.venv/.../nautilus_trader/live/reconciliation.py` — `get_existing_fill_for_trade_id`
+  (trade-id dedup precedent, R3).
+</canonical_refs>
+
+<code_context>
+### Plan 05-13 Code Insights
+
+- **Reusable:** the `adopt_venue_correlation` inbound seam (add its outbound twin
+  `release_venue_correlation`); the `_handle_trade` dedup/resolve/buffer flow (cumulative
+  counter layers on top); the `set_halt_signal`/`set_stream_state_listener` injected-callback
+  pattern (the shape we AVOID for release, per WR05-D1); the `live_bar_feed` `deque(maxlen)` ring.
+- **Pattern held:** WR-03 cross-thread lock guarantees; re-drain-outside-lock (WR05-D3);
+  live-only isolation (no `AbstractExchange` Protocol change → `SimulatedExchange` untouched).
+- **Integration point:** `_handle_trade` (per-fill) feeds the cumulative counter → self-release
+  on the full-fill terminal; the durable `venue_trade_id` DB layer is the evicted-id backstop.
+</code_context>
+
+<deferred>
+### Plan 05-13 Deferred (→ R4 / future phase)
+
+- **Non-fill terminal release** (partial-then-cancel D-12, expire, reject-without-fill)
+  mid-session — depends on R4's mid-session order-status signal (`watch_orders` promotion /
+  REST order-poll). Correlation for these releases only at restart until R4.
+- **Out-of-band (web-UI) cancel coverage** — depends on R4.
+- **Native OKX OCO/algo orders; multi-venue** — out of scope.
+</deferred>
+
+---
+
 *Phase: 5-real-sandbox-path-reconciliation-persistence-live-drive*
 *Context gathered: 2026-07-02*
+*Plan 05-13 (WR-05) decisions added: 2026-07-04*
