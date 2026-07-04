@@ -53,7 +53,8 @@ from .trading import (
 
 # System enums
 from .system import (
-    SystemStatus
+    SystemStatus,
+    VALID_STATUS_TRANSITIONS
 )
 
 # Error-severity enum
@@ -101,6 +102,7 @@ __all__ = [
 
     # System enums
     'SystemStatus',
+    'VALID_STATUS_TRANSITIONS',
 
     # Error-severity enum
     'ErrorSeverity'
