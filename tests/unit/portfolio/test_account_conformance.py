@@ -38,6 +38,7 @@ import pytest
 import uuid_utils.compat as uuid_compat
 
 from itrader import idgen
+from itrader.core.exceptions import StateError
 from itrader.core.ids import OrderId
 from itrader.config import PortfolioConfig, get_portfolio_preset, deep_merge
 from itrader.portfolio_handler.portfolio import Portfolio
@@ -249,3 +250,33 @@ def test_serialization_reads_account_surface(leaf):
     snapshot = portfolio.to_dict()
     assert snapshot["available_cash"] == account.balance
     assert snapshot["reserved_cash"] == Decimal("0")
+
+
+# --- (f) D-02 margin op on a non-margin (venue) account fails loud, no mutation ---
+
+
+def test_margin_op_on_venue_account_raises_before_mutation(venue_connectors):
+    """D-02: a venue-linked + margin-configured portfolio fails LOUD at the guard.
+
+    Re-typing ``Portfolio.account`` to the ABC lets a ``VenueAccount`` wire onto a
+    margin-configured portfolio (the V17-14 hazard surface). Driving a margin BUY
+    through ``_process_transaction_margin`` used to hit a bare ``cast`` no-op and
+    then ``AttributeError`` mid-settlement — AFTER the position had mutated. The
+    ``_require_margin_account`` isinstance guard now raises a typed ``StateError``
+    BEFORE any mutation; the untouched position + transaction ledger assert the
+    settlement did not partially apply (closes the V17-14 cast arm).
+    """
+    portfolio = Portfolio("venue_margin_pf", "okx", Decimal("150000"),
+                          datetime.now(), config=_margin_config())
+    connector = venue_connectors(_spot_payloads())
+    account = VenueAccount(connector, quote_currency="USDC")
+    account.snapshot()
+    portfolio.account = account
+
+    prior_txns = len(portfolio.transactions)
+    with pytest.raises(StateError):
+        portfolio.transact_shares(_txn(TransactionType.BUY, qty="0.1", price="100"))
+
+    # No partial mutation: no position opened, no transaction recorded.
+    assert portfolio.get_open_position(_TICKER) is None
+    assert len(portfolio.transactions) == prior_txns
