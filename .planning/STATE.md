@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Phase 5 (05-13 WR-05) context gathered
-last_updated: "2026-07-04T19:26:23.818Z"
+stopped_at: Completed 05.1-05-PLAN.md
+last_updated: "2026-07-04T19:51:41.487Z"
 last_activity: 2026-07-04
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 42
-  completed_plans: 37
+  completed_plans: 38
   percent: 50
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 05.1 (live-path-remediation) — EXECUTING
-Plan: 5 of 9
+Plan: 6 of 9
 Status: Ready to execute
 Last activity: 2026-07-04
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 90%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -161,6 +161,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: [Phase 05.1]: 05.1-03: CONF-A RED spine slice 3 — A6 supervisor-catchall (V17-07/D-11), A7 submit-timeout-in-flight (V17-09/D-13), A8 pause-defer-replay (V17-11/D-14) authored RED. A6 covers 3 silent-death surfaces (unclassified ExchangeError, unguarded json.loads, bare-while-True VenueAccount stream); A7/A8 carry control arms (definitive-rejection still REFUSED; entry stays suppressed) to force the fix to branch. All GREEN in Phase 05.3; CONF-A spine A1..A8 complete.
 - [Phase ?]: 05.1-04: D-01 delivered — 7-member Account ABC settlement surface; VenueAccount as a locally-ledgered account (balance = cached venue balance + local fill-delta; snapshot reconciles the delta). available_balance nets settled balance not the venue free field; assert_funds_invariant raises before any mutation. A1 GREEN all 3 leaves; oracle byte-exact.
 - [Phase ?]: 05.1-04: A1 BUY facet made leaf-relative (before-10) — hardcoded 149990 assumed a 150000 start absent on the venue leaf (fixture total[USDC]=78999.79). test_venue_account_cache .available renames deferred to 05.1-06; A4 spot-drift RED deferred to 05.1-08.
+- [Phase 05.1]: D-05: HALTED is a latched state — VALID_STATUS_TRANSITIONS (HALTED->set()) enforced at the single _update_status seam; halt() routed through it; start() refuses RUNNING-from-HALTED post-reconcile; reset_halt() is the sole off-table exit (verify-then-trust)
 
 ### Pending Todos
 
@@ -231,6 +232,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.1 P02 | 16min | 3 tasks | 3 files |
 | Phase 05.1 P03 | 17min | 3 tasks | 3 files |
 | Phase 05.1 P04 | 15min | 2 tasks | 4 files |
+| Phase 05.1 P05 | 35min | 2 tasks | 3 files |
 
 ## Deferred Items
 
@@ -280,8 +282,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T19:26:12.892Z
-Stopped at: Phase 5 (05-13 WR-05) context gathered
+Last session: 2026-07-04T19:51:41.479Z
+Stopped at: Completed 05.1-05-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
