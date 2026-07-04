@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 5 (05-13 WR-05) context gathered
-last_updated: "2026-07-04T18:58:11.261Z"
+last_updated: "2026-07-04T19:10:15.369Z"
 last_activity: 2026-07-04
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 42
-  completed_plans: 35
+  completed_plans: 36
   percent: 50
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 05.1 (live-path-remediation) — EXECUTING
-Plan: 3 of 9
+Plan: 4 of 9
 Status: Ready to execute
 Last activity: 2026-07-04
 
-Progress: [████████░░] 83%
+Progress: [█████████░] 86%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -158,6 +158,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05]: 05-12: RECON-06 closed — tests/e2e/test_okx_sandbox_recon.py runs `3 passed` against the real OKX EEA demo venue (order->fill->reconcile->restart loop, human-observed 2026-07-03). Reaching green needed 4 follow-on integration fixes (committed separately): OKX_REGION=eea host derivation (REST eea.okx.com / WS wseeapap.okx.com — 50119/60032 otherwise), unified `1d` timeframe to ccxt backfill, live pair BTC/USDT->BTC/USDC (EEA/MiCA sCode 51155; make pair configurable via universe next phase), and store rewired onto unified ITRADER_DATABASE_* (dropped SYSTEM_DB_URL).
 - [Phase 05.1]: 05.1-01: CONF-A RED spine slice 1 — A1 3-leaf account-conformance (V17-01/D-01,D-02) + A4 spot-no-drift-halt (V17-04/D-03,D-04) authored RED; AUD-7 spot/derivative fixture split. Spot fixture is the NEW-cluster default (legacy fixture kept for full-suite green). A4 seeds venue truth via snapshot() from fetch_balance total[BTC] so it is RED now and GREEN after the D-03 base-balance adapter.
 - [Phase 05.1]: 05.1-02: CONF-A RED spine slice 2 — A3 halt-latch (V17-03/D-05), A2 venue_order_id persistence (V17-02/D-06), A5 redeliver-dedup (V17-06/D-08) authored RED. A3 injects the reconcile halt by wrapping _initialize_live_session on the offline paper venue; A2/A5 encode observable end-state so the 05.2 fixes turn them GREEN without rewrite. A3 GREEN in 05.1-05; A2/A5 GREEN in Phase 05.2.
+- [Phase ?]: [Phase 05.1]: 05.1-03: CONF-A RED spine slice 3 — A6 supervisor-catchall (V17-07/D-11), A7 submit-timeout-in-flight (V17-09/D-13), A8 pause-defer-replay (V17-11/D-14) authored RED. A6 covers 3 silent-death surfaces (unclassified ExchangeError, unguarded json.loads, bare-while-True VenueAccount stream); A7/A8 carry control arms (definitive-rejection still REFUSED; entry stays suppressed) to force the fix to branch. All GREEN in Phase 05.3; CONF-A spine A1..A8 complete.
 
 ### Pending Todos
 
@@ -226,6 +227,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05 P11 | ~15min | 2 tasks | 6 files |
 | Phase 05.1 P01 | 18min | 3 tasks | 4 files |
 | Phase 05.1 P02 | 16min | 3 tasks | 3 files |
+| Phase 05.1 P03 | 17min | 3 tasks | 3 files |
 
 ## Deferred Items
 
@@ -275,7 +277,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T18:56:41.636Z
+Last session: 2026-07-04T19:09:57.268Z
 Stopped at: Phase 5 (05-13 WR-05) context gathered
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)

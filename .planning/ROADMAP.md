@@ -344,7 +344,7 @@ Plans:
 
 - [x] 05.1-01-PLAN.md — CONF-A RED spine: AUD-7 spot fixture split + A1 (account conformance) + A4 (spot no-drift) RED tests (Wave 1)
 - [x] 05.1-02-PLAN.md — CONF-A RED spine: A2 (venue_order_id) + A3 (halt latch) + A5 (redeliver dedup) RED tests (Wave 1)
-- [ ] 05.1-03-PLAN.md — CONF-A RED spine: A6 (supervisor catch-all) + A7 (submit timeout) + A8 (pause defer-replay) RED tests (Wave 1)
+- [x] 05.1-03-PLAN.md — CONF-A RED spine: A6 (supervisor catch-all) + A7 (submit timeout) + A8 (pause defer-replay) RED tests (Wave 1)
 - [ ] 05.1-04-PLAN.md — D-01: widen Account ABC (7-member surface) + Simulated rename + VenueAccount ledgered settlement -> A1 GREEN (Wave 2)
 - [ ] 05.1-05-PLAN.md — D-05: VALID_STATUS_TRANSITIONS latch + single-seam enforcement + start() halt-refusal + reset_halt -> A3 GREEN (Wave 2)
 - [ ] 05.1-06-PLAN.md — D-02: re-type Portfolio.account to ABC + isinstance-guard margin casts + mypy visibility + permanent conformance gate (Wave 3)
