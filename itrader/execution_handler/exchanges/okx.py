@@ -406,13 +406,26 @@ class OkxExchange(AbstractExchange):
 			return
 		# Correlated (outcome == "emit"): mint + emit OUTSIDE the lock.
 		assert result.order is not None  # narrowed by outcome == "emit"
-		self._emit_fill(trade, result.order, result.venue_id)
+		emitted = self._emit_fill(trade, result.order, result.venue_id)
+		# WR-05 R2 (WR05-D1): feed the per-venue_id cumulative-filled counter and, when
+		# this fill terminalizes the order (cumulative reaches order.quantity), self-release
+		# its correlation entries so the maps do not grow without limit over a long session
+		# (drain-then-evict, WR05-D3). Gate on an actual emit + a keyable venue_id: a
+		# malformed/skipped fill must not advance the counter, and a clOrdId-only resolve
+		# (no venue id) has no venue-id-keyed entry to release.
+		if emitted and result.venue_id is not None:
+			amount = trade.get("amount") if isinstance(trade, dict) else None
+			if amount is not None and self._index.record_fill(
+				result.venue_id, result.order, to_money(str(amount))):
+				self.release_venue_correlation(result.venue_id)
 
-	def _emit_fill(self, trade: Any, order: OrderEvent, venue_id: Any) -> None:
+	def _emit_fill(self, trade: Any, order: OrderEvent, venue_id: Any) -> bool:
 		"""Mint the FillEvent for a correlated venue trade and put it on ``global_queue``.
 
-		Preserves the CONN-05 Decimal edge (``to_money(str(x))``), the WR-01
-		commission None-guard + ``abs()`` magnitude normalisation, and the
+		Returns True when a FillEvent was emitted, False when the payload was malformed and
+		skipped (so the caller does NOT advance the WR-05 cumulative-filled counter for a
+		fill that never settled). Preserves the CONN-05 Decimal edge (``to_money(str(x))``),
+		the WR-01 commission None-guard + ``abs()`` magnitude normalisation, and the
 		``_ms_to_dt`` business-time stamp verbatim.
 		"""
 		price = trade.get("price")
@@ -422,7 +435,7 @@ class OkxExchange(AbstractExchange):
 			self.logger.warning(
 				"Malformed fill payload for order %s (missing price/amount/timestamp) — skipping",
 				venue_id)
-			return
+			return False
 		# WR-01: ccxt frequently emits ``fee: {"cost": None, ...}`` (fee not yet
 		# known). ``fee.get("cost", 0)`` returns None because the key IS present, and
 		# ``to_money(str(None))`` -> ``Decimal("None")`` raises InvalidOperation,
@@ -456,6 +469,26 @@ class OkxExchange(AbstractExchange):
 			venue_trade_id=venue_trade_id)
 		# D-07: the EXCHANGE emits the fill; MPSC-safe put from the connector loop thread (D-19).
 		self.global_queue.put(fill)
+		return True
+
+	def release_venue_correlation(self, venue_id: str) -> None:
+		"""Release a terminalized order's venue correlation (WR-05 R2 — the OUTBOUND twin
+		of ``adopt_venue_correlation``).
+
+		Delegates to ``VenueCorrelationIndex.release`` (drain-then-evict, WR05-D3): the index
+		drains any buffered late fills FIRST and returns them, then drops the order's
+		venue-id / order-id / clOrdId entries + the cumulative counter (bounding the maps).
+		This arm emits each drained buffered fill via ``_emit_fill`` OUTSIDE the index lock —
+		mint/emit outside the lock, matching the ``_submit_order`` / ``adopt_venue_correlation``
+		re-drain pattern — so a late buffered fill still fires its ``FillEvent`` BEFORE its
+		correlation is considered gone (no WR-02 regression). Idempotent: an unknown /
+		already-released ``venue_id`` returns nothing to emit.
+		"""
+		order, drained = self._index.release(venue_id)
+		if order is None:
+			return
+		for buffered_trade in drained:
+			self._emit_fill(buffered_trade, order, venue_id)
 
 	# --- reconnect supervisor (RES-01/D-19/D-20) -------------------------------
 

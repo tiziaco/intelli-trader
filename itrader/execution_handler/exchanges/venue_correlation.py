@@ -204,21 +204,47 @@ class VenueCorrelationIndex:
 		self._seen_trade_ids.add(trade_id)
 		return True
 
-	# --- release-on-terminal (R2 — fill-driven; body lands in Task 3) ----------
+	# --- release-on-terminal (R2 — fill-driven, WR05-D1/D3) --------------------
 
 	def record_fill(self, venue_id: str, order: OrderEvent, filled_qty: Decimal) -> bool:
-		"""Feed the per-``venue_id`` cumulative-filled counter; report terminal (WR05-D1).
+		"""Add a fill to the per-``venue_id`` cumulative-filled counter; report terminal.
 
-		Body lands in Task 3 (R2 release-on-terminal wiring).
+		WR05-D1: the index owns the terminal decision entirely inside the execution domain
+		(NOT coupled to ``ReconcileManager``) — it self-releases when the accumulated fill
+		amount reaches ``order.quantity``. ``>=`` (not strict ``==``) so an over-fill still
+		terminalizes; a partial (cumulative < quantity) reports False and the caller retains
+		the entries. Decimal arithmetic throughout (money is Decimal end-to-end). The counter
+		is fed by the exact same trades that drive the order mirror, so it agrees by
+		construction; a drift is a cleanup concern only (fill/position/cash stay authoritative
+		on the mirror + portfolio).
 		"""
-		return False
+		with self._correlation_lock:
+			cumulative = self._cumulative_filled_by_venue_id.get(venue_id, Decimal("0")) + filled_qty
+			self._cumulative_filled_by_venue_id[venue_id] = cumulative
+			return cumulative >= order.quantity
 
 	def release(self, venue_id: str) -> Tuple[Optional[OrderEvent], List[Any]]:
-		"""Drain-then-evict a terminalized order's correlation (WR05-D3).
+		"""Drain-then-evict a terminalized order's correlation (WR05-D3); idempotent.
 
-		Body lands in Task 3 (R2 release-on-terminal wiring).
+		Under the lock: pop + RETURN any ``_pending_fills_by_venue_id`` for ``venue_id`` FIRST
+		(so the caller can emit those buffered late fills OUTSIDE the lock BEFORE the
+		correlation is considered gone — no WR-02 regression), THEN drop the three correlation
+		entries (``_orders_by_venue_id`` / ``_venue_id_by_order_id`` / ``_orders_by_clOrdId``),
+		the per-``venue_id`` cumulative counter, and the clOrdId link — bounding the maps.
+		Returns the released order + the drained buffered trades. Idempotent: an unknown /
+		already-released ``venue_id`` returns ``(None, [])`` with no raise (empty drain).
 		"""
-		return None, []
+		with self._correlation_lock:
+			# Drain FIRST (WR05-D3) — surface buffered late fills before dropping entries.
+			drained = self._pending_fills_by_venue_id.pop(venue_id, [])
+			order = self._orders_by_venue_id.pop(venue_id, None)
+			if order is not None:
+				self._venue_id_by_order_id.pop(order.order_id, None)
+			clordid = self._clordid_by_venue_id.pop(venue_id, None)
+			if clordid is not None:
+				self._orders_by_clOrdId.pop(clordid, None)
+			self._cumulative_filled_by_venue_id.pop(venue_id, None)
+			return order, drained
 
 	# --- accessors ------------------------------------------------------------
 
