@@ -490,8 +490,8 @@ def test_restart_rehydrate_then_venue_reconcile_no_spurious_halt() -> None:
         assert "reconciliation-unresolved" not in halt.reasons
 
         # (b) the 05-11 adopt seam repopulated the correlation map for the rehydrated order.
-        with okx_exchange._correlation_lock:
-            adopted = okx_exchange._venue_id_by_order_id.get(order.id)
+        with okx_exchange._index._correlation_lock:
+            adopted = okx_exchange._index._venue_id_by_order_id.get(order.id)
         assert adopted == venue_ord
 
         # A post-restart fill for the rehydrated resting order now RESOLVES (emits a FillEvent)
