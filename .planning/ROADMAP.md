@@ -338,11 +338,19 @@ COV-01 real-path surface coverage completes here.
 **Goal:** Make a real OKX demo fill actually settle into the portfolio (position + cash + transaction) and stop the engine from trading on state the reconciler declared untrustworthy. Fixes V17-01/14/04/03 per locked decisions ARCH-1/ARCH-2/ARCH-4-Layer-1 (CONTEXT D-01..D-05), preceded by the CONF-A A1..A8 RED-test spine (D-19) and gated by the CONF-B online sandbox run (D-20). The go/no-go gate — nothing downstream is observable until settlement works.
 **Requirements**: Scope defined by CONTEXT.md decisions D-01..D-05, D-19, D-20 (ADR ingest of v17_arch_decisions.md).
 **Depends on:** Phase 5
-**Plans:** 0 plans (run /gsd:plan-phase 05.1 to break down)
+**Plans:** 9 plans
 
 Plans:
 
-- [ ] TBD (run /gsd:plan-phase 05.1 to break down)
+- [ ] 05.1-01-PLAN.md — CONF-A RED spine: AUD-7 spot fixture split + A1 (account conformance) + A4 (spot no-drift) RED tests (Wave 1)
+- [ ] 05.1-02-PLAN.md — CONF-A RED spine: A2 (venue_order_id) + A3 (halt latch) + A5 (redeliver dedup) RED tests (Wave 1)
+- [ ] 05.1-03-PLAN.md — CONF-A RED spine: A6 (supervisor catch-all) + A7 (submit timeout) + A8 (pause defer-replay) RED tests (Wave 1)
+- [ ] 05.1-04-PLAN.md — D-01: widen Account ABC (7-member surface) + Simulated rename + VenueAccount ledgered settlement -> A1 GREEN (Wave 2)
+- [ ] 05.1-05-PLAN.md — D-05: VALID_STATUS_TRANSITIONS latch + single-seam enforcement + start() halt-refusal + reset_halt -> A3 GREEN (Wave 2)
+- [ ] 05.1-06-PLAN.md — D-02: re-type Portfolio.account to ABC + isinstance-guard margin casts + mypy visibility + permanent conformance gate (Wave 3)
+- [ ] 05.1-07-PLAN.md — D-03: per-market-type venue-truth adapter (spot base-balance positions; parameterized quote) (Wave 3)
+- [ ] 05.1-08-PLAN.md — D-04 + D-03 wiring: thread real quote + post-reconcile baseline guard + spurious-halt drift band -> A4 GREEN (Wave 4)
+- [ ] 05.1-09-PLAN.md — D-20: extend CONF-B sandbox e2e assertions + human-gated online run (Wave-1 GREEN exit gate + ARCH-3 finalization capture) (Wave 5)
 
 ### Phase 05.2: Live-Path Remediation — Wave 2 (Restart Real) (INSERTED)
 
