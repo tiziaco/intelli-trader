@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Phase 5 (05-13 WR-05) context gathered
-last_updated: "2026-07-04T16:59:06.228Z"
-last_activity: 2026-07-04 -- Phase 05.1 planning complete
+last_updated: "2026-07-04T18:43:13.432Z"
+last_activity: 2026-07-04
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 42
-  completed_plans: 33
+  completed_plans: 34
   percent: 50
 ---
 
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 05.1 — Live-Path Remediation (V17 bugs + ARCH decisions)
+**Current focus:** Phase 05.1 — live-path-remediation
 
 ## Current Position
 
-Phase: 05.1
-Plan: Not started
+Phase: 05.1 (live-path-remediation) — EXECUTING
+Plan: 2 of 9
 Status: Ready to execute
-Last activity: 2026-07-04 -- Phase 05.1 planning complete
+Last activity: 2026-07-04
 
-Progress: [████████▒░] 5/6 phases complete (83%) — only Phase 6 (Dynamic Universe Membership) remains
+Progress: [████████░░] 81%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -156,6 +156,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05]: 05-11: WR-02 closed — OkxExchange.adopt_venue_correlation() repopulates the three correlation maps + drains buffered fills for rehydrated orders; VenueReconciler.reconcile() adopts per working-set order with a venue_order_id (exchange=self._okx_exchange). Post-restart fills reach the mirror instead of being silently buffered.
 - [Phase 05]: 05-11: WR-03 closed — reconcile_manager validates the PARTIALLY_FILLED transition BEFORE mutating filled_quantity; a rejected transition leaves the mirror literally unchanged. WR-05 recorded documented-only (portfolio_handler.py untouched).
 - [Phase 05]: 05-12: RECON-06 closed — tests/e2e/test_okx_sandbox_recon.py runs `3 passed` against the real OKX EEA demo venue (order->fill->reconcile->restart loop, human-observed 2026-07-03). Reaching green needed 4 follow-on integration fixes (committed separately): OKX_REGION=eea host derivation (REST eea.okx.com / WS wseeapap.okx.com — 50119/60032 otherwise), unified `1d` timeframe to ccxt backfill, live pair BTC/USDT->BTC/USDC (EEA/MiCA sCode 51155; make pair configurable via universe next phase), and store rewired onto unified ITRADER_DATABASE_* (dropped SYSTEM_DB_URL).
+- [Phase 05.1]: 05.1-01: CONF-A RED spine slice 1 — A1 3-leaf account-conformance (V17-01/D-01,D-02) + A4 spot-no-drift-halt (V17-04/D-03,D-04) authored RED; AUD-7 spot/derivative fixture split. Spot fixture is the NEW-cluster default (legacy fixture kept for full-suite green). A4 seeds venue truth via snapshot() from fetch_balance total[BTC] so it is RED now and GREEN after the D-03 base-balance adapter.
 
 ### Pending Todos
 
@@ -222,6 +223,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase Phase 04 P04 P04 | 5min | 2 tasks | 2 files |
 | Phase 05 P10 | 20min | 3 tasks | 3 files |
 | Phase 05 P11 | ~15min | 2 tasks | 6 files |
+| Phase 05.1 P01 | 18min | 3 tasks | 4 files |
 
 ## Deferred Items
 
@@ -271,9 +273,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T08:47:06.886Z
+Last session: 2026-07-04T18:41:19.705Z
 Stopped at: Phase 5 (05-13 WR-05) context gathered
-Resume file: .planning/phases/05-real-sandbox-path-reconciliation-persistence-live-drive/05-CONTEXT.md
+Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps

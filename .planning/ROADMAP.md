@@ -342,7 +342,7 @@ COV-01 real-path surface coverage completes here.
 
 Plans:
 
-- [ ] 05.1-01-PLAN.md — CONF-A RED spine: AUD-7 spot fixture split + A1 (account conformance) + A4 (spot no-drift) RED tests (Wave 1)
+- [x] 05.1-01-PLAN.md — CONF-A RED spine: AUD-7 spot fixture split + A1 (account conformance) + A4 (spot no-drift) RED tests (Wave 1)
 - [ ] 05.1-02-PLAN.md — CONF-A RED spine: A2 (venue_order_id) + A3 (halt latch) + A5 (redeliver dedup) RED tests (Wave 1)
 - [ ] 05.1-03-PLAN.md — CONF-A RED spine: A6 (supervisor catch-all) + A7 (submit timeout) + A8 (pause defer-replay) RED tests (Wave 1)
 - [ ] 05.1-04-PLAN.md — D-01: widen Account ABC (7-member surface) + Simulated rename + VenueAccount ledgered settlement -> A1 GREEN (Wave 2)
