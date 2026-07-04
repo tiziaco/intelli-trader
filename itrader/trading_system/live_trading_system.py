@@ -19,6 +19,7 @@ from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from itrader.portfolio_handler.reconcile import is_within_single_unit_tolerance
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.alert_sink import LogAlertSink
@@ -397,7 +398,18 @@ class LiveTradingSystem:
             self._okx_data_provider = OkxDataProvider(
                 self._okx_connector, symbol=_OKX_STREAM_SYMBOL,
                 timeframe=_OKX_STREAM_TIMEFRAME)
-            self._venue_account = VenueAccount(self._okx_connector)
+            # D-03 (V17-04, quote-wiring arm): thread the WIRED pair's real quote +
+            # spot market-type into the VenueAccount so the settlement currency is the
+            # traded pair's quote (USDC for BTC/USDC — never the USDT default) AND the
+            # per-symbol position truth is DERIVED from total[BASE] (OKX spot reports
+            # no position rows). Both are taken from the single wiring input
+            # (_OKX_STREAM_SYMBOL): quote = right leg, symbol drives the base read.
+            self._venue_account = VenueAccount(
+                self._okx_connector,
+                quote_currency=_OKX_STREAM_SYMBOL.split('/')[1],
+                market_type='spot',
+                symbol=_OKX_STREAM_SYMBOL,
+            )
 
             # Phase 3 (D-01/D-13 provider->feed seam, FEED-05): inject the real OKX
             # provider into the LIVE feed via the PUBLIC setter — it assigns
@@ -563,6 +575,56 @@ class LiveTradingSystem:
         # Zero -> no-op; exactly one -> link the venue-cached account onto it.
         for portfolio in active_portfolios:
             portfolio.account = self._venue_account
+
+    def _run_session_baseline_guard(self) -> None:
+        """Session-start baseline guard (D-04, ARCH-2): HALT on unexplained residual.
+
+        Sequenced AFTER reconciliation and BEFORE the engine thread spawns. The
+        reconciler has already SYNCED every EXPLAINABLE delta (adopted external
+        fills, re-linked brackets, in-band adjustments); anything LEFT is a
+        base-asset residual of UNKNOWN origin — wrong sub-account wiring, a
+        crashed-session leftover, a forgotten manual deposit. Per ARCH-2
+        sub-decision 3 the engine must NEVER trade on exposure it cannot explain,
+        and it must NEVER auto-adopt that exposure. So compare the venue base-asset
+        holding against the engine's post-reconcile believed position within the
+        per-instrument dust epsilon (F/U-6 — the SAME drift.py band the on-fill
+        compare uses, resolved via the handler's instrument precision), and on ANY
+        residual mismatch call the LATCHED halt (D-05) so ``start()`` refuses
+        RUNNING. Quote-side cash is NOT asserted (deposits are legitimate funding).
+        The halt reason is a FIXED literal (never ``str(exc)`` — no venue secret can
+        leak, ASVS V7 / T-05.1-10).
+
+        The guard's halt is REAL only because 05.1-05 latched ``HALTED``: a guard
+        halt during session init cannot be clobbered back to RUNNING (the processing
+        loop's unconditional RUNNING stamp is gated by ``start()``'s ``_is_halted()``
+        refusal downstream of this call).
+        """
+        if self._venue_account is None:
+            return
+        symbol = _OKX_STREAM_SYMBOL
+        venue_qty = self._venue_account.positions.get(symbol, Decimal('0'))
+        # F/U-6: reuse the per-instrument drift epsilon (the same band the on-fill
+        # drift compare keys off the wired instrument's quantity precision).
+        precision = self.portfolio_handler._drift_precision(symbol)
+        for portfolio in self.portfolio_handler.get_active_portfolios():
+            engine_position = portfolio.get_open_position(symbol)
+            engine_qty = (
+                engine_position.net_quantity if engine_position is not None
+                else Decimal('0')
+            )
+            if is_within_single_unit_tolerance(engine_qty, venue_qty, precision):
+                continue  # base-asset balance == believed position — trustworthy.
+            # Unexplained base-asset residual: NEVER auto-adopt exposure of unknown
+            # origin — latch HALT BEFORE trading (D-04/D-05). start()'s post-guard
+            # _is_halted() refusal keeps the engine from spawning the loop.
+            self.logger.error(
+                'Session-start baseline guard: unexplained base-asset residual — '
+                'halting before trading (venue exposure the engine cannot explain)',
+                symbol=symbol,
+                engine_qty=str(engine_qty),
+                venue_qty=str(venue_qty))
+            self.halt('baseline-residual')
+            return
 
     def halt(self, reason: str) -> None:
         """Freeze-in-place halt of the whole engine (D-01/D-02/D-06/D-07).
@@ -1248,6 +1310,16 @@ class LiveTradingSystem:
                         exchange=self._okx_exchange,
                     )
                     reconciler.reconcile()
+
+                # D-04 (V17-04, ARCH-2 guard arm): session-start baseline guard,
+                # sequenced strictly AFTER reconcile() and BEFORE the thread spawn.
+                # Reconcile syncs the explainable; this guard HALTs on the residue —
+                # any unexplained base-asset holding the engine cannot account for.
+                # Runs even when the store has no rehydrate() (the reconcile block
+                # above is store-gated; the guard is not — a fresh session with a
+                # venue holding the engine never opened must still halt). On a clean
+                # fresh session (engine flat, venue flat) it is a benign no-op.
+                self._run_session_baseline_guard()
 
             # D-05 (V17-03): a reconcile/guard halt during session init must LATCH.
             # The VenueReconciler.reconcile() above (or the baseline guard) may have

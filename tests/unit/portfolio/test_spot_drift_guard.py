@@ -117,7 +117,14 @@ def _spot_venue_portfolio(venue_connectors, btc_total: str) -> Portfolio:
     """
     connector = venue_connectors(_spot_payloads_with_btc(btc_total))
     portfolio = Portfolio("spot_venue_pf", "okx", Decimal("150000"), datetime.now())
-    account = VenueAccount(connector, quote_currency="USDC")
+    # Wire the account exactly as the composition root now does (D-03,
+    # live_trading_system.py:400): the real quote (USDC) + spot market-type +
+    # symbol so per-symbol position truth derives from total[BASE] (OKX spot has
+    # no fetch_positions rows). This is the 05.1-08 real-quote wiring that turns
+    # A4 GREEN — the assertions below are unchanged.
+    account = VenueAccount(
+        connector, quote_currency="USDC", market_type="spot", symbol=_TICKER
+    )
     account.snapshot()
     portfolio.account = account
     return portfolio
