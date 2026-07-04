@@ -158,7 +158,7 @@ def test_duplicate_trade_id_emits_single_fill(
     A ccxt.pro reconnect re-pushes recent trades; without dedup the mirror double-counts.
     """
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     trade = {
         "id": "T-42",
         "order": "OID-1",
@@ -177,7 +177,7 @@ def test_duplicate_trade_id_emits_single_fill(
     assert fills[0].status is FillStatus.EXECUTED
     assert fills[0].quantity == to_money("0.2")
     # The dedup key is recorded so a later re-send stays a no-op.
-    assert "T-42" in exchange._seen_trade_ids
+    assert "T-42" in exchange._index._seen_trade_ids
 
 
 def test_distinct_trade_ids_both_emit(
@@ -185,7 +185,7 @@ def test_distinct_trade_ids_both_emit(
 ) -> None:
     """Two DISTINCT trade ids for the same order are two real partial fills — both emit."""
     order = _make_order(quantity=Decimal("0.5"))
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     base = {"order": "OID-1", "price": "42000.0", "fee": {"cost": "0.04"}, "timestamp": 1704067202000}
 
     exchange._handle_trade({**base, "id": "T-1", "amount": "0.2"})
@@ -218,7 +218,7 @@ def test_fill_before_venue_id_is_buffered_not_dropped(
     # Fill arrives before submit completes -> uncorrelated -> BUFFERED, not emitted.
     exchange._handle_trade(fill)
     assert queue.empty()
-    assert exchange._pending_fills_by_venue_id.get("OID-9") == [fill]
+    assert exchange._index._pending_fills_by_venue_id.get("OID-9") == [fill]
 
     # Now the submit RPC returns the venue id -> correlation lands -> buffer drains.
     exchange._connector.client.create_order = AsyncMock(return_value={"id": "OID-9"})
@@ -230,7 +230,7 @@ def test_fill_before_venue_id_is_buffered_not_dropped(
     assert fills[0].quantity == to_money("0.5")
     assert fills[0].order_id == order.order_id
     # The buffer was consumed (no lingering entry).
-    assert "OID-9" not in exchange._pending_fills_by_venue_id
+    assert "OID-9" not in exchange._index._pending_fills_by_venue_id
 
 
 def test_fill_resolves_via_clordid_before_venue_id(
@@ -241,7 +241,7 @@ def test_fill_resolves_via_clordid_before_venue_id(
     order = _make_order(order_id=77)
     clordid = OkxExchange._client_order_id(order)
     # Pending correlation registered BEFORE the RPC returns the venue id.
-    exchange._orders_by_clOrdId[clordid] = order
+    exchange._index._orders_by_clOrdId[clordid] = order
     fill = {
         "id": "T-5",
         "order": "OID-LATE",   # not yet in _orders_by_venue_id
@@ -258,7 +258,7 @@ def test_fill_resolves_via_clordid_before_venue_id(
     assert len(fills) == 1
     assert fills[0].order_id == order.order_id
     # Resolved directly (not buffered).
-    assert "OID-LATE" not in exchange._pending_fills_by_venue_id
+    assert "OID-LATE" not in exchange._index._pending_fills_by_venue_id
 
 
 def test_submit_registers_clordid_pending_correlation(
@@ -272,7 +272,7 @@ def test_submit_registers_clordid_pending_correlation(
     exchange.on_order(order)
 
     assert fake_client.create_order.call_args.kwargs["params"]["clOrdId"] == clordid
-    assert exchange._orders_by_clOrdId[clordid] is order
+    assert exchange._index._orders_by_clOrdId[clordid] is order
 
 
 # --- (ii-b) restart rehydration: adopt_venue_correlation repopulates the maps --
@@ -313,7 +313,7 @@ def test_adopt_correlation_drains_prebuffered_fill(
     # (the maps are empty — _submit_order never ran for it) -> BUFFERED.
     exchange._handle_trade(fill)
     assert queue.empty()
-    assert exchange._pending_fills_by_venue_id.get("OID-REHY") == [fill]
+    assert exchange._index._pending_fills_by_venue_id.get("OID-REHY") == [fill]
 
     # Restart rehydration adopts the correlation -> the buffer drains.
     exchange.adopt_venue_correlation(order)
@@ -323,7 +323,7 @@ def test_adopt_correlation_drains_prebuffered_fill(
     assert isinstance(fills[0], FillEvent)
     assert fills[0].order_id == order.id
     assert fills[0].quantity == to_money("0.5")
-    assert "OID-REHY" not in exchange._pending_fills_by_venue_id
+    assert "OID-REHY" not in exchange._index._pending_fills_by_venue_id
 
 
 def test_adopt_correlation_lets_postrestart_fill_reach_mirror(
@@ -348,7 +348,7 @@ def test_adopt_correlation_lets_postrestart_fill_reach_mirror(
     assert len(fills) == 1
     assert fills[0].order_id == order.id
     # Resolved via the adopted map — nothing left buffered.
-    assert not exchange._pending_fills_by_venue_id
+    assert not exchange._index._pending_fills_by_venue_id
 
 
 def test_adopt_correlation_none_venue_id_is_noop(
@@ -361,8 +361,8 @@ def test_adopt_correlation_none_venue_id_is_noop(
 
     exchange.adopt_venue_correlation(order)
 
-    assert not exchange._orders_by_venue_id
-    assert not exchange._venue_id_by_order_id
+    assert not exchange._index._orders_by_venue_id
+    assert not exchange._index._venue_id_by_order_id
     assert queue.empty()
 
 
@@ -375,7 +375,7 @@ def test_malformed_trade_does_not_kill_stream(
     """A malformed fill (missing price) is skipped-and-logged inside the forever-loop;
     a subsequent good fill in the same batch still emits — the stream keeps draining."""
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     malformed = {"id": "T-bad", "order": "OID-1", "amount": "0.2", "timestamp": 1}  # no price
     good = {
         "id": "T-good",
@@ -405,7 +405,7 @@ def test_raising_trade_is_swallowed_per_trade(
     """Even a trade whose translation RAISES is swallowed per-trade (WR-02): the
     forever-loop survives and later fills still emit."""
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     good = {
         "id": "T-ok",
         "order": "OID-1",

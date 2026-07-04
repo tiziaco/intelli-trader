@@ -173,7 +173,7 @@ def test_create_order_rounds_qty_and_price_and_submits_via_call(
     _sym, otype, side, amount, price = fake_client.create_order.call_args.args
     assert (otype, side, amount, price) == ("limit", "buy", "0.5", "42000.0")
     # The venue id from the response is correlated back to the originating order.
-    assert exchange._orders_by_venue_id["OID-1"] is order
+    assert exchange._index._orders_by_venue_id["OID-1"] is order
 
 
 def test_market_order_omits_price_to_precision(
@@ -250,7 +250,7 @@ def test_watch_my_trades_fill_becomes_fillevent_on_queue(
     """A recorded venue fill is translated to a FillEvent and put on global_queue."""
     order = _make_order()
     raw = _load_lifecycle()["my_trades"][0]["data"][0]  # the partial-fill trade
-    exchange._orders_by_venue_id[raw["ordId"]] = order
+    exchange._index._orders_by_venue_id[raw["ordId"]] = order
     # ccxt watch_my_trades yields UNIFIED trades; derive one from the recorded raw fields.
     unified = {
         "order": raw["ordId"],
@@ -285,7 +285,7 @@ def test_decimal_edge_no_float_artifact(
 ) -> None:
     """A raw FLOAT fill value crosses via the string path — no Decimal(float) artifact."""
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     # Raw floats straight off ccxt — the edge must route them through to_money(str(x)).
     unified = {
         "order": "OID-1",
@@ -322,7 +322,7 @@ def test_malformed_fill_missing_price_is_skipped(
 ) -> None:
     """A fill missing price/amount is guarded before Decimal conversion (T-02-03-VALID)."""
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     exchange._handle_trade({"order": "OID-1", "amount": "1", "timestamp": 1})
     assert queue.empty()
 
@@ -337,7 +337,7 @@ def test_none_fee_cost_coalesces_to_zero_commission(
     InvalidOperation and silently drops every subsequent fill.
     """
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     unified = {
         "order": "OID-1",
         "price": "42000.0",
@@ -366,7 +366,7 @@ def test_cancel_order_routes_through_call(
     exchange: OkxExchange, fake_client: MagicMock
 ) -> None:
     """CANCEL resolves the venue id and routes through connector.call -> cancel_order."""
-    exchange._venue_id_by_order_id[1] = "OID-1"
+    exchange._index._venue_id_by_order_id[1] = "OID-1"
     cancel = _make_order(order_id=1, command=OrderCommand.CANCEL)
 
     exchange.on_order(cancel)
@@ -452,7 +452,7 @@ def test_cancel_failure_emits_error_event_not_refused_fill(
     fake_client.cancel_order = AsyncMock(
         name="cancel_order", side_effect=RuntimeError("cancel rejected")
     )
-    exchange._venue_id_by_order_id[1] = "OID-1"
+    exchange._index._venue_id_by_order_id[1] = "OID-1"
     cancel = _make_order(order_id=1, command=OrderCommand.CANCEL)
 
     exchange.on_order(cancel)
@@ -523,7 +523,7 @@ def test_client_order_id_round_trip_correlation_resolves(
 
     clordid = OkxExchange._client_order_id(order)
     assert fake_client.create_order.call_args.kwargs["params"]["clOrdId"] == clordid
-    assert exchange._orders_by_clOrdId[clordid] is order
+    assert exchange._index._orders_by_clOrdId[clordid] is order
 
     # An echoed fill carrying that clOrdId (venue-id lookup misses) resolves it.
     exchange._handle_trade({
