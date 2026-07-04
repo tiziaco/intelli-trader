@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: ready_to_plan
-stopped_at: Phases 1–5 complete — ready to plan Phase 6 (final)
-last_updated: 2026-07-04T11:21:42.000Z
-last_activity: 2026-07-04 -- Phase 02 re-verified passed (CR-01/CR-02 gaps closed by Phases 3–5)
+status: planning
+stopped_at: Phase 5 (05-13 WR-05) context gathered
+last_updated: "2026-07-04T15:50:48.168Z"
+last_activity: 2026-07-04
 progress:
-  total_phases: 6
+  total_phases: 8
   completed_phases: 5
   total_plans: 33
   completed_plans: 33
-  percent: 83
+  percent: 63
 ---
 
 # Project State
@@ -24,13 +24,13 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 6 — dynamic universe membership
+**Current focus:** Phase 05.1 — Live-Path Remediation (V17 bugs + ARCH decisions)
 
 ## Current Position
 
-Phase: 6
+Phase: 05.1
 Plan: Not started
-Status: Ready to plan
+Status: Ready to plan (inserted — urgent)
 Last activity: 2026-07-04
 
 Progress: [████████▒░] 5/6 phases complete (83%) — only Phase 6 (Dynamic Universe Membership) remains
@@ -100,6 +100,8 @@ was an off-by-one — see REQUIREMENTS.md count note).
   Phase 4 wires the runtime), RES-01 → Phase 5 (resilience fully verified on the real path; rate-limit
   built in Phase 2, reconnect+gap-recovery in Phase 3 FEED-04), COV-01 → Phase 4 (FL-13 on the first
   end-to-end live surface; `pytest-asyncio` infra lands Phase 2; real-path coverage extends to Phase 5).
+
+- Phase 05.1 inserted after Phase 5: Live-Path Remediation (URGENT)
 
 ### Decisions
 

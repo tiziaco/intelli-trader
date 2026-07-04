@@ -291,6 +291,16 @@ nautilus pure-functions; venue order id persisted for bracket re-link; two-sided
 **Cross-cutting**: RES-01 home phase (resilience pieces also built in Phases 2 rate-limit / 3 reconnect+gap-recovery);
 COV-01 real-path surface coverage completes here.
 
+### Phase 05.1: Live-Path Remediation (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 5
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 05.1 to break down)
+
 ### Phase 6: Dynamic Universe Membership
 **Goal**: Add a lean universe-membership **poll seam** for mid-run add/remove of symbols (NOT the full
 production screener), reusing the Phase-3 backfill: warmup-on-add replays the new symbol's history through
