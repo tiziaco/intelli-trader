@@ -35,7 +35,7 @@ ever relaxed to a runtime import it would still not couple the hot path to
 import threading
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from itrader.core.exceptions import (
     InsufficientFundsError,
@@ -71,13 +71,26 @@ class VenueAccount(Account):
     BEFORE the edge (mirrors the ``okx.py`` fee-guard).
     """
 
-    def __init__(self, connector: "LiveConnector", quote_currency: str = "USDT") -> None:
-        """Bind the injected session and stand up the venue cache (D-04 / D-14).
+    def __init__(
+        self,
+        connector: "LiveConnector",
+        quote_currency: str = "USDT",
+        *,
+        market_type: Literal["spot", "derivative"] = "derivative",
+        symbol: str | None = None,
+    ) -> None:
+        """Bind the injected session and stand up the venue cache (D-04 / D-14 / D-03).
 
         The composition root builds the concrete ``OkxConnector`` once and injects
         the ``LiveConnector`` session here; this leaf holds it for the cached-venue
         body. No stream is started here — the root wires and starts it via
         ``start_streaming`` (05-04) so lifecycle stays at the root.
+
+        Per-market-type venue truth (D-03): OKX SPOT has NO position rows
+        (``fetch_positions``/``watch_positions`` return ``[]``), so the wired spot
+        pair's per-symbol position truth is DERIVED from the base-currency balance
+        total (``total[BASE]``) rather than the derivatives positions channel; a
+        ``derivative`` market type keeps the unchanged ``_extract_positions`` channel.
 
         Parameters
         ----------
@@ -85,11 +98,27 @@ class VenueAccount(Account):
             The injected session/transport Protocol (never the concretion, D-04).
         quote_currency : str
             The quote-currency key read out of the ccxt-unified balance payloads
-            (``total``/``free`` maps). Defaults to ``"USDT"`` (the OKX spot quote).
+            (``total``/``free`` maps). The default ``"USDT"`` is a fallback only —
+            the composition root threads the WIRED pair's real quote (e.g. USDC for
+            the EEA/MiCA BTC/USDC pair, D-03); the root wiring lands in 05.1-08.
+        market_type : {"spot", "derivative"}
+            Selects the position-truth channel (D-03). ``"derivative"`` (default,
+            backward-compatible) reads ``fetch_positions``/``watch_positions``;
+            ``"spot"`` derives the per-symbol holding from ``total[BASE]``.
+        symbol : str | None
+            The wired traded pair (e.g. ``"BTC/USDC"``). Required for spot truth —
+            the derived base holding is keyed under this symbol and the base currency
+            is taken from its left leg (``BTC``). Unused for derivative market types.
         """
         # D-04: the injected session Protocol, NOT the concretion.
         self._connector = connector
         self._quote = quote_currency
+
+        # D-03: per-market-type venue-truth channel. ``_base`` is the base-currency
+        # key read out of ``total`` for spot position truth (left leg of the pair).
+        self._market_type = market_type
+        self._symbol = symbol
+        self._base = symbol.split("/")[0] if symbol is not None else None
 
         # D-14/D-15: RLock-guarded venue cache. Written ONLY on the connector loop
         # thread (async push) or on a snapshot call; read on the engine thread. All
@@ -158,6 +187,29 @@ class VenueAccount(Account):
             result[str(symbol)] = qty
         return result
 
+    def _extract_spot_position(self, payload: Any) -> dict[str, Decimal]:
+        """Derive spot per-symbol position truth from the BASE-currency balance total (D-03).
+
+        OKX SPOT reports NO position rows (``fetch_positions``/``watch_positions``
+        return ``[]``): the real per-symbol holding lives in the balance payload's
+        ``total[BASE]`` map. Reads ``total[self._base]`` — guarding None/missing keys
+        BEFORE the ``to_money(str(x))`` edge (never ``Decimal(float)``) — and keys it
+        under the wired ``symbol``. A zero (or absent) base total is a FLAT position,
+        surfaced as an empty map (no row), mirroring the derivative channel which
+        reports no row when flat. Returns ``{}`` when the spot pair is unconfigured
+        (``symbol``/``base`` unset) so an unwired leaf is structurally inert.
+        """
+        if self._symbol is None or self._base is None:
+            return {}
+        total_map = payload.get("total") if isinstance(payload, dict) else None
+        base_raw = total_map.get(self._base) if isinstance(total_map, dict) else None
+        if base_raw is None:
+            return {}
+        qty = to_money(str(base_raw))  # Decimal edge
+        if qty == 0:
+            return {}
+        return {self._symbol: qty}
+
     # --- async push (D-14 push writer — cache-write ONLY, never compare/halt) ---
 
     async def _stream_account(self) -> None:
@@ -171,11 +223,20 @@ class VenueAccount(Account):
         while True:
             update = await self._connector.client.watch_balance()
             balance, available = self._extract_balance(update)
+            # D-03: on spot the position truth rides the BALANCE stream (there is no
+            # positions channel), so derive it here from ``total[BASE]``. Derivative
+            # positions arrive via ``_stream_positions`` instead (unchanged).
+            spot_positions = (
+                self._extract_spot_position(update)
+                if self._market_type == "spot" else None
+            )
             with self._lock:
                 if balance is not None:
                     self._venue_balance = balance
                 if available is not None:
                     self._venue_available = available
+                if spot_positions is not None:
+                    self._venue_positions = spot_positions
 
     async def _stream_positions(self) -> None:
         """Consume the venue positions stream forever, writing the cache ONLY (D-15).
@@ -195,11 +256,16 @@ class VenueAccount(Account):
         The composition root calls this AFTER ``connect()`` so the connector owns
         the loop lifecycle (the spawned handles are cancelled by the connector on
         ``disconnect``). Not started in ``__init__`` — wiring stays at the root.
+
+        D-03: a spot leaf does NOT spawn the positions stream — spot has no positions
+        channel (``watch_positions`` yields ``[]`` and would clobber the base-derived
+        holding). Spot position truth rides ``_stream_account`` (the balance stream);
+        only derivative leaves consume ``_stream_positions``.
         """
-        self._stream_handles = [
-            self._connector.spawn(self._stream_account()),
-            self._connector.spawn(self._stream_positions()),
-        ]
+        handles = [self._connector.spawn(self._stream_account())]
+        if self._market_type != "spot":
+            handles.append(self._connector.spawn(self._stream_positions()))
+        self._stream_handles = handles
 
     # --- REST snapshot (D-14/D-19 — startup / restart / gap recovery) ----------
 
@@ -213,11 +279,19 @@ class VenueAccount(Account):
         The positions cache is fully replaced (the REST snapshot is authoritative)
         and the pending-reservation overlay is naturally reconciled to venue truth
         as the next admission cycle reads the refreshed available.
+
+        D-03: on spot the position truth is DERIVED from the balance payload's
+        ``total[BASE]`` (``fetch_positions`` returns ``[]`` for spot), so the
+        derivatives positions RPC is skipped and the holding read from ``bal``;
+        derivative leaves keep the unchanged ``fetch_positions`` channel.
         """
         bal = self._connector.call(self._connector.client.fetch_balance())
-        pos = self._connector.call(self._connector.client.fetch_positions())
         balance, available = self._extract_balance(bal)
-        positions = self._extract_positions(pos)
+        if self._market_type == "spot":
+            positions = self._extract_spot_position(bal)
+        else:
+            pos = self._connector.call(self._connector.client.fetch_positions())
+            positions = self._extract_positions(pos)
         with self._lock:
             if balance is not None:
                 self._venue_balance = balance
