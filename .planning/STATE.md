@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: executing
-stopped_at: Phase 05 reopened for 05-13 (WR-05 remediation) — 05-SPEC.md staged
-last_updated: "2026-07-03T00:00:00.000Z"
-last_activity: 2026-07-03
+status: "Reopened — WR-05 (unbounded OkxExchange correlation) carved into plan 05-13. Next: /gsd:discuss-phase 5 (resolve 3 "how" decisions) → /gsd:plan-phase 5 (produce 05-13-PLAN.md). Full design: docs/superpowers/specs/2026-07-03-mid-session-order-lifecycle-reconciliation-spec.md"
+stopped_at: Phase 5 (05-13 WR-05) context gathered
+last_updated: "2026-07-04T08:47:06.894Z"
+last_activity: "2026-07-03 - Reopened Phase 05 for 05-13: staged 05-SPEC.md (narrow WR-05 R1–R3), backed up 05-CONTEXT.md → .bak; broad R4 (mid-session order-status signal + out-of-band) deferred to a future phase"
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 33
+  completed_phases: 5
+  total_plans: 32
   completed_plans: 32
-  percent: 57
+  percent: 71
 ---
 
 # Project State
@@ -269,9 +269,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-03T00:00:00.000Z
-Stopped at: Completed 05-12-PLAN.md — Phase 05 complete (RECON-06 closed)
-Resume file: None
+Last session: 2026-07-04T08:47:06.886Z
+Stopped at: Phase 5 (05-13 WR-05) context gathered
+Resume file: .planning/phases/05-real-sandbox-path-reconciliation-persistence-live-drive/05-CONTEXT.md
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps
