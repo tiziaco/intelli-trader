@@ -48,6 +48,17 @@ _FORBIDDEN = (
     # LiveTradingSystem(exchange='paper') arm only — it must NEVER be pulled onto
     # the backtest hot path (protects the oracle byte-exactness + the W1/W2 perf gate).
     "itrader.price_handler.providers.replay_provider",
+    # Phase 5 (D-17/RECON-05, inertness gate): the two-sided restart reconciler is
+    # lazy-imported inside LiveTradingSystem.start()'s OKX arm ONLY — its live-arm
+    # deps (LiveConnector / VenueAccount / CachedSqlOrderStorage) are TYPE_CHECKING-
+    # only, but the MODULE must still never be pulled onto the backtest hot path (it
+    # is the live-drive reconcile surface). If a future edit hoists it to module
+    # scope this probe fails loudly. NOTE: the pure VenueAccount body
+    # (itrader.portfolio_handler.account.venue) and the AlertSink
+    # (itrader.trading_system.alert_sink) are deliberately NOT forbidden — they pull
+    # no async/connector/SQLAlchemy (LiveConnector stays TYPE_CHECKING-only), so they
+    # are inert-by-construction even when transitively imported.
+    "itrader.portfolio_handler.reconcile.venue_reconciler",
 )
 leaked = [name for name in _FORBIDDEN if name in sys.modules]
 assert not leaked, (

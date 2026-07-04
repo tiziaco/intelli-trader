@@ -33,12 +33,15 @@ _REAL_OKX = ccxtpro.okx
 _PATCH_TARGET = "itrader.connectors.okx.ccxtpro.okx"
 
 
-def _settings(monkeypatch: pytest.MonkeyPatch, *, sandbox: bool) -> OkxSettings:
+def _settings(
+    monkeypatch: pytest.MonkeyPatch, *, sandbox: bool, region: str = "global"
+) -> OkxSettings:
     """Build OkxSettings from a controlled OKX_API_* env (demo values, never real secrets)."""
     monkeypatch.setenv("OKX_API_KEY", "demo-key")
     monkeypatch.setenv("OKX_API_SECRET", "demo-secret")
     monkeypatch.setenv("OKX_API_PASSPHRASE", "demo-pass")
     monkeypatch.setenv("OKX_SANDBOX", "true" if sandbox else "false")
+    monkeypatch.setenv("OKX_REGION", region)
     return OkxSettings()
 
 
@@ -85,6 +88,37 @@ def test_sandbox_false_uses_live_host(monkeypatch: pytest.MonkeyPatch) -> None:
             api_urls = str(client.urls["api"])
             assert "wspap" not in api_urls
             assert "ws.okx.com" in api_urls
+        finally:
+            connector.disconnect()
+
+
+# ------------------------------------------------------------------- region WS host (OKX-REGION)
+
+
+def test_region_ws_host_global_demo_is_wspap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """region=global + sandbox=True pins client.urls['api']['ws'] to the wspap WS URL."""
+    connector = OkxConnector(_settings(monkeypatch, sandbox=True, region="global"))
+    with patch(_PATCH_TARGET, _real_offline_okx):
+        connector.connect()
+        try:
+            assert connector.ws_hostname == "wspap.okx.com"
+            assert (connector.client.urls["api"]["ws"]
+                    == "wss://wspap.okx.com:8443/ws/v5")
+        finally:
+            connector.disconnect()
+
+
+def test_region_ws_host_eea_demo_is_wseeapap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """region=eea + sandbox=True pins the WS host to the EEA demo host (wseeapap)."""
+    connector = OkxConnector(_settings(monkeypatch, sandbox=True, region="eea"))
+    with patch(_PATCH_TARGET, _real_offline_okx):
+        connector.connect()
+        try:
+            assert connector.ws_hostname == "wseeapap.okx.com"
+            assert (connector.client.urls["api"]["ws"]
+                    == "wss://wseeapap.okx.com:8443/ws/v5")
+            # The region override supersedes ccxt's global-only demo swap.
+            assert "wspap.okx.com" not in connector.client.urls["api"]["ws"]
         finally:
             connector.disconnect()
 

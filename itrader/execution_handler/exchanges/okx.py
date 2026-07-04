@@ -29,22 +29,45 @@ from ``base`` keeps the Protocol import ccxt-free and cannot couple a consumer t
 Indentation: this tree is TAB-indented (a mixed-indent diff breaks the file).
 """
 
-import threading
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 from queue import Queue
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from itrader.connectors.base import LiveConnector
-from itrader.core.enums import OrderCommand, OrderType, Side
+from itrader.core.enums import ErrorSeverity, OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
-from itrader.core.ids import OrderId
 from itrader.core.money import to_money
-from itrader.events_handler.events import FillEvent, OrderEvent
+from itrader.events_handler.events import ErrorEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 
 from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
 from .base import AbstractExchange
+from .venue_correlation import VenueCorrelationIndex
+
+
+# 05-08 (RES-01/D-19/D-20) reconnect-supervisor tuning — named module constants,
+# documented [ASSUMED] and tunable from sandbox behaviour (research A3; anchored to
+# nautilus defaults: open_check_missing_retries=5 / position_check_retries=3). A
+# transient socket drop reconnects with exponential backoff (staying running,
+# publish-and-continue); the debounce keeps a sub-second blip from escalating to a
+# pause (D-19); the retry ceiling bounds the retry loop so it never spins forever ->
+# HALT on exhaustion (D-20).
+_STREAM_RECONNECT_DEBOUNCE_SECONDS = 0.25    # A3 [ASSUMED] sub-second blip -> no pause
+_STREAM_RECONNECT_BACKOFF_BASE_SECONDS = 1.0  # A3 [ASSUMED] first backoff step
+_STREAM_RECONNECT_BACKOFF_CAP_SECONDS = 30.0  # A3 [ASSUMED] exponential backoff ceiling
+_STREAM_RECONNECT_RETRY_CEILING = 6           # A3 [ASSUMED] retries exhausted -> HALT (D-20)
+
+# WR-04: OKX clOrdId charset. The client order id is the fast-fill-race
+# correlation key (``_orders_by_clOrdId``) and MUST be unique per order.
+# Base62 of the order id's 128 bits is LOSSLESS (a bijection on the 16 raw
+# UUID bytes) and renders to <=22 chars, so ``"it"`` + token stays under
+# OKX's 32-char alphanumeric clOrdId limit with the full 128-bit entropy
+# preserved. The old ``("it" + hex_token)[:32]`` dropped the UUID tail bits,
+# so two orders differing only there collided on one clOrdId (wrong-order
+# fill correlation).
+_CLORDID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 
 class OkxExchange(AbstractExchange):
@@ -81,25 +104,47 @@ class OkxExchange(AbstractExchange):
 		self._connected = False
 		self._connection_status = ExchangeConnectionStatus.DISCONNECTED
 
-		# Venue-id correlation: a streamed fill (watch_my_trades) carries the venue order id;
-		# resolve it back to the originating OrderEvent so FillEvent.new_fill carries the
+		# Venue-id correlation (WR-05 R1): all venue-correlation state — the three
+		# venue-id / order-id / clOrdId maps, the late-fill buffer, the bounded
+		# trade-id dedup ring, the cumulative-filled counter, and the cross-thread
+		# lock — lives on VenueCorrelationIndex; this arm DELEGATES to it. A streamed
+		# fill (watch_my_trades) carries the venue order id; the index resolves it
+		# back to the originating OrderEvent so FillEvent.new_fill carries the
 		# order_id/strategy_id/portfolio_id audit chain (D-12).
-		# WR-03: the two correlation maps are written on the ENGINE thread (submit /
-		# cancel, via connector.call) and read on the CONNECTOR LOOP thread (streamed
-		# fills, via _handle_trade). Guard every write/read with this lock so the
-		# cross-thread dict access is synchronised. NOTE (latent, streams not started
-		# this phase): a lock alone does not close the fast-fill race — the venue can
-		# push a fill before create_order returns the venue id, so the fill still
-		# resolves to order=None and is dropped. The full fix (register a pending
-		# correlation keyed by clOrdId BEFORE the submit RPC, and/or briefly buffer
-		# unmatched fills for late correlation) lands with OkxExchange.connect() stream
-		# wiring; this guard is the documented minimum until then.
-		self._correlation_lock = threading.Lock()
-		self._orders_by_venue_id: Dict[str, OrderEvent] = {}
-		self._venue_id_by_order_id: Dict[OrderId, str] = {}
+		# WR-03: the index guards every map/ring/counter read+write with its own lock
+		# (writes on the ENGINE thread via submit/cancel; reads on the CONNECTOR LOOP
+		# thread via _handle_trade). The fast-fill race (a fill pushed before
+		# create_order returns the venue id) is closed by the clOrdId pre-correlation
+		# + unmatched-fill buffer inside the index (D-12, Pitfall 11); WR-05 R2/R3
+		# additionally bound the state (fill-driven release-on-terminal + the dedup
+		# ring) so it no longer grows without limit over a long live session.
+		self._index = VenueCorrelationIndex()
 
 		# Spawned stream-task handles (cancelled by the connector on disconnect).
 		self._stream_handles: List[Any] = []
+
+		# 05-08 (RES-01/D-19/D-20): reconnect-supervisor state. Each stream
+		# consume-loop runs under a bounded-retry supervisor — a transient socket
+		# drop reconnects with exponential backoff instead of the task dying
+		# silently, a fatal error or an exhausted retry ceiling halts the engine
+		# (D-20), and a sustained disconnect pauses new order submission until the
+		# stream reconnects + a fresh REST reconcile completes (D-19).
+		self._reconnect_attempts: Dict[str, int] = {}
+		self._streams_down: set[str] = set()
+		# Per-instance tuning seeded from the module defaults so a test (or a
+		# sandbox tune) can shrink the debounce/backoff without monkeypatching the
+		# module — the module constants stay the documented [ASSUMED] anchor.
+		self._reconnect_debounce_s = _STREAM_RECONNECT_DEBOUNCE_SECONDS
+		self._reconnect_backoff_base_s = _STREAM_RECONNECT_BACKOFF_BASE_SECONDS
+		self._reconnect_backoff_cap_s = _STREAM_RECONNECT_BACKOFF_CAP_SECONDS
+		self._reconnect_ceiling = _STREAM_RECONNECT_RETRY_CEILING
+		# Injected seams (composition root, 05-08 Task 2): the 05-04 freeze-in-place
+		# halt entrypoint (fatal / exhausted -> HALTED + CRITICAL alert) and the
+		# pause/resume-on-disconnect callbacks (D-19). All None on the paper/backtest
+		# path (streams never start there).
+		self._halt_signal: Optional[Callable[[str], None]] = None
+		self._on_stream_down: Optional[Callable[[str], None]] = None
+		self._on_stream_up: Optional[Callable[[str], None]] = None
 
 	# --- symbol / time helpers ------------------------------------------------
 
@@ -107,6 +152,37 @@ class OkxExchange(AbstractExchange):
 		"""Venue symbol for a ticker. Pass-through today (the OrderEvent carries the venue
 		symbol); a dedicated translation table lands with the data arm if needed."""
 		return ticker
+
+	@staticmethod
+	def _client_order_id(event: OrderEvent) -> str:
+		"""Client order id (clOrdId) for the Pitfall-11 fast-fill-race pre-correlation.
+
+		OKX requires an alphanumeric clOrdId (<=32 chars). The engine order id
+		(a UUIDv7 — the locked single-UUID-scheme decision) is rendered LOSSLESSLY
+		to a compact alphanumeric token by base62-encoding its 128 bits, with an
+		``it`` prefix. Lossless + deterministic (WR-04): distinct order ids yield
+		distinct clOrdIds — no truncation collision — and the venue-echoed clOrdId
+		maps straight back to the pending correlation registered before the submit
+		RPC. ``order_id`` is a ``uuid.UUID`` on every live path (``.bytes``); the
+		``int`` fallback keeps the encoder total for the int-id test doubles.
+		"""
+		oid = event.order_id
+		n = (int.from_bytes(oid.bytes, "big")
+		     if hasattr(oid, "bytes") else int(oid))
+		if n == 0:
+			token = "0"
+		else:
+			digits: List[str] = []
+			while n > 0:
+				n, rem = divmod(n, 62)
+				digits.append(_CLORDID_ALPHABET[rem])
+			token = "".join(reversed(digits))
+		clordid = "it" + token
+		# WR-04 rendering contract: alphanumeric + within OKX's 32-char clOrdId
+		# limit. A full 128-bit base62 token is <=22 chars, so "it" + token <=24.
+		assert clordid.isalnum() and len(clordid) <= 32, (
+			f"clOrdId {clordid!r} violates the OKX charset/length contract")
+		return clordid
 
 	@staticmethod
 	def _ms_to_dt(ts: Any) -> datetime:
@@ -135,14 +211,42 @@ class OkxExchange(AbstractExchange):
 			self.logger.error(
 				"OKX order op failed for %s %s: %s",
 				event.action, event.ticker, str(exc), exc_info=True)
-			# WR-02: the reconciliation contract (mirrored by SimulatedExchange's
-			# _emit_rejection) is that a failed/refused submit or cancel flows back
-			# as FillEvent(REFUSED) so OrderHandler.on_fill transitions the stored
-			# order mirror PENDING->REJECTED. Only logging would leave the mirror
-			# stuck at PENDING forever — a silent order-state divergence once the arm
-			# is live-wired. Emit REFUSED with the order's own (Decimal) price/quantity
-			# and commission Decimal("0") (never settled); no time= so it inherits the
-			# order's decision time (admission-time outcome, D-01/D-13).
+			# WR-01: branch on the command — a failed CANCEL is NOT an execution
+			# event and must not travel the fill/execution channel.
+			if event.command is OrderCommand.CANCEL:
+				# A cancel-ack failure is a command-ack failure: the venue order
+				# is very likely STILL RESTING. Emitting FillEvent(REFUSED) here
+				# would drive ReconcileManager._apply_refused -> REJECTED, wrongly
+				# terminalizing a live resting order (later a real fill arrives
+				# against an order the engine believes is dead). Leave the mirror
+				# in its resting state and publish an ErrorEvent on the existing
+				# operator/dead-letter channel (ERROR route -> _log_error_event) so
+				# the failed cancel is AUDITABLE; the next reconcile / drift pass
+				# reconciles true venue state. (Nautilus OrderCancelRejected leaves
+				# order state untouched; a first-class OrderCancelRejected event is
+				# the full-parity option, DEFERRED — ErrorEvent gets correctness
+				# now.) Scrub (T-05-27): bind the exception TYPE only, never
+				# ``str(exc)`` — a connector error may carry request context /
+				# a secret.
+				self.global_queue.put(ErrorEvent(
+					time=event.time,
+					source="okx_exchange",
+					error_type=type(exc).__name__,
+					error_message=(
+						f"OKX cancel failed for order {event.order_id} "
+						f"({event.ticker}) — mirror left resting, "
+						"deferred to reconcile"),
+					operation="cancel_order",
+					severity=ErrorSeverity.ERROR))
+				return
+			# SUBMIT failure: keep the existing reconciliation contract (mirrored
+			# by SimulatedExchange's _emit_rejection) — a submit that never reached
+			# the venue flows back as FillEvent(REFUSED) so OrderHandler.on_fill /
+			# ReconcileManager transitions the stored mirror PENDING->REJECTED.
+			# Only logging would leave the mirror stuck at PENDING forever. Emit
+			# REFUSED with the order's own (Decimal) price/quantity and commission
+			# Decimal("0") (never settled); no time= so it inherits the order's
+			# decision time (admission-time outcome, D-01/D-13).
 			self.global_queue.put(FillEvent.new_fill(
 				"REFUSED", event, price=event.price, quantity=event.quantity,
 				commission=Decimal("0")))
@@ -193,25 +297,68 @@ class OkxExchange(AbstractExchange):
 		if event.order_type is OrderType.MARKET and event.action is Side.BUY:
 			params["createMarketBuyOrderRequiresPrice"] = False
 
+		# Pitfall 11 fast-fill-race fix (D-12): attach a CLIENT order id and
+		# register the pending correlation keyed by it BEFORE the create_order RPC.
+		# OKX echoes clOrdId back on the fill, so a fill that streams in before the
+		# RPC returns the venue id still resolves its OrderEvent in _handle_trade
+		# (which consults _orders_by_clOrdId when the venue-id lookup misses).
+		client_order_id = self._client_order_id(event)
+		params["clOrdId"] = client_order_id
+		# WR-05 R1: the index owns the pending-correlation write (guarded internally).
+		self._index.register_pending(client_order_id, event)
+
 		response = self._connector.call(
 			client.create_order(symbol, otype, side, amount, price, params=params))
 
 		venue_id = response.get("id") if isinstance(response, dict) else None
 		if venue_id is not None:
-			with self._correlation_lock:  # WR-03: cross-thread write guard
-				self._orders_by_venue_id[venue_id] = event
-				self._venue_id_by_order_id[event.order_id] = venue_id
+			# Write the venue-id correlation and pop any fills that streamed back
+			# before it landed (fast-fill race, Pitfall 11 — never the old silent
+			# drop). register drains under the index lock and RETURNS the buffered
+			# trades; re-drain OUTSIDE it (_handle_trade re-acquires the index lock,
+			# and the index lock is non-reentrant).
+			for buffered_trade in self._index.register(venue_id, event, client_order_id):
+				self._handle_trade(buffered_trade)
 
 	def _cancel_order(self, event: OrderEvent) -> None:
 		"""Cancel the venue order correlated to ``event.order_id`` via the RPC."""
 		symbol = self._to_symbol(event.ticker)
-		with self._correlation_lock:  # WR-03: cross-thread read guard
-			venue_id = self._venue_id_by_order_id.get(event.order_id)
+		# WR-05 R1: the index resolves the venue id (guarded internally, WR-03).
+		venue_id = self._index.venue_id_for(event.order_id)
 		if venue_id is None:
 			self.logger.warning(
 				"Cancel for order %s has no known venue id — skipping", event.order_id)
 			return
 		self._connector.call(self._connector.client.cancel_order(venue_id, symbol))
+
+	def adopt_venue_correlation(self, order: Any) -> None:
+		"""Restart-rehydration correlation seam (WR-02 / RECON-05 / D-12).
+
+		A pre-restart Order never went through ``_submit_order`` — the ONLY writer
+		of the three in-memory correlation maps (``_orders_by_venue_id`` /
+		``_venue_id_by_order_id`` / ``_orders_by_clOrdId``). Consequence once the
+		live fill stream is spawned (CR-01): a post-restart fill for a rehydrated
+		resting order resolves to no OrderEvent and is BUFFERED under
+		``_pending_fills_by_venue_id`` forever (silently lost), and a cancel of a
+		rehydrated order is a silent no-op. ``VenueReconciler.reconcile`` calls this
+		during restart rehydration for each working-set order (and each re-linked
+		bracket leg) carrying a persisted ``venue_order_id``: it repopulates the maps
+		exactly as ``_submit_order`` does, then re-drains any fills that streamed in
+		before adoption — so the fill reaches the mirror and the cancel resolves.
+		"""
+		venue_id = order.venue_order_id
+		if venue_id is None:
+			# Nothing to correlate — an order the venue never acknowledged.
+			return
+		event = OrderEvent.new_order_event(order)
+		venue_id = str(venue_id)
+		# WR-05 R1: the index repopulates all three maps and RETURNS any fills
+		# buffered before this correlation landed (mirrors the _submit_order
+		# fast-fill-race drain). Re-drain OUTSIDE the index lock — _handle_trade
+		# re-acquires it and the index lock is non-reentrant.
+		for buffered_trade in self._index.adopt(
+			venue_id, event, self._client_order_id(event)):
+			self._handle_trade(buffered_trade)
 
 	def on_market_data(self, bar: Any) -> None:
 		"""No-op for live: the venue matches resting orders, not us (D-06).
@@ -224,20 +371,63 @@ class OkxExchange(AbstractExchange):
 	# --- streaming (D-07 — the exchange emits FillEvents itself) ---------------
 
 	def _handle_trade(self, trade: Any) -> None:
-		"""Translate one venue fill (ccxt-unified trade) into a ``FillEvent`` on ``global_queue``.
+		"""Translate one venue fill (ccxt-unified trade) into a ``FillEvent`` (D-07, D-12).
+
+		Idempotent + race-safe (RECON-02, Pitfall 11):
+		- **fill-ID dedup** — a reconnect re-send carries the same ``trade['id']``
+		  and is an idempotent no-op, never double-counted;
+		- **fast-fill race** — a fill that arrives before its ``create_order`` RPC
+		  returns the venue id is resolved via the ``clOrdId`` pending correlation
+		  registered before the submit, or BUFFERED for late correlation (drained by
+		  ``_submit_order`` once the venue-id map lands) — never the old silent drop.
 
 		CONN-05: every inbound float crosses the Decimal boundary via ``to_money(str(x))``.
 		Business time: ``FillEvent.time`` is stamped from the venue trade timestamp.
-		Input validation (T-02-03-VALID): a fill for an unknown order, or one missing
-		price/amount, is skipped-and-logged — never crashed.
+		Input validation (T-02-03-VALID): a fill missing price/amount/timestamp is
+		skipped-and-logged — never crashed.
 		"""
-		venue_id = trade.get("order") if isinstance(trade, dict) else None
-		with self._correlation_lock:  # WR-03: cross-thread read guard
-			order = self._orders_by_venue_id.get(venue_id) if venue_id is not None else None
-		if order is None:
-			self.logger.warning("Fill for unknown venue order %s — skipping", venue_id)
+		# WR-05 R1: the index performs the atomic dedup + venue-id/clOrdId resolve +
+		# buffer + mark-seen under its own lock (WR-03, Pitfall 11); this arm mints +
+		# emits OUTSIDE the lock (the FillEvent mint touches no correlation map).
+		result = self._index.resolve(trade)
+		if result.outcome == "duplicate":
+			# An already-seen venue trade id is a reconnect re-send — idempotent no-op.
 			return
+		if result.outcome == "buffered":
+			# Uncorrelated but keyable: buffered for late correlation. _submit_order /
+			# adopt_venue_correlation re-drain once the venue-id map lands (never dropped).
+			self.logger.warning(
+				"Fill for not-yet-correlated venue order %s — buffered for late correlation",
+				result.venue_id)
+			return
+		if result.outcome == "uncorrelated":
+			# No venue id to key a buffer on — skip-and-log.
+			self.logger.warning("Fill with no venue order id — skipping")
+			return
+		# Correlated (outcome == "emit"): mint + emit OUTSIDE the lock.
+		assert result.order is not None  # narrowed by outcome == "emit"
+		emitted = self._emit_fill(trade, result.order, result.venue_id)
+		# WR-05 R2 (WR05-D1): feed the per-venue_id cumulative-filled counter and, when
+		# this fill terminalizes the order (cumulative reaches order.quantity), self-release
+		# its correlation entries so the maps do not grow without limit over a long session
+		# (drain-then-evict, WR05-D3). Gate on an actual emit + a keyable venue_id: a
+		# malformed/skipped fill must not advance the counter, and a clOrdId-only resolve
+		# (no venue id) has no venue-id-keyed entry to release.
+		if emitted and result.venue_id is not None:
+			amount = trade.get("amount") if isinstance(trade, dict) else None
+			if amount is not None and self._index.record_fill(
+				result.venue_id, result.order, to_money(str(amount))):
+				self.release_venue_correlation(result.venue_id)
 
+	def _emit_fill(self, trade: Any, order: OrderEvent, venue_id: Any) -> bool:
+		"""Mint the FillEvent for a correlated venue trade and put it on ``global_queue``.
+
+		Returns True when a FillEvent was emitted, False when the payload was malformed and
+		skipped (so the caller does NOT advance the WR-05 cumulative-filled counter for a
+		fill that never settled). Preserves the CONN-05 Decimal edge (``to_money(str(x))``),
+		the WR-01 commission None-guard + ``abs()`` magnitude normalisation, and the
+		``_ms_to_dt`` business-time stamp verbatim.
+		"""
 		price = trade.get("price")
 		amount = trade.get("amount")
 		timestamp = trade.get("timestamp")
@@ -245,7 +435,7 @@ class OkxExchange(AbstractExchange):
 			self.logger.warning(
 				"Malformed fill payload for order %s (missing price/amount/timestamp) — skipping",
 				venue_id)
-			return
+			return False
 		# WR-01: ccxt frequently emits ``fee: {"cost": None, ...}`` (fee not yet
 		# known). ``fee.get("cost", 0)`` returns None because the key IS present, and
 		# ``to_money(str(None))`` -> ``Decimal("None")`` raises InvalidOperation,
@@ -262,19 +452,195 @@ class OkxExchange(AbstractExchange):
 		fee_cost = fee.get("cost")
 		commission = abs(to_money(str(fee_cost))) if fee_cost is not None else Decimal("0")
 
+		# CR-01: carry the venue trade id onto the FillEvent as the cross-emitter
+		# idempotency key. The exchange-local ``_seen_trade_ids`` dedups a stream
+		# re-send BEFORE mint; stamping ``trade['id']`` here lets the portfolio
+		# settlement chokepoint ALSO dedup the same economic trade adopted by the
+		# restart VenueReconciler (which bypasses ``_seen_trade_ids``).
+		trade_id = trade.get("id") if isinstance(trade, dict) else None
+		venue_trade_id = str(trade_id) if trade_id is not None else None
+
 		fill = FillEvent.new_fill(
 			"EXECUTED", order,
 			price=to_money(str(price)),
 			quantity=to_money(str(amount)),
 			commission=commission,
-			time=self._ms_to_dt(timestamp))
+			time=self._ms_to_dt(timestamp),
+			venue_trade_id=venue_trade_id)
 		# D-07: the EXCHANGE emits the fill; MPSC-safe put from the connector loop thread (D-19).
 		self.global_queue.put(fill)
+		return True
+
+	def release_venue_correlation(self, venue_id: str) -> None:
+		"""Release a terminalized order's venue correlation (WR-05 R2 — the OUTBOUND twin
+		of ``adopt_venue_correlation``).
+
+		Delegates to ``VenueCorrelationIndex.release`` (drain-then-evict, WR05-D3): the index
+		drains any buffered late fills FIRST and returns them, then drops the order's
+		venue-id / order-id / clOrdId entries + the cumulative counter (bounding the maps).
+		This arm emits each drained buffered fill via ``_emit_fill`` OUTSIDE the index lock —
+		mint/emit outside the lock, matching the ``_submit_order`` / ``adopt_venue_correlation``
+		re-drain pattern — so a late buffered fill still fires its ``FillEvent`` BEFORE its
+		correlation is considered gone (no WR-02 regression). Idempotent: an unknown /
+		already-released ``venue_id`` returns nothing to emit.
+		"""
+		order, drained = self._index.release(venue_id)
+		if order is None:
+			return
+		for buffered_trade in drained:
+			self._emit_fill(buffered_trade, order, venue_id)
+
+	# --- reconnect supervisor (RES-01/D-19/D-20) -------------------------------
+
+	def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
+		"""Inject the 05-04 freeze-in-place halt entrypoint (D-20).
+
+		Called with reason ``'connector-fatal'`` when a stream hits a fatal connector
+		error (auth/permission) OR exhausts the reconnect retry ceiling. The halt
+		entrypoint owns the CRITICAL alert emission and binds only declared ErrorEvent
+		fields; the arm passes NO exception text so no secret leaks (Pitfall 16, T-05-27).
+		"""
+		self._halt_signal = halt_signal
+
+	def set_stream_state_listener(
+		self,
+		on_down: Callable[[str], None],
+		on_up: Callable[[str], None],
+	) -> None:
+		"""Inject the pause/resume-on-disconnect callbacks (D-19).
+
+		``on_down`` fires when a stream stays disconnected past the debounce window
+		(pause NEW order submission); ``on_up`` fires when it reconnects (the callback
+		owns the resume-only-after-fresh-REST-reconcile discipline). Both fire from the
+		connector loop thread, so they must not perform blocking venue I/O (Pitfall 9) —
+		the composition-root wiring flips a thread-safe flag only.
+		"""
+		self._on_stream_down = on_down
+		self._on_stream_up = on_up
+
+	async def _run_stream_supervisor(
+		self, consume: Callable[[str], Awaitable[None]], stream_name: str
+	) -> None:
+		"""Bounded-retry reconnect supervisor wrapping a stream consume-loop (D-19/D-20).
+
+		Runs ``consume`` (a forever ``while True: await watch_*()`` loop that only
+		returns by raising) under a bounded-retry wrapper:
+
+		- **transient** (``ccxt.NetworkError``/``RequestTimeout``/``DDoSProtection``) ->
+		  reconnect with exponential backoff (cap) after a short debounce, staying
+		  running (publish-and-continue). A sustained drop (past the debounce) pauses new
+		  submission (D-19); a sub-second blip that clears on the first retry does not.
+		- **fatal** (``ccxt.AuthenticationError``/``PermissionDenied``) OR the retry
+		  ceiling exhausted -> escalate to the injected halt entrypoint (HALTED +
+		  CRITICAL alert, reason ``'connector-fatal'``), never spin forever (D-20).
+
+		``asyncio.CancelledError`` is re-raised untouched so the connector's disconnect
+		can cancel the task cleanly (Pitfall 4 — no swallowed cancellation).
+		"""
+		import ccxt  # lazy: ccxt already transitively imported on the live path only
+		transient: tuple[type[BaseException], ...] = (
+			ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection)
+		fatal: tuple[type[BaseException], ...] = (
+			ccxt.AuthenticationError, ccxt.PermissionDenied)
+		while True:
+			try:
+				await consume(stream_name)
+				return  # a forever-loop returning cleanly is not expected — stop.
+			except asyncio.CancelledError:
+				raise  # cooperative teardown — never swallow.
+			except fatal as exc:
+				self._escalate_connector_halt(stream_name, exc, "fatal auth/permission error")
+				return
+			except transient as exc:
+				attempt = self._reconnect_attempts.get(stream_name, 0) + 1
+				self._reconnect_attempts[stream_name] = attempt
+				if attempt > self._reconnect_ceiling:
+					self._escalate_connector_halt(
+						stream_name, exc, "reconnect retry ceiling exhausted")
+					return
+				# Debounce first: a blip that clears on the first retry never pauses.
+				await asyncio.sleep(self._reconnect_debounce_s)
+				if attempt > 1:
+					# Still failing past the debounce window -> pause (D-19).
+					self._mark_stream_down(stream_name)
+				backoff = min(
+					self._reconnect_backoff_base_s * (2 ** (attempt - 1)),
+					self._reconnect_backoff_cap_s)
+				# Scrub (T-05-27): log the exception TYPE only, never str(exc) — a
+				# connector error may carry request context / a secret.
+				self.logger.warning(
+					"OKX %s stream dropped (%s) — reconnecting "
+					"(attempt %d/%d, backoff %.1fs)",
+					stream_name, type(exc).__name__, attempt,
+					self._reconnect_ceiling, backoff)
+				await asyncio.sleep(backoff)
+
+	def _escalate_connector_halt(self, stream_name: str, exc: BaseException, cause: str) -> None:
+		"""Halt the engine on an unrecoverable connector failure (D-20).
+
+		Scrub (T-05-27): the log carries the exception TYPE + a fixed cause string, never
+		``str(exc)``; the halt entrypoint is called with the fixed reason
+		``'connector-fatal'`` (no exception text), so no secret can reach the CRITICAL alert.
+		"""
+		self.logger.error(
+			"OKX %s stream unrecoverable (%s: %s) — halting engine",
+			stream_name, type(exc).__name__, cause)
+		if self._halt_signal is not None:
+			self._halt_signal("connector-fatal")
+
+	def _mark_stream_down(self, stream_name: str) -> None:
+		"""Record a sustained disconnect and pause new submission once (D-19)."""
+		if stream_name in self._streams_down:
+			return
+		self._streams_down.add(stream_name)
+		self.logger.warning(
+			"OKX %s stream disconnected — pausing new order submission", stream_name)
+		if self._on_stream_down is not None:
+			self._on_stream_down(stream_name)
+
+	def _on_stream_healthy(self, stream_name: str) -> None:
+		"""A successful subscribe: resume if we were paused (D-19). Does NOT reset backoff.
+
+		Called by a consume-loop after a successful venue subscribe/read. On the transition
+		out of a paused state it fires ``on_stream_up`` so the composition root can resume
+		submission only after a fresh REST reconcile.
+
+		WR-03: a subscribe is NOT proof of health — it does NOT reset the reconnect retry
+		budget. Only a delivered payload does (see ``_reset_reconnect_budget``). Resetting on
+		a mere subscribe let a subscribe-then-close storm pin ``attempt`` at 1 forever and
+		silently defeat the D-20 never-spin-forever HALT guarantee.
+		"""
+		if stream_name in self._streams_down:
+			self._streams_down.discard(stream_name)
+			self.logger.info(
+				"OKX %s stream reconnected — resuming after REST reconcile", stream_name)
+			if self._on_stream_up is not None:
+				self._on_stream_up(stream_name)
+
+	def _reset_reconnect_budget(self, stream_name: str) -> None:
+		"""WR-03: a delivered payload proves the connection — reset the retry budget.
+
+		A subscribe alone (``_on_stream_healthy``) no longer resets ``_reconnect_attempts``;
+		only >=1 delivered payload does. This keeps the D-20 ceiling able to trip under a
+		subscribe-then-close storm while a genuine, payload-carrying reconnect still clears
+		the accumulated attempts.
+		"""
+		self._reconnect_attempts[stream_name] = 0
 
 	async def _stream_fills(self) -> None:
-		"""Consume the venue fill stream forever, emitting a FillEvent per trade (D-07)."""
+		"""Consume the venue fill stream under the reconnect supervisor (D-07/D-19/D-20)."""
+		await self._run_stream_supervisor(self._consume_fills, "fills")
+
+	async def _consume_fills(self, stream_name: str) -> None:
+		"""Forever-loop: emit a FillEvent per venue trade (D-07); reconnect-supervised."""
 		while True:
 			trades = await self._connector.client.watch_my_trades()
+			# Subscribe/ack: resume submission if we were paused (D-19).
+			self._on_stream_healthy(stream_name)
+			# WR-03: only a delivered payload (>=1 trade) resets the retry budget — a
+			# subscribe-then-close storm must never keep the ceiling from tripping.
+			if trades:
+				self._reset_reconnect_budget(stream_name)
 			for trade in trades:
 				# WR-02: a single malformed trade must not kill the forever-loop and
 				# silently drop every subsequent fill. Swallow-and-log per trade,
@@ -286,13 +652,21 @@ class OkxExchange(AbstractExchange):
 						"OKX fill translation failed — skipping trade", exc_info=True)
 
 	async def _stream_orders(self) -> None:
-		"""Consume the order-status stream for mirror reconciliation (status only).
+		"""Consume the order-status stream under the reconnect supervisor (status only).
 
 		The fill money crosses on ``watch_my_trades`` (``_stream_fills``); this loop tracks
 		order lifecycle transitions for logging/reconciliation and never mints money.
 		"""
+		await self._run_stream_supervisor(self._consume_orders, "orders")
+
+	async def _consume_orders(self, stream_name: str) -> None:
+		"""Forever-loop: log venue order-status updates; reconnect-supervised."""
 		while True:
 			orders = await self._connector.client.watch_orders()
+			self._on_stream_healthy(stream_name)
+			# WR-03: payload-gated retry-budget reset (>=1 order update).
+			if orders:
+				self._reset_reconnect_budget(stream_name)
 			for order in orders:
 				self.logger.debug("OKX order update: %s", order)
 

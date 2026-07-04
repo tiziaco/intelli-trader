@@ -214,6 +214,7 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
             "portfolio_id": self._portfolio_id,
             "fill_id": transaction.fill_id,
             "position_id": transaction.position_id,
+            "venue_trade_id": transaction.venue_trade_id,
             "time": transaction.time,
             "type": transaction.type.value,
             "ticker": transaction.ticker,
@@ -239,6 +240,7 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
             TransactionId(row["id"]),
             fill_id=row["fill_id"],
             position_id=position_id,
+            venue_trade_id=row["venue_trade_id"],
             leverage=row["leverage"],
         )
 

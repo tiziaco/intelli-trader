@@ -1,0 +1,217 @@
+{
+  "_comment": "DOCUMENTED-SHAPE recon fixture (Phase 5 / 05-02, D-09 offline gate). Synthetic ccxt-UNIFIED payloads for the reconciliation cluster's FakeLiveConnector — watch_my_trades / watch_orders / watch_balance / watch_positions push streams plus fetch_balance / fetch_positions / fetch_open_orders / fetch_my_trades REST snapshots. Contains NO real credentials, API keys, auth tokens, or account IDs — every id is a sanitized PLACEHOLDER-*. Refinement via a real demo-venue capture (A2/A5) is opt-in and NEVER gates the offline suite.",
+  "_scenario": "A BTC/USDT limit BUY 0.5 @ 42000 fills in two increments (0.2 then 0.3). Streams narrate the live fill; REST snapshots narrate the post-full-fill restart state (long 0.5 BTC + one resting take-profit leg). ccxt returns floats everywhere (Pitfall 2) — downstream MUST route every price/amount/fee/balance through to_money(str(...)).",
+
+  "watch_my_trades": [
+    [
+      {
+        "id": "PLACEHOLDER-TRD-0001",
+        "order": "PLACEHOLDER-ORD-0001",
+        "clientOrderId": "PLACEHOLDER-CLI-0001",
+        "symbol": "BTC/USDT",
+        "type": "limit",
+        "side": "buy",
+        "takerOrMaker": "maker",
+        "amount": 0.2,
+        "price": 42000.0,
+        "cost": 8400.0,
+        "fee": {"cost": 0.084, "currency": "USDT"},
+        "timestamp": 1704067202000,
+        "datetime": "2024-01-01T00:00:02.000Z"
+      }
+    ],
+    [
+      {
+        "id": "PLACEHOLDER-TRD-0002",
+        "order": "PLACEHOLDER-ORD-0001",
+        "clientOrderId": "PLACEHOLDER-CLI-0001",
+        "symbol": "BTC/USDT",
+        "type": "limit",
+        "side": "buy",
+        "takerOrMaker": "maker",
+        "amount": 0.3,
+        "price": 42000.0,
+        "cost": 12600.0,
+        "fee": {"cost": 0.126, "currency": "USDT"},
+        "timestamp": 1704067203000,
+        "datetime": "2024-01-01T00:00:03.000Z"
+      }
+    ]
+  ],
+
+  "watch_orders": [
+    [
+      {
+        "id": "PLACEHOLDER-ORD-0001",
+        "clientOrderId": "PLACEHOLDER-CLI-0001",
+        "symbol": "BTC/USDT",
+        "type": "limit",
+        "side": "buy",
+        "price": 42000.0,
+        "amount": 0.5,
+        "filled": 0.0,
+        "remaining": 0.5,
+        "average": null,
+        "status": "open",
+        "timestamp": 1704067201000
+      }
+    ],
+    [
+      {
+        "id": "PLACEHOLDER-ORD-0001",
+        "clientOrderId": "PLACEHOLDER-CLI-0001",
+        "symbol": "BTC/USDT",
+        "type": "limit",
+        "side": "buy",
+        "price": 42000.0,
+        "amount": 0.5,
+        "filled": 0.2,
+        "remaining": 0.3,
+        "average": 42000.0,
+        "status": "open",
+        "timestamp": 1704067202000
+      }
+    ],
+    [
+      {
+        "id": "PLACEHOLDER-ORD-0001",
+        "clientOrderId": "PLACEHOLDER-CLI-0001",
+        "symbol": "BTC/USDT",
+        "type": "limit",
+        "side": "buy",
+        "price": 42000.0,
+        "amount": 0.5,
+        "filled": 0.5,
+        "remaining": 0.0,
+        "average": 42000.0,
+        "status": "closed",
+        "timestamp": 1704067203000
+      }
+    ]
+  ],
+
+  "watch_balance": [
+    {
+      "info": {"_note": "synthetic pre-fill balance snapshot"},
+      "timestamp": 1704067201000,
+      "free": {"USDT": 100000.0, "BTC": 0.0},
+      "used": {"USDT": 0.0, "BTC": 0.0},
+      "total": {"USDT": 100000.0, "BTC": 0.0}
+    },
+    {
+      "info": {"_note": "synthetic post-partial-fill balance snapshot"},
+      "timestamp": 1704067202000,
+      "free": {"USDT": 91599.916, "BTC": 0.2},
+      "used": {"USDT": 0.0, "BTC": 0.0},
+      "total": {"USDT": 91599.916, "BTC": 0.2}
+    },
+    {
+      "info": {"_note": "synthetic post-full-fill balance snapshot"},
+      "timestamp": 1704067203000,
+      "free": {"USDT": 78999.79, "BTC": 0.5},
+      "used": {"USDT": 0.0, "BTC": 0.0},
+      "total": {"USDT": 78999.79, "BTC": 0.5}
+    }
+  ],
+
+  "watch_positions": [
+    [
+      {
+        "symbol": "BTC/USDT",
+        "side": "long",
+        "contracts": 0.2,
+        "contractSize": 1.0,
+        "entryPrice": 42000.0,
+        "markPrice": 42100.0,
+        "notional": 8420.0,
+        "unrealizedPnl": 20.0,
+        "timestamp": 1704067202000
+      }
+    ],
+    [
+      {
+        "symbol": "BTC/USDT",
+        "side": "long",
+        "contracts": 0.5,
+        "contractSize": 1.0,
+        "entryPrice": 42000.0,
+        "markPrice": 42100.0,
+        "notional": 21050.0,
+        "unrealizedPnl": 50.0,
+        "timestamp": 1704067203000
+      }
+    ]
+  ],
+
+  "fetch_balance": {
+    "info": {"_note": "synthetic REST balance snapshot for restart reconcile"},
+    "timestamp": 1704067203000,
+    "free": {"USDT": 78999.79, "BTC": 0.5},
+    "used": {"USDT": 0.0, "BTC": 0.0},
+    "total": {"USDT": 78999.79, "BTC": 0.5}
+  },
+
+  "fetch_positions": [
+    {
+      "symbol": "BTC/USDT",
+      "side": "long",
+      "contracts": 0.5,
+      "contractSize": 1.0,
+      "entryPrice": 42000.0,
+      "markPrice": 42100.0,
+      "notional": 21050.0,
+      "unrealizedPnl": 50.0,
+      "timestamp": 1704067203000
+    }
+  ],
+
+  "fetch_open_orders": [
+    {
+      "id": "PLACEHOLDER-ORD-0002",
+      "clientOrderId": "PLACEHOLDER-CLI-0002",
+      "symbol": "BTC/USDT",
+      "type": "limit",
+      "side": "sell",
+      "price": 45000.0,
+      "amount": 0.5,
+      "filled": 0.0,
+      "remaining": 0.5,
+      "average": null,
+      "status": "open",
+      "timestamp": 1704067203000
+    }
+  ],
+
+  "fetch_my_trades": [
+    {
+      "id": "PLACEHOLDER-TRD-0001",
+      "order": "PLACEHOLDER-ORD-0001",
+      "clientOrderId": "PLACEHOLDER-CLI-0001",
+      "symbol": "BTC/USDT",
+      "type": "limit",
+      "side": "buy",
+      "takerOrMaker": "maker",
+      "amount": 0.2,
+      "price": 42000.0,
+      "cost": 8400.0,
+      "fee": {"cost": 0.084, "currency": "USDT"},
+      "timestamp": 1704067202000,
+      "datetime": "2024-01-01T00:00:02.000Z"
+    },
+    {
+      "id": "PLACEHOLDER-TRD-0002",
+      "order": "PLACEHOLDER-ORD-0001",
+      "clientOrderId": "PLACEHOLDER-CLI-0001",
+      "symbol": "BTC/USDT",
+      "type": "limit",
+      "side": "buy",
+      "takerOrMaker": "maker",
+      "amount": 0.3,
+      "price": 42000.0,
+      "cost": 12600.0,
+      "fee": {"cost": 0.126, "currency": "USDT"},
+      "timestamp": 1704067203000,
+      "datetime": "2024-01-01T00:00:03.000Z"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import queue
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
@@ -17,6 +17,20 @@ if TYPE_CHECKING:
 	# must not be imported as a side effect of loading the dispatcher
 	# (keeps the module import light and stub-friendly in tests).
 	from itrader.events_handler.events import ErrorEvent, Event
+
+
+class _AlertSinkLike(Protocol):
+	"""Duck-typed alert-sink egress surface (D-06).
+
+	Structurally matches the ``AlertSink`` Protocol in the composition-root
+	layer WITHOUT a runtime dependency on it — a reverse layer edge would
+	invert the layering (the composition root wires that layer on TOP of the
+	event handler). The concrete ``LogAlertSink`` is injected at wiring; the
+	attribute stays ``None`` on the backtest path (no egress, inertness
+	preserved).
+	"""
+
+	def alert(self, event: "ErrorEvent") -> None: ...
 
 
 class EventHandler(object):
@@ -58,6 +72,12 @@ class EventHandler(object):
 		self.execution_handler = execution_handler
 		self.bar_event_source = bar_event_source
 		self.global_queue = global_queue
+
+		# D-06: optional CRITICAL/halt egress. Injected at live wiring (a
+		# LogAlertSink); ``None`` on the backtest path so the hot loop stays
+		# egress-free and inert. Duck-typed to avoid an events_handler →
+		# trading_system layer inversion.
+		self._alert_sink: "_AlertSinkLike | None" = None
 
 		self.logger = get_itrader_logger().bind(component="FullEventHandler")
 
@@ -148,20 +168,48 @@ class EventHandler(object):
 		``event.severity`` (WARNING/CRITICAL/anything else -> ERROR).
 		Never logs secrets — only the declared ErrorEvent fields.
 		"""
-		log_method = {
-			ErrorSeverity.WARNING: self.logger.warning,
-			ErrorSeverity.CRITICAL: self.logger.critical,
-		}.get(event.severity, self.logger.error)
-		context: dict[str, Any] = {
-			"source": event.source,
-			"error_type": event.error_type,
-			"error_message": event.error_message,
-			"operation": event.operation,
-			"correlation_id": event.correlation_id,
-		}
-		portfolio_id = getattr(event, "portfolio_id", None)
-		if portfolio_id is not None:
-			context["portfolio_id"] = portfolio_id
-		if event.details is not None:
-			context["details"] = event.details
-		log_method("Error event consumed", **context)
+		# WR-06: the ERROR route is TERMINAL. A failure WHILE consuming an
+		# ErrorEvent — a raising alert sink, a broken logger/structlog processor,
+		# or a future malformed/required field — must NEVER escape into _dispatch,
+		# whose live policy (_publish_and_continue) would republish a fresh
+		# ErrorEvent routed straight back here: an unbounded error->error feedback
+		# loop flooding the engine-thread queue. Log once (best-effort) and swallow;
+		# the consumer never re-raises into the dispatcher. (Part A guards the seam
+		# too; this is defense-in-depth so the recursion is impossible either way.)
+		try:
+			log_method = {
+				ErrorSeverity.WARNING: self.logger.warning,
+				ErrorSeverity.CRITICAL: self.logger.critical,
+			}.get(event.severity, self.logger.error)
+			context: dict[str, Any] = {
+				"source": event.source,
+				"error_type": event.error_type,
+				"error_message": event.error_message,
+				"operation": event.operation,
+				"correlation_id": event.correlation_id,
+			}
+			portfolio_id = getattr(event, "portfolio_id", None)
+			if portfolio_id is not None:
+				context["portfolio_id"] = portfolio_id
+			if event.details is not None:
+				context["details"] = event.details
+			log_method("Error event consumed", **context)
+
+			# D-06: escalate a CRITICAL/halt event through the injected alert-sink
+			# egress (RES-01), AFTER the existing log call. The sink re-binds only
+			# declared ErrorEvent fields — the same secret-scrub discipline as above,
+			# so no raw connector context / secret ever leaves (Pitfall 16, T-05-01).
+			# ``None`` on the backtest path (no egress wired) — a no-op branch.
+			if event.severity is ErrorSeverity.CRITICAL and self._alert_sink is not None:
+				self._alert_sink.alert(event)
+		except Exception:
+			# Last-resort recovery log is itself wrapped: if the primary logger is
+			# what failed, this inner attempt must not re-raise either.
+			try:
+				self.logger.error(
+					"ERROR-route consumer failed; swallowed to prevent "
+					"error->error recursion (WR-06)",
+					exc_info=True,
+				)
+			except Exception:
+				pass

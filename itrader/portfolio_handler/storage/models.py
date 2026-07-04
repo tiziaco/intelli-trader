@@ -110,6 +110,10 @@ def build_portfolio_tables(metadata: MetaData) -> dict[str, Table]:
             Column("portfolio_id", Uuid(as_uuid=True), index=True, nullable=False),
             Column("fill_id", Uuid(as_uuid=True), nullable=False),
             Column("position_id", Uuid(as_uuid=True), nullable=True),
+            # CR-01: the venue's own trade id (FIX ExecID / Nautilus TradeId)
+            # carried from the FillEvent so the durable settlement record keeps
+            # the venue idempotency key. None for backtest/simulated rows.
+            Column("venue_trade_id", String, nullable=True),
             Column("time", UtcIsoText, nullable=False),
             Column("type", String, nullable=False),
             Column("ticker", String, nullable=False),

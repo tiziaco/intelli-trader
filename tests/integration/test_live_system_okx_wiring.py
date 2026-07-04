@@ -20,6 +20,12 @@ the same session may already have imported ``ccxt.pro``); the credential-free co
 + unwired-arm assertions are the load-bearing gate.
 """
 
+from unittest.mock import MagicMock
+
+import pytest
+
+from itrader.core.enums import ExchangeConnectionStatus, SystemStatus
+from itrader.execution_handler.result_objects import ConnectionResult
 from itrader.trading_system.live_trading_system import LiveTradingSystem
 
 
@@ -130,3 +136,120 @@ def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
     expected = max(
         (s.warmup for s in system.strategies_handler.strategies), default=1)
     assert system.feed.cache_capacity() == expected
+
+
+def _stub_okx_network(system: LiveTradingSystem) -> None:
+    """Stub every network-touching call in start() so it runs fully offline.
+
+    Leaves ``system._okx_exchange.connect`` untouched — that is the call under
+    test (CR-01). The VenueReconciler path is skipped because the in-memory order
+    store does not expose ``rehydrate`` (start() guards on ``hasattr``).
+    """
+    system._okx_connector.connect = MagicMock(name="connector.connect")
+    system.feed.warmup = MagicMock(name="feed.warmup")
+    system._okx_data_provider.start_stream = MagicMock(name="provider.start_stream")
+    system._venue_account = MagicMock(name="venue_account")
+
+
+def test_start_spawns_okx_order_arm_fill_stream(monkeypatch) -> None:
+    """start() invokes _okx_exchange.connect() — the SOLE spawn site of the fill stream (CR-01).
+
+    This is the assertion the verification proved absent (``grep _okx_exchange.connect(``
+    returned 0 across tests/). Removing the Task-1 ``self._okx_exchange.connect()`` call in
+    start() makes ``connect_spy.assert_called_once()`` FAIL — so the test genuinely catches
+    the CR-01 gap (order mirror stays PENDING forever with no fill stream).
+    """
+    _set_okx_env(monkeypatch)
+    system = LiveTradingSystem(exchange="okx")
+    _stub_okx_network(system)
+    connect_spy = MagicMock(
+        name="okx_exchange.connect",
+        return_value=ConnectionResult(
+            success=True,
+            status=ExchangeConnectionStatus.CONNECTED,
+            exchange_name="okx"))
+    system._okx_exchange.connect = connect_spy
+
+    try:
+        started = system.start()
+        assert started is True
+        connect_spy.assert_called_once()          # fill/order streams spawned
+        assert system.get_status()["status"] == SystemStatus.RUNNING.value
+    finally:
+        system.stop()
+
+
+def test_start_fails_when_okx_exchange_connect_fails(monkeypatch) -> None:
+    """A failed ConnectionResult from _okx_exchange.connect() drives ERROR and returns False.
+
+    connect() RETURNS a ConnectionResult (never raises), so start() must check ``.success``
+    and re-raise; the failure then flows through the existing except → SystemStatus.ERROR.
+    """
+    _set_okx_env(monkeypatch)
+    system = LiveTradingSystem(exchange="okx")
+    _stub_okx_network(system)
+    system._okx_exchange.connect = MagicMock(
+        name="okx_exchange.connect",
+        return_value=ConnectionResult(
+            success=False,
+            status=ExchangeConnectionStatus.ERROR,
+            exchange_name="okx",
+            error_message="stream spawn failed"))
+
+    try:
+        started = system.start()
+        assert started is False
+        assert system.get_status()["status"] == SystemStatus.ERROR.value
+    finally:
+        system.stop()
+
+
+# --- WR-02: one VenueAccount per portfolio; single-portfolio-live fail-loud ----
+
+
+def test_link_venue_account_single_portfolio_assigns(monkeypatch) -> None:
+    """One active portfolio: the venue account is linked onto it (WR-02, unchanged path).
+
+    Exercises the extracted wiring seam directly (no network) — the single active
+    portfolio receives the venue-cached account so the engine-thread drift compare
+    reads venue truth.
+    """
+    _set_okx_env(monkeypatch)
+    system = LiveTradingSystem(exchange="okx")
+
+    venue_account = MagicMock(name="venue_account")
+    system._venue_account = venue_account
+    portfolio = MagicMock(name="portfolio")
+    system.portfolio_handler.get_active_portfolios = MagicMock(  # type: ignore[method-assign]
+        return_value=[portfolio])
+
+    system._link_venue_account_to_portfolios()
+
+    assert portfolio.account is venue_account
+
+
+def test_link_venue_account_two_portfolios_fails_loud(monkeypatch) -> None:
+    """Two active portfolios: wiring FAILS LOUD rather than sharing one VenueAccount (WR-02).
+
+    Sharing a single VenueAccount across portfolios would conflate their buying
+    power / positions and silently discard each SimulatedAccount ledger. Until a
+    per-portfolio VenueAccount keyed by venue sub-account exists, the wiring must
+    refuse (RuntimeError) — a second portfolio can never silently mis-attribute
+    venue truth.
+    """
+    _set_okx_env(monkeypatch)
+    system = LiveTradingSystem(exchange="okx")
+
+    system._venue_account = MagicMock(name="venue_account")
+    p1 = MagicMock(name="portfolio_1")
+    p2 = MagicMock(name="portfolio_2")
+    system.portfolio_handler.get_active_portfolios = MagicMock(  # type: ignore[method-assign]
+        return_value=[p1, p2])
+
+    with pytest.raises(RuntimeError, match="at most one active portfolio"):
+        system._link_venue_account_to_portfolios()
+
+    # The guard raises BEFORE any assignment — no portfolio received the shared
+    # venue account (each ``.account`` is an untouched auto-child mock, not it).
+    assert p1.account is not system._venue_account
+    assert p2.account is not system._venue_account

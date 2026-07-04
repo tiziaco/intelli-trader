@@ -32,10 +32,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from itrader.core.enums import FillStatus, OrderCommand, OrderType, Side
+from itrader.core.enums import ErrorSeverity, FillStatus, OrderCommand, OrderType, Side
+from itrader.core.ids import OrderId
 from itrader.core.money import to_money
-from itrader.events_handler.events import FillEvent, OrderEvent
+from itrader.events_handler.events import ErrorEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.okx import OkxExchange
+from itrader import idgen
 
 _T = TypeVar("_T")
 
@@ -171,7 +173,7 @@ def test_create_order_rounds_qty_and_price_and_submits_via_call(
     _sym, otype, side, amount, price = fake_client.create_order.call_args.args
     assert (otype, side, amount, price) == ("limit", "buy", "0.5", "42000.0")
     # The venue id from the response is correlated back to the originating order.
-    assert exchange._orders_by_venue_id["OID-1"] is order
+    assert exchange._index._orders_by_venue_id["OID-1"] is order
 
 
 def test_market_order_omits_price_to_precision(
@@ -204,8 +206,10 @@ def test_market_buy_disables_requires_price_param(
 
     _sym, otype, side, _amount, price = fake_client.create_order.call_args.args
     assert (otype, side, price) == ("market", "buy", None)
+    # Pitfall 11: a clOrdId is also attached (pending correlation before the RPC).
     assert fake_client.create_order.call_args.kwargs["params"] == {
-        "createMarketBuyOrderRequiresPrice": False
+        "createMarketBuyOrderRequiresPrice": False,
+        "clOrdId": OkxExchange._client_order_id(order),
     }
 
 
@@ -230,7 +234,11 @@ def test_limit_order_submits_empty_params(
 
     exchange.on_order(order)
 
-    assert fake_client.create_order.call_args.kwargs["params"] == {}
+    # Pitfall 11: the only param on a plain LIMIT order is the clOrdId pending
+    # correlation attached before the submit RPC (no market-buy override).
+    assert fake_client.create_order.call_args.kwargs["params"] == {
+        "clOrdId": OkxExchange._client_order_id(order),
+    }
 
 
 # --- fill stream: raw fill -> FillEvent on global_queue (D-07) -----------------
@@ -242,7 +250,7 @@ def test_watch_my_trades_fill_becomes_fillevent_on_queue(
     """A recorded venue fill is translated to a FillEvent and put on global_queue."""
     order = _make_order()
     raw = _load_lifecycle()["my_trades"][0]["data"][0]  # the partial-fill trade
-    exchange._orders_by_venue_id[raw["ordId"]] = order
+    exchange._index._orders_by_venue_id[raw["ordId"]] = order
     # ccxt watch_my_trades yields UNIFIED trades; derive one from the recorded raw fields.
     unified = {
         "order": raw["ordId"],
@@ -277,7 +285,7 @@ def test_decimal_edge_no_float_artifact(
 ) -> None:
     """A raw FLOAT fill value crosses via the string path — no Decimal(float) artifact."""
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     # Raw floats straight off ccxt — the edge must route them through to_money(str(x)).
     unified = {
         "order": "OID-1",
@@ -314,7 +322,7 @@ def test_malformed_fill_missing_price_is_skipped(
 ) -> None:
     """A fill missing price/amount is guarded before Decimal conversion (T-02-03-VALID)."""
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     exchange._handle_trade({"order": "OID-1", "amount": "1", "timestamp": 1})
     assert queue.empty()
 
@@ -329,7 +337,7 @@ def test_none_fee_cost_coalesces_to_zero_commission(
     InvalidOperation and silently drops every subsequent fill.
     """
     order = _make_order()
-    exchange._orders_by_venue_id["OID-1"] = order
+    exchange._index._orders_by_venue_id["OID-1"] = order
     unified = {
         "order": "OID-1",
         "price": "42000.0",
@@ -358,7 +366,7 @@ def test_cancel_order_routes_through_call(
     exchange: OkxExchange, fake_client: MagicMock
 ) -> None:
     """CANCEL resolves the venue id and routes through connector.call -> cancel_order."""
-    exchange._venue_id_by_order_id[1] = "OID-1"
+    exchange._index._venue_id_by_order_id[1] = "OID-1"
     cancel = _make_order(order_id=1, command=OrderCommand.CANCEL)
 
     exchange.on_order(cancel)
@@ -402,16 +410,18 @@ def test_trailing_stop_order_type_is_refused(
     assert fill.status is FillStatus.REFUSED
 
 
-# --- WR-02: failed submit/cancel reconciles via FillEvent(REFUSED) ------------
+# --- WR-01: failed SUBMIT terminalizes (REFUSED); failed CANCEL does NOT -------
 
 
 def test_submit_failure_emits_refused_fill(
     exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
 ) -> None:
-    """A failed create_order emits FillEvent(REFUSED) so the order mirror reconciles (WR-02).
+    """A failed create_order emits FillEvent(REFUSED) so the order mirror reconciles (WR-01).
 
-    The reconciliation contract (mirrored by SimulatedExchange) is that a refused
-    submit flows back as REFUSED — only logging would leave the mirror stuck at PENDING.
+    UNCHANGED submit behaviour: the reconciliation contract (mirrored by
+    SimulatedExchange) is that a submit that never reached the venue flows back as
+    REFUSED (mirror PENDING->REJECTED) — only logging would leave the mirror stuck
+    at PENDING.
     """
     fake_client.create_order = AsyncMock(
         name="create_order", side_effect=RuntimeError("venue rejected")
@@ -427,19 +437,108 @@ def test_submit_failure_emits_refused_fill(
     assert fill.order_id == order.order_id
 
 
-def test_cancel_failure_emits_refused_fill(
+def test_cancel_failure_emits_error_event_not_refused_fill(
     exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
 ) -> None:
-    """A failed cancel_order also emits FillEvent(REFUSED) for mirror reconciliation (WR-02)."""
+    """A failed cancel publishes an ErrorEvent and does NOT terminalize the mirror (WR-01).
+
+    A cancel-ack failure is a command-ack failure, NOT an execution event: the
+    venue order is very likely STILL RESTING. Emitting FillEvent(REFUSED) here
+    would drive ReconcileManager._apply_refused -> REJECTED, wrongly terminalizing
+    a live resting order. Instead the arm leaves the mirror untouched (no
+    FillEvent) and publishes an auditable ErrorEvent on the operator/dead-letter
+    channel; the next reconcile pass reconciles true venue state.
+    """
     fake_client.cancel_order = AsyncMock(
         name="cancel_order", side_effect=RuntimeError("cancel rejected")
     )
-    exchange._venue_id_by_order_id[1] = "OID-1"
+    exchange._index._venue_id_by_order_id[1] = "OID-1"
     cancel = _make_order(order_id=1, command=OrderCommand.CANCEL)
 
     exchange.on_order(cancel)
 
     assert not queue.empty()
-    fill = queue.get_nowait()
-    assert isinstance(fill, FillEvent)
-    assert fill.status is FillStatus.REFUSED
+    emitted = queue.get_nowait()
+    # No FillEvent — the mirror is left in its resting state (NOT terminalized).
+    assert not isinstance(emitted, FillEvent)
+    assert isinstance(emitted, ErrorEvent)
+    assert emitted.operation == "cancel_order"
+    assert emitted.severity is ErrorSeverity.ERROR
+    assert emitted.source == "okx_exchange"
+    # Scrub (T-05-27): the exception TYPE is bound, never the venue str(exc).
+    assert emitted.error_type == "RuntimeError"
+    assert "cancel rejected" not in emitted.error_message
+    # Exactly one event — no stray FillEvent(REFUSED) alongside the ErrorEvent.
+    assert queue.empty()
+
+
+# --- WR-04: lossless base62 clOrdId — no truncation collision -----------------
+
+
+def test_client_order_id_is_alphanumeric_and_within_okx_limit() -> None:
+    """clOrdId renders to <=32 alphanumeric chars for a real UUIDv7 order id (WR-04)."""
+    order = _make_order(order_id=OrderId(idgen.generate_order_id()))
+    clordid = OkxExchange._client_order_id(order)
+
+    assert clordid.isalnum()
+    assert len(clordid) <= 32
+    assert clordid.startswith("it")
+
+
+def test_client_order_id_lossless_no_tail_bit_collision() -> None:
+    """Two UUIDs differing ONLY in their tail bits produce DIFFERENT clOrdIds (WR-04).
+
+    The old ``("it" + hex_token)[:32]`` truncation dropped the UUID's last 2 hex
+    chars, so orders differing only there collided on one clOrdId (wrong-order
+    fill correlation). Base62 of the full 128 bits is lossless — no collision.
+    """
+    import uuid
+
+    base = uuid.uuid4()
+    # Flip only the lowest byte — the exact bits the old truncation discarded.
+    tail_flipped = uuid.UUID(bytes=base.bytes[:-1] + bytes([base.bytes[-1] ^ 0x01]))
+
+    id_a = OkxExchange._client_order_id(_make_order(order_id=OrderId(base)))
+    id_b = OkxExchange._client_order_id(_make_order(order_id=OrderId(tail_flipped)))
+
+    assert id_a != id_b
+    assert id_a.isalnum() and len(id_a) <= 32
+    assert id_b.isalnum() and len(id_b) <= 32
+
+
+def test_client_order_id_round_trip_correlation_resolves(
+    exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
+) -> None:
+    """A submit registers the clOrdId pending correlation and an echoed fill resolves it (WR-04).
+
+    Round-trip: _submit_order attaches clOrdId + registers it BEFORE the RPC; a
+    fill echoing the SAME clOrdId (before any venue-id correlation) resolves the
+    originating order and mints a FillEvent carrying its order_id.
+    """
+    order = _make_order(order_type=OrderType.LIMIT, order_id=OrderId(idgen.generate_order_id()))
+    # No venue id from create_order yet — force the clOrdId fallback path.
+    fake_client.create_order = AsyncMock(name="create_order", return_value={})
+
+    exchange.on_order(order)
+
+    clordid = OkxExchange._client_order_id(order)
+    assert fake_client.create_order.call_args.kwargs["params"]["clOrdId"] == clordid
+    assert exchange._index._orders_by_clOrdId[clordid] is order
+
+    # An echoed fill carrying that clOrdId (venue-id lookup misses) resolves it.
+    exchange._handle_trade({
+        "id": "T-1",
+        "order": "OID-LATE",
+        "clientOrderId": clordid,
+        "price": 42000.0,
+        "amount": 0.5,
+        "timestamp": 1_700_000_000_000,
+        "fee": {"cost": 1.0},
+    })
+
+    drained: list[Any] = []
+    while not queue.empty():
+        drained.append(queue.get_nowait())
+    fills = [e for e in drained if isinstance(e, FillEvent)]
+    assert len(fills) == 1
+    assert fills[0].order_id == order.order_id

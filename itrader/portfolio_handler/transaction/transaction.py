@@ -40,6 +40,11 @@ class Transaction(msgspec.Struct, gc=False):
 	# new_transaction still passes it by keyword — construction is unchanged.
 	fill_id: uuid.UUID
 	position_id: Optional[PositionId] = None
+	# CR-01: the venue's own trade id carried from the FillEvent so the durable
+	# settlement record preserves the venue idempotency key (FIX ExecID /
+	# Nautilus TradeId). None for backtest/simulated fills (oracle-dark) — the
+	# defaulted field keeps the positional construction + spot path byte-exact.
+	venue_trade_id: Optional[str] = None
 	# LEV-03 (Finding B): the admission-clamped EFFECTIVE leverage carried from
 	# the FillEvent. A Decimal("1") default keeps the positional construction
 	# (price/quantity/commission/portfolio_id/id) and the spot path byte-exact
@@ -151,6 +156,8 @@ class Transaction(msgspec.Struct, gc=False):
 			# LEV-03 (Finding B): carry the effective leverage from the fill.
 			# getattr default keeps spot fills (predating the field) byte-exact.
 			leverage=getattr(filled_order, "leverage", Decimal("1")),
+			# CR-01: carry the venue trade id (None for backtest/simulated fills).
+			venue_trade_id=getattr(filled_order, "venue_trade_id", None),
 		)
 
 	def to_dict(self) -> dict[str, object]:

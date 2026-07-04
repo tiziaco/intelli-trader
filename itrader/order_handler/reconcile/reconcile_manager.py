@@ -124,34 +124,96 @@ class ReconcileManager:
 			return True, OrderStatus.EXPIRED
 		return False, None
 
-	def _apply_executed(self, order: "Order", fill_event: FillEvent, order_id: Any) -> bool:
+	def _apply_executed(self, order: "Order", fill_event: FillEvent,
+	                    order_id: Any) -> "tuple[bool, bool]":
 		"""
-		EXECUTED arm: apply the exchange fill to the order mirror.
+		EXECUTED arm: apply an exchange fill increment to the order mirror (D-12).
 
-		Returns ``applied`` — ``True`` when the mirror moved, ``False`` when
-		``add_fill`` rejected (WR-02: the caller must NOT early-return on a
-		rejected mirror update — the portfolio already settled this fill, so the
-		uniform terminal release still has to run or the BUY's reservation is
-		stuck forever, T-05-17).
+		Live venues deliver PARTIAL fills; the mirror accumulates each increment
+		against cumulative-filled and terminalizes to FILLED only when the fill
+		covers the entire remaining quantity (the full-quantity ``add_fill``
+		contract). A shortfall stays OPEN at PARTIALLY_FILLED — the order keeps
+		working, its reservation is HELD, and no engine-imposed timeout ages it
+		out (D-12 no premature terminalization; D-13 aging is a strategy concern).
+
+		Returns ``(applied, terminalized)``:
+		- ``applied``      — ``True`` when the mirror moved. On a rejected mirror
+		                     update the caller must NOT early-return: the portfolio
+		                     already settled this fill (FILL dispatches
+		                     portfolio-first), so a terminal fill's uniform release
+		                     must still run or the BUY's reservation is stuck
+		                     forever (WR-02 / T-05-17).
+		- ``terminalized`` — ``True`` only when THIS fill completed the order
+		                     (-> FILLED). ``False`` when the order stayed open
+		                     (a partial, D-12) so the caller HOLDS the reservation
+		                     and SKIPS the terminal-only bracket post-processing.
 		"""
-		# D-22: fill_event.price is Decimal — to_money is an identity
-		# normalization at this domain entry (kept deliberately: the
-		# mirror never trusts an unnormalized money input).
-		# Full-quantity contract (D-06, plan 06-04): matching is
-		# Decimal-native end-to-end, so the exchange-truth fill
-		# quantity passes straight through — the float-roundtrip
-		# clamp that defended the old D-22 boundary is gone.
-		if not order.add_fill(to_money(fill_event.quantity),
-		                      to_money(fill_event.price),
-		                      fill_event.time, "exchange fill"):
-			# WR-02: do NOT early-return — the portfolio has already
-			# settled this fill (FILL dispatches portfolio-first), so
-			# the uniform terminal release below must still run or the
-			# BUY's reservation is stuck forever (T-05-17). Only the
-			# mirror update is skipped.
-			self.logger.warning('add_fill rejected for order %s; mirror left unchanged', order_id)
-			return False
-		return True
+		# D-22: fill_event.price/quantity are Decimal — to_money is an identity
+		# normalization at this domain entry (the mirror never trusts an
+		# unnormalized money input).
+		increment = to_money(fill_event.quantity)
+		fill_price = to_money(fill_event.price)
+		# COMMON PATH (tried FIRST): a fill that covers the ENTIRE remaining
+		# quantity completes the order via the full-quantity add_fill contract ->
+		# FILLED. The simulated single-fill path stays byte-exact (filled 0,
+		# increment == quantity). Trying add_fill first also keeps any mirror/fake
+		# whose add_fill simply succeeds (existing reconcile suites) untouched: the
+		# state inspection below runs ONLY when add_fill rejects.
+		if order.add_fill(increment, fill_price, fill_event.time, "exchange fill"):
+			return True, True
+		# add_fill REJECTED the increment. Distinguish three outcomes:
+		if not order.is_active:
+			# WR-02 / T-05-17: an EXECUTED fill for an ALREADY-TERMINAL mirror
+			# (e.g. locally CANCELLED before the exchange ack) can never move the
+			# order — but the portfolio already settled the fill (FILL dispatches
+			# portfolio-first), so this is still a TERMINAL reconciliation whose
+			# uniform release MUST run or the reservation is stuck forever. Preserve
+			# the pre-D-12 contract: rejected mirror, but terminalized -> release.
+			self.logger.warning(
+				'add_fill rejected for order %s (mirror already terminal); left unchanged', order_id)
+			return False, True
+		# The order is ACTIVE, so add_fill rejected at its full-quantity guard
+		# WITHOUT mutating filled_quantity — the remaining quantity is accurate.
+		remaining = order.remaining_quantity
+		if 0 < increment < remaining:
+			# Partial fill (D-12): a strict shortfall against the remaining leaves
+			# the order OPEN at PARTIALLY_FILLED — accumulate the increment, HOLD
+			# the reservation, and impose NO timeout (D-13 — aging is a strategy
+			# concern). add_fill did not mutate, so this does not double-count.
+			#
+			# WR-03: validate the transition BEFORE mutating filled_quantity.
+			# Compute the prospective total WITHOUT assigning it yet, so a rejected
+			# transition leaves the mirror literally unchanged (the "mirror left
+			# unchanged" contract below now holds — pre-reorder the quantity was
+			# bumped before the validation could reject it).
+			new_filled = to_money(order.filled_quantity + increment)
+			additional_data = {
+				"fill_quantity": increment,
+				"fill_price": fill_price,
+				"fill_time": fill_event.time.isoformat() if fill_event.time is not None else None,
+				"total_filled": new_filled,
+			}
+			# allow_same_status so a SECOND partial (PARTIALLY_FILLED ->
+			# PARTIALLY_FILLED) records without tripping the transition validator;
+			# a first partial (PENDING -> PARTIALLY_FILLED) is a normal transition.
+			if not order.add_state_change(
+					OrderStatus.PARTIALLY_FILLED, "exchange partial fill",
+					additional_data=additional_data, time=fill_event.time,
+					allow_same_status=True):
+				self.logger.warning(
+					'Partial-fill transition rejected for order %s; mirror left unchanged', order_id)
+				return False, False
+			# Transition accepted — NOW accumulate the increment (mirror moves only
+			# after the validation passed).
+			order.filled_quantity = new_filled
+			return True, False
+		# Over-fill (increment > remaining) or non-positive increment on an ACTIVE
+		# order: reject-and-log — never crash, and never terminalize on a bad fill.
+		# The mirror is left unchanged and the reservation HELD.
+		self.logger.warning(
+			'Rejected fill for order %s: increment %s not in (0, remaining %s]; mirror left unchanged',
+			order_id, increment, remaining)
+		return False, False
 
 	@staticmethod
 	def _apply_cancelled(order: "Order") -> None:
@@ -227,6 +289,12 @@ class ReconcileManager:
 		body_raised = False
 		try:
 			applied = True
+			# D-12: CANCELLED/REFUSED/EXPIRED terminalize unconditionally; an
+			# EXECUTED fill overrides this below — a PARTIAL fill leaves the order
+			# OPEN (PARTIALLY_FILLED), so it is NOT terminal and the reservation is
+			# HELD. ``terminalized`` (not merely the fill-status classification)
+			# now drives ``should_release`` and the terminal-only bracket work.
+			terminalized = True
 			# _classify names the EXECUTED/CANCELLED/REFUSED -> FILLED/CANCELLED/
 			# REJECTED mapping + terminal-ness (READABILITY only — it does not
 			# drive the mirror transition; the arms below do). The unknown /
@@ -242,7 +310,7 @@ class ReconcileManager:
 				                    fill_event.status, order_id)
 				return out_events
 			if fill_event.status == FillStatus.EXECUTED:
-				applied = self._apply_executed(order, fill_event, order_id)
+				applied, terminalized = self._apply_executed(order, fill_event, order_id)
 			elif fill_event.status == FillStatus.CANCELLED:
 				self._apply_cancelled(order)
 			elif fill_event.status == FillStatus.REFUSED:
@@ -256,13 +324,19 @@ class ReconcileManager:
 				# reservation stays held — never silently mis-reconcile as REFUSED.
 				raise NotImplementedError(
 					f'terminal fill status {fill_event.status!r} has no reconcile arm')
-			# A terminal status was reached (EXECUTED/CANCELLED/REFUSED): arm the
-			# release before any further work so a raise below still releases.
-			should_release = True
-			# Reached for every terminal-status fill (EXECUTED/CANCELLED/
-			# REFUSED), whether or not the mirror transition applied.
-			# D-20: no deactivate step — the terminal status set above already
-			# removes the order from active queries via the is_active predicate.
+			# D-12: arm the release only when THIS fill terminalized the order.
+			# CANCELLED/REFUSED/EXPIRED always terminalize; an EXECUTED fill does
+			# so only when it fully filled the order — a PARTIAL leaves it OPEN, so
+			# ``terminalized`` is False and the reservation is intentionally HELD.
+			# should_release is still armed BEFORE the update/bracket work below so
+			# a raise there still releases a TERMINAL fill (the WR-04 skeleton is
+			# preserved — the arm point and the finally re-raise gate are unchanged).
+			should_release = terminalized
+			# Reached for every terminal-status fill AND for an accumulating
+			# partial (whose mirror moved to PARTIALLY_FILLED). Persist whenever
+			# the mirror moved (D-13: the store's cumulative-filled is the
+			# restart cross-check). D-20: no deactivate step — a terminal status
+			# already removes the order from active queries via is_active.
 			if applied:
 				self.order_storage.update_order(order)
 			# WR-05: a parent that reaches a terminal state WITHOUT any fill
@@ -289,7 +363,12 @@ class ReconcileManager:
 			# terminates WITHOUT executing (CANCELLED/REJECTED) discards its
 			# pending entry: the children were never created, so no orphan can
 			# exist and the WR-05 logic above is untouched (T-07-15).
-			if fill_event.status == FillStatus.EXECUTED:
+			if fill_event.status == FillStatus.EXECUTED and terminalized:
+				# D-12: only a TERMINAL (fully-filled) EXECUTED fill consumes the
+				# pending bracket + mints the fill-anchored children / runs the
+				# OVERSELL flatten. A PARTIAL leaves the parent working, so the
+				# bracket stays PENDING for the completing fill (no premature
+				# child creation, no bracket discard).
 				pending = self._brackets.consume(order_id)
 				# WR-03 (part 1): only anchor children when the mirror actually
 				# applied the fill. If add_fill was rejected (applied=False) the
@@ -328,7 +407,12 @@ class ReconcileManager:
 									reason=f"position {fill_event.ticker} flattened by fill {order.id}")
 								if child_result.success and child_result.order_events:
 									out_events.extend(child_result.order_events)
-			else:
+			elif fill_event.status != FillStatus.EXECUTED:
+				# A terminal NON-executing outcome (CANCELLED/REFUSED/EXPIRED)
+				# discards the pending bracket — its children were never created.
+				# D-12: a PARTIAL EXECUTED fill (EXECUTED but not terminalized)
+				# falls through NEITHER branch, so the bracket stays PENDING for
+				# the completing fill (never prematurely discarded).
 				self._brackets.consume(order_id)
 		except Exception as e:
 			# WR-04: log with a stack trace and RE-RAISE — backtest fail-fast.

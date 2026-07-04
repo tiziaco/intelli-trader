@@ -123,3 +123,31 @@ def make_bar():
 def make_bar_event():
     """Alias of ``make_bar`` for call sites preferring the explicit name."""
     return _bar_event
+
+
+# --- Shared reconciliation double (Phase 5 / 05-02, D-09 offline gate) ---------
+
+
+@pytest.fixture
+def fake_venue_connector():
+    """A connected, teardown-safe ``FakeLiveConnector`` for the reconciliation cluster.
+
+    The single credential-free double every Phase-5 test tree (portfolio / order /
+    execution / integration) verifies against (D-09, RECON-06). Yields a CONNECTED
+    connector (loop already running on a daemon thread) driving a fake ccxt.pro client
+    wired with the canned ``watch_*`` push streams + ``fetch_*`` REST snapshots from
+    ``tests/support/fixtures/okx_recon_payloads.json``. Guarantees ``disconnect()`` in
+    teardown — cancelling any spawned stream task and closing the client so no
+    ResourceWarning/RuntimeWarning escapes into the strict suite (Pitfall 4).
+
+    The import is DEFERRED into the fixture body so the root conftest never depends on
+    ``tests.support`` being importable at early collection time.
+    """
+    from tests.support.fake_venue_connector import make_fake_venue_connector
+
+    connector = make_fake_venue_connector(sandbox=True)
+    connector.connect()
+    try:
+        yield connector
+    finally:
+        connector.disconnect()

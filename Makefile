@@ -3,7 +3,7 @@ include .env
 .EXPORT_ALL_VARIABLES:
 
 # Define the default target commands
-.PHONY: init-env clean test test-unit test-integration test-e2e test-smoke test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
+.PHONY: init-env clean test test-unit test-integration test-e2e test-e2e-live test-live test-smoke test-cov backtest normalize-data precommit typecheck perf-w1 perf-w2 perf-baseline perf-w2-baseline perf-profile perf-view
 
 # Initialize Poetry environment in the service directory
 init-env:
@@ -26,7 +26,7 @@ clean:
 # Test commands
 test:
 	@echo "🧪 Running all tests..."
-	poetry run pytest tests/ -v
+	poetry run pytest tests/ -v -m "not live"
 
 test-unit:
 	@echo "🔬 Running unit tests..."
@@ -34,7 +34,7 @@ test-unit:
 
 test-integration:
 	@echo "🔗 Running integration tests..."
-	poetry run pytest tests/ -v -m "integration"
+	poetry run pytest tests/ -v -m "integration and not live"
 
 test-e2e:
 	@echo "🎬 Running e2e scenario tests..."
@@ -43,6 +43,36 @@ test-e2e:
 test-smoke:
 	@echo "💨 Running smoke tests..."
 	poetry run pytest tests/ -v -m "smoke"
+
+# Fast opt-in LIVE-venue connectivity checks (-m live) anywhere under tests/.
+# Loads .env (via include .env + .EXPORT_ALL_VARIABLES above), so local OKX_API_* demo
+# creds are exported and the credential-gated authenticated test runs alongside the
+# credential-free public reachability test. DISTINCT from test-e2e-live: this runs the
+# fast `-m live` connectivity checks (tests/integration/test_okx_connectivity.py),
+# while test-e2e-live runs only the slow OKX-demo recon e2e suite with `-m slow`.
+test-live:
+	@echo "📡 Running LIVE-venue connectivity checks (opt-in, real network round-trip)..."
+	poetry run pytest tests/ -v -m live
+
+# LIVE opt-in OKX-demo reconciliation suite (RECON-06 / 05-12 Task-3 human gate).
+# Loads .env (via include .env above), so OKX_API_* demo creds are exported and the
+# credential-skipif no longer trips. Runs ONLY the slow-marked live tests against the
+# OKX DEMO venue — the suite asserts connector.sandbox is True before any order, so
+# real-money routing is impossible (T-05-04). Requires OKX_API_KEY/SECRET/PASSPHRASE
+# (demo) and OKX_SANDBOX=true (or unset — default is demo) in .env; test (iii) also
+# needs Docker (testcontainers Postgres) and skips cleanly if Docker is absent.
+#
+# The DB-gate vars are UNSET for this run: tests (i)/(ii) build a full LiveTradingSystem
+# which, when ITRADER_DATABASE_PASSWORD (or ITRADER_DATABASE_URL) is set, takes the
+# Postgres operational-store arm and tries to connect to a real DB (localhost:5544 by
+# default). Those two tests need only the venue round-trip, so we unset them to force the
+# in-memory order/signal fallback. Test (iii) stands up its OWN testcontainers Postgres
+# (explicit url=) and is unaffected. (The store gate reads the env at construction, so the
+# vars must be unset BEFORE the process starts.)
+test-e2e-live:
+	@echo "🛰️  Running LIVE OKX-demo reconciliation suite (opt-in, real demo venue)..."
+	@test -n "$(OKX_API_KEY)" || { echo "❌ OKX_API_KEY not set in .env — cannot run the live demo suite."; exit 1; }
+	env -u ITRADER_DATABASE_PASSWORD -u ITRADER_DATABASE_URL poetry run pytest tests/e2e/test_okx_sandbox_recon.py -m slow -v
 
 test-portfolio:
 	@echo "📊 Running portfolio tests..."

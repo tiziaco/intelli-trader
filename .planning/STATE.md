@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: ready_to_plan
-stopped_at: Phase 04 complete (4/4) — ready to discuss Phase 5
-last_updated: 2026-07-02T13:00:20.551Z
-last_activity: 2026-07-02 - Completed quick task 260702-m8d: Phase 04 code-review fix-now bucket
+status: planning
+stopped_at: Phase 5 (05-13 WR-05) context gathered
+last_updated: "2026-07-04T15:50:48.168Z"
+last_activity: 2026-07-04
 progress:
-  total_phases: 7
-  completed_phases: 4
-  total_plans: 20
-  completed_plans: 20
-  percent: 57
+  total_phases: 8
+  completed_phases: 5
+  total_plans: 33
+  completed_plans: 33
+  percent: 63
 ---
 
 # Project State
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 5 — real/sandbox path + reconciliation + persistence live drive
+**Current focus:** Phase 05.1 — Live-Path Remediation (V17 bugs + ARCH decisions)
 
 ## Current Position
 
-Phase: 5
+Phase: 05.1
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-02
+Status: Ready to plan (inserted — urgent)
+Last activity: 2026-07-04
 
-Progress: [██████████] 100%
+Progress: [████████▒░] 5/6 phases complete (83%) — only Phase 6 (Dynamic Universe Membership) remains
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -80,7 +80,7 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 **Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 251 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- Total plans completed: 264 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
 - v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
@@ -100,6 +100,8 @@ was an off-by-one — see REQUIREMENTS.md count note).
   Phase 4 wires the runtime), RES-01 → Phase 5 (resilience fully verified on the real path; rate-limit
   built in Phase 2, reconnect+gap-recovery in Phase 3 FEED-04), COV-01 → Phase 4 (FL-13 on the first
   end-to-end live surface; `pytest-asyncio` infra lands Phase 2; real-path coverage extends to Phase 5).
+
+- Phase 05.1 inserted after Phase 5: Live-Path Remediation (URGENT)
 
 ### Decisions
 
@@ -151,6 +153,9 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 04]: Paper venue reuses the 'simulated' SimulatedExchange as-is (D-04/D-05/D-06); run_paper_replay() drives golden bars synchronously through the real live seam with backtest per-tick + run-end discipline (parity by construction, D-01/D-09)
 - [Phase ?]: 04-03: RUN-01 runnable paper worker (scripts/run_live_paper.py) delivered per D-08 — offline run_paper_replay (CI-safe default) + opt-in okx manual smoke over start/stop/get_status; channel + web-framework wrapper deferred to Phase 5. COV-01 lifecycle half added (FL-13: clean startup / graceful thread-joining stop / status-before-start, exchange=paper offline).
 - [Phase ?]: 04-04: paper-parity DoD gate shipped (PAPER-04/COV-01) — one test drives run_paper_replay() AND a fresh backtest on the golden dataset, asserts trades+equity frame-equal EXACT (tz-normalized UTC); anchored to the fresh backtest not the frozen 46189 artifact (D-01), survives a backtest-loop rework; inertness _FORBIDDEN extended to replay_provider (D-12), oracle untouched
+- [Phase 05]: 05-11: WR-02 closed — OkxExchange.adopt_venue_correlation() repopulates the three correlation maps + drains buffered fills for rehydrated orders; VenueReconciler.reconcile() adopts per working-set order with a venue_order_id (exchange=self._okx_exchange). Post-restart fills reach the mirror instead of being silently buffered.
+- [Phase 05]: 05-11: WR-03 closed — reconcile_manager validates the PARTIALLY_FILLED transition BEFORE mutating filled_quantity; a rejected transition leaves the mirror literally unchanged. WR-05 recorded documented-only (portfolio_handler.py untouched).
+- [Phase 05]: 05-12: RECON-06 closed — tests/e2e/test_okx_sandbox_recon.py runs `3 passed` against the real OKX EEA demo venue (order->fill->reconcile->restart loop, human-observed 2026-07-03). Reaching green needed 4 follow-on integration fixes (committed separately): OKX_REGION=eea host derivation (REST eea.okx.com / WS wseeapap.okx.com — 50119/60032 otherwise), unified `1d` timeframe to ccxt backfill, live pair BTC/USDT->BTC/USDC (EEA/MiCA sCode 51155; make pair configurable via universe next phase), and store rewired onto unified ITRADER_DATABASE_* (dropped SYSTEM_DB_URL).
 
 ### Pending Todos
 
@@ -199,6 +204,14 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 |---|-------------|------|--------|-----------|
 | 260701-l33 | Add `smoke` pytest marker (register + tag 3 files + `make test-smoke` + tagging rule) | 2026-07-01 | 40c13992 | [260701-l33-add-smoke-marker](./quick/260701-l33-add-smoke-marker/) |
 | 260702-m8d | Apply Phase 04 code-review fix-now bucket (IN-01..04, WR-05, WR-03, WR-02 window guard) + sync stale REQUIREMENTS.md | 2026-07-02 | 148836a6 | [260702-m8d-apply-phase-04-code-review-fix-now-bucke](./quick/260702-m8d-apply-phase-04-code-review-fix-now-bucke/) |
+| 260703-030 | Rewire live operational store onto unified SqlSettings, drop legacy SYSTEM_DB_URL | 2026-07-02 | 8947cc27 | [260703-030-rewire-live-operational-store-onto-unifi](./quick/260703-030-rewire-live-operational-store-onto-unifi/) |
+| fast | Make OKX connector hostname configurable (OKX_HOSTNAME) for EEA regional entity — fixes 50119 on eea.okx.com keys | 2026-07-02 | 3790990f | — (fast, inline) |
+| fast | Fix OKX backfill timeframe: pass unified "1d" (not OKX "1D") to ccxt fetch_ohlcv — unblocks LiveTradingSystem.start() warmup | 2026-07-02 | d6d225b6 | — (fast, inline) |
+| 260703-bza | Add OKX_REGION config deriving REST+WS hosts (global/eea); wire ws_hostname through connector + native candle socket — enables EEA demo (wseeapap.okx.com) | 2026-07-03 | b5826909 | [260703-bza-add-okx-region-config-deriving-rest-ws-h](./quick/260703-bza-add-okx-region-config-deriving-rest-ws-h/) |
+| fast | Hardcode OKX live pair BTC/USDT->BTC/USDC (EEA restricts USDT/MiCA, sCode 51155); universe phase will make it configurable | 2026-07-03 | f51fc34a | — (fast, inline) |
+| 260703-dob | Add OKX live-connectivity integration test + new `live` pytest marker (creds-free public reachability + creds-gated demo auth via OkxConnector); fence default `make test`/`test-integration` with `not live`, add `make test-live` | 2026-07-03 | b97690d5 | [260703-dob-okx-live-connectivity-marker](./quick/260703-dob-okx-live-connectivity-marker/) |
+| fast | Remove OKX cred diagnostic script + diagnose-okx make target (redundant — test_okx_connectivity.py auth test now verifies creds via OkxConnector) | 2026-07-03 | 8f7acd0c | — (fast, inline) |
+| 260703-hl5 | Persist `venue_trade_id` on the transactions table (tail of CR-01 fill-dedup): nullable column + chained Alembic migration + both sql_storage mappers + Postgres round-trip test | 2026-07-03 | b142cbc5 | [260703-hl5-persist-venue-trade-id-on-the-transactio](./quick/260703-hl5-persist-venue-trade-id-on-the-transactio/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
@@ -207,6 +220,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 04 P02 | 8min | 2 tasks | 1 files |
 | Phase 04 P03 | 6min | 2 tasks | 2 files |
 | Phase Phase 04 P04 P04 | 5min | 2 tasks | 2 files |
+| Phase 05 P10 | 20min | 3 tasks | 3 files |
+| Phase 05 P11 | ~15min | 2 tasks | 6 files |
 
 ## Deferred Items
 
@@ -256,11 +271,13 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-02T12:51:57.880Z
-Stopped at: Completed 04-04-PLAN.md
-Resume file: None
+Last session: 2026-07-04T08:47:06.886Z
+Stopped at: Phase 5 (05-13 WR-05) context gathered
+Resume file: .planning/phases/05-real-sandbox-path-reconciliation-persistence-live-drive/05-CONTEXT.md
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps
 
-- Plan Phase 1 (Account Abstraction) with `/gsd:plan-phase 1`.
+- Phase 05 is COMPLETE (12/12, RECON-06 closed). Plan Phase 6 (Dynamic Universe Membership) with
+  `/gsd:plan-phase 6` — carry the "make the live trading pair configurable (currently hardcoded
+  BTC/USDC for OKX EEA/MiCA)" item into its scope.

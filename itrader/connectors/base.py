@@ -76,6 +76,15 @@ class LiveConnector(Protocol):
         """Demo-routing flag; the native data socket keys its host off this (D-02 correction)."""
         ...
 
+    @property
+    def ws_hostname(self) -> str:
+        """Region+sandbox-derived WS host the native data socket keys its URL off (OKX-REGION).
+
+        Supersedes the old sandbox-only host ternary: the (region, sandbox) pair selects
+        one of wspap/ws/wseeapap/wseea so an EEA entity streams from its own demo/live host.
+        """
+        ...
+
     def connect(self) -> Any:
         """Start the loop-on-a-daemon-thread and build the shared client (lifecycle)."""
         ...

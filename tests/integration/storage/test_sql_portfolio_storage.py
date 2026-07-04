@@ -242,6 +242,33 @@ def test_transaction_history_stable_order(storage, portfolio_id):
     assert {t.id for t in history} == {first.id, second.id}
 
 
+def test_transaction_venue_trade_id_round_trip(storage, portfolio_id):
+    # CR-01 — a live Transaction preserves its venue trade id across write -> rehydrate,
+    # and the None default (backtest/simulated fills) round-trips as None.
+    live = Transaction(
+        _T0,
+        TransactionType.BUY,
+        "BTCUSD",
+        Decimal("30000.12345678"),
+        Decimal("1.5"),
+        Decimal("12.34"),
+        portfolio_id,
+        TransactionId(uc.uuid7()),
+        fill_id=uc.uuid7(),
+        position_id=PositionId(uc.uuid7()),
+        venue_trade_id="OKX-EXEC-9001",
+        leverage=Decimal("2"),
+    )
+    spot = _transaction(portfolio_id)  # venue_trade_id defaults to None
+    assert spot.venue_trade_id is None
+    storage.add_transaction(live)
+    storage.add_transaction(spot)
+
+    history = {t.id: t for t in storage.get_transaction_history()}
+    assert history[live.id].venue_trade_id == "OKX-EXEC-9001"
+    assert history[spot.id].venue_trade_id is None
+
+
 # --------------------------------------------------------------------------- cash reservations
 def test_reservation_money_exact_full_precision(storage):
     amount = Decimal("1234.567890123456789")

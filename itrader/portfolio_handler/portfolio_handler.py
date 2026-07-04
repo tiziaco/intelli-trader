@@ -7,14 +7,16 @@ events. Composite reads are consistent because nothing mutates concurrently.
 Live cross-thread reads are a D-live design item.
 """
 from queue import Queue
+from collections import OrderedDict
 from datetime import datetime, UTC
 from decimal import Decimal
-from typing import Dict, Optional, Any, List, Generator, Union
+from typing import Dict, Optional, Any, List, Generator, Union, Callable
 from contextlib import contextmanager
 
 from .portfolio import Portfolio
 from .position import Position
-from .account import SimulatedMarginAccount
+from .account import Account, SimulatedMarginAccount, VenueAccount
+from itrader.portfolio_handler.reconcile import is_within_single_unit_tolerance
 from itrader.core.exceptions import (
     PortfolioNotFoundError, InvalidPortfolioOperationError,
     PortfolioStateError, PortfolioValidationError, PortfolioConfigurationError,
@@ -103,6 +105,37 @@ class PortfolioHandler:
         # mirror the reconcile reads. Oracle-dark on the spot path: with no
         # breaches it is never written, so SMA_MACD stays byte-exact.
         self._order_storage: Optional[OrderStorage] = None
+
+        # 05-04 (D-15/D-01/D-02, RECON-01/RECON-03): the engine-thread drift-halt
+        # seam. The live composition root injects a halt callback
+        # (``LiveTradingSystem.halt``) via ``set_halt_signal``; on unexplained
+        # beyond-band per-symbol drift the engine-thread compare calls it to freeze
+        # the WHOLE engine (D-02). ``None`` on the backtest path — no VenueAccount
+        # portfolio exists, so the compare is never reached and the SMA_MACD oracle
+        # stays byte-exact (drift is inert on the spot SimulatedAccount path).
+        self._halt_signal: Optional[Callable[[str], None]] = None
+        # 05-04 (D-04): the injected reconciler answering whether a beyond-band
+        # drift maps to a KNOWN venue event (an external cancel / external or
+        # hand-closed fill) and is therefore adopt-and-continue rather than a halt.
+        # Signature ``(portfolio, ticker, engine_qty, venue_qty) -> bool``. ``None``
+        # → the conservative money-first default: any beyond-band drift is
+        # unexplained (halt). The full resolver (venue order/fill events + stored
+        # intent) is a follow-on (restart/resilience); this plan wires the halt.
+        self._drift_reconciler: Optional[
+            Callable[[Any, str, Decimal, Decimal], bool]
+        ] = None
+
+        # CR-01: bounded per-handler set of already-settled venue trade ids — the
+        # cross-emitter fill-dedup ledger. The live OKX stream and the restart
+        # VenueReconciler can both book the SAME economic venue trade (they share
+        # no other idempotency key: fill_id is a fresh uuid7 per emit). on_fill
+        # rejects a fill whose venue_trade_id is already here so the position/cash
+        # settles exactly once. An OrderedDict is used as a bounded FIFO (oldest
+        # evicted past the cap) so a long-running live session cannot grow it
+        # unbounded. Backtest/simulated fills carry venue_trade_id=None and NEVER
+        # touch this ledger — the SMA_MACD oracle stays byte-exact (oracle-dark).
+        self._settled_venue_trade_ids: "OrderedDict[str, None]" = OrderedDict()
+        self._max_settled_venue_trade_ids = 100_000
 
         # Global logger
         self.logger = get_itrader_logger().bind(component="PortfolioHandler")
@@ -616,6 +649,160 @@ class PortfolioHandler:
         breached.sort(key=lambda p: (p.ticker, p.entry_date, str(p.id)))
         return breached
 
+    # ------------------------------------------------------------------
+    # Engine-thread drift compare + halt decision (05-04, D-15/D-01/D-04,
+    # RECON-01/RECON-03). The venue is the arbiter of truth in live: the async
+    # push writer only WRITES the VenueAccount cache (D-15 single-writer); the
+    # per-symbol COMPARE + halt DECISION run HERE, on the engine thread, after a
+    # fill drains (on_fill) and once per closed bar (BAR-route backstop). This
+    # placement structurally defeats the phantom-drift race (Pitfall 8): the
+    # engine tally is fully applied before the compare reads it, and no compare is
+    # reachable from a spawned coroutine. Fully oracle-dark: a backtest/paper
+    # portfolio holds a SimulatedAccount, so the compare skips cleanly and
+    # SMA_MACD stays byte-exact.
+    # ------------------------------------------------------------------
+
+    def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
+        """Inject the composition-root freeze-in-place halt entrypoint (05-04, D-01/D-02).
+
+        The live root wires ``LiveTradingSystem.halt`` here; the engine-thread
+        drift compare calls it with a machine-readable reason (``"drift"``) on
+        unexplained beyond-band drift. Backtest never wires it (no VenueAccount →
+        no compare → the signal is never invoked).
+        """
+        self._halt_signal = halt_signal
+
+    def set_drift_reconciler(
+        self, reconciler: Callable[[Any, str, Decimal, Decimal], bool]
+    ) -> None:
+        """Inject the external-event reconciler for beyond-band drift (05-04, D-04).
+
+        Answers whether a beyond-band per-symbol drift reconciles to a KNOWN venue
+        event (an external cancel / external or hand-closed fill) — adopt-and-
+        continue — versus genuinely unexplained drift that halts the engine.
+        ``None`` → every beyond-band drift is treated as unexplained (the
+        conservative money-first default; an external fill is NOT unexplained
+        drift and is adopted only when the reconciler confirms it).
+        """
+        self._drift_reconciler = reconciler
+
+    def _drift_precision(self, ticker: str) -> int:
+        """Resolve the instrument quantity precision for the drift epsilon (D-01).
+
+        Keys the ``is_within_single_unit_tolerance`` band off the SAME instrument
+        precision ``core/money.py::quantize`` consumes
+        (``Instrument.quantity_precision``), resolved via the injected Universe —
+        never a hand-rolled per-symbol table. Falls back to ``8`` (the money-policy
+        quantity default, ``1e-8``) when no Universe is wired or the instrument
+        carries no precision.
+        """
+        default = 8
+        if self._universe is None:
+            return default
+        try:
+            instrument = self._universe.instrument(ticker)
+        except (KeyError, AttributeError):
+            return default
+        precision = getattr(instrument, "quantity_precision", None)
+        if precision is None:
+            return default
+        return int(precision)
+
+    def _compare_symbol_drift(self, portfolio: Portfolio, ticker: str,
+                              correlation_id: CorrelationId) -> None:
+        """Per-symbol engine-vs-venue drift compare on the ENGINE thread (D-15/D-01/D-04).
+
+        Runs ONLY for a live ``VenueAccount`` portfolio — a backtest/paper
+        ``SimulatedAccount`` portfolio has no venue truth, so this is a clean skip
+        (oracle-dark). Compares the engine's fill-applied position quantity for
+        ``ticker`` against the ``VenueAccount`` cached venue truth via
+        ``is_within_single_unit_tolerance`` keyed to the instrument precision:
+
+        * within the precision-epsilon band → adopt venue truth silently
+          (auto-correct, D-01) — a no-op (the difference is last-digit dust);
+        * beyond band AND reconciles to a known venue event → adopt-and-continue
+          (D-04 — an external fill / hand-closed position is NOT unexplained drift);
+        * beyond band AND unexplained → freeze-in-place halt the WHOLE engine
+          (D-01/D-02) via the injected halt signal.
+
+        Single-writer safe (D-15): the async push writer only writes the
+        VenueAccount cache; this compare + decision run on the engine thread AFTER
+        the fill has drained — never from a spawned coroutine (Pitfall 8).
+        """
+        account: Account = portfolio.account
+        if not isinstance(account, VenueAccount):
+            return  # backtest/paper — no venue truth, nothing to reconcile.
+
+        venue_qty = account.positions.get(ticker, Decimal("0"))
+        engine_position = portfolio.get_open_position(ticker)
+        engine_qty = (
+            engine_position.net_quantity if engine_position is not None
+            else Decimal("0")
+        )
+        precision = self._drift_precision(ticker)
+        if is_within_single_unit_tolerance(engine_qty, venue_qty, precision):
+            return  # within the precision-epsilon band — adopt silently (D-01).
+
+        # Beyond band: adopt-and-continue if it maps to a known venue event (D-04).
+        if self._drift_reconciler is not None and self._drift_reconciler(
+                portfolio, ticker, engine_qty, venue_qty):
+            self.logger.warning(
+                "Adopted external venue event (beyond-band drift reconciled)",
+                ticker=ticker,
+                engine_qty=str(engine_qty),
+                venue_qty=str(venue_qty),
+                correlation_id=correlation_id,
+            )
+            return
+
+        # Unexplained beyond-band drift → freeze-in-place halt the whole engine.
+        # The compare declared the engine's own state untrustworthy; per D-02 the
+        # halt does NOT auto-flatten/auto-cancel — it stops NEW submissions and
+        # surfaces HALTED + a CRITICAL alert (wired by the composition root).
+        self.logger.error(
+            "Unexplained per-symbol drift beyond tolerance — halting engine",
+            ticker=ticker,
+            engine_qty=str(engine_qty),
+            venue_qty=str(venue_qty),
+            correlation_id=correlation_id,
+        )
+        if self._halt_signal is not None:
+            self._halt_signal("drift")
+
+    def _run_drift_sweep(self, bar_time: Optional[datetime]) -> None:
+        """Periodic per-closed-bar drift backstop on the ENGINE thread (D-15).
+
+        The on-bar backstop to the on-fill compare (D-15 — on fill immediate + on
+        bar periodic): sweeps every active ``VenueAccount`` portfolio and compares
+        each symbol's engine tally against venue truth across the union of
+        engine-held and venue-reported tickers. Fully oracle-dark — a
+        backtest/paper portfolio holds a ``SimulatedAccount`` and is skipped, so
+        SMA_MACD stays byte-exact.
+        """
+        if bar_time is None:
+            return
+        for portfolio in self.get_active_portfolios():
+            account: Account = portfolio.account
+            if not isinstance(account, VenueAccount):
+                continue
+            engine_tickers = set(portfolio.positions.keys())
+            venue_tickers = set(account.positions.keys())
+            for ticker in sorted(engine_tickers | venue_tickers):
+                self._compare_symbol_drift(
+                    portfolio, ticker, self._generate_correlation_id())
+
+    def _mark_venue_trade_settled(self, venue_trade_id: str) -> None:
+        """Record a venue trade id as settled in the bounded FIFO dedup ledger (CR-01).
+
+        Evicts the oldest id once the ledger exceeds its cap so a long-running live
+        session cannot grow it without bound. Re-inserting an already-present id
+        refreshes its recency (moves it to the newest end).
+        """
+        self._settled_venue_trade_ids[venue_trade_id] = None
+        self._settled_venue_trade_ids.move_to_end(venue_trade_id)
+        while len(self._settled_venue_trade_ids) > self._max_settled_venue_trade_ids:
+            self._settled_venue_trade_ids.popitem(last=False)
+
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
         """Process fill event for the appropriate portfolio.
@@ -635,6 +822,23 @@ class PortfolioHandler:
             self.logger.debug(
                 "Ignoring non-executed fill",
                 status=str(fill_event.status),
+                ticker=fill_event.ticker,
+            )
+            return
+
+        # CR-01: cross-emitter fill-dedup at the settlement chokepoint. The venue
+        # trade id is the ONE idempotency key shared by the two live emitters (the
+        # OKX trade stream and the restart VenueReconciler); a fill whose
+        # venue_trade_id was already settled is a duplicate booking of the SAME
+        # economic venue trade — reject it BEFORE it mutates position/cash, so
+        # 0.5 BTC is never booked as 1.0 (the CR-01 double-count). Backtest and
+        # simulated fills carry venue_trade_id=None and SKIP the guard entirely —
+        # the SMA_MACD oracle takes no new branch (oracle-dark).
+        venue_trade_id = getattr(fill_event, "venue_trade_id", None)
+        if venue_trade_id is not None and venue_trade_id in self._settled_venue_trade_ids:
+            self.logger.warning(
+                "Rejecting duplicate venue trade fill (already settled)",
+                venue_trade_id=venue_trade_id,
                 ticker=fill_event.ticker,
             )
             return
@@ -673,9 +877,19 @@ class PortfolioHandler:
                     # the admission reservation (notional / effective_leverage).
                     # getattr default keeps spot fills byte-exact (oracle-dark).
                     leverage=getattr(fill_event, "leverage", Decimal("1")),
+                    # CR-01: carry the venue trade id onto the durable settlement
+                    # record (None for backtest/simulated fills — oracle-dark).
+                    venue_trade_id=venue_trade_id,
                 )
 
                 portfolio.transact_shares(transaction)
+
+                # CR-01: record the venue trade id as settled ONLY after the
+                # transaction applied — a later re-delivery (stream re-send or the
+                # restart reconciler) of the SAME venue trade is then a no-op at
+                # the guard above. None-keyed backtest/simulated fills never record.
+                if venue_trade_id is not None:
+                    self._mark_venue_trade_settled(venue_trade_id)
 
                 self.logger.debug(
                     "Fill event processed",
@@ -683,6 +897,12 @@ class PortfolioHandler:
                     ticker=fill_event.ticker,
                     correlation_id=correlation_id
                 )
+
+                # 05-04 (D-15): engine-thread per-symbol drift compare + halt
+                # decision, immediately after the fill has drained (single-writer
+                # safe — Pitfall 8). No-op for backtest/paper SimulatedAccount
+                # portfolios, so the SMA_MACD oracle stays byte-exact.
+                self._compare_symbol_drift(portfolio, fill_event.ticker, correlation_id)
 
             except Exception as e:
                 error_portfolio_id = getattr(fill_event, "portfolio_id", None)
@@ -764,6 +984,11 @@ class PortfolioHandler:
         # IN-01: reuse the SAME ``prices`` map the mark used so the breach price
         # and the mark price cannot diverge (no second pass over bar_events).
         self._run_liquidation_pass(prices, bar_time, marked_portfolio_ids)
+
+        # 05-04 (D-15): per-closed-bar drift backstop on the engine thread — the
+        # on-bar complement to the on-fill compare. Oracle-dark (SimulatedAccount
+        # portfolios are skipped), so SMA_MACD stays byte-exact.
+        self._run_drift_sweep(bar_time)
 
     # Global health and monitoring
     def get_global_health_report(self) -> Dict[str, Any]:

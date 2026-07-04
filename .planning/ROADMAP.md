@@ -73,10 +73,10 @@ configured so the global filter is never relaxed); tabs/spaces indentation match
 ### Phase Summary
 
 - [x] **Phase 1: Account Abstraction + Portfolio/Handler Refactor** — Oracle-gated, behavior-preserving extraction of an `Account` truth surface; the universal gate before any live code. — completed 2026-06-30
-- [ ] **Phase 2: OKX Connector** — `OkxConnector` = shared authenticated **session/transport primitive**; data/order/account are **domain adapters** consuming it (`OkxDataProvider` + `OkxExchange` + `VenueAccount`), injected at the composition root; async bottled at the connector edge. (Revised 2026-07-01 — decomposition, revises LX-05; see `phases/02-okx-connector/02-CONTEXT.md`.)
-- [ ] **Phase 3: LiveBarFeed** — Ring-buffer `BarFeed` impl; closed-bar emission off the confirm flag; warmup/backfill through the identical `update(bar)` path; monotonic-forward-only.
-- [ ] **Phase 4: Paper Path (milestone DoD)** — reuse `SimulatedExchange` as-is as the paper exchange (revised 2026-07-02); runnable worker + lifecycle; **paper-parity gate = paper ≡ a fresh backtest on the same data, exact frame-equality**.
-- [ ] **Phase 5: Real/Sandbox Path + Reconciliation + Persistence Live-Drive** — `VenueAccount` reconciliation, partial-fill correctness, v1.6 store driven by the real feed, two-sided restart; sandbox-validated.
+- [x] **Phase 2: OKX Connector** — `OkxConnector` = shared authenticated **session/transport primitive**; data/order/account are **domain adapters** consuming it (`OkxDataProvider` + `OkxExchange` + `VenueAccount`), injected at the composition root; async bottled at the connector edge. (Revised 2026-07-01 — decomposition, revises LX-05; see `phases/02-okx-connector/02-CONTEXT.md`.) — completed 2026-07-04 (re-verified: CR-01/CR-02 gaps closed by Phases 3–5)
+- [x] **Phase 3: LiveBarFeed** — Ring-buffer `BarFeed` impl; closed-bar emission off the confirm flag; warmup/backfill through the identical `update(bar)` path; monotonic-forward-only. — completed 2026-07-01
+- [x] **Phase 4: Paper Path (milestone DoD)** — reuse `SimulatedExchange` as-is as the paper exchange (revised 2026-07-02); runnable worker + lifecycle; **paper-parity gate = paper ≡ a fresh backtest on the same data, exact frame-equality**. — completed 2026-07-02
+- [x] **Phase 5: Real/Sandbox Path + Reconciliation + Persistence Live-Drive** — `VenueAccount` reconciliation, partial-fill correctness, v1.6 store driven by the real feed, two-sided restart; sandbox-validated. — completed 2026-07-04
 - [ ] **Phase 6: Dynamic Universe Membership** — Lean poll seam for mid-run add/remove; warmup-on-add reuses the Phase-3 backfill.
 
 ### Phase 1: Account Abstraction + Portfolio/Handler Refactor
@@ -200,7 +200,7 @@ reconnect debounce strategy; after-the-fact venue bar-correction policy (re-warm
 > extraction is **dropped** (D-05: PAPER-02 satisfied-by-reuse); the parity gate re-anchors to **paper ≡
 > a fresh backtest on the same data, exact frame-equality** (D-01: NOT pinned to the frozen `46189…`
 > artifact, revises PAPER-04/LX-11); Phase 4 builds only the **runnable worker + lifecycle** — the
-> Postgres `LISTEN/NOTIFY` channel + FastAPI move to Phase 5 (D-08: revises RUN-01). The prior
+> Postgres `LISTEN/NOTIFY` channel + FastAPI move past Phase 5 to the FastAPI application-layer plan (D-08: revises RUN-01). The prior
 > 2026-07-01 note (paper needs no connector/session, revises LX-06 framing) still holds.
 
 **Goal**: Deliver the paper path by **reusing `SimulatedExchange` as-is** as the paper exchange (it
@@ -209,7 +209,7 @@ under the `'simulated'` key), driven by `LiveBarFeed`, plus a **runnable worker 
 start/stop/status lifecycle — and prove the **paper-parity gate**: replaying the fixed golden dataset
 through the live-paper path yields **the same trades/equity as a fresh backtest run on the same data,
 exact frame-equality**. Reachable on Phases 1+3 (and, for the manual live smoke test only, the Phase-2
-**data arm** `OkxDataProvider`). The LX-15 runtime topology is decided; the channel/FastAPI defer to Phase 5.
+**data arm** `OkxDataProvider`). The LX-15 runtime topology is decided; the channel/FastAPI defer past Phase 5 to the app-layer plan (D-08).
 **Depends on**: Phase 1 (`SimulatedAccount`, portfolio-side) + Phase 3 (`LiveBarFeed`) + Phase 2 **data arm only** (`OkxDataProvider`, manual smoke)
 **Requirements**: PAPER-01, PAPER-02, PAPER-03, PAPER-04, RUN-01, COV-01
 **Success Criteria** (what must be TRUE):
@@ -232,7 +232,7 @@ exact frame-equality**. Reachable on Phases 1+3 (and, for the manual live smoke 
      backtest hot path — the inertness gate forbids `replay_provider` on the backtest import path).
 **Research flag**: RESOLVED 2026-07-02 (`04-CONTEXT.md` + `04-PATTERNS.md`) — parity harness = offline
 synchronous replay of the golden CSV through `LiveBarFeed` vs a fresh in-test backtest (D-01/D-02/D-03);
-LX-15 topology decided (D-07); channel/FastAPI deferred to Phase 5 (D-08). Two load-bearing traps mapped:
+LX-15 topology decided (D-07); channel/FastAPI deferred past Phase 5 to the app-layer plan (D-08). Two load-bearing traps mapped:
 the `BTCUSD` symbol-form (not `BTC/USDT`) and the tz divergence (backtest `Europe/Paris` vs live-feed `UTC`
 — parity test tz-normalizes to UTC before the exact diff).
 **Plans**: 4 plans (planned 2026-07-02)
@@ -269,12 +269,37 @@ live resilience hardened. The heaviest phase by unique live complexity (the reco
      live. (RECON-06, RES-01)
   5. Recurring milestone gate: backtest oracle byte-exact + no W1/W2 regression (live/venue machinery off
      the backtest hot path).
-**Research flag**: NEEDS PLAN-TIME RESEARCH SPRINT — reconciliation drift/repair policy (tolerance
-thresholds, halt triggers, auto-correct scope, bracket parent/child restart re-establishment); write-through
-transaction boundary; OKX partial-fill field cadence. Do not start Phase 5 coding until decided + documented.
-**Plans**: TBD
+**Research flag**: RESOLVED 2026-07-02 (`05-RESEARCH.md` + `05-PATTERNS.md` + `05-VALIDATION.md`) —
+drift policy = precision-epsilon auto-correct band else whole-engine halt (nautilus
+`is_within_single_unit_tolerance`, D-01); ~80% is wiring already-built seams (`VenueAccount` constructor,
+`OkxExchange` streams, `CachedSql*` rehydrate, `_publish_and_continue`, `get_status`) + porting ~4 small
+nautilus pure-functions; venue order id persisted for bracket re-link; two-sided restart = store rehydrate
++ venue REST reconcile → reconciling events / halt. Design unblocked.
+**Plans**: 9 plans (planned 2026-07-02)
+- [x] 05-01-PLAN.md — Reconciliation primitives: drift epsilon (D-01) + SystemStatus.HALTED (D-07) + pluggable AlertSink egress (D-06) (Wave 1)
+- [x] 05-02-PLAN.md — Offline test infra: shared FakeLiveConnector + recorded OKX recon fixtures + opt-in slow sandbox suite scaffold (D-09) (Wave 1)
+- [x] 05-03-PLAN.md — VenueAccount cache body: push stream + REST snapshot + reserve/release overlay (D-14/D-15, RECON-01) (Wave 2)
+- [x] 05-04-PLAN.md — Drift-compare (engine thread) + freeze-in-place halt + HALTED status/alert + VenueAccount→Portfolio wiring (D-01/D-02/D-04/D-15, RECON-03) (Wave 3)
+- [x] 05-05-PLAN.md — Partial-fill idempotency: fill-ID dedup + fast-fill-race fix + partial→CANCELLED terminalization (D-12/D-13, RECON-02) (Wave 2)
+- [x] 05-06-PLAN.md — Persistence live-drive: split write paths (CachedSql* sync / signal+metrics async) + BAR-keyed metrics (D-10/D-11/D-16, RECON-04) (Wave 4)
+- [x] 05-07-PLAN.md — Two-sided restart: venue_order_id persistence + VenueReconciler reconciling events + bracket re-link (D-03/D-05, RECON-05) (Wave 5)
+- [x] 05-08-PLAN.md — Live resilience: reconnect supervisor + failure classification + pause-on-disconnect (RES-01/D-19/D-20) (Wave 6)
+- [x] 05-09-PLAN.md — Error-policy split (D-17) + shared-parity-config + doc-sync (D-18) + terminal milestone gate (oracle byte-exact + inertness + RECON-06 sandbox evidence) (Wave 7)
+- [x] 05-10-PLAN.md — Gap-closure: CR-01 live-fill wiring (start() spawns OkxExchange.connect()) + honest resume snapshot (WR-04) + atomic halt (WR-01) (Wave 8)
+- [x] 05-11-PLAN.md — Gap-closure: adopt_venue_correlation seam (WR-02, rehydrated-order fill reaches mirror) + validate-before-mutate partial fill (WR-03) (Wave 8)
+- [x] 05-12-PLAN.md — Gap-closure: RECON-06 OKX-demo live e2e suite (order->fill->reconcile->restart loop, human-gated `3 passed` against real EEA demo venue) (Wave 8)
 **Cross-cutting**: RES-01 home phase (resilience pieces also built in Phases 2 rate-limit / 3 reconnect+gap-recovery);
 COV-01 real-path surface coverage completes here.
+
+### Phase 05.1: Live-Path Remediation (INSERTED)
+
+**Goal:** [Urgent work - to be planned]
+**Requirements**: TBD
+**Depends on:** Phase 5
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 05.1 to break down)
 
 ### Phase 6: Dynamic Universe Membership
 **Goal**: Add a lean universe-membership **poll seam** for mid-run add/remove of symbols (NOT the full
@@ -458,7 +483,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | 2. OKX Connector | v1.7 | 5/5 | Complete   | 2026-07-01 |
 | 3. LiveBarFeed | v1.7 | 4/4 | Complete   | 2026-07-01 |
 | 4. Paper Path (DoD) | v1.7 | 4/4 | Complete   | 2026-07-02 |
-| 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 0/TBD | Not started | - |
+| 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 13/13 | Complete   | 2026-07-04 |
 | 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):

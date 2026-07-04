@@ -103,6 +103,10 @@ def build_order_tables(metadata: MetaData) -> dict[str, Table]:
             Column("leverage", Numeric, nullable=False),
             Column("trail_type", String, nullable=True),
             Column("trail_value", Numeric, nullable=True),
+            # 05-07 (RECON-05 / Open Question 3) — the venue order id, nullable so
+            # backtest/paper orders (no venue id) round-trip unchanged. Persisted so a
+            # rehydrated bracket leg re-links confidently to a venue resting order.
+            Column("venue_order_id", String, nullable=True),
             # D-08 — composite index over the hot active-set predicate (portfolio_id, status).
             Index("ix_orders_portfolio_status", "portfolio_id", "status"),
         )

@@ -40,14 +40,23 @@ from itrader.price_handler.providers.okx_provider import ClosedBar, OkxDataProvi
 class _StubConnector:
     """Minimal ``LiveConnector`` stand-in exposing only what the data arm reads directly.
 
-    ``_stream_candles`` reads ``sandbox``; ``fetch_ohlcv_backfill`` reads ``client`` and
-    bridges through ``call`` (run the coroutine to completion inline — no background loop
-    needed for the synchronous-RPC path in these offline tests).
+    ``_stream_candles`` reads ``ws_hostname``; ``fetch_ohlcv_backfill`` reads ``client``
+    and bridges through ``call`` (run the coroutine to completion inline — no background
+    loop needed for the synchronous-RPC path in these offline tests). ``ws_hostname``
+    defaults to the sandbox-derived global host so the legacy routing tests still pin
+    wspap/ws; the region-derived host is exercised by passing it explicitly.
     """
 
-    def __init__(self, sandbox: bool, client: Any = None) -> None:
+    def __init__(
+        self, sandbox: bool, client: Any = None, ws_hostname: str | None = None
+    ) -> None:
         self.sandbox = sandbox
         self.client = client
+        self.ws_hostname = (
+            ws_hostname
+            if ws_hostname is not None
+            else ("wspap.okx.com" if sandbox else "ws.okx.com")
+        )
 
     def call(self, coro: Any) -> Any:
         return asyncio.run(coro)
@@ -208,6 +217,19 @@ def test_sandbox_false_selects_live_business_host(
     assert "wspap" not in recorder["url"]
 
 
+def test_native_host_follows_connector_ws_hostname(
+    okx_business_candles: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The native socket host follows connector.ws_hostname (region-derived, e.g. EEA demo)."""
+    provider = OkxDataProvider(
+        _StubConnector(sandbox=True, ws_hostname="wseeapap.okx.com"), "BTC-USDT", "1d")
+    provider.set_bar_sink(lambda _b: None)
+
+    recorder = _drive_stream(provider, okx_business_candles, monkeypatch)
+
+    assert recorder["url"] == "wss://wseeapap.okx.com:8443/ws/v5/business"
+
+
 def test_stream_subscribes_the_business_candle_channel(
     okx_business_candles: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -298,6 +320,27 @@ def test_backfill_decimal_no_float_leaks(fake_ccxt_client: Any) -> None:
         assert isinstance(bar[key], Decimal)
         assert not isinstance(bar[key], float)
     assert isinstance(bar["ts"], int)
+
+
+def test_backfill_passes_unified_timeframe_to_ccxt(fake_ccxt_client: Any) -> None:
+    """Backfill hands ccxt the UNIFIED timeframe ("1d"), not the OKX channel token ("1D").
+
+    Regression: ccxt's unified ``fetch_ohlcv`` maps "1d" -> OKX "1D" itself; passing the
+    OKX token makes ccxt's ``parse_timeframe`` reject unit "D" ("timeframe unit D is not
+    supported"), which broke ``LiveTradingSystem.start()`` warmup backfill. The
+    ``_okx_interval`` token is for the native business-candle channel name only.
+    """
+    raw = [["1704067200000", "42000.0", "42500.0", "41800.0", "42100.0", "1200.5"]]
+    fake_ccxt_client.fetch_ohlcv = AsyncMock(return_value=raw)
+    provider = OkxDataProvider(
+        _StubConnector(sandbox=True, client=fake_ccxt_client), "BTC-USDT", "1d")
+
+    provider.fetch_ohlcv_backfill("BTC-USDT", "1d")
+
+    # Positional signature: fetch_ohlcv(symbol_okx, timeframe, since, limit)
+    passed_timeframe = fake_ccxt_client.fetch_ohlcv.call_args.args[1]
+    assert passed_timeframe == "1d"
+    assert passed_timeframe != "1D"
 
 
 def test_decimal_edge_no_float_leaks_in_streamed_bar(

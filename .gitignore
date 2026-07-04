@@ -53,6 +53,10 @@ credentials*
 # them by filename "CACHE"/"cache").
 !docs/CACHE-CLASSIFICATION.md
 !tests/integration/test_cache_classification.py
+# v1.7 Phase 5 RECON-01 VenueAccount cache unit test (mandated artifact name per
+# the phase test map; the broad **cache** rule above would otherwise ignore it by
+# filename "cache").
+!tests/unit/portfolio/test_venue_account_cache.py
 
 #UserData
 output/
