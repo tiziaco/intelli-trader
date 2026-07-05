@@ -108,7 +108,12 @@ def _drop_operational_tables(pg_url):
 
 
 def _make_order(**overrides) -> Order:
-    """Build an active ``Order`` for BTC/USDT with a venue order id (overridable per field)."""
+    """Build an active ``Order`` for BTC/USDT (overridable per field).
+
+    NO ``venue_order_id`` hand-stamp here — that is exactly the V17-02 anti-pattern the
+    A2 gate guards against. The mirror's ``venue_order_id`` is stamped ONLY by the real
+    D-06 ORDER-ACK path via ``_stamp_venue_ack`` (as ``OkxExchange`` would pre-restart).
+    """
     base = dict(
         time=_BT,
         type=OrderType.LIMIT,
@@ -120,10 +125,35 @@ def _make_order(**overrides) -> Order:
         exchange="okx",
         strategy_id=StrategyId(uc.uuid7()),
         portfolio_id=PortfolioId(uc.uuid7()),
-        venue_order_id=_VENUE_ORD,
     )
     base.update(overrides)
     return Order(**base)
+
+
+def _stamp_venue_ack(seed_store, order, venue_order_id: str) -> Order:
+    """Persist ``venue_order_id`` onto the seeded order via the REAL D-06 ORDER-ACK path.
+
+    Never a fixture hand-stamp (V17-02): wire an ``OrderHandler`` over the seed store and
+    drive an ``OrderAckEvent`` through ``on_order_ack`` -> ``OrderManager.stamp_venue_order_id``
+    -> ``store.update_order``, exactly as ``OkxExchange._submit_order`` does in a live
+    pre-restart session. Write-through persists to the backing DB, so the ``restarted``
+    store rehydrates the stamp (the D-06 durability this suite exercises). Returns the
+    re-read order so the caller's handle reflects the persisted stamp.
+    """
+    from unittest.mock import MagicMock
+
+    from itrader.events_handler.events import OrderAckEvent
+    from itrader.order_handler.order_handler import OrderHandler
+
+    handler = OrderHandler(
+        queue.Queue(), MagicMock(name="portfolio_read_model"), order_storage=seed_store)
+    handler.on_order_ack(OrderAckEvent(
+        time=_BT,
+        order_id=order.id,
+        venue_order_id=venue_order_id,
+        portfolio_id=order.portfolio_id,
+    ))
+    return seed_store.get_order_by_id(order.id, order.portfolio_id)
 
 
 def _fresh_store(backend):
@@ -177,6 +207,7 @@ def test_store_and_venue_agree_no_halt_no_phantom_fill(pg_url, fake_venue_connec
             filled_quantity=Decimal("0.5"),
         )
         seed.add_order(order)
+        order = _stamp_venue_ack(seed, order, _VENUE_ORD)   # real D-06 ack path
 
         restarted = _fresh_store(backend)
         halt = _HaltSpy()
@@ -205,6 +236,7 @@ def test_downtime_fill_is_adopted_once(pg_url, fake_venue_connector):
         # Store thinks the order is still open (filled 0) — the venue filled 0.5 in downtime.
         order = _make_order(status=OrderStatus.PENDING, filled_quantity=Decimal("0"))
         seed.add_order(order)
+        order = _stamp_venue_ack(seed, order, _VENUE_ORD)   # real D-06 ack path
 
         restarted = _fresh_store(backend)
         halt = _HaltSpy()
@@ -244,8 +276,9 @@ def test_venue_position_without_stored_intent_halts(pg_url, fake_venue_connector
     try:
         seed = _fresh_store(backend)
         # A stored order for a DIFFERENT symbol — it does NOT explain the BTC/USDT position.
-        order = _make_order(ticker="ETH/USDT", venue_order_id="OTHER-VENUE-ID")
+        order = _make_order(ticker="ETH/USDT")
         seed.add_order(order)
+        order = _stamp_venue_ack(seed, order, "OTHER-VENUE-ID")   # real D-06 ack path
 
         restarted = _fresh_store(backend)
         halt = _HaltSpy()
