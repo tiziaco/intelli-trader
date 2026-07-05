@@ -287,6 +287,74 @@ def _build_demo_connector():
     return connector
 
 
+def _seed_believed_position_to_venue(system, portfolio_id):
+    """TEST-ONLY: seed the engine's believed BTC/USDC position to the LIVE venue balance.
+
+    The only OKX demo account available is NON-FLAT: OKX pre-seeds ~1 BTC and the EEA/MiCA
+    account cannot be sold flat (sells blocked by a price-floor > best-bid). On such an
+    account ``_run_session_baseline_guard`` (live_trading_system.py:579) reads a base-asset
+    residual and latches ``halt('baseline-residual')`` inside ``start()`` — the two online
+    start()-driven tests never reach RUNNING.
+
+    This helper reads the live venue BTC balance READ-ONLY (via an independent sandbox
+    connector — the system connector is not yet connected pre-``start()``) and seeds the
+    believed BTC/USDC position to match it BEFORE ``start()``, so the guard reads
+    ``engine_qty == venue_qty`` and lets the session reach RUNNING. The read places NO order.
+    ``set_position`` is a pure position-only dict write (``PositionManager`` is cash-agnostic,
+    D-06), so ``cash_before`` — snapshotted after ``start()`` — is unaffected by the seed.
+
+    On a genuinely FLAT account (venue base total 0 or absent) the seed is a no-op and the
+    original flat-start behavior is unchanged. Returns the seeded ``venue_qty`` (Decimal).
+    All imports are LAZY (inside this body) so credential-free collection never touches
+    connector code.
+    """
+    from datetime import datetime, timezone
+
+    import uuid_utils.compat as uc
+
+    from itrader.core.enums import TransactionType
+    from itrader.core.ids import TransactionId
+    from itrader.core.money import to_money
+    from itrader.portfolio_handler.position.position import Position
+    from itrader.portfolio_handler.transaction.transaction import Transaction
+
+    # READ-ONLY: read the live venue BTC balance via a throwaway sandbox connector.
+    connector = _build_demo_connector()
+    try:
+        bal = connector.call(connector.client.fetch_balance())
+        total = bal.get("total", {}) if isinstance(bal, dict) else {}
+        base_raw = total.get(_BASE_CCY) if isinstance(total, dict) else None
+    finally:
+        try:
+            connector.disconnect()
+        except Exception:
+            pass
+
+    if base_raw is None:
+        return Decimal("0")   # no venue balance key — genuinely flat, seed is a no-op.
+
+    # Decimal edge — never Decimal(float); matches the guard's venue_qty byte-for-byte.
+    venue_qty = to_money(str(base_raw))
+    if venue_qty == 0:
+        return Decimal("0")   # flat account — original flat-start path intact.
+
+    txn = Transaction(
+        time=datetime.now(timezone.utc),
+        type=TransactionType.BUY,
+        ticker=_OKX_SYMBOL,
+        price=_PRICE_ESTIMATE,
+        quantity=venue_qty,
+        commission=Decimal("0"),
+        portfolio_id=portfolio_id,
+        id=TransactionId(uc.uuid7()),
+        fill_id=uc.uuid7(),
+    )
+    position = Position.open_position(txn)
+    portfolio = system.portfolio_handler.get_portfolio(portfolio_id)
+    portfolio.position_manager._storage.set_position(_OKX_SYMBOL, position)
+    return venue_qty
+
+
 def _start_pg_container():
     """Start a testcontainers Postgres (rehydrate substrate); skip if Docker is absent (D-11)."""
     from testcontainers.postgres import PostgresContainer
@@ -582,6 +650,10 @@ def test_demo_order_produces_real_fill_event() -> None:
 
     system, portfolio_id = _build_live_okx_stack()
     _assert_sandbox_routed(system)
+    # Seed the believed BTC/USDC position to the live (non-flat) venue balance BEFORE
+    # start() so the baseline guard reads engine_qty == venue_qty and reaches RUNNING
+    # instead of latching halt('baseline-residual'). No-op on a genuinely flat account.
+    _seed_believed_position_to_venue(system, portfolio_id)
     emitted = _install_emit_spy(system)
     try:
         # T-05-04: final routing guard — the connector MUST be sandbox is True before we submit.
@@ -634,6 +706,11 @@ def test_venue_account_reconciles_post_fill_within_tolerance() -> None:
 
     system, portfolio_id = _build_live_okx_stack()
     _assert_sandbox_routed(system)
+    # Seed the believed BTC/USDC position to the live (non-flat) venue balance BEFORE
+    # start() so the baseline guard reaches RUNNING (see test (i)); the reconcile below
+    # still holds because engine and venue both move by the same fill delta from this
+    # seeded baseline. No-op on a genuinely flat account.
+    _seed_believed_position_to_venue(system, portfolio_id)
     try:
         # T-05-04: final routing guard — the connector MUST be sandbox is True before we submit.
         assert system._okx_connector.sandbox is True
