@@ -135,6 +135,16 @@ class VenueAccount(Account):
         self._symbol = symbol
         self._base = symbol.split("/")[0] if symbol is not None else None
 
+        # D-24 (CR-01): does this leaf's cash channel actually net a venue-side hold
+        # into ``_venue_balance``? Only then may ``drop_pending`` drop the local
+        # ``_pending`` overlay on ack without OVER-stating buying power. On the wired
+        # single-channel SPOT leaf ``_write_balance_stream`` is positions-only and
+        # ``_venue_balance`` is re-baselined solely by ``snapshot()`` — the overlay is
+        # the SOLE tracker of a resting order's hold, so it must be held until terminal
+        # ``release``. The derivative/margin leaf DOES net holds (stream-refreshed cash),
+        # so D-15's drop-on-ack stays valid there.
+        self._cash_stream_nets_holds = market_type != "spot"
+
         # D-14/D-15: RLock-guarded venue cache. Written ONLY on the connector loop
         # thread (async push) or on a snapshot call; read on the engine thread. All
         # None/empty until first snapshotted — a read before then surfaces loud.
@@ -700,21 +710,39 @@ class VenueAccount(Account):
             self._pending.pop(str(order_id), None)
 
     def drop_pending(self, order_id: OrderId) -> None:
-        """Drop the local pending overlay entry on the venue ORDER-ACK (D-15, V17-13).
+        """Drop the local pending overlay on ack — ONLY when the cash channel nets holds (D-15/D-24).
 
-        Closes the buying-power double-count: ``_pending`` is otherwise only popped
-        in ``release`` (terminal), so between the venue ORDER-ACK and terminal release
-        the same hold is counted TWICE — once by this local overlay, once by the
-        venue's own netting (the venue owns the real reservation the moment it acks
-        the resting order). Dropping the overlay on ack restores the settled
-        available (``available_balance == balance`` again for this order) instead of
-        understating buying power until the fill/cancel settles.
+        D-15 (V17-13) closes a buying-power double-count on a cash channel that nets
+        the venue-side hold into ``_venue_balance``: there ``_pending`` and the
+        stream-refreshed venue balance BOTH carry the hold between ack and terminal
+        release, so dropping the overlay on ack removes the duplicate.
 
-        This is a NON-terminal drop: it pops ONLY the admission overlay entry and
-        NEVER touches the settled ledger (``_ledger_delta``) — the fill still settles
-        later through the normal ``apply_fill_cash_flow`` path. Idempotent (a
-        ``KeyError``-free ``pop``), keyed by ``str(order_id)`` to match the ``reserve``
-        write key, and taken under the same lock ``reserve``/``release`` hold.
+        D-24 (CR-01) gates that drop. On the WIRED single-channel SPOT leaf
+        ``_write_balance_stream`` is positions-only and ``_venue_balance`` is
+        re-baselined solely by ``snapshot()`` (D-01) — so the ``_pending`` overlay is
+        the SOLE tracker of a resting order's cash hold for its entire life. There was
+        never a double-count for D-15 to remove; dropping the overlay on ack would snap
+        ``available_balance`` back to the full settled balance while the order is still
+        open on the venue — a buying-power OVER-statement admitting a second order
+        against already-committed cash. So on the spot leaf this is a NO-OP: the overlay
+        is held until terminal ``release``. D-15's drop-on-ack stays dormant-valid for a
+        future margin/swap leaf whose cash channel refreshes ``_venue_balance``.
+
+        The guard is the intent-revealing ``_cash_stream_nets_holds`` predicate
+        (False on spot, True on derivative). When it is False the overlay is held —
+        negation-first early return, no overlay pop.
+
+        This is a NON-terminal drop: on the netting leaf it pops ONLY the admission
+        overlay entry and NEVER touches the settled ledger (``_ledger_delta``) — the
+        fill still settles later through the normal ``apply_fill_cash_flow`` path.
+        Idempotent (a ``KeyError``-free ``pop``), keyed by ``str(order_id)`` to match
+        the ``reserve`` write key, and taken under the same lock ``reserve``/``release``
+        hold. Terminal ``release`` still pops unconditionally on BOTH leaves, so the
+        spot hold is released at terminal, never leaked.
         """
+        if not self._cash_stream_nets_holds:
+            # D-24 (CR-01): single-channel spot leaf — hold the overlay until terminal
+            # release (dropping it here over-states buying power).
+            return
         with self._lock:
             self._pending.pop(str(order_id), None)
