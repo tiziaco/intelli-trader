@@ -932,6 +932,18 @@ class PortfolioHandler:
             # (a) D-07 restore: positions into the live managers' read cache + the
             # persisted cash scalar into the account.
             rehydrate_fn(portfolio.account)
+            # (a2) WR-03 restore: re-seed the realised-PnL accumulator from the durable
+            # account-state scalar. The accumulator is not one of the containers the
+            # working-set cache carries, so without this a post-restart fill would
+            # overwrite the durable realized_pnl column with a 0-based value. Guarded
+            # exactly like the cash restore — only when durable state exists.
+            load_account_state = getattr(storage, "load_account_state", None)
+            if load_account_state is not None:
+                account_state = load_account_state()
+                if account_state is not None:
+                    portfolio.position_manager.restore_realised_pnl(
+                        account_state["realized_pnl"]
+                    )
             # (b) D-08 Layer 2 durable backstop: seed the dedup ledger from the durable
             # transaction history, keyed f"{ticker}:{venue_trade_id}" (V17-12). None-keyed
             # backtest/simulated transactions carry no venue key and are skipped.

@@ -328,6 +328,29 @@ class PositionManager:
         # per-position realised terms. Fed only from the Portfolio close funnel.
         self._realised_pnl_accumulator += increment
 
+    def restore_realised_pnl(self, value: Decimal) -> None:
+        """Restart-restore seam for the realised-PnL accumulator (WR-03).
+
+        Sets ``self._realised_pnl_accumulator`` directly from the persisted
+        account-state scalar (``load_account_state()["realized_pnl"]``) on the live
+        rehydrate path, so a fresh ``PositionManager`` REMEMBERS its pre-restart
+        realised PnL instead of restarting at ``Decimal('0.00')``. Without this, the
+        first post-restart settled fill would write the undercounted (0-based) total
+        back over the durable ``realized_pnl`` column via ``_persist_account_state``.
+
+        Set at FULL precision — deliberately NO quantize, mirroring
+        ``apply_realised_increment``'s discipline (Decimal end-to-end; a mid-stream
+        quantize would shift the accumulator off the byte-identical running sum). The
+        gated ``assert_accumulator_consistent`` seam is unaffected — it is NOT called
+        on the hot path, and after a restart the closed positions it would re-sum are
+        deliberately not loaded, so restoring the persisted scalar is the ONLY correct
+        source of the pre-restart realised total.
+
+        Args:
+            value: The persisted realised-PnL accumulator (full precision Decimal).
+        """
+        self._realised_pnl_accumulator = value
+
     def get_total_realized_pnl(self) -> Decimal:
         """Return the running realised-PnL accumulator (O(1) cached field).
 
