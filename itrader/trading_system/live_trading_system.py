@@ -927,13 +927,25 @@ class LiveTradingSystem:
         if not self._is_submission_paused():
             return
         try:
+            # D-25 (WR-01): re-fetch fills that settled while the fill stream was down,
+            # BEFORE the fresh REST snapshot — so the snapshot's balance/position picture
+            # already reflects the recovered trade. Engine thread here (safe to block; the
+            # bounded fetch_my_trades page bridges through the connector). Each trade routes
+            # through _handle_trade and is deduped by the D-08 {symbol}:{trade_id} guard, so
+            # a later reconcile never double-settles it. Guard-claused on _okx_exchange
+            # (mirrors the _venue_account guard); a catch-up failure is caught by the same
+            # except below (stay paused, never resume blind). NOTE: no distinct attempt==1
+            # live-path call site exists — every reconnect funnels through _mark_stream_down
+            # → on_stream_up → _pending_stream_resume → this drain (see okx.py supervisor).
+            if self._okx_exchange is not None:
+                self._okx_exchange.catch_up_missed_fills()
             if self._venue_account is not None:
                 # WR-04: fresh REST balance/position snapshot before resuming (engine
                 # thread — safe to block); NOT a full two-sided reconcile (see docstring).
                 self._venue_account.snapshot()
         except Exception as e:
             self.logger.error(
-                'Resume REST snapshot failed — staying paused: %s', e)
+                'Resume missed-fill catch-up / REST snapshot failed — staying paused: %s', e)
             self._pending_stream_resume.set()  # retry on the next engine iteration
             return
         self.resume_submission()
