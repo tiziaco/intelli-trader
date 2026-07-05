@@ -393,8 +393,8 @@ Plans:
 
 **Wave 7** *(gap remediation — closes the 3 confirmed verification gaps; blocked on Wave 1-6 completion)*
 
-- [ ] 05.3-10-PLAN.md — D-24 gate `drop_pending` no-op on the single-channel spot leaf (close CR-01 buying-power over-statement) + D-27 spot-premise regression test [wave 7]
-- [ ] 05.3-11-PLAN.md — D-25 wire orphaned `catch_up_missed_fills` into resume drain + D-26 arm `_okx_connector.set_halt_signal` at composition root + D-27 resume-recovery / start()-arm wiring tests [wave 7]
+- [x] 05.3-10-PLAN.md — D-24 gate `drop_pending` no-op on the single-channel spot leaf (close CR-01 buying-power over-statement) + D-27 spot-premise regression test [wave 7]
+- [x] 05.3-11-PLAN.md — D-25 wire orphaned `catch_up_missed_fills` into resume drain + D-26 arm `_okx_connector.set_halt_signal` at composition root + D-27 resume-recovery / start()-arm wiring tests [wave 7]
 
 **Cross-cutting constraints:**
 
