@@ -1508,37 +1508,48 @@ class LiveTradingSystem:
             # (the only venue with a VenueAccount); lazy inside the okx branch, so
             # no inertness impact. The venue owns balance/positions in live — the
             # engine caches, it does not recompute (Pitfall 10, D-14).
+            # 05.3-09 (D-23): UNGATE the durable PORTFOLIO-ledger rehydrate from the
+            # OKX arm — it runs whenever the store exposes rehydrate() (the durable
+            # Postgres spine present), REGARDLESS of exchange, so a durable
+            # paper/simulated engine restores its persisted cash + realized-PnL on
+            # restart instead of coming up with construction-time initial cash. It is
+            # sequenced FIRST (before the okx block's snapshot()/link/reconcile) so a
+            # paper/simulated account restores while its portfolio still holds the
+            # SimulatedAccount — before any VenueAccount swap (whose restore_cash is a
+            # no-op, which is why link-before-rehydrate left the SimulatedAccount
+            # restore dead on the paper path). Semantics = RESTORE not reconcile: the
+            # SimulatedAccount ledger is sole truth and the restored (cash, positions)
+            # pair's consistency is guaranteed by D-19's atomic fill-path write; the
+            # venue reconcile/snapshot below is NOT invoked on the paper path. Guarded
+            # on the store exposing rehydrate() (the CachedSql live store; not the
+            # in-memory fallback) so an unconfigured ITRADER_DATABASE_* env degrades
+            # cleanly; rehydrate() is additionally per-portfolio getattr-guarded (the
+            # in-memory backtest backend is a clean skip → oracle-dark).
+            # D-22 (WR-05): pass the order-mirror seed sink so the SAME single
+            # transactions.venue_trade_id history pass restart-seeds the
+            # ReconcileManager dedup ring SYMMETRICALLY with the portfolio ledger's
+            # _settled_venue_trade_ids — a re-delivered pre-restart trade cannot
+            # double-settle on EITHER arm.
+            if hasattr(self._order_storage, 'rehydrate'):
+                self.portfolio_handler.rehydrate(
+                    self.order_handler.order_manager.seed_applied_trades)
+
             if self.exchange == 'okx' and self._venue_account is not None:
                 self._venue_account.snapshot()
                 self._venue_account.start_streaming()
                 self._link_venue_account_to_portfolios()
 
                 # 05-07 (RECON-05, D-03/D-05): two-sided restart reconcile on the
-                # ENGINE thread BEFORE RUNNING. Rehydrate the working set from the
-                # store (INTENT truth), reconcile against the venue REST snapshot,
+                # ENGINE thread BEFORE RUNNING. The working set was rehydrated from the
+                # store (INTENT truth) above; reconcile against the venue REST snapshot,
                 # adopt in-band deltas as reconciling FillEvents (idempotent fill
                 # path), halt on unexplained venue positions, and re-link brackets.
                 # Lazy-imported inside the OKX arm so the backtest import path stays
-                # SQL/async/connector-free (inertness gate). Guarded on the store
-                # exposing rehydrate() (the CachedSql live store; not the in-memory
-                # fallback) so an unconfigured ITRADER_DATABASE_* env degrades cleanly.
+                # SQL/async/connector-free (inertness gate). Stays okx-only (the venue
+                # reconcile never runs on the paper/simulated path — D-23 RESTORE-only)
+                # and guarded on the store exposing rehydrate() so an unconfigured
+                # ITRADER_DATABASE_* env degrades cleanly.
                 if hasattr(self._order_storage, 'rehydrate'):
-                    # 05.2-05 (D-07/D-08): restore the durable PORTFOLIO ledger
-                    # (open positions + persisted cash into the live managers) and
-                    # seed the settled-trade dedup ledger from durable transactions
-                    # BEFORE reconcile — so venue adoption diffs against RESTORED
-                    # engine state and a re-delivered downtime trade is a no-op.
-                    # rehydrate() is internally getattr-guarded per portfolio (the
-                    # in-memory backtest backend is a clean skip), so it is safe here
-                    # under the same durable-store gate as the order rehydrate.
-                    # D-22 (WR-05): pass the order-mirror seed sink so the SAME single
-                    # transactions.venue_trade_id history pass restart-seeds the
-                    # ReconcileManager dedup ring SYMMETRICALLY with the portfolio
-                    # ledger's _settled_venue_trade_ids — a re-delivered pre-restart
-                    # trade cannot double-settle on EITHER arm.
-                    self.portfolio_handler.rehydrate(
-                        self.order_handler.order_manager.seed_applied_trades)
-
                     from itrader.portfolio_handler.reconcile.venue_reconciler import (
                         VenueReconciler,
                     )
