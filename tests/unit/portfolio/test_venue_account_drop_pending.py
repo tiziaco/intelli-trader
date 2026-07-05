@@ -1,12 +1,21 @@
-"""D-15 unit tests — drop the local ``_pending`` overlay on the venue ORDER-ACK.
+"""D-15 / D-24 unit tests — the ``_pending`` overlay drop is gated per market type.
 
-Closes V17-13 (buying-power double-count): today ``VenueAccount._pending`` is only
-popped on terminal ``release``. Between the venue ORDER-ACK and terminal release the
-same hold is counted twice — once by the local overlay, once by the venue's own
-netting — so every resting order understates available buying power. D-15 drops the
-overlay the moment the ack arrives (``VenueAccount.drop_pending``), routed through the
-existing ``PortfolioReadModel`` seam the order domain already uses for reserve/release
-and getattr-guarded so paper/simulated accounts are a clean skip.
+D-15 drops the local ``_pending`` overlay on the venue ORDER-ACK
+(``VenueAccount.drop_pending``), routed through the existing ``PortfolioReadModel``
+seam the order domain already uses for reserve/release and getattr-guarded so
+paper/simulated accounts are a clean skip.
+
+D-24 / CR-01 (gap remediation): the drop-on-ack is only correct on a cash channel
+that actually nets the venue-side hold into ``_venue_balance`` (a stream-refreshed
+margin/swap leaf). On the WIRED single-channel **spot** leaf
+(``market_type='spot'``, ``live_trading_system.py:471``) ``_write_balance_stream``
+is positions-only and ``_venue_balance`` is re-baselined solely by ``snapshot()`` —
+so the ``_pending`` overlay is the SOLE tracker of a resting order's cash hold for
+its entire life. Dropping it on ack there snaps ``available_balance`` back to the
+full settled balance while the order is still open on the venue — a buying-power
+OVER-statement that would admit a second order against already-committed cash. D-24
+gates ``drop_pending`` to a no-op on the spot leaf (overlay held until terminal
+``release``); the derivative leaf keeps the drop-on-ack (D-15 stays dormant-valid).
 
 Offline — the ``fake_venue_connector`` double (05-02) owns connect/disconnect so every
 spawned push stream is cancelled and the client closed in teardown (clean under
@@ -28,14 +37,15 @@ from tests.support.fake_venue_connector import FakeLiveConnector
 def test_ack_drops_pending_overlay(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
-    """D-15: the ORDER-ACK drops the local ``_pending`` overlay immediately.
+    """D-15 (derivative control arm): the ORDER-ACK drops the ``_pending`` overlay.
 
-    RED on current code — ``drop_pending`` does not exist, so the overlay stays held
-    (available understated: the double-count). GREEN — the ack pops the overlay and
-    available is restored to the settled balance (the venue ``free`` already excludes
-    the resting hold, so the local overlay must not linger).
+    On the ``derivative`` leaf (the default ``market_type``) the venue cash channel
+    nets the hold into ``_venue_balance``, so dropping the local overlay on ack
+    removes a genuine double-count and restores the settled available. This is the
+    control arm for D-24 — it proves ``drop_pending`` is GATED per market type, not
+    blanket-disabled: the derivative drop must still fire.
     """
-    account = VenueAccount(fake_venue_connector)
+    account = VenueAccount(fake_venue_connector)  # market_type defaults to 'derivative'
     account.snapshot()  # available == 78999.79
 
     order_id = OrderId(uuid.uuid4())
@@ -173,3 +183,88 @@ def test_drop_pending_uses_string_key_edge(
 
     account.drop_pending(order_id)
     assert account._pending == {}
+
+
+def _spot_account(connector: FakeLiveConnector) -> VenueAccount:
+    """A snapshotted single-channel spot ``VenueAccount`` (the WIRED leaf, D-24).
+
+    Mirrors the ``live_trading_system.py:471`` construction: ``market_type='spot'``
+    with a wired ``symbol`` so the balance-derived position channel is configured.
+    The canned REST snapshot carries ``total[USDT] == 78999.79`` (settled quote
+    balance) and ``total[BTC] == 0.5`` (the spot holding derived from the base leg).
+    """
+    account = VenueAccount(
+        connector, quote_currency="USDT", market_type="spot", symbol="BTC/USDT"
+    )
+    account.snapshot()  # settled available == 78999.79
+    return account
+
+
+def test_spot_ack_holds_pending_overlay(
+    fake_venue_connector: FakeLiveConnector,
+) -> None:
+    """D-24 / CR-01: on the spot leaf the ack does NOT drop the overlay (over-statement).
+
+    RED on the pre-fix unconditional ``drop_pending``: dropping the overlay on ack
+    snaps ``available_balance`` back to the full settled balance (78999.79) while the
+    order is still open on the venue — the buying-power OVER-statement CR-01 flags,
+    because on the single-channel spot leaf ``_venue_balance`` is never refreshed to
+    net the hold, so the overlay is the SOLE cash-hold tracker. GREEN: the overlay is
+    HELD, available stays reduced by the reservation until terminal ``release``.
+    """
+    account = _spot_account(fake_venue_connector)
+
+    order_id = OrderId(uuid.uuid4())
+    account.reserve(order_id, Decimal("1000"))
+    assert account.available_balance == Decimal("77999.79")
+
+    # ORDER-ACK arrives. On the single-channel spot leaf this MUST be a no-op — the
+    # hold is not reflected anywhere else, so the overlay is held until terminal release.
+    account.drop_pending(order_id)
+
+    # Over-statement guard: available is STILL reduced by the reservation (order open).
+    assert str(order_id) in account._pending
+    assert account.available_balance == Decimal("77999.79")
+    # The ledger is untouched — the settled balance itself is unchanged.
+    assert account.balance == Decimal("78999.79")
+
+
+def test_spot_terminal_release_still_pops_overlay(
+    fake_venue_connector: FakeLiveConnector,
+) -> None:
+    """D-24: terminal ``release`` still clears the spot overlay (the hold is never leaked).
+
+    The ack is gated to a no-op on spot, but the terminal fill/cancel ``release`` path
+    is UNCHANGED — it pops the overlay unconditionally, restoring settled available.
+    Proves the spot hold is released at terminal, not leaked forever.
+    """
+    account = _spot_account(fake_venue_connector)
+
+    order_id = OrderId(uuid.uuid4())
+    account.reserve(order_id, Decimal("1000"))
+    account.drop_pending(order_id)  # ack — no-op on spot, overlay held
+    assert account.available_balance == Decimal("77999.79")
+
+    account.release(order_id)  # terminal — pops on BOTH leaves
+    assert str(order_id) not in account._pending
+    assert account.available_balance == Decimal("78999.79")
+
+
+def test_derivative_terminal_release_still_pops_overlay(
+    fake_venue_connector: FakeLiveConnector,
+) -> None:
+    """D-24: terminal ``release`` still pops on the derivative leaf too (both leaves).
+
+    Even though the derivative ack already dropped the overlay, a terminal ``release``
+    on a still-held reservation (e.g. cancel before ack) remains an unconditional pop.
+    """
+    account = VenueAccount(fake_venue_connector)  # derivative
+    account.snapshot()
+
+    order_id = OrderId(uuid.uuid4())
+    account.reserve(order_id, Decimal("1000"))
+    assert account.available_balance == Decimal("77999.79")
+
+    account.release(order_id)
+    assert str(order_id) not in account._pending
+    assert account.available_balance == Decimal("78999.79")
