@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: ready_to_plan
-stopped_at: Phase 05.1 complete (9/9) — ready to discuss Phase 05.2
-last_updated: 2026-07-04T21:43:53.971Z
-last_activity: 2026-07-04
+stopped_at: Phase 05.2 complete (6/6) — ready to discuss Phase 05.3
+last_updated: 2026-07-05T16:01:47.774Z
+last_activity: 2026-07-05
 progress:
   total_phases: 10
-  completed_phases: 5
-  total_plans: 42
-  completed_plans: 42
-  percent: 50
+  completed_phases: 7
+  total_plans: 48
+  completed_plans: 48
+  percent: 70
 ---
 
 # Project State
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 05.2 — live path remediation wave 2 restart real durable engine led
+**Current focus:** Phase 05.3 — live path remediation wave 3 resilience hardening stream dea
 
 ## Current Position
 
-Phase: 05.2
+Phase: 05.3
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-05 - Completed quick task 260705-fqe: adapt e2e OKX sandbox recon test for a non-flat demo account
+Last activity: 2026-07-05
 
-Progress: [██████████] 98%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -80,7 +80,7 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 **Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 273 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- Total plans completed: 279 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
 - v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
@@ -167,6 +167,12 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05.1]: D-03/D-04: real quote + spot market-type wired into VenueAccount at the composition root; post-reconcile baseline guard latches halt('baseline-residual') on unexplained base-asset residual (never auto-adopts)
 - [Phase 05.1]: D-04 spurious-halt band: on-fill compare absorbs the just-applied-fill vs not-yet-refreshed-venue-snapshot transient via a signed fill delta; periodic sweep + baseline guard remain the drift backstops
 - [Phase 05.1]: 05.1-09 (D-20) Task 1: CONF-B sandbox e2e extended with 4 Wave-1 settlement assertions (position/cash/not-HALTED/spot fetch_positions()==[]) closing the V17-01 blind spot + venue_order_id recorded soft-check (pending D-06/05.2) + ARCH-3 finalization capture to .planning/debug/05.1-confb-<date>.md. Added pytest.mark.live so make test (-m 'not live') fences the network. Task 2 online GREEN run is CHECKPOINT-PENDING (human): `poetry run pytest tests/e2e/test_okx_sandbox_recon.py -k demo_order -x -m live` (verify sandbox=True). Plan NOT fully complete until approved.
+- [Phase 05.2]: 05.2-01: D-06 delivered — new frozen OrderAckEvent (order_id->venue_order_id) emitted by OkxExchange._submit_order once the venue id lands (queue-only, V5 field-bind); OrderHandler.on_order_ack -> OrderManager.stamp_venue_order_id persists via order_storage.update_order (D-18). A2 venue_order_id-persistence GREEN; oracle byte-exact; mypy 229 files. Restart integration fixtures now drive the real ack path (V17-02 hand-stamp deleted; unconfident bracket leg asserted None).
+- [Phase ?]: [Phase 05.2]: 05.2-02: D-09 delivered — VenueReconciler._fetch_trades fetches venue fills per active-order symbol with since=oldest-active-order business time (epoch-ms) + explicit limit=100, NO ccxt auto-pagination (OKX sCode 51000, CONF-B). F/U-13 window guard (_FILLS_HISTORY_WINDOW_DAYS=90) loud-logs WARNING naming the symbol when since predates the venue ~3-month /trade/fills-history window. Oracle byte-exact; mypy clean; paginate grep-clean on the production file.
+- [Phase 05.2]: 05.2-03: D-08 Layers 1+3 delivered — ReconcileManager in-session applied-set (bounded OrderedDict cap 10000) guards _apply_executed BEFORE add_fill so a re-delivered venue trade (same venue_trade_id, fresh fill_id) no-ops (A5 GREEN, filled_quantity stays 0.2); key f'{ticker}:{venue_trade_id}', None-keyed backtest fills skip guard (oracle-dark). VenueCorrelationIndex.resolve dedup re-keyed raw trade_id -> f'{order.ticker}:{trade_id}' (gate moved after resolution), closing V17-12 numeric-tradeId cross-instrument collision. Layer 2 (portfolio_handler) + durable settled-ledger deferred to Plan 04. — D-08 exactly-once settlement per economic venue trade, collision-safe across instruments
+- [Phase 05.2]: 05.2-04: D-07/D-08 delivered — restart remembers positions+cash (new Account.restore_cash restores the persisted cash scalar via rehydrate; open positions already WIRE through the manager read of the rehydrated cache, OQ1) + the settled-trade dedup ledger rehydrates: PortfolioHandler.rehydrate() seeds _settled_venue_trade_ids from durable transactions.venue_trade_id keyed f-string ticker:venue_trade_id; on_fill guard/mark re-keyed symbol-scoped (V17-12). Proven offline vs an in-memory durable double; oracle byte-exact; mypy 229 files. Composition-root wiring + rehydrate-before-reconcile is Plan 05.
+- [Phase ?]: 05.2-05: D-07 durable portfolio ledger wired at the live composition root — PortfolioHandler injects the shared SqlBackend ('live' arm when Postgres spine present, else 'backtest' in-memory), threading environment+backend+portfolio_id into each Portfolio state storage (portfolio.py:96 the only real lever; four manager/account fallbacks honor it defensively). F/U-11 RESOLVED: save_account_state wired on the on_fill settlement path (getattr-guarded, oracle-dark). rehydrate() sequenced strictly BEFORE reconcile() in start() (T-05.2-14). Oracle byte-exact; mypy 229; inertness preserved.
+- [Phase ?]: 05.2-06: D-10 durable HALTED latch survives restart — halt() persists a secret-scrubbed halt record (reason literal + timestamp, V7) on the shared SqlBackend spine; a FRESH LiveTradingSystem refuses RUNNING while unresolved (re-latching in-process via _update_status, not halt(), so no double-write); reset_halt() resolves. New d10_halt_records chained Alembic head (single head); env.py registers the table (autogenerate-safe); idgen.generate_halt_record_id keeps the single UUIDv7 scheme. Oracle byte-exact; mypy clean 231; inertness preserved.
 
 ### Pending Todos
 
@@ -225,6 +231,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | 260703-hl5 | Persist `venue_trade_id` on the transactions table (tail of CR-01 fill-dedup): nullable column + chained Alembic migration + both sql_storage mappers + Postgres round-trip test | 2026-07-03 | b142cbc5 | [260703-hl5-persist-venue-trade-id-on-the-transactio](./quick/260703-hl5-persist-venue-trade-id-on-the-transactio/) |
 | 260705-fqe | Adapt e2e OKX sandbox recon test to run against a non-flat demo account (seed engine position to live venue balance; assert BUY delta) — unblocks online settlement proof on OKX-seeded ~1 BTC EEA account | 2026-07-05 | f2070431 | [260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-](./quick/260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-/) |
 | fast | Make ARCH-3 capture best-effort + fix OKX fetch_my_trades param (limit=100, no paginate — sCode 51000) — online settlement proof now fully GREEN (3/3) | 2026-07-05 | 81fc39aa | — (fast, inline) |
+| 260705-m3m | Test-infra: session-autouse guard clears dev-DB env so no test reaches operational Postgres at localhost:5544 + one shared session testcontainers Postgres for live-path DB tests to opt into (D-11 skip-safe, single-container); prereq for 05.2 durable-SQL tests | 2026-07-05 | 2f43faec | [260705-m3m-add-a-session-autouse-guard-in-tests-con](./quick/260705-m3m-add-a-session-autouse-guard-in-tests-con/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
@@ -243,6 +250,12 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.1 P06 | 90min | 2 tasks | 4 files |
 | Phase 05.1 P07 | 12min | 1 tasks | 2 files |
 | Phase 05.1 P08 | 20min | 2 tasks | 3 files |
+| Phase 05.2 P01 | 18min | 2 tasks | 10 files |
+| Phase 05.2 P02 | 12min | 2 tasks | 2 files |
+| Phase 05.2 P03 | 15min | 2 tasks | 4 files |
+| Phase 05.2 P04 | 12min | 2 tasks | 7 files |
+| Phase 05.2 P05 | 20min | 2 tasks | 8 files |
+| Phase 05.2 P06 | 22min | 2 tasks | 6 files |
 
 ## Deferred Items
 
@@ -292,9 +305,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T21:10:00.000Z
-Stopped at: 05.1-09 Task 1 committed (b9e5c541) — Task 2 online CONF-B run CHECKPOINT-PENDING (human-gated)
-Resume file: .planning/phases/05.1-live-path-remediation/05.1-09-PLAN.md (Task 2 checkpoint)
+Last session: 2026-07-05T15:36:11.197Z
+Stopped at: 05.2-06 complete (23e897d5) — D-10 durable HALTED latch GREEN
+Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps

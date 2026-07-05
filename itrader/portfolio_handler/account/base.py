@@ -152,6 +152,30 @@ class Account(ABC):
         """
         raise NotImplementedError("Subclasses must implement apply_fill_cash_flow")
 
+    def restore_cash(self, balance: Decimal) -> None:
+        """
+        Restore the settled cash balance from a durable snapshot on restart
+        (D-07 / V17-05 — the restart-restore hook of the settlement surface).
+
+        Called only on the live rehydrate path
+        (``CachedSqlPortfolioStateStorage.rehydrate`` → this account) so a fresh
+        account leaf REMEMBERS its pre-restart balance rather than its
+        construction-time initial cash. Bypasses the deposit/withdraw policy gates
+        (a restart restores already-validated persisted truth, not a new deposit);
+        Decimal end-to-end (never ``Decimal(float)``).
+
+        Concrete (not abstract): the simulated leaves override it with the direct
+        ``_balance`` setter. The ``VenueAccount`` cash-restore is Phase 5
+        (RECON-01) — until then the interface-only leaf inherits this loud
+        NotImplementedError, matching its deferred-body posture.
+
+        Parameters
+        ----------
+        balance : Decimal
+            The persisted cash balance to restore (full precision).
+        """
+        raise NotImplementedError("Subclasses must implement restore_cash")
+
     @abstractmethod
     def reserve(self, order_id: OrderId, amount: Decimal) -> None:
         """

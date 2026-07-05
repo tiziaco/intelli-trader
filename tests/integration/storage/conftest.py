@@ -36,47 +36,24 @@ import pytest
 
 
 @pytest.fixture(scope="session")
-def pg_engine():
-    """Session-scoped testcontainers Postgres ``Engine`` (D-10); skip if Dockerless (D-11).
+def pg_engine(pg_container_url):
+    """Session-scoped Postgres ``Engine`` over the suite-wide shared container (D-10/D-11).
 
-    The heavy ``testcontainers``/``docker`` imports live INSIDE the fixture body so
-    collection (``--collect-only``) succeeds with no Docker daemon and the SQLite arm of
-    the ``engine`` fixture is never coupled to Docker. Any failure to start the container
-    (absent daemon, unreachable socket, image-pull/boot failure) is converted to a
-    ``pytest.skip`` — the PG arm must never hard-fail a Dockerless run.
+    Refactored to REUSE the single ``pg_container_url`` fixture from
+    ``tests/integration/conftest.py`` instead of spinning its OWN container — there is now
+    exactly ONE testcontainers Postgres behind the whole integration tree (no second
+    competing container). It simply builds a fresh ``Engine`` off the shared URL and disposes
+    it in ``finally`` (Pitfall 4 — an undisposed engine trips a ResourceWarning under
+    ``filterwarnings=["error"]``). The D-11 Dockerless skip now happens transitively: resolving
+    ``pg_container_url`` raises ``Skipped`` before this body runs.
     """
-    # Deferred imports (mirrors tests/integration/conftest.py::backtest_engine):
-    # kept inside the body so --collect-only needs no Docker daemon.
-    from docker.errors import DockerException
     from sqlalchemy import create_engine
-    from testcontainers.postgres import PostgresContainer
 
-    container = None
-    try:
-        # NOTE: the PostgresContainer constructor eagerly builds a DockerClient, so
-        # an absent/unreachable daemon raises a DockerException as early as
-        # construction (NOT in .start()) — construction MUST be inside this try.
-        container = PostgresContainer("postgres:16")
-        container.start()
-    except Exception as exc:
-        # D-11 — ANY startup failure (absent daemon, unreachable socket, image
-        # pull/boot failure) skips the PG arm; it must never hard-fail a Dockerless
-        # run. pytest.skip raises Skipped (a BaseException), so it is not
-        # re-swallowed by this broad clause.
-        if container is not None:
-            try:
-                container.stop()
-            except Exception:
-                pass
-        kind = "Docker" if isinstance(exc, DockerException) else "PostgreSQL container"
-        pytest.skip(f"{kind} unavailable — PG arm skipped (D-11): {exc}")
-
-    engine = create_engine(container.get_connection_url())
+    engine = create_engine(pg_container_url)
     try:
         yield engine
     finally:
         engine.dispose()
-        container.stop()
 
 
 @pytest.fixture

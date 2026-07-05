@@ -108,26 +108,57 @@ def _fresh_store(backend):
 
 
 def _make_entry_parent(pid) -> Order:
-    """A FILLED entry (BTC/USDT buy 0.5) that anchors the bracket, resident via its live leg."""
+    """A FILLED entry (BTC/USDT buy 0.5) that anchors the bracket, resident via its live leg.
+
+    NO ``venue_order_id`` hand-stamp — the mirror's venue id is persisted ONLY by the real
+    D-06 ORDER-ACK path via ``_stamp_venue_ack`` (V17-02 anti-pattern guard).
+    """
     return Order(
         time=_BT, type=OrderType.LIMIT, status=OrderStatus.FILLED,
         ticker=_VENUE_SYMBOL, action=Side.BUY,
         price=Decimal("42000"), quantity=Decimal("0.5"),
         filled_quantity=Decimal("0.5"),
         exchange="okx", strategy_id=StrategyId(uc.uuid7()), portfolio_id=pid,
-        venue_order_id=_VENUE_ENTRY,
     )
 
 
-def _make_leg(pid, parent_id, *, price, venue_order_id) -> Order:
-    """A resting SELL take-profit leg linked to the parent (active — needs re-linking)."""
+def _make_leg(pid, parent_id, *, price) -> Order:
+    """A resting SELL take-profit leg linked to the parent (active — needs re-linking).
+
+    NO ``venue_order_id`` hand-stamp — a leg with a venue ack gets it stamped via the real
+    D-06 ORDER-ACK path (``_stamp_venue_ack``); a leg that legitimately has no ack in the
+    scenario is left ``None`` (the unconfident case the halt guards).
+    """
     return Order(
         time=_BT, type=OrderType.LIMIT, status=OrderStatus.PENDING,
         ticker=_VENUE_SYMBOL, action=Side.SELL,
         price=price, quantity=Decimal("0.5"),
         exchange="okx", strategy_id=StrategyId(uc.uuid7()), portfolio_id=pid,
-        parent_order_id=parent_id, venue_order_id=venue_order_id,
+        parent_order_id=parent_id,
     )
+
+
+def _stamp_venue_ack(seed_store, order, venue_order_id: str) -> None:
+    """Persist ``venue_order_id`` onto the seeded order via the REAL D-06 ORDER-ACK path.
+
+    Never a fixture hand-stamp (V17-02): wire an ``OrderHandler`` over the seed store and
+    drive an ``OrderAckEvent`` through ``on_order_ack`` -> ``OrderManager.stamp_venue_order_id``
+    -> ``store.update_order``, exactly as ``OkxExchange._submit_order`` does pre-restart.
+    Write-through persists to the backing DB so the ``restarted`` store rehydrates the stamp.
+    """
+    from unittest.mock import MagicMock
+
+    from itrader.events_handler.events import OrderAckEvent
+    from itrader.order_handler.order_handler import OrderHandler
+
+    handler = OrderHandler(
+        queue.Queue(), MagicMock(name="portfolio_read_model"), order_storage=seed_store)
+    handler.on_order_ack(OrderAckEvent(
+        time=_BT,
+        order_id=order.id,
+        venue_order_id=venue_order_id,
+        portfolio_id=order.portfolio_id,
+    ))
 
 
 def _build_reconciler(store, connector, halt_spy):
@@ -153,9 +184,11 @@ def test_bracket_leg_relinks_by_venue_id_resumes_oco(pg_url, fake_venue_connecto
         pid = PortfolioId(uc.uuid7())
         parent = _make_entry_parent(pid)
         # The leg's persisted venue id matches the fixture's resting order (ORD-0002).
-        leg = _make_leg(pid, parent.id, price=Decimal("45000"), venue_order_id=_VENUE_LEG)
+        leg = _make_leg(pid, parent.id, price=Decimal("45000"))
         seed.add_order(parent)      # FK: parent before child
         seed.add_order(leg)
+        _stamp_venue_ack(seed, parent, _VENUE_ENTRY)   # real D-06 ack path
+        _stamp_venue_ack(seed, leg, _VENUE_LEG)        # real D-06 ack path
 
         restarted = _fresh_store(backend)
         halt = _HaltSpy()
@@ -181,9 +214,13 @@ def test_unconfident_bracket_leg_halts(pg_url, fake_venue_connector):
         parent = _make_entry_parent(pid)
         # No persisted venue id AND a price no resting order carries (fixture rests @ 45000)
         # → neither venue-id nor attribute match → unconfident.
-        leg = _make_leg(pid, parent.id, price=Decimal("99999"), venue_order_id=None)
+        leg = _make_leg(pid, parent.id, price=Decimal("99999"))
         seed.add_order(parent)
         seed.add_order(leg)
+        _stamp_venue_ack(seed, parent, _VENUE_ENTRY)   # real D-06 ack path
+        # The leg legitimately has NO venue ack in this scenario — left unstamped (None),
+        # the unconfident case the halt guards (assert None, never a faked id).
+        assert seed.get_order_by_id(leg.id).venue_order_id is None
 
         restarted = _fresh_store(backend)
         halt = _HaltSpy()

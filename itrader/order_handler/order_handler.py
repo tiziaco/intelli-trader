@@ -11,7 +11,7 @@ from ..core.enums import OrderStatus, MarketExecution
 from ..core.ids import OrderId, PortfolioId
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
-from ..events_handler.events import SignalEvent, OrderEvent, FillEvent, PortfolioUpdateEvent
+from ..events_handler.events import SignalEvent, OrderEvent, OrderAckEvent, FillEvent, PortfolioUpdateEvent
 from .storage import OrderStorageFactory
 from ..universe import Universe
 
@@ -158,6 +158,16 @@ class OrderHandler:
 		for order_event in self.order_manager.on_fill(fill_event):
 			self.global_queue.put(order_event)
 			self.logger.debug('Orphaned-child cancel event sent to execution handler: %s', order_event)
+
+	def on_order_ack(self, ack_event: OrderAckEvent) -> None:
+		"""Persist the venue ack (D-06 / V17-02) onto the stored order mirror.
+
+		The live exchange emits an ORDER-ACK once the venue returns its order id
+		(queue-only cross-domain write, D-19). Delegate to OrderManager to stamp +
+		persist ``venue_order_id`` — the handler holds NO store ref (D-18).
+		"""
+		self.order_manager.stamp_venue_order_id(
+			ack_event.order_id, ack_event.venue_order_id, ack_event.portfolio_id)
 
 	def modify_order(self, order_id: OrderId, new_price: Optional[Decimal] = None, new_quantity: Optional[Decimal] = None,
 	                portfolio_id: Optional[PortfolioId] = None, reason: str = "user modification") -> bool:

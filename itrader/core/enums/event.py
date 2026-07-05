@@ -25,6 +25,7 @@ class EventType(Enum):
     UPDATE = "UPDATE"
     SIGNAL = "SIGNAL"
     ORDER = "ORDER"
+    ORDER_ACK = "ORDER_ACK"
     FILL = "FILL"
     SCREENER = "SCREENER"
     ERROR = "ERROR"

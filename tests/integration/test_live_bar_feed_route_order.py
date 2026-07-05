@@ -95,7 +95,9 @@ def test_direct_emission_preserves_bar_route_order() -> None:
     )
     screeners = SimpleNamespace(screen_markets=rec("screeners.screen_markets"))
     order = SimpleNamespace(
-        on_signal=rec("order.on_signal"), on_fill=rec("order.on_fill")
+        on_signal=rec("order.on_signal"),
+        on_fill=rec("order.on_fill"),
+        on_order_ack=rec("order.on_order_ack"),  # D-06: EventHandler route literal references it
     )
 
     q: "queue.Queue[Any]" = queue.Queue()

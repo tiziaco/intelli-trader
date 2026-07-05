@@ -201,7 +201,12 @@ class LiveTradingSystem:
         # system) — a local variable would leave every captured SignalRecord
         # permanently unreachable (a write-only accumulation).
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
-        self.portfolio_handler = PortfolioHandler(self.global_queue)
+        # 05.2-05 (D-07): the PortfolioHandler is constructed AFTER the operational
+        # store block below (which sets self._system_db_backend) so it can inject the
+        # SAME shared SqlBackend on the durable 'live' arm — see the durable-portfolio
+        # wiring right after the store block. Declared here as a forward attribute so
+        # nothing between reads it before construction.
+        self.portfolio_handler: PortfolioHandler
         # WR-04: declare the universe attribute as a clean "not yet wired"
         # sentinel here, mirroring Engine.universe: Optional[Universe] = None on
         # the backtest path. It is populated in _initialize_live_session (from
@@ -284,7 +289,35 @@ class LiveTradingSystem:
             # loop. Keep-only-measured: no async buffering is built unless a live stall
             # is profiled (D-10).
             self._signal_store = SignalStorageFactory.create('live', backend=backend)
-        
+
+        # 05.2-05 (D-07): durable portfolio ledger wiring. When the Postgres spine
+        # is present, construct the PortfolioHandler on the 'live' arm with the SAME
+        # shared SqlBackend so each Portfolio threads it into its state storage —
+        # the engine's own durable ledger becomes the source of portfolio truth
+        # (rehydrate restores positions+cash on restart). No spine -> 'backtest'
+        # in-memory (degrades cleanly, mirroring the order/signal fallback above).
+        if self._system_db_backend is not None:
+            self.portfolio_handler = PortfolioHandler(
+                self.global_queue, environment='live',
+                backend=self._system_db_backend)
+        else:
+            self.portfolio_handler = PortfolioHandler(self.global_queue)
+
+        # 05.2-06 (D-10 / ARCH-4 Layer 2): durable halt-record store — the HALTED
+        # latch that survives a process restart. Built over the SAME shared Postgres
+        # spine when present (so a breaker halt persisted by halt() latches across a
+        # supervised auto-restart), else None (in-memory fallback -> no durable record,
+        # degrade cleanly like the order/signal/portfolio stores above). The SQL import
+        # stays LAZY inside the spine-present arm so the backtest import path remains
+        # SQLAlchemy-free (GATE-01 inertness). Offline tests inject an in-memory double
+        # via attribute assignment.
+        if self._system_db_backend is not None:
+            from itrader.storage.halt_record_store import HaltRecordStore
+            self._halt_record_store: Optional[Any] = HaltRecordStore(
+                self._system_db_backend)
+        else:
+            self._halt_record_store = None
+
         # Execution handler constructed BEFORE the order handler so the
         # admission gate's commission estimator can adapt the simulated
         # exchange's fee model (Plan 05-06, D-04 — mode-agnostic wiring).
@@ -680,6 +713,17 @@ class LiveTradingSystem:
             operation='halt',
             severity=ErrorSeverity.CRITICAL,
         ))
+        # 05.2-06 (D-10 / ARCH-4 Layer 2): persist a DURABLE halt record so the HALTED
+        # latch survives a process restart — a supervised auto-restart builds a FRESH
+        # engine (in-process _status STOPPED) that would otherwise silently clear a
+        # breaker halt whose cause is not re-detectable at start(). Reached ONLY by the
+        # winning transition above, so a re-entrant (idempotent) halt never double-writes.
+        # Bind ONLY the machine-readable reason literal + timestamp (V7 secret-scrub,
+        # T-05.2-18; mirrors the ErrorEvent field-bind discipline) — never str(exc) or a
+        # connector payload. Guarded on the store being present (in-memory fallback ->
+        # no durable record, degrade cleanly).
+        if self._halt_record_store is not None:
+            self._halt_record_store.record_halt(reason, datetime.now(UTC))
 
     def _is_halted(self) -> bool:
         """Whether the engine is in the freeze-in-place HALTED state (D-02)."""
@@ -716,6 +760,13 @@ class LiveTradingSystem:
             force=True,
         )
         if cleared:
+            # 05.2-06 (D-10): resolve the DURABLE halt record too, so the durable latch
+            # does not re-refuse the next start() (F/U-9 verify-then-trust: that next
+            # start() still re-runs reconciliation + the baseline guard from a clean
+            # STOPPED baseline, so the halt cause is re-checked, never assumed resolved).
+            # Guarded on the store being present (in-memory fallback -> no-op).
+            if self._halt_record_store is not None:
+                self._halt_record_store.resolve_all()
             self.logger.warning(
                 'HALTED cleared by operator reset_halt() — engine returned to STOPPED; '
                 'a subsequent start() will re-run reconciliation + the baseline guard '
@@ -1298,6 +1349,16 @@ class LiveTradingSystem:
                 # exposing rehydrate() (the CachedSql live store; not the in-memory
                 # fallback) so an unconfigured ITRADER_DATABASE_* env degrades cleanly.
                 if hasattr(self._order_storage, 'rehydrate'):
+                    # 05.2-05 (D-07/D-08): restore the durable PORTFOLIO ledger
+                    # (open positions + persisted cash into the live managers) and
+                    # seed the settled-trade dedup ledger from durable transactions
+                    # BEFORE reconcile — so venue adoption diffs against RESTORED
+                    # engine state and a re-delivered downtime trade is a no-op.
+                    # rehydrate() is internally getattr-guarded per portfolio (the
+                    # in-memory backtest backend is a clean skip), so it is safe here
+                    # under the same durable-store gate as the order rehydrate.
+                    self.portfolio_handler.rehydrate()
+
                     from itrader.portfolio_handler.reconcile.venue_reconciler import (
                         VenueReconciler,
                     )
@@ -1320,6 +1381,36 @@ class LiveTradingSystem:
                 # venue holding the engine never opened must still halt). On a clean
                 # fresh session (engine flat, venue flat) it is a benign no-op.
                 self._run_session_baseline_guard()
+
+            # 05.2-06 (D-10 / ARCH-4 Layer 2): a DURABLE halt record latches across a
+            # process restart. A supervised auto-restart builds a FRESH engine whose
+            # in-process _status is STOPPED, so the in-process _is_halted() check below
+            # would silently clear a breaker halt whose cause is not re-detectable at
+            # start(). Refuse RUNNING while an unresolved durable record exists (runs for
+            # EVERY venue, outside the OKX branch) and RE-LATCH this fresh instance
+            # in-process from the persisted reason via _update_status (NOT halt() — halt()
+            # would write a SECOND durable record) so get_status() reflects it and
+            # reset_halt() can clear both the in-process and durable latches. Only re-latch
+            # when not already HALTED (a reconcile/guard halt above is handled by the D-05
+            # check below); guarded on the store being present (in-memory fallback -> skip).
+            if (self._halt_record_store is not None
+                    and not self._is_halted()
+                    and self._halt_record_store.has_unresolved()):
+                durable_record = self._halt_record_store.get_unresolved()
+                durable_reason = (
+                    durable_record.reason if durable_record is not None
+                    else 'durable-halt')
+                self.logger.error(
+                    'start() refused RUNNING: an unresolved DURABLE halt record latches '
+                    'across the restart (reason=%s) — a supervised auto-restart cannot '
+                    'silently clear a breaker halt (T-05.2-17); resolve the cause then '
+                    'call reset_halt()', durable_reason)
+                self._update_status(
+                    SystemStatus.HALTED,
+                    error_msg=f'durable halt latched on restart: {durable_reason}',
+                    halt_reason=durable_reason)
+                self._running = False
+                return False
 
             # D-05 (V17-03): a reconcile/guard halt during session init must LATCH.
             # The VenueReconciler.reconcile() above (or the baseline guard) may have

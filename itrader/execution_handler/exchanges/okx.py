@@ -39,7 +39,7 @@ from itrader.connectors.base import LiveConnector
 from itrader.core.enums import ErrorSeverity, OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
 from itrader.core.money import to_money
-from itrader.events_handler.events import ErrorEvent, FillEvent, OrderEvent
+from itrader.events_handler.events import ErrorEvent, FillEvent, OrderAckEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 
 from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
@@ -319,6 +319,13 @@ class OkxExchange(AbstractExchange):
 			# and the index lock is non-reentrant).
 			for buffered_trade in self._index.register(venue_id, event, client_order_id):
 				self._handle_trade(buffered_trade)
+			# D-06 / V17-02: persist the venue ack. The in-memory index alone is
+			# lost across a restart, so emit an ORDER-ACK on the shared queue —
+			# OrderHandler.on_order_ack stamps + persists venue_order_id onto the
+			# stored mirror. Queue-only: the exchange never writes the order store
+			# directly (D-19). V5: bind ONLY order_id/venue_order_id/portfolio_id/
+			# time — the raw venue payload never rides onto the event.
+			self.global_queue.put(OrderAckEvent.new_order_ack(event, str(venue_id)))
 
 	def _cancel_order(self, event: OrderEvent) -> None:
 		"""Cancel the venue order correlated to ``event.order_id`` via the RPC."""

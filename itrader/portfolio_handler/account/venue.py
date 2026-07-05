@@ -339,6 +339,39 @@ class VenueAccount(Account):
                 self._ledger_delta = Decimal("0")
             self._venue_positions = positions
 
+    # --- restart restore (CR-01 — venue snapshot is authoritative for cash) ----
+
+    def restore_cash(self, balance: Decimal) -> None:
+        """Documented NO-OP: venue snapshot is authoritative for cash (CR-01/D-14).
+
+        The live restart path calls ``CachedSqlPortfolioStateStorage.rehydrate`` ->
+        ``account.restore_cash(cash_balance)`` unconditionally when a persisted
+        account-state row exists. For a venue-CACHED account this scalar must NOT be
+        applied: ``snapshot()`` (called at ``start()`` BEFORE rehydrate) already
+        re-read the venue's AUTHORITATIVE balance via the REST fetch, so writing the
+        STALE persisted engine scalar over it would clobber venue truth — exactly the
+        "cache, not recompute" violation D-14 forbids. The venue is the source of cash
+        truth in live; the engine's persisted cash scalar intentionally DEFERS to it.
+
+        This override therefore accepts ``balance`` and does nothing to the cache. It
+        exists to (a) fix the CR-01 crash — the inherited ``Account.restore_cash``
+        raised ``NotImplementedError``, failing every live restart with persisted
+        account state — and (b) encode the correct semantics explicitly. The base
+        ABC's raising default is deliberately UNCHANGED (an unimplemented leaf must
+        still fail loud); ``VenueAccount`` now overrides it on purpose.
+
+        Note the position and dedup-ledger restore still happen on the venue path
+        (positions surface through the snapshotted cache; the dedup ledger seeds from
+        the durable transaction history) — ONLY the cash scalar defers to venue truth.
+
+        Parameters
+        ----------
+        balance : Decimal
+            The persisted engine cash scalar. Accepted and intentionally not applied
+            (the venue snapshot owns the cash baseline).
+        """
+        # Intentionally a no-op — see docstring (CR-01 / D-14).
+
     # --- engine-thread reads (D-15 — surface unsnapshotted loud, never 0) -------
 
     @property

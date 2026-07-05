@@ -24,6 +24,9 @@ from .signal import SignalEvent
 # Order events
 from .order import OrderEvent
 
+# Order-ack events (D-06)
+from .ack import OrderAckEvent
+
 # Fill events
 from .fill import FillEvent
 
@@ -51,6 +54,9 @@ __all__ = [
 
     # Order events
     'OrderEvent',
+
+    # Order-ack events
+    'OrderAckEvent',
 
     # Fill events
     'FillEvent',

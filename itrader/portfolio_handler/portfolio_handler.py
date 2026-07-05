@@ -65,9 +65,20 @@ class PortfolioHandler:
     concurrently. Live cross-thread reads are a D-live design item.
     """
     
-    def __init__(self, global_queue: "Queue[Any]", config_dir: str = "settings", environment: str = "default") -> None:
+    def __init__(self, global_queue: "Queue[Any]", config_dir: str = "settings",
+                 environment: str = "backtest", backend: "Optional[Any]" = None) -> None:
         self.global_queue: "Queue[Any]" = global_queue
         self.current_time: Any = 0
+
+        # D-07 (05.2-05): the durable portfolio-storage selector threaded down
+        # into each Portfolio's state storage (add_portfolio -> Portfolio ->
+        # PortfolioStateStorageFactory.create). "backtest" (the default) is the
+        # in-memory oracle-dark path; the live composition root passes "live" +
+        # the shared SqlBackend so every portfolio persists to the durable SQL
+        # ledger and rehydrates its truth on restart. ``backend`` is typed Any
+        # to keep the SqlBackend import off this hot-path module (GATE-01).
+        self._environment = environment
+        self._backend = backend
         
         # Initialize configuration by constructing the Pydantic model directly
         # (M2-06 / D-01): the registry/provider getters were deleted. Pydantic validates
@@ -205,13 +216,18 @@ class PortfolioHandler:
                 if len(self._portfolios) >= self.max_portfolios:
                     raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
                 
-                # Create portfolio instance
+                # Create portfolio instance. D-07 (05.2-05): thread the durable
+                # environment + shared backend so the portfolio's state storage
+                # is the live SQL ledger when wired 'live' (default "backtest" =
+                # in-memory, oracle-dark).
                 portfolio = Portfolio(
                     name=name,
                     exchange=exchange,
                     cash=to_money(cash),
                     time=datetime.now(UTC),
-                    config=portfolio_config
+                    config=portfolio_config,
+                    environment=self._environment,
+                    backend=self._backend,
                 )
                 
                 # Store portfolio
@@ -842,6 +858,101 @@ class PortfolioHandler:
         while len(self._settled_venue_trade_ids) > self._max_settled_venue_trade_ids:
             self._settled_venue_trade_ids.popitem(last=False)
 
+    def _persist_account_state(self, portfolio: Portfolio, updated_time: datetime) -> None:
+        """Write-through the durable account-state scalar after a settled fill (F/U-11).
+
+        The D-07 restore path (Plan 04) reads the cash scalar back on restart via
+        ``load_account_state`` -> ``Account.restore_cash``; that read is only
+        meaningful if ``save_account_state`` is actually written on the settlement
+        path. This seam persists ``cash_balance`` (+ the derived accounting scalars
+        the row carries) once the fill has settled, so a process restart restores
+        the true balance rather than the construction-time initial cash.
+
+        LIVE ONLY / oracle-dark: the in-memory backtest backend exposes no
+        ``save_account_state`` (only ``CachedSqlPortfolioStateStorage`` does), so
+        this is a clean ``getattr`` skip on the SMA_MACD path (no persistence, no
+        new branch through the byte-exact run). ``updated_time`` is the fill's
+        BUSINESS time (never wall-clock — determinism). ``peak_equity`` monotonically
+        tracks the high-water equity across restarts by max-ing the current equity
+        against any previously-persisted peak.
+        """
+        storage = portfolio.state_storage
+        save_account_state = getattr(storage, "save_account_state", None)
+        if save_account_state is None:
+            return  # in-memory backtest backend — nothing durable to persist.
+
+        total_equity = portfolio.total_equity
+        # Carry the high-water peak forward across restarts (the drawdown basis).
+        load_account_state = getattr(storage, "load_account_state", None)
+        prior_peak = Decimal("0")
+        if load_account_state is not None:
+            prior_state = load_account_state()
+            if prior_state is not None:
+                prior_peak = prior_state["peak_equity"]
+        peak_equity = max(prior_peak, total_equity)
+
+        save_account_state(
+            cash_balance=portfolio.account.balance,
+            realized_pnl=portfolio.total_realised_pnl,
+            total_equity=total_equity,
+            peak_equity=peak_equity,
+            open_positions_count=portfolio.n_open_positions,
+            updated_time=updated_time,
+        )
+
+    def rehydrate(self) -> None:
+        """Restore live portfolio state + the durable dedup ledger on restart (D-07/D-08).
+
+        The cross-restart arm the in-session A5 guard (Plan 03) does NOT cover: on a live
+        restart ``_settled_venue_trade_ids`` starts EMPTY, so a venue trade re-delivered
+        AFTER the restart (an OKX stream re-send, or the ``VenueReconciler`` adopting a
+        downtime fill) would be booked a SECOND time. Per active portfolio this seam:
+
+        1. **Drives ``state_storage.rehydrate(account)``** — the Task-1 restore path: open
+           positions surface through the live ``PositionManager`` read cache and the
+           persisted cash scalar is restored into the ``Account`` (D-07 / V17-05). The
+           in-memory backtest backend exposes no ``rehydrate`` (oracle-dark) — skipped.
+        2. **Seeds the settled-trade dedup ledger** from the durable
+           ``transactions.venue_trade_id`` (the D-08 Layer-2 durable backstop), keyed
+           ``f"{ticker}:{venue_trade_id}"`` (V17-12 collision-safe — the same numeric
+           trade id on a DIFFERENT symbol still settles) via the bounded-FIFO
+           ``_mark_venue_trade_settled``. A re-delivered ``(ticker, venue_trade_id)`` is
+           then a no-op at the ``on_fill`` guard.
+
+        Sequencing (composition-root, Plan 05): this MUST run BEFORE
+        ``VenueReconciler.reconcile()`` so adoption diffs against restored state and the
+        dedup ledger already knows every already-settled venue trade.
+        """
+        for portfolio in self.get_active_portfolios():
+            storage = portfolio.state_storage
+            rehydrate_fn = getattr(storage, "rehydrate", None)
+            if rehydrate_fn is None:
+                # Backtest in-memory backend — nothing durable to restore (oracle-dark).
+                continue
+            # (a) D-07 restore: positions into the live managers' read cache + the
+            # persisted cash scalar into the account.
+            rehydrate_fn(portfolio.account)
+            # (a2) WR-03 restore: re-seed the realised-PnL accumulator from the durable
+            # account-state scalar. The accumulator is not one of the containers the
+            # working-set cache carries, so without this a post-restart fill would
+            # overwrite the durable realized_pnl column with a 0-based value. Guarded
+            # exactly like the cash restore — only when durable state exists.
+            load_account_state = getattr(storage, "load_account_state", None)
+            if load_account_state is not None:
+                account_state = load_account_state()
+                if account_state is not None:
+                    portfolio.position_manager.restore_realised_pnl(
+                        account_state["realized_pnl"]
+                    )
+            # (b) D-08 Layer 2 durable backstop: seed the dedup ledger from the durable
+            # transaction history, keyed f"{ticker}:{venue_trade_id}" (V17-12). None-keyed
+            # backtest/simulated transactions carry no venue key and are skipped.
+            for transaction in storage.get_transaction_history():
+                venue_trade_id = getattr(transaction, "venue_trade_id", None)
+                if venue_trade_id is None:
+                    continue
+                self._mark_venue_trade_settled(f"{transaction.ticker}:{venue_trade_id}")
+
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
         """Process fill event for the appropriate portfolio.
@@ -873,8 +984,17 @@ class PortfolioHandler:
         # 0.5 BTC is never booked as 1.0 (the CR-01 double-count). Backtest and
         # simulated fills carry venue_trade_id=None and SKIP the guard entirely —
         # the SMA_MACD oracle takes no new branch (oracle-dark).
+        # D-08 Layer 2 (V17-12): key the dedup ledger by f"{ticker}:{venue_trade_id}",
+        # NOT the raw id — the numeric venue tradeId is only unique per instrument, so
+        # the SAME id on a different symbol is a DISTINCT economic trade and must still
+        # settle (collision-safe). None-keyed backtest/simulated fills skip the guard.
         venue_trade_id = getattr(fill_event, "venue_trade_id", None)
-        if venue_trade_id is not None and venue_trade_id in self._settled_venue_trade_ids:
+        dedup_key = (
+            f"{fill_event.ticker}:{venue_trade_id}"
+            if venue_trade_id is not None
+            else None
+        )
+        if dedup_key is not None and dedup_key in self._settled_venue_trade_ids:
             self.logger.warning(
                 "Rejecting duplicate venue trade fill (already settled)",
                 venue_trade_id=venue_trade_id,
@@ -931,9 +1051,20 @@ class PortfolioHandler:
                 # CR-01: record the venue trade id as settled ONLY after the
                 # transaction applied — a later re-delivery (stream re-send or the
                 # restart reconciler) of the SAME venue trade is then a no-op at
-                # the guard above. None-keyed backtest/simulated fills never record.
-                if venue_trade_id is not None:
-                    self._mark_venue_trade_settled(venue_trade_id)
+                # the guard above. Recorded under the SAME f"{ticker}:{venue_trade_id}"
+                # key the guard reads (D-08 Layer 2 / V17-12 — symbol-scoped so the
+                # durable-ledger seed and the live mark share one key space). None-keyed
+                # backtest/simulated fills never record.
+                if dedup_key is not None:
+                    self._mark_venue_trade_settled(dedup_key)
+
+                # F/U-11 (05.2-05): write-through the account-state scalar on the
+                # settlement path so the Plan-04 restore (rehydrate ->
+                # load_account_state -> Account.restore_cash) has a persisted cash
+                # balance to read on restart. The in-memory backtest backend has
+                # no save_account_state, so this is a clean getattr-skip
+                # (oracle-dark — the SMA_MACD run never persists). LIVE ONLY.
+                self._persist_account_state(portfolio, fill_event.time)
 
                 self.logger.debug(
                     "Fill event processed",

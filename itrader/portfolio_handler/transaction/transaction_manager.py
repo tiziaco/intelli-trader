@@ -44,7 +44,16 @@ class TransactionManager:
         from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
         storage = getattr(portfolio, "state_storage", None)
         if storage is None:
-            storage = PortfolioStateStorageFactory.create("backtest")
+            # D-07 (05.2-05): honor the portfolio's durable environment/backend so
+            # a standalone-constructed live portfolio fabricates the SAME 'live'
+            # backend rather than silently falling back to in-memory. Defaults
+            # ("backtest"/None) keep a lightweight test portfolio in-memory
+            # (oracle-dark); portfolio.py:_init_managers is the primary lever.
+            storage = PortfolioStateStorageFactory.create(
+                getattr(portfolio, "_environment", "backtest"),
+                backend=getattr(portfolio, "_backend", None),
+                portfolio_id=getattr(portfolio, "portfolio_id", None),
+            )
             # WR-02: share the fabricated seam with sibling managers so a
             # standalone-constructed portfolio does not end up with disjoint
             # per-manager backends (which would silently break cross-manager

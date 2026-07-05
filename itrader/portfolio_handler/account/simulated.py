@@ -108,7 +108,16 @@ class SimulatedCashAccount(Account):
         from itrader.portfolio_handler.storage import PortfolioStateStorageFactory
         storage = getattr(portfolio, "state_storage", None)
         if storage is None:
-            storage = PortfolioStateStorageFactory.create("backtest")
+            # D-07 (05.2-05): honor the portfolio's durable environment/backend so
+            # a standalone-constructed live portfolio fabricates the SAME 'live'
+            # backend rather than silently falling back to in-memory. Defaults
+            # ("backtest"/None) keep a lightweight test portfolio in-memory
+            # (oracle-dark); portfolio.py:_init_managers is the primary lever.
+            storage = PortfolioStateStorageFactory.create(
+                getattr(portfolio, "_environment", "backtest"),
+                backend=getattr(portfolio, "_backend", None),
+                portfolio_id=getattr(portfolio, "portfolio_id", None),
+            )
             # WR-02: share the fabricated seam with sibling managers so a
             # standalone-constructed portfolio does not end up with disjoint
             # per-manager backends (which would silently break cross-manager
@@ -154,6 +163,25 @@ class SimulatedCashAccount(Account):
     def reserved_balance(self) -> Decimal:
         """Get reserved cash balance."""
         return self._storage.get_reserved_cash()
+
+    def restore_cash(self, balance: Decimal) -> None:
+        """Restore the cash balance from a durable snapshot on restart (D-07 / V17-05).
+
+        The ONE live-restart-only cash setter: sets ``self._balance`` directly from the
+        persisted account-state scalar
+        (``CachedSqlPortfolioStateStorage.load_account_state``) so a fresh account leaf
+        REMEMBERS the pre-restart balance instead of its construction-time initial cash.
+        Deliberately bypasses the ``deposit``/``withdraw`` min/max-balance policy gates —
+        those guard NEW live admin cash flows; a restart is restoring already-validated
+        persisted truth, not admitting a new deposit. Decimal end-to-end via ``to_money``
+        (never ``Decimal(float)`` — the persisted Postgres ``Numeric`` round-trips
+        exactly). Oracle-dark: only reachable on the live rehydrate path (the in-memory
+        backtest backend exposes no ``rehydrate``), so SMA_MACD stays byte-exact.
+
+        Args:
+            balance: The persisted cash balance to restore (full precision Decimal).
+        """
+        self._balance = to_money(balance)
 
     def deposit(self, amount: float | Decimal, description: str = "Cash deposit", reference_id: Optional[str] = None) -> bool:
         """

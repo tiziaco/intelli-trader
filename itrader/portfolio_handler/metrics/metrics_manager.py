@@ -109,8 +109,16 @@ class MetricsManager:
         if storage is None:
             # WR-01: thread max_snapshots through so the fabricated backend's
             # deque bound matches this manager's configured retention.
+            # D-07 (05.2-05): honor the portfolio's durable environment/backend so
+            # a standalone-constructed live portfolio fabricates the SAME 'live'
+            # backend rather than silently falling back to in-memory. Defaults
+            # ("backtest"/None) keep a lightweight test portfolio in-memory
+            # (oracle-dark); portfolio.py:_init_managers is the primary lever.
             storage = PortfolioStateStorageFactory.create(
-                "backtest", max_snapshots=self.max_snapshots
+                getattr(portfolio, "_environment", "backtest"),
+                max_snapshots=self.max_snapshots,
+                backend=getattr(portfolio, "_backend", None),
+                portfolio_id=getattr(portfolio, "portfolio_id", None),
             )
             # WR-02: share the fabricated seam with sibling managers so a
             # standalone-constructed portfolio does not end up with disjoint
