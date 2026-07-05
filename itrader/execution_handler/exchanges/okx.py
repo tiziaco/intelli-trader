@@ -238,6 +238,22 @@ class OkxExchange(AbstractExchange):
 			if event.command is OrderCommand.CANCEL:
 				self._cancel_order(event)
 			else:
+				# D-18 (V17-16, ASVS V4/V5): run the execution-domain preflight as
+				# defense-in-depth BEFORE any venue call, mirroring simulated.py's
+				# validate_order/validate_symbol placement. A preflight failure is a
+				# DEFINITIVE rejection (the order params/symbol are invalid — it can
+				# never rest), so it flows back as FillEvent(REFUSED) exactly like the
+				# ccxt.InvalidOrder branch below, NOT the D-13 in-flight/ambiguous path
+				# (which is reserved for transport ambiguity where the order MAY be live).
+				preflight = self.validate_order(event)
+				if not preflight.is_valid:
+					self._refuse_preflight(
+						event, preflight.error_message or "order failed preflight validation")
+					return
+				if not self.validate_symbol(event.ticker):
+					self._refuse_preflight(
+						event, f"unknown symbol {event.ticker}")
+					return
 				self._submit_order(event)
 		except Exception as exc:  # boundary swallow (matches the execution-layer policy)
 			self.logger.error(
@@ -321,6 +337,24 @@ class OkxExchange(AbstractExchange):
 			self.global_queue.put(FillEvent.new_fill(
 				"REFUSED", event, price=event.price, quantity=event.quantity,
 				commission=Decimal("0")))
+
+	def _refuse_preflight(self, event: OrderEvent, reason: str) -> None:
+		"""Emit a DEFINITIVE FillEvent(REFUSED) for a preflight-rejected order (D-18).
+
+		A preflight rejection (non-positive quantity, unknown symbol) means the order was
+		refused before ever reaching the venue — it can never rest. Mirror the definitive
+		venue-rejection emit (``ccxt.InvalidOrder`` branch) so OrderHandler.on_fill /
+		ReconcileManager transitions the stored mirror PENDING->REJECTED (only logging would
+		leave it stuck at PENDING). No pending clOrdId correlation exists yet (registered
+		inside ``_submit_order``, which never ran), so nothing to release. Scrub (T-05-27):
+		the log binds the fixed reason, never a connector payload.
+		"""
+		self.logger.warning(
+			"OKX preflight rejected order %s (%s): %s — not submitted",
+			event.order_id, event.ticker, reason)
+		self.global_queue.put(FillEvent.new_fill(
+			"REFUSED", event, price=event.price, quantity=event.quantity,
+			commission=Decimal("0")))
 
 	def _submit_order(self, event: OrderEvent) -> None:
 		"""Round outbound qty/price to OKX lot/tick (string helpers) and submit via the RPC.

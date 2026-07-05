@@ -1606,12 +1606,24 @@ class LiveTradingSystem:
     def add_event(self, event):
         """
         Add an event to the global queue for processing.
-        
+
+        D-18 (V17-16, HIGH — ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
+        surface. A raw ``OrderEvent`` here would reach the execution queue with NO validation,
+        sizing, cash reservation or order-mirror engagement — an external caller could inject
+        an arbitrary order that bypasses every admission control (elevation-of-privilege /
+        input-validation defect). Raw ``EventType.ORDER`` injection is therefore REFUSED.
+
+        The sanctioned external-order path is SIGNAL-form entry: submit a ``SignalEvent`` (or
+        call the order domain directly), which routes through ``OrderHandler.on_signal`` ->
+        ``AdmissionManager`` so validation + sizing + reservation + mirror engage before any
+        ``OrderEvent`` is emitted. The internal order flow is UNAFFECTED — handlers emit
+        ``OrderEvent``s by putting them on ``global_queue`` directly, never through ``add_event``.
+
         Parameters
         ----------
         event
             The event to add to the queue
-        
+
         Returns
         -------
         bool
@@ -1620,7 +1632,16 @@ class LiveTradingSystem:
         if not self._running:
             self.logger.warning('Cannot add event: Live trading system is not running')
             return False
-        
+
+        # D-18: reject raw ORDER injection. Only ORDER events are blocked (a narrow gate);
+        # every non-ORDER event (the sanctioned SIGNAL-form entry included) enqueues normally.
+        if getattr(event, 'type', None) is EventType.ORDER:
+            self.logger.warning(
+                'Rejected raw ORDER injection via add_event (D-18/V17-16) — external orders '
+                'must route through the admission pipeline (signal-form entry), not the '
+                'live queue directly')
+            return False
+
         try:
             self.global_queue.put(event)
             return True
