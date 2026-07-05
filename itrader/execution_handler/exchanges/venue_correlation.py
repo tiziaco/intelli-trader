@@ -49,15 +49,23 @@ class ResolveResult:
 	"""Outcome of ``VenueCorrelationIndex.resolve`` for one streamed venue fill.
 
 	``outcome`` ∈ ``{"emit", "duplicate", "buffered", "uncorrelated"}``:
-	- ``emit`` — ``order`` resolved; the caller mints + emits the FillEvent OUTSIDE the lock.
+	- ``emit`` — ``order`` resolved; the caller mints + emits the FillEvent OUTSIDE the lock,
+	  THEN consumes the dedup slot via ``mark_seen(dedup_key)`` only after a True emit (WR-02).
 	- ``duplicate`` — the ``trade['id']`` was already seen (reconnect re-send); no-op.
 	- ``buffered`` — uncorrelated but has a ``venue_id``; buffered for late correlation.
 	- ``uncorrelated`` — no ``venue_id`` to key a buffer on; the caller skips-and-logs.
+
+	``dedup_key`` carries the symbol-scoped ``f"{ticker}:{trade_id}"`` for an ``emit`` verdict
+	(``None`` on the other outcomes, and ``None`` for a trade with no ``trade['id']`` — the
+	None-keyed backtest path). WR-02: ``resolve`` no longer consumes the slot itself; the caller
+	feeds this key back to ``mark_seen`` ONLY after ``_emit_fill`` proves the fill emitted, so a
+	malformed-then-corrected re-send is not silently dropped.
 	"""
 
 	order: Optional[OrderEvent]
 	venue_id: Optional[str]
 	outcome: str
+	dedup_key: Optional[str] = None
 
 
 def _extract_client_order_id(trade: Any) -> Optional[str]:
@@ -177,6 +185,13 @@ class VenueCorrelationIndex:
 		tradeId — OKX tradeIds are unique only per-instrument, so two symbols sharing a numeric
 		tradeId must BOTH settle. The gate therefore runs AFTER resolution (the ticker is not
 		known before the order resolves); the buffer / uncorrelated branches are unchanged.
+
+		WR-02: the ``emit`` verdict does NOT consume the dedup slot here — ``resolve`` only
+		CHECKS for an already-seen key (``duplicate``) and returns the ``dedup_key`` for the
+		caller to ``mark_seen`` AFTER a True ``_emit_fill``. Consuming the slot before the fill
+		is proven emitted would drop a malformed-then-corrected re-send of the same key. A trade
+		with no ``trade['id']`` (None-keyed backtest path) carries ``dedup_key = None`` → the
+		caller's mark-seen is a clean skip, so the oracle path stays dark.
 		"""
 		trade_id = trade.get("id") if isinstance(trade, dict) else None
 		venue_id = trade.get("order") if isinstance(trade, dict) else None
@@ -197,9 +212,9 @@ class VenueCorrelationIndex:
 			dedup_key = f"{order.ticker}:{trade_id}" if trade_id is not None else None
 			if dedup_key is not None and dedup_key in self._seen_trade_ids:
 				return ResolveResult(None, venue_id, "duplicate")
-			if dedup_key is not None:
-				self._mark_seen_locked(dedup_key)
-			return ResolveResult(order, venue_id, "emit")
+			# WR-02: DO NOT mark seen here — the caller consumes the slot via mark_seen only
+			# after _emit_fill returns True (a malformed fill must not burn the slot).
+			return ResolveResult(order, venue_id, "emit", dedup_key)
 
 	def mark_seen(self, trade_id: str) -> bool:
 		"""Record a trade id in the bounded dedup ring; return True if it was newly seen.
@@ -241,6 +256,19 @@ class VenueCorrelationIndex:
 			cumulative = self._cumulative_filled_by_venue_id.get(venue_id, Decimal("0")) + filled_qty
 			self._cumulative_filled_by_venue_id[venue_id] = cumulative
 			return cumulative >= order.quantity
+
+	def take_pending(self, venue_id: str) -> List[Any]:
+		"""Pop + return a ``venue_id``'s buffered late fills WITHOUT dropping the correlation
+		(WR-03 drain-through-resolve helper).
+
+		``release_venue_correlation`` re-routes each drained fill through the FULL ``resolve``
+		path (dedup + correlation) instead of raw ``_emit_fill`` — that re-resolution needs the
+		correlation entries STILL present, so the buffer is emptied here first (correlation
+		intact) and ``release`` evicts the now-drained entries afterwards. Idempotent: an unknown
+		venue id returns ``[]``.
+		"""
+		with self._correlation_lock:
+			return self._pending_fills_by_venue_id.pop(venue_id, [])
 
 	def release(self, venue_id: str) -> Tuple[Optional[OrderEvent], List[Any]]:
 		"""Drain-then-evict a terminalized order's correlation (WR05-D3); idempotent.

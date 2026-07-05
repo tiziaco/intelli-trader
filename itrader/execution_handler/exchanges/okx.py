@@ -483,6 +483,12 @@ class OkxExchange(AbstractExchange):
 		# Correlated (outcome == "emit"): mint + emit OUTSIDE the lock.
 		assert result.order is not None  # narrowed by outcome == "emit"
 		emitted = self._emit_fill(trade, result.order, result.venue_id)
+		# WR-02: consume the dedup slot ONLY after a True emit — resolve deliberately did
+		# NOT mark the key seen, so a malformed payload (_emit_fill False) leaves the slot
+		# free and a corrected re-send of the same {ticker}:{trade_id} still emits. A
+		# None-keyed (backtest) trade carries dedup_key=None → clean skip (oracle-dark).
+		if emitted and result.dedup_key is not None:
+			self._index.mark_seen(result.dedup_key)
 		# WR-05 R2 (WR05-D1): feed the per-venue_id cumulative-filled counter and, when
 		# this fill terminalizes the order (cumulative reaches order.quantity), self-release
 		# its correlation entries so the maps do not grow without limit over a long session
@@ -563,20 +569,18 @@ class OkxExchange(AbstractExchange):
 		"""Release a terminalized order's venue correlation (WR-05 R2 — the OUTBOUND twin
 		of ``adopt_venue_correlation``).
 
-		Delegates to ``VenueCorrelationIndex.release`` (drain-then-evict, WR05-D3): the index
-		drains any buffered late fills FIRST and returns them, then drops the order's
-		venue-id / order-id / clOrdId entries + the cumulative counter (bounding the maps).
-		This arm emits each drained buffered fill via ``_emit_fill`` OUTSIDE the index lock —
-		mint/emit outside the lock, matching the ``_submit_order`` / ``adopt_venue_correlation``
-		re-drain pattern — so a late buffered fill still fires its ``FillEvent`` BEFORE its
-		correlation is considered gone (no WR-02 regression). Idempotent: an unknown /
-		already-released ``venue_id`` returns nothing to emit.
+		WR-03: drain any buffered late fills through the FULL ``_handle_trade`` → ``resolve``
+		path (dedup + correlation) BEFORE the index drops the correlation — NOT raw
+		``_emit_fill``. Raw ``_emit_fill`` bypasses the dedup ring, so a re-delivered buffered
+		fill would double-count; routing through ``resolve`` records the drained trade id in the
+		ring (a later re-delivery dedups). ``take_pending`` empties the buffer while the
+		correlation is still present so each drained fill re-resolves to its order; ``release``
+		then evicts the (now-drained) correlation entries. Idempotent: an unknown /
+		already-released ``venue_id`` drains nothing and drops nothing.
 		"""
-		order, drained = self._index.release(venue_id)
-		if order is None:
-			return
-		for buffered_trade in drained:
-			self._emit_fill(buffered_trade, order, venue_id)
+		for buffered_trade in self._index.take_pending(venue_id):
+			self._handle_trade(buffered_trade)
+		self._index.release(venue_id)
 
 	def catch_up_missed_fills(self) -> None:
 		"""Recover fills that settled while the fill stream was down (D-12 / V17-08).

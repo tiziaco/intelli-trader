@@ -87,15 +87,22 @@ def test_mark_seen_reports_newly_seen_then_duplicate() -> None:
 
 
 def test_resolve_dedups_an_already_seen_trade_id() -> None:
-    """A trade id already marked seen resolves as a duplicate (no re-emit)."""
+    """A trade id already marked seen resolves as a duplicate (no re-emit).
+
+    WR-02: ``resolve`` no longer consumes the slot itself — the caller marks the dedup key
+    seen only after a True ``_emit_fill``. So the second resolve dedups only AFTER the caller
+    confirms the first emit via ``mark_seen(dedup_key)``.
+    """
     idx = VenueCorrelationIndex()
     order = _make_order()
     idx.register("OID-1", order, "it1")
 
     first = idx.resolve({"id": "T-DUP", "order": "OID-1", "amount": "0.2"})
-    second = idx.resolve({"id": "T-DUP", "order": "OID-1", "amount": "0.2"})
-
     assert first.outcome == "emit"
+    # The caller consumes the slot after proving the fill emitted.
+    idx.mark_seen(first.dedup_key)  # type: ignore[arg-type]
+
+    second = idx.resolve({"id": "T-DUP", "order": "OID-1", "amount": "0.2"})
     assert second.outcome == "duplicate"
     assert second.order is None
 
