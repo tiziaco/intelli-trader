@@ -13,7 +13,7 @@ and order storage/execution systems.
 """
 
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import pydantic
 
@@ -206,6 +206,17 @@ class OrderManager:
 	def on_fill(self, fill_event: FillEvent) -> List[OrderEvent]:
 		"""Delegate fill reconciliation to ReconcileManager (D-07)."""
 		return self.reconcile_manager.on_fill(fill_event)
+
+	def seed_applied_trades(self, keys: Iterable[str]) -> None:
+		"""Restart-seed the reconcile dedup ring (D-22 — the composition-root sink).
+
+		The wiring seam ``PortfolioHandler.rehydrate`` drives into: it forwards the
+		durable ``f"{ticker}:{venue_trade_id}"`` history into
+		``ReconcileManager.seed_applied_trades`` so the order-mirror dedup arm is
+		restart-seeded SYMMETRICALLY with the portfolio ledger. Live-path-only
+		(backtest never rehydrates — oracle-dark).
+		"""
+		self.reconcile_manager.seed_applied_trades(keys)
 
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""Delegate the signal→order pipeline to AdmissionManager (D-07)."""

@@ -1357,7 +1357,13 @@ class LiveTradingSystem:
                     # rehydrate() is internally getattr-guarded per portfolio (the
                     # in-memory backtest backend is a clean skip), so it is safe here
                     # under the same durable-store gate as the order rehydrate.
-                    self.portfolio_handler.rehydrate()
+                    # D-22 (WR-05): pass the order-mirror seed sink so the SAME single
+                    # transactions.venue_trade_id history pass restart-seeds the
+                    # ReconcileManager dedup ring SYMMETRICALLY with the portfolio
+                    # ledger's _settled_venue_trade_ids — a re-delivered pre-restart
+                    # trade cannot double-settle on EITHER arm.
+                    self.portfolio_handler.rehydrate(
+                        self.order_handler.order_manager.seed_applied_trades)
 
                     from itrader.portfolio_handler.reconcile.venue_reconciler import (
                         VenueReconciler,

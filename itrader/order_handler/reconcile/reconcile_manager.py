@@ -38,7 +38,7 @@ puts. Money is Decimal end-to-end via `to_money` (NEVER `Decimal(float)`).
 """
 
 from collections import OrderedDict
-from typing import Any, Callable, List, Optional, TYPE_CHECKING
+from typing import Any, Callable, Iterable, List, Optional, TYPE_CHECKING
 
 from ..operation_result import OperationResult
 from ..base import OrderStorage
@@ -120,6 +120,25 @@ class ReconcileManager:
 		if self._applied_capacity > 0 and len(self._applied_trade_keys) >= self._applied_capacity:
 			self._applied_trade_keys.popitem(last=False)
 		self._applied_trade_keys[dedup_key] = None
+
+	def seed_applied_trades(self, keys: Iterable[str]) -> None:
+		"""Restart-seed the dedup ring from the durable settled-trade history (D-22).
+
+		On a live restart ``_applied_trade_keys`` starts EMPTY, so a venue trade
+		re-delivered AFTER the restart (an OKX stream re-send or the
+		``VenueReconciler`` adopting a downtime fill) would re-book the order mirror
+		— the in-session A5 guard does not cover the cross-restart arm. This hook is
+		driven FROM ``PortfolioHandler.rehydrate`` (the only place already reading the
+		durable ``transactions.venue_trade_id`` history, Pitfall 8 — ReconcileManager
+		has no durable transaction store) with the SAME ``f"{ticker}:{venue_trade_id}"``
+		keys the portfolio ledger seeds ``_settled_venue_trade_ids`` from, so the
+		order-mirror arm and the portfolio arm survive a restart SYMMETRICALLY. Reuses
+		the bounded-FIFO ``_record_applied_trade`` primitive (cap-guarded — never an
+		unbounded set, T-05.2-09). LIVE-ONLY: the in-memory backtest backend has no
+		durable transactions / no rehydrate, so the sink is never called (oracle-dark).
+		"""
+		for key in keys:
+			self._record_applied_trade(key)
 
 	@staticmethod
 	def _classify(status: FillStatus) -> "tuple[bool, Optional[OrderStatus]]":

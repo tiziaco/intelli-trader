@@ -10,7 +10,7 @@ from queue import Queue
 from collections import OrderedDict
 from datetime import datetime, UTC
 from decimal import Decimal
-from typing import Dict, Optional, Any, List, Generator, Union, Callable
+from typing import Dict, Iterable, Optional, Any, List, Generator, Union, Callable
 from contextlib import contextmanager
 
 from .portfolio import Portfolio
@@ -900,7 +900,10 @@ class PortfolioHandler:
             updated_time=updated_time,
         )
 
-    def rehydrate(self) -> None:
+    def rehydrate(
+        self,
+        applied_trade_sink: Optional[Callable[[Iterable[str]], None]] = None,
+    ) -> None:
         """Restore live portfolio state + the durable dedup ledger on restart (D-07/D-08).
 
         The cross-restart arm the in-session A5 guard (Plan 03) does NOT cover: on a live
@@ -919,10 +922,27 @@ class PortfolioHandler:
            ``_mark_venue_trade_settled``. A re-delivered ``(ticker, venue_trade_id)`` is
            then a no-op at the ``on_fill`` guard.
 
+        3. **Restart-seeds the ORDER-mirror dedup ring symmetrically (D-22 / WR-05)**
+           when an ``applied_trade_sink`` is supplied. The order-mirror
+           ``ReconcileManager._applied_trade_keys`` also starts EMPTY on a restart, so
+           the SAME ``f"{ticker}:{venue_trade_id}"`` keys collected for the portfolio
+           arm are forwarded ONCE (single history pass, Pitfall 8 — ReconcileManager
+           has no durable transaction store of its own) into the sink
+           (``OrderManager.seed_applied_trades``). Both dedup arms then survive a
+           restart symmetrically. The composition root wires the sink; the in-memory
+           backtest path passes ``None`` (oracle-dark).
+
         Sequencing (composition-root, Plan 05): this MUST run BEFORE
         ``VenueReconciler.reconcile()`` so adoption diffs against restored state and the
         dedup ledger already knows every already-settled venue trade.
+
+        Args:
+            applied_trade_sink: Optional seed hook (``OrderManager.seed_applied_trades``)
+                driven with the durable ``f"{ticker}:{venue_trade_id}"`` history so the
+                order-mirror dedup ring is restart-seeded symmetrically (D-22). ``None``
+                keeps the portfolio-arm-only behaviour (backtest / no order domain).
         """
+        seeded_keys: List[str] = []
         for portfolio in self.get_active_portfolios():
             storage = portfolio.state_storage
             rehydrate_fn = getattr(storage, "rehydrate", None)
@@ -951,7 +971,16 @@ class PortfolioHandler:
                 venue_trade_id = getattr(transaction, "venue_trade_id", None)
                 if venue_trade_id is None:
                     continue
-                self._mark_venue_trade_settled(f"{transaction.ticker}:{venue_trade_id}")
+                dedup_key = f"{transaction.ticker}:{venue_trade_id}"
+                self._mark_venue_trade_settled(dedup_key)
+                # D-22: collect the SAME key for the order-mirror ring seed so both
+                # dedup arms read from ONE history pass (no second divergent read).
+                seeded_keys.append(dedup_key)
+        # D-22 (WR-05): restart-seed the order-mirror dedup ring symmetrically with
+        # the portfolio ledger — one history pass feeds both arms. Skipped when no
+        # sink is wired (backtest / no order domain — oracle-dark).
+        if applied_trade_sink is not None and seeded_keys:
+            applied_trade_sink(seeded_keys)
 
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
