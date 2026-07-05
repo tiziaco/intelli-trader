@@ -169,6 +169,15 @@ class LiveTradingSystem:
         self._submission_paused = False
         self._paused_reason: Optional[str] = None
         self._pending_stream_resume = threading.Event()
+        # 05.3-08 (D-21 / WR-02): connector-fatal escalation handoff. A fatal connector
+        # error / exhausted retry ceiling / unclassified catch-all escalates from the
+        # connector ASYNCIO LOOP thread. Doing the blocking durable record_halt SQL write
+        # there stalls every stream sharing the loop (Pitfall 9). The loop-thread callback
+        # (_request_connector_halt) only SETS this flag; the ENGINE thread drains it via
+        # _maybe_halt_after_connector_fatal and runs the blocking halt() (durable write +
+        # status flip + CRITICAL alert), winner-only. Mirrors the pause/resume flag pattern.
+        self._pending_connector_halt = threading.Event()
+        self._pending_connector_halt_reason: Optional[str] = None
         # D-14 (V17-11): pause-window protective-order replay queue. While submission
         # is paused/halted, system-generated PROTECTIVE orders (bracket children,
         # OCO/orphan cancels — a just-filled entry's stop/take-profit) are DEFERRED here
@@ -482,10 +491,18 @@ class LiveTradingSystem:
             # (engine thread) — NOT a full two-sided reconcile (WR-04, see below).
             # The pause/resume callbacks fire from the connector loop thread, so they
             # only flip thread-safe flags — no blocking venue I/O there (Pitfall 9).
-            self._okx_exchange.set_halt_signal(self.halt)
+            #
+            # 05.3-08 (D-21 / WR-02): the halt signal is _request_connector_halt (a
+            # thread-safe FLAG setter), NOT halt() directly. halt() does a BLOCKING durable
+            # record_halt SQL write; running it inline on the connector asyncio loop would
+            # stall every stream sharing the loop (Pitfall 9). The engine thread drains the
+            # flag via _maybe_halt_after_connector_fatal and runs the blocking halt off the
+            # loop (winner-only, D-10 latch, V7 scrub preserved). Mirrors the pause/resume
+            # flag handoff above.
+            self._okx_exchange.set_halt_signal(self._request_connector_halt)
             self._okx_exchange.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
-            self._okx_data_provider.set_halt_signal(self.halt)
+            self._okx_data_provider.set_halt_signal(self._request_connector_halt)
             self._okx_data_provider.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
 
@@ -921,6 +938,44 @@ class LiveTradingSystem:
             return
         self.resume_submission()
 
+    def _request_connector_halt(self, reason: str) -> None:
+        """Connector-loop callback (D-21/WR-02): REQUEST an engine-thread durable halt.
+
+        Injected as the OKX stream arms' halt signal (``set_halt_signal``). Fired from the
+        connector ASYNCIO LOOP thread on a fatal connector error / exhausted retry ceiling /
+        the unclassified catch-all. It ONLY flips a thread-safe flag — it must NOT drive the
+        blocking ``halt()`` here (its durable ``record_halt`` SQL write would stall every
+        stream sharing the loop, Pitfall 9). The engine loop drains the flag via
+        ``_maybe_halt_after_connector_fatal`` and runs the blocking halt off the loop.
+        Mirrors ``_on_venue_stream_up`` (the reconnect-resume flag handoff).
+
+        Parameters
+        ----------
+        reason : str
+            Machine-readable halt reason (the arms pass the fixed ``'connector-fatal'``).
+        """
+        self._pending_connector_halt_reason = reason
+        self._pending_connector_halt.set()
+
+    def _maybe_halt_after_connector_fatal(self) -> None:
+        """Engine-thread durable halt after a connector-fatal escalation (D-21/WR-02).
+
+        Runs on the engine (queue-draining) thread. When the connector-loop escalation has
+        flagged a fatal, this drains the flag and runs the blocking ``halt()`` HERE — the
+        durable ``record_halt`` write + status flip + CRITICAL alert all off the connector
+        asyncio loop (Pitfall 9). ``halt()`` is winner-only/idempotent, so two flagged
+        escalations (e.g. both stream arms fail) still write the durable record exactly once
+        (D-10 latch ordering preserved). The V7 secret scrub is preserved end-to-end — only
+        the fixed ``'connector-fatal'`` reason literal crosses the handoff, never ``str(exc)``.
+        Mirrors ``_maybe_resume_after_reconnect`` (the reconnect-resume drain).
+        """
+        if not self._pending_connector_halt.is_set():
+            return
+        self._pending_connector_halt.clear()
+        reason = self._pending_connector_halt_reason or 'connector-fatal'
+        self._pending_connector_halt_reason = None
+        self.halt(reason)
+
     def _dispatch_live(self, event) -> None:
         """Dispatch one event through the live halt/pause gate (D-02/D-19).
 
@@ -1315,10 +1370,19 @@ class LiveTradingSystem:
                     # the blocking snapshot runs on this thread (Pitfall 9).
                     self._maybe_resume_after_reconnect()
 
+                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal escalation on
+                    # the ENGINE thread — the blocking durable record_halt write runs here,
+                    # never on the connector asyncio loop (Pitfall 9). Flag-only on the loop.
+                    self._maybe_halt_after_connector_fatal()
+
                 except queue.Empty:
                     # 05-08 (D-19): drain a pending resume even when the queue is idle —
                     # a reconnect during a quiet spell must still resume submission.
                     self._maybe_resume_after_reconnect()
+
+                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal even when the
+                    # queue is idle — a fatal during a quiet spell must still halt (off-loop).
+                    self._maybe_halt_after_connector_fatal()
 
                     # No events in queue, check if we've been idle too long
                     current_time = datetime.now(UTC)
@@ -1352,6 +1416,43 @@ class LiveTradingSystem:
         self._update_status(SystemStatus.STARTING)
         
         try:
+            # 05.3-08 (D-20 / WR-01): the DURABLE halt refusal gate runs FIRST — right
+            # after STARTING and BEFORE any session init / OKX connect / feed warmup /
+            # stream spawn / VenueAccount.snapshot() / VenueReconciler.reconcile(). A
+            # supervised auto-restart builds a FRESH engine whose in-process _status is
+            # STOPPED, so the in-process _is_halted() check further below would silently
+            # clear a breaker halt whose cause is not re-detectable at start(). Refuse
+            # RUNNING while an unresolved durable record exists (runs for EVERY venue,
+            # outside the OKX branch) and RE-LATCH this fresh instance in-process from the
+            # persisted reason via _update_status (NOT halt() — halt() would write a SECOND
+            # durable record) so get_status() reflects it and reset_halt() can clear both
+            # the in-process and durable latches. Placed at the TOP so a durably-HALTED
+            # engine stays INERT: zero venue I/O, no state-mutating reconcile, no second
+            # durable record (WR-01 — the old late position ran the whole OKX handshake +
+            # reconcile before refusing). The `not self._is_halted()` conjunct is KEPT (a
+            # reconcile/guard halt raised DURING this run is handled by the D-05 check
+            # below, no double-refuse); guarded on the store being present (in-memory
+            # fallback -> skip). Sits before the D-17 error-policy bind so a refused start
+            # does not even install the live handler policy.
+            if (self._halt_record_store is not None
+                    and not self._is_halted()
+                    and self._halt_record_store.has_unresolved()):
+                durable_record = self._halt_record_store.get_unresolved()
+                durable_reason = (
+                    durable_record.reason if durable_record is not None
+                    else 'durable-halt')
+                self.logger.error(
+                    'start() refused RUNNING: an unresolved DURABLE halt record latches '
+                    'across the restart (reason=%s) — a supervised auto-restart cannot '
+                    'silently clear a breaker halt (T-05.2-17); resolve the cause then '
+                    'call reset_halt()', durable_reason)
+                self._update_status(
+                    SystemStatus.HALTED,
+                    error_msg=f'durable halt latched on restart: {durable_reason}',
+                    halt_reason=durable_reason)
+                self._running = False
+                return False
+
             # D-17 (error-policy split, WR-04): install the live publish-and-continue
             # policy HERE — on the daemon/live path ONLY. A live session can't abort on
             # one handler error (it must emit an ErrorEvent and keep draining, RES-01
@@ -1461,35 +1562,12 @@ class LiveTradingSystem:
                 # fresh session (engine flat, venue flat) it is a benign no-op.
                 self._run_session_baseline_guard()
 
-            # 05.2-06 (D-10 / ARCH-4 Layer 2): a DURABLE halt record latches across a
-            # process restart. A supervised auto-restart builds a FRESH engine whose
-            # in-process _status is STOPPED, so the in-process _is_halted() check below
-            # would silently clear a breaker halt whose cause is not re-detectable at
-            # start(). Refuse RUNNING while an unresolved durable record exists (runs for
-            # EVERY venue, outside the OKX branch) and RE-LATCH this fresh instance
-            # in-process from the persisted reason via _update_status (NOT halt() — halt()
-            # would write a SECOND durable record) so get_status() reflects it and
-            # reset_halt() can clear both the in-process and durable latches. Only re-latch
-            # when not already HALTED (a reconcile/guard halt above is handled by the D-05
-            # check below); guarded on the store being present (in-memory fallback -> skip).
-            if (self._halt_record_store is not None
-                    and not self._is_halted()
-                    and self._halt_record_store.has_unresolved()):
-                durable_record = self._halt_record_store.get_unresolved()
-                durable_reason = (
-                    durable_record.reason if durable_record is not None
-                    else 'durable-halt')
-                self.logger.error(
-                    'start() refused RUNNING: an unresolved DURABLE halt record latches '
-                    'across the restart (reason=%s) — a supervised auto-restart cannot '
-                    'silently clear a breaker halt (T-05.2-17); resolve the cause then '
-                    'call reset_halt()', durable_reason)
-                self._update_status(
-                    SystemStatus.HALTED,
-                    error_msg=f'durable halt latched on restart: {durable_reason}',
-                    halt_reason=durable_reason)
-                self._running = False
-                return False
+            # 05.3-08 (D-20 / WR-01): the DURABLE halt refusal gate that used to sit HERE
+            # (after the full OKX handshake + reconcile) was moved to the TOP of start()
+            # so a durably-HALTED engine refuses INERT — zero venue I/O, no state-mutating
+            # reconcile, no second durable record. Only the D-05 in-process check below
+            # remains at this position, to latch a halt raised DURING this run's
+            # reconcile/baseline guard.
 
             # D-05 (V17-03): a reconcile/guard halt during session init must LATCH.
             # The VenueReconciler.reconcile() above (or the baseline guard) may have
