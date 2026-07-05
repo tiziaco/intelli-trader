@@ -42,11 +42,12 @@ indentation (matches the ``sql_storage.py`` sibling — Pitfall 12).
 
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import Connection, delete, insert, select
 
 from itrader.logger import get_itrader_logger
 
@@ -89,17 +90,78 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
         # The dedicated account-state carrier (A2), registered on the shared MetaData by
         # build_portfolio_tables (constructing the store registered + created it).
         self._account_state = store.backend.metadata.tables["portfolio_account_state"]
+        # D-19 (WR-04): the shared fill-transaction connection. When a fill is in
+        # flight under ``fill_transaction()`` the position upsert (``set_position``)
+        # and the cash-scalar upsert (``save_account_state``) both execute on THIS
+        # one connection so they commit (or roll back) as a single transaction —
+        # a crash between them can never leave the durable position one fill ahead
+        # of the durable cash. ``None`` off the fill path (each write opens its own
+        # ``engine.begin()`` as before).
+        self._fill_conn: Optional[Connection] = None
         self.logger = get_itrader_logger().bind(
             component="CachedSqlPortfolioStateStorage"
         )
 
+    # -- Fill transaction (D-19 — one commit spans position + cash) ----------
+
+    @contextmanager
+    def fill_transaction(self) -> Iterator[None]:
+        """Span a fill's position + cash-scalar durable writes in ONE txn (D-19/WR-04).
+
+        Opens a single ``self._store.engine`` transaction and parks its connection on
+        ``self._fill_conn`` for the duration; ``set_position`` and
+        ``save_account_state`` then route their durable upserts onto that shared
+        connection instead of opening independent ``engine.begin()`` blocks. Both
+        writes commit together on a clean exit and roll back together on any
+        exception — so a crash between them can never tear the durable position ahead
+        of the durable cash (the ``VenueReconciler`` restart baseline is always a
+        consistent snapshot). LIVE-ONLY: the in-memory backtest backend exposes no
+        ``fill_transaction`` (the on_fill seam getattr-skips it — oracle-dark).
+        """
+        with self._store.engine.begin() as connection:
+            self._fill_conn = connection
+            try:
+                yield
+            finally:
+                self._fill_conn = None
+
     # -- Positions (open = working state, closed = append-only history) ------
 
     def set_position(self, ticker: str, position: "Position") -> None:
-        # Store-first, then mirror the open position into the working set.
-        self._store.set_position(ticker, position)
+        # Store-first, then mirror the open position into the working set. D-19:
+        # inside a fill_transaction the durable upsert lands on the shared fill
+        # connection (atomic with the cash-scalar write); otherwise it opens its
+        # own commit as before (the store-first two-write ordering is preserved
+        # within the single transaction).
+        if self._fill_conn is not None:
+            self._upsert_position_on(self._fill_conn, ticker, position)
+        else:
+            self._store.set_position(ticker, position)
         with self._lock:
             self._cache.set_position(ticker, position)
+
+    def _upsert_position_on(
+        self, connection: Connection, ticker: str, position: "Position"
+    ) -> None:
+        """Upsert the open position row for ``ticker`` on an explicit connection (D-19).
+
+        Mirrors ``SqlPortfolioStateStorage.set_position`` (delete-then-insert the open
+        row, ``is_open=true`` filter leaving closed history untouched) but executes on
+        the caller-supplied ``connection`` so it can share the fill transaction. Reuses
+        the store's own ``positions`` table + ``_position_to_row`` mapping so the row
+        shape stays byte-identical to the independent-commit path.
+        """
+        table = self._store.positions
+        connection.execute(
+            delete(table).where(
+                (table.c.portfolio_id == self._portfolio_id)
+                & (table.c.ticker == ticker)
+                & (table.c.is_open.is_(True))
+            )
+        )
+        connection.execute(
+            insert(table), [self._store._position_to_row(position)]
+        )
 
     def get_position(self, ticker: str) -> Optional["Position"]:
         # Cache-only — the open set is always resident.
@@ -229,26 +291,68 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
         idiom). Parameterized Core on the ``portfolio_account_state`` ``Table`` — never
         f-string SQL (T-04-01). Scoped to ``self._portfolio_id`` so it can never write another
         portfolio's row.
+
+        D-19 (WR-04): inside a ``fill_transaction`` the upsert lands on the shared fill
+        connection so it commits ATOMICALLY with the same fill's position write;
+        otherwise it opens its own ``engine.begin()`` as before.
+        """
+        if self._fill_conn is not None:
+            self._upsert_account_state_on(
+                self._fill_conn,
+                cash_balance=cash_balance,
+                realized_pnl=realized_pnl,
+                total_equity=total_equity,
+                peak_equity=peak_equity,
+                open_positions_count=open_positions_count,
+                updated_time=updated_time,
+            )
+        else:
+            with self._store.engine.begin() as connection:
+                self._upsert_account_state_on(
+                    connection,
+                    cash_balance=cash_balance,
+                    realized_pnl=realized_pnl,
+                    total_equity=total_equity,
+                    peak_equity=peak_equity,
+                    open_positions_count=open_positions_count,
+                    updated_time=updated_time,
+                )
+
+    def _upsert_account_state_on(
+        self,
+        connection: Connection,
+        *,
+        cash_balance: Decimal,
+        realized_pnl: Decimal,
+        total_equity: Decimal,
+        peak_equity: Decimal,
+        open_positions_count: int,
+        updated_time: datetime,
+    ) -> None:
+        """Delete-then-insert the single account-state row on an explicit connection (D-19).
+
+        The upsert body of ``save_account_state`` extracted so both the independent-commit
+        path and the shared fill-transaction path execute byte-identical SQL scoped to
+        ``self._portfolio_id``.
         """
         table = self._account_state
-        with self._store.engine.begin() as connection:
-            connection.execute(
-                delete(table).where(table.c.portfolio_id == self._portfolio_id)
-            )
-            connection.execute(
-                insert(table),
-                [
-                    {
-                        "portfolio_id": self._portfolio_id,
-                        "cash_balance": cash_balance,
-                        "realized_pnl": realized_pnl,
-                        "total_equity": total_equity,
-                        "peak_equity": peak_equity,
-                        "open_positions_count": open_positions_count,
-                        "updated_time": updated_time,
-                    }
-                ],
-            )
+        connection.execute(
+            delete(table).where(table.c.portfolio_id == self._portfolio_id)
+        )
+        connection.execute(
+            insert(table),
+            [
+                {
+                    "portfolio_id": self._portfolio_id,
+                    "cash_balance": cash_balance,
+                    "realized_pnl": realized_pnl,
+                    "total_equity": total_equity,
+                    "peak_equity": peak_equity,
+                    "open_positions_count": open_positions_count,
+                    "updated_time": updated_time,
+                }
+            ],
+        )
 
     def load_account_state(self) -> Optional[dict[str, Any]]:
         """Return the single account-state row for the bound portfolio, or ``None`` if absent.
