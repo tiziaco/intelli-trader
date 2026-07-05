@@ -31,7 +31,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 Phase: 05.2
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-07-04
+Last activity: 2026-07-05 - Completed quick task 260705-fqe: adapt e2e OKX sandbox recon test for a non-flat demo account
 
 Progress: [██████████] 98%
 
@@ -223,6 +223,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | 260703-dob | Add OKX live-connectivity integration test + new `live` pytest marker (creds-free public reachability + creds-gated demo auth via OkxConnector); fence default `make test`/`test-integration` with `not live`, add `make test-live` | 2026-07-03 | b97690d5 | [260703-dob-okx-live-connectivity-marker](./quick/260703-dob-okx-live-connectivity-marker/) |
 | fast | Remove OKX cred diagnostic script + diagnose-okx make target (redundant — test_okx_connectivity.py auth test now verifies creds via OkxConnector) | 2026-07-03 | 8f7acd0c | — (fast, inline) |
 | 260703-hl5 | Persist `venue_trade_id` on the transactions table (tail of CR-01 fill-dedup): nullable column + chained Alembic migration + both sql_storage mappers + Postgres round-trip test | 2026-07-03 | b142cbc5 | [260703-hl5-persist-venue-trade-id-on-the-transactio](./quick/260703-hl5-persist-venue-trade-id-on-the-transactio/) |
+| 260705-fqe | Adapt e2e OKX sandbox recon test to run against a non-flat demo account (seed engine position to live venue balance; assert BUY delta) — unblocks online settlement proof on OKX-seeded ~1 BTC EEA account | 2026-07-05 | f2070431 | [260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-](./quick/260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-/) |
+| fast | Make ARCH-3 capture best-effort + fix OKX fetch_my_trades param (limit=100, no paginate — sCode 51000) — online settlement proof now fully GREEN (3/3) | 2026-07-05 | 81fc39aa | — (fast, inline) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |

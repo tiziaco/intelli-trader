@@ -250,17 +250,27 @@ class Position(object):
 		"""
 		position_side = PositionSide.LONG if transaction.type == TransactionType.BUY else PositionSide.SHORT
 
+		# spot-base-fee-drift-halt: the base quantity that actually settles into the
+		# position and the commission that is a QUOTE cash flow. For a base-denominated
+		# fee (OKX spot BUY) position_quantity == amount - base_fee (the venue-credited
+		# net base) and quote_commission == 0 (the fee is netted out of the base, not a
+		# quote cost). getattr fallbacks keep hand-built transaction stubs (predating the
+		# properties) working; on the default/oracle path they resolve to
+		# quantity/commission verbatim (byte-exact).
+		settle_quantity = getattr(transaction, "position_quantity", transaction.quantity)
+		quote_commission = getattr(transaction, "quote_commission", transaction.commission)
+
 		return cls(
 			entry_date = transaction.time,
 			ticker = transaction.ticker,
 			side = position_side,
 			price = transaction.price,
-			buy_quantity = transaction.quantity if position_side == PositionSide.LONG else 0,
-			sell_quantity = transaction.quantity if position_side == PositionSide.SHORT else 0,
+			buy_quantity = settle_quantity if position_side == PositionSide.LONG else 0,
+			sell_quantity = settle_quantity if position_side == PositionSide.SHORT else 0,
 			avg_bought = transaction.price if position_side == PositionSide.LONG else 0,
 			avg_sold = transaction.price if position_side == PositionSide.SHORT else 0,
-			buy_commission = transaction.commission if position_side == PositionSide.LONG else 0,
-			sell_commission = transaction.commission if position_side == PositionSide.SHORT else 0,
+			buy_commission = quote_commission if position_side == PositionSide.LONG else 0,
+			sell_commission = quote_commission if position_side == PositionSide.SHORT else 0,
 			is_open = True,
 			portfolio_id = transaction.portfolio_id,
 			# D-06: the one effective leverage, taken from the opening fill's
@@ -274,14 +284,20 @@ class Position(object):
 		Updates the average bought/sold price, quantity, and commission
 		of the Position based on the transaction details.
 		"""
+		# spot-base-fee-drift-halt: net-base settle quantity + quote-cash commission
+		# (see open_position). Default/oracle path resolves to quantity/commission
+		# verbatim (byte-exact); a base-denominated fee scales the position in by the
+		# venue-credited net base (amount - base_fee) and folds NO quote commission.
+		settle_quantity = getattr(transaction, "position_quantity", transaction.quantity)
+		quote_commission = getattr(transaction, "quote_commission", transaction.commission)
 		if transaction.type == TransactionType.BUY:
-			self.avg_bought = ((self.avg_bought * self.buy_quantity) + (transaction.quantity * transaction.price)) / (self.buy_quantity + transaction.quantity)
-			self.buy_quantity += transaction.quantity
-			self.buy_commission += transaction.commission
+			self.avg_bought = ((self.avg_bought * self.buy_quantity) + (settle_quantity * transaction.price)) / (self.buy_quantity + settle_quantity)
+			self.buy_quantity += settle_quantity
+			self.buy_commission += quote_commission
 		elif transaction.type == TransactionType.SELL:
-			self.avg_sold = ((self.avg_sold * self.sell_quantity) + (transaction.quantity * transaction.price)) / (self.sell_quantity + (transaction.quantity))
-			self.sell_quantity += transaction.quantity
-			self.sell_commission += transaction.commission
+			self.avg_sold = ((self.avg_sold * self.sell_quantity) + (settle_quantity * transaction.price)) / (self.sell_quantity + (settle_quantity))
+			self.sell_quantity += settle_quantity
+			self.sell_commission += quote_commission
 		# D-05 (PERF-08): this is the ONLY site that mutates the six fill-derived
 		# inputs (buy/sell_quantity, buy/sell_commission, avg_bought/avg_sold), so
 		# both caches are invalidated here. A grep audit confirms no other mutator

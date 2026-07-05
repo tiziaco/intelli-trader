@@ -919,6 +919,11 @@ class PortfolioHandler:
                     # CR-01: carry the venue trade id onto the durable settlement
                     # record (None for backtest/simulated fills — oracle-dark).
                     venue_trade_id=venue_trade_id,
+                    # spot-base-fee-drift-halt: carry the venue fee currency so the
+                    # spot settlement seam nets a base-denominated fee (OKX spot BUY)
+                    # out of the position quantity instead of the quote cash leg.
+                    # None for backtest/simulated fills (oracle-dark).
+                    fee_currency=getattr(fill_event, "fee_currency", None),
                 )
 
                 portfolio.transact_shares(transaction)
@@ -945,9 +950,20 @@ class PortfolioHandler:
                 # SELL) so the spurious-halt band can absorb the "fill applied to the
                 # engine but not yet in the venue snapshot" transient (V17-04) — a
                 # first spot position-opening fill must not spuriously halt.
+                # spot-base-fee-drift-halt: this MUST be the ACTUAL signed position
+                # delta the settlement applied — NET of a base-denominated fee. The
+                # settlement moves a base-fee BUY by (amount - base_fee), so passing
+                # the RAW fill_event.quantity here left the absorber's pre-fill
+                # reconstruction (engine_qty - just_applied_fill_qty) off by the fee,
+                # spuriously tripping halt('drift') when the venue cache was still
+                # pre-fill. transaction.position_quantity is (amount - base_fee) for a
+                # base BUY and the raw amount otherwise (fee_currency None / quote fee
+                # -> identity, so simulated fills yield +/- fill_event.quantity as
+                # before — oracle-dark).
+                settled_base_delta = transaction.position_quantity
                 just_applied_fill_qty = (
-                    to_money(fill_event.quantity) if fill_event.action is Side.BUY
-                    else -to_money(fill_event.quantity)
+                    settled_base_delta if fill_event.action is Side.BUY
+                    else -settled_base_delta
                 )
                 self._compare_symbol_drift(
                     portfolio, fill_event.ticker, correlation_id,
