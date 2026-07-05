@@ -1,5 +1,5 @@
 from datetime import datetime, UTC
-from typing import Optional, Dict, List, Any, Mapping, cast
+from typing import Optional, Dict, List, Any, Mapping
 from decimal import Decimal
 
 from itrader.portfolio_handler.transaction import Transaction
@@ -13,7 +13,7 @@ from itrader.core.enums import PortfolioState, PositionSide, TransactionType
 # Import the new managers
 from itrader.portfolio_handler.transaction.transaction_manager import TransactionManager
 from itrader.portfolio_handler.position.position_manager import PositionManager
-from itrader.portfolio_handler.account import SimulatedCashAccount, SimulatedMarginAccount
+from itrader.portfolio_handler.account import Account, SimulatedCashAccount, SimulatedMarginAccount
 from itrader.portfolio_handler.metrics.metrics_manager import MetricsManager
 from itrader.portfolio_handler.storage import (
 	PortfolioStateStorage,
@@ -98,10 +98,11 @@ class Portfolio(object):
 		# construct the account leaf the same way the four managers are built
 		# (ACCT-01). enable_margin=False -> the verbatim-critical spot cash leaf
 		# (SimulatedCashAccount, the SMA_MACD byte-exact oracle path, D-04);
-		# enable_margin=True -> the margin superset. Declared as the cash base type
-		# (the margin leaf is a subclass); margin-only call sites narrow to
-		# SimulatedMarginAccount where the margin surface is needed.
-		self.account: SimulatedCashAccount = (
+		# enable_margin=True -> the margin superset. D-02: declared as the Account
+		# ABC (the field IS the settlement contract, not a concretion) so the live
+		# VenueAccount leaf wires in cleanly; margin-only call sites narrow to
+		# SimulatedMarginAccount via _require_margin_account (isinstance guard).
+		self.account: Account = (
 			SimulatedMarginAccount(self, initial_cash=initial_cash)
 			if self.config.trading_rules.enable_margin
 			else SimulatedCashAccount(self, initial_cash=initial_cash)
@@ -405,6 +406,28 @@ class Portfolio(object):
 		# 5. Record — the applied Transaction entity IS the audit record (D-11).
 		self.transaction_manager.record(transaction)
 
+	def _require_margin_account(self, operation: str) -> SimulatedMarginAccount:
+		"""D-02: narrow ``self.account`` to the margin superset, or fail LOUD.
+
+		Replaces the two bare ``cast(...)`` margin narrowings on ``self.account``
+		(V17-14). A ``cast`` is a type-level no-op, so a venue-linked or
+		cash-linked portfolio driven through a margin operation used to reach a
+		margin-only method (``lock_margin`` / ``accrue_borrow_interest``) on a leaf
+		that does not implement it — an ``AttributeError`` MID-settlement, AFTER the
+		position had already mutated (the partial-mutation-on-margin hazard). This
+		guard raises a typed ``StateError`` BEFORE any mutation instead, so a wrong
+		account-type configuration fails at the boundary and never corrupts money
+		state. Returns the narrowed margin account on the happy path.
+		"""
+		if not isinstance(self.account, SimulatedMarginAccount):
+			raise StateError(
+				self.portfolio_id,
+				type(self.account).__name__,
+				required_state=SimulatedMarginAccount.__name__,
+				operation=operation,
+			)
+		return self.account
+
 	def _process_transaction_margin(self, transaction: Transaction) -> None:
 		"""Lock-and-settle margin settlement (enable_margin=True, D-09/D-11).
 
@@ -431,11 +454,13 @@ class Portfolio(object):
 		"""
 		# D-03/ACCT-02: this arm is reached ONLY when enable_margin=True, so the
 		# account leaf is the margin superset — narrow to its margin surface
-		# (lock_margin / release_margin / assert_lock_fits_buying_power). cast is a
-		# type-level no-op (zero runtime effect); the spot byte-exact path
+		# (lock_margin / release_margin / assert_lock_fits_buying_power). D-02: the
+		# narrowing is a runtime isinstance guard (not a bare cast), raising a typed
+		# StateError BEFORE any mutation if the account is not a margin leaf (closes
+		# the V17-14 partial-mutation hazard). The spot byte-exact path
 		# (_process_transaction_spot) never enters here, so this is dark on the
 		# SMA_MACD oracle.
-		account = cast(SimulatedMarginAccount, self.account)
+		account = self._require_margin_account("process_transaction_margin")
 		ticker = transaction.ticker
 
 		# Capture pre-mutation state for the transition classification.
@@ -689,8 +714,12 @@ class Portfolio(object):
 	
 	def _validate_transaction(self, transaction: Transaction) -> None:
 		"""Validate transaction against portfolio configuration."""
-		# Check position limits
-		if transaction.quantity > 0:  # Buy transaction
+		# Check position limits — gate the OPEN/GROW checks on the transaction
+		# TYPE, not the magnitude (WR-01): quantity is always a positive magnitude
+		# (direction rides transaction.type), so `quantity > 0` was ALWAYS true and
+		# wrongly ran the buy-only limits for closing SELLs — blocking exits at the
+		# position cap (and, in live, failing settlement into a drift-halt).
+		if transaction.type == TransactionType.BUY:
 			if self.n_open_positions >= self.config.limits.max_positions:
 				# FL-01: domain limit breach (not state/field validation) — PortfolioError base.
 				raise PortfolioError(f"Maximum positions limit reached: {self.config.limits.max_positions}")
@@ -829,9 +858,11 @@ class Portfolio(object):
 			)
 			# ACCT-02: borrow carry is a margin-only surface. This loop body is
 			# reached only for an OPEN SHORT with a non-zero borrow_rate (a margin
-			# concept); the account is therefore the margin superset here. cast is
-			# a type-level no-op — never reached on the LONG-only spot oracle.
-			cast(SimulatedMarginAccount, self.account).accrue_borrow_interest(
+			# concept); the account is therefore the margin superset here. D-02: the
+			# narrowing is a runtime isinstance guard raising a typed StateError
+			# BEFORE the accrual mutation if the leaf is not a margin account — never
+			# reached on the LONG-only spot oracle.
+			self._require_margin_account("accrue_borrow_interest").accrue_borrow_interest(
 				amount=carry,
 				reference_id=str(position.id),
 				description=f"Borrow interest {ticker}",

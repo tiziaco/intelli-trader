@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any, Callable
 
 from dataclasses import dataclass
 
-from itrader.core.enums import ErrorSeverity, SystemStatus
+from itrader.core.enums import ErrorSeverity, SystemStatus, VALID_STATUS_TRANSITIONS
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
@@ -19,6 +19,7 @@ from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.order_handler.storage import OrderStorageFactory
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
+from itrader.portfolio_handler.reconcile import is_within_single_unit_tolerance
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.alert_sink import LogAlertSink
@@ -397,7 +398,18 @@ class LiveTradingSystem:
             self._okx_data_provider = OkxDataProvider(
                 self._okx_connector, symbol=_OKX_STREAM_SYMBOL,
                 timeframe=_OKX_STREAM_TIMEFRAME)
-            self._venue_account = VenueAccount(self._okx_connector)
+            # D-03 (V17-04, quote-wiring arm): thread the WIRED pair's real quote +
+            # spot market-type into the VenueAccount so the settlement currency is the
+            # traded pair's quote (USDC for BTC/USDC — never the USDT default) AND the
+            # per-symbol position truth is DERIVED from total[BASE] (OKX spot reports
+            # no position rows). Both are taken from the single wiring input
+            # (_OKX_STREAM_SYMBOL): quote = right leg, symbol drives the base read.
+            self._venue_account = VenueAccount(
+                self._okx_connector,
+                quote_currency=_OKX_STREAM_SYMBOL.split('/')[1],
+                market_type='spot',
+                symbol=_OKX_STREAM_SYMBOL,
+            )
 
             # Phase 3 (D-01/D-13 provider->feed seam, FEED-05): inject the real OKX
             # provider into the LIVE feed via the PUBLIC setter — it assigns
@@ -564,6 +576,56 @@ class LiveTradingSystem:
         for portfolio in active_portfolios:
             portfolio.account = self._venue_account
 
+    def _run_session_baseline_guard(self) -> None:
+        """Session-start baseline guard (D-04, ARCH-2): HALT on unexplained residual.
+
+        Sequenced AFTER reconciliation and BEFORE the engine thread spawns. The
+        reconciler has already SYNCED every EXPLAINABLE delta (adopted external
+        fills, re-linked brackets, in-band adjustments); anything LEFT is a
+        base-asset residual of UNKNOWN origin — wrong sub-account wiring, a
+        crashed-session leftover, a forgotten manual deposit. Per ARCH-2
+        sub-decision 3 the engine must NEVER trade on exposure it cannot explain,
+        and it must NEVER auto-adopt that exposure. So compare the venue base-asset
+        holding against the engine's post-reconcile believed position within the
+        per-instrument dust epsilon (F/U-6 — the SAME drift.py band the on-fill
+        compare uses, resolved via the handler's instrument precision), and on ANY
+        residual mismatch call the LATCHED halt (D-05) so ``start()`` refuses
+        RUNNING. Quote-side cash is NOT asserted (deposits are legitimate funding).
+        The halt reason is a FIXED literal (never ``str(exc)`` — no venue secret can
+        leak, ASVS V7 / T-05.1-10).
+
+        The guard's halt is REAL only because 05.1-05 latched ``HALTED``: a guard
+        halt during session init cannot be clobbered back to RUNNING (the processing
+        loop's unconditional RUNNING stamp is gated by ``start()``'s ``_is_halted()``
+        refusal downstream of this call).
+        """
+        if self._venue_account is None:
+            return
+        symbol = _OKX_STREAM_SYMBOL
+        venue_qty = self._venue_account.positions.get(symbol, Decimal('0'))
+        # F/U-6: reuse the per-instrument drift epsilon (the same band the on-fill
+        # drift compare keys off the wired instrument's quantity precision).
+        precision = self.portfolio_handler._drift_precision(symbol)
+        for portfolio in self.portfolio_handler.get_active_portfolios():
+            engine_position = portfolio.get_open_position(symbol)
+            engine_qty = (
+                engine_position.net_quantity if engine_position is not None
+                else Decimal('0')
+            )
+            if is_within_single_unit_tolerance(engine_qty, venue_qty, precision):
+                continue  # base-asset balance == believed position — trustworthy.
+            # Unexplained base-asset residual: NEVER auto-adopt exposure of unknown
+            # origin — latch HALT BEFORE trading (D-04/D-05). start()'s post-guard
+            # _is_halted() refusal keeps the engine from spawning the loop.
+            self.logger.error(
+                'Session-start baseline guard: unexplained base-asset residual — '
+                'halting before trading (venue exposure the engine cannot explain)',
+                symbol=symbol,
+                engine_qty=str(engine_qty),
+                venue_qty=str(venue_qty))
+            self.halt('baseline-residual')
+            return
+
     def halt(self, reason: str) -> None:
         """Freeze-in-place halt of the whole engine (D-01/D-02/D-06/D-07).
 
@@ -588,22 +650,23 @@ class LiveTradingSystem:
             Machine-readable halt reason (D-07) ∈ {drift,
             reconciliation-unresolved, connector-fatal, paused-on-disconnect}.
         """
-        # WR-01: atomic check-and-set. The status FLIP happens under the SAME
-        # _status_lock acquisition as the guard, so two concurrent halt() callers can
-        # never BOTH pass the guard. The old form set _halt_reason here but flipped the
-        # status in a SECOND _update_status lock acquisition — both callers saw a
-        # non-HALTED status, both clobbered halt_reason and both fired the CRITICAL
-        # alert. Only the winner (the first to flip the status) reaches the emit below.
-        with self._status_lock:
-            if self._status == SystemStatus.HALTED:
-                return  # already halted — first reason wins (idempotent).
-            old_status = self._status
-            self._status = SystemStatus.HALTED
-            self._halt_reason = reason
-            self._last_error = f'halt: {reason}'
-        # Winner only past here. Notify + emit the SINGLE CRITICAL alert OUTSIDE the
-        # lock (status_callback / queue.put must never run under _status_lock).
-        self._notify_status_change(old_status, SystemStatus.HALTED, f'halt: {reason}')
+        # WR-01 + D-05: atomic check-and-set routed through the SINGLE _update_status
+        # seam. _update_status flips the status, sets the halt_reason and records
+        # _last_error all under ONE _status_lock acquisition, and returns True ONLY for
+        # the winning caller that actually flips a non-HALTED status to HALTED (a
+        # re-entrant halt is a same-state no-op -> False). Two concurrent halt() callers
+        # can therefore never BOTH pass the guard, both clobber halt_reason and both fire
+        # the CRITICAL alert — only the winner reaches the emit below. HALTED is reachable
+        # from every non-terminal state in VALID_STATUS_TRANSITIONS, so this flip is never
+        # refused. The notify/callback runs OUTSIDE the lock, inside _update_status.
+        transitioned = self._update_status(
+            SystemStatus.HALTED,
+            error_msg=f'halt: {reason}',
+            halt_reason=reason,
+        )
+        if not transitioned:
+            return  # already halted — first reason wins (idempotent).
+        # Winner only past here. Emit the SINGLE CRITICAL alert.
         # D-06: CRITICAL egress — routed through the EventHandler's ERROR route to
         # the injected alert sink. Only declared ErrorEvent fields are bound.
         self.global_queue.put(ErrorEvent(
@@ -622,6 +685,42 @@ class LiveTradingSystem:
         """Whether the engine is in the freeze-in-place HALTED state (D-02)."""
         with self._status_lock:
             return self._status == SystemStatus.HALTED
+
+    def reset_halt(self) -> bool:
+        """Operator-only clear of the latched HALTED state (D-05, F/U-9).
+
+        ``HALTED`` has NO legal exit in ``VALID_STATUS_TRANSITIONS`` — it is a latched
+        safety state. This method is the SOLE sanctioned exit, deliberately OUTSIDE the
+        transition table (a ``force=True`` write through the single ``_update_status``
+        seam) that returns the engine to ``STOPPED``. It does NOT re-open the trading
+        gate itself: verify-then-trust means a subsequent ``start()`` re-runs
+        reconciliation + the session-start baseline guard from a clean STOPPED baseline,
+        so the halt cause is re-checked, never implicitly assumed resolved. Clearing the
+        halt also clears the machine-readable ``halt_reason`` (handled in
+        ``_update_status`` when leaving HALTED). A no-op returning ``False`` when the
+        engine is not currently HALTED.
+
+        Returns
+        -------
+        bool
+            ``True`` if a latched HALTED was cleared; ``False`` if the engine was not
+            HALTED (no-op).
+        """
+        if not self._is_halted():
+            self.logger.warning('reset_halt() ignored — engine is not HALTED')
+            return False
+        # force=True is the ONLY sanctioned bypass of the latch table (the HALTED exit).
+        cleared = self._update_status(
+            SystemStatus.STOPPED,
+            error_msg='HALTED cleared by operator reset_halt()',
+            force=True,
+        )
+        if cleared:
+            self.logger.warning(
+                'HALTED cleared by operator reset_halt() — engine returned to STOPPED; '
+                'a subsequent start() will re-run reconciliation + the baseline guard '
+                'before trading (verify-then-trust)')
+        return cleared
 
     def _is_submission_paused(self) -> bool:
         """Whether NEW order submission is reversibly paused on a disconnect (D-19)."""
@@ -742,15 +841,73 @@ class LiveTradingSystem:
             return
         self.event_handler._dispatch(event)
 
-    def _update_status(self, new_status: SystemStatus, error_msg: Optional[str] = None):
-        """Update system status and notify via callback if available."""
+    def _update_status(
+        self,
+        new_status: SystemStatus,
+        error_msg: Optional[str] = None,
+        halt_reason: Optional[str] = None,
+        force: bool = False,
+    ) -> bool:
+        """The SINGLE enforced status-mutation seam (D-05 / V17-03).
+
+        This is the ONE point that writes ``self._status`` for a lifecycle transition
+        (``__init__`` sets the initial STOPPED at construction; ``reset_halt`` is the
+        one sanctioned off-table exit, routed here with ``force=True``). It enforces
+        ``VALID_STATUS_TRANSITIONS``: a transition not in the current state's legal set
+        is REFUSED (log-and-refuse, status left unchanged) rather than raised — the live
+        event loop follows publish-and-continue (D-17), so an illegal transition must
+        never abort it. ``HALTED`` has NO legal exit in the table, so once the reconciler
+        or baseline guard halts the engine, no lifecycle transition (including the
+        processing loop's RUNNING stamp) can clobber it — only ``reset_halt`` may.
+
+        A same-state call is an idempotent no-op (returns ``False`` without notifying).
+
+        Parameters
+        ----------
+        new_status : SystemStatus
+            The target lifecycle state.
+        error_msg : str, optional
+            Recorded as ``self._last_error`` on a successful transition.
+        halt_reason : str, optional
+            The machine-readable halt reason (D-07), set ATOMICALLY with the flip under
+            the same ``_status_lock`` acquisition. ``halt()`` routes its reason through
+            here so the reason and the HALTED flip share one lock (WR-01 atomic
+            check-and-set) — two concurrent ``halt()`` callers can never both win.
+        force : bool
+            Bypass the transition-table check. RESERVED for ``reset_halt``'s sanctioned
+            HALTED exit only — do NOT use elsewhere (it defeats the latch).
+
+        Returns
+        -------
+        bool
+            ``True`` iff the status actually changed (the winning caller); ``False`` on a
+            same-state no-op or a refused illegal transition.
+        """
         with self._status_lock:
             old_status = self._status
+            if new_status == old_status:
+                return False  # idempotent no-op — already in this state.
+            if not force and new_status not in VALID_STATUS_TRANSITIONS[old_status]:
+                # F/U-8: log-and-refuse (never raise from the live loop). The message
+                # binds only fixed enum literals — no connector context — so no secret
+                # can leak on a halt-adjacent refusal (T-05.1-10, ASVS V7).
+                self.logger.warning(
+                    'Refused illegal status transition %s -> %s (D-05 latch); '
+                    'status unchanged', old_status.value, new_status.value)
+                return False
             self._status = new_status
             if error_msg:
                 self._last_error = error_msg
+            if new_status == SystemStatus.HALTED:
+                if halt_reason is not None:
+                    self._halt_reason = halt_reason
+            else:
+                # Leaving HALTED (only possible via reset_halt's forced exit) clears the
+                # machine-readable reason so get_status() no longer surfaces a stale one.
+                self._halt_reason = None
 
         self._notify_status_change(old_status, new_status, error_msg)
+        return True
 
     def _notify_status_change(
         self,
@@ -1153,6 +1310,35 @@ class LiveTradingSystem:
                         exchange=self._okx_exchange,
                     )
                     reconciler.reconcile()
+
+                # D-04 (V17-04, ARCH-2 guard arm): session-start baseline guard,
+                # sequenced strictly AFTER reconcile() and BEFORE the thread spawn.
+                # Reconcile syncs the explainable; this guard HALTs on the residue —
+                # any unexplained base-asset holding the engine cannot account for.
+                # Runs even when the store has no rehydrate() (the reconcile block
+                # above is store-gated; the guard is not — a fresh session with a
+                # venue holding the engine never opened must still halt). On a clean
+                # fresh session (engine flat, venue flat) it is a benign no-op.
+                self._run_session_baseline_guard()
+
+            # D-05 (V17-03): a reconcile/guard halt during session init must LATCH.
+            # The VenueReconciler.reconcile() above (or the baseline guard) may have
+            # called self.halt(...) because it could not trust venue state. REFUSE to
+            # enter RUNNING from HALTED: do NOT spawn the processing thread (its first
+            # action is the unconditional _update_status(RUNNING) stamp) and do NOT open
+            # the SIGNAL/ORDER gate. The engine stays HALTED until an explicit operator
+            # reset_halt() re-runs the verify-then-trust sequence. _update_status already
+            # refuses HALTED->RUNNING as a second line of defence; this check keeps
+            # start() from even spawning the loop and returns False so the caller sees the
+            # refusal. The stop() teardown in the caller's finally is safe (no thread).
+            if self._is_halted():
+                self.logger.error(
+                    'start() refused RUNNING: engine HALTED during session init '
+                    '(reason=%s) — the reconciler/baseline guard declared venue state '
+                    'untrustworthy; not spawning the processing thread',
+                    self._halt_reason)
+                self._running = False
+                return False
 
             # Reset the stop event and start the processing thread
             self._stop_event.clear()

@@ -709,7 +709,8 @@ class PortfolioHandler:
         return int(precision)
 
     def _compare_symbol_drift(self, portfolio: Portfolio, ticker: str,
-                              correlation_id: CorrelationId) -> None:
+                              correlation_id: CorrelationId,
+                              just_applied_fill_qty: Optional[Decimal] = None) -> None:
         """Per-symbol engine-vs-venue drift compare on the ENGINE thread (D-15/D-01/D-04).
 
         Runs ONLY for a live ``VenueAccount`` portfolio — a backtest/paper
@@ -720,10 +721,26 @@ class PortfolioHandler:
 
         * within the precision-epsilon band → adopt venue truth silently
           (auto-correct, D-01) — a no-op (the difference is last-digit dust);
+        * D-04 spurious-halt band: on the IMMEDIATE on-fill compare, the just-applied
+          fill may not yet be reflected in the not-yet-refreshed venue snapshot — the
+          only skew the fill itself explains is exactly its own signed quantity (venue
+          still at the pre-fill holding), so absorb that transient and defer to the
+          periodic sweep (a first spot position-opening fill must NOT halt, V17-04);
         * beyond band AND reconciles to a known venue event → adopt-and-continue
           (D-04 — an external fill / hand-closed position is NOT unexplained drift);
         * beyond band AND unexplained → freeze-in-place halt the WHOLE engine
           (D-01/D-02) via the injected halt signal.
+
+        Parameters
+        ----------
+        just_applied_fill_qty : Optional[Decimal]
+            The SIGNED position delta of a fill JUST applied to the engine belief for
+            ``ticker`` (``+qty`` BUY, ``-qty`` SELL), passed ONLY by the on-fill
+            compare. ``None`` (the per-bar sweep + the session-start baseline guard)
+            means no just-applied fill — every beyond-band skew is a candidate drift.
+            The band is deliberately scoped to the on-fill transient: the periodic
+            sweep (``None``) is the backstop that halts once the venue snapshot has
+            had time to catch up, so a genuinely persistent divergence is never hidden.
 
         Single-writer safe (D-15): the async push writer only writes the
         VenueAccount cache; this compare + decision run on the engine thread AFTER
@@ -742,6 +759,28 @@ class PortfolioHandler:
         precision = self._drift_precision(ticker)
         if is_within_single_unit_tolerance(engine_qty, venue_qty, precision):
             return  # within the precision-epsilon band — adopt silently (D-01).
+
+        # D-04 spurious-halt band (V17-04): a just-applied engine fill vs a
+        # not-yet-refreshed venue snapshot. The venue snapshot legitimately lags the
+        # fill it hasn't streamed yet, and the ONLY holding that lag explains is the
+        # pre-fill one — ``engine_qty - just_applied_fill_qty``. When the venue truth
+        # still matches that pre-fill holding within the band, the skew is exactly the
+        # fill the venue hasn't caught up to (NOT drift), so absorb it and let the
+        # periodic per-bar sweep (which passes no fill qty) be the backstop once the
+        # snapshot refreshes. Only the on-fill compare supplies a fill qty; every
+        # other caller falls straight through to the drift decision below.
+        if just_applied_fill_qty is not None and is_within_single_unit_tolerance(
+                venue_qty, engine_qty - just_applied_fill_qty, precision):
+            self.logger.info(
+                "Just-applied fill not yet reflected in venue snapshot — deferring "
+                "drift decision to the periodic sweep (spurious-halt band, D-04)",
+                ticker=ticker,
+                engine_qty=str(engine_qty),
+                venue_qty=str(venue_qty),
+                fill_qty=str(just_applied_fill_qty),
+                correlation_id=correlation_id,
+            )
+            return
 
         # Beyond band: adopt-and-continue if it maps to a known venue event (D-04).
         if self._drift_reconciler is not None and self._drift_reconciler(
@@ -902,7 +941,17 @@ class PortfolioHandler:
                 # decision, immediately after the fill has drained (single-writer
                 # safe — Pitfall 8). No-op for backtest/paper SimulatedAccount
                 # portfolios, so the SMA_MACD oracle stays byte-exact.
-                self._compare_symbol_drift(portfolio, fill_event.ticker, correlation_id)
+                # D-04: pass the SIGNED just-applied fill delta (+qty BUY / -qty
+                # SELL) so the spurious-halt band can absorb the "fill applied to the
+                # engine but not yet in the venue snapshot" transient (V17-04) — a
+                # first spot position-opening fill must not spuriously halt.
+                just_applied_fill_qty = (
+                    to_money(fill_event.quantity) if fill_event.action is Side.BUY
+                    else -to_money(fill_event.quantity)
+                )
+                self._compare_symbol_drift(
+                    portfolio, fill_event.ticker, correlation_id,
+                    just_applied_fill_qty=just_applied_fill_qty)
 
             except Exception as e:
                 error_portfolio_id = getattr(fill_event, "portfolio_id", None)

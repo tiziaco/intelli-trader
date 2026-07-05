@@ -1,0 +1,165 @@
+{
+  "_comment": "AUD-7 Tier-1 SPOT recon fixture (Phase 05.1 / 05.1-01, D-03/D-19 offline gate). Synthetic ccxt-UNIFIED SPOT payloads for the reconciliation cluster's FakeLiveConnector — the split sibling of okx_recon_payloads_swap.json (which keeps the derivative positions payload verbatim). Models the WIRED live pair BTC/USDC (EEA/MiCA — USDT is restricted, sCode 51155): balances keyed by BTC (base position truth) and USDC (quote from wiring, never the USDT default), fetch_positions/watch_positions == [] (OKX spot has NO position rows — D-03 derives per-symbol truth from the BASE-currency balance total, NOT fetch_positions), and a windowed/ordered fetch_my_trades so a since-scoped fetch returns a bounded slice. Contains NO real credentials, API keys, auth tokens, or account IDs — every id is a sanitized PLACEHOLDER-*. ccxt returns floats everywhere (Pitfall 2) — downstream MUST route every price/amount/fee/balance through to_money(str(...)); this fixture intentionally does NOT pre-Decimalize.",
+  "_scenario": "A BTC/USDC spot limit BUY 0.5 @ 42000 USDC fills in two increments (0.2 then 0.3). Streams narrate the live fill; REST snapshots narrate the post-full-fill restart state: base holding total[BTC] == 0.5 (the spot position truth), quote total[USDC] net of the filled cost, used[USDC] == 21000 reserving one resting take-profit sell leg. fetch_positions is [] — spot has no position rows, so the D-03 truth adapter reads total[BTC].",
+
+  "watch_my_trades": [
+    [
+      {
+        "id": "PLACEHOLDER-TRD-S001",
+        "order": "PLACEHOLDER-ORD-S001",
+        "clientOrderId": "PLACEHOLDER-CLI-S001",
+        "symbol": "BTC/USDC",
+        "type": "limit",
+        "side": "buy",
+        "takerOrMaker": "maker",
+        "amount": 0.2,
+        "price": 42000.0,
+        "cost": 8400.0,
+        "fee": {"cost": 0.084, "currency": "USDC"},
+        "timestamp": 1704067202000,
+        "datetime": "2024-01-01T00:00:02.000Z"
+      }
+    ],
+    [
+      {
+        "id": "PLACEHOLDER-TRD-S002",
+        "order": "PLACEHOLDER-ORD-S001",
+        "clientOrderId": "PLACEHOLDER-CLI-S001",
+        "symbol": "BTC/USDC",
+        "type": "limit",
+        "side": "buy",
+        "takerOrMaker": "maker",
+        "amount": 0.3,
+        "price": 42000.0,
+        "cost": 12600.0,
+        "fee": {"cost": 0.126, "currency": "USDC"},
+        "timestamp": 1704067203000,
+        "datetime": "2024-01-01T00:00:03.000Z"
+      }
+    ]
+  ],
+
+  "watch_orders": [
+    [
+      {
+        "id": "PLACEHOLDER-ORD-S001",
+        "clientOrderId": "PLACEHOLDER-CLI-S001",
+        "symbol": "BTC/USDC",
+        "type": "limit",
+        "side": "buy",
+        "price": 42000.0,
+        "amount": 0.5,
+        "filled": 0.0,
+        "remaining": 0.5,
+        "average": null,
+        "status": "open",
+        "timestamp": 1704067201000
+      }
+    ],
+    [
+      {
+        "id": "PLACEHOLDER-ORD-S001",
+        "clientOrderId": "PLACEHOLDER-CLI-S001",
+        "symbol": "BTC/USDC",
+        "type": "limit",
+        "side": "buy",
+        "price": 42000.0,
+        "amount": 0.5,
+        "filled": 0.5,
+        "remaining": 0.0,
+        "average": 42000.0,
+        "status": "closed",
+        "timestamp": 1704067203000
+      }
+    ]
+  ],
+
+  "watch_balance": [
+    {
+      "info": {"_note": "synthetic pre-fill SPOT balance snapshot"},
+      "timestamp": 1704067201000,
+      "free": {"USDC": 100000.0, "BTC": 0.0},
+      "used": {"USDC": 0.0, "BTC": 0.0},
+      "total": {"USDC": 100000.0, "BTC": 0.0}
+    },
+    {
+      "info": {"_note": "synthetic post-partial-fill SPOT balance snapshot"},
+      "timestamp": 1704067202000,
+      "free": {"USDC": 91599.916, "BTC": 0.2},
+      "used": {"USDC": 0.0, "BTC": 0.0},
+      "total": {"USDC": 91599.916, "BTC": 0.2}
+    },
+    {
+      "info": {"_note": "synthetic post-full-fill SPOT balance snapshot (one resting sell leg reserves USDC)"},
+      "timestamp": 1704067203000,
+      "free": {"USDC": 57999.79, "BTC": 0.5},
+      "used": {"USDC": 21000.0, "BTC": 0.0},
+      "total": {"USDC": 78999.79, "BTC": 0.5}
+    }
+  ],
+
+  "watch_positions": [
+    [],
+    []
+  ],
+
+  "fetch_balance": {
+    "info": {"_note": "synthetic REST SPOT balance snapshot for restart reconcile — base holding is the position truth"},
+    "timestamp": 1704067203000,
+    "free": {"USDC": 57999.79, "BTC": 0.5},
+    "used": {"USDC": 21000.0, "BTC": 0.0},
+    "total": {"USDC": 78999.79, "BTC": 0.5}
+  },
+
+  "fetch_positions": [],
+
+  "fetch_open_orders": [
+    {
+      "id": "PLACEHOLDER-ORD-S002",
+      "clientOrderId": "PLACEHOLDER-CLI-S002",
+      "symbol": "BTC/USDC",
+      "type": "limit",
+      "side": "sell",
+      "price": 45000.0,
+      "amount": 0.5,
+      "filled": 0.0,
+      "remaining": 0.5,
+      "average": null,
+      "status": "open",
+      "timestamp": 1704067203000
+    }
+  ],
+
+  "fetch_my_trades": [
+    {
+      "id": "PLACEHOLDER-TRD-S001",
+      "order": "PLACEHOLDER-ORD-S001",
+      "clientOrderId": "PLACEHOLDER-CLI-S001",
+      "symbol": "BTC/USDC",
+      "type": "limit",
+      "side": "buy",
+      "takerOrMaker": "maker",
+      "amount": 0.2,
+      "price": 42000.0,
+      "cost": 8400.0,
+      "fee": {"cost": 0.084, "currency": "USDC"},
+      "timestamp": 1704067202000,
+      "datetime": "2024-01-01T00:00:02.000Z"
+    },
+    {
+      "id": "PLACEHOLDER-TRD-S002",
+      "order": "PLACEHOLDER-ORD-S001",
+      "clientOrderId": "PLACEHOLDER-CLI-S001",
+      "symbol": "BTC/USDC",
+      "type": "limit",
+      "side": "buy",
+      "takerOrMaker": "maker",
+      "amount": 0.3,
+      "price": 42000.0,
+      "cost": 12600.0,
+      "fee": {"cost": 0.126, "currency": "USDC"},
+      "timestamp": 1704067203000,
+      "datetime": "2024-01-01T00:00:03.000Z"
+    }
+  ]
+}

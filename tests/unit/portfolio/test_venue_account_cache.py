@@ -44,7 +44,7 @@ def test_snapshot_populates_cache_from_rest(
 
     # fetch_balance canned: total/free USDT == 78999.79; fetch_positions: long 0.5 BTC.
     assert account.balance == Decimal("78999.79")
-    assert account.available == Decimal("78999.79")
+    assert account.available_balance == Decimal("78999.79")
     assert account.positions == {"BTC/USDT": Decimal("0.5")}
 
 
@@ -61,7 +61,7 @@ def test_push_stream_mutates_cache(
     _wait_for(lambda: account._venue_positions == {"BTC/USDT": Decimal("0.5")})
 
     assert account.balance == Decimal("78999.79")
-    assert account.available == Decimal("78999.79")
+    assert account.available_balance == Decimal("78999.79")
     assert account.positions == {"BTC/USDT": Decimal("0.5")}
 
 
@@ -74,7 +74,7 @@ def test_read_before_snapshot_raises_state_error(
     with pytest.raises(StateError):
         _ = account.balance
     with pytest.raises(StateError):
-        _ = account.available
+        _ = account.available_balance
 
 
 def test_reserve_beyond_available_raises(
@@ -89,7 +89,7 @@ def test_reserve_beyond_available_raises(
         account.reserve(order_id, Decimal("80000"))
 
     # Nothing was reserved — available is untouched.
-    assert account.available == Decimal("78999.79")
+    assert account.available_balance == Decimal("78999.79")
 
 
 def test_reserve_then_release_restores_available(
@@ -101,14 +101,14 @@ def test_reserve_then_release_restores_available(
 
     order_id = OrderId(uuid.uuid4())
     account.reserve(order_id, Decimal("1000"))
-    assert account.available == Decimal("77999.79")
+    assert account.available_balance == Decimal("77999.79")
 
     account.release(order_id)
-    assert account.available == Decimal("78999.79")
+    assert account.available_balance == Decimal("78999.79")
 
     # Release is idempotent — releasing an unknown reference is a silent no-op.
     account.release(order_id)
-    assert account.available == Decimal("78999.79")
+    assert account.available_balance == Decimal("78999.79")
 
 
 def test_reserve_before_snapshot_raises_state_error(

@@ -62,6 +62,7 @@ The live machinery is **inert on the backtest hot path**. Each phase carries the
 
 1. **Oracle byte-exact** — SMA_MACD on the golden BTCUSD CSV stays **134 trades /
    `final_equity 46189.87730727451`** (`check_exact=True`), determinism double-run identical.
+
 2. **No W1/W2 perf regression** vs the v1.5 frozen baseline (15.7 s / 152.8 MB) — the backtest path
    imports no async/connector code.
 
@@ -80,6 +81,7 @@ configured so the global filter is never relaxed); tabs/spaces indentation match
 - [ ] **Phase 6: Dynamic Universe Membership** — Lean poll seam for mid-run add/remove; warmup-on-add reuses the Phase-3 backfill.
 
 ### Phase 1: Account Abstraction + Portfolio/Handler Refactor
+
 **Goal**: Extract an `Account` abstraction owning balance/margin truth (`Simulated*` leaves;
 `Venue*` interface-only), inject it into `Portfolio`, move margin/liquidation math out of
 `PortfolioHandler` (the queue emission stays), strip `Portfolio.user_id`, evaluate/remove
@@ -89,22 +91,27 @@ may merge against `Account` until the backtest is re-confirmed byte-exact.
 **Depends on**: Nothing (first phase — gates all live work)
 **Requirements**: ACCT-01, ACCT-02, ACCT-03, ACCT-04, ACCT-05, ACCT-06
 **Success Criteria** (what must be TRUE):
+
   1. `Portfolio` delegates all balance/margin accounting to an injected `account` (`Portfolio.cash` →
      `account.balance`); `SimulatedCashAccount` (CashManager code-motion) and `SimulatedMarginAccount`
      own the truth, with margin/liquidation math (maintenance_margin, margin_ratio, liq price/penalty,
      liquidation *decision*) moved out of `PortfolioHandler` while the liquidation *emission*
      (`global_queue.put`) stays in the handler (queue-only rule preserved). (ACCT-01, ACCT-02)
+
   2. `Portfolio.user_id` is removed (app-layer concern, NOT relocated onto `Account`),
      `TradingInterface` is removed (or deliberately slimmed per LX-14) with the surviving engine
      command surface decided (scoping FL-13), and the `LiveConnector` interface + `VenueAccount` leaf
      are defined **interface-only** so Phases 2–5 implement against a stable contract. (ACCT-04, ACCT-05, ACCT-06)
+
   3. The backtest oracle re-confirms **byte-exact (134 / `46189.87730727451`)** after the extraction —
      determinism double-run identical, `mypy --strict` clean, no float-for-money. (ACCT-03)
+
   4. Recurring milestone gate: no W1/W2 perf regression vs the v1.5 baseline (15.7 s / 152.8 MB) — the
      refactor is pure code-motion behind the `PortfolioReadModel` seam (does not ripple into the order domain).
 **Research flag**: SKIP — v1.2 MOD-01 OrderManager-decomposition playbook; `PortfolioReadModel` seam
 already in place; code-motion only (plan-time research optional).
 **Plans**: 7 plans
+
 - [x] 01-01-PLAN.md — Interface scaffold: Account ABC + VenueAccount stub + LiveConnector Protocol + D-04 resolution (Wave 1)
 - [x] 01-02-PLAN.md — SimulatedCashAccount + SimulatedMarginAccount byte-exact code-motion + CashOperation barrel (Wave 2)
 - [x] 01-03-PLAN.md — Re-point Portfolio/PortfolioHandler to Account; strip user_id (production); re-point sql_storage CashOperation; delete CashManager (Wave 3)
@@ -114,6 +121,7 @@ already in place; code-motion only (plan-time research optional).
 - [x] 01-05-PLAN.md — Oracle byte-exact + full-suite re-confirmation terminal gate (Wave 5)
 
 ### Phase 2: OKX Connector
+
 > **Revised 2026-07-01** (Phase 2 discuss) — responsibility-based decomposition, revises LX-05 /
 > D-10 / CONN-01/02/04. Details + rationale: `phases/02-okx-connector/02-CONTEXT.md` (D-01..D-10).
 
@@ -129,24 +137,29 @@ the Decimal boundary at the edge; async stays bottled at the connector.
 **Depends on**: Phase 1 (the `LiveConnector` Protocol + `Account`/`VenueAccount` seams)
 **Requirements**: CONN-01, CONN-02, CONN-03, CONN-04, CONN-05, CONN-06
 **Success Criteria** (what must be TRUE):
+
   1. **Data arm** (`OkxDataProvider`): streams OKX candles via a native `business`-endpoint subscription
      carrying the **`confirm`** flag (ccxt's unified `watch_ohlcv` drops it), with REST `fetch_ohlcv`
      backfill; feeds closed bars to the Phase-3 `LiveBarFeed`. (CONN-01)
+
   2. **Order arm** (`OkxExchange`, impl `AbstractExchange`): async `create_order` + cancel +
      `watch_orders`/`watch_my_trades` implemented; **the exchange translates raw fills → `FillEvent` and
      emits them** (the connector emits nothing). A single `sandbox: bool` routes BOTH ccxt
      (`set_sandbox_mode`) and the native WS path (demo host `wss://wspap.okx.com` — the
      `x-simulated-trading` header is REST-only, corrected per 02-RESEARCH.md) to OKX demo and selects
      demo-vs-live keys — no split-brain. (CONN-02, CONN-03)
+
   3. **Session** (`OkxConnector`): runs its own asyncio loop on its own daemon thread, owns the one
      `ccxt.pro` client + rate-limit budget, and is **injected** into the three adapters (only the
      connector authenticates); the backtest path imports no async/connector code; every ccxt float
      crosses the Decimal boundary via `to_money` and outbound quantities round to OKX lot/tick via ccxt
      string-precision helpers (no `Decimal(float)`); D-19 single-writer preserved (`queue.Queue`
      MPSC-safe, portfolio state mutates only on the engine thread). (CONN-04, CONN-05)
+
   4. OKX secrets (apiKey + secret + **passphrase**) load via `OkxSettings(BaseSettings)` reading plain
      `OKX_API_*` (**no env prefix** — revised from `ITRADER_OKX_*`; a real secret manager is deferred
      post-milestone); never in code, logs, or fixtures; the backtest path stays credential-free. (CONN-06)
+
   5. Recurring milestone gate: oracle byte-exact + no W1/W2 regression (connector inert on the backtest
      hot path); `pytest-asyncio` configured (`asyncio_mode`, `asyncio_default_fixture_loop_scope`) so
      `filterwarnings=["error"]` stays green.
@@ -155,14 +168,17 @@ the Decimal boundary at the edge; async stays bottled at the connector.
 (`wspap.okx.com`), NOT the REST-only `x-simulated-trading` header; auth triple = apiKey+secret+passphrase,
 demo selected by host. Design unblocked.
 **Plans**: 5 plans (planned 2026-07-01)
+
 - [x] 02-01-PLAN.md — Foundation: pytest-asyncio + async test infra, OkxSettings (CONN-06), LiveConnector Protocol reshape (Wave 1)
 - [x] 02-02-PLAN.md — OkxConnector session/transport primitive: loop-on-daemon-thread, sandbox->wspap routing, call/spawn bridge (CONN-03/04) (Wave 2)
 - [x] 02-03-PLAN.md — Order arm OkxExchange(AbstractExchange): create/cancel + watch_my_trades -> FillEvent, Decimal edge (CONN-02/05) (Wave 3)
 - [x] 02-04-PLAN.md — Data arm OkxDataProvider: native /business confirm-gated candle socket + REST backfill (CONN-01/03/05) (Wave 3)
 - [x] 02-05-PLAN.md — Composition-root wiring + VenueAccount seam + recurring milestone gate (CONN-04) (Wave 4)
+
 **Cross-cutting**: RES-01 (rate-limit coordination across ccxt + native paths) begins here — home phase is Phase 5.
 
 ### Phase 3: LiveBarFeed
+
 **Goal**: Build `LiveBarFeed` as a ring-buffer `BarFeed` impl that consumes the Phase-2 connector data
 arm, emits a `BarEvent` **only on a completed bar** (`confirm == 1`) with venue bar-open `time`, replays
 warmup/gap backfill **one-by-one through the identical `update(bar)` path**, enforces
@@ -171,30 +187,39 @@ live complexity (no backtest equivalent for reconnect gap-fill).
 **Depends on**: Phase 2 (`OkxDataProvider` data arm + native `confirm` flag)
 **Requirements**: FEED-01, FEED-02, FEED-03, FEED-04, FEED-05
 **Success Criteria** (what must be TRUE):
+
   1. `LiveBarFeed` implements the existing `BarFeed` ABC as a bounded `deque(maxlen)` ring buffer per
      `(symbol, timeframe)` (capacity from the same wiring-time `cache_capacity()` derivation as
      backtest); strategies/screeners/execution consume it unchanged. (FEED-01)
+
   2. A `BarEvent` is emitted **only on a completed bar** (`confirm == 1`), bar `time` from the venue
      bar-open stamp (never wall-clock), the 7-rule look-ahead contract holds, and `LiveBarFeed` replaces
      `TimeGenerator`'s role preserving the TIME-before-BAR route ordering downstream. (FEED-02, FEED-05)
+
   3. Live-start and gap warmup replay REST-fetched bars **one-by-one through the identical `update(bar)`
      path** — there is no bulk `warmup_from()` fast-path (LX-09, parity audit). (FEED-03)
+
   4. Bar delivery is **monotonic-forward-only**: gap → REST-backfill-and-replay; duplicate → drop;
      stale/out-of-order → reject; reconnect → gap-fill the interim (stateful indicators never fed
      backward). (FEED-04)
+
   5. Recurring milestone gate: oracle byte-exact + no W1/W2 regression (LiveBarFeed off the backtest hot path).
+
 **Research flag**: NEEDS PLAN-TIME RESEARCH — ring-buffer capacity across multiple timeframes/consumers;
 reconnect debounce strategy; after-the-fact venue bar-correction policy (re-warm vs forward-only-and-log);
 `TimeEvent`-on-bar-close vs moving metric recording to the BAR route.
 **Plans**: 4 plans (planned 2026-07-01)
+
 - [x] 03-01-PLAN.md — Provider D-12 ClosedBar co-shape (symbol+timeframe) + shared offline test fixtures (Wave 1)
 - [x] 03-02-PLAN.md — LiveBarFeed core: ring + monotonic guard (D-06 taxonomy) + direct BarEvent emission (FEED-01/02/04) (Wave 2)
 - [x] 03-03-PLAN.md — Warmup one-by-one replay (FEED-03) + reconnect boundary backfill (D-08) through the shared update() path (Wave 3)
 - [x] 03-04-PLAN.md — Composition-root wiring: LiveBarFeed swap + D-13 raw-bar consumer + FEED-05 route order + recurring milestone gate (Wave 4)
+
 **Cross-cutting**: RES-01 (websocket reconnect + gap recovery, FEED-04) builds here — home phase is Phase 5.
 **Handoff**: the LX-15 runtime topology (RUN-01) must be DECIDED before Phase 4 wires the runtime — settle it in the Phase 3→4 planning handoff.
 
 ### Phase 4: Paper Path (milestone DoD)
+
 > **Revised 2026-07-02** (Phase 4 discuss — `04-CONTEXT.md` D-01..D-12) — the paper exchange is the
 > **reused `SimulatedExchange` as-is** (D-04: no new adapter, revises LX-06/PAPER-01); the `apply_costs`
 > extraction is **dropped** (D-05: PAPER-02 satisfied-by-reuse); the parity gate re-anchors to **paper ≡
@@ -213,21 +238,26 @@ exact frame-equality**. Reachable on Phases 1+3 (and, for the manual live smoke 
 **Depends on**: Phase 1 (`SimulatedAccount`, portfolio-side) + Phase 3 (`LiveBarFeed`) + Phase 2 **data arm only** (`OkxDataProvider`, manual smoke)
 **Requirements**: PAPER-01, PAPER-02, PAPER-03, PAPER-04, RUN-01, COV-01
 **Success Criteria** (what must be TRUE):
+
   1. The paper exchange is the **reused `SimulatedExchange`** (D-04, satisfies "impl `AbstractExchange`")
      with **bar-based fills only** and no OKX I/O; there is exactly ONE fill-pricing implementation
      (`_emit_fill`, UNTOUCHED — D-05), so "no dual fill-pricing drift" holds by construction. (PAPER-01, PAPER-02)
+
   2. `LiveTradingSystem` runs end-to-end on the paper path (live feed → strategy → order → paper fill →
      `SimulatedAccount`/`Portfolio`) with the determinism seams (seeded RNG + business-time stamping)
      threaded through; a **runnable worker entrypoint** with start/stop/status lifecycle exists (LX-15
      topology (b)-as-(c)-N=1 decided). (PAPER-03, RUN-01)
+
   3. **Paper-parity gate (DoD)**: replaying the fixed golden dataset through the live-paper path yields
      trades + equity **exactly equal to a fresh backtest run on the same data** (`check_exact=True`, no
      tolerance) — NOT pinned to the frozen `46189…` artifact so it survives a backtest-loop rework; the
      transitive lock (paper == backtest == `46189…`) is held by the separate, unchanged oracle test. (PAPER-04)
+
   4. The surviving live surface (`LiveTradingSystem` + the ACCT-05 engine command surface) has FL-13
      coverage: the parity gate (anchor E2E) + start/stop/status lifecycle tests + the synthetic replay
      provider as the fixture, `filterwarnings=["error"]` green; real-connector coverage is manual/opt-in
      here (network-gated, out of CI) and automated in Phase 5. (COV-01)
+
   5. Recurring milestone gate: backtest oracle byte-exact + no W1/W2 regression (paper machinery off the
      backtest hot path — the inertness gate forbids `replay_provider` on the backtest import path).
 **Research flag**: RESOLVED 2026-07-02 (`04-CONTEXT.md` + `04-PATTERNS.md`) — parity harness = offline
@@ -236,14 +266,17 @@ LX-15 topology decided (D-07); channel/FastAPI deferred past Phase 5 to the app-
 the `BTCUSD` symbol-form (not `BTC/USDT`) and the tz divergence (backtest `Europe/Paris` vs live-feed `UTC`
 — parity test tz-normalizes to UTC before the exact diff).
 **Plans**: 4 plans (planned 2026-07-02)
+
 - [x] 04-01-PLAN.md — ReplayDataProvider over the golden CsvPriceStore + offline unit coverage (COV-01 fixture) (Wave 1)
 - [x] 04-02-PLAN.md — Paper venue arm (reuse SimulatedExchange) + synchronous run_paper_replay() driver (PAPER-01/02/03) (Wave 2)
 - [x] 04-03-PLAN.md — Runnable worker entrypoint (RUN-01) + start/stop/status lifecycle tests (COV-01) (Wave 3)
 - [x] 04-04-PLAN.md — Paper-parity gate (PAPER-04, DoD) = paper ≡ fresh backtest exact + inertness/oracle gate (Wave 3)
+
 **Cross-cutting**: RUN-01 (topology, LX-15) is decided here but architected for Phases 2–5; COV-01 (FL-13)
 is primarily established here on the first end-to-end live surface and extends into Phase 5 for the real path.
 
 ### Phase 5: Real/Sandbox Path + Reconciliation + Persistence Live-Drive
+
 **Goal**: Bring up the real path against OKX sandbox — `VenueAccount` caching+reconciling venue
 balance/margin/position streams under 1 account : 1 portfolio, idempotent partial-fill handling, a
 halt-and-alert drift policy, the v1.6 operational store **driven by the real OKX feed** (completing the
@@ -252,21 +285,26 @@ live resilience hardened. The heaviest phase by unique live complexity (the reco
 **Depends on**: Phase 2 **order arm** (`OkxExchange`) + connector session + Phase 1 `VenueAccount` interface + Phase 4 paper path proven + the v1.6 store
 **Requirements**: RECON-01, RECON-02, RECON-03, RECON-04, RECON-05, RECON-06, RES-01
 **Success Criteria** (what must be TRUE):
+
   1. `VenueAccount` caches the injected connector session's balance/margin/position streams and reconciles **per-symbol
      drift** under 1 account : 1 portfolio (it caches venue truth, it does not compute); the drift-repair
      policy is **halt-and-alert by default**, with auto-correct only within a defined tolerance band.
      (RECON-01, RECON-03)
+
   2. Partial-fill handling is correct and idempotent (fill-ID dedup, accumulation, terminalize only on
      full fill or venue-reported closed) with the venue as source of truth in live. (RECON-02)
+
   3. The v1.6 operational store (order / portfolio-state / signal) is **driven by the real OKX feed** —
      the live composition-root wiring is completed (resolves v1.6 D-01 / RETAIN-03) with create/terminalize
      writes sync-durable; restart rehydration is **two-sided** (reconstruct from the store AND reconcile
      against the live venue). (RECON-04, RECON-05)
+
   4. Order I/O + `VenueAccount` reconciliation + persistence live-drive + restart rehydration are
      **validated against OKX sandbox** (real-money a gated stretch, not the DoD); live resilience
      (websocket reconnect + gap recovery, rate-limit coordination across ccxt + native, partial-fill
      handling) is in place and `LiveTradingSystem`'s publish-and-continue error policy is hardened for
      live. (RECON-06, RES-01)
+
   5. Recurring milestone gate: backtest oracle byte-exact + no W1/W2 regression (live/venue machinery off
      the backtest hot path).
 **Research flag**: RESOLVED 2026-07-02 (`05-RESEARCH.md` + `05-PATTERNS.md` + `05-VALIDATION.md`) —
@@ -274,8 +312,11 @@ drift policy = precision-epsilon auto-correct band else whole-engine halt (nauti
 `is_within_single_unit_tolerance`, D-01); ~80% is wiring already-built seams (`VenueAccount` constructor,
 `OkxExchange` streams, `CachedSql*` rehydrate, `_publish_and_continue`, `get_status`) + porting ~4 small
 nautilus pure-functions; venue order id persisted for bracket re-link; two-sided restart = store rehydrate
+
 + venue REST reconcile → reconciling events / halt. Design unblocked.
+
 **Plans**: 9 plans (planned 2026-07-02)
+
 - [x] 05-01-PLAN.md — Reconciliation primitives: drift epsilon (D-01) + SystemStatus.HALTED (D-07) + pluggable AlertSink egress (D-06) (Wave 1)
 - [x] 05-02-PLAN.md — Offline test infra: shared FakeLiveConnector + recorded OKX recon fixtures + opt-in slow sandbox suite scaffold (D-09) (Wave 1)
 - [x] 05-03-PLAN.md — VenueAccount cache body: push stream + REST snapshot + reserve/release overlay (D-14/D-15, RECON-01) (Wave 2)
@@ -288,32 +329,69 @@ nautilus pure-functions; venue order id persisted for bracket re-link; two-sided
 - [x] 05-10-PLAN.md — Gap-closure: CR-01 live-fill wiring (start() spawns OkxExchange.connect()) + honest resume snapshot (WR-04) + atomic halt (WR-01) (Wave 8)
 - [x] 05-11-PLAN.md — Gap-closure: adopt_venue_correlation seam (WR-02, rehydrated-order fill reaches mirror) + validate-before-mutate partial fill (WR-03) (Wave 8)
 - [x] 05-12-PLAN.md — Gap-closure: RECON-06 OKX-demo live e2e suite (order->fill->reconcile->restart loop, human-gated `3 passed` against real EEA demo venue) (Wave 8)
+
 **Cross-cutting**: RES-01 home phase (resilience pieces also built in Phases 2 rate-limit / 3 reconnect+gap-recovery);
 COV-01 real-path surface coverage completes here.
 
-### Phase 05.1: Live-Path Remediation (INSERTED)
+### Phase 05.1: Live-Path Remediation — CONF-A + Wave 1 (Settlement Possible) (INSERTED)
 
-**Goal:** [Urgent work - to be planned]
-**Requirements**: TBD
+**Goal:** Make a real OKX demo fill actually settle into the portfolio (position + cash + transaction) and stop the engine from trading on state the reconciler declared untrustworthy. Fixes V17-01/14/04/03 per locked decisions ARCH-1/ARCH-2/ARCH-4-Layer-1 (CONTEXT D-01..D-05), preceded by the CONF-A A1..A8 RED-test spine (D-19) and gated by the CONF-B online sandbox run (D-20). The go/no-go gate — nothing downstream is observable until settlement works.
+**Requirements**: Scope defined by CONTEXT.md decisions D-01..D-05, D-19, D-20 (ADR ingest of v17_arch_decisions.md).
 **Depends on:** Phase 5
-**Plans:** 0 plans
+**Plans:** 9 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 05.1 to break down)
+
+- [x] 05.1-01-PLAN.md — CONF-A RED spine: AUD-7 spot fixture split + A1 (account conformance) + A4 (spot no-drift) RED tests (Wave 1)
+- [x] 05.1-02-PLAN.md — CONF-A RED spine: A2 (venue_order_id) + A3 (halt latch) + A5 (redeliver dedup) RED tests (Wave 1)
+- [x] 05.1-03-PLAN.md — CONF-A RED spine: A6 (supervisor catch-all) + A7 (submit timeout) + A8 (pause defer-replay) RED tests (Wave 1)
+- [x] 05.1-04-PLAN.md — D-01: widen Account ABC (7-member surface) + Simulated rename + VenueAccount ledgered settlement -> A1 GREEN (Wave 2)
+- [x] 05.1-05-PLAN.md — D-05: VALID_STATUS_TRANSITIONS latch + single-seam enforcement + start() halt-refusal + reset_halt -> A3 GREEN (Wave 2)
+- [x] 05.1-06-PLAN.md — D-02: re-type Portfolio.account to ABC + isinstance-guard margin casts + mypy visibility + permanent conformance gate (Wave 3)
+- [x] 05.1-07-PLAN.md — D-03: per-market-type venue-truth adapter (spot base-balance positions; parameterized quote) (Wave 3)
+- [x] 05.1-08-PLAN.md — D-04 + D-03 wiring: thread real quote + post-reconcile baseline guard + spurious-halt drift band -> A4 GREEN (Wave 4)
+- [~] 05.1-09-PLAN.md — D-20: extend CONF-B sandbox e2e assertions + human-gated online run (Wave-1 GREEN exit gate + ARCH-3 finalization capture) (Wave 5) — Task 1 DONE (b9e5c541: assertions + ARCH-3 capture + live-marker fence); Task 2 online run CHECKPOINT-PENDING (human)
+
+### Phase 05.2: Live-Path Remediation — Wave 2 (Restart Real) (INSERTED)
+
+**Goal:** Make restart real: persist the venue ack (ORDER-ACK event), wire the existing durable portfolio SQL ledger in live, rehydrate positions/cash + the settled-trade dedup ledger before reconcile, and add a durable halt record. Fixes V17-02/05/06/12/10 + ARCH-4 Layer 2 (CONTEXT D-06..D-10). **PROVISIONAL — pending Phase 05.1's CONF-B online run** (settles the four ARCH-3 finalization points); RED tests encode observable behavior, not storage shape.
+**Requirements**: Scope defined by CONTEXT.md decisions D-06..D-10.
+**Depends on:** Phase 05.1 (CONF-B online run finalizes the ARCH-3 storage posture before 05.2 detail freezes)
+**Plans:** 0 plans (run /gsd:plan-phase 05.2 to break down, AFTER 05.1 CONF-B)
+
+Plans:
+
+- [ ] TBD (run /gsd:plan-phase 05.2 to break down)
+
+### Phase 05.3: Live-Path Remediation — Wave 3 (Resilience Hardening) (INSERTED)
+
+**Goal:** Resilience hardening: stream-death catch-all + supervised account/position streams, missed-fill catch-up on resume, submit-timeout in-flight semantics, defer protective orders during pause, drop overlay on ack, loop-native gap backfill, external-order admission + preflight, and the 05-13 carry-overs. Fixes V17-07/08/09/11/13/15/16 + 05-13 (CONTEXT D-11..D-18).
+**Requirements**: Scope defined by CONTEXT.md decisions D-11..D-18.
+**Depends on:** Phase 05.2 (D-15 drop-overlay needs the D-06 ORDER-ACK trigger; D-12 catch-up + D-16 mark-seen are only safe once D-08 dedup lands)
+**Plans:** 0 plans (run /gsd:plan-phase 05.3 to break down, AFTER 05.2)
+
+Plans:
+
+- [ ] TBD (run /gsd:plan-phase 05.3 to break down)
 
 ### Phase 6: Dynamic Universe Membership
+
 **Goal**: Add a lean universe-membership **poll seam** for mid-run add/remove of symbols (NOT the full
 production screener), reusing the Phase-3 backfill: warmup-on-add replays the new symbol's history through
 the same `update(bar)` path, and the open-position-handling-on-remove policy is defined.
 **Depends on**: Phase 3 (the backfill-through-`update` seam)
 **Requirements**: UNIV-01, UNIV-02
 **Success Criteria** (what must be TRUE):
+
   1. A lean universe-membership poll seam supports mid-run add/remove of symbols (grows
      `universe/membership.py` per its D-20 target) — NOT the full production screener. (UNIV-01)
+
   2. Warmup-on-add replays the new symbol's history through the same `update(bar)` path (reuses the
      Phase-3 backfill machinery); the open-position-handling-on-remove policy is defined
      (force-close vs orphan-and-track). (UNIV-02)
+
   3. Recurring milestone gate: backtest oracle byte-exact + no W1/W2 regression.
+
 **Research flag**: SKIP — reuses the Phase-3 backfill-through-`update` seam; standard patterns if Phase 3
 is built generically (per-symbol, not start-only).
 **Plans**: TBD
@@ -537,16 +615,20 @@ Scope (intent only — see the v1.7 active milestone for the trimmed, locked sco
 - **#7 production-ready universe / screener.** → DEFERRED to v2 (v1.7 ships only the lean poll seam, Phase 6).
 - **Dynamic universe membership** — lean `UniverseSelectionModel` poll seam for mid-run adds/removes;
   warmup-on-add + open-position-handling-on-remove. → v1.7 Phase 6.
+
 - **FL-13** — `LiveTradingSystem`/`TradingInterface` test coverage. → v1.7 COV-01 (Phase 4, extends to 5).
 - **Perp realism — "Phase B" (FUND-01..04, deferred out of v1.4)** — funding-rate accrual, mark-price
   liquidation trigger, funding-data pipeline, `freqtrade` 4th cross-validation oracle. → DEFERRED to v2
   (out of v1.7 trimmed scope; its own future milestone).
+
 - **Account abstraction (born here, with the connector)** — first-class `Account` as the reconciled
   local mirror of venue balance/margin truth; `CashAccount` vs `MarginAccount`; 1 account : 1 portfolio;
   `user_id` stripped from the engine (app-layer concern). → v1.7 Phase 1 (`Account` abstraction,
   `Simulated*`/`Venue*` leaves, `user_id` strip) + Phase 5 (`VenueAccount` reconciliation).
+
 - **Live-start indicator backfill through the same `update(bar)` path** (deferred out of v1.5 Phase 5).
   → v1.7 Phase 3 (FEED-03, LX-09 — no bulk `warmup_from` fast-path).
+
 - **Persistence live-drive + venue reconciliation** (v1.6 operational store built + testcontainers-tested,
   driven by a real live feed only in N+4). → v1.7 Phase 5 (RECON-04/05).
 

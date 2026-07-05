@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: planning
-stopped_at: Phase 5 (05-13 WR-05) context gathered
-last_updated: "2026-07-04T15:50:48.168Z"
+status: ready_to_plan
+stopped_at: Phase 05.1 complete (9/9) — ready to discuss Phase 05.2
+last_updated: 2026-07-04T21:43:53.971Z
 last_activity: 2026-07-04
 progress:
-  total_phases: 8
+  total_phases: 10
   completed_phases: 5
-  total_plans: 33
-  completed_plans: 33
-  percent: 63
+  total_plans: 42
+  completed_plans: 42
+  percent: 50
 ---
 
 # Project State
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 05.1 — Live-Path Remediation (V17 bugs + ARCH decisions)
+**Current focus:** Phase 05.2 — live path remediation wave 2 restart real durable engine led
 
 ## Current Position
 
-Phase: 05.1
+Phase: 05.2
 Plan: Not started
-Status: Ready to plan (inserted — urgent)
+Status: Ready to plan
 Last activity: 2026-07-04
 
-Progress: [████████▒░] 5/6 phases complete (83%) — only Phase 6 (Dynamic Universe Membership) remains
+Progress: [██████████] 98%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -80,7 +80,7 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 **Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 264 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- Total plans completed: 273 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
 - v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
@@ -156,6 +156,17 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05]: 05-11: WR-02 closed — OkxExchange.adopt_venue_correlation() repopulates the three correlation maps + drains buffered fills for rehydrated orders; VenueReconciler.reconcile() adopts per working-set order with a venue_order_id (exchange=self._okx_exchange). Post-restart fills reach the mirror instead of being silently buffered.
 - [Phase 05]: 05-11: WR-03 closed — reconcile_manager validates the PARTIALLY_FILLED transition BEFORE mutating filled_quantity; a rejected transition leaves the mirror literally unchanged. WR-05 recorded documented-only (portfolio_handler.py untouched).
 - [Phase 05]: 05-12: RECON-06 closed — tests/e2e/test_okx_sandbox_recon.py runs `3 passed` against the real OKX EEA demo venue (order->fill->reconcile->restart loop, human-observed 2026-07-03). Reaching green needed 4 follow-on integration fixes (committed separately): OKX_REGION=eea host derivation (REST eea.okx.com / WS wseeapap.okx.com — 50119/60032 otherwise), unified `1d` timeframe to ccxt backfill, live pair BTC/USDT->BTC/USDC (EEA/MiCA sCode 51155; make pair configurable via universe next phase), and store rewired onto unified ITRADER_DATABASE_* (dropped SYSTEM_DB_URL).
+- [Phase 05.1]: 05.1-01: CONF-A RED spine slice 1 — A1 3-leaf account-conformance (V17-01/D-01,D-02) + A4 spot-no-drift-halt (V17-04/D-03,D-04) authored RED; AUD-7 spot/derivative fixture split. Spot fixture is the NEW-cluster default (legacy fixture kept for full-suite green). A4 seeds venue truth via snapshot() from fetch_balance total[BTC] so it is RED now and GREEN after the D-03 base-balance adapter.
+- [Phase 05.1]: 05.1-02: CONF-A RED spine slice 2 — A3 halt-latch (V17-03/D-05), A2 venue_order_id persistence (V17-02/D-06), A5 redeliver-dedup (V17-06/D-08) authored RED. A3 injects the reconcile halt by wrapping _initialize_live_session on the offline paper venue; A2/A5 encode observable end-state so the 05.2 fixes turn them GREEN without rewrite. A3 GREEN in 05.1-05; A2/A5 GREEN in Phase 05.2.
+- [Phase ?]: [Phase 05.1]: 05.1-03: CONF-A RED spine slice 3 — A6 supervisor-catchall (V17-07/D-11), A7 submit-timeout-in-flight (V17-09/D-13), A8 pause-defer-replay (V17-11/D-14) authored RED. A6 covers 3 silent-death surfaces (unclassified ExchangeError, unguarded json.loads, bare-while-True VenueAccount stream); A7/A8 carry control arms (definitive-rejection still REFUSED; entry stays suppressed) to force the fix to branch. All GREEN in Phase 05.3; CONF-A spine A1..A8 complete.
+- [Phase ?]: 05.1-04: D-01 delivered — 7-member Account ABC settlement surface; VenueAccount as a locally-ledgered account (balance = cached venue balance + local fill-delta; snapshot reconciles the delta). available_balance nets settled balance not the venue free field; assert_funds_invariant raises before any mutation. A1 GREEN all 3 leaves; oracle byte-exact.
+- [Phase ?]: 05.1-04: A1 BUY facet made leaf-relative (before-10) — hardcoded 149990 assumed a 150000 start absent on the venue leaf (fixture total[USDC]=78999.79). test_venue_account_cache .available renames deferred to 05.1-06; A4 spot-drift RED deferred to 05.1-08.
+- [Phase 05.1]: D-05: HALTED is a latched state — VALID_STATUS_TRANSITIONS (HALTED->set()) enforced at the single _update_status seam; halt() routed through it; start() refuses RUNNING-from-HALTED post-reconcile; reset_halt() is the sole off-table exit (verify-then-trust)
+- [Phase 05.1]: 05.1-06: D-02 delivered — Portfolio.account re-typed to the Account ABC; both cast(SimulatedMarginAccount,...) narrowings replaced by a single _require_margin_account isinstance guard raising a typed StateError BEFORE any mutation (closes V17-14 partial-mutation cast arm). F/U-4 resolved to a typed conformance module (account/conformance.py) making mypy --strict see the ABC-vs-concretion live wiring; pyproject untouched. A1 permanent gate 16 passed (incl. venue+margin guard case); 7 venue-cache .available->available_balance renames GREEN; oracle byte-exact; mypy clean 228 files.
+- [Phase ?]: 05.1-07: D-03 truth arm — VenueAccount venue-type-aware; spot derives per-symbol position truth from total[BASE] (fetch_positions [] on spot), derivative channel unchanged. market_type/symbol ctor params (base from symbol left leg); spot skips _stream_positions/fetch_positions. A4 spot_drift stays RED (GREEN in 05.1-08); oracle byte-exact; mypy strict clean.
+- [Phase 05.1]: D-03/D-04: real quote + spot market-type wired into VenueAccount at the composition root; post-reconcile baseline guard latches halt('baseline-residual') on unexplained base-asset residual (never auto-adopts)
+- [Phase 05.1]: D-04 spurious-halt band: on-fill compare absorbs the just-applied-fill vs not-yet-refreshed-venue-snapshot transient via a signed fill delta; periodic sweep + baseline guard remain the drift backstops
+- [Phase 05.1]: 05.1-09 (D-20) Task 1: CONF-B sandbox e2e extended with 4 Wave-1 settlement assertions (position/cash/not-HALTED/spot fetch_positions()==[]) closing the V17-01 blind spot + venue_order_id recorded soft-check (pending D-06/05.2) + ARCH-3 finalization capture to .planning/debug/05.1-confb-<date>.md. Added pytest.mark.live so make test (-m 'not live') fences the network. Task 2 online GREEN run is CHECKPOINT-PENDING (human): `poetry run pytest tests/e2e/test_okx_sandbox_recon.py -k demo_order -x -m live` (verify sandbox=True). Plan NOT fully complete until approved.
 
 ### Pending Todos
 
@@ -222,6 +233,14 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase Phase 04 P04 P04 | 5min | 2 tasks | 2 files |
 | Phase 05 P10 | 20min | 3 tasks | 3 files |
 | Phase 05 P11 | ~15min | 2 tasks | 6 files |
+| Phase 05.1 P01 | 18min | 3 tasks | 4 files |
+| Phase 05.1 P02 | 16min | 3 tasks | 3 files |
+| Phase 05.1 P03 | 17min | 3 tasks | 3 files |
+| Phase 05.1 P04 | 15min | 2 tasks | 4 files |
+| Phase 05.1 P05 | 35min | 2 tasks | 3 files |
+| Phase 05.1 P06 | 90min | 2 tasks | 4 files |
+| Phase 05.1 P07 | 12min | 1 tasks | 2 files |
+| Phase 05.1 P08 | 20min | 2 tasks | 3 files |
 
 ## Deferred Items
 
@@ -271,9 +290,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T08:47:06.886Z
-Stopped at: Phase 5 (05-13 WR-05) context gathered
-Resume file: .planning/phases/05-real-sandbox-path-reconciliation-persistence-live-drive/05-CONTEXT.md
+Last session: 2026-07-04T21:10:00.000Z
+Stopped at: 05.1-09 Task 1 committed (b9e5c541) — Task 2 online CONF-B run CHECKPOINT-PENDING (human-gated)
+Resume file: .planning/phases/05.1-live-path-remediation/05.1-09-PLAN.md (Task 2 checkpoint)
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps

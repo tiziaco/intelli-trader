@@ -139,7 +139,14 @@ def _drive_stream(
     recorder: dict[str, Any] = {}
     monkeypatch.setattr(
         aiohttp, "ClientSession", _make_session_cls(_messages_from(fixture), recorder))
-    asyncio.run(provider._stream_candles(symbol, channel))
+    # Drive ONE consume cycle (connect + subscribe + read the finite fixture), NOT
+    # `_stream_candles` — that wraps this body in the unbounded reconnect supervisor
+    # (D-19/D-20), which treats the finite fake stream's exhaustion as a server-side
+    # socket close and reconnects forever (the re-delivered fixture resets the retry
+    # budget so the ceiling never trips). These tests assert the consume body's
+    # confirm gate / host routing / sink; the supervisor's reconnect behaviour is
+    # covered separately.
+    asyncio.run(provider._connect_and_consume_candles(symbol, channel))
     return recorder
 
 
@@ -267,7 +274,8 @@ def test_stream_subscribes_the_business_candle_channel(
         return _S(*a, **k)
 
     monkeypatch.setattr(aiohttp, "ClientSession", _session_cls)
-    asyncio.run(provider._stream_candles("BTC-USDT", "candle1D"))
+    # One consume cycle, not the unbounded supervisor (see `_drive_stream`).
+    asyncio.run(provider._connect_and_consume_candles("BTC-USDT", "candle1D"))
 
     assert sent_holder == [
         {"op": "subscribe", "args": [{"channel": "candle1D", "instId": "BTC-USDT"}]}
@@ -384,3 +392,166 @@ def test_malformed_row_is_skipped_not_indexed(
     # The malformed row did not crash the loop; the well-formed completed bar still arrived.
     assert len(delivered) == 1
     assert delivered[0]["close"] == to_money("43050.0")
+
+
+# ----------------------------------------- reconnect supervisor (RES-01/D-19/D-20)
+#
+# These exercise ``_stream_candles`` THROUGH ``_run_stream_supervisor`` — the
+# unbounded reconnect wrapper the confirm-gate/routing tests deliberately bypass.
+# They pin the two guarantees that were previously untested (and whose absence hid
+# the full-suite hang): the D-20 never-spin-forever HALT, and the WR-03 rule that
+# only a POST-snapshot payload — not the OKX subscribe-time snapshot — resets the
+# retry budget. Each fake session caps its reconnects so a REGRESSION fails fast
+# instead of re-introducing an infinite loop.
+
+
+class _StopLoop(Exception):
+    """Test sentinel used to bound an otherwise-healthy (infinite) reconnect loop."""
+
+
+async def _instant_sleep(*_a: Any, **_k: Any) -> None:
+    """No-op ``asyncio.sleep`` so the bounded-retry backoff runs instantly."""
+    return None
+
+
+def _candle_row(confirm: str) -> list[str]:
+    """A well-formed OKX business candle row (9 fields; index 8 == ``confirm``)."""
+    return ["1", "10", "10", "10", "10", "1", "1", "1", confirm]
+
+
+def _candle_push(rows: list[list[str]]) -> dict[str, Any]:
+    return {"arg": {"channel": "candle1D", "instId": "BTC-USDT"}, "data": rows}
+
+
+def _looping_session_cls(
+    messages: list[_FakeMsg],
+    calls: list[str],
+    *,
+    cap: int,
+    raise_on_call: int | None = None,
+    exc: BaseException | None = None,
+) -> type:
+    """Fake ``ClientSession`` whose ``ws_connect`` re-yields ``messages`` every reconnect.
+
+    Records each connect in ``calls``. ``cap`` converts a non-terminating reconnect
+    (a regressed budget gate) into a fast ``AssertionError`` rather than a hang — the
+    whole point of these tests is anti-hang behaviour. Optionally raises ``exc`` on
+    the ``raise_on_call``-th connect to drive the fatal / bounded-loop paths.
+    """
+
+    class _Session:
+        def __init__(self, *a: Any, **k: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> "_Session":
+            return self
+
+        async def __aexit__(self, *exc_info: Any) -> bool:
+            return False
+
+        def ws_connect(self, url: str, **kwargs: Any) -> _FakeWS:
+            calls.append(url)
+            if len(calls) > cap:
+                raise AssertionError(
+                    f"reconnect exceeded cap={cap} — supervisor failed to terminate")
+            if raise_on_call is not None and len(calls) == raise_on_call and exc is not None:
+                raise exc
+            return _FakeWS(list(messages))
+
+        async def close(self) -> None:
+            pass
+
+    return _Session
+
+
+def test_supervisor_snapshot_only_storm_trips_ceiling_and_halts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subscribe-then-close storm (only the OKX snapshot each cycle) exhausts the
+    retry ceiling and HALTS, then RETURNS — the D-20 never-spin-forever guarantee.
+
+    OKX pushes exactly one in-progress snapshot on every subscribe, so a cycle that
+    delivers only that snapshot must NOT reset the retry budget (no post-snapshot
+    payload). After ``_reconnect_ceiling`` reconnects the supervisor escalates
+    ``halt('connector-fatal')`` and the coroutine returns — it does not loop forever.
+    """
+    provider = OkxDataProvider(_StubConnector(sandbox=True), "BTC-USDT", "1d")
+    provider.set_bar_sink(lambda _b: None)
+    halts: list[str] = []
+    provider.set_halt_signal(halts.append)
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    calls: list[str] = []
+    snapshot_only = [_FakeMsg(json.dumps(_candle_push([_candle_row("0")])))]
+    monkeypatch.setattr(
+        aiohttp, "ClientSession",
+        _looping_session_cls(snapshot_only, calls, cap=provider._reconnect_ceiling + 5))
+
+    asyncio.run(provider._stream_candles("BTC-USDT", "candle1D"))
+
+    # Halted exactly once with the scrubbed fixed reason after ceiling+1 attempts.
+    assert halts == ["connector-fatal"]
+    assert provider._reconnect_attempts["candles"] == provider._reconnect_ceiling + 1
+    assert len(calls) == provider._reconnect_ceiling + 1
+
+
+def test_supervisor_post_snapshot_payload_resets_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A payload delivered AFTER the subscribe snapshot proves real streaming and
+    RESETS the retry budget — a healthy, flapping stream never false-halts (WR-03).
+
+    Each cycle delivers the snapshot AND a second candle row, so
+    ``_reset_reconnect_budget`` fires and ``attempt`` never climbs to the ceiling. We
+    run well past ``_reconnect_ceiling`` cycles and assert NO halt was escalated; a
+    ``_StopLoop`` sentinel bounds the otherwise-healthy (infinite) loop.
+    """
+    provider = OkxDataProvider(_StubConnector(sandbox=True), "BTC-USDT", "1d")
+    provider.set_bar_sink(lambda _b: None)
+    halts: list[str] = []
+    provider.set_halt_signal(halts.append)
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    calls: list[str] = []
+    two_payloads = [
+        _FakeMsg(json.dumps(_candle_push([_candle_row("0")]))),  # subscribe snapshot
+        _FakeMsg(json.dumps(_candle_push([_candle_row("0")]))),  # post-snapshot payload
+    ]
+    stop_after = provider._reconnect_ceiling + 4  # run WELL past the ceiling
+    monkeypatch.setattr(
+        aiohttp, "ClientSession",
+        _looping_session_cls(two_payloads, calls, cap=stop_after + 5,
+                             raise_on_call=stop_after, exc=_StopLoop()))
+
+    with pytest.raises(_StopLoop):
+        asyncio.run(provider._stream_candles("BTC-USDT", "candle1D"))
+
+    # Ran past the ceiling with zero halts — the reset kept attempt from climbing.
+    assert halts == []
+    assert len(calls) == stop_after
+    assert provider._reconnect_attempts["candles"] <= 1
+
+
+def test_supervisor_fatal_error_halts_immediately_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fatal auth/permission error escalates halt at once — no bounded-retry loop."""
+    import ccxt
+
+    provider = OkxDataProvider(_StubConnector(sandbox=True), "BTC-USDT", "1d")
+    provider.set_bar_sink(lambda _b: None)
+    halts: list[str] = []
+    provider.set_halt_signal(halts.append)
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        aiohttp, "ClientSession",
+        _looping_session_cls([], calls, cap=5, raise_on_call=1,
+                             exc=ccxt.AuthenticationError("bad key")))
+
+    asyncio.run(provider._stream_candles("BTC-USDT", "candle1D"))
+
+    assert halts == ["connector-fatal"]
+    assert len(calls) == 1                                       # halted on first attempt
+    assert provider._reconnect_attempts.get("candles", 0) == 0  # fatal skips attempt++
