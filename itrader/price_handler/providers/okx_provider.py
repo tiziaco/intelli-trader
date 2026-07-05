@@ -271,7 +271,19 @@ class OkxDataProvider:
                 async for msg in ws:
                     if msg.type is not aiohttp.WSMsgType.TEXT:
                         continue
-                    payload: Any = json.loads(msg.data)
+                    # D-11 / T-05.3-03: parse each frame INSIDE a per-message guard. A
+                    # malformed (non-JSON) frame is a tampering signal — log the
+                    # exception TYPE only (scrub — never msg.data, which may embed
+                    # venue/request context) and re-raise so the reconnect supervisor's
+                    # fail-safe catch-all escalates it to a HALT. A garbage frame must
+                    # never fall through the raw loop and silently kill the candle task.
+                    try:
+                        payload: Any = json.loads(msg.data)
+                    except (ValueError, TypeError) as exc:
+                        self.logger.warning(
+                            "OKX candle frame parse failed (%s) — escalating to halt",
+                            type(exc).__name__)
+                        raise
                     rows: Any = payload.get("data", []) if isinstance(payload, dict) else []
                     if rows:
                         if payload_seen:
@@ -340,6 +352,15 @@ class OkxDataProvider:
                 return
             except transient as exc:
                 drop_label = type(exc).__name__
+            except Exception as exc:
+                # D-11 (V17-07): an UNCLASSIFIED error is neither transient nor fatal.
+                # Fail safe — escalate to the halt entrypoint and RETURN (do NOT fall
+                # through to the reconnect ladder below: an unknown error, e.g. a
+                # malformed-frame parse error surfaced from the per-message guard, must
+                # HALT, never silently kill the candle task). Scrub preserved
+                # (type(exc).__name__ + fixed literal only — V7 / T-05-27).
+                self._escalate_connector_halt(stream_name, exc, "unexpected error")
+                return
             # Transient drop OR clean socket-close -> bounded-retry reconnect.
             attempt = self._reconnect_attempts.get(stream_name, 0) + 1
             self._reconnect_attempts[stream_name] = attempt
