@@ -38,6 +38,7 @@ smoke test opts in by hand and thereby joins the ``make test-smoke`` (``-m smoke
 selection while retaining its folder-derived TYPE marker.
 """
 
+import os
 import pathlib
 import queue
 from datetime import datetime
@@ -71,6 +72,50 @@ def pytest_collection_modifyitems(config, items):
 
 
 # --- Cross-cutting fixtures -------------------------------------------------
+
+
+# The six dev-DB env vars (itrader/config/sql.py SqlSettings, env_prefix=
+# "ITRADER_DATABASE_") that form the developer's operational-Postgres leak surface.
+# The Makefile does `include .env` + `.EXPORT_ALL_VARIABLES`, so under `make test`
+# these are exported into the pytest process; any test constructing a
+# LiveTradingSystem / Postgres SqlSettings without overriding env would bind to the
+# real dev DB at localhost:5544. They are removed session-wide by the guard below.
+# NOT ITRADER_DATABASE_DATABASE (the sqlite path) — it is not a dev-DB leak surface
+# and default() pins the sqlite arm via init kwargs.
+_DEV_DB_ENV_VARS = (
+    "ITRADER_DATABASE_PASSWORD",
+    "ITRADER_DATABASE_URL",
+    "ITRADER_DATABASE_HOST",
+    "ITRADER_DATABASE_PORT",
+    "ITRADER_DATABASE_USER",
+    "ITRADER_DATABASE_NAME",
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _block_dev_database_env():
+    """Session-wide guarantee that no test can reach the developer's operational Postgres.
+
+    Pops the six ``ITRADER_DATABASE_*`` dev-DB env vars (``_DEV_DB_ENV_VARS``) from
+    ``os.environ`` at session start and restores them in ``finally``, so the
+    ``LiveTradingSystem`` / ``SqlSettings`` env gate falls back to in-memory unless a
+    test EXPLICITLY opts in. This makes "no test can reach the dev DB" a systemic
+    guarantee rather than a latent leak that is quiet only because the dev DB is down.
+
+    It uses ``os.environ.pop(..., None)`` directly (NOT the function-scoped
+    ``monkeypatch`` fixture, which cannot be session-scoped). It is naturally
+    overridable by a function-scoped ``monkeypatch.setenv`` inside a test: that
+    later, narrower set wins over this earlier session-scope pop and is undone at the
+    test's teardown — so the existing container tests that set their own DB env
+    (``test_store_live_drive`` / ``test_two_sided_restart``) keep passing.
+    """
+    saved = {name: os.environ.pop(name, None) for name in _DEV_DB_ENV_VARS}
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is not None:
+                os.environ[name] = value
 
 
 @pytest.fixture
