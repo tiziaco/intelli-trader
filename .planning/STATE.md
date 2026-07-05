@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: ready_to_plan
-stopped_at: Phase 05.2 complete (6/6) — ready to discuss Phase 05.3
-last_updated: 2026-07-05T16:01:47.774Z
+status: planning
+stopped_at: Phase 05.3 context updated — folded 05.2 WR-01/02/04/05 (D-19..D-22)
+last_updated: "2026-07-05T16:41:44.776Z"
 last_activity: 2026-07-05
 progress:
   total_phases: 10
@@ -305,9 +305,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-05T15:36:11.197Z
-Stopped at: 05.2-06 complete (23e897d5) — D-10 durable HALTED latch GREEN
-Resume file: None
+Last session: 2026-07-05T16:41:44.766Z
+Stopped at: Phase 05.3 context updated — folded 05.2 WR-01/02/04/05 (D-19..D-22)
+Resume file: .planning/phases/05.3-live-path-remediation-wave-3-resilience-hardening-stream-dea/05.3-CONTEXT.md
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps
