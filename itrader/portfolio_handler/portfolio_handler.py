@@ -347,6 +347,20 @@ class PortfolioHandler:
         """
         self.get_portfolio(portfolio_id).account.release(order_id)
 
+    def drop_pending(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        """Drop the local pending overlay on the venue ORDER-ACK (D-15, V17-13).
+
+        Getattr-guarded delegate: only ``VenueAccount`` carries a local pending
+        overlay to drop, so this resolves ``account.drop_pending`` dynamically and
+        skips cleanly when absent (paper/simulated accounts have no such method —
+        oracle-dark, the byte-exact backtest never takes this branch). Mirrors the
+        ``save_account_state`` getattr-skip idiom. NON-terminal: the account drop
+        pops only the admission overlay, never the settled ledger.
+        """
+        fn = getattr(self.get_portfolio(portfolio_id).account, "drop_pending", None)
+        if fn is not None:
+            fn(order_id)
+
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
         """Return the exchange the portfolio trades on (admission metadata, OQ1)."""
         exchange: str = self.get_portfolio(portfolio_id).exchange
