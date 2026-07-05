@@ -139,7 +139,14 @@ def _drive_stream(
     recorder: dict[str, Any] = {}
     monkeypatch.setattr(
         aiohttp, "ClientSession", _make_session_cls(_messages_from(fixture), recorder))
-    asyncio.run(provider._stream_candles(symbol, channel))
+    # Drive ONE consume cycle (connect + subscribe + read the finite fixture), NOT
+    # `_stream_candles` — that wraps this body in the unbounded reconnect supervisor
+    # (D-19/D-20), which treats the finite fake stream's exhaustion as a server-side
+    # socket close and reconnects forever (the re-delivered fixture resets the retry
+    # budget so the ceiling never trips). These tests assert the consume body's
+    # confirm gate / host routing / sink; the supervisor's reconnect behaviour is
+    # covered separately.
+    asyncio.run(provider._connect_and_consume_candles(symbol, channel))
     return recorder
 
 
@@ -267,7 +274,8 @@ def test_stream_subscribes_the_business_candle_channel(
         return _S(*a, **k)
 
     monkeypatch.setattr(aiohttp, "ClientSession", _session_cls)
-    asyncio.run(provider._stream_candles("BTC-USDT", "candle1D"))
+    # One consume cycle, not the unbounded supervisor (see `_drive_stream`).
+    asyncio.run(provider._connect_and_consume_candles("BTC-USDT", "candle1D"))
 
     assert sent_holder == [
         {"op": "subscribe", "args": [{"channel": "candle1D", "instId": "BTC-USDT"}]}
