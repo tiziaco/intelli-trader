@@ -210,6 +210,24 @@ class VenueAccount(Account):
             return {}
         return {self._symbol: qty}
 
+    def _spot_positions_from_balance(self, payload: Any) -> dict[str, Decimal] | None:
+        """Derive the spot holding to WRITE, or ``None`` to leave the cache intact (WR-02).
+
+        A partial/quote-only ``watch_balance`` push that OMITS the base key must NOT
+        clobber the derived holding to flat — returning ``None`` tells the caller to
+        keep the prior cache (else the next drift sweep reads venue-qty=0 vs a live
+        engine position and spuriously halts). A frame that DOES carry the base key
+        is authoritative: it returns the derived map (an empty ``{}`` when the base
+        total is zero — a real FLAT that correctly clears the holding). Returns
+        ``None`` for an unwired leaf (``symbol``/``base`` unset) too.
+        """
+        if self._symbol is None or self._base is None:
+            return None
+        total_map = payload.get("total") if isinstance(payload, dict) else None
+        if not isinstance(total_map, dict) or self._base not in total_map:
+            return None
+        return self._extract_spot_position(payload)
+
     # --- async push (D-14 push writer — cache-write ONLY, never compare/halt) ---
 
     async def _stream_account(self) -> None:
@@ -225,9 +243,12 @@ class VenueAccount(Account):
             balance, available = self._extract_balance(update)
             # D-03: on spot the position truth rides the BALANCE stream (there is no
             # positions channel), so derive it here from ``total[BASE]``. Derivative
-            # positions arrive via ``_stream_positions`` instead (unchanged).
+            # positions arrive via ``_stream_positions`` instead (unchanged). WR-02:
+            # ``_spot_positions_from_balance`` returns ``None`` for a base-absent
+            # partial frame so the guard below leaves the prior holding intact
+            # (never a spurious clobber-to-flat that would trip the drift halt).
             spot_positions = (
-                self._extract_spot_position(update)
+                self._spot_positions_from_balance(update)
                 if self._market_type == "spot" else None
             )
             with self._lock:
