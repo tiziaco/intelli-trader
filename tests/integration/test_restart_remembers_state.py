@@ -386,7 +386,14 @@ class _AtomicDurableStoreDouble(InMemoryPortfolioStateStorage):
         }
 
     def rehydrate(self, account: Any = None) -> None:
-        """Restore the COMMITTED durable state into a fresh working set."""
+        """Restore the COMMITTED durable state into a fresh working set.
+
+        A restart is a new process with an EMPTY working set rebuilt from durable
+        truth — so the working set is reset to the committed positions (any dirty
+        working-set write from a rolled-back fill is discarded, exactly as a real
+        restart drops the in-memory cache and reloads from the store).
+        """
+        self._positions.clear()
         for ticker, position in self._committed_positions.items():
             self._positions[ticker] = position
         state = self.load_account_state()

@@ -1046,25 +1046,42 @@ class PortfolioHandler:
                     fee_currency=getattr(fill_event, "fee_currency", None),
                 )
 
-                portfolio.transact_shares(transaction)
+                # D-19 (WR-04): wrap the durable position upsert (driven by
+                # transact_shares -> set_position) AND the cash-scalar account-state
+                # upsert (_persist_account_state -> save_account_state) in ONE
+                # transaction so a crash between them can never leave the durable
+                # position one fill ahead of the durable cash (a torn restore, which
+                # is PERMANENT on the SimulatedAccount path — no venue heals it). The
+                # in-memory backtest backend exposes no fill_transaction, so this is a
+                # clean getattr-skip on the SMA_MACD path (oracle-dark — the two
+                # writes stay independent, but backtest never persists at all). LIVE
+                # ONLY.
+                fill_transaction = getattr(
+                    portfolio.state_storage, "fill_transaction", None)
+                if fill_transaction is not None:
+                    with fill_transaction():
+                        portfolio.transact_shares(transaction)
+                        # F/U-11 (05.2-05): write-through the account-state scalar on
+                        # the settlement path so the D-07 restore (rehydrate ->
+                        # load_account_state -> Account.restore_cash) has a persisted
+                        # balance to read on restart — now atomic with the position.
+                        self._persist_account_state(portfolio, fill_event.time)
+                else:
+                    portfolio.transact_shares(transaction)
+                    self._persist_account_state(portfolio, fill_event.time)
 
-                # CR-01: record the venue trade id as settled ONLY after the
-                # transaction applied — a later re-delivery (stream re-send or the
-                # restart reconciler) of the SAME venue trade is then a no-op at
-                # the guard above. Recorded under the SAME f"{ticker}:{venue_trade_id}"
-                # key the guard reads (D-08 Layer 2 / V17-12 — symbol-scoped so the
-                # durable-ledger seed and the live mark share one key space). None-keyed
-                # backtest/simulated fills never record.
+                # CR-01: record the venue trade id as settled ONLY after the durable
+                # persist committed — a later re-delivery (stream re-send or the
+                # restart reconciler) of the SAME venue trade is then a no-op at the
+                # guard above. Placed AFTER the fill_transaction so a rolled-back
+                # atomic persist (D-19) does not record a dedup key for a fill that
+                # never durably landed. Recorded under the SAME
+                # f"{ticker}:{venue_trade_id}" key the guard reads (D-08 Layer 2 /
+                # V17-12 — symbol-scoped so the durable-ledger seed and the live mark
+                # share one key space). None-keyed backtest/simulated fills never
+                # record.
                 if dedup_key is not None:
                     self._mark_venue_trade_settled(dedup_key)
-
-                # F/U-11 (05.2-05): write-through the account-state scalar on the
-                # settlement path so the Plan-04 restore (rehydrate ->
-                # load_account_state -> Account.restore_cash) has a persisted cash
-                # balance to read on restart. The in-memory backtest backend has
-                # no save_account_state, so this is a clean getattr-skip
-                # (oracle-dark — the SMA_MACD run never persists). LIVE ONLY.
-                self._persist_account_state(portfolio, fill_event.time)
 
                 self.logger.debug(
                     "Fill event processed",
