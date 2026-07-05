@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: 05.2-01 complete (fd3b0b58) — D-06 venue-ack persistence GREEN
-last_updated: "2026-07-05T14:24:55.982Z"
+last_updated: "2026-07-05T14:34:20.388Z"
 last_activity: 2026-07-05
 progress:
   total_phases: 10
   completed_phases: 6
   total_plans: 48
-  completed_plans: 43
+  completed_plans: 44
   percent: 60
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 05.2 (live-path-remediation-wave-2-restart-real-durable-engine-led) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-07-05
 
-Progress: [█████████░] 90%
+Progress: [█████████░] 92%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -168,6 +168,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05.1]: D-04 spurious-halt band: on-fill compare absorbs the just-applied-fill vs not-yet-refreshed-venue-snapshot transient via a signed fill delta; periodic sweep + baseline guard remain the drift backstops
 - [Phase 05.1]: 05.1-09 (D-20) Task 1: CONF-B sandbox e2e extended with 4 Wave-1 settlement assertions (position/cash/not-HALTED/spot fetch_positions()==[]) closing the V17-01 blind spot + venue_order_id recorded soft-check (pending D-06/05.2) + ARCH-3 finalization capture to .planning/debug/05.1-confb-<date>.md. Added pytest.mark.live so make test (-m 'not live') fences the network. Task 2 online GREEN run is CHECKPOINT-PENDING (human): `poetry run pytest tests/e2e/test_okx_sandbox_recon.py -k demo_order -x -m live` (verify sandbox=True). Plan NOT fully complete until approved.
 - [Phase 05.2]: 05.2-01: D-06 delivered — new frozen OrderAckEvent (order_id->venue_order_id) emitted by OkxExchange._submit_order once the venue id lands (queue-only, V5 field-bind); OrderHandler.on_order_ack -> OrderManager.stamp_venue_order_id persists via order_storage.update_order (D-18). A2 venue_order_id-persistence GREEN; oracle byte-exact; mypy 229 files. Restart integration fixtures now drive the real ack path (V17-02 hand-stamp deleted; unconfident bracket leg asserted None).
+- [Phase ?]: [Phase 05.2]: 05.2-02: D-09 delivered — VenueReconciler._fetch_trades fetches venue fills per active-order symbol with since=oldest-active-order business time (epoch-ms) + explicit limit=100, NO ccxt auto-pagination (OKX sCode 51000, CONF-B). F/U-13 window guard (_FILLS_HISTORY_WINDOW_DAYS=90) loud-logs WARNING naming the symbol when since predates the venue ~3-month /trade/fills-history window. Oracle byte-exact; mypy clean; paginate grep-clean on the production file.
 
 ### Pending Todos
 
@@ -246,6 +247,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.1 P07 | 12min | 1 tasks | 2 files |
 | Phase 05.1 P08 | 20min | 2 tasks | 3 files |
 | Phase 05.2 P01 | 18min | 2 tasks | 10 files |
+| Phase 05.2 P02 | 12min | 2 tasks | 2 files |
 
 ## Deferred Items
 
@@ -295,7 +297,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-05T14:24:55.975Z
+Last session: 2026-07-05T14:33:57.943Z
 Stopped at: 05.2-01 complete (fd3b0b58) — D-06 venue-ack persistence GREEN
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
