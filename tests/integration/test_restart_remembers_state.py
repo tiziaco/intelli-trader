@@ -29,10 +29,12 @@ backing store object. Offline seam pattern modelled on ``test_halt_latch.py``.
 """
 
 import queue
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
+import pytest
 import uuid_utils.compat as uc
 
 from itrader.core.enums import Side, FillStatus, TransactionType
@@ -276,3 +278,158 @@ def test_restart_restores_realised_pnl_accumulator() -> None:
     # The persisted accumulator is restored at full precision (WR-03) — a subsequent
     # _persist_account_state would now write the correct realized_pnl back.
     assert portfolio.total_realised_pnl == persisted_realised
+
+
+# ---------------------------------------------------------------------------
+# D-19 (WR-04) — the on_fill durable persist of position (set_position) + the
+# cash-scalar account-state (save_account_state) must commit in ONE transaction
+# so a crash BETWEEN them can never leave the durable position one fill ahead of
+# the durable cash (a torn restore, PERMANENT on the SimulatedAccount path — no
+# venue heals it). Modelled offline with an atomic-transaction store double.
+# ---------------------------------------------------------------------------
+
+
+class _AtomicDurableStoreDouble(InMemoryPortfolioStateStorage):
+    """Offline durable store modelling the D-19 single-transaction fill persist.
+
+    Splits DURABLE (committed, restart-visible) state from the LIVE working set,
+    exactly like ``_DurableStoreDouble``, but additionally models the REAL SQL
+    transaction boundary that D-19 introduces:
+
+    * ``set_position`` and ``save_account_state`` are the two durable writes on
+      the fill path. Outside a ``fill_transaction`` they commit INDEPENDENTLY
+      (the pre-D-19 two-commit seam) — a failure of the second leaves the first
+      committed (TORN). Inside a ``fill_transaction`` they STAGE onto a pending
+      buffer that is flushed atomically on a clean exit and DISCARDED on any
+      exception (the D-19 single-transaction seam — both or neither).
+    * ``save_account_state`` optionally raises to simulate a crash between the
+      position commit and the cash upsert.
+
+    The in-memory backtest backend exposes no ``fill_transaction`` / no
+    ``save_account_state``, so the atomic seam is oracle-dark (the on_fill call
+    getattr-skips it) — this double opts INTO the live behaviour under test.
+    """
+
+    def __init__(
+        self,
+        *,
+        durable_cash: Decimal,
+        fail_account_state: bool = False,
+    ) -> None:
+        super().__init__()
+        # Committed durable state (what a restart's rehydrate reads back).
+        self._committed_positions: Dict[str, Position] = {}
+        self._committed_cash: Decimal = durable_cash
+        self._committed_realized_pnl: Decimal = Decimal("0")
+        # Staging buffer active only inside a fill_transaction (the SQL txn).
+        self._in_fill_txn: bool = False
+        self._staged_positions: Dict[str, Position] = {}
+        self._staged_cash: Optional[Decimal] = None
+        self._staged_realized: Optional[Decimal] = None
+        # Inject a crash between the position commit and the cash upsert.
+        self._fail_account_state: bool = fail_account_state
+
+    @contextmanager
+    def fill_transaction(self) -> Iterator[None]:
+        """Stage the fill's durable writes and commit them atomically (D-19)."""
+        self._in_fill_txn = True
+        self._staged_positions = {}
+        self._staged_cash = None
+        self._staged_realized = None
+        try:
+            yield
+        except Exception:
+            # Rollback: discard everything staged in this transaction.
+            self._staged_positions = {}
+            self._staged_cash = None
+            self._staged_realized = None
+            raise
+        else:
+            # Commit: apply the staged writes to the durable state atomically.
+            self._committed_positions.update(self._staged_positions)
+            if self._staged_cash is not None:
+                self._committed_cash = self._staged_cash
+            if self._staged_realized is not None:
+                self._committed_realized_pnl = self._staged_realized
+        finally:
+            self._in_fill_txn = False
+
+    def set_position(self, ticker: str, position: Position) -> None:
+        # Working set update (the managers read this) — always immediate.
+        super().set_position(ticker, position)
+        # Durable position write: staged inside a fill txn, else committed now
+        # (the pre-D-19 independent commit that could be left torn).
+        if self._in_fill_txn:
+            self._staged_positions[ticker] = position
+        else:
+            self._committed_positions[ticker] = position
+
+    def save_account_state(self, *, cash_balance: Decimal, realized_pnl: Decimal,
+                           **_kwargs: Any) -> None:
+        if self._fail_account_state:
+            raise RuntimeError("injected crash before the cash-scalar upsert (D-19)")
+        if self._in_fill_txn:
+            self._staged_cash = cash_balance
+            self._staged_realized = realized_pnl
+        else:
+            self._committed_cash = cash_balance
+            self._committed_realized_pnl = realized_pnl
+
+    def load_account_state(self) -> Optional[Dict[str, Any]]:
+        return {
+            "cash_balance": self._committed_cash,
+            "realized_pnl": self._committed_realized_pnl,
+            "total_equity": self._committed_cash,
+            "peak_equity": self._committed_cash,
+            "open_positions_count": len(self._committed_positions),
+            "updated_time": _BT,
+        }
+
+    def rehydrate(self, account: Any = None) -> None:
+        """Restore the COMMITTED durable state into a fresh working set."""
+        for ticker, position in self._committed_positions.items():
+            self._positions[ticker] = position
+        state = self.load_account_state()
+        if account is not None and state is not None:
+            account.restore_cash(state["cash_balance"])
+
+
+def test_on_fill_position_and_cash_persist_atomically_single_txn() -> None:
+    """A crash between the position commit and the cash upsert must not tear (D-19).
+
+    The fill drives the durable position write (``set_position``) then the
+    cash-scalar upsert (``save_account_state``), which is injected to fail. On the
+    pre-D-19 two-commit seam the position is durably committed while the cash is
+    not, so a restart rehydrates a position with STALE cash (torn — position one
+    fill ahead of cash). With the D-19 single-transaction persist the failed cash
+    upsert rolls the position write back too, so a restart reads a CONSISTENT
+    (no position, unchanged cash) pair — neither, never a torn half.
+
+    RED (pre-fix): the fill is NOT wrapped in a single transaction, so the
+    position survives the failed cash write → ``get_position`` returns the torn
+    position and the assertion below fails. GREEN: on_fill wraps both writes in
+    ``fill_transaction`` → the position rolls back → ``get_position`` is None.
+    """
+    initial_cash = Decimal("100000.00")
+    store = _AtomicDurableStoreDouble(
+        durable_cash=initial_cash, fail_account_state=True
+    )
+    handler, portfolio_id, _portfolio = _handler_with_portfolio_on(
+        store, cash=initial_cash
+    )
+
+    # Drive one EXECUTED BUY fill; the cash-scalar upsert crashes mid-persist.
+    fill = _executed_fill("BTC/USDT", portfolio_id, "T1")
+    with pytest.raises(RuntimeError):
+        handler.on_fill(fill)
+
+    # "Restart": a fresh Portfolio sharing the same durable store.
+    fresh = Portfolio(name="restart_pf", exchange="simulated",
+                      cash=initial_cash, time=_BT)
+    _rebind_storage(fresh, store)
+    fresh.state_storage.rehydrate(fresh.account)
+
+    # Atomic (D-19): the failed cash upsert rolled the position write back too —
+    # the durable pair is consistent (no position, cash unchanged), NOT torn.
+    assert fresh.position_manager.get_position("BTC/USDT") is None
+    assert fresh.account.balance == initial_cash
