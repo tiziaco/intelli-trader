@@ -457,7 +457,7 @@ def _sum_fill_cost(order_trades):
     )
 
 
-def _assert_settlement(system, portfolio_id, order, emitted, cash_before):
+def _assert_settlement(system, portfolio_id, order, emitted, cash_before, position_before):
     """D-20 CONF-B: the four Wave-1 settlement assertions the pre-05.1 suite lacked.
 
     The prior suite asserted only the order mirror + emitted fills, NEVER the portfolio
@@ -466,6 +466,11 @@ def _assert_settlement(system, portfolio_id, order, emitted, cash_before):
     equality): an OKX spot BUY may deduct the fee from the base asset received, so the
     settled qty / cash-delta straddle a cost..cost*(1+fee) band. Returns the measured
     values so the ARCH-3 capture can record them without a second network round-trip.
+
+    The POSITION check asserts the BUY's DELTA (``pos.net_quantity - position_before``),
+    not the absolute post-fill net_quantity — the online proof runs against a NON-FLAT
+    demo account pre-seeded to the venue baseline (see ``_seed_believed_position_to_venue``),
+    so only the fill-induced delta is meaningful.
     """
     from itrader.core.enums import SystemStatus
 
@@ -475,16 +480,18 @@ def _assert_settlement(system, portfolio_id, order, emitted, cash_before):
     filled_qty = _sum_filled_qty(order_trades)
     fill_cost = _sum_fill_cost(order_trades)
 
-    # (1) POSITION settled: non-None with qty ≈ the venue-filled qty (within a base-fee
-    #     band — a spot BUY fee is frequently taken from the BTC received).
+    # (1) POSITION settled: non-None with the fill DELTA ≈ the venue-filled qty (within a
+    #     base-fee band — a spot BUY fee is frequently taken from the BTC received). The
+    #     delta is relative to the pre-seeded non-flat baseline, not the absolute qty.
     pos = system.portfolio_handler.get_position(portfolio_id, _OKX_SYMBOL)
     assert pos is not None, (
         f"portfolio has no {_OKX_SYMBOL} position after a real demo fill — settlement "
         f"never reached the portfolio (V17-01 blind spot)")
-    assert pos.net_quantity > 0
-    assert pos.net_quantity <= filled_qty
-    assert pos.net_quantity >= filled_qty * (Decimal("1") - _SETTLE_QTY_FEE_BAND), (
-        f"settled qty {pos.net_quantity} below the fee-band floor of venue-filled "
+    delta_qty = pos.net_quantity - position_before
+    assert delta_qty > 0
+    assert delta_qty <= filled_qty
+    assert delta_qty >= filled_qty * (Decimal("1") - _SETTLE_QTY_FEE_BAND), (
+        f"settled qty delta {delta_qty} below the fee-band floor of venue-filled "
         f"{filled_qty}")
 
     # (2) CASH decreased by ≈ cost+fee — settlement debited the ledger.
@@ -515,6 +522,8 @@ def _assert_settlement(system, portfolio_id, order, emitted, cash_before):
         "filled_qty": filled_qty,
         "fill_cost": fill_cost,
         "position_qty": pos.net_quantity,
+        "position_before": position_before,
+        "position_delta": delta_qty,
         "cash_before": cash_before,
         "cash_after": cash_after,
         "cash_delta": delta,
@@ -596,6 +605,8 @@ def _capture_arch3_finalization(system, order, settlement, venue_id_check):
         "## Wave-1 settlement assertions (GREEN gate)",
         "",
         f"- position qty (settled): `{settlement['position_qty']}`",
+        f"- position before (seeded baseline): `{settlement['position_before']}`",
+        f"- position delta (fill-induced): `{settlement['position_delta']}`",
         f"- venue-filled qty: `{settlement['filled_qty']}`",
         f"- fill cost (quote notional): `{settlement['fill_cost']}`",
         f"- cash before / after: `{settlement['cash_before']}` -> `{settlement['cash_after']}`",
@@ -664,6 +675,10 @@ def test_demo_order_produces_real_fill_event() -> None:
         # D-20: snapshot buying power BEFORE the order so the settlement assertion can
         # prove a real fill DEBITED the ledger (not merely produced a FillEvent).
         cash_before = system.portfolio_handler.available_cash(portfolio_id)
+        # Snapshot the pre-order believed position (non-flat after the venue seed) so the
+        # settlement proof asserts the BUY's DELTA, not the absolute post-fill net_quantity.
+        _pos_before = system.portfolio_handler.get_position(portfolio_id, _OKX_SYMBOL)
+        position_before = _pos_before.net_quantity if _pos_before is not None else Decimal("0")
 
         order = _submit_min_demo_order(system, portfolio_id)
         filled = _wait_for_fill(system, order)
@@ -681,7 +696,7 @@ def test_demo_order_produces_real_fill_event() -> None:
         #     fill lands in the portfolio (position + cash), does not HALT, and the spot
         #     venue-truth channel is []. These four are the Wave-1 GREEN exit gate.
         settlement = _assert_settlement(
-            system, portfolio_id, order, emitted, cash_before)
+            system, portfolio_id, order, emitted, cash_before, position_before)
         # (e) RECORDED soft-check (pending D-06 / Phase 05.2) — records the post-fill
         #     venue_order_id result without hard-failing the Wave-1 gate.
         venue_id_check = _venue_order_id_softcheck(system, order, emitted)
