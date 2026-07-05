@@ -71,13 +71,21 @@ def test_same_tradeid_across_symbols_both_settle() -> None:
 
 
 def test_same_symbol_and_tradeid_still_dedups() -> None:
-    """Re-delivering the SAME (symbol, tradeId) is still a duplicate no-op."""
+    """Re-delivering the SAME (symbol, tradeId) is still a duplicate no-op.
+
+    WR-02 (D-16): ``resolve`` no longer consumes the dedup slot itself — the caller marks the
+    symbol-scoped key seen only after a True ``_emit_fill``. So the second delivery dedups
+    once the first emit is confirmed via ``mark_seen(first.dedup_key)``.
+    """
     idx = VenueCorrelationIndex()
     btc = _make_order(ticker="BTC-USDT", order_id=1)
     idx.register("OID-BTC", btc, "it-btc")
 
     first = idx.resolve({"id": "42", "order": "OID-BTC", "amount": "0.2"})
-    second = idx.resolve({"id": "42", "order": "OID-BTC", "amount": "0.2"})
-
     assert first.outcome == "emit"
+    assert first.dedup_key == "BTC-USDT:42"
+    # The caller consumes the symbol-scoped slot after proving the fill emitted.
+    idx.mark_seen(first.dedup_key)
+
+    second = idx.resolve({"id": "42", "order": "OID-BTC", "amount": "0.2"})
     assert second.outcome == "duplicate"
