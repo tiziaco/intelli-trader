@@ -10,7 +10,7 @@ signature (D-11 avoids the premature-interface trap of freezing connector
 signatures before the integration exists).
 
 Phase 5 lands the cached-venue body (RECON-01 / D-14 / D-15): an RLock-guarded
-balance/available/position cache, an async push writer that mirrors the venue's
+balance/position cache, an async push writer that mirrors the venue's
 private stream (cache-write ONLY on the connector loop thread — it NEVER compares
 and NEVER halts, D-15 single-writer discipline), a REST ``snapshot()`` for
 startup / restart / gap recovery (D-14/D-19), engine-thread reads that surface a
@@ -125,7 +125,6 @@ class VenueAccount(Account):
         # None/empty until first snapshotted — a read before then surfaces loud.
         self._lock = threading.RLock()
         self._venue_balance: Decimal | None = None
-        self._venue_available: Decimal | None = None
         self._venue_positions: dict[str, Decimal] = {}  # symbol -> signed qty
 
         # Open Question 1: local pending-reservation overlay keyed by order id.
@@ -148,21 +147,22 @@ class VenueAccount(Account):
 
     # --- Decimal-edge parsers (None/missing guarded BEFORE the edge) -----------
 
-    def _extract_balance(self, payload: Any) -> tuple[Decimal | None, Decimal | None]:
-        """Extract ``(total, free)`` for the quote currency from a ccxt balance payload.
+    def _extract_balance(self, payload: Any) -> Decimal | None:
+        """Extract the settled ``total`` for the quote currency from a ccxt balance payload.
 
-        Returns a ``(balance, available)`` pair, each ``None`` when the venue did
-        not carry that field. Every venue float crosses the Decimal boundary via
+        Returns the quote ``total`` as ``Decimal``, or ``None`` when the venue did
+        not carry it. Every venue float crosses the Decimal boundary via
         ``to_money(str(x))``; None/missing keys are guarded BEFORE the edge so a
         missing value never becomes ``Decimal("None")`` (money policy, Pitfall 6).
+
+        WR-03: the venue ``free`` map is deliberately NOT parsed. Admission is
+        governed by the local pending-reservation overlay (Open Question 1), so
+        ``available_balance`` nets against the settled ``balance`` — never the venue
+        ``free`` field — and the parsed venue-free value had no reader.
         """
         total_map = payload.get("total") if isinstance(payload, dict) else None
-        free_map = payload.get("free") if isinstance(payload, dict) else None
         total_raw = total_map.get(self._quote) if isinstance(total_map, dict) else None
-        free_raw = free_map.get(self._quote) if isinstance(free_map, dict) else None
-        balance = to_money(str(total_raw)) if total_raw is not None else None
-        available = to_money(str(free_raw)) if free_raw is not None else None
-        return balance, available
+        return to_money(str(total_raw)) if total_raw is not None else None
 
     def _extract_positions(self, payload: Any) -> dict[str, Decimal]:
         """Extract ``symbol -> signed qty`` from a ccxt positions payload.
@@ -240,7 +240,7 @@ class VenueAccount(Account):
         """
         while True:
             update = await self._connector.client.watch_balance()
-            balance, available = self._extract_balance(update)
+            balance = self._extract_balance(update)
             # D-03: on spot the position truth rides the BALANCE stream (there is no
             # positions channel), so derive it here from ``total[BASE]``. Derivative
             # positions arrive via ``_stream_positions`` instead (unchanged). WR-02:
@@ -254,8 +254,6 @@ class VenueAccount(Account):
             with self._lock:
                 if balance is not None:
                     self._venue_balance = balance
-                if available is not None:
-                    self._venue_available = available
                 if spot_positions is not None:
                     self._venue_positions = spot_positions
 
@@ -307,7 +305,7 @@ class VenueAccount(Account):
         derivative leaves keep the unchanged ``fetch_positions`` channel.
         """
         bal = self._connector.call(self._connector.client.fetch_balance())
-        balance, available = self._extract_balance(bal)
+        balance = self._extract_balance(bal)
         if self._market_type == "spot":
             positions = self._extract_spot_position(bal)
         else:
@@ -320,8 +318,6 @@ class VenueAccount(Account):
                 # reconcile the local fill-delta back to zero (never double-count
                 # a fill that the venue snapshot already reflects).
                 self._ledger_delta = Decimal("0")
-            if available is not None:
-                self._venue_available = available
             self._venue_positions = positions
 
     # --- engine-thread reads (D-15 — surface unsnapshotted loud, never 0) -------

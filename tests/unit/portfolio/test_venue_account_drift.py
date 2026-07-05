@@ -50,7 +50,6 @@ def _venue_account(positions: dict[str, Decimal]) -> VenueAccount:
     account = VenueAccount(MagicMock(name="connector"))
     account._venue_positions = dict(positions)
     account._venue_balance = Decimal("78999.79")
-    account._venue_available = Decimal("78999.79")
     return account
 
 
