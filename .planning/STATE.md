@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: 05.2-01 complete (fd3b0b58) — D-06 venue-ack persistence GREEN
-last_updated: "2026-07-05T14:43:15.677Z"
+last_updated: "2026-07-05T15:03:29.263Z"
 last_activity: 2026-07-05
 progress:
   total_phases: 10
   completed_phases: 6
   total_plans: 48
-  completed_plans: 45
+  completed_plans: 46
   percent: 60
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 05.2 (live-path-remediation-wave-2-restart-real-durable-engine-led) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-07-05
 
-Progress: [█████████░] 94%
+Progress: [██████████] 96%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -170,6 +170,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05.2]: 05.2-01: D-06 delivered — new frozen OrderAckEvent (order_id->venue_order_id) emitted by OkxExchange._submit_order once the venue id lands (queue-only, V5 field-bind); OrderHandler.on_order_ack -> OrderManager.stamp_venue_order_id persists via order_storage.update_order (D-18). A2 venue_order_id-persistence GREEN; oracle byte-exact; mypy 229 files. Restart integration fixtures now drive the real ack path (V17-02 hand-stamp deleted; unconfident bracket leg asserted None).
 - [Phase ?]: [Phase 05.2]: 05.2-02: D-09 delivered — VenueReconciler._fetch_trades fetches venue fills per active-order symbol with since=oldest-active-order business time (epoch-ms) + explicit limit=100, NO ccxt auto-pagination (OKX sCode 51000, CONF-B). F/U-13 window guard (_FILLS_HISTORY_WINDOW_DAYS=90) loud-logs WARNING naming the symbol when since predates the venue ~3-month /trade/fills-history window. Oracle byte-exact; mypy clean; paginate grep-clean on the production file.
 - [Phase 05.2]: 05.2-03: D-08 Layers 1+3 delivered — ReconcileManager in-session applied-set (bounded OrderedDict cap 10000) guards _apply_executed BEFORE add_fill so a re-delivered venue trade (same venue_trade_id, fresh fill_id) no-ops (A5 GREEN, filled_quantity stays 0.2); key f'{ticker}:{venue_trade_id}', None-keyed backtest fills skip guard (oracle-dark). VenueCorrelationIndex.resolve dedup re-keyed raw trade_id -> f'{order.ticker}:{trade_id}' (gate moved after resolution), closing V17-12 numeric-tradeId cross-instrument collision. Layer 2 (portfolio_handler) + durable settled-ledger deferred to Plan 04. — D-08 exactly-once settlement per economic venue trade, collision-safe across instruments
+- [Phase 05.2]: 05.2-04: D-07/D-08 delivered — restart remembers positions+cash (new Account.restore_cash restores the persisted cash scalar via rehydrate; open positions already WIRE through the manager read of the rehydrated cache, OQ1) + the settled-trade dedup ledger rehydrates: PortfolioHandler.rehydrate() seeds _settled_venue_trade_ids from durable transactions.venue_trade_id keyed f-string ticker:venue_trade_id; on_fill guard/mark re-keyed symbol-scoped (V17-12). Proven offline vs an in-memory durable double; oracle byte-exact; mypy 229 files. Composition-root wiring + rehydrate-before-reconcile is Plan 05.
 
 ### Pending Todos
 
@@ -250,6 +251,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.2 P01 | 18min | 2 tasks | 10 files |
 | Phase 05.2 P02 | 12min | 2 tasks | 2 files |
 | Phase 05.2 P03 | 15min | 2 tasks | 4 files |
+| Phase 05.2 P04 | 12min | 2 tasks | 7 files |
 
 ## Deferred Items
 
@@ -299,7 +301,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-05T14:41:57.986Z
+Last session: 2026-07-05T15:02:09.567Z
 Stopped at: 05.2-01 complete (fd3b0b58) — D-06 venue-ack persistence GREEN
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
