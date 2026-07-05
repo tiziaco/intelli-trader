@@ -714,8 +714,12 @@ class Portfolio(object):
 	
 	def _validate_transaction(self, transaction: Transaction) -> None:
 		"""Validate transaction against portfolio configuration."""
-		# Check position limits
-		if transaction.quantity > 0:  # Buy transaction
+		# Check position limits — gate the OPEN/GROW checks on the transaction
+		# TYPE, not the magnitude (WR-01): quantity is always a positive magnitude
+		# (direction rides transaction.type), so `quantity > 0` was ALWAYS true and
+		# wrongly ran the buy-only limits for closing SELLs — blocking exits at the
+		# position cap (and, in live, failing settlement into a drift-halt).
+		if transaction.type == TransactionType.BUY:
 			if self.n_open_positions >= self.config.limits.max_positions:
 				# FL-01: domain limit breach (not state/field validation) — PortfolioError base.
 				raise PortfolioError(f"Maximum positions limit reached: {self.config.limits.max_positions}")
