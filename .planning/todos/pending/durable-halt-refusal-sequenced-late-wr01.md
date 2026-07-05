@@ -3,7 +3,7 @@ status: deferred
 created: "2026-07-05"
 source: Phase 05.2 (v1.7) code review finding WR-01 — owner-deferred (tiziaco, 2026-07-05)
 tags: [live, halt, durable, restart, start-sequence, D-10, ARCH-4, resilience, phase-05.3]
-resolves_phase: ""
+resolves_phase: "05.3"
 ---
 
 # Durable-halt refusal is sequenced too late in `LiveTradingSystem.start()` (WR-01)

@@ -3,7 +3,7 @@ status: deferred
 created: "2026-07-05"
 source: Phase 05.2 (v1.7) code review finding WR-04 — owner-deferred (tiziaco, 2026-07-05)
 tags: [live, durable, restart, persistence, atomicity, portfolio, D-07, resilience, phase-05.3]
-resolves_phase: ""
+resolves_phase: "05.3"
 ---
 
 # Position persist and cash-scalar persist are non-atomic across a crash (WR-04)
