@@ -65,9 +65,20 @@ class PortfolioHandler:
     concurrently. Live cross-thread reads are a D-live design item.
     """
     
-    def __init__(self, global_queue: "Queue[Any]", config_dir: str = "settings", environment: str = "default") -> None:
+    def __init__(self, global_queue: "Queue[Any]", config_dir: str = "settings",
+                 environment: str = "backtest", backend: "Optional[Any]" = None) -> None:
         self.global_queue: "Queue[Any]" = global_queue
         self.current_time: Any = 0
+
+        # D-07 (05.2-05): the durable portfolio-storage selector threaded down
+        # into each Portfolio's state storage (add_portfolio -> Portfolio ->
+        # PortfolioStateStorageFactory.create). "backtest" (the default) is the
+        # in-memory oracle-dark path; the live composition root passes "live" +
+        # the shared SqlBackend so every portfolio persists to the durable SQL
+        # ledger and rehydrates its truth on restart. ``backend`` is typed Any
+        # to keep the SqlBackend import off this hot-path module (GATE-01).
+        self._environment = environment
+        self._backend = backend
         
         # Initialize configuration by constructing the Pydantic model directly
         # (M2-06 / D-01): the registry/provider getters were deleted. Pydantic validates
@@ -205,13 +216,18 @@ class PortfolioHandler:
                 if len(self._portfolios) >= self.max_portfolios:
                     raise PortfolioConfigurationError("max_portfolios", self.max_portfolios, "maximum portfolios limit reached")
                 
-                # Create portfolio instance
+                # Create portfolio instance. D-07 (05.2-05): thread the durable
+                # environment + shared backend so the portfolio's state storage
+                # is the live SQL ledger when wired 'live' (default "backtest" =
+                # in-memory, oracle-dark).
                 portfolio = Portfolio(
                     name=name,
                     exchange=exchange,
                     cash=to_money(cash),
                     time=datetime.now(UTC),
-                    config=portfolio_config
+                    config=portfolio_config,
+                    environment=self._environment,
+                    backend=self._backend,
                 )
                 
                 # Store portfolio
@@ -842,6 +858,48 @@ class PortfolioHandler:
         while len(self._settled_venue_trade_ids) > self._max_settled_venue_trade_ids:
             self._settled_venue_trade_ids.popitem(last=False)
 
+    def _persist_account_state(self, portfolio: Portfolio, updated_time: datetime) -> None:
+        """Write-through the durable account-state scalar after a settled fill (F/U-11).
+
+        The D-07 restore path (Plan 04) reads the cash scalar back on restart via
+        ``load_account_state`` -> ``Account.restore_cash``; that read is only
+        meaningful if ``save_account_state`` is actually written on the settlement
+        path. This seam persists ``cash_balance`` (+ the derived accounting scalars
+        the row carries) once the fill has settled, so a process restart restores
+        the true balance rather than the construction-time initial cash.
+
+        LIVE ONLY / oracle-dark: the in-memory backtest backend exposes no
+        ``save_account_state`` (only ``CachedSqlPortfolioStateStorage`` does), so
+        this is a clean ``getattr`` skip on the SMA_MACD path (no persistence, no
+        new branch through the byte-exact run). ``updated_time`` is the fill's
+        BUSINESS time (never wall-clock — determinism). ``peak_equity`` monotonically
+        tracks the high-water equity across restarts by max-ing the current equity
+        against any previously-persisted peak.
+        """
+        storage = portfolio.state_storage
+        save_account_state = getattr(storage, "save_account_state", None)
+        if save_account_state is None:
+            return  # in-memory backtest backend — nothing durable to persist.
+
+        total_equity = portfolio.total_equity
+        # Carry the high-water peak forward across restarts (the drawdown basis).
+        load_account_state = getattr(storage, "load_account_state", None)
+        prior_peak = Decimal("0")
+        if load_account_state is not None:
+            prior_state = load_account_state()
+            if prior_state is not None:
+                prior_peak = prior_state["peak_equity"]
+        peak_equity = max(prior_peak, total_equity)
+
+        save_account_state(
+            cash_balance=portfolio.account.balance,
+            realized_pnl=portfolio.total_realised_pnl,
+            total_equity=total_equity,
+            peak_equity=peak_equity,
+            open_positions_count=portfolio.n_open_positions,
+            updated_time=updated_time,
+        )
+
     def rehydrate(self) -> None:
         """Restore live portfolio state + the durable dedup ledger on restart (D-07/D-08).
 
@@ -987,6 +1045,14 @@ class PortfolioHandler:
                 # backtest/simulated fills never record.
                 if dedup_key is not None:
                     self._mark_venue_trade_settled(dedup_key)
+
+                # F/U-11 (05.2-05): write-through the account-state scalar on the
+                # settlement path so the Plan-04 restore (rehydrate ->
+                # load_account_state -> Account.restore_cash) has a persisted cash
+                # balance to read on restart. The in-memory backtest backend has
+                # no save_account_state, so this is a clean getattr-skip
+                # (oracle-dark — the SMA_MACD run never persists). LIVE ONLY.
+                self._persist_account_state(portfolio, fill_event.time)
 
                 self.logger.debug(
                     "Fill event processed",
