@@ -443,6 +443,41 @@ def test_adopt_correlation_none_venue_id_is_noop(
     assert queue.empty()
 
 
+# --- (ii-c) D-16 WR-01: release_pending on a DEFINITIVE submit failure ----------
+
+
+def test_release_pending_on_definitive_submit_failure(
+    exchange: OkxExchange, fake_client: MagicMock
+) -> None:
+    """WR-01: a DEFINITIVE venue rejection (ccxt.InvalidOrder) drops the pending clOrdId
+    correlation registered before the RPC — a failed submit does not leak it."""
+    import ccxt
+
+    order = _make_order(order_id=1)
+    clordid = OkxExchange._client_order_id(order)
+    fake_client.create_order = AsyncMock(side_effect=ccxt.InvalidOrder("bad symbol"))
+
+    exchange.on_order(order)
+
+    # Definitive rejection -> the pending correlation is released (no leak).
+    assert clordid not in exchange._index._orders_by_clOrdId
+
+
+def test_release_pending_not_called_on_ambiguous_submit_timeout(
+    exchange: OkxExchange, fake_client: MagicMock
+) -> None:
+    """WR-01 / D-13: an AMBIGUOUS transport timeout leaves the mirror in-flight — the
+    pending clOrdId correlation is RETAINED (the order may still fill, resolving via it)."""
+    order = _make_order(order_id=2)
+    clordid = OkxExchange._client_order_id(order)
+    fake_client.create_order = AsyncMock(side_effect=TimeoutError())
+
+    exchange.on_order(order)
+
+    # Ambiguous transport -> pending correlation retained (NOT released).
+    assert exchange._index._orders_by_clOrdId.get(clordid) is order
+
+
 # --- (iii) stream resilience: a malformed trade does not kill the loop ---------
 
 

@@ -18,10 +18,14 @@ Folder-derived ``unit`` marker (no decorator). Decimal edge held (money is
 ``Decimal`` end-to-end). No new pytest marker, no watch-mode flags.
 """
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import pytest
+
 from itrader.core.enums import OrderCommand, OrderType, Side
+from itrader.core.exceptions import ValidationError
 from itrader.events_handler.events import OrderEvent
 from itrader.execution_handler.exchanges.venue_correlation import VenueCorrelationIndex
 
@@ -219,3 +223,60 @@ def test_release_is_idempotent_on_unknown_venue_id() -> None:
     unknown_order, unknown_drained = idx.release("NEVER-SEEN")
     assert unknown_order is None
     assert unknown_drained == []
+
+
+# --- D-16 WR-01: release_pending pairs register_pending on submit failure --------
+
+
+def test_release_pending_removes_leaked_correlation() -> None:
+    """WR-01: ``release_pending`` is the paired inverse of ``register_pending`` — it drops
+    the pre-correlation clOrdId entry so a failed submit does not leak it. Idempotent."""
+    idx = VenueCorrelationIndex()
+    order = _make_order()
+
+    idx.register_pending("cid-1", order)
+    assert idx.resolve({"id": "T-1", "clientOrderId": "cid-1", "amount": "0.1"}).order is order
+
+    idx.release_pending("cid-1")
+    # The pending correlation is gone — a fill echoing the clOrdId no longer resolves.
+    res = idx.resolve({"id": "T-2", "clientOrderId": "cid-1", "amount": "0.1"})
+    assert res.order is None
+    assert res.outcome == "uncorrelated"
+
+    # Idempotent on an unknown / already-released clOrdId.
+    idx.release_pending("never-registered")
+
+
+# --- D-16 IN-01: reject capacity < 1 at construction ----------------------------
+
+
+def test_capacity_below_one_is_rejected() -> None:
+    """IN-01: a dedup-ring capacity < 1 is a construction error (the ring must hold >= 1)."""
+    with pytest.raises(ValidationError):
+        VenueCorrelationIndex(capacity=0)
+    with pytest.raises(ValidationError):
+        VenueCorrelationIndex(capacity=-5)
+    # capacity == 1 is the accepted boundary.
+    assert VenueCorrelationIndex(capacity=1).seen_count() == 0
+
+
+# --- D-16: bound + alarm the uncorrelated-fill buffer ---------------------------
+
+
+def test_uncorrelated_buffer_is_bounded_and_alarms(caplog: pytest.LogCaptureFixture) -> None:
+    """A flood of external (unknown venue id) fills cannot grow ``_pending_fills_by_venue_id``
+    without limit: the total buffered fills stay bounded and a WARNING alarms on eviction."""
+    idx = VenueCorrelationIndex(pending_buffer_max=3)
+
+    with caplog.at_level(logging.WARNING):
+        for i in range(6):
+            res = idx.resolve({"id": f"T-{i}", "order": f"EXT-{i}", "amount": "0.1"})
+            assert res.outcome == "buffered"
+
+    # Bounded: the total number of buffered fills never exceeds the cap.
+    total = sum(idx.pending_count(f"EXT-{i}") for i in range(6))
+    assert total <= 3
+
+    # Alarmed: at least one WARNING fired on eviction.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings, "expected a WARNING when the uncorrelated-fill buffer overflows"
