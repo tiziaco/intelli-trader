@@ -303,6 +303,21 @@ class LiveTradingSystem:
         else:
             self.portfolio_handler = PortfolioHandler(self.global_queue)
 
+        # 05.2-06 (D-10 / ARCH-4 Layer 2): durable halt-record store — the HALTED
+        # latch that survives a process restart. Built over the SAME shared Postgres
+        # spine when present (so a breaker halt persisted by halt() latches across a
+        # supervised auto-restart), else None (in-memory fallback -> no durable record,
+        # degrade cleanly like the order/signal/portfolio stores above). The SQL import
+        # stays LAZY inside the spine-present arm so the backtest import path remains
+        # SQLAlchemy-free (GATE-01 inertness). Offline tests inject an in-memory double
+        # via attribute assignment.
+        if self._system_db_backend is not None:
+            from itrader.storage.halt_record_store import HaltRecordStore
+            self._halt_record_store: Optional[Any] = HaltRecordStore(
+                self._system_db_backend)
+        else:
+            self._halt_record_store = None
+
         # Execution handler constructed BEFORE the order handler so the
         # admission gate's commission estimator can adapt the simulated
         # exchange's fee model (Plan 05-06, D-04 — mode-agnostic wiring).
@@ -698,6 +713,17 @@ class LiveTradingSystem:
             operation='halt',
             severity=ErrorSeverity.CRITICAL,
         ))
+        # 05.2-06 (D-10 / ARCH-4 Layer 2): persist a DURABLE halt record so the HALTED
+        # latch survives a process restart — a supervised auto-restart builds a FRESH
+        # engine (in-process _status STOPPED) that would otherwise silently clear a
+        # breaker halt whose cause is not re-detectable at start(). Reached ONLY by the
+        # winning transition above, so a re-entrant (idempotent) halt never double-writes.
+        # Bind ONLY the machine-readable reason literal + timestamp (V7 secret-scrub,
+        # T-05.2-18; mirrors the ErrorEvent field-bind discipline) — never str(exc) or a
+        # connector payload. Guarded on the store being present (in-memory fallback ->
+        # no durable record, degrade cleanly).
+        if self._halt_record_store is not None:
+            self._halt_record_store.record_halt(reason, datetime.now(UTC))
 
     def _is_halted(self) -> bool:
         """Whether the engine is in the freeze-in-place HALTED state (D-02)."""
@@ -734,6 +760,13 @@ class LiveTradingSystem:
             force=True,
         )
         if cleared:
+            # 05.2-06 (D-10): resolve the DURABLE halt record too, so the durable latch
+            # does not re-refuse the next start() (F/U-9 verify-then-trust: that next
+            # start() still re-runs reconciliation + the baseline guard from a clean
+            # STOPPED baseline, so the halt cause is re-checked, never assumed resolved).
+            # Guarded on the store being present (in-memory fallback -> no-op).
+            if self._halt_record_store is not None:
+                self._halt_record_store.resolve_all()
             self.logger.warning(
                 'HALTED cleared by operator reset_halt() — engine returned to STOPPED; '
                 'a subsequent start() will re-run reconciliation + the baseline guard '
@@ -1348,6 +1381,36 @@ class LiveTradingSystem:
                 # venue holding the engine never opened must still halt). On a clean
                 # fresh session (engine flat, venue flat) it is a benign no-op.
                 self._run_session_baseline_guard()
+
+            # 05.2-06 (D-10 / ARCH-4 Layer 2): a DURABLE halt record latches across a
+            # process restart. A supervised auto-restart builds a FRESH engine whose
+            # in-process _status is STOPPED, so the in-process _is_halted() check below
+            # would silently clear a breaker halt whose cause is not re-detectable at
+            # start(). Refuse RUNNING while an unresolved durable record exists (runs for
+            # EVERY venue, outside the OKX branch) and RE-LATCH this fresh instance
+            # in-process from the persisted reason via _update_status (NOT halt() — halt()
+            # would write a SECOND durable record) so get_status() reflects it and
+            # reset_halt() can clear both the in-process and durable latches. Only re-latch
+            # when not already HALTED (a reconcile/guard halt above is handled by the D-05
+            # check below); guarded on the store being present (in-memory fallback -> skip).
+            if (self._halt_record_store is not None
+                    and not self._is_halted()
+                    and self._halt_record_store.has_unresolved()):
+                durable_record = self._halt_record_store.get_unresolved()
+                durable_reason = (
+                    durable_record.reason if durable_record is not None
+                    else 'durable-halt')
+                self.logger.error(
+                    'start() refused RUNNING: an unresolved DURABLE halt record latches '
+                    'across the restart (reason=%s) — a supervised auto-restart cannot '
+                    'silently clear a breaker halt (T-05.2-17); resolve the cause then '
+                    'call reset_halt()', durable_reason)
+                self._update_status(
+                    SystemStatus.HALTED,
+                    error_msg=f'durable halt latched on restart: {durable_reason}',
+                    halt_reason=durable_reason)
+                self._running = False
+                return False
 
             # D-05 (V17-03): a reconcile/guard halt during session init must LATCH.
             # The VenueReconciler.reconcile() above (or the baseline guard) may have
