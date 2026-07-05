@@ -451,6 +451,14 @@ class OkxExchange(AbstractExchange):
 		fee = trade.get("fee") if isinstance(trade.get("fee"), dict) else {}
 		fee_cost = fee.get("cost")
 		commission = abs(to_money(str(fee_cost))) if fee_cost is not None else Decimal("0")
+		# spot-base-fee-drift-halt: carry the fee CURRENCY too. OKX charges the
+		# spot BUY taker fee in the pair's BASE asset (BTC), so the venue credits
+		# ``amount - base_fee`` BTC — dropping the currency (as this path used to)
+		# made the engine record the full ``amount`` and overstate the position by
+		# the fee, tripping the on-fill drift halt. The portfolio settlement branch
+		# reads this to net a base-denominated fee out of the position quantity.
+		fee_currency = fee.get("currency")
+		fee_currency = str(fee_currency) if fee_currency is not None else None
 
 		# CR-01: carry the venue trade id onto the FillEvent as the cross-emitter
 		# idempotency key. The exchange-local ``_seen_trade_ids`` dedups a stream
@@ -466,7 +474,8 @@ class OkxExchange(AbstractExchange):
 			quantity=to_money(str(amount)),
 			commission=commission,
 			time=self._ms_to_dt(timestamp),
-			venue_trade_id=venue_trade_id)
+			venue_trade_id=venue_trade_id,
+			fee_currency=fee_currency)
 		# D-07: the EXCHANGE emits the fill; MPSC-safe put from the connector loop thread (D-19).
 		self.global_queue.put(fill)
 		return True

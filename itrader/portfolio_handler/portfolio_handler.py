@@ -919,6 +919,11 @@ class PortfolioHandler:
                     # CR-01: carry the venue trade id onto the durable settlement
                     # record (None for backtest/simulated fills — oracle-dark).
                     venue_trade_id=venue_trade_id,
+                    # spot-base-fee-drift-halt: carry the venue fee currency so the
+                    # spot settlement seam nets a base-denominated fee (OKX spot BUY)
+                    # out of the position quantity instead of the quote cash leg.
+                    # None for backtest/simulated fills (oracle-dark).
+                    fee_currency=getattr(fill_event, "fee_currency", None),
                 )
 
                 portfolio.transact_shares(transaction)

@@ -52,6 +52,13 @@ class Transaction(msgspec.Struct, gc=False):
 	# position-life locked margin (aggregate_notional / leverage) EQUALS the
 	# admission reservation (notional / effective_leverage).
 	leverage: Decimal = msgspec.field(default_factory=lambda: Decimal("1"))
+	# spot-base-fee-drift-halt: the venue's fee CURRENCY carried from the FillEvent.
+	# OKX charges the spot BUY taker fee in the pair's BASE asset (BTC); when this
+	# equals the pair base the settlement seam nets the fee out of the position
+	# quantity instead of debiting it from quote cash. None for backtest/simulated
+	# fills (oracle-dark) — the defaulted field keeps the positional construction +
+	# spot byte-exact path unchanged.
+	fee_currency: Optional[str] = None
 
 	def __post_init__(self) -> None:
 		"""Enter the Decimal money domain at the construction boundary (D-04).
@@ -99,6 +106,59 @@ class Transaction(msgspec.Struct, gc=False):
 			return self.cost + self.commission
 
 	@property
+	def base_asset(self) -> Optional[str]:
+		"""The pair's BASE asset parsed from the ticker (spot-base-fee-drift-halt).
+
+		Venue tickers on the live path are ccxt-unified ``BASE/QUOTE`` (e.g.
+		``BTC/USDC`` → ``BTC``). Returns None for a ticker without a ``/`` separator
+		(e.g. the backtest ``BTCUSDT`` idiom) so the base-fee branch never engages on
+		the oracle path.
+		"""
+		if "/" in self.ticker:
+			return self.ticker.split("/")[0]
+		return None
+
+	@property
+	def is_base_fee(self) -> bool:
+		"""True when the venue charged the fee in the pair's BASE asset (OKX spot BUY).
+
+		Requires a non-None ``fee_currency`` that equals the parsed base asset AND a
+		non-zero commission. False for a quote-denominated fee, a fee currency absent
+		(None — every backtest/simulated fill), or a zero commission → the CURRENT
+		settlement path (oracle-dark, byte-exact).
+		"""
+		if self.fee_currency is None or self.commission == 0:
+			return False
+		return self.fee_currency == self.base_asset
+
+	@property
+	def quote_commission(self) -> Decimal:
+		"""Commission that settles as a QUOTE cash flow (spot-base-fee-drift-halt).
+
+		A base-denominated fee is taken in the base asset and nets out of the position
+		quantity, so it is NOT a quote cash outflow → ``Decimal("0")``. Otherwise the
+		full commission is a quote cash flow (default / oracle path → identity, so the
+		cash math is byte-exact when there is no venue base fee).
+		"""
+		if self.is_base_fee:
+			return Decimal("0")
+		return self.commission
+
+	@property
+	def position_quantity(self) -> Decimal:
+		"""Base quantity that actually settles into the position (spot-base-fee-drift-halt).
+
+		For a base-denominated fee on a BUY the venue credits ``amount - base_fee`` base
+		(the fee is netted out of what is received), so the position must hold the NET
+		amount to equal the venue base balance (drift eliminated at the source). Every
+		other path — quote-fee, None fee currency, SELL — returns the full traded
+		``quantity`` (oracle-dark, byte-exact).
+		"""
+		if self.is_base_fee and self.type == TransactionType.BUY:
+			return self.quantity - self.commission
+		return self.quantity
+
+	@property
 	def net_cash_delta(self) -> Decimal:
 		"""
 		Signed, full-precision net cash delta this transaction settles for.
@@ -118,10 +178,15 @@ class Transaction(msgspec.Struct, gc=False):
 			Negative for a BUY (cash outflow: -(cost + commission)),
 			positive for a SELL (cash inflow: cost - commission).
 		"""
+		# spot-base-fee-drift-halt: a base-denominated fee has NO quote cash leg
+		# (``quote_commission`` == 0) — it is netted out of the position quantity
+		# instead. ``quote_commission`` is the full commission on the default /
+		# quote-fee path, so this expression is byte-exact when there is no venue
+		# base fee (the SMA_MACD oracle path).
 		if self.type == TransactionType.BUY:
-			return -(self.price * self.quantity + self.commission)
+			return -(self.price * self.quantity + self.quote_commission)
 		else:  # SELL
-			return self.price * self.quantity - self.commission
+			return self.price * self.quantity - self.quote_commission
 
 	@classmethod
 	def new_transaction(cls, filled_order: FillEvent) -> "Transaction":
@@ -158,6 +223,9 @@ class Transaction(msgspec.Struct, gc=False):
 			leverage=getattr(filled_order, "leverage", Decimal("1")),
 			# CR-01: carry the venue trade id (None for backtest/simulated fills).
 			venue_trade_id=getattr(filled_order, "venue_trade_id", None),
+			# spot-base-fee-drift-halt: carry the venue fee currency (None for
+			# backtest/simulated fills — oracle-dark).
+			fee_currency=getattr(filled_order, "fee_currency", None),
 		)
 
 	def to_dict(self) -> dict[str, object]:

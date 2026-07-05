@@ -397,7 +397,11 @@ class Portfolio(object):
 		#    fee field and event-derived timestamp (D-05/D-06, Pitfalls 1/5).
 		self.account.apply_fill_cash_flow(
 			amount=net_delta,
-			fee=transaction.commission,
+			# spot-base-fee-drift-halt: the QUOTE-cash commission portion included in
+			# ``net_delta`` (0 for a base-denominated fee, which is netted out of the
+			# position quantity instead). Identity to transaction.commission on the
+			# default / oracle path (byte-exact).
+			fee=transaction.quote_commission,
 			description=f"Transaction {transaction.type.name} {transaction.ticker}",
 			reference_id=str(transaction.id),
 			timestamp=transaction.time,

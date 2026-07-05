@@ -76,6 +76,13 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
     # at the settlement chokepoint — the SMA_MACD oracle stays byte-exact
     # (oracle-dark). Stamped live-only from the ccxt-unified ``trade['id']``.
     venue_trade_id: 'str | None' = None
+    # spot-base-fee-drift-halt: the venue's fee CURRENCY (ccxt-unified
+    # ``trade['fee']['currency']``). OKX charges the spot BUY taker fee in the
+    # pair's BASE asset (BTC) — carried so settlement can net a base-denominated
+    # fee out of the position quantity instead of the (unit-mismatched) cash leg.
+    # Default None so backtest/simulated fills take NO new settlement branch and
+    # the SMA_MACD oracle stays byte-exact (oracle-dark). Stamped live-only.
+    fee_currency: 'str | None' = None
 
     def __str__(self) -> str:
         return f'{self.type} ({self.ticker}, {self.action}, {round(self.quantity, 4)}, {round(self.price, 4)} $)'
@@ -88,7 +95,8 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
                  price: 'Decimal | float', quantity: 'Decimal | float',
                  commission: 'Decimal | float',
                  time: 'datetime | None' = None,
-                 venue_trade_id: 'str | None' = None) -> 'FillEvent':
+                 venue_trade_id: 'str | None' = None,
+                 fee_currency: 'str | None' = None) -> 'FillEvent':
         """
         Generate a complete FillEvent from the originating order.
 
@@ -135,6 +143,10 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
             key. Defaults to None: backtest/simulated fills carry no venue key
             and are unaffected (oracle-dark). Live emitters (OkxExchange stream,
             VenueReconciler) stamp it from the ccxt-unified ``trade['id']``.
+        fee_currency : `str`, optional (keyword-only)
+            The venue's fee currency (spot-base-fee-drift-halt) — the ccxt-unified
+            ``trade['fee']['currency']``. Defaults to None: backtest/simulated fills
+            carry no fee currency and take no new settlement branch (oracle-dark).
 
         Returns
         -------
@@ -161,4 +173,7 @@ class FillEvent(Event, frozen=True, kw_only=True, gc=False):
             leverage=getattr(order, "leverage", Decimal("1")),
             # CR-01: the venue trade id (None for backtest/simulated fills).
             venue_trade_id=venue_trade_id,
+            # spot-base-fee-drift-halt: the venue fee currency (None for
+            # backtest/simulated fills — oracle-dark).
+            fee_currency=fee_currency,
         )
