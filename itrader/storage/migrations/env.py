@@ -31,6 +31,7 @@ from itrader.config.sql import SqlDriver, SqlSettings
 from itrader.order_handler.storage.models import build_order_tables
 from itrader.portfolio_handler.storage.models import build_portfolio_tables
 from itrader.storage.backend import NAMING_CONVENTION
+from itrader.storage.halt_record_store import build_halt_records_table
 from itrader.strategy_handler.storage.models import build_signal_tables
 
 # The Alembic Config object — access to the values within the .ini file in use.
@@ -59,6 +60,10 @@ target_metadata = MetaData(naming_convention=NAMING_CONVENTION)
 build_order_tables(target_metadata)
 build_portfolio_tables(target_metadata)
 build_signal_tables(target_metadata)
+# D-10 (05.2-06): the durable halt-record table registrar — the same single source of
+# truth the store's create_all uses, so autogenerate sees ``halt_records`` and never emits
+# a spurious drop for the table the ``d10_halt_records`` migration creates.
+build_halt_records_table(target_metadata)
 
 
 def _resolve_url() -> str:

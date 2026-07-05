@@ -62,3 +62,11 @@ class IDGenerator:
 	def generate_correlation_id(self) -> uuid.UUID:
 		"""Generate unique correlation ID (D-01/D-02 — single UUIDv7 scheme)."""
 		return self._uuid7()
+
+	def generate_halt_record_id(self) -> uuid.UUID:
+		"""Generate unique durable halt-record ID (D-10 — single UUIDv7 scheme).
+
+		The ``halt_records`` primary key (the HALTED latch that survives a process
+		restart). One UUIDv7 scheme — no DB autoincrement / second ID scheme.
+		"""
+		return self._uuid7()
