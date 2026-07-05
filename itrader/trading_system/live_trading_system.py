@@ -1352,6 +1352,43 @@ class LiveTradingSystem:
         self._update_status(SystemStatus.STARTING)
         
         try:
+            # 05.3-08 (D-20 / WR-01): the DURABLE halt refusal gate runs FIRST — right
+            # after STARTING and BEFORE any session init / OKX connect / feed warmup /
+            # stream spawn / VenueAccount.snapshot() / VenueReconciler.reconcile(). A
+            # supervised auto-restart builds a FRESH engine whose in-process _status is
+            # STOPPED, so the in-process _is_halted() check further below would silently
+            # clear a breaker halt whose cause is not re-detectable at start(). Refuse
+            # RUNNING while an unresolved durable record exists (runs for EVERY venue,
+            # outside the OKX branch) and RE-LATCH this fresh instance in-process from the
+            # persisted reason via _update_status (NOT halt() — halt() would write a SECOND
+            # durable record) so get_status() reflects it and reset_halt() can clear both
+            # the in-process and durable latches. Placed at the TOP so a durably-HALTED
+            # engine stays INERT: zero venue I/O, no state-mutating reconcile, no second
+            # durable record (WR-01 — the old late position ran the whole OKX handshake +
+            # reconcile before refusing). The `not self._is_halted()` conjunct is KEPT (a
+            # reconcile/guard halt raised DURING this run is handled by the D-05 check
+            # below, no double-refuse); guarded on the store being present (in-memory
+            # fallback -> skip). Sits before the D-17 error-policy bind so a refused start
+            # does not even install the live handler policy.
+            if (self._halt_record_store is not None
+                    and not self._is_halted()
+                    and self._halt_record_store.has_unresolved()):
+                durable_record = self._halt_record_store.get_unresolved()
+                durable_reason = (
+                    durable_record.reason if durable_record is not None
+                    else 'durable-halt')
+                self.logger.error(
+                    'start() refused RUNNING: an unresolved DURABLE halt record latches '
+                    'across the restart (reason=%s) — a supervised auto-restart cannot '
+                    'silently clear a breaker halt (T-05.2-17); resolve the cause then '
+                    'call reset_halt()', durable_reason)
+                self._update_status(
+                    SystemStatus.HALTED,
+                    error_msg=f'durable halt latched on restart: {durable_reason}',
+                    halt_reason=durable_reason)
+                self._running = False
+                return False
+
             # D-17 (error-policy split, WR-04): install the live publish-and-continue
             # policy HERE — on the daemon/live path ONLY. A live session can't abort on
             # one handler error (it must emit an ErrorEvent and keep draining, RES-01
@@ -1461,35 +1498,12 @@ class LiveTradingSystem:
                 # fresh session (engine flat, venue flat) it is a benign no-op.
                 self._run_session_baseline_guard()
 
-            # 05.2-06 (D-10 / ARCH-4 Layer 2): a DURABLE halt record latches across a
-            # process restart. A supervised auto-restart builds a FRESH engine whose
-            # in-process _status is STOPPED, so the in-process _is_halted() check below
-            # would silently clear a breaker halt whose cause is not re-detectable at
-            # start(). Refuse RUNNING while an unresolved durable record exists (runs for
-            # EVERY venue, outside the OKX branch) and RE-LATCH this fresh instance
-            # in-process from the persisted reason via _update_status (NOT halt() — halt()
-            # would write a SECOND durable record) so get_status() reflects it and
-            # reset_halt() can clear both the in-process and durable latches. Only re-latch
-            # when not already HALTED (a reconcile/guard halt above is handled by the D-05
-            # check below); guarded on the store being present (in-memory fallback -> skip).
-            if (self._halt_record_store is not None
-                    and not self._is_halted()
-                    and self._halt_record_store.has_unresolved()):
-                durable_record = self._halt_record_store.get_unresolved()
-                durable_reason = (
-                    durable_record.reason if durable_record is not None
-                    else 'durable-halt')
-                self.logger.error(
-                    'start() refused RUNNING: an unresolved DURABLE halt record latches '
-                    'across the restart (reason=%s) — a supervised auto-restart cannot '
-                    'silently clear a breaker halt (T-05.2-17); resolve the cause then '
-                    'call reset_halt()', durable_reason)
-                self._update_status(
-                    SystemStatus.HALTED,
-                    error_msg=f'durable halt latched on restart: {durable_reason}',
-                    halt_reason=durable_reason)
-                self._running = False
-                return False
+            # 05.3-08 (D-20 / WR-01): the DURABLE halt refusal gate that used to sit HERE
+            # (after the full OKX handshake + reconcile) was moved to the TOP of start()
+            # so a durably-HALTED engine refuses INERT — zero venue I/O, no state-mutating
+            # reconcile, no second durable record. Only the D-05 in-process check below
+            # remains at this position, to latch a halt raised DURING this run's
+            # reconcile/baseline guard.
 
             # D-05 (V17-03): a reconcile/guard halt during session init must LATCH.
             # The VenueReconciler.reconcile() above (or the baseline guard) may have
