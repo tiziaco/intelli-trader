@@ -258,6 +258,16 @@ def test_supervisor_catchall_venue_stream_survives_networkerror() -> None:
     ``NetworkError`` kills the balance-cache writer outright, so the post-blip balance is
     never written and the cache freezes at ``None``. GREEN after D-11 wraps it in the same
     bounded-retry supervisor: the transient drop is survived and the recovered balance lands.
+
+    NOTE (Phase 05.3 implementer — assertion premise invalidated by commit 30cfb73):
+    the ``_venue_balance == 123.45`` assertion below no longer expresses stream survival.
+    The cash-double-count fix made the balance stream (``_write_balance_stream``) write
+    POSITIONS ONLY — ``_venue_balance`` is now written SOLELY by ``snapshot()`` (single-
+    channel cash, D-01). So even AFTER D-11 adds the reconnect supervisor, this test will
+    STILL fail on the ``_venue_balance`` check, because the stream deliberately never writes
+    the cash baseline anymore. When you implement D-11, RE-EXPRESS the survival assertion
+    another way (e.g. assert a positions write after recovery, or spy the recovery
+    iteration) — do NOT resurrect a stream-side ``_venue_balance`` write to satisfy it.
     """
     client = MagicMock(name="ccxt_pro_client")
     good_balance = {"total": {"USDT": 123.45}, "free": {"USDT": 100.0}}
@@ -278,6 +288,8 @@ def test_supervisor_catchall_venue_stream_survives_networkerror() -> None:
         # GREEN: the supervisor breaks on the _StopLoop sentinel after the recovery write.
         pass
 
+    # NOTE (30cfb73): the balance stream now writes positions only; _venue_balance is
+    # snapshot()-only. This assertion must be re-expressed when D-11 lands — see docstring.
     assert venue._venue_balance == to_money("123.45"), (
         "A6/V17-07: VenueAccount._stream_account is a bare `while True` with no reconnect "
         "supervisor — a single NetworkError killed the balance-cache writer silently and the "
