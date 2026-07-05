@@ -383,8 +383,8 @@ Plans:
 
 - [x] 05.3-01-PLAN.md — D-11 stream supervisor catch-all + supervised venue streams (turn A6 spine GREEN) [wave 1]
 - [x] 05.3-07-PLAN.md — D-19 atomic fill-path persist + D-22 restart-seeded reconcile dedup ring (durable restart integrity) [wave 1]
-- [ ] 05.3-02-PLAN.md — D-13 submit-timeout in-flight (turn A7 GREEN) + D-12 missed-fill catch-up on resume [wave 2]
-- [ ] 05.3-04-PLAN.md — D-15 drop buying-power overlay on venue ack [wave 2]
+- [x] 05.3-02-PLAN.md — D-13 submit-timeout in-flight (turn A7 GREEN) + D-12 missed-fill catch-up on resume [wave 2]
+- [x] 05.3-04-PLAN.md — D-15 drop buying-power overlay on venue ack [wave 2]
 - [ ] 05.3-03-PLAN.md — D-16 05-13 correlation carry-overs (mark-seen-after, release_pending, capacity guard, bounded buffer) [wave 3]
 - [ ] 05.3-05-PLAN.md — D-17 loop-native gap backfill (kill the 30s stall -> livelock) [wave 3]
 - [ ] 05.3-06-PLAN.md — D-18 external-order admission + preflight (HIGH threat) + D-14 defer protective orders during pause (turn A8 GREEN) [wave 4]
