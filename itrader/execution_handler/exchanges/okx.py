@@ -675,12 +675,17 @@ class OkxExchange(AbstractExchange):
 	# --- reconnect supervisor (RES-01/D-19/D-20) -------------------------------
 
 	def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
-		"""Inject the 05-04 freeze-in-place halt entrypoint (D-20).
+		"""Inject the connector-fatal halt signal (D-20; flag handoff D-21/WR-02).
 
 		Called with reason ``'connector-fatal'`` when a stream hits a fatal connector
-		error (auth/permission) OR exhausts the reconnect retry ceiling. The halt
-		entrypoint owns the CRITICAL alert emission and binds only declared ErrorEvent
-		fields; the arm passes NO exception text so no secret leaks (Pitfall 16, T-05-27).
+		error (auth/permission) OR exhausts the reconnect retry ceiling. This runs on the
+		connector ASYNCIO LOOP thread, so the injected signal MUST be non-blocking: the
+		composition root wires ``_request_connector_halt`` (a thread-safe flag setter), NOT
+		``halt()`` directly — ``halt()``'s blocking durable ``record_halt`` SQL write would
+		stall every stream sharing the loop (WR-02 / Pitfall 9). The engine thread drains
+		the flag and runs the blocking halt (CRITICAL alert + durable write) off the loop.
+		The arm passes NO exception text, only the fixed reason, so no secret leaks
+		(Pitfall 16, T-05-27).
 		"""
 		self._halt_signal = halt_signal
 
@@ -769,11 +774,18 @@ class OkxExchange(AbstractExchange):
 				return
 
 	def _escalate_connector_halt(self, stream_name: str, exc: BaseException, cause: str) -> None:
-		"""Halt the engine on an unrecoverable connector failure (D-20).
+		"""Halt the engine on an unrecoverable connector failure (D-20; D-21/WR-02 flag-only).
+
+		Runs on the connector ASYNCIO LOOP thread. The escalation is FLAG-ONLY here: it
+		invokes the injected non-blocking halt signal (``_request_connector_halt``, which
+		merely flips a thread-safe flag) — it does NOT drive the blocking ``halt()``/durable
+		``record_halt`` SQL write inline, which would stall every stream sharing the loop
+		(WR-02 / Pitfall 9). The engine thread drains the flag and runs the blocking halt +
+		durable write + CRITICAL alert off the loop.
 
 		Scrub (T-05-27): the log carries the exception TYPE + a fixed cause string, never
-		``str(exc)``; the halt entrypoint is called with the fixed reason
-		``'connector-fatal'`` (no exception text), so no secret can reach the CRITICAL alert.
+		``str(exc)``; the halt signal is called with the fixed reason ``'connector-fatal'``
+		(no exception text), so no secret can reach the CRITICAL alert.
 		"""
 		self.logger.error(
 			"OKX %s stream unrecoverable (%s: %s) — halting engine",

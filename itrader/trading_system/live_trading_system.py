@@ -169,6 +169,15 @@ class LiveTradingSystem:
         self._submission_paused = False
         self._paused_reason: Optional[str] = None
         self._pending_stream_resume = threading.Event()
+        # 05.3-08 (D-21 / WR-02): connector-fatal escalation handoff. A fatal connector
+        # error / exhausted retry ceiling / unclassified catch-all escalates from the
+        # connector ASYNCIO LOOP thread. Doing the blocking durable record_halt SQL write
+        # there stalls every stream sharing the loop (Pitfall 9). The loop-thread callback
+        # (_request_connector_halt) only SETS this flag; the ENGINE thread drains it via
+        # _maybe_halt_after_connector_fatal and runs the blocking halt() (durable write +
+        # status flip + CRITICAL alert), winner-only. Mirrors the pause/resume flag pattern.
+        self._pending_connector_halt = threading.Event()
+        self._pending_connector_halt_reason: Optional[str] = None
         # D-14 (V17-11): pause-window protective-order replay queue. While submission
         # is paused/halted, system-generated PROTECTIVE orders (bracket children,
         # OCO/orphan cancels — a just-filled entry's stop/take-profit) are DEFERRED here
@@ -482,10 +491,18 @@ class LiveTradingSystem:
             # (engine thread) — NOT a full two-sided reconcile (WR-04, see below).
             # The pause/resume callbacks fire from the connector loop thread, so they
             # only flip thread-safe flags — no blocking venue I/O there (Pitfall 9).
-            self._okx_exchange.set_halt_signal(self.halt)
+            #
+            # 05.3-08 (D-21 / WR-02): the halt signal is _request_connector_halt (a
+            # thread-safe FLAG setter), NOT halt() directly. halt() does a BLOCKING durable
+            # record_halt SQL write; running it inline on the connector asyncio loop would
+            # stall every stream sharing the loop (Pitfall 9). The engine thread drains the
+            # flag via _maybe_halt_after_connector_fatal and runs the blocking halt off the
+            # loop (winner-only, D-10 latch, V7 scrub preserved). Mirrors the pause/resume
+            # flag handoff above.
+            self._okx_exchange.set_halt_signal(self._request_connector_halt)
             self._okx_exchange.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
-            self._okx_data_provider.set_halt_signal(self.halt)
+            self._okx_data_provider.set_halt_signal(self._request_connector_halt)
             self._okx_data_provider.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
 
@@ -921,6 +938,44 @@ class LiveTradingSystem:
             return
         self.resume_submission()
 
+    def _request_connector_halt(self, reason: str) -> None:
+        """Connector-loop callback (D-21/WR-02): REQUEST an engine-thread durable halt.
+
+        Injected as the OKX stream arms' halt signal (``set_halt_signal``). Fired from the
+        connector ASYNCIO LOOP thread on a fatal connector error / exhausted retry ceiling /
+        the unclassified catch-all. It ONLY flips a thread-safe flag — it must NOT drive the
+        blocking ``halt()`` here (its durable ``record_halt`` SQL write would stall every
+        stream sharing the loop, Pitfall 9). The engine loop drains the flag via
+        ``_maybe_halt_after_connector_fatal`` and runs the blocking halt off the loop.
+        Mirrors ``_on_venue_stream_up`` (the reconnect-resume flag handoff).
+
+        Parameters
+        ----------
+        reason : str
+            Machine-readable halt reason (the arms pass the fixed ``'connector-fatal'``).
+        """
+        self._pending_connector_halt_reason = reason
+        self._pending_connector_halt.set()
+
+    def _maybe_halt_after_connector_fatal(self) -> None:
+        """Engine-thread durable halt after a connector-fatal escalation (D-21/WR-02).
+
+        Runs on the engine (queue-draining) thread. When the connector-loop escalation has
+        flagged a fatal, this drains the flag and runs the blocking ``halt()`` HERE — the
+        durable ``record_halt`` write + status flip + CRITICAL alert all off the connector
+        asyncio loop (Pitfall 9). ``halt()`` is winner-only/idempotent, so two flagged
+        escalations (e.g. both stream arms fail) still write the durable record exactly once
+        (D-10 latch ordering preserved). The V7 secret scrub is preserved end-to-end — only
+        the fixed ``'connector-fatal'`` reason literal crosses the handoff, never ``str(exc)``.
+        Mirrors ``_maybe_resume_after_reconnect`` (the reconnect-resume drain).
+        """
+        if not self._pending_connector_halt.is_set():
+            return
+        self._pending_connector_halt.clear()
+        reason = self._pending_connector_halt_reason or 'connector-fatal'
+        self._pending_connector_halt_reason = None
+        self.halt(reason)
+
     def _dispatch_live(self, event) -> None:
         """Dispatch one event through the live halt/pause gate (D-02/D-19).
 
@@ -1315,10 +1370,19 @@ class LiveTradingSystem:
                     # the blocking snapshot runs on this thread (Pitfall 9).
                     self._maybe_resume_after_reconnect()
 
+                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal escalation on
+                    # the ENGINE thread — the blocking durable record_halt write runs here,
+                    # never on the connector asyncio loop (Pitfall 9). Flag-only on the loop.
+                    self._maybe_halt_after_connector_fatal()
+
                 except queue.Empty:
                     # 05-08 (D-19): drain a pending resume even when the queue is idle —
                     # a reconnect during a quiet spell must still resume submission.
                     self._maybe_resume_after_reconnect()
+
+                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal even when the
+                    # queue is idle — a fatal during a quiet spell must still halt (off-loop).
+                    self._maybe_halt_after_connector_fatal()
 
                     # No events in queue, check if we've been idle too long
                     current_time = datetime.now(UTC)
