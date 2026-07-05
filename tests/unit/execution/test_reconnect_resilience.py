@@ -46,11 +46,16 @@ _SECRET = "OKX_API_SECRET-supersecret-0xDEADBEEF"
 # --- scripted consume double -------------------------------------------------
 
 
-class _StopSupervisor(Exception):
-    """Unclassified sentinel: breaks the supervisor loop cleanly in a test.
+class _StopSupervisor(BaseException):
+    """Harness control-flow sentinel: breaks the supervisor loop cleanly in a test.
 
-    Neither transient nor fatal, so the supervisor does not catch it — it propagates out,
-    ending the ``asyncio.run`` without hanging on the forever reconnect loop.
+    Subclasses ``BaseException`` (NOT ``Exception``) so it is a control-flow signal —
+    like ``asyncio.CancelledError`` — that the supervisor does NOT catch: it propagates
+    out, ending the ``asyncio.run`` without hanging on the forever reconnect loop. After
+    D-11 (V17-07) the supervisor grew an ``except Exception`` fail-safe catch-all that
+    escalates any UNCLASSIFIED error to a HALT; an ``Exception`` sentinel here would be
+    mis-treated as a real venue error and spuriously halt (masking the non-halt / clean
+    loop-break behaviour these tests verify).
     """
 
 

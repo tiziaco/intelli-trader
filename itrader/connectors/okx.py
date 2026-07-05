@@ -51,7 +51,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from concurrent.futures import Future
-from typing import Any, Awaitable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
 import ccxt.pro as ccxtpro
 
@@ -86,6 +86,20 @@ class OkxConnector:
         self._client: Any = None
         # nautilus-mirrored: track long-running stream tasks; cancel-all on disconnect.
         self._stream_tasks: set[asyncio.Task[Any]] = set()
+        # D-11 (V17-07): optional freeze-in-place halt entrypoint. The spawn
+        # done-callback escalates here when a stream task dies with an unexpected
+        # exception (was discard-only — a dead task vanished silently).
+        self._halt_signal: Callable[[str], None] | None = None
+
+    def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
+        """Inject the freeze-in-place halt entrypoint (D-11/D-20).
+
+        Called with the fixed reason ``'connector-fatal'`` when a spawned stream task
+        dies with an unexpected exception (observed in ``_on_task_done``). Optional —
+        the connector still untracks finished tasks without a halt signal wired; the
+        escalation is simply a no-op until the composition root injects the signal.
+        """
+        self._halt_signal = halt_signal
 
     @property
     def client(self) -> Any:
@@ -179,7 +193,7 @@ class OkxConnector:
             assert self._loop is not None
             task: asyncio.Task[Any] = self._loop.create_task(coro)  # type: ignore[arg-type]
             self._stream_tasks.add(task)
-            task.add_done_callback(self._stream_tasks.discard)
+            task.add_done_callback(self._on_task_done)
             holder["task"] = task
             ready.set()
 
@@ -191,6 +205,30 @@ class OkxConnector:
             raise TimeoutError(
                 "OKX connector loop did not schedule the spawned task in time")
         return holder["task"]
+
+    def _on_task_done(self, task: asyncio.Task[Any]) -> None:
+        """Done-callback: untrack the task AND observe its exception (D-11 / V17-07).
+
+        The old callback only ``discard``ed the task from the tracking set, so a spawned
+        stream that died with an exception vanished SILENTLY — no reconnect, no halt.
+        D-11 makes the callback observe ``task.exception()``: a clean finish or a
+        cooperative ``CancelledError`` (disconnect) is untracked quietly; ANY other
+        exception is logged (exception TYPE only — scrub, never ``str(exc)``, T-05-27)
+        and escalated to the injected halt entrypoint (fail-safe HALT,
+        ``'connector-fatal'``). ``task.exception()`` is only read after the cancelled
+        guard so it never re-raises the ``CancelledError``.
+        """
+        self._stream_tasks.discard(task)
+        if task.cancelled():
+            return  # cooperative teardown — never a fault.
+        exc = task.exception()
+        if exc is None:
+            return  # clean finish.
+        self.logger.error(
+            "OKX spawned stream task died (%s) — halting engine",
+            type(exc).__name__)
+        if self._halt_signal is not None:
+            self._halt_signal("connector-fatal")
 
     def disconnect(self) -> None:
         """Cancel every spawned stream task, close the client, stop the loop, join the thread."""
