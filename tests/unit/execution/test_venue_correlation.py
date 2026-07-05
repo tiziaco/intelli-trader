@@ -118,6 +118,37 @@ def test_bounded_ring_evicts_oldest_id() -> None:
     assert idx.seen_count() == 3
 
 
+# --- D-16 WR-02: mark-seen ordering (slot consumed only after proven emit) ------
+
+
+def test_resolve_does_not_mark_seen_until_caller_confirms_corrected_resend() -> None:
+    """WR-02: ``resolve`` returns an ``emit`` verdict WITHOUT consuming the dedup slot —
+    the slot is consumed only when the caller confirms a True ``_emit_fill`` via
+    ``mark_seen(dedup_key)``. So a malformed-then-corrected re-send of the SAME
+    ``{ticker}:{trade_id}`` is NOT silently dropped: a second ``resolve`` still emits
+    until the caller marks the key seen."""
+    idx = VenueCorrelationIndex()
+    order = _make_order()
+    idx.register("OID-1", order, "it1")
+
+    first = idx.resolve({"id": "T-1", "order": "OID-1", "amount": "0.2"})
+    assert first.outcome == "emit"
+    # WR-02: the slot is NOT consumed by resolve (the caller emits first).
+    assert idx.seen_count() == 0
+
+    # A corrected re-send BEFORE the caller confirms the emit still resolves to emit
+    # (the malformed first attempt did not burn the slot).
+    second = idx.resolve({"id": "T-1", "order": "OID-1", "amount": "0.2"})
+    assert second.outcome == "emit"
+    assert second.dedup_key == "BTC-USDT:T-1"
+
+    # Once the caller proves the fill emitted, it marks the slot seen; a later re-send dedups.
+    idx.mark_seen(first.dedup_key)  # type: ignore[arg-type]
+    third = idx.resolve({"id": "T-1", "order": "OID-1", "amount": "0.2"})
+    assert third.outcome == "duplicate"
+    assert third.order is None
+
+
 # --- R2: release-on-terminal (drain-then-evict, partial vs full, idempotent) ----
 
 
