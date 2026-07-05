@@ -181,8 +181,10 @@ def test_duplicate_trade_id_emits_single_fill(
     assert isinstance(fills[0], FillEvent)
     assert fills[0].status is FillStatus.EXECUTED
     assert fills[0].quantity == to_money("0.2")
-    # The dedup key is recorded so a later re-send stays a no-op.
-    assert "T-42" in exchange._index._seen_trade_ids
+    # The dedup key is recorded so a later re-send stays a no-op. D-08 / V17-12:
+    # the ring is now SYMBOL-scoped (f"{ticker}:{trade_id}"), so a numeric tradeId
+    # shared across instruments does not alias — the stored key carries the ticker.
+    assert "BTC-USDT:T-42" in exchange._index._seen_trade_ids
 
 
 def test_distinct_trade_ids_both_emit(

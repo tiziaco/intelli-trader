@@ -155,18 +155,21 @@ class VenueCorrelationIndex:
 	def resolve(self, trade: Any) -> ResolveResult:
 		"""Correlate one streamed venue fill to its OrderEvent — atomic under the lock.
 
-		Preserves the exact ``_handle_trade`` semantics in one lock hold (WR-03): dedup on
-		``trade['id']`` (a re-send is a ``duplicate`` no-op), resolve ``trade['order']`` ->
-		OrderEvent with the clOrdId fallback, BUFFER an uncorrelated fill that carries a
-		``venue_id`` (``buffered``) else report ``uncorrelated``, and mark a resolved trade id
-		seen INSIDE the lock so a concurrent re-send dedupes against it. The caller mints +
-		emits OUTSIDE the lock (the FillEvent mint touches no map).
+		Preserves the exact ``_handle_trade`` semantics in one lock hold (WR-03): resolve
+		``trade['order']`` -> OrderEvent with the clOrdId fallback, BUFFER an uncorrelated fill
+		that carries a ``venue_id`` (``buffered``) else report ``uncorrelated``, dedup on the
+		SYMBOL-scoped key ``f"{order.ticker}:{trade['id']}"`` (a re-send is a ``duplicate``
+		no-op), and mark a resolved key seen INSIDE the lock so a concurrent re-send dedupes
+		against it. The caller mints + emits OUTSIDE the lock (the FillEvent mint touches no map).
+
+		D-08 / V17-12: the dedup key is the RESOLVED order's ticker + tradeId, NOT the raw
+		tradeId — OKX tradeIds are unique only per-instrument, so two symbols sharing a numeric
+		tradeId must BOTH settle. The gate therefore runs AFTER resolution (the ticker is not
+		known before the order resolves); the buffer / uncorrelated branches are unchanged.
 		"""
 		trade_id = trade.get("id") if isinstance(trade, dict) else None
 		venue_id = trade.get("order") if isinstance(trade, dict) else None
 		with self._correlation_lock:
-			if trade_id is not None and trade_id in self._seen_trade_ids:
-				return ResolveResult(None, venue_id, "duplicate")
 			order = (self._orders_by_venue_id.get(venue_id)
 			         if venue_id is not None else None)
 			if order is None:
@@ -178,8 +181,13 @@ class VenueCorrelationIndex:
 					self._pending_fills_by_venue_id.setdefault(venue_id, []).append(trade)
 					return ResolveResult(None, venue_id, "buffered")
 				return ResolveResult(None, None, "uncorrelated")
-			if trade_id is not None:
-				self._mark_seen_locked(trade_id)
+			# D-08 / V17-12: symbol-scope the dedup key with the resolved order's ticker so a
+			# numeric tradeId shared across instruments does not alias (two symbols both settle).
+			dedup_key = f"{order.ticker}:{trade_id}" if trade_id is not None else None
+			if dedup_key is not None and dedup_key in self._seen_trade_ids:
+				return ResolveResult(None, venue_id, "duplicate")
+			if dedup_key is not None:
+				self._mark_seen_locked(dedup_key)
 			return ResolveResult(order, venue_id, "emit")
 
 	def mark_seen(self, trade_id: str) -> bool:
