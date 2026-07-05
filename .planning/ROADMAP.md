@@ -375,9 +375,9 @@ Plans:
 ### Phase 05.3: Live-Path Remediation — Wave 3 (Resilience Hardening) (INSERTED)
 
 **Goal:** Resilience hardening for the live OKX path: stream-death catch-all + supervised account/position streams, missed-fill catch-up on resume, submit-timeout in-flight semantics, defer protective orders during pause, drop overlay on ack, loop-native gap backfill, external-order admission + preflight, and the 05-13 carry-overs — PLUS the four 05.2-review durability warnings (atomic fill-path persist, early durable-halt refusal, off-loop halt write, restart-seeded reconcile dedup ring) and the SimulatedAccount restart-restore ungate. Fixes V17-07/08/09/11/13/15/16 + 05-13 + WR-01/02/04/05 (CONTEXT D-11..D-23).
-**Requirements**: Scope defined by CONTEXT.md decisions D-11..D-23 (no formal REQ/V17 IDs mapped; each D-NN is the trackable requirement, cited in each plan's must_haves/truths).
+**Requirements**: Scope defined by CONTEXT.md decisions D-11..D-27 (no formal REQ/V17 IDs mapped; each D-NN is the trackable requirement, cited in each plan's must_haves/truths). D-24..D-27 are the gap-remediation decisions closing the 3 confirmed verification gaps (D-11/WR-02, D-12/WR-01, D-15/CR-01).
 **Depends on:** Phase 05.2 (D-15 drop-overlay needs the D-06 ORDER-ACK trigger; D-12 catch-up + D-16 mark-seen safe once D-08 dedup lands; D-19..D-22 build on the 05.2 durable SQL ledger + HaltRecordStore + VenueCorrelationIndex; D-23's scalar-restore relies on D-19's atomic write)
-**Plans:** 9 plans in 6 waves
+**Plans:** 11 plans in 7 waves
 
 Plans:
 
@@ -390,6 +390,11 @@ Plans:
 - [x] 05.3-06-PLAN.md — D-18 external-order admission + preflight (HIGH threat) + D-14 defer protective orders during pause (turn A8 GREEN) [wave 4]
 - [x] 05.3-08-PLAN.md — D-20 early durable-halt refusal + D-21 off-loop halt write [wave 5]
 - [x] 05.3-09-PLAN.md — D-23 ungate rehydrate -> SimulatedAccount restart cash/realized-PnL restore [wave 6]
+
+**Wave 7** *(gap remediation — closes the 3 confirmed verification gaps; blocked on Wave 1-6 completion)*
+
+- [ ] 05.3-10-PLAN.md — D-24 gate `drop_pending` no-op on the single-channel spot leaf (close CR-01 buying-power over-statement) + D-27 spot-premise regression test [wave 7]
+- [ ] 05.3-11-PLAN.md — D-25 wire orphaned `catch_up_missed_fills` into resume drain + D-26 arm `_okx_connector.set_halt_signal` at composition root + D-27 resume-recovery / start()-arm wiring tests [wave 7]
 
 **Cross-cutting constraints:**
 
