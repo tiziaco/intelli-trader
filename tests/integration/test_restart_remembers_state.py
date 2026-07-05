@@ -33,13 +33,16 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, Iterator, List, Optional
+from unittest.mock import Mock
 
 import pytest
 import uuid_utils.compat as uc
 
-from itrader.core.enums import Side, FillStatus, TransactionType
+from itrader.core.enums import OrderStatus, OrderType, Side, FillStatus, TransactionType
 from itrader.core.ids import PortfolioId, TransactionId, OrderId, StrategyId
 from itrader.events_handler.events import FillEvent
+from itrader.order_handler.order import Order
+from itrader.order_handler.reconcile.reconcile_manager import ReconcileManager
 from itrader.portfolio_handler.portfolio import Portfolio
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.portfolio_handler.position.position import Position
@@ -440,3 +443,142 @@ def test_on_fill_position_and_cash_persist_atomically_single_txn() -> None:
     # the durable pair is consistent (no position, cash unchanged), NOT torn.
     assert fresh.position_manager.get_position("BTC/USDT") is None
     assert fresh.account.balance == initial_cash
+
+
+# ---------------------------------------------------------------------------
+# D-22 (WR-05) — the ORDER-mirror dedup ring must be restart-seeded SYMMETRICALLY
+# with the portfolio ledger's _settled_venue_trade_ids. On a restart the
+# ReconcileManager's _applied_trade_keys starts EMPTY, so a venue trade
+# re-delivered AFTER the restart re-books the mirror unless the ring is seeded
+# from the durable transactions.venue_trade_id history (Pitfall 8: driven FROM
+# PortfolioHandler.rehydrate — ReconcileManager has no durable transaction store).
+# ---------------------------------------------------------------------------
+
+
+class _FixedOrderStorage:
+    """Returns a single fixed order; records update_order calls (mirror moved)."""
+
+    def __init__(self, order: Order) -> None:
+        self._order = order
+        self.update_calls = 0
+
+    def get_order_by_id(self, order_id: Any, portfolio_id: Any = None) -> Order:
+        return self._order
+
+    def update_order(self, order: Order) -> bool:
+        self.update_calls += 1
+        return True
+
+    def get_active_orders(self, portfolio_id: Any) -> List[Order]:
+        return []
+
+
+def _reconcile_manager_for(order: Order) -> ReconcileManager:
+    """Wire a ReconcileManager around a real Order + a fixed storage (Mock rest)."""
+    return ReconcileManager(
+        order_storage=_FixedOrderStorage(order),
+        logger=Mock(),
+        portfolio_handler=Mock(),
+        brackets=Mock(),
+        bracket_manager=Mock(),
+        cancel_order=Mock(),
+    )
+
+
+def _resting_order(ticker: str, portfolio_id: PortfolioId) -> Order:
+    """A PENDING BUY LIMIT order (quantity 1.0) whose mirror a partial fill moves."""
+    return Order(
+        time=_BT,
+        type=OrderType.LIMIT,
+        status=OrderStatus.PENDING,
+        ticker=ticker,
+        action=Side.BUY,
+        price=Decimal("42000.0"),
+        quantity=Decimal("1.0"),
+        exchange="okx",
+        strategy_id=1,
+        portfolio_id=portfolio_id,
+        id=OrderId(uc.uuid7()),
+    )
+
+
+def _fill_for(order: Order, venue_trade_id: str,
+              quantity: Decimal = Decimal("0.1")) -> FillEvent:
+    """An EXECUTED partial fill for ``order`` carrying ``venue_trade_id``."""
+    return FillEvent(
+        time=_BT,
+        status=FillStatus.EXECUTED,
+        ticker=order.ticker,
+        action=Side.BUY,
+        price=Decimal("42000.0"),
+        quantity=quantity,
+        commission=Decimal("0"),
+        portfolio_id=order.portfolio_id,
+        fill_id=uc.uuid7(),
+        order_id=order.id,
+        strategy_id=order.strategy_id,
+        venue_trade_id=venue_trade_id,
+    )
+
+
+def test_reconcile_ring_restart_seeded_redelivered_trade_is_noop() -> None:
+    """The order-mirror dedup ring survives a restart, seeded from rehydrate (D-22).
+
+    A venue trade "T1" for BTC/USDT was durably recorded pre-restart. After the
+    restart the ReconcileManager's ring is EMPTY; ``PortfolioHandler.rehydrate``
+    drives the SAME single ``transactions.venue_trade_id`` history pass into the
+    ring via the seed sink (``ReconcileManager.seed_applied_trades``), keyed
+    ``f"{ticker}:{venue_trade_id}"`` — symmetric with the portfolio arm's
+    ``_settled_venue_trade_ids`` seed. A re-delivered "T1" is then a mirror no-op.
+
+    RED (pre-fix): the ring is not restart-seeded (no ``seed_applied_trades`` seam,
+    ``rehydrate`` takes no sink) so the re-delivery re-accumulates the mirror.
+    GREEN: the seeded ring recognizes "BTC/USDT:T1" and the increment is ignored.
+    """
+    portfolio_id = PortfolioId(uc.uuid7())
+    # Durable transaction recorded venue_trade_id "T1" for BTC/USDT pre-restart.
+    seed = _buy_transaction(
+        "BTC/USDT", Decimal("0.1"), Decimal("42000"), portfolio_id,
+        venue_trade_id="T1",
+    )
+    store = _DurableStoreDouble(durable_transactions=[seed])
+    handler, _pid, _portfolio = _handler_with_portfolio_on(store)
+
+    # The order the re-delivered fill targets after the restart.
+    order = _resting_order("BTC/USDT", portfolio_id)
+    reconcile_manager = _reconcile_manager_for(order)
+
+    # Restart seed: rehydrate drives the durable venue_trade_id history into BOTH
+    # the portfolio ledger AND the order-mirror ring (single history pass).
+    handler.rehydrate(reconcile_manager.seed_applied_trades)
+    assert "BTC/USDT:T1" in handler._settled_venue_trade_ids
+    assert "BTC/USDT:T1" in reconcile_manager._applied_trade_keys
+
+    # Re-delivering the SAME (BTC/USDT, "T1") after the restart must be a mirror
+    # no-op — the restart-seeded ring recognizes it as already-applied.
+    reconcile_manager.on_fill(_fill_for(order, "T1"))
+    assert order.filled_quantity == Decimal("0")
+    assert order.status == OrderStatus.PENDING
+
+
+def test_reconcile_ring_seed_symbol_scoped_other_symbol_still_books() -> None:
+    """A restart-seeded ring is symbol-scoped: a different symbol still books (V17-12)."""
+    portfolio_id = PortfolioId(uc.uuid7())
+    seed = _buy_transaction(
+        "BTC/USDT", Decimal("0.1"), Decimal("42000"), portfolio_id,
+        venue_trade_id="T1",
+    )
+    store = _DurableStoreDouble(durable_transactions=[seed])
+    handler, _pid, _portfolio = _handler_with_portfolio_on(store)
+
+    # A DIFFERENT symbol sharing the numeric trade id "T1" — a distinct trade.
+    order = _resting_order("ETH/USDT", portfolio_id)
+    reconcile_manager = _reconcile_manager_for(order)
+
+    handler.rehydrate(reconcile_manager.seed_applied_trades)
+    # Only the BTC key was seeded — the ETH key is absent, so ETH:T1 still books.
+    assert "ETH/USDT:T1" not in reconcile_manager._applied_trade_keys
+
+    reconcile_manager.on_fill(_fill_for(order, "T1"))
+    assert order.filled_quantity == Decimal("0.1")
+    assert order.status == OrderStatus.PARTIALLY_FILLED
