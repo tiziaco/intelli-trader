@@ -2,13 +2,23 @@ import os
 import queue
 import sys
 import threading
+from collections import deque
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
 
+# D-14 (V17-11): bound on the pause-window protective-order replay queue. During a
+# pause/halt, system-generated protective orders (bracket children, OCO/orphan
+# cancels) are DEFERRED here and replayed on resume; the bound prevents an unbounded
+# backlog if a pause runs long. A realistic reconnect-window generates far fewer than
+# this many protective orders, so the cap only guards a pathological stall (oldest
+# deferred protective orders are dropped past it — a dropped protective order is the
+# same freeze-in-place safety posture as the pre-D-14 blanket suppression).
+_DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
+
 from dataclasses import dataclass
 
-from itrader.core.enums import ErrorSeverity, SystemStatus, VALID_STATUS_TRANSITIONS
+from itrader.core.enums import ErrorSeverity, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
@@ -159,6 +169,15 @@ class LiveTradingSystem:
         self._submission_paused = False
         self._paused_reason: Optional[str] = None
         self._pending_stream_resume = threading.Event()
+        # D-14 (V17-11): pause-window protective-order replay queue. While submission
+        # is paused/halted, system-generated PROTECTIVE orders (bracket children,
+        # OCO/orphan cancels — a just-filled entry's stop/take-profit) are DEFERRED here
+        # instead of being blanket-dropped, and REPLAYED through _dispatch_live on
+        # resume so the position is never left naked. Bounded engine-internal state — NOT
+        # a new EventType. Fresh ENTRY orders are still suppressed (never deferred), and a
+        # CANCEL command is dispatched immediately (a cancel only reduces risk).
+        self._deferred_protective: "deque[Any]" = deque(
+            maxlen=_DEFERRED_PROTECTIVE_REPLAY_MAX)
         
         # Threading control
         self._running = False
@@ -807,7 +826,14 @@ class LiveTradingSystem:
             'untouched', reason)
 
     def resume_submission(self) -> None:
-        """Clear the reversible pause after reconnect + a fresh REST snapshot (D-19)."""
+        """Clear the reversible pause after reconnect + a fresh REST snapshot (D-19).
+
+        D-14: once the pause flag is cleared, DRAIN the protective-order replay queue —
+        each deferred protective order (bracket child / OCO / orphan cancel) is
+        re-dispatched through ``_dispatch_live``. The pause flag is cleared FIRST
+        (below), so the re-dispatch proceeds to ``_dispatch`` and is NOT re-suppressed
+        (Assumption A4 — the drain runs after the flag clears).
+        """
         with self._status_lock:
             if not self._submission_paused:
                 return
@@ -816,6 +842,27 @@ class LiveTradingSystem:
         self.logger.info(
             'Order submission resumed — venue stream reconnected + fresh REST '
             'balance/position snapshot complete')
+        # D-14: replay the protective orders deferred during the pause window.
+        self._replay_deferred_protective()
+
+    def _replay_deferred_protective(self) -> None:
+        """Replay pause-deferred protective orders through the live gate on resume (D-14).
+
+        Snapshots the replay queue into a local batch and CLEARS it before re-dispatching,
+        so a re-dispatch that finds the engine HALTED (and re-defers) appends to the now-empty
+        queue rather than spinning this drain forever. Each protective order is re-dispatched
+        through ``_dispatch_live``; with the pause flag already cleared it passes the gate to
+        ``_dispatch`` (Assumption A4). Bracket children / OCO cancels reach the venue so the
+        just-filled position is no longer left naked.
+        """
+        if not self._deferred_protective:
+            return
+        batch = list(self._deferred_protective)
+        self._deferred_protective.clear()
+        self.logger.info(
+            'Replaying %d deferred protective order(s) on resume (D-14)', len(batch))
+        for deferred in batch:
+            self._dispatch_live(deferred)
 
     def _on_venue_stream_down(self, stream_name: str) -> None:
         """Connector-loop callback (D-19): pause NEW submission on a sustained disconnect.
@@ -878,14 +925,40 @@ class LiveTradingSystem:
         """Dispatch one event through the live halt/pause gate (D-02/D-19).
 
         The freeze-in-place gate: while HALTED (terminal) OR paused-on-disconnect
-        (reversible), NEW order submission (the SIGNAL and ORDER routes) is SUPPRESSED,
-        while BAR/FILL/ERROR streaming + reconciling + persisting continue to drain
-        normally (so the venue stays mirrored and the halt itself — a CRITICAL
-        ErrorEvent — is still consumed). Otherwise → a transparent pass-through.
+        (reversible), NEW order submission (the SIGNAL and ORDER routes) is gated, while
+        BAR/FILL/ERROR streaming + reconciling + persisting continue to drain normally
+        (so the venue stays mirrored and the halt itself — a CRITICAL ErrorEvent — is
+        still consumed). Otherwise → a transparent pass-through.
+
+        D-14 (V17-11): the gate no longer blanket-suppresses SIGNAL+ORDER. It branches by
+        order KIND so risk-REDUCING commands are not silently dropped during the pause:
+        (a) a CANCEL command ALWAYS passes through (a cancel only reduces risk);
+        (b) a system-generated PROTECTIVE order (a bracket child — ``parent_order_id`` set)
+            is DEFERRED onto the replay queue and replayed on resume (never left naked);
+        (c) a fresh ENTRY order (NEW, no parent) and any SIGNAL stay SUPPRESSED — opening
+            new risk while blind to the venue is exactly what the pause exists to prevent.
         """
         if (self._is_halted() or self._is_submission_paused()) and getattr(
                 event, 'type', None) in (EventType.SIGNAL, EventType.ORDER):
             event_type = getattr(getattr(event, 'type', None), 'name', 'UNKNOWN')
+            command = getattr(event, 'command', None)
+            parent = getattr(event, 'parent_order_id', None)
+            # (a) CANCEL always passes — a cancel only reduces risk (D-14).
+            if command is OrderCommand.CANCEL:
+                self.logger.info(
+                    'CANCEL dispatched during pause/halt (D-14) — cancels always pass the '
+                    'gate (risk-reducing)', event_type=event_type)
+                self.event_handler._dispatch(event)
+                return
+            # (b) a PROTECTIVE order (bracket child — parent set) is deferred for replay
+            # on resume, not dropped (D-14) — the just-filled position stays protected.
+            if getattr(event, 'type', None) is EventType.ORDER and parent is not None:
+                self._deferred_protective.append(event)
+                self.logger.warning(
+                    'Protective order deferred during pause/halt (D-14) — replays on resume',
+                    event_type=event_type)
+                return
+            # (c) fresh ENTRY order + SIGNAL stay suppressed (don't open new risk blind).
             self.logger.warning(
                 'New order submission suppressed (freeze-in-place / paused-on-disconnect)',
                 event_type=event_type)
@@ -1606,12 +1679,24 @@ class LiveTradingSystem:
     def add_event(self, event):
         """
         Add an event to the global queue for processing.
-        
+
+        D-18 (V17-16, HIGH — ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
+        surface. A raw ``OrderEvent`` here would reach the execution queue with NO validation,
+        sizing, cash reservation or order-mirror engagement — an external caller could inject
+        an arbitrary order that bypasses every admission control (elevation-of-privilege /
+        input-validation defect). Raw ``EventType.ORDER`` injection is therefore REFUSED.
+
+        The sanctioned external-order path is SIGNAL-form entry: submit a ``SignalEvent`` (or
+        call the order domain directly), which routes through ``OrderHandler.on_signal`` ->
+        ``AdmissionManager`` so validation + sizing + reservation + mirror engage before any
+        ``OrderEvent`` is emitted. The internal order flow is UNAFFECTED — handlers emit
+        ``OrderEvent``s by putting them on ``global_queue`` directly, never through ``add_event``.
+
         Parameters
         ----------
         event
             The event to add to the queue
-        
+
         Returns
         -------
         bool
@@ -1620,7 +1705,16 @@ class LiveTradingSystem:
         if not self._running:
             self.logger.warning('Cannot add event: Live trading system is not running')
             return False
-        
+
+        # D-18: reject raw ORDER injection. Only ORDER events are blocked (a narrow gate);
+        # every non-ORDER event (the sanctioned SIGNAL-form entry included) enqueues normally.
+        if getattr(event, 'type', None) is EventType.ORDER:
+            self.logger.warning(
+                'Rejected raw ORDER injection via add_event (D-18/V17-16) — external orders '
+                'must route through the admission pipeline (signal-form entry), not the '
+                'live queue directly')
+            return False
+
         try:
             self.global_queue.put(event)
             return True
