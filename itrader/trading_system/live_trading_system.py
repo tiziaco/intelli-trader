@@ -502,6 +502,14 @@ class LiveTradingSystem:
             self._okx_exchange.set_halt_signal(self._request_connector_halt)
             self._okx_exchange.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
+            # 05.3-11 (D-26 / WR-02): arm the CONNECTOR's halt signal too. Without this
+            # OkxConnector._on_task_done's `if self._halt_signal is not None:` guard is
+            # always False, so a task dying OUTSIDE the exchange/provider stream supervisors
+            # (a supervisor bug, or any coroutine not itself wrapped) would log-and-vanish
+            # with no halt. Same flag-only callback the exchange/provider arms pass
+            # (_request_connector_halt) — fail-safe: an unexpected dead task escalates to
+            # an engine halt, never silently.
+            self._okx_connector.set_halt_signal(self._request_connector_halt)
             self._okx_data_provider.set_halt_signal(self._request_connector_halt)
             self._okx_data_provider.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
