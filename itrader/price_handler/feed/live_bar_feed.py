@@ -30,6 +30,7 @@ Indentation: 4 SPACES (the ``price_handler/feed/`` package convention) — NO ta
 
 from __future__ import annotations
 
+import asyncio
 import queue
 from collections import deque
 from datetime import datetime, timedelta
@@ -169,8 +170,8 @@ class LiveBarFeed(BarFeed):
         if t == last:
             return self._duplicate_or_revision(sym, tf_str, t, closed_bar)
         if t > last + tf:
-            self._backfill_gap(sym, tf_str, last + tf, t - tf)
-            return self._deliver(sym, tf_str, t, closed_bar)
+            return self._fill_gap_and_deliver(
+                sym, tf_str, last + tf, t - tf, t, closed_bar)
         if t == last + tf:
             return self._deliver(sym, tf_str, t, closed_bar)
         # WR-01: the remaining region is last < t < last + tf — an off-grid
@@ -274,6 +275,83 @@ class LiveBarFeed(BarFeed):
             "D-07): last-close=%s incoming-close=%s", sym, str(t),
             str(last_bar.close) if last_bar is not None else None,
             str(incoming.close))
+
+    def _fill_gap_and_deliver(
+        self, sym: str, tf_str: str, first_missing: pd.Timestamp,
+        last_missing: pd.Timestamp, t: pd.Timestamp, closed_bar: "ClosedBar",
+    ) -> None:
+        """Resolve a gap ``[first_missing .. last_missing]`` then deliver the trigger ``t`` (D-17).
+
+        Two paths, one contract (interior bars replayed contiguous, THEN ``t`` delivered exactly
+        once):
+
+        - **Loop-triggered (the connector loop thread).** The live candle coroutine calls
+          ``update()`` synchronously inside its running loop, so a synchronous
+          ``fetch_ohlcv_backfill`` here would bridge through ``connector.call(...).result()`` and
+          self-deadlock the loop (30s stall → livelock, RESEARCH Pitfall 4 / V17-15). Hand the gap
+          range to a loop-native supervised backfill coroutine (``provider.spawn_gap_backfill``) that
+          ``await``s the client fetch DIRECTLY on the loop, then replays the interior + delivers
+          ``t`` on this same loop thread once the fetch resolves.
+        - **Off the loop (engine-thread warmup-adjacent / reconnect-resume, or the offline paper
+          ``ReplayDataProvider``).** No running loop → the synchronous ``fetch_ohlcv_backfill`` /
+          ``connector.call()`` bridge is SAFE; fill the interior then deliver ``t`` inline (the
+          pre-D-17 behaviour, byte-identical for the socket-free unit matrix).
+
+        Note (scope): the loop-native path schedules the backfill and returns; a second live bar
+        arriving before the coroutine completes is the concurrent-bar case owned by the D-14
+        pause-defer-replay work (05.3-06), not D-17 (which only kills the self-deadlock).
+        """
+        if self._loop_native_backfill_available():
+            self._spawn_loop_native_gap_backfill(
+                sym, tf_str, first_missing, last_missing, t, closed_bar)
+            return
+        self._backfill_gap(sym, tf_str, first_missing, last_missing)
+        self._deliver(sym, tf_str, t, closed_bar)
+
+    def _loop_native_backfill_available(self) -> bool:
+        """True iff the gap fired on a running loop AND the provider offers the D-17 seam.
+
+        ``asyncio.get_running_loop()`` succeeds only when called from within a running loop — i.e.
+        the connector loop thread, where ``update()`` runs synchronously inside the candle
+        coroutine. The engine-thread warmup / reconnect-resume paths (and the offline synchronous
+        ``ReplayDataProvider``) have no running loop and raise ``RuntimeError`` → synchronous path.
+        The ``spawn_gap_backfill`` capability check keeps a provider without the seam on the safe
+        synchronous fallback.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return hasattr(self._provider, "spawn_gap_backfill")
+
+    def _spawn_loop_native_gap_backfill(
+        self, sym: str, tf_str: str, first_missing: pd.Timestamp,
+        last_missing: pd.Timestamp, t: pd.Timestamp, closed_bar: "ClosedBar",
+    ) -> None:
+        """Hand the gap range to the provider's loop-native supervised backfill coroutine (D-17)."""
+        tf = to_timedelta(tf_str)
+        since_ms = int(first_missing.value // _NS_PER_MS)
+        last_ms = int(last_missing.value // _NS_PER_MS)
+        limit = int((last_missing - first_missing) / tf) + 1
+        self.logger.info(
+            "Gap for %s: loop-native backfilling %d interior bar(s) [%s .. %s] "
+            "(awaiting client fetch on the connector loop — no call().result() bridge)",
+            sym, limit, str(first_missing), str(last_missing))
+
+        def _replay_and_deliver(bars: "list[ClosedBar]") -> None:
+            # Runs on the connector loop thread once the awaited fetch resolves. Replay the
+            # interior (CLAMPED to last_missing — the real provider over-fetches past the
+            # interior into t and beyond, CR-01), each advancing L by one tf (in-sequence, no
+            # nested gap), THEN deliver the trigger t exactly once — mirroring the synchronous
+            # gap path's ordering.
+            for cb in bars:
+                if cb["ts"] > last_ms:
+                    break
+                self.update(cb)
+            self._deliver(sym, tf_str, t, closed_bar)
+
+        self._provider.spawn_gap_backfill(
+            sym, tf_str, since_ms, limit, _replay_and_deliver)
 
     def _backfill_gap(self, sym: str, tf_str: str, first_missing: pd.Timestamp,
                       last_missing: pd.Timestamp) -> None:
