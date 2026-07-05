@@ -37,6 +37,7 @@ D-05), the coordinator-owned `BracketManager` (`self.bracket_manager`), and the
 puts. Money is Decimal end-to-end via `to_money` (NEVER `Decimal(float)`).
 """
 
+from collections import OrderedDict
 from typing import Any, Callable, List, Optional, TYPE_CHECKING
 
 from ..operation_result import OperationResult
@@ -50,6 +51,14 @@ from ...events_handler.events import OrderEvent, FillEvent
 if TYPE_CHECKING:
 	from ..brackets import BracketManager
 	from ..order import Order
+
+
+# D-08 (V17-06/V17-12): in-session applied-trade dedup ring capacity. Mirrors the
+# venue_correlation.py `_DEDUP_RING_CAPACITY` precedent — 10 000 >> a realistic
+# reconnect / restart re-send burst; the durable cross-restart settled-ledger
+# (Plan 04) is the evicted-then-resent backstop, so a bounded in-session ring
+# never grows unboundedly in a long live session (T-05.2-09 DoS).
+_APPLIED_TRADE_RING_CAPACITY = 10000
 
 
 class ReconcileManager:
@@ -83,6 +92,34 @@ class ReconcileManager:
 		# WR-05 orphaned-child cancel reaches lifecycle WITHOUT a direct
 		# lifecycle-manager sibling ref (no circular import).
 		self._cancel_order = cancel_order
+		# D-08 (V17-06/V17-12): in-session per-trade applied-set guarding
+		# _apply_executed against a re-delivered venue trade. Two live emitters
+		# (the OKX trade stream + the restart VenueReconciler) can book the SAME
+		# economic venue trade; they share only the venue tradeId (fill_id is a
+		# fresh uuid7 per emit). A bounded FIFO (OrderedDict, cap-guarded — NOT an
+		# unbounded set, T-05.2-09) keyed f"{ticker}:{venue_trade_id}" also closes
+		# the V17-12 instrument-scoped-tradeId collision (two symbols sharing a
+		# numeric tradeId both settle). This is the in-session (Layer 1) guard; the
+		# durable cross-restart settled-ledger arm lands in Plan 04.
+		self._applied_capacity = _APPLIED_TRADE_RING_CAPACITY
+		self._applied_trade_keys: "OrderedDict[str, None]" = OrderedDict()
+
+	def _record_applied_trade(self, dedup_key: Optional[str]) -> None:
+		"""Record a successfully-applied venue-trade key in the bounded FIFO ring.
+
+		None-keyed fills (backtest / simulated — no venue_trade_id) never touch the
+		ring (oracle-dark). Past capacity the oldest key is evicted (FIFO); the
+		durable settled-ledger (Plan 04) is the evicted-then-resent backstop, so a
+		bounded in-session ring cannot grow unboundedly in a long live session
+		(T-05.2-09).
+		"""
+		if dedup_key is None:
+			return
+		if dedup_key in self._applied_trade_keys:
+			return
+		if self._applied_capacity > 0 and len(self._applied_trade_keys) >= self._applied_capacity:
+			self._applied_trade_keys.popitem(last=False)
+		self._applied_trade_keys[dedup_key] = None
 
 	@staticmethod
 	def _classify(status: FillStatus) -> "tuple[bool, Optional[OrderStatus]]":
@@ -148,6 +185,23 @@ class ReconcileManager:
 		                     (a partial, D-12) so the caller HOLDS the reservation
 		                     and SKIPS the terminal-only bracket post-processing.
 		"""
+		# D-08 (V17-06/V17-12): in-session dedup — a re-delivered venue trade (same
+		# venue_trade_id, fresh fill_id) must be a no-op so the mirror never
+		# double-books. Keyed f"{ticker}:{venue_trade_id}" so two symbols sharing a
+		# numeric tradeId do NOT alias (V17-12). A None venue_trade_id (backtest /
+		# simulated fill) skips the guard entirely — oracle-dark.
+		venue_trade_id = getattr(fill_event, "venue_trade_id", None)
+		dedup_key = (f"{fill_event.ticker}:{venue_trade_id}"
+		             if venue_trade_id is not None else None)
+		if dedup_key is not None and dedup_key in self._applied_trade_keys:
+			# Re-delivered venue trade: treat the increment as a no-op — do not
+			# accumulate, leave filled_quantity/status untouched, HOLD the
+			# reservation. applied=False -> the caller skips update_order;
+			# terminalized=False -> no release, no bracket post-processing.
+			self.logger.warning(
+				'Dedup: venue trade %s for order %s already applied; increment ignored',
+				dedup_key, order_id)
+			return False, False
 		# D-22: fill_event.price/quantity are Decimal — to_money is an identity
 		# normalization at this domain entry (the mirror never trusts an
 		# unnormalized money input).
@@ -160,6 +214,8 @@ class ReconcileManager:
 		# whose add_fill simply succeeds (existing reconcile suites) untouched: the
 		# state inspection below runs ONLY when add_fill rejects.
 		if order.add_fill(increment, fill_price, fill_event.time, "exchange fill"):
+			# D-08: record the applied venue trade so a re-delivery no-ops above.
+			self._record_applied_trade(dedup_key)
 			return True, True
 		# add_fill REJECTED the increment. Distinguish three outcomes:
 		if not order.is_active:
@@ -206,6 +262,8 @@ class ReconcileManager:
 			# Transition accepted — NOW accumulate the increment (mirror moves only
 			# after the validation passed).
 			order.filled_quantity = new_filled
+			# D-08: record the applied venue trade so a re-delivery no-ops above.
+			self._record_applied_trade(dedup_key)
 			return True, False
 		# Over-fill (increment > remaining) or non-positive increment on an ACTIVE
 		# order: reject-and-log — never crash, and never terminalize on a bad fill.
