@@ -368,6 +368,10 @@ Plans:
 - [ ] 05.2-05-PLAN.md — D-07: composition-root durable-portfolio wiring (five sites + backend inject) + rehydrate-before-reconcile sequence (Wave 3)
 - [ ] 05.2-06-PLAN.md — D-10: durable halt record + new chained Alembic head; fresh instance refuses RUNNING; reset_halt resolves (Wave 4)
 
+**Cross-cutting constraints:**
+
+- SMA_MACD backtest oracle stays byte-exact (134 / 46189.87730727451) — all changes live-path-only
+
 ### Phase 05.3: Live-Path Remediation — Wave 3 (Resilience Hardening) (INSERTED)
 
 **Goal:** Resilience hardening: stream-death catch-all + supervised account/position streams, missed-fill catch-up on resume, submit-timeout in-flight semantics, defer protective orders during pause, drop overlay on ack, loop-native gap backfill, external-order admission + preflight, and the 05-13 carry-overs. Fixes V17-07/08/09/11/13/15/16 + 05-13 (CONTEXT D-11..D-18).
