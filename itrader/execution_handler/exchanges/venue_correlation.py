@@ -150,6 +150,17 @@ class VenueCorrelationIndex:
 		with self._correlation_lock:
 			return self._venue_id_by_order_id.get(order_id)
 
+	def order_for_venue_id(self, venue_id: str) -> Optional[OrderEvent]:
+		"""Resolve the correlated OrderEvent for a venue order id (the order-status path, D-12).
+
+		The venue-side order-status stream (``watch_orders``) carries the venue order id and a
+		terminal status (CANCELLED/EXPIRED) the engine did not itself command; the arm needs the
+		originating OrderEvent to mint a reconciling FillEvent. Read-only + lock-guarded (WR-03);
+		returns None for an unknown / already-released venue id (deferred to the reconcile sweep).
+		"""
+		with self._correlation_lock:
+			return self._orders_by_venue_id.get(venue_id)
+
 	# --- resolution (read path — connector loop thread, atomic) ---------------
 
 	def resolve(self, trade: Any) -> ResolveResult:

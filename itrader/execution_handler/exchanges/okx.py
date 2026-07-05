@@ -69,6 +69,26 @@ _STREAM_RECONNECT_RETRY_CEILING = 6           # A3 [ASSUMED] retries exhausted -
 # fill correlation).
 _CLORDID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
+# D-12 (V17-08): bounded missed-fill catch-up page size. On resume the arm
+# re-fetches at most this many recent trades per active symbol via a SINGLE
+# ``fetch_my_trades`` page (explicit ``limit``, NO ccxt auto-pagination) since the
+# disconnect floor — enough to cover a realistic reconnect-window fill burst. D-08
+# ``{symbol}:{trade_id}`` dedup makes any re-fetched (or live-redelivered) trade an
+# idempotent no-op, so an under-sized page only defers the tail to the next
+# reconcile, never double-settles. ccxt's okx caps a fetch_my_trades page at 100.
+_CATCHUP_TRADE_LIMIT = 100
+
+# D-12: ccxt-unified terminal order statuses that reconcile the mirror via a
+# FillEvent — a venue-side cancel/expiry the engine did NOT itself command (an OKX
+# MMP cancel, a post-only reject, a GTD expiry). ``closed`` (FILLED) is deliberately
+# absent: that money already crosses on ``watch_my_trades``, so translating it here
+# would double-settle. Keys are lower-cased before lookup.
+_ORDER_STATUS_TO_FILL: Dict[str, str] = {
+	"canceled": "CANCELLED",
+	"cancelled": "CANCELLED",
+	"expired": "EXPIRED",
+}
+
 
 class OkxExchange(AbstractExchange):
 	"""Live OKX order arm implementing ``AbstractExchange`` against an injected session.
@@ -145,6 +165,18 @@ class OkxExchange(AbstractExchange):
 		self._halt_signal: Optional[Callable[[str], None]] = None
 		self._on_stream_down: Optional[Callable[[str], None]] = None
 		self._on_stream_up: Optional[Callable[[str], None]] = None
+
+		# D-12 (V17-08): missed-fill catch-up state. Every submitted/adopted order's
+		# symbol is tracked so the resume catch-up knows WHICH symbols to re-fetch
+		# (the venue universe is small, so a symbol that never terminalizes is
+		# naturally bounded — over-including one is a dedup-safe no-op). When a stream
+		# drops we snapshot the last venue-ms timestamp processed
+		# (``_last_venue_ts_ms``) as the re-fetch floor (``_disconnect_ts_ms``); on
+		# resume the ENGINE thread calls ``catch_up_missed_fills`` to recover trades
+		# that settled during the gap. Business time only — never wall-clock.
+		self._active_symbols: set[str] = set()
+		self._last_venue_ts_ms: Optional[int] = None
+		self._disconnect_ts_ms: Optional[int] = None
 
 	# --- symbol / time helpers ------------------------------------------------
 
@@ -338,6 +370,9 @@ class OkxExchange(AbstractExchange):
 		params["clOrdId"] = client_order_id
 		# WR-05 R1: the index owns the pending-correlation write (guarded internally).
 		self._index.register_pending(client_order_id, event)
+		# D-12: track the symbol BEFORE the RPC so an ambiguous submit timeout (D-13,
+		# mirror left in-flight) still contributes its symbol to the resume catch-up.
+		self._active_symbols.add(event.ticker)
 
 		response = self._connector.call(
 			client.create_order(symbol, otype, side, amount, price, params=params))
@@ -391,6 +426,8 @@ class OkxExchange(AbstractExchange):
 			return
 		event = OrderEvent.new_order_event(order)
 		venue_id = str(venue_id)
+		# D-12: a rehydrated resting order is active — track its symbol for the resume catch-up.
+		self._active_symbols.add(event.ticker)
 		# WR-05 R1: the index repopulates all three maps and RETURNS any fills
 		# buffered before this correlation landed (mirrors the _submit_order
 		# fast-fill-race drain). Re-drain OUTSIDE the index lock — _handle_trade
@@ -475,6 +512,9 @@ class OkxExchange(AbstractExchange):
 				"Malformed fill payload for order %s (missing price/amount/timestamp) — skipping",
 				venue_id)
 			return False
+		# D-12: advance the catch-up floor (venue business ms) so a later stream drop
+		# re-fetches only from the last fill actually processed, not from epoch.
+		self._last_venue_ts_ms = int(timestamp)
 		# WR-01: ccxt frequently emits ``fee: {"cost": None, ...}`` (fee not yet
 		# known). ``fee.get("cost", 0)`` returns None because the key IS present, and
 		# ``to_money(str(None))`` -> ``Decimal("None")`` raises InvalidOperation,
@@ -537,6 +577,55 @@ class OkxExchange(AbstractExchange):
 			return
 		for buffered_trade in drained:
 			self._emit_fill(buffered_trade, order, venue_id)
+
+	def catch_up_missed_fills(self) -> None:
+		"""Recover fills that settled while the fill stream was down (D-12 / V17-08).
+
+		Called on the ENGINE / resume path — NOT the connector loop thread. It bridges
+		the async ``fetch_my_trades`` through the blocking ``connector.call``, which does
+		``run_coroutine_threadsafe(...).result()``; calling that FROM the loop thread
+		would deadlock. The composition-root resume wiring (the injected ``on_stream_up``
+		flips a thread-safe flag; the engine thread then runs the fresh REST reconcile)
+		drives this alongside that reconcile, on resume and on the attempt==1 reconnect.
+
+		For each active-order symbol it fetches the venue's trades since the disconnect
+		floor (``_disconnect_ts_ms`` — a venue-ms business timestamp captured at the
+		stream-down transition) and routes each through the EXISTING ``_handle_trade``,
+		so a fill missed during the downtime settles the mirror. Safe to re-run, and safe
+		against the live stream ALSO redelivering the same trade: D-08
+		``{symbol}:{trade_id}`` dedup makes a re-fetched trade an idempotent no-op, so the
+		missed fill settles EXACTLY once. Bounded (Pitfall-safe): a SINGLE page with an
+		explicit ``limit`` — NO ccxt auto-pagination — honoring the venue's ~3-month /
+		100-per-page window. A fetch or translation failure is swallow-and-logged (the
+		next reconcile sweep is the backstop); the resume path never crashes on catch-up.
+		Steady-state mid-session re-fetch is OUT of scope here (Phase-7 spec).
+		"""
+		since = self._disconnect_ts_ms
+		symbols = sorted(self._active_symbols)
+		if not symbols:
+			return
+		client = self._connector.client
+		for symbol in symbols:
+			try:
+				trades = self._connector.call(client.fetch_my_trades(
+					self._to_symbol(symbol), since=since, limit=_CATCHUP_TRADE_LIMIT))
+			except Exception:
+				# Scrub (T-05-27): the connector error may carry request context — log
+				# via exc_info (the sink scrubs), never str(exc) into the message.
+				self.logger.error(
+					"OKX missed-fill catch-up fetch failed for %s — deferred to reconcile",
+					symbol, exc_info=True)
+				continue
+			for trade in trades or []:
+				# A single malformed trade must not abort the remaining catch-up.
+				try:
+					self._handle_trade(trade)
+				except Exception:
+					self.logger.error(
+						"OKX missed-fill catch-up translation failed — skipping trade",
+						exc_info=True)
+		# Floor consumed — a subsequent disconnect re-arms it (idempotent re-run otherwise).
+		self._disconnect_ts_ms = None
 
 	# --- reconnect supervisor (RES-01/D-19/D-20) -------------------------------
 
@@ -652,6 +741,12 @@ class OkxExchange(AbstractExchange):
 		if stream_name in self._streams_down:
 			return
 		self._streams_down.add(stream_name)
+		# D-12: snapshot the catch-up floor from the stream-down transition (last
+		# processed venue ms, never wall-clock) so the resume ``catch_up_missed_fills``
+		# re-fetches trades that settled during the gap. Only the first drop sets it;
+		# it clears once the catch-up consumes it.
+		if self._disconnect_ts_ms is None:
+			self._disconnect_ts_ms = self._last_venue_ts_ms
 		self.logger.warning(
 			"OKX %s stream disconnected — pausing new order submission", stream_name)
 		if self._on_stream_down is not None:
@@ -719,7 +814,13 @@ class OkxExchange(AbstractExchange):
 		await self._run_stream_supervisor(self._consume_orders, "orders")
 
 	async def _consume_orders(self, stream_name: str) -> None:
-		"""Forever-loop: log venue order-status updates; reconnect-supervised."""
+		"""Forever-loop: reconcile venue order-status updates; reconnect-supervised (D-12).
+
+		A venue-side CANCELLED/EXPIRED row is translated into a FillEvent so the mirror
+		reconciles (``_handle_order_update``); every other status stays log-only. Per-row
+		swallow-and-log (matching ``_consume_fills``) so one malformed row never kills the
+		forever-loop and silently drops every subsequent order update.
+		"""
 		while True:
 			orders = await self._connector.client.watch_orders()
 			self._on_stream_healthy(stream_name)
@@ -727,7 +828,52 @@ class OkxExchange(AbstractExchange):
 			if orders:
 				self._reset_reconnect_budget(stream_name)
 			for order in orders:
-				self.logger.debug("OKX order update: %s", order)
+				try:
+					self._handle_order_update(order)
+				except Exception:
+					self.logger.error(
+						"OKX order-update translation failed — skipping", exc_info=True)
+
+	def _handle_order_update(self, order: Any) -> None:
+		"""Translate one venue order-status row into a mirror-reconciling event (D-12 / V17-08).
+
+		A venue-side CANCELLED/EXPIRED (a cancel/expiry the engine did NOT command — an OKX
+		MMP cancel, a post-only reject, a GTD expiry) must reconcile the order mirror, else
+		the order sits PENDING forever. Translate it into a ``FillEvent(CANCELLED/EXPIRED)``
+		on ``global_queue`` (the ``:250`` REFUSED emit's donor shape) so ``OrderHandler.on_fill``
+		drives the mirror terminal. Every other status stays log-only: ``closed`` (FILLED) is
+		the money path that already crosses on ``watch_my_trades``, so translating it here would
+		double-settle. Business time from the venue ms (never wall-clock); the OrderEvent is
+		resolved from the venue order id via the correlation index — an uncorrelated row is
+		deferred to the reconcile sweep.
+		"""
+		if not isinstance(order, dict):
+			self.logger.debug("OKX order update (non-dict) — skipping: %s", order)
+			return
+		status = order.get("status")
+		fill_status = (_ORDER_STATUS_TO_FILL.get(str(status).lower())
+		               if status is not None else None)
+		if fill_status is None:
+			# Non-terminal / FILLED (money crosses on watch_my_trades) — log only.
+			self.logger.debug("OKX order update: %s", order)
+			return
+		venue_id = order.get("id")
+		event = (self._index.order_for_venue_id(str(venue_id))
+		         if venue_id is not None else None)
+		if event is None:
+			self.logger.warning(
+				"Venue %s for order %s has no correlated OrderEvent — deferred to reconcile",
+				fill_status, venue_id)
+			return
+		timestamp = order.get("timestamp")
+		if timestamp is not None:
+			self._last_venue_ts_ms = int(timestamp)
+		fill_time = self._ms_to_dt(timestamp) if timestamp is not None else None
+		# Donor shape (:250): the order's own (Decimal) price/quantity + commission
+		# Decimal("0") (a cancel/expiry never settles money); time from the venue ms.
+		self.global_queue.put(FillEvent.new_fill(
+			fill_status, event, price=event.price, quantity=event.quantity,
+			commission=Decimal("0"), time=fill_time))
 
 	# --- connection lifecycle -------------------------------------------------
 
