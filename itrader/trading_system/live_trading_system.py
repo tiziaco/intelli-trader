@@ -201,7 +201,12 @@ class LiveTradingSystem:
         # system) — a local variable would leave every captured SignalRecord
         # permanently unreachable (a write-only accumulation).
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
-        self.portfolio_handler = PortfolioHandler(self.global_queue)
+        # 05.2-05 (D-07): the PortfolioHandler is constructed AFTER the operational
+        # store block below (which sets self._system_db_backend) so it can inject the
+        # SAME shared SqlBackend on the durable 'live' arm — see the durable-portfolio
+        # wiring right after the store block. Declared here as a forward attribute so
+        # nothing between reads it before construction.
+        self.portfolio_handler: PortfolioHandler
         # WR-04: declare the universe attribute as a clean "not yet wired"
         # sentinel here, mirroring Engine.universe: Optional[Universe] = None on
         # the backtest path. It is populated in _initialize_live_session (from
@@ -284,7 +289,20 @@ class LiveTradingSystem:
             # loop. Keep-only-measured: no async buffering is built unless a live stall
             # is profiled (D-10).
             self._signal_store = SignalStorageFactory.create('live', backend=backend)
-        
+
+        # 05.2-05 (D-07): durable portfolio ledger wiring. When the Postgres spine
+        # is present, construct the PortfolioHandler on the 'live' arm with the SAME
+        # shared SqlBackend so each Portfolio threads it into its state storage —
+        # the engine's own durable ledger becomes the source of portfolio truth
+        # (rehydrate restores positions+cash on restart). No spine -> 'backtest'
+        # in-memory (degrades cleanly, mirroring the order/signal fallback above).
+        if self._system_db_backend is not None:
+            self.portfolio_handler = PortfolioHandler(
+                self.global_queue, environment='live',
+                backend=self._system_db_backend)
+        else:
+            self.portfolio_handler = PortfolioHandler(self.global_queue)
+
         # Execution handler constructed BEFORE the order handler so the
         # admission gate's commission estimator can adapt the simulated
         # exchange's fee model (Plan 05-06, D-04 — mode-agnostic wiring).
@@ -1298,6 +1316,16 @@ class LiveTradingSystem:
                 # exposing rehydrate() (the CachedSql live store; not the in-memory
                 # fallback) so an unconfigured ITRADER_DATABASE_* env degrades cleanly.
                 if hasattr(self._order_storage, 'rehydrate'):
+                    # 05.2-05 (D-07/D-08): restore the durable PORTFOLIO ledger
+                    # (open positions + persisted cash into the live managers) and
+                    # seed the settled-trade dedup ledger from durable transactions
+                    # BEFORE reconcile — so venue adoption diffs against RESTORED
+                    # engine state and a re-delivered downtime trade is a no-op.
+                    # rehydrate() is internally getattr-guarded per portfolio (the
+                    # in-memory backtest backend is a clean skip), so it is safe here
+                    # under the same durable-store gate as the order rehydrate.
+                    self.portfolio_handler.rehydrate()
+
                     from itrader.portfolio_handler.reconcile.venue_reconciler import (
                         VenueReconciler,
                     )
