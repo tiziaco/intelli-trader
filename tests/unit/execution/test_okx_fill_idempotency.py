@@ -282,6 +282,76 @@ def test_submit_registers_clordid_pending_correlation(
     assert exchange._index._orders_by_clOrdId[clordid] is order
 
 
+# --- (ii-a) D-16 WR-02/WR-03: mark-seen-after-emit + release drains via resolve --
+
+
+def test_corrected_resend_after_malformed_emits_correlation(
+    exchange: OkxExchange, queue: "Queue[Any]"
+) -> None:
+    """WR-02: a malformed fill (missing price) does NOT consume the dedup slot, so a
+    corrected re-send of the SAME ``{ticker}:{trade_id}`` still emits — the slot is
+    consumed only after a True ``_emit_fill`` proves the fill was emitted."""
+    order = _make_order()
+    exchange._index._orders_by_venue_id["OID-1"] = order
+    malformed = {"id": "T-C", "order": "OID-1", "amount": "0.2", "timestamp": 1}  # no price
+    corrected = {
+        "id": "T-C",
+        "order": "OID-1",
+        "price": "42000.0",
+        "amount": "0.2",
+        "fee": {"cost": "0.084"},
+        "timestamp": 1704067202000,
+    }
+
+    exchange._handle_trade(malformed)  # _emit_fill False -> the slot must stay free
+    assert queue.empty()
+    assert "BTC-USDT:T-C" not in exchange._index._seen_trade_ids
+
+    exchange._handle_trade(corrected)  # corrected re-send -> emits (not dropped)
+
+    fills = _drain_queue(queue)
+    assert len(fills) == 1
+    assert fills[0].quantity == to_money("0.2")
+    # Now the slot is consumed so a further re-send dedups.
+    assert "BTC-USDT:T-C" in exchange._index._seen_trade_ids
+
+
+def test_release_drain_routes_buffered_fill_through_resolve_correlation(
+    exchange: OkxExchange, queue: "Queue[Any]"
+) -> None:
+    """WR-03: ``release_venue_correlation`` drains a buffered late fill through the FULL
+    ``resolve`` path (dedup + correlation), NOT raw ``_emit_fill`` — so the drained fill
+    is recorded in the dedup ring (a later re-delivery dedups instead of double-counting)."""
+    order = _make_order(quantity=Decimal("0.5"))
+    buffered = {
+        "id": "T-DRAIN",
+        "order": "OID-1",
+        "price": "42000.0",
+        "amount": "0.2",
+        "fee": {"cost": "0.04"},
+        "timestamp": 1704067202000,
+    }
+    # Fill arrives before any correlation -> buffered (not emitted).
+    exchange._handle_trade(buffered)
+    assert queue.empty()
+    assert exchange._index._pending_fills_by_venue_id.get("OID-1") == [buffered]
+
+    # Correlation lands directly (as on the terminal-release path where the buffer is
+    # drained by release rather than by register).
+    exchange._index._orders_by_venue_id["OID-1"] = order
+    exchange._index._venue_id_by_order_id[order.order_id] = "OID-1"
+    exchange._index._clordid_by_venue_id["OID-1"] = "it1"
+
+    exchange.release_venue_correlation("OID-1")
+
+    fills = _drain_queue(queue)
+    assert len(fills) == 1
+    assert fills[0].quantity == to_money("0.2")
+    # Proof it drained THROUGH resolve (not raw _emit_fill): the dedup key is now recorded.
+    assert "BTC-USDT:T-DRAIN" in exchange._index._seen_trade_ids
+    assert "OID-1" not in exchange._index._pending_fills_by_venue_id
+
+
 # --- (ii-b) restart rehydration: adopt_venue_correlation repopulates the maps --
 
 
@@ -371,6 +441,41 @@ def test_adopt_correlation_none_venue_id_is_noop(
     assert not exchange._index._orders_by_venue_id
     assert not exchange._index._venue_id_by_order_id
     assert queue.empty()
+
+
+# --- (ii-c) D-16 WR-01: release_pending on a DEFINITIVE submit failure ----------
+
+
+def test_release_pending_on_definitive_submit_failure(
+    exchange: OkxExchange, fake_client: MagicMock
+) -> None:
+    """WR-01: a DEFINITIVE venue rejection (ccxt.InvalidOrder) drops the pending clOrdId
+    correlation registered before the RPC — a failed submit does not leak it."""
+    import ccxt
+
+    order = _make_order(order_id=1)
+    clordid = OkxExchange._client_order_id(order)
+    fake_client.create_order = AsyncMock(side_effect=ccxt.InvalidOrder("bad symbol"))
+
+    exchange.on_order(order)
+
+    # Definitive rejection -> the pending correlation is released (no leak).
+    assert clordid not in exchange._index._orders_by_clOrdId
+
+
+def test_release_pending_not_called_on_ambiguous_submit_timeout(
+    exchange: OkxExchange, fake_client: MagicMock
+) -> None:
+    """WR-01 / D-13: an AMBIGUOUS transport timeout leaves the mirror in-flight — the
+    pending clOrdId correlation is RETAINED (the order may still fill, resolving via it)."""
+    order = _make_order(order_id=2)
+    clordid = OkxExchange._client_order_id(order)
+    fake_client.create_order = AsyncMock(side_effect=TimeoutError())
+
+    exchange.on_order(order)
+
+    # Ambiguous transport -> pending correlation retained (NOT released).
+    assert exchange._index._orders_by_clOrdId.get(clordid) is order
 
 
 # --- (iii) stream resilience: a malformed trade does not kill the loop ---------
