@@ -190,3 +190,46 @@ def test_fetch_open_orders_keeps_its_no_arg_form():
     reconciler.reconcile()
 
     assert client.open_orders_calls == [((), {})]
+
+
+# ------------------------------------------------ Task 2: F/U-13 window loud-log
+
+# A distinctive substring the window-bound WARNING must carry so the no-warn case can
+# assert its ABSENCE without coupling to the full message text.
+_WINDOW_WARN_MARKER = "fills-history"
+
+
+def test_warns_when_since_predates_fills_history_window(caplog):
+    """since older than the ~3-month /trade/fills-history window → WARNING naming the symbol."""
+    order = _make_order(time=_ANCIENT)   # 2020 — far outside the ~90-day window
+    client = _RecordingClient()
+    reconciler, _ = _build_reconciler([order], client)
+
+    with caplog.at_level(logging.WARNING):
+        reconciler.reconcile()
+
+    window_warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and _WINDOW_WARN_MARKER in r.getMessage()
+    ]
+    assert window_warnings, "expected a fills-history window WARNING for an out-of-window since"
+    assert _SYMBOL in caplog.text   # the warning names the uncovered symbol
+
+
+def test_no_warn_when_since_within_window(caplog):
+    """since inside the ~3-month window → no window-bound warning (silent catch-up)."""
+    order = _make_order(time=_RECENT)   # now − 1 day — well inside the window
+    client = _RecordingClient()
+    reconciler, _ = _build_reconciler([order], client)
+
+    with caplog.at_level(logging.WARNING):
+        reconciler.reconcile()
+
+    assert _WINDOW_WARN_MARKER not in caplog.text
+
+
+def test_window_bound_is_a_named_constant():
+    """The venue window bound is a named module constant, not a magic literal."""
+    from itrader.portfolio_handler.reconcile import venue_reconciler as vr
+
+    assert vr._FILLS_HISTORY_WINDOW_DAYS == 90
