@@ -387,7 +387,7 @@ Plans:
 - [x] 05.3-04-PLAN.md — D-15 drop buying-power overlay on venue ack [wave 2]
 - [x] 05.3-03-PLAN.md — D-16 05-13 correlation carry-overs (mark-seen-after, release_pending, capacity guard, bounded buffer) [wave 3]
 - [x] 05.3-05-PLAN.md — D-17 loop-native gap backfill (kill the 30s stall -> livelock) [wave 3]
-- [ ] 05.3-06-PLAN.md — D-18 external-order admission + preflight (HIGH threat) + D-14 defer protective orders during pause (turn A8 GREEN) [wave 4]
+- [x] 05.3-06-PLAN.md — D-18 external-order admission + preflight (HIGH threat) + D-14 defer protective orders during pause (turn A8 GREEN) [wave 4]
 - [ ] 05.3-08-PLAN.md — D-20 early durable-halt refusal + D-21 off-loop halt write [wave 5]
 - [ ] 05.3-09-PLAN.md — D-23 ungate rehydrate -> SimulatedAccount restart cash/realized-PnL restore [wave 6]
 
