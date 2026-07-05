@@ -590,6 +590,17 @@ class OkxExchange(AbstractExchange):
 					stream_name, type(exc).__name__, attempt,
 					self._reconnect_ceiling, backoff)
 				await asyncio.sleep(backoff)
+			except Exception as exc:
+				# D-11 (V17-07): an UNCLASSIFIED error is neither transient nor fatal.
+				# Fail safe — escalate to the halt entrypoint instead of letting it
+				# propagate out of the consume loop and kill the task silently (an
+				# unknown error on a money path must HALT, never freeze state blind).
+				# Sits BELOW the CancelledError re-raise (cancellation is never
+				# swallowed) and BELOW the fatal/transient arms (classified errors keep
+				# their existing paths); the scrub in _escalate_connector_halt is
+				# preserved (type(exc).__name__ + fixed literal only — V7 / T-05-27).
+				self._escalate_connector_halt(stream_name, exc, "unexpected error")
+				return
 
 	def _escalate_connector_halt(self, stream_name: str, exc: BaseException, cause: str) -> None:
 		"""Halt the engine on an unrecoverable connector failure (D-20).

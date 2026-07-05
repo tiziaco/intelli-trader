@@ -405,8 +405,16 @@ def test_malformed_row_is_skipped_not_indexed(
 # instead of re-introducing an infinite loop.
 
 
-class _StopLoop(Exception):
-    """Test sentinel used to bound an otherwise-healthy (infinite) reconnect loop."""
+class _StopLoop(BaseException):
+    """Test sentinel used to bound an otherwise-healthy (infinite) reconnect loop.
+
+    Subclasses ``BaseException`` (NOT ``Exception``) so it is a harness control-flow
+    signal — like ``asyncio.CancelledError`` — that propagates cleanly out of the
+    supervisor rather than being caught. After D-11 (V17-07) the supervisor grew an
+    ``except Exception`` fail-safe catch-all that escalates any UNCLASSIFIED error to a
+    HALT; an ``Exception`` sentinel here would be mis-treated as a real venue error and
+    spuriously halt (masking the non-halt behaviour this test verifies).
+    """
 
 
 async def _instant_sleep(*_a: Any, **_k: Any) -> None:
