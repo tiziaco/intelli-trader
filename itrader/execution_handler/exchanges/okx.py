@@ -239,14 +239,46 @@ class OkxExchange(AbstractExchange):
 					operation="cancel_order",
 					severity=ErrorSeverity.ERROR))
 				return
-			# SUBMIT failure: keep the existing reconciliation contract (mirrored
-			# by SimulatedExchange's _emit_rejection) — a submit that never reached
-			# the venue flows back as FillEvent(REFUSED) so OrderHandler.on_fill /
-			# ReconcileManager transitions the stored mirror PENDING->REJECTED.
-			# Only logging would leave the mirror stuck at PENDING forever. Emit
-			# REFUSED with the order's own (Decimal) price/quantity and commission
-			# Decimal("0") (never settled); no time= so it inherits the order's
-			# decision time (admission-time outcome, D-01/D-13).
+			# SUBMIT failure. Branch on the error CLASS (D-13 / V17-09) BEFORE the
+			# REFUSED emit — the disposition depends on whether the failure is a
+			# DEFINITIVE venue rejection or an AMBIGUOUS transport outcome.
+			#
+			# AMBIGUOUS transport error: a ``TimeoutError`` (raised by
+			# ``connector.call(...).result(timeout=_CALL_TIMEOUT)`` when the loop
+			# future does not resolve in time — this alias also covers
+			# ``asyncio.TimeoutError`` / ``concurrent.futures.TimeoutError`` on 3.11+)
+			# or a ccxt ``NetworkError`` (``RequestTimeout`` / ``DDoSProtection`` /
+			# ``ExchangeNotAvailable`` …). The submit MAY have REACHED the venue and be
+			# resting / partially filled — the transport just lost the ack. Emitting
+			# ``FillEvent(REFUSED)`` here would drive ReconcileManager -> REJECTED,
+			# terminalizing a mirror whose order might be live: a later real fill then
+			# arrives against an order the engine believes is dead (position + cash
+			# drift, unhedged risk). Leave the mirror IN-FLIGHT / UNKNOWN — it simply
+			# stays PENDING (no terminal FillEvent on the queue). Resolution is
+			# deferred: the ``clOrdId`` pending correlation registered before the
+			# submit still resolves a fill that streams in, and the next
+			# ``VenueReconciler`` sweep (or a ``fetch_order(clOrdId)`` probe) settles
+			# the true venue state. Scrub (T-05-27): bind the exception TYPE only,
+			# never ``str(exc)``.
+			import ccxt  # lazy: ccxt already transitively imported on the live path only
+			ambiguous_transport: tuple[type[BaseException], ...] = (
+				TimeoutError, ccxt.NetworkError)
+			if isinstance(exc, ambiguous_transport):
+				self.logger.warning(
+					"OKX submit for order %s (%s) hit an ambiguous transport error "
+					"(%s) — mirror left IN-FLIGHT (stays PENDING) pending "
+					"fetch_order / reconcile, NOT terminalized to REJECTED",
+					event.order_id, event.ticker, type(exc).__name__)
+				return
+			# DEFINITIVE venue rejection (e.g. ccxt.InvalidOrder — the order was
+			# refused outright and never reached the book): keep the existing
+			# reconciliation contract (mirrored by SimulatedExchange's
+			# _emit_rejection) — flow it back as FillEvent(REFUSED) so
+			# OrderHandler.on_fill / ReconcileManager transitions the stored mirror
+			# PENDING->REJECTED. Only logging would leave the mirror stuck at PENDING
+			# forever. Emit REFUSED with the order's own (Decimal) price/quantity and
+			# commission Decimal("0") (never settled); no time= so it inherits the
+			# order's decision time (admission-time outcome, D-01/D-13).
 			self.global_queue.put(FillEvent.new_fill(
 				"REFUSED", event, price=event.price, quantity=event.quantity,
 				commission=Decimal("0")))
