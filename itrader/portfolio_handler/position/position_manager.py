@@ -269,7 +269,15 @@ class PositionManager:
         return self._storage.get_position(ticker)
 
     def get_all_positions(self) -> Dict[str, Position]:
-        """Get all active positions."""
+        """Get all active positions.
+
+        D-07 restore read-surface: on a live restart the rehydrated OPEN positions
+        surface HERE unchanged — this manager reads through ``self._storage`` (the
+        ``CachedSqlPortfolioStateStorage`` working-set cache that ``rehydrate()``
+        repopulates), so no manager-facing restore is needed; the read seam already
+        exposes the rehydrated positions (OQ1: positions WIRE, only the cash scalar
+        BUILDS — see ``Account.restore_cash``).
+        """
         return self._storage.get_positions()
 
     def get_closed_positions(self, limit: Optional[int] = None) -> List[Position]:

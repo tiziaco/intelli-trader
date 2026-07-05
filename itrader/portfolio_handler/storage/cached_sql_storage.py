@@ -54,6 +54,7 @@ from ..base import PortfolioStateStorage
 from .in_memory_storage import InMemoryPortfolioStateStorage
 
 if TYPE_CHECKING:
+    from ..account import Account
     from ..position import Position
     from ..transaction import Transaction
     from .sql_storage import SqlPortfolioStateStorage
@@ -273,14 +274,26 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
 
     # -- Rehydration (open-only restart boot sequence — D-03) -----------------
 
-    def rehydrate(self) -> None:
-        """Reload the open working set from the store on restart — open-only (D-03).
+    def rehydrate(self, account: "Optional[Account]" = None) -> None:
+        """Reload the open working set from the store on restart — open-only (D-03/D-07).
 
         Loads open positions (the indexed ``WHERE is_open = true`` query, D-08), repopulates
-        the reservations / locked-margin dicts from their per-reference rows, and reads back the
-        account-state scalars. NEVER loads closed positions / transaction history / cash-ops
-        into the working set (read-through serves those). A3: restoration of the scalars INTO
-        ``CashManager`` / ``PositionManager`` is N+4 — here they are only read back.
+        the reservations / locked-margin dicts from their per-reference rows, and — when a live
+        ``account`` is supplied — restores the persisted cash scalar INTO it (D-07 / V17-05:
+        the engine remembers its balance after a restart). NEVER loads closed positions /
+        transaction history / cash-ops into the working set (read-through serves those).
+
+        The rehydrated OPEN positions surface through the live ``PositionManager`` read path
+        automatically: the manager reads ``state_storage.get_positions()`` → this wrapper's
+        cache, which is populated below. The cash scalar is the one piece NOT served by the
+        cache (it lives on the ``Account._balance``), so it is threaded into
+        ``account.restore_cash`` here — closing the D-07 restore gap (was: read back and
+        discarded, "N+4").
+
+        Args:
+            account: The live ``Account`` leaf to restore the persisted cash balance into.
+                ``None`` keeps the read-back-only boot behaviour (the caller restores cash
+                elsewhere) — the SMA_MACD backtest never reaches this path (oracle-dark).
         """
         positions = self._store.get_positions()
         reservations = self._load_scoped_amounts(
@@ -296,9 +309,13 @@ class CachedSqlPortfolioStateStorage(PortfolioStateStorage):
                 self._cache.add_reservation(reference_id, amount)
             for position_id, amount in locked_margin.items():
                 self._cache.add_locked_margin(position_id, amount)
-        # Read back the latest account-state row (boot-sequence step; restoration into the
-        # managers is N+4 — A3). Discarded here on purpose.
-        self.load_account_state()
+        # D-07: restore the persisted cash scalar INTO the live account (no longer
+        # discarded). Positions/reservations/locked-margin are already restored above via
+        # the cache the managers read; the cash balance is the one scalar the cache does
+        # not carry, so it is threaded into the account here.
+        state = self.load_account_state()
+        if account is not None and state is not None:
+            account.restore_cash(state["cash_balance"])
 
     def _load_scoped_amounts(self, table: Any, key_column: str) -> dict[str, Decimal]:
         """Read a ``{key -> amount}`` map for the bound portfolio from a per-reference table.

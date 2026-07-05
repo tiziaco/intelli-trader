@@ -155,6 +155,25 @@ class SimulatedCashAccount(Account):
         """Get reserved cash balance."""
         return self._storage.get_reserved_cash()
 
+    def restore_cash(self, balance: Decimal) -> None:
+        """Restore the cash balance from a durable snapshot on restart (D-07 / V17-05).
+
+        The ONE live-restart-only cash setter: sets ``self._balance`` directly from the
+        persisted account-state scalar
+        (``CachedSqlPortfolioStateStorage.load_account_state``) so a fresh account leaf
+        REMEMBERS the pre-restart balance instead of its construction-time initial cash.
+        Deliberately bypasses the ``deposit``/``withdraw`` min/max-balance policy gates —
+        those guard NEW live admin cash flows; a restart is restoring already-validated
+        persisted truth, not admitting a new deposit. Decimal end-to-end via ``to_money``
+        (never ``Decimal(float)`` — the persisted Postgres ``Numeric`` round-trips
+        exactly). Oracle-dark: only reachable on the live rehydrate path (the in-memory
+        backtest backend exposes no ``rehydrate``), so SMA_MACD stays byte-exact.
+
+        Args:
+            balance: The persisted cash balance to restore (full precision Decimal).
+        """
+        self._balance = to_money(balance)
+
     def deposit(self, amount: float | Decimal, description: str = "Cash deposit", reference_id: Optional[str] = None) -> bool:
         """
         Deposit cash to the portfolio.
