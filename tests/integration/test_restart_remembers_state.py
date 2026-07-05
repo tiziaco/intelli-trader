@@ -68,10 +68,15 @@ class _DurableStoreDouble(InMemoryPortfolioStateStorage):
         durable_positions: Optional[Dict[str, Position]] = None,
         durable_cash: Optional[Decimal] = None,
         durable_transactions: Optional[List[Transaction]] = None,
+        durable_realized_pnl: Decimal = Decimal("0"),
     ) -> None:
         super().__init__()
         self._durable_positions: Dict[str, Position] = dict(durable_positions or {})
         self._durable_cash: Optional[Decimal] = durable_cash
+        # WR-03: the persisted realised-PnL accumulator scalar (defaults to zero so
+        # existing callers are unchanged). Restored into the PositionManager on
+        # rehydrate so a post-restart fill does not overwrite the durable value with 0.
+        self._durable_realized_pnl: Decimal = durable_realized_pnl
         # Durable transactions ARE the persisted history — expose them via the
         # inherited get_transaction_history() read-through (the ledger seed reads it).
         for txn in durable_transactions or []:
@@ -83,7 +88,7 @@ class _DurableStoreDouble(InMemoryPortfolioStateStorage):
             return None
         return {
             "cash_balance": self._durable_cash,
-            "realized_pnl": Decimal("0"),
+            "realized_pnl": self._durable_realized_pnl,
             "total_equity": self._durable_cash,
             "peak_equity": self._durable_cash,
             "open_positions_count": len(self._durable_positions),
@@ -239,3 +244,35 @@ def test_same_trade_id_different_symbol_still_settles() -> None:
     assert settled.net_quantity == Decimal("0.1")
     # And its symbol-scoped key is now recorded.
     assert "ETH/USDT:T1" in handler._settled_venue_trade_ids
+
+
+def test_restart_restores_realised_pnl_accumulator() -> None:
+    """A fresh handler rehydrates the persisted realised-PnL accumulator (WR-03).
+
+    The running ``PositionManager._realised_pnl_accumulator`` (fed only via
+    ``apply_realised_increment``) is NOT one of the position/cash containers the
+    working-set cache carries — it starts at ``Decimal('0.00')`` on a fresh handler.
+    Before the WR-03 fix ``rehydrate()`` never re-seeded it, so after a restart
+    ``total_realised_pnl`` reported 0 (dropping all pre-restart realised PnL — including
+    the fully-closed positions rehydrate deliberately does not load), and the very next
+    ``_persist_account_state`` write OVERWROTE the durable ``realized_pnl`` column with
+    that undercounted value.
+
+    RED (before fix): ``total_realised_pnl == Decimal('0.00')``. GREEN: the persisted
+    accumulator is restored so the durable figure survives a restart.
+    """
+    persisted_realised = Decimal("1234.56")
+    store = _DurableStoreDouble(
+        durable_cash=Decimal("100000.00"),
+        durable_realized_pnl=persisted_realised,
+    )
+
+    handler, portfolio_id, portfolio = _handler_with_portfolio_on(store)
+    # Pre-rehydrate: a fresh handler remembers no realised PnL.
+    assert portfolio.total_realised_pnl == Decimal("0.00")
+
+    handler.rehydrate()
+
+    # The persisted accumulator is restored at full precision (WR-03) — a subsequent
+    # _persist_account_state would now write the correct realized_pnl back.
+    assert portfolio.total_realised_pnl == persisted_realised
