@@ -168,3 +168,74 @@ def test_restart_restores_position_and_cash_into_live_managers() -> None:
     assert restored is not None
     assert restored.net_quantity == Decimal("0.5")
     assert fresh.account.balance == Decimal("99934.53")
+
+
+def _handler_with_portfolio_on(store: Any, cash: Decimal = Decimal("100000")):
+    """Build a fresh PortfolioHandler + one portfolio wired to the shared durable store."""
+    handler = PortfolioHandler(queue.Queue())
+    portfolio_id = handler.add_portfolio(name="restart_pf", exchange="simulated", cash=cash)
+    portfolio = handler.get_portfolio(portfolio_id)
+    _rebind_storage(portfolio, store)
+    return handler, portfolio_id, portfolio
+
+
+def _executed_fill(ticker: str, portfolio_id: PortfolioId, venue_trade_id: str,
+                   quantity: Decimal = Decimal("0.1"),
+                   price: Decimal = Decimal("42000")) -> FillEvent:
+    """Build an EXECUTED venue BUY fill carrying a venue trade id (the dedup key)."""
+    return FillEvent(
+        time=_BT,
+        status=FillStatus.EXECUTED,
+        ticker=ticker,
+        action=Side.BUY,
+        price=price,
+        quantity=quantity,
+        commission=Decimal("0"),
+        portfolio_id=portfolio_id,
+        fill_id=uc.uuid7(),
+        order_id=OrderId(uc.uuid7()),
+        strategy_id=StrategyId(uc.uuid7()),
+        venue_trade_id=venue_trade_id,
+    )
+
+
+def test_redelivered_venue_trade_after_restart_is_noop() -> None:
+    """The settled-trade dedup ledger survives a restart (D-07 + D-08 Layer 2)."""
+    # Durable transaction already recorded venue_trade_id "T1" for BTC/USDT pre-restart.
+    seed = _buy_transaction(
+        "BTC/USDT", Decimal("0.1"), Decimal("42000"), PortfolioId(uc.uuid7()),
+        venue_trade_id="T1",
+    )
+    store = _DurableStoreDouble(durable_transactions=[seed])
+
+    handler, portfolio_id, portfolio = _handler_with_portfolio_on(store)
+    # Restart seed: the fresh handler's ledger starts EMPTY; rehydrate seeds it from the
+    # durable transactions.venue_trade_id, keyed f"{ticker}:{venue_trade_id}".
+    handler.rehydrate()
+    assert "BTC/USDT:T1" in handler._settled_venue_trade_ids
+
+    # Re-delivering the SAME (BTC/USDT, "T1") after the restart is a no-op — the dedup
+    # ledger rehydrated, so no position is booked.
+    handler.on_fill(_executed_fill("BTC/USDT", portfolio_id, "T1"))
+    assert portfolio.position_manager.get_position("BTC/USDT") is None
+
+
+def test_same_trade_id_different_symbol_still_settles() -> None:
+    """A numeric venue tradeId collision across instruments settles (V17-12 collision-safe)."""
+    seed = _buy_transaction(
+        "BTC/USDT", Decimal("0.1"), Decimal("42000"), PortfolioId(uc.uuid7()),
+        venue_trade_id="T1",
+    )
+    store = _DurableStoreDouble(durable_transactions=[seed])
+
+    handler, portfolio_id, portfolio = _handler_with_portfolio_on(store)
+    handler.rehydrate()
+
+    # SAME numeric trade id "T1" but a DIFFERENT symbol — a distinct economic trade that
+    # must settle (the dedup key is symbol-scoped, not the raw id).
+    handler.on_fill(_executed_fill("ETH/USDT", portfolio_id, "T1"))
+    settled = portfolio.position_manager.get_position("ETH/USDT")
+    assert settled is not None
+    assert settled.net_quantity == Decimal("0.1")
+    # And its symbol-scoped key is now recorded.
+    assert "ETH/USDT:T1" in handler._settled_venue_trade_ids

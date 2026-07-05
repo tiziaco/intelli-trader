@@ -842,6 +842,47 @@ class PortfolioHandler:
         while len(self._settled_venue_trade_ids) > self._max_settled_venue_trade_ids:
             self._settled_venue_trade_ids.popitem(last=False)
 
+    def rehydrate(self) -> None:
+        """Restore live portfolio state + the durable dedup ledger on restart (D-07/D-08).
+
+        The cross-restart arm the in-session A5 guard (Plan 03) does NOT cover: on a live
+        restart ``_settled_venue_trade_ids`` starts EMPTY, so a venue trade re-delivered
+        AFTER the restart (an OKX stream re-send, or the ``VenueReconciler`` adopting a
+        downtime fill) would be booked a SECOND time. Per active portfolio this seam:
+
+        1. **Drives ``state_storage.rehydrate(account)``** — the Task-1 restore path: open
+           positions surface through the live ``PositionManager`` read cache and the
+           persisted cash scalar is restored into the ``Account`` (D-07 / V17-05). The
+           in-memory backtest backend exposes no ``rehydrate`` (oracle-dark) — skipped.
+        2. **Seeds the settled-trade dedup ledger** from the durable
+           ``transactions.venue_trade_id`` (the D-08 Layer-2 durable backstop), keyed
+           ``f"{ticker}:{venue_trade_id}"`` (V17-12 collision-safe — the same numeric
+           trade id on a DIFFERENT symbol still settles) via the bounded-FIFO
+           ``_mark_venue_trade_settled``. A re-delivered ``(ticker, venue_trade_id)`` is
+           then a no-op at the ``on_fill`` guard.
+
+        Sequencing (composition-root, Plan 05): this MUST run BEFORE
+        ``VenueReconciler.reconcile()`` so adoption diffs against restored state and the
+        dedup ledger already knows every already-settled venue trade.
+        """
+        for portfolio in self.get_active_portfolios():
+            storage = portfolio.state_storage
+            rehydrate_fn = getattr(storage, "rehydrate", None)
+            if rehydrate_fn is None:
+                # Backtest in-memory backend — nothing durable to restore (oracle-dark).
+                continue
+            # (a) D-07 restore: positions into the live managers' read cache + the
+            # persisted cash scalar into the account.
+            rehydrate_fn(portfolio.account)
+            # (b) D-08 Layer 2 durable backstop: seed the dedup ledger from the durable
+            # transaction history, keyed f"{ticker}:{venue_trade_id}" (V17-12). None-keyed
+            # backtest/simulated transactions carry no venue key and are skipped.
+            for transaction in storage.get_transaction_history():
+                venue_trade_id = getattr(transaction, "venue_trade_id", None)
+                if venue_trade_id is None:
+                    continue
+                self._mark_venue_trade_settled(f"{transaction.ticker}:{venue_trade_id}")
+
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
         """Process fill event for the appropriate portfolio.
@@ -873,8 +914,17 @@ class PortfolioHandler:
         # 0.5 BTC is never booked as 1.0 (the CR-01 double-count). Backtest and
         # simulated fills carry venue_trade_id=None and SKIP the guard entirely —
         # the SMA_MACD oracle takes no new branch (oracle-dark).
+        # D-08 Layer 2 (V17-12): key the dedup ledger by f"{ticker}:{venue_trade_id}",
+        # NOT the raw id — the numeric venue tradeId is only unique per instrument, so
+        # the SAME id on a different symbol is a DISTINCT economic trade and must still
+        # settle (collision-safe). None-keyed backtest/simulated fills skip the guard.
         venue_trade_id = getattr(fill_event, "venue_trade_id", None)
-        if venue_trade_id is not None and venue_trade_id in self._settled_venue_trade_ids:
+        dedup_key = (
+            f"{fill_event.ticker}:{venue_trade_id}"
+            if venue_trade_id is not None
+            else None
+        )
+        if dedup_key is not None and dedup_key in self._settled_venue_trade_ids:
             self.logger.warning(
                 "Rejecting duplicate venue trade fill (already settled)",
                 venue_trade_id=venue_trade_id,
@@ -931,9 +981,12 @@ class PortfolioHandler:
                 # CR-01: record the venue trade id as settled ONLY after the
                 # transaction applied — a later re-delivery (stream re-send or the
                 # restart reconciler) of the SAME venue trade is then a no-op at
-                # the guard above. None-keyed backtest/simulated fills never record.
-                if venue_trade_id is not None:
-                    self._mark_venue_trade_settled(venue_trade_id)
+                # the guard above. Recorded under the SAME f"{ticker}:{venue_trade_id}"
+                # key the guard reads (D-08 Layer 2 / V17-12 — symbol-scoped so the
+                # durable-ledger seed and the live mark share one key space). None-keyed
+                # backtest/simulated fills never record.
+                if dedup_key is not None:
+                    self._mark_venue_trade_settled(dedup_key)
 
                 self.logger.debug(
                     "Fill event processed",

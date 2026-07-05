@@ -77,7 +77,9 @@ def test_same_venue_trade_id_settles_once(env):
     portfolio = env.ptf.get_portfolio(env.pid)
     assert len(portfolio.transactions) == 1                 # booked once, not twice
     assert portfolio.positions["BTCUSDT"].net_quantity == Decimal("0.5")
-    assert "T-42" in env.ptf._settled_venue_trade_ids
+    # D-08 Layer 2 (V17-12): the ledger key is symbol-scoped f"{ticker}:{venue_trade_id}"
+    # so the same numeric id on a different symbol still settles (collision-safe).
+    assert "BTCUSDT:T-42" in env.ptf._settled_venue_trade_ids
 
 
 def test_distinct_venue_trade_ids_both_settle(env):
