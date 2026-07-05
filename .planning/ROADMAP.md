@@ -366,7 +366,7 @@ Plans:
 - [x] 05.2-03-PLAN.md — D-08: in-session ReconcileManager dedup → A5 GREEN + correlation ring {symbol}:{trade_id} (V17-12) (Wave 1)
 - [x] 05.2-04-PLAN.md — D-07/D-08: build rehydrate→managers restore + PortfolioHandler settled-ledger rehydrate seam + Layer-2 dedup re-key (Wave 2)
 - [x] 05.2-05-PLAN.md — D-07: composition-root durable-portfolio wiring (five sites + backend inject) + rehydrate-before-reconcile sequence (Wave 3)
-- [ ] 05.2-06-PLAN.md — D-10: durable halt record + new chained Alembic head; fresh instance refuses RUNNING; reset_halt resolves (Wave 4)
+- [x] 05.2-06-PLAN.md — D-10: durable halt record + new chained Alembic head; fresh instance refuses RUNNING; reset_halt resolves (Wave 4)
 
 **Cross-cutting constraints:**
 
