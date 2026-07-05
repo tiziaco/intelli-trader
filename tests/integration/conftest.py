@@ -42,6 +42,58 @@ def golden_summary_path():
     return _GOLDEN_DIR / "summary.json"
 
 
+# --- Shared operational-Postgres substrate (single suite-wide container) ------
+
+
+@pytest.fixture(scope="session")
+def pg_container_url():
+    """The SINGLE session-scoped testcontainers Postgres for the whole integration tree.
+
+    Models its lifecycle EXACTLY on ``tests/integration/storage/conftest.py::pg_engine``:
+    the ``testcontainers`` import is DEFERRED into the body so ``--collect-only`` needs no
+    Docker daemon; the ``PostgresContainer`` constructor eagerly builds a DockerClient, so an
+    absent/unreachable daemon raises as early as construction (kept inside the ``try``). ANY
+    startup failure is converted to a ``pytest.skip`` (D-11) — the PG arm must never hard-fail
+    a Dockerless run. It yields the connection URL so consumers build their own Engine off it.
+
+    This is the ONE container for the whole ``tests/integration/`` tree (it cascades into
+    ``storage/``): ``storage/conftest.py::pg_engine`` and the ``pg_database_env`` opt-in fixture
+    both consume this URL, so no second competing container is ever spun.
+    """
+    from testcontainers.postgres import PostgresContainer
+
+    container = None
+    try:
+        # Constructor eagerly builds a DockerClient — absent daemon raises here, not .start().
+        container = PostgresContainer("postgres:16")
+        container.start()
+    except Exception as exc:
+        if container is not None:
+            try:
+                container.stop()
+            except Exception:
+                pass
+        pytest.skip(f"PostgreSQL container unavailable — skipped (D-11): {exc}")
+
+    try:
+        yield container.get_connection_url()
+    finally:
+        container.stop()
+
+
+@pytest.fixture
+def pg_database_env(pg_container_url, monkeypatch):
+    """Point the ``ITRADER_DATABASE_URL`` env gate at the shared container within test scope.
+
+    The companion for tests that go through the ``LiveTradingSystem`` env gate: it
+    ``monkeypatch.setenv``s ``ITRADER_DATABASE_URL`` to the shared ``pg_container_url`` (the
+    function-scoped set overrides the session-scoped dev-DB guard in ``tests/conftest.py`` and
+    is undone at test teardown) and returns the URL so the test can also build a drop Engine.
+    """
+    monkeypatch.setenv("ITRADER_DATABASE_URL", pg_container_url)
+    return pg_container_url
+
+
 @pytest.fixture
 def backtest_engine():
     """Factory that builds a CSV-fed backtest ``BacktestTradingSystem``.
