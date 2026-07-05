@@ -357,11 +357,16 @@ Plans:
 **Goal:** Make restart real: persist the venue ack (ORDER-ACK event), wire the existing durable portfolio SQL ledger in live, rehydrate positions/cash + the settled-trade dedup ledger before reconcile, and add a durable halt record. Fixes V17-02/05/06/12/10 + ARCH-4 Layer 2 (CONTEXT D-06..D-10). **PROVISIONAL — pending Phase 05.1's CONF-B online run** (settles the four ARCH-3 finalization points); RED tests encode observable behavior, not storage shape.
 **Requirements**: Scope defined by CONTEXT.md decisions D-06..D-10.
 **Depends on:** Phase 05.1 (CONF-B online run finalizes the ARCH-3 storage posture before 05.2 detail freezes)
-**Plans:** 0 plans (run /gsd:plan-phase 05.2 to break down, AFTER 05.1 CONF-B)
+**Plans:** 6 plans in 4 waves (CONF-B settled 2026-07-05 — D-09 paginate INVERTED to limit=100/since/no-paginate)
 
 Plans:
 
-- [ ] TBD (run /gsd:plan-phase 05.2 to break down)
+- [ ] 05.2-01-PLAN.md — D-06: ORDER-ACK event triad + emit + consume (persist venue_order_id) → A2 GREEN; delete restart hand-stamp (Wave 1)
+- [ ] 05.2-02-PLAN.md — D-09: per-symbol since/limit=100 fill fetch (no paginate, CONF-B) + F/U-13 window loud-log (Wave 1)
+- [ ] 05.2-03-PLAN.md — D-08: in-session ReconcileManager dedup → A5 GREEN + correlation ring {symbol}:{trade_id} (V17-12) (Wave 1)
+- [ ] 05.2-04-PLAN.md — D-07/D-08: build rehydrate→managers restore + PortfolioHandler settled-ledger rehydrate seam + Layer-2 dedup re-key (Wave 2)
+- [ ] 05.2-05-PLAN.md — D-07: composition-root durable-portfolio wiring (five sites + backend inject) + rehydrate-before-reconcile sequence (Wave 3)
+- [ ] 05.2-06-PLAN.md — D-10: durable halt record + new chained Alembic head; fresh instance refuses RUNNING; reset_halt resolves (Wave 4)
 
 ### Phase 05.3: Live-Path Remediation — Wave 3 (Resilience Hardening) (INSERTED)
 
