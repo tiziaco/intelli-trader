@@ -698,3 +698,23 @@ class VenueAccount(Account):
         """
         with self._lock:
             self._pending.pop(str(order_id), None)
+
+    def drop_pending(self, order_id: OrderId) -> None:
+        """Drop the local pending overlay entry on the venue ORDER-ACK (D-15, V17-13).
+
+        Closes the buying-power double-count: ``_pending`` is otherwise only popped
+        in ``release`` (terminal), so between the venue ORDER-ACK and terminal release
+        the same hold is counted TWICE — once by this local overlay, once by the
+        venue's own netting (the venue owns the real reservation the moment it acks
+        the resting order). Dropping the overlay on ack restores the settled
+        available (``available_balance == balance`` again for this order) instead of
+        understating buying power until the fill/cancel settles.
+
+        This is a NON-terminal drop: it pops ONLY the admission overlay entry and
+        NEVER touches the settled ledger (``_ledger_delta``) — the fill still settles
+        later through the normal ``apply_fill_cash_flow`` path. Idempotent (a
+        ``KeyError``-free ``pop``), keyed by ``str(order_id)`` to match the ``reserve``
+        write key, and taken under the same lock ``reserve``/``release`` hold.
+        """
+        with self._lock:
+            self._pending.pop(str(order_id), None)
