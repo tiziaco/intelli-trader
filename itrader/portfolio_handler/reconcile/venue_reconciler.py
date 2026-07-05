@@ -33,7 +33,7 @@ the live composition root only (no async / connector / SQL import on the backtes
 4-space indentation (matches ``core/`` + the ``reconcile/`` siblings ``drift.py``).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
@@ -62,6 +62,14 @@ _HALT_REASON = "reconciliation-unresolved"
 # generous — an over-tight epsilon would misfire the fallback into a spurious per-bracket halt.
 _MATCH_PRICE_PRECISION = 2
 _MATCH_QTY_PRECISION = 8
+
+# F/U-13 (D-09) — OKX's ``/trade/fills-history`` REST window is ~3 months (100/page). A
+# derived ``since`` older than this bound CANNOT be covered by the single limit=100 call
+# (ccxt auto-pagination trips sCode 51000 — A3), so the catch-up would silently miss a
+# downtime fill. When ``since`` predates ``now − this window`` the reconciler logs loudly
+# (T-05.2-04) so an operator sees the incomplete catch-up. Deep pagination is deliberately
+# NOT built; this loud-log is the guard for the single-limit=100 call.
+_FILLS_HISTORY_WINDOW_DAYS = 90
 
 
 class VenueReconciler:
@@ -463,11 +471,32 @@ class VenueReconciler:
         trades: List[Dict[str, Any]] = []
         for symbol in sorted({order.ticker for order in active}):
             since_ms = self._oldest_active_since_ms(active, symbol)
+            self._warn_if_window_uncovered(symbol, since_ms)
             fetched = self._connector.call(
                 self._connector.client.fetch_my_trades(symbol, since=since_ms, limit=100))
             if isinstance(fetched, list):
                 trades.extend(fetched)
         return trades
+
+    def _warn_if_window_uncovered(self, symbol: str, since_ms: int) -> None:
+        """Loud-log when ``since`` predates the venue's ~3-month fills-history window (F/U-13).
+
+        The single ``limit=100`` fetch reaches back only ~``_FILLS_HISTORY_WINDOW_DAYS``
+        (OKX ``/trade/fills-history``); ccxt auto-pagination is not built (it trips sCode
+        51000 — A3). When the oldest active order's ``since`` is older than that bound the
+        catch-up cannot cover it, so a downtime fill could be missed — emit a WARNING naming
+        the symbol and the uncovered bound (T-05.2-04) rather than fail silently. The window
+        lower bound is a real-time operational bound (the venue's wall-clock window), not a
+        business-time comparison, so ``datetime.now`` is legitimate here.
+        """
+        window_start = datetime.now(timezone.utc) - timedelta(days=_FILLS_HISTORY_WINDOW_DAYS)
+        window_start_ms = int(window_start.timestamp() * 1000)
+        if since_ms < window_start_ms:
+            self.logger.warning(
+                "Venue fills-history window (~%d days) cannot cover the oldest active order "
+                "for %s (since=%s predates window_start=%s) — restart catch-up may be "
+                "INCOMPLETE (deep pagination not built; A3/F/U-13)",
+                _FILLS_HISTORY_WINDOW_DAYS, symbol, since_ms, window_start_ms)
 
     @staticmethod
     def _oldest_active_since_ms(active: List["Order"], symbol: str) -> int:
