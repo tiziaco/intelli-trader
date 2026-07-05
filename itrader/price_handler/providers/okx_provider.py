@@ -512,6 +512,46 @@ class OkxDataProvider:
                 client.fetch_ohlcv(symbol_okx, timeframe, last_ts + 1, limit)))
             raw.extend(page)
 
+        return self._rows_to_closed_bars(raw, symbol, timeframe)
+
+    async def _fetch_ohlcv_backfill_async(
+        self, symbol: str, timeframe: str,
+        since: int | None = None, limit: int = _BACKFILL_PAGE,
+    ) -> list[ClosedBar]:
+        """D-17 loop-native REST backfill: ``await`` ``client.fetch_ohlcv`` DIRECTLY on the loop.
+
+        The byte-identical twin of the synchronous :meth:`fetch_ohlcv_backfill` — same bounded /
+        paginated shape (explicit ``limit`` per page, ``since`` advanced past the last bar), same
+        Decimal edge (``to_money(str(...))``, never ``Decimal(float)`` / a bulk float cast, CONN-05),
+        same D-12 param-stamped routing keys — differing in ONE thing: it ``await``s the ccxt client
+        coroutine on the connector loop instead of bridging through ``connector.call(...).result()``.
+        That bridge blocks the loop thread on a future the same loop must resolve → self-deadlock
+        (30s stall → livelock, RESEARCH Pitfall 4 / V17-15). This variant is the LOOP-triggered gap
+        path only; the engine-thread ``warmup`` path keeps the synchronous ``call()``-based method.
+        """
+        symbol_okx = self._to_okx_symbol(symbol)
+        client = self._connector.client
+        raw: list[Any] = []
+        page: list[Any] = list(
+            await client.fetch_ohlcv(symbol_okx, timeframe, since, limit))
+        raw.extend(page)
+        while len(page) == limit:
+            last_ts = int(page[-1][0])
+            page = list(
+                await client.fetch_ohlcv(symbol_okx, timeframe, last_ts + 1, limit))
+            raw.extend(page)
+        return self._rows_to_closed_bars(raw, symbol, timeframe)
+
+    def _rows_to_closed_bars(
+        self, raw: list[Any], symbol: str, timeframe: str
+    ) -> list[ClosedBar]:
+        """Cross the Decimal edge for a batch of raw ccxt OHLCV rows (shared sync/async).
+
+        Every numeric cell crosses via ``to_money(str(...))`` — NEVER a bulk float cast /
+        ``Decimal(float)`` (CONN-05). Routing keys are stamped from the caller's ``symbol`` /
+        ``timeframe`` params (NOT ``self._symbol``, D-12) so an ad-hoc backfill for any pair routes
+        to the correct ring key.
+        """
         bars: list[ClosedBar] = []
         for row in raw:
             bars.append({
@@ -521,13 +561,58 @@ class OkxDataProvider:
                 "low": to_money(str(row[3])),
                 "close": to_money(str(row[4])),
                 "volume": to_money(str(row[5])),
-                # D-12: stamp the routing keys from the method's own params (NOT
-                # self._symbol) so an ad-hoc backfill for any symbol/timeframe routes
-                # to the correct ring key.
                 "symbol": symbol,
                 "timeframe": timeframe,
             })
         return bars
+
+    def spawn_gap_backfill(
+        self, symbol: str, timeframe: str, since: int, limit: int,
+        on_bars: Callable[[list[ClosedBar]], None],
+    ) -> None:
+        """D-17: schedule a loop-native, supervised gap backfill on the connector loop.
+
+        MUST be reached from loop-thread code — the ``LiveBarFeed`` gap branch runs synchronously
+        INSIDE the running candle coroutine, so ``asyncio.get_running_loop()`` returns the connector
+        loop here. Scheduling uses the running loop's ``create_task`` — NEVER ``connector.spawn``
+        (whose cross-thread ``ready.wait`` would self-deadlock when driven from the loop thread) and
+        NEVER ``connector.call(...).result()`` (RESEARCH Pitfall 4). The spawned coroutine ``await``s
+        the loop-native fetch, then hands the interior bars back through ``on_bars``, which the feed
+        replays on this same loop thread. The task is supervised (D-11 shape): an unexpected failure
+        escalates to the injected halt entrypoint instead of dying silently.
+        """
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(
+            self._run_gap_backfill(symbol, timeframe, since, limit, on_bars))
+        task.add_done_callback(self._on_gap_backfill_done)
+
+    async def _run_gap_backfill(
+        self, symbol: str, timeframe: str, since: int, limit: int,
+        on_bars: Callable[[list[ClosedBar]], None],
+    ) -> None:
+        """Await the loop-native interior backfill, then hand the bars to the feed's replay."""
+        bars = await self._fetch_ohlcv_backfill_async(
+            symbol, timeframe, since=since, limit=limit)
+        on_bars(bars)
+
+    def _on_gap_backfill_done(self, task: "asyncio.Task[Any]") -> None:
+        """Supervise the spawned gap-backfill task (D-11 shape — unknown ⇒ halt).
+
+        A cooperative ``CancelledError`` (connector disconnect) or a clean finish is quiet; ANY
+        other exception is logged (exception TYPE only — scrub, never ``str(exc)``, T-05-27) and
+        escalated to the injected halt entrypoint (fail-safe HALT, ``'connector-fatal'``) so a dead
+        backfill never vanishes silently. ``task.exception()`` is read only past the cancelled guard
+        so it never re-raises the ``CancelledError``.
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        self.logger.error(
+            "OKX gap backfill task died (%s) — halting engine", type(exc).__name__)
+        if self._halt_signal is not None:
+            self._halt_signal("connector-fatal")
 
     # --- lifecycle ------------------------------------------------------------
 
