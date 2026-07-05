@@ -361,7 +361,7 @@ Plans:
 
 Plans:
 
-- [ ] 05.2-01-PLAN.md — D-06: ORDER-ACK event triad + emit + consume (persist venue_order_id) → A2 GREEN; delete restart hand-stamp (Wave 1)
+- [x] 05.2-01-PLAN.md — D-06: ORDER-ACK event triad + emit + consume (persist venue_order_id) → A2 GREEN; delete restart hand-stamp (Wave 1)
 - [ ] 05.2-02-PLAN.md — D-09: per-symbol since/limit=100 fill fetch (no paginate, CONF-B) + F/U-13 window loud-log (Wave 1)
 - [ ] 05.2-03-PLAN.md — D-08: in-session ReconcileManager dedup → A5 GREEN + correlation ring {symbol}:{trade_id} (V17-12) (Wave 1)
 - [ ] 05.2-04-PLAN.md — D-07/D-08: build rehydrate→managers restore + PortfolioHandler settled-ledger rehydrate seam + Layer-2 dedup re-key (Wave 2)

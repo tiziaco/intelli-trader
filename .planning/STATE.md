@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: 05.1-09 Task 1 committed (b9e5c541) — Task 2 online CONF-B run CHECKPOINT-PENDING (human-gated)
-last_updated: "2026-07-05T13:35:15.029Z"
-last_activity: 2026-07-05 -- Phase 05.2 planning complete
+stopped_at: 05.2-01 complete (fd3b0b58) — D-06 venue-ack persistence GREEN
+last_updated: "2026-07-05T14:24:55.982Z"
+last_activity: 2026-07-05
 progress:
   total_phases: 10
   completed_phases: 6
   total_plans: 48
-  completed_plans: 42
+  completed_plans: 43
   percent: 60
 ---
 
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 05.2 — live path remediation wave 2 restart real durable engine led
+**Current focus:** Phase 05.2 — live-path-remediation-wave-2-restart-real-durable-engine-led
 
 ## Current Position
 
-Phase: 05.2
-Plan: Not started
+Phase: 05.2 (live-path-remediation-wave-2-restart-real-durable-engine-led) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-07-05 -- Quick task 260705-m3m: test DB-isolation guard + shared testcontainers fixture (prereq for 05.2)
+Last activity: 2026-07-05
 
-Progress: [██████████] 98%
+Progress: [█████████░] 90%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -167,6 +167,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 05.1]: D-03/D-04: real quote + spot market-type wired into VenueAccount at the composition root; post-reconcile baseline guard latches halt('baseline-residual') on unexplained base-asset residual (never auto-adopts)
 - [Phase 05.1]: D-04 spurious-halt band: on-fill compare absorbs the just-applied-fill vs not-yet-refreshed-venue-snapshot transient via a signed fill delta; periodic sweep + baseline guard remain the drift backstops
 - [Phase 05.1]: 05.1-09 (D-20) Task 1: CONF-B sandbox e2e extended with 4 Wave-1 settlement assertions (position/cash/not-HALTED/spot fetch_positions()==[]) closing the V17-01 blind spot + venue_order_id recorded soft-check (pending D-06/05.2) + ARCH-3 finalization capture to .planning/debug/05.1-confb-<date>.md. Added pytest.mark.live so make test (-m 'not live') fences the network. Task 2 online GREEN run is CHECKPOINT-PENDING (human): `poetry run pytest tests/e2e/test_okx_sandbox_recon.py -k demo_order -x -m live` (verify sandbox=True). Plan NOT fully complete until approved.
+- [Phase 05.2]: 05.2-01: D-06 delivered — new frozen OrderAckEvent (order_id->venue_order_id) emitted by OkxExchange._submit_order once the venue id lands (queue-only, V5 field-bind); OrderHandler.on_order_ack -> OrderManager.stamp_venue_order_id persists via order_storage.update_order (D-18). A2 venue_order_id-persistence GREEN; oracle byte-exact; mypy 229 files. Restart integration fixtures now drive the real ack path (V17-02 hand-stamp deleted; unconfident bracket leg asserted None).
 
 ### Pending Todos
 
@@ -244,6 +245,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.1 P06 | 90min | 2 tasks | 4 files |
 | Phase 05.1 P07 | 12min | 1 tasks | 2 files |
 | Phase 05.1 P08 | 20min | 2 tasks | 3 files |
+| Phase 05.2 P01 | 18min | 2 tasks | 10 files |
 
 ## Deferred Items
 
@@ -293,9 +295,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-04T21:10:00.000Z
-Stopped at: 05.1-09 Task 1 committed (b9e5c541) — Task 2 online CONF-B run CHECKPOINT-PENDING (human-gated)
-Resume file: .planning/phases/05.1-live-path-remediation/05.1-09-PLAN.md (Task 2 checkpoint)
+Last session: 2026-07-05T14:24:55.975Z
+Stopped at: 05.2-01 complete (fd3b0b58) — D-06 venue-ack persistence GREEN
+Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps
