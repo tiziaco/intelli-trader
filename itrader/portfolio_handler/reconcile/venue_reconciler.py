@@ -128,7 +128,7 @@ class VenueReconciler:
 
         # 2. venue side — REST snapshot (balances/positions) + the venue fill history.
         self._venue_account.snapshot()
-        venue_trades = self._fetch("fetch_my_trades")
+        venue_trades = self._fetch_trades(working)
 
         # 3. adopt in-band fill deltas as reconciling events (never mutate state directly).
         self._adopt_fill_deltas(working, venue_trades)
@@ -446,7 +446,45 @@ class VenueReconciler:
             to_money(str(amount)), to_money(child.quantity), _MATCH_QTY_PRECISION)
         return price_ok and qty_ok
 
+    def _fetch_trades(self, working: List["Order"]) -> List[Dict[str, Any]]:
+        """Fetch venue trades per working-set symbol (CONF-B: since + explicit limit=100).
+
+        D-09 / V17-10: the old arg-less ``fetch_my_trades()`` returned only the venue's
+        default recent window — it could NOT cover the working set's oldest active order
+        after downtime. For each distinct active-order symbol, derive ``since`` from that
+        symbol's oldest active order business ``time`` (epoch-ms) and fetch with an explicit
+        ``limit=100``. The ccxt auto-pagination param is deliberately NOT passed — OKX
+        rejects it with sCode 51000 'Parameter limit error' (CONF-B online run 2026-07-05;
+        the working shape hits ``/trade/fills-history``, ~3-month window, 100/page). Trades
+        are aggregated into ONE list so the downstream per-venue-id grouping
+        (``_adopt_fill_deltas``) is unchanged.
+        """
+        active = [order for order in working if order.is_active]
+        trades: List[Dict[str, Any]] = []
+        for symbol in sorted({order.ticker for order in active}):
+            since_ms = self._oldest_active_since_ms(active, symbol)
+            fetched = self._connector.call(
+                self._connector.client.fetch_my_trades(symbol, since=since_ms, limit=100))
+            if isinstance(fetched, list):
+                trades.extend(fetched)
+        return trades
+
+    @staticmethod
+    def _oldest_active_since_ms(active: List["Order"], symbol: str) -> int:
+        """The oldest active-order business ``time`` for ``symbol`` as an epoch-ms ``since``.
+
+        Business ``time`` only (never wall-clock, Pitfall 3) — the venue fill fetch must
+        reach back to the working set's oldest still-open order for this symbol so a
+        downtime fill is not missed.
+        """
+        oldest = min(order.time for order in active if order.ticker == symbol)
+        return int(oldest.timestamp() * 1000)
+
     def _fetch(self, method_name: str) -> Any:
-        """Run a venue REST read (``fetch_my_trades`` / ``fetch_open_orders``) via the connector."""
+        """Run a venue REST read (``fetch_open_orders``) via the connector.
+
+        Arg-less read still used for ``fetch_open_orders`` (the resting-order snapshot);
+        the trade read is per-symbol / since / limit=100 via ``_fetch_trades`` (D-09).
+        """
         client_method = getattr(self._connector.client, method_name)
         return self._connector.call(client_method())
