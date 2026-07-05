@@ -236,26 +236,45 @@ class VenueAccount(Account):
         Mirrors ``OkxExchange._stream_fills``: cache-write on the connector loop
         thread, NEVER a drift compare and NEVER a halt (the compare lives on the
         engine thread in 05-04). Each venue float crosses the Decimal edge in
-        ``_extract_balance``; a missing field leaves the prior cache value intact.
+        ``_write_balance_stream``; a missing field leaves the prior cache value intact.
         """
         while True:
             update = await self._connector.client.watch_balance()
-            balance = self._extract_balance(update)
-            # D-03: on spot the position truth rides the BALANCE stream (there is no
-            # positions channel), so derive it here from ``total[BASE]``. Derivative
-            # positions arrive via ``_stream_positions`` instead (unchanged). WR-02:
-            # ``_spot_positions_from_balance`` returns ``None`` for a base-absent
-            # partial frame so the guard below leaves the prior holding intact
-            # (never a spurious clobber-to-flat that would trip the drift halt).
-            spot_positions = (
-                self._spot_positions_from_balance(update)
-                if self._market_type == "spot" else None
-            )
-            with self._lock:
-                if balance is not None:
-                    self._venue_balance = balance
-                if spot_positions is not None:
-                    self._venue_positions = spot_positions
+            self._write_balance_stream(update)
+
+    def _write_balance_stream(self, update: Any) -> None:
+        """Apply a venue balance push to the cache — POSITIONS only, NEVER the cash baseline.
+
+        Root cause ``okx-venue-cash-double-count``: cash is the two-term surface
+        ``balance = _venue_balance + _ledger_delta`` where ``apply_fill_cash_flow``
+        (the shared Account-ABC settlement primitive, ``portfolio.py`` spot/margin
+        settle) moves ``_ledger_delta`` for EVERY fill. If the balance stream ALSO
+        refreshed ``_venue_balance`` to the fill-inclusive venue push, the same fill
+        would be counted TWICE — once in the stream-pushed venue balance, once in the
+        local ledger — a 2x cash debit (position, which has no ledger overlay, stayed
+        single-counted). Resetting the ledger on the stream write is NOT a fix: on the
+        live path the venue ``watch_balance`` push routinely LEADS the engine-thread
+        ``on_fill`` apply (queue latency), so a reset-then-apply double-counts in the
+        opposite order. Cash must be single-channel.
+
+        D-01 keeps ``snapshot()`` as the SOLE cash-reconcile point: it atomically
+        re-baselines ``_venue_balance`` AND resets ``_ledger_delta``. Between snapshots
+        the local ledger is the only channel that moves cash, so ordering can never
+        double-count. The stream's remaining live job is spot position liveness for the
+        drift compare (D-03): on spot the per-symbol holding rides the BALANCE stream
+        (there is no positions channel), derived from ``total[BASE]``. Derivative
+        positions arrive via ``_stream_positions`` instead (unchanged). WR-02:
+        ``_spot_positions_from_balance`` returns ``None`` for a base-absent partial
+        frame so the guard below leaves the prior holding intact (never a spurious
+        clobber-to-flat that would trip the drift halt).
+        """
+        spot_positions = (
+            self._spot_positions_from_balance(update)
+            if self._market_type == "spot" else None
+        )
+        with self._lock:
+            if spot_positions is not None:
+                self._venue_positions = spot_positions
 
     async def _stream_positions(self) -> None:
         """Consume the venue positions stream forever, writing the cache ONLY (D-15).

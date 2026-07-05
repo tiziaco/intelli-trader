@@ -48,21 +48,32 @@ def test_snapshot_populates_cache_from_rest(
     assert account.positions == {"BTC/USDT": Decimal("0.5")}
 
 
-def test_push_stream_mutates_cache(
+def test_push_stream_mutates_positions_cache(
     fake_venue_connector: FakeLiveConnector,
 ) -> None:
-    """A ``watch_balance`` push writes the cache on the connector loop thread (D-15)."""
+    """A ``watch_positions`` push writes the POSITIONS cache on the connector loop thread (D-15).
+
+    Post ``okx-venue-cash-double-count``: the balance stream no longer overwrites the
+    cash baseline ``_venue_balance`` — that second cash channel double-counted every
+    fill against the local ``_ledger_delta`` (``balance = _venue_balance + _ledger_delta``).
+    Cash is now single-channel: ``snapshot()`` owns the baseline (D-01) and
+    ``apply_fill_cash_flow`` moves the ledger. The push streams keep the POSITIONS cache
+    live for the drift compare, which is what this test now pins. An engine-thread cash
+    read before any ``snapshot()`` therefore still surfaces ``StateError`` (never a silent
+    stream-populated 0).
+    """
     account = VenueAccount(fake_venue_connector)
     account.start_streaming()
 
-    # The canned watch_balance stream yields 100000 -> 91599.916 -> 78999.79 (total USDT);
-    # watch_positions yields long 0.2 -> long 0.5. Drain to the final values.
-    _wait_for(lambda: account._venue_balance == Decimal("78999.79"))
+    # watch_positions yields long 0.2 -> long 0.5. Drain to the final value.
     _wait_for(lambda: account._venue_positions == {"BTC/USDT": Decimal("0.5")})
-
-    assert account.balance == Decimal("78999.79")
-    assert account.available_balance == Decimal("78999.79")
     assert account.positions == {"BTC/USDT": Decimal("0.5")}
+
+    # The balance stream did NOT move the cash baseline — cash stays snapshot-owned, so
+    # an unsnapshotted cash read is still loud (never a silent stream-populated value).
+    assert account._venue_balance is None
+    with pytest.raises(StateError):
+        _ = account.balance
 
 
 def test_read_before_snapshot_raises_state_error(
