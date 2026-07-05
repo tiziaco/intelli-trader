@@ -22,26 +22,36 @@ socket-free, unit-testable unit so the growth can be bounded and exercised witho
   durable ``venue_trade_id`` DB layer (CR-01) is the evicted-then-resent backstop.
 
 Import discipline (backtest-inertness gate): stdlib + ``itrader.core.ids`` +
-``itrader.events_handler.events`` ONLY — NO ccxt, NO connector concretion — so this module is
-structurally inert on the backtest hot path.
+``itrader.events_handler.events`` + ``itrader.core.exceptions`` (typed guard) +
+``itrader.logger`` (buffer-overflow alarm) ONLY — NO ccxt, NO connector concretion — so this
+module is structurally inert on the backtest hot path.
 
 Indentation: this tree is TAB-indented (a mixed-indent diff breaks the file).
 """
 
 import threading
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from itrader.core.exceptions import ValidationError
 from itrader.core.ids import OrderId
 from itrader.events_handler.events import OrderEvent
+from itrader.logger import get_itrader_logger
 
 # WR05-D2: dedup-ring capacity. 10 000 >> a realistic reconnect re-send burst; the in-memory
 # ring only needs to cover the reconnect window (an evicted-then-resent id is still deduped at
 # the durable venue_trade_id DB layer — CR-01 backstop). Overridable per-instance via the
 # constructor (mirrors the _STREAM_RECONNECT_* overridable-constant pattern in okx.py).
 _DEDUP_RING_CAPACITY = 10000
+
+# D-16: bound the uncorrelated late-fill buffer. An external order (one this engine never
+# submitted, e.g. a manual venue trade with an unknown venue id) streams a fill that never
+# correlates, so it buffers forever — an unbounded-growth vector. Cap the TOTAL buffered fills;
+# past the cap the OLDEST venue_id bucket is evicted (FIFO) with a WARNING alarm. 10 000 >> any
+# realistic pre-correlation fast-fill backlog for legitimately-submitted orders.
+_PENDING_BUFFER_MAX = 10000
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +105,32 @@ class VenueCorrelationIndex:
 	lock cannot deadlock and no fill is minted under the lock (drain-then-evict, WR05-D3).
 	"""
 
-	def __init__(self, capacity: int = _DEDUP_RING_CAPACITY) -> None:
-		"""Construct an empty index. ``capacity`` bounds the trade-id dedup ring (WR05-D2)."""
+	def __init__(
+		self,
+		capacity: int = _DEDUP_RING_CAPACITY,
+		pending_buffer_max: int = _PENDING_BUFFER_MAX,
+	) -> None:
+		"""Construct an empty index. ``capacity`` bounds the trade-id dedup ring (WR05-D2);
+		``pending_buffer_max`` bounds the uncorrelated late-fill buffer (D-16).
+
+		IN-01: a ``capacity < 1`` is a construction error — a ring that holds nothing would
+		dedup nothing (every re-send re-emits). Reject it up front with a typed ValidationError.
+		"""
+		# IN-01: the dedup ring must hold at least one id (a zero/negative-capacity ring cannot
+		# dedup — every reconnect re-send would double-count).
+		if capacity < 1:
+			raise ValidationError(
+				field="capacity", value=str(capacity),
+				message="VenueCorrelationIndex dedup-ring capacity must be >= 1")
+		# D-16: same lower bound for the late-fill buffer cap (a zero-cap buffer cannot hold a
+		# legitimate fast-fill).
+		if pending_buffer_max < 1:
+			raise ValidationError(
+				field="pending_buffer_max", value=str(pending_buffer_max),
+				message="VenueCorrelationIndex pending-buffer cap must be >= 1")
+
+		self.logger = get_itrader_logger().bind(component="VenueCorrelationIndex")
+
 		# WR-03: one lock guards every map/ring/counter read+write (engine-thread submit vs
 		# connector-loop-thread fills). Keep the current cross-thread guarantee.
 		self._correlation_lock = threading.Lock()
@@ -105,8 +139,12 @@ class VenueCorrelationIndex:
 		self._orders_by_venue_id: Dict[str, OrderEvent] = {}
 		self._venue_id_by_order_id: Dict[OrderId, str] = {}
 		self._orders_by_clOrdId: Dict[str, OrderEvent] = {}
-		# Buffered fills awaiting correlation (fast-fill race / pre-adoption).
-		self._pending_fills_by_venue_id: Dict[str, List[Any]] = {}
+		# Buffered fills awaiting correlation (fast-fill race / pre-adoption). D-16: an
+		# OrderedDict so a bounded FIFO eviction can drop the OLDEST bucket on overflow.
+		self._pending_fills_by_venue_id: "OrderedDict[str, List[Any]]" = OrderedDict()
+		# D-16: cap + running total for the uncorrelated-fill buffer (bound + alarm).
+		self._pending_buffer_max = pending_buffer_max
+		self._pending_fill_count = 0
 		# WR05-D1: per-venue_id cumulative-filled counter driving fill-driven self-release.
 		self._cumulative_filled_by_venue_id: Dict[str, Decimal] = {}
 		# venue_id -> clOrdId, so ``release`` can drop the clOrdId map entry too (R2 bound).
@@ -129,6 +167,19 @@ class VenueCorrelationIndex:
 		with self._correlation_lock:
 			self._orders_by_clOrdId[clordid] = order
 
+	def release_pending(self, clordid: str) -> None:
+		"""Paired inverse of ``register_pending`` (WR-01): drop the pre-correlation clOrdId
+		entry when the submit that registered it DEFINITIVELY failed, so a failed submit does
+		not leak a pending correlation entry.
+
+		Called ONLY on a definitive venue rejection — NOT on an ambiguous transport timeout
+		(D-13), where the order may still be resting/filling and MUST keep its pending
+		correlation so a streamed fill still resolves via the clOrdId fallback. Idempotent: an
+		unknown / already-released clOrdId is a clean no-op.
+		"""
+		with self._correlation_lock:
+			self._orders_by_clOrdId.pop(clordid, None)
+
 	def register(self, venue_id: str, order: OrderEvent, clordid: str) -> List[Any]:
 		"""Write the venue-id correlation after the RPC returns the venue id; return any
 		fills buffered before it landed (the caller re-drains them OUTSIDE the lock).
@@ -140,7 +191,7 @@ class VenueCorrelationIndex:
 			self._orders_by_venue_id[venue_id] = order
 			self._venue_id_by_order_id[order.order_id] = venue_id
 			self._clordid_by_venue_id[venue_id] = clordid
-			return self._pending_fills_by_venue_id.pop(venue_id, [])
+			return self._pop_pending_locked(venue_id)
 
 	def adopt(self, venue_id: str, order: OrderEvent, clordid: str) -> List[Any]:
 		"""Restart-rehydration seam (WR-02): repopulate ALL three maps from a rehydrated order;
@@ -151,7 +202,7 @@ class VenueCorrelationIndex:
 			self._venue_id_by_order_id[order.order_id] = venue_id
 			self._orders_by_clOrdId[clordid] = order
 			self._clordid_by_venue_id[venue_id] = clordid
-			return self._pending_fills_by_venue_id.pop(venue_id, [])
+			return self._pop_pending_locked(venue_id)
 
 	def venue_id_for(self, order_id: OrderId) -> Optional[str]:
 		"""Resolve the venue order id for an engine order id (the cancel path)."""
@@ -204,7 +255,7 @@ class VenueCorrelationIndex:
 					order = self._orders_by_clOrdId.get(clordid)
 			if order is None:
 				if venue_id is not None:
-					self._pending_fills_by_venue_id.setdefault(venue_id, []).append(trade)
+					self._buffer_pending_locked(venue_id, trade)
 					return ResolveResult(None, venue_id, "buffered")
 				return ResolveResult(None, None, "uncorrelated")
 			# D-08 / V17-12: symbol-scope the dedup key with the resolved order's ticker so a
@@ -268,7 +319,40 @@ class VenueCorrelationIndex:
 		venue id returns ``[]``.
 		"""
 		with self._correlation_lock:
-			return self._pending_fills_by_venue_id.pop(venue_id, [])
+			return self._pop_pending_locked(venue_id)
+
+	def _buffer_pending_locked(self, venue_id: str, trade: Any) -> None:
+		"""Append an uncorrelated-but-keyable fill to the bounded late-fill buffer (D-16) —
+		caller MUST hold ``_correlation_lock``.
+
+		Bounds the TOTAL buffered fills at ``_pending_buffer_max``; on overflow evicts the
+		OLDEST venue_id bucket (FIFO ``popitem(last=False)``) with a WARNING naming the dropped
+		count, so a flood of external (unknown venue id / ``clOrdId==""``) fills cannot grow the
+		buffer without limit (mirrors the ``deque(maxlen)`` dedup-ring bound). The just-touched
+		bucket is moved to the end so eviction always targets the least-recently-buffered venue.
+		"""
+		bucket = self._pending_fills_by_venue_id.get(venue_id)
+		if bucket is None:
+			bucket = []
+			self._pending_fills_by_venue_id[venue_id] = bucket
+		bucket.append(trade)
+		self._pending_fill_count += 1
+		self._pending_fills_by_venue_id.move_to_end(venue_id)
+		while (self._pending_fill_count > self._pending_buffer_max
+		       and self._pending_fills_by_venue_id):
+			old_venue_id, old_bucket = self._pending_fills_by_venue_id.popitem(last=False)
+			self._pending_fill_count -= len(old_bucket)
+			self.logger.warning(
+				"Uncorrelated-fill buffer exceeded cap %d — evicting %d buffered fill(s) for "
+				"venue id %s (external/unknown-venue fill flood?)",
+				self._pending_buffer_max, len(old_bucket), old_venue_id)
+
+	def _pop_pending_locked(self, venue_id: str) -> List[Any]:
+		"""Pop + return a venue_id's buffered fills (caller holds the lock); keep the running
+		buffer count in sync. Idempotent — an unknown venue id returns ``[]``."""
+		bucket = self._pending_fills_by_venue_id.pop(venue_id, [])
+		self._pending_fill_count -= len(bucket)
+		return bucket
 
 	def release(self, venue_id: str) -> Tuple[Optional[OrderEvent], List[Any]]:
 		"""Drain-then-evict a terminalized order's correlation (WR05-D3); idempotent.
@@ -283,7 +367,7 @@ class VenueCorrelationIndex:
 		"""
 		with self._correlation_lock:
 			# Drain FIRST (WR05-D3) — surface buffered late fills before dropping entries.
-			drained = self._pending_fills_by_venue_id.pop(venue_id, [])
+			drained = self._pop_pending_locked(venue_id)
 			order = self._orders_by_venue_id.pop(venue_id, None)
 			if order is not None:
 				self._venue_id_by_order_id.pop(order.order_id, None)

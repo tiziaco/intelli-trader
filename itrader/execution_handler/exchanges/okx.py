@@ -311,6 +311,13 @@ class OkxExchange(AbstractExchange):
 			# forever. Emit REFUSED with the order's own (Decimal) price/quantity and
 			# commission Decimal("0") (never settled); no time= so it inherits the
 			# order's decision time (admission-time outcome, D-01/D-13).
+			#
+			# WR-01: a DEFINITIVE rejection means the order never rested — release the pending
+			# clOrdId correlation registered before the RPC so it does not leak (paired inverse
+			# of register_pending). NOT done on the ambiguous-transport branch above, which
+			# returns early: that order may still be resting/filling and needs its pending
+			# correlation for a streamed fill to resolve via the clOrdId fallback.
+			self._index.release_pending(self._client_order_id(event))
 			self.global_queue.put(FillEvent.new_fill(
 				"REFUSED", event, price=event.price, quantity=event.quantity,
 				commission=Decimal("0")))
