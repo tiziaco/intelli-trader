@@ -97,6 +97,7 @@ class EventHandler(object):
 			],
 			EventType.SIGNAL: [self.order_handler.on_signal],
 			EventType.ORDER: [self.execution_handler.on_order],
+			EventType.ORDER_ACK: [self.order_handler.on_order_ack],  # D-06: persist venue ack
 			EventType.FILL: [
 				self.portfolio_handler.on_fill,   # 1) positions/cash
 				self.order_handler.on_fill,       # 2) order-mirror reconciliation

@@ -234,6 +234,26 @@ class OrderManager:
 		"""Delegate the run-end time-in-force sweep to LifecycleManager (D-07)."""
 		return self.lifecycle_manager.expire_all_resting()
 
+	def stamp_venue_order_id(self, order_id: OrderId, venue_order_id: str,
+	                         portfolio_id: Optional[PortfolioId] = None) -> bool:
+		"""Persist the venue ack onto the stored order mirror (D-06 / V17-02).
+
+		Driven by ``OrderHandler.on_order_ack`` off a queued ORDER-ACK event: look up
+		the stored order, stamp ``venue_order_id``, and persist via
+		``order_storage.update_order``. The persisted id is the precondition that lets
+		the post-restart reconciler match its working-set orders to venue fills by id
+		(the in-memory VenueCorrelationIndex is lost across a restart). Returns False
+		if the order is unknown (e.g. an ack for an order pruned from the mirror).
+		"""
+		order = self.order_storage.get_order_by_id(order_id, portfolio_id)
+		if order is None:
+			self.logger.warning(
+				"ORDER-ACK for unknown order %s — venue_order_id %s not stamped",
+				order_id, venue_order_id)
+			return False
+		order.venue_order_id = venue_order_id
+		return self.order_storage.update_order(order)
+
 	# --- Read interface (D-18) -------------------------------------------------
 	# The manager owns the storage; OrderHandler read methods delegate here.
 	# Pure pass-through layer: same names, same signatures as the facade.

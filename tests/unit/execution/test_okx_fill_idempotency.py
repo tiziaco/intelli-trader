@@ -141,9 +141,14 @@ def _make_order(
 
 
 def _drain_queue(q: "Queue[Any]") -> list:
+    # D-06: ``_submit_order`` now also emits an ORDER-ACK (venue_order_id persistence)
+    # onto the same queue. These tests assert on the FILL stream, so filter to
+    # FillEvents — the ORDER-ACK is a legitimate co-resident, not a dropped fill.
     out = []
     while not q.empty():
-        out.append(q.get_nowait())
+        event = q.get_nowait()
+        if isinstance(event, FillEvent):
+            out.append(event)
     return out
 
 
