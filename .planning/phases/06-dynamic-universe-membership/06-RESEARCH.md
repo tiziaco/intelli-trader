@@ -796,23 +796,23 @@ surface; the relevant controls are input-validation and tampering on the new eve
 | A3 | A single cheap `is None` source-guard per backtest TIME tick is W1-free | §11 / Pitfall 3 | If measurable, must wire the poll live-only; measure before locking |
 | A4 | Dynamic **data** subscribe/unsubscribe is not gated by the MiCA whitelist / price-floor on the demo (CONTEXT D-05 asserts this; confirmed by the demo posture, not re-tested here) | §10 | If data subscribe is gated, live-data coverage falls back to paper/replay only |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Instrument resolution for a dynamically added symbol.**
+1. **Instrument resolution for a dynamically added symbol.** — RESOLVED: 06-01 Task 2 (default-ladder-fallback instrument resolution; the poll handler resolves precision from the venue markets map and passes it into `apply()`, keeping `Universe` connector-free).
    - Known: `derive_instruments` is wiring-time/strategy-driven and needs `price_data`; a dynamic add
      has neither.
    - Unclear: whether `apply()` receives pre-resolved `Instrument`s from the poll handler (keeping
      `Universe` connector-free, D-03) or a resolver is injected.
    - Recommendation: poll handler resolves precision from the venue markets map (reused D-06 seam) and
      passes it into `apply()`; default-ladder fallback when markets absent (paper).
-2. **Flat-detection detach trigger for orphan-and-track.**
+2. **Flat-detection detach trigger for orphan-and-track.** — RESOLVED: 06-04 Task 2 (`on_fill` flat-detect detach via the `PortfolioReadModel` open-position count; poll-cadence re-check as backstop).
    - Known: detach must fire when the leaving symbol's position reaches flat; the FILL route is the
      natural detection point.
    - Unclear: whether the remove-policy consumer subscribes to FILL directly or the poll re-checks
      positions each cadence.
    - Recommendation: check on FILL (immediate) with a poll-cadence re-check as backstop; both read the
      `PortfolioReadModel` open-position count.
-3. **Live-only vs shared TIME route for the poll handler** (Pitfall 3 / A3) — resolve by measuring W1.
+3. **Live-only vs shared TIME route for the poll handler** (Pitfall 3 / A3) — resolve by measuring W1. — RESOLVED: 06-05 Task 2 (live-only `_routes` mutation in the live-init path; the backtest `_routes` literal is left untouched — chosen over a per-tick source-guard on the shared route).
 
 ## Sources
 
