@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: verifying
-stopped_at: Completed 07-08-PLAN.md
-last_updated: "2026-07-06T19:33:56.244Z"
+status: ready_to_plan
+stopped_at: Phase 07 complete (8/8) — v1.7 roadmap phases (1-7) all complete; awaiting milestone close / backlog review (999.3 is an unpromoted backlog placeholder, not a scheduled phase)
+last_updated: 2026-07-06T20:47:11.909Z
 last_activity: 2026-07-06
 progress:
   total_phases: 11
@@ -24,13 +24,13 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 07 — live-dynamic-universe-hardening
+**Current focus:** v1.7 roadmap complete (Phases 1-7 all done & verified) — awaiting user decision: close the v1.7 milestone or review backlog. (999.3 is an unpromoted backlog placeholder auto-selected by phase.complete, NOT a scheduled next phase.)
 
 ## Current Position
 
-Phase: 07 (live-dynamic-universe-hardening) — EXECUTING
-Plan: 8 of 8
-Status: Phase complete — ready for verification
+Phase: — (v1.7 Phases 1-7 complete; no Phase 8 scheduled)
+Plan: Not started
+Status: Awaiting milestone close / backlog review
 Last activity: 2026-07-06
 
 Progress: [██████████] 100%
@@ -80,7 +80,7 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 **Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 279 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- Total plans completed: 287 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
 - v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
