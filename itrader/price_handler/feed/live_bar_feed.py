@@ -391,6 +391,26 @@ class LiveBarFeed(BarFeed):
                                 f"(expected first bar ts={since_ms}, got ts={ts})")
                         first_replayed = True
                     self.update(cb)
+                # CR-01: the interior must be fully contiguous up to last_missing
+                # before t is delivered. A tail-truncated page (contiguous prefix
+                # that stops short of last_missing) or an empty / no-in-range page
+                # leaves L short — the loop raises nothing (no bar exists AFTER the
+                # hole to trip the interior-hole guard), and the trailing _deliver(t)
+                # would otherwise jump L straight past never-backfilled interior bars,
+                # silently swallowing the gap and defeating D-29's fail-loud goal.
+                # Fail loud (typed, secret-free — integer-ms coordinates only, no
+                # str(payload)) so it escalates through the same supervised-backfill
+                # error path to a connector halt.
+                last_delivered = self._last_delivered.get((sym, tf_str))
+                if last_delivered != last_missing:
+                    last_delivered_ms = (
+                        int(last_delivered.value // _NS_PER_MS)
+                        if last_delivered is not None else None)
+                    raise MalformedDataError(
+                        f"gap-backfill:{sym}/{tf_str}",
+                        "under-returning backfill page (interior incomplete: "
+                        f"last-delivered={last_delivered_ms}, "
+                        f"expected last_missing={last_ms})")
                 self._deliver(sym, tf_str, t, closed_bar)
             finally:
                 self._replaying_backfill = False
