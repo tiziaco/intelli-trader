@@ -143,6 +143,39 @@ def test_discard_instrument_removes_record_entirely() -> None:
     assert "A" not in universe.leaving_symbols()  # leaving gone
 
 
+# --- CR-02 FAILED-retry accessors (mark_pending + failed_symbols) -----------
+
+
+def test_mark_pending_flips_failed_back_to_pending() -> None:
+    """mark_pending flips a FAILED record back to PENDING (CR-02 retry seam):
+    is_ready stays False (PENDING is not READY) but the record is no longer FAILED,
+    so the next warmup can drive it to READY."""
+    universe = _universe("A")
+    universe.apply({"A", "B"}, instruments={"B": _inst("B")})
+    universe.mark_failed("B")
+    assert universe.failed_symbols() == {"B"}
+
+    universe.mark_pending("B")
+    assert universe.is_ready("B") is False           # PENDING is still not tradeable
+    assert universe.failed_symbols() == set()        # no longer FAILED
+    assert universe._entries["B"].readiness is Readiness.PENDING
+
+
+def test_failed_symbols_lists_only_failed_records() -> None:
+    """failed_symbols() returns exactly the FAILED-readiness members (mirrors
+    leaving_symbols) — READY/PENDING members are excluded."""
+    universe = _universe("A")  # READY at construction
+    universe.apply(
+        {"A", "B", "C"}, instruments={"B": _inst("B"), "C": _inst("C")}
+    )  # B, C PENDING
+    assert universe.failed_symbols() == set()
+
+    universe.mark_failed("B")
+    assert universe.failed_symbols() == {"B"}        # only the FAILED one
+    universe.mark_ready("C")
+    assert universe.failed_symbols() == {"B"}        # READY C excluded
+
+
 # --- D-15 leaving surface operates through the record, orthogonal to readiness
 
 

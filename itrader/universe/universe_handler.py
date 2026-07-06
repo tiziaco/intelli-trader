@@ -295,17 +295,35 @@ class UniverseHandler:
         instruments = self._resolve_added_instruments(desired)
         delta = self._universe.apply(desired, instruments)
 
-        # T-06-03-DOS: no empty-delta floods — put NOTHING when nothing changed.
-        if delta.is_empty():
+        # CR-02 FAILED-retry ("kept in membership, retried next poll"): any
+        # still-desired member whose warmup previously FAILED must be re-warmed on
+        # this poll. ``apply`` never re-adds an existing member, so a FAILED member
+        # never re-enters ``delta.added`` — collect them here (intersected with
+        # ``desired`` so a symbol being REMOVED this poll is not retried), flip each
+        # back to PENDING (the WR-02 gate keeps it dark until the re-warm lands), and
+        # FOLD them into ``added`` so they ride the SAME warmup trigger a genuinely
+        # new add uses (``on_universe_update`` -> ``_begin_warmup``). This MUST run
+        # even on the empty-delta fast path (a FAILED-retry with no other membership
+        # change). Live-only: ``on_poll`` is a live route and backtest members
+        # default READY (never FAILED), so this path is oracle-inert.
+        retry = tuple(sorted(self._universe.failed_symbols() & desired))
+        for sym in retry:
+            self._universe.mark_pending(sym)
+        added = delta.added + retry
+
+        # T-06-03-DOS: no empty-delta floods — put NOTHING when nothing changed AND
+        # nothing needs re-warming.
+        if not added and not delta.removed:
             return
 
         self._global_queue.put(
             UniverseUpdateEvent(
-                time=event.time, added=delta.added, removed=delta.removed
+                time=event.time, added=added, removed=delta.removed
             )
         )
         self.logger.info(
-            "Universe delta applied: +%s -%s", delta.added, delta.removed
+            "Universe delta applied: +%s -%s (retried %s)",
+            added, delta.removed, retry
         )
 
     def _resolve_added_instruments(

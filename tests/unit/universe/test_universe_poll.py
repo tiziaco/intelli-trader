@@ -265,6 +265,76 @@ def test_on_poll_rejected_symbol_dropped_before_apply() -> None:
     assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
 
 
+# --- CR-02 FAILED-retry on the next poll -----------------------------------
+
+
+def test_on_poll_retries_failed_member_flips_pending_and_readds() -> None:
+    """CR-02(a): a FAILED member is re-warmed on the next poll — even when the
+    membership delta is EMPTY (desired == current). on_poll flips it back to
+    PENDING (so the WR-02 gate keeps it dark until the re-warm lands) and folds
+    it into the emitted UniverseUpdateEvent.added so it rides the same warmup
+    trigger a genuinely-new add uses."""
+    universe = _universe("BTC/USDC")
+    universe.apply({"BTC/USDC", "ETH/USDC"})  # ETH added, PENDING
+    universe.mark_failed("ETH/USDC")          # its warmup backfill failed once
+    handler = _handler(universe)
+    # Selection returns the CURRENT membership — an EMPTY apply delta.
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    # Despite the empty apply delta, ONE UniverseUpdateEvent re-drives ETH's warmup.
+    event = _drain_one(handler._global_queue)
+    assert isinstance(event, UniverseUpdateEvent)
+    assert event.added == ("ETH/USDC",)
+    assert event.removed == ()
+    # Readiness returned to PENDING (no longer FAILED) — still not tradeable yet.
+    assert universe.is_ready("ETH/USDC") is False
+    assert universe.failed_symbols() == set()
+
+
+def test_on_poll_failed_retry_then_rewarm_marks_ready() -> None:
+    """CR-02(b): after the retry re-drives warmup, a successful re-warm marks the
+    symbol READY. Uses the paper path (no provider): on_universe_update runs the
+    synchronous feed.warmup + immediate mark_ready for the re-added symbol."""
+    log: list[tuple[str, str]] = []
+    universe = _universe("BTC/USDC")
+    universe.apply({"BTC/USDC", "ETH/USDC"})  # ETH added, PENDING
+    universe.mark_failed("ETH/USDC")
+    handler = _handler(universe, feed=_RecordingFeed(log))  # NO provider (paper)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+    event = _drain_one(handler._global_queue)
+    assert isinstance(event, UniverseUpdateEvent)
+    assert event.added == ("ETH/USDC",)
+
+    # Route the emitted event through the add consumer (paper: warmup + mark_ready).
+    handler.on_universe_update(event)
+
+    assert log == [("warmup", "ETH/USDC")]
+    assert universe.is_ready("ETH/USDC") is True   # re-warm succeeded → READY
+
+
+def test_on_poll_static_ready_universe_never_retries_oracle_inert() -> None:
+    """CR-02(c): a static, all-READY universe (the backtest oracle shape) triggers
+    NO FAILED retry — the empty-delta fast path stays silent, nothing is queued,
+    and no readiness is disturbed. Guards the oracle-inertness of the retry path."""
+    universe = _universe("BTC/USDC", "ETH/USDC")  # both READY at construction
+    handler = _handler(universe)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    # No FAILED members → no retry → empty-delta fast path → nothing queued.
+    assert handler._global_queue.empty()
+    assert universe.is_ready("BTC/USDC") is True
+    assert universe.is_ready("ETH/USDC") is True
+
+
 # --- freeze gate (WR-05 / D-07 freeze-in-place) ----------------------------
 
 

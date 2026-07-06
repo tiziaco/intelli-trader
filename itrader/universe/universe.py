@@ -180,6 +180,31 @@ class Universe:
         """Flip ``symbol``'s record to ``FAILED`` (backfill errored, WR-02)."""
         self._entries[symbol].readiness = Readiness.FAILED
 
+    def mark_pending(self, symbol: str) -> None:
+        """Flip ``symbol``'s record back to ``PENDING`` (CR-02 warmup retry, WR-02).
+
+        Mirrors ``mark_ready``/``mark_failed``. The poll handler calls this when a
+        still-desired member whose warmup previously ``FAILED`` is re-warmed on the
+        next poll: readiness returns to ``PENDING`` so the WR-02 gate keeps the
+        symbol dark until the re-warm actually lands (``mark_ready`` on success, or
+        ``mark_failed`` again on another failure).
+        """
+        self._entries[symbol].readiness = Readiness.PENDING
+
+    def failed_symbols(self) -> set[str]:
+        """Return the set of members whose warmup readiness is ``FAILED`` (CR-02).
+
+        Mirrors ``leaving_symbols`` — derived fresh from the records each call, so
+        callers cannot mutate internal state through the returned set. The poll
+        handler reads this to re-drive warmup for still-desired FAILED members
+        (the "kept in membership, retried next poll" contract).
+        """
+        return {
+            sym
+            for sym, entry in self._entries.items()
+            if entry.readiness is Readiness.FAILED
+        }
+
     def apply(
         self,
         desired: set[str],
