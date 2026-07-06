@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-07-06T18:52:43.793Z"
+stopped_at: Completed 07-08-PLAN.md
+last_updated: "2026-07-06T18:57:53.911Z"
 last_activity: 2026-07-06
 progress:
   total_phases: 11
   completed_phases: 9
   total_plans: 73
-  completed_plans: 70
+  completed_plans: 71
   percent: 82
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 07 (live-dynamic-universe-hardening) — EXECUTING
-Plan: 6 of 8
+Plan: 7 of 8
 Status: Ready to execute
 Last activity: 2026-07-06
 
-Progress: [██████████] 96%
+Progress: [██████████] 97%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -197,6 +197,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 07-03: split synchronous warmup into two WR-02 halves — non-emitting LiveBarFeed.absorb_warmup (silent ring/L absorb = _deliver minus _emit, D-03b/OQ1) + async OkxDataProvider.spawn_warmup (loop-native REST fetch via connector.spawn threadsafe -> ONE BarsLoaded bulk transport, or ONE scrubbed BarsLoadFailed reason=exception-TYPE-only T-05-27/V5). _build_bar promoted @staticmethod for the single canonical ClosedBar->Bar conversion (D-03a). Live-only, oracle byte-exact
 - [Phase 07]: 07-04: WR-02 readiness gate composed BEFORE strategy.is_ready in calculate_signals (None-guarded single O(1) universe.is_ready read, no allocation; backtest wires no universe so oracle byte-exact); update-before-gate kept so a PENDING symbol still warms (D-03c). on_bars_loaded warms concerned strategies via strategy.update with NO signals (D-03). on_strategy_command mutates .tickers idempotently (emptying-remove refused, non-empty invariant) then EMITS UniversePollEvent follow-on (D-11 queue-only, never calls UniverseHandler)
 - [Phase 07]: 07-05: on_time->on_poll consumes the dedicated UniversePollEvent (WR-06/D-06, off the shared TIME route); set_freeze_gate early-return freeze-in-place at the top of on_poll (WR-05/D-07, level-triggered self-heal, no replay); _PrecisionResolver + set_precision_resolver resolves added-symbol venue precision (WR-04/D-16, Universe stays connector-free, paper falls to _DEFAULT_* ladder). All 3 seams inert-by-default; route/predicate/resolver wiring is Plan 07
+- [Phase ?]: 07-08: PRIMARY WR-02 readiness admission gate (D-01) — _enforce_readiness_admission wired SECOND (after leaving, before direction) rejects a non-READY (PENDING/FAILED) symbol's unsized signal at admission even when it bypasses the strategy-loop SECONDARY check (07-04); sanctioned exit passes; oracle-inert (None-guard + construction members READY). ADMISSION_READINESS trigger source added
 
 ### Pending Todos
 
@@ -293,6 +294,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 07 P07-03 | 10min | 2 tasks | 4 files |
 | Phase 07 P07-04 | 5min | 3 tasks | 2 files |
 | Phase 07 P07-05 | 5min | 2 tasks | 3 files |
+| Phase 07 P07-08 | 4min | 1 tasks | 3 files |
 
 ## Deferred Items
 
@@ -342,8 +344,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T18:52:25.600Z
-Stopped at: Completed 07-01-PLAN.md
+Last session: 2026-07-06T18:57:53.903Z
+Stopped at: Completed 07-08-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
