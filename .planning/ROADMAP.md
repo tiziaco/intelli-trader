@@ -424,7 +424,12 @@ the same `update(bar)` path, and the open-position-handling-on-remove policy is 
 
 **Research flag**: SKIP — reuses the Phase-3 backfill-through-`update` seam; standard patterns if Phase 3
 is built generically (per-symbol, not start-only).
-**Plans**: TBD
+**Plans**: 5 plans (4 waves)
+- [ ] 06-01-PLAN.md — Event/enum/route contract + `Universe.apply`/`UniverseDelta`/leaving-set (pure foundation)
+- [ ] 06-02-PLAN.md — OKX provider dynamic subscribe/unsubscribe + per-symbol supervisor keys
+- [ ] 06-03-PLAN.md — Lean `UniverseSelectionModel` + `UniverseHandler` poll (on_time) + add-side subscribe
+- [ ] 06-04-PLAN.md — Remove-policy (orphan/force-close) + leaving-symbol admission gate + detach-on-flat
+- [ ] 06-05-PLAN.md — Composition root: un-hardcode `_OKX_STREAM_SYMBOL` + poll timer + live-only route mutation + milestone gate
 
 ## Phases (shipped — archived detail)
 
