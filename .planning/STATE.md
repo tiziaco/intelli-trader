@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
-stopped_at: Phase 6 context gathered
-last_updated: "2026-07-06T09:43:40.907Z"
-last_activity: 2026-07-06 -- Phase 06 planning complete
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-07-06T10:06:23.349Z"
+last_activity: 2026-07-06
 progress:
   total_phases: 10
   completed_phases: 8
   total_plans: 65
-  completed_plans: 60
+  completed_plans: 61
   percent: 80
 ---
 
@@ -24,16 +24,16 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 05.3 — live-path-remediation-wave-3-resilience-hardening-stream-dea
+**Current focus:** Phase 06 — dynamic-universe-membership
 
 ## Current Position
 
-Phase: 05.3 (live-path-remediation-wave-3-resilience-hardening-stream-dea) — COMPLETE (12/12 plans; verified PASSED)
-Plan: 12 of 12
+Phase: 06 (dynamic-universe-membership) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-07-06 -- Phase 06 planning complete
+Last activity: 2026-07-06
 
-Progress: [██████████] 100%
+Progress: [█████████░] 94%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -175,6 +175,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 05.2-06: D-10 durable HALTED latch survives restart — halt() persists a secret-scrubbed halt record (reason literal + timestamp, V7) on the shared SqlBackend spine; a FRESH LiveTradingSystem refuses RUNNING while unresolved (re-latching in-process via _update_status, not halt(), so no double-write); reset_halt() resolves. New d10_halt_records chained Alembic head (single head); env.py registers the table (autogenerate-safe); idgen.generate_halt_record_id keeps the single UUIDv7 scheme. Oracle byte-exact; mypy clean 231; inertness preserved.
 - [Phase ?]: [Phase 05.3]: 05.3-12: D-28 (WR-03) closed — resume gated on ALL venue stream arms healthy via per-arm is_streaming_healthy() (not _streams_down) + engine compound _all_venue_streams_healthy(); no engine-side aggregation/namespacing; None arm = healthy; gate after D-25 catch-up+snapshot, does not re-set _pending_stream_resume
 - [Phase ?]: [Phase 05.3]: 05.3-12: D-29 (WR-05) closed — gap backfill low-clamps (< since_ms) + raises MalformedDataError on non-contiguous first replayed bar (escalates to connector halt) + _replaying_backfill re-entrancy guard fails loud in update() gap branch. Empty-page hole out of scope; WR-04 deferred
+- [Phase 06]: 06-01: UniverseUpdateEvent (frozen Event, tuple added/removed) + EventType.UNIVERSE_UPDATE + explicit-empty _routes entry (three-step flow, Pitfall 5) — dispose notification DISTINCT from ScreenerEvent (D-04); backtest-inert
+- [Phase 06]: 06-01: Universe.apply(desired, instruments)->UniverseDelta slice-assigns _members in place (identity preserved, Pitfall 4) with oracle-dark empty-delta fast path; connector-free (D-03, caller passes resolved instruments, _DEFAULT_* ladder fallback); leaving-set surface (mark/read-copy/clear) for the plan-04 admission gate. UNIV-01 left Pending (foundation only, no consumers)
 
 ### Pending Todos
 
@@ -259,6 +261,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.2 P05 | 20min | 2 tasks | 8 files |
 | Phase 05.2 P06 | 22min | 2 tasks | 6 files |
 | Phase 05.3 P12 | 12min | 2 tasks | 6 files |
+| Phase 06 P01 | 22min | 2 tasks | 7 files |
 
 ## Deferred Items
 
@@ -308,9 +311,9 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T08:56:50.872Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-dynamic-universe-membership/06-CONTEXT.md
+Last session: 2026-07-06T10:06:15.673Z
+Stopped at: Completed 06-01-PLAN.md
+Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
 ## Operator Next Steps

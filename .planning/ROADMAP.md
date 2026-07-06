@@ -425,7 +425,7 @@ the same `update(bar)` path, and the open-position-handling-on-remove policy is 
 **Research flag**: SKIP — reuses the Phase-3 backfill-through-`update` seam; standard patterns if Phase 3
 is built generically (per-symbol, not start-only).
 **Plans**: 5 plans (4 waves)
-- [ ] 06-01-PLAN.md — Event/enum/route contract + `Universe.apply`/`UniverseDelta`/leaving-set (pure foundation)
+- [x] 06-01-PLAN.md — Event/enum/route contract + `Universe.apply`/`UniverseDelta`/leaving-set (pure foundation)
 - [ ] 06-02-PLAN.md — OKX provider dynamic subscribe/unsubscribe + per-symbol supervisor keys
 - [ ] 06-03-PLAN.md — Lean `UniverseSelectionModel` + `UniverseHandler` poll (on_time) + add-side subscribe
 - [ ] 06-04-PLAN.md — Remove-policy (orphan/force-close) + leaving-symbol admission gate + detach-on-flat
@@ -597,7 +597,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | 3. LiveBarFeed | v1.7 | 4/4 | Complete   | 2026-07-01 |
 | 4. Paper Path (DoD) | v1.7 | 4/4 | Complete   | 2026-07-02 |
 | 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 13/13 | Complete   | 2026-07-04 |
-| 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
+| 6. Dynamic Universe Membership | v1.7 | 1/5 | In Progress|  |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
 
