@@ -146,7 +146,9 @@ def _drive_stream(
     # budget so the ceiling never trips). These tests assert the consume body's
     # confirm gate / host routing / sink; the supervisor's reconnect behaviour is
     # covered separately.
-    asyncio.run(provider._connect_and_consume_candles(symbol, channel))
+    # 06-02: per-symbol supervisor key threaded as the third arg (stream_name); these
+    # tests drive a single symbol so the member key is the streamed symbol itself.
+    asyncio.run(provider._connect_and_consume_candles(symbol, channel, symbol))
     return recorder
 
 
@@ -275,7 +277,7 @@ def test_stream_subscribes_the_business_candle_channel(
 
     monkeypatch.setattr(aiohttp, "ClientSession", _session_cls)
     # One consume cycle, not the unbounded supervisor (see `_drive_stream`).
-    asyncio.run(provider._connect_and_consume_candles("BTC-USDT", "candle1D"))
+    asyncio.run(provider._connect_and_consume_candles("BTC-USDT", "candle1D", "BTC-USDT"))
 
     assert sent_holder == [
         {"op": "subscribe", "args": [{"channel": "candle1D", "instId": "BTC-USDT"}]}
@@ -495,11 +497,11 @@ def test_supervisor_snapshot_only_storm_trips_ceiling_and_halts(
         aiohttp, "ClientSession",
         _looping_session_cls(snapshot_only, calls, cap=provider._reconnect_ceiling + 5))
 
-    asyncio.run(provider._stream_candles("BTC-USDT", "candle1D"))
+    asyncio.run(provider._stream_candles("BTC-USDT", "candle1D", "BTC-USDT"))
 
     # Halted exactly once with the scrubbed fixed reason after ceiling+1 attempts.
     assert halts == ["connector-fatal"]
-    assert provider._reconnect_attempts["candles"] == provider._reconnect_ceiling + 1
+    assert provider._reconnect_attempts["BTC-USDT"] == provider._reconnect_ceiling + 1
     assert len(calls) == provider._reconnect_ceiling + 1
 
 
@@ -532,12 +534,12 @@ def test_supervisor_post_snapshot_payload_resets_budget(
                              raise_on_call=stop_after, exc=_StopLoop()))
 
     with pytest.raises(_StopLoop):
-        asyncio.run(provider._stream_candles("BTC-USDT", "candle1D"))
+        asyncio.run(provider._stream_candles("BTC-USDT", "candle1D", "BTC-USDT"))
 
     # Ran past the ceiling with zero halts — the reset kept attempt from climbing.
     assert halts == []
     assert len(calls) == stop_after
-    assert provider._reconnect_attempts["candles"] <= 1
+    assert provider._reconnect_attempts["BTC-USDT"] <= 1
 
 
 def test_supervisor_fatal_error_halts_immediately_without_retry(
@@ -558,7 +560,7 @@ def test_supervisor_fatal_error_halts_immediately_without_retry(
         _looping_session_cls([], calls, cap=5, raise_on_call=1,
                              exc=ccxt.AuthenticationError("bad key")))
 
-    asyncio.run(provider._stream_candles("BTC-USDT", "candle1D"))
+    asyncio.run(provider._stream_candles("BTC-USDT", "candle1D", "BTC-USDT"))
 
     assert halts == ["connector-fatal"]
     assert len(calls) == 1                                       # halted on first attempt

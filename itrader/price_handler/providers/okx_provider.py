@@ -222,8 +222,10 @@ class OkxDataProvider:
         """
         symbol_okx = self._to_okx_symbol(self._symbol)
         channel = "candle" + self._okx_interval(self._timeframe)
+        # Per-symbol supervisor key = the member symbol (Pitfall 2); the wiring-time
+        # default keys on self._symbol so single-symbol behaviour is unchanged.
         self._stream_handle = self._connector.spawn(
-            self._stream_candles(symbol_okx, channel))
+            self._stream_candles(symbol_okx, channel, self._symbol))
         return self._stream_handle
 
     def subscribe(self, symbol: str) -> None:
@@ -249,8 +251,10 @@ class OkxDataProvider:
             return
         symbol_okx = self._to_okx_symbol(symbol)
         channel = "candle" + self._okx_interval(self._timeframe)
+        # Pass the member symbol through as the per-symbol supervisor key (Pitfall 2) so
+        # this symbol's reconnect budget / down-state never collides with another's.
         self._streams[symbol] = self._connector.spawn(
-            self._stream_candles(symbol_okx, channel))
+            self._stream_candles(symbol_okx, channel, symbol))
 
     def unsubscribe(self, symbol: str) -> None:
         """Dynamically unsubscribe a symbol's candle stream (D-05) — safe no-op if absent.
@@ -267,7 +271,9 @@ class OkxDataProvider:
         if task is not None:
             task.cancel()
 
-    async def _stream_candles(self, symbol_okx: str, channel: str) -> None:
+    async def _stream_candles(
+        self, symbol_okx: str, channel: str, symbol: str
+    ) -> None:
         """Consume the native candle socket under the reconnect supervisor (D-19/D-20).
 
         The consume body (one WS connect + subscribe + read loop) is wrapped in a
@@ -276,13 +282,21 @@ class OkxDataProvider:
         D-19); a fatal error or the exhausted retry ceiling halts the engine (D-20).
         Without it a single socket drop silently killed the candle task (a code-verified
         gap) and paper-parity would starve for bars.
+
+        The per-symbol member ``symbol`` is threaded through as the supervisor
+        ``stream_name`` (Pitfall 2 / 06-02 D-05): with N dynamic channels the reconnect
+        budget / down-state MUST key on the member symbol, never a shared single literal
+        — otherwise one symbol's drop marks all streams down and one symbol's payload
+        resets all budgets, defeating the D-20 HALT ceiling.
         """
-        async def _connect_and_consume(_stream_name: str) -> None:
-            await self._connect_and_consume_candles(symbol_okx, channel)
+        async def _connect_and_consume(stream_name: str) -> None:
+            await self._connect_and_consume_candles(symbol_okx, channel, stream_name)
 
-        await self._run_stream_supervisor(_connect_and_consume, "candles")
+        await self._run_stream_supervisor(_connect_and_consume, symbol)
 
-    async def _connect_and_consume_candles(self, symbol_okx: str, channel: str) -> None:
+    async def _connect_and_consume_candles(
+        self, symbol_okx: str, channel: str, stream_name: str
+    ) -> None:
         """One native business-candle connection: subscribe + read, gating on ``confirm``.
 
         Opens an aiohttp WS to ``wss://{host}:8443/ws/v5/business`` where the host is the
@@ -306,8 +320,9 @@ class OkxDataProvider:
                     host=host, channel=channel, instId=symbol_okx)
                 # Subscribed successfully — if we were paused on a prior disconnect,
                 # resume after the fresh reconcile (D-19). WR-03: a subscribe does NOT
-                # reset the retry budget (see _reset_reconnect_budget).
-                self._on_stream_healthy("candles")
+                # reset the retry budget (see _reset_reconnect_budget). Per-symbol key
+                # (06-02 D-05): this resumes ONLY this symbol's stream, never all.
+                self._on_stream_healthy(stream_name)
                 # WR-03 (data arm): OKX pushes an in-progress-candle SNAPSHOT (confirm='0')
                 # within ~30ms of EVERY subscribe — verified against the demo venue. That
                 # snapshot is delivered ON subscribe, so it is NOT proof of a connection that
@@ -336,7 +351,7 @@ class OkxDataProvider:
                     rows: Any = payload.get("data", []) if isinstance(payload, dict) else []
                     if rows:
                         if payload_seen:
-                            self._reset_reconnect_budget("candles")
+                            self._reset_reconnect_budget(stream_name)
                         payload_seen = True
                     for row in rows:
                         self._process_row(row)
