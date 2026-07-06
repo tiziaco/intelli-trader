@@ -35,7 +35,15 @@ findings:
   warning: 6
   info: 2
   total: 9
-status: issues_found
+status: partially_resolved
+resolution:
+  resolved:
+    - "CR-01 — fixed in quick task 260706-l48 (commit e08424d2, 2026-07-06)"
+    - "WR-03 — fixed in quick task 260706-l48 (commit e08424d2, 2026-07-06)"
+  routed_to_phase_7:
+    - "WR-01, WR-02, WR-04, WR-05, WR-06 — see 06-REVIEW-DECISIONS.md; Phase 7 (Live Dynamic-Universe Hardening)"
+  open_info:
+    - "IN-01, IN-02 — not yet actioned (info severity)"
 ---
 
 # Phase 06: Code Review Report
@@ -68,6 +76,10 @@ The single BLOCKER (CR-01) can permanently wedge the live submission-resume path
 ## Critical Issues
 
 ### CR-01: `unsubscribe` leaves stale per-symbol supervisor state → live submission can wedge forever
+
+**✅ RESOLVED — quick task 260706-l48 (commit `e08424d2`, 2026-07-06).** `unsubscribe` now clears
+`self._streams_down.discard(symbol)` + `self._reconnect_attempts.pop(symbol, None)` after cancelling the
+task. Verified green (161 passed).
 
 **File:** `itrader/price_handler/providers/okx_provider.py:259-272` (with `466-474`, `385-449`)
 **Issue:**
@@ -150,6 +162,9 @@ failure, roll that symbol back out of membership (or re-queue it) rather than le
 a member with no data.
 
 ### WR-03: `universe_poll_cadence_s` has no lower bound → 0/negative busy-spins the queue
+
+**✅ RESOLVED — quick task 260706-l48 (commit `e08424d2`, 2026-07-06).** Field now bounded fail-loud:
+`universe_poll_cadence_s: float = Field(default=60.0, gt=0.0)`. Verified a `0.0` raises `ValidationError`.
 
 **File:** `itrader/config/system.py:71`; `itrader/trading_system/live_trading_system.py:1789-1793`
 **Issue:**
