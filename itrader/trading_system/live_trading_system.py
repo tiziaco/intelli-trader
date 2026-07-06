@@ -37,6 +37,7 @@ from itrader.universe import Universe, derive_instruments, derive_membership
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, ErrorEvent
+from itrader.events_handler.events.market import TimeEvent
 
 # Live operational store credential surface (D-live wiring completed). The live order +
 # signal store is selected by ENV-PRESENCE of a Postgres credential on the unified
@@ -191,6 +192,11 @@ class LiveTradingSystem:
         # Threading control
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        # Plan 06-05 (D-02): the live-only dynamic-universe poll-timer daemon. Spawned
+        # in start() on the daemon/live path ONLY (never run_paper_replay — synchronous
+        # — never backtest); stopped via the shared _stop_event. Declared here so a
+        # pre-start read is a clean None, never an AttributeError.
+        self._poll_timer_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         
         # Statistics tracking
@@ -241,7 +247,12 @@ class LiveTradingSystem:
         # start()); without this, any pre-start read raises AttributeError
         # instead of returning None — an attribute-existence trap for D-live.
         self.universe: Optional[Universe] = None
-        
+        # Plan 06-05 (D-02/D-05): the live-only UniverseHandler (poll host + add/remove
+        # consumer). Constructed in _initialize_live_session (from start()) — NEVER on
+        # the backtest path (a separate EventHandler with the untouched _routes literal).
+        # Declared here as a "not yet wired" sentinel so a pre-start read is a clean None.
+        self._universe_handler: Optional[Any] = None
+
         # ------------------------------------------------------------------
         # v1.6 operational store live-drive (05-06, RECON-04, D-10/D-11).
         #
@@ -1249,29 +1260,97 @@ class LiveTradingSystem:
                     default=1)))
             self.feed.bind(self.global_queue, universe.members)
 
-            # WR-03: the LIVE feed keys its ring on the streamed symbol string
-            # (_OKX_STREAM_SYMBOL, stamped by the provider into ClosedBar['symbol']),
-            # while window() is queried with the ticker drawn from universe.members.
-            # If the two forms diverge (e.g. 'BTC/USDT' vs 'BTCUSD'), _find_ring raises
-            # MissingPriceDataError only at the FIRST window() call — deep on the live
-            # path. Assert the streamed symbol is a member at WIRING time so a ring-key
-            # vs membership format mismatch fails loudly at startup instead. Guarded on
-            # a non-empty membership: an empty universe (no strategy declared an
-            # instrument) streams nothing and has no ticker to mismatch.
-            if (self.exchange == 'okx' and universe.members
-                    and _OKX_STREAM_SYMBOL not in universe.members):
-                raise ConfigurationError(
-                    config_key="okx_stream_symbol",
-                    config_value=_OKX_STREAM_SYMBOL,
-                    reason=(
-                        f"streamed symbol is not a member of the universe "
-                        f"{universe.members!r}; the feed ring key and the strategy's "
-                        "window() ticker would mismatch (MissingPriceDataError at first "
-                        "window()). Align the subscription symbol with the universe."))
+            # WR-03 generalized (Plan 06-05, D-05): the LIVE subscription set is now
+            # SOURCED FROM MEMBERSHIP — start() iterates universe.members and subscribes
+            # each (warmup-before-subscribe), no longer the single hardcoded
+            # _OKX_STREAM_SYMBOL. The LIVE feed keys its ring on the streamed-symbol form
+            # the provider stamps into ClosedBar['symbol'] while window() is queried with
+            # the ticker drawn from universe.members. If the two forms diverge for a
+            # member (e.g. 'BTC/USDT' vs 'BTCUSD'), _find_ring raises MissingPriceDataError
+            # only at the FIRST window() call — deep on the live path. Assert the ring-key
+            # vs window()-ticker invariant at WIRING time for EVERY subscribed symbol:
+            # the engine subscribes exactly the members, so assert every symbol it will
+            # subscribe is a member (the provider's plan-02 {symbol: task} registry keys
+            # on the member string and stamps that SAME form as the ring key, so a member
+            # is its own ring key by construction). This fails loudly at startup if a
+            # future edit subscribes a symbol whose form diverges from the member window()
+            # ticker, instead of surfacing as a MissingPriceDataError deep on the live
+            # path. Guarded on a non-empty membership: an empty universe (no strategy
+            # declared an instrument) streams nothing and has no ticker to mismatch.
+            if self.exchange == 'okx' and universe.members:
+                members = universe.members
+                subscribed = list(members)  # start() subscribes exactly the members
+                mismatched = [s for s in subscribed if s not in members]
+                if mismatched:
+                    raise ConfigurationError(
+                        config_key="okx_stream_symbols",
+                        config_value=repr(mismatched),
+                        reason=(
+                            f"subscribed symbol(s) {mismatched!r} are not members of "
+                            f"the universe {members!r}; the feed ring key and the "
+                            "strategy's window() ticker would mismatch "
+                            "(MissingPriceDataError at first window()). Subscribe only "
+                            "universe members."))
 
             # Plan 06-05: the legacy set_symbols/set_timeframe calls died with
             # the price handler — the Store knows its symbols (store.symbols()).
             # Live symbol/timeframe subscription wiring is owned by D-live.
+
+            # ------------------------------------------------------------------
+            # Plan 06-05 (D-02/D-05): construct the live-only UniverseHandler and
+            # wire its seams + the LIVE-ONLY _routes mutation. The BACKTEST never
+            # reaches this path — its TradingSystem builds a SEPARATE EventHandler
+            # with the untouched _routes literal (empty UNIVERSE_UPDATE route) and
+            # never constructs this handler or starts the poll timer, so the oracle
+            # + W1/W2 are provably unaffected (RESEARCH §11.1). The imports stay
+            # LAZY inside this live-init method (mirrors the OKX/LiveBarFeed lazy
+            # imports) so the backtest import path never pulls universe_handler —
+            # the recurring inertness gate (tests/integration/test_okx_inertness.py).
+            from itrader import config as _system_config
+            from itrader.universe.membership import StaticUniverseSelectionModel
+            from itrader.universe.universe_handler import UniverseHandler
+
+            # remove_policy + poll cadence come from the LIVE/monitoring config, NOT
+            # SystemConfig.PerformanceSettings (which carries the oracle-critical
+            # rng_seed) — §8/D-01 keeps the backtest oracle config untouched.
+            self._universe_handler = UniverseHandler(
+                global_queue=self.global_queue,
+                universe=universe,
+                feed=self.feed,
+                timeframe=_OKX_STREAM_TIMEFRAME,
+                remove_policy=_system_config.monitoring.universe_remove_policy,
+            )
+            # Seed the selection source from CURRENT membership so the poll is a
+            # NO-OP (desired == current -> empty delta -> no event) until an
+            # operator drives set_symbols — the lean poll seam (D-20), not a
+            # ranking engine.
+            self._universe_handler.set_selection_source(
+                StaticUniverseSelectionModel(universe.members))
+            # D-06 venue bound: OKX validate_symbol filters the proposed set BEFORE
+            # apply (OKX arm only — guard None on paper/replay, no venue markets map).
+            if self._okx_exchange is not None:
+                self._universe_handler.set_symbol_validator(self._okx_exchange)
+            # Data-plane provider the add/remove branch drives (guard None on paper).
+            if self._okx_data_provider is not None:
+                self._universe_handler.set_provider(self._okx_data_provider)
+            # Open-position truth for the remove consumer + detach-on-flat.
+            self._universe_handler.set_portfolio_read_model(self.portfolio_handler)
+
+            # LIVE-ONLY route mutation (RESEARCH §11.1): mutate THIS live
+            # EventHandler's own routes dict — NEVER the shared backtest _routes
+            # literal (the backtest TradingSystem builds a SEPARATE EventHandler).
+            # Append the poll on_time to the TIME route (the poll-timer's control-
+            # plane TimeEvent reaches it there); set the UNIVERSE_UPDATE consumer;
+            # append on_fill to the FILL route AFTER PortfolioHandler.on_fill so the
+            # read model already reflects the settled (flat) position for
+            # detach-on-flat. The backtest literal is untouched → W1/W2 + oracle
+            # provably unaffected.
+            self.event_handler.routes[EventType.TIME].append(
+                self._universe_handler.on_time)
+            self.event_handler.routes[EventType.UNIVERSE_UPDATE] = [
+                self._universe_handler.on_universe_update]
+            self.event_handler.routes[EventType.FILL].append(
+                self._universe_handler.on_fill)
 
             self.logger.info('Live trading session initialized')
             
@@ -1530,8 +1609,18 @@ class LiveTradingSystem:
             # non-OKX venue has no provider, so the None provider is never dereferenced
             # (mirrors the CR-02 venue-guard). Warmup MUST precede start_stream.
             if self.exchange == 'okx' and self._okx_data_provider is not None:
-                self.feed.warmup(_OKX_STREAM_SYMBOL, _OKX_STREAM_TIMEFRAME)
-                self._okx_data_provider.start_stream()
+                # Plan 06-05 (D-05): un-hardcode _OKX_STREAM_SYMBOL — the live
+                # subscription set is now SOURCED FROM MEMBERSHIP. For each member,
+                # warm the feed FIRST (REST replay sets the ring) THEN subscribe the
+                # live socket (warmup-before-subscribe, Pitfall 6 — never reorder),
+                # replacing the single-symbol start_stream() with the per-member
+                # dynamic subscribe() seam (plan 02). A one-symbol universe subscribes
+                # exactly that one symbol, so the single wiring-time default falls out
+                # naturally. _OKX_STREAM_TIMEFRAME remains the live timeframe.
+                members = self.universe.members if self.universe is not None else []
+                for sym in members:
+                    self.feed.warmup(sym, _OKX_STREAM_TIMEFRAME)
+                    self._okx_data_provider.subscribe(sym)
 
             # CR-01 (RECON-02, RES-01): spawn the order-arm venue streams. This is
             # the SOLE spawn site for OkxExchange._stream_fills()/_stream_orders()
@@ -1660,7 +1749,20 @@ class LiveTradingSystem:
             
             self._running = True
             self._thread.start()
-            
+
+            # Plan 06-05 (D-02): start the live-only dynamic-universe poll timer on
+            # the daemon/live path ONLY (never run_paper_replay — synchronous — never
+            # backtest). It puts a control-plane TimeEvent on the configured cadence so
+            # the UniverseHandler polls membership DECOUPLED from bars (D-02). Stopped
+            # via the shared _stop_event discipline (stop() sets it, joins the thread) —
+            # the event was already cleared above before the processing thread started.
+            self._poll_timer_thread = threading.Thread(
+                target=self._run_poll_timer,
+                name='LiveTradingSystem-UniversePollTimer',
+                daemon=True
+            )
+            self._poll_timer_thread.start()
+
             self.logger.info('Live trading system started successfully')
             return True
             
@@ -1670,6 +1772,26 @@ class LiveTradingSystem:
             self._running = False
             return False
     
+    def _run_poll_timer(self) -> None:
+        """Live-only dynamic-universe poll-timer daemon (Plan 06-05, D-02).
+
+        Loops until ``_stop_event`` is set, putting a control-plane ``TimeEvent`` on
+        the global queue every ``monitoring.universe_poll_cadence_s`` seconds so the
+        live ``UniverseHandler.on_time`` polls its selection source DECOUPLED from
+        bars (D-02). This is the SOLE wall-clock ``TimeEvent`` on the live path — it
+        stamps ONLY the control-plane poll, and NEVER a bar/fill business time
+        (Pitfall 3 / determinism: business ``time`` stays venue-sourced). Started
+        only on the live daemon path (``start()``), NEVER in ``run_paper_replay``
+        (synchronous) or the backtest. ``_stop_event.wait(cadence)`` doubles as the
+        interruptible sleep so ``stop()`` unblocks it immediately.
+        """
+        from itrader import config as _system_config
+        cadence = _system_config.monitoring.universe_poll_cadence_s
+        while not self._stop_event.is_set():
+            # Control-plane wall-clock TimeEvent ONLY (Pitfall 3): never a bar/fill.
+            self.global_queue.put(TimeEvent(time=datetime.now(UTC)))
+            self._stop_event.wait(cadence)
+
     def stop(self, timeout=10.0):
         """
         Stop the live trading system gracefully.
@@ -1711,6 +1833,13 @@ class LiveTradingSystem:
                     return False
                 else:
                     self.logger.info('Event processing thread stopped')
+
+            # Plan 06-05 (D-02): join the live-only poll timer via the same
+            # _stop_event discipline (set above). It waits on _stop_event so the
+            # join returns promptly; daemon=True guarantees it never blocks shutdown.
+            if self._poll_timer_thread and self._poll_timer_thread.is_alive():
+                self._poll_timer_thread.join(timeout=timeout)
+            self._poll_timer_thread = None
 
             self._running = False
             self._thread = None

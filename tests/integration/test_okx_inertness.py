@@ -59,6 +59,18 @@ _FORBIDDEN = (
     # no async/connector/SQLAlchemy (LiveConnector stays TYPE_CHECKING-only), so they
     # are inert-by-construction even when transitively imported.
     "itrader.portfolio_handler.reconcile.venue_reconciler",
+    # Phase 6 (Plan 06-05, inertness gate): the live-only UniverseHandler (poll host
+    # + add/remove consumer) and its poll-timer daemon are constructed inside
+    # LiveTradingSystem._initialize_live_session / start() ONLY (LAZY-imported there).
+    # The backtest TradingSystem builds its OWN EventHandler with the untouched
+    # _routes literal (empty UNIVERSE_UPDATE route) and never constructs the handler
+    # or starts the timer — so universe_handler must NEVER be pulled onto the backtest
+    # hot path. The universe barrel (itrader.universe.__init__) deliberately does NOT
+    # import it (membership/selection-model are pure), so importing Universe on the
+    # backtest path stays handler-free. If a future edit hoists it to the backtest
+    # composition root (or re-exports it from the barrel) this probe fails loudly,
+    # protecting the oracle byte-exactness + the W1/W2 perf gate.
+    "itrader.universe.universe_handler",
 )
 leaked = [name for name in _FORBIDDEN if name in sys.modules]
 assert not leaked, (

@@ -128,9 +128,9 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Dynamic Universe Membership — Phase 6 (lean poll seam)
 
-- [ ] **UNIV-01**: A lean universe-membership **poll seam** supports mid-run add/remove of symbols
+- [x] **UNIV-01**: A lean universe-membership **poll seam** supports mid-run add/remove of symbols
   (grows `universe/membership.py` per its D-20 target) — NOT the full production screener.
-- [ ] **UNIV-02**: Warmup-on-add replays the new symbol's history through the same `update(bar)` path
+- [x] **UNIV-02**: Warmup-on-add replays the new symbol's history through the same `update(bar)` path
   (reuses the Phase 3 backfill machinery); the open-position-handling-on-remove policy is defined.
 
 ### Cross-Cutting (woven through Phases 2–5; each has one definite home phase)
@@ -224,8 +224,8 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | RECON-04 | Phase 5 | Pending |
 | RECON-05 | Phase 5 | Complete |
 | RECON-06 | Phase 5 | Done (05-12) |
-| UNIV-01 | Phase 6 | Pending |
-| UNIV-02 | Phase 6 | Pending |
+| UNIV-01 | Phase 6 | Complete |
+| UNIV-02 | Phase 6 | Complete |
 | RUN-01 | Phase 4 (home; decided in Phase 3→4 handoff, cross-cutting 2–5) | Complete |
 | RES-01 | Phase 5 (home; pieces build in Phases 2–3, cross-cutting 2–5) | Complete |
 | COV-01 | Phase 4 (home; infra in Phase 2, extends to Phase 5, cross-cutting 1–5) | Complete |

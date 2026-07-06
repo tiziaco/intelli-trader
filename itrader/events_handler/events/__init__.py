@@ -16,6 +16,7 @@ from .market import (
     BarEvent,
     PortfolioUpdateEvent,
     ScreenerEvent,
+    UniverseUpdateEvent,
 )
 
 # Signal events
@@ -48,6 +49,7 @@ __all__ = [
     'BarEvent',
     'PortfolioUpdateEvent',
     'ScreenerEvent',
+    'UniverseUpdateEvent',
 
     # Signal events
     'SignalEvent',

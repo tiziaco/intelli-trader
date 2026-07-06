@@ -28,6 +28,7 @@ class EventType(Enum):
     ORDER_ACK = "ORDER_ACK"
     FILL = "FILL"
     SCREENER = "SCREENER"
+    UNIVERSE_UPDATE = "UNIVERSE_UPDATE"
     ERROR = "ERROR"
 
     @classmethod

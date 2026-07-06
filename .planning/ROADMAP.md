@@ -9,7 +9,7 @@
 - ✅ **v1.4 — Margin, Leverage, Shorts & Trailing Stops** — Phases 1-6 + 5.1 (shipped 2026-06-22; numbering reset; promoted Backlog 999.4 / N+2)
 - ✅ **v1.5 — Backtest Performance Optimization** — Phases 1-8 (shipped 2026-06-26; numbering reset; performance half of Backlog 999.2, split out from Persistence; Phases 7-8 added 2026-06-25 from post-phase re-profiles)
 - ✅ **v1.6 — N+3b Persistence Foundation** — Phases 1-5 (shipped 2026-06-30; numbering reset; promoted the **persistence half** of Backlog 999.2)
-- 🚧 **v1.7 — Live Trading Readiness (trimmed N+4 / Backlog 999.3)** — Phases 1-6 (in progress; numbering reset; promoted Backlog 999.3)
+- 🚧 **v1.7 — Live Trading Readiness (trimmed N+4 / Backlog 999.3)** — Phases 1-7 (in progress; numbering reset; promoted Backlog 999.3; Phase 7 added 2026-07-06 from the Phase 6 code review)
 
 Full milestone detail (phase goals, success criteria, per-plan breakdown) is archived per milestone:
 v1.0 — [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md) ·
@@ -49,7 +49,7 @@ v1.0 phase working dirs are archived under `milestones/v1.0-phases/`; v1.1 under
 
 **Milestone Goal:** Deploy and run the package **live on one crypto venue (OKX), paper-first**, with a
 real correctness gate (**paper-parity vs the backtest oracle**) — **without disturbing the byte-exact
-backtest oracle** (134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). Six phases, numbering
+backtest oracle** (134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). Seven phases, numbering
 reset to Phase 1, refactor-phase-first (Phase 1 is an oracle-gated Account-abstraction extraction *before*
 any live code depends on it). The trimmed N+4: the **minimum surface to deploy live**.
 
@@ -79,6 +79,7 @@ configured so the global filter is never relaxed); tabs/spaces indentation match
 - [x] **Phase 4: Paper Path (milestone DoD)** — reuse `SimulatedExchange` as-is as the paper exchange (revised 2026-07-02); runnable worker + lifecycle; **paper-parity gate = paper ≡ a fresh backtest on the same data, exact frame-equality**. — completed 2026-07-02
 - [x] **Phase 5: Real/Sandbox Path + Reconciliation + Persistence Live-Drive** — `VenueAccount` reconciliation, partial-fill correctness, v1.6 store driven by the real feed, two-sided restart; sandbox-validated. — completed 2026-07-04
 - [ ] **Phase 6: Dynamic Universe Membership** — Lean poll seam for mid-run add/remove; warmup-on-add reuses the Phase-3 backfill.
+- [ ] **Phase 7: Live Dynamic-Universe Hardening** — Async warmup + per-symbol `isReady` readiness gate (+ WR-01/04/05/06 from the Phase 6 review); backtest oracle stays inert. Added 2026-07-06 from the Phase 6 code review.
 
 ### Phase 1: Account Abstraction + Portfolio/Handler Refactor
 
@@ -424,7 +425,53 @@ the same `update(bar)` path, and the open-position-handling-on-remove policy is 
 
 **Research flag**: SKIP — reuses the Phase-3 backfill-through-`update` seam; standard patterns if Phase 3
 is built generically (per-symbol, not start-only).
-**Plans**: TBD
+**Plans**: 5 plans (4 waves)
+- [x] 06-01-PLAN.md — Event/enum/route contract + `Universe.apply`/`UniverseDelta`/leaving-set (pure foundation)
+- [x] 06-02-PLAN.md — OKX provider dynamic subscribe/unsubscribe + per-symbol supervisor keys
+- [x] 06-03-PLAN.md — Lean `UniverseSelectionModel` + `UniverseHandler` poll (on_time) + add-side subscribe
+- [x] 06-04-PLAN.md — Remove-policy (orphan/force-close) + leaving-symbol admission gate + detach-on-flat
+- [x] 06-05-PLAN.md — Composition root: un-hardcode `_OKX_STREAM_SYMBOL` + poll timer + live-only route mutation + milestone gate
+
+### Phase 7: Live Dynamic-Universe Hardening
+
+**Goal**: Harden the live dynamic-universe membership path delivered in Phase 6 by resolving the
+design-level findings from the Phase 6 code review (`phases/06-dynamic-universe-membership/06-REVIEW.md`
++ `06-REVIEW-DECISIONS.md`). Centerpiece: replace the current synchronous **commit-then-effect** warmup
+with an **async warmup + per-symbol `isReady` readiness gate** (LEAN/Nautilus model — "activated &
+data-ready", not merely "selected", is what the engine keys on). The backtest oracle path MUST stay
+inert (a backtest member is always ready; the gate is a live-only no-op on the oracle path).
+**Depends on**: Phase 6 (dynamic-universe-membership).
+**Requirements**: (derive at plan time from the 5 routed review findings)
+**Success Criteria** (what must be TRUE):
+
+  1. **WR-02 (centerpiece)** — warmup runs asynchronously on the connector substrate; a symbol is
+     `pending` on add and `ready` only when warmup completes (then subscribe — warmup-before-subscribe
+     ordering preserved); "not ready" is a **soft per-symbol gate** honored by all membership consumers
+     (strategies, screeners, admission), not today's `window()` → `MissingPriceDataError` hard failure.
+     Per-symbol isolation: one failed warmup never aborts the batch or the remove branch (fixes the
+     naked-remove-branch bug).
+
+  2. **WR-01** — instrument-lifecycle invariant enforced: an `Instrument` exists while a symbol is a
+     member OR has open exposure; `Universe.apply` stops popping removed instruments, teardown ties to
+     detach-on-flat (design settled in `06-REVIEW-DECISIONS.md`).
+
+  3. **WR-04** — poll-added symbols resolve venue-correct precision via an injected markets-map resolver
+     seam (keeps `Universe` connector-free, D-03).
+
+  4. **WR-05** — the poll is gated under HALT/pause so membership does not churn and streams are not torn
+     down while frozen (freeze-in-place contract).
+
+  5. **WR-06** — the control-plane poll routes through a dedicated discriminator, not the shared business
+     TIME route (pairs with WR-05 gating).
+
+  6. Recurring milestone gate: backtest oracle byte-exact + no W1/W2 perf regression.
+
+**Note**: CR-01 and WR-03 from the same review were already fixed in quick task 260706-l48. The WR-04/05/06
+detailed approaches are *leanings* in `06-REVIEW-DECISIONS.md` — final design decisions are deferred to
+the Phase 7 discuss session, not locked here.
+**Research flag**: consider — LEAN `OnSecuritiesChanged`/`IsReady` + Nautilus `request_bars` readiness
+patterns informed the design direction (see `06-REVIEW-DECISIONS.md` WR-02).
+**Plans**: not planned yet (run `/gsd-plan-phase 7` after discuss).
 
 ## Phases (shipped — archived detail)
 
@@ -592,7 +639,7 @@ arm + Phase 1's `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3's ba
 | 3. LiveBarFeed | v1.7 | 4/4 | Complete   | 2026-07-01 |
 | 4. Paper Path (DoD) | v1.7 | 4/4 | Complete   | 2026-07-02 |
 | 5. Real/Sandbox Path + Reconciliation + Persistence Live-Drive | v1.7 | 13/13 | Complete   | 2026-07-04 |
-| 6. Dynamic Universe Membership | v1.7 | 0/TBD | Not started | - |
+| 6. Dynamic Universe Membership | v1.7 | 5/5 | Complete   | 2026-07-06 |
 
 **Shipped milestones** (full per-phase detail archived under `milestones/`):
 

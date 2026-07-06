@@ -104,6 +104,7 @@ class EventHandler(object):
 			],
 			EventType.SCREENER: [],   # explicit empty — consuming screeners is D-screener
 			EventType.UPDATE: [],     # explicit empty — live API path consumes these (D-live)
+			EventType.UNIVERSE_UPDATE: [],  # explicit empty — live consumers wired live-only in plan 05 (backtest stays inert)
 			EventType.ERROR: [self._log_error_event],   # D-16: real log consumer
 		}
 

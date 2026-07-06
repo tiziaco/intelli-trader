@@ -148,6 +148,14 @@ class OkxDataProvider:
         self._bar_sink: Callable[[ClosedBar], None] | None = None
         self._stream_handle: Any = None
 
+        # 06-02 (D-05): dynamic per-symbol subscription registry — {member-symbol: task}.
+        # Keyed by the universe-member symbol string (the SAME form stamped into
+        # ``ClosedBar["symbol"]``). This is mechanical socket state derived from
+        # ``UniverseUpdateEvent``s — the provider never decides membership. It is an
+        # ADDITIONAL index over the connector's own ``_stream_tasks`` set (which owns task
+        # lifecycle + disconnect teardown), NOT a second lifecycle owner.
+        self._streams: dict[str, asyncio.Task[Any]] = {}
+
         # 05-08 (RES-01/D-19/D-20): reconnect-supervisor state (mirrors the OKX order
         # arm). The native candle loop runs under a bounded-retry supervisor — a
         # transient socket drop reconnects with exponential backoff instead of the task
@@ -214,11 +222,64 @@ class OkxDataProvider:
         """
         symbol_okx = self._to_okx_symbol(self._symbol)
         channel = "candle" + self._okx_interval(self._timeframe)
+        # Per-symbol supervisor key = the member symbol (Pitfall 2); the wiring-time
+        # default keys on self._symbol so single-symbol behaviour is unchanged.
         self._stream_handle = self._connector.spawn(
-            self._stream_candles(symbol_okx, channel))
+            self._stream_candles(symbol_okx, channel, self._symbol))
         return self._stream_handle
 
-    async def _stream_candles(self, symbol_okx: str, channel: str) -> None:
+    def subscribe(self, symbol: str) -> None:
+        """Dynamically subscribe one universe-member symbol's candle stream (D-05).
+
+        Idempotent: a second call for an already-subscribed ``symbol`` is a no-op. Spawns
+        ONE supervised ``candle{tf}`` coroutine on the connector loop via
+        ``connector.spawn`` and records the returned task in the ``{symbol: task}``
+        registry. Engine-thread-safe: ``spawn`` marshals onto the connector loop via
+        ``call_soon_threadsafe`` and blocks on a ``ready`` Event, so a poll-handler /
+        ``UniverseUpdateEvent`` consumer running on the engine thread can call this
+        directly. The provider carries NO membership knowledge — the registry is a
+        mechanical index driven from membership events (Arm B data plane).
+
+        Ordering CONTRACT (Pitfall 6, warmup-before-subscribe): the plan-05 consumer MUST
+        run ``feed.warmup(symbol, tf)`` BEFORE ``subscribe(symbol)`` for an added symbol
+        (mirroring the wiring-time ``feed.warmup(...)`` → ``start_stream()`` order) so the
+        feed's monotonic stamp ``L`` is set from REST history and the first live closed bar
+        lands on the in-sequence/duplicate branch. The ``confirm='0'`` snapshot OKX pushes on
+        every subscribe is already dropped by ``_process_row`` (no dedup logic here).
+        """
+        if symbol in self._streams:
+            return
+        symbol_okx = self._to_okx_symbol(symbol)
+        channel = "candle" + self._okx_interval(self._timeframe)
+        # Pass the member symbol through as the per-symbol supervisor key (Pitfall 2) so
+        # this symbol's reconnect budget / down-state never collides with another's.
+        self._streams[symbol] = self._connector.spawn(
+            self._stream_candles(symbol_okx, channel, symbol))
+
+    def unsubscribe(self, symbol: str) -> None:
+        """Dynamically unsubscribe a symbol's candle stream (D-05) — safe no-op if absent.
+
+        Pops the registry entry and cancels the task exactly once. Cancellation reuses the
+        connector's existing cooperative-cancel teardown — NO new teardown code: the
+        ``async with aiohttp.ClientSession()`` in ``_connect_and_consume_candles`` closes
+        the socket/session on ``CancelledError``, ``_run_stream_supervisor`` re-raises
+        ``CancelledError`` untouched, and the connector's ``_on_task_done`` untracks the
+        cancelled task quietly. A symbol never subscribed is a no-op (no exception, no
+        cancel); a later ``subscribe`` for the same symbol re-spawns a fresh task.
+        """
+        task = self._streams.pop(symbol, None)
+        if task is not None:
+            task.cancel()
+        # CR-01: clear the per-symbol reconnect-supervisor state on unsubscribe so a
+        # stale down-flag cannot permanently pin is_streaming_healthy() False (wedging
+        # the live NEW-submission resume gate _all_venue_streams_healthy) and a stale
+        # attempt count cannot trip the D-20 retry ceiling on a later re-subscribe.
+        self._streams_down.discard(symbol)
+        self._reconnect_attempts.pop(symbol, None)
+
+    async def _stream_candles(
+        self, symbol_okx: str, channel: str, symbol: str
+    ) -> None:
         """Consume the native candle socket under the reconnect supervisor (D-19/D-20).
 
         The consume body (one WS connect + subscribe + read loop) is wrapped in a
@@ -227,13 +288,21 @@ class OkxDataProvider:
         D-19); a fatal error or the exhausted retry ceiling halts the engine (D-20).
         Without it a single socket drop silently killed the candle task (a code-verified
         gap) and paper-parity would starve for bars.
+
+        The per-symbol member ``symbol`` is threaded through as the supervisor
+        ``stream_name`` (Pitfall 2 / 06-02 D-05): with N dynamic channels the reconnect
+        budget / down-state MUST key on the member symbol, never a shared single literal
+        — otherwise one symbol's drop marks all streams down and one symbol's payload
+        resets all budgets, defeating the D-20 HALT ceiling.
         """
-        async def _connect_and_consume(_stream_name: str) -> None:
-            await self._connect_and_consume_candles(symbol_okx, channel)
+        async def _connect_and_consume(stream_name: str) -> None:
+            await self._connect_and_consume_candles(symbol_okx, channel, stream_name)
 
-        await self._run_stream_supervisor(_connect_and_consume, "candles")
+        await self._run_stream_supervisor(_connect_and_consume, symbol)
 
-    async def _connect_and_consume_candles(self, symbol_okx: str, channel: str) -> None:
+    async def _connect_and_consume_candles(
+        self, symbol_okx: str, channel: str, stream_name: str
+    ) -> None:
         """One native business-candle connection: subscribe + read, gating on ``confirm``.
 
         Opens an aiohttp WS to ``wss://{host}:8443/ws/v5/business`` where the host is the
@@ -257,8 +326,9 @@ class OkxDataProvider:
                     host=host, channel=channel, instId=symbol_okx)
                 # Subscribed successfully — if we were paused on a prior disconnect,
                 # resume after the fresh reconcile (D-19). WR-03: a subscribe does NOT
-                # reset the retry budget (see _reset_reconnect_budget).
-                self._on_stream_healthy("candles")
+                # reset the retry budget (see _reset_reconnect_budget). Per-symbol key
+                # (06-02 D-05): this resumes ONLY this symbol's stream, never all.
+                self._on_stream_healthy(stream_name)
                 # WR-03 (data arm): OKX pushes an in-progress-candle SNAPSHOT (confirm='0')
                 # within ~30ms of EVERY subscribe — verified against the demo venue. That
                 # snapshot is delivered ON subscribe, so it is NOT proof of a connection that
@@ -287,7 +357,7 @@ class OkxDataProvider:
                     rows: Any = payload.get("data", []) if isinstance(payload, dict) else []
                     if rows:
                         if payload_seen:
-                            self._reset_reconnect_budget("candles")
+                            self._reset_reconnect_budget(stream_name)
                         payload_seen = True
                     for row in rows:
                         self._process_row(row)

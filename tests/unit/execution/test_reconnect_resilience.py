@@ -394,7 +394,7 @@ def test_okx_provider_snapshot_on_subscribe_storm_exhausts_ceiling_and_halts(
         "itrader.price_handler.providers.okx_provider.aiohttp.ClientSession", session)
 
     async def _consume(_stream_name: str) -> None:
-        await okx_provider._connect_and_consume_candles("BTC-USDT", "candle1D")
+        await okx_provider._connect_and_consume_candles("BTC-USDT", "candle1D", _stream_name)
 
     _drive_storm(okx_provider._run_stream_supervisor(_consume, "candles"))
 

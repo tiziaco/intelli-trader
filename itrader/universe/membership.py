@@ -27,7 +27,7 @@ static "what do we track?" the union seam answers).
 
 from collections.abc import Iterable, Sequence
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
 class SupportsTickers(Protocol):
@@ -168,3 +168,73 @@ def active_membership(spans: dict[str, Span], asof: datetime) -> set[str]:
         callers must not rely on order.
     """
     return {t for t in spans if is_active(spans, t, asof)}
+
+
+# ---------------------------------------------------------------------------
+# Lean UniverseSelectionModel — the D-20 growth target (UNIV-01, poll seam)
+# ---------------------------------------------------------------------------
+#
+# This is the D-20 growth target realised: a LEAN "what SHOULD the universe be?"
+# selection seam the engine polls for mid-run adds/removes. It grows HERE (the
+# module's own growth-target docstring) alongside ``derive_membership`` /
+# ``active_membership`` — same purity contract: it holds NO queue and NO feed,
+# answering a pure ``select(asof) -> set[str]`` (the poll handler that owns the
+# queue + feed + cadence lives elsewhere; selection proposes, the engine
+# disposes). The returned ``set`` composes directly into the poll's D-06
+# ``validate_symbol`` filter, mirroring ``active_membership``'s set contract.
+#
+# It is DELIBERATELY NOT the deferred v2 ranked production screener — no ranking,
+# no rebalance loop, no scoring. Just the lean poll seam the milestone ships.
+
+
+@runtime_checkable
+class UniverseSelectionModel(Protocol):
+    """The lean selection seam: "what SHOULD the universe be at ``asof``?" (UNIV-01).
+
+    A pure/derived Protocol — implementations hold NO queue and NO feed (those
+    live on the poll handler host). ``select`` returns a ``set[str]`` (unordered,
+    like ``active_membership``) so it composes directly into the poll handler's
+    D-06 ``validate_symbol`` filter before ``Universe.apply``.
+
+    This is the D-20 growth target, NOT the deferred v2 ranked production
+    screener (no ranking/scoring/rebalance).
+    """
+
+    def select(self, asof: datetime) -> set[str]:
+        """Return the desired membership set at ``asof``."""
+        ...
+
+
+class StaticUniverseSelectionModel:
+    """A lean, operator-driven ``UniverseSelectionModel`` over a fixed symbol set.
+
+    Pure and queue/feed-free by construction: the ctor takes ONLY symbols, so
+    there is no seam for a connector/queue/feed. ``select`` ignores ``asof`` and
+    returns a COPY of the held set (a defensive copy — callers must not corrupt
+    internal state). ``set_symbols`` is the operator/test lever that drives a
+    mid-run add/remove (the poll then resolves the delta via ``Universe.apply``).
+    """
+
+    def __init__(self, symbols: Iterable[str]) -> None:
+        """Hold the desired symbol set (deduplicated into a ``set``).
+
+        Parameters
+        ----------
+        symbols : Iterable[str]
+            The initial desired membership. Deduplicated; order is irrelevant
+            (selection is honestly unordered, mirroring ``active_membership``).
+        """
+        self._symbols: set[str] = set(symbols)
+
+    def select(self, asof: datetime) -> set[str]:
+        """Return a COPY of the desired set (``asof``-independent for the static model).
+
+        The ``asof`` parameter satisfies the ``UniverseSelectionModel`` contract
+        (a span-model or ranked screener would consult it); the static model is
+        time-invariant, so it is accepted and ignored.
+        """
+        return set(self._symbols)
+
+    def set_symbols(self, symbols: Iterable[str]) -> None:
+        """Re-drive the desired set (the mid-run add/remove operator/test lever)."""
+        self._symbols = set(symbols)

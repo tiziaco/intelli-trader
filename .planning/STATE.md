@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: executing
-stopped_at: Phase 05.3 complete — 05.3-12 (WR-03/D-28 resume-gate + WR-05/D-29 backfill fail-loud) verified PASSED (28/28); code-review CR-01/WR-01/WR-02 resolved
-last_updated: "2026-07-06T07:42:33.581Z"
-last_activity: 2026-07-06 -- 05.3-12 executed + verified; code-review CR-01 (empty/tail-truncated backfill silent-swallow) fixed TDD + WR-01/WR-02
+status: verifying
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-07-06T12:18:05.414Z"
+last_activity: 2026-07-06
 progress:
   total_phases: 10
-  completed_phases: 8
-  total_plans: 60
-  completed_plans: 60
-  percent: 80
+  completed_phases: 9
+  total_plans: 65
+  completed_plans: 65
+  percent: 90
 ---
 
 # Project State
@@ -24,14 +24,14 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 05.3 — live-path-remediation-wave-3-resilience-hardening-stream-dea
+**Current focus:** Phase 06 — dynamic-universe-membership
 
 ## Current Position
 
-Phase: 05.3 (live-path-remediation-wave-3-resilience-hardening-stream-dea) — COMPLETE (12/12 plans; verified PASSED)
-Plan: 12 of 12
-Status: Complete — code-review findings resolved
-Last activity: 2026-07-06
+Phase: 06 (dynamic-universe-membership) — EXECUTING
+Plan: 5 of 5
+Status: verified
+Last activity: 2026-07-06 - Completed quick task 260706-l48: Phase 06 mechanical review fixes (CR-01, WR-03)
 
 Progress: [██████████] 100%
 
@@ -102,6 +102,12 @@ was an off-by-one — see REQUIREMENTS.md count note).
   end-to-end live surface; `pytest-asyncio` infra lands Phase 2; real-path coverage extends to Phase 5).
 
 - Phase 05.1 inserted after Phase 5: Live-Path Remediation (URGENT)
+
+- Phase 7 added 2026-07-06: Live Dynamic-Universe Hardening — from the Phase 6 code review. Async warmup +
+  per-symbol `isReady` readiness gate (WR-02 centerpiece) plus WR-01/04/05/06; CR-01/WR-03 already fixed in
+  quick task 260706-l48. Detailed WR-04/05/06 design deferred to the Phase 7 discuss session. (Note:
+  `gsd-sdk query phase.add` auto-numbered it Phase 10 by scanning the cumulative cross-milestone ROADMAP —
+  manually corrected to Phase 7 per the v1.7 per-milestone numbering reset; dir renamed 10→07.)
 
 ### Decisions
 
@@ -175,6 +181,17 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: 05.2-06: D-10 durable HALTED latch survives restart — halt() persists a secret-scrubbed halt record (reason literal + timestamp, V7) on the shared SqlBackend spine; a FRESH LiveTradingSystem refuses RUNNING while unresolved (re-latching in-process via _update_status, not halt(), so no double-write); reset_halt() resolves. New d10_halt_records chained Alembic head (single head); env.py registers the table (autogenerate-safe); idgen.generate_halt_record_id keeps the single UUIDv7 scheme. Oracle byte-exact; mypy clean 231; inertness preserved.
 - [Phase ?]: [Phase 05.3]: 05.3-12: D-28 (WR-03) closed — resume gated on ALL venue stream arms healthy via per-arm is_streaming_healthy() (not _streams_down) + engine compound _all_venue_streams_healthy(); no engine-side aggregation/namespacing; None arm = healthy; gate after D-25 catch-up+snapshot, does not re-set _pending_stream_resume
 - [Phase ?]: [Phase 05.3]: 05.3-12: D-29 (WR-05) closed — gap backfill low-clamps (< since_ms) + raises MalformedDataError on non-contiguous first replayed bar (escalates to connector halt) + _replaying_backfill re-entrancy guard fails loud in update() gap branch. Empty-page hole out of scope; WR-04 deferred
+- [Phase 06]: 06-01: UniverseUpdateEvent (frozen Event, tuple added/removed) + EventType.UNIVERSE_UPDATE + explicit-empty _routes entry (three-step flow, Pitfall 5) — dispose notification DISTINCT from ScreenerEvent (D-04); backtest-inert
+- [Phase 06]: 06-01: Universe.apply(desired, instruments)->UniverseDelta slice-assigns _members in place (identity preserved, Pitfall 4) with oracle-dark empty-delta fast path; connector-free (D-03, caller passes resolved instruments, _DEFAULT_* ladder fallback); leaving-set surface (mark/read-copy/clear) for the plan-04 admission gate. UNIV-01 left Pending (foundation only, no consumers)
+- [Phase 06]: 06-02: OkxDataProvider.subscribe/unsubscribe + {symbol: asyncio.Task} registry (D-05, Arm B data plane) — idempotent subscribe spawns one supervised candle coroutine on the connector loop; unsubscribe cancels via the connector cooperative-cancel teardown (no new teardown); provider carries zero membership knowledge
+- [Phase 06]: 06-02: per-symbol supervisor keys — member symbol threaded as stream_name through _stream_candles/_connect_and_consume_candles (replaces shared 'candles' literal, Pitfall 2); one symbol's drop no longer marks all streams down, one payload no longer resets all budgets; is_streaming_healthy keeps any-symbol-down; confirm='0' snapshot still dropped, warmup-before-subscribe contract documented
+- [Phase 06]: 06-03: UniverseHandler on_time (source-guard -> D-06 validate_symbol filter -> Universe.apply -> emit UniverseUpdateEvent only on non-empty delta) + on_universe_update ADD branch (warmup-before-subscribe, Pitfall 6); zero membership duplication. Dedicated 4-space handler isolates the live-only poll route from the backtest _routes[TIME] literal (Pitfall 3/A3). Lean UniverseSelectionModel + StaticUniverseSelectionModel grown in membership.py (D-20). on_time passes instruments=None (plan-01 default-ladder); venue-precision deferred to plan-05. UNIV-01 still Pending (remove=04, wiring=05)
+- [Phase ?]: [Phase 06]: 06-04: OrderTriggerSource.ADMISSION_LEAVING + AdmissionManager._enforce_leaving_symbol_admission wired FIRST (before direction) — audited-REJECTS a new entry for a symbol in Universe.leaving_symbols() while PASSING a sanctioned exit (SELL vs LONG / BUY vs SHORT); no-op with no universe/empty leaving-set (oracle-dark, D-01)
+- [Phase ?]: [Phase 06]: 06-04: UniverseHandler remove-policy consumer — orphan-and-track (mark_leaving, DEFER unsubscribe until flat; unsubscribe-now only when nothing held) vs force-close (emit opposite-side full-exit SignalEvent then unsubscribe) + on_fill detach-on-flat (unsubscribe+clear_leaving once flat). remove_policy on the live/poll-seam ctor NOT SystemConfig — oracle untouched (D-01/§8)
+- [Phase ?]: [Phase 06]: 06-04: remove-policy proven deterministically offline via remove_policy_harness — two synthetic symbols driven through LiveBarFeed.update (the OKX seam) settling force-close through the reused SimulatedExchange (FillEvent->PortfolioHandler.on_fill); plan-04 on_universe_update/on_fill seams direct-called against the REAL PortfolioHandler read model (route wiring is plan 05). UNIV-02 remove-half done
+- [Phase ?]: [Phase 06]: 06-05: _OKX_STREAM_SYMBOL un-hardcoded — live subscription set sourced from universe.members (warmup-before-subscribe per member); generalized ring-key vs window()-ticker assertion, ConfigurationError shape preserved (D-05)
+- [Phase ?]: [Phase 06]: 06-05: live-only UniverseHandler + poll-timer daemon (configurable cadence default 60s, control-plane TimeEvent(now UTC) only) + LIVE-ONLY _routes mutation on the live EventHandler's own dict — backtest _routes literal UNTOUCHED (RESEARCH §11.1); remove_policy + cadence on MonitoringSettings NOT PerformanceSettings (§8/D-01/D-02)
+- [Phase ?]: [Phase 06]: 06-05 milestone gate GREEN — oracle byte-exact (134/46189.87730727451), determinism identical, inertness green (universe_handler forbidden on backtest import), W1 14.5s -7.4% vs 15.7s baseline; UNIV-01 closed + human-observed live-demo dynamic DATA subscribe/unsubscribe on OKX demo (1 passed 127.85s, sandbox verified)
 
 ### Pending Todos
 
@@ -234,6 +251,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | 260705-fqe | Adapt e2e OKX sandbox recon test to run against a non-flat demo account (seed engine position to live venue balance; assert BUY delta) — unblocks online settlement proof on OKX-seeded ~1 BTC EEA account | 2026-07-05 | f2070431 | [260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-](./quick/260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-/) |
 | fast | Make ARCH-3 capture best-effort + fix OKX fetch_my_trades param (limit=100, no paginate — sCode 51000) — online settlement proof now fully GREEN (3/3) | 2026-07-05 | 81fc39aa | — (fast, inline) |
 | 260705-m3m | Test-infra: session-autouse guard clears dev-DB env so no test reaches operational Postgres at localhost:5544 + one shared session testcontainers Postgres for live-path DB tests to opt into (D-11 skip-safe, single-container); prereq for 05.2 durable-SQL tests | 2026-07-05 | 2f43faec | [260705-m3m-add-a-session-autouse-guard-in-tests-con](./quick/260705-m3m-add-a-session-autouse-guard-in-tests-con/) |
+| 260706-l48 | Apply Phase 06 mechanical code-review fixes: CR-01 (okx `unsubscribe` clears stale `_streams_down`/`_reconnect_attempts` supervisor state — un-wedges live resume gate) + WR-03 (`universe_poll_cadence_s` bounded `gt=0.0`). WR-01/02/04/05/06 routed to Phase 7. | 2026-07-06 | e08424d2 | [260706-l48-apply-mechanical-code-review-fixes-cr-01](./quick/260706-l48-apply-mechanical-code-review-fixes-cr-01/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
@@ -259,6 +277,12 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.2 P05 | 20min | 2 tasks | 8 files |
 | Phase 05.2 P06 | 22min | 2 tasks | 6 files |
 | Phase 05.3 P12 | 12min | 2 tasks | 6 files |
+| Phase 06 P01 | 22min | 2 tasks | 7 files |
+| Phase 06 P02 | 9min | 2 tasks | 4 files |
+| Phase 06 P03 | 6min | 2 tasks | 5 files |
+| Phase 06 P04 | 20min | 3 tasks | 8 files |
+| Phase 06 P05 | 35min | 3 tasks | 4 files |
+| Phase 06 P05 | 35min | 3 tasks | 4 files |
 
 ## Deferred Items
 
@@ -308,8 +332,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T07:42:07.559Z
-Stopped at: Phase 05.3 gap-remediation context gathered (D-24..D-27)
+Last session: 2026-07-06T12:07:06.508Z
+Stopped at: Completed 06-01-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 
