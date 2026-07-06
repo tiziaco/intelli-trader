@@ -115,6 +115,29 @@ def test_okx_arm_wires_provider_sink_to_feed_update(monkeypatch) -> None:
     assert system._okx_data_provider._bar_sink == system.feed.update
 
 
+def test_okx_arm_binds_provider_to_engine_queue(monkeypatch) -> None:
+    """The OKX arm binds the provider's engine queue so spawn_warmup can emit (WR-02 blocker).
+
+    ``OkxDataProvider.spawn_warmup`` (the async half of the WR-02 warmup pipeline) raises a
+    typed ``StateError`` unless ``self._global_queue`` was bound via ``set_global_queue``. The
+    composition root wires the provider's bar sink / halt signal / stream-state listener but
+    (before this fix) never bound the queue — so every poll-driven add's ``spawn_warmup`` failed
+    immediately (swallowed by the per-symbol try/except), no ``BarsLoaded`` was ever emitted, and
+    the symbol stayed permanently PENDING (dark), breaking the core live WR-02 deliverable.
+
+    Removing the ``self._okx_data_provider.set_global_queue(self.global_queue)`` wire makes this
+    FAIL (``_global_queue is None``) — so the test genuinely catches the wiring gap.
+    """
+    _set_okx_env(monkeypatch)
+
+    system = LiveTradingSystem(exchange="okx")
+
+    assert system._okx_data_provider is not None
+    # The provider's warmup-emit queue IS the engine queue — spawn_warmup can now put
+    # BarsLoaded/BarsLoadFailed without raising the unbound StateError.
+    assert system._okx_data_provider._global_queue is system.global_queue
+
+
 def test_okx_live_feed_capacity_derives_to_strategy_warmup(monkeypatch) -> None:
     """After session init the LIVE feed's cache_capacity() derives to the max strategy warmup (D-13).
 

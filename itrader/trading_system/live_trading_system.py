@@ -582,6 +582,13 @@ class LiveTradingSystem:
             # Wire the provider's confirm-gated closed-bar sink to the feed's
             # monotonic-guard ingest so every ClosedBar drives feed.update() -> BarEvent.
             self._okx_data_provider.set_bar_sink(self.feed.update)
+            # 07-03 (WR-02, D-03): bind the engine queue the async warmup half emits on.
+            # spawn_warmup is the ONE provider path that puts an event directly on the
+            # queue (BarsLoaded/BarsLoadFailed); it raises a typed StateError unless the
+            # queue is bound here. Without this every poll-driven add's spawn_warmup fails
+            # immediately (swallowed by the per-symbol try/except) and the added symbol
+            # stays permanently PENDING (dark) — the WR-02 live-warmup pipeline never fires.
+            self._okx_data_provider.set_global_queue(self.global_queue)
 
             # 05-08 (RES-01/D-19/D-20): wire the reconnect-supervisor seams on BOTH
             # venue stream arms. A fatal connector error or an exhausted retry ceiling
