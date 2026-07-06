@@ -31,7 +31,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 Phase: 06 (dynamic-universe-membership) — EXECUTING
 Plan: 5 of 5
 Status: verified
-Last activity: 2026-07-06
+Last activity: 2026-07-06 - Completed quick task 260706-l48: Phase 06 mechanical review fixes (CR-01, WR-03)
 
 Progress: [██████████] 100%
 
@@ -245,6 +245,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | 260705-fqe | Adapt e2e OKX sandbox recon test to run against a non-flat demo account (seed engine position to live venue balance; assert BUY delta) — unblocks online settlement proof on OKX-seeded ~1 BTC EEA account | 2026-07-05 | f2070431 | [260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-](./quick/260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-/) |
 | fast | Make ARCH-3 capture best-effort + fix OKX fetch_my_trades param (limit=100, no paginate — sCode 51000) — online settlement proof now fully GREEN (3/3) | 2026-07-05 | 81fc39aa | — (fast, inline) |
 | 260705-m3m | Test-infra: session-autouse guard clears dev-DB env so no test reaches operational Postgres at localhost:5544 + one shared session testcontainers Postgres for live-path DB tests to opt into (D-11 skip-safe, single-container); prereq for 05.2 durable-SQL tests | 2026-07-05 | 2f43faec | [260705-m3m-add-a-session-autouse-guard-in-tests-con](./quick/260705-m3m-add-a-session-autouse-guard-in-tests-con/) |
+| 260706-l48 | Apply Phase 06 mechanical code-review fixes: CR-01 (okx `unsubscribe` clears stale `_streams_down`/`_reconnect_attempts` supervisor state — un-wedges live resume gate) + WR-03 (`universe_poll_cadence_s` bounded `gt=0.0`). WR-01/02/04/05/06 routed to Phase 7. | 2026-07-06 | e08424d2 | [260706-l48-apply-mechanical-code-review-fixes-cr-01](./quick/260706-l48-apply-mechanical-code-review-fixes-cr-01/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
