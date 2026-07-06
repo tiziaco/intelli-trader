@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-06T10:06:23.349Z"
+last_updated: "2026-07-06T10:18:41.754Z"
 last_activity: 2026-07-06
 progress:
   total_phases: 10
   completed_phases: 8
   total_plans: 65
-  completed_plans: 61
+  completed_plans: 62
   percent: 80
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 06 (dynamic-universe-membership) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-07-06
 
-Progress: [█████████░] 94%
+Progress: [██████████] 95%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -177,6 +177,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: [Phase 05.3]: 05.3-12: D-29 (WR-05) closed — gap backfill low-clamps (< since_ms) + raises MalformedDataError on non-contiguous first replayed bar (escalates to connector halt) + _replaying_backfill re-entrancy guard fails loud in update() gap branch. Empty-page hole out of scope; WR-04 deferred
 - [Phase 06]: 06-01: UniverseUpdateEvent (frozen Event, tuple added/removed) + EventType.UNIVERSE_UPDATE + explicit-empty _routes entry (three-step flow, Pitfall 5) — dispose notification DISTINCT from ScreenerEvent (D-04); backtest-inert
 - [Phase 06]: 06-01: Universe.apply(desired, instruments)->UniverseDelta slice-assigns _members in place (identity preserved, Pitfall 4) with oracle-dark empty-delta fast path; connector-free (D-03, caller passes resolved instruments, _DEFAULT_* ladder fallback); leaving-set surface (mark/read-copy/clear) for the plan-04 admission gate. UNIV-01 left Pending (foundation only, no consumers)
+- [Phase 06]: 06-02: OkxDataProvider.subscribe/unsubscribe + {symbol: asyncio.Task} registry (D-05, Arm B data plane) — idempotent subscribe spawns one supervised candle coroutine on the connector loop; unsubscribe cancels via the connector cooperative-cancel teardown (no new teardown); provider carries zero membership knowledge
+- [Phase 06]: 06-02: per-symbol supervisor keys — member symbol threaded as stream_name through _stream_candles/_connect_and_consume_candles (replaces shared 'candles' literal, Pitfall 2); one symbol's drop no longer marks all streams down, one payload no longer resets all budgets; is_streaming_healthy keeps any-symbol-down; confirm='0' snapshot still dropped, warmup-before-subscribe contract documented
 
 ### Pending Todos
 
@@ -262,6 +264,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 05.2 P06 | 22min | 2 tasks | 6 files |
 | Phase 05.3 P12 | 12min | 2 tasks | 6 files |
 | Phase 06 P01 | 22min | 2 tasks | 7 files |
+| Phase 06 P02 | 9min | 2 tasks | 4 files |
 
 ## Deferred Items
 
@@ -311,7 +314,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T10:06:15.673Z
+Last session: 2026-07-06T10:17:19.291Z
 Stopped at: Completed 06-01-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
