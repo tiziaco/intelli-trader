@@ -39,7 +39,11 @@ from typing import TYPE_CHECKING, Any, Optional
 import pandas as pd
 
 from itrader.core.bar import Bar
-from itrader.core.exceptions import MissingPriceDataError, StateError
+from itrader.core.exceptions import (
+    MalformedDataError,
+    MissingPriceDataError,
+    StateError,
+)
 from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.logger import get_itrader_logger
 from itrader.outils.time_parser import to_timedelta
@@ -95,6 +99,11 @@ class LiveBarFeed(BarFeed):
         self._last_delivered: dict[tuple[str, str], pd.Timestamp] = {}
         # Newest-bar provision (P5-D16 / G5) written by every delivery.
         self._newest_bars: dict[str, Bar] = {}
+        # D-29 (WR-05): re-entrancy guard set for the duration of a loop-native
+        # backfill replay. If update() detects a gap WHILE a replay is in progress
+        # (an under-returning venue page with a hole inside the replayed range), it
+        # fails loud instead of spawning a nested/overlapping backfill.
+        self._replaying_backfill = False
         # Run-path bindings (mirror bar_feed.py:334-335); set via bind().
         self.global_queue: "Optional[queue.Queue[Any]]" = None
         self.membership: list[str] = []
@@ -170,6 +179,18 @@ class LiveBarFeed(BarFeed):
         if t == last:
             return self._duplicate_or_revision(sym, tf_str, t, closed_bar)
         if t > last + tf:
+            if self._replaying_backfill:
+                # D-29 (WR-05): a gap detected WHILE a loop-native backfill replay is
+                # in progress means the venue page under-returned (a hole INSIDE the
+                # replayed range). Fail loud instead of spawning a nested/overlapping
+                # backfill — the shape-independent structural stop against recursion.
+                # The raise escalates through the provider's supervised-backfill error
+                # path (_run_gap_backfill -> _on_gap_backfill_done -> connector halt).
+                raise MalformedDataError(
+                    f"gap-backfill:{sym}/{tf_str}",
+                    "gap detected during an in-progress backfill replay "
+                    f"(expected in-sequence L+tf, got ts={int(t.value // _NS_PER_MS)}) "
+                    "— refusing a nested backfill")
             return self._fill_gap_and_deliver(
                 sym, tf_str, last + tf, t - tf, t, closed_bar)
         if t == last + tf:
@@ -340,15 +361,39 @@ class LiveBarFeed(BarFeed):
 
         def _replay_and_deliver(bars: "list[ClosedBar]") -> None:
             # Runs on the connector loop thread once the awaited fetch resolves. Replay the
-            # interior (CLAMPED to last_missing — the real provider over-fetches past the
-            # interior into t and beyond, CR-01), each advancing L by one tf (in-sequence, no
-            # nested gap), THEN deliver the trigger t exactly once — mirroring the synchronous
-            # gap path's ordering.
-            for cb in bars:
-                if cb["ts"] > last_ms:
-                    break
-                self.update(cb)
-            self._deliver(sym, tf_str, t, closed_bar)
+            # interior CLAMPED at BOTH ends — below since_ms (D-29 low clamp, mirroring the
+            # existing upper > last_ms break: the real provider treats limit as a page size
+            # and can straddle the interior on either side) and above last_missing (CR-01,
+            # it over-fetches past the interior into t and beyond) — each in-range bar
+            # advancing L by one tf (in-sequence, no nested gap), THEN deliver the trigger t
+            # exactly once — mirroring the synchronous gap path's ordering.
+            #
+            # D-29 (WR-05): the first in-range replayed bar MUST be exactly first_missing
+            # (ts == since_ms). An under-returning page that omits the earliest missing bar
+            # would otherwise re-enter the gap branch and spawn a nested backfill; fail loud
+            # (typed data-integrity error, secret-free — fixed literal + coordinates only, no
+            # str(payload)) so it escalates to a connector halt instead. The _replaying_backfill
+            # guard is the shape-independent backstop for a hole INSIDE the range.
+            self._replaying_backfill = True
+            try:
+                first_replayed = False
+                for cb in bars:
+                    ts = cb["ts"]
+                    if ts < since_ms:
+                        continue
+                    if ts > last_ms:
+                        break
+                    if not first_replayed:
+                        if ts != since_ms:
+                            raise MalformedDataError(
+                                f"gap-backfill:{sym}/{tf_str}",
+                                "under-returning backfill page "
+                                f"(expected first bar ts={since_ms}, got ts={ts})")
+                        first_replayed = True
+                    self.update(cb)
+                self._deliver(sym, tf_str, t, closed_bar)
+            finally:
+                self._replaying_backfill = False
 
         self._provider.spawn_gap_backfill(
             sym, tf_str, since_ms, limit, _replay_and_deliver)
