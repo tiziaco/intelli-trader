@@ -479,7 +479,7 @@ patterns informed the design direction (see `06-REVIEW-DECISIONS.md` WR-02).
 - [x] 07-04-PLAN.md — StrategiesHandler: readiness gate + on_bars_loaded + on_strategy_command (WR-02/OP-SEAM, Wave 3)
 - [x] 07-05-PLAN.md — UniverseHandler poll route + HALT gate + precision resolver (WR-04/WR-05/WR-06, Wave 3)
 - [x] 07-06-PLAN.md — UniverseHandler warmup consumers + discard teardown + strategy-derived source (WR-01/WR-02/OP-SEAM, Wave 4)
-- [ ] 07-07-PLAN.md — Composition root + add_event allowlist + milestone gate (WR-04/WR-06/OP-SEAM, Wave 5)
+- [x] 07-07-PLAN.md — Composition root + add_event allowlist + milestone gate (WR-04/WR-06/OP-SEAM, Wave 5)
 - [x] 07-08-PLAN.md — AdmissionManager PRIMARY readiness gate: reject a non-READY symbol at admission even bypassing the strategy loop (WR-02/D-01, Wave 3)
 
 ## Phases (shipped — archived detail)
