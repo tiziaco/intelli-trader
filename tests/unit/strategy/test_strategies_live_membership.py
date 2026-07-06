@@ -166,3 +166,42 @@ def test_set_universe_defaults_none() -> None:
     fake = _FakeUniverse(True)
     handler.set_universe(fake)
     assert handler._universe is fake
+
+
+# --------------------------------------------------------------------------- #
+# Task 2 — on_bars_loaded warms concerned strategies (no signals).
+# --------------------------------------------------------------------------- #
+
+
+def test_on_bars_loaded_warms_concerned_strategy_in_order() -> None:
+    """A concerned strategy receives K in-order update calls, no signals, queue empty."""
+    queue: "Queue[Any]" = Queue()
+    handler = StrategiesHandler(queue, _StubFeed(), InMemorySignalStore())
+    spy = _SpyStrategy(["BTCUSDT"])
+    handler.strategies.append(spy)
+
+    bars = tuple(_bar(str(100 + i)) for i in range(4))  # K = 4
+    handler.on_bars_loaded(
+        BarsLoaded(time=_T0, symbol="BTCUSDT", timeframe="1d", bars=bars)
+    )
+
+    assert [t for t, _ in spy.update_calls] == ["BTCUSDT"] * 4
+    assert [b for _, b in spy.update_calls] == list(bars)  # in-order
+    assert spy.generate_calls == []  # warmup only — no signals
+    assert queue.empty()  # nothing emitted
+
+
+def test_on_bars_loaded_skips_non_concerned_strategy() -> None:
+    """A strategy whose .tickers exclude the symbol receives zero updates."""
+    handler = _handler()
+    concerned = _SpyStrategy(["BTCUSDT"], name="concerned")
+    other = _SpyStrategy(["ETHUSDT"], name="other")
+    handler.strategies.extend([concerned, other])
+
+    bars = tuple(_bar(str(100 + i)) for i in range(3))
+    handler.on_bars_loaded(
+        BarsLoaded(time=_T0, symbol="BTCUSDT", timeframe="1d", bars=bars)
+    )
+
+    assert len(concerned.update_calls) == 3
+    assert other.update_calls == []

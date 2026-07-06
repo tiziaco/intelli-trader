@@ -12,7 +12,13 @@ from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage import SignalStore
-from itrader.events_handler.events import BarEvent, SignalEvent
+from itrader.events_handler.events import (
+	BarEvent,
+	BarsLoaded,
+	SignalEvent,
+	StrategyCommandEvent,
+	UniversePollEvent,
+)
 from itrader.outils.time_parser import check_timeframe
 from itrader.logger import get_itrader_logger
 
@@ -352,6 +358,35 @@ class StrategiesHandler(object):
 		bars_by_ticker = {ticker_A: bar_A, ticker_B: bar_B}
 		for intent in intents:
 			self._emit_intent(strategy, event, intent.ticker, bars_by_ticker[intent.ticker], intent)
+
+	def on_bars_loaded(self, event: BarsLoaded) -> None:
+		"""Warm the concerned strategies from a bulk warmup payload (D-03).
+
+		Live-only consumer of the ``BarsLoaded`` bulk-transport event (wired in
+		Plan 07; NEVER on the backtest path). For each strategy CONCERNED with
+		``event.symbol`` (its ``.tickers`` include the symbol — the same
+		predicate as the D-03 warmup targets), replay ``event.bars`` IN ORDER
+		through the identical ``strategy.update(symbol, bar)`` path used by the
+		per-tick loop — and NOTHING else. This is warmup, not trading (D-03):
+		it does NOT call ``strategy.is_ready`` / ``generate_signal`` /
+		``_emit_intent`` and never touches the signal store or the queue, so no
+		tradeable signal is produced during warmup. The per-bar loop is
+		intrinsic to the O(1) recurrence (D-03a — never vectorized); a strategy
+		not concerned with the symbol is skipped.
+
+		Parameters
+		----------
+		event: `BarsLoaded`
+			The bulk warmup payload for one ``(symbol, timeframe)`` — an
+			immutable ``tuple[Bar, ...]`` reused verbatim from the queue (M5-02).
+		"""
+		for strategy in self.strategies:
+			if event.symbol not in strategy.tickers:
+				# Not concerned with this symbol — skip (no state churn).
+				continue
+			for bar in event.bars:
+				# Warmup only (D-03): drive the O(1) recurrence, emit NOTHING.
+				strategy.update(event.symbol, bar)
 
 	def get_strategies_universe(self) -> list[str]:
 		"""
