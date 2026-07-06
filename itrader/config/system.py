@@ -68,7 +68,7 @@ class MonitoringSettings(BaseModel):
     # (the backtest builds its own EventHandler with an empty UNIVERSE_UPDATE route
     # and never constructs the handler or starts the timer), so the oracle-critical
     # config surface stays untouched.
-    universe_poll_cadence_s: float = 60.0
+    universe_poll_cadence_s: float = Field(default=60.0, gt=0.0)
     universe_remove_policy: str = "orphan-and-track"
 
 

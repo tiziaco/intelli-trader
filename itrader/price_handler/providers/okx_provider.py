@@ -270,6 +270,12 @@ class OkxDataProvider:
         task = self._streams.pop(symbol, None)
         if task is not None:
             task.cancel()
+        # CR-01: clear the per-symbol reconnect-supervisor state on unsubscribe so a
+        # stale down-flag cannot permanently pin is_streaming_healthy() False (wedging
+        # the live NEW-submission resume gate _all_venue_streams_healthy) and a stale
+        # attempt count cannot trip the D-20 retry ceiling on a later re-subscribe.
+        self._streams_down.discard(symbol)
+        self._reconnect_attempts.pop(symbol, None)
 
     async def _stream_candles(
         self, symbol_okx: str, channel: str, symbol: str
