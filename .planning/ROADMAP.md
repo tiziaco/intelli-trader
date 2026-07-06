@@ -473,7 +473,7 @@ the Phase 7 discuss session, not locked here.
 patterns informed the design direction (see `06-REVIEW-DECISIONS.md` WR-02).
 **Plans**: 8 plans (5 waves) — planned 2026-07-06 (07-08 added 2026-07-06 in revision: primary admission readiness gate, D-01/WR-02)
 
-- [ ] 07-01-PLAN.md — Contracts: Readiness enum + 4 EventType members + 4 event structs + explicit-empty routes (Wave 1)
+- [x] 07-01-PLAN.md — Contracts: Readiness enum + 4 EventType members + 4 event structs + explicit-empty routes (Wave 1)
 - [ ] 07-02-PLAN.md — Universe state model: TrackedInstrument + _entries + keep-until-flat (WR-01/WR-02, Wave 2)
 - [ ] 07-03-PLAN.md — Feed absorb_warmup (non-emitting) + provider spawn_warmup → BarsLoaded/BarsLoadFailed (WR-02, Wave 2)
 - [ ] 07-04-PLAN.md — StrategiesHandler: readiness gate + on_bars_loaded + on_strategy_command (WR-02/OP-SEAM, Wave 3)
