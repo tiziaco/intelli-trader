@@ -29,14 +29,19 @@ Design decisions locked for this boundary:
 * **D-17 — the strategy-layer admission path (sizer/risk manager) retypes to
   this Protocol too.**
 
-OQ1 resolution (planner decision): the Protocol carries exactly SIX members —
-the four locked by D-13 (``available_cash``, ``get_position``, ``reserve``,
-``release``) plus two admission-metadata members: ``exchange_for`` (exchange
-routing is admission metadata, not portfolio internals) and
-``open_position_count`` (position-limit check). Per-ticker ``get_position``
+OQ1 resolution (planner decision): the Protocol carries SEVEN core admission
+members — the four locked by D-13 (``available_cash``, ``get_position``,
+``reserve``, ``release``) plus two admission-metadata members: ``exchange_for``
+(exchange routing is admission metadata, not portfolio internals) and
+``open_position_count`` (position-limit check), plus the D-15 seventh
+``drop_pending`` (drop the local pending overlay on the venue ORDER-ACK — the
+buying-power double-count fix, V17-13; routed through the same read/write seam
+the order domain already uses for reserve/release). Per-ticker ``get_position``
 composes any positions-dict membership read; the validator's ``total_equity``
 exposure WARNING is deleted (equity excluded by D-14 — log-only change,
-verdict-preserving).
+verdict-preserving). (Later narrow amendments add reporting/metrics reads —
+``active_portfolio_ids``, ``total_equity``, ``maintenance_margin``,
+``margin_ratio`` — each documented at its own accessor.)
 """
 
 from dataclasses import dataclass
@@ -155,6 +160,31 @@ class PortfolioReadModel(Protocol):
             The portfolio whose reservation is released.
         order_id : OrderId
             The order the reservation was keyed by.
+        """
+        ...
+
+    def drop_pending(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        """Drop the local pending-reservation overlay entry on the venue ORDER-ACK.
+
+        D-15 (V17-13): once the venue acks a resting order it owns the real
+        reservation, so the local overlay must be dropped immediately rather than
+        lingering to terminal release — otherwise the same hold is counted twice
+        (once locally, once in the venue netting) and buying power is understated.
+
+        Routed through this seam (the same one the order domain uses for
+        ``reserve``/``release``) so the cross-domain write stays queue-mediated,
+        never a direct account import. NON-terminal: it drops ONLY the admission
+        overlay and never settles the fill (the fill settles later on the normal
+        path). Idempotent — dropping an unknown or already-dropped order id is a
+        silent no-op. On a portfolio whose account has no overlay (paper/simulated),
+        the concrete handler getattr-skips the call cleanly.
+
+        Parameters
+        ----------
+        portfolio_id : PortfolioId
+            The portfolio whose overlay entry is dropped.
+        order_id : OrderId
+            The acked order the overlay was keyed by.
         """
         ...
 

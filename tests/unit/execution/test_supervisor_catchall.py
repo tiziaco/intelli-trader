@@ -53,7 +53,6 @@ import ccxt
 import pytest
 
 from itrader.core.enums import ErrorSeverity
-from itrader.core.money import to_money
 from itrader.execution_handler.exchanges.okx import OkxExchange
 from itrader.portfolio_handler.account.venue import VenueAccount
 from itrader.price_handler.providers.okx_provider import OkxDataProvider
@@ -288,11 +287,17 @@ def test_supervisor_catchall_venue_stream_survives_networkerror() -> None:
         # GREEN: the supervisor breaks on the _StopLoop sentinel after the recovery write.
         pass
 
-    # NOTE (30cfb73): the balance stream now writes positions only; _venue_balance is
-    # snapshot()-only. This assertion must be re-expressed when D-11 lands — see docstring.
-    assert venue._venue_balance == to_money("123.45"), (
+    # D-11 re-expression (per docstring / 30cfb73): the balance stream deliberately no
+    # longer writes _venue_balance (cash is snapshot()-only, single-channel), so stream
+    # SURVIVAL is asserted via the recovery iteration rather than a cache value. A bare
+    # `while True` dies on the first NetworkError -> watch_balance is called exactly ONCE
+    # and never reaches the recovered frame. The supervised loop retries the transient
+    # blip, consumes the recovered good_balance, and only stops on the unclassified
+    # _StopLoop -> watch_balance is called all THREE times (blip, recovery, stop).
+    assert client.watch_balance.call_count == 3, (
         "A6/V17-07: VenueAccount._stream_account is a bare `while True` with no reconnect "
-        "supervisor — a single NetworkError killed the balance-cache writer silently and the "
-        f"cache froze at {venue._venue_balance!r} (the post-blip 123.45 was never written). "
-        "D-11 (Phase 05.3) must wrap the venue streams so a transient drop survives/escalates."
+        "supervisor — a single NetworkError killed the balance-cache writer silently "
+        f"(watch_balance called {client.watch_balance.call_count}x, never reaching the "
+        "post-blip recovery). D-11 (Phase 05.3) must wrap the venue streams in the "
+        "bounded-retry supervisor so a transient drop survives / an unknown error escalates."
     )

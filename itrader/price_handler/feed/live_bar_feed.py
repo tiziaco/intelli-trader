@@ -30,6 +30,7 @@ Indentation: 4 SPACES (the ``price_handler/feed/`` package convention) — NO ta
 
 from __future__ import annotations
 
+import asyncio
 import queue
 from collections import deque
 from datetime import datetime, timedelta
@@ -38,7 +39,11 @@ from typing import TYPE_CHECKING, Any, Optional
 import pandas as pd
 
 from itrader.core.bar import Bar
-from itrader.core.exceptions import MissingPriceDataError, StateError
+from itrader.core.exceptions import (
+    MalformedDataError,
+    MissingPriceDataError,
+    StateError,
+)
 from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.logger import get_itrader_logger
 from itrader.outils.time_parser import to_timedelta
@@ -94,6 +99,18 @@ class LiveBarFeed(BarFeed):
         self._last_delivered: dict[tuple[str, str], pd.Timestamp] = {}
         # Newest-bar provision (P5-D16 / G5) written by every delivery.
         self._newest_bars: dict[str, Bar] = {}
+        # D-29 (WR-05): re-entrancy guard set for the duration of a loop-native
+        # backfill replay. If update() detects a gap WHILE a replay is in progress
+        # (an under-returning venue page with a hole inside the replayed range), it
+        # fails loud instead of spawning a nested/overlapping backfill.
+        #
+        # WR-01 precondition: this is a PLAIN instance bool with no lock — it encodes
+        # "THIS thread's replay is active," not "any replay is active." It is correct
+        # ONLY while replay and its nested update() calls stay on the single
+        # connector-loop thread (the current loop-native path). The DEFERRED D-14
+        # concurrent-bar path (05.3-06) must scope re-entrancy to the replaying thread
+        # (thread-id / threading.local) BEFORE enabling it — see the guard in update().
+        self._replaying_backfill = False
         # Run-path bindings (mirror bar_feed.py:334-335); set via bind().
         self.global_queue: "Optional[queue.Queue[Any]]" = None
         self.membership: list[str] = []
@@ -169,8 +186,38 @@ class LiveBarFeed(BarFeed):
         if t == last:
             return self._duplicate_or_revision(sym, tf_str, t, closed_bar)
         if t > last + tf:
-            self._backfill_gap(sym, tf_str, last + tf, t - tf)
-            return self._deliver(sym, tf_str, t, closed_bar)
+            if self._replaying_backfill:
+                # D-29 (WR-05): a gap detected WHILE a loop-native backfill replay is
+                # in progress means the venue page under-returned (a hole INSIDE the
+                # replayed range). Fail loud instead of spawning a nested/overlapping
+                # backfill — the shape-independent structural stop against recursion.
+                # The raise escalates through the provider's supervised-backfill error
+                # path (_run_gap_backfill -> _on_gap_backfill_done -> connector halt).
+                #
+                # WR-01 precondition: `_replaying_backfill` encodes "THIS thread's
+                # replay is active," NOT "any replay is active." It is a plain instance
+                # bool with no lock, and this classification is correct ONLY while the
+                # replay and its nested update() calls stay on the single connector-loop
+                # thread (the current loop-native path guarantees this). update() is also
+                # reachable from the ENGINE thread (warmup / backfill_on_resume); the
+                # DEFERRED D-14 concurrent-bar path (05.3-06) MUST scope re-entrancy to
+                # the replaying thread (thread-id / threading.local) BEFORE it is enabled
+                # — otherwise a legitimate engine-thread gap arriving mid-replay would
+                # observe this flag True, be misclassified as a nested in-replay gap, and
+                # spuriously HALT the connector.
+                #
+                # WR-02: carry BOTH {expected, got} coordinates so an operator triaging a
+                # connector-fatal halt sees where in the interior the hole is without
+                # cross-referencing logs (integer-ms, secret-free — matches the sibling
+                # under-returning-page raise in _replay_and_deliver).
+                raise MalformedDataError(
+                    f"gap-backfill:{sym}/{tf_str}",
+                    "gap detected during an in-progress backfill replay "
+                    f"(expected in-sequence L+tf={int((last + tf).value // _NS_PER_MS)}, "
+                    f"got ts={int(t.value // _NS_PER_MS)}) "
+                    "— refusing a nested backfill")
+            return self._fill_gap_and_deliver(
+                sym, tf_str, last + tf, t - tf, t, closed_bar)
         if t == last + tf:
             return self._deliver(sym, tf_str, t, closed_bar)
         # WR-01: the remaining region is last < t < last + tf — an off-grid
@@ -274,6 +321,127 @@ class LiveBarFeed(BarFeed):
             "D-07): last-close=%s incoming-close=%s", sym, str(t),
             str(last_bar.close) if last_bar is not None else None,
             str(incoming.close))
+
+    def _fill_gap_and_deliver(
+        self, sym: str, tf_str: str, first_missing: pd.Timestamp,
+        last_missing: pd.Timestamp, t: pd.Timestamp, closed_bar: "ClosedBar",
+    ) -> None:
+        """Resolve a gap ``[first_missing .. last_missing]`` then deliver the trigger ``t`` (D-17).
+
+        Two paths, one contract (interior bars replayed contiguous, THEN ``t`` delivered exactly
+        once):
+
+        - **Loop-triggered (the connector loop thread).** The live candle coroutine calls
+          ``update()`` synchronously inside its running loop, so a synchronous
+          ``fetch_ohlcv_backfill`` here would bridge through ``connector.call(...).result()`` and
+          self-deadlock the loop (30s stall → livelock, RESEARCH Pitfall 4 / V17-15). Hand the gap
+          range to a loop-native supervised backfill coroutine (``provider.spawn_gap_backfill``) that
+          ``await``s the client fetch DIRECTLY on the loop, then replays the interior + delivers
+          ``t`` on this same loop thread once the fetch resolves.
+        - **Off the loop (engine-thread warmup-adjacent / reconnect-resume, or the offline paper
+          ``ReplayDataProvider``).** No running loop → the synchronous ``fetch_ohlcv_backfill`` /
+          ``connector.call()`` bridge is SAFE; fill the interior then deliver ``t`` inline (the
+          pre-D-17 behaviour, byte-identical for the socket-free unit matrix).
+
+        Note (scope): the loop-native path schedules the backfill and returns; a second live bar
+        arriving before the coroutine completes is the concurrent-bar case owned by the D-14
+        pause-defer-replay work (05.3-06), not D-17 (which only kills the self-deadlock).
+        """
+        if self._loop_native_backfill_available():
+            self._spawn_loop_native_gap_backfill(
+                sym, tf_str, first_missing, last_missing, t, closed_bar)
+            return
+        self._backfill_gap(sym, tf_str, first_missing, last_missing)
+        self._deliver(sym, tf_str, t, closed_bar)
+
+    def _loop_native_backfill_available(self) -> bool:
+        """True iff the gap fired on a running loop AND the provider offers the D-17 seam.
+
+        ``asyncio.get_running_loop()`` succeeds only when called from within a running loop — i.e.
+        the connector loop thread, where ``update()`` runs synchronously inside the candle
+        coroutine. The engine-thread warmup / reconnect-resume paths (and the offline synchronous
+        ``ReplayDataProvider``) have no running loop and raise ``RuntimeError`` → synchronous path.
+        The ``spawn_gap_backfill`` capability check keeps a provider without the seam on the safe
+        synchronous fallback.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return hasattr(self._provider, "spawn_gap_backfill")
+
+    def _spawn_loop_native_gap_backfill(
+        self, sym: str, tf_str: str, first_missing: pd.Timestamp,
+        last_missing: pd.Timestamp, t: pd.Timestamp, closed_bar: "ClosedBar",
+    ) -> None:
+        """Hand the gap range to the provider's loop-native supervised backfill coroutine (D-17)."""
+        tf = to_timedelta(tf_str)
+        since_ms = int(first_missing.value // _NS_PER_MS)
+        last_ms = int(last_missing.value // _NS_PER_MS)
+        limit = int((last_missing - first_missing) / tf) + 1
+        self.logger.info(
+            "Gap for %s: loop-native backfilling %d interior bar(s) [%s .. %s] "
+            "(awaiting client fetch on the connector loop — no call().result() bridge)",
+            sym, limit, str(first_missing), str(last_missing))
+
+        def _replay_and_deliver(bars: "list[ClosedBar]") -> None:
+            # Runs on the connector loop thread once the awaited fetch resolves. Replay the
+            # interior CLAMPED at BOTH ends — below since_ms (D-29 low clamp, mirroring the
+            # existing upper > last_ms break: the real provider treats limit as a page size
+            # and can straddle the interior on either side) and above last_missing (CR-01,
+            # it over-fetches past the interior into t and beyond) — each in-range bar
+            # advancing L by one tf (in-sequence, no nested gap), THEN deliver the trigger t
+            # exactly once — mirroring the synchronous gap path's ordering.
+            #
+            # D-29 (WR-05): the first in-range replayed bar MUST be exactly first_missing
+            # (ts == since_ms). An under-returning page that omits the earliest missing bar
+            # would otherwise re-enter the gap branch and spawn a nested backfill; fail loud
+            # (typed data-integrity error, secret-free — fixed literal + coordinates only, no
+            # str(payload)) so it escalates to a connector halt instead. The _replaying_backfill
+            # guard is the shape-independent backstop for a hole INSIDE the range.
+            self._replaying_backfill = True
+            try:
+                first_replayed = False
+                for cb in bars:
+                    ts = cb["ts"]
+                    if ts < since_ms:
+                        continue
+                    if ts > last_ms:
+                        break
+                    if not first_replayed:
+                        if ts != since_ms:
+                            raise MalformedDataError(
+                                f"gap-backfill:{sym}/{tf_str}",
+                                "under-returning backfill page "
+                                f"(expected first bar ts={since_ms}, got ts={ts})")
+                        first_replayed = True
+                    self.update(cb)
+                # CR-01: the interior must be fully contiguous up to last_missing
+                # before t is delivered. A tail-truncated page (contiguous prefix
+                # that stops short of last_missing) or an empty / no-in-range page
+                # leaves L short — the loop raises nothing (no bar exists AFTER the
+                # hole to trip the interior-hole guard), and the trailing _deliver(t)
+                # would otherwise jump L straight past never-backfilled interior bars,
+                # silently swallowing the gap and defeating D-29's fail-loud goal.
+                # Fail loud (typed, secret-free — integer-ms coordinates only, no
+                # str(payload)) so it escalates through the same supervised-backfill
+                # error path to a connector halt.
+                last_delivered = self._last_delivered.get((sym, tf_str))
+                if last_delivered != last_missing:
+                    last_delivered_ms = (
+                        int(last_delivered.value // _NS_PER_MS)
+                        if last_delivered is not None else None)
+                    raise MalformedDataError(
+                        f"gap-backfill:{sym}/{tf_str}",
+                        "under-returning backfill page (interior incomplete: "
+                        f"last-delivered={last_delivered_ms}, "
+                        f"expected last_missing={last_ms})")
+                self._deliver(sym, tf_str, t, closed_bar)
+            finally:
+                self._replaying_backfill = False
+
+        self._provider.spawn_gap_backfill(
+            sym, tf_str, since_ms, limit, _replay_and_deliver)
 
     def _backfill_gap(self, sym: str, tf_str: str, first_missing: pd.Timestamp,
                       last_missing: pd.Timestamp) -> None:

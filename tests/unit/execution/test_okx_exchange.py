@@ -472,6 +472,69 @@ def test_cancel_failure_emits_error_event_not_refused_fill(
     assert queue.empty()
 
 
+# --- D-18: OkxExchange.on_order preflight (defense-in-depth, ASVS V4/V5) -------
+
+
+def test_on_order_preflight_rejects_non_positive_quantity(
+    exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
+) -> None:
+    """A non-positive quantity is rejected by the wired preflight before any venue call (D-18).
+
+    RED today: ``on_order`` submits straight to the venue with no preflight, so an invalid
+    order reaches ``create_order``. GREEN after D-18 wires ``validate_order`` into ``on_order``
+    (mirroring simulated.py) — a preflight failure is a DEFINITIVE rejection -> FillEvent(REFUSED),
+    and the venue is never called.
+    """
+    order = _make_order(order_type=OrderType.LIMIT, quantity=Decimal("0"))
+
+    exchange.on_order(order)
+
+    fake_client.create_order.assert_not_called()
+    assert not queue.empty()
+    fill = queue.get_nowait()
+    assert isinstance(fill, FillEvent)
+    assert fill.status is FillStatus.REFUSED
+    assert fill.order_id == order.order_id
+
+
+def test_on_order_preflight_rejects_unknown_symbol(
+    exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
+) -> None:
+    """An unknown symbol (not in the loaded markets) is rejected before any venue call (D-18).
+
+    RED today: no symbol preflight — the order reaches ``create_order``. GREEN after D-18 wires
+    ``validate_symbol`` into ``on_order``: a loaded ``markets`` map that omits the ticker is a
+    DEFINITIVE rejection -> FillEvent(REFUSED); the venue is never called.
+    """
+    # A loaded markets map that does NOT contain the order's ticker.
+    fake_client.markets = {"ETH/USDT": {}}
+    order = _make_order(order_type=OrderType.LIMIT)  # ticker "BTC-USDT" not in markets
+
+    exchange.on_order(order)
+
+    fake_client.create_order.assert_not_called()
+    assert not queue.empty()
+    fill = queue.get_nowait()
+    assert isinstance(fill, FillEvent)
+    assert fill.status is FillStatus.REFUSED
+
+
+def test_on_order_preflight_passes_valid_order_to_venue(
+    exchange: OkxExchange, fake_client: MagicMock, queue: "Queue[Any]"
+) -> None:
+    """A valid order clears the preflight and still submits to the venue (D-18 over-fit guard).
+
+    The preflight must not block legitimate orders: a positive quantity with a symbol present
+    in the loaded markets passes through to ``create_order`` exactly as before.
+    """
+    fake_client.markets = {"BTC-USDT": {}}
+    order = _make_order(order_type=OrderType.LIMIT, quantity=Decimal("0.5"))
+
+    exchange.on_order(order)
+
+    fake_client.create_order.assert_awaited_once()
+
+
 # --- WR-04: lossless base62 clOrdId — no truncation collision -----------------
 
 

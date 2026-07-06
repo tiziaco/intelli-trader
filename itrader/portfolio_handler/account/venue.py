@@ -32,10 +32,11 @@ ever relaxed to a runtime import it would still not couple the hot path to
 ``ccxt.pro``.
 """
 
+import asyncio
 import threading
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
 from itrader.core.exceptions import (
     InsufficientFundsError,
@@ -44,11 +45,24 @@ from itrader.core.exceptions import (
 )
 from itrader.core.ids import OrderId
 from itrader.core.money import to_money
+from itrader.logger import get_itrader_logger
 
 from .base import Account
 
 if TYPE_CHECKING:
     from itrader.connectors.base import LiveConnector
+
+
+# D-11 (RES-01/D-19/D-20) reconnect-supervisor tuning — mirrors the okx.py donor
+# constants (``OkxExchange._run_stream_supervisor``). The venue balance/position
+# streams are wrapped in the same bounded-retry supervisor so a transient socket
+# drop is survived (publish-and-continue) and an unknown error escalates to a
+# fail-safe HALT rather than silently killing the cache writer (V17-07). Named
+# constants, [ASSUMED] and tunable from sandbox behaviour.
+_STREAM_RECONNECT_DEBOUNCE_SECONDS = 0.25
+_STREAM_RECONNECT_BACKOFF_BASE_SECONDS = 1.0
+_STREAM_RECONNECT_BACKOFF_CAP_SECONDS = 30.0
+_STREAM_RECONNECT_RETRY_CEILING = 6
 
 
 class VenueAccount(Account):
@@ -110,6 +124,7 @@ class VenueAccount(Account):
             the derived base holding is keyed under this symbol and the base currency
             is taken from its left leg (``BTC``). Unused for derivative market types.
         """
+        self.logger = get_itrader_logger().bind(component="VenueAccount")
         # D-04: the injected session Protocol, NOT the concretion.
         self._connector = connector
         self._quote = quote_currency
@@ -119,6 +134,16 @@ class VenueAccount(Account):
         self._market_type = market_type
         self._symbol = symbol
         self._base = symbol.split("/")[0] if symbol is not None else None
+
+        # D-24 (CR-01): does this leaf's cash channel actually net a venue-side hold
+        # into ``_venue_balance``? Only then may ``drop_pending`` drop the local
+        # ``_pending`` overlay on ack without OVER-stating buying power. On the wired
+        # single-channel SPOT leaf ``_write_balance_stream`` is positions-only and
+        # ``_venue_balance`` is re-baselined solely by ``snapshot()`` — the overlay is
+        # the SOLE tracker of a resting order's hold, so it must be held until terminal
+        # ``release``. The derivative/margin leaf DOES net holds (stream-refreshed cash),
+        # so D-15's drop-on-ack stays valid there.
+        self._cash_stream_nets_holds = market_type != "spot"
 
         # D-14/D-15: RLock-guarded venue cache. Written ONLY on the connector loop
         # thread (async push) or on a snapshot call; read on the engine thread. All
@@ -144,6 +169,20 @@ class VenueAccount(Account):
 
         # Spawned stream-task handles (cancelled by the connector on disconnect).
         self._stream_handles: list[Any] = []
+
+        # D-11 (V17-07): bounded-retry supervisor state for the balance/position
+        # streams (mirrors the okx.py donor). A transient drop reconnects with
+        # backoff; an unknown error escalates to a fail-safe HALT — never the bare
+        # ``while True`` that died silently on the first raise. The halt/pause seams
+        # default to no-op (None) so an unwired leaf still supervises without halting.
+        self._reconnect_attempts: dict[str, int] = {}
+        self._streams_down: set[str] = set()
+        self._reconnect_debounce_s = _STREAM_RECONNECT_DEBOUNCE_SECONDS
+        self._reconnect_backoff_base_s = _STREAM_RECONNECT_BACKOFF_BASE_SECONDS
+        self._reconnect_backoff_cap_s = _STREAM_RECONNECT_BACKOFF_CAP_SECONDS
+        self._reconnect_ceiling = _STREAM_RECONNECT_RETRY_CEILING
+        self._halt_signal: Callable[[str], None] | None = None
+        self._on_stream_down: Callable[[str], None] | None = None
 
     # --- Decimal-edge parsers (None/missing guarded BEFORE the edge) -----------
 
@@ -231,16 +270,23 @@ class VenueAccount(Account):
     # --- async push (D-14 push writer — cache-write ONLY, never compare/halt) ---
 
     async def _stream_account(self) -> None:
-        """Consume the venue balance stream forever, writing the cache ONLY (D-15).
+        """Consume the venue balance stream under the reconnect supervisor (D-15/D-11).
 
         Mirrors ``OkxExchange._stream_fills``: cache-write on the connector loop
-        thread, NEVER a drift compare and NEVER a halt (the compare lives on the
-        engine thread in 05-04). Each venue float crosses the Decimal edge in
-        ``_write_balance_stream``; a missing field leaves the prior cache value intact.
+        thread, NEVER a drift compare and NEVER a halt on a NORMAL push (the compare
+        lives on the engine thread in 05-04). Each venue float crosses the Decimal edge
+        in ``_write_balance_stream``; a missing field leaves the prior cache value
+        intact. D-11 (V17-07): the forever ``while True`` consume body is now wrapped in
+        the bounded-retry supervisor so a transient socket drop is survived and an
+        UNKNOWN error escalates to a fail-safe HALT — the bare loop died silently on the
+        first raise, freezing the balance/position cache forever.
         """
-        while True:
-            update = await self._connector.client.watch_balance()
-            self._write_balance_stream(update)
+        async def _consume(_stream_name: str) -> None:
+            while True:
+                update = await self._connector.client.watch_balance()
+                self._write_balance_stream(update)
+
+        await self._run_stream_supervisor(_consume, "account")
 
     def _write_balance_stream(self, update: Any) -> None:
         """Apply a venue balance push to the cache — POSITIONS only, NEVER the cash baseline.
@@ -277,16 +323,119 @@ class VenueAccount(Account):
                 self._venue_positions = spot_positions
 
     async def _stream_positions(self) -> None:
-        """Consume the venue positions stream forever, writing the cache ONLY (D-15).
+        """Consume the venue positions stream under the reconnect supervisor (D-15/D-11).
 
         Same single-writer discipline as ``_stream_account`` — cache-write on the
-        connector loop thread only, never compare/halt.
+        connector loop thread only, never compare/halt on a NORMAL push. D-11 (V17-07):
+        the forever ``while True`` consume body is wrapped in the same bounded-retry
+        supervisor so a transient drop is survived and an unknown error escalates to a
+        fail-safe HALT rather than silently killing the position-cache writer.
         """
+        async def _consume(_stream_name: str) -> None:
+            while True:
+                update = await self._connector.client.watch_positions()
+                positions = self._extract_positions(update)
+                with self._lock:
+                    self._venue_positions = positions
+
+        await self._run_stream_supervisor(_consume, "positions")
+
+    # --- reconnect supervisor (D-11 — wrap the bare venue loops, V17-07) --------
+
+    def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
+        """Inject the freeze-in-place halt entrypoint (D-11/D-20).
+
+        Called with the fixed reason ``'connector-fatal'`` on a fatal connector error,
+        an exhausted retry ceiling, or an UNKNOWN error on a supervised stream. The
+        halt entrypoint owns the CRITICAL alert; the venue passes NO exception text so
+        no secret can leak (T-05-27 / V7). Optional — an unwired leaf supervises (retries
+        transients) but escalation is a no-op until a halt signal is injected.
+        """
+        self._halt_signal = halt_signal
+
+    async def _run_stream_supervisor(
+        self, consume: Callable[[str], Awaitable[None]], stream_name: str
+    ) -> None:
+        """Bounded-retry reconnect supervisor wrapping a stream consume-loop (D-11).
+
+        Ladder mirrors the ``OkxExchange._run_stream_supervisor`` donor:
+
+        - ``asyncio.CancelledError`` is re-raised untouched (cooperative teardown —
+          never swallow cancellation, Pitfall 4).
+        - **transient** (``ccxt.NetworkError``/``RequestTimeout``/``DDoSProtection``) ->
+          reconnect with exponential backoff after a debounce, staying running.
+        - **fatal** (``ccxt.AuthenticationError``/``PermissionDenied``) OR the retry
+          ceiling exhausted OR an **unknown** (unclassified) error -> escalate to the
+          injected halt entrypoint (fail-safe HALT, reason ``'connector-fatal'``). The
+          catch-all is what closes V17-07: the old bare ``while True`` let any raise
+          kill the cache writer silently.
+        """
+        import ccxt  # lazy: ccxt only needed on the live stream path (hot-path inert).
+        transient: tuple[type[BaseException], ...] = (
+            ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection)
+        fatal: tuple[type[BaseException], ...] = (
+            ccxt.AuthenticationError, ccxt.PermissionDenied)
         while True:
-            update = await self._connector.client.watch_positions()
-            positions = self._extract_positions(update)
-            with self._lock:
-                self._venue_positions = positions
+            try:
+                await consume(stream_name)
+                return  # a forever-loop returning cleanly is not expected — stop.
+            except asyncio.CancelledError:
+                raise  # cooperative teardown — never swallow.
+            except fatal as exc:
+                self._escalate_connector_halt(
+                    stream_name, exc, "fatal auth/permission error")
+                return
+            except transient as exc:
+                attempt = self._reconnect_attempts.get(stream_name, 0) + 1
+                self._reconnect_attempts[stream_name] = attempt
+                if attempt > self._reconnect_ceiling:
+                    self._escalate_connector_halt(
+                        stream_name, exc, "reconnect retry ceiling exhausted")
+                    return
+                await asyncio.sleep(self._reconnect_debounce_s)
+                if attempt > 1:
+                    self._mark_stream_down(stream_name)
+                backoff = min(
+                    self._reconnect_backoff_base_s * (2 ** (attempt - 1)),
+                    self._reconnect_backoff_cap_s)
+                # Scrub (T-05-27): log the exception TYPE only, never str(exc).
+                self.logger.warning(
+                    "OKX venue %s stream dropped (%s) — reconnecting "
+                    "(attempt %d/%d, backoff %.1fs)",
+                    stream_name, type(exc).__name__, attempt,
+                    self._reconnect_ceiling, backoff)
+                await asyncio.sleep(backoff)
+            except Exception as exc:
+                # D-11 (V17-07): an UNCLASSIFIED error is neither transient nor fatal.
+                # Fail safe — escalate to a HALT instead of letting it propagate out of
+                # the consume loop and kill the cache writer silently.
+                self._escalate_connector_halt(stream_name, exc, "unexpected error")
+                return
+
+    def _escalate_connector_halt(
+        self, stream_name: str, exc: BaseException, cause: str
+    ) -> None:
+        """Halt the engine on an unrecoverable venue-stream failure (D-11/D-20).
+
+        Scrub (T-05-27 / V7): the log carries the exception TYPE + a fixed cause string,
+        never ``str(exc)``; the halt entrypoint is called with the fixed reason
+        ``'connector-fatal'`` so no secret can reach the CRITICAL alert.
+        """
+        self.logger.error(
+            "OKX venue %s stream unrecoverable (%s: %s) — halting engine",
+            stream_name, type(exc).__name__, cause)
+        if self._halt_signal is not None:
+            self._halt_signal("connector-fatal")
+
+    def _mark_stream_down(self, stream_name: str) -> None:
+        """Record a sustained venue-stream disconnect once (D-11/D-19)."""
+        if stream_name in self._streams_down:
+            return
+        self._streams_down.add(stream_name)
+        self.logger.warning(
+            "OKX venue %s stream disconnected past debounce", stream_name)
+        if self._on_stream_down is not None:
+            self._on_stream_down(stream_name)
 
     def start_streaming(self) -> None:
         """Spawn the venue push streams via the injected connector (root-wired, 05-04).
@@ -557,5 +706,43 @@ class VenueAccount(Account):
         no-op (mirrors ``SimulatedCashAccount.release``). The venue owns the real
         reservation; this only clears the local admission overlay.
         """
+        with self._lock:
+            self._pending.pop(str(order_id), None)
+
+    def drop_pending(self, order_id: OrderId) -> None:
+        """Drop the local pending overlay on ack — ONLY when the cash channel nets holds (D-15/D-24).
+
+        D-15 (V17-13) closes a buying-power double-count on a cash channel that nets
+        the venue-side hold into ``_venue_balance``: there ``_pending`` and the
+        stream-refreshed venue balance BOTH carry the hold between ack and terminal
+        release, so dropping the overlay on ack removes the duplicate.
+
+        D-24 (CR-01) gates that drop. On the WIRED single-channel SPOT leaf
+        ``_write_balance_stream`` is positions-only and ``_venue_balance`` is
+        re-baselined solely by ``snapshot()`` (D-01) — so the ``_pending`` overlay is
+        the SOLE tracker of a resting order's cash hold for its entire life. There was
+        never a double-count for D-15 to remove; dropping the overlay on ack would snap
+        ``available_balance`` back to the full settled balance while the order is still
+        open on the venue — a buying-power OVER-statement admitting a second order
+        against already-committed cash. So on the spot leaf this is a NO-OP: the overlay
+        is held until terminal ``release``. D-15's drop-on-ack stays dormant-valid for a
+        future margin/swap leaf whose cash channel refreshes ``_venue_balance``.
+
+        The guard is the intent-revealing ``_cash_stream_nets_holds`` predicate
+        (False on spot, True on derivative). When it is False the overlay is held —
+        negation-first early return, no overlay pop.
+
+        This is a NON-terminal drop: on the netting leaf it pops ONLY the admission
+        overlay entry and NEVER touches the settled ledger (``_ledger_delta``) — the
+        fill still settles later through the normal ``apply_fill_cash_flow`` path.
+        Idempotent (a ``KeyError``-free ``pop``), keyed by ``str(order_id)`` to match
+        the ``reserve`` write key, and taken under the same lock ``reserve``/``release``
+        hold. Terminal ``release`` still pops unconditionally on BOTH leaves, so the
+        spot hold is released at terminal, never leaked.
+        """
+        if not self._cash_stream_nets_holds:
+            # D-24 (CR-01): single-channel spot leaf — hold the overlay until terminal
+            # release (dropping it here over-states buying power).
+            return
         with self._lock:
             self._pending.pop(str(order_id), None)

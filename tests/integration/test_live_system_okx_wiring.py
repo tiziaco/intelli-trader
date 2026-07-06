@@ -179,6 +179,42 @@ def test_start_spawns_okx_order_arm_fill_stream(monkeypatch) -> None:
         system.stop()
 
 
+def test_start_arms_okx_connector_halt_signal(monkeypatch) -> None:
+    """The composition root arms _okx_connector's halt signal to _request_connector_halt (D-26/WR-02).
+
+    WR-02 gap: ``OkxConnector.set_halt_signal`` had no caller — only ``_okx_exchange``,
+    ``_okx_data_provider`` and ``portfolio_handler`` were armed — so
+    ``OkxConnector._on_task_done``'s ``if self._halt_signal is not None:`` guard was always
+    False and a task dying OUTSIDE the stream supervisors logged-and-vanished with no halt.
+
+    This asserts the REAL connector's halt signal is armed by the composition root (not the
+    ``_on_task_done`` unit's injected halt-signal double), and that it survives ``start()``.
+    Removing the ``self._okx_connector.set_halt_signal(...)`` arm makes this FAIL (the arm
+    is the SOLE caller of ``OkxConnector.set_halt_signal``).
+    """
+    _set_okx_env(monkeypatch)
+    system = LiveTradingSystem(exchange="okx")
+    _stub_okx_network(system)
+    system._okx_exchange.connect = MagicMock(
+        name="okx_exchange.connect",
+        return_value=ConnectionResult(
+            success=True,
+            status=ExchangeConnectionStatus.CONNECTED,
+            exchange_name="okx"))
+
+    try:
+        started = system.start()
+        assert started is True
+        # The connector arm is wired to the SAME flag-only callback the exchange/provider
+        # arms pass — so _on_task_done can now escalate a dead task to a fail-safe halt.
+        # (== not is: each `self._request_connector_halt` access is a fresh bound-method
+        # object; bound methods compare equal by function+instance, mirroring this file's
+        # `_bar_sink == system.feed.update` check.)
+        assert system._okx_connector._halt_signal == system._request_connector_halt
+    finally:
+        system.stop()
+
+
 def test_start_fails_when_okx_exchange_connect_fails(monkeypatch) -> None:
     """A failed ConnectionResult from _okx_exchange.connect() drives ERROR and returns False.
 

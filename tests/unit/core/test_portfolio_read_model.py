@@ -23,6 +23,11 @@ Phase 06 (WR-02, LIFE-01) widens it by ONE further member:
 ``active_portfolio_ids`` — the run-end time-in-force sweep enumerates active
 portfolios to expire their resting orders (replaces a ``# type: ignore``
 call to a non-Protocol method).
+
+Plan 05.3-04 (D-15, V17-13) widens it by ONE further member: ``drop_pending``
+— the venue ORDER-ACK drops the local pending-reservation overlay (routed
+through the same read/write seam reserve/release use), closing the
+buying-power double-count. Eleven members total.
 """
 
 import dataclasses
@@ -87,12 +92,12 @@ def test_position_view_uses_slots():
 
 
 # ---------------------------------------------------------------------------
-# PortfolioReadModel: runtime_checkable Protocol, seven members, narrow
+# PortfolioReadModel: runtime_checkable Protocol, eleven members, narrow
 # ---------------------------------------------------------------------------
 
 
 class _ConformingFake:
-    """Minimal fake implementing all ten Protocol members."""
+    """Minimal fake implementing all eleven Protocol members."""
 
     def active_portfolio_ids(self) -> list[PortfolioId]:
         return []
@@ -107,6 +112,9 @@ class _ConformingFake:
         return None
 
     def release(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        return None
+
+    def drop_pending(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
         return None
 
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
@@ -140,6 +148,9 @@ class _MissingReserveFake:
     def release(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
         return None
 
+    def drop_pending(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        return None
+
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
         return "csv"
 
@@ -157,7 +168,7 @@ class _MissingReserveFake:
 
 
 def test_protocol_is_runtime_checkable_and_fake_conforms():
-    """D-16: structural typing — a fake with all ten methods passes isinstance."""
+    """D-16: structural typing — a fake with all eleven methods passes isinstance."""
     assert isinstance(_ConformingFake(), PortfolioReadModel)
 
 
@@ -166,16 +177,18 @@ def test_object_missing_reserve_fails_isinstance():
     assert not isinstance(_MissingReserveFake(), PortfolioReadModel)
 
 
-def test_protocol_declares_exactly_ten_methods():
-    """OQ1 + Plan 07-01 + Phase 06 WR-02 + Plan 02-05: six original members +
-    total_equity (RiskPercent input) + active_portfolio_ids (run-end TIF sweep) +
-    maintenance_margin/margin_ratio (D-13/MARGIN-03 compute-on-demand accessors)."""
+def test_protocol_declares_exactly_eleven_methods():
+    """OQ1 + Plan 07-01 + Phase 06 WR-02 + Plan 02-05 + Plan 05.3-04: six original
+    members + total_equity (RiskPercent input) + active_portfolio_ids (run-end TIF
+    sweep) + maintenance_margin/margin_ratio (D-13/MARGIN-03 compute-on-demand
+    accessors) + drop_pending (D-15/V17-13 venue-ack overlay drop)."""
     expected = {
         "active_portfolio_ids",
         "available_cash",
         "get_position",
         "reserve",
         "release",
+        "drop_pending",
         "exchange_for",
         "open_position_count",
         "total_equity",

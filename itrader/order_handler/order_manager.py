@@ -13,7 +13,7 @@ and order storage/execution systems.
 """
 
 from decimal import Decimal
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import pydantic
 
@@ -207,6 +207,17 @@ class OrderManager:
 		"""Delegate fill reconciliation to ReconcileManager (D-07)."""
 		return self.reconcile_manager.on_fill(fill_event)
 
+	def seed_applied_trades(self, keys: Iterable[str]) -> None:
+		"""Restart-seed the reconcile dedup ring (D-22 — the composition-root sink).
+
+		The wiring seam ``PortfolioHandler.rehydrate`` drives into: it forwards the
+		durable ``f"{ticker}:{venue_trade_id}"`` history into
+		``ReconcileManager.seed_applied_trades`` so the order-mirror dedup arm is
+		restart-seeded SYMMETRICALLY with the portfolio ledger. Live-path-only
+		(backtest never rehydrates — oracle-dark).
+		"""
+		self.reconcile_manager.seed_applied_trades(keys)
+
 	def process_signal(self, signal_event: SignalEvent) -> List[OperationResult]:
 		"""Delegate the signal→order pipeline to AdmissionManager (D-07)."""
 		return self.admission_manager.process_signal(signal_event)
@@ -252,7 +263,19 @@ class OrderManager:
 				order_id, venue_order_id)
 			return False
 		order.venue_order_id = venue_order_id
-		return self.order_storage.update_order(order)
+		stamped = self.order_storage.update_order(order)
+		# D-15 (V17-13): drop the local pending overlay for this order on the ack
+		# through the SAME injected read-model seam the admission path uses for
+		# reserve/release — the venue now owns the real reservation, so keeping the
+		# local overlay to terminal release double-counts the hold and understates
+		# buying power. Routed only with a read model + portfolio_id present
+		# (queue-only cross-domain write via the injected model, not a direct account
+		# call); the handler getattr-guards it, so a non-VenueAccount portfolio is a
+		# clean skip. Runs only on a successful stamp (an unknown order returned False
+		# above never had a live overlay).
+		if stamped and self.portfolio_handler is not None and portfolio_id is not None:
+			self.portfolio_handler.drop_pending(portfolio_id, order_id)
+		return stamped
 
 	# --- Read interface (D-18) -------------------------------------------------
 	# The manager owns the storage; OrderHandler read methods delegate here.

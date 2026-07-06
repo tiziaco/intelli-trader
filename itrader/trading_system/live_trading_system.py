@@ -2,13 +2,23 @@ import os
 import queue
 import sys
 import threading
+from collections import deque
 from datetime import datetime, UTC
 from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
 
+# D-14 (V17-11): bound on the pause-window protective-order replay queue. During a
+# pause/halt, system-generated protective orders (bracket children, OCO/orphan
+# cancels) are DEFERRED here and replayed on resume; the bound prevents an unbounded
+# backlog if a pause runs long. A realistic reconnect-window generates far fewer than
+# this many protective orders, so the cap only guards a pathological stall (oldest
+# deferred protective orders are dropped past it — a dropped protective order is the
+# same freeze-in-place safety posture as the pre-D-14 blanket suppression).
+_DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
+
 from dataclasses import dataclass
 
-from itrader.core.enums import ErrorSeverity, SystemStatus, VALID_STATUS_TRANSITIONS
+from itrader.core.enums import ErrorSeverity, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
@@ -159,6 +169,24 @@ class LiveTradingSystem:
         self._submission_paused = False
         self._paused_reason: Optional[str] = None
         self._pending_stream_resume = threading.Event()
+        # 05.3-08 (D-21 / WR-02): connector-fatal escalation handoff. A fatal connector
+        # error / exhausted retry ceiling / unclassified catch-all escalates from the
+        # connector ASYNCIO LOOP thread. Doing the blocking durable record_halt SQL write
+        # there stalls every stream sharing the loop (Pitfall 9). The loop-thread callback
+        # (_request_connector_halt) only SETS this flag; the ENGINE thread drains it via
+        # _maybe_halt_after_connector_fatal and runs the blocking halt() (durable write +
+        # status flip + CRITICAL alert), winner-only. Mirrors the pause/resume flag pattern.
+        self._pending_connector_halt = threading.Event()
+        self._pending_connector_halt_reason: Optional[str] = None
+        # D-14 (V17-11): pause-window protective-order replay queue. While submission
+        # is paused/halted, system-generated PROTECTIVE orders (bracket children,
+        # OCO/orphan cancels — a just-filled entry's stop/take-profit) are DEFERRED here
+        # instead of being blanket-dropped, and REPLAYED through _dispatch_live on
+        # resume so the position is never left naked. Bounded engine-internal state — NOT
+        # a new EventType. Fresh ENTRY orders are still suppressed (never deferred), and a
+        # CANCEL command is dispatched immediately (a cancel only reduces risk).
+        self._deferred_protective: "deque[Any]" = deque(
+            maxlen=_DEFERRED_PROTECTIVE_REPLAY_MAX)
         
         # Threading control
         self._running = False
@@ -463,10 +491,26 @@ class LiveTradingSystem:
             # (engine thread) — NOT a full two-sided reconcile (WR-04, see below).
             # The pause/resume callbacks fire from the connector loop thread, so they
             # only flip thread-safe flags — no blocking venue I/O there (Pitfall 9).
-            self._okx_exchange.set_halt_signal(self.halt)
+            #
+            # 05.3-08 (D-21 / WR-02): the halt signal is _request_connector_halt (a
+            # thread-safe FLAG setter), NOT halt() directly. halt() does a BLOCKING durable
+            # record_halt SQL write; running it inline on the connector asyncio loop would
+            # stall every stream sharing the loop (Pitfall 9). The engine thread drains the
+            # flag via _maybe_halt_after_connector_fatal and runs the blocking halt off the
+            # loop (winner-only, D-10 latch, V7 scrub preserved). Mirrors the pause/resume
+            # flag handoff above.
+            self._okx_exchange.set_halt_signal(self._request_connector_halt)
             self._okx_exchange.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
-            self._okx_data_provider.set_halt_signal(self.halt)
+            # 05.3-11 (D-26 / WR-02): arm the CONNECTOR's halt signal too. Without this
+            # OkxConnector._on_task_done's `if self._halt_signal is not None:` guard is
+            # always False, so a task dying OUTSIDE the exchange/provider stream supervisors
+            # (a supervisor bug, or any coroutine not itself wrapped) would log-and-vanish
+            # with no halt. Same flag-only callback the exchange/provider arms pass
+            # (_request_connector_halt) — fail-safe: an unexpected dead task escalates to
+            # an engine halt, never silently.
+            self._okx_connector.set_halt_signal(self._request_connector_halt)
+            self._okx_data_provider.set_halt_signal(self._request_connector_halt)
             self._okx_data_provider.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
 
@@ -807,7 +851,14 @@ class LiveTradingSystem:
             'untouched', reason)
 
     def resume_submission(self) -> None:
-        """Clear the reversible pause after reconnect + a fresh REST snapshot (D-19)."""
+        """Clear the reversible pause after reconnect + a fresh REST snapshot (D-19).
+
+        D-14: once the pause flag is cleared, DRAIN the protective-order replay queue —
+        each deferred protective order (bracket child / OCO / orphan cancel) is
+        re-dispatched through ``_dispatch_live``. The pause flag is cleared FIRST
+        (below), so the re-dispatch proceeds to ``_dispatch`` and is NOT re-suppressed
+        (Assumption A4 — the drain runs after the flag clears).
+        """
         with self._status_lock:
             if not self._submission_paused:
                 return
@@ -816,6 +867,27 @@ class LiveTradingSystem:
         self.logger.info(
             'Order submission resumed — venue stream reconnected + fresh REST '
             'balance/position snapshot complete')
+        # D-14: replay the protective orders deferred during the pause window.
+        self._replay_deferred_protective()
+
+    def _replay_deferred_protective(self) -> None:
+        """Replay pause-deferred protective orders through the live gate on resume (D-14).
+
+        Snapshots the replay queue into a local batch and CLEARS it before re-dispatching,
+        so a re-dispatch that finds the engine HALTED (and re-defers) appends to the now-empty
+        queue rather than spinning this drain forever. Each protective order is re-dispatched
+        through ``_dispatch_live``; with the pause flag already cleared it passes the gate to
+        ``_dispatch`` (Assumption A4). Bracket children / OCO cancels reach the venue so the
+        just-filled position is no longer left naked.
+        """
+        if not self._deferred_protective:
+            return
+        batch = list(self._deferred_protective)
+        self._deferred_protective.clear()
+        self.logger.info(
+            'Replaying %d deferred protective order(s) on resume (D-14)', len(batch))
+        for deferred in batch:
+            self._dispatch_live(deferred)
 
     def _on_venue_stream_down(self, stream_name: str) -> None:
         """Connector-loop callback (D-19): pause NEW submission on a sustained disconnect.
@@ -863,29 +935,136 @@ class LiveTradingSystem:
         if not self._is_submission_paused():
             return
         try:
+            # D-25 (WR-01): re-fetch fills that settled while the fill stream was down,
+            # BEFORE the fresh REST snapshot — so the snapshot's balance/position picture
+            # already reflects the recovered trade. Engine thread here (safe to block; the
+            # bounded fetch_my_trades page bridges through the connector). Each trade routes
+            # through _handle_trade and is deduped by the D-08 {symbol}:{trade_id} guard, so
+            # a later reconcile never double-settles it. Guard-claused on _okx_exchange
+            # (mirrors the _venue_account guard); a catch-up failure is caught by the same
+            # except below (stay paused, never resume blind). NOTE: no distinct attempt==1
+            # live-path call site exists — every reconnect funnels through _mark_stream_down
+            # → on_stream_up → _pending_stream_resume → this drain (see okx.py supervisor).
+            if self._okx_exchange is not None:
+                self._okx_exchange.catch_up_missed_fills()
             if self._venue_account is not None:
                 # WR-04: fresh REST balance/position snapshot before resuming (engine
                 # thread — safe to block); NOT a full two-sided reconcile (see docstring).
                 self._venue_account.snapshot()
         except Exception as e:
             self.logger.error(
-                'Resume REST snapshot failed — staying paused: %s', e)
+                'Resume missed-fill catch-up / REST snapshot failed — staying paused: %s', e)
             self._pending_stream_resume.set()  # retry on the next engine iteration
             return
+        # D-28 (WR-03): resume NEW submission ONLY when EVERY wired venue stream arm
+        # is healthy. A single arm's reconnect (candle stream up while the fill stream
+        # is still down, OR the exchange's own orders-stream up while its fills-stream
+        # is still down) previously resumed submission while the engine was still blind
+        # to fills. Leave the pause in place — do NOT re-set _pending_stream_resume: the
+        # still-down arm's next up-event re-fires it, so there is no engine-thread spin.
+        # (The D-25 catch-up + snapshot above ran regardless — recovering fills while
+        # staying paused is correct.)
+        if not self._all_venue_streams_healthy():
+            self.logger.info(
+                'Reconnect handled but venue streams not all healthy — staying paused '
+                '(resume gated until every wired arm reports up, D-28/WR-03)')
+            return
         self.resume_submission()
+
+    def _all_venue_streams_healthy(self) -> bool:
+        """True unless a WIRED venue arm reports its stream set down (D-28 / WR-03).
+
+        The compound resume gate: resume NEW submission only when EVERY wired arm —
+        the exchange arm (fills+orders) AND the data-provider arm (candles) — reports
+        its own ``_streams_down`` empty. Each arm OWNS its health state; the engine only
+        READS a public per-arm predicate, adding NO engine-side aggregate stream set and
+        NO namespaced stream names. A None (unwired) arm never blocks (absent ⇒ healthy),
+        so non-OKX runs resume unconditionally.
+        """
+        if (self._okx_exchange is not None
+                and not self._okx_exchange.is_streaming_healthy()):
+            return False
+        if (self._okx_data_provider is not None
+                and not self._okx_data_provider.is_streaming_healthy()):
+            return False
+        return True
+
+    def _request_connector_halt(self, reason: str) -> None:
+        """Connector-loop callback (D-21/WR-02): REQUEST an engine-thread durable halt.
+
+        Injected as the OKX stream arms' halt signal (``set_halt_signal``). Fired from the
+        connector ASYNCIO LOOP thread on a fatal connector error / exhausted retry ceiling /
+        the unclassified catch-all. It ONLY flips a thread-safe flag — it must NOT drive the
+        blocking ``halt()`` here (its durable ``record_halt`` SQL write would stall every
+        stream sharing the loop, Pitfall 9). The engine loop drains the flag via
+        ``_maybe_halt_after_connector_fatal`` and runs the blocking halt off the loop.
+        Mirrors ``_on_venue_stream_up`` (the reconnect-resume flag handoff).
+
+        Parameters
+        ----------
+        reason : str
+            Machine-readable halt reason (the arms pass the fixed ``'connector-fatal'``).
+        """
+        self._pending_connector_halt_reason = reason
+        self._pending_connector_halt.set()
+
+    def _maybe_halt_after_connector_fatal(self) -> None:
+        """Engine-thread durable halt after a connector-fatal escalation (D-21/WR-02).
+
+        Runs on the engine (queue-draining) thread. When the connector-loop escalation has
+        flagged a fatal, this drains the flag and runs the blocking ``halt()`` HERE — the
+        durable ``record_halt`` write + status flip + CRITICAL alert all off the connector
+        asyncio loop (Pitfall 9). ``halt()`` is winner-only/idempotent, so two flagged
+        escalations (e.g. both stream arms fail) still write the durable record exactly once
+        (D-10 latch ordering preserved). The V7 secret scrub is preserved end-to-end — only
+        the fixed ``'connector-fatal'`` reason literal crosses the handoff, never ``str(exc)``.
+        Mirrors ``_maybe_resume_after_reconnect`` (the reconnect-resume drain).
+        """
+        if not self._pending_connector_halt.is_set():
+            return
+        self._pending_connector_halt.clear()
+        reason = self._pending_connector_halt_reason or 'connector-fatal'
+        self._pending_connector_halt_reason = None
+        self.halt(reason)
 
     def _dispatch_live(self, event) -> None:
         """Dispatch one event through the live halt/pause gate (D-02/D-19).
 
         The freeze-in-place gate: while HALTED (terminal) OR paused-on-disconnect
-        (reversible), NEW order submission (the SIGNAL and ORDER routes) is SUPPRESSED,
-        while BAR/FILL/ERROR streaming + reconciling + persisting continue to drain
-        normally (so the venue stays mirrored and the halt itself — a CRITICAL
-        ErrorEvent — is still consumed). Otherwise → a transparent pass-through.
+        (reversible), NEW order submission (the SIGNAL and ORDER routes) is gated, while
+        BAR/FILL/ERROR streaming + reconciling + persisting continue to drain normally
+        (so the venue stays mirrored and the halt itself — a CRITICAL ErrorEvent — is
+        still consumed). Otherwise → a transparent pass-through.
+
+        D-14 (V17-11): the gate no longer blanket-suppresses SIGNAL+ORDER. It branches by
+        order KIND so risk-REDUCING commands are not silently dropped during the pause:
+        (a) a CANCEL command ALWAYS passes through (a cancel only reduces risk);
+        (b) a system-generated PROTECTIVE order (a bracket child — ``parent_order_id`` set)
+            is DEFERRED onto the replay queue and replayed on resume (never left naked);
+        (c) a fresh ENTRY order (NEW, no parent) and any SIGNAL stay SUPPRESSED — opening
+            new risk while blind to the venue is exactly what the pause exists to prevent.
         """
         if (self._is_halted() or self._is_submission_paused()) and getattr(
                 event, 'type', None) in (EventType.SIGNAL, EventType.ORDER):
             event_type = getattr(getattr(event, 'type', None), 'name', 'UNKNOWN')
+            command = getattr(event, 'command', None)
+            parent = getattr(event, 'parent_order_id', None)
+            # (a) CANCEL always passes — a cancel only reduces risk (D-14).
+            if command is OrderCommand.CANCEL:
+                self.logger.info(
+                    'CANCEL dispatched during pause/halt (D-14) — cancels always pass the '
+                    'gate (risk-reducing)', event_type=event_type)
+                self.event_handler._dispatch(event)
+                return
+            # (b) a PROTECTIVE order (bracket child — parent set) is deferred for replay
+            # on resume, not dropped (D-14) — the just-filled position stays protected.
+            if getattr(event, 'type', None) is EventType.ORDER and parent is not None:
+                self._deferred_protective.append(event)
+                self.logger.warning(
+                    'Protective order deferred during pause/halt (D-14) — replays on resume',
+                    event_type=event_type)
+                return
+            # (c) fresh ENTRY order + SIGNAL stay suppressed (don't open new risk blind).
             self.logger.warning(
                 'New order submission suppressed (freeze-in-place / paused-on-disconnect)',
                 event_type=event_type)
@@ -1242,10 +1421,19 @@ class LiveTradingSystem:
                     # the blocking snapshot runs on this thread (Pitfall 9).
                     self._maybe_resume_after_reconnect()
 
+                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal escalation on
+                    # the ENGINE thread — the blocking durable record_halt write runs here,
+                    # never on the connector asyncio loop (Pitfall 9). Flag-only on the loop.
+                    self._maybe_halt_after_connector_fatal()
+
                 except queue.Empty:
                     # 05-08 (D-19): drain a pending resume even when the queue is idle —
                     # a reconnect during a quiet spell must still resume submission.
                     self._maybe_resume_after_reconnect()
+
+                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal even when the
+                    # queue is idle — a fatal during a quiet spell must still halt (off-loop).
+                    self._maybe_halt_after_connector_fatal()
 
                     # No events in queue, check if we've been idle too long
                     current_time = datetime.now(UTC)
@@ -1279,6 +1467,43 @@ class LiveTradingSystem:
         self._update_status(SystemStatus.STARTING)
         
         try:
+            # 05.3-08 (D-20 / WR-01): the DURABLE halt refusal gate runs FIRST — right
+            # after STARTING and BEFORE any session init / OKX connect / feed warmup /
+            # stream spawn / VenueAccount.snapshot() / VenueReconciler.reconcile(). A
+            # supervised auto-restart builds a FRESH engine whose in-process _status is
+            # STOPPED, so the in-process _is_halted() check further below would silently
+            # clear a breaker halt whose cause is not re-detectable at start(). Refuse
+            # RUNNING while an unresolved durable record exists (runs for EVERY venue,
+            # outside the OKX branch) and RE-LATCH this fresh instance in-process from the
+            # persisted reason via _update_status (NOT halt() — halt() would write a SECOND
+            # durable record) so get_status() reflects it and reset_halt() can clear both
+            # the in-process and durable latches. Placed at the TOP so a durably-HALTED
+            # engine stays INERT: zero venue I/O, no state-mutating reconcile, no second
+            # durable record (WR-01 — the old late position ran the whole OKX handshake +
+            # reconcile before refusing). The `not self._is_halted()` conjunct is KEPT (a
+            # reconcile/guard halt raised DURING this run is handled by the D-05 check
+            # below, no double-refuse); guarded on the store being present (in-memory
+            # fallback -> skip). Sits before the D-17 error-policy bind so a refused start
+            # does not even install the live handler policy.
+            if (self._halt_record_store is not None
+                    and not self._is_halted()
+                    and self._halt_record_store.has_unresolved()):
+                durable_record = self._halt_record_store.get_unresolved()
+                durable_reason = (
+                    durable_record.reason if durable_record is not None
+                    else 'durable-halt')
+                self.logger.error(
+                    'start() refused RUNNING: an unresolved DURABLE halt record latches '
+                    'across the restart (reason=%s) — a supervised auto-restart cannot '
+                    'silently clear a breaker halt (T-05.2-17); resolve the cause then '
+                    'call reset_halt()', durable_reason)
+                self._update_status(
+                    SystemStatus.HALTED,
+                    error_msg=f'durable halt latched on restart: {durable_reason}',
+                    halt_reason=durable_reason)
+                self._running = False
+                return False
+
             # D-17 (error-policy split, WR-04): install the live publish-and-continue
             # policy HERE — on the daemon/live path ONLY. A live session can't abort on
             # one handler error (it must emit an ErrorEvent and keep draining, RES-01
@@ -1334,31 +1559,48 @@ class LiveTradingSystem:
             # (the only venue with a VenueAccount); lazy inside the okx branch, so
             # no inertness impact. The venue owns balance/positions in live — the
             # engine caches, it does not recompute (Pitfall 10, D-14).
+            # 05.3-09 (D-23): UNGATE the durable PORTFOLIO-ledger rehydrate from the
+            # OKX arm — it runs whenever the store exposes rehydrate() (the durable
+            # Postgres spine present), REGARDLESS of exchange, so a durable
+            # paper/simulated engine restores its persisted cash + realized-PnL on
+            # restart instead of coming up with construction-time initial cash. It is
+            # sequenced FIRST (before the okx block's snapshot()/link/reconcile) so a
+            # paper/simulated account restores while its portfolio still holds the
+            # SimulatedAccount — before any VenueAccount swap (whose restore_cash is a
+            # no-op, which is why link-before-rehydrate left the SimulatedAccount
+            # restore dead on the paper path). Semantics = RESTORE not reconcile: the
+            # SimulatedAccount ledger is sole truth and the restored (cash, positions)
+            # pair's consistency is guaranteed by D-19's atomic fill-path write; the
+            # venue reconcile/snapshot below is NOT invoked on the paper path. Guarded
+            # on the store exposing rehydrate() (the CachedSql live store; not the
+            # in-memory fallback) so an unconfigured ITRADER_DATABASE_* env degrades
+            # cleanly; rehydrate() is additionally per-portfolio getattr-guarded (the
+            # in-memory backtest backend is a clean skip → oracle-dark).
+            # D-22 (WR-05): pass the order-mirror seed sink so the SAME single
+            # transactions.venue_trade_id history pass restart-seeds the
+            # ReconcileManager dedup ring SYMMETRICALLY with the portfolio ledger's
+            # _settled_venue_trade_ids — a re-delivered pre-restart trade cannot
+            # double-settle on EITHER arm.
+            if hasattr(self._order_storage, 'rehydrate'):
+                self.portfolio_handler.rehydrate(
+                    self.order_handler.order_manager.seed_applied_trades)
+
             if self.exchange == 'okx' and self._venue_account is not None:
                 self._venue_account.snapshot()
                 self._venue_account.start_streaming()
                 self._link_venue_account_to_portfolios()
 
                 # 05-07 (RECON-05, D-03/D-05): two-sided restart reconcile on the
-                # ENGINE thread BEFORE RUNNING. Rehydrate the working set from the
-                # store (INTENT truth), reconcile against the venue REST snapshot,
+                # ENGINE thread BEFORE RUNNING. The working set was rehydrated from the
+                # store (INTENT truth) above; reconcile against the venue REST snapshot,
                 # adopt in-band deltas as reconciling FillEvents (idempotent fill
                 # path), halt on unexplained venue positions, and re-link brackets.
                 # Lazy-imported inside the OKX arm so the backtest import path stays
-                # SQL/async/connector-free (inertness gate). Guarded on the store
-                # exposing rehydrate() (the CachedSql live store; not the in-memory
-                # fallback) so an unconfigured ITRADER_DATABASE_* env degrades cleanly.
+                # SQL/async/connector-free (inertness gate). Stays okx-only (the venue
+                # reconcile never runs on the paper/simulated path — D-23 RESTORE-only)
+                # and guarded on the store exposing rehydrate() so an unconfigured
+                # ITRADER_DATABASE_* env degrades cleanly.
                 if hasattr(self._order_storage, 'rehydrate'):
-                    # 05.2-05 (D-07/D-08): restore the durable PORTFOLIO ledger
-                    # (open positions + persisted cash into the live managers) and
-                    # seed the settled-trade dedup ledger from durable transactions
-                    # BEFORE reconcile — so venue adoption diffs against RESTORED
-                    # engine state and a re-delivered downtime trade is a no-op.
-                    # rehydrate() is internally getattr-guarded per portfolio (the
-                    # in-memory backtest backend is a clean skip), so it is safe here
-                    # under the same durable-store gate as the order rehydrate.
-                    self.portfolio_handler.rehydrate()
-
                     from itrader.portfolio_handler.reconcile.venue_reconciler import (
                         VenueReconciler,
                     )
@@ -1382,35 +1624,12 @@ class LiveTradingSystem:
                 # fresh session (engine flat, venue flat) it is a benign no-op.
                 self._run_session_baseline_guard()
 
-            # 05.2-06 (D-10 / ARCH-4 Layer 2): a DURABLE halt record latches across a
-            # process restart. A supervised auto-restart builds a FRESH engine whose
-            # in-process _status is STOPPED, so the in-process _is_halted() check below
-            # would silently clear a breaker halt whose cause is not re-detectable at
-            # start(). Refuse RUNNING while an unresolved durable record exists (runs for
-            # EVERY venue, outside the OKX branch) and RE-LATCH this fresh instance
-            # in-process from the persisted reason via _update_status (NOT halt() — halt()
-            # would write a SECOND durable record) so get_status() reflects it and
-            # reset_halt() can clear both the in-process and durable latches. Only re-latch
-            # when not already HALTED (a reconcile/guard halt above is handled by the D-05
-            # check below); guarded on the store being present (in-memory fallback -> skip).
-            if (self._halt_record_store is not None
-                    and not self._is_halted()
-                    and self._halt_record_store.has_unresolved()):
-                durable_record = self._halt_record_store.get_unresolved()
-                durable_reason = (
-                    durable_record.reason if durable_record is not None
-                    else 'durable-halt')
-                self.logger.error(
-                    'start() refused RUNNING: an unresolved DURABLE halt record latches '
-                    'across the restart (reason=%s) — a supervised auto-restart cannot '
-                    'silently clear a breaker halt (T-05.2-17); resolve the cause then '
-                    'call reset_halt()', durable_reason)
-                self._update_status(
-                    SystemStatus.HALTED,
-                    error_msg=f'durable halt latched on restart: {durable_reason}',
-                    halt_reason=durable_reason)
-                self._running = False
-                return False
+            # 05.3-08 (D-20 / WR-01): the DURABLE halt refusal gate that used to sit HERE
+            # (after the full OKX handshake + reconcile) was moved to the TOP of start()
+            # so a durably-HALTED engine refuses INERT — zero venue I/O, no state-mutating
+            # reconcile, no second durable record. Only the D-05 in-process check below
+            # remains at this position, to latch a halt raised DURING this run's
+            # reconcile/baseline guard.
 
             # D-05 (V17-03): a reconcile/guard halt during session init must LATCH.
             # The VenueReconciler.reconcile() above (or the baseline guard) may have
@@ -1600,12 +1819,24 @@ class LiveTradingSystem:
     def add_event(self, event):
         """
         Add an event to the global queue for processing.
-        
+
+        D-18 (V17-16, HIGH — ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
+        surface. A raw ``OrderEvent`` here would reach the execution queue with NO validation,
+        sizing, cash reservation or order-mirror engagement — an external caller could inject
+        an arbitrary order that bypasses every admission control (elevation-of-privilege /
+        input-validation defect). Raw ``EventType.ORDER`` injection is therefore REFUSED.
+
+        The sanctioned external-order path is SIGNAL-form entry: submit a ``SignalEvent`` (or
+        call the order domain directly), which routes through ``OrderHandler.on_signal`` ->
+        ``AdmissionManager`` so validation + sizing + reservation + mirror engage before any
+        ``OrderEvent`` is emitted. The internal order flow is UNAFFECTED — handlers emit
+        ``OrderEvent``s by putting them on ``global_queue`` directly, never through ``add_event``.
+
         Parameters
         ----------
         event
             The event to add to the queue
-        
+
         Returns
         -------
         bool
@@ -1614,7 +1845,16 @@ class LiveTradingSystem:
         if not self._running:
             self.logger.warning('Cannot add event: Live trading system is not running')
             return False
-        
+
+        # D-18: reject raw ORDER injection. Only ORDER events are blocked (a narrow gate);
+        # every non-ORDER event (the sanctioned SIGNAL-form entry included) enqueues normally.
+        if getattr(event, 'type', None) is EventType.ORDER:
+            self.logger.warning(
+                'Rejected raw ORDER injection via add_event (D-18/V17-16) — external orders '
+                'must route through the admission pipeline (signal-form entry), not the '
+                'live queue directly')
+            return False
+
         try:
             self.global_queue.put(event)
             return True

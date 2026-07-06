@@ -374,14 +374,35 @@ Plans:
 
 ### Phase 05.3: Live-Path Remediation — Wave 3 (Resilience Hardening) (INSERTED)
 
-**Goal:** Resilience hardening: stream-death catch-all + supervised account/position streams, missed-fill catch-up on resume, submit-timeout in-flight semantics, defer protective orders during pause, drop overlay on ack, loop-native gap backfill, external-order admission + preflight, and the 05-13 carry-overs. Fixes V17-07/08/09/11/13/15/16 + 05-13 (CONTEXT D-11..D-18).
-**Requirements**: Scope defined by CONTEXT.md decisions D-11..D-18.
-**Depends on:** Phase 05.2 (D-15 drop-overlay needs the D-06 ORDER-ACK trigger; D-12 catch-up + D-16 mark-seen are only safe once D-08 dedup lands)
-**Plans:** 0 plans (run /gsd:plan-phase 05.3 to break down, AFTER 05.2)
+**Goal:** Resilience hardening for the live OKX path: stream-death catch-all + supervised account/position streams, missed-fill catch-up on resume, submit-timeout in-flight semantics, defer protective orders during pause, drop overlay on ack, loop-native gap backfill, external-order admission + preflight, and the 05-13 carry-overs — PLUS the four 05.2-review durability warnings (atomic fill-path persist, early durable-halt refusal, off-loop halt write, restart-seeded reconcile dedup ring) and the SimulatedAccount restart-restore ungate. Fixes V17-07/08/09/11/13/15/16 + 05-13 + WR-01/02/04/05 (CONTEXT D-11..D-23).
+**Requirements**: Scope defined by CONTEXT.md decisions D-11..D-27 (no formal REQ/V17 IDs mapped; each D-NN is the trackable requirement, cited in each plan's must_haves/truths). D-24..D-27 are the gap-remediation decisions closing the 3 confirmed verification gaps (D-11/WR-02, D-12/WR-01, D-15/CR-01).
+**Depends on:** Phase 05.2 (D-15 drop-overlay needs the D-06 ORDER-ACK trigger; D-12 catch-up + D-16 mark-seen safe once D-08 dedup lands; D-19..D-22 build on the 05.2 durable SQL ledger + HaltRecordStore + VenueCorrelationIndex; D-23's scalar-restore relies on D-19's atomic write)
+**Plans:** 12 plans in 8 waves
 
 Plans:
 
-- [ ] TBD (run /gsd:plan-phase 05.3 to break down)
+- [x] 05.3-01-PLAN.md — D-11 stream supervisor catch-all + supervised venue streams (turn A6 spine GREEN) [wave 1]
+- [x] 05.3-07-PLAN.md — D-19 atomic fill-path persist + D-22 restart-seeded reconcile dedup ring (durable restart integrity) [wave 1]
+- [x] 05.3-02-PLAN.md — D-13 submit-timeout in-flight (turn A7 GREEN) + D-12 missed-fill catch-up on resume [wave 2]
+- [x] 05.3-04-PLAN.md — D-15 drop buying-power overlay on venue ack [wave 2]
+- [x] 05.3-03-PLAN.md — D-16 05-13 correlation carry-overs (mark-seen-after, release_pending, capacity guard, bounded buffer) [wave 3]
+- [x] 05.3-05-PLAN.md — D-17 loop-native gap backfill (kill the 30s stall -> livelock) [wave 3]
+- [x] 05.3-06-PLAN.md — D-18 external-order admission + preflight (HIGH threat) + D-14 defer protective orders during pause (turn A8 GREEN) [wave 4]
+- [x] 05.3-08-PLAN.md — D-20 early durable-halt refusal + D-21 off-loop halt write [wave 5]
+- [x] 05.3-09-PLAN.md — D-23 ungate rehydrate -> SimulatedAccount restart cash/realized-PnL restore [wave 6]
+
+**Wave 7** *(gap remediation — closes the 3 confirmed verification gaps; blocked on Wave 1-6 completion)*
+
+- [x] 05.3-10-PLAN.md — D-24 gate `drop_pending` no-op on the single-channel spot leaf (close CR-01 buying-power over-statement) + D-27 spot-premise regression test [wave 7]
+- [x] 05.3-11-PLAN.md — D-25 wire orphaned `catch_up_missed_fills` into resume drain + D-26 arm `_okx_connector.set_halt_signal` at composition root + D-27 resume-recovery / start()-arm wiring tests [wave 7]
+
+**Wave 8** *(residual code-review warnings — WR-03 + WR-05; WR-04 deferred)*
+
+- [x] 05.3-12-PLAN.md — D-28 gate resume on all venue streams healthy (per-arm `is_streaming_healthy()` + compound gate, no engine aggregation) + D-29 loop-native backfill fail-loud on non-contiguous page + `_replaying_backfill` re-entrancy guard + D-27 resume-gate / backfill-contiguity tests [wave 8]
+
+**Cross-cutting constraints:**
+
+- SMA_MACD backtest oracle stays byte-exact (134 / 46189.87730727451) — live-path-only
 
 ### Phase 6: Dynamic Universe Membership
 

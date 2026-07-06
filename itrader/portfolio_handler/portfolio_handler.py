@@ -10,7 +10,7 @@ from queue import Queue
 from collections import OrderedDict
 from datetime import datetime, UTC
 from decimal import Decimal
-from typing import Dict, Optional, Any, List, Generator, Union, Callable
+from typing import Dict, Iterable, Optional, Any, List, Generator, Union, Callable
 from contextlib import contextmanager
 
 from .portfolio import Portfolio
@@ -346,6 +346,20 @@ class PortfolioHandler:
         Account-level ``release(order_id)``.
         """
         self.get_portfolio(portfolio_id).account.release(order_id)
+
+    def drop_pending(self, portfolio_id: PortfolioId, order_id: OrderId) -> None:
+        """Drop the local pending overlay on the venue ORDER-ACK (D-15, V17-13).
+
+        Getattr-guarded delegate: only ``VenueAccount`` carries a local pending
+        overlay to drop, so this resolves ``account.drop_pending`` dynamically and
+        skips cleanly when absent (paper/simulated accounts have no such method —
+        oracle-dark, the byte-exact backtest never takes this branch). Mirrors the
+        ``save_account_state`` getattr-skip idiom. NON-terminal: the account drop
+        pops only the admission overlay, never the settled ledger.
+        """
+        fn = getattr(self.get_portfolio(portfolio_id).account, "drop_pending", None)
+        if fn is not None:
+            fn(order_id)
 
     def exchange_for(self, portfolio_id: PortfolioId) -> str:
         """Return the exchange the portfolio trades on (admission metadata, OQ1)."""
@@ -900,7 +914,10 @@ class PortfolioHandler:
             updated_time=updated_time,
         )
 
-    def rehydrate(self) -> None:
+    def rehydrate(
+        self,
+        applied_trade_sink: Optional[Callable[[Iterable[str]], None]] = None,
+    ) -> None:
         """Restore live portfolio state + the durable dedup ledger on restart (D-07/D-08).
 
         The cross-restart arm the in-session A5 guard (Plan 03) does NOT cover: on a live
@@ -919,10 +936,27 @@ class PortfolioHandler:
            ``_mark_venue_trade_settled``. A re-delivered ``(ticker, venue_trade_id)`` is
            then a no-op at the ``on_fill`` guard.
 
+        3. **Restart-seeds the ORDER-mirror dedup ring symmetrically (D-22 / WR-05)**
+           when an ``applied_trade_sink`` is supplied. The order-mirror
+           ``ReconcileManager._applied_trade_keys`` also starts EMPTY on a restart, so
+           the SAME ``f"{ticker}:{venue_trade_id}"`` keys collected for the portfolio
+           arm are forwarded ONCE (single history pass, Pitfall 8 — ReconcileManager
+           has no durable transaction store of its own) into the sink
+           (``OrderManager.seed_applied_trades``). Both dedup arms then survive a
+           restart symmetrically. The composition root wires the sink; the in-memory
+           backtest path passes ``None`` (oracle-dark).
+
         Sequencing (composition-root, Plan 05): this MUST run BEFORE
         ``VenueReconciler.reconcile()`` so adoption diffs against restored state and the
         dedup ledger already knows every already-settled venue trade.
+
+        Args:
+            applied_trade_sink: Optional seed hook (``OrderManager.seed_applied_trades``)
+                driven with the durable ``f"{ticker}:{venue_trade_id}"`` history so the
+                order-mirror dedup ring is restart-seeded symmetrically (D-22). ``None``
+                keeps the portfolio-arm-only behaviour (backtest / no order domain).
         """
+        seeded_keys: List[str] = []
         for portfolio in self.get_active_portfolios():
             storage = portfolio.state_storage
             rehydrate_fn = getattr(storage, "rehydrate", None)
@@ -951,7 +985,16 @@ class PortfolioHandler:
                 venue_trade_id = getattr(transaction, "venue_trade_id", None)
                 if venue_trade_id is None:
                     continue
-                self._mark_venue_trade_settled(f"{transaction.ticker}:{venue_trade_id}")
+                dedup_key = f"{transaction.ticker}:{venue_trade_id}"
+                self._mark_venue_trade_settled(dedup_key)
+                # D-22: collect the SAME key for the order-mirror ring seed so both
+                # dedup arms read from ONE history pass (no second divergent read).
+                seeded_keys.append(dedup_key)
+        # D-22 (WR-05): restart-seed the order-mirror dedup ring symmetrically with
+        # the portfolio ledger — one history pass feeds both arms. Skipped when no
+        # sink is wired (backtest / no order domain — oracle-dark).
+        if applied_trade_sink is not None and seeded_keys:
+            applied_trade_sink(seeded_keys)
 
     # Fill event processing
     def on_fill(self, fill_event: FillEvent) -> None:
@@ -1046,25 +1089,42 @@ class PortfolioHandler:
                     fee_currency=getattr(fill_event, "fee_currency", None),
                 )
 
-                portfolio.transact_shares(transaction)
+                # D-19 (WR-04): wrap the durable position upsert (driven by
+                # transact_shares -> set_position) AND the cash-scalar account-state
+                # upsert (_persist_account_state -> save_account_state) in ONE
+                # transaction so a crash between them can never leave the durable
+                # position one fill ahead of the durable cash (a torn restore, which
+                # is PERMANENT on the SimulatedAccount path — no venue heals it). The
+                # in-memory backtest backend exposes no fill_transaction, so this is a
+                # clean getattr-skip on the SMA_MACD path (oracle-dark — the two
+                # writes stay independent, but backtest never persists at all). LIVE
+                # ONLY.
+                fill_transaction = getattr(
+                    portfolio.state_storage, "fill_transaction", None)
+                if fill_transaction is not None:
+                    with fill_transaction():
+                        portfolio.transact_shares(transaction)
+                        # F/U-11 (05.2-05): write-through the account-state scalar on
+                        # the settlement path so the D-07 restore (rehydrate ->
+                        # load_account_state -> Account.restore_cash) has a persisted
+                        # balance to read on restart — now atomic with the position.
+                        self._persist_account_state(portfolio, fill_event.time)
+                else:
+                    portfolio.transact_shares(transaction)
+                    self._persist_account_state(portfolio, fill_event.time)
 
-                # CR-01: record the venue trade id as settled ONLY after the
-                # transaction applied — a later re-delivery (stream re-send or the
-                # restart reconciler) of the SAME venue trade is then a no-op at
-                # the guard above. Recorded under the SAME f"{ticker}:{venue_trade_id}"
-                # key the guard reads (D-08 Layer 2 / V17-12 — symbol-scoped so the
-                # durable-ledger seed and the live mark share one key space). None-keyed
-                # backtest/simulated fills never record.
+                # CR-01: record the venue trade id as settled ONLY after the durable
+                # persist committed — a later re-delivery (stream re-send or the
+                # restart reconciler) of the SAME venue trade is then a no-op at the
+                # guard above. Placed AFTER the fill_transaction so a rolled-back
+                # atomic persist (D-19) does not record a dedup key for a fill that
+                # never durably landed. Recorded under the SAME
+                # f"{ticker}:{venue_trade_id}" key the guard reads (D-08 Layer 2 /
+                # V17-12 — symbol-scoped so the durable-ledger seed and the live mark
+                # share one key space). None-keyed backtest/simulated fills never
+                # record.
                 if dedup_key is not None:
                     self._mark_venue_trade_settled(dedup_key)
-
-                # F/U-11 (05.2-05): write-through the account-state scalar on the
-                # settlement path so the Plan-04 restore (rehydrate ->
-                # load_account_state -> Account.restore_cash) has a persisted cash
-                # balance to read on restart. The in-memory backtest backend has
-                # no save_account_state, so this is a clean getattr-skip
-                # (oracle-dark — the SMA_MACD run never persists). LIVE ONLY.
-                self._persist_account_state(portfolio, fill_event.time)
 
                 self.logger.debug(
                     "Fill event processed",

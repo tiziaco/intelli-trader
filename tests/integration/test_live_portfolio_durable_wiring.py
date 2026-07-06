@@ -98,9 +98,11 @@ def test_portfolio_rehydrate_runs_before_reconcile_on_live_start(monkeypatch) ->
         # per-portfolio getattr-guarded loop still executes, a no-op with no portfolios).
         original_rehydrate = system.portfolio_handler.rehydrate
 
-        def _spy_rehydrate() -> None:
+        def _spy_rehydrate(*args: Any, **kwargs: Any) -> None:
+            # D-22: start() now passes the order-mirror seed sink through to
+            # rehydrate — forward it so the real per-portfolio loop still runs.
             calls.append("rehydrate")
-            original_rehydrate()
+            original_rehydrate(*args, **kwargs)
 
         monkeypatch.setattr(system.portfolio_handler, "rehydrate", _spy_rehydrate)
 

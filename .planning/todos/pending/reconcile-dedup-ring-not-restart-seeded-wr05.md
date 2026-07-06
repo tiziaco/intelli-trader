@@ -3,7 +3,7 @@ status: deferred
 created: "2026-07-05"
 source: Phase 05.2 (v1.7) code review finding WR-05 — owner-deferred (tiziaco, 2026-07-05)
 tags: [live, dedup, restart, reconcile, order-mirror, D-08, idempotency, resilience, phase-05.3]
-resolves_phase: ""
+resolves_phase: "05.3"
 ---
 
 # `ReconcileManager` applied-trade dedup ring is not restart-seeded (WR-05)

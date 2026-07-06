@@ -3,7 +3,7 @@ status: deferred
 created: "2026-07-05"
 source: Phase 05.2 (v1.7) code review finding WR-02 — owner-deferred (tiziaco, 2026-07-05)
 tags: [live, halt, durable, threading, asyncio, pitfall-9, D-10, resilience, phase-05.3]
-resolves_phase: ""
+resolves_phase: "05.3"
 ---
 
 # `halt()`'s blocking `record_halt` SQL write runs on the connector asyncio loop thread (WR-02)
