@@ -1,6 +1,6 @@
 from datetime import timedelta
 from queue import Queue
-from typing import Any, cast
+from typing import Any, TYPE_CHECKING, cast
 
 from itrader.core.enums import OrderType
 from itrader.core.exceptions import ConfigurationError
@@ -15,6 +15,14 @@ from itrader.strategy_handler.storage import SignalStore
 from itrader.events_handler.events import BarEvent, SignalEvent
 from itrader.outils.time_parser import check_timeframe
 from itrader.logger import get_itrader_logger
+
+if TYPE_CHECKING:
+	# TYPE_CHECKING-guarded (D-01): StrategiesHandler is on the backtest hot
+	# path, so the live-only Universe seam is never imported at runtime on the
+	# backtest path — the readiness gate is a single `is None` short-circuit
+	# when no universe is wired. The annotation stays a string ("Universe |
+	# None") so no runtime import cost is added.
+	from itrader.universe.universe import Universe
 
 
 class StrategiesHandler(object):
@@ -70,9 +78,24 @@ class StrategiesHandler(object):
 		self.min_timeframe: timedelta | None = None
 		#self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
+		# WR-02 (D-01) live-only readiness seam: the injected dynamic universe,
+		# wired ONLY on the live path via set_universe. Defaults None so the
+		# backtest wires no universe → the calculate_signals readiness gate is a
+		# single `is None` short-circuit (oracle byte-exact, RESEARCH OQ8).
+		self._universe: "Universe | None" = None
 
 		self.logger = get_itrader_logger().bind(component="StrategiesHandler")
 		self.logger.info('Strategies Handler initialized')
+
+	def set_universe(self, universe: "Universe") -> None:
+		"""Wire the live dynamic universe for the WR-02 readiness gate (D-01).
+
+		Live-only seam (mirrors the inert-by-default pattern): the backtest
+		composition root never calls this, so ``self._universe`` stays ``None``
+		and the per-tick gate in ``calculate_signals`` short-circuits — the
+		SMA_MACD oracle path is untouched.
+		"""
+		self._universe = universe
 
 	def calculate_signals(self, event: BarEvent) -> None:
 		"""
@@ -138,6 +161,17 @@ class StrategiesHandler(object):
 				#     short-circuit: SMA_MACD's warmup==100 is now "all three handles
 				#     ready at >=100 bars" (HARD-04, the firing tick is preserved).
 				strategy.update(ticker, bar)
+				# WR-02 (D-01/D-03c) defensive membership readiness gate, composed
+				# BEFORE the indicator-warmth gate: warm the O(1) recurrence
+				# (strategy.update above already advanced it) but do NOT trade a
+				# symbol whose warmup backfill is still PENDING/FAILED. This is a
+				# single None-check + one O(1) is_ready read, NO allocation — the
+				# oracle hot path (RESEARCH OQ8). Default _universe is None →
+				# backtest short-circuits on `is None` → byte-exact. Kept AFTER
+				# strategy.update so a pending symbol still warms (D-03c: the
+				# recurrence must advance while pending).
+				if self._universe is not None and not self._universe.is_ready(ticker):
+					continue
 				if not strategy.is_ready(ticker):
 					continue
 				intent = strategy.generate_signal(ticker)
