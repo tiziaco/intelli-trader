@@ -155,6 +155,51 @@ def test_reentrancy_guard_blocks_nested_spawn_on_interior_hole() -> None:
     assert feed._replaying_backfill is False
 
 
+def test_tail_truncated_page_fails_loud_no_nested_spawn() -> None:
+    """A page truncated at the TAIL fails loud + spawns no nested backfill (CR-01).
+
+    Gap t = L+3tf → first_missing = L+tf, last_missing = L+2tf, since_ms = L+tf,
+    last_ms = L+2tf. The page returns only the contiguous PREFIX [L+tf] and OMITS the tail
+    L+2tf. Replay: ``update(L+tf)`` delivers in-sequence (L → L+tf), the loop ends with no
+    gap raised (nothing after the hole to trip the interior-hole guard). RED: current code
+    then ``_deliver(t=L+3tf)`` jumps L straight past the never-backfilled L+2tf — silent
+    data loss, no raise. GREEN: the post-loop interior-completeness assertion sees
+    last-delivered=L+tf != last_missing=L+2tf and raises a typed ``MalformedDataError`` so it
+    escalates through the supervised-backfill error path; spawn is called exactly once.
+    """
+    # Tail-truncated: return the contiguous prefix [L+tf] only, omit the tail L+2tf.
+    page = [_closed_bar(_START_MS + 1 * _TF_MS)]
+    provider = _SyncSpawnProvider(page)
+    feed, _q = _make_feed(provider)
+
+    with pytest.raises(MalformedDataError):
+        _drive_gap(feed, gap_multiple=3)
+
+    assert provider.spawn_calls == 1  # no nested/recursive backfill
+    # The guard clears after the failed replay (try/finally) — no leaked state.
+    assert feed._replaying_backfill is False
+
+
+def test_empty_page_fails_loud_no_nested_spawn() -> None:
+    """An EMPTY / no-in-range page fails loud + spawns no nested backfill (CR-01).
+
+    Gap t = L+3tf → first_missing = L+tf, last_missing = L+2tf. The venue page returns [] (no
+    in-range bars). RED: ``first_replayed`` stays False, no ``update()`` runs, current code
+    ``_deliver(t=L+3tf)`` jumps L across the whole never-backfilled interior — silent swallow,
+    no raise. GREEN: the post-loop assertion sees last-delivered=L (unchanged) != last_missing
+    and raises a typed ``MalformedDataError``; spawn is called exactly once.
+    """
+    page: list[dict[str, Any]] = []
+    provider = _SyncSpawnProvider(page)
+    feed, _q = _make_feed(provider)
+
+    with pytest.raises(MalformedDataError):
+        _drive_gap(feed, gap_multiple=3)
+
+    assert provider.spawn_calls == 1  # no nested/recursive backfill
+    assert feed._replaying_backfill is False
+
+
 def test_well_formed_page_unregressed() -> None:
     """A well-formed page (starts exactly at first_missing) still replays + delivers (D-29 Case B).
 
