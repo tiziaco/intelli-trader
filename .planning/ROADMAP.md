@@ -396,6 +396,10 @@ Plans:
 - [x] 05.3-10-PLAN.md — D-24 gate `drop_pending` no-op on the single-channel spot leaf (close CR-01 buying-power over-statement) + D-27 spot-premise regression test [wave 7]
 - [x] 05.3-11-PLAN.md — D-25 wire orphaned `catch_up_missed_fills` into resume drain + D-26 arm `_okx_connector.set_halt_signal` at composition root + D-27 resume-recovery / start()-arm wiring tests [wave 7]
 
+**Wave 8** *(residual code-review warnings — WR-03 + WR-05; WR-04 deferred)*
+
+- [ ] 05.3-12-PLAN.md — D-28 gate resume on all venue streams healthy (per-arm `is_streaming_healthy()` + compound gate, no engine aggregation) + D-29 loop-native backfill fail-loud on non-contiguous page + `_replaying_backfill` re-entrancy guard + D-27 resume-gate / backfill-contiguity tests [wave 8]
+
 **Cross-cutting constraints:**
 
 - SMA_MACD backtest oracle stays byte-exact (134 / 46189.87730727451) — live-path-only
