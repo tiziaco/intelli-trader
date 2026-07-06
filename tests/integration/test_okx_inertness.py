@@ -104,3 +104,56 @@ def test_backtest_path_imports_no_okx_stack() -> None:
         "inertness sentinel missing from probe stdout.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
+# The four Phase-7 control types whose consumers are wired LIVE-ONLY (Plan 07-07,
+# _initialize_live_session). On the backtest EventHandler they MUST stay explicit-empty
+# (the 3-step-flow inertness guarantee, RESEARCH OQ8).
+_PHASE7_INERT_ROUTES = (
+    "UNIVERSE_POLL",
+    "STRATEGY_COMMAND",
+    "BARS_LOADED",
+    "BARS_LOAD_FAILED",
+)
+
+
+def test_backtest_event_handler_phase7_routes_are_inert_empty() -> None:
+    """A freshly-built backtest EventHandler declares the four Phase-7 routes as empty lists.
+
+    The other half of the oracle-inertness contract (RESEARCH OQ8): beyond keeping the
+    live MODULES off the backtest import path (the subprocess probe above), the backtest
+    builds its OWN ``EventHandler`` whose ``_routes`` literal declares ``UNIVERSE_POLL`` /
+    ``STRATEGY_COMMAND`` / ``BARS_LOADED`` / ``BARS_LOAD_FAILED`` as EXPLICIT-EMPTY lists.
+    The live consumers (``on_poll`` / ``on_strategy_command`` / ``on_bars_loaded`` /
+    ``on_bars_load_failed``) are mutated onto a SEPARATE live EventHandler in
+    ``_initialize_live_session`` (Plan 07-07) — never this literal. A non-empty list here
+    would mean live routing leaked onto the backtest path (the T-07-07-ORACLE threat).
+
+    Built with ``MagicMock`` collaborators + a real ``Queue``: the ``_routes`` literal only
+    *references* handler attributes (e.g. ``self.strategies_handler.calculate_signals``); it
+    never calls them at construction, so mocks are sufficient and no backtest data is loaded.
+    """
+    import queue as _queue
+    from unittest.mock import MagicMock
+
+    from itrader.core.enums import EventType
+    from itrader.events_handler.full_event_handler import EventHandler
+
+    handler = EventHandler(
+        strategies_handler=MagicMock(),
+        screeners_handler=MagicMock(),
+        portfolio_handler=MagicMock(),
+        order_handler=MagicMock(),
+        execution_handler=MagicMock(),
+        bar_event_source=MagicMock(),
+        global_queue=_queue.Queue(),
+    )
+
+    for route_name in _PHASE7_INERT_ROUTES:
+        event_type = EventType[route_name]
+        assert handler.routes[event_type] == [], (
+            f"{route_name} must be an EXPLICIT-EMPTY route on the backtest EventHandler — "
+            "the live consumers are wired live-only in _initialize_live_session (Plan 07-07). "
+            "A non-empty list here means live routing leaked onto the backtest path "
+            "(T-07-07-ORACLE oracle-inertness violation)."
+        )
