@@ -205,3 +205,104 @@ def test_on_bars_loaded_skips_non_concerned_strategy() -> None:
 
     assert len(concerned.update_calls) == 3
     assert other.update_calls == []
+
+
+# --------------------------------------------------------------------------- #
+# Task 3 — on_strategy_command mutates tickers + emits UniversePollEvent.
+# --------------------------------------------------------------------------- #
+
+
+def _drain(queue: "Queue[Any]") -> list[Any]:
+    out: list[Any] = []
+    while not queue.empty():
+        out.append(queue.get_nowait())
+    return out
+
+
+def test_add_ticker_appends_and_emits_poll() -> None:
+    """add_ticker for a known strategy appends the symbol and emits one UniversePollEvent."""
+    handler = _handler()
+    spy = _SpyStrategy(["BTCUSDT"], name="s1")
+    handler.strategies.append(spy)
+
+    handler.on_strategy_command(
+        StrategyCommandEvent.add_ticker("s1", "ETHUSDT", time=_T0)
+    )
+
+    assert spy.tickers == ["BTCUSDT", "ETHUSDT"]
+    emitted = _drain(handler.global_queue)
+    assert len(emitted) == 1 and isinstance(emitted[0], UniversePollEvent)
+    assert emitted[0].time == _T0
+
+
+def test_add_ticker_idempotent() -> None:
+    """add_ticker of an already-present symbol does not duplicate; still emits once."""
+    handler = _handler()
+    spy = _SpyStrategy(["BTCUSDT"], name="s1")
+    handler.strategies.append(spy)
+
+    handler.on_strategy_command(
+        StrategyCommandEvent.add_ticker("s1", "BTCUSDT", time=_T0)
+    )
+
+    assert spy.tickers == ["BTCUSDT"]  # no duplicate
+    emitted = _drain(handler.global_queue)
+    assert len(emitted) == 1 and isinstance(emitted[0], UniversePollEvent)
+
+
+def test_remove_ticker_removes_and_emits_poll() -> None:
+    """remove_ticker removes the symbol and emits one UniversePollEvent."""
+    handler = _handler()
+    spy = _SpyStrategy(["BTCUSDT", "ETHUSDT"], name="s1")
+    handler.strategies.append(spy)
+
+    handler.on_strategy_command(
+        StrategyCommandEvent.remove_ticker("s1", "ETHUSDT", time=_T0)
+    )
+
+    assert spy.tickers == ["BTCUSDT"]
+    emitted = _drain(handler.global_queue)
+    assert len(emitted) == 1 and isinstance(emitted[0], UniversePollEvent)
+
+
+def test_remove_ticker_idempotent_absent() -> None:
+    """remove_ticker of an absent symbol (list stays non-empty) is a no-op mutation; emits once."""
+    handler = _handler()
+    spy = _SpyStrategy(["BTCUSDT", "ETHUSDT"], name="s1")
+    handler.strategies.append(spy)
+
+    handler.on_strategy_command(
+        StrategyCommandEvent.remove_ticker("s1", "XRPUSDT", time=_T0)
+    )
+
+    assert spy.tickers == ["BTCUSDT", "ETHUSDT"]  # unchanged
+    emitted = _drain(handler.global_queue)
+    assert len(emitted) == 1 and isinstance(emitted[0], UniversePollEvent)
+
+
+def test_remove_ticker_refuses_emptying() -> None:
+    """A remove that would empty .tickers is refused: list unchanged, no event (documented no-op)."""
+    handler = _handler()
+    spy = _SpyStrategy(["BTCUSDT"], name="s1")
+    handler.strategies.append(spy)
+
+    handler.on_strategy_command(
+        StrategyCommandEvent.remove_ticker("s1", "BTCUSDT", time=_T0)
+    )
+
+    assert spy.tickers == ["BTCUSDT"]  # invariant preserved (non-empty)
+    assert _drain(handler.global_queue) == []  # refused → no poll
+
+
+def test_unknown_strategy_name_is_noop() -> None:
+    """An unknown strategy_name mutates nothing and emits nothing."""
+    handler = _handler()
+    spy = _SpyStrategy(["BTCUSDT"], name="s1")
+    handler.strategies.append(spy)
+
+    handler.on_strategy_command(
+        StrategyCommandEvent.add_ticker("nope", "ETHUSDT", time=_T0)
+    )
+
+    assert spy.tickers == ["BTCUSDT"]
+    assert _drain(handler.global_queue) == []

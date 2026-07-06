@@ -388,6 +388,67 @@ class StrategiesHandler(object):
 				# Warmup only (D-03): drive the O(1) recurrence, emit NOTHING.
 				strategy.update(event.symbol, bar)
 
+	def on_strategy_command(self, event: StrategyCommandEvent) -> None:
+		"""Mutate a strategy's tickers then emit a UniversePollEvent follow-on (D-11).
+
+		The operator strategy-ticker seam (live-only, wired Plan 07). Locates the
+		strategy whose ``.name`` matches ``event.strategy_name`` and applies the
+		verb IDEMPOTENTLY to its plain ``list[str]`` tickers (per-symbol indicator
+		handles mint LAZILY on first ``update``, so appending a ticker needs no
+		re-warmup wiring):
+
+		- ``add_ticker`` appends ``event.symbol`` IF not already present.
+		- ``remove_ticker`` removes it IF present, EXCEPT a remove that would
+		  empty the list is REFUSED with a logged warning (the non-empty
+		  ``list[str]`` invariant, base.py — a strategy is never left with zero
+		  tickers); the refused command is a documented no-op (no re-select).
+
+		On an accepted command it then EMITS a follow-on ``UniversePollEvent`` on
+		``self.global_queue`` (D-11 — one selection path, two triggers; explicit
+		causal ordering: the ticker mutation happens-before the re-select). It
+		NEVER calls ``UniverseHandler`` or touches ``Universe`` (queue-only
+		cross-domain write — ``StrategiesHandler`` never sees ``UniverseHandler``).
+		An unknown ``strategy_name`` (or verb) logs a warning and emits nothing.
+
+		Parameters
+		----------
+		event: `StrategyCommandEvent`
+			The add/remove-ticker command addressed to one strategy by name.
+		"""
+		by_name = {strategy.name: strategy for strategy in self.strategies}
+		strategy = by_name.get(event.strategy_name)
+		if strategy is None:
+			# Unknown target — loud no-op (no mutation, no follow-on).
+			self.logger.warning(
+				'StrategyCommandEvent for unknown strategy %s (verb=%s, symbol=%s) — ignored',
+				event.strategy_name, event.verb, event.symbol)
+			return
+		symbol = event.symbol
+		if event.verb == "add_ticker":
+			if symbol not in strategy.tickers:
+				strategy.tickers.append(symbol)  # idempotent append
+		elif event.verb == "remove_ticker":
+			if symbol in strategy.tickers:
+				if len(strategy.tickers) == 1:
+					# Refuse: removing the last ticker would violate the
+					# non-empty list[str] invariant (base.py). Documented no-op —
+					# no mutation, no re-select.
+					self.logger.warning(
+						'remove_ticker %s refused for strategy %s — would empty its '
+						'ticker set (non-empty invariant preserved)',
+						symbol, event.strategy_name)
+					return
+				strategy.tickers.remove(symbol)  # idempotent removal
+		else:
+			# Unknown verb — loud no-op.
+			self.logger.warning(
+				'StrategyCommandEvent unknown verb %s for strategy %s — ignored',
+				event.verb, event.strategy_name)
+			return
+		# D-11 follow-on: mutate happens-before re-select. Emit a UniversePollEvent
+		# on the queue (queue-only cross-domain write — never call UniverseHandler).
+		self.global_queue.put(UniversePollEvent(time=event.time))
+
 	def get_strategies_universe(self) -> list[str]:
 		"""
 		Return a list with all the coins traded from the differents strategies.
