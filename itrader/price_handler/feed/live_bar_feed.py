@@ -142,11 +142,18 @@ class LiveBarFeed(BarFeed):
 
     # -- Bar construction (Decimal edge already crossed at the provider) -------
 
-    def _build_bar(self, t: pd.Timestamp, cb: "ClosedBar") -> Bar:
+    @staticmethod
+    def _build_bar(t: pd.Timestamp, cb: "ClosedBar") -> Bar:
         """Build a ``Bar`` straight from the Decimal ``ClosedBar`` fields.
 
         The OHLCV are ALREADY ``Decimal`` (the provider crossed the edge via
         ``to_money``) — never re-cast through float / ``Bar.from_row`` (D-14).
+
+        Self-less by construction, so it is a ``@staticmethod`` (07-03 / D-03a): the
+        ONE canonical ``ClosedBar`` → ``Bar`` conversion, reused read-only by
+        ``OkxDataProvider.spawn_warmup`` (``LiveBarFeed._build_bar(t, cb)``) so the
+        warmup bulk-transport path and the live ``update()`` path build byte-identical
+        ``Bar`` facts — never a second bulk conversion.
         """
         return Bar(time=t, open=cb["open"], high=cb["high"], low=cb["low"],
                    close=cb["close"], volume=cb["volume"])
@@ -258,6 +265,46 @@ class LiveBarFeed(BarFeed):
             symbol, timeframe, len(bars))
         for cb in bars:
             self.update(cb)
+
+    def absorb_warmup(self, symbol: str, timeframe: str,
+                      bars: tuple[Bar, ...]) -> None:
+        """Silently absorb pre-built warmup ``Bar``s into the ring + ``L`` — NO ``BarEvent`` (D-03/OQ1).
+
+        The non-emitting twin of :meth:`_deliver` (RESEARCH OQ1 / D-03b). For each
+        pre-built ``Bar`` in order it runs the EXACT ring / ``L`` / newest-bar logic of
+        ``_deliver`` (:490-499) — lazily create the ``deque(maxlen=cache_capacity())``
+        ring, ``ring.append(bar)``, set ``_newest_bars[symbol]`` and
+        ``_last_delivered[(symbol, timeframe)]`` — but DELIBERATELY SKIPS the terminal
+        ``_emit`` (the single divergence). No tradeable ``BarEvent`` is put on the queue
+        during warmup: the ring is warmed and ``L`` is advanced so the feed read-model is
+        query-ready and L-continuous, but strategies are NOT signalled off historical bars
+        (D-03b — "no tradeable BarEvent during warmup").
+
+        This closes the documented warmup-before-subscribe ``L`` contract (RESEARCH OQ1):
+        the ``BarsLoaded`` warmup window is absorbed here so ``L`` is set from REST history
+        and the first subsequent live ``update()`` lands on the in-sequence branch instead
+        of being misclassified as a fresh first delivery (a cold ring / unset ``L`` would
+        starve ``window()`` and mis-sequence the first live bar).
+
+        Bars arrive already built (from the ``BarsLoaded`` payload), so ``_build_bar`` is
+        skipped. This is a controlled single-purpose absorb, NOT a second state path
+        (D-03a / LX-09): the ring-append / ``L``-advance is byte-identical to ``_deliver``;
+        only the emit is suppressed. ``window()`` still RAISES ``MissingPriceDataError`` for
+        an unknown ticker (D-01 — never softened to return-empty).
+        """
+        for bar in bars:
+            ring = self._ring.get((symbol, timeframe))
+            if ring is None:
+                # D-09: size the ring by the derived capacity AT CREATION (byte-identical
+                # to _deliver) so the 03-04 D-13 registration makes it 100 on the live feed.
+                ring = deque(maxlen=self.cache_capacity())
+                self._ring[(symbol, timeframe)] = ring
+            ring.append(bar)
+            self._newest_bars[symbol] = bar
+            # L is stamped as a pd.Timestamp (matching _deliver's t) so a subsequent live
+            # update() compares like-for-like on the tf grid (bar.time is a datetime; the
+            # provider builds it as a pd.Timestamp, this wrap is idempotent + mypy-exact).
+            self._last_delivered[(symbol, timeframe)] = pd.Timestamp(bar.time)
 
     def backfill_on_resume(self, symbol: str, timeframe: str,
                            latest_completed_ts: int) -> None:
