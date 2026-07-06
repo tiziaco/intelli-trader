@@ -103,6 +103,13 @@ class LiveBarFeed(BarFeed):
         # backfill replay. If update() detects a gap WHILE a replay is in progress
         # (an under-returning venue page with a hole inside the replayed range), it
         # fails loud instead of spawning a nested/overlapping backfill.
+        #
+        # WR-01 precondition: this is a PLAIN instance bool with no lock — it encodes
+        # "THIS thread's replay is active," not "any replay is active." It is correct
+        # ONLY while replay and its nested update() calls stay on the single
+        # connector-loop thread (the current loop-native path). The DEFERRED D-14
+        # concurrent-bar path (05.3-06) must scope re-entrancy to the replaying thread
+        # (thread-id / threading.local) BEFORE enabling it — see the guard in update().
         self._replaying_backfill = False
         # Run-path bindings (mirror bar_feed.py:334-335); set via bind().
         self.global_queue: "Optional[queue.Queue[Any]]" = None
@@ -186,10 +193,28 @@ class LiveBarFeed(BarFeed):
                 # backfill — the shape-independent structural stop against recursion.
                 # The raise escalates through the provider's supervised-backfill error
                 # path (_run_gap_backfill -> _on_gap_backfill_done -> connector halt).
+                #
+                # WR-01 precondition: `_replaying_backfill` encodes "THIS thread's
+                # replay is active," NOT "any replay is active." It is a plain instance
+                # bool with no lock, and this classification is correct ONLY while the
+                # replay and its nested update() calls stay on the single connector-loop
+                # thread (the current loop-native path guarantees this). update() is also
+                # reachable from the ENGINE thread (warmup / backfill_on_resume); the
+                # DEFERRED D-14 concurrent-bar path (05.3-06) MUST scope re-entrancy to
+                # the replaying thread (thread-id / threading.local) BEFORE it is enabled
+                # — otherwise a legitimate engine-thread gap arriving mid-replay would
+                # observe this flag True, be misclassified as a nested in-replay gap, and
+                # spuriously HALT the connector.
+                #
+                # WR-02: carry BOTH {expected, got} coordinates so an operator triaging a
+                # connector-fatal halt sees where in the interior the hole is without
+                # cross-referencing logs (integer-ms, secret-free — matches the sibling
+                # under-returning-page raise in _replay_and_deliver).
                 raise MalformedDataError(
                     f"gap-backfill:{sym}/{tf_str}",
                     "gap detected during an in-progress backfill replay "
-                    f"(expected in-sequence L+tf, got ts={int(t.value // _NS_PER_MS)}) "
+                    f"(expected in-sequence L+tf={int((last + tf).value // _NS_PER_MS)}, "
+                    f"got ts={int(t.value // _NS_PER_MS)}) "
                     "— refusing a nested backfill")
             return self._fill_gap_and_deliver(
                 sym, tf_str, last + tf, t - tf, t, closed_bar)
