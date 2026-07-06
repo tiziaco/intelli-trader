@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: executing
+status: verifying
 stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-06T11:15:36.681Z"
+last_updated: "2026-07-06T12:08:02.660Z"
 last_activity: 2026-07-06
 progress:
   total_phases: 10
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 65
-  completed_plans: 64
-  percent: 80
+  completed_plans: 65
+  percent: 90
 ---
 
 # Project State
@@ -30,10 +30,10 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 
 Phase: 06 (dynamic-universe-membership) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-06
 
-Progress: [██████████] 98%
+Progress: [██████████] 100%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -183,6 +183,9 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: [Phase 06]: 06-04: OrderTriggerSource.ADMISSION_LEAVING + AdmissionManager._enforce_leaving_symbol_admission wired FIRST (before direction) — audited-REJECTS a new entry for a symbol in Universe.leaving_symbols() while PASSING a sanctioned exit (SELL vs LONG / BUY vs SHORT); no-op with no universe/empty leaving-set (oracle-dark, D-01)
 - [Phase ?]: [Phase 06]: 06-04: UniverseHandler remove-policy consumer — orphan-and-track (mark_leaving, DEFER unsubscribe until flat; unsubscribe-now only when nothing held) vs force-close (emit opposite-side full-exit SignalEvent then unsubscribe) + on_fill detach-on-flat (unsubscribe+clear_leaving once flat). remove_policy on the live/poll-seam ctor NOT SystemConfig — oracle untouched (D-01/§8)
 - [Phase ?]: [Phase 06]: 06-04: remove-policy proven deterministically offline via remove_policy_harness — two synthetic symbols driven through LiveBarFeed.update (the OKX seam) settling force-close through the reused SimulatedExchange (FillEvent->PortfolioHandler.on_fill); plan-04 on_universe_update/on_fill seams direct-called against the REAL PortfolioHandler read model (route wiring is plan 05). UNIV-02 remove-half done
+- [Phase ?]: [Phase 06]: 06-05: _OKX_STREAM_SYMBOL un-hardcoded — live subscription set sourced from universe.members (warmup-before-subscribe per member); generalized ring-key vs window()-ticker assertion, ConfigurationError shape preserved (D-05)
+- [Phase ?]: [Phase 06]: 06-05: live-only UniverseHandler + poll-timer daemon (configurable cadence default 60s, control-plane TimeEvent(now UTC) only) + LIVE-ONLY _routes mutation on the live EventHandler's own dict — backtest _routes literal UNTOUCHED (RESEARCH §11.1); remove_policy + cadence on MonitoringSettings NOT PerformanceSettings (§8/D-01/D-02)
+- [Phase ?]: [Phase 06]: 06-05 milestone gate GREEN — oracle byte-exact (134/46189.87730727451), determinism identical, inertness green (universe_handler forbidden on backtest import), W1 14.5s -7.4% vs 15.7s baseline; UNIV-01 closed + human-observed live-demo dynamic DATA subscribe/unsubscribe on OKX demo (1 passed 127.85s, sandbox verified)
 
 ### Pending Todos
 
@@ -271,6 +274,8 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 06 P02 | 9min | 2 tasks | 4 files |
 | Phase 06 P03 | 6min | 2 tasks | 5 files |
 | Phase 06 P04 | 20min | 3 tasks | 8 files |
+| Phase 06 P05 | 35min | 3 tasks | 4 files |
+| Phase 06 P05 | 35min | 3 tasks | 4 files |
 
 ## Deferred Items
 
@@ -320,7 +325,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T11:15:10.606Z
+Last session: 2026-07-06T12:07:06.508Z
 Stopped at: Completed 06-01-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
