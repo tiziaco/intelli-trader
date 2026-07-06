@@ -5,18 +5,21 @@ This handler-style file is **4-SPACE** indented to match its ``universe/`` packa
 (``order_handler/`` / ``execution_handler/`` / ...). Match this file's indentation.
 
 Why a dedicated handler (Claude's-Discretion divergence from PATTERNS.md §7): the
-poll ``on_time`` COULD grow onto ``ScreenersHandler`` (which is already on the
+poll ``on_poll`` COULD grow onto ``ScreenersHandler`` (which is already on the
 backtest-shared ``_routes[TIME]``), but hosting it on a NEW ``UniverseHandler``
-isolates the live-only route wiring from the backtest literal. Plan 05 mutates the
-LIVE ``_routes[TIME]`` only, so the backtest per-tick path never pays the
-source-guard / W1-measurement burden by construction (Pitfall 3 / A3).
+isolates the live-only route wiring from the backtest literal. The poll consumes a
+DEDICATED ``UniversePollEvent`` (``EventType.UNIVERSE_POLL``) — NOT the shared
+business ``TIME`` route (WR-06/D-06) — so the poll never rides a route that reaches
+screeners/bar-gen, and the backtest per-tick path is untouched by construction.
 
 Responsibilities (the selection/poll half of D-02 + the "screeners propose,
 membership disposes" split, D-04):
 
-- ``on_time``: source-guard (unwired route is a no-op) → poll the injected
-  ``UniverseSelectionModel`` → D-06 ``validate_symbol`` filter BEFORE apply →
-  ``Universe.apply`` → emit ONE ``UniverseUpdateEvent`` ONLY on a non-empty delta.
+- ``on_poll``: freeze-gate (WR-05/D-07 — early-return while the engine is halted or
+  submission-paused, membership freezes in place) → source-guard (unwired route is a
+  no-op) → poll the injected ``UniverseSelectionModel`` → D-06 ``validate_symbol``
+  filter BEFORE apply → precision-resolve added symbols (WR-04) → ``Universe.apply``
+  → emit ONE ``UniverseUpdateEvent`` ONLY on a non-empty delta.
 - ``on_universe_update``: the ADD branch — warmup-BEFORE-subscribe per added
   symbol (Pitfall 6). The REMOVE branch (policy), flat-detect detach, and
   admission gate are plan 04; the live timer + composition wiring are plan 05.
@@ -27,6 +30,7 @@ connector-free (D-03): the D-06 filter is a DIRECT ``validate_symbol`` call here
 never handed to ``Universe``.
 """
 
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
 from queue import Queue
@@ -36,9 +40,9 @@ from itrader.core.enums import OrderType, PositionSide, Side
 from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.portfolio_read_model import PortfolioReadModel, PositionView
 from itrader.core.sizing import FractionOfCash, TradingDirection
-from itrader.events_handler.events import SignalEvent
+from itrader.events_handler.events import SignalEvent, UniversePollEvent
 from itrader.events_handler.events.fill import FillEvent
-from itrader.events_handler.events.market import TimeEvent, UniverseUpdateEvent
+from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.logger import get_itrader_logger
 from itrader.outils.id_generator import IDGenerator
 from itrader.universe.membership import UniverseSelectionModel
@@ -103,7 +107,7 @@ class UniverseHandler:
         Parameters
         ----------
         global_queue : Queue
-            The trading-system event queue; ``on_time`` puts ``UniverseUpdateEvent``.
+            The trading-system event queue; ``on_poll`` puts ``UniverseUpdateEvent``.
         universe : Universe
             The injected membership read-model — the SOLE source/sink of membership
             (the handler holds NO membership copy). Read via ``.members``, mutated
@@ -127,22 +131,37 @@ class UniverseHandler:
         self._timeframe = timeframe
         self._remove_policy = remove_policy
 
-        # Live-only injected seams (plan 05 wires these on the live path). While
-        # ``None`` the handler is inert: ``on_time`` short-circuits on the source
+        # Live-only injected seams (plan 07 wires these on the live path). While
+        # ``None`` the handler is inert: ``on_poll`` short-circuits on the source
         # guard, so an unwired route is a near-free no-op. The read model is the
-        # open-position truth the remove consumer / flat-detect read.
+        # open-position truth the remove consumer / flat-detect read. The freeze
+        # gate (WR-05/D-07) is None -> never freeze-skip on paper/backtest.
         self._selection_source: UniverseSelectionModel | None = None
         self._symbol_validator: _SymbolValidator | None = None
         self._provider: _SupportsSubscribe | None = None
         self._read_model: PortfolioReadModel | None = None
+        self._freeze_gate: Callable[[], bool] | None = None
 
         self.logger = get_itrader_logger().bind(component="UniverseHandler")
 
     # --- live-only wiring seams (plan 05) --------------------------------------
 
     def set_selection_source(self, source: UniverseSelectionModel) -> None:
-        """Wire the lean ``UniverseSelectionModel`` the poll consults (plan 05)."""
+        """Wire the lean ``UniverseSelectionModel`` the poll consults (plan 07)."""
         self._selection_source = source
+
+    def set_freeze_gate(self, gate: Callable[[], bool]) -> None:
+        """Wire the WR-05/D-07 freeze predicate the poll early-returns on (plan 07).
+
+        The wired callable returns ``True`` when membership must freeze in place —
+        i.e. the engine is HALTED or submission-paused (plan 07 wires it to
+        ``lambda: engine._is_halted() or engine._is_submission_paused()``). While
+        it returns ``True`` ``on_poll`` skips the whole poll (no select, no apply,
+        no event): membership is level-triggered, so the skipped poll self-heals on
+        the next unfrozen tick — NO replay, NO buffering (D-07 freeze-in-place). An
+        unwired gate (``None``) never freeze-skips, so paper/backtest are inert.
+        """
+        self._freeze_gate = gate
 
     def set_symbol_validator(self, validator: _SymbolValidator) -> None:
         """Wire the D-06 venue bound (``validate_symbol``) the poll filters through."""
@@ -165,15 +184,27 @@ class UniverseHandler:
 
     # --- poll (Arm A) ----------------------------------------------------------
 
-    def on_time(self, event: TimeEvent) -> None:
-        """Poll → D-06 filter → apply → emit-only-on-non-empty (source-guarded).
+    def on_poll(self, event: UniversePollEvent) -> None:
+        """Freeze-gate → poll → D-06 filter → apply → emit-only-on-non-empty.
 
-        The single cheap inertness lever is the source guard: with no selection
-        source wired the route returns immediately (backtest/paper wire none, so
-        this is oracle-dark). Cadence itself is owned by the plan-05 live timer,
+        Consumes the DEDICATED ``UniversePollEvent`` (``EventType.UNIVERSE_POLL``),
+        NOT the shared business ``TIME`` route (WR-06/D-06) — the poll never rides a
+        route reaching screeners/bar-gen. Cadence is owned by the plan-07 live timer,
         decoupled from bars per D-02 — this method is invoked by that timer's
-        ``TimeEvent`` on the live route only.
+        ``UniversePollEvent`` on the live route only.
+
+        Two inertness levers: (1) the WR-05/D-07 freeze gate — while wired-and-True
+        (engine halted or submission-paused) the whole poll is skipped so membership
+        FREEZES IN PLACE (level-triggered: self-heals next unfrozen tick, no replay);
+        (2) the source guard — with no selection source wired the route returns
+        immediately (backtest/paper wire neither, so both are oracle-dark).
         """
+        # WR-05 / D-07 freeze-in-place: skip the poll entirely while the engine is
+        # halted or submission-paused — MUST precede any select/apply. Unwired gate
+        # (None) never freeze-skips (paper/backtest inert).
+        if self._freeze_gate is not None and self._freeze_gate():
+            return
+
         if self._selection_source is None:
             return
 

@@ -1339,14 +1339,16 @@ class LiveTradingSystem:
             # LIVE-ONLY route mutation (RESEARCH §11.1): mutate THIS live
             # EventHandler's own routes dict — NEVER the shared backtest _routes
             # literal (the backtest TradingSystem builds a SEPARATE EventHandler).
-            # Append the poll on_time to the TIME route (the poll-timer's control-
+            # Append the poll on_poll to the TIME route (the poll-timer's control-
             # plane TimeEvent reaches it there); set the UNIVERSE_UPDATE consumer;
             # append on_fill to the FILL route AFTER PortfolioHandler.on_fill so the
             # read model already reflects the settled (flat) position for
             # detach-on-flat. The backtest literal is untouched → W1/W2 + oracle
-            # provably unaffected.
+            # provably unaffected. (Plan 07 migrates this to the dedicated
+            # UNIVERSE_POLL route + freeze-gate/precision-resolver wiring; on_poll
+            # already accepts the poll-timer's TimeEvent via its business .time.)
             self.event_handler.routes[EventType.TIME].append(
-                self._universe_handler.on_time)
+                self._universe_handler.on_poll)
             self.event_handler.routes[EventType.UNIVERSE_UPDATE] = [
                 self._universe_handler.on_universe_update]
             self.event_handler.routes[EventType.FILL].append(
@@ -1777,7 +1779,7 @@ class LiveTradingSystem:
 
         Loops until ``_stop_event`` is set, putting a control-plane ``TimeEvent`` on
         the global queue every ``monitoring.universe_poll_cadence_s`` seconds so the
-        live ``UniverseHandler.on_time`` polls its selection source DECOUPLED from
+        live ``UniverseHandler.on_poll`` polls its selection source DECOUPLED from
         bars (D-02). This is the SOLE wall-clock ``TimeEvent`` on the live path — it
         stamps ONLY the control-plane poll, and NEVER a bar/fill business time
         (Pitfall 3 / determinism: business ``time`` stays venue-sourced). Started

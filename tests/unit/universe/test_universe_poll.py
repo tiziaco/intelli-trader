@@ -1,18 +1,25 @@
-"""``UniverseHandler`` on_time poll + add-side subscribe consumer (Plan 06-03 Task 2).
+"""``UniverseHandler`` on_poll poll + add-side subscribe consumer (Plan 06-03 / 07-05).
 
-The Arm-A poll seam: ``on_time`` polls the injected ``UniverseSelectionModel``,
-filters the desired set through ``validate_symbol`` (D-06) BEFORE ``Universe.apply``,
-and emits ONE ``UniverseUpdateEvent`` only when the applied delta is non-empty
-(no empty-delta floods). ``on_universe_update`` implements the ADD branch:
+The Arm-A poll seam: ``on_poll`` consumes the DEDICATED ``UniversePollEvent``
+(``EventType.UNIVERSE_POLL``, WR-06 — NOT the shared TIME route), freeze-gates
+(WR-05 — early-return while halted/paused), polls the injected
+``UniverseSelectionModel``, filters the desired set through ``validate_symbol``
+(D-06) BEFORE ``Universe.apply``, precision-resolves added symbols (WR-04), and
+emits ONE ``UniverseUpdateEvent`` only when the applied delta is non-empty (no
+empty-delta floods). ``on_universe_update`` implements the ADD branch:
 warmup-BEFORE-subscribe per added symbol (Pitfall 6).
 
-The six behaviors asserted:
-1. Unwired route is a no-op — no selection source → ``on_time`` returns, queue empty.
+The behaviors asserted:
+1. Unwired route is a no-op — no selection source → ``on_poll`` returns, queue empty.
 2. Selection returning the CURRENT membership → empty delta → NOTHING on the queue.
 3. Selection that ADDS a symbol → filter → apply → exactly ONE ``UniverseUpdateEvent``.
 4. A symbol REJECTED by ``validate_symbol`` is dropped BEFORE apply (never a member).
 5. ``on_universe_update`` ADD: ``feed.warmup`` THEN ``provider.subscribe`` in order.
 6. ``on_universe_update`` tolerates ``provider is None`` — warmup runs, subscribe skipped.
+7. A wired-True freeze gate short-circuits ``on_poll`` — no select, no apply, no event.
+8. A freeze gate returning False behaves exactly like an unwired gate (apply + emit).
+9. A poll-added symbol takes the resolver's venue precision (WR-04), and the default
+   ladder when no resolver is wired (paper-correct).
 """
 
 from datetime import datetime, timezone
@@ -26,8 +33,8 @@ from itrader.core.enums import PositionSide, Side
 from itrader.core.ids import PortfolioId
 from itrader.core.instrument import Instrument
 from itrader.core.portfolio_read_model import PositionView
-from itrader.events_handler.events import SignalEvent
-from itrader.events_handler.events.market import TimeEvent, UniverseUpdateEvent
+from itrader.events_handler.events import SignalEvent, UniversePollEvent
+from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler
 
@@ -197,32 +204,32 @@ def _remove_handler(
 # --- behaviors -------------------------------------------------------------
 
 
-def test_on_time_no_source_is_a_noop() -> None:
+def test_on_poll_no_source_is_a_noop() -> None:
     """1. Unwired route (no selection source) returns immediately; queue stays empty."""
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
-    handler.on_time(TimeEvent(time=_ASOF))
+    handler.on_poll(UniversePollEvent(time=_ASOF))
     assert handler._global_queue.empty()
     assert universe.members == ["BTC/USDC"]
 
 
-def test_on_time_current_membership_puts_nothing() -> None:
+def test_on_poll_current_membership_puts_nothing() -> None:
     """2. Selection == current membership → empty delta → NOTHING on the queue."""
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC"}))
-    handler.on_time(TimeEvent(time=_ASOF))
+    handler.on_poll(UniversePollEvent(time=_ASOF))
     assert handler._global_queue.empty()
 
 
-def test_on_time_add_emits_one_update_event() -> None:
+def test_on_poll_add_emits_one_update_event() -> None:
     """3. Selection adds a symbol → apply → exactly one UniverseUpdateEvent(added)."""
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
     handler.set_symbol_validator(_FakeValidator(rejected=set()))
 
-    handler.on_time(TimeEvent(time=_ASOF))
+    handler.on_poll(UniversePollEvent(time=_ASOF))
 
     event = _drain_one(handler._global_queue)
     assert isinstance(event, UniverseUpdateEvent)
@@ -231,7 +238,7 @@ def test_on_time_add_emits_one_update_event() -> None:
     assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
 
 
-def test_on_time_rejected_symbol_dropped_before_apply() -> None:
+def test_on_poll_rejected_symbol_dropped_before_apply() -> None:
     """4. A validate_symbol-rejected symbol never reaches the universe."""
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
@@ -240,12 +247,60 @@ def test_on_time_rejected_symbol_dropped_before_apply() -> None:
     )
     handler.set_symbol_validator(_FakeValidator(rejected={"FAKE/USDC"}))
 
-    handler.on_time(TimeEvent(time=_ASOF))
+    handler.on_poll(UniversePollEvent(time=_ASOF))
 
     event = _drain_one(handler._global_queue)
     assert isinstance(event, UniverseUpdateEvent)
     assert event.added == ("ETH/USDC",)
     assert "FAKE/USDC" not in universe.members
+    assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
+
+
+# --- freeze gate (WR-05 / D-07 freeze-in-place) ----------------------------
+
+
+class _SpySelectionSource:
+    """A selection source that records whether ``select`` was called (freeze spy)."""
+
+    def __init__(self, desired: set[str]) -> None:
+        self._desired = desired
+        self.select_calls = 0
+
+    def select(self, asof: datetime) -> set[str]:
+        self.select_calls += 1
+        return set(self._desired)
+
+
+def test_on_poll_freeze_gate_true_short_circuits() -> None:
+    """7. A wired-True freeze gate skips the poll: no select, no apply, no event."""
+    universe = _universe("BTC/USDC")
+    handler = _handler(universe)
+    spy = _SpySelectionSource({"BTC/USDC", "ETH/USDC"})
+    handler.set_selection_source(spy)
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_freeze_gate(lambda: True)
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    # Membership frozen in place — no select consulted, no apply, nothing queued.
+    assert spy.select_calls == 0
+    assert handler._global_queue.empty()
+    assert universe.members == ["BTC/USDC"]
+
+
+def test_on_poll_freeze_gate_false_behaves_as_unwired() -> None:
+    """8. A freeze gate returning False behaves exactly like the prior on_time."""
+    universe = _universe("BTC/USDC")
+    handler = _handler(universe)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_freeze_gate(lambda: False)
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    event = _drain_one(handler._global_queue)
+    assert isinstance(event, UniverseUpdateEvent)
+    assert event.added == ("ETH/USDC",)
     assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
 
 
