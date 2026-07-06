@@ -39,6 +39,19 @@ from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, ErrorEvent
 from itrader.events_handler.events.market import TimeEvent
 
+# D-10 (WR — the primary external-surface security control): ``add_event`` is the
+# engine's PUBLIC external/web ingress. It is FAIL-CLOSED (default-deny, ASVS V4/V5):
+# ONLY the two sanctioned externally-originated event types are admissible — a
+# ``SIGNAL`` (routes through ``OrderHandler.on_signal`` -> ``AdmissionManager`` for
+# validation + sizing + reservation + mirror) and a ``STRATEGY_COMMAND`` (an operator
+# add/remove-ticker command). EVERY other event type — every internal-fact type
+# (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL / BARS_LOADED / BARS_LOAD_FAILED /
+# TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) — is rejected by default. Internal
+# order flow is UNAFFECTED: handlers put their events on ``global_queue`` directly,
+# never through this external ``add_event`` surface (RESEARCH OQ7: zero internal
+# production callers of ``add_event``).
+_EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND})
+
 # Live operational store credential surface (D-live wiring completed). The live order +
 # signal store is selected by ENV-PRESENCE of a Postgres credential on the unified
 # ``ITRADER_DATABASE_*`` surface — ``ITRADER_DATABASE_PASSWORD`` (component-var arm) or the
@@ -1951,17 +1964,20 @@ class LiveTradingSystem:
         """
         Add an event to the global queue for processing.
 
-        D-18 (V17-16, HIGH — ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
-        surface. A raw ``OrderEvent`` here would reach the execution queue with NO validation,
-        sizing, cash reservation or order-mirror engagement — an external caller could inject
-        an arbitrary order that bypasses every admission control (elevation-of-privilege /
-        input-validation defect). Raw ``EventType.ORDER`` injection is therefore REFUSED.
-
-        The sanctioned external-order path is SIGNAL-form entry: submit a ``SignalEvent`` (or
-        call the order domain directly), which routes through ``OrderHandler.on_signal`` ->
-        ``AdmissionManager`` so validation + sizing + reservation + mirror engage before any
-        ``OrderEvent`` is emitted. The internal order flow is UNAFFECTED — handlers emit
-        ``OrderEvent``s by putting them on ``global_queue`` directly, never through ``add_event``.
+        D-10 (fail-closed, ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
+        surface, so it is DEFAULT-DENY. Only the two sanctioned externally-originated event
+        types in ``_EXTERNALLY_ADMISSIBLE`` are admitted — a ``SIGNAL`` (routes through
+        ``OrderHandler.on_signal`` -> ``AdmissionManager`` so validation + sizing + cash
+        reservation + order-mirror engage before any ``OrderEvent`` is emitted) and a
+        ``STRATEGY_COMMAND`` (an operator add/remove-ticker command). EVERY other type is
+        rejected: every internal-fact type (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL /
+        BARS_LOADED / BARS_LOAD_FAILED / TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) is not
+        admissible from the external surface — a raw ``OrderEvent`` here would otherwise reach
+        the execution queue with NO admission control (elevation-of-privilege / input-validation
+        defect). This inverts the prior narrow ORDER-only denylist (fail-open -> fail-closed):
+        the sanctioned entry stays SIGNAL-form. The internal order flow is UNAFFECTED —
+        handlers emit ``OrderEvent``s by putting them on ``global_queue`` directly, never
+        through ``add_event`` (RESEARCH OQ7: zero internal production callers).
 
         Parameters
         ----------
@@ -1977,13 +1993,16 @@ class LiveTradingSystem:
             self.logger.warning('Cannot add event: Live trading system is not running')
             return False
 
-        # D-18: reject raw ORDER injection. Only ORDER events are blocked (a narrow gate);
-        # every non-ORDER event (the sanctioned SIGNAL-form entry included) enqueues normally.
-        if getattr(event, 'type', None) is EventType.ORDER:
+        # D-10: FAIL-CLOSED allowlist. Admit ONLY the sanctioned externally-originated types
+        # (SIGNAL + STRATEGY_COMMAND); reject every other type by default (default-deny). This
+        # covers the prior narrow ORDER reject and every other internal-fact type in one gate.
+        event_type = getattr(event, 'type', None)
+        if event_type not in _EXTERNALLY_ADMISSIBLE:
             self.logger.warning(
-                'Rejected raw ORDER injection via add_event (D-18/V17-16) — external orders '
-                'must route through the admission pipeline (signal-form entry), not the '
-                'live queue directly')
+                'Rejected external add_event of type %s (D-10 fail-closed default-deny) — only '
+                'SIGNAL and STRATEGY_COMMAND are admissible from the external surface; every '
+                'internal-fact type (incl. raw ORDER injection) must route through the engine '
+                'internally, never the public queue directly', event_type)
             return False
 
         try:
