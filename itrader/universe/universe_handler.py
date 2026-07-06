@@ -36,12 +36,18 @@ from decimal import Decimal
 from queue import Queue
 from typing import Any, Protocol, cast, runtime_checkable
 
+from itrader.core.bar import Bar
 from itrader.core.enums import OrderType, PositionSide, Side
 from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.instrument import Instrument
 from itrader.core.portfolio_read_model import PortfolioReadModel, PositionView
 from itrader.core.sizing import FractionOfCash, TradingDirection
-from itrader.events_handler.events import SignalEvent, UniversePollEvent
+from itrader.events_handler.events import (
+    BarsLoaded,
+    BarsLoadFailed,
+    SignalEvent,
+    UniversePollEvent,
+)
 from itrader.events_handler.events.fill import FillEvent
 from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.logger import get_itrader_logger
@@ -55,6 +61,16 @@ __all__ = ["UniverseHandler"]
 _ORPHAN_AND_TRACK = "orphan-and-track"
 _FORCE_CLOSE = "force-close"
 
+# Warmup fetch depth margin (mirrors ``live_bar_feed._WARMUP_MARGIN``). The async
+# spawn path needs an EXPLICIT integer ``limit``, so the depth is computed here as
+# ``feed.cache_capacity() + _WARMUP_MARGIN`` (RESEARCH OQ4 — SAFE for the
+# SMA_MACD-only roster: ``cache_capacity()`` == 100 >= the deepest declared
+# SMA_MACD indicator warmup). The max-across-concerned-strategies ``depth_hint``
+# seam is DEFERRED this phase (see
+# ``.planning/todos/pending/warmup-depth-max-concerned-strategy.md``) — do NOT build
+# a provider ``depth_hint`` here.
+_WARMUP_MARGIN = 5
+
 # Engine-owned id generator for the fabricated force-close exit signal's
 # strategy_id (single UUIDv7 scheme). Constructed once at import (live-only file).
 _idgen = IDGenerator()
@@ -62,9 +78,24 @@ _idgen = IDGenerator()
 
 @runtime_checkable
 class _SupportsWarmup(Protocol):
-    """The feed shape the add branch drives: REST-replay warmup (LX-09/FEED-03)."""
+    """The feed shape the add branch drives (WR-02 async warmup pipeline).
+
+    - ``warmup`` — the synchronous REST-replay warmup (LX-09/FEED-03), used ONLY
+      on the paper/no-provider path where there is no async stream to gate against.
+    - ``absorb_warmup`` — the non-emitting ring/``L`` absorb (D-03b) the
+      ``on_bars_loaded`` consumer feeds the ``BarsLoaded`` payload into (no
+      tradeable ``BarEvent`` during warmup).
+    - ``cache_capacity`` — the derived ring depth the async ``spawn_warmup``
+      ``limit`` is computed from (``cache_capacity() + _WARMUP_MARGIN``).
+    """
 
     def warmup(self, symbol: str, timeframe: str, depth: int | None = ...) -> None: ...
+
+    def absorb_warmup(
+        self, symbol: str, timeframe: str, bars: tuple[Bar, ...]
+    ) -> None: ...
+
+    def cache_capacity(self) -> int: ...
 
 
 class _SymbolValidator(Protocol):
@@ -93,9 +124,16 @@ class _PrecisionResolver(Protocol):
 class _SupportsSubscribe(Protocol):
     """The data-plane provider shape the add/remove branch drives (Arm B, plan 02).
 
-    The remove branch also calls ``unsubscribe`` (deferred until flat under
-    orphan-and-track; immediate under force-close / when nothing is held).
+    - ``spawn_warmup`` — the async loop-native REST warmup fetch (I/O only, no
+      state) the add branch kicks off per added symbol; it emits ONE
+      ``BarsLoaded`` / ``BarsLoadFailed`` back onto the queue (plan 03).
+    - ``subscribe`` — the live candle socket, subscribed ONLY from
+      ``on_bars_loaded`` AFTER the ring is warmed (D-03b ordering).
+    - ``unsubscribe`` — the remove branch teardown (deferred until flat under
+      orphan-and-track; immediate under force-close / when nothing is held).
     """
+
+    def spawn_warmup(self, symbol: str, timeframe: str, limit: int) -> None: ...
 
     def subscribe(self, symbol: str) -> None: ...
 
@@ -296,24 +334,105 @@ class UniverseHandler:
     # --- add-side consumer (Arm A) --------------------------------------------
 
     def on_universe_update(self, event: UniverseUpdateEvent) -> None:
-        """Consume a membership delta — ADD branch NOW (warmup-BEFORE-subscribe).
+        """Consume a membership delta — ADD branch spawns async warmup (WR-02).
 
-        For each added symbol, warm the feed FIRST (REST replay sets ``L`` on the
-        ring) THEN subscribe the live socket, so the first live closed bar lands
-        in-sequence rather than mis-ordered (Pitfall 6). ``provider is None``
-        (paper/replay — no socket) is tolerated: warmup runs, subscribe is skipped.
+        For each added symbol the add branch KICKS OFF warmup only (I/O), it does
+        NOT flip readiness or subscribe here — the readiness flip + subscribe move
+        to ``on_bars_loaded`` so a symbol is only tradeable once its ring is warmed
+        (D-03b). Two paths, resolved to ONE deterministic behavior each (no open
+        OR):
+
+        - Live (provider wired): ``provider.spawn_warmup(sym, tf, K)`` — an async
+          loop-native REST fetch (no feed/universe state mutated here) that later
+          emits ONE ``BarsLoaded`` / ``BarsLoadFailed``. Subscribe is DEFERRED to
+          ``on_bars_loaded`` (D-03b ordering).
+        - Paper (provider is None — no live stream): absorb the warmup
+          SYNCHRONOUSLY via ``feed.warmup`` (which already works on the paper
+          path today) THEN ``universe.mark_ready(sym)`` IMMEDIATELY. A no-provider
+          symbol is NEVER left PENDING — leaving it PENDING would (with the plan-04
+          strategy gate AND the plan-08 admission gate) PERMANENTLY block trading a
+          poll-added paper symbol.
+
+        Per-symbol isolation (D-04): each added symbol's warmup runs in its OWN
+        ``try`` so one symbol's spawn failure never aborts the remaining adds NOR
+        the remove branch (fixes the naked-remove-branch bug).
         """
         for sym in event.added:
-            # Warmup BEFORE subscribe (Pitfall 6) — never reorder these two.
-            self._feed.warmup(sym, self._timeframe)
-            if self._provider is not None:
-                self._provider.subscribe(sym)
+            try:
+                self._begin_warmup(sym)
+            except Exception:
+                # D-04 per-symbol isolation: log and continue — the failed symbol
+                # simply never reaches READY (retried next poll); the batch and the
+                # remove branch below still process.
+                self.logger.error(
+                    "Warmup kickoff failed for added symbol %s — skipped "
+                    "(remaining adds + remove branch still processed)",
+                    sym, exc_info=True)
 
         # REMOVE branch (D-01 policy, Pitfall 4 — do NOT unconditionally
         # unsubscribe). Branch on policy + open-position state so an orphaned
         # position's WS/ring stays alive until it goes flat.
         for sym in event.removed:
             self._on_symbol_removed(sym, event.time)
+
+    def _begin_warmup(self, sym: str) -> None:
+        """Kick off warmup for one added symbol (live async vs paper synchronous).
+
+        Live (provider wired): async ``spawn_warmup`` (I/O only, no state mutated)
+        with an EXPLICIT depth ``K = feed.cache_capacity() + _WARMUP_MARGIN``
+        (RESEARCH OQ4 — SAFE for the SMA_MACD-only roster). Subscribe is NOT called
+        here — it moves to ``on_bars_loaded`` (D-03b). Paper (provider is None):
+        synchronous ``feed.warmup`` fallback + immediate ``mark_ready`` (no live
+        stream to subscribe, never left PENDING).
+        """
+        if self._provider is not None:
+            depth = self._feed.cache_capacity() + _WARMUP_MARGIN
+            self._provider.spawn_warmup(sym, self._timeframe, depth)
+            return
+        # Paper / no-provider path: synchronous absorb + immediate READY.
+        self._feed.warmup(sym, self._timeframe)
+        self._universe.mark_ready(sym)
+
+    # --- readiness-gated warmup consumers (WR-02, D-03b / D-04) ----------------
+
+    def on_bars_loaded(self, event: BarsLoaded) -> None:
+        """Warmup bars landed — absorb → mark_ready → subscribe, in THAT order (D-03b).
+
+        The deterministic route-order sequence that completes the async warmup
+        pipeline for one symbol:
+
+        1. ``feed.absorb_warmup`` — silently warm the ring + advance ``L`` from the
+           ``BarsLoaded`` payload (NO tradeable ``BarEvent`` emitted).
+        2. ``universe.mark_ready`` — flip the readiness gate so the symbol becomes
+           tradeable (strategy + admission gates now pass it).
+        3. ``provider.subscribe`` — subscribe the live candle socket LAST, so the
+           first live closed bar lands in-sequence on the just-warmed ring.
+
+        The order is correctness (T-07-06-ORDER): mark_ready MUST follow the ring
+        absorb, and subscribe MUST follow mark_ready. ``StrategiesHandler`` warms
+        its indicators off the SAME ``BarsLoaded`` earlier in the route list
+        (list-order guarantee, plan 07), so indicators are warm before this flip.
+        ``provider is None`` (paper) is tolerated — subscribe is skipped.
+        """
+        self._feed.absorb_warmup(event.symbol, event.timeframe, event.bars)
+        self._universe.mark_ready(event.symbol)
+        if self._provider is not None:
+            self._provider.subscribe(event.symbol)
+
+    def on_bars_load_failed(self, event: BarsLoadFailed) -> None:
+        """Warmup backfill failed — mark FAILED, keep in membership (D-04/D-05).
+
+        The symbol is flipped to ``Readiness.FAILED`` (the readiness gate keeps it
+        DARK — no trading) but is NEVER removed from membership: rollback is
+        redundant with the gate, and the symbol is retried on the next poll (which
+        re-spawns warmup). ``reason`` is already scrubbed at the emit site
+        (exception TYPE only, T-05-27) — logged as-is.
+        """
+        self._universe.mark_failed(event.symbol)
+        self.logger.warning(
+            "Warmup backfill failed for %s (reason=%s) — marked FAILED "
+            "(kept in membership, retried next poll)",
+            event.symbol, event.reason)
 
     # --- remove-policy consumer (D-01) -----------------------------------------
 
@@ -334,7 +453,11 @@ class UniverseHandler:
         """
         holders = self._holding_portfolios(sym)
         if not holders:
+            # Final-teardown point 1 (D-13): nothing references the symbol, so tear
+            # its record down atomically (instrument + readiness + leaving) alongside
+            # the unsubscribe — instrument lifetime == stream lifetime.
             self._unsubscribe(sym)
+            self._universe.discard_instrument(sym)
             return
 
         if self._remove_policy == _FORCE_CLOSE:
@@ -369,9 +492,14 @@ class UniverseHandler:
             return
         if self._holding_portfolios(ticker):
             return  # still held — not yet flat
+        # Final-teardown point 2 (D-13): the orphan just went flat — unsubscribe,
+        # clear the leaving flag, and discard the record atomically (keep-until-flat
+        # ends HERE; force-close discards on flat too, same as orphan-and-track).
         self._unsubscribe(ticker)
         self._universe.clear_leaving(ticker)
-        self.logger.info("Detach-on-flat: %s reached flat, unsubscribed + cleared", ticker)
+        self._universe.discard_instrument(ticker)
+        self.logger.info(
+            "Detach-on-flat: %s reached flat, unsubscribed + discarded", ticker)
 
     # --- remove helpers --------------------------------------------------------
 

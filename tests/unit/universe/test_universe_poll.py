@@ -68,7 +68,7 @@ class _FakeValidator:
 
 
 class _RecordingFeed:
-    """Records ``warmup`` calls into a shared ordered call log."""
+    """Records ``warmup``/``absorb_warmup`` calls into a shared ordered call log."""
 
     def __init__(self, log: list[tuple[str, str]]) -> None:
         self._log = log
@@ -76,12 +76,21 @@ class _RecordingFeed:
     def warmup(self, symbol: str, timeframe: str, depth: int | None = None) -> None:
         self._log.append(("warmup", symbol))
 
+    def absorb_warmup(self, symbol: str, timeframe: str, bars: object) -> None:
+        self._log.append(("absorb", symbol))
+
+    def cache_capacity(self) -> int:
+        return 100
+
 
 class _RecordingProvider:
-    """Records ``subscribe`` calls into a shared ordered call log."""
+    """Records ``spawn_warmup``/``subscribe`` calls into a shared ordered call log."""
 
     def __init__(self, log: list[tuple[str, str]]) -> None:
         self._log = log
+
+    def spawn_warmup(self, symbol: str, timeframe: str, limit: int) -> None:
+        self._log.append(("spawn", symbol))
 
     def subscribe(self, symbol: str) -> None:
         self._log.append(("subscribe", symbol))
@@ -362,10 +371,15 @@ def test_on_poll_added_symbol_no_resolver_uses_default_ladder() -> None:
     assert inst.quantity_precision == Decimal("0.00000001")  # _DEFAULT_QUANTITY_SCALE (8dp)
 
 
-def test_on_universe_update_warmup_before_subscribe() -> None:
-    """5. ADD branch: feed.warmup THEN provider.subscribe, in that order per symbol."""
+def test_on_universe_update_add_spawns_warmup_no_subscribe() -> None:
+    """5. ADD branch (live): spawn_warmup per symbol, NO synchronous subscribe (D-03b).
+
+    Subscribe now moves to ``on_bars_loaded`` (after the ring is warmed); the add
+    branch only kicks off the async warmup fetch.
+    """
     log: list[tuple[str, str]] = []
     universe = _universe("BTC/USDC")
+    universe.apply({"BTC/USDC", "ETH/USDC", "SOL/USDC"})  # ETH, SOL pending
     handler = _handler(universe, feed=_RecordingFeed(log))
     handler.set_provider(_RecordingProvider(log))
 
@@ -373,18 +387,19 @@ def test_on_universe_update_warmup_before_subscribe() -> None:
         UniverseUpdateEvent(time=_ASOF, added=("ETH/USDC", "SOL/USDC"), removed=())
     )
 
-    assert log == [
-        ("warmup", "ETH/USDC"),
-        ("subscribe", "ETH/USDC"),
-        ("warmup", "SOL/USDC"),
-        ("subscribe", "SOL/USDC"),
-    ]
+    # spawn only — no subscribe on the add branch.
+    assert log == [("spawn", "ETH/USDC"), ("spawn", "SOL/USDC")]
 
 
-def test_on_universe_update_provider_none_tolerant() -> None:
-    """6. provider is None → warmup runs, subscribe skipped (paper/replay tolerant)."""
+def test_on_universe_update_provider_none_synchronous_paper_warmup() -> None:
+    """6. provider is None → synchronous feed.warmup + immediate READY (WARNING 1).
+
+    The no-provider paper path absorbs warmup synchronously and marks the symbol
+    READY at once — a poll-added paper symbol is NEVER left PENDING.
+    """
     log: list[tuple[str, str]] = []
     universe = _universe("BTC/USDC")
+    universe.apply({"BTC/USDC", "ETH/USDC"})  # ETH pending
     handler = _handler(universe, feed=_RecordingFeed(log))
     # No provider set.
 
@@ -393,6 +408,7 @@ def test_on_universe_update_provider_none_tolerant() -> None:
     )
 
     assert log == [("warmup", "ETH/USDC")]
+    assert universe.is_ready("ETH/USDC")  # never left PENDING
 
 
 # --- remove-policy consumer + detach-on-flat (plan 06-04 Task 2) ------------
