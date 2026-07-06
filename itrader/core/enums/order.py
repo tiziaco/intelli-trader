@@ -196,6 +196,7 @@ class OrderTriggerSource(Enum):
 	ADMISSION_MAX_POSITIONS = "admission_max_positions"
 	ADMISSION_LEVERAGE = "admission_leverage"
 	ADMISSION_LEAVING = "admission_leaving"  # D-01 — block new entries for a leaving (removed) symbol
+	ADMISSION_READINESS = "admission_readiness"  # D-01 — block trading a non-READY (PENDING/FAILED) symbol
 	LIQUIDATION = "liquidation"  # LIQ-03 — forced-close trigger source
 
 	@classmethod
