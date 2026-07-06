@@ -28,15 +28,31 @@ never handed to ``Universe``.
 """
 
 from datetime import datetime
+from decimal import Decimal
 from queue import Queue
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
+from itrader.core.enums import OrderType, PositionSide, Side
+from itrader.core.ids import PortfolioId, StrategyId
+from itrader.core.portfolio_read_model import PortfolioReadModel, PositionView
+from itrader.core.sizing import FractionOfCash, TradingDirection
+from itrader.events_handler.events import SignalEvent
+from itrader.events_handler.events.fill import FillEvent
 from itrader.events_handler.events.market import TimeEvent, UniverseUpdateEvent
 from itrader.logger import get_itrader_logger
+from itrader.outils.id_generator import IDGenerator
 from itrader.universe.membership import UniverseSelectionModel
 from itrader.universe.universe import Universe
 
 __all__ = ["UniverseHandler"]
+
+# The two supported remove-policy dispositions (D-01). Default orphan-and-track.
+_ORPHAN_AND_TRACK = "orphan-and-track"
+_FORCE_CLOSE = "force-close"
+
+# Engine-owned id generator for the fabricated force-close exit signal's
+# strategy_id (single UUIDv7 scheme). Constructed once at import (live-only file).
+_idgen = IDGenerator()
 
 
 @runtime_checkable
@@ -53,9 +69,15 @@ class _SymbolValidator(Protocol):
 
 
 class _SupportsSubscribe(Protocol):
-    """The data-plane provider shape the add branch drives (Arm B, plan 02)."""
+    """The data-plane provider shape the add/remove branch drives (Arm B, plan 02).
+
+    The remove branch also calls ``unsubscribe`` (deferred until flat under
+    orphan-and-track; immediate under force-close / when nothing is held).
+    """
 
     def subscribe(self, symbol: str) -> None: ...
+
+    def unsubscribe(self, symbol: str) -> None: ...
 
 
 class UniverseHandler:
@@ -74,6 +96,7 @@ class UniverseHandler:
         universe: Universe,
         feed: _SupportsWarmup,
         timeframe: str,
+        remove_policy: str = _ORPHAN_AND_TRACK,
     ) -> None:
         """Hold the queue + universe read-model + feed + poll timeframe.
 
@@ -89,18 +112,29 @@ class UniverseHandler:
             The ``LiveBarFeed`` — warmed per added symbol BEFORE subscribe (Pitfall 6).
         timeframe : str
             The bar timeframe passed to ``feed.warmup`` on add.
+        remove_policy : str, optional
+            The open-position-on-remove disposition (D-01). Default
+            ``"orphan-and-track"`` (keep the WS/ring alive until the orphaned
+            position goes flat, blocking new entries meanwhile); ``"force-close"``
+            emits a market exit at removal then detaches. This flag lives in the
+            LIVE/poll-seam config (wired by plan 05) — NOT
+            ``SystemConfig.PerformanceSettings`` — so the backtest oracle is
+            untouched (§8, D-01).
         """
         self._global_queue = global_queue
         self._universe = universe
         self._feed = feed
         self._timeframe = timeframe
+        self._remove_policy = remove_policy
 
         # Live-only injected seams (plan 05 wires these on the live path). While
         # ``None`` the handler is inert: ``on_time`` short-circuits on the source
-        # guard, so an unwired route is a near-free no-op.
+        # guard, so an unwired route is a near-free no-op. The read model is the
+        # open-position truth the remove consumer / flat-detect read.
         self._selection_source: UniverseSelectionModel | None = None
         self._symbol_validator: _SymbolValidator | None = None
         self._provider: _SupportsSubscribe | None = None
+        self._read_model: PortfolioReadModel | None = None
 
         self.logger = get_itrader_logger().bind(component="UniverseHandler")
 
@@ -115,8 +149,19 @@ class UniverseHandler:
         self._symbol_validator = validator
 
     def set_provider(self, provider: _SupportsSubscribe) -> None:
-        """Wire the data-plane provider the add branch subscribes (plan 05)."""
+        """Wire the data-plane provider the add/remove branch drives (plan 05)."""
         self._provider = provider
+
+    def set_portfolio_read_model(self, read_model: PortfolioReadModel) -> None:
+        """Wire the ``PortfolioReadModel`` for open-position truth (plan 05).
+
+        The remove consumer reads it to decide whether a removed symbol still
+        holds a position (orphan-and-track defer vs unsubscribe-now / force-close
+        exit); ``on_fill`` reads it to detect the leaving symbol reaching flat.
+        With no read model wired a removed symbol is treated as no-open (paper
+        add/remove of an untraded symbol).
+        """
+        self._read_model = read_model
 
     # --- poll (Arm A) ----------------------------------------------------------
 
@@ -179,7 +224,119 @@ class UniverseHandler:
             if self._provider is not None:
                 self._provider.subscribe(sym)
 
-        # plan 04: REMOVE branch (policy) inserted here — ``event.removed`` handling
-        # (orphan-and-track vs force-close: leaving-set mark + admission gate,
-        # deferred unsubscribe until flat, force-close OrderEvent). This method is
-        # extended in place; the ADD branch above stays unchanged.
+        # REMOVE branch (D-01 policy, Pitfall 4 — do NOT unconditionally
+        # unsubscribe). Branch on policy + open-position state so an orphaned
+        # position's WS/ring stays alive until it goes flat.
+        for sym in event.removed:
+            self._on_symbol_removed(sym, event.time)
+
+    # --- remove-policy consumer (D-01) -----------------------------------------
+
+    def _on_symbol_removed(self, sym: str, asof: datetime) -> None:
+        """Apply the remove policy to a single removed symbol (D-01, Pitfall 4).
+
+        - No open position (either policy): unsubscribe NOW — nothing to keep
+          alive (paper add/remove of an untraded symbol also lands here when no
+          read model is wired).
+        - orphan-and-track WITH an open position: ``mark_leaving`` and DO NOT
+          unsubscribe — the WS/ring stays alive so the orphaned position's stop
+          can fire; detach happens on the flat FILL (``on_fill``). New entries
+          are blocked meanwhile by the plan-04 admission gate.
+        - force-close WITH an open position: emit a market-exit ``SignalEvent``
+          (opposite side, full exit) for each holding portfolio, ``mark_leaving``
+          (so re-entry is blocked and the flat FILL clears the leaving set), then
+          unsubscribe.
+        """
+        holders = self._holding_portfolios(sym)
+        if not holders:
+            self._unsubscribe(sym)
+            return
+
+        if self._remove_policy == _FORCE_CLOSE:
+            for portfolio_id, snap in holders:
+                self._emit_force_close_exit(sym, portfolio_id, snap, asof)
+            self._universe.mark_leaving(sym)
+            self._unsubscribe(sym)
+            self.logger.info("Force-close removal: exit emitted + detached %s", sym)
+            return
+
+        # orphan-and-track WITH an open position: defer unsubscribe until flat.
+        self._universe.mark_leaving(sym)
+        self.logger.info("Orphan-and-track removal: %s kept alive until flat", sym)
+
+    def on_fill(self, event: FillEvent) -> None:
+        """Detach-on-flat: unsubscribe + clear a leaving symbol once it is flat.
+
+        On each FILL, if the filled ticker is in ``Universe.leaving_symbols()``
+        and no active portfolio holds an open position for it any more, the
+        orphaned position has reached flat — unsubscribe the live socket and
+        clear the symbol from the leaving set (detach-on-flat). A non-leaving
+        symbol, or a leaving symbol still holding, is a no-op.
+
+        Wired on the live FILL route only (plan 05), AFTER
+        ``PortfolioHandler.on_fill`` so the read model already reflects the
+        settled (flat) position.
+        """
+        if self._read_model is None:
+            return
+        ticker = event.ticker
+        if ticker not in self._universe.leaving_symbols():
+            return
+        if self._holding_portfolios(ticker):
+            return  # still held — not yet flat
+        self._unsubscribe(ticker)
+        self._universe.clear_leaving(ticker)
+        self.logger.info("Detach-on-flat: %s reached flat, unsubscribed + cleared", ticker)
+
+    # --- remove helpers --------------------------------------------------------
+
+    def _holding_portfolios(
+        self, sym: str
+    ) -> list[tuple[PortfolioId, PositionView]]:
+        """Return (portfolio_id, position) for every active portfolio holding ``sym``.
+
+        Empty when no read model is wired (paper add/remove of an untraded
+        symbol) or no portfolio holds an open position for the symbol.
+        """
+        if self._read_model is None:
+            return []
+        holders: list[tuple[PortfolioId, PositionView]] = []
+        for portfolio_id in self._read_model.active_portfolio_ids():
+            snap = self._read_model.get_position(portfolio_id, sym)
+            if snap is not None:
+                holders.append((portfolio_id, snap))
+        return holders
+
+    def _unsubscribe(self, sym: str) -> None:
+        """Unsubscribe the live socket for ``sym`` (guard provider is None)."""
+        if self._provider is not None:
+            self._provider.unsubscribe(sym)
+
+    def _emit_force_close_exit(
+        self, sym: str, portfolio_id: PortfolioId, snap: PositionView, asof: datetime
+    ) -> None:
+        """Emit a market-exit ``SignalEvent`` closing ``snap`` fully (force-close).
+
+        Opposite side from the open position (LONG -> SELL, SHORT -> BUY),
+        ``exit_fraction=Decimal("1")`` (full exit). ``LONG_SHORT`` direction so
+        the direction gate always passes; the leaving admission gate passes it as
+        a sanctioned exit. Money is Decimal end-to-end — the indicative
+        ``price`` is the position's Decimal ``avg_price`` (a MARKET order fills at
+        the current bar, so the carried price is only indicative).
+        """
+        exit_action = Side.SELL if snap.side is PositionSide.LONG else Side.BUY
+        signal = SignalEvent(
+            time=asof,
+            order_type=OrderType.MARKET,
+            ticker=sym,
+            action=exit_action,
+            price=snap.avg_price,
+            stop_loss=Decimal("0"),
+            take_profit=Decimal("0"),
+            strategy_id=cast(StrategyId, _idgen.generate_strategy_id()),
+            portfolio_id=portfolio_id,
+            sizing_policy=FractionOfCash(fraction=Decimal("1")),
+            direction=TradingDirection.LONG_SHORT,
+            exit_fraction=Decimal("1"),
+        )
+        self._global_queue.put(signal)
