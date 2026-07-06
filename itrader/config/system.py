@@ -59,6 +59,17 @@ class MonitoringSettings(BaseModel):
     enable_profiling: bool = False
     profiling_port: int = 8081
     enable_tracing: bool = False
+    # Live/control-plane ONLY (Phase 06-05, D-01/D-02): the dynamic-universe poll
+    # cadence (seconds between membership polls, decoupled from bars per D-02) and
+    # the open-position-on-remove disposition (orphan-and-track vs force-close,
+    # D-01). These live on the monitoring/live plane, NEVER on PerformanceSettings
+    # (which carries the oracle-critical rng_seed): they are read only by the
+    # live-only poll-timer daemon + UniverseHandler, never on the backtest hot path
+    # (the backtest builds its own EventHandler with an empty UNIVERSE_UPDATE route
+    # and never constructs the handler or starts the timer), so the oracle-critical
+    # config surface stays untouched.
+    universe_poll_cadence_s: float = 60.0
+    universe_remove_policy: str = "orphan-and-track"
 
 
 class SystemConfig(BaseModel):
