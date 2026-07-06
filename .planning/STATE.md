@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-07-06T18:42:08.631Z"
+last_updated: "2026-07-06T18:52:43.793Z"
 last_activity: 2026-07-06
 progress:
   total_phases: 11
   completed_phases: 9
   total_plans: 73
-  completed_plans: 68
+  completed_plans: 70
   percent: 82
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 07 (live-dynamic-universe-hardening) — EXECUTING
-Plan: 5 of 8
+Plan: 6 of 8
 Status: Ready to execute
 Last activity: 2026-07-06
 
-Progress: [█████████░] 93%
+Progress: [██████████] 96%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -196,6 +196,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 07]: 07-02: Universe holds ONE TrackedInstrument record map (_entries) replacing the desync-prone _instruments map + _leaving set (D-02, WR-01 bug class); apply stops popping removed symbols (D-13 keep-until-flat), add-branch clobber-guarded (D-14), discard_instrument is the single atomic three-field teardown; construction members default READY (oracle-inert), apply-added PENDING; is_ready/mark_ready/mark_failed readiness surface (WR-02)
 - [Phase ?]: 07-03: split synchronous warmup into two WR-02 halves — non-emitting LiveBarFeed.absorb_warmup (silent ring/L absorb = _deliver minus _emit, D-03b/OQ1) + async OkxDataProvider.spawn_warmup (loop-native REST fetch via connector.spawn threadsafe -> ONE BarsLoaded bulk transport, or ONE scrubbed BarsLoadFailed reason=exception-TYPE-only T-05-27/V5). _build_bar promoted @staticmethod for the single canonical ClosedBar->Bar conversion (D-03a). Live-only, oracle byte-exact
 - [Phase 07]: 07-04: WR-02 readiness gate composed BEFORE strategy.is_ready in calculate_signals (None-guarded single O(1) universe.is_ready read, no allocation; backtest wires no universe so oracle byte-exact); update-before-gate kept so a PENDING symbol still warms (D-03c). on_bars_loaded warms concerned strategies via strategy.update with NO signals (D-03). on_strategy_command mutates .tickers idempotently (emptying-remove refused, non-empty invariant) then EMITS UniversePollEvent follow-on (D-11 queue-only, never calls UniverseHandler)
+- [Phase 07]: 07-05: on_time->on_poll consumes the dedicated UniversePollEvent (WR-06/D-06, off the shared TIME route); set_freeze_gate early-return freeze-in-place at the top of on_poll (WR-05/D-07, level-triggered self-heal, no replay); _PrecisionResolver + set_precision_resolver resolves added-symbol venue precision (WR-04/D-16, Universe stays connector-free, paper falls to _DEFAULT_* ladder). All 3 seams inert-by-default; route/predicate/resolver wiring is Plan 07
 
 ### Pending Todos
 
@@ -291,6 +292,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 07 P07-02 | 6min | 2 tasks | 3 files |
 | Phase 07 P07-03 | 10min | 2 tasks | 4 files |
 | Phase 07 P07-04 | 5min | 3 tasks | 2 files |
+| Phase 07 P07-05 | 5min | 2 tasks | 3 files |
 
 ## Deferred Items
 
@@ -340,7 +342,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T18:39:17.779Z
+Last session: 2026-07-06T18:52:25.600Z
 Stopped at: Completed 07-01-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
