@@ -304,6 +304,64 @@ def test_on_poll_freeze_gate_false_behaves_as_unwired() -> None:
     assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
 
 
+# --- precision resolver (WR-04 / D-16 venue precision) ---------------------
+
+
+class _FakeResolver:
+    """A precision resolver returning a configured Instrument per symbol.
+
+    A symbol absent from ``by_symbol`` resolves to ``None`` (unresolvable → the
+    caller falls to the default ladder).
+    """
+
+    def __init__(self, by_symbol: dict[str, Instrument]) -> None:
+        self._by_symbol = by_symbol
+
+    def resolve(self, symbol: str) -> Instrument | None:
+        return self._by_symbol.get(symbol)
+
+
+def _venue_inst(symbol: str) -> Instrument:
+    """A venue-precision Instrument with NON-default scales (3dp / 4dp)."""
+    return Instrument(
+        symbol=symbol,
+        price_precision=Decimal("0.001"),
+        quantity_precision=Decimal("0.0001"),
+        maintenance_margin_rate=Decimal("0.01"),
+        max_leverage=Decimal("3"),
+    )
+
+
+def test_on_poll_added_symbol_takes_resolver_precision() -> None:
+    """9a. A wired resolver gives a poll-added symbol venue precision (not 2dp/8dp)."""
+    universe = _universe("BTC/USDC")
+    handler = _handler(universe)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_precision_resolver(_FakeResolver({"ETH/USDC": _venue_inst("ETH/USDC")}))
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    inst = universe.instrument("ETH/USDC")
+    assert inst.price_precision == Decimal("0.001")  # resolver, not 2dp default
+    assert inst.quantity_precision == Decimal("0.0001")  # not 8dp default
+
+
+def test_on_poll_added_symbol_no_resolver_uses_default_ladder() -> None:
+    """9b. With NO resolver wired (paper), an added symbol lands on the default ladder."""
+    universe = _universe("BTC/USDC")
+    handler = _handler(universe)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    # No precision resolver wired.
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    inst = universe.instrument("ETH/USDC")
+    assert inst.price_precision == Decimal("0.01")  # _DEFAULT_PRICE_SCALE (2dp)
+    assert inst.quantity_precision == Decimal("0.00000001")  # _DEFAULT_QUANTITY_SCALE (8dp)
+
+
 def test_on_universe_update_warmup_before_subscribe() -> None:
     """5. ADD branch: feed.warmup THEN provider.subscribe, in that order per symbol."""
     log: list[tuple[str, str]] = []

@@ -38,6 +38,7 @@ from typing import Any, Protocol, cast, runtime_checkable
 
 from itrader.core.enums import OrderType, PositionSide, Side
 from itrader.core.ids import PortfolioId, StrategyId
+from itrader.core.instrument import Instrument
 from itrader.core.portfolio_read_model import PortfolioReadModel, PositionView
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.events_handler.events import SignalEvent, UniversePollEvent
@@ -70,6 +71,23 @@ class _SymbolValidator(Protocol):
     """The D-06 venue bound: an object exposing ``validate_symbol`` (e.g. OkxExchange)."""
 
     def validate_symbol(self, symbol: str) -> bool: ...
+
+
+class _PrecisionResolver(Protocol):
+    """The WR-04/D-16 venue-precision bound for poll-added symbols.
+
+    ``resolve`` returns a fully-built ``Instrument`` carrying venue-correct
+    precision (from the OKX markets map) for a freshly-added symbol, or ``None``
+    when the symbol is unresolvable — the caller then falls to ``Universe.apply``'s
+    ``_DEFAULT_*`` ladder (paper/replay wire no resolver, so an added symbol lands
+    on the default ladder). ``Universe`` stays connector-free (D-03/D-16):
+    resolution happens HERE, never inside ``Universe``. The resolver
+    IMPLEMENTATION is built at the composition root (plan 07) from the venue
+    markets map, using the string Decimal path (``Decimal("1e-n")`` / ``to_money``,
+    NEVER ``Decimal(float)``).
+    """
+
+    def resolve(self, symbol: str) -> Instrument | None: ...
 
 
 class _SupportsSubscribe(Protocol):
@@ -141,6 +159,7 @@ class UniverseHandler:
         self._provider: _SupportsSubscribe | None = None
         self._read_model: PortfolioReadModel | None = None
         self._freeze_gate: Callable[[], bool] | None = None
+        self._precision_resolver: _PrecisionResolver | None = None
 
         self.logger = get_itrader_logger().bind(component="UniverseHandler")
 
@@ -166,6 +185,16 @@ class UniverseHandler:
     def set_symbol_validator(self, validator: _SymbolValidator) -> None:
         """Wire the D-06 venue bound (``validate_symbol``) the poll filters through."""
         self._symbol_validator = validator
+
+    def set_precision_resolver(self, resolver: _PrecisionResolver) -> None:
+        """Wire the WR-04/D-16 venue-precision resolver for poll-added symbols (plan 07).
+
+        With a resolver wired, ``on_poll`` resolves each newly-added symbol to a
+        venue-precision ``Instrument`` from the OKX markets map before ``apply``;
+        with none wired (paper/replay) an added symbol falls to ``Universe``'s
+        ``_DEFAULT_*`` ladder. ``Universe`` stays connector-free (D-16).
+        """
+        self._precision_resolver = resolver
 
     def set_provider(self, provider: _SupportsSubscribe) -> None:
         """Wire the data-plane provider the add/remove branch drives (plan 05)."""
@@ -218,13 +247,15 @@ class UniverseHandler:
             validator = self._symbol_validator
             desired = {s for s in desired if validator.validate_symbol(s)}
 
-        # Added-symbol precision is resolved by ``Universe.apply`` via the
-        # plan-01 ``_DEFAULT_*`` ladder fallback (paper-correct, never KeyErrors).
-        # Venue-correct precision resolution from the live markets map is a plan-05
-        # composition-root wiring concern (where a real OKX markets map + its
-        # precisionMode is available and testable); passing ``None`` here keeps the
-        # handler from reaching into connector internals and honors D-03.
-        delta = self._universe.apply(desired, None)
+        # WR-04/D-16 venue precision: resolve the ADDED symbols (those not already
+        # members) to venue-precision ``Instrument``s from the markets map when a
+        # resolver is wired, keeping only non-None results — ``Universe.apply``'s
+        # ``resolved.get(sym) or default`` fallback (plan-02) handles an
+        # unresolvable symbol, so no KeyError. Resolution happens HERE, never inside
+        # ``Universe`` (D-03/D-16 connector-free). With no resolver wired (paper) the
+        # dict is None and every add falls to the ``_DEFAULT_*`` ladder.
+        instruments = self._resolve_added_instruments(desired)
+        delta = self._universe.apply(desired, instruments)
 
         # T-06-03-DOS: no empty-delta floods — put NOTHING when nothing changed.
         if delta.is_empty():
@@ -238,6 +269,29 @@ class UniverseHandler:
         self.logger.info(
             "Universe delta applied: +%s -%s", delta.added, delta.removed
         )
+
+    def _resolve_added_instruments(
+        self, desired: set[str]
+    ) -> dict[str, Instrument] | None:
+        """Resolve venue-precision ``Instrument``s for the newly-added symbols (WR-04).
+
+        Returns a ``{symbol: Instrument}`` dict for the symbols in ``desired`` that
+        are NOT already members and that the wired resolver resolves to a non-None
+        ``Instrument``; returns ``None`` when no resolver is wired (paper/replay) so
+        ``Universe.apply`` falls entirely to the ``_DEFAULT_*`` ladder. An
+        unresolvable added symbol is simply omitted — ``apply``'s ``resolved.get(sym)
+        or default`` fallback lands it on the ladder without a KeyError.
+        """
+        if self._precision_resolver is None:
+            return None
+        resolver = self._precision_resolver
+        added = desired - set(self._universe.members)
+        instruments: dict[str, Instrument] = {}
+        for sym in added:
+            resolved = resolver.resolve(sym)
+            if resolved is not None:
+                instruments[sym] = resolved
+        return instruments
 
     # --- add-side consumer (Arm A) --------------------------------------------
 
