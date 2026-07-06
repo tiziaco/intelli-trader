@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-06T10:29:21.633Z"
+last_updated: "2026-07-06T11:15:36.681Z"
 last_activity: 2026-07-06
 progress:
   total_phases: 10
   completed_phases: 8
   total_plans: 65
-  completed_plans: 63
+  completed_plans: 64
   percent: 80
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 06 (dynamic-universe-membership) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-07-06
 
-Progress: [██████████] 97%
+Progress: [██████████] 98%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -180,6 +180,9 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase 06]: 06-02: OkxDataProvider.subscribe/unsubscribe + {symbol: asyncio.Task} registry (D-05, Arm B data plane) — idempotent subscribe spawns one supervised candle coroutine on the connector loop; unsubscribe cancels via the connector cooperative-cancel teardown (no new teardown); provider carries zero membership knowledge
 - [Phase 06]: 06-02: per-symbol supervisor keys — member symbol threaded as stream_name through _stream_candles/_connect_and_consume_candles (replaces shared 'candles' literal, Pitfall 2); one symbol's drop no longer marks all streams down, one payload no longer resets all budgets; is_streaming_healthy keeps any-symbol-down; confirm='0' snapshot still dropped, warmup-before-subscribe contract documented
 - [Phase 06]: 06-03: UniverseHandler on_time (source-guard -> D-06 validate_symbol filter -> Universe.apply -> emit UniverseUpdateEvent only on non-empty delta) + on_universe_update ADD branch (warmup-before-subscribe, Pitfall 6); zero membership duplication. Dedicated 4-space handler isolates the live-only poll route from the backtest _routes[TIME] literal (Pitfall 3/A3). Lean UniverseSelectionModel + StaticUniverseSelectionModel grown in membership.py (D-20). on_time passes instruments=None (plan-01 default-ladder); venue-precision deferred to plan-05. UNIV-01 still Pending (remove=04, wiring=05)
+- [Phase ?]: [Phase 06]: 06-04: OrderTriggerSource.ADMISSION_LEAVING + AdmissionManager._enforce_leaving_symbol_admission wired FIRST (before direction) — audited-REJECTS a new entry for a symbol in Universe.leaving_symbols() while PASSING a sanctioned exit (SELL vs LONG / BUY vs SHORT); no-op with no universe/empty leaving-set (oracle-dark, D-01)
+- [Phase ?]: [Phase 06]: 06-04: UniverseHandler remove-policy consumer — orphan-and-track (mark_leaving, DEFER unsubscribe until flat; unsubscribe-now only when nothing held) vs force-close (emit opposite-side full-exit SignalEvent then unsubscribe) + on_fill detach-on-flat (unsubscribe+clear_leaving once flat). remove_policy on the live/poll-seam ctor NOT SystemConfig — oracle untouched (D-01/§8)
+- [Phase ?]: [Phase 06]: 06-04: remove-policy proven deterministically offline via remove_policy_harness — two synthetic symbols driven through LiveBarFeed.update (the OKX seam) settling force-close through the reused SimulatedExchange (FillEvent->PortfolioHandler.on_fill); plan-04 on_universe_update/on_fill seams direct-called against the REAL PortfolioHandler read model (route wiring is plan 05). UNIV-02 remove-half done
 
 ### Pending Todos
 
@@ -267,6 +270,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 06 P01 | 22min | 2 tasks | 7 files |
 | Phase 06 P02 | 9min | 2 tasks | 4 files |
 | Phase 06 P03 | 6min | 2 tasks | 5 files |
+| Phase 06 P04 | 20min | 3 tasks | 8 files |
 
 ## Deferred Items
 
@@ -316,7 +320,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T10:28:08.968Z
+Last session: 2026-07-06T11:15:10.606Z
 Stopped at: Completed 06-01-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
