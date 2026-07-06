@@ -398,7 +398,7 @@ Plans:
 
 **Wave 8** *(residual code-review warnings — WR-03 + WR-05; WR-04 deferred)*
 
-- [ ] 05.3-12-PLAN.md — D-28 gate resume on all venue streams healthy (per-arm `is_streaming_healthy()` + compound gate, no engine aggregation) + D-29 loop-native backfill fail-loud on non-contiguous page + `_replaying_backfill` re-entrancy guard + D-27 resume-gate / backfill-contiguity tests [wave 8]
+- [x] 05.3-12-PLAN.md — D-28 gate resume on all venue streams healthy (per-arm `is_streaming_healthy()` + compound gate, no engine aggregation) + D-29 loop-native backfill fail-loud on non-contiguous page + `_replaying_backfill` re-entrancy guard + D-27 resume-gate / backfill-contiguity tests [wave 8]
 
 **Cross-cutting constraints:**
 
