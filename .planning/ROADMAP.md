@@ -377,7 +377,7 @@ Plans:
 **Goal:** Resilience hardening for the live OKX path: stream-death catch-all + supervised account/position streams, missed-fill catch-up on resume, submit-timeout in-flight semantics, defer protective orders during pause, drop overlay on ack, loop-native gap backfill, external-order admission + preflight, and the 05-13 carry-overs — PLUS the four 05.2-review durability warnings (atomic fill-path persist, early durable-halt refusal, off-loop halt write, restart-seeded reconcile dedup ring) and the SimulatedAccount restart-restore ungate. Fixes V17-07/08/09/11/13/15/16 + 05-13 + WR-01/02/04/05 (CONTEXT D-11..D-23).
 **Requirements**: Scope defined by CONTEXT.md decisions D-11..D-27 (no formal REQ/V17 IDs mapped; each D-NN is the trackable requirement, cited in each plan's must_haves/truths). D-24..D-27 are the gap-remediation decisions closing the 3 confirmed verification gaps (D-11/WR-02, D-12/WR-01, D-15/CR-01).
 **Depends on:** Phase 05.2 (D-15 drop-overlay needs the D-06 ORDER-ACK trigger; D-12 catch-up + D-16 mark-seen safe once D-08 dedup lands; D-19..D-22 build on the 05.2 durable SQL ledger + HaltRecordStore + VenueCorrelationIndex; D-23's scalar-restore relies on D-19's atomic write)
-**Plans:** 11 plans in 7 waves
+**Plans:** 12 plans in 8 waves
 
 Plans:
 
