@@ -49,14 +49,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Awaitable, Callable, TypedDict
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
 import aiohttp
 
 from itrader.connectors.base import LiveConnector
+from itrader.core.exceptions import MissingPriceDataError, StateError
 from itrader.core.money import to_money
+from itrader.events_handler.events import BarsLoaded, BarsLoadFailed
 from itrader.logger import get_itrader_logger
+
+if TYPE_CHECKING:
+    # Bar is used only in the warmup conversion's return annotation — a lazy string
+    # under ``from __future__ import annotations`` (no runtime import cost here; the
+    # live-only conversion imports it locally).
+    from itrader.core.bar import Bar
 
 
 class ClosedBar(TypedDict):
@@ -148,6 +158,12 @@ class OkxDataProvider:
         self._bar_sink: Callable[[ClosedBar], None] | None = None
         self._stream_handle: Any = None
 
+        # 07-03 (WR-02, D-03): the engine-thread queue the async warmup fetch hands its ONE
+        # BarsLoaded / BarsLoadFailed back on (the MPSC-safe cross-thread hop from the
+        # connector loop to the single-writer engine thread). Injected post-construction via
+        # set_global_queue at the live composition root (a later plan wires it); None until then.
+        self._global_queue: "queue.Queue[Any] | None" = None
+
         # 06-02 (D-05): dynamic per-symbol subscription registry — {member-symbol: task}.
         # Keyed by the universe-member symbol string (the SAME form stamped into
         # ``ClosedBar["symbol"]``). This is mechanical socket state derived from
@@ -202,6 +218,16 @@ class OkxDataProvider:
         owns ``BarEvent`` construction and the ring buffer (LX-07/LX-08).
         """
         self._bar_sink = sink
+
+    def set_global_queue(self, global_queue: "queue.Queue[Any]") -> None:
+        """Inject the engine queue the async warmup emits BarsLoaded/BarsLoadFailed on (07-03/D-03).
+
+        The provider is otherwise a pure fetch-and-hand-to-sink arm; :meth:`spawn_warmup` is
+        the ONE path that puts an event on the queue directly (mirroring ``OkxExchange``
+        emitting ``FillEvent``s itself, D-07). Kept a post-construction seam (like
+        :meth:`set_bar_sink`) so the wiring order at the live composition root stays flexible.
+        """
+        self._global_queue = global_queue
 
     def _hand_closed_bar(self, bar: ClosedBar) -> None:
         """Deliver one completed bar to the registered sink (drop-and-log if unset)."""
@@ -691,6 +717,120 @@ class OkxDataProvider:
             return
         self.logger.error(
             "OKX gap backfill task died (%s) — halting engine", type(exc).__name__)
+        if self._halt_signal is not None:
+            self._halt_signal("connector-fatal")
+
+    # --- async warmup (07-03 WR-02, D-03/D-04) --------------------------------
+
+    def spawn_warmup(self, symbol: str, timeframe: str, limit: int) -> None:
+        """Schedule a loop-native REST warmup fetch; emit ONE BarsLoaded/BarsLoadFailed (D-03/D-04).
+
+        The async half of the WR-02 warmup pipeline. Runs ONLY the REST fetch (pure I/O, no
+        engine/feed state) on the connector loop and hands ALL fetched bars back to the engine
+        thread as ONE ``BarsLoaded`` bulk-transport event (D-03 — never a per-bar flood). On
+        ANY fetch failure it emits ONE ``BarsLoadFailed`` carrying a SCRUBBED reason (the
+        exception TYPE name only — never ``str(exc)`` / venue context / a secret, T-05-27 /
+        Security V5).
+
+        Cross-thread (RESEARCH Pitfall 6): ``spawn_warmup`` is triggered from the ENGINE thread
+        (a poll / add-ticker consumer), so it schedules onto the connector loop via
+        ``connector.spawn`` (threadsafe ``call_soon_threadsafe``) — NEVER ``create_task`` (which
+        would fail off-loop) and NEVER ``connector.call(...).result()`` (which would block the
+        engine thread on the fetch). The ONLY thing that crosses back to the engine thread is
+        the ``queue.put`` (MPSC-safe). The provider carries no membership / readiness knowledge;
+        it fetches and emits.
+        """
+        if self._global_queue is None:
+            # WR-02 (mirror the feed _emit guard): a bound queue is a runtime wiring
+            # precondition, not an invariant — a typed StateError that ALWAYS fires (never a
+            # bare assert, which ``python -O`` strips) beats a ``None.put`` AttributeError
+            # swallowed by the task's broad except.
+            raise StateError(
+                "OkxDataProvider",
+                "unbound",
+                required_state="queue-bound (call set_global_queue first)",
+                operation="spawn_warmup",
+            )
+        handle = self._connector.spawn(self._run_warmup(symbol, timeframe, limit))
+        # Supervise like spawn_gap_backfill (D-11 shape): a crash OUTSIDE the coroutine's own
+        # scrubbed try/except is logged + halts, never swallowed.
+        handle.add_done_callback(self._on_warmup_done)
+
+    async def _run_warmup(self, symbol: str, timeframe: str, limit: int) -> None:
+        """Await the loop-native REST warmup fetch, then emit ONE BarsLoaded / BarsLoadFailed.
+
+        Runs on the connector loop (scheduled by :meth:`spawn_warmup`). ``await``s the
+        loop-native :meth:`_fetch_ohlcv_backfill_async` (no ``call().result()`` bridge, RESEARCH
+        Pitfall 4), converts the fetched ``ClosedBar``s to ``Bar``s via the feed's canonical
+        ``_build_bar`` (D-03a — one conversion, never a second bulk path), and puts ONE
+        ``BarsLoaded`` on the engine queue with the business ``time`` of the NEWEST venue bar
+        (never wall-clock, Pitfall 5). Any exception is scrubbed to its TYPE name and emitted as
+        ONE ``BarsLoadFailed`` (T-05-27).
+        """
+        # spawn_warmup guarantees a bound queue before scheduling; narrow for mypy.
+        engine_queue = self._global_queue
+        assert engine_queue is not None
+        try:
+            closed_bars = await self._fetch_ohlcv_backfill_async(
+                symbol, timeframe, limit=limit)
+            bars = self._closed_bars_to_bars(closed_bars)
+            if not bars:
+                # An empty warmup window cannot warm indicators — surface it as a scrubbed
+                # failure (the readiness gate moves the symbol to FAILED) rather than emit an
+                # empty BarsLoaded that breaks the non-empty payload contract.
+                raise MissingPriceDataError(symbol, "warmup fetch returned no bars")
+            # Business time = the NEWEST fetched bar's open-time (Pitfall 5), never now().
+            engine_queue.put(BarsLoaded(
+                symbol=symbol, timeframe=timeframe, bars=bars, time=bars[-1].time))
+        except Exception as exc:
+            # Scrub (T-05-27 / Security V5): the exception TYPE name only — NEVER str(exc),
+            # which may embed venue request context / a credential / a URL.
+            self.logger.warning(
+                "OKX warmup for %s/%s failed (%s) — emitting BarsLoadFailed",
+                symbol, timeframe, type(exc).__name__)
+            engine_queue.put(BarsLoadFailed(
+                symbol=symbol, reason=type(exc).__name__,
+                # No venue bar exists on a failure to source business time from; this is a
+                # live-only control-plane failure signal (oracle-inert, never on the
+                # deterministic backtest path), so the live wall-clock is the pragmatic stamp
+                # — mirroring the single allowed control-plane poll-timer emit (Pitfall 5).
+                time=datetime.now(UTC)))
+
+    def _closed_bars_to_bars(
+        self, closed_bars: "list[ClosedBar]"
+    ) -> "tuple[Bar, ...]":
+        """Convert fetched ``ClosedBar``s to ``Bar``s via the feed's canonical ``_build_bar`` (D-03a).
+
+        Reuses ``LiveBarFeed._build_bar`` (the ONE ``ClosedBar`` → ``Bar`` conversion) so the
+        warmup bulk-transport path and the live ``update()`` path build byte-identical ``Bar``
+        facts — no second bulk conversion (D-03a / LX-09). The open-time is the venue ``ts``
+        parsed to a tz-aware ``pd.Timestamp`` (matching the live path), never wall-clock.
+        Live-only imports are kept LOCAL so the module's import graph stays lean.
+        """
+        import pandas as pd
+
+        from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
+        return tuple(
+            LiveBarFeed._build_bar(
+                pd.Timestamp(cb["ts"], unit="ms", tz="UTC"), cb)
+            for cb in closed_bars)
+
+    def _on_warmup_done(self, task: "asyncio.Task[Any]") -> None:
+        """Supervise the spawned warmup task (D-11 shape — unknown ⇒ halt).
+
+        A cooperative ``CancelledError`` (connector disconnect) or a clean finish is quiet; ANY
+        other exception (a crash OUTSIDE ``_run_warmup``'s own scrubbed except — e.g. the emit
+        itself failing) is logged (exception TYPE only — scrub, never ``str(exc)``, T-05-27) and
+        escalated to the injected halt entrypoint so a dead warmup never vanishes silently.
+        ``task.exception()`` is read only past the cancelled guard so it never re-raises.
+        """
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is None:
+            return
+        self.logger.error(
+            "OKX warmup task died (%s) — halting engine", type(exc).__name__)
         if self._halt_signal is not None:
             self._halt_signal("connector-fatal")
 
