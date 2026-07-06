@@ -471,7 +471,7 @@ detailed approaches are *leanings* in `06-REVIEW-DECISIONS.md` — final design 
 the Phase 7 discuss session, not locked here.
 **Research flag**: consider — LEAN `OnSecuritiesChanged`/`IsReady` + Nautilus `request_bars` readiness
 patterns informed the design direction (see `06-REVIEW-DECISIONS.md` WR-02).
-**Plans**: 7 plans (5 waves) — planned 2026-07-06
+**Plans**: 8 plans (5 waves) — planned 2026-07-06 (07-08 added 2026-07-06 in revision: primary admission readiness gate, D-01/WR-02)
 
 - [ ] 07-01-PLAN.md — Contracts: Readiness enum + 4 EventType members + 4 event structs + explicit-empty routes (Wave 1)
 - [ ] 07-02-PLAN.md — Universe state model: TrackedInstrument + _entries + keep-until-flat (WR-01/WR-02, Wave 2)
@@ -480,6 +480,7 @@ patterns informed the design direction (see `06-REVIEW-DECISIONS.md` WR-02).
 - [ ] 07-05-PLAN.md — UniverseHandler poll route + HALT gate + precision resolver (WR-04/WR-05/WR-06, Wave 3)
 - [ ] 07-06-PLAN.md — UniverseHandler warmup consumers + discard teardown + strategy-derived source (WR-01/WR-02/OP-SEAM, Wave 4)
 - [ ] 07-07-PLAN.md — Composition root + add_event allowlist + milestone gate (WR-04/WR-06/OP-SEAM, Wave 5)
+- [ ] 07-08-PLAN.md — AdmissionManager PRIMARY readiness gate: reject a non-READY symbol at admission even bypassing the strategy loop (WR-02/D-01, Wave 3)
 
 ## Phases (shipped — archived detail)
 

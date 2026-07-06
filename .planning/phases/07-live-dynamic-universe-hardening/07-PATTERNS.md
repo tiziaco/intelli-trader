@@ -6,8 +6,8 @@
 
 > **Indentation hazard is per-file and load-bearing (CLAUDE.md + RESEARCH Pitfall 3).**
 > Each entry below is tagged `[4-SPACE]` or `[TABS]`. A mixed-indentation diff in a TAB file breaks it.
-> - `[4-SPACE]`: `core/`, `core/enums/`, `config/`, `universe/` (all of it), `price_handler/feed/`, `events_handler/events/`
-> - `[TABS]`: `strategy_handler/` (`strategies_handler.py`, `base.py`), `trading_system/live_trading_system.py`, `events_handler/full_event_handler.py`
+> - `[4-SPACE]`: `core/`, `config/`, `universe/` (all of it), `price_handler/feed/`, `events_handler/events/`, `trading_system/live_trading_system.py` (verified: zero tab lines)
+> - `[TABS]`: `strategy_handler/` (`strategies_handler.py`, `base.py`), `events_handler/full_event_handler.py`, `order_handler/` (incl. `admission/admission_manager.py`), `core/enums/order.py` (verified tab-indented despite the `core/` default)
 
 ---
 
@@ -26,7 +26,7 @@
 | `universe/membership.py` (MODIFY) | service / selection | transform | itself (`StaticUniverseSelectionModel`) | self | `[4-SPACE]` |
 | `price_handler/feed/live_bar_feed.py` (MODIFY) | feed | streaming / file-I/O(REST) | itself (`warmup`/`_deliver`) | self | `[4-SPACE]` |
 | `strategy_handler/strategies_handler.py` (MODIFY) | handler | event-driven | itself (`calculate_signals`) | self | `[TABS]` |
-| `trading_system/live_trading_system.py` (MODIFY) | composition-root | event-driven / lifecycle | itself (`_init_live_session`, `add_event`, `_run_poll_timer`) | self | `[TABS]` |
+| `trading_system/live_trading_system.py` (MODIFY) | composition-root | event-driven / lifecycle | itself (`_initialize_live_session`, `add_event`, `_run_poll_timer`) | self | `[4-SPACE]` |
 | `events_handler/full_event_handler.py` (MODIFY) | dispatcher | event-driven | itself (`self.routes` literal) | self | `[TABS]` |
 
 ---
@@ -185,7 +185,7 @@ Add `self._precision_resolver: _PrecisionResolver | None = None` + `set_precisio
 
 **Precision source (same as `derive_instruments`):** ccxt loaded `markets[symbol].precision.price/.amount` via `okx.py` `amount_to_precision`/`price_to_precision`; convert to Decimal scales via the string path (`to_money`/`Decimal("1e-n")`, NEVER `Decimal(float)`), mirroring the `instruments.py` ladder (`_DEFAULT_PRICE_SCALE = Decimal("0.01")`, `:49`; declared→inferred→default resolution `:216-225`).
 
-**Wiring analog (exact):** the guarded `set_symbol_validator` block in `_init_live_session` (`live_trading_system.py:1329-1332`):
+**Wiring analog (exact):** the guarded `set_symbol_validator` block in `_initialize_live_session` (`live_trading_system.py:1329-1332`):
 ```python
 if self._okx_exchange is not None:
     self._universe_handler.set_symbol_validator(self._okx_exchange)
@@ -266,14 +266,14 @@ Changes (D-01/D-03/D-03c/D-11):
 
 ---
 
-### `itrader/trading_system/live_trading_system.py` `[TABS]`
+### `itrader/trading_system/live_trading_system.py` `[4-SPACE]`
 
-**Baseline read:** `_init_live_session` route wiring (`:1310-1355`), `_run_poll_timer` (`:1775-1793`), `add_event` (`:1948-1992`).
+**Baseline read:** `_initialize_live_session` route wiring (`:1310-1355`), `_run_poll_timer` (`:1775-1793`), `add_event` (`:1948-1992`).
 
 Changes:
 - **`add_event` (D-10):** invert the narrow ORDER denylist (`:1978-1985`) to an allowlist. Add module constant `_EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND})`; replace the `is EventType.ORDER` reject (`:1980`) with `if getattr(event, 'type', None) not in _EXTERNALLY_ADMISSIBLE: reject`. RESEARCH OQ7: ZERO internal production callers — only `tests/unit/trading_system/test_add_event_admission_guard.py` (`:75` still-rejected, `:101` MUST be updated to the fail-closed posture).
 - **Poll timer (D-06, RESEARCH OQ6):** in `_run_poll_timer` (`:1790-1793`) swap the emitted `TimeEvent(time=datetime.now(UTC))` (`:1792`) → `UniversePollEvent(time=datetime.now(UTC))`. Keep the `_stop_event.wait(cadence)` interruptible-sleep mechanism (`:1793`) UNCHANGED. This stays the SOLE wall-clock event (Pitfall 5).
-- **Route wiring (D-06):** in `_init_live_session` (`:1348-1349`) change `routes[EventType.TIME].append(self._universe_handler.on_time)` → `routes[EventType.UNIVERSE_POLL] = [self._universe_handler.on_poll]`. Add `routes[EventType.STRATEGY_COMMAND] = [strategies_handler.on_strategy_command]` and the two-consumer `routes[EventType.BARS_LOADED] = [strategies_handler.on_bars_loaded, universe_handler.on_bars_loaded]` (list order = execution order) + `routes[EventType.BARS_LOAD_FAILED] = [universe_handler.on_bars_load_failed]`. **LIVE-ONLY** — mutate THIS EventHandler's dict, never the backtest literal (`:1339-1341` documents this invariant).
+- **Route wiring (D-06):** in `_initialize_live_session` (`:1348-1349`) change `routes[EventType.TIME].append(self._universe_handler.on_time)` → `routes[EventType.UNIVERSE_POLL] = [self._universe_handler.on_poll]`. Add `routes[EventType.STRATEGY_COMMAND] = [strategies_handler.on_strategy_command]` and the two-consumer `routes[EventType.BARS_LOADED] = [strategies_handler.on_bars_loaded, universe_handler.on_bars_loaded]` (list order = execution order) + `routes[EventType.BARS_LOAD_FAILED] = [universe_handler.on_bars_load_failed]`. **LIVE-ONLY** — mutate THIS EventHandler's dict, never the backtest literal (`:1339-1341` documents this invariant).
 - Swap the selection source (D-12): `set_selection_source(StaticUniverseSelectionModel(universe.members))` (`:1327-1328`) → the strategy-derived model.
 - **Cross-thread note (RESEARCH Pitfall 6):** engine-thread-triggered warmup must schedule onto the connector loop via `connector.spawn` (threadsafe), NOT `create_task`.
 
@@ -283,10 +283,10 @@ Changes:
 
 **Baseline read:** the `self.routes` literal (`:88-109`).
 
-The backtest literal to extend (`:88-109`) — add explicit-empty entries for the new types so the backtest builds them inert (live consumers wired in `_init_live_session`), mirroring `UNIVERSE_UPDATE: []` (`:107`):
+The backtest literal to extend (`:88-109`) — add explicit-empty entries for the new types so the backtest builds them inert (live consumers wired in `_initialize_live_session`), mirroring `UNIVERSE_UPDATE: []` (`:107`):
 ```python
 EventType.UNIVERSE_UPDATE: [],  # existing — explicit empty, live-only consumers
-EventType.UNIVERSE_POLL: [],    # NEW — live-only (UniverseHandler.on_poll wired in _init_live_session)
+EventType.UNIVERSE_POLL: [],    # NEW — live-only (UniverseHandler.on_poll wired in _initialize_live_session)
 EventType.STRATEGY_COMMAND: [], # NEW — live-only
 EventType.BARS_LOADED: [],      # NEW — live-only
 EventType.BARS_LOAD_FAILED: [], # NEW — live-only
@@ -320,7 +320,7 @@ Every new event: (1) frozen msgspec `Event` subclass with `type: ClassVar[EventT
 **Apply to:** precision resolver Decimal scales — `Decimal("1e-n")`/`to_money`, NEVER `Decimal(float)`.
 
 ### Oracle-inertness invariant (RESEARCH OQ8, Pitfall 2)
-**Apply to:** ALL Phase-7 additions. Two levers: (a) backtest builds a SEPARATE `EventHandler` with the untouched `_routes` literal — all live routing lives behind `_init_live_session`; (b) backtest members default **READY** so `is_ready` is unconditionally true and the strategy gate is a no-op. The only shared hot-path touch is the `is_ready` composition in `calculate_signals` — must be a single dict/enum read, no allocation (W1/W2).
+**Apply to:** ALL Phase-7 additions. Two levers: (a) backtest builds a SEPARATE `EventHandler` with the untouched `_routes` literal — all live routing lives behind `_initialize_live_session`; (b) backtest members default **READY** so `is_ready` is unconditionally true and the strategy gate is a no-op. The only shared hot-path touch is the `is_ready` composition in `calculate_signals` — must be a single dict/enum read, no allocation (W1/W2).
 
 ---
 

@@ -61,6 +61,7 @@ requirements. See `07-RESEARCH.md` Validation Architecture for the per-finding c
 | 07-04-3 | 04 | 3 | OP-SEAM | T-07-04-FANOUT | on_strategy_command mutate + emit UNIVERSE_POLL | unit | `poetry run pytest tests/unit/strategy/test_strategies_live_membership.py -q` | ⬜ pending |
 | 07-05-1 | 05 | 3 | WR-05/WR-06 | T-07-05-FREEZE/COUPLE | on_poll dedicated route + freeze gate | unit | `poetry run pytest tests/unit/universe/test_universe_poll.py -q` | ⬜ pending |
 | 07-05-2 | 05 | 3 | WR-04 | T-07-05-PRECISION | precision resolver seam + on_poll resolve | unit | `poetry run pytest tests/unit/universe/test_universe_poll.py -q` | ⬜ pending |
+| 07-08-1 | 08 | 3 | WR-02 (D-01 PRIMARY gate) | T-07-08-UNWARMED/ORACLE | admission readiness gate: non-READY symbol rejected AT ADMISSION even bypassing the strategy loop; oracle-inert | unit+integration | `poetry run pytest tests/unit/order/test_admission_readiness_gate.py tests/integration/test_backtest_oracle.py -q` | ⬜ pending |
 | 07-06-1 | 06 | 4 | WR-02 | T-07-06-ORDER/BATCH | async add-branch + warmup consumers + isolation | unit | `poetry run pytest tests/unit/universe/test_universe_warmup_consumers.py -q` | ⬜ pending |
 | 07-06-2 | 06 | 4 | WR-01 | T-07-06-DROP | discard_instrument teardown (2 points) | integration | `poetry run pytest tests/integration/test_universe_remove_policy.py -q` | ⬜ pending |
 | 07-06-3 | 06 | 4 | OP-SEAM | — | strategy-derived selection source | unit | `poetry run pytest tests/unit/universe -q` | ⬜ pending |

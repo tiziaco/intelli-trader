@@ -269,7 +269,7 @@ Interface shape (reuse the markets source, dedicated tiny Protocol — cleaner t
 class _PrecisionResolver(Protocol):
     def resolve(self, symbol: str) -> Instrument | None: ...   # None -> caller falls back to _DEFAULT_* ladder
 ```
-Wiring point: the same `_init_live_session` block that already builds the universe seams
+Wiring point: the same `_initialize_live_session` block that already builds the universe seams
 (`live_trading_system.py:1316-1337`), guarded `if self._okx_exchange is not None` exactly like the
 `set_symbol_validator` guard (`:1331-1332`). On paper/replay (no live markets map) the resolver is absent →
 `apply` falls through to the `_DEFAULT_*` ladder (paper-correct — identical posture to `validate_symbol`
@@ -356,7 +356,7 @@ byte-exact + no-W1/W2-regression acceptance criteria against these exact inertne
 
 | New path | Why inert on backtest | Proof lever |
 |---|---|---|
-| `UNIVERSE_POLL` route + `on_poll` | Backtest builds its OWN `EventHandler` with the untouched `_routes` literal (`full_event_handler.py:88-109`, empty `UNIVERSE_UPDATE`, no `UNIVERSE_POLL`); the live route mutation is in `_init_live_session` only (`live_trading_system.py:1339-1353`). Backtest never constructs `UniverseHandler` nor starts `_run_poll_timer`. | `tests/integration/test_okx_inertness.py`; assert no `UniverseHandler`/`live_bar_feed` import on the backtest path |
+| `UNIVERSE_POLL` route + `on_poll` | Backtest builds its OWN `EventHandler` with the untouched `_routes` literal (`full_event_handler.py:88-109`, empty `UNIVERSE_UPDATE`, no `UNIVERSE_POLL`); the live route mutation is in `_initialize_live_session` only (`live_trading_system.py:1339-1353`). Backtest never constructs `UniverseHandler` nor starts `_run_poll_timer`. | `tests/integration/test_okx_inertness.py`; assert no `UniverseHandler`/`live_bar_feed` import on the backtest path |
 | `TrackedInstrument`/`Readiness`/`_entries` on `Universe` | `Universe` construction is shared, but the backtest `select()` never polls (no selection source drives a delta) and SMA_MACD's membership is construction-fixed. Every backtest member is added once at wiring → `PENDING`→`READY` transition must resolve to "always ready" when no live warmup gate runs. **Backtest members must default `READY`** (they carry real data from the store), so `is_ready` is unconditionally true and the strategy loop gate is a no-op. | Oracle byte-exact (`tests/integration/test_backtest_oracle.py`, 134 trades / `46189.87730727451`) |
 | Readiness gate in `calculate_signals` | The defensive `universe.is_ready(sym)` check (D-01) must be a live-only branch OR always-true on backtest. The existing gate is `strategy.update → strategy.is_ready → generate_signal` (`strategies_handler.py:140-143`); the membership gate composes BEFORE it. On backtest, `is_ready` is always true (members READY at wiring), so the added gate never changes the firing tick. | Oracle byte-exact + W1 (per-tick hot path — the gate must be O(1), no allocation) |
 | Async warmup / `BarsLoaded` / `BarsLoadFailed` | These only fire on the live add-branch (`on_universe_update`), which the backtest never reaches. The events never appear on the backtest queue. | `test_okx_inertness.py` |
@@ -365,7 +365,7 @@ byte-exact + no-W1/W2-regression acceptance criteria against these exact inertne
 
 **Key inertness invariant for the planner:** the backtest builds a SEPARATE `EventHandler` with the untouched
 `_routes` literal (`live_trading_system.py:1301-1305` documents this), so ALL live-only routing lives behind
-`_init_live_session`. As long as (a) the backtest never constructs `UniverseHandler`/starts the timer, and
+`_initialize_live_session`. As long as (a) the backtest never constructs `UniverseHandler`/starts the timer, and
 (b) backtest members default `READY`, every Phase-7 addition is provably oracle-dark. W1/W2: the only shared
 hot-path touch is the `is_ready` composition in `calculate_signals` — must be a single dict/enum read, no
 allocation.
@@ -433,9 +433,11 @@ remove. Then emit `UNIVERSE_POLL` (follow-on, D-11) — one selection path, two 
    flips it, the backtest strategy loop gate suppresses every signal → oracle goes to zero trades. Backtest
    members must be `READY` at wiring (they carry store data). Highest-risk inertness trap.
 3. **Indentation mismatch.** `universe/` package (`universe.py`, `universe_handler.py`, `instruments.py`,
-   `membership.py`) and `price_handler/feed/live_bar_feed.py` are **4-SPACE**; `strategy_handler/`
-   (`strategies_handler.py`, `base.py`) and `trading_system/live_trading_system.py` are **TABS**. Match the
-   file (CONVENTIONS tab/space hazard). `events_handler/events/` is 4-space.
+   `membership.py`), `price_handler/feed/live_bar_feed.py`, and `trading_system/live_trading_system.py`
+   (verified: zero tab lines) are **4-SPACE**; `strategy_handler/` (`strategies_handler.py`, `base.py`),
+   `events_handler/full_event_handler.py`, `order_handler/admission/admission_manager.py`, and
+   `core/enums/order.py` are **TABS**. Match the file (CONVENTIONS tab/space hazard).
+   `events_handler/events/` is 4-space.
 4. **`filterwarnings=["error"]` + `--strict-markers`.** Any unexpected warning fails the suite; new tests
    must use only `unit`/`integration`/`slow`/`e2e` markers (folder-derived).
 5. **Wall-clock leak.** `BarsLoaded.time` / poll event `time` must be venue/business-sourced, never
@@ -541,7 +543,7 @@ feed/provider or event routing changes before planning).
   one of which (`test_add_event_admission_guard.py:101`) must be updated for the new fail-closed posture.
 - Highest oracle-inertness risk: backtest `TrackedInstrument` must default **READY** (not PENDING) or the
   strategy gate zeroes the oracle. The backtest builds a SEPARATE `EventHandler` with the untouched `_routes`,
-  so all live routing stays behind `_init_live_session`.
+  so all live routing stays behind `_initialize_live_session`.
 - `TrackedInstrument` = mutable `@dataclass(slots=True)` in `universe.py` wrapping frozen `Instrument` by
   reference; `Readiness` enum in `core/enums/` (house convention). Precision resolver reuses
   `okx._connector.client.markets` (same source as `validate_symbol` + ccxt `*_to_precision`).
