@@ -956,7 +956,38 @@ class LiveTradingSystem:
                 'Resume missed-fill catch-up / REST snapshot failed — staying paused: %s', e)
             self._pending_stream_resume.set()  # retry on the next engine iteration
             return
+        # D-28 (WR-03): resume NEW submission ONLY when EVERY wired venue stream arm
+        # is healthy. A single arm's reconnect (candle stream up while the fill stream
+        # is still down, OR the exchange's own orders-stream up while its fills-stream
+        # is still down) previously resumed submission while the engine was still blind
+        # to fills. Leave the pause in place — do NOT re-set _pending_stream_resume: the
+        # still-down arm's next up-event re-fires it, so there is no engine-thread spin.
+        # (The D-25 catch-up + snapshot above ran regardless — recovering fills while
+        # staying paused is correct.)
+        if not self._all_venue_streams_healthy():
+            self.logger.info(
+                'Reconnect handled but venue streams not all healthy — staying paused '
+                '(resume gated until every wired arm reports up, D-28/WR-03)')
+            return
         self.resume_submission()
+
+    def _all_venue_streams_healthy(self) -> bool:
+        """True unless a WIRED venue arm reports its stream set down (D-28 / WR-03).
+
+        The compound resume gate: resume NEW submission only when EVERY wired arm —
+        the exchange arm (fills+orders) AND the data-provider arm (candles) — reports
+        its own ``_streams_down`` empty. Each arm OWNS its health state; the engine only
+        READS a public per-arm predicate, adding NO engine-side aggregate stream set and
+        NO namespaced stream names. A None (unwired) arm never blocks (absent ⇒ healthy),
+        so non-OKX runs resume unconditionally.
+        """
+        if (self._okx_exchange is not None
+                and not self._okx_exchange.is_streaming_healthy()):
+            return False
+        if (self._okx_data_provider is not None
+                and not self._okx_data_provider.is_streaming_healthy()):
+            return False
+        return True
 
     def _request_connector_halt(self, reason: str) -> None:
         """Connector-loop callback (D-21/WR-02): REQUEST an engine-thread durable halt.

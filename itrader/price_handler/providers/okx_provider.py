@@ -399,6 +399,16 @@ class OkxDataProvider:
         if self._halt_signal is not None:
             self._halt_signal("connector-fatal")
 
+    def is_streaming_healthy(self) -> bool:
+        """True iff this arm's candle stream is up (D-28 / WR-03).
+
+        Read by the engine's compound resume gate (``_all_venue_streams_healthy``) on
+        the ENGINE thread while the connector loop mutates ``_streams_down`` (GIL-atomic
+        emptiness read, no lock; any staleness self-heals via the re-fired resume
+        Event). Reads ONLY this arm's own already-tracked set — no engine-side aggregate.
+        """
+        return not self._streams_down
+
     def _mark_stream_down(self, stream_name: str) -> None:
         """Record a sustained disconnect and pause new submission once (D-19)."""
         if stream_name in self._streams_down:
