@@ -238,3 +238,62 @@ class StaticUniverseSelectionModel:
     def set_symbols(self, symbols: Iterable[str]) -> None:
         """Re-drive the desired set (the mid-run add/remove operator/test lever)."""
         self._symbols = set(symbols)
+
+
+@runtime_checkable
+class SupportsStrategiesUniverse(Protocol):
+    """The live strategy-universe source the strategy-derived model reads (D-12).
+
+    Structurally satisfied by ``StrategiesHandler`` — its
+    ``get_strategies_universe()`` returns the union of every registered strategy's
+    ``tickers`` (the live membership union, recomputed each call). An operator
+    ticker edit (Plan 04 mutating a strategy's ``.tickers``) is reflected on the
+    NEXT read, so re-reading the source each ``select`` is how the edit propagates.
+    """
+
+    def get_strategies_universe(self) -> list[str]: ...
+
+
+class StrategyDerivedSelectionModel:
+    """A ``UniverseSelectionModel`` reading the LIVE strategy set each ``select`` (D-12).
+
+    The operator-seam selection source (OP-SEAM): instead of holding a frozen
+    snapshot like ``StaticUniverseSelectionModel``, it re-reads the injected
+    ``StrategiesHandler`` (``get_strategies_universe``) on EVERY ``select`` call, so
+    an operator ticker edit (Plan 04 mutating a strategy's ``.tickers``, then
+    emitting a ``UniversePollEvent``) propagates to membership on the very next
+    poll — no stale snapshot, no re-wiring.
+
+    Oracle-safety: this model is LIVE-ONLY (the poll route it feeds is never wired
+    on the backtest path — backtest never polls), and the SMA_MACD oracle's tickers
+    are construction-fixed, so re-reading them each ``select`` yields the same set.
+    The backtest byte-exact path is untouched by construction.
+
+    Pure/queue-free (mirroring ``StaticUniverseSelectionModel``): it holds ONLY the
+    source reference, no queue and no feed. ``select`` returns a fresh ``set`` each
+    call (unordered, like ``active_membership``) that composes directly into the
+    poll handler's D-06 ``validate_symbol`` filter before ``Universe.apply``.
+    """
+
+    def __init__(self, source: SupportsStrategiesUniverse) -> None:
+        """Hold the live strategy-universe source (the ``StrategiesHandler``).
+
+        Parameters
+        ----------
+        source : SupportsStrategiesUniverse
+            The live strategy set source — its ``get_strategies_universe()`` is
+            re-read on every ``select`` so ticker edits propagate (D-12).
+        """
+        self._source = source
+
+    def select(self, asof: datetime) -> set[str]:
+        """Return the CURRENT strategy universe as a ``set`` (read-live each call, D-12).
+
+        Re-reads ``source.get_strategies_universe()`` on every call — NO held
+        snapshot — so an operator ticker edit between two ``select`` calls changes
+        the result. The ``asof`` parameter satisfies the ``UniverseSelectionModel``
+        contract (a span-model or ranked screener would consult it); the
+        strategy-derived model is time-invariant with respect to ``asof`` (it tracks
+        strategy edits, not calendar time), so it is accepted and ignored.
+        """
+        return set(self._source.get_strategies_universe())
