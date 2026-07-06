@@ -9,11 +9,19 @@ query (``is_active`` / ``active_membership``, UNIV-01) was added alongside
 """
 
 from .instruments import derive_instruments
-from .membership import active_membership, derive_membership, is_active
+from .membership import (
+    StaticUniverseSelectionModel,
+    UniverseSelectionModel,
+    active_membership,
+    derive_membership,
+    is_active,
+)
 from .universe import Universe
 
 __all__ = [
+    'StaticUniverseSelectionModel',
     'Universe',
+    'UniverseSelectionModel',
     'active_membership',
     'derive_instruments',
     'derive_membership',
