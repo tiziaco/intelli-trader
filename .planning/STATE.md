@@ -103,6 +103,12 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 - Phase 05.1 inserted after Phase 5: Live-Path Remediation (URGENT)
 
+- Phase 7 added 2026-07-06: Live Dynamic-Universe Hardening — from the Phase 6 code review. Async warmup +
+  per-symbol `isReady` readiness gate (WR-02 centerpiece) plus WR-01/04/05/06; CR-01/WR-03 already fixed in
+  quick task 260706-l48. Detailed WR-04/05/06 design deferred to the Phase 7 discuss session. (Note:
+  `gsd-sdk query phase.add` auto-numbered it Phase 10 by scanning the cumulative cross-milestone ROADMAP —
+  manually corrected to Phase 7 per the v1.7 per-milestone numbering reset; dir renamed 10→07.)
+
 ### Decisions
 
 Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (design LX-01..LX-15):
