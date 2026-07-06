@@ -29,6 +29,10 @@ class EventType(Enum):
     FILL = "FILL"
     SCREENER = "SCREENER"
     UNIVERSE_UPDATE = "UNIVERSE_UPDATE"
+    UNIVERSE_POLL = "UNIVERSE_POLL"          # D-06: control-plane poll tick
+    STRATEGY_COMMAND = "STRATEGY_COMMAND"    # D-09: add/remove-ticker command
+    BARS_LOADED = "BARS_LOADED"              # D-03: warmup bulk-transport
+    BARS_LOAD_FAILED = "BARS_LOAD_FAILED"    # D-04: warmup backfill failure
     ERROR = "ERROR"
 
     @classmethod
