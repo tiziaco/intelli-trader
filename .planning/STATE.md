@@ -4,13 +4,13 @@ milestone: v1.7
 milestone_name: Live Trading Readiness
 status: executing
 stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-07-06T18:16:30.936Z"
+last_updated: "2026-07-06T18:31:10.024Z"
 last_activity: 2026-07-06
 progress:
   total_phases: 11
   completed_phases: 9
   total_plans: 73
-  completed_plans: 67
+  completed_plans: 68
   percent: 82
 ---
 
@@ -29,11 +29,11 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 ## Current Position
 
 Phase: 07 (live-dynamic-universe-hardening) — EXECUTING
-Plan: 3 of 8
+Plan: 4 of 8
 Status: Ready to execute
 Last activity: 2026-07-06
 
-Progress: [█████████░] 92%
+Progress: [█████████░] 93%
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -194,6 +194,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: [Phase 06]: 06-05 milestone gate GREEN — oracle byte-exact (134/46189.87730727451), determinism identical, inertness green (universe_handler forbidden on backtest import), W1 14.5s -7.4% vs 15.7s baseline; UNIV-01 closed + human-observed live-demo dynamic DATA subscribe/unsubscribe on OKX demo (1 passed 127.85s, sandbox verified)
 - [Phase ?]: [Phase 07] 07-01: Readiness tri-state enum + four EventType members (UNIVERSE_POLL/STRATEGY_COMMAND/BARS_LOADED/BARS_LOAD_FAILED) + four frozen msgspec event structs + explicit-empty backtest _routes — additive-only, backtest-inert by construction (contracts-first; downstream 07-02..07 implement against these). StrategyCommandEvent add/remove_ticker factories (D-09); BarsLoadFailed.reason scrub discipline documented (T-05-27)
 - [Phase 07]: 07-02: Universe holds ONE TrackedInstrument record map (_entries) replacing the desync-prone _instruments map + _leaving set (D-02, WR-01 bug class); apply stops popping removed symbols (D-13 keep-until-flat), add-branch clobber-guarded (D-14), discard_instrument is the single atomic three-field teardown; construction members default READY (oracle-inert), apply-added PENDING; is_ready/mark_ready/mark_failed readiness surface (WR-02)
+- [Phase ?]: 07-03: split synchronous warmup into two WR-02 halves — non-emitting LiveBarFeed.absorb_warmup (silent ring/L absorb = _deliver minus _emit, D-03b/OQ1) + async OkxDataProvider.spawn_warmup (loop-native REST fetch via connector.spawn threadsafe -> ONE BarsLoaded bulk transport, or ONE scrubbed BarsLoadFailed reason=exception-TYPE-only T-05-27/V5). _build_bar promoted @staticmethod for the single canonical ClosedBar->Bar conversion (D-03a). Live-only, oracle byte-exact
 
 ### Pending Todos
 
@@ -287,6 +288,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 06 P05 | 35min | 3 tasks | 4 files |
 | Phase 07 P07-01 | 3min | 3 tasks | 7 files |
 | Phase 07 P07-02 | 6min | 2 tasks | 3 files |
+| Phase 07 P07-03 | 10min | 2 tasks | 4 files |
 
 ## Deferred Items
 
@@ -336,7 +338,7 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T18:16:15.990Z
+Last session: 2026-07-06T18:30:43.193Z
 Stopped at: Completed 07-01-PLAN.md
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
