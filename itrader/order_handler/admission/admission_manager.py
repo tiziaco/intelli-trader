@@ -178,6 +178,16 @@ class AdmissionManager:
 					signal_event.portfolio_id, signal_event.ticker)
 				if self.portfolio_handler is not None else None)
 
+			# 0-pre. D-01 leaving-symbol admission gate — the FIRST gate, before
+			# direction. A NEW entry for a symbol removed-but-still-held
+			# (marked leaving on the universe by the remove-policy consumer) is
+			# an AUDITED rejection (triggered_by=ADMISSION_LEAVING); a sanctioned
+			# exit passes so the orphaned position can go flat. No-op when there
+			# is no universe or the leaving set is empty (oracle-dark).
+			gate_rejection = self._enforce_leaving_symbol_admission(signal_event, snap)
+			if gate_rejection is not None:
+				return [gate_rejection]
+
 			# 0. D-08 direction admission gate — BEFORE sizing. Enforces the
 			# strategy's DECLARED TradingDirection: an unsized LONG_ONLY SELL
 			# with no open long is an AUDITED rejection (Pitfall 4 — the exact
@@ -478,6 +488,68 @@ class AdmissionManager:
 		return OperationResult.failure_result(
 			f"Unsupported order type: {signal_event.order_type}",
 			operation_type=OrderOperationType.CREATE_PRIMARY_ORDER
+		)
+
+	def _enforce_leaving_symbol_admission(self, signal_event: SignalEvent,
+	                                      snap: "PositionView | None") -> Optional[OperationResult]:
+		"""D-01 leaving-symbol admission gate — the FIRST gate in process_signal.
+
+		When a symbol is REMOVED from the universe while it still holds an open
+		position (orphan-and-track), the remove-policy consumer marks it
+		``leaving`` on the injected ``Universe``. This gate reads
+		``Universe.leaving_symbols()`` and BLOCKS a NEW entry for a leaving
+		symbol — a leaving symbol must never open fresh exposure while it is
+		being wound down — while ALLOWING a sanctioned EXIT so the orphaned
+		position can still go flat (its stop/exit fires, then it detaches).
+
+		Runs BEFORE the direction gate so even a signal that would trip
+		direction is intercepted with ADMISSION_LEAVING when the symbol is
+		leaving. Mirrors ``_enforce_direction_admission``'s guard-clause shape.
+
+		Preserved no-op paths (early-return None):
+		- Explicit-quantity signals (the live/manual path skips every gate).
+		- No injected universe (``self._universe is None`` — backtest / no
+		  universe): the leaving set does not exist, so the gate never fires
+		  (oracle-dark; the empty leaving-set keeps it dark even when wired).
+		- A ticker NOT in the leaving set.
+
+		A sanctioned exit PASSES via the same side-dispatch discipline the
+		direction gate uses (the read model carries an UNSIGNED magnitude, so we
+		dispatch on ``side``): a SELL against an open LONG, or a BUY against an
+		open SHORT. Everything else for a leaving ticker (a new entry, or an
+		increase in the same direction) is an AUDITED rejection.
+
+		Returns
+		-------
+		Optional[OperationResult]
+			A failure_result when a new entry is blocked (the audited REJECTED
+			entity is already persisted), or None when the signal passes.
+		"""
+		if signal_event.quantity and signal_event.quantity > 0:
+			# Explicit caller-supplied quantity: the gate does not apply.
+			return None
+		if self._universe is None:
+			# No universe injected — no leaving set exists (backtest / no
+			# universe). Byte-exact: the gate is a structural no-op.
+			return None
+		if signal_event.ticker not in self._universe.leaving_symbols():
+			return None
+		# Sanctioned exit PASSES so the orphaned position can go flat: a SELL
+		# reduces an open LONG, a BUY covers an open SHORT (dispatch on `side`,
+		# the read-model magnitude is unsigned).
+		is_sanctioned_exit = snap is not None and (
+			(signal_event.action is Side.SELL and snap.side is PositionSide.LONG)
+			or (signal_event.action is Side.BUY and snap.side is PositionSide.SHORT)
+		)
+		if is_sanctioned_exit:
+			return None
+		return self._reject_unsized_signal(
+			signal_event,
+			f"universe removal: new entries blocked for leaving symbol "
+			f"{signal_event.ticker}",
+			triggered_by=OrderTriggerSource.ADMISSION_LEAVING,
+			operation_type=OrderOperationType.SIGNAL_ADMISSION,
+			error_prefix="Signal rejected at admission",
 		)
 
 	def _enforce_direction_admission(self, signal_event: SignalEvent,
