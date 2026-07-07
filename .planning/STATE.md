@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: ready_to_plan
-stopped_at: Phase 07 complete (8/8) — v1.7 roadmap phases (1-7) all complete; awaiting milestone close / backlog review (999.3 is an unpromoted backlog placeholder, not a scheduled phase)
-last_updated: 2026-07-06T20:47:11.909Z
-last_activity: 2026-07-06
+status: ready_to_execute
+stopped_at: Phase 07 planned 07-09 (post-review remediation, added 2026-07-07 after closeout) — plan-checker PASS, awaiting `/gsd:execute-phase 07`. Phase 7 was Complete (8/8); 07-09 closes the 8 in-scope findings from 07-REVIEW.md (CR-01/WR-01/WR-02/WR-03/WR-04/WR-05/IN-01/IN-02; CR-02 already fixed in 9cd5dd8d)
+last_updated: 2026-07-07
+last_activity: 2026-07-07
 progress:
   total_phases: 11
   completed_phases: 10
-  total_plans: 73
+  total_plans: 74
   completed_plans: 73
   percent: 91
 ---
@@ -24,14 +24,14 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** v1.7 roadmap complete (Phases 1-7 all done & verified) — awaiting user decision: close the v1.7 milestone or review backlog. (999.3 is an unpromoted backlog placeholder auto-selected by phase.complete, NOT a scheduled next phase.)
+**Current focus:** Phase 7 reopened for post-review remediation — `07-09-PLAN.md` (added 2026-07-07 after closeout) closes the 8 in-scope findings from `07-REVIEW.md`; plan-checker PASS, ready for `/gsd:execute-phase 07`. After it lands + re-verifies, resume awaiting v1.7 milestone close / backlog review.
 
 ## Current Position
 
-Phase: — (v1.7 Phases 1-7 complete; no Phase 8 scheduled)
-Plan: Not started
-Status: Awaiting milestone close / backlog review
-Last activity: 2026-07-06
+Phase: 07 — live-dynamic-universe-hardening (post-review remediation)
+Plan: 07-09-PLAN.md — planned & plan-checked (PASS); not yet executed
+Status: Ready to execute (`/gsd:execute-phase 07`)
+Last activity: 2026-07-07
 
 Progress: [██████████] 100%
 
