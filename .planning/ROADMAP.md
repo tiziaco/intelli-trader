@@ -481,7 +481,7 @@ patterns informed the design direction (see `06-REVIEW-DECISIONS.md` WR-02).
 - [x] 07-06-PLAN.md — UniverseHandler warmup consumers + discard teardown + strategy-derived source (WR-01/WR-02/OP-SEAM, Wave 4)
 - [x] 07-07-PLAN.md — Composition root + add_event allowlist + milestone gate (WR-04/WR-06/OP-SEAM, Wave 5)
 - [x] 07-08-PLAN.md — AdmissionManager PRIMARY readiness gate: reject a non-READY symbol at admission even bypassing the strategy loop (WR-02/D-01, Wave 3)
-- [ ] 07-09-PLAN.md — Post-review remediation: CR-01 (refuse PairStrategy ticker mutation) + WR-01 (pair per-leg readiness gate) + WR-02 (warm-state read-model re-verify → mark_failed) + WR-03 (marshal OKX unsubscribe onto connector loop) + WR-04 (per-thread replay guard) + WR-05 (_find_ring honors timeframe) + IN-01/IN-02 (Wave 4 — added 2026-07-07 post-closeout)
+- [x] 07-09-PLAN.md — Post-review remediation: CR-01 (refuse PairStrategy ticker mutation) + WR-01 (pair per-leg readiness gate) + WR-02 (warm-state read-model re-verify → mark_failed) + WR-03 (marshal OKX unsubscribe onto connector loop) + WR-04 (per-thread replay guard) + WR-05 (_find_ring honors timeframe) + IN-01/IN-02 (Wave 4 — added 2026-07-07 post-closeout)
 
 ## Phases (shipped — archived detail)
 
