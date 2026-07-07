@@ -2,7 +2,7 @@ import copy
 from abc import ABC, abstractmethod
 from collections import deque
 from decimal import Decimal
-from datetime import timedelta
+from datetime import timedelta, datetime
 from enum import Enum
 from functools import cache
 from typing import Any, cast, get_type_hints
@@ -15,7 +15,13 @@ from itrader.core.ids import PortfolioId, StrategyId
 from itrader.core.money import to_money
 from itrader.core.sizing import SignalIntent, SizingPolicy, SLTPPolicy, TradingDirection
 from itrader.outils.time_parser import to_timedelta
+from itrader.logger import get_itrader_logger
 from itrader import idgen
+
+# Module-level bound logger (mirrors SMA_MACD_strategy.py) — the base Strategy has no
+# per-instance self.logger, so the CR-01-strategy out-of-order-bar warning in update()
+# uses this shared component logger.
+logger = get_itrader_logger().bind(component="Strategy")
 
 # D-03/D-05 (amended): the IndicatorHandle and the typed adapter Protocol live in
 # the first-party indicators/ subsystem (NOT here) — base imports them, the
@@ -438,6 +444,13 @@ class Strategy(ABC):
 		# the post-init() pass below, so the deques are (re)sized in update() lazily
 		# against the resolved depth (init() runs before max_window is known).
 		self._recent_closes: dict[str, deque[float]] = {}
+		# CR-01-strategy (Option B design point 2): per-symbol monotonic cursor of the
+		# last ACCEPTED bar.time (raw stdlib datetime — no pandas, no conversion). update()
+		# rejects bar.time <= this before ANY state mutation so a re-delivered warmup bar
+		# (CR-02 retry re-warm) or a live reconnect-resend duplicate cannot double-count
+		# _bar_counts / _recent_closes / advance the O(1) indicator handles. Cleared in
+		# reset()/_reset_ticker() so an evaluate() window replay still works (see below).
+		self._last_bar_time: dict[str, datetime] = {}
 		self.now: Any = None
 		self.current_bar: Any = None
 		self.init()
@@ -487,6 +500,27 @@ class Strategy(ABC):
 		bar is absent — P5-D10c, state frozen, count increments on REAL bars only —
 		so this method never fabricates a bar).
 		"""
+		# CR-01-strategy (Option B design point 2): reject a re-delivered bar BEFORE any
+		# state mutation. A CR-02 next-poll FAILED-retry re-warms an overlapping window
+		# through THIS path (StrategiesHandler.on_bars_loaded), and the live per-tick path
+		# can receive a duplicate bar on a reconnect resend — either would inflate
+		# _bar_counts past min_period OFF DUPLICATES and advance the O(1) recurrences over
+		# repeated values (garbage indicator state → a symbol tradeable on corruption). The
+		# None-check is REQUIRED (a never-seen ticker has last is None → bar.time <= None
+		# would TypeError). Reject is `<=`: strict `<` (out-of-order) warns + drops; `==`
+		# (duplicate) drops SILENTLY (expected/benign). Monotonic bars (bar.time > last, and
+		# the first bar) fall through and record the raw bar.time at the end of the method.
+		# BACKTEST INERTNESS: update() IS on the backtest per-tick path
+		# (strategies_handler.calculate_signals), BUT backtest bars for a ticker arrive
+		# strictly monotonically increasing in bar.time, so `bar.time <= last` is NEVER
+		# true — the reject branch is never taken and the SMA_MACD oracle is byte-exact.
+		last_time = self._last_bar_time.get(ticker)
+		if last_time is not None and bar.time <= last_time:
+			if bar.time < last_time:
+				logger.warning(
+					"Out-of-order bar for %s at %s (< last=%s) — dropped "
+					"(no state mutation)", ticker, str(bar.time), str(last_time))
+			return
 		# P5-D13a: per-symbol completed-bar bookkeeping (replaces the removed
 		# self.bars slice). Count increments on REAL bars only (gap bar = caller
 		# skips update -> count frozen, P5-D10c); the latest bar + decision anchor
@@ -510,6 +544,10 @@ class Strategy(ABC):
 		self._activate_ticker(ticker)
 		for handle, (_adapter, input_col, _params) in zip(self._handles, self._handle_specs):
 			handle.update(float(getattr(bar, input_col)))
+		# CR-01-strategy: record the accepted bar.time (raw) as the per-symbol monotonic
+		# cursor so a subsequent duplicate (==) or out-of-order (<) bar is rejected by the
+		# guard at the top of update() before it can mutate state.
+		self._last_bar_time[ticker] = bar.time
 
 	def bar_count(self, ticker: str) -> int:
 		"""Completed-bar count seen for ``ticker`` (P5-D13a count seam).
@@ -581,6 +619,9 @@ class Strategy(ABC):
 		self._bar_counts.clear()
 		self._latest_bar.clear()
 		self._recent_closes.clear()
+		# CR-01-strategy: clear the per-symbol monotonic cursor so a re-feed reproduces a
+		# fresh run (an evaluate()/replay after reset() is not rejected on old timestamps).
+		self._last_bar_time.clear()
 		self.now = None
 		self.current_bar = None
 
@@ -645,6 +686,11 @@ class Strategy(ABC):
 		self._bar_counts.pop(ticker, None)
 		self._latest_bar.pop(ticker, None)
 		self._recent_closes.pop(ticker, None)
+		# CR-01-strategy: pop the per-symbol cursor too — LOAD-BEARING for evaluate(): it
+		# calls _reset_ticker(ticker) then replays the window through update(), so without
+		# this pop a SECOND evaluate() replay would reject every bar (bar.time <= last) and
+		# break the legacy window-driven tests.
+		self._last_bar_time.pop(ticker, None)
 
 	def reconfigure(self, **kwargs: Any) -> None:
 		"""Re-apply + re-coerce kwargs, re-validate, re-run init() (D-12/D-13).
