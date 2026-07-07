@@ -143,6 +143,12 @@ None - no external service configuration required.
 - CR-02 remains excluded (already fixed in 9cd5dd8d). The correct atomic ordered-pair reconfiguration path stays deferred (`.planning/todos/pair-strategy-live-reconfiguration.md`) — CR-01's refusal guard is forward-compatible with it.
 - Live wiring for the WR-02 warmth seam is in place (`LiveTradingSystem.set_strategy_warmth`); an end-to-end online-settlement proof still depends on a flat/non-EEA OKX account (see project memory).
 
+## Self-Check: PASSED
+
+- All 4 new test files exist on disk.
+- All 4 task commits + the SUMMARY commit exist in git history (`cf05091a`, `992dbad3`, `e0af4da6`, `061cf7cd`, `99cbc1d5`).
+- 333 unit tests (strategy/universe/price) green; oracle byte-exact; mypy --strict clean on all 5 touched modules.
+
 ---
 *Phase: 07-live-dynamic-universe-hardening*
 *Completed: 2026-07-07*
