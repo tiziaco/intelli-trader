@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: verifying
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-07-06T12:18:05.414Z"
-last_activity: 2026-07-06
+status: milestone_complete
+stopped_at: Phase 07 complete (10/10) — v1.7 (Phases 1-7) complete; ready to close/archive the milestone (999.3 is a historical seed already promoted into v1.7, not a forward phase)
+last_updated: 2026-07-07T11:08:49.601Z
+last_activity: 2026-07-07 -- Quick task 260707-iy6: applied 07-REVIEW WR-01/WR-02/IN-01/IN-02 fixes
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 9
-  total_plans: 65
-  completed_plans: 65
-  percent: 90
+  total_plans: 75
+  completed_plans: 75
+  percent: 82
 ---
 
 # Project State
@@ -24,16 +24,19 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 06 — dynamic-universe-membership
+**Current focus:** v1.7 (Live Trading Readiness) complete — all 7 phases shipped; ready to close/archive the milestone
 
 ## Current Position
 
-Phase: 06 (dynamic-universe-membership) — EXECUTING
-Plan: 5 of 5
-Status: verified
-Last activity: 2026-07-06 - Completed quick task 260706-l48: Phase 06 mechanical review fixes (CR-01, WR-03)
+Milestone: v1.7 — Live Trading Readiness — COMPLETE (Phases 1-7)
+Phase: 07 (live-dynamic-universe-hardening) — complete (10/10 plans)
+Status: Milestone complete — next step is `/gsd:complete-milestone`
+Last activity: 2026-07-07 — Quick task 260707-iy6: applied 07-REVIEW WR-01/WR-02/IN-01/IN-02 fixes
 
 Progress: [██████████] 100%
+
+Note: `phase.complete` advanced to "999.3" (an N+4 backlog seed already promoted INTO v1.7 — a historical
+entry, not a forward phase). Corrected here manually; do NOT plan/execute 999.3.
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -80,7 +83,7 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 **Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 279 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- Total plans completed: 306 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
 - v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
@@ -192,6 +195,17 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 - [Phase ?]: [Phase 06]: 06-05: _OKX_STREAM_SYMBOL un-hardcoded — live subscription set sourced from universe.members (warmup-before-subscribe per member); generalized ring-key vs window()-ticker assertion, ConfigurationError shape preserved (D-05)
 - [Phase ?]: [Phase 06]: 06-05: live-only UniverseHandler + poll-timer daemon (configurable cadence default 60s, control-plane TimeEvent(now UTC) only) + LIVE-ONLY _routes mutation on the live EventHandler's own dict — backtest _routes literal UNTOUCHED (RESEARCH §11.1); remove_policy + cadence on MonitoringSettings NOT PerformanceSettings (§8/D-01/D-02)
 - [Phase ?]: [Phase 06]: 06-05 milestone gate GREEN — oracle byte-exact (134/46189.87730727451), determinism identical, inertness green (universe_handler forbidden on backtest import), W1 14.5s -7.4% vs 15.7s baseline; UNIV-01 closed + human-observed live-demo dynamic DATA subscribe/unsubscribe on OKX demo (1 passed 127.85s, sandbox verified)
+- [Phase ?]: [Phase 07] 07-01: Readiness tri-state enum + four EventType members (UNIVERSE_POLL/STRATEGY_COMMAND/BARS_LOADED/BARS_LOAD_FAILED) + four frozen msgspec event structs + explicit-empty backtest _routes — additive-only, backtest-inert by construction (contracts-first; downstream 07-02..07 implement against these). StrategyCommandEvent add/remove_ticker factories (D-09); BarsLoadFailed.reason scrub discipline documented (T-05-27)
+- [Phase 07]: 07-02: Universe holds ONE TrackedInstrument record map (_entries) replacing the desync-prone _instruments map + _leaving set (D-02, WR-01 bug class); apply stops popping removed symbols (D-13 keep-until-flat), add-branch clobber-guarded (D-14), discard_instrument is the single atomic three-field teardown; construction members default READY (oracle-inert), apply-added PENDING; is_ready/mark_ready/mark_failed readiness surface (WR-02)
+- [Phase ?]: 07-03: split synchronous warmup into two WR-02 halves — non-emitting LiveBarFeed.absorb_warmup (silent ring/L absorb = _deliver minus _emit, D-03b/OQ1) + async OkxDataProvider.spawn_warmup (loop-native REST fetch via connector.spawn threadsafe -> ONE BarsLoaded bulk transport, or ONE scrubbed BarsLoadFailed reason=exception-TYPE-only T-05-27/V5). _build_bar promoted @staticmethod for the single canonical ClosedBar->Bar conversion (D-03a). Live-only, oracle byte-exact
+- [Phase 07]: 07-04: WR-02 readiness gate composed BEFORE strategy.is_ready in calculate_signals (None-guarded single O(1) universe.is_ready read, no allocation; backtest wires no universe so oracle byte-exact); update-before-gate kept so a PENDING symbol still warms (D-03c). on_bars_loaded warms concerned strategies via strategy.update with NO signals (D-03). on_strategy_command mutates .tickers idempotently (emptying-remove refused, non-empty invariant) then EMITS UniversePollEvent follow-on (D-11 queue-only, never calls UniverseHandler)
+- [Phase 07]: 07-05: on_time->on_poll consumes the dedicated UniversePollEvent (WR-06/D-06, off the shared TIME route); set_freeze_gate early-return freeze-in-place at the top of on_poll (WR-05/D-07, level-triggered self-heal, no replay); _PrecisionResolver + set_precision_resolver resolves added-symbol venue precision (WR-04/D-16, Universe stays connector-free, paper falls to _DEFAULT_* ladder). All 3 seams inert-by-default; route/predicate/resolver wiring is Plan 07
+- [Phase ?]: 07-08: PRIMARY WR-02 readiness admission gate (D-01) — _enforce_readiness_admission wired SECOND (after leaving, before direction) rejects a non-READY (PENDING/FAILED) symbol's unsized signal at admission even when it bypasses the strategy-loop SECONDARY check (07-04); sanctioned exit passes; oracle-inert (None-guard + construction members READY). ADMISSION_READINESS trigger source added
+- [Phase ?]: [Phase 07] 07-06: WR-02 warmup pipeline handler-side — add-branch spawns async provider.spawn_warmup (paper: synchronous feed.warmup + IMMEDIATE mark_ready, never PENDING) with per-symbol try isolation (D-04); on_bars_loaded absorb→mark_ready→subscribe (D-03b); on_bars_load_failed marks FAILED kept-in-membership retried-next-poll
+- [Phase ?]: [Phase 07] 07-06: WR-01 keep-until-flat finished — discard_instrument at exactly 2 final points (no-holder removal + on_fill detach-on-flat, D-13); StrategyDerivedSelectionModel reads get_strategies_universe() live each select (D-12/OP-SEAM) so ticker edits propagate
+- [Phase 07]: 07-10 (POST-CLOSEOUT gap-closure): CR-01 closed via Option B "unified monotonic idempotency" (Level 2). absorb_warmup reuses the EXISTING _last_delivered cursor (reject bar.time <= cursor before ring.append; == silent, < warns) — zero new feed state, cursor stays pd.Timestamp (de-pandas deferred). Strategy.update gains a per-symbol _last_bar_time cursor (raw datetime) rejecting bar.time <= last before ANY state mutation; cleared in reset()/_reset_ticker() so evaluate() replay still works. A CR-02 retry re-warm can no longer duplicate the ring, inflate indicators, or flip a symbol tradeable on corrupted state.
+- [Phase 07]: 07-10: Level-2 retry policy — on_poll cadence-gates FAILED re-warms to one per bar interval (_last_rewarm_at + to_timedelta(timeframe)); 3-strike consecutive-failure warn (_rewarm_fail_streak at both failure sites, reset on mark_ready success); NEVER auto-drop (Level 3 quarantine explicitly OUT). RED-first headline regression proved the corruption reachable pre-fix and unreachable after; oracle byte-exact (134 / 46189.87730727451), mypy --strict clean on the 3 modules, full unit 1752 + integration/e2e 228 green.
+- [Phase 07]: 07-10 deviation (Rule 1): the base Strategy has no self.logger (added a module-level bound logger); causal-guard tests fed a constant sentinel time=0 that the new monotonic guard rejected as duplicates — _Bar stub now auto-increments its tick (anchor value stays don't-care).
 
 ### Pending Todos
 
@@ -252,6 +266,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | fast | Make ARCH-3 capture best-effort + fix OKX fetch_my_trades param (limit=100, no paginate — sCode 51000) — online settlement proof now fully GREEN (3/3) | 2026-07-05 | 81fc39aa | — (fast, inline) |
 | 260705-m3m | Test-infra: session-autouse guard clears dev-DB env so no test reaches operational Postgres at localhost:5544 + one shared session testcontainers Postgres for live-path DB tests to opt into (D-11 skip-safe, single-container); prereq for 05.2 durable-SQL tests | 2026-07-05 | 2f43faec | [260705-m3m-add-a-session-autouse-guard-in-tests-con](./quick/260705-m3m-add-a-session-autouse-guard-in-tests-con/) |
 | 260706-l48 | Apply Phase 06 mechanical code-review fixes: CR-01 (okx `unsubscribe` clears stale `_streams_down`/`_reconnect_attempts` supervisor state — un-wedges live resume gate) + WR-03 (`universe_poll_cadence_s` bounded `gt=0.0`). WR-01/02/04/05/06 routed to Phase 7. | 2026-07-06 | e08424d2 | [260706-l48-apply-mechanical-code-review-fixes-cr-01](./quick/260706-l48-apply-mechanical-code-review-fixes-cr-01/) |
+| 260707-iy6 | Apply 07-REVIEW CR-01 gap-closure fixes: WR-01 (`absorb_warmup` warns on genuine revision, silent on byte-identical dup via `_same_ohlcv`) + WR-02 (off-grid rejection protecting the shared `_last_delivered` cursor) + IN-01/IN-02 docstrings. Oracle byte-exact, mypy clean. | 2026-07-07 | 8eb66f73 | [260707-iy6-fix-07-review-cr-01-gap-closure-findings](./quick/260707-iy6-fix-07-review-cr-01-gap-closure-findings/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
@@ -283,6 +298,14 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | Phase 06 P04 | 20min | 3 tasks | 8 files |
 | Phase 06 P05 | 35min | 3 tasks | 4 files |
 | Phase 06 P05 | 35min | 3 tasks | 4 files |
+| Phase 07 P07-01 | 3min | 3 tasks | 7 files |
+| Phase 07 P07-02 | 6min | 2 tasks | 3 files |
+| Phase 07 P07-03 | 10min | 2 tasks | 4 files |
+| Phase 07 P07-04 | 5min | 3 tasks | 2 files |
+| Phase 07 P07-05 | 5min | 2 tasks | 3 files |
+| Phase 07 P07-08 | 4min | 1 tasks | 3 files |
+| Phase 07 P07-06 | 12min | 3 tasks | 5 files |
+| Phase 07 P07-10 | 11min | 4 tasks | 8 files |
 
 ## Deferred Items
 
@@ -332,8 +355,8 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
 
 ## Session Continuity
 
-Last session: 2026-07-06T12:07:06.508Z
-Stopped at: Completed 06-01-PLAN.md
+Last session: 2026-07-07T10:45:57Z
+Stopped at: Completed 07-10-PLAN.md (CR-01 gap-closure — warmup re-delivery idempotency)
 Resume file: None
 Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
 

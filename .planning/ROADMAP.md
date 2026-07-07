@@ -78,8 +78,8 @@ configured so the global filter is never relaxed); tabs/spaces indentation match
 - [x] **Phase 3: LiveBarFeed** — Ring-buffer `BarFeed` impl; closed-bar emission off the confirm flag; warmup/backfill through the identical `update(bar)` path; monotonic-forward-only. — completed 2026-07-01
 - [x] **Phase 4: Paper Path (milestone DoD)** — reuse `SimulatedExchange` as-is as the paper exchange (revised 2026-07-02); runnable worker + lifecycle; **paper-parity gate = paper ≡ a fresh backtest on the same data, exact frame-equality**. — completed 2026-07-02
 - [x] **Phase 5: Real/Sandbox Path + Reconciliation + Persistence Live-Drive** — `VenueAccount` reconciliation, partial-fill correctness, v1.6 store driven by the real feed, two-sided restart; sandbox-validated. — completed 2026-07-04
-- [ ] **Phase 6: Dynamic Universe Membership** — Lean poll seam for mid-run add/remove; warmup-on-add reuses the Phase-3 backfill.
-- [ ] **Phase 7: Live Dynamic-Universe Hardening** — Async warmup + per-symbol `isReady` readiness gate (+ WR-01/04/05/06 from the Phase 6 review); backtest oracle stays inert. Added 2026-07-06 from the Phase 6 code review.
+- [x] **Phase 6: Dynamic Universe Membership** — Lean poll seam for mid-run add/remove; warmup-on-add reuses the Phase-3 backfill. — completed 2026-07-06
+- [x] **Phase 7: Live Dynamic-Universe Hardening** — Async warmup + per-symbol `isReady` readiness gate (+ WR-01/04/05/06 from the Phase 6 review); backtest oracle stays inert. Added 2026-07-06 from the Phase 6 code review. — completed 2026-07-07 (10/10 plans; 07-09 post-review remediation folded in; **07-10 gap-closure closed CR-01** — warmup re-delivery idempotency Option B/Level 2: absorb_warmup `_last_delivered` guard + Strategy.update `_last_bar_time` cursor + cadence-gated retry, oracle byte-exact)
 
 ### Phase 1: Account Abstraction + Portfolio/Handler Refactor
 
@@ -471,7 +471,17 @@ detailed approaches are *leanings* in `06-REVIEW-DECISIONS.md` — final design 
 the Phase 7 discuss session, not locked here.
 **Research flag**: consider — LEAN `OnSecuritiesChanged`/`IsReady` + Nautilus `request_bars` readiness
 patterns informed the design direction (see `06-REVIEW-DECISIONS.md` WR-02).
-**Plans**: not planned yet (run `/gsd-plan-phase 7` after discuss).
+**Plans**: 8 plans (5 waves) — planned 2026-07-06 (07-08 added 2026-07-06 in revision: primary admission readiness gate, D-01/WR-02); **07-09 added 2026-07-07 as POST-REVIEW REMEDIATION after closeout** (closes the 8 in-scope findings from `07-REVIEW.md` — the fresh review of Phase 7's own output; CR-02 already fixed in 9cd5dd8d, excluded; CR-01 atomic pair-reconfiguration deferred to next milestone, `todos/pair-strategy-live-reconfiguration.md`).
+
+- [x] 07-01-PLAN.md — Contracts: Readiness enum + 4 EventType members + 4 event structs + explicit-empty routes (Wave 1)
+- [x] 07-02-PLAN.md — Universe state model: TrackedInstrument + _entries + keep-until-flat (WR-01/WR-02, Wave 2)
+- [x] 07-03-PLAN.md — Feed absorb_warmup (non-emitting) + provider spawn_warmup → BarsLoaded/BarsLoadFailed (WR-02, Wave 2)
+- [x] 07-04-PLAN.md — StrategiesHandler: readiness gate + on_bars_loaded + on_strategy_command (WR-02/OP-SEAM, Wave 3)
+- [x] 07-05-PLAN.md — UniverseHandler poll route + HALT gate + precision resolver (WR-04/WR-05/WR-06, Wave 3)
+- [x] 07-06-PLAN.md — UniverseHandler warmup consumers + discard teardown + strategy-derived source (WR-01/WR-02/OP-SEAM, Wave 4)
+- [x] 07-07-PLAN.md — Composition root + add_event allowlist + milestone gate (WR-04/WR-06/OP-SEAM, Wave 5)
+- [x] 07-08-PLAN.md — AdmissionManager PRIMARY readiness gate: reject a non-READY symbol at admission even bypassing the strategy loop (WR-02/D-01, Wave 3)
+- [x] 07-09-PLAN.md — Post-review remediation: CR-01 (refuse PairStrategy ticker mutation) + WR-01 (pair per-leg readiness gate) + WR-02 (warm-state read-model re-verify → mark_failed) + WR-03 (marshal OKX unsubscribe onto connector loop) + WR-04 (per-thread replay guard) + WR-05 (_find_ring honors timeframe) + IN-01/IN-02 (Wave 4 — added 2026-07-07 post-closeout)
 
 ## Phases (shipped — archived detail)
 

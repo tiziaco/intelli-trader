@@ -105,6 +105,10 @@ class EventHandler(object):
 			EventType.SCREENER: [],   # explicit empty — consuming screeners is D-screener
 			EventType.UPDATE: [],     # explicit empty — live API path consumes these (D-live)
 			EventType.UNIVERSE_UPDATE: [],  # explicit empty — live consumers wired live-only in plan 05 (backtest stays inert)
+			EventType.UNIVERSE_POLL: [],       # NEW — live-only consumers wired live-only in plan 07 (backtest stays inert)
+			EventType.STRATEGY_COMMAND: [],    # NEW — live-only consumers wired live-only in plan 07 (backtest stays inert)
+			EventType.BARS_LOADED: [],         # NEW — live-only consumers wired live-only in plan 07 (backtest stays inert)
+			EventType.BARS_LOAD_FAILED: [],    # NEW — live-only consumers wired live-only in plan 07 (backtest stays inert)
 			EventType.ERROR: [self._log_error_event],   # D-16: real log consumer
 		}
 

@@ -188,6 +188,22 @@ class AdmissionManager:
 			if gate_rejection is not None:
 				return [gate_rejection]
 
+			# 0a. D-01 PRIMARY WR-02 readiness admission gate — the SECOND gate,
+			# immediately after leaving and BEFORE direction. Stops an
+			# externally-injected signal (bypassing the strategy-loop SECONDARY
+			# check, Plan 07-04) from sizing a live order for a still-PENDING /
+			# FAILED (unwarmed) symbol: an AUDITED rejection
+			# (triggered_by=ADMISSION_READINESS); a sanctioned exit passes so a
+			# winding-down orphan can go flat. Ordering rationale: leaving-first
+			# so a leaving symbol's stale readiness never mis-triggers
+			# ADMISSION_READINESS on a sanctioned exit the leaving gate already
+			# allowed; readiness-before-direction so a PENDING symbol is
+			# intercepted with the correct reason before direction sizing runs.
+			# No-op with no universe / READY ticker (oracle-dark, D-01).
+			gate_rejection = self._enforce_readiness_admission(signal_event, snap)
+			if gate_rejection is not None:
+				return [gate_rejection]
+
 			# 0. D-08 direction admission gate — BEFORE sizing. Enforces the
 			# strategy's DECLARED TradingDirection: an unsized LONG_ONLY SELL
 			# with no open long is an AUDITED rejection (Pitfall 4 — the exact
@@ -548,6 +564,74 @@ class AdmissionManager:
 			f"universe removal: new entries blocked for leaving symbol "
 			f"{signal_event.ticker}",
 			triggered_by=OrderTriggerSource.ADMISSION_LEAVING,
+			operation_type=OrderOperationType.SIGNAL_ADMISSION,
+			error_prefix="Signal rejected at admission",
+		)
+
+	def _enforce_readiness_admission(self, signal_event: SignalEvent,
+	                                 snap: "PositionView | None") -> Optional[OperationResult]:
+		"""D-01 readiness admission gate — the PRIMARY WR-02 gate.
+
+		This is the PRIMARY consumer of the per-symbol readiness state (D-01):
+		"Admission is the primary gate consumer (a `pending` symbol cannot be
+		traded via a bypassing external `OrderEvent`); the strategy loop carries
+		a cheap defensive check." The strategy-loop check (Plan 07-04 Task 1) is
+		the SECONDARY defensive gate; THIS gate is the one that stops a signal
+		that BYPASSES the strategy loop entirely (an externally-injected
+		`OrderEvent`/`SignalEvent` admitted by the D-10 allowlist).
+
+		A still-``PENDING`` (or ``FAILED``) symbol has NOT finished its warmup
+		backfill, so sizing it into a live order would trade on an unwarmed
+		symbol. This gate reads ``Universe.is_ready(ticker)`` and BLOCKS a NEW
+		unsized entry for a non-READY symbol (AUDITED rejection,
+		triggered_by == ADMISSION_READINESS) while ALLOWING a sanctioned EXIT so
+		a winding-down orphan whose readiness may be stale (D-15: force-close
+		tears the stream down at removal) can still go flat.
+
+		Runs SECOND, immediately AFTER the leaving gate and BEFORE the direction
+		gate. Leaving-first so a leaving symbol's stale readiness never
+		mis-triggers ADMISSION_READINESS on a sanctioned exit the leaving gate
+		already allowed; readiness-before-direction so a PENDING symbol is
+		intercepted with the correct reason before direction sizing is consulted.
+		Mirrors ``_enforce_leaving_symbol_admission``'s guard-clause shape.
+
+		Preserved no-op paths (early-return None):
+		- Explicit-quantity signals (the live/manual path skips every gate, D-07).
+		- No injected universe (``self._universe is None`` — backtest / no
+		  universe): the gate is a structural no-op (oracle-dark BYTE-EXACT;
+		  construction-time backtest members default READY anyway, Plan 02).
+		- A READY ticker (the common path — a construction-time member is always
+		  READY, so this returns None on the golden path).
+
+		Returns
+		-------
+		Optional[OperationResult]
+			A failure_result when a non-READY new entry is blocked (the audited
+			REJECTED entity is already persisted), or None when the signal passes.
+		"""
+		if signal_event.quantity and signal_event.quantity > 0:
+			# Explicit caller-supplied quantity: the gate does not apply (D-07).
+			return None
+		if self._universe is None:
+			# No universe injected — backtest / no universe: the gate is a
+			# structural no-op (oracle-dark BYTE-EXACT).
+			return None
+		if self._universe.is_ready(signal_event.ticker):
+			# READY symbol — the common path (construction members are READY).
+			return None
+		# Sanctioned exit PASSES so a winding-down orphan (whose readiness may be
+		# stale) can go flat: a SELL reduces an open LONG, a BUY covers an open
+		# SHORT (dispatch on `side`, the read-model magnitude is unsigned).
+		is_sanctioned_exit = snap is not None and (
+			(signal_event.action is Side.SELL and snap.side is PositionSide.LONG)
+			or (signal_event.action is Side.BUY and snap.side is PositionSide.SHORT)
+		)
+		if is_sanctioned_exit:
+			return None
+		return self._reject_unsized_signal(
+			signal_event,
+			f"symbol not ready: {signal_event.ticker} is warming up (readiness gate)",
+			triggered_by=OrderTriggerSource.ADMISSION_READINESS,
 			operation_type=OrderOperationType.SIGNAL_ADMISSION,
 			error_prefix="Signal rejected at admission",
 		)

@@ -19,6 +19,14 @@ from .market import (
     UniverseUpdateEvent,
 )
 
+# Universe / live control-plane events (D-03/D-04/D-06/D-09)
+from .universe import (
+    BarsLoaded,
+    BarsLoadFailed,
+    UniversePollEvent,
+    StrategyCommandEvent,
+)
+
 # Signal events
 from .signal import SignalEvent
 
@@ -50,6 +58,12 @@ __all__ = [
     'PortfolioUpdateEvent',
     'ScreenerEvent',
     'UniverseUpdateEvent',
+
+    # Universe / live control-plane events
+    'BarsLoaded',
+    'BarsLoadFailed',
+    'UniversePollEvent',
+    'StrategyCommandEvent',
 
     # Signal events
     'SignalEvent',

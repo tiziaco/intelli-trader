@@ -4,7 +4,7 @@ import sys
 import threading
 from collections import deque
 from datetime import datetime, UTC
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Optional, Dict, Any, Callable
 
 # D-14 (V17-11): bound on the pause-window protective-order replay queue. During a
@@ -36,8 +36,21 @@ from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.universe import Universe, derive_instruments, derive_membership
 
 from itrader.logger import get_itrader_logger
-from itrader.events_handler.events import EventType, ErrorEvent
-from itrader.events_handler.events.market import TimeEvent
+from itrader.events_handler.events import EventType, ErrorEvent, UniversePollEvent
+from itrader.core.instrument import Instrument
+
+# D-10 (WR — the primary external-surface security control): ``add_event`` is the
+# engine's PUBLIC external/web ingress. It is FAIL-CLOSED (default-deny, ASVS V4/V5):
+# ONLY the two sanctioned externally-originated event types are admissible — a
+# ``SIGNAL`` (routes through ``OrderHandler.on_signal`` -> ``AdmissionManager`` for
+# validation + sizing + reservation + mirror) and a ``STRATEGY_COMMAND`` (an operator
+# add/remove-ticker command). EVERY other event type — every internal-fact type
+# (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL / BARS_LOADED / BARS_LOAD_FAILED /
+# TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) — is rejected by default. Internal
+# order flow is UNAFFECTED: handlers put their events on ``global_queue`` directly,
+# never through this external ``add_event`` surface (RESEARCH OQ7: zero internal
+# production callers of ``add_event``).
+_EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND})
 
 # Live operational store credential surface (D-live wiring completed). The live order +
 # signal store is selected by ENV-PRESENCE of a Postgres credential on the unified
@@ -91,6 +104,82 @@ _PAPER_STREAM_TIMEFRAME = "1d"
 # a coincidental-class-default check. Aliased to the single-source constants above.
 _PAPER_EXPECTED_START = PAPER_PARITY_START_DATE
 _PAPER_EXPECTED_END = PAPER_PARITY_END_DATE
+
+
+def _precision_to_scale(value: Any) -> "Decimal | None":
+    """Convert a ccxt market-precision entry to a Decimal rounding scale (WR-04/D-16, D-04 string path).
+
+    OKX loads markets in ccxt TICK_SIZE mode, so ``precision.price`` / ``precision.amount``
+    are tick sizes (``0.1``, ``0.00000001``) — the Decimal scale directly. A bare
+    DECIMAL_PLACES integer (``8``) is read as a decimal-place count -> ``Decimal("1e-8")``.
+    Enters the Decimal domain via ``str(value)`` (Pitfall 2 — NEVER ``Decimal(float)``);
+    returns ``None`` on a missing / non-positive / unparseable entry so the caller falls to
+    ``Universe.apply``'s ``_DEFAULT_*`` ladder.
+    """
+    if value is None:
+        return None
+    try:
+        dec = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if dec <= 0:
+        return None
+    if dec == dec.to_integral_value() and dec >= 1:
+        # DECIMAL_PLACES count (e.g. 8) -> 1e-8 scale.
+        return Decimal(1).scaleb(-int(dec))
+    return dec
+
+
+class _OkxPrecisionResolver:
+    """WR-04/D-16 venue-precision resolver over the OKX loaded-markets map.
+
+    Reads ``okx_exchange._connector.client.markets[symbol]['precision']`` — the SAME ccxt
+    loaded-markets precision the submit path already consumes via ``price_to_precision`` /
+    ``amount_to_precision`` (``okx.py:362-392``) — and converts the venue tick sizes into an
+    ``Instrument`` carrying Decimal price/quantity scales via the D-04 string path
+    (``Decimal(str(x))``, NEVER ``Decimal(float)`` — Pitfall 2). Returns ``None`` when markets
+    aren't loaded / the symbol is absent / a precision entry is unusable, so
+    ``UniverseHandler.on_poll`` falls to ``Universe.apply``'s ``_DEFAULT_*`` ladder — the same
+    paper posture as ``validate_symbol`` accepting when ``markets`` isn't a dict
+    (``okx.py:1029-1032``). ``Universe`` stays connector-free (D-16): every connector read
+    happens HERE, never inside ``Universe``. Satisfies the ``_PrecisionResolver`` Protocol.
+    """
+
+    # Inert margin defaults (mirror ``instruments.derive_instruments`` — unused on the spot
+    # path this phase; present so every constructed Instrument is well-formed).
+    _DEFAULT_MAINTENANCE_MARGIN_RATE = Decimal("0.005")
+    _DEFAULT_MAX_LEVERAGE = Decimal("1")
+
+    def __init__(self, okx_exchange: Any) -> None:
+        self._okx = okx_exchange
+
+    def resolve(self, symbol: str) -> "Instrument | None":
+        connector = getattr(self._okx, "_connector", None)
+        client = getattr(connector, "client", None)
+        markets = getattr(client, "markets", None)
+        if not isinstance(markets, dict):
+            return None
+        # Normalise through the SAME _to_symbol helper validate_symbol uses (okx.py:1023)
+        # so a caller-form vs markets-key mismatch resolves consistently.
+        to_symbol = getattr(self._okx, "_to_symbol", None)
+        key = to_symbol(symbol) if callable(to_symbol) else symbol
+        market = markets.get(key)
+        if not isinstance(market, dict):
+            return None
+        precision = market.get("precision")
+        if not isinstance(precision, dict):
+            return None
+        price_scale = _precision_to_scale(precision.get("price"))
+        quantity_scale = _precision_to_scale(precision.get("amount"))
+        if price_scale is None or quantity_scale is None:
+            return None
+        return Instrument(
+            symbol=symbol.upper(),
+            price_precision=price_scale,
+            quantity_precision=quantity_scale,
+            maintenance_margin_rate=self._DEFAULT_MAINTENANCE_MARGIN_RATE,
+            max_leverage=self._DEFAULT_MAX_LEVERAGE,
+        )
 
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
@@ -493,6 +582,13 @@ class LiveTradingSystem:
             # Wire the provider's confirm-gated closed-bar sink to the feed's
             # monotonic-guard ingest so every ClosedBar drives feed.update() -> BarEvent.
             self._okx_data_provider.set_bar_sink(self.feed.update)
+            # 07-03 (WR-02, D-03): bind the engine queue the async warmup half emits on.
+            # spawn_warmup is the ONE provider path that puts an event directly on the
+            # queue (BarsLoaded/BarsLoadFailed); it raises a typed StateError unless the
+            # queue is bound here. Without this every poll-driven add's spawn_warmup fails
+            # immediately (swallowed by the per-symbol try/except) and the added symbol
+            # stays permanently PENDING (dark) — the WR-02 live-warmup pipeline never fires.
+            self._okx_data_provider.set_global_queue(self.global_queue)
 
             # 05-08 (RES-01/D-19/D-20): wire the reconnect-supervisor seams on BOTH
             # venue stream arms. A fatal connector error or an exhausted retry ceiling
@@ -1307,7 +1403,7 @@ class LiveTradingSystem:
             # imports) so the backtest import path never pulls universe_handler —
             # the recurring inertness gate (tests/integration/test_okx_inertness.py).
             from itrader import config as _system_config
-            from itrader.universe.membership import StaticUniverseSelectionModel
+            from itrader.universe.membership import StrategyDerivedSelectionModel
             from itrader.universe.universe_handler import UniverseHandler
 
             # remove_policy + poll cadence come from the LIVE/monitoring config, NOT
@@ -1320,35 +1416,64 @@ class LiveTradingSystem:
                 timeframe=_OKX_STREAM_TIMEFRAME,
                 remove_policy=_system_config.monitoring.universe_remove_policy,
             )
-            # Seed the selection source from CURRENT membership so the poll is a
-            # NO-OP (desired == current -> empty delta -> no event) until an
-            # operator drives set_symbols — the lean poll seam (D-20), not a
-            # ranking engine.
+            # D-12/OP-SEAM: the poll selection source is the strategy-derived model —
+            # ``select()`` reads ``strategies_handler.get_strategies_universe()`` live
+            # each poll so an operator ticker edit (STRATEGY_COMMAND) propagates on the
+            # next poll (no held snapshot). The poll is a NO-OP (desired == current ->
+            # empty delta -> no event) until the strategy universe actually changes.
             self._universe_handler.set_selection_source(
-                StaticUniverseSelectionModel(universe.members))
+                StrategyDerivedSelectionModel(self.strategies_handler))
+            # Plan 04 readiness-gate seam: give StrategiesHandler the Universe read-model
+            # so calculate_signals gates on per-symbol readiness (backtest wires none).
+            self.strategies_handler.set_universe(universe)
+            # WR-05/D-07 freeze gate: while the engine is HALTED or submission-paused
+            # the poll freezes membership IN PLACE (on_poll early-returns) — level-
+            # triggered, self-heals on the next unfrozen tick (no replay/buffering).
+            self._universe_handler.set_freeze_gate(
+                lambda: self._is_halted() or self._is_submission_paused())
             # D-06 venue bound: OKX validate_symbol filters the proposed set BEFORE
             # apply (OKX arm only — guard None on paper/replay, no venue markets map).
             if self._okx_exchange is not None:
                 self._universe_handler.set_symbol_validator(self._okx_exchange)
+                # WR-04/D-16 venue precision: resolve a poll-added symbol's precision
+                # from the OKX loaded-markets map (guarded on okx presence, mirroring
+                # the validate_symbol guard). Paper/replay (no okx exchange) leaves the
+                # resolver unset -> Universe.apply falls to the _DEFAULT_* ladder.
+                self._universe_handler.set_precision_resolver(
+                    _OkxPrecisionResolver(self._okx_exchange))
             # Data-plane provider the add/remove branch drives (guard None on paper).
             if self._okx_data_provider is not None:
                 self._universe_handler.set_provider(self._okx_data_provider)
             # Open-position truth for the remove consumer + detach-on-flat.
             self._universe_handler.set_portfolio_read_model(self.portfolio_handler)
+            # WR-02 strategy-warmth re-verify: on_bars_loaded re-checks is_warm before
+            # flipping a symbol READY (a MISS marks FAILED, retried next poll) — so a
+            # swallowed partial strategy warmup can't make a half-warmed symbol
+            # tradeable. Live-only (backtest constructs no UniverseHandler).
+            self._universe_handler.set_strategy_warmth(self.strategies_handler)
 
-            # LIVE-ONLY route mutation (RESEARCH §11.1): mutate THIS live
-            # EventHandler's own routes dict — NEVER the shared backtest _routes
-            # literal (the backtest TradingSystem builds a SEPARATE EventHandler).
-            # Append the poll on_time to the TIME route (the poll-timer's control-
-            # plane TimeEvent reaches it there); set the UNIVERSE_UPDATE consumer;
-            # append on_fill to the FILL route AFTER PortfolioHandler.on_fill so the
-            # read model already reflects the settled (flat) position for
-            # detach-on-flat. The backtest literal is untouched → W1/W2 + oracle
-            # provably unaffected.
-            self.event_handler.routes[EventType.TIME].append(
-                self._universe_handler.on_time)
+            # LIVE-ONLY route mutation (RESEARCH §11.1): mutate THIS live EventHandler's
+            # own routes dict — NEVER the shared backtest _routes literal (the backtest
+            # TradingSystem builds a SEPARATE EventHandler; the four new routes stay
+            # explicit-empty there, proven by tests/integration/test_okx_inertness.py).
+            # D-06/WR-06: the poll rides its OWN dedicated UNIVERSE_POLL route (not the
+            # shared TIME route that fans to screeners/bar-gen). STRATEGY_COMMAND edits
+            # the strategy universe; BARS_LOADED runs strategies FIRST (warm indicators)
+            # then universe (absorb ring + mark_ready + subscribe) — LIST ORDER = EXECUTION
+            # ORDER (D-03b); BARS_LOAD_FAILED marks the symbol FAILED (kept, retried).
+            # on_fill is appended AFTER PortfolioHandler.on_fill so the read model already
+            # reflects the settled (flat) position for detach-on-flat.
+            self.event_handler.routes[EventType.UNIVERSE_POLL] = [
+                self._universe_handler.on_poll]
             self.event_handler.routes[EventType.UNIVERSE_UPDATE] = [
                 self._universe_handler.on_universe_update]
+            self.event_handler.routes[EventType.STRATEGY_COMMAND] = [
+                self.strategies_handler.on_strategy_command]
+            self.event_handler.routes[EventType.BARS_LOADED] = [
+                self.strategies_handler.on_bars_loaded,
+                self._universe_handler.on_bars_loaded]
+            self.event_handler.routes[EventType.BARS_LOAD_FAILED] = [
+                self._universe_handler.on_bars_load_failed]
             self.event_handler.routes[EventType.FILL].append(
                 self._universe_handler.on_fill)
 
@@ -1750,10 +1875,11 @@ class LiveTradingSystem:
             self._running = True
             self._thread.start()
 
-            # Plan 06-05 (D-02): start the live-only dynamic-universe poll timer on
-            # the daemon/live path ONLY (never run_paper_replay — synchronous — never
-            # backtest). It puts a control-plane TimeEvent on the configured cadence so
-            # the UniverseHandler polls membership DECOUPLED from bars (D-02). Stopped
+            # Plan 06-05 / 07-07 (D-02/D-06): start the live-only dynamic-universe poll
+            # timer on the daemon/live path ONLY (never run_paper_replay — synchronous —
+            # never backtest). It puts a control-plane UniversePollEvent on the configured
+            # cadence so the UniverseHandler polls membership DECOUPLED from bars (D-02),
+            # off its dedicated UNIVERSE_POLL route (D-06/WR-06). Stopped
             # via the shared _stop_event discipline (stop() sets it, joins the thread) —
             # the event was already cleared above before the processing thread started.
             self._poll_timer_thread = threading.Thread(
@@ -1773,23 +1899,25 @@ class LiveTradingSystem:
             return False
     
     def _run_poll_timer(self) -> None:
-        """Live-only dynamic-universe poll-timer daemon (Plan 06-05, D-02).
+        """Live-only dynamic-universe poll-timer daemon (Plan 06-05 / 07-07, D-02/D-06).
 
-        Loops until ``_stop_event`` is set, putting a control-plane ``TimeEvent`` on
-        the global queue every ``monitoring.universe_poll_cadence_s`` seconds so the
-        live ``UniverseHandler.on_time`` polls its selection source DECOUPLED from
-        bars (D-02). This is the SOLE wall-clock ``TimeEvent`` on the live path — it
-        stamps ONLY the control-plane poll, and NEVER a bar/fill business time
-        (Pitfall 3 / determinism: business ``time`` stays venue-sourced). Started
-        only on the live daemon path (``start()``), NEVER in ``run_paper_replay``
-        (synchronous) or the backtest. ``_stop_event.wait(cadence)`` doubles as the
-        interruptible sleep so ``stop()`` unblocks it immediately.
+        Loops until ``_stop_event`` is set, putting a control-plane ``UniversePollEvent``
+        on the global queue every ``monitoring.universe_poll_cadence_s`` seconds so the
+        live ``UniverseHandler.on_poll`` polls its selection source DECOUPLED from bars
+        (D-02) off its OWN dedicated ``UNIVERSE_POLL`` route (D-06/WR-06 — no longer the
+        shared TIME route that also fans to screeners/bar-gen). This is the SOLE
+        wall-clock event on the live path — it stamps ONLY the control-plane poll, and
+        NEVER a bar/fill business time (Pitfall 3 / determinism: business ``time`` stays
+        venue-sourced). Started only on the live daemon path (``start()``), NEVER in
+        ``run_paper_replay`` (synchronous) or the backtest. ``_stop_event.wait(cadence)``
+        doubles as the interruptible sleep so ``stop()`` unblocks it immediately.
         """
         from itrader import config as _system_config
         cadence = _system_config.monitoring.universe_poll_cadence_s
         while not self._stop_event.is_set():
-            # Control-plane wall-clock TimeEvent ONLY (Pitfall 3): never a bar/fill.
-            self.global_queue.put(TimeEvent(time=datetime.now(UTC)))
+            # Control-plane wall-clock UniversePollEvent ONLY (D-06/Pitfall 3): its own
+            # discriminator, never a bar/fill business time, never the shared TIME route.
+            self.global_queue.put(UniversePollEvent(time=datetime.now(UTC)))
             self._stop_event.wait(cadence)
 
     def stop(self, timeout=10.0):
@@ -1949,17 +2077,20 @@ class LiveTradingSystem:
         """
         Add an event to the global queue for processing.
 
-        D-18 (V17-16, HIGH — ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
-        surface. A raw ``OrderEvent`` here would reach the execution queue with NO validation,
-        sizing, cash reservation or order-mirror engagement — an external caller could inject
-        an arbitrary order that bypasses every admission control (elevation-of-privilege /
-        input-validation defect). Raw ``EventType.ORDER`` injection is therefore REFUSED.
-
-        The sanctioned external-order path is SIGNAL-form entry: submit a ``SignalEvent`` (or
-        call the order domain directly), which routes through ``OrderHandler.on_signal`` ->
-        ``AdmissionManager`` so validation + sizing + reservation + mirror engage before any
-        ``OrderEvent`` is emitted. The internal order flow is UNAFFECTED — handlers emit
-        ``OrderEvent``s by putting them on ``global_queue`` directly, never through ``add_event``.
+        D-10 (fail-closed, ASVS V4/V5): ``add_event`` is the engine's PUBLIC external/web
+        surface, so it is DEFAULT-DENY. Only the two sanctioned externally-originated event
+        types in ``_EXTERNALLY_ADMISSIBLE`` are admitted — a ``SIGNAL`` (routes through
+        ``OrderHandler.on_signal`` -> ``AdmissionManager`` so validation + sizing + cash
+        reservation + order-mirror engage before any ``OrderEvent`` is emitted) and a
+        ``STRATEGY_COMMAND`` (an operator add/remove-ticker command). EVERY other type is
+        rejected: every internal-fact type (FILL / BAR / UNIVERSE_UPDATE / UNIVERSE_POLL /
+        BARS_LOADED / BARS_LOAD_FAILED / TIME / ORDER / ERROR / PORTFOLIO_UPDATE ...) is not
+        admissible from the external surface — a raw ``OrderEvent`` here would otherwise reach
+        the execution queue with NO admission control (elevation-of-privilege / input-validation
+        defect). This inverts the prior narrow ORDER-only denylist (fail-open -> fail-closed):
+        the sanctioned entry stays SIGNAL-form. The internal order flow is UNAFFECTED —
+        handlers emit ``OrderEvent``s by putting them on ``global_queue`` directly, never
+        through ``add_event`` (RESEARCH OQ7: zero internal production callers).
 
         Parameters
         ----------
@@ -1975,13 +2106,16 @@ class LiveTradingSystem:
             self.logger.warning('Cannot add event: Live trading system is not running')
             return False
 
-        # D-18: reject raw ORDER injection. Only ORDER events are blocked (a narrow gate);
-        # every non-ORDER event (the sanctioned SIGNAL-form entry included) enqueues normally.
-        if getattr(event, 'type', None) is EventType.ORDER:
+        # D-10: FAIL-CLOSED allowlist. Admit ONLY the sanctioned externally-originated types
+        # (SIGNAL + STRATEGY_COMMAND); reject every other type by default (default-deny). This
+        # covers the prior narrow ORDER reject and every other internal-fact type in one gate.
+        event_type = getattr(event, 'type', None)
+        if event_type not in _EXTERNALLY_ADMISSIBLE:
             self.logger.warning(
-                'Rejected raw ORDER injection via add_event (D-18/V17-16) — external orders '
-                'must route through the admission pipeline (signal-form entry), not the '
-                'live queue directly')
+                'Rejected external add_event of type %s (D-10 fail-closed default-deny) — only '
+                'SIGNAL and STRATEGY_COMMAND are admissible from the external surface; every '
+                'internal-fact type (incl. raw ORDER injection) must route through the engine '
+                'internally, never the public queue directly', event_type)
             return False
 
         try:

@@ -18,6 +18,8 @@ Carries the ``integration`` marker AUTOMATICALLY via the ``tests/integration/`` 
 
 from decimal import Decimal
 
+import pytest
+
 
 def test_orphan_and_track_defers_unsubscribe_blocks_entry_detaches_on_flat(
     remove_policy_harness,
@@ -44,6 +46,12 @@ def test_orphan_and_track_defers_unsubscribe_blocks_entry_detaches_on_flat(
     assert harness.system.feed.newest_bar(held) is not None
     assert harness.system.feed.newest_bar(held).close == Decimal("101")
 
+    # (a2) WR-01 keep-until-flat: the removed-but-held symbol's TrackedInstrument
+    #      record SURVIVES the removal (instrument still resolves) — teardown is
+    #      deferred to the flat FILL (D-13), so mark-to-market of the orphan never
+    #      hits a KeyError.
+    assert harness.universe.instrument(held).symbol == held
+
     # (b) A NEW-entry signal for the leaving symbol is audited-REJECTED (ADMISSION_LEAVING)
     #     and emits NO order — no fresh exposure can open.
     results = harness.submit_new_entry(held, price="101")
@@ -63,3 +71,26 @@ def test_orphan_and_track_defers_unsubscribe_blocks_entry_detaches_on_flat(
     harness.fire_flat_fill(held)
     assert harness.provider.unsubscribed == [held]
     assert held not in harness.universe.leaving_symbols()
+
+    # (d) D-13 atomic teardown: on detach-on-flat the record is discarded — the
+    #     instrument no longer resolves (record gone in one pop, no desync).
+    with pytest.raises(KeyError):
+        harness.universe.instrument(held)
+
+
+def test_remove_no_holder_discards_instrument_immediately(remove_policy_harness):
+    """A removed no-holder symbol is torn down at removal (D-13 final-teardown point 1)."""
+    harness = remove_policy_harness(remove_policy="orphan-and-track")
+    other = harness.other_symbol
+
+    # ``other`` is a member with NO open position — drive one bar so its ring exists.
+    harness.drive_bar(other, price="50")
+    assert harness.universe.instrument(other).symbol == other  # record present
+
+    # REMOVE the no-holder symbol: unsubscribe NOW + discard the record immediately.
+    harness.remove(other)
+
+    assert harness.provider.unsubscribed == [other]
+    assert other not in harness.universe.leaving_symbols()
+    with pytest.raises(KeyError):
+        harness.universe.instrument(other)  # record discarded at removal

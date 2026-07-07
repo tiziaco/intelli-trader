@@ -1,18 +1,25 @@
-"""``UniverseHandler`` on_time poll + add-side subscribe consumer (Plan 06-03 Task 2).
+"""``UniverseHandler`` on_poll poll + add-side subscribe consumer (Plan 06-03 / 07-05).
 
-The Arm-A poll seam: ``on_time`` polls the injected ``UniverseSelectionModel``,
-filters the desired set through ``validate_symbol`` (D-06) BEFORE ``Universe.apply``,
-and emits ONE ``UniverseUpdateEvent`` only when the applied delta is non-empty
-(no empty-delta floods). ``on_universe_update`` implements the ADD branch:
+The Arm-A poll seam: ``on_poll`` consumes the DEDICATED ``UniversePollEvent``
+(``EventType.UNIVERSE_POLL``, WR-06 — NOT the shared TIME route), freeze-gates
+(WR-05 — early-return while halted/paused), polls the injected
+``UniverseSelectionModel``, filters the desired set through ``validate_symbol``
+(D-06) BEFORE ``Universe.apply``, precision-resolves added symbols (WR-04), and
+emits ONE ``UniverseUpdateEvent`` only when the applied delta is non-empty (no
+empty-delta floods). ``on_universe_update`` implements the ADD branch:
 warmup-BEFORE-subscribe per added symbol (Pitfall 6).
 
-The six behaviors asserted:
-1. Unwired route is a no-op — no selection source → ``on_time`` returns, queue empty.
+The behaviors asserted:
+1. Unwired route is a no-op — no selection source → ``on_poll`` returns, queue empty.
 2. Selection returning the CURRENT membership → empty delta → NOTHING on the queue.
 3. Selection that ADDS a symbol → filter → apply → exactly ONE ``UniverseUpdateEvent``.
 4. A symbol REJECTED by ``validate_symbol`` is dropped BEFORE apply (never a member).
 5. ``on_universe_update`` ADD: ``feed.warmup`` THEN ``provider.subscribe`` in order.
 6. ``on_universe_update`` tolerates ``provider is None`` — warmup runs, subscribe skipped.
+7. A wired-True freeze gate short-circuits ``on_poll`` — no select, no apply, no event.
+8. A freeze gate returning False behaves exactly like an unwired gate (apply + emit).
+9. A poll-added symbol takes the resolver's venue precision (WR-04), and the default
+   ladder when no resolver is wired (paper-correct).
 """
 
 from datetime import datetime, timezone
@@ -26,8 +33,8 @@ from itrader.core.enums import PositionSide, Side
 from itrader.core.ids import PortfolioId
 from itrader.core.instrument import Instrument
 from itrader.core.portfolio_read_model import PositionView
-from itrader.events_handler.events import SignalEvent
-from itrader.events_handler.events.market import TimeEvent, UniverseUpdateEvent
+from itrader.events_handler.events import SignalEvent, UniversePollEvent
+from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.universe.universe import Universe
 from itrader.universe.universe_handler import UniverseHandler
 
@@ -61,7 +68,7 @@ class _FakeValidator:
 
 
 class _RecordingFeed:
-    """Records ``warmup`` calls into a shared ordered call log."""
+    """Records ``warmup``/``absorb_warmup`` calls into a shared ordered call log."""
 
     def __init__(self, log: list[tuple[str, str]]) -> None:
         self._log = log
@@ -69,12 +76,21 @@ class _RecordingFeed:
     def warmup(self, symbol: str, timeframe: str, depth: int | None = None) -> None:
         self._log.append(("warmup", symbol))
 
+    def absorb_warmup(self, symbol: str, timeframe: str, bars: object) -> None:
+        self._log.append(("absorb", symbol))
+
+    def cache_capacity(self) -> int:
+        return 100
+
 
 class _RecordingProvider:
-    """Records ``subscribe`` calls into a shared ordered call log."""
+    """Records ``spawn_warmup``/``subscribe`` calls into a shared ordered call log."""
 
     def __init__(self, log: list[tuple[str, str]]) -> None:
         self._log = log
+
+    def spawn_warmup(self, symbol: str, timeframe: str, limit: int) -> None:
+        self._log.append(("spawn", symbol))
 
     def subscribe(self, symbol: str) -> None:
         self._log.append(("subscribe", symbol))
@@ -197,32 +213,32 @@ def _remove_handler(
 # --- behaviors -------------------------------------------------------------
 
 
-def test_on_time_no_source_is_a_noop() -> None:
+def test_on_poll_no_source_is_a_noop() -> None:
     """1. Unwired route (no selection source) returns immediately; queue stays empty."""
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
-    handler.on_time(TimeEvent(time=_ASOF))
+    handler.on_poll(UniversePollEvent(time=_ASOF))
     assert handler._global_queue.empty()
     assert universe.members == ["BTC/USDC"]
 
 
-def test_on_time_current_membership_puts_nothing() -> None:
+def test_on_poll_current_membership_puts_nothing() -> None:
     """2. Selection == current membership → empty delta → NOTHING on the queue."""
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC"}))
-    handler.on_time(TimeEvent(time=_ASOF))
+    handler.on_poll(UniversePollEvent(time=_ASOF))
     assert handler._global_queue.empty()
 
 
-def test_on_time_add_emits_one_update_event() -> None:
+def test_on_poll_add_emits_one_update_event() -> None:
     """3. Selection adds a symbol → apply → exactly one UniverseUpdateEvent(added)."""
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
     handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
     handler.set_symbol_validator(_FakeValidator(rejected=set()))
 
-    handler.on_time(TimeEvent(time=_ASOF))
+    handler.on_poll(UniversePollEvent(time=_ASOF))
 
     event = _drain_one(handler._global_queue)
     assert isinstance(event, UniverseUpdateEvent)
@@ -231,7 +247,7 @@ def test_on_time_add_emits_one_update_event() -> None:
     assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
 
 
-def test_on_time_rejected_symbol_dropped_before_apply() -> None:
+def test_on_poll_rejected_symbol_dropped_before_apply() -> None:
     """4. A validate_symbol-rejected symbol never reaches the universe."""
     universe = _universe("BTC/USDC")
     handler = _handler(universe)
@@ -240,7 +256,7 @@ def test_on_time_rejected_symbol_dropped_before_apply() -> None:
     )
     handler.set_symbol_validator(_FakeValidator(rejected={"FAKE/USDC"}))
 
-    handler.on_time(TimeEvent(time=_ASOF))
+    handler.on_poll(UniversePollEvent(time=_ASOF))
 
     event = _drain_one(handler._global_queue)
     assert isinstance(event, UniverseUpdateEvent)
@@ -249,10 +265,191 @@ def test_on_time_rejected_symbol_dropped_before_apply() -> None:
     assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
 
 
-def test_on_universe_update_warmup_before_subscribe() -> None:
-    """5. ADD branch: feed.warmup THEN provider.subscribe, in that order per symbol."""
+# --- CR-02 FAILED-retry on the next poll -----------------------------------
+
+
+def test_on_poll_retries_failed_member_flips_pending_and_readds() -> None:
+    """CR-02(a): a FAILED member is re-warmed on the next poll — even when the
+    membership delta is EMPTY (desired == current). on_poll flips it back to
+    PENDING (so the WR-02 gate keeps it dark until the re-warm lands) and folds
+    it into the emitted UniverseUpdateEvent.added so it rides the same warmup
+    trigger a genuinely-new add uses."""
+    universe = _universe("BTC/USDC")
+    universe.apply({"BTC/USDC", "ETH/USDC"})  # ETH added, PENDING
+    universe.mark_failed("ETH/USDC")          # its warmup backfill failed once
+    handler = _handler(universe)
+    # Selection returns the CURRENT membership — an EMPTY apply delta.
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    # Despite the empty apply delta, ONE UniverseUpdateEvent re-drives ETH's warmup.
+    event = _drain_one(handler._global_queue)
+    assert isinstance(event, UniverseUpdateEvent)
+    assert event.added == ("ETH/USDC",)
+    assert event.removed == ()
+    # Readiness returned to PENDING (no longer FAILED) — still not tradeable yet.
+    assert universe.is_ready("ETH/USDC") is False
+    assert universe.failed_symbols() == set()
+
+
+def test_on_poll_failed_retry_then_rewarm_marks_ready() -> None:
+    """CR-02(b): after the retry re-drives warmup, a successful re-warm marks the
+    symbol READY. Uses the paper path (no provider): on_universe_update runs the
+    synchronous feed.warmup + immediate mark_ready for the re-added symbol."""
     log: list[tuple[str, str]] = []
     universe = _universe("BTC/USDC")
+    universe.apply({"BTC/USDC", "ETH/USDC"})  # ETH added, PENDING
+    universe.mark_failed("ETH/USDC")
+    handler = _handler(universe, feed=_RecordingFeed(log))  # NO provider (paper)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+    event = _drain_one(handler._global_queue)
+    assert isinstance(event, UniverseUpdateEvent)
+    assert event.added == ("ETH/USDC",)
+
+    # Route the emitted event through the add consumer (paper: warmup + mark_ready).
+    handler.on_universe_update(event)
+
+    assert log == [("warmup", "ETH/USDC")]
+    assert universe.is_ready("ETH/USDC") is True   # re-warm succeeded → READY
+
+
+def test_on_poll_static_ready_universe_never_retries_oracle_inert() -> None:
+    """CR-02(c): a static, all-READY universe (the backtest oracle shape) triggers
+    NO FAILED retry — the empty-delta fast path stays silent, nothing is queued,
+    and no readiness is disturbed. Guards the oracle-inertness of the retry path."""
+    universe = _universe("BTC/USDC", "ETH/USDC")  # both READY at construction
+    handler = _handler(universe)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    # No FAILED members → no retry → empty-delta fast path → nothing queued.
+    assert handler._global_queue.empty()
+    assert universe.is_ready("BTC/USDC") is True
+    assert universe.is_ready("ETH/USDC") is True
+
+
+# --- freeze gate (WR-05 / D-07 freeze-in-place) ----------------------------
+
+
+class _SpySelectionSource:
+    """A selection source that records whether ``select`` was called (freeze spy)."""
+
+    def __init__(self, desired: set[str]) -> None:
+        self._desired = desired
+        self.select_calls = 0
+
+    def select(self, asof: datetime) -> set[str]:
+        self.select_calls += 1
+        return set(self._desired)
+
+
+def test_on_poll_freeze_gate_true_short_circuits() -> None:
+    """7. A wired-True freeze gate skips the poll: no select, no apply, no event."""
+    universe = _universe("BTC/USDC")
+    handler = _handler(universe)
+    spy = _SpySelectionSource({"BTC/USDC", "ETH/USDC"})
+    handler.set_selection_source(spy)
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_freeze_gate(lambda: True)
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    # Membership frozen in place — no select consulted, no apply, nothing queued.
+    assert spy.select_calls == 0
+    assert handler._global_queue.empty()
+    assert universe.members == ["BTC/USDC"]
+
+
+def test_on_poll_freeze_gate_false_behaves_as_unwired() -> None:
+    """8. A freeze gate returning False behaves exactly like the prior on_time."""
+    universe = _universe("BTC/USDC")
+    handler = _handler(universe)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_freeze_gate(lambda: False)
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    event = _drain_one(handler._global_queue)
+    assert isinstance(event, UniverseUpdateEvent)
+    assert event.added == ("ETH/USDC",)
+    assert set(universe.members) == {"BTC/USDC", "ETH/USDC"}
+
+
+# --- precision resolver (WR-04 / D-16 venue precision) ---------------------
+
+
+class _FakeResolver:
+    """A precision resolver returning a configured Instrument per symbol.
+
+    A symbol absent from ``by_symbol`` resolves to ``None`` (unresolvable → the
+    caller falls to the default ladder).
+    """
+
+    def __init__(self, by_symbol: dict[str, Instrument]) -> None:
+        self._by_symbol = by_symbol
+
+    def resolve(self, symbol: str) -> Instrument | None:
+        return self._by_symbol.get(symbol)
+
+
+def _venue_inst(symbol: str) -> Instrument:
+    """A venue-precision Instrument with NON-default scales (3dp / 4dp)."""
+    return Instrument(
+        symbol=symbol,
+        price_precision=Decimal("0.001"),
+        quantity_precision=Decimal("0.0001"),
+        maintenance_margin_rate=Decimal("0.01"),
+        max_leverage=Decimal("3"),
+    )
+
+
+def test_on_poll_added_symbol_takes_resolver_precision() -> None:
+    """9a. A wired resolver gives a poll-added symbol venue precision (not 2dp/8dp)."""
+    universe = _universe("BTC/USDC")
+    handler = _handler(universe)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    handler.set_precision_resolver(_FakeResolver({"ETH/USDC": _venue_inst("ETH/USDC")}))
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    inst = universe.instrument("ETH/USDC")
+    assert inst.price_precision == Decimal("0.001")  # resolver, not 2dp default
+    assert inst.quantity_precision == Decimal("0.0001")  # not 8dp default
+
+
+def test_on_poll_added_symbol_no_resolver_uses_default_ladder() -> None:
+    """9b. With NO resolver wired (paper), an added symbol lands on the default ladder."""
+    universe = _universe("BTC/USDC")
+    handler = _handler(universe)
+    handler.set_selection_source(_FakeSelectionSource({"BTC/USDC", "ETH/USDC"}))
+    handler.set_symbol_validator(_FakeValidator(rejected=set()))
+    # No precision resolver wired.
+
+    handler.on_poll(UniversePollEvent(time=_ASOF))
+
+    inst = universe.instrument("ETH/USDC")
+    assert inst.price_precision == Decimal("0.01")  # _DEFAULT_PRICE_SCALE (2dp)
+    assert inst.quantity_precision == Decimal("0.00000001")  # _DEFAULT_QUANTITY_SCALE (8dp)
+
+
+def test_on_universe_update_add_spawns_warmup_no_subscribe() -> None:
+    """5. ADD branch (live): spawn_warmup per symbol, NO synchronous subscribe (D-03b).
+
+    Subscribe now moves to ``on_bars_loaded`` (after the ring is warmed); the add
+    branch only kicks off the async warmup fetch.
+    """
+    log: list[tuple[str, str]] = []
+    universe = _universe("BTC/USDC")
+    universe.apply({"BTC/USDC", "ETH/USDC", "SOL/USDC"})  # ETH, SOL pending
     handler = _handler(universe, feed=_RecordingFeed(log))
     handler.set_provider(_RecordingProvider(log))
 
@@ -260,18 +457,19 @@ def test_on_universe_update_warmup_before_subscribe() -> None:
         UniverseUpdateEvent(time=_ASOF, added=("ETH/USDC", "SOL/USDC"), removed=())
     )
 
-    assert log == [
-        ("warmup", "ETH/USDC"),
-        ("subscribe", "ETH/USDC"),
-        ("warmup", "SOL/USDC"),
-        ("subscribe", "SOL/USDC"),
-    ]
+    # spawn only — no subscribe on the add branch.
+    assert log == [("spawn", "ETH/USDC"), ("spawn", "SOL/USDC")]
 
 
-def test_on_universe_update_provider_none_tolerant() -> None:
-    """6. provider is None → warmup runs, subscribe skipped (paper/replay tolerant)."""
+def test_on_universe_update_provider_none_synchronous_paper_warmup() -> None:
+    """6. provider is None → synchronous feed.warmup + immediate READY (WARNING 1).
+
+    The no-provider paper path absorbs warmup synchronously and marks the symbol
+    READY at once — a poll-added paper symbol is NEVER left PENDING.
+    """
     log: list[tuple[str, str]] = []
     universe = _universe("BTC/USDC")
+    universe.apply({"BTC/USDC", "ETH/USDC"})  # ETH pending
     handler = _handler(universe, feed=_RecordingFeed(log))
     # No provider set.
 
@@ -280,6 +478,7 @@ def test_on_universe_update_provider_none_tolerant() -> None:
     )
 
     assert log == [("warmup", "ETH/USDC")]
+    assert universe.is_ready("ETH/USDC")  # never left PENDING
 
 
 # --- remove-policy consumer + detach-on-flat (plan 06-04 Task 2) ------------

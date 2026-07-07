@@ -1,6 +1,6 @@
 from datetime import timedelta
 from queue import Queue
-from typing import Any, cast
+from typing import Any, TYPE_CHECKING, cast
 
 from itrader.core.enums import OrderType
 from itrader.core.exceptions import ConfigurationError
@@ -12,9 +12,23 @@ from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage import SignalStore
-from itrader.events_handler.events import BarEvent, SignalEvent
+from itrader.events_handler.events import (
+	BarEvent,
+	BarsLoaded,
+	SignalEvent,
+	StrategyCommandEvent,
+	UniversePollEvent,
+)
 from itrader.outils.time_parser import check_timeframe
 from itrader.logger import get_itrader_logger
+
+if TYPE_CHECKING:
+	# TYPE_CHECKING-guarded (D-01): StrategiesHandler is on the backtest hot
+	# path, so the live-only Universe seam is never imported at runtime on the
+	# backtest path — the readiness gate is a single `is None` short-circuit
+	# when no universe is wired. The annotation stays a string ("Universe |
+	# None") so no runtime import cost is added.
+	from itrader.universe.universe import Universe
 
 
 class StrategiesHandler(object):
@@ -70,9 +84,46 @@ class StrategiesHandler(object):
 		self.min_timeframe: timedelta | None = None
 		#self.portfolios: dict = {}
 		self.strategies: list[Strategy]= []
+		# WR-02 (D-01) live-only readiness seam: the injected dynamic universe,
+		# wired ONLY on the live path via set_universe. Defaults None so the
+		# backtest wires no universe → the calculate_signals readiness gate is a
+		# single `is None` short-circuit (oracle byte-exact, RESEARCH OQ8).
+		self._universe: "Universe | None" = None
 
 		self.logger = get_itrader_logger().bind(component="StrategiesHandler")
 		self.logger.info('Strategies Handler initialized')
+
+	def set_universe(self, universe: "Universe") -> None:
+		"""Wire the live dynamic universe for the WR-02 readiness gate (D-01).
+
+		Live-only seam (mirrors the inert-by-default pattern): the backtest
+		composition root never calls this, so ``self._universe`` stays ``None``
+		and the per-tick gate in ``calculate_signals`` short-circuits — the
+		SMA_MACD oracle path is untouched.
+		"""
+		self._universe = universe
+
+	def is_warm(self, symbol: str) -> bool:
+		"""Aggregate per-symbol indicator warmth across concerned strategies (WR-02).
+
+		Warm = for EVERY strategy CONCERNED with ``symbol`` (its ``.tickers``
+		include it), that strategy's per-symbol indicators are warm
+		(``strategy.is_ready(symbol)``). Vacuously ``True`` when NO strategy is
+		concerned with the symbol (nothing to warm → nothing blocks readiness).
+
+		This is the WR-02 read-model the ``UniverseHandler`` re-verifies before
+		flipping a symbol READY + subscribing it: a swallowed partial strategy
+		warmup can no longer let a half-warmed symbol become tradeable. Reflects
+		INDICATOR warmth only — ``Strategy.is_ready`` is base handle-derived
+		warmth (a handle-free ``PairStrategy`` is always ``is_ready`` True); the
+		pair-specific spread warmth (``is_pair_ready``) is governed on the
+		dispatch path, which is the WR-02 contract.
+		"""
+		return all(
+			strategy.is_ready(symbol)
+			for strategy in self.strategies
+			if symbol in strategy.tickers
+		)
 
 	def calculate_signals(self, event: BarEvent) -> None:
 		"""
@@ -138,6 +189,17 @@ class StrategiesHandler(object):
 				#     short-circuit: SMA_MACD's warmup==100 is now "all three handles
 				#     ready at >=100 bars" (HARD-04, the firing tick is preserved).
 				strategy.update(ticker, bar)
+				# WR-02 (D-01/D-03c) defensive membership readiness gate, composed
+				# BEFORE the indicator-warmth gate: warm the O(1) recurrence
+				# (strategy.update above already advanced it) but do NOT trade a
+				# symbol whose warmup backfill is still PENDING/FAILED. This is a
+				# single None-check + one O(1) is_ready read, NO allocation — the
+				# oracle hot path (RESEARCH OQ8). Default _universe is None →
+				# backtest short-circuits on `is None` → byte-exact. Kept AFTER
+				# strategy.update so a pending symbol still warms (D-03c: the
+				# recurrence must advance while pending).
+				if self._universe is not None and not self._universe.is_ready(ticker):
+					continue
 				if not strategy.is_ready(ticker):
 					continue
 				intent = strategy.generate_signal(ticker)
@@ -298,6 +360,18 @@ class StrategiesHandler(object):
 			# D-02/P5-D10c: a missing leg = no spread this tick — skip silently,
 			# the pair buffers + count stay frozen (no update, no forward-fill).
 			return
+		# WR-01 (D-01): per-leg readiness gate mirroring the single-leg loop
+		# (:179-180) for BOTH legs. Short-circuit the WHOLE pair dispatch (no
+		# update_pair, no evaluate_pair) when EITHER leg is not universe-ready —
+		# a pair must never burn cycles evaluating an unwarmed leg. Single None
+		# check + two O(1) is_ready reads; default _universe is None → backtest
+		# short-circuits on `is None` → byte-exact. AdmissionManager (07-08) is
+		# the primary backstop; this is the cheap defensive strategy-loop layer.
+		if self._universe is not None and (
+			not self._universe.is_ready(ticker_A)
+			or not self._universe.is_ready(ticker_B)
+		):
+			return
 		# P5-D09/D15: push BOTH legs into the pair's own bounded per-leg buffers
 		# (the feed.window() slice is removed). update_pair stamps self.now from
 		# leg A's bar (a tz-aware Timestamp). The buffers ARE the trailing windows
@@ -318,6 +392,130 @@ class StrategiesHandler(object):
 		bars_by_ticker = {ticker_A: bar_A, ticker_B: bar_B}
 		for intent in intents:
 			self._emit_intent(strategy, event, intent.ticker, bars_by_ticker[intent.ticker], intent)
+
+	def on_bars_loaded(self, event: BarsLoaded) -> None:
+		"""Warm the concerned strategies from a bulk warmup payload (D-03).
+
+		Live-only consumer of the ``BarsLoaded`` bulk-transport event (wired in
+		Plan 07; NEVER on the backtest path). For each strategy CONCERNED with
+		``event.symbol`` (its ``.tickers`` include the symbol — the same
+		predicate as the D-03 warmup targets), replay ``event.bars`` IN ORDER
+		through the identical ``strategy.update(symbol, bar)`` path used by the
+		per-tick loop — and NOTHING else. This is warmup, not trading (D-03):
+		it does NOT call ``strategy.is_ready`` / ``generate_signal`` /
+		``_emit_intent`` and never touches the signal store or the queue, so no
+		tradeable signal is produced during warmup. The per-bar loop is
+		intrinsic to the O(1) recurrence (D-03a — never vectorized); a strategy
+		not concerned with the symbol is skipped.
+
+		Parameters
+		----------
+		event: `BarsLoaded`
+			The bulk warmup payload for one ``(symbol, timeframe)`` — an
+			immutable ``tuple[Bar, ...]`` reused verbatim from the queue (M5-02).
+		"""
+		for strategy in self.strategies:
+			if event.symbol not in strategy.tickers:
+				# Not concerned with this symbol — skip (no state churn).
+				continue
+			for bar in event.bars:
+				# Warmup only (D-03): drive the O(1) recurrence, emit NOTHING.
+				strategy.update(event.symbol, bar)
+
+	def on_strategy_command(self, event: StrategyCommandEvent) -> None:
+		"""Mutate a strategy's tickers then emit a UniversePollEvent follow-on (D-11).
+
+		The operator strategy-ticker seam (live-only, wired Plan 07). Locates the
+		strategy whose ``.name`` matches ``event.strategy_name`` and applies the
+		verb IDEMPOTENTLY to its plain ``list[str]`` tickers (per-symbol indicator
+		handles mint LAZILY on first ``update``, so appending a ticker needs no
+		re-warmup wiring):
+
+		- ``add_ticker`` appends ``event.symbol`` IF not already present.
+		- ``remove_ticker`` removes it IF present, EXCEPT a remove that would
+		  empty the list is REFUSED with a logged warning (the non-empty
+		  ``list[str]`` invariant, base.py — a strategy is never left with zero
+		  tickers); the refused command is a documented no-op (no re-select).
+
+		CR-01: a ``PairStrategy`` target is REFUSED outright (loud no-op) — its
+		exact-2-ticker contract cannot be mutated via add/remove without breaking
+		every subsequent ``_dispatch_pair`` (the atomic ordered-pair
+		reconfiguration path is deferred, see
+		todos/pair-strategy-live-reconfiguration.md).
+
+		On a command that ACTUALLY mutated the tickers it then EMITS a follow-on
+		``UniversePollEvent`` on ``self.global_queue`` (D-11 — one selection path,
+		two triggers; explicit causal ordering: the ticker mutation happens-before
+		the re-select). IN-02: an idempotent no-op (add already-present / remove
+		absent) mutates nothing and emits nothing (no control-plane churn). It
+		NEVER calls ``UniverseHandler`` or touches ``Universe`` (queue-only
+		cross-domain write — ``StrategiesHandler`` never sees ``UniverseHandler``).
+		An unknown ``strategy_name`` (or verb) logs a warning and emits nothing.
+
+		Parameters
+		----------
+		event: `StrategyCommandEvent`
+			The add/remove-ticker command addressed to one strategy by name.
+		"""
+		by_name = {strategy.name: strategy for strategy in self.strategies}
+		strategy = by_name.get(event.strategy_name)
+		if strategy is None:
+			# Unknown target — loud no-op (no mutation, no follow-on).
+			self.logger.warning(
+				'StrategyCommandEvent for unknown strategy %s (verb=%s, symbol=%s) — ignored',
+				event.strategy_name, event.verb, event.symbol)
+			return
+		# CR-01: a PairStrategy is bound to an EXACT-2-ticker contract
+		# (PairStrategy.validate + _dispatch_pair len-2 guard). Mutating its
+		# tickers via add/remove would break that contract and make EVERY
+		# subsequent BAR's _dispatch_pair raise — an unbounded self-inflicted
+		# ErrorEvent storm with no recovery. Refuse the command as a loud no-op
+		# BEFORE the verb branches: no ticker mutation, no follow-on poll. This
+		# guard is forward-compatible with the deferred atomic ordered-pair
+		# reconfiguration path (todos/pair-strategy-live-reconfiguration.md — the
+		# "correct" Option B, out of scope here); until that lands, a pair's
+		# membership is immutable at the control-plane seam.
+		if isinstance(strategy, PairStrategy):
+			self.logger.warning(
+				'StrategyCommandEvent verb=%s refused for pair strategy %s — '
+				'PairStrategy requires exactly 2 tickers and cannot be mutated via '
+				'add/remove_ticker',
+				event.verb, event.strategy_name)
+			return
+		symbol = event.symbol
+		# IN-02: track whether the tickers ACTUALLY mutated. A follow-on
+		# UniversePollEvent is emitted ONLY on a genuine mutation — an idempotent
+		# no-op (add already-present / remove absent) emits nothing (no
+		# control-plane churn on a no-op command).
+		mutated = False
+		if event.verb == "add_ticker":
+			if symbol not in strategy.tickers:
+				strategy.tickers.append(symbol)  # idempotent append
+				mutated = True
+		elif event.verb == "remove_ticker":
+			if symbol in strategy.tickers:
+				if len(strategy.tickers) == 1:
+					# Refuse: removing the last ticker would violate the
+					# non-empty list[str] invariant (base.py). Documented no-op —
+					# no mutation, no re-select.
+					self.logger.warning(
+						'remove_ticker %s refused for strategy %s — would empty its '
+						'ticker set (non-empty invariant preserved)',
+						symbol, event.strategy_name)
+					return
+				strategy.tickers.remove(symbol)  # idempotent removal
+				mutated = True
+		else:
+			# Unknown verb — loud no-op.
+			self.logger.warning(
+				'StrategyCommandEvent unknown verb %s for strategy %s — ignored',
+				event.verb, event.strategy_name)
+			return
+		# D-11 / IN-02 follow-on: mutate happens-before re-select. Emit a
+		# UniversePollEvent on the queue ONLY when the tickers actually mutated
+		# (queue-only cross-domain write — never call UniverseHandler).
+		if mutated:
+			self.global_queue.put(UniversePollEvent(time=event.time))
 
 	def get_strategies_universe(self) -> list[str]:
 		"""

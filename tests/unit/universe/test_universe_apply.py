@@ -80,8 +80,13 @@ def test_apply_removes_symbol():
     assert delta.added == ()
     assert delta.removed == ("A",)
     assert universe.members == ["B"]
+    # WR-01 keep-until-flat (Plan 07-02, D-13): apply no longer drops the record
+    # — only membership shrinks. The removed symbol's record survives (so a
+    # still-held orphan never KeyErrors) until discard_instrument tears it down.
+    assert universe.instrument("A").symbol == "A"
+    universe.discard_instrument("A")
     with pytest.raises(KeyError):
-        universe.instrument("A")  # dropped from _instruments
+        universe.instrument("A")  # gone after the atomic teardown
 
 
 def test_apply_adds_and_removes_together():
