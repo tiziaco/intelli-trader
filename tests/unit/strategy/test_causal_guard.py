@@ -9,6 +9,7 @@ Also covers the Task-2 per-symbol fan-out surfaces (update/is_ready/reset) and
 independent per-symbol readiness (P5-D10/D10b). TAB-indented (Pitfall 6).
 """
 
+import itertools
 from datetime import timedelta
 from decimal import Decimal
 
@@ -97,11 +98,19 @@ class _Bar:
 	Plan C (P5-D13a): ``update`` now also stashes the decision anchor
 	``self.now = bar.time``, so the stub carries a ``time`` (a plain int tick here —
 	readiness/fan-out is what these tests exercise, the anchor value is unused).
+
+	CR-01-strategy (07-10): ``update`` now enforces a per-symbol monotonic ``bar.time``
+	cursor (reject ``bar.time <= last``), so a CONSTANT sentinel time would be dropped as
+	a duplicate. Auto-assign a strictly-increasing tick when no explicit time is given so
+	these fan-out/readiness tests keep feeding accepted bars (the anchor value is still
+	don't-care — only its monotonicity matters).
 	"""
 
-	def __init__(self, close: float, time: int = 0) -> None:
+	_tick = itertools.count()
+
+	def __init__(self, close: float, time: int | None = None) -> None:
 		self.close = close
-		self.time = time
+		self.time = next(_Bar._tick) if time is None else time
 
 
 def _make_dual_sma():
