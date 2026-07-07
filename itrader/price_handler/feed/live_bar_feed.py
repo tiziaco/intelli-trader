@@ -341,8 +341,35 @@ class LiveBarFeed(BarFeed):
                         symbol, str(bt), str(last))
                     continue
                 if bt == last:
-                    # Duplicate re-delivery (== cursor) — expected/benign overlap on a
-                    # retry re-warm; drop SILENTLY (no log) so the ring gains no dup.
+                    # WR-01: `== cursor` is a duplicate OR a forward-only revision —
+                    # mirror the sibling _duplicate_or_revision. A BYTE-IDENTICAL
+                    # re-delivery (benign overlap re-fetch on a retry re-warm) drops
+                    # SILENTLY so the ring gains no dup; a DIFFERING-OHLCV bar at the
+                    # same open-time is a genuine venue-side revision (D-07) — WARN so
+                    # the operator sees the conflict, but still DROP with NO state
+                    # mutation (the already-ringed bar stays canonical, never rewound).
+                    ring = self._ring.get((symbol, timeframe))
+                    last_bar = ring[-1] if ring else None
+                    if last_bar is not None and not self._same_ohlcv(last_bar, bar):
+                        self.logger.warning(
+                            "Revision dropped for %s at %s during warmup absorb "
+                            "(forward-only, no state mutation, D-07): last-close=%s "
+                            "incoming-close=%s",
+                            symbol, str(bt), str(last_bar.close), str(bar.close))
+                    continue
+                # WR-02: the remaining region is last < bt < last + tf — an off-grid
+                # timestamp (mirroring update()'s WR-01 off-grid branch). Absorbing it
+                # would set L off the tf-grid and make every subsequent live update()
+                # for this (symbol, timeframe) spuriously trip the gap branch. Reject
+                # explicitly BEFORE ring.append / cursor-advance so an off-grid warmup
+                # bar can never poison the shared _last_delivered cursor. Bars at
+                # bt >= last + tf fall through to the existing append path unchanged.
+                tf = to_timedelta(timeframe)
+                if bt < last + tf:
+                    self.logger.warning(
+                        "Off-grid warmup bar for %s at %s (not L+tf, "
+                        "last-delivered=%s) — dropped (no absorb, no state mutation)",
+                        symbol, str(bt), str(last))
                     continue
             ring = self._ring.get((symbol, timeframe))
             if ring is None:
