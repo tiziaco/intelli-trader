@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import threading
 from collections import deque
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Optional
@@ -104,19 +105,44 @@ class LiveBarFeed(BarFeed):
         # (an under-returning venue page with a hole inside the replayed range), it
         # fails loud instead of spawning a nested/overlapping backfill.
         #
-        # WR-01 precondition: this is a PLAIN instance bool with no lock — it encodes
-        # "THIS thread's replay is active," not "any replay is active." It is correct
-        # ONLY while replay and its nested update() calls stay on the single
-        # connector-loop thread (the current loop-native path). The DEFERRED D-14
-        # concurrent-bar path (05.3-06) must scope re-entrancy to the replaying thread
-        # (thread-id / threading.local) BEFORE enabling it — see the guard in update().
-        self._replaying_backfill = False
+        # WR-04 (07-09, D-14 hazard FIXED): the guard is now PER-THREAD scoped via
+        # threading.local — it encodes "THIS thread's replay is active." The plain
+        # instance bool it replaced was correct ONLY while replay and its nested
+        # update() calls stayed on the single connector-loop thread; but update() is
+        # also reachable from the ENGINE thread (warmup / backfill_on_resume), so an
+        # engine-thread gap arriving mid connector-loop replay would read the
+        # connector's True, be misclassified as a nested in-replay gap, and spuriously
+        # HALT the connector. Thread-local storage makes the engine thread read its
+        # OWN default (False), so the deferred concurrent-bar path (05.3-06) no longer
+        # needs the "scope re-entrancy before enabling" caveat. Exposed through the
+        # ``_replaying_backfill`` property (getter/setter) so the three call sites
+        # (read / set-True / set-False) stay unchanged.
+        self._replay_local = threading.local()
         # Run-path bindings (mirror bar_feed.py:334-335); set via bind().
         self.global_queue: "Optional[queue.Queue[Any]]" = None
         self.membership: list[str] = []
         self.logger = get_itrader_logger().bind(component="LiveBarFeed")
         self.logger.info(
             "Live bar feed initialized (base timeframe %s)", self._base_alias)
+
+    # -- WR-04 per-thread replay re-entrancy guard ----------------------------
+
+    @property
+    def _replaying_backfill(self) -> bool:
+        """True iff the CURRENT thread is inside a loop-native backfill replay (WR-04).
+
+        Backed by ``threading.local``: the setter stashes ``active`` on the calling
+        thread, and the getter defaults to ``False`` on any thread that never set it
+        (the engine thread reads its OWN False even while the connector thread has
+        set True). This keeps the D-29 interior-hole guard correct without a lock and
+        without cross-thread poison — a backfill on one symbol/thread never
+        misclassifies a legitimate gap on another thread.
+        """
+        return getattr(self._replay_local, "active", False)
+
+    @_replaying_backfill.setter
+    def _replaying_backfill(self, value: bool) -> None:
+        self._replay_local.active = value
 
     # -- Provider -> feed seam (D-01/D-13) ------------------------------------
 
@@ -201,17 +227,17 @@ class LiveBarFeed(BarFeed):
                 # The raise escalates through the provider's supervised-backfill error
                 # path (_run_gap_backfill -> _on_gap_backfill_done -> connector halt).
                 #
-                # WR-01 precondition: `_replaying_backfill` encodes "THIS thread's
-                # replay is active," NOT "any replay is active." It is a plain instance
-                # bool with no lock, and this classification is correct ONLY while the
-                # replay and its nested update() calls stay on the single connector-loop
-                # thread (the current loop-native path guarantees this). update() is also
-                # reachable from the ENGINE thread (warmup / backfill_on_resume); the
-                # DEFERRED D-14 concurrent-bar path (05.3-06) MUST scope re-entrancy to
-                # the replaying thread (thread-id / threading.local) BEFORE it is enabled
-                # — otherwise a legitimate engine-thread gap arriving mid-replay would
-                # observe this flag True, be misclassified as a nested in-replay gap, and
-                # spuriously HALT the connector.
+                # WR-04 (07-09, FIXED): `_replaying_backfill` encodes "THIS thread's
+                # replay is active," NOT "any replay is active" — and it is now backed
+                # by threading.local (a property over self._replay_local), so that
+                # scoping is enforced rather than merely assumed. update() is also
+                # reachable from the ENGINE thread (warmup / backfill_on_resume); with
+                # the per-thread guard a legitimate engine-thread gap arriving mid
+                # connector-loop replay reads its OWN thread-local False (not the
+                # connector's True), so it is NOT misclassified as a nested in-replay
+                # gap and does NOT spuriously HALT the connector. The previously
+                # DEFERRED D-14 concurrent-bar path (05.3-06) therefore no longer needs
+                # the "scope re-entrancy before enabling" caveat — it is scoped here.
                 #
                 # WR-02: carry BOTH {expected, got} coordinates so an operator triaging a
                 # connector-fatal halt sees where in the interior the hole is without
@@ -650,9 +676,24 @@ class LiveBarFeed(BarFeed):
         )
 
     def _find_ring(self, ticker: str) -> "deque[Bar]":
-        """Return the ring for ``ticker`` (any timeframe), or raise (FR7)."""
-        for (sym, _tf), ring in self._ring.items():
-            if sym == ticker:
+        """Return the ``ticker`` ring at the feed's BASE timeframe, or raise (FR7 / WR-05).
+
+        WR-05: honor the timeframe key rather than returning whichever ring iterates
+        first for the symbol. The old first-match loop was safe only while a single
+        base timeframe existed per feed — pushing the same symbol at two base
+        timeframes into one feed could silently return the wrong-timeframe ring.
+
+        The ring is keyed by the RAW delivered timeframe string (e.g. ``"1d"`` from
+        the stream/warmup ``ClosedBar``), which is NOT byte-equal to
+        ``self._base_alias`` (the pandas offset alias, e.g. ``"1D"``). So the match
+        normalizes each ring's timeframe through ``_offset_alias(to_timedelta(tf))``
+        and compares it to ``self._base_alias`` — selecting ONLY the ring at this
+        feed's base timeframe (a coarser/other-timeframe ring for the same symbol is
+        NOT returned) while staying robust to ``"1d"``/``"1D"`` format differences.
+        A miss raises ``MissingPriceDataError``.
+        """
+        for (sym, tf), ring in self._ring.items():
+            if sym == ticker and _offset_alias(to_timedelta(tf)) == self._base_alias:
                 return ring
         raise MissingPriceDataError(
             ticker, "ticker not known to LiveBarFeed (no ring)")
