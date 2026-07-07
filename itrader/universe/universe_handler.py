@@ -52,6 +52,7 @@ from itrader.events_handler.events.fill import FillEvent
 from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.logger import get_itrader_logger
 from itrader.outils.id_generator import IDGenerator
+from itrader.outils.time_parser import to_timedelta
 from itrader.universe.membership import UniverseSelectionModel
 from itrader.universe.universe import Universe
 
@@ -203,6 +204,19 @@ class UniverseHandler:
         self._timeframe = timeframe
         self._remove_policy = remove_policy
 
+        # CR-01-retry (Level 2) handler-local live-only state (oracle-dark — the
+        # backtest composition root never constructs UniverseHandler). Both are pure
+        # hygiene/observability once idempotency (07-10 Tasks 2-3) landed — a retry can
+        # no longer corrupt state, so this only stops pointless re-fetches + surfaces a
+        # stuck symbol.
+        #   _last_rewarm_at: last poll ``event.time`` a FAILED symbol was re-warmed at —
+        #     the cadence gate skips re-warming more than once per bar interval (no new
+        #     venue data closes before then).
+        #   _rewarm_fail_streak: consecutive failed re-warms per symbol — warn at >= 3,
+        #     reset on a mark_ready success. NEVER auto-drop (Level 3 is explicitly OUT).
+        self._last_rewarm_at: dict[str, datetime] = {}
+        self._rewarm_fail_streak: dict[str, int] = {}
+
         # Live-only injected seams (plan 07 wires these on the live path). While
         # ``None`` the handler is inert: ``on_poll`` short-circuits on the source
         # guard, so an unwired route is a near-free no-op. The read model is the
@@ -339,9 +353,22 @@ class UniverseHandler:
         # even on the empty-delta fast path (a FAILED-retry with no other membership
         # change). Live-only: ``on_poll`` is a live route and backtest members
         # default READY (never FAILED), so this path is oracle-inert.
-        retry = tuple(sorted(self._universe.failed_symbols() & desired))
-        for sym in retry:
+        # CR-01-retry (Level 2) CADENCE GATE: do NOT re-warm a FAILED symbol more often
+        # than its bar interval — no new venue data closes before then, so a faster poll
+        # would only churn pointless REST re-fetches (T-07-10-CHURN). A symbol with no
+        # recorded prior attempt passes immediately (first retry is allowed at once);
+        # otherwise skip this poll while ``event.time - last_at < interval``. Record the
+        # attempt time on each admitted re-warm so the next poll compares against it.
+        interval = to_timedelta(self._timeframe)
+        collected: list[str] = []
+        for sym in sorted(self._universe.failed_symbols() & desired):
+            last_at = self._last_rewarm_at.get(sym)
+            if last_at is not None and event.time - last_at < interval:
+                continue
             self._universe.mark_pending(sym)
+            self._last_rewarm_at[sym] = event.time
+            collected.append(sym)
+        retry = tuple(collected)
         added = delta.added + retry
 
         # T-06-03-DOS: no empty-delta floods — put NOTHING when nothing changed AND
@@ -480,12 +507,16 @@ class UniverseHandler:
         # READY) and return — the CR-02 next-poll retry re-attempts the full warmup.
         if self._warmth is not None and not self._warmth.is_warm(event.symbol):
             self._universe.mark_failed(event.symbol)
+            # CR-01-retry (Level 2) 3-strike: a warm-verify MISS is a failed re-warm.
+            self._record_rewarm_failure(event.symbol)
             self.logger.warning(
                 "Warm-verify MISS for %s — strategy indicators not warm after "
                 "warmup; marked FAILED (retried next poll)",
                 event.symbol)
             return
         self._universe.mark_ready(event.symbol)
+        # CR-01-retry (Level 2): a genuine re-warm success clears the failure streak.
+        self._reset_rewarm_streak(event.symbol)
         if self._provider is not None:
             self._provider.subscribe(event.symbol)
 
@@ -499,10 +530,39 @@ class UniverseHandler:
         (exception TYPE only, T-05-27) — logged as-is.
         """
         self._universe.mark_failed(event.symbol)
+        # CR-01-retry (Level 2) 3-strike: the backfill errored — a failed re-warm.
+        self._record_rewarm_failure(event.symbol)
         self.logger.warning(
             "Warmup backfill failed for %s (reason=%s) — marked FAILED "
             "(kept in membership, retried next poll)",
             event.symbol, event.reason)
+
+    def _record_rewarm_failure(self, symbol: str) -> None:
+        """Increment ``symbol``'s consecutive-failed-re-warm streak; warn at >= 3 (Level 2).
+
+        Called at BOTH failure sites (the on_bars_loaded WR-02 warm-verify MISS and
+        on_bars_load_failed). At the 3rd consecutive failure a warning surfaces the stuck
+        symbol + its streak — but the symbol is NEVER auto-dropped / removed from
+        membership / quarantined (Level 3 is explicitly OUT; delisting is handled by
+        markets-freshness). The streak resets to 0 on a genuine re-warm success
+        (``_reset_rewarm_streak``).
+        """
+        streak = self._rewarm_fail_streak.get(symbol, 0) + 1
+        self._rewarm_fail_streak[symbol] = streak
+        if streak >= 3:
+            self.logger.warning(
+                "Symbol %s has failed re-warm %d times consecutively — still retrying "
+                "(never auto-dropped; investigate a possible delisting / stuck feed)",
+                symbol, streak)
+
+    def _reset_rewarm_streak(self, symbol: str) -> None:
+        """Clear ``symbol``'s failed-re-warm streak on a genuine re-warm success (Level 2).
+
+        Does NOT clear ``_last_rewarm_at`` — a LATER failure then compares against an old
+        poll time and passes the cadence gate immediately (correct: a symbol that warmed
+        successfully and only fails much later should be retried without waiting).
+        """
+        self._rewarm_fail_streak.pop(symbol, None)
 
     # --- remove-policy consumer (D-01) -----------------------------------------
 
