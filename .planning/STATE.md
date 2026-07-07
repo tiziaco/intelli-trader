@@ -5,7 +5,7 @@ milestone_name: Live Trading Readiness
 status: milestone_complete
 stopped_at: Phase 07 complete (10/10) — v1.7 (Phases 1-7) complete; ready to close/archive the milestone (999.3 is a historical seed already promoted into v1.7, not a forward phase)
 last_updated: 2026-07-07T11:08:49.601Z
-last_activity: 2026-07-07 -- Phase 07 gap-closure 07-10 (CR-01) complete
+last_activity: 2026-07-07 -- Quick task 260707-iy6: applied 07-REVIEW WR-01/WR-02/IN-01/IN-02 fixes
 progress:
   total_phases: 11
   completed_phases: 9
@@ -31,7 +31,7 @@ deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W
 Milestone: v1.7 — Live Trading Readiness — COMPLETE (Phases 1-7)
 Phase: 07 (live-dynamic-universe-hardening) — complete (10/10 plans)
 Status: Milestone complete — next step is `/gsd:complete-milestone`
-Last activity: 2026-07-07 — Phase 07 gap-closure 07-10 (CR-01) complete
+Last activity: 2026-07-07 — Quick task 260707-iy6: applied 07-REVIEW WR-01/WR-02/IN-01/IN-02 fixes
 
 Progress: [██████████] 100%
 
@@ -266,6 +266,7 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 | fast | Make ARCH-3 capture best-effort + fix OKX fetch_my_trades param (limit=100, no paginate — sCode 51000) — online settlement proof now fully GREEN (3/3) | 2026-07-05 | 81fc39aa | — (fast, inline) |
 | 260705-m3m | Test-infra: session-autouse guard clears dev-DB env so no test reaches operational Postgres at localhost:5544 + one shared session testcontainers Postgres for live-path DB tests to opt into (D-11 skip-safe, single-container); prereq for 05.2 durable-SQL tests | 2026-07-05 | 2f43faec | [260705-m3m-add-a-session-autouse-guard-in-tests-con](./quick/260705-m3m-add-a-session-autouse-guard-in-tests-con/) |
 | 260706-l48 | Apply Phase 06 mechanical code-review fixes: CR-01 (okx `unsubscribe` clears stale `_streams_down`/`_reconnect_attempts` supervisor state — un-wedges live resume gate) + WR-03 (`universe_poll_cadence_s` bounded `gt=0.0`). WR-01/02/04/05/06 routed to Phase 7. | 2026-07-06 | e08424d2 | [260706-l48-apply-mechanical-code-review-fixes-cr-01](./quick/260706-l48-apply-mechanical-code-review-fixes-cr-01/) |
+| 260707-iy6 | Apply 07-REVIEW CR-01 gap-closure fixes: WR-01 (`absorb_warmup` warns on genuine revision, silent on byte-identical dup via `_same_ohlcv`) + WR-02 (off-grid rejection protecting the shared `_last_delivered` cursor) + IN-01/IN-02 docstrings. Oracle byte-exact, mypy clean. | 2026-07-07 | 8eb66f73 | [260707-iy6-fix-07-review-cr-01-gap-closure-findings](./quick/260707-iy6-fix-07-review-cr-01-gap-closure-findings/) |
 | Phase 03 P01 | 3min | 2 tasks | 4 files |
 | Phase 03 P02 | 9min | 2 tasks | 2 files |
 | Phase 03 P03 | 3min | 1 tasks | 2 files |
