@@ -47,7 +47,8 @@ findings:
   warning: 6
   info: 4
   total: 11
-status: issues_found
+status: partially_resolved
+resolved_by: "CR-01 + WR-01..WR-04 + WR-06 landed in Phase 5 debug sessions (PR #75 / a4c440ee); CR-01 durable-seeding hardened in Phase 5.2 (PR #78 / 7566f7ee); WR-05 (unbounded correlation maps) closed by VenueCorrelationIndex in plan 05-13 (PR #79 / fe287f4b). IN-01..IN-04 remain OPEN (cosmetic doc-hygiene, non-blocking, untracked)."
 ---
 
 # Phase 5: Code Review Report
@@ -55,7 +56,21 @@ status: issues_found
 **Reviewed:** 2026-07-03T00:00:00Z
 **Depth:** standard
 **Files Reviewed:** 41
-**Status:** issues_found
+**Status:** partially_resolved
+
+> **RESOLUTION (2026-07-07):** The critical and all six warnings are FIXED at HEAD, verified against
+> source (not SUMMARY faith). CR-01 → `PortfolioHandler._settled_venue_trade_ids` bounded-OrderedDict
+> dedup guard + `FillEvent.venue_trade_id` cross-emitter key + per-venue-trade reconciling fills
+> (PR #75 `a4c440ee`; durable restart-seeding added in Phase 5.2, PR #78 `7566f7ee`). WR-01 →
+> `OkxExchange.on_order` branches on `event.command is OrderCommand.CANCEL` and leaves a failed cancel
+> resting. WR-02 → `_link_venue_account_to_portfolios` fail-loud `len > 1` guard. WR-03 →
+> `_reset_reconnect_budget` fires only on a post-subscribe-snapshot payload (`payload_seen` gate). WR-04
+> → `_client_order_id` base62-encodes the full 128 bits (≤24 chars, no entropy dropped). WR-05 →
+> `VenueCorrelationIndex` bounded dedup ring + fill-driven release-on-terminal (plan 05-13, PR #79
+> `fe287f4b`). WR-06 → `_publish_and_continue` ERROR-source guard + `_log_error_event` log-once-swallow.
+> **Not resolved:** IN-01..IN-04 are all still present at HEAD — four cosmetic doc-hygiene items (stale
+> line ref, a leftover TODO, a missing `from None`, a `BTC/USDT` fixture vs wired `BTC/USDC`); each is
+> **⚠ OPEN**, non-blocking, and currently untracked. Hence `partially_resolved`, not `resolved`.
 
 ## Summary
 
@@ -79,6 +94,8 @@ concerns plus quality items. This review supersedes the earlier 16-file partial 
 ## Critical Issues
 
 ### CR-01: Restart reconciler can double-count fills against portfolio state
+
+**✓ FIXED** (Phase 5 debug `cr-01-fill-double-count`, PR #75 `a4c440ee`; durable restart-seeding in Phase 5.2 PR #78 `7566f7ee`) — `FillEvent` carries `venue_trade_id` (`events/fill.py`), both live emitters stamp it (`okx.py::_emit_fill` ~460-469; `venue_reconciler.py:194-246` emits one reconciling fill per venue trade, not an aggregated delta), and `PortfolioHandler.on_fill` rejects an already-settled key via the bounded `_settled_venue_trade_ids` OrderedDict (`portfolio_handler.py:148-149` init, dedup at :1040, eviction at :870-873); `venue_trade_id=None` skips the guard → SMA_MACD byte-exact. Original finding preserved below.
 
 **File:** `itrader/portfolio_handler/reconcile/venue_reconciler.py:187-218` (cross-refs
 `itrader/execution_handler/exchanges/okx.py:343-390`,
@@ -136,6 +153,8 @@ call, so the two duplicate fills for the same venue trade carry DIFFERENT `fill_
 
 ### WR-01: `OkxExchange.on_order` emits `FillEvent(REFUSED)` on a failed CANCEL, wrongly terminalizing a still-resting order
 
+**✓ FIXED** (Phase 5 debug `wr-high-priority-live`, PR #75 `a4c440ee`) — `on_order`'s boundary `except` now branches on `event.command is OrderCommand.CANCEL` (`okx.py:238, 262-264`): a failed CANCEL leaves the mirror resting and publishes an `ErrorEvent` instead of synthesizing `REFUSED`; a failed SUBMIT keeps the `FillEvent(REFUSED)` → REJECTED path. Original finding preserved below.
+
 **File:** `itrader/execution_handler/exchanges/okx.py:192-211`
 
 **Issue:** The boundary `except` fires for BOTH `_submit_order` and `_cancel_order` and emits
@@ -166,6 +185,8 @@ oracle byte-exact. Live-sandbox confirmation (transient cancel failure) pending.
 
 ### WR-02: A single shared `VenueAccount` is assigned to every live portfolio
 
+**✓ FIXED** (Phase 5 debug `wr-high-priority-live`, PR #75 `a4c440ee`) — extracted `_link_venue_account_to_portfolios` (`live_trading_system.py:728`, called at :1805) with a fail-loud `RuntimeError` on `len(active_portfolios) > 1` (:750-753) — 0 = benign no-op, 1 = supported single-portfolio-live, >1 = fail-loud (survives `python -O`, unlike a strippable `assert`). Per-portfolio venue accounts remain the deferred multi-portfolio design. Original finding preserved below.
+
 **File:** `itrader/trading_system/live_trading_system.py:1085-1089`
 
 **Issue:** `for portfolio in self.portfolio_handler.get_active_portfolios(): portfolio.account =
@@ -190,6 +211,8 @@ byte-exact. Known follow-up (out of scope): a portfolio added *post-start* is no
 point (pre-existing behavior, not a regression).
 
 ### WR-03: Reconnect retry ceiling can never trip when the socket closes cleanly right after subscribe
+
+**✓ FIXED** (Phase 5 debug `wr-03-reconnect-ceiling-storm`, PR #75 `a4c440ee`, commit `21899dca`) — `_on_stream_healthy` no longer resets the retry budget on a mere subscribe/ack (`okx_provider.py:563-577`); the budget resets only via `_reset_reconnect_budget` (:578), gated by a per-connection `payload_seen` flag so it fires only on a payload delivered AFTER OKX's subscribe-snapshot (:411, 430-432). A subscribe-then-close storm now climbs monotonically to `_escalate_connector_halt` (D-20 restored) on both arms. Original finding preserved below.
 
 **File:** `itrader/price_handler/providers/okx_provider.py:236-350` (mirrored in
 `itrader/execution_handler/exchanges/okx.py:501-532`)
@@ -225,6 +248,8 @@ budget 0/3 (was 3/3 pre-fix) → HALT; healthy post-snapshot update reset it 1/1
 
 ### WR-04: `_client_order_id` truncation drops entropy, risking clOrdId collisions
 
+**✓ FIXED** (Phase 5 debug `wr-high-priority-live`, PR #75 `a4c440ee`) — `_client_order_id` (`okx.py:189-214`) now base62-encodes the full 128 bits of `order_id.bytes` — a lossless bijection ≤22 chars, so `"it"` + token ≤24 chars, under OKX's 32-char alphanumeric limit with no entropy dropped and deterministic round-trip correlation. Original finding preserved below.
+
 **File:** `itrader/execution_handler/exchanges/okx.py:162-172`
 
 **Issue:** `("it" + token)[:32]`, where `token` is the 32 hex chars of a UUIDv7 with hyphens
@@ -249,6 +274,8 @@ clOrdIds + round-trip-correlation tests pass; oracle byte-exact.
 
 ### WR-05: OKX in-memory correlation maps grow unbounded across a live session
 
+**✓ FIXED** (plan 05-13, PR #79 `fe287f4b`; residual carry-overs closed in Phase 5.3 05.3-03) — the five inline maps + inline lock were lifted into `itrader/execution_handler/exchanges/venue_correlation.py::VenueCorrelationIndex` (`okx.py:141` `self._index = VenueCorrelationIndex()`), which pairs a `deque(maxlen=capacity)` dedup ring with a companion set and does fill-driven release-on-terminal via `record_fill`/`release` (`_handle_trade` self-releases correlation entries when cumulative ≥ quantity). See `05-13-REVIEW.md` (status: resolved). Original finding preserved below.
+
 **File:** `itrader/execution_handler/exchanges/okx.py:108-127`
 
 **Issue:** `_orders_by_venue_id`, `_venue_id_by_order_id`, `_orders_by_clOrdId`, and
@@ -262,6 +289,8 @@ signal it), and bound `_seen_trade_ids` (a bounded LRU/ring keyed by recency —
 plausible within a reconnect window).
 
 ### WR-06: Live ERROR-route consumer is not self-protected against its own failure
+
+**✓ FIXED** (Phase 5 debug `wr06-error-route-recursion`, PR #75 `a4c440ee`, commit `755305f8`) — Part A: `live_trading_system.py::_publish_and_continue` returns without republishing when the failing `event.type is EventType.ERROR` (:714), so a failure handling an ErrorEvent is never re-queued. Part B: `full_event_handler.py::_log_error_event` (:169) wraps its body AND the alert-sink call in a log-once-and-swallow guard (:211, 220), so a raising sink / broken logger / malformed field can never re-raise into `_dispatch`. Original finding preserved below.
 
 **File:** `itrader/events_handler/full_event_handler.py:126-195` with
 `itrader/trading_system/live_trading_system.py:490-521`
@@ -296,6 +325,8 @@ byte-exact; mypy strict-clean (226 files). Commit `755305f8`.
 
 ### IN-01: Stale source-line references in reconcile comments
 
+**⚠ OPEN** — unfixed at HEAD; `reconcile_manager.py:313` still cites `order.py:307-309` for `VALID_ORDER_TRANSITIONS[EXPIRED]`. Cosmetic doc-hygiene, non-blocking, untracked. Original finding preserved below.
+
 **File:** `itrader/order_handler/reconcile/reconcile_manager.py:236-238`
 
 **Issue:** `_apply_expired` cites `order.py:307-309` for `VALID_ORDER_TRANSITIONS[EXPIRED] == []`,
@@ -303,6 +334,8 @@ but that table lives in `core/enums` and `order.py` has grown past those lines. 
 references over line numbers, which rot.
 
 ### IN-02: Left-behind `TODO` in the production order lifecycle path
+
+**⚠ OPEN** — unfixed at HEAD; the `# TODO: check if i have to store the state changes permanently in sql` comment still sits in `order.py:451-452` inside `add_state_change`. SQL state-change round-trip is wired (`_state_change_rows`), so the TODO is effectively resolved-but-not-removed. Cosmetic doc-hygiene, non-blocking, untracked. Original finding preserved below.
 
 **File:** `itrader/order_handler/order.py:451-452`
 
@@ -315,6 +348,8 @@ by the live SQL mirror. Phase 5 wires `SqlOrderStorage` (state changes DO round-
 
 ### IN-03: `NotImplementedError` raised inside `except` without `from None`
 
+**⚠ OPEN** — unfixed at HEAD; `full_event_handler.py:143-145` still raises `NotImplementedError(...)` inside `except KeyError` without `from None`, so the `KeyError` chains as `__context__`. Cosmetic, non-blocking, untracked. Original finding preserved below.
+
 **File:** `itrader/events_handler/full_event_handler.py:134-139`
 
 **Issue:** Raising inside `except KeyError` chains the `KeyError` as `__context__`, producing noisy
@@ -323,6 +358,8 @@ by the live SQL mirror. Phase 5 wires `SqlOrderStorage` (state changes DO round-
 **Fix:** `raise NotImplementedError(...) from None`.
 
 ### IN-04: Recon fixture symbol (`BTC/USDT`) diverges from the wired live symbol (`BTC/USDC`)
+
+**⚠ OPEN** — unfixed at HEAD; `tests/support/fixtures/okx_recon_payloads.json` still narrates `BTC/USDT` throughout while production hardcodes `_OKX_STREAM_SYMBOL = "BTC/USDC"` (`live_trading_system.py:76`). Test-fixture hygiene, non-blocking, untracked. Original finding preserved below.
 
 **File:** `tests/support/fixtures/okx_recon_payloads.json:3` vs
 `itrader/trading_system/live_trading_system.py:48-51`

@@ -104,7 +104,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
 
 ### Real / Sandbox Path + Reconciliation + Persistence Live-Drive — Phase 5
 
-- [ ] **RECON-01**: `VenueAccount` caches the connector's balance/margin/position streams and
+- [x] **RECON-01**: `VenueAccount` caches the connector's balance/margin/position streams and
   reconciles **per-symbol drift** under 1 account : 1 portfolio (LX-03/LX-04) — it caches venue truth,
   it does not compute.
 - [x] **RECON-02**: Partial-fill handling is correct and idempotent (fill-ID dedup, accumulation,
@@ -113,7 +113,7 @@ Requirements for the v1.7 milestone. Each maps to exactly one roadmap phase.
   within a defined tolerance band. Concretized by **D-01**: a precision-epsilon auto-correct band
   (`is_within_single_unit_tolerance`, per-symbol quantity) — any beyond-band, unexplained drift freezes
   the WHOLE engine in place (`SystemStatus.HALTED` + CRITICAL alert, no auto-flatten/auto-cancel).
-- [ ] **RECON-04**: The v1.6 operational store (order / portfolio-state / signal) is **driven by the
+- [x] **RECON-04**: The v1.6 operational store (order / portfolio-state / signal) is **driven by the
   real OKX feed** — the live composition-root wiring is completed (resolves v1.6 D-01 / RETAIN-03),
   with create/terminalize writes sync-durable. Realized via **split write paths (D-10/D-11)**: the order
   working set persists **store-first** (sync-durable, restart-rehydratable via `CachedSqlOrderStorage`)
@@ -218,10 +218,10 @@ cross-cutting requirements each have a definite home phase, flagged cross-cuttin
 | PAPER-02 | Phase 4 | Complete |
 | PAPER-03 | Phase 4 | Complete |
 | PAPER-04 | Phase 4 | Complete |
-| RECON-01 | Phase 5 | Pending |
+| RECON-01 | Phase 5 | Complete |
 | RECON-02 | Phase 5 | Complete |
 | RECON-03 | Phase 5 | Complete |
-| RECON-04 | Phase 5 | Pending |
+| RECON-04 | Phase 5 | Complete |
 | RECON-05 | Phase 5 | Complete |
 | RECON-06 | Phase 5 | Done (05-12) |
 | UNIV-01 | Phase 6 | Complete |

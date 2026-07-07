@@ -38,7 +38,7 @@ poetry run pytest tests/unit/order/test_order.py -k "test_name" -v
 
 The test root is `tests/` (NOT `test/`), with type-grouped subtrees — `tests/unit/<domain>/`, `tests/integration/`, `tests/e2e/`, `tests/golden/`. `conftest.py` auto-applies the type marker (`unit`/`integration`/`e2e`) from the folder location; the domain-specific `make` targets are just path shortcuts, not marker selectors.
 
-**Test gotcha:** `pyproject.toml` sets `filterwarnings = ["error", ...]` and `--strict-markers`/`--strict-config`. Any unexpected warning fails the test, and every marker used must be declared in the `markers` list — only **`unit`, `integration`, `slow`, `e2e`** are registered.
+**Test gotcha:** `pyproject.toml` sets `filterwarnings = ["error", ...]` and `--strict-markers`/`--strict-config`. Any unexpected warning fails the test, and every marker used must be declared in the `markers` list — **`unit`, `integration`, `slow`, `e2e`** (TYPE axis) plus **`smoke`, `live`** (PURPOSE axis, applied by hand) are registered.
 
 ## Architecture
 
@@ -214,7 +214,7 @@ must import, run, and yield trustworthy results.
 - Process-wide singletons (`config`, `logger`, `idgen`) initialized in `itrader/__init__.py` on import
 - `pyproject.toml` - Single source of truth for dependencies, pytest config, and mypy config
 - `Makefile` - All developer commands
-- `pyproject.toml::[tool.pytest.ini_options]` sets `filterwarnings = ["error", ...]`, `--strict-markers`, `--strict-config`. Only `unit`, `integration`, `slow`, `e2e` markers are declared (type marker folder-derived in `tests/conftest.py`).
+- `pyproject.toml::[tool.pytest.ini_options]` sets `filterwarnings = ["error", ...]`, `--strict-markers`, `--strict-config`. `unit`, `integration`, `slow`, `e2e` (folder-derived TYPE axis, in `tests/conftest.py`) plus `smoke`, `live` (hand-applied PURPOSE axis) markers are declared.
 
 ## Platform Requirements
 

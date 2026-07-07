@@ -36,14 +36,18 @@ findings:
   info: 2
   total: 9
 status: partially_resolved
+resolved_by: "quick task 260706-l48 (CR-01, WR-03; commit e08424d2) + Phase 7 Live Dynamic-Universe Hardening (WR-01/02/04/05/06; PR #81 / af1ddb5a, 2026-07-07)"
 resolution:
   resolved:
-    - "CR-01 — fixed in quick task 260706-l48 (commit e08424d2, 2026-07-06)"
+    - "CR-01 — fixed in quick task 260706-l48 (commit e08424d2, 2026-07-06); unsubscribe further marshaled onto the connector loop in Phase 7 07-09 (WR-03, PR #81 / af1ddb5a)"
     - "WR-03 — fixed in quick task 260706-l48 (commit e08424d2, 2026-07-06)"
-  routed_to_phase_7:
-    - "WR-01, WR-02, WR-04, WR-05, WR-06 — see 06-REVIEW-DECISIONS.md; Phase 7 (Live Dynamic-Universe Hardening)"
+    - "WR-01 — fixed in Phase 7 07-02 keep-until-flat (TrackedInstrument + _entries + discard_instrument; PR #81 / af1ddb5a)"
+    - "WR-02 — fixed in Phase 7 07-02/03/04/06/08 async warmup + per-symbol isReady readiness gate + per-symbol isolation (PR #81 / af1ddb5a)"
+    - "WR-04 — fixed in Phase 7 07-05/07 venue-precision resolver seam (set_precision_resolver; PR #81 / af1ddb5a)"
+    - "WR-05 — fixed in Phase 7 07-05 on_poll HALT/pause freeze-gate (PR #81 / af1ddb5a)"
+    - "WR-06 — fixed in Phase 7 07-05/07 dedicated EventType.UNIVERSE_POLL route + UniversePollEvent (PR #81 / af1ddb5a)"
   open_info:
-    - "IN-01, IN-02 — not yet actioned (info severity)"
+    - "IN-01, IN-02 — still OPEN at HEAD (info severity, not actioned): IN-01 tautological dead check persists (live_trading_system.py:1378-1379); IN-02 universe_remove_policy still an unvalidated free str (system.py:72)"
 ---
 
 # Phase 06: Code Review Report
@@ -52,6 +56,19 @@ resolution:
 **Depth:** standard
 **Files Reviewed:** 24
 **Status:** issues_found
+
+> **RESOLUTION (2026-07-07):** CR-01 + WR-03 fixed in quick task `260706-l48` (commit `e08424d2`);
+> the five routed WARNINGs (WR-01/02/04/05/06) were closed by **Phase 7 — Live Dynamic-Universe
+> Hardening** (PR #81 / `af1ddb5a`), routed via `06-REVIEW-DECISIONS.md`. WR-01 → keep-until-flat
+> instrument lifecycle (`TrackedInstrument` + `_entries` + `discard_instrument`, 07-02). WR-02 →
+> async warmup on the connector substrate + per-symbol `isReady` readiness gate + per-symbol
+> isolation with `mark_failed` on failure (07-02/03/04/06/08). WR-04 → injected venue-precision
+> resolver seam (`set_precision_resolver`, `Universe` stays connector-free, 07-05/07). WR-05 →
+> `on_poll` short-circuits while HALTED/submission-paused (07-05). WR-06 → dedicated
+> `EventType.UNIVERSE_POLL` route + `UniversePollEvent`, off the shared TIME route (07-05/07).
+> CR-01's `unsubscribe` was additionally marshaled onto the connector loop in 07-09. **Two INFO
+> items remain OPEN** at HEAD (IN-01 dead check, IN-02 unvalidated remove-policy string) — hence
+> `partially_resolved`.
 
 ## Summary
 
@@ -79,7 +96,9 @@ The single BLOCKER (CR-01) can permanently wedge the live submission-resume path
 
 **✅ RESOLVED — quick task 260706-l48 (commit `e08424d2`, 2026-07-06).** `unsubscribe` now clears
 `self._streams_down.discard(symbol)` + `self._reconnect_attempts.pop(symbol, None)` after cancelling the
-task. Verified green (161 passed).
+task (`okx_provider.py:341-342`). Verified green (161 passed). Additionally hardened in Phase 7 07-09
+(WR-03, PR #81 / `af1ddb5a`): `unsubscribe` is now marshaled onto the connector loop for engine-thread
+safety.
 
 **File:** `itrader/price_handler/providers/okx_provider.py:259-272` (with `466-474`, `385-449`)
 **Issue:**
@@ -123,6 +142,8 @@ def unsubscribe(self, symbol: str) -> None:
 
 ### WR-01: `Universe.apply` drops the Instrument for a removed symbol that is still held (orphan-and-track)
 
+**✓ FIXED** (Phase 7 07-02, PR #81 / `af1ddb5a`) — instrument lifetime decoupled from membership via the keep-until-flat invariant: `Universe` now holds a single `_entries: dict[str, TrackedInstrument]` map; `apply()` shrinks only the membership list and the removed symbol's record survives (`universe.py:208-266`), with teardown deferred to an explicit `discard_instrument` (`universe.py:292-300`) called at detach-on-flat. `instrument()` no longer `KeyError`s a still-held removed symbol. Original finding preserved below.
+
 **File:** `itrader/universe/universe.py:155-156`; consumers `itrader/portfolio_handler/portfolio_handler.py:518`, `itrader/portfolio_handler/portfolio.py:865`
 **Issue:**
 `apply()` pops `self._instruments.pop(sym, None)` for every removed symbol
@@ -144,6 +165,8 @@ path), or have the margin-path reads fall back to a default Instrument like the
 exchange already does.
 
 ### WR-02: `on_universe_update` add branch has no rollback / isolation on partial failure
+
+**✓ FIXED** (Phase 7 07-02/03/04/06/08, PR #81 / `af1ddb5a`) — the synchronous batched warmup was replaced by an async warmup on the connector substrate plus a per-symbol `isReady` readiness gate (`Readiness.PENDING/READY/FAILED` on each `TrackedInstrument`): a symbol is marked `PENDING` on add and only `READY` once `spawn_warmup` completes (`BarsLoaded` → absorb → `mark_ready` → subscribe, `universe_handler.py:476-521`); a failed warmup marks it `FAILED` (`on_bars_load_failed`, `universe_handler.py:523-532`) rather than aborting the batch. Per-symbol isolation via try/except (`universe_handler.py:439-441`), so one flaky warmup neither poisons the batch nor blocks the remove branch. Original finding preserved below.
 
 **File:** `itrader/universe/universe_handler.py:213-231`
 **Issue:**
@@ -178,6 +201,8 @@ sane minimum in `_run_poll_timer` before entering the loop.
 
 ### WR-04: Poll-added OKX symbols get default-ladder precision, not venue-correct precision
 
+**✓ FIXED** (Phase 7 07-05/07, PR #81 / `af1ddb5a`) — a venue-precision resolver seam was injected into `UniverseHandler` (`set_precision_resolver`, `universe_handler.py:261-269`): `on_poll` now resolves each newly-added symbol to a venue-precision `Instrument` from the OKX markets map before `apply` (`_resolve_added_instruments`, `universe_handler.py:392-407`) and passes a real instruments map in. `Universe` stays connector-free (D-03/D-16) — it still just receives a dict; paper/replay wire no resolver and fall back to the `_DEFAULT_*` ladder by design. Original finding preserved below.
+
 **File:** `itrader/universe/universe_handler.py:196` (`self._universe.apply(desired, None)`)
 **Issue:**
 The poll passes `instruments=None` to `apply`, so every dynamically-added symbol
@@ -196,6 +221,8 @@ connector-free contract).
 
 ### WR-05: Poll `on_time` (and thus remove/unsubscribe) is not gated by HALT/pause
 
+**✓ FIXED** (Phase 7 07-05, PR #81 / `af1ddb5a`) — the poll consumer (`UniverseHandler.on_poll`, `universe_handler.py:301-317`) now short-circuits with an early-return via an injected freeze predicate (`live_trading_system.py:1433` wires `lambda: self._is_halted() or self._is_submission_paused()`), so while the engine is HALTED or submission-paused the whole poll is skipped and membership freezes in place — no delta churn, no stream teardown during a freeze. Original finding preserved below.
+
 **File:** `itrader/trading_system/live_trading_system.py:1058-1083` (gate); `itrader/universe/universe_handler.py:168-209, 235-265`
 **Issue:**
 `_dispatch_live` gates only `SIGNAL`/`ORDER`. A control-plane `TimeEvent` (`TIME`)
@@ -211,6 +238,8 @@ engine is HALTED or submission-paused, so membership does not churn and streams 
 not torn down while frozen.
 
 ### WR-06: Control-plane poll `TimeEvent` is indistinguishable from a business tick and drives the whole TIME route
+
+**✓ FIXED** (Phase 7 07-05/07, PR #81 / `af1ddb5a`) — a dedicated control-plane discriminator was added: `EventType.UNIVERSE_POLL` (`core/enums/event.py:32`) + a payload-free `UniversePollEvent` (`events_handler/events/universe.py:82-91`). The poll timer now emits a `UniversePollEvent` (`live_trading_system.py:1880`) onto its own single-consumer route (`full_event_handler.py:108`; wired live-only to `UniverseHandler.on_poll` at `live_trading_system.py:1466`), so the poll cadence no longer touches `screen_markets`/`generate_bar_event` and the queue-only contract stays intact. Original finding preserved below.
 
 **File:** `itrader/trading_system/live_trading_system.py:1790-1792`; routes at `itrader/events_handler/full_event_handler.py:89-92`
 **Issue:**
@@ -232,6 +261,8 @@ route) so the poll cadence never drives the bar/screener handlers.
 
 ### IN-01: Tautological dead check — `mismatched` can never be non-empty
 
+**⚠ OPEN** (unactioned at HEAD, `af1ddb5a`) — the dead check persists, now at `live_trading_system.py:1378-1379`: `subscribed = list(members)` then `mismatched = [s for s in subscribed if s not in members]` is still `[]` by construction, so the `ConfigurationError` branch (`:1380-1389`) remains unreachable. Info severity; not routed to Phase 7. Original finding preserved below.
+
 **File:** `itrader/trading_system/live_trading_system.py:1282-1293`
 **Issue:**
 `subscribed = list(members)` then `mismatched = [s for s in subscribed if s not in members]`
@@ -245,6 +276,8 @@ window()-ticker" invariant is not actually being asserted — the check tests
 branch to avoid a false sense of coverage.
 
 ### IN-02: `universe_remove_policy` is an unvalidated free string
+
+**⚠ OPEN** (unactioned at HEAD, `af1ddb5a`) — `universe_remove_policy: str = "orphan-and-track"` is still a plain `str` at `system.py:72` (no `Literal`/enum constraint), so a typo still silently falls through to orphan-and-track. Info severity; not routed to Phase 7. Original finding preserved below.
 
 **File:** `itrader/config/system.py:72`; consumed at `itrader/universe/universe_handler.py:99, 255`
 **Issue:**
