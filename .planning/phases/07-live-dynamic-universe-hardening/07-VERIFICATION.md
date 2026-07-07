@@ -1,213 +1,192 @@
 ---
 phase: 07-live-dynamic-universe-hardening
-verified: 2026-07-06T00:00:00Z
+verified: 2026-07-07T13:00:00Z
 status: passed
-score: 35/35 must-haves verified
+score: 14/14 must-haves verified
 overrides_applied: 0
 re_verification:
-  previous_status: gaps_found
-  previous_score: 32/35 must-haves verified (1 failed, 1 partial)
+  previous_status: passed (35/35, covering 07-01..07-08) + passed (9/9, covering 07-09)
+  previous_score: "35/35 + 9/9 — this pass supersedes both and adds fresh coverage for 07-10"
   gaps_closed:
-    - "Async warmup pipeline (WR-02) functions end-to-end at the live composition root (provider I/O -> queue -> BarsLoaded -> strategies/universe consumers) — closed by c13265a3 (self._okx_data_provider.set_global_queue(self.global_queue) wired in _initialize_live_session's OKX arm)."
-    - "on_bars_load_failed's 'retried next poll' claim (CR-02, truth #23, previously PARTIAL) — closed by 9cd5dd8d (Universe.mark_pending/failed_symbols + on_poll FAILED-retry fold-in, with RED->GREEN tests)."
+    - "CR-01 (07-10, warmup re-delivery idempotency): the WR-02 warm-verify MISS + CR-02 next-poll FAILED-retry composed to make absorb_warmup/Strategy.update non-idempotent against an overlapping re-delivered warmup window — a duplicate-inflated indicator count could cross min_period and flip a symbol tradeable on corrupted state. Closed by commits 738644f4 (feed), 794e50ee (strategy), 1647ba99 (retry policy), proven by RED-first regression e9a10502."
   gaps_remaining: []
   regressions: []
 deferred: []
-resolved_post_hoc:
-  - truth: "STRATEGY_COMMAND handling guards PairStrategy's 2-ticker invariant (CR-01)"
-    addressed_in: "Plan 07-09 (post-review remediation) — the isinstance(strategy, PairStrategy) refusal guard in StrategiesHandler.on_strategy_command; verified passed in 07-09-VERIFICATION.md (2026-07-07). This previously-deferred item is now CLOSED."
 human_verification: []
 ---
 
 # Phase 7: Live Dynamic-Universe Hardening Verification Report
 
-**Phase Goal:** Live Dynamic-Universe Hardening — Async warmup + per-symbol readiness gate (WR-02) plus WR-01/04/05/06 from the Phase 6 review; the backtest oracle stays inert (byte-exact 134 trades / 46189.87730727451).
+**Phase Goal:** Live Dynamic-Universe Hardening — Async warmup + per-symbol `isReady` readiness gate
+(+ WR-01/04/05/06 from the Phase 6 review); backtest oracle stays inert. 10 plans total (07-01..07-10).
+07-09 was post-review remediation; 07-10 was a post-closeout gap-closure that closed CR-01 (warmup
+re-delivery idempotency, Option B / Level 2).
 
-**Verified:** 2026-07-06T00:00:00Z (re-verification)
+**Verified:** 2026-07-07T13:00:00Z
 **Status:** passed
-**Re-verification:** Yes — after gap closure (commits `c13265a3`, `9cd5dd8d`)
-
-## Re-Verification Summary
-
-The prior verification (`gaps_found`, 32/35) found one BLOCKER and one WARNING-level PARTIAL
-truth. Both are re-checked here directly against the codebase and test suite, not against the
-gap-closure commit messages.
-
-### Gap 1 (BLOCKER): missing `set_global_queue` wiring
-
-**Prior finding:** `grep -c "set_global_queue" itrader/trading_system/live_trading_system.py` returned
-`0` — `OkxDataProvider.spawn_warmup` unconditionally requires the queue bound before it can `put`
-`BarsLoaded`/`BarsLoadFailed`, so every live poll-driven add's warmup failed silently and the symbol
-was stuck `PENDING` forever.
-
-**Re-check:**
-
-```
-$ grep -n "set_global_queue" itrader/trading_system/live_trading_system.py
-591:            self._okx_data_provider.set_global_queue(self.global_queue)
-```
-
-One occurrence, placed in the OKX arm of `_initialize_live_session`, alongside `set_bar_sink` /
-`set_halt_signal` (read directly at `itrader/trading_system/live_trading_system.py:582-591`). A new
-composition-root regression test asserts the binding directly:
-`tests/integration/test_live_system_okx_wiring.py::test_okx_arm_binds_provider_to_engine_queue` —
-constructs the real `LiveTradingSystem(exchange="okx")` and asserts
-`system._okx_data_provider._global_queue is system.global_queue`. Ran it directly:
-
-```
-$ poetry run pytest tests/integration/test_live_system_okx_wiring.py -q
-11 passed in 3.36s
-```
-
-**Verdict: ✓ CLOSED.** The queue is bound at the exact site `spawn_warmup` needs it, verified by a
-composition-root test (not a hand-built provider + fake queue, unlike the prior unit-only coverage
-gap the previous verification flagged).
-
-### Gap 2 (WARNING/PARTIAL, CR-02): FAILED symbols never retried
-
-**Prior finding:** `on_poll`/`Universe.apply`'s `added = desired - current_members` set logic meant a
-`FAILED` member (never removed from `_members`) could never re-enter `added`, so
-`on_bars_load_failed`'s docstring claim "retried next poll" was false — a transient warmup failure
-permanently darkened the symbol.
-
-**Re-check:** Read `itrader/universe/universe.py` and `itrader/universe/universe_handler.py` directly.
-
-- `Universe.mark_pending(symbol)` (universe.py:183-192) flips a record back to `PENDING`, mirroring
-  `mark_ready`/`mark_failed`.
-- `Universe.failed_symbols()` (universe.py:194-206) derives the FAILED subset fresh from `_entries`
-  each call (same pattern as `leaving_symbols()`).
-- `UniverseHandler.on_poll` (universe_handler.py:298-327) now computes
-  `retry = tuple(sorted(self._universe.failed_symbols() & desired))`, flips each retried symbol back
-  to `PENDING`, and folds `retry` into the emitted `UniverseUpdateEvent.added` — `added = delta.added
-  + retry`. The empty-delta fast-path guard was widened from `if delta.is_empty()` to
-  `if not added and not delta.removed`, so a lone FAILED-retry with no other membership change still
-  emits — the exact edge case the prior fast-path had been silently swallowing.
-- The retried symbols ride through `on_universe_update -> _begin_warmup` exactly like a genuinely new
-  add (confirmed by reading `on_universe_update`, universe_handler.py:378-388, which iterates
-  `event.added` unconditionally) — re-invoking `provider.spawn_warmup` (live) or
-  `feed.warmup` + `mark_ready` (paper), so the retry is not just data-plumbing but actually re-drives
-  the async warmup.
-
-New tests (read directly, not taken on faith): `test_on_poll_retries_failed_member_flips_pending_and_readds`,
-`test_on_poll_failed_retry_then_rewarm_marks_ready`, `test_on_poll_static_ready_universe_never_retries_oracle_inert`
-in `tests/unit/universe/test_universe_poll.py`; `test_mark_pending_flips_failed_back_to_pending`,
-`test_failed_symbols_lists_only_failed_records` in `tests/unit/universe/test_universe_readiness.py`.
-These assert the actual behavior (event content, readiness transitions, warmup re-invocation), not
-just presence of a method. Ran them directly:
-
-```
-$ poetry run pytest tests/unit/universe/test_universe_poll.py tests/unit/universe/test_universe_readiness.py -q
-29 passed in 0.03s
-```
-
-**Verdict: ✓ CLOSED.** `on_bars_load_failed`'s "kept in membership, retried next poll" docstring claim
-is now true end-to-end: FAILED members are recollected every poll, flipped to PENDING, and re-driven
-through the same warmup trigger as a new add — live-only (backtest members default READY and never
-reach FAILED, confirmed by `test_on_poll_static_ready_universe_never_retries_oracle_inert` and the
-unchanged oracle byte-exact result below).
-
-### CR-01 (PairStrategy 2-ticker invariant) — confirmed still out of scope, non-blocking
-
-Re-checked per the assignment brief: `grep -rn "PairStrategy(" itrader/` finds only the class
-definitions (`pair_base.py`, `eth_btc_pair_strategy.py`) — no live composition-root or
-`my_strategies` instantiation. Dormant under the milestone's SMA_MACD-only live roster, unchanged
-since the prior pass. Recorded as a deferred, non-blocking follow-on (frontmatter `deferred:`), not
-a gap — consistent with the instruction not to fail the phase on it.
+**Re-verification:** Yes — this pass OVERWRITES the pre-07-10 `07-VERIFICATION.md` (35/35, status
+`passed`, covering 07-01..07-08) and folds in `07-09-VERIFICATION.md` (9/9, status `passed`, covering
+07-09). It re-confirms the WR-01..WR-06/IN-01/IN-02/OP-SEAM baseline by direct regression test
+execution (not by trusting the prior reports) and performs a full fresh 3-level verification on
+07-10's CR-01 gap-closure, which neither prior report covered.
 
 ## Goal Achievement
 
 ### Observable Truths
 
-All 34 truths from the prior verification that were already `✓ VERIFIED` were spot-checked for
-regression (no code changed under them; confirmed via the full-suite run below) and are not
-re-narrated here in full — see the prior report's truth table for #1-22, #24-34, all unchanged. The
-two previously-failing/partial truths are re-verified in full above and now both close cleanly:
+| # | Truth | Status | Evidence |
+|---|-------|--------|----------|
+| 1 | WR-02 (centerpiece): warmup runs asynchronously; a symbol is PENDING on add and READY only when warmup completes (warmup-before-subscribe preserved); not-ready is a soft per-symbol gate honored by strategies/admission | ✓ VERIFIED (regression) | `itrader/universe/universe_handler.py::on_universe_update`/`on_bars_loaded` (live: `provider.spawn_warmup` → `BarsLoaded`/`BarsLoadFailed`; paper: sync `feed.warmup` + immediate `mark_ready`); `AdmissionManager._enforce_readiness_admission` (07-08) is the PRIMARY gate. Full targeted suite re-run this session: `tests/unit/universe`, `tests/unit/price`, `tests/unit/strategy` — 353 passed. |
+| 2 | WR-01: instrument-lifecycle invariant — `Universe.apply` stops popping removed instruments; teardown ties to detach-on-flat | ✓ VERIFIED (regression) | `itrader/universe/universe.py` `_entries` single record map (07-02); `discard_instrument` at exactly 2 sites (07-06), unchanged by 07-10. `tests/unit/universe/test_universe_apply.py`, `test_membership.py` green (part of the 353). |
+| 3 | WR-04: poll-added symbols resolve venue-correct precision via an injected markets-map resolver seam, `Universe` stays connector-free | ✓ VERIFIED (regression) | `UniverseHandler._resolve_added_instruments` (universe_handler.py:389-410), unchanged by 07-10 except for the surrounding cadence-gate edit added a few lines above it. `tests/unit/universe/test_derive_instruments.py` green. |
+| 4 | WR-05: poll is gated under HALT/pause (freeze-in-place, no replay) | ✓ VERIFIED (regression) | `set_freeze_gate` early-return at top of `on_poll` (07-05), untouched by 07-10 — confirmed by direct read: the freeze-gate check precedes the cadence-gate/retry logic 07-10 added later in the method body. |
+| 5 | WR-06: control-plane poll routes through a dedicated `UniversePollEvent` discriminator, not the shared TIME route | ✓ VERIFIED (regression) | `UNIVERSE_POLL` EventType + `on_poll` route (07-01/07-05), unaffected by 07-10. |
+| 6 | WR-03 (07-09): OKX `unsubscribe` marshals cleanup onto the connector loop, no new lock | ✓ VERIFIED (regression) | `okx_provider.py:285-325`. `tests/unit/price/test_okx_unsubscribe_marshal.py` — 3 passed (re-run this session). |
+| 7 | CR-01 (07-09 sense): `STRATEGY_COMMAND` add/remove_ticker to a `PairStrategy` is refused, no mutation, no crash on next BAR | ✓ VERIFIED (regression) | `strategies_handler.py` `isinstance(strategy, PairStrategy)` guard. `tests/unit/strategy/test_strategies_handler_remediation.py` — 12 passed (re-run this session). |
+| 8 | IN-01/IN-02 (07-09): force-close log wording accurate; `UniversePollEvent` emitted only on genuine mutation | ✓ VERIFIED (regression) | `universe_handler.py:542-544` (IN-01 wording); `strategies_handler.py` mutation-gated emit (IN-02). Covered by the same 12-test re-run above + `test_universe_warm_verify_gate.py` (4 passed). |
+| 9 | CR-01 (07-10, headline reachability): a first warmup window shorter than min_period → FAILED → CR-02 retry re-warm re-delivers a largely-overlapping window → the feed ring holds NO duplicate `bar.time` AND `is_warm` does NOT flip True off the duplicates (stays not-tradeable until genuinely warm) | ✓ VERIFIED (fresh) | `tests/unit/universe/test_warmup_retry_idempotency_cr01.py` drives REAL `LiveBarFeed` + REAL `StrategiesHandler.is_warm` over a REAL SMA(3) `Strategy` (not stubs). 3 tests: fully-overlapping re-warm → ring len 2, unique timestamps, `is_warm` stays False; partially-overlapping re-warm → ring len 4, unique, `is_warm` flips True only on genuine new bars. Re-run directly this session: 3 passed. The RED proof pre-fix (ring gaining duplicate timestamps, `is_warm` flipping True off them) is documented in the SUMMARY and corroborated by the commit sequence — the test file lands in commit `e9a10502`, strictly before the implementation commits `738644f4`/`794e50ee`/`1647ba99`. |
+| 10 | CR-01-feed: `LiveBarFeed.absorb_warmup` honors `_last_delivered` — reject `bar.time <= cursor` BEFORE `ring.append` (`==` silent, `<` warns); first clean warmup unaffected; `_deliver` untouched; cursor stays `pd.Timestamp` | ✓ VERIFIED (fresh) | `live_bar_feed.py:334-346` — `last = self._last_delivered.get((symbol, timeframe))`; `if bt < last: warning; continue`; `if bt == last: continue` (silent) — both placed BEFORE the `ring = self._ring.get(...)` / `ring.append(bar)` lines that follow. `_deliver` (a separate method) is unchanged. `tests/unit/price/test_absorb_warmup_idempotency_cr01.py` (5 tests) + the pre-existing `test_absorb_warmup.py` (regression) both green. |
+| 11 | CR-01-strategy: `Strategy.update` rejects `bar.time <= self._last_bar_time[ticker]` BEFORE any state mutation (`==` silent, `<` warns); `reset()`/`_reset_ticker()` clear the cursor so `evaluate()` replay still works | ✓ VERIFIED (fresh) | `base.py:517-523` — the guard is the FIRST statement in `update()`'s body, before the `_bar_counts` increment at :530. `reset()` (:624) and `_reset_ticker()` (:693) both clear/pop `_last_bar_time`. `tests/unit/strategy/test_update_idempotency_cr01.py` (5) + `test_strategy.py` + `test_indicator_reset.py` + `test_causal_guard.py` all green (regression, including the auto-fixed `_Bar` monotonic-tick deviation documented in the SUMMARY). |
+| 12 | CR-01-retry (Level 2): a FAILED symbol is not re-warmed more than once per bar interval (`_last_rewarm_at` cadence gate); the 3rd consecutive failed re-warm warns (`_rewarm_fail_streak`); the symbol is NEVER auto-dropped | ✓ VERIFIED (fresh) | `universe_handler.py:362-372` (cadence gate in `on_poll`), `:540-556` (`_record_rewarm_failure`, `>= 3` warn, wired at both failure sites `on_bars_loaded` MISS and `on_bars_load_failed`), `:558-565` (`_reset_rewarm_streak` on `mark_ready` success — deliberately leaves `_last_rewarm_at` alone). No `discard`/`remove` call anywhere in either failure path (grep confirms membership is never touched on failure). `tests/unit/universe/test_retry_policy_cr01.py` — 6 passed. |
+| 13 | Backtest-inertness (recurring milestone gate): every 07-10 change is LIVE-ONLY; SMA_MACD oracle stays byte-exact (134 / `46189.87730727451`, `check_exact`) | ✓ VERIFIED (fresh) | `poetry run pytest tests/integration/test_backtest_oracle.py -q` → 3 passed (independently re-run this session). `absorb_warmup`/`UniverseHandler` are never constructed on the backtest composition root; `Strategy.update`'s new guard is provably never taken on backtest bars because `TimeGenerator`-driven backtest bars for a ticker arrive strictly monotonically increasing in `bar.time`. |
+| 14 | `mypy --strict` clean on the 3 touched modules (and no regression to the rest of the codebase) | ✓ VERIFIED (fresh) | `poetry run mypy itrader/price_handler/feed/live_bar_feed.py itrader/strategy_handler/base.py itrader/universe/universe_handler.py` → "Success: no issues found in 3 source files" (re-run this session). Full-repo `poetry run mypy itrader` → "Success: no issues found in 234 source files". |
 
-| # | Plan | Truth | Status | Evidence |
-|---|------|-------|--------|----------|
-| 23 | 06 | `on_bars_load_failed` marks the symbol FAILED, stays dark, and is retried next poll | ✓ VERIFIED | `universe_handler.py:298-327` (retry fold-in), `universe.py:183-206` (`mark_pending`/`failed_symbols`); `test_universe_poll.py`/`test_universe_readiness.py` — 29 passed |
-| 35 | ALL | Async warmup pipeline (WR-02) functions end-to-end at the live composition root | ✓ VERIFIED | `live_trading_system.py:591` `set_global_queue` bound in the OKX arm; `test_live_system_okx_wiring.py::test_okx_arm_binds_provider_to_engine_queue` — 11 passed |
+**Score:** 14/14 truths verified.
 
-**Score:** 35/35 truths fully verified (no partial, no failed). CR-01 recorded as a deferred,
-non-blocking follow-on (see `deferred:` frontmatter), not counted against the score per the
-assignment brief.
-
-### Required Artifacts (delta from prior pass)
+### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `itrader/trading_system/live_trading_system.py` | `set_global_queue` call in the OKX composition-root arm | ✓ VERIFIED | line 591, alongside `set_bar_sink`/`set_halt_signal` |
-| `itrader/universe/universe.py` | `mark_pending` + `failed_symbols` | ✓ VERIFIED | lines 183-206 |
-| `itrader/universe/universe_handler.py` | `on_poll` FAILED-retry fold-in | ✓ VERIFIED | lines 298-327 |
-| `tests/integration/test_live_system_okx_wiring.py` | composition-root queue-binding regression test | ✓ VERIFIED | `test_okx_arm_binds_provider_to_engine_queue`, passes |
-| `tests/unit/universe/test_universe_poll.py` | CR-02 retry RED->GREEN tests | ✓ VERIFIED | 3 new tests, all passing |
-| `tests/unit/universe/test_universe_readiness.py` | `mark_pending`/`failed_symbols` unit tests | ✓ VERIFIED | 2 new tests, all passing |
+| `itrader/price_handler/feed/live_bar_feed.py` | `_last_delivered` idempotency guard in `absorb_warmup` (CR-01-feed) | ✓ VERIFIED | Guard at lines 334-346, before `ring.append`; 4-space indentation preserved (no tabs introduced — confirmed by reading the file). |
+| `itrader/strategy_handler/base.py` | `_last_bar_time` per-symbol cursor in `update()` + `reset()`/`_reset_ticker()` clearing (CR-01-strategy) | ✓ VERIFIED | Decl :453, guard+record :517-550, `reset()` clear :624, `_reset_ticker()` pop :693; tab indentation preserved throughout (confirmed by reading the file). |
+| `itrader/universe/universe_handler.py` | `_last_rewarm_at` cadence gate + `_rewarm_fail_streak` 3-strike warn (CR-01-retry) | ✓ VERIFIED | Decls :217-218, cadence gate :362-372, streak helpers :540-565 wired at both failure sites + the success reset; 4-space indentation preserved. |
+| `tests/unit/universe/test_warmup_retry_idempotency_cr01.py` | RED-then-GREEN headline regression | ✓ VERIFIED | 3 tests, real seams (real `LiveBarFeed`, real `StrategiesHandler`, real SMA(3) `Strategy`), all pass now; RED-proof narrated in SUMMARY and corroborated by commit ordering. |
+| `tests/unit/price/test_absorb_warmup_idempotency_cr01.py` | Feed idempotency unit coverage | ✓ VERIFIED | 5 tests (overlap dedup, strict-older warn, dup-silent, clean-first unaffected), all pass. |
+| `tests/unit/strategy/test_update_idempotency_cr01.py` | Strategy cursor unit coverage | ✓ VERIFIED | 5 tests (dup silent, strict-older warn, monotonic advance, evaluate double-replay, reset+refeed), all pass. |
+| `tests/unit/universe/test_retry_policy_cr01.py` | Level-2 retry unit coverage | ✓ VERIFIED | 6 tests (cadence gate, 3-strike warn, streak reset, never-auto-drop), all pass. |
 
-All other artifacts from the prior report are unchanged and were not touched by the gap-closure
-commits (confirmed by `git show --stat` on both commits — only the six files above plus their
-diffs were modified).
-
-### Key Link Verification (delta from prior pass)
+### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|----|----|--------|---------|
-| `live_trading_system.py::_initialize_live_session` | `okx_data_provider.set_global_queue` | queue-binding for `spawn_warmup` | ✓ WIRED | `grep -n set_global_queue` → line 591; test asserts `_global_queue is system.global_queue` |
-| `universe_handler.py::on_poll` | `Universe.failed_symbols/mark_pending` | FAILED-retry fold-in before emit | ✓ WIRED | confirmed by reading `on_poll` lines 298-327 |
-| `universe_handler.py::on_poll` retried symbols | `on_universe_update -> _begin_warmup` | same trigger as a new add | ✓ WIRED | retried symbols fold into `UniverseUpdateEvent.added`, consumed identically by `on_universe_update` |
+| `live_bar_feed.py::absorb_warmup` | `self._last_delivered[(symbol, timeframe)]` | reject `pd.Timestamp(bar.time) <= cursor` BEFORE `ring.append` | ✓ WIRED | Confirmed by direct read; the cursor is only advanced (line 358) after the guard passes. |
+| `strategy_handler/base.py::Strategy.update` | `self._last_bar_time` | reject `bar.time <= last` BEFORE mutating `_bar_counts`/`_recent_closes`/handles; record on accept | ✓ WIRED | Confirmed by direct read; guard is literally the first statement in the method body. |
+| `universe_handler.py::on_poll` | `self._last_rewarm_at` | cadence gate — skip re-warm if `event.time - last < to_timedelta(self._timeframe)` | ✓ WIRED | Confirmed by direct read (:362-372); `to_timedelta` imported and used. |
+| `universe_handler.py::on_bars_loaded` (MISS) + `on_bars_load_failed` | `self._rewarm_fail_streak` | increment at both sites, warn at `>= 3`, reset to 0 on `mark_ready` success | ✓ WIRED | Confirmed by direct read (:510-511, :533-534, :518-519); never auto-drops (no `discard`/`remove` call in either failure path). |
 
-All other key links from the prior report are unchanged (not touched by either commit).
+### Data-Flow Trace (Level 4)
 
-### Behavioral Spot-Checks
+Not applicable in the UI-rendering sense (backend event-driven engine, no dashboard). The analogous
+"is the guard actually load-bearing, not a dead branch" question is answered directly by the RED→GREEN
+regression: `test_warmup_retry_idempotency_cr01.py` demonstrably FAILED on the pre-fix code (per the
+SUMMARY's documented RED run and the commit sequence — the test file `e9a10502` predates the
+implementation commits `738644f4`/`794e50ee`/`1647ba99`) and is GREEN after the three seams landed,
+confirmed by an independent re-run this session (3 passed). This is materially stronger evidence than
+existence + wiring alone — it demonstrates the guards are causally responsible for the observed
+behavior change, not merely present in the diff.
+
+### Behavioral Spot-Checks / Test Execution (independently re-run this session, not taken from SUMMARY)
 
 | Behavior | Command | Result | Status |
 |----------|---------|--------|--------|
-| Backtest oracle byte-exact (134 trades / 46189.87730727451) | `poetry run pytest tests/integration/test_backtest_oracle.py -q` | 3 passed; golden `summary.json` confirms `final_cash`/`final_equity` = 46189.87730727451 | ✓ PASS |
-| OKX inertness (backtest import path clean) | `poetry run pytest tests/integration/test_okx_inertness.py -q` | 2 passed | ✓ PASS |
-| Provider queue-binding at the live composition root (regression re-check) | `grep -n "set_global_queue" itrader/trading_system/live_trading_system.py` | line 591, 1 occurrence | ✓ PASS (was FAIL/0 in prior pass) |
-| Composition-root OKX wiring suite | `poetry run pytest tests/integration/test_live_system_okx_wiring.py -q` | 11 passed | ✓ PASS |
-| CR-02 retry unit suites | `poetry run pytest tests/unit/universe/test_universe_poll.py tests/unit/universe/test_universe_readiness.py -q` | 29 passed | ✓ PASS |
-| Phase-7 targeted suites (events/universe/strategy/price/order/trading_system) | `poetry run pytest tests/unit/events/test_universe_events.py tests/unit/universe tests/unit/strategy/test_strategies_live_membership.py tests/unit/price/test_absorb_warmup.py tests/unit/price/test_spawn_warmup.py tests/unit/order/test_admission_readiness_gate.py tests/unit/trading_system/test_add_event_admission_guard.py tests/integration/test_universe_remove_policy.py tests/integration/test_live_system_okx_wiring.py -q` | 154 passed | ✓ PASS |
-| mypy --strict over itrader | `poetry run mypy itrader --strict` | Success: no issues found in 234 source files | ✓ PASS |
-| Full unit + integration suite (regression check for the two gap-closure commits) | `poetry run pytest tests/unit tests/integration -q` | 1863 passed, 2 skipped (OKX demo creds absent, expected) | ✓ PASS |
+| 07-10 targeted test files (4 new files) | `poetry run pytest tests/unit/universe/test_warmup_retry_idempotency_cr01.py tests/unit/price/test_absorb_warmup_idempotency_cr01.py tests/unit/strategy/test_update_idempotency_cr01.py tests/unit/universe/test_retry_policy_cr01.py -q` | 19 passed | ✓ PASS |
+| Full price+strategy+universe domain suites | `poetry run pytest tests/unit/price tests/unit/strategy tests/unit/universe -q` | 353 passed | ✓ PASS |
+| 07-09 remediation regression (touched-file overlap with 07-10) | `poetry run pytest tests/unit/price/test_live_bar_feed_remediation.py tests/unit/price/test_okx_unsubscribe_marshal.py tests/unit/strategy/test_strategies_handler_remediation.py tests/unit/universe/test_universe_warm_verify_gate.py -q` | 26 passed | ✓ PASS — no regression from 07-10 to the 07-09 gap-closure |
+| Full unit suite | `poetry run pytest tests/unit -q -m "not live"` | 1752 passed | ✓ PASS |
+| Integration + e2e (standard gate) | `poetry run pytest tests/integration tests/e2e -q -m "not live"` | 227 passed, 1 skipped (OKX creds absent, expected), 6 deselected | ✓ PASS |
+| Backtest oracle byte-exact | `poetry run pytest tests/integration/test_backtest_oracle.py -q` | 3 passed | ✓ PASS |
+| mypy --strict, 3 touched modules | `poetry run mypy itrader/price_handler/feed/live_bar_feed.py itrader/strategy_handler/base.py itrader/universe/universe_handler.py` | Success: no issues found in 3 source files | ✓ PASS |
+| mypy --strict, full repo | `poetry run mypy itrader` | Success: no issues found in 234 source files | ✓ PASS |
+| Git working tree clean (no uncommitted drift) | `git status --short` | (empty) | ✓ PASS |
 
 ### Requirements Coverage
 
-| Requirement | Description | Status | Evidence |
-|-------------|-------------|--------|----------|
-| WR-01 | Keep-until-flat (no desync between instrument/readiness/leaving maps) | ✓ SATISFIED | Unchanged from prior pass — `Universe._entries` single record map |
-| WR-02 | Async per-symbol warmup + readiness gate | ✓ SATISFIED | Was PARTIAL — now fully closed: composition-root queue binding (`set_global_queue`) + FAILED-retry (CR-02) both confirmed live-tested |
-| WR-04 | Venue-correct precision for poll-added symbols | ✓ SATISFIED | Unchanged from prior pass |
-| WR-05 | Freeze-in-place under halt/pause | ✓ SATISFIED | Unchanged from prior pass |
-| WR-06 | Dedicated poll route (off shared TIME) | ✓ SATISFIED | Unchanged from prior pass |
-| OP-SEAM | Operator strategy-ticker edit propagation | ⚠ PARTIALLY SATISFIED (non-blocking) | Mechanism works; CR-01 (`PairStrategy` 2-ticker guard) remains a dormant follow-on — see `deferred:` |
+07-10's requirement IDs are review-derived tags (`CR-01`, `CR-01-feed`, `CR-01-strategy`, `CR-01-retry`),
+not formal `REQUIREMENTS.md` entries — consistent with the same convention already established and
+accepted in `07-09-VERIFICATION.md` ("each review finding IS the trackable requirement," mirroring the
+`D-NN` decision-tag convention). `grep` for these tags in `REQUIREMENTS.md` returns nothing, which is
+expected: this is milestone-internal hardening work responding to a code review, not a fresh v1.7
+feature against the formal requirements ledger (which stops at Phase 6 / UNIV-01/02).
+
+| Tag | Description | Source Plan(s) | Status | Evidence |
+|-----|--------------|-----------------|--------|----------|
+| WR-02 | Async warmup + readiness gate (centerpiece) | 07-01/03/04/06/08 | ✓ SATISFIED | Truth #1 |
+| WR-01 | Instrument-lifecycle invariant (keep-until-flat) | 07-02/06 | ✓ SATISFIED | Truth #2 |
+| WR-04 | Venue-precision resolver seam | 07-05 | ✓ SATISFIED | Truth #3 |
+| WR-05 | HALT/pause freeze-in-place gate | 07-05 | ✓ SATISFIED | Truth #4 |
+| WR-06 | Dedicated `UniversePollEvent` route | 07-01/05 | ✓ SATISFIED | Truth #5 |
+| WR-03 | OKX unsubscribe marshaled cleanup | 07-09 | ✓ SATISFIED | Truth #6 |
+| CR-01 (07-09 sense) | PairStrategy 2-ticker mutation refusal | 07-09 | ✓ SATISFIED | Truth #7 |
+| IN-01 | Force-close log wording | 07-09 | ✓ SATISFIED | Truth #8 |
+| IN-02 | Mutation-gated poll emit | 07-09 | ✓ SATISFIED | Truth #8 |
+| CR-01 (07-10 sense) | Warmup re-delivery idempotency headline | 07-10 | ✓ SATISFIED | Truth #9 |
+| CR-01-feed | `absorb_warmup` `_last_delivered` guard | 07-10 | ✓ SATISFIED | Truth #10 |
+| CR-01-strategy | `Strategy.update` `_last_bar_time` cursor | 07-10 | ✓ SATISFIED | Truth #11 |
+| CR-01-retry | Level-2 cadence gate + 3-strike warn | 07-10 | ✓ SATISFIED | Truth #12 |
+| OP-SEAM | Cross-cutting read-model/seam wiring | 07-01/04/06/07 | ✓ SATISFIED | Confirmed unchanged by 07-10; regression suite green. |
+
+No orphaned requirements found. All IDs declared across the 10 plans' frontmatter are accounted for
+above.
+
+**Traceability quality note (info, non-blocking):** `CR-01` is reused as a tag for TWO functionally
+unrelated findings — 07-09's PairStrategy-mutation refusal and 07-10's warmup-re-delivery idempotency.
+Both are independently verified and closed, so this is not a functional gap, but it is the same class
+of traceability ambiguity the project already tracked and resolved once before (see
+`.planning/todos/completed/perf08-requirement-id-collision.md`, the `PERF-08` collision). Recommend a
+similar disambiguating note (or renumber) if a future audit sweep touches this phase's tags.
 
 ### Anti-Patterns Found
 
-No `TBD`/`FIXME`/`XXX` markers in the gap-closure files (`live_trading_system.py`, `universe.py`,
-`universe_handler.py`, the two new/extended test files). No stub implementations. CR-01 remains
-tracked as a WARNING follow-on (dormant, not a blocker) — see Deferred Items above.
+No `TBD`/`FIXME`/`XXX`/`TODO`/`HACK`/`PLACEHOLDER` markers in any of the 3 touched modules (grep
+confirmed empty). No stub implementations, no empty handlers, no hardcoded-empty return values on a
+consumed path.
+
+**Two WARNING-level findings from `07-REVIEW.md` remain open (not remediated by any commit after the
+review; `git status` is clean at HEAD `eba7fff0`):**
+
+1. **WR-01 (review tag, `live_bar_feed.py:343-346`):** `absorb_warmup`'s `==` branch treats every
+   `bt == last` bar as a benign duplicate and drops it silently — but it does not distinguish a
+   byte-identical re-delivery from a genuine OHLCV *revision* (the sibling `_duplicate_or_revision`
+   method it is modeled on does distinguish, warning on a revision). The review confirms this is
+   **not a data-integrity defect** (the old, already-ringed bar stays canonical either way, consistent
+   with the D-07 "never rewind" contract) — it is an observability gap: an operator gets no signal if
+   the venue sends conflicting data for an already-warmed bar. The plan's own must-haves (Task 2's
+   `<behavior>` spec) explicitly define the simpler "== always silent" contract with no revision
+   distinction, so the implementation satisfies the letter of what 07-10 committed to ship — the
+   review is recommending an enhancement beyond the plan's stated scope, not flagging an unmet
+   must-have.
+2. **WR-02 (review tag, `live_bar_feed.py:334-346`):** `absorb_warmup`'s guard has no equivalent to
+   `update()`'s off-grid-timestamp rejection (a bar strictly between `last` and `last + tf`), so an
+   off-grid warmup bar would fall through to `ring.append` and misalign `L` off the timeframe grid.
+   Likelihood is low (warmup bars are a bulk REST fetch on the same grid as the live stream), and this
+   was explicitly out of the plan's Task 2 scope (which only asked for the `<`/`==` legs, not an
+   off-grid `elif`).
+
+Neither finding blocks the phase goal — CR-01's headline reachability path (the actual, confirmed
+exploit) is closed and proven by the RED→GREEN regression — and both are legitimate low-priority
+follow-up candidates. **Recommend:** open a `.planning/todos/pending/` entry capturing these two review
+findings so they are not lost, mirroring the project's standard practice for accepted-but-deferred
+review findings (e.g. `livebarfeed-depandas-time-model-datetime.md`,
+`okx-markets-map-freshness-delisting-detection.md`). This is advisory, not a verification gap — no
+override is required since neither finding contradicts a stated must-have.
 
 ### Human Verification Required
 
-None. All findings are confirmed by direct code reading, targeted test execution, and full-suite
-regression — no visual, real-time, or subjective judgment call is needed.
+None. All must-haves are mechanically verifiable via direct code reads, grep, and reproducible test
+execution; no UI, real-time behavior, or external-service integration is in scope for this phase.
 
-## Gaps Summary
+### Gaps Summary
 
-Both previously-blocking items are closed and independently re-verified against the actual codebase
-(not the gap-closure commit narration): (1) the OKX composition root now binds
-`self._okx_data_provider.set_global_queue(self.global_queue)`, confirmed by a passing
-composition-root test that constructs the real `LiveTradingSystem` and asserts queue identity; (2) a
-FAILED universe member is now genuinely recollected, flipped to PENDING, and re-driven through the
-same warmup trigger a new add uses on the next poll, confirmed by RED->GREEN behavioral tests. The
-milestone gate holds: the backtest oracle remains byte-exact (134 trades / 46189.87730727451), OKX
-inertness on the backtest import path is intact, `mypy --strict` is clean, and the full 1863-test
-unit+integration suite passes with no regressions introduced by either gap-closure commit. CR-01
-(dormant `PairStrategy` 2-ticker invariant) is the only remaining open item; it is out of this
-phase's literal scope (no `PairStrategy` registered live) and is recorded as a non-blocking deferred
-follow-on rather than a gap, per the assignment brief.
+No gaps. All 14 merged must-haves (5 original Phase-7 roadmap success criteria + WR-03/CR-01(07-09)/
+IN-01/IN-02 from the 07-09 remediation + the 4 new CR-01/CR-01-feed/CR-01-strategy/CR-01-retry
+must-haves from 07-10 + the recurring backtest-inertness/mypy gate) are verified against the actual
+codebase, independently re-run this session (not taken from SUMMARY.md or prior VERIFICATION.md
+claims). The phase goal — async warmup + per-symbol readiness gate, WR-01/03/04/05/06 hardening, and
+now CR-01's warmup-re-delivery idempotency — is achieved, and the backtest oracle remains byte-exact
+(134 / `46189.87730727451`) throughout. Two review-tagged WARNING findings from `07-REVIEW.md` remain
+open as advisory follow-up (see Anti-Patterns Found above) but do not block phase completion.
 
 ---
 
-_Verified: 2026-07-06T00:00:00Z_
+_Verified: 2026-07-07T13:00:00Z_
 _Verifier: Claude (gsd-verifier)_
