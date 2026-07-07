@@ -34,11 +34,18 @@ class _DummyTask:
 
 
 class _RecordingConnector:
-    """Minimal ``LiveConnector`` stand-in recording every ``spawn`` and its coroutine args.
+    """Minimal ``LiveConnector`` stand-in recording every stream ``spawn`` and its args.
 
-    ``spawn`` reads the un-started coroutine's frame locals (``symbol_okx``/``channel``) so a
-    test can assert the normalized instId + channel token, then ``close()``s the coroutine
-    (never-awaited-safe under the strict suite) and returns a fresh cancellable ``_DummyTask``.
+    A STREAM coroutine (``_stream_candles``) would open a socket if run, so ``spawn``
+    reads its un-started frame locals (``symbol_okx``/``channel``) for assertions, then
+    ``close()``s it (never-awaited-safe under the strict suite) and returns a fresh
+    cancellable ``_DummyTask`` tracked in ``tasks``.
+
+    The WR-03 unsubscribe CLEANUP coroutine (``_cleanup``) carries no I/O — it is DRIVEN
+    to completion synchronously (a single ``send(None)`` runs its awaitless body) so the
+    marshaled ``task.cancel()`` + supervisor-dict cleanup actually execute. A cleanup
+    spawn is NOT recorded into ``spawn_args`` / ``tasks`` (it is a teardown, not a
+    stream), so the stream-spawn indices the tests assert on stay stable.
     """
 
     def __init__(self) -> None:
@@ -46,6 +53,13 @@ class _RecordingConnector:
         self.tasks: list[_DummyTask] = []
 
     def spawn(self, coro: Any) -> _DummyTask:
+        if getattr(coro, "__name__", "") != "_stream_candles":
+            # WR-03 cleanup coroutine — run its awaitless body to completion.
+            try:
+                coro.send(None)
+            except StopIteration:
+                pass
+            return _DummyTask()
         frame = coro.cr_frame
         self.spawn_args.append(dict(frame.f_locals) if frame is not None else {})
         coro.close()
