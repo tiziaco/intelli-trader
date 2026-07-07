@@ -43,22 +43,52 @@ This is the exact "half-warmed tradeable" defect class WR-02 was meant to elimin
 *garbage-warmed* tradeable reached automatically via CR-02 auto-retry. If duplicates instead never
 re-cross depth, the path degenerates into unbounded FAILED↔retry churn with no backoff.
 
-## Decisions required (why this was deferred, not fixed inline)
+## Reachability — CONFIRMED (2026-07-07)
 
-1. **Remediation strategy** — two incompatible approaches:
-   - **Reset-then-reabsorb:** clear the ring + `L` and each concerned strategy's per-symbol state
-     (`_bar_counts[sym]`, `_recent_closes[sym]`, handle state) before re-warming. Needs new
-     `reset_symbol()` methods on the feed AND the strategy. Isolated to the retry path.
-   - **Monotonic dedup:** make `absorb_warmup` and `Strategy.update` reject `bar.time <= last_delivered`
-     so an overlapping re-fetch is a no-op. Touches the hot `update()` path used by every live bar.
-2. **Retry policy** — add a ceiling / backoff so a permanently-unwarmable symbol cannot churn
-   FAILED↔retry forever. Cap value + backoff shape TBD.
-3. **Scope / priority** — engine is not in live production yet (live-only path). Confirm the swallowed
-   `on_bars_loaded` scenario is actually reachable before investing, so the fix is chosen on facts.
+Traced end-to-end; the corruption is reachable with **no exception required**:
+- `on_poll` folds a FAILED symbol back into `added` (`universe_handler.py:342-345`) → `_begin_warmup`
+  → `spawn_warmup` → `BarsLoaded` → `on_bars_loaded` → `absorb_warmup` **on the same ring, no reset**.
+- Dispatch isolates errors **per-consumer** (`full_event_handler.py:146-150`) and live mode is
+  publish-and-continue, so `strategies_handler.on_bars_loaded` can fail while
+  `universe_handler.on_bars_loaded` still absorbs the ring (the review's trigger).
+- Simpler trigger (no exception): any first attempt where the warmup window < strategy `min_period`
+  (new-ish symbol / provider under-delivers / poll cadence faster than bar close) → FAILED → retry
+  re-appends the same bars → count crosses `min_period` off duplicates → READY + subscribe →
+  tradeable on a duplicate-corrupted ring + inflated indicators.
 
-## Suggested first step
+## Decided design (2026-07-07, owner: tiziaco) — Option B "unified monotonic idempotency", Level 2
 
-Confirm reachability (does the CR-02 retry actually re-run `spawn_warmup`/`absorb_warmup` against the
-same ring, and is `on_bars_loaded`'s raise-and-swallow path real?), then take the decisions above into a
-`07-10` gap-closure plan (or a `07.1` gap-closure phase). Add a regression test that fails on the
-duplicate-inflated `is_warm`-flips-tradeable path before fixing.
+**ts_event is `Bar.time` — no new timestamp field.** The fix applies the timestamp already present as a
+monotonic *key* in the two places that currently ignore it.
+
+1. **Feed side — reuse the existing cursor, stop bypassing it.** `absorb_warmup` must honor the SAME
+   `_last_delivered` guard `_deliver` already uses: reject `bar.time <= _last_delivered[(sym, tf)]`
+   before `ring.append`. Zero new state; initial warmup unaffected (cursor unset → all pass). Feed
+   cursor **stays `pd.Timestamp`** (the feed's ring/`window()` model is pandas-native — see
+   [[livebarfeed-depandas-time-model-datetime]]; full de-pandas migration deferred to next milestone).
+2. **Strategy side — one new per-symbol cursor, stdlib `datetime`.** Add `_last_bar_time: dict[str,
+   datetime]` to the base `Strategy`; store raw `bar.time` (no pandas, no conversion). In `update`:
+   reject `bar.time <= last` before touching `_bar_counts` / `_recent_closes` / indicator handles.
+   Keyed by symbol (each strategy owns one timeframe). Also hardens the live per-tick path against a
+   duplicate bar on reconnect resend.
+3. **Drop semantics (both cursors):** `==` (duplicate) → **silent** drop (expected, benign);
+   strict `<` (out-of-order, older than last) → **`warning`** + drop. Reject is `<=`, never `<`.
+4. **Retry policy = Level 2 (cadence-gate + warn).** Once idempotency lands, retry can no longer
+   corrupt state, so this is hygiene/observability: do NOT re-warm a FAILED symbol more often than its
+   bar interval (no new data before then), and emit a `warning` after N consecutive failed re-warms
+   (start N=3) so a stuck symbol surfaces — but keep trying (never auto-drop). Level 3 hard-ceiling +
+   quarantine-drop is explicitly OUT (ping-pongs against the selection source without a cooldown set;
+   delisting is better handled by markets-freshness — see
+   [[okx-markets-map-freshness-delisting-detection]]).
+
+## Test to write first (RED)
+
+A regression that drives the confirmed path — first warmup shorter than `min_period` (or a swallowed
+`strategies_handler.on_bars_loaded`) → FAILED → CR-02 retry re-warm → assert the ring has NO duplicate
+timestamps and `is_warm` does NOT flip True off duplicates (symbol stays not-tradeable until genuinely
+warm). Then implement Option B to turn it GREEN.
+
+## Target
+
+A `07-10` gap-closure plan (or `07.1` gap-closure phase). Backtest oracle must stay byte-exact
+(all changes live-only / inert on the backtest path).
