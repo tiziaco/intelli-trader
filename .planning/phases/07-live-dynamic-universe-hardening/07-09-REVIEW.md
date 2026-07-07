@@ -207,6 +207,21 @@ docstring so a future reader does not assume the gate covers the ticker-add race
 
 ---
 
+## Resolution (2026-07-07, owner: tiziaco)
+
+- **WR-01** — FIXED. `unsubscribe` now early-returns for a fully-absent symbol (no task, no own
+  `_streams_down`/`_reconnect_attempts` entry); test reconciled to the true-no-op contract plus a
+  guard-precision case. Commit `fix(07-09): make OKX unsubscribe a true no-op + close cleanup coro on spawn failure`.
+- **WR-02** — FIXED. `_cleanup()` coroutine is closed if `_connector.spawn()` raises after construction.
+  Same commit.
+- **CR-01 (BLOCKER)** — DEFERRED to a Phase 07 gap-closure ("07-10"). Captured as
+  `.planning/todos/pending/warmup-retry-nonidempotent-tradeable-corrupted-cr01.md` with both remediation
+  options, the retry-policy decision, and the reachability caveat (the swallowed `on_bars_loaded` path is
+  not yet confirmed to fire). Not fixed inline because it requires design decisions on the money path.
+- **IN-01** — no action required (documented residual limitation).
+
+---
+
 _Reviewed: 2026-07-07T07:32:25Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
