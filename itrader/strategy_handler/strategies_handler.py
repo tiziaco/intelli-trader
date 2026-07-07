@@ -103,6 +103,28 @@ class StrategiesHandler(object):
 		"""
 		self._universe = universe
 
+	def is_warm(self, symbol: str) -> bool:
+		"""Aggregate per-symbol indicator warmth across concerned strategies (WR-02).
+
+		Warm = for EVERY strategy CONCERNED with ``symbol`` (its ``.tickers``
+		include it), that strategy's per-symbol indicators are warm
+		(``strategy.is_ready(symbol)``). Vacuously ``True`` when NO strategy is
+		concerned with the symbol (nothing to warm → nothing blocks readiness).
+
+		This is the WR-02 read-model the ``UniverseHandler`` re-verifies before
+		flipping a symbol READY + subscribing it: a swallowed partial strategy
+		warmup can no longer let a half-warmed symbol become tradeable. Reflects
+		INDICATOR warmth only — ``Strategy.is_ready`` is base handle-derived
+		warmth (a handle-free ``PairStrategy`` is always ``is_ready`` True); the
+		pair-specific spread warmth (``is_pair_ready``) is governed on the
+		dispatch path, which is the WR-02 contract.
+		"""
+		return all(
+			strategy.is_ready(symbol)
+			for strategy in self.strategies
+			if symbol in strategy.tickers
+		)
+
 	def calculate_signals(self, event: BarEvent) -> None:
 		"""
 		Calculate the signal for every strategy to be traded.
@@ -338,6 +360,18 @@ class StrategiesHandler(object):
 			# D-02/P5-D10c: a missing leg = no spread this tick — skip silently,
 			# the pair buffers + count stay frozen (no update, no forward-fill).
 			return
+		# WR-01 (D-01): per-leg readiness gate mirroring the single-leg loop
+		# (:179-180) for BOTH legs. Short-circuit the WHOLE pair dispatch (no
+		# update_pair, no evaluate_pair) when EITHER leg is not universe-ready —
+		# a pair must never burn cycles evaluating an unwarmed leg. Single None
+		# check + two O(1) is_ready reads; default _universe is None → backtest
+		# short-circuits on `is None` → byte-exact. AdmissionManager (07-08) is
+		# the primary backstop; this is the cheap defensive strategy-loop layer.
+		if self._universe is not None and (
+			not self._universe.is_ready(ticker_A)
+			or not self._universe.is_ready(ticker_B)
+		):
+			return
 		# P5-D09/D15: push BOTH legs into the pair's own bounded per-leg buffers
 		# (the feed.window() slice is removed). update_pair stamps self.now from
 		# leg A's bar (a tz-aware Timestamp). The buffers ARE the trailing windows
@@ -403,9 +437,17 @@ class StrategiesHandler(object):
 		  ``list[str]`` invariant, base.py — a strategy is never left with zero
 		  tickers); the refused command is a documented no-op (no re-select).
 
-		On an accepted command it then EMITS a follow-on ``UniversePollEvent`` on
-		``self.global_queue`` (D-11 — one selection path, two triggers; explicit
-		causal ordering: the ticker mutation happens-before the re-select). It
+		CR-01: a ``PairStrategy`` target is REFUSED outright (loud no-op) — its
+		exact-2-ticker contract cannot be mutated via add/remove without breaking
+		every subsequent ``_dispatch_pair`` (the atomic ordered-pair
+		reconfiguration path is deferred, see
+		todos/pair-strategy-live-reconfiguration.md).
+
+		On a command that ACTUALLY mutated the tickers it then EMITS a follow-on
+		``UniversePollEvent`` on ``self.global_queue`` (D-11 — one selection path,
+		two triggers; explicit causal ordering: the ticker mutation happens-before
+		the re-select). IN-02: an idempotent no-op (add already-present / remove
+		absent) mutates nothing and emits nothing (no control-plane churn). It
 		NEVER calls ``UniverseHandler`` or touches ``Universe`` (queue-only
 		cross-domain write — ``StrategiesHandler`` never sees ``UniverseHandler``).
 		An unknown ``strategy_name`` (or verb) logs a warning and emits nothing.
@@ -423,10 +465,33 @@ class StrategiesHandler(object):
 				'StrategyCommandEvent for unknown strategy %s (verb=%s, symbol=%s) — ignored',
 				event.strategy_name, event.verb, event.symbol)
 			return
+		# CR-01: a PairStrategy is bound to an EXACT-2-ticker contract
+		# (PairStrategy.validate + _dispatch_pair len-2 guard). Mutating its
+		# tickers via add/remove would break that contract and make EVERY
+		# subsequent BAR's _dispatch_pair raise — an unbounded self-inflicted
+		# ErrorEvent storm with no recovery. Refuse the command as a loud no-op
+		# BEFORE the verb branches: no ticker mutation, no follow-on poll. This
+		# guard is forward-compatible with the deferred atomic ordered-pair
+		# reconfiguration path (todos/pair-strategy-live-reconfiguration.md — the
+		# "correct" Option B, out of scope here); until that lands, a pair's
+		# membership is immutable at the control-plane seam.
+		if isinstance(strategy, PairStrategy):
+			self.logger.warning(
+				'StrategyCommandEvent verb=%s refused for pair strategy %s — '
+				'PairStrategy requires exactly 2 tickers and cannot be mutated via '
+				'add/remove_ticker',
+				event.verb, event.strategy_name)
+			return
 		symbol = event.symbol
+		# IN-02: track whether the tickers ACTUALLY mutated. A follow-on
+		# UniversePollEvent is emitted ONLY on a genuine mutation — an idempotent
+		# no-op (add already-present / remove absent) emits nothing (no
+		# control-plane churn on a no-op command).
+		mutated = False
 		if event.verb == "add_ticker":
 			if symbol not in strategy.tickers:
 				strategy.tickers.append(symbol)  # idempotent append
+				mutated = True
 		elif event.verb == "remove_ticker":
 			if symbol in strategy.tickers:
 				if len(strategy.tickers) == 1:
@@ -439,15 +504,18 @@ class StrategiesHandler(object):
 						symbol, event.strategy_name)
 					return
 				strategy.tickers.remove(symbol)  # idempotent removal
+				mutated = True
 		else:
 			# Unknown verb — loud no-op.
 			self.logger.warning(
 				'StrategyCommandEvent unknown verb %s for strategy %s — ignored',
 				event.verb, event.strategy_name)
 			return
-		# D-11 follow-on: mutate happens-before re-select. Emit a UniversePollEvent
-		# on the queue (queue-only cross-domain write — never call UniverseHandler).
-		self.global_queue.put(UniversePollEvent(time=event.time))
+		# D-11 / IN-02 follow-on: mutate happens-before re-select. Emit a
+		# UniversePollEvent on the queue ONLY when the tickers actually mutated
+		# (queue-only cross-domain write — never call UniverseHandler).
+		if mutated:
+			self.global_queue.put(UniversePollEvent(time=event.time))
 
 	def get_strategies_universe(self) -> list[str]:
 		"""
