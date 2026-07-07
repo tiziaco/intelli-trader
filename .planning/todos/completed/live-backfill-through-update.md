@@ -1,12 +1,20 @@
 ---
-status: open
+status: resolved
 created: "2026-06-24"
+resolved: "2026-07-07"
 source: surfaced in v1.5 Phase 5 discuss-phase (Area 8 / spec §10.D-3); deferred, roadmap-tracked
 tags: [live-trading, backfill, warmup, indicators, bar-feed, single-code-path, deferred, §10.D-3, N+4]
-resolves_phase: ""
+resolves_phase: "v1.7 (LiveBarFeed live path)"
 ---
 
 # Route live-start backfill through the same update(bar) path (single code path)
+
+> **RESOLVED in v1.7 (verified at milestone close, 2026-07-07).** The requirement was met
+> exactly: `LiveBarFeed.warmup()` REST-fetches `depth` bars and replays each through the same
+> `update()` path (`price_handler/feed/live_bar_feed.py:267,293`), and `:280-281` documents the
+> deliberate absence of any bulk `warmup_from` fast-path (LX-09, the parity decision) — precisely
+> what this todo required. All backfill entry points (`warmup`, `backfill_on_resume`, gap replay)
+> funnel through `update()`. Wired at `live_trading_system.py:1747`.
 
 **Origin:** Surfaced in v1.5 Phase 5 (Stateful Indicators + Shared Bar Cache) discuss-phase,
 Area 8. Phase 5 builds the stateful-indicator `update(bar)` surface and the `BarFeed` interface
