@@ -12,8 +12,12 @@ findings:
   warning: 2
   info: 2
   total: 4
-status: issues_found
+status: resolved
+resolved_by: quick task 260707-iy6 (commits 0d090857 / 8eb66f73 / 222219a4, 2026-07-07)
 ---
+
+> **RESOLUTION (2026-07-07):** All four findings fixed in quick task `260707-iy6`.
+> WR-01 → `absorb_warmup` now warns on a genuine revision (differing OHLCV, via `_same_ohlcv`) and stays silent on a byte-identical duplicate. WR-02 → off-grid rejection added, mirroring `update()`'s WR-01 branch, protecting the shared `_last_delivered` cursor. IN-01/IN-02 → docstrings reworded. Backtest oracle byte-exact; mypy clean; targeted units green.
 
 # Phase 07: Code Review Report (gap-closure — CR-01 warmup re-delivery idempotency)
 
