@@ -53,3 +53,13 @@ reason is in the known vocabulary. Live-only change — backtest oracle stays by
 
 **Related:** the other v1.7 halt-path hardening todos (now in `todos/completed/`):
 `durable-halt-refusal-sequenced-late-wr01`, `blocking-halt-write-on-asyncio-loop-wr02`.
+
+## Deferral decision (2026-07-07, v1.7 milestone close)
+
+**Deferred to the next milestone by owner decision.** `live_trading_system.py` will be
+**fully refactored** in the next milestone, and the halt-reason storage/vocabulary system reviewed
+as part of that work. Fixing WR-04 in isolation now (a typed `HaltReason` enum threaded through
+`halt()`) would be redone by that refactor. The cosmetic doc-only patch was explicitly rejected as
+not addressing the real weakness (untyped free-string halt reasons). Owned by the next-milestone
+`live_trading_system.py` refactor + the FastAPI control-plane vocabulary design
+(`fastapi-application-layer-plan`). No pre-close action.
