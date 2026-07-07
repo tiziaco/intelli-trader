@@ -1446,6 +1446,11 @@ class LiveTradingSystem:
                 self._universe_handler.set_provider(self._okx_data_provider)
             # Open-position truth for the remove consumer + detach-on-flat.
             self._universe_handler.set_portfolio_read_model(self.portfolio_handler)
+            # WR-02 strategy-warmth re-verify: on_bars_loaded re-checks is_warm before
+            # flipping a symbol READY (a MISS marks FAILED, retried next poll) — so a
+            # swallowed partial strategy warmup can't make a half-warmed symbol
+            # tradeable. Live-only (backtest constructs no UniverseHandler).
+            self._universe_handler.set_strategy_warmth(self.strategies_handler)
 
             # LIVE-ONLY route mutation (RESEARCH §11.1): mutate THIS live EventHandler's
             # own routes dict — NEVER the shared backtest _routes literal (the backtest
