@@ -541,10 +541,13 @@ class UniverseHandler:
         """Increment ``symbol``'s consecutive-failed-re-warm streak; warn at >= 3 (Level 2).
 
         Called at BOTH failure sites (the on_bars_loaded WR-02 warm-verify MISS and
-        on_bars_load_failed). At the 3rd consecutive failure a warning surfaces the stuck
-        symbol + its streak — but the symbol is NEVER auto-dropped / removed from
-        membership / quarantined (Level 3 is explicitly OUT; delisting is handled by
-        markets-freshness). The streak resets to 0 on a genuine re-warm success
+        on_bars_load_failed). The guard is ``if streak >= 3``, so a warning surfaces the
+        stuck symbol + its streak at the 3rd AND every subsequent consecutive failure
+        (streak 3, 4, 5, ...) — not a one-time notification, but bounded to at most once
+        per bar interval by the ``on_poll`` cadence gate (so ongoing visibility for a
+        persistently stuck symbol without a log flood). The symbol is NEVER auto-dropped /
+        removed from membership / quarantined (Level 3 is explicitly OUT; delisting is
+        handled by markets-freshness). The streak resets to 0 on a genuine re-warm success
         (``_reset_rewarm_streak``).
         """
         streak = self._rewarm_fail_streak.get(symbol, 0) + 1

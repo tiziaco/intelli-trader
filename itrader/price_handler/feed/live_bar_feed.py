@@ -297,14 +297,22 @@ class LiveBarFeed(BarFeed):
         """Silently absorb pre-built warmup ``Bar``s into the ring + ``L`` — NO ``BarEvent`` (D-03/OQ1).
 
         The non-emitting twin of :meth:`_deliver` (RESEARCH OQ1 / D-03b). For each
-        pre-built ``Bar`` in order it runs the EXACT ring / ``L`` / newest-bar logic of
+        pre-built ``Bar`` in order it runs the ring / ``L`` / newest-bar logic of
         ``_deliver`` (:490-499) — lazily create the ``deque(maxlen=cache_capacity())``
         ring, ``ring.append(bar)``, set ``_newest_bars[symbol]`` and
-        ``_last_delivered[(symbol, timeframe)]`` — but DELIBERATELY SKIPS the terminal
-        ``_emit`` (the single divergence). No tradeable ``BarEvent`` is put on the queue
-        during warmup: the ring is warmed and ``L`` is advanced so the feed read-model is
-        query-ready and L-continuous, but strategies are NOT signalled off historical bars
-        (D-03b — "no tradeable BarEvent during warmup").
+        ``_last_delivered[(symbol, timeframe)]``. It now diverges from ``_deliver`` in TWO
+        ways: (1) it DELIBERATELY SKIPS the terminal ``_emit`` — no tradeable ``BarEvent``
+        is put on the queue during warmup; and (2) it applies its OWN ``<=`` monotonic
+        cursor guard (the CR-01-feed WR-01/WR-02 guard) BEFORE appending — dropping a
+        stale (``<`` warn), duplicate/revision (``==`` silent-or-revision-warn), or
+        off-grid (``last < bt < last + tf`` warn) bar with no ring mutation and no ``L``
+        advance. ``_deliver`` itself has NO monotonic guard: that classification lives one
+        layer up in ``update()`` and is never reached by ``absorb_warmup`` (pre-built
+        ``Bar``s bypass ``update()``), so the guard is re-implemented here against the
+        SAME shared ``_last_delivered`` cursor. No tradeable ``BarEvent`` is put on the
+        queue during warmup: the ring is warmed and ``L`` is advanced so the feed
+        read-model is query-ready and L-continuous, but strategies are NOT signalled off
+        historical bars (D-03b — "no tradeable BarEvent during warmup").
 
         This closes the documented warmup-before-subscribe ``L`` contract (RESEARCH OQ1):
         the ``BarsLoaded`` warmup window is absorbed here so ``L`` is set from REST history
