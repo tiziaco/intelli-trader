@@ -1,112 +1,102 @@
----
-last_mapped_commit: 6b15b25
----
 # External Integrations
 
-**Analysis Date:** 2026-06-30
+**Analysis Date:** 2026-07-07
 
 ## APIs & External Services
 
-**Crypto exchange data (offline/research):**
-- CCXT (unified crypto-exchange interface) - Fetch OHLCV + tradable symbols from any CCXT-supported exchange
-  - SDK/Client: `ccxt` ^4.5.56 (`itrader/price_handler/providers/ccxt_provider.py` — `CCXT_exchange`)
-  - Auth: none for public market data; instantiated via `getattr(ccxt, name)()`
-  - Mypy override (deferred D-oanda), not on the backtest run path
+**Crypto exchange — OKX (live trading, paper-first, primary live venue as of v1.7):**
+- Order/session transport: `itrader/connectors/okx.py::OkxConnector` — one `ccxt.pro` client on a single asyncio loop on a daemon thread (`name="okx-connector"`); owns auth, rate-limit budget, sandbox/region routing, and `connect`/`disconnect` lifecycle. Structural `LiveConnector` Protocol seam: `itrader/connectors/base.py`.
+  - SDK/Client: `ccxt.pro` (`import ccxt.pro as ccxtpro`)
+  - Auth: `OKX_API_KEY`, `OKX_API_SECRET`, `OKX_API_PASSPHRASE` (a triple, all `SecretStr`; passphrase required) via `itrader/config/okx_settings.py::OkxSettings`
+  - Routing: `OKX_SANDBOX` (default `True` = demo) + `OKX_REGION` (`global` | `eea`, default `global`) derive BOTH hosts
+    - REST host: `www.okx.com` (global) / `eea.okx.com` (eea)
+    - WS host: `wspap.okx.com` (global demo) / `ws.okx.com` (global live) / `wseeapap.okx.com` (eea demo) / `wseea.okx.com` (eea live), port `8443`, path `/ws/v5`
+- Order execution arm: `itrader/execution_handler/exchanges/okx.py::OkxExchange` — live sibling of `SimulatedExchange` (same `AbstractExchange` seam); submits/cancels via `connector.call`, streams order status + fills via `connector.spawn` on `watch_orders` / `watch_my_trades`, translates each fill into a frozen `FillEvent` onto `global_queue`. clOrdId correlation key is Base62-of-UUID (`_CLORDID_ALPHABET`, WR-04).
+- Market-data arm: `itrader/price_handler/providers/okx_provider.py::OkxDataProvider` — native OKX business-candle WebSocket over `aiohttp`, plus REST snapshot backfill via lazily-imported `ccxt`; emits `BarsLoaded` / `BarsLoadFailed` events. Feeds `itrader/price_handler/feed/live_bar_feed.py::LiveBarFeed`.
+- Reconnect supervision: exponential backoff with debounce + retry ceiling → HALT on exhaustion (`_STREAM_RECONNECT_*` constants in `exchanges/okx.py`, D-19/D-20).
 
-**Forex data (OANDA):**
-- OANDA - FX OHLCV download/streaming
-  - SDK/Client: `tpqoa` (`itrader/price_handler/providers/oanda_provider.py` — `OANDA_exchange`)
-  - Auth: reads an `oanda.cfg` file at construction (`tpqoa.tpqoa('oanda.cfg')`); env vars `OANDA_TESTNET_ACCOUNT_ID`, `OANDA_TESTNET_API_KEY`, `OANDA_TESTNET_API_SECRET` documented in `.env.example`
-  - Mypy override (deferred D-oanda), not on the backtest run path
+**Crypto exchange — Binance (data streaming):**
+- Live kline streaming: `itrader/price_handler/providers/binance_stream.py` (`websocket-client`)
+- Auth env: `BINANCE_MAIN_API_KEY`/`_SECRET`, `BINANCE_SPOT_TESTNET_API_KEY`/`_SECRET`, `BINANCE_FUTURE_TESTNET_API_KEY`/`_SECRET`
 
-**Binance live streaming (quarantined, D-live):**
-- Binance WebSocket kline stream - Live OHLCV → `BarEvent`s
-  - SDK/Client: `websocket-client` (`itrader/price_handler/providers/binance_stream.py` — `BINANCELiveStreamer`)
-  - Auth: `BINANCE_MAIN_API_KEY`/`_SECRET`, `BINANCE_SPOT_TESTNET_*`, `BINANCE_FUTURE_TESTNET_*` (documented in `.env.example`)
-  - Quarantined: NOT imported on any run path (D-18 deleted the legacy base); D-live owns rebuilding it
+**Generic crypto exchange access — CCXT:**
+- Unified provider: `itrader/price_handler/providers/ccxt_provider.py` (historical OHLCV download)
+
+**Forex — OANDA:**
+- Provider: `itrader/price_handler/providers/oanda_provider.py` (via `tpqoa`)
+- Auth: `oanda.cfg` file + `OANDA_TESTNET_ACCOUNT_ID`, `OANDA_TESTNET_API_KEY`, `OANDA_TESTNET_API_SECRET`
+
+**Offline replay (test/CI seam):**
+- `itrader/price_handler/providers/replay_provider.py` — replays the golden CSV as confirm-gated `ClosedBar` dicts through the SAME live feed seam an OKX provider drives (`set_bar_sink` → `LiveBarFeed.update`). Used by `scripts/run_live_paper.py` for deterministic, single-thread, CI-safe live-path exercise.
 
 ## Data Storage
 
 **Databases:**
+- Operational store (live path): PostgreSQL via `postgresql+psycopg2://`
+  - Connection: unified `SqlSettings` (`itrader/config/sql.py`), `env_prefix="ITRADER_DATABASE_"` — component vars `ITRADER_DATABASE_HOST`/`_PORT`/`_USER`/`_NAME`/`_PASSWORD` (default port `5544`); URL assembled via `sqlalchemy.URL.create`. Optional verbatim override `ITRADER_DATABASE_URL`.
+  - Client/spine: `itrader/storage/backend.py::SqlBackend` (single Engine + MetaData; per-concern stores compose it by reference — has-a, no shared god base)
+  - Concerns on the spine: order storage, portfolio-account-state, signal, results (`Sql<Concern>Storage`)
+  - Fail-loud: `_require_pg_credentials` validator raises `pydantic.ValidationError` if Postgres selected with no password/URL
+- Research / results store: SQLite (`SqlResultsStore`, `itrader/results/sql_storage.py`) — idempotent `create_all(checkfirst=True)`, no Alembic; DataFrames stored as byte-deterministic gzip blobs (`mtime=0` + fixed `compresslevel`, `orient="table"` JSON).
+- Price database: PostgreSQL (`itrader/price_handler/store/sql_store.py`, read-only on the run path)
+- Backend switch is config-not-code: `SqlDriver` enum (`SQLITE_PYSQLITE`, `POSTGRESQL_PSYCOPG2`, `SQLITE_LIBSQL` reserved Turso slot, D-15).
 
-PostgreSQL — the durable operational store + price database (v1.6 Persistence Foundation):
-- Driver: `postgresql+psycopg2` (`psycopg2-binary`), selected via `SqlDriver.POSTGRESQL_PSYCOPG2`
-- Connection: assembled from component env vars `ITRADER_DATABASE_HOST`/`PORT`/`USER`/`NAME`/`PASSWORD` via `sqlalchemy.URL.create` (URL-escapes special chars). Default port `5544` (NOT 5432). Optional verbatim override `ITRADER_DATABASE_URL` (`SecretStr`).
-- Config: unified `SqlSettings` (`itrader/config/sql.py`), `env_prefix="ITRADER_DATABASE_"`, fail-loud Postgres validator (requires password or url)
-- Engine spine: `SqlBackend` (`itrader/storage/backend.py`) — one Engine + MetaData, composed by each storage concern
-- Schema source of truth: `build_order_tables` / `build_portfolio_tables` / `build_signal_tables` registrars in `itrader/order_handler/storage/models.py`, `itrader/portfolio_handler/storage/models.py`, `itrader/strategy_handler/storage/models.py`
-- Migrations: Alembic chain in `itrader/storage/migrations/versions/` — `2cbf0bf6b0b6_operational_baseline.py` (base) → `47f2b41f3ffe_portfolio_account_state.py`. `render_as_batch=True` for portable ALTER (SQLite/libSQL). URL resolved lazily in `env.py` (never in `alembic.ini`).
-
-SQLite — the ephemeral research/results store:
-- Driver: `sqlite+pysqlite`, default `:memory:` (backtest) or an on-disk file (results store, `SqlSettings.results_default()`)
-- Built by `MetaData.create_all()` — runs NO Alembic, carries no `alembic_version` table (the create_all-vs-Alembic split is intentional, MIG-01/D-14)
-- Results store: `itrader/results/sql_storage.py` (+ `base.py`, `models.py`, `records.py`, `serializers.py`)
-- Cross-dialect types (`itrader/storage/types.py`): `Uuid(as_uuid=True)` (CHAR(32) on SQLite / native UUID on PG), `UtcIsoText` (ISO-8601 UTC TEXT both dialects), `json_variant()` (JSON on SQLite / JSONB on PG). No Decimal-as-text decorator — money never lands on SQLite this milestone (D-13).
-
-libSQL / Turso:
-- `SqlDriver.SQLITE_LIBSQL` is a SLOT only (D-15) — driver NOT added; escape path is one URL change, zero code change.
-
-Price CSV store (offline, run path):
-- `CsvPriceStore` (`itrader/price_handler/store/csv_store.py`) — eager-loads the committed golden CSV (`data/BTCUSD_1d_ohlcv_2018_2026.csv`), read-only
-
-**Per-handler storage backends (pluggable via factories):**
-- Order mirror: `OrderStorageFactory` (`itrader/order_handler/storage/storage_factory.py`) — `in_memory` (backtest/test) vs `live` (SQL spine, wrapped by `CachedSqlOrderStorage`)
-- Portfolio: `itrader/portfolio_handler/storage/storage_factory.py` — `in_memory_storage.py` / `sql_storage.py` / `cached_sql_storage.py`
-- Strategy/signals: `itrader/strategy_handler/storage/storage_factory.py` — same three-backend pattern
+**Schema migrations:**
+- Alembic chain at `itrader/storage/migrations/` (`env.py` imports `NAMING_CONVENTION` from `itrader/storage/backend.py` so `create_all` and autogenerate emit identical constraint names)
+- Versions: `2cbf0bf6b0b6_operational_baseline.py`, `47f2b41f3ffe_portfolio_account_state.py`, `d10_halt_records.py`, `hl5_transaction_venue_trade_id.py`, `p05_venue_order_id.py`
 
 **File Storage:**
-- Local filesystem only — golden datasets under `data/`, run artifacts under `output/` (`make backtest` writes `trades.csv`, `equity.csv`, `summary.json`)
+- Committed golden OHLCV CSVs under `data/` (e.g. `data/BTCUSD_1d_ohlcv_2018_2026.csv`); run artifacts under `output/`
 
 **Caching:**
-- In-process only — no external cache (Redis/Memcached). Caches are classified, not unified, in `docs/CACHE-CLASSIFICATION.md`:
-  - (a) hot-path data cache: per-tick recent-bars feed (`itrader/price_handler/feed/bar_feed.py`, `cache_registration.py`) — Q7-protected, Arrow/columnar REJECTED on the per-tick path
-  - (b) storage-index lookup: solved by Phase-3 SQL `WHERE`/indexes — documentation only
-  - (c) pure-function memoization (`lru_cache`/`functools.cache`)
-  - (d) live-retention working-set caches: `CachedSql*Storage` decorators (store-first write-through over an in-memory working set; `itrader/*/storage/cached_sql_storage.py`)
-  - Drift guard: `tests/integration/test_cache_classification.py`
+- None (in-memory ring buffers only — `LiveBarFeed` bounded `deque` per `(symbol, timeframe)`)
 
 ## Authentication & Identity
 
 **Auth Provider:**
-- None — no end-user auth (no web layer yet). External API auth is via env-var credentials (exchange API keys, OANDA cfg). All DB secrets are `SecretStr` (`SqlSettings.password`/`url`), masked in repr/str/logs.
+- None (no end-user auth). All credentials are outbound venue/DB API keys.
+- Credential discipline: `SecretStr` end-to-end for OKX (`OkxSettings`) and DB (`SqlSettings`) — masked in repr/logs, surfaced only via `.get_secret_value()` at the client edge; the OKX connector imports no domain-event module (grep-guarded) so secrets never reach event payloads.
 
 ## Monitoring & Observability
 
-**Error Tracking:**
-- None (no Sentry/Datadog). Domain errors flow as `ErrorEvent`/`PortfolioErrorEvent` on the queue; `EventHandler._log_error_event` is the structured-log sink.
+**Error Tracking / Alerting:**
+- `itrader/trading_system/alert_sink.py` — `AlertSink` Protocol (swap-a-fake egress seam) with one shipped implementation `LogAlertSink` (marked structured `logger.critical`, `alert=True`). External push (PagerDuty / Slack / webhook) is architected-but-deferred (RES-01, D-06). CRITICAL/halt `ErrorEvent`s route through this sink.
 
 **Logs:**
-- structlog ^24.4.0 (`itrader/logger.py`) — console (color) or JSON renderer. Component context via `get_itrader_logger().bind(component="...")`. `ITRADER_DISABLE_LOGS` kill-switch.
+- structlog (`itrader/logger.py`); console (color) or JSON renderer. Env: `ITRADER_LOG_LEVEL`, `ITRADER_JSON_LOGS`, `ITRADER_DISABLE_LOGS`. Bind context via `get_itrader_logger().bind(component="...")`.
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- None detected — no deployment target configured
+- None detected (no Dockerfile, docker-compose, or deploy manifest)
 
 **CI Pipeline:**
-- None detected — no `.github/workflows`, no CI config. Quality gates run locally via `make test` / `make typecheck` / `make perf-w1`.
+- None detected (no `.github/workflows`, etc.)
 
 ## Environment Configuration
 
-**Required env vars (live/operational only — backtest needs none):**
-- `ITRADER_DATABASE_HOST`, `ITRADER_DATABASE_PORT` (default 5544), `ITRADER_DATABASE_USER`, `ITRADER_DATABASE_NAME`, `ITRADER_DATABASE_PASSWORD` — operational Postgres store
-- `ITRADER_DATABASE_URL` — optional verbatim override (wins when set)
-- `ITRADER_LOG_LEVEL`, `ITRADER_JSON_LOGS`, `ITRADER_DISABLE_LOGS` — logging
-- `BINANCE_MAIN_API_KEY`/`_SECRET`, `BINANCE_SPOT_TESTNET_*`, `BINANCE_FUTURE_TESTNET_*` — Binance live (not wired)
-- `OANDA_TESTNET_ACCOUNT_ID`/`_API_KEY`/`_API_SECRET` — OANDA (also reads `oanda.cfg`)
-- `DATA_DB_URL`, `SYSTEM_DB_URL` — legacy D-live seams, documented only, NOT wired to `SqlSettings` (reconciliation deferred, Open Q4/D-09)
+**Required env vars (see `.env.example`):**
+- Logging: `ITRADER_LOG_LEVEL`, `ITRADER_JSON_LOGS`, `ITRADER_DISABLE_LOGS`
+- Operational DB: `ITRADER_DATABASE_HOST`, `ITRADER_DATABASE_PORT` (5544), `ITRADER_DATABASE_USER`, `ITRADER_DATABASE_NAME`, `ITRADER_DATABASE_PASSWORD` (or verbatim `ITRADER_DATABASE_URL`)
+- OKX (live only): `OKX_API_KEY`, `OKX_API_SECRET`, `OKX_API_PASSPHRASE`, `OKX_SANDBOX` (default true), `OKX_REGION` (global/eea)
+- Binance (live only): `BINANCE_MAIN_API_KEY`/`_SECRET`, `BINANCE_SPOT_TESTNET_API_KEY`/`_SECRET`, `BINANCE_FUTURE_TESTNET_API_KEY`/`_SECRET`
+- OANDA (live only): `OANDA_TESTNET_ACCOUNT_ID`, `OANDA_TESTNET_API_KEY`, `OANDA_TESTNET_API_SECRET`
+- Legacy D-live seams (documented-only, not wired): `DATA_DB_URL`, `SYSTEM_DB_URL`
 
 **Secrets location:**
-- `.env` at repo root (gitignored). `.env.example` is the committed, value-free surface. `alembic.ini::sqlalchemy.url` is intentionally blank — no credential-bearing URL is ever committed (SEC-01).
+- `.env` at repo root (gitignored); `.env.example` committed as the documented surface (no real secrets). OANDA additionally reads `oanda.cfg`.
+- NOTE: `OKX_API_*` in `.env` are a demo sub-account (no real money), authorized for live-sandbox tests — still verify `sandbox=True` before any order.
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- None (no web/HTTP layer present)
+- None (no web server yet; FastAPI application layer deferred to a later phase)
 
 **Outgoing:**
-- None
+- OKX WebSocket subscriptions (`watch_orders`, `watch_my_trades`, native business-candle socket) via `ccxt.pro` / `aiohttp`
+- Binance WebSocket kline subscription (`websocket-client`)
+- Alert egress is a deferred seam (`AlertSink`); no outbound HTTP webhook wired this milestone
 
 ---
 
-*Integration audit: 2026-06-30*
+*Integration audit: 2026-07-07*
