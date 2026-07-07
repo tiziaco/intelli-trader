@@ -312,7 +312,7 @@ publish-and-continue live/paper daemon.
 ## Cross-Cutting Concerns
 
 **Logging:** structlog; bind context via `get_itrader_logger().bind(component="ClassName")`; `self.logger` convention.
-**Validation:** `EnhancedOrderValidator` (order domain) + defense-in-depth exchange-level validation on the live-path bypass; Pydantic config models.
+**Validation:** `EnhancedOrderValidator` (order domain, run in `AdmissionManager` on every signal→order path) + defense-in-depth exchange-level `validate_order` re-checking structural preconditions at the fill boundary (D-03a; not a bypass — the live `add_event` ingress is fail-closed/SIGNAL-form, so orders are domain-validated upstream); Pydantic config models.
 **Authentication:** venue credentials owned solely by `OkxConnector` from `OkxSettings`; SQL credentials from unified `ITRADER_DATABASE_*` / `SqlSettings`; no secret ever bound onto an `ErrorEvent`/alert (field-bind discipline).
 **Determinism/money:** injected seeded RNG + `BacktestClock`; Decimal end-to-end.
 
