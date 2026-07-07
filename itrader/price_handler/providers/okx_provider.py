@@ -292,16 +292,37 @@ class OkxDataProvider:
         ``CancelledError`` untouched, and the connector's ``_on_task_done`` untracks the
         cancelled task quietly. A symbol never subscribed is a no-op (no exception, no
         cancel); a later ``subscribe`` for the same symbol re-spawns a fresh task.
+
+        WR-03 (07-09): ``unsubscribe`` runs on the ENGINE thread, but ``task.cancel()``
+        and the ``_streams_down`` / ``_reconnect_attempts`` supervisor-dict cleanup all
+        touch state OWNED by the connector-loop thread (written by
+        ``_run_stream_supervisor`` / ``_mark_stream_down`` / ``_reset_reconnect_budget``).
+        Doing them inline here races that thread. So — chosen over adding a
+        ``threading.Lock`` — the engine-thread-owned ``_streams`` pop stays here
+        (subscribe writes ``_streams`` on the engine thread too, so it is single-writer
+        on the engine thread), and BOTH ``task.cancel()`` AND the supervisor-dict cleanup
+        are MARSHALED onto the connector loop via ``self._connector.spawn`` — the SAME
+        ownership model ``subscribe`` uses. The connector loop is then the SINGLE WRITER
+        for ``_streams_down`` / ``_reconnect_attempts`` (plus the lock-free self-healing
+        reads in ``is_streaming_healthy``) — no new lock. Cleanup is now ASYNC (completes
+        on the next connector-loop tick). Safe-no-op / single-cancel semantics are
+        preserved: an absent symbol pops ``None`` so ``cancel`` is skipped inside the
+        closure and the discard/pop are no-ops.
         """
         task = self._streams.pop(symbol, None)
-        if task is not None:
-            task.cancel()
-        # CR-01: clear the per-symbol reconnect-supervisor state on unsubscribe so a
-        # stale down-flag cannot permanently pin is_streaming_healthy() False (wedging
-        # the live NEW-submission resume gate _all_venue_streams_healthy) and a stale
-        # attempt count cannot trip the D-20 retry ceiling on a later re-subscribe.
-        self._streams_down.discard(symbol)
-        self._reconnect_attempts.pop(symbol, None)
+
+        async def _cleanup() -> None:
+            # Runs on the connector loop (single-writer for the supervisor dicts).
+            if task is not None:
+                task.cancel()
+            # Clear the per-symbol reconnect-supervisor state on unsubscribe so a stale
+            # down-flag cannot permanently pin is_streaming_healthy() False (wedging the
+            # live NEW-submission resume gate _all_venue_streams_healthy) and a stale
+            # attempt count cannot trip the D-20 retry ceiling on a later re-subscribe.
+            self._streams_down.discard(symbol)
+            self._reconnect_attempts.pop(symbol, None)
+
+        self._connector.spawn(_cleanup())
 
     async def _stream_candles(
         self, symbol_okx: str, channel: str, symbol: str

@@ -236,7 +236,7 @@ def test_add_ticker_appends_and_emits_poll() -> None:
 
 
 def test_add_ticker_idempotent() -> None:
-    """add_ticker of an already-present symbol does not duplicate; still emits once."""
+    """add_ticker of an already-present symbol does not duplicate; IN-02 emits nothing."""
     handler = _handler()
     spy = _SpyStrategy(["BTCUSDT"], name="s1")
     handler.strategies.append(spy)
@@ -246,8 +246,9 @@ def test_add_ticker_idempotent() -> None:
     )
 
     assert spy.tickers == ["BTCUSDT"]  # no duplicate
-    emitted = _drain(handler.global_queue)
-    assert len(emitted) == 1 and isinstance(emitted[0], UniversePollEvent)
+    # IN-02: an idempotent no-op (add already-present) mutates nothing, so no
+    # follow-on UniversePollEvent is emitted (no control-plane churn).
+    assert _drain(handler.global_queue) == []
 
 
 def test_remove_ticker_removes_and_emits_poll() -> None:
@@ -266,7 +267,7 @@ def test_remove_ticker_removes_and_emits_poll() -> None:
 
 
 def test_remove_ticker_idempotent_absent() -> None:
-    """remove_ticker of an absent symbol (list stays non-empty) is a no-op mutation; emits once."""
+    """remove_ticker of an absent symbol (list stays non-empty) is a no-op; IN-02 emits nothing."""
     handler = _handler()
     spy = _SpyStrategy(["BTCUSDT", "ETHUSDT"], name="s1")
     handler.strategies.append(spy)
@@ -276,8 +277,8 @@ def test_remove_ticker_idempotent_absent() -> None:
     )
 
     assert spy.tickers == ["BTCUSDT", "ETHUSDT"]  # unchanged
-    emitted = _drain(handler.global_queue)
-    assert len(emitted) == 1 and isinstance(emitted[0], UniversePollEvent)
+    # IN-02: an idempotent no-op (remove absent) mutates nothing → no poll.
+    assert _drain(handler.global_queue) == []
 
 
 def test_remove_ticker_refuses_emptying() -> None:

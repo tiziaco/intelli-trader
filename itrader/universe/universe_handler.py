@@ -140,6 +140,22 @@ class _SupportsSubscribe(Protocol):
     def unsubscribe(self, symbol: str) -> None: ...
 
 
+class _StrategyWarmthReadModel(Protocol):
+    """The WR-02 strategy-warmth bound (``StrategiesHandler`` satisfies it).
+
+    ``is_warm(symbol)`` means "for EVERY strategy concerned with ``symbol`` (its
+    ``.tickers`` include it), that strategy's per-symbol indicators have seen
+    >= their warmup period" (aggregate: warm = ALL concerned strategies warm;
+    vacuously True when none are concerned). ``UniverseHandler.on_bars_loaded``
+    re-verifies this before flipping a symbol READY — so a swallowed partial
+    strategy warmup (per-handler route isolation) can no longer let a half-warmed
+    symbol become tradeable. Mirrors the injected-seam Protocol pattern used by
+    ``PortfolioReadModel`` / ``_SymbolValidator``.
+    """
+
+    def is_warm(self, symbol: str) -> bool: ...
+
+
 class UniverseHandler:
     """Live-only poll host + add-side ``UniverseUpdateEvent`` consumer (Arm A).
 
@@ -198,6 +214,10 @@ class UniverseHandler:
         self._read_model: PortfolioReadModel | None = None
         self._freeze_gate: Callable[[], bool] | None = None
         self._precision_resolver: _PrecisionResolver | None = None
+        # WR-02 strategy-warmth re-verify seam. While None (paper/backtest, or an
+        # unwired handler) on_bars_loaded skips the re-verify and flips READY as
+        # before — inert by default. Live wires it to the StrategiesHandler.
+        self._warmth: _StrategyWarmthReadModel | None = None
 
         self.logger = get_itrader_logger().bind(component="UniverseHandler")
 
@@ -248,6 +268,19 @@ class UniverseHandler:
         add/remove of an untraded symbol).
         """
         self._read_model = read_model
+
+    def set_strategy_warmth(self, read_model: _StrategyWarmthReadModel) -> None:
+        """Wire the WR-02 strategy-warmth read-model (``StrategiesHandler``).
+
+        ``on_bars_loaded`` re-verifies ``read_model.is_warm(symbol)`` before it
+        flips the symbol READY + subscribes; a warm-check MISS marks the symbol
+        FAILED instead (skip mark_ready/subscribe), so a partially-warmed symbol
+        is never tradeable and is retried on the next poll (composes with the
+        CR-02 FAILED-retry). Live-only wiring — the backtest composition root
+        never constructs the ``UniverseHandler``, so this seam stays ``None``
+        there and the re-verify is inert.
+        """
+        self._warmth = read_model
 
     # --- poll (Arm A) ----------------------------------------------------------
 
@@ -431,8 +464,27 @@ class UniverseHandler:
         its indicators off the SAME ``BarsLoaded`` earlier in the route list
         (list-order guarantee, plan 07), so indicators are warm before this flip.
         ``provider is None`` (paper) is tolerated — subscribe is skipped.
+
+        WR-02: the list-order guarantee is now BACKED by an explicit strategy-warmth
+        re-verify. Per-handler route isolation means a swallowed partial strategy
+        warmup would otherwise still reach this flip; so when a warmth read-model is
+        wired, ``is_warm(symbol)`` is re-checked AFTER the ring absorb and BEFORE
+        mark_ready. A MISS marks the symbol FAILED (skip BOTH mark_ready and
+        subscribe) so a half-warmed symbol is never tradeable and is re-warmed on
+        the next poll (composes with the CR-02 FAILED-retry). With no warmth wired
+        (paper/backtest) the re-verify is skipped — inert.
         """
         self._feed.absorb_warmup(event.symbol, event.timeframe, event.bars)
+        # WR-02 warm-verify: a partially-warmed symbol (a strategy indicator not yet
+        # at its warmup depth) must NOT become tradeable. On a MISS mark FAILED (not
+        # READY) and return — the CR-02 next-poll retry re-attempts the full warmup.
+        if self._warmth is not None and not self._warmth.is_warm(event.symbol):
+            self._universe.mark_failed(event.symbol)
+            self.logger.warning(
+                "Warm-verify MISS for %s — strategy indicators not warm after "
+                "warmup; marked FAILED (retried next poll)",
+                event.symbol)
+            return
         self._universe.mark_ready(event.symbol)
         if self._provider is not None:
             self._provider.subscribe(event.symbol)
@@ -483,7 +535,13 @@ class UniverseHandler:
                 self._emit_force_close_exit(sym, portfolio_id, snap, asof)
             self._universe.mark_leaving(sym)
             self._unsubscribe(sym)
-            self.logger.info("Force-close removal: exit emitted + detached %s", sym)
+            # IN-01: the detach is NOT complete here — the exit order is only
+            # emitted and the socket unsubscribed; the record teardown (discard)
+            # happens later on the flat FILL (on_fill). Word the log accordingly so
+            # it does not imply full teardown already happened.
+            self.logger.info(
+                "Force-close removal for %s: exit order emitted, unsubscribed; "
+                "detach completes on flat fill", sym)
             return
 
         # orphan-and-track WITH an open position: defer unsubscribe until flat.
