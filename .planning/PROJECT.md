@@ -13,8 +13,13 @@ end-to-end by a 58-leaf frozen golden E2E matrix — all behavior-preserving aga
 oracle. The engine then gained its **authoring + contract surfaces** (v1.3), **margin, leverage,
 first-class shorts and engine-native trailing stops** (v1.4 — it now trades on margin), and a
 **profiler-guided hot-path optimization pass** (v1.5 — materially faster with the numbers unchanged).
-The result is a backtest engine that is trustworthy, regression-locked across the whole surface, and
-fast — ready for the persistence and live work ahead.
+It then grew a **durable-storage + caching foundation** (v1.6 — a swappable SQL spine, results store,
+and Postgres operational backends, all inert on the backtest path) and finally a **live operating mode,
+paper-first on OKX** (v1.7 — an `Account` abstraction, an `OkxConnector`, a streaming `LiveBarFeed`, a
+paper path gated on paper-parity vs the byte-exact oracle, and a reconciled real/sandbox path
+human-observed GREEN on the OKX demo venue). The result is a backtest engine that is trustworthy,
+regression-locked across the whole surface, and fast — and now runs live paper-first on a real venue
+without disturbing that backtest oracle.
 
 ## Core Value
 
@@ -22,13 +27,15 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
-## Current Milestone: v1.7 — Live Trading Readiness (trimmed N+4 / Backlog 999.3)
+## Shipped Milestone: v1.7 — Live Trading Readiness (2026-07-07)
 
-**Goal:** Deploy and run the package **live on one crypto venue (OKX), paper-first**, with a real
+**Delivered:** Deployed and ran the package **live on one crypto venue (OKX), paper-first**, with a real
 correctness gate (paper-parity vs the backtest oracle) — **without disturbing the byte-exact backtest
 oracle** (134 trades / `final_equity 46189.87730727451`; v1.5 W1 baseline 15.7 s / 152.8 MB). The
 trimmed N+4: the **minimum surface to deploy live**. One milestone, **refactor-phase-first** (Phase 1
-is an oracle-gated Account-abstraction extraction *before* any live code depends on it).
+was an oracle-gated Account-abstraction extraction *before* any live code depended on it). Shipped as
+**10 phases** (1–7 with 05.1/05.2/05.3 remediation waves inserted), 75 plans, all 32 requirements
+validated; audit `passed`. Full delivery detail in the **Current State** section below.
 
 **Target features (6 phases, numbering reset to Phase 1):**
 - **Phase 1 — Account abstraction + `Portfolio`/`PortfolioHandler` refactor (oracle-gated,
@@ -432,6 +439,54 @@ caching foundation; DB-gated, behavior-preserving on the backtest path; SMA_MACD
   Nyquist VALIDATION.md records (every phase carries full VERIFICATION.md evidence); ~13 WR-/IN- review
   warnings catalogued in the audit; single-pass valuation carry (v1.5). See `milestones/v1.6-MILESTONE-AUDIT.md`.
 
+**Validated in v1.7 — Live Trading Readiness (Phases 1–7 + 05.1/05.2/05.3), 2026-07-07** — the live
+operating mode, paper-first on OKX; backtest oracle **byte-exact** (134 / `46189.87730727451`) with the
+live/connector machinery provably inert on the backtest hot path; full non-live suite 1981 passed,
+`mypy --strict` clean (234 files); 32/32 v1 requirements satisfied, audit `passed`
+(`milestones/v1.7-MILESTONE-AUDIT.md`):
+- ✓ **ACCT-01..06 — Account abstraction + Portfolio/Handler refactor (Phase 1, oracle-gated):** extracted
+  an `Account` owning balance/margin truth (`Simulated*` leaves compute, `Venue*` caches) across two
+  orthogonal axes (simulated-vs-venue, cash-vs-margin); stripped `Portfolio.user_id` (ACCT-04, app-layer);
+  shaped the `LiveConnector` interface. Backtest oracle byte-exact after the extraction (ACCT-03).
+- ✓ **CONN-01..06 — OKX connector (Phase 2):** live OKX access as **one session + domain adapters**
+  (data/trading/account arms), not a two-arm venue object; ccxt.pro by default with a native escape hatch
+  behind the interface; single `sandbox: bool`; async/sync bridge bottled at the connector edge; `to_money`
+  at the connector boundary (ccxt returns floats). CR-01/CR-02 closed downstream by Phases 3–5.
+- ✓ **FEED-01..05 — LiveBarFeed (Phase 3):** ring-buffer `BarFeed` impl consuming the Phase-2 data arm;
+  closed-bar detection off OKX's native `confirm` flag; warmup/backfill through the *identical*
+  `update(bar)` path (no bulk fast-path); monotonic-forward-only delivery; replaces `TimeGenerator`'s role.
+- ✓ **PAPER-01..04 — Paper path, the milestone DoD (Phase 4):** reused `SimulatedExchange` **as-is** as the
+  paper exchange (pure `MatchingEngine` + fee/slippage) driven by `LiveBarFeed` over `SimulatedAccount`
+  math; correctness gate = **paper-parity: the golden dataset replayed through the live-paper path yields
+  the backtest oracle frame-exact** (`test_paper_parity.py`, PAPER-04) + a live-paper lifecycle test.
+- ✓ **RECON-01..06 — Real/sandbox path + reconciliation + persistence live-drive (Phase 5 + 05.1/05.2/05.3
+  remediation waves):** `OkxConnector` (one session) → 3 injected adapters → `LiveBarFeed` → strategy →
+  order → `OkxExchange._emit_fill` (unconditional pass-through even under halt/pause) → `VenueAccount`-linked
+  portfolio; `VenueReconciler` adopts explainable per-symbol drift under 1:1, halts on orphans, re-links
+  brackets; a session-start baseline guard, a **durable restart-real ledger** with symmetric dedup-ring
+  rehydration, and stream/reconnect resilience hardening (Waves 2–3). **Human-observed GREEN on the OKX demo
+  venue** — a real 0.0001 BTC fill settled into position + cash with the engine not halting (05.1-09 CONF-B
+  settlement proof, 2026-07-05).
+- ✓ **UNIV-01/02 — Dynamic universe membership (Phases 6 + 7 hardening):** poll timer → `UniversePollEvent`
+  → spawn_warmup / absorb_warmup → `BarsLoaded` → strict-ordered warm-verify → mark_ready → subscribe, with
+  detach-on-flat; Phase 7 added async warmup + a per-symbol `isReady` readiness gate and warmup re-delivery
+  idempotency (07-10 CR-01, LIVE-ONLY, inert on the oracle).
+- ✓ **RUN-01 / RES-01 / COV-01 (cross-cutting):** live resilience (reconnect/partial-fill/rate-limit/gap
+  recovery); FL-13 live-surface coverage (`test_live_system_okx_wiring.py`, 11 real-wiring assertions);
+  an **inertness invariant** proven directly — a clean-interpreter subprocess probe confirms the backtest
+  path imports no connector/ccxt/live_bar_feed/replay/reconciler/universe code, and the live-only event
+  types are explicit-empty on the shared backtest `_routes` literal. (RUN-01 FastAPI/channel surface
+  deferred by documented scope decision.)
+- ⚠ Non-blocking at close: **01-REVIEW WR-01** margin-mode `total_equity`/`margin_ratio` double-counts the
+  borrowed notional — a real defect but **dark on the all-spot v1.7 golden** (the formula degenerates to
+  correct), owner-gated (a fix moves 6 owner-frozen goldens, needs external cross-validation) → carried to
+  the next milestone before any live margin/leverage consumer. **05.1-REVIEW WR-04** off-vocabulary halt
+  reason `'baseline-residual'` — deferred by owner decision into the next-milestone `live_trading_system.py`
+  refactor + halt-vocabulary review. **07 CR-01** atomic PairStrategy live reconfiguration → next-milestone
+  feature (v1.7 shipped a refusal guard). Plus INFO-level cosmetics, all oracle-dark. 14 pending todos are
+  the acknowledged rolling carry-forward (`todos/pending/v17-residual-carryforward.md`). See
+  `milestones/v1.7-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
+
 ### Active
 
 <!-- v1.0 (Backtest-Correctness Refactor) SHIPPED 2026-06-08 — 45 requirements.
@@ -440,25 +495,30 @@ caching foundation; DB-gated, behavior-preserving on the backtest path; SMA_MACD
      v1.3 (Engine Surface Completion) SHIPPED 2026-06-14 — 10 requirements.
      v1.4 (Margin, Leverage, Shorts & Trailing Stops) SHIPPED 2026-06-22 — 23 requirements.
      v1.5 (Backtest Performance Optimization) SHIPPED 2026-06-26 — 11 requirements.
-     v1.6 (N+3b — Persistence Foundation) SHIPPED 2026-06-30 — 20 requirements. -->
+     v1.6 (N+3b — Persistence Foundation) SHIPPED 2026-06-30 — 20 requirements.
+     v1.7 (Live Trading Readiness) SHIPPED 2026-07-07 — 32 requirements. -->
 
-**Active milestone: v1.7 — Live Trading Readiness (trimmed N+4 / Backlog 999.3).** Started 2026-06-30.
-Land the new operating mode, **paper-first on OKX**: an `Account` abstraction (oracle-gated refactor),
-the `LiveConnector`/`OkxConnector`, a streaming `LiveBarFeed`, the paper path (the DoD — paper-parity
-vs the backtest oracle), the real/sandbox path that *drives* the v1.6 operational store + `VenueAccount`
-reconciliation, a lean dynamic-universe poll seam, and FL-13 live-surface coverage — all without
-disturbing the byte-exact backtest oracle. Full scope in the **Current Milestone** section above;
-requirements in `REQUIREMENTS.md`, phases in `ROADMAP.md`. v1.0 (45 reqs), v1.1 (51 reqs), v1.2 (18
-reqs), v1.3 (10 reqs), v1.4 (23 reqs), v1.5 (11 reqs), and v1.6 (20 reqs) are shipped and recorded in
-the Validated section above and under `milestones/`.
+**No active milestone — v1.7 shipped 2026-07-07; next milestone not yet defined.** Start it with
+`/gsd:new-milestone`. The owner's stated next direction is a **`live_trading_system.py` full refactor +
+halt-reason storage/vocabulary review**, and (per the `fastapi-application-layer-plan` memory) wrapping
+iTrader in a **FastAPI application layer / control-plane** — which is the consumer that makes the typed
+halt vocabulary (05.1-REVIEW WR-04) and the margin-equity adjudication (01-REVIEW WR-01) load-bearing.
+The single substantive carry-forward defect to adjudicate before any live margin/leverage consumer is
+`margin-equity-double-counts-notional-wr01` (owner-gated, oracle-dark). v1.0 (45 reqs), v1.1 (51 reqs),
+v1.2 (18 reqs), v1.3 (10 reqs), v1.4 (23 reqs), v1.5 (11 reqs), v1.6 (20 reqs), and v1.7 (32 reqs) are
+shipped and recorded in the Validated section above and under `milestones/`.
 
 ### Out of Scope
 
 <!-- Deferred to future milestones with explicit tags. Reasoning prevents re-adding. -->
 
-- **Live mode** (`D-live`) — Binance streaming, WebSocket reconnection, restart sync, venue
-  reconciliation, `TradingInterface`/API order path, live threading lifecycle, env-only secrets —
-  whole separate risk surface; this program is backtest-first
+- ~~**Live mode** (`D-live`)~~ — **DELIVERED (paper-first) in v1.7** (2026-07-07): live OKX streaming via
+  the `OkxConnector` (ccxt.pro + native escape hatch), WebSocket reconnection/resilience, `LiveBarFeed`,
+  restart-real durable ledger + `VenueAccount` reconciliation, live threading lifecycle, and env-only
+  secrets all shipped; the paper path is DoD-gated (paper-parity vs the oracle) and the real/sandbox path
+  is human-observed GREEN on the OKX demo venue. Remaining deferred: **real-money production** operation,
+  the FastAPI/`TradingInterface` control-plane surface (RUN-01, scope-deferred), trade-aggregation bar
+  fidelity (TRADE-01), and Phase-B perp realism (FUND-01..04) — all → next milestone / v2.
 - ~~**SQL persistence** (`D-sql`)~~ — **DELIVERED in v1.6** (2026-06-30): the swappable SQL spine,
   results store, the three operational Postgres backends (order/portfolio-state/signal), FL-06
   `SqlHandler` hardening, and Alembic migrations all shipped. Live-DRIVE of the operational store
@@ -553,6 +613,14 @@ the Validated section above and under `milestones/`.
 | v1.6 Owner Decisions: SQLite-research + Postgres-only-operational + Turso-opt-in-LATER; results all-`Float`; frames JSON/gzip (no Parquet/`pyarrow`); no `DecimalAsText`; sweep loop OUT | The research seed's "Turso-default / native DECIMAL / Parquet" premises didn't hold for our batch-dump workload; money fidelity is preserved by Postgres-native `Numeric` (money never touches SQLite), and the optimization loop is a later milestone | ✓ Good — shipped v1.6 exactly as scoped; substrate stays Optuna-FK-ready + Turso-ready (one engine-URL swap) without adding the driver |
 | v1.6: live composition-root wiring deferred to N+4 (D-01) | The operational store has no live feed to drive it in v1.6; building + testcontainers-verifying the components now, and wiring the live root when N+4 builds the feed, avoids dead live wiring against an unbuilt loop | — Pending — `CachedSql*`/`Sql*` built + verified; live root hardcodes `'backtest'` for 2/3 concerns; resolves in N+4 per RETAIN-03 |
 | v1.6: classify caches, do not rewrite or unify (#3) | Most of the ~14 cache sites are already correct; a "unify into one Arrow-backed object" rewrite would risk the v1.5 hot path for no measured win | ✓ Good — shipped v1.6 (CACHE-01/02); committed classification map + per-site anchors + grep-matches-inventory test; v1.5 hot path untouched |
+| v1.7: paper-first DoD — paper-parity vs the backtest oracle is the correctness gate (LX-01) | Live correctness is unfalsifiable without a reference; replaying the golden dataset through the live-paper path and demanding the oracle frame-exact makes "the live path is correct" a real pass/fail | ✓ Good — shipped v1.7 (PAPER-04); `test_paper_parity.py` frame-exact vs a fresh backtest, oracle byte-exact |
+| v1.7: one milestone, refactor-phase-first (Account extraction before any live code) (LX-02) | Building live code on the old `Portfolio`-owns-cash shape would bake in the wrong seam; extracting `Account` first (oracle-gated) means live/venue accounting plugs into a correct boundary | ✓ Good — shipped v1.7 (Phase 1 ACCT-01..06); backtest oracle byte-exact after the extraction |
+| v1.7: `LiveConnector` is ours over ccxt.pro, one session + domain adapters (LX-03/LX-05) | A two-arm venue object leaks async + venue quirks across the engine; owning a thin interface with data/trading/account adapters bottles the async/sync bridge at the connector edge and keeps venues swappable | ✓ Good — shipped v1.7 (Phase 2 CONN-01..06); OKX as one session + 3 adapters, native escape hatch behind the interface |
+| v1.7: reuse `SimulatedExchange` AS-IS as the paper exchange (LX-06) | The pure `MatchingEngine` + fee/slippage is already the validated fill model; a second paper-fill path would double the surface to trust | ✓ Good — shipped v1.7 (Phase 4); paper path reuses the unchanged exchange, driven by `LiveBarFeed` |
+| v1.7: warmup/backfill through the identical `update(bar)` path, no bulk fast-path (LX-09) | A separate bulk-load path would diverge from the per-tick delivery contract (look-ahead, ordering); one path means one thing to prove | ✓ Good — shipped v1.7 (Phase 3 FEED-03); monotonic-forward-only, closed-bar off the native `confirm` flag |
+| v1.7: 1 account : 1 portfolio, venue is source of truth; reconcile explainable drift, halt on orphans (LX-04) | A live venue diverges from the engine mirror; adopting explainable per-symbol drift under 1:1 while halting (freeze-in-place) on the unexplained is the safe verify-then-trust posture | ✓ Good — shipped v1.7 (Phase 5 RECON); `VenueReconciler` + session baseline guard; human-observed GREEN settlement on OKX demo |
+| v1.7: keep the live/connector machinery INERT on the backtest hot path (recurring gate) | The whole live surface must add zero backtest cost/risk; making inertness structural (separate live routes dict, no connector imports on the backtest path) and proving it by a clean-interpreter probe keeps the oracle trustworthy | ✓ Good — shipped v1.7; import-quarantine subprocess probe green, oracle byte-exact (134 / `46189.87730727451`), no W1/W2 regression |
+| v1.7: margin-equity WR-01 fix is owner-gated, NOT folded in at close | The fix moves 6 owner-frozen goldens and the defect is dark on the all-spot golden (never oracle-caught); folding it in silently would break the frozen-golden contract without external cross-validation | — Pending — deferred, tracked (`margin-equity-double-counts-notional-wr01`); adjudicate before any live margin/leverage consumer reads margin equity |
 
 ## Evolution
 
@@ -599,23 +667,29 @@ This document evolves at phase transitions and milestone boundaries.
 
 **Tech debt at v1.6 close (non-blocking, tracked):** live composition-root wiring deferred to N+4 (D-01 — the `CachedSql*`/`Sql*` components are built + testcontainers-verified, but the live root hardcodes `'backtest'` for the portfolio-state + signal concerns and order storage is `SYSTEM_DB_URL`-conditional; by design per RETAIN-03 — built + tested here, driven by a real live feed in N+4); draft Nyquist VALIDATION.md records on all 5 phases (process-artifact gap only — every phase carries full VERIFICATION.md test evidence); ~13 WR-/IN- non-blocking review warnings catalogued in the audit; the v1.5 single-pass per-bar valuation carry (profile-first gated). **Resolved at close:** the Phase 02 stale W1/W2 UAT + verification items (resolved by Phase 4's −2.8% measurement) and 2 completed quick tasks flagged only by the `gsd-sdk audit-open` filename bug (cleared with completion markers). See `milestones/v1.6-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
-**v1.7 — Live Trading Readiness — ALL PHASES COMPLETE (ready to close) 2026-07-07.** 7 phases (numbering reset to Phase 1): Account Abstraction (1), OKX Connector (2), LiveBarFeed (3), Paper Path / DoD (4), Real+Sandbox Path + Reconciliation (5), Dynamic Universe Membership (6), Live Dynamic-Universe Hardening (7). The engine gained a live operating mode (paper-first on OKX) gated on **paper-parity vs the byte-exact backtest oracle** without disturbing that oracle (134 / `46189.87730727451`). Phase 7 closed 2026-07-07 (10/10 plans): async warmup + per-symbol `isReady` readiness gate, the WR-01/04/05/06 Phase-6-review remediations (07-09), and the **07-10 CR-01 gap-closure** — warmup re-delivery idempotency (Option B / Level 2): `absorb_warmup` `_last_delivered` cursor guard + `Strategy.update` `_last_bar_time` cursor + cadence-gated FAILED-retry with 3-strike warn, all LIVE-ONLY and inert on the byte-exact oracle. Phase-07 verification 14/14 must-haves; full unit suite 1752 green, `mypy --strict` clean. Two non-blocking `absorb_warmup` review warnings (revision-vs-duplicate distinction, off-grid rejection) deferred to `.planning/todos/pending/`. Milestone close/archive pending via `/gsd:complete-milestone`.
+**v1.7 — Live Trading Readiness — SHIPPED 2026-07-07.** 10 phases (numbering reset to Phase 1, with 05.1/05.2/05.3 remediation waves inserted), 75 plans, all 32 v1 requirements validated at milestone audit (32/32 requirements, 10/10 phases passed, 9/9 cross-phase seams wired, 4/4 E2E flows — `milestones/v1.7-MILESTONE-AUDIT.md`, status `passed`, no blockers): Account Abstraction (1), OKX Connector (2), LiveBarFeed (3), Paper Path / DoD (4), Real+Sandbox Path + Reconciliation + Persistence Live-Drive (5) with three remediation waves (05.1 settlement / 05.2 restart-real / 05.3 resilience hardening), Dynamic Universe Membership (6), Live Dynamic-Universe Hardening (7). The engine gained a live operating mode (paper-first on OKX) gated on **paper-parity vs the byte-exact backtest oracle** without disturbing that oracle (134 / `46189.87730727451`): an `Account` abstraction (oracle-gated extraction), the `OkxConnector` (one session + data/trading/account adapters), a streaming `LiveBarFeed`, the DoD paper path (`test_paper_parity.py` frame-exact vs a fresh backtest), a reconciled real/sandbox path **human-observed GREEN on the OKX demo venue** (a real 0.0001 BTC fill settled into position + cash, engine not halting — 05.1-09 CONF-B proof 2026-07-05) with a durable restart-real ledger + symmetric dedup-ring rehydration, and a poll-driven dynamic universe hardened with async warmup + per-symbol readiness gate + warmup re-delivery idempotency (07-10 CR-01). The live/connector machinery is **provably inert on the backtest hot path** (clean-interpreter import-quarantine probe green; live-only event types explicit-empty on the shared backtest `_routes`). Full non-live suite **1981 passed**, `mypy --strict` clean (234 files), `filterwarnings=["error"]` green; Decimal end-to-end (`to_money` at the connector edge), single UUIDv7, determinism preserved. Milestone v1.7 closed and archived 2026-07-07; next milestone not yet defined (owner's stated direction: `live_trading_system.py` full refactor + FastAPI control-plane).
 
-## Next Milestones (after v1.6)
+**Tech debt at v1.7 close (non-blocking, tracked):** the single substantive open defect is **01-REVIEW WR-01** margin-mode `total_equity`/`margin_ratio` double-counting the borrowed notional — owner-gated, **dark on the all-spot golden** (degenerates to correct), a fix moves 6 owner-frozen goldens → adjudicate (with external cross-validation) before any live margin/leverage consumer reads margin equity (`margin-equity-double-counts-notional-wr01`). **05.1-REVIEW WR-04** off-vocabulary halt reason `'baseline-residual'` deferred by owner decision into the next-milestone `live_trading_system.py` refactor + halt-vocabulary review. **07 CR-01** atomic PairStrategy live reconfiguration → next-milestone feature (v1.7 shipped a refusal guard). Plus INFO-level cosmetics, all oracle-dark. 14 pending todos are the acknowledged rolling carry-forward (`todos/pending/v17-residual-carryforward.md`). **Resolved at close:** the 18-item pre-close open-artifact scan → 10 quick-task false positives cleared with completion markers, 2 CONF-B debug captures + 1 stale UAT gap re-stamped to their verified GREEN status. See `milestones/v1.7-MILESTONE-AUDIT.md` and STATE.md → Deferred Items.
 
-N+2 (Margin, Leverage, Shorts & Trailing Stops) shipped as **v1.4** (2026-06-22), N+3 Performance
-shipped as **v1.5** (2026-06-26), and N+3b Persistence shipped as **v1.6** (2026-06-30) — see the
-**Shipped Milestone** sections above. Backlog 999.2 is now fully consumed. Remaining backlog (full
-intent in `ROADMAP.md` Backlog); **N+4 is next**:
+## Next Milestones (after v1.7)
 
-- **N+4 — Live Trading Readiness** (Backlog 999.3, capstone) — land the new operating mode as one
-  coherent, testable thing: a real-time data engine (#6) + live execution loop (#2) + production
-  universe/screener (#7) that **drives** the v1.6 operational store (built + testcontainers-verified,
-  live-driven only here), a first-class `Account` reconciliation mirror (the venue becomes source of
-  truth), live-start indicator backfill through the same `update(bar)` path, `LiveTradingSystem`/
-  `TradingInterface` test coverage (FL-13), and optional Phase-B perp realism (funding/mark-price
-  liquidation, FUND-01..04). Depends on validated multi-scenario behavior (N+1), the margin model (N+2),
-  and durable storage (N+3 perf v1.5 + N+3b persistence v1.6) — all now shipped.
+N+2 (Margin/Leverage/Shorts/Trailing) shipped as **v1.4** (2026-06-22), N+3 Performance as **v1.5**
+(2026-06-26), N+3b Persistence as **v1.6** (2026-06-30), and **N+4 — Live Trading Readiness** as **v1.7**
+(2026-07-07) — the whole 999.x backlog through N+4 is now consumed. See the **Shipped Milestone** +
+**Current State** sections above. **The next milestone is not yet defined** (`/gsd:new-milestone`).
+
+Owner's stated direction for the next cycle:
+- **`live_trading_system.py` full refactor + halt-reason storage/vocabulary review** — the 2172-line live
+  composition root is refactored, and the free-string halt-reason vocabulary is reviewed and typed (a
+  `HaltReason` enum), which subsumes the deferred 05.1-REVIEW WR-04 (`'baseline-residual'` off-vocabulary).
+- **FastAPI application layer / control-plane** (`fastapi-application-layer-plan` memory) — wrap iTrader in
+  a web/control-plane surface; this is the consumer that makes a typed halt vocabulary and a status/
+  monitoring surface load-bearing (RUN-01, scope-deferred from v1.7).
+- **Adjudicate the margin-equity WR-01 defect** (owner-gated, oracle-dark) with external cross-validation
+  before any live **margin/leverage/short** consumer reads margin equity — it is safe only while the golden
+  stays all-spot.
+- Optional **Phase-B perp realism** (funding accrual / mark-price liquidation, FUND-01..04) and a
+  production universe/screener remain in the backlog.
 
 Crypto-first keeps the whole sequence tractable (no multi-currency, no borrow-locate). Multi-asset
 (forex / equities / ETF) is deferred indefinitely.
@@ -650,3 +724,6 @@ a measurable W1 improvement — **EXCEPT Phase 5 (reframed 2026-06-24), which de
 the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a re-frozen reference
 (P5-D01/D02), not byte-identity. Source: `perf/results/PERF-BASELINE-RESULTS.md` (spike = the research).
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
+
+---
+*Last updated: 2026-07-07 after v1.7 (Live Trading Readiness) milestone close.*

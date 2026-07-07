@@ -13,7 +13,8 @@ findings:
   warning: 3
   info: 2
   total: 5
-status: issues_found
+status: resolved
+resolved_by: "Phase 5.3 plan 05.3-03 (D-16 '05-13 correlation carry-overs'), PR #79 / fe287f4b — commits c7c91550 (WR-01 release_pending + IN-01 capacity<1 guard + bounded/alarmed uncorrelated buffer) and d62df22a (WR-02 mark-seen-after-emit + WR-03 release drains through resolve). RED-first (60969d7f / 213587e5)."
 ---
 
 # Phase 05 (Plan 05-13): Code Review Report
@@ -21,7 +22,17 @@ status: issues_found
 **Reviewed:** 2026-07-04
 **Depth:** standard
 **Files Reviewed:** 3
-**Status:** issues_found
+**Status:** resolved
+
+> **RESOLUTION (2026-07-07):** All three WARNINGs and IN-01 were closed by **Phase 5.3 plan 05.3-03**
+> (D-16 "05-13 correlation carry-overs"), in HEAD via PR #79 (`fe287f4b`). RED-test-first.
+> WR-01 → `release_pending()` drops the pre-correlation clOrdId entry on a *definitive* submit failure
+> (not on an ambiguous transport timeout, D-13). WR-02 → `resolve()` no longer marks the trade id seen;
+> the caller calls `mark_seen` only after `_emit_fill` returns True (a malformed fill can't burn the
+> slot). WR-03 → the uncorrelated buffer is bounded + alarmed and drains **through `resolve`**, so a
+> replayed buffered fill is deduped on the way out and can never double-emit. IN-01 → `capacity < 1`
+> guard added. IN-02 (test-modeling nitpick, INFO) is the only item not code-affecting. See each finding
+> marked **✓ FIXED** inline below.
 
 ## Summary
 
@@ -57,6 +68,8 @@ not fully close.
 ## Warnings
 
 ### WR-01: clOrdId map still grows unbounded on the submit-failure and fast-fill-race-full-fill paths
+
+**✓ FIXED** (Phase 5.3 / 05.3-03, D-16, commit `c7c91550`) — `register_pending` now has a paired inverse `release_pending(clordid)` that drops the pre-correlation `_orders_by_clOrdId` entry on a *definitive* submit failure (kept on an ambiguous transport timeout per D-13, so a still-resting order's streamed fill can still resolve via the clOrdId fallback). Idempotent no-op on an unknown/already-released clOrdId. Original finding preserved below.
 
 **File:** `itrader/execution_handler/exchanges/venue_correlation.py:115-135, 226-247`; `itrader/execution_handler/exchanges/okx.py:305-321, 408-420`
 **Issue:** `release` only drops the `_orders_by_clOrdId` entry via
@@ -104,6 +117,8 @@ by the resolved order's `order_id`.
 
 ### WR-02: `resolve` marks a trade id seen before `_emit_fill` validates the payload — a malformed fill permanently consumes its dedup slot
 
+**✓ FIXED** (Phase 5.3 / 05.3-03, D-16, commit `d62df22a`) — `resolve` now only CHECKS for an already-seen key and returns the `dedup_key`; the caller consumes the slot via `mark_seen` ONLY after `_emit_fill` returns True, so a malformed/skipped fill no longer burns the slot and a later corrected re-delivery still settles. (This is the review's recommended fix (b).) Original finding preserved below.
+
 **File:** `itrader/execution_handler/exchanges/venue_correlation.py:181-183`; `itrader/execution_handler/exchanges/okx.py:392-438`
 **Issue:** `resolve` calls `_mark_seen_locked(trade_id)` on the `"emit"` outcome
 *before* the caller mints. `_emit_fill` then validates the payload and returns
@@ -124,6 +139,8 @@ price/amount/timestamp presence inside `resolve` before marking seen and return 
 re-send. Given the WR-03 single-hold requirement, (b) is the cheaper fix.
 
 ### WR-03: uncorrelated fills are not deduped, so a reconnect re-send double-buffers and later double-emits
+
+**✓ FIXED** (Phase 5.3 / 05.3-03, D-16, commit `d62df22a` + `c7c91550`) — the uncorrelated buffer is now bounded + alarmed, and buffered late fills drain **through `resolve`** on release, so a replayed buffered fill hits the symbol-scoped dedup gate on the way out and can never double-emit (the review's actual double-emit concern). A transient internal double-buffer within the pre-correlation window is bounded and never reaches the portfolio. Original finding preserved below.
 
 **File:** `itrader/execution_handler/exchanges/venue_correlation.py:176-179`; `itrader/execution_handler/exchanges/okx.py:487-491`
 **Issue:** In `resolve`, the `"buffered"` branch appends to
@@ -152,6 +169,8 @@ if venue_id is not None:
 ## Info
 
 ### IN-01: `capacity=0` makes the dedup set grow unbounded while the ring stores nothing
+
+**✓ FIXED** (Phase 5.3 / 05.3-03, D-16, commit `c7c91550`) — a `capacity < 1` guard was added. Original finding preserved below.
 
 **File:** `itrader/execution_handler/exchanges/venue_correlation.py:90, 195-205`
 **Issue:** With `capacity=0`, `deque(maxlen=0)` never stores an element, but

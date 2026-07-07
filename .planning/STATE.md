@@ -2,41 +2,38 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: milestone_complete
-stopped_at: Phase 07 complete (10/10) — v1.7 (Phases 1-7) complete; ready to close/archive the milestone (999.3 is a historical seed already promoted into v1.7, not a forward phase)
-last_updated: 2026-07-07T11:08:49.601Z
-last_activity: 2026-07-07 -- Quick task 260707-iy6: applied 07-REVIEW WR-01/WR-02/IN-01/IN-02 fixes
+status: Awaiting next milestone
+stopped_at: Completed 07-10-PLAN.md (CR-01 gap-closure — warmup re-delivery idempotency)
+last_updated: "2026-07-07T14:06:39.708Z"
+last_activity: 2026-07-07 — Milestone v1.7 completed and archived
 progress:
   total_phases: 11
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 75
   completed_plans: 75
-  percent: 82
+  percent: 91
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness active; roadmap created)
+See: .planning/PROJECT.md (updated 2026-07-07 — v1.7 Live Trading Readiness SHIPPED + archived; no active milestone)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
-152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
+152.8 MB). v1.7 added a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** v1.7 (Live Trading Readiness) complete — all 7 phases shipped; ready to close/archive the milestone
+**Current focus:** No active milestone — v1.7 shipped + archived 2026-07-07. Next: `/gsd:new-milestone`
+(owner's stated direction: `live_trading_system.py` full refactor + halt-vocabulary review + FastAPI
+control-plane). Adjudicate the owner-gated margin-equity WR-01 defect before any live margin consumer.
 
 ## Current Position
 
-Milestone: v1.7 — Live Trading Readiness — COMPLETE (Phases 1-7)
-Phase: 07 (live-dynamic-universe-hardening) — complete (10/10 plans)
-Status: Milestone complete — next step is `/gsd:complete-milestone`
-Last activity: 2026-07-07 — Quick task 260707-iy6: applied 07-REVIEW WR-01/WR-02/IN-01/IN-02 fixes
-
-Progress: [██████████] 100%
-
-Note: `phase.complete` advanced to "999.3" (an N+4 backlog seed already promoted INTO v1.7 — a historical
-entry, not a forward phase). Corrected here manually; do NOT plan/execute 999.3.
+Phase: Milestone v1.7 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-07 — Milestone v1.7 completed and archived
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -309,15 +306,16 @@ Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (d
 
 ## Deferred Items
 
-Program-level items deferred across milestones; v1.7-relevant rows promoted INTO this milestone are marked.
+Program-level items deferred across milestones. The four v1.7-promoted rows are now **DELIVERED**;
+the v1.7-close carry-forward (14 pending todos, acknowledged at close 2026-07-07) follows below.
 
 | Category | Item | Status | Target |
 |----------|------|--------|--------|
-| Live drive | Persistence driven by a real live feed + venue reconciliation (v1.6 store built/tested on testcontainers) | ⏳ **Promoted to v1.7** (Phase 5, RECON-04/05) | v1.7 |
-| Live account | `Account` abstraction + reconciliation mirror (ACCT) | ⏳ **Promoted to v1.7** (Phase 1 + Phase 5 `VenueAccount`) | v1.7 |
-| Live coverage | `LiveTradingSystem` test coverage (FL-13) | ⏳ **Promoted to v1.7** (COV-01, Phase 4→5) | v1.7 |
-| Cleanup | `Portfolio.user_id` removal (app-layer multi-tenancy) | ⏳ **Promoted to v1.7** (ACCT-04, Phase 1) | v1.7 |
-| D-screener | Production screener / ranking / rebalance loop | Deferred (v1.7 ships only the lean poll seam, Phase 6) | v2 |
+| Live drive | Persistence driven by a real live feed + venue reconciliation | ✅ **Delivered v1.7** (Phase 5, RECON-04/05) | — |
+| Live account | `Account` abstraction + reconciliation mirror (ACCT) | ✅ **Delivered v1.7** (Phase 1 + Phase 5 `VenueAccount`) | — |
+| Live coverage | `LiveTradingSystem` test coverage (FL-13) | ✅ **Delivered v1.7** (COV-01, Phase 4→5) | — |
+| Cleanup | `Portfolio.user_id` removal (app-layer multi-tenancy) | ✅ **Delivered v1.7** (ACCT-04, Phase 1) | — |
+| D-screener | Production screener / ranking / rebalance loop | Deferred (v1.7 shipped only the lean poll seam, Phase 6/7) | v2 |
 | Optimization | Optuna sampler + sweep loop (OPT-01) — v1.6 ships the FK-ready substrate only | Deferred | v2 |
 | Turso/libSQL | `sqlalchemy-libsql` opt-in backend (TURSO-01) — interface stays Turso-ready | Deferred | v2 (post-beta + measured) |
 | Perp realism (Phase B) | FUND-01..04 (funding accrual, mark-price liq, funding pipeline, freqtrade oracle) | Deferred | v2 |
@@ -327,10 +325,23 @@ Program-level items deferred across milestones; v1.7-relevant rows promoted INTO
 | Deferred perf (v2) | PERF-09 / PERF-10 (strategy-level dedup, O(n²)-in-symbol guard) | Deferred | future (large universes) |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions | Deferred | indefinite (crypto-first) |
 
+**v1.7 close carry-forward (14 pending todos, acknowledged 2026-07-07 — indexed by
+`todos/pending/v17-residual-carryforward.md`; none block the paper-spot DoD):**
+
+| Item (`todos/pending/`) | Class | Status | Target |
+|-------------------------|-------|--------|--------|
+| `margin-equity-double-counts-notional-wr01` | Real defect (01-REVIEW WR-01) | ⚠ **Owner-gated** — dark on the all-spot golden (degenerates to correct); a fix moves 6 owner-frozen goldens → needs external cross-validation before any live margin/leverage/short consumer reads margin equity | next milestone (pre-margin/live) |
+| `off-vocabulary-halt-reason-baseline-residual-wr04` | Minor (05.1-REVIEW WR-04) | Deferred by owner decision → the next-milestone `live_trading_system.py` full refactor + halt-vocabulary review (a typed `HaltReason` enum, owned there, not a pre-close patch) | next milestone |
+| `pair-strategy-live-reconfiguration` | Next-milestone feature (07 CR-01) | Deferred by design — v1.7 shipped a refusal guard; atomic ordered-pair leg swap is future work | next milestone |
+| 11× refactor/feature todos (multi-timeframe consolidator, `Instrument` split, deep shared-bar history, de-pandas LiveBarFeed time model, single-pass valuation, synthetic-spread instrument, native tagged MTF, OKX markets-map freshness, unify backtest bar-gen, warmup-depth K seam, …) | Future features/refactors | Rolling backlog | future milestones |
+
 v1.0–v1.6 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md files under
-`milestones/`. v1.6 audit (`tech_debt`, no blockers): live composition-root wiring → promoted to v1.7
-Phase 5 (D-01); draft Nyquist VALIDATION.md records on all 5 phases; ~13 WR-/IN- non-blocking review
-warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`).
+`milestones/`. **v1.7 audit (`passed`, no blockers, `milestones/v1.7-MILESTONE-AUDIT.md`):** 32/32
+requirements satisfied, 10/10 phases passed, 9/9 seams wired, 4/4 E2E flows; the 18-item pre-close
+open-artifact scan resolved to the 14 carry-forward todos above (10 quick-task false positives cleared
+with completion markers, 2 CONF-B debug captures + 1 stale UAT gap re-stamped to their verified GREEN
+status). The single substantive open item is `margin-equity-double-counts-notional-wr01` (owner-gated,
+oracle-dark).
 | Phase 01 P01 | 3min | 3 tasks | 5 files |
 | Phase 01 P04 | 2min | 2 tasks | 3 files |
 | Phase 01 P02 | 4min | 2 tasks | 2 files |
@@ -350,18 +361,24 @@ warnings — all consciously accepted (see `milestones/v1.6-MILESTONE-AUDIT.md`)
   `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` archived as `milestones/v1.6-*`. Only the `999.3` backlog
   seed dir remains in `.planning/phases/`, so the new v1.7 `01-*..06-*` dirs will not collide.
 
-- **At v1.7 close (reminder):** `git mv` the v1.7 phase dirs to `milestones/v1.7-phases/` and archive
-  `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` as `milestones/v1.7-*`.
+- **At v1.7 close (done 2026-07-07):** all 10 v1.7 phase dirs (`01-*..07-*` + `05.1/05.2/05.3-*`)
+  `git mv`'d to `milestones/v1.7-phases/`; `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` archived as
+  `milestones/v1.7-*`; `.planning/phases/` is now empty (no `999.3` seed dir remained). Pre-close
+  open-artifact scan resolved to 14 carry-forward todos (see Deferred Items). `REQUIREMENTS.md` removed
+  via `git rm` (fresh for the next milestone). Git tag `v1.7` NOT created (owner deferred tagging to a
+  manual step).
 
 ## Session Continuity
 
-Last session: 2026-07-07T10:45:57Z
-Stopped at: Completed 07-10-PLAN.md (CR-01 gap-closure — warmup re-delivery idempotency)
+Last session: 2026-07-07 — v1.7 milestone close
+Stopped at: Milestone v1.7 completed and archived (PROJECT.md evolved, ROADMAP collapsed, MILESTONES entry, retrospective updated)
 Resume file: None
-Carried todo: live-backfill-through-update (now Phase 3 / FEED-03); single-pass valuation (deferred, future perf)
+Carried todo: 14 pending todos in `todos/pending/` (carry-forward backlog — `v17-residual-carryforward.md` is the index; the only substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated)
 
 ## Operator Next Steps
 
-- Phase 05 is COMPLETE (12/12, RECON-06 closed). Plan Phase 6 (Dynamic Universe Membership) with
-  `/gsd:plan-phase 6` — carry the "make the live trading pair configurable (currently hardcoded
-  BTC/USDC for OKX EEA/MiCA)" item into its scope.
+- Start the next milestone with `/gsd:new-milestone` (owner's stated direction: `live_trading_system.py`
+  full refactor + halt-reason storage/vocabulary review, and a FastAPI application-layer / control-plane).
+- Optionally create the git tag: `git tag -a v1.7 -m "v1.7 Live Trading Readiness"` (deferred at close).
+- Before any live margin/leverage consumer: adjudicate `margin-equity-double-counts-notional-wr01`
+  (owner-gated, oracle-dark) with external cross-validation.

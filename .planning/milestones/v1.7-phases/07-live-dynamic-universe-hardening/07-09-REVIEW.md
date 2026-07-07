@@ -15,7 +15,8 @@ findings:
   warning: 2
   info: 1
   total: 4
-status: issues_found
+status: resolved
+resolved_by: "PR #81 / af1ddb5a. WR-01 + WR-02 → OKX unsubscribe made a true no-op for a fully-absent symbol + close cleanup coro on spawn failure (okx_provider.py:327-349). CR-01 (BLOCKER) → plan 07-10 warmup re-delivery idempotency (Option B): _last_delivered cursor guard in absorb_warmup (live_bar_feed.py:342-393), per-symbol _last_bar_time cursor in Strategy.update (base.py:517-550), cadence-gated FAILED-retry + 3-strike warn in UniverseHandler (universe_handler.py:365-369, 540-568). IN-01 → documented residual (no action)."
 ---
 
 # Phase 7 (plan 07-09): Code Review Report
@@ -23,7 +24,7 @@ status: issues_found
 **Reviewed:** 2026-07-07T07:32:25Z
 **Depth:** standard
 **Files Reviewed:** 5
-**Status:** issues_found
+**Status:** resolved
 
 ## Summary
 
@@ -53,6 +54,8 @@ unconditional `spawn()` regresses the documented "safe no-op" contract**. Detail
 ## Critical Issues
 
 ### CR-01: WR-02 retry re-warm is non-idempotent — a warm-verify MISS can flip a symbol tradeable on CORRUPTED indicator/ring state
+
+**✓ FIXED** (plan 07-10, PR #81 / af1ddb5a) — warmup re-delivery idempotency (Option B), all three guards present: `_last_delivered` cursor guard in `absorb_warmup` (`live_bar_feed.py:342-393`), per-symbol `_last_bar_time` cursor in `Strategy.update` (`strategy_handler/base.py:517-550`), and cadence-gated FAILED-retry + 3-strike warn in `UniverseHandler` (`universe_handler.py:365-369` cadence gate, `540-568` streak). Overlapping re-fetch is now a no-op and a permanently-unwarmable symbol cannot churn faster than once per bar interval. Todo `warmup-retry-nonidempotent-tradeable-corrupted-cr01.md` moved to `completed/`. Original finding preserved below.
 
 **File:** `itrader/universe/universe_handler.py:477-490` (compose with
 `itrader/strategy_handler/strategies_handler.py:417-423`)
@@ -122,6 +125,8 @@ way, add a retry ceiling / backoff so a permanently-unwarmable symbol cannot chu
 
 ### WR-01: WR-03 `unsubscribe` now calls `self._connector.spawn(...)` unconditionally — breaks the "safe no-op if absent" contract and raises before `connect()`
 
+**✓ FIXED** (PR #81 / af1ddb5a) — `unsubscribe` now early-returns for a fully-absent symbol (no task, no own `_streams_down`/`_reconnect_attempts` entry) before any connector interaction, restoring the true no-op contract and avoiding the pre-connect `spawn` assertion (`okx_provider.py:327-331`). Original finding preserved below.
+
 **File:** `itrader/price_handler/providers/okx_provider.py:312-325`
 
 **Issue:**
@@ -160,6 +165,8 @@ GIL-atomic point-read, consistent with the existing `is_streaming_healthy` lock-
 
 ### WR-02: WR-03 leaks a never-awaited coroutine when `spawn()` raises
 
+**✓ FIXED** (PR #81 / af1ddb5a) — the `_cleanup()` coroutine is now built into `coro` and closed via `except BaseException: coro.close(); raise` if `_connector.spawn(coro)` raises after construction, so no `RuntimeWarning: coroutine was never awaited` leaks under `filterwarnings=["error"]` (`okx_provider.py:344-349`). Original finding preserved below.
+
 **File:** `itrader/price_handler/providers/okx_provider.py:314-325`
 
 **Issue:**
@@ -189,6 +196,8 @@ except BaseException:
 
 ### IN-01: `is_warm` vacuous-True lets a symbol not-yet-in-any-strategy pass the WR-02 gate
 
+**DEFERRED** (documented residual — no action required) — `is_warm` still returns vacuously `True` for a symbol in no concerned strategy's `.tickers` (`strategies_handler.py:122-126`); this is the intended AdmissionManager-backstopped limitation, not a defect. The `is_warm` docstring now records that it reflects indicator warmth only. Original finding preserved below.
+
 **File:** `itrader/strategy_handler/strategies_handler.py:120-125`
 
 **Issue:**
@@ -207,18 +216,21 @@ docstring so a future reader does not assume the gate covers the ticker-add race
 
 ---
 
-## Resolution (2026-07-07, owner: tiziaco)
+## Resolution (2026-07-07, owner: tiziaco) — FINALIZED: all findings resolved (merged in PR #81 / af1ddb5a)
 
 - **WR-01** — FIXED. `unsubscribe` now early-returns for a fully-absent symbol (no task, no own
   `_streams_down`/`_reconnect_attempts` entry); test reconciled to the true-no-op contract plus a
-  guard-precision case. Commit `fix(07-09): make OKX unsubscribe a true no-op + close cleanup coro on spawn failure`.
+  guard-precision case. `okx_provider.py:327-331`.
 - **WR-02** — FIXED. `_cleanup()` coroutine is closed if `_connector.spawn()` raises after construction.
-  Same commit.
-- **CR-01 (BLOCKER)** — DEFERRED to a Phase 07 gap-closure ("07-10"). Captured as
-  `.planning/todos/pending/warmup-retry-nonidempotent-tradeable-corrupted-cr01.md` with both remediation
-  options, the retry-policy decision, and the reachability caveat (the swallowed `on_bars_loaded` path is
-  not yet confirmed to fire). Not fixed inline because it requires design decisions on the money path.
-- **IN-01** — no action required (documented residual limitation).
+  `okx_provider.py:344-349`.
+- **CR-01 (BLOCKER)** — FIXED in Phase 07 gap-closure plan **07-10** (originally deferred; now landed).
+  Warmup re-delivery idempotency (Option B), all three guards verified against HEAD: `_last_delivered`
+  cursor guard in `absorb_warmup` (`live_bar_feed.py:342-393`), per-symbol `_last_bar_time` cursor in
+  `Strategy.update` (`strategy_handler/base.py:517-550`), and cadence-gated FAILED-retry + 3-strike warn
+  in `UniverseHandler` (`universe_handler.py:365-369`, `540-568`). The tracking todo
+  `warmup-retry-nonidempotent-tradeable-corrupted-cr01.md` is in `.planning/todos/completed/`.
+- **IN-01** — no action required (documented residual limitation; `is_warm` still vacuously `True` for a
+  symbol in no concerned strategy's `.tickers`, backstopped by AdmissionManager by design).
 
 ---
 
