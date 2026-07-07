@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.7
 milestone_name: Live Trading Readiness
-status: executing
-stopped_at: Completed 07-08-PLAN.md
-last_updated: "2026-07-07T06:58:38.241Z"
-last_activity: 2026-07-07 -- Phase 07 execution started
+status: ready_to_plan
+stopped_at: Phase 07 complete (9/9) — v1.7 phases 1-7 all delivered; CR-01 (07-09 review) deferred to a 07-10 gap-closure
+last_updated: 2026-07-07T08:27:23.376Z
+last_activity: 2026-07-07 -- Phase 07 complete (07-09 remediation + WR-01/WR-02 fixes; CR-01 deferred to 07-10)
 progress:
   total_phases: 11
   completed_phases: 9
   total_plans: 74
-  completed_plans: 73
+  completed_plans: 74
   percent: 82
 ---
 
@@ -24,14 +24,14 @@ See: .planning/PROJECT.md (updated 2026-06-30 — v1.7 Live Trading Readiness ac
 deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 adds a **live operating mode (paper-first on OKX)** with a real correctness gate
 (**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** Phase 07 — live-dynamic-universe-hardening
+**Current focus:** Phase 07 complete — v1.7 Live Trading Readiness phases 1-7 all delivered. Next: a **07-10 gap-closure** for the 07-09 review's CR-01 (warmup-retry idempotency), then close milestone v1.7. (The auto-computed "999.3" next-phase is a backlog placeholder — v1.7 defines no phase beyond 7.)
 
 ## Current Position
 
-Phase: 07 (live-dynamic-universe-hardening) — EXECUTING
-Plan: 1 of 9
-Status: Executing Phase 07
-Last activity: 2026-07-07 -- Phase 07 execution started
+Phase: 07 (complete — last phase of v1.7)
+Plan: Next — 07-10 gap-closure (CR-01) or milestone v1.7 close
+Status: Ready to plan
+Last activity: 2026-07-07
 
 Progress: [██████████] 100%
 
@@ -80,7 +80,7 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 **Velocity (program cumulative through v1.6):**
 
-- Total plans completed: 287 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
+- Total plans completed: 296 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
 - v1.7 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*

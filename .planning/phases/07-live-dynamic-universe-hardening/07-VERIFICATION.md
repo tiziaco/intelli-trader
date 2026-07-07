@@ -12,10 +12,10 @@ re_verification:
     - "on_bars_load_failed's 'retried next poll' claim (CR-02, truth #23, previously PARTIAL) — closed by 9cd5dd8d (Universe.mark_pending/failed_symbols + on_poll FAILED-retry fold-in, with RED->GREEN tests)."
   gaps_remaining: []
   regressions: []
-deferred:
+deferred: []
+resolved_post_hoc:
   - truth: "STRATEGY_COMMAND handling guards PairStrategy's 2-ticker invariant (CR-01)"
-    addressed_in: "Follow-on hardening plan (not yet scheduled)"
-    evidence: "No PairStrategy is registered at the live composition root (grep-confirmed zero live/my_strategies instantiation of PairStrategy(...) — only the class definitions in pair_base.py and eth_btc_pair_strategy.py exist). Dormant under the milestone's actual SMA_MACD-only live roster; tracked as a WARNING follow-on, not a phase blocker, per the prior verification's judgment (unchanged this pass)."
+    addressed_in: "Plan 07-09 (post-review remediation) — the isinstance(strategy, PairStrategy) refusal guard in StrategiesHandler.on_strategy_command; verified passed in 07-09-VERIFICATION.md (2026-07-07). This previously-deferred item is now CLOSED."
 human_verification: []
 ---
 
