@@ -1,10 +1,19 @@
 ---
-status: deferred
+status: resolved
 created: "2026-07-07"
+resolved: "2026-07-07"
+resolved_by: "07-10-PLAN.md (see 07-10-SUMMARY.md) — Option B unified monotonic idempotency, Level 2"
 source: Phase 07 (v1.7) plan 07-09 code review finding CR-01 — owner-deferred (tiziaco, 2026-07-07)
 tags: [live, warmup, readiness, idempotency, retry, indicators, ring, WR-02, CR-02, phase-07-gap-closure, 07-10]
 resolves_phase: "07.1"
 ---
+
+> **RESOLVED 2026-07-07 by 07-10** — absorb_warmup honors the existing `_last_delivered`
+> cursor (CR-01-feed), `Strategy.update` gains a `_last_bar_time` per-symbol cursor
+> (CR-01-strategy), and `UniverseHandler` gains a Level-2 cadence-gate + 3-strike retry
+> policy (CR-01-retry). A RED-first headline regression proved the corruption reachable
+> pre-fix and unreachable after. Oracle byte-exact (134 / 46189.87730727451). See
+> `.planning/phases/07-live-dynamic-universe-hardening/07-10-SUMMARY.md`.
 
 # WR-02 retry re-warm is non-idempotent — a warm-verify MISS can flip a symbol tradeable on CORRUPTED ring/indicator state (CR-01)
 

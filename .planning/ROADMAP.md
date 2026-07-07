@@ -79,7 +79,7 @@ configured so the global filter is never relaxed); tabs/spaces indentation match
 - [x] **Phase 4: Paper Path (milestone DoD)** — reuse `SimulatedExchange` as-is as the paper exchange (revised 2026-07-02); runnable worker + lifecycle; **paper-parity gate = paper ≡ a fresh backtest on the same data, exact frame-equality**. — completed 2026-07-02
 - [x] **Phase 5: Real/Sandbox Path + Reconciliation + Persistence Live-Drive** — `VenueAccount` reconciliation, partial-fill correctness, v1.6 store driven by the real feed, two-sided restart; sandbox-validated. — completed 2026-07-04
 - [x] **Phase 6: Dynamic Universe Membership** — Lean poll seam for mid-run add/remove; warmup-on-add reuses the Phase-3 backfill. — completed 2026-07-06
-- [x] **Phase 7: Live Dynamic-Universe Hardening** — Async warmup + per-symbol `isReady` readiness gate (+ WR-01/04/05/06 from the Phase 6 review); backtest oracle stays inert. Added 2026-07-06 from the Phase 6 code review. — completed 2026-07-07 (9/9 plans; 07-09 post-review remediation folded in; CR-01 from the 07-09 review deferred to a 07-10 gap-closure)
+- [x] **Phase 7: Live Dynamic-Universe Hardening** — Async warmup + per-symbol `isReady` readiness gate (+ WR-01/04/05/06 from the Phase 6 review); backtest oracle stays inert. Added 2026-07-06 from the Phase 6 code review. — completed 2026-07-07 (10/10 plans; 07-09 post-review remediation folded in; **07-10 gap-closure closed CR-01** — warmup re-delivery idempotency Option B/Level 2: absorb_warmup `_last_delivered` guard + Strategy.update `_last_bar_time` cursor + cadence-gated retry, oracle byte-exact)
 
 ### Phase 1: Account Abstraction + Portfolio/Handler Refactor
 
