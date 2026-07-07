@@ -319,6 +319,31 @@ class LiveBarFeed(BarFeed):
         an unknown ticker (D-01 — never softened to return-empty).
         """
         for bar in bars:
+            # CR-01-feed (Option B design point 1): reuse the EXISTING _last_delivered
+            # cursor _deliver already honors — stop bypassing its dup/stale guard so a
+            # re-delivered warmup window (the CR-02 next-poll FAILED-retry re-fetch of a
+            # largely-overlapping REST window) is IDEMPOTENT. Reject bar.time <= cursor
+            # BEFORE ring.append so the ring never gains a duplicate bar.time and L never
+            # rewinds off an overlapping re-warm. This is the SAME `<=` monotonic contract
+            # update() enforces via _reject_stale (strict `<` warns) and
+            # _duplicate_or_revision (`==` silent). A first clean warmup is unaffected
+            # (cursor unset -> last is None -> every bar passes), so absorb stays
+            # byte-identical to _deliver on the cold path. The cursor STAYS pd.Timestamp
+            # (the feed's ring/window() model is pandas-native; the de-pandas migration is
+            # the DEFERRED livebarfeed-depandas-time-model-datetime todo).
+            last = self._last_delivered.get((symbol, timeframe))
+            if last is not None:
+                bt = pd.Timestamp(bar.time)
+                if bt < last:
+                    self.logger.warning(
+                        "Out-of-order warmup bar for %s at %s (< last-delivered=%s) "
+                        "— dropped (no absorb, no state mutation)",
+                        symbol, str(bt), str(last))
+                    continue
+                if bt == last:
+                    # Duplicate re-delivery (== cursor) — expected/benign overlap on a
+                    # retry re-warm; drop SILENTLY (no log) so the ring gains no dup.
+                    continue
             ring = self._ring.get((symbol, timeframe))
             if ring is None:
                 # D-09: size the ring by the derived capacity AT CREATION (byte-identical
