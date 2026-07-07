@@ -306,10 +306,29 @@ class OkxDataProvider:
         for ``_streams_down`` / ``_reconnect_attempts`` (plus the lock-free self-healing
         reads in ``is_streaming_healthy``) — no new lock. Cleanup is now ASYNC (completes
         on the next connector-loop tick). Safe-no-op / single-cancel semantics are
-        preserved: an absent symbol pops ``None`` so ``cancel`` is skipped inside the
-        closure and the discard/pop are no-ops.
+        preserved: a fully-absent symbol (no task, no supervisor state) returns before
+        any connector interaction; otherwise an absent task pops ``None`` so ``cancel``
+        is skipped inside the closure and the discard/pop are no-ops.
+
+        WR-01 (07-09 remediation): only marshal when there is real work. A symbol with
+        no live task AND no ``_streams_down`` / ``_reconnect_attempts`` entry is a true
+        safe no-op — returning early both honors the "safe no-op if absent" contract and
+        avoids ``_connector.spawn``'s "connect() must run before spawn()" assertion when
+        ``unsubscribe`` is reached before the connector loop is running (early lifecycle
+        / teardown). The membership reads run on the engine thread as GIL-atomic
+        point-reads, consistent with the lock-free reads in ``is_streaming_healthy``.
+
+        WR-02 (07-09 remediation): ``_cleanup()`` is constructed before ``spawn`` runs,
+        and ``spawn`` can still raise AFTER the guard (e.g. ``TimeoutError`` if the loop
+        fails to schedule in time). Close the coroutine on any ``spawn`` failure so it is
+        never left un-awaited — otherwise a ``RuntimeWarning`` (test-fatal under
+        ``filterwarnings=["error"]``) masks the real scheduling failure in production.
         """
         task = self._streams.pop(symbol, None)
+        if (task is None
+                and symbol not in self._streams_down
+                and symbol not in self._reconnect_attempts):
+            return
 
         async def _cleanup() -> None:
             # Runs on the connector loop (single-writer for the supervisor dicts).
@@ -322,7 +341,12 @@ class OkxDataProvider:
             self._streams_down.discard(symbol)
             self._reconnect_attempts.pop(symbol, None)
 
-        self._connector.spawn(_cleanup())
+        coro = _cleanup()
+        try:
+            self._connector.spawn(coro)
+        except BaseException:
+            coro.close()
+            raise
 
     async def _stream_candles(
         self, symbol_okx: str, channel: str, symbol: str

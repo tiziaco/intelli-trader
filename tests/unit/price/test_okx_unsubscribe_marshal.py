@@ -89,18 +89,45 @@ def test_unsubscribe_marshals_cancel_and_cleanup_through_spawn(
     assert sym not in provider._reconnect_attempts
 
 
-def test_unsubscribe_absent_symbol_is_safe_noop(provider: OkxDataProvider) -> None:
-    """An absent symbol pops None → no cancel, no exception; discard/pop are no-ops."""
-    # Nothing subscribed; a spurious down/attempt entry for ANOTHER symbol is untouched.
+def test_unsubscribe_absent_symbol_is_true_noop(provider: OkxDataProvider) -> None:
+    """WR-01 (07-09): a fully-absent symbol marshals NOTHING (no spawn), doesn't raise.
+
+    No task, and no OWN ``_streams_down`` / ``_reconnect_attempts`` entry → the guard
+    returns before any connector interaction. This both avoids wasteful no-op
+    marshaling and dodges ``spawn``'s "connect() must run before spawn()" assertion when
+    ``unsubscribe`` is reached before the connector loop is running.
+    """
+    # Nothing subscribed for DOGE; a spurious down/attempt entry for ANOTHER symbol.
     provider._streams_down.add("OTHER/USDC")
     provider._reconnect_attempts["OTHER/USDC"] = 2
 
     provider.unsubscribe("DOGE/USDC")  # must not raise
 
     conn = _connector(provider)
-    # Cleanup is still marshaled (preserving the original always-run discard/pop
-    # semantics), but it cancels nothing and leaves the unrelated symbol's state intact.
-    assert conn.spawn_calls == 1
+    # WR-01: true safe no-op — no connector interaction at all.
+    assert conn.spawn_calls == 0
     assert "DOGE/USDC" not in provider._streams
+    # The unrelated symbol's state is untouched.
     assert provider._streams_down == {"OTHER/USDC"}
     assert provider._reconnect_attempts == {"OTHER/USDC": 2}
+
+
+def test_unsubscribe_stale_supervisor_state_without_task_still_marshals(
+    provider: OkxDataProvider,
+) -> None:
+    """The WR-01 guard is precise: a symbol with OWN supervisor state but no live task
+    must STILL marshal cleanup — otherwise a stale down-flag / attempt count would leak
+    and wedge is_streaming_healthy() / the D-20 retry ceiling. Only a FULLY-absent symbol
+    is skipped.
+    """
+    sym = "DOGE/USDC"
+    provider._streams_down.add(sym)  # own down-flag, but no _streams task
+    provider._reconnect_attempts[sym] = 4
+
+    provider.unsubscribe(sym)
+
+    conn = _connector(provider)
+    # Guard did NOT short-circuit: cleanup was marshaled and cleared this symbol's state.
+    assert conn.spawn_calls == 1
+    assert sym not in provider._streams_down
+    assert sym not in provider._reconnect_attempts
