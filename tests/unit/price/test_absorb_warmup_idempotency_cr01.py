@@ -8,11 +8,15 @@ EXISTING ``_last_delivered`` cursor ``_deliver`` already honors: a re-delivered 
 silently, strict ``<`` (out-of-order) with a ``warning``.
 
 Covered <behavior> cases:
-  (i)   two overlapping absorbs -> ring has NO duplicate bar.time, only the genuinely-new
-        bars are appended, the ring stays strictly increasing;
-  (ii)  a strictly-older re-delivered bar is DROPPED and a warning is captured;
-  (iii) a same-timestamp duplicate is dropped with NO warning captured;
-  (iv)  a first clean absorb appends ALL bars unchanged (regression vs test_absorb_warmup).
+  (i)    two overlapping absorbs -> ring has NO duplicate bar.time, only the genuinely-new
+         bars are appended, the ring stays strictly increasing;
+  (ii)   a strictly-older re-delivered bar is DROPPED and a warning is captured;
+  (iii-a) a same-timestamp BYTE-IDENTICAL duplicate is dropped with NO warning captured;
+  (iii-b) a same-timestamp bar with DIFFERENT OHLCV is a forward-only revision (WR-01):
+          dropped with NO state mutation but a "Revision dropped" WARNING is captured;
+  (iii-c) an off-grid warmup bar (last < bt < last + tf, WR-02) is dropped with an
+          "Off-grid warmup bar" WARNING and does NOT advance the _last_delivered cursor;
+  (iv)   a first clean absorb appends ALL bars unchanged (regression vs test_absorb_warmup).
 
 Offline / socket-free (the package ``stub_provider`` fixture; a ``_DepthConsumer`` forces a
 ring capacity that holds the whole window). This directory is package-less (NO
@@ -139,7 +143,7 @@ def test_strictly_older_bar_drops_and_warns(
     )
 
 
-# --- (iii) same-timestamp duplicate -> drop, NO warning ----------------------
+# --- (iii-a) same-timestamp BYTE-IDENTICAL duplicate -> drop, NO warning ------
 
 
 def test_same_timestamp_duplicate_drops_silently(
@@ -150,13 +154,64 @@ def test_same_timestamp_duplicate_drops_silently(
     feed.absorb_warmup(_SYM, _TF, bars)
     before = _ring_times(feed)
 
-    duplicate = _bar(_START_MS + 2 * _TF_MS)  # == L (newest absorbed bar's time)
+    # BYTE-IDENTICAL to the bar already ringed at that ts (_warmup_bars(3)[2] has
+    # close=str(42100+2)="42102"): a benign overlap re-fetch, NOT a revision.
+    duplicate = _bar(_START_MS + 2 * _TF_MS, close="42102")  # == L, same OHLCV
     with caplog.at_level(logging.WARNING):
         feed.absorb_warmup(_SYM, _TF, (duplicate,))
 
     # Dropped silently — ring unchanged, NO warning captured.
     assert _ring_times(feed) == before
     assert not [rec for rec in caplog.records if rec.levelno >= logging.WARNING]
+
+
+# --- (iii-b) same-timestamp DIFFERENT OHLCV -> forward-only revision WARN -----
+
+
+def test_same_timestamp_revision_warns(
+    stub_provider: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    feed, _q = _make_feed(stub_provider)
+    feed.absorb_warmup(_SYM, _TF, _warmup_bars(3))  # L = bar[2].time, close="42102"
+    before = _ring_times(feed)
+
+    # Same ts as L but DIFFERENT close — a genuine venue-side revision (D-07).
+    revision = _bar(_START_MS + 2 * _TF_MS, close="99999")
+    with caplog.at_level(logging.WARNING):
+        feed.absorb_warmup(_SYM, _TF, (revision,))
+
+    # Forward-only: dropped with NO state mutation (indicator state never rewound).
+    assert _ring_times(feed) == before
+    assert feed._last_delivered[(_SYM, _TF)] == before[-1]
+    # A "Revision dropped" WARNING surfaces the conflicting venue data.
+    assert any(
+        "Revision dropped" in rec.getMessage() for rec in caplog.records
+    )
+
+
+# --- (iii-c) off-grid warmup bar (last < bt < last + tf) -> drop + WARN --------
+
+
+def test_off_grid_warmup_bar_dropped_and_warns(
+    stub_provider: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    feed, _q = _make_feed(stub_provider)
+    bars = _warmup_bars(3)
+    feed.absorb_warmup(_SYM, _TF, bars)  # L at _START_MS + 2*_TF_MS
+    before = _ring_times(feed)
+
+    # Strictly between L and L + tf — an off-grid timestamp that would set L off
+    # the tf-grid and make every subsequent live update() spuriously trip the gap.
+    off_grid = _bar(_START_MS + 2 * _TF_MS + _TF_MS // 2)
+    with caplog.at_level(logging.WARNING):
+        feed.absorb_warmup(_SYM, _TF, (off_grid,))
+
+    # Dropped — ring unchanged AND the cursor did NOT advance off-grid.
+    assert _ring_times(feed) == before
+    assert feed._last_delivered[(_SYM, _TF)] == bars[2].time
+    assert any(
+        "Off-grid warmup bar" in rec.getMessage() for rec in caplog.records
+    )
 
 
 # --- (iv) first clean absorb appends all bars unchanged ----------------------
