@@ -66,6 +66,8 @@ staleness points.
 
 ### WR-01: `absorb_warmup`'s `==` branch silently swallows a genuine revision, not just a duplicate
 
+**✓ FIXED** (quick 260707-iy6, commit `8eb66f73`) — the `bt == last` branch now compares OHLCV against the last ring bar via `_same_ohlcv`: byte-identical duplicate drops silently, genuine revision warns `"Revision dropped"` (forward-only, no state mutation). Test `test_same_timestamp_duplicate_drops_silently` rebuilt byte-identical + new `test_same_timestamp_revision_warns`.
+
 **File:** `itrader/price_handler/feed/live_bar_feed.py:343-346`
 **Issue:** The new guard treats every `bt == last` bar as a benign duplicate and drops it with
 no log:
@@ -115,6 +117,8 @@ if bt == last:
 
 ### WR-02: `absorb_warmup` has no equivalent to `update()`'s WR-01 off-grid rejection
 
+**✓ FIXED** (quick 260707-iy6, commit `8eb66f73`) — added the off-grid rejection (`last < bt < last + tf` → warn `"Off-grid warmup bar"` + drop) before `ring.append`/cursor-advance, mirroring `update()`'s WR-01 branch, so an off-grid warmup bar can no longer poison the shared `_last_delivered` cursor. New `test_off_grid_warmup_bar_dropped_and_warns` asserts drop + warn + cursor unchanged.
+
 **File:** `itrader/price_handler/feed/live_bar_feed.py:334-346`
 **Issue:** `update()`'s classification tree explicitly rejects an off-grid timestamp — one
 strictly between `last` and `last + tf` (see `update()` lines 256-263, "WR-01: ... an off-grid
@@ -138,6 +142,8 @@ the append path.
 
 ### IN-01: `absorb_warmup` docstring's "the single divergence" claim is now stale
 
+**✓ FIXED** (quick 260707-iy6, commit `222219a4`) — docstring reworded to state the two divergences from `_deliver` (never emits + applies its own `<=` monotonic cursor guard).
+
 **File:** `itrader/price_handler/feed/live_bar_feed.py:301-304`
 **Issue:** The docstring reads: "For each pre-built `Bar` in order it runs the EXACT ring / `L` /
 newest-bar logic of `_deliver` ... but DELIBERATELY SKIPS the terminal `_emit` (**the single
@@ -152,6 +158,8 @@ in two ways: it never emits, and it applies its own `<=` monotonic cursor guard 
 before appending."
 
 ### IN-02: `_record_rewarm_failure`'s docstring undersells the actual repeat-warn behavior
+
+**✓ FIXED** (quick 260707-iy6, commit `222219a4`) — docstring reworded to match the `>= 3` semantics (warns at the 3rd and every subsequent consecutive failure).
 
 **File:** `itrader/universe/universe_handler.py:540-556`
 **Issue:** The docstring says "At the 3rd consecutive failure a warning surfaces the stuck
