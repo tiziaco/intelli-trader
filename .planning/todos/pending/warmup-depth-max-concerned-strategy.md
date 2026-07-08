@@ -1,9 +1,41 @@
+---
+status: scheduled
+created: "2026-07-06"
+source: Phase 7 (v1.7 Live Dynamic-Universe Hardening) plans 07-06 / 07-07 — deferred seam
+tags: [live, warmup, universe, bar-feed, depth-hint, strategies-handler, seam-only, phase-7-tie-in]
+folded_into: "v1.8 spec §18 — CF-10 (P7, seam-only — see 'What v1.8 P7 does now' below)"
+---
+
 # Deferred seam: max-across-concerned-strategies warmup depth (K)
 
 **Deferred from:** Phase 7 (Live Dynamic-Universe Hardening), plans 07-06 / 07-07.
 **Captured:** 2026-07-06
+**Folded into v1.8 as CF-10 (P7), seam-only — 2026-07-08.**
 
-## What
+## What v1.8 P7 does NOW (seam-only — resume point for later)
+
+**Scope locked at fold (CF-10, seam-only):** P7 is already rehoming `_LiveWarmupConsumer` →
+`StrategyWarmupConsumer` and rewriting `UniverseHandler` init (`_initialize_live_session` →
+`SessionInitializer`) — i.e. it rebuilds the exact wiring this seam plugs into. So P7 **shapes the
+depth-hint interface** while it is in that code, but does **NOT** change the behavioural K computation
+(no roster exercises it today — see "Why deferred" below).
+
+**P7 delivers (the seam):**
+- A depth-hint **interface** on `StrategiesHandler` — e.g. `warmup_depth_hint(symbol) ->
+  max(strategy.warmup for strategies concerned with symbol)` — designed but **not yet consumed** to
+  change fetch depth. Shape it so the future consumer is a one-line wire-up, not a re-plumb.
+- Thread that seam through `SessionInitializer` / `UniverseHandler` construction (the new composition
+  root), so the hint is *available* at the point the add-branch K is computed.
+- The add-branch K stays `cache_capacity() + _WARMUP_MARGIN` (unchanged, byte-for-byte behaviour).
+
+**P7 does NOT do (resume here when the trigger lands):**
+- Step 3 below — changing the K computation to `max(cache_capacity(), depth_hint(sym)) +
+  _WARMUP_MARGIN`. That is the only behavioural change and it waits for a real deeper-warmup roster.
+
+When you pick this up later, the seam + composition wiring already exist; you only implement the
+`max(...)` swap in the add-branch and add a test for a divergent-warmup roster.
+
+## What (original TODO — full deferred design)
 
 Phase 7's async warmup fetches `K = cache_capacity() + _WARMUP_MARGIN` bars per added symbol
 (`live_bar_feed.py:252-253`, `_WARMUP_MARGIN = 5`). When a single symbol is shared by MULTIPLE strategies

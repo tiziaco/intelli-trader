@@ -1,9 +1,10 @@
 ---
-status: open
+status: scheduled
 created: "2026-07-07"
 source: v1.7 milestone-close disposition sweep of the Phase-5 remediation roadmap (v17_bugs / v17_audit_results / v17_arch_decisions / v17_widen_audit_architecture)
 tags: [live, carry-forward, v1.8, circuit-breaker, resilience, observability, docs, refactor]
 resolves_phase: ""
+folded_into: "v1.8 spec §18 — CF-1…CF-7 (§1→P9, §2→P8, §3→P6, §4→P6/§8f, §5→P9, §6→P1, §7→P8)"
 ---
 
 # v1.7 residual carry-forward — 7 open deliverable/refactor/doc gaps
