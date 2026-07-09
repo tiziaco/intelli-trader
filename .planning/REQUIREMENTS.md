@@ -102,7 +102,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `script_location` updated; `env.py` keeps importing the `build_*_table` registrars + `NAMING_CONVENTION`
   from `itrader.storage`; migrations stay out of the shipped wheel (LR-18/§7e).
 
-- [ ] **SQL-02**: An Alembic gate confirms `alembic upgrade head` on a clean DB, `alembic heads == 1`
+- [x] **SQL-02**: An Alembic gate confirms `alembic upgrade head` on a clean DB, `alembic heads == 1`
   (single head) over the full relocated chain incl. the three new stores, and a `create_all`/migration
   parity test (research PITFALLS).
 
@@ -117,7 +117,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [x] **STORE-03**: `StrategyRegistryStore` (cardinality N) holds which strategies trade + per-strategy
   config + subscriptions (LR-22/§7d).
 
-- [ ] **STORE-04**: Each store follows the `HaltRecordStore` template (composes `sql_engine`, own
+- [x] **STORE-04**: Each store follows the `HaltRecordStore` template (composes `sql_engine`, own
   `build_*_table` registrar, chained Alembic migration `d10_halt_records → system_store → venue_config →
   strategy_registry` in the relocated `migrations/` tree) and rehydrates on restart (§7d).
 
@@ -369,11 +369,11 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | CTX-03 | P2 | Complete |
 | CTX-04 | P3 | Complete |
 | SQL-01 | P4 | Complete |
-| SQL-02 | P4 | Pending |
+| SQL-02 | P4 | Complete |
 | STORE-01 | P4 | Complete |
 | STORE-02 | P4 | Complete |
 | STORE-03 | P4 | Complete |
-| STORE-04 | P4 | Pending |
+| STORE-04 | P4 | Complete |
 | STORE-05 | P4 | Complete |
 | VENUE-01 | P5 | Pending |
 | VENUE-02 | P5 | Pending |

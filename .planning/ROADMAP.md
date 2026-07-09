@@ -203,7 +203,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 2** *(blocked on 04-01 + 04-02)*
 
-- [ ] 04-03-PLAN.md — Chained migrations (`system_store → venue_config → strategy_registry`) + `env.py target_metadata` + SQL-02 single-head/upgrade/parity gate + inertness extension (SQL-02, STORE-04/05, D-02/11)
+- [x] 04-03-PLAN.md — Chained migrations (`system_store → venue_config → strategy_registry`) + `env.py target_metadata` + SQL-02 single-head/upgrade/parity gate + inertness extension (SQL-02, STORE-04/05, D-02/11)
 
 ### Phase 5: Venue Registry + Bundle
 
@@ -335,7 +335,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
-| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 2/3 | In Progress|  |
+| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 3/3 | Complete   | 2026-07-09 |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |

@@ -4,17 +4,17 @@ milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 04
 current_phase_name: storage-schema-migrations-relocation-new-durable-stores
-status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-07-09T17:41:46.460Z"
+status: verifying
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-07-09T17:52:03.861Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 9
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 12
-  completed_plans: 11
-  percent: 33
+  completed_plans: 12
+  percent: 44
 ---
 
 # Project State
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 04 (storage-schema-migrations-relocation-new-durable-stores) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-09 — Phase 04 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -139,6 +139,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase 03]: D-03: collapsed redundant signal_store surfaces; accessors read through engine.strategies_handler.signal_store, no @property added
 - [Phase ?]: [Phase 04]: 04-01: migrations/ relocated to project root via git mv (D-10, 5 revision IDs preserved unchanged, single head d10_halt_records); alembic.ini script_location=migrations; SQL-01 wheel-exclusion samplable via tomllib assertion; oracle byte-exact + inertness green
 - [Phase ?]: [Phase 04]: 04-02: three new live-only durable stores landed (SystemStore KV / VenueStore / StrategyRegistryStore), each a HaltRecordStore-template clone composing SqlEngine; natural NAME PKs (D-06, no idgen/surrogate); VenueStore recursive secret-denylist guard fires before the write (D-05, Pitfall 6); StrategyRegistryStore two-table registry+subscriptions with FK-join rehydrate + file-backed restart survival; oracle byte-exact + inertness green
+- [Phase ?]: [Phase 04]: 04-03: 3 hand-authored Alembic revisions off d10_halt_records (system_store → venue_config[builds venue_store table, slug!=name] → strategy_registry[registry+FK'd subscriptions, child-first downgrade]); new single head strategy_registry; env.py target_metadata registers all 4 new tables (D-02, import-inert Table-only); SQL-02 gate = single-head + upgrade-head + create_all/migration parity; inertness _FORBIDDEN + register-vs-build extended; oracle byte-exact
 
 ### Pending Todos
 
@@ -204,6 +205,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 03 P02 | 2min | 1 tasks | 2 files |
 | Phase 04 P01 | 1min | 2 tasks | 4 files |
 | Phase 04 P02 | 6min | 3 tasks | 6 files |
+| Phase 04 P03 | 12min | 3 tasks | 6 files |
 
 ## Bookkeeping
 
@@ -215,11 +217,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T17:41:36.953Z
-Stopped at: Phase 4 context gathered
+Last session: 2026-07-09T17:52:03.853Z
+Stopped at: Completed 04-03-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/04-storage-schema-migrations-relocation-new-durable-stores/04-CONTEXT.md
+Resume file: None
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
