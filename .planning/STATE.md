@@ -4,9 +4,9 @@ milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 4
 current_phase_name: "Storage Schema: Migrations Relocation + New Durable Stores"
-status: verifying
+status: executing
 stopped_at: Phase 4 context gathered
-last_updated: "2026-07-09T16:39:02.700Z"
+last_updated: "2026-07-09T17:17:05.315Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 03 complete, transitioned to Phase 4
 progress:
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 4 — Storage Schema: Migrations Relocation + New Durable Stores
 Plan: Not started
-Status: Phase complete — ready for verification
+Status: Ready to execute
 Last activity: 2026-07-09 — Phase 03 complete, transitioned to Phase 4
 
 Progress: [░░░░░░░░░░] 0%

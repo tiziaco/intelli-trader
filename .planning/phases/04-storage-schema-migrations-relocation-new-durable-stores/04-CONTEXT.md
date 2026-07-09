@@ -83,7 +83,7 @@ strategy_registry`, and rehydrating on restart (STORE-01..05, SQL-02).
   and rehydrate **joins** both. Chosen over subscriptions-as-JSON-array despite the consumer not existing yet.
 
 ### Migrations relocation + authoring
-- **D-05-mig — wait, renumbered below.** (See D-09/D-10.)
+*(The migrations relocation + authoring decisions were renumbered during discussion — see D-10 (`git mv` preserve) and D-11 (hand-author revisions) below.)*
 
 ### Secret-scrub enforcement (VenueStore)
 - **D-05 (Structural + write-time denylist guard — defense-in-depth):** `VenueStore` enforces "never stores
@@ -107,7 +107,7 @@ strategy_registry`, and rehydrating on restart (STORE-01..05, SQL-02).
     UUIDv7 PK, no DB autoincrement). Rejected UUIDv7-surrogate-PK-+-unique-natural-key (extra indirection, no consumer).
 
 ### `updated_at` clock source
-- **D-07 (Caller-supplied `at: datetime`, `UtcIsoText` column):** Store methods take an `at: datetime` param
+- **D-07 (Caller-supplied `at: datetime` param — stored in a `UtcIsoText` column):** Store methods take an `at: datetime` param
   (like `HaltRecordStore.record_halt`), stored via the `UtcIsoText` type. Store stays pure/clock-free; round-trip
   tests pass a fixed timestamp (deterministic); live call sites pass `datetime.now(UTC)`. Rejected store-internal
   `datetime.now(UTC)` (bakes wall-clock + non-determinism into persistence) and DB server-side default (dialect
