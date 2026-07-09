@@ -174,8 +174,12 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
   *(CTX-01/CTX-02/CTX-03 — `compose_engine(ctx, spec)`, handler-owned storage, and the byte-exact/inertness gate — were delivered in Phase 2 per Phase 2 D-03; they are no longer P3 criteria.)*
 
 **Plans**: 2 plans
+**Wave 1**
 
 - [ ] 03-01-PLAN.md — `SqlBackend`→`SqlEngine` rename: class + module move (`storage/backend.py`→`storage/engine.py`) + `EngineContext.sql_engine` type-tighten + D-01 full `backend`→`sql_engine` vocabulary sweep across ~34 files (CTX-04, wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 03-02-PLAN.md — D-03 rider: collapse the redundant `signal_store` surfaces on `Engine`/`BacktestTradingSystem`; repoint accessors to read `engine.strategies_handler.signal_store` directly (wave 2)
 
 ### Phase 4: Storage Schema: Migrations Relocation + New Durable Stores
