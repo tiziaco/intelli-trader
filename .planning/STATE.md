@@ -5,8 +5,8 @@ milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 2
 current_phase_name: Event Bus
 status: verifying
-stopped_at: Phase 1 planned — 4 plans, verification passed, ready to execute
-last_updated: "2026-07-09T11:13:47.028Z"
+stopped_at: Phase 2 context gathered
+last_updated: "2026-07-09T11:56:25.404Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 01 complete, transitioned to Phase 2
 progress:
@@ -197,11 +197,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T10:37:19.000Z
-Stopped at: Phase 1 planned — 4 plans, verification passed, ready to execute
+Last session: 2026-07-09T11:56:25.397Z
+Stopped at: Phase 2 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/01-config-centralization/01-CONTEXT.md
+Resume file: .planning/phases/02-event-bus/02-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
