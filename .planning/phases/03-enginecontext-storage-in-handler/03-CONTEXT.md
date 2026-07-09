@@ -6,12 +6,17 @@
 <domain>
 ## Phase Boundary
 
-A **purely mechanical rename** delivering the single remaining requirement **CTX-04**:
+Two **behavior-preserving, oracle-byte-exact, mypy-clean** changes:
 
+**(A) CTX-04 — the `SqlBackend` → `SqlEngine` rename (the phase requirement):**
 - Rename the class `SqlBackend` → `SqlEngine`.
 - Move its module `itrader/storage/backend.py` → `itrader/storage/engine.py`.
 - Tighten `EngineContext.sql_engine` from `Optional[Any]` to the concrete `Optional[SqlEngine]` type.
 - Update all ~118 importers/references across ~34 files.
+
+**(B) D-03 rider — collapse the redundant `signal_store` surfacing (a separate structural cleanup, NOT part of CTX-04):**
+- Remove the `signal_store` surfaces that duplicate the handler-owned store, aligning it with the `@property`-delegation pattern every other component already uses.
+- Behavior-preserving: the public accessors return the identical store instance, so the oracle stays byte-exact. Kept as a distinct planner step, not smuggled into the rename diff.
 
 **End-state gates (already locked by ROADMAP success criteria — not up for discussion):**
 - `mypy --strict` clean.
@@ -39,6 +44,14 @@ A **purely mechanical rename** delivering the single remaining requirement **CTX
 ### Back-compat handling
 - **D-02 (Hard rename, no alias):** Delete the `SqlBackend` name entirely. Do NOT leave a `SqlBackend = SqlEngine` deprecation alias.
   - Rationale: internal-only refactor with no external consumers; `mypy --strict` (the phase gate) flags every missed importer, so no stale reference can silently survive. Cleanest end-state, no dead vocabulary.
+
+### Redundant signal_store surfacing (rider — separate from CTX-04)
+- **D-03 (Collapse the duplicate `signal_store` surfaces onto the `@property`-delegation pattern):** The `SignalStore` is owned and constructed in-module by `StrategiesHandler` (`strategy_handler/strategies_handler.py:87`, from `environment` + `sql_engine` via `SignalStorageFactory` — CTX-02 upheld). That handler ownership and its `signal_store=` **test-override seam STAY untouched.** What gets removed is the redundant *plumbing* that duplicates the store on the composition holders:
+  - Drop the `Engine.signal_store` dataclass field (`compose.py:96`) and the `signal_store=strategies_handler.signal_store` line in the `return Engine(...)` (`compose.py:252`).
+  - Drop the `signal_store` ctor param on `BacktestTradingSystem` (`backtest_trading_system.py:97`), the two `self._signal_store = ...` assignments (`:121`, `:162`), and the `signal_store=engine.signal_store` arg in the factory (`:492`). The ctor-param override is already dead — the only caller passes exactly what the fallback computes.
+  - Repoint the public accessors `get_signal_records()` (`:416`) and `get_signal_store()` (`:420`) at `self.engine.strategies_handler.signal_store` — optionally via a new `signal_store` `@property` mirroring the sibling delegating properties (`store`, `feed`, `order_handler`, …) at `:174–216`.
+  - **Invariant:** behavior-preserving. `get_signal_records()`/`get_signal_store()` return the *identical* store instance, so the backtest oracle stays byte-exact and the two consuming tests (`tests/integration/test_backtest_oracle.py:284,288`) pass unchanged. `mypy --strict` clean.
+  - **Boundary:** this is a distinct cleanup from the rename — plan it as its own step/plan, not as part of the `SqlBackend→SqlEngine` diff.
 
 ### Claude's Discretion
 - Ordering of the rename (module move first vs. importer updates first), exact commit/plan granularity, and whether to use a scripted find-replace vs. per-file edits — planner/executor's call, subject to the byte-exact oracle and `mypy --strict` gates.
@@ -81,6 +94,12 @@ A **purely mechanical rename** delivering the single remaining requirement **CTX
 ### Integration Points
 - `storage/migrations/env.py` imports the spine's `NAMING_CONVENTION` / MetaData — the module move must keep that import path working (it becomes `from itrader.storage.engine import ...`).
 - `EngineContext.sql_engine` is `None` on the backtest path (GATE-01 inertness). Tightening its type to `Optional[SqlEngine]` must NOT introduce an eager import of the SQL engine on the backtest path — use `TYPE_CHECKING` / string annotation if a real import would break lazy-loading inertness.
+
+### signal_store rider (D-03) — verified footprint
+- **Owner (keep):** `strategy_handler/strategies_handler.py:87` — `self.signal_store = signal_store or SignalStorageFactory.create(environment, backend=sql_engine)`. The `signal_store=` override param is used by tests (`test_strategies_handler_storage.py:27`, `test_warmup_retry_idempotency_cr01.py:124`) — leave it.
+- **Redundant surfaces (remove):** `Engine.signal_store` (`compose.py:96`, `:252`); `BacktestTradingSystem` `signal_store=` param + `_signal_store` (`backtest_trading_system.py:97,121,162`); factory arg (`:492`).
+- **Consumers to preserve:** `get_signal_records()`/`get_signal_store()` (`:409–420`) — called by `tests/integration/test_backtest_oracle.py:284,288`. `live_trading_system.py:2077,2087` only *mirrors* the docstring wording; it has its own signal store and is unaffected.
+- **Pattern to mirror:** the sibling delegating `@property` block at `backtest_trading_system.py:174–216` — a `signal_store` property delegating to `self.engine.strategies_handler.signal_store` is the clean shape.
 
 </code_context>
 
