@@ -86,6 +86,11 @@ _STREAM_SETTINGS = StreamSettings()
 PAPER_PARITY_START_DATE = "2018-01-01"
 PAPER_PARITY_END_DATE = "2026-06-03"
 PAPER_PARITY_SYMBOL = "BTCUSD"
+# WR-01: the golden parity grid's timeframe is its OWN anchor here, NOT the live-tunable
+# StreamSettings.okx_stream_timeframe. Sourcing it from the live stream config coupled the
+# byte-exact golden grid to a live knob, and run_paper_replay's window guard did not check
+# timeframe — so a live timeframe change could silently re-grid the parity comparand.
+PAPER_PARITY_TIMEFRAME = "1d"
 
 # Phase 4 (D-02/D-09) / CFG-03 / D-08: the paper replay subscription is wired directly
 # from the PAPER_PARITY_* single-source anchor above (the paper-specific aliases are
@@ -95,11 +100,11 @@ PAPER_PARITY_SYMBOL = "BTCUSD"
 # same symbol. The paper ticker MUST be the universe-member form "BTCUSD" (what the
 # strategy's window() queries), NOT the OKX venue form "BTC/USDT": a mismatch surfaces
 # only as a MissingPriceDataError at the first window() call (LiveBarFeed._find_ring).
-# The paper stream timeframe is the shared "1d" folded into StreamSettings (config,
-# byte-identical value). run_paper_replay's WR-02 assertion half (backed by the D-18
-# structural wiring) asserts the replay store's effective window/symbol equals the
-# PAPER_PARITY_* anchor — a defense that CsvPriceStore honored the window it was
-# EXPLICITLY constructed with.
+# The paper stream timeframe is pinned to PAPER_PARITY_TIMEFRAME (the anchor above), NOT
+# StreamSettings.okx_stream_timeframe — the golden grid must not track a live knob (WR-01).
+# run_paper_replay's WR-02 assertion half (backed by the D-18 structural wiring) asserts
+# the replay store's effective window/symbol AND timeframe equal the PAPER_PARITY_* anchor
+# — a defense that CsvPriceStore honored the window it was EXPLICITLY constructed with.
 
 
 def _precision_to_scale(value: Any) -> "Decimal | None":
@@ -646,7 +651,7 @@ class LiveTradingSystem:
                 store=CsvPriceStore(
                     start_date=PAPER_PARITY_START_DATE, end_date=PAPER_PARITY_END_DATE),
                 symbol=PAPER_PARITY_SYMBOL,
-                timeframe=_STREAM_SETTINGS.okx_stream_timeframe)
+                timeframe=PAPER_PARITY_TIMEFRAME)
             # Inject the replay provider into the LIVE feed via the PUBLIC setter — it
             # assigns self._provider (the private attr warmup()/gap-backfill read); a
             # bare self.feed.provider = ... would leave self._provider None. Then wire
@@ -1528,6 +1533,19 @@ class LiveTradingSystem:
                     f"{PAPER_PARITY_SYMBOL}) but got ({_store.start_date}, "
                     f"{_store.end_date}, {self._replay_provider._symbol}). Align the "
                     "replay store window/symbol with the parity backtest."))
+
+        # WR-01: the parity grid's timeframe must ALSO stay pinned to the anchor, not the
+        # live-tunable StreamSettings.okx_stream_timeframe — else a live timeframe change
+        # would silently re-grid the golden comparand past the window/symbol guard above.
+        if self._replay_provider._timeframe != PAPER_PARITY_TIMEFRAME:
+            raise ConfigurationError(
+                config_key="paper_replay_timeframe",
+                config_value=str(self._replay_provider._timeframe),
+                reason=(
+                    f"replay store timeframe drifted from the backtest parity grid: "
+                    f"expected {PAPER_PARITY_TIMEFRAME!r} but got "
+                    f"{self._replay_provider._timeframe!r}. Pin the paper replay timeframe "
+                    "to PAPER_PARITY_TIMEFRAME, not the live stream config."))
 
         # Step 1 — session init (ORDER-SENSITIVE): derive membership/instruments,
         # inject the Universe into the 'simulated' exchange + order/portfolio handlers,
