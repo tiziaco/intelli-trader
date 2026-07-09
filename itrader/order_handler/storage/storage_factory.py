@@ -6,7 +6,7 @@ from ..base import OrderStorage
 from .in_memory_storage import InMemoryOrderStorage
 
 if TYPE_CHECKING:
-    from itrader.storage import SqlBackend
+    from itrader.storage import SqlEngine
 
 
 class OrderStorageFactory:
@@ -22,7 +22,7 @@ class OrderStorageFactory:
 
     @staticmethod
     def create(
-        environment: str, backend: "Optional[SqlBackend]" = None
+        environment: str, sql_engine: "Optional[SqlEngine]" = None
     ) -> OrderStorage:
         """
         Create an OrderStorage instance based on the environment.
@@ -31,10 +31,10 @@ class OrderStorageFactory:
         ----------
         environment : str
             The environment type ('backtest', 'live', 'test')
-        backend : SqlBackend, optional
+        sql_engine : SqlEngine, optional
             The shared SQL spine for the 'live' arm (D-06). When omitted, a default
-            ``SqlBackend(SqlSettings.default())`` is built; Phase 4 injects the shared
-            operational backend at the live composition root.
+            ``SqlEngine(SqlSettings.default())`` is built; Phase 4 injects the shared
+            operational engine at the live composition root.
 
         Returns
         -------
@@ -53,12 +53,12 @@ class OrderStorageFactory:
         elif environment == 'live':
             # Import here so the backtest import path stays SQL-free (GATE-01 quarantine).
             from itrader.config.sql import SqlSettings
-            from itrader.storage import SqlBackend
+            from itrader.storage import SqlEngine
 
             from .cached_sql_storage import CachedSqlOrderStorage
             from .sql_storage import SqlOrderStorage
 
-            resolved = backend if backend is not None else SqlBackend(SqlSettings.default())
+            resolved = sql_engine if sql_engine is not None else SqlEngine(SqlSettings.default())
             # D-04 — the live arm returns the cache wrapper composing the untouched SQL store.
             return CachedSqlOrderStorage(SqlOrderStorage(resolved))
         else:

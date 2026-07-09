@@ -45,7 +45,7 @@ def test_shared_pg_fixture_wires_live_system(pg_database_env):
     ``pg_database_env`` has set ``ITRADER_DATABASE_URL`` to the shared container URL, so the
     ``LiveTradingSystem`` composition root builds the sync-durable order working set
     (``CachedSqlOrderStorage``) and the live signal store (``CachedSqlSignalStorage``) off ONE
-    shared ``SqlBackend`` — proving the new shared fixture reaches the env gate.
+    shared ``SqlEngine`` — proving the new shared fixture reaches the env gate.
     """
     import itrader.trading_system.live_trading_system as lts
 

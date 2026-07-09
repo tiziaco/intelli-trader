@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 3
-current_phase_name: EngineContext + Storage-in-Handler
+current_phase: 4
+current_phase_name: "Storage Schema: Migrations Relocation + New Durable Stores"
 status: verifying
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-07-09T13:45:39.640Z"
+stopped_at: Phase 3 context gathered
+last_updated: "2026-07-09T15:38:19.910Z"
 last_activity: 2026-07-09
-last_activity_desc: Phase 02 complete, transitioned to Phase 3
+last_activity_desc: Phase 03 complete, transitioned to Phase 4
 progress:
   total_phases: 9
-  completed_phases: 2
-  total_plans: 7
-  completed_plans: 7
-  percent: 22
+  completed_phases: 3
+  total_plans: 9
+  completed_plans: 9
+  percent: 33
 ---
 
 # Project State
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 02 — Event Bus
+**Current focus:** Phase 03 — enginecontext-storage-in-handler
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 3 — EngineContext + Storage-in-Handler
+Phase: 4 — Storage Schema: Migrations Relocation + New Durable Stores
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-09 — Phase 02 complete, transitioned to Phase 3
+Last activity: 2026-07-09 — Phase 03 complete, transitioned to Phase 4
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -134,6 +134,9 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: 02-03: compose_engine folded to two-arg (ctx, spec) end-state; internal queue deleted, ctx.bus owns transport (D-01/CTX-01)
 - [Phase 02]: 02-03: EngineContext = 4 loose fields (bus/config/environment/sql_engine); downstream only tightens types, never adds fields (D-05/BUS-04)
 - [Phase 02]: 02-03: global_queue retyped to EventBus (name unchanged) across 5 handlers + SimulatedExchange + BacktestBarFeed.bind; no call-site changes (D-07/D-08)
+- [Phase ?]: CTX-04: SqlBackend renamed to SqlEngine; module moved to storage/engine.py; no alias (D-02)
+- [Phase ?]: D-01: backend/_backend vocabulary unified to sql_engine/_sql_engine across storage factories, PortfolioHandler, and Portfolio
+- [Phase 03]: D-03: collapsed redundant signal_store surfaces; accessors read through engine.strategies_handler.signal_store, no @property added
 
 ### Pending Todos
 
@@ -195,6 +198,8 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 02 P01 | 3min | 3 tasks | 3 files |
 | Phase 02 P02 | 6min | 3 tasks | 4 files |
 | Phase 02 P03 | 18min | 3 tasks | 10 files |
+| Phase 03 P01 | 11min | 2 tasks | 41 files |
+| Phase 03 P02 | 2min | 1 tasks | 2 files |
 
 ## Bookkeeping
 
@@ -206,11 +211,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T13:30:30.397Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-07-09T15:28:32.345Z
+Stopped at: Phase 3 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: None
+Resume file: .planning/phases/03-enginecontext-storage-in-handler/03-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

@@ -16,7 +16,7 @@ from ..base import PortfolioStateStorage
 from .in_memory_storage import InMemoryPortfolioStateStorage
 
 if TYPE_CHECKING:
-    from itrader.storage import SqlBackend
+    from itrader.storage import SqlEngine
 
 
 class PortfolioStateStorageFactory:
@@ -32,7 +32,7 @@ class PortfolioStateStorageFactory:
     @staticmethod
     def create(environment: str, db_url: Optional[str] = None,
                max_snapshots: int = 10000, *,
-               backend: "Optional[SqlBackend]" = None,
+               sql_engine: "Optional[SqlEngine]" = None,
                portfolio_id: Optional[uuid.UUID] = None,
                ) -> PortfolioStateStorage:
         """
@@ -44,16 +44,16 @@ class PortfolioStateStorageFactory:
             The environment type ('backtest', 'live', 'test')
         db_url : str, optional
             Legacy parameter (predates ``SqlSettings``); unused by the live arm now —
-            the live backend takes a shared ``SqlBackend`` instead (research §Factory wiring).
+            the live backend takes a shared ``SqlEngine`` instead (research §Factory wiring).
         max_snapshots : int, optional
             Snapshot-retention bound for the in-memory backend's bounded deque
             (D-03). WR-01: threaded through so the caller's retention bound (e.g.
             ``MetricsManager.max_snapshots``) actually governs the live deque
             instead of silently diverging from a hardcoded default.
-        backend : SqlBackend, optional
+        sql_engine : SqlEngine, optional
             The shared SQL spine for the ``'live'`` arm (one engine/MetaData co-registering
-            all operational tables). If omitted, a default ``SqlBackend(SqlSettings.default())``
-            is built. Phase 4 wires the real Postgres backend at the live composition root.
+            all operational tables). If omitted, a default ``SqlEngine(SqlSettings.default())``
+            is built. Phase 4 wires the real Postgres engine at the live composition root.
         portfolio_id : uuid.UUID, optional
             REQUIRED for the ``'live'`` arm — the SQL backend binds it and scopes every query
             to it (Pitfall 1; the ABC has no ``portfolio_id`` parameter).
@@ -83,19 +83,19 @@ class PortfolioStateStorageFactory:
             # D-06 / GATE-01: lazy import keeps the SQL backend off the backtest
             # import path. The live arm IS the Postgres path — no 'postgresql' arm.
             from itrader.config.sql import SqlSettings
-            from itrader.storage import SqlBackend
+            from itrader.storage import SqlEngine
             from .cached_sql_storage import CachedSqlPortfolioStateStorage
             from .sql_storage import SqlPortfolioStateStorage
 
-            sql_backend = (
-                backend if backend is not None
-                else SqlBackend(SqlSettings.default())
+            resolved = (
+                sql_engine if sql_engine is not None
+                else SqlEngine(SqlSettings.default())
             )
             # D-04/A3: the live arm constructs the store-first cache wrapper over the
             # untouched Phase-3 store. The composition root is NOT rewired this phase
             # (portfolio.py:93 stays "backtest", D-01) — this arm is built + component-tested.
             return CachedSqlPortfolioStateStorage(
-                SqlPortfolioStateStorage(sql_backend, portfolio_id),
+                SqlPortfolioStateStorage(resolved, portfolio_id),
                 max_snapshots=max_snapshots,
             )
         else:

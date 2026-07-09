@@ -8,7 +8,7 @@ injection / disclosure defects, all removed here:
    The credential is now sourced exclusively from the spine's secret seam: the unified
    ``SqlSettings`` ``ITRADER_DATABASE_*`` fields (``password``/``url`` are ``SecretStr``)
    resolved lazily inside ``SqlSettings.engine_url()`` (``SecretStr`` masks
-   ``repr``/``str``/logs). ``SqlHandler`` composes an injected ``SqlBackend`` and NEVER
+   ``repr``/``str``/logs). ``SqlHandler`` composes an injected ``SqlEngine`` and NEVER
    constructs an engine from a literal URL.
 
 2. **Dynamic-identifier DDL (closed).** The old purge interpolated each symbol into a
@@ -49,30 +49,30 @@ from sqlalchemy import Column, Float, String, Table, bindparam, insert, select
 
 from itrader.config import TIMEZONE
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlBackend, UtcIsoText
+from itrader.storage import SqlEngine, UtcIsoText
 
 
 class SqlHandler:
-    """Read/write OHLCV prices through the shared SQL spine (5th ``SqlBackend`` consumer).
+    """Read/write OHLCV prices through the shared SQL spine (5th ``SqlEngine`` consumer).
 
-    Composition, not inheritance (D-06): the handler holds an injected ``SqlBackend`` by
+    Composition, not inheritance (D-06): the handler holds an injected ``SqlEngine`` by
     reference and registers a single ``prices`` ``Table`` on ``backend.metadata``. All
     access is parameterized Core SQL against the literal ``prices`` table — there are no
     dynamic SQL identifiers and no hardcoded credentials.
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The engine's driver/URL — and, on the
         Postgres arm, its credential — come from ``SqlSettings``/``Settings`` at wiring;
         the resolved secret URL is NEVER logged.
     """
 
-    def __init__(self, backend: SqlBackend) -> None:
-        self.backend = backend
-        self.engine = backend.engine
+    def __init__(self, sql_engine: SqlEngine) -> None:
+        self.backend = sql_engine
+        self.engine = sql_engine.engine
 
-        metadata = backend.metadata
+        metadata = sql_engine.metadata
         if "prices" in metadata.tables:
             # Idempotent on a shared backend: reuse the already-registered table.
             self.prices = metadata.tables["prices"]

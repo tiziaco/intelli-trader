@@ -115,7 +115,7 @@ class SimulatedCashAccount(Account):
             # (oracle-dark); portfolio.py:_init_managers is the primary lever.
             storage = PortfolioStateStorageFactory.create(
                 getattr(portfolio, "_environment", "backtest"),
-                backend=getattr(portfolio, "_backend", None),
+                sql_engine=getattr(portfolio, "_sql_engine", None),
                 portfolio_id=getattr(portfolio, "portfolio_id", None),
             )
             # WR-02: share the fabricated seam with sibling managers so a

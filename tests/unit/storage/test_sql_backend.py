@@ -1,14 +1,14 @@
-"""Unit tests for ``itrader/storage/backend.py`` + the barrel (SPINE-02, D-01).
+"""Unit tests for ``itrader/storage/engine.py`` + the barrel (SPINE-02, D-01).
 
 Asserts the three behaviors of the composition spine:
 
-1. ``SqlBackend(SqlSettings())`` over the default SQLite settings exposes ``.engine``
+1. ``SqlEngine(SqlSettings())`` over the default SQLite settings exposes ``.engine``
    (an Engine bound to the resolved URL) and ``.metadata`` (a fresh MetaData), and holds
    NO business / query logic.
-2. A throwaway concrete store COMPOSES a ``SqlBackend`` (has-a) and creates a Table on
+2. A throwaway concrete store COMPOSES a ``SqlEngine`` (has-a) and creates a Table on
    ``backend.metadata`` without inheriting any shared storage base — there is no
    ``SqlStorageBase`` symbol to import.
-3. ``itrader.storage`` re-exports ``SqlBackend`` and the type helpers; importing the
+3. ``itrader.storage`` re-exports ``SqlEngine`` and the type helpers; importing the
    barrel does NOT import the quarantined ``sql_store`` and does NOT touch the env.
 """
 
@@ -22,11 +22,11 @@ from sqlalchemy import Column, MetaData, Table, Uuid, insert, select
 from sqlalchemy.engine import Engine
 
 from itrader.config.sql import SqlSettings
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 
 def test_backend_exposes_engine_and_metadata_no_business_logic() -> None:
-    backend = SqlBackend(SqlSettings())
+    backend = SqlEngine(SqlSettings())
     assert isinstance(backend.engine, Engine)
     assert isinstance(backend.metadata, MetaData)
     assert str(backend.engine.url) == "sqlite+pysqlite:///:memory:"
@@ -37,8 +37,8 @@ def test_backend_exposes_engine_and_metadata_no_business_logic() -> None:
     # logic — it remains a pure Engine+MetaData holder otherwise.
     public_methods = {
         name
-        for name in dir(SqlBackend)
-        if not name.startswith("_") and callable(getattr(SqlBackend, name))
+        for name in dir(SqlEngine)
+        if not name.startswith("_") and callable(getattr(SqlEngine, name))
     }
     assert public_methods == {"dispose"}
 
@@ -53,7 +53,7 @@ def test_backend_creates_missing_sqlite_parent_dir(tmp_path: Path) -> None:
     db_path = tmp_path / "missing_dir" / "results.db"
     assert not db_path.parent.exists()
 
-    backend = SqlBackend(SqlSettings(database=str(db_path)))
+    backend = SqlEngine(SqlSettings(database=str(db_path)))
     try:
         # The parent dir now exists, and a real connection actually opens the file.
         assert db_path.parent.is_dir()
@@ -64,12 +64,12 @@ def test_backend_creates_missing_sqlite_parent_dir(tmp_path: Path) -> None:
 
 
 def test_concrete_store_composes_backend_without_god_base() -> None:
-    backend = SqlBackend(SqlSettings())
+    backend = SqlEngine(SqlSettings())
 
     class _DemoStore:
-        """Composes SqlBackend (has-a) — it does NOT inherit a shared storage base."""
+        """Composes SqlEngine (has-a) — it does NOT inherit a shared storage base."""
 
-        def __init__(self, sql_backend: SqlBackend) -> None:
+        def __init__(self, sql_backend: SqlEngine) -> None:
             self._backend = sql_backend
             self.table = Table(
                 "demo",
@@ -79,8 +79,8 @@ def test_concrete_store_composes_backend_without_god_base() -> None:
 
     store = _DemoStore(backend)
     # has-a, not is-a — composition, never inheritance (SPINE-02 / D-01).
-    assert not isinstance(store, SqlBackend)
-    assert isinstance(store._backend, SqlBackend)
+    assert not isinstance(store, SqlEngine)
+    assert isinstance(store._backend, SqlEngine)
     assert "demo" in backend.metadata.tables
 
     # The composed backend actually creates the table and round-trips a UUIDv7.
@@ -93,16 +93,16 @@ def test_concrete_store_composes_backend_without_god_base() -> None:
 
     # There is no cross-concern god base anywhere in the spine.
     import itrader.storage as storage_pkg
-    import itrader.storage.backend as backend_mod
+    import itrader.storage.engine as engine_mod
 
     assert not hasattr(storage_pkg, "SqlStorageBase")
-    assert not hasattr(backend_mod, "SqlStorageBase")
+    assert not hasattr(engine_mod, "SqlStorageBase")
 
 
 def test_barrel_reexports_public_surface() -> None:
     import itrader.storage as storage_pkg
 
-    assert storage_pkg.SqlBackend is SqlBackend
+    assert storage_pkg.SqlEngine is SqlEngine
     assert hasattr(storage_pkg, "UtcIsoText")
     assert hasattr(storage_pkg, "json_variant")
 

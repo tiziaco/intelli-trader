@@ -94,15 +94,13 @@ class BacktestTradingSystem(object):
 		*,
 		engine: Optional[Engine] = None,
 		runner: Optional[BacktestRunner] = None,
-		signal_store: Optional[SignalStore] = None,
 	) -> None:
 		"""Construct the holder.
 
 		Two construction modes:
 
 		* **Factory mode (D-04):** ``build_backtest_system`` passes a pre-built
-		  ``engine`` + ``runner`` (+ ``signal_store``); the holder is a dumb
-		  wrapper.
+		  ``engine`` + ``runner``; the holder is a dumb wrapper.
 		* **Legacy direct-construction mode:** the oracle/integration sites pass
 		  the loose params; the holder builds the engine+runner internally via the
 		  same ``compose_engine`` seam (byte-identical wiring) so they work by
@@ -118,7 +116,6 @@ class BacktestTradingSystem(object):
 			# Factory mode: dumb holder of pre-built components.
 			self.engine = engine
 			self.runner = runner
-			self._signal_store = signal_store or engine.signal_store
 		else:
 			# Legacy direct-construction mode: build the engine+runner here using
 			# the shared seam. The COMPLETE supported-symbol set is seeded into a
@@ -158,8 +155,6 @@ class BacktestTradingSystem(object):
 				sql_engine=None,
 			)
 			self.engine = compose_engine(ctx, spec)
-			# Read the handler-owned signal store back off the engine (02-02/02-03).
-			self._signal_store = self.engine.signal_store
 			self.runner = BacktestRunner(self.engine)
 
 		self.logger.info('Trading system initialised')
@@ -409,15 +404,20 @@ class BacktestTradingSystem(object):
 	def get_signal_records(self) -> list[SignalRecord]:
 		"""Return the signals captured during the run (Plan 05-03, SIG-02).
 
-		Post-run read-model accessor (D-12): reads the injected signal-store sink
-		AFTER the run completes. A sink read, NOT a cross-domain handler call — the
-		queue-only contract is preserved.
+		Post-run read-model accessor (D-12): reads the handler-owned signal-store
+		sink AFTER the run completes (D-03 — reached through its owning handler,
+		``engine.strategies_handler.signal_store``, not a re-surfaced holder copy).
+		A sink read, NOT a cross-domain handler call — the queue-only contract is
+		preserved.
 		"""
-		return self._signal_store.get_all()
+		return self.engine.strategies_handler.signal_store.get_all()
 
 	def get_signal_store(self) -> SignalStore:
-		"""Return the signal-store itself for post-run filtered queries (SIG-02)."""
-		return self._signal_store
+		"""Return the signal-store itself for post-run filtered queries (SIG-02).
+
+		Reaches the store through its owning handler (D-03).
+		"""
+		return self.engine.strategies_handler.signal_store
 
 
 def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
@@ -450,7 +450,7 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	#    GATE-01): commonly None, so the oracle path stays store-free AND
 	#    SQL-import-inert — this module imports NO SQL surface at top level. A
 	#    persistence caller builds the store DIRECTLY (NO factory, D-19) and injects
-	#    it on the spec, e.g. ``SqlResultsStore(SqlBackend(SqlSettings.results_default()),
+	#    it on the spec, e.g. ``SqlResultsStore(SqlEngine(SqlSettings.results_default()),
 	#    strict_persist=SqlSettings.results_default().strict_persist)`` with the SQL
 	#    surface imported on THAT path only — never here.
 	ctx = EngineContext(
@@ -488,5 +488,4 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 		for pid in portfolio_ids:
 			strategy.subscribe_portfolio(pid)
 
-	return BacktestTradingSystem(
-		engine=engine, runner=runner, signal_store=engine.signal_store)
+	return BacktestTradingSystem(engine=engine, runner=runner)

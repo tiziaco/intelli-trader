@@ -12,7 +12,7 @@ Two observable guarantees the composition-root wiring must hold:
 
 * **Durable-store presence selects the 'live' arm; absence degrades to 'backtest'.** With a
   Postgres spine present the live ``PortfolioHandler`` is constructed on the durable 'live'
-  arm threading the SHARED ``SqlBackend`` (so each portfolio persists to the durable ledger);
+  arm threading the SHARED ``SqlEngine`` (so each portfolio persists to the durable ledger);
   with no ``ITRADER_DATABASE_*`` env it falls back cleanly to the in-memory 'backtest' arm.
   The 'live' arm is proven against the shared testcontainers Postgres (SKIPS Dockerless, D-11);
   the fallback is proven fully offline.
@@ -66,14 +66,14 @@ def test_no_durable_store_falls_back_to_backtest(monkeypatch) -> None:
 
 
 def test_durable_store_constructs_live_portfolio_handler(pg_database_env) -> None:
-    """With the Postgres spine present the PortfolioHandler is 'live' + shares the SqlBackend.
+    """With the Postgres spine present the PortfolioHandler is 'live' + shares the SqlEngine.
 
     Uses the shared session testcontainers Postgres via ``pg_database_env`` (sets
     ``ITRADER_DATABASE_URL``); SKIPS Dockerless (D-11).
     """
     system = LiveTradingSystem(exchange="paper")
     try:
-        # The durable arm was taken — one shared SqlBackend spine built.
+        # The durable arm was taken — one shared SqlEngine spine built.
         assert system._system_db_backend is not None
         # The PortfolioHandler is wired on the durable 'live' arm with the SAME shared backend,
         # so every portfolio it creates persists to the durable SQL ledger (D-07).

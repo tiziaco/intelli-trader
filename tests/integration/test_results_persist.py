@@ -47,10 +47,10 @@ from itrader.trading_system.system_spec import PortfolioSpec, SystemSpec
 
 # The SQL surface is imported HERE (the persistence path) — NEVER on the backtest
 # module's import path (test 4 below asserts that). The store is constructed
-# DIRECTLY as SqlResultsStore(SqlBackend(SqlSettings())) — no factory (D-19).
+# DIRECTLY as SqlResultsStore(SqlEngine(SqlSettings())) — no factory (D-19).
 from itrader.config.sql import SqlSettings
 from itrader.results.sql_storage import SqlResultsStore
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 # The committed golden oracle values (tests/golden/summary.json) — the byte-exact
 # SMA_MACD reference the default persist=False path must preserve (D-04 / GATE-01).
@@ -73,7 +73,7 @@ def _make_strategy() -> SMAMACDStrategy:
 
 def _make_store() -> SqlResultsStore:
     """A fresh in-process SQLite results store (direct construction, no factory)."""
-    return SqlResultsStore(SqlBackend(SqlSettings()))
+    return SqlResultsStore(SqlEngine(SqlSettings()))
 
 
 def test_persist_end_to_end_writes_runs_portfolios_and_artifacts() -> None:

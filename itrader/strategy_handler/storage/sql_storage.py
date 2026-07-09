@@ -1,6 +1,6 @@
 """Concrete ``SqlSignalStorage`` — the signal store on the shared SQL spine (OPS-03).
 
-The strategy/signal operational backend: it *composes* a ``SqlBackend`` by reference
+The strategy/signal operational backend: it *composes* a ``SqlEngine`` by reference
 (has-a, D-04 — never a cross-concern god base), registers the single ``signals`` table on
 ``backend.metadata`` via ``build_signal_tables``, and calls
 ``metadata.create_all(checkfirst=True)`` so schema creation is idempotent. This mirrors the
@@ -33,7 +33,7 @@ from sqlalchemy import bindparam, insert, select
 from itrader.core.enums import OrderType, Side, order_type_map
 from itrader.core.ids import SignalId, StrategyId
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage.base import SignalStore
 from itrader.strategy_handler.storage.models import build_signal_tables
@@ -44,23 +44,23 @@ class SqlSignalStorage(SignalStore):
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; the signal store registers its ``signals`` table on ``backend.metadata`` and
+        wiring; the signal store registers its ``signals`` table on ``sql_engine.metadata`` and
         creates it idempotently (``checkfirst=True``).
     """
 
-    def __init__(self, backend: SqlBackend) -> None:
-        self.backend = backend
-        self.engine = backend.engine
+    def __init__(self, sql_engine: SqlEngine) -> None:
+        self.backend = sql_engine
+        self.engine = sql_engine.engine
 
-        tables = build_signal_tables(backend.metadata)
+        tables = build_signal_tables(sql_engine.metadata)
         self.signals = tables["signals"]
 
         # Idempotent schema creation (on the live Postgres path the Alembic chain owns the
         # migration; create_all(checkfirst=True) is a no-op against an existing table and the
         # round-trip-test substrate's bootstrap).
-        backend.metadata.create_all(self.engine, checkfirst=True)
+        sql_engine.metadata.create_all(self.engine, checkfirst=True)
 
         self.logger = get_itrader_logger().bind(component="SqlSignalStorage")
 

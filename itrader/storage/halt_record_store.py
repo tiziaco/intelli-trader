@@ -3,7 +3,7 @@
 Phase 05.1 D-05 landed an IN-PROCESS ``HALTED`` latch. But a supervised auto-restart builds
 a FRESH ``LiveTradingSystem`` whose in-process ``_status`` is ``STOPPED``, so a breaker-class
 halt whose cause is not re-detectable at start would be silently cleared. This store puts the
-latch on the shared ``SqlBackend`` spine (ARCH-4 Layer 2): ``record_halt`` persists an
+latch on the shared ``SqlEngine`` spine (ARCH-4 Layer 2): ``record_halt`` persists an
 unresolved record, ``has_unresolved`` / ``get_unresolved`` read it back on the next process,
 and ``resolve_all`` clears it (operator ``reset_halt``). The DURABLE record is what latches
 across a restart.
@@ -13,7 +13,7 @@ Secret-scrub (V7 / T-05.2-18): the schema carries ONLY the machine-readable ``re
 column, so ``str(exc)`` or a connector payload can never leak into persistence (mirrors the
 ``ErrorEvent`` field-bind discipline at ``halt()``).
 
-The store *composes* a ``SqlBackend`` by reference (has-a, D-06 — never a cross-concern god
+The store *composes* a ``SqlEngine`` by reference (has-a, D-06 — never a cross-concern god
 base), registers the single ``halt_records`` table on ``backend.metadata`` and calls
 ``create_all(checkfirst=True)`` so schema creation is idempotent (the live path migrates via
 Alembic — ``d10_halt_records``; ``create_all`` is the test / no-op-if-present path). All SQL is
@@ -32,7 +32,7 @@ from sqlalchemy.engine import Engine
 
 from itrader import idgen
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlBackend, UtcIsoText, Uuid
+from itrader.storage import SqlEngine, UtcIsoText, Uuid
 
 
 class HaltRecord(NamedTuple):
@@ -76,19 +76,19 @@ class HaltRecordStore:
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; this store registers its one table on ``backend.metadata`` and creates it
+        wiring; this store registers its one table on ``sql_engine.metadata`` and creates it
         idempotently (``checkfirst=True``).
     """
 
-    def __init__(self, backend: SqlBackend) -> None:
-        self.backend = backend
-        self.engine: Engine = backend.engine
-        self.halt_records: Table = build_halt_records_table(backend.metadata)
+    def __init__(self, sql_engine: SqlEngine) -> None:
+        self.backend = sql_engine
+        self.engine: Engine = sql_engine.engine
+        self.halt_records: Table = build_halt_records_table(sql_engine.metadata)
         # Idempotent, ephemeral-friendly schema creation (the live path migrates via
         # Alembic; create_all is the test / no-op-if-present path).
-        backend.metadata.create_all(self.engine, checkfirst=True)
+        sql_engine.metadata.create_all(self.engine, checkfirst=True)
         self.logger = get_itrader_logger().bind(component="HaltRecordStore")
 
     def dispose(self) -> None:

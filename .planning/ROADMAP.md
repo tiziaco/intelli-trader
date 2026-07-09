@@ -101,7 +101,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 - [x] **Phase 1: Config Centralization** - One import-safe `SystemConfig` (eager/lazy split), module-constant migration, dead-config audit, typed `HaltReason` (CFG-01..06) (completed 2026-07-09)
 - [x] **Phase 2: Event Bus** - Two-tier `EventBus` Protocol (`FifoEventBus`/`PriorityEventBus`) + CONTROL EventTypes + minimal `EngineContext` skeleton (BUS-01..04) (completed 2026-07-09)
-- [ ] **Phase 3: EngineContext + Storage-in-Handler** - `EngineContext` threaded into `compose_engine(ctx, spec)`, handler-owns storage init, `SqlBackend→SqlEngine` rename (CTX-01..04)
+- [x] **Phase 3: EngineContext + Storage-in-Handler** - `EngineContext` threaded into `compose_engine(ctx, spec)`, handler-owns storage init, `SqlBackend→SqlEngine` rename (CTX-01..04) (completed 2026-07-09)
 - [ ] **Phase 4: Storage Schema: Migrations Relocation + New Durable Stores** - `migrations/` → project root FIRST, then `SystemStore`/`VenueStore`/`StrategyRegistryStore` chained on the `HaltRecordStore` template; single-head + parity Alembic gate over the FULL chain + rehydrate (SQL-01..02, STORE-01..05)
 - [ ] **Phase 5: Venue Registry + Bundle** - Two registries, `VenuePlugin`/`VenueBundle`, precision/validate on the exchange, connector memoization, shared `StreamSupervisor` — kills every `if exchange==` (VENUE-01..07)
 - [ ] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade (RUN-01..07)
@@ -173,7 +173,14 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
   *(CTX-01/CTX-02/CTX-03 — `compose_engine(ctx, spec)`, handler-owned storage, and the byte-exact/inertness gate — were delivered in Phase 2 per Phase 2 D-03; they are no longer P3 criteria.)*
 
-**Plans**: TBD
+**Plans**: 2 plans
+**Wave 1**
+
+- [x] 03-01-PLAN.md — `SqlBackend`→`SqlEngine` rename: class + module move (`storage/backend.py`→`storage/engine.py`) + `EngineContext.sql_engine` type-tighten + D-01 full `backend`→`sql_engine` vocabulary sweep across ~34 files (CTX-04, wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 03-02-PLAN.md — D-03 rider: collapse the redundant `signal_store` surfaces on `Engine`/`BacktestTradingSystem`; repoint accessors to read `engine.strategies_handler.signal_store` directly (wave 2)
 
 ### Phase 4: Storage Schema: Migrations Relocation + New Durable Stores
 
@@ -318,7 +325,7 @@ P1 and P2 have no dependencies and can start in parallel.
 |-------|-----------|----------------|--------|-----------|
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
-| 3. EngineContext + Storage-in-Handler | v1.8 | 0/TBD | Not started | - |
+| 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |

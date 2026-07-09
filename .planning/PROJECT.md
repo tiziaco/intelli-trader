@@ -785,7 +785,24 @@ the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a 
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
 
 ---
-*Last updated: 2026-07-09 — **v1.8 Phase 2 (Event Bus) COMPLETE.** 3 plans; goal verified `passed`
+*Last updated: 2026-07-09 — **v1.8 Phase 3 (EngineContext + Storage-in-Handler) COMPLETE.** 2 plans;
+goal verified `passed` (13/13 must-haves, `03-VERIFICATION.md`). Delivered CTX-04: hard-renamed the shared
+SQL spine class `SqlBackend`→`SqlEngine` (git mv `storage/backend.py`→`storage/engine.py`, history
+preserved, no alias), swept all 41 importers to `sql_engine=`/`_sql_engine` vocabulary (incl. the 4
+invisible `getattr(..., "_backend")` string-keys), repointed the barrel + Alembic `env.py` metadata
+import, and tightened `EngineContext.sql_engine` from `Optional[Any]` to `Optional["SqlEngine"]` under
+`TYPE_CHECKING` (inertness-preserving forward-ref). Plus the D-03 rider: collapsed the redundant
+`signal_store` surfacing — dropped the `Engine.signal_store` field + `BacktestTradingSystem._signal_store`
+param/attribute, repointed `get_signal_records()`/`get_signal_store()` to read
+`self.engine.strategies_handler.signal_store` directly (identical instance, no new `@property`,
+`StrategiesHandler` owner seam untouched). Zero-backtest-impact held: SMA_MACD oracle **byte-exact**
+(134 / `46189.87730727451`, determinism double-run identical), inertness green (0 sqlalchemy on the
+backtest import path), `mypy --strict` clean (237 files), full unit + integration regression **1852
+passed**, `poetry.lock` byte-unchanged. Advisory `03-REVIEW`: 0 blockers / 0 warnings / 1 info (six SQL
+leaf-store ctors kept param name `backend:` while the type renamed — cosmetic, all call sites positional).
+Next: Phase 4 — Storage Schema: Migrations Relocation + New Durable Stores.*
+
+*Earlier: 2026-07-09 — **v1.8 Phase 2 (Event Bus) COMPLETE.** 3 plans; goal verified `passed`
 (12/12 must-haves, `02-VERIFICATION.md`). Delivered the stdlib two-tier `EventBus` Protocol
 (`FifoEventBus` + `PriorityEventBus`, CONTROL > BUSINESS behind one `.put()` surface, `itertools.count()`
 seq keying so the priority heap never dereferences the non-orderable `Event`), the three CONTROL

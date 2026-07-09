@@ -319,7 +319,7 @@ class LiveTradingSystem:
         self.feed = LiveBarFeed(provider=None, base_timeframe=to_timedelta('1d'))
         # Signal-store sink (Plan 05-03 / 05-06, D-11): the live signal store is
         # wired TOGETHER with the order working set in the ITRADER_DATABASE_*-gated
-        # store block below — both share ONE SqlBackend (sync-durable orders on the D-10
+        # store block below — both share ONE SqlEngine (sync-durable orders on the D-10
         # path, the advisory signal store on the D-11 async/best-effort path). WR-03:
         # retain the store on self and expose accessors (mirroring the backtest
         # system) — a local variable would leave every captured SignalRecord
@@ -327,7 +327,7 @@ class LiveTradingSystem:
         self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
         # 05.2-05 (D-07): the PortfolioHandler is constructed AFTER the operational
         # store block below (which sets self._system_db_backend) so it can inject the
-        # SAME shared SqlBackend on the durable 'live' arm — see the durable-portfolio
+        # SAME shared SqlEngine on the durable 'live' arm — see the durable-portfolio
         # wiring right after the store block. Declared here as a forward attribute so
         # nothing between reads it before construction.
         self.portfolio_handler: PortfolioHandler
@@ -352,7 +352,7 @@ class LiveTradingSystem:
         # ``CachedSqlOrderStorage`` so it survives a crash for a correct two-sided
         # restart (D-10). The DERIVED / advisory state (the signal store) is
         # live-driven on the async/best-effort path (D-11 — signals are audit records,
-        # NOT the restart working set). Both share ONE ``SqlBackend`` built here.
+        # NOT the restart working set). Both share ONE ``SqlEngine`` built here.
         #
         # All SQL imports stay LAZY inside the Postgres arm (mirrors the OKX
         # lazy imports below) so the BACKTEST import path stays SQLAlchemy-free — the
@@ -384,13 +384,13 @@ class LiveTradingSystem:
             self._system_db_backend: Optional[Any] = None
         else:
             # CR-01/RECON-04: a Postgres credential is present on the unified
-            # ITRADER_DATABASE_* surface — honor it. Build ONE Postgres ``SqlBackend``
+            # ITRADER_DATABASE_* surface — honor it. Build ONE Postgres ``SqlEngine``
             # from the unified ``SqlSettings`` Postgres arm (the SAME surface Alembic
             # migrations/env.py uses) and drive the whole v1.6 operational store off it.
             # The SQL imports stay LAZY inside this arm so the backtest import path
             # remains SQLAlchemy-free (GATE-01 inertness).
             from itrader.config.sql import SqlDriver, SqlSettings
-            from itrader.storage import SqlBackend
+            from itrader.storage import SqlEngine
             from itrader.order_handler.storage.cached_sql_storage import (
                 CachedSqlOrderStorage,
             )
@@ -399,7 +399,7 @@ class LiveTradingSystem:
             # Mirror migrations/env.py:76 — no explicit url=; let pydantic-settings source
             # ITRADER_DATABASE_* (component vars, default port 5544) or the
             # ITRADER_DATABASE_URL verbatim escape hatch from env.
-            backend = SqlBackend(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
+            backend = SqlEngine(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
             # Sync-durable working set (D-10): order create/terminalize persists
             # store-first (persist-then-acknowledge, Pitfall 8) via the CachedSql
             # wrapper composing the untouched Phase-3 ``SqlOrderStorage`` — its
@@ -417,18 +417,18 @@ class LiveTradingSystem:
             # connector asyncio coroutine (Pitfall 9) — so a write can never stall the
             # loop. Keep-only-measured: no async buffering is built unless a live stall
             # is profiled (D-10).
-            self._signal_store = SignalStorageFactory.create('live', backend=backend)
+            self._signal_store = SignalStorageFactory.create('live', sql_engine=backend)
 
         # 05.2-05 (D-07): durable portfolio ledger wiring. When the Postgres spine
         # is present, construct the PortfolioHandler on the 'live' arm with the SAME
-        # shared SqlBackend so each Portfolio threads it into its state storage —
+        # shared SqlEngine so each Portfolio threads it into its state storage —
         # the engine's own durable ledger becomes the source of portfolio truth
         # (rehydrate restores positions+cash on restart). No spine -> 'backtest'
         # in-memory (degrades cleanly, mirroring the order/signal fallback above).
         if self._system_db_backend is not None:
             self.portfolio_handler = PortfolioHandler(
                 self.global_queue, environment='live',
-                backend=self._system_db_backend)
+                sql_engine=self._system_db_backend)
         else:
             self.portfolio_handler = PortfolioHandler(self.global_queue)
 

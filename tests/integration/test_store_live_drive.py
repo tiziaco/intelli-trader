@@ -96,13 +96,13 @@ def pg_url():
 
 
 def _make_backend(pg_url):
-    """Build a fresh ``SqlBackend`` bound to the container DB (verbatim-URL escape hatch)."""
+    """Build a fresh ``SqlEngine`` bound to the container DB (verbatim-URL escape hatch)."""
     from pydantic import SecretStr
 
     from itrader.config.sql import SqlDriver, SqlSettings
-    from itrader.storage import SqlBackend
+    from itrader.storage import SqlEngine
 
-    return SqlBackend(SqlSettings(
+    return SqlEngine(SqlSettings(
         driver=SqlDriver.POSTGRESQL_PSYCOPG2,
         url=SecretStr(pg_url),
     ))
@@ -204,7 +204,7 @@ def test_order_create_terminalize_durable_survives_restart(pg_url):
 def test_signal_store_live_driven_off_engine_critical_path(pg_url):
     """The signal store is live-driven and its persist is off the connector coroutine (D-11).
 
-    ``SignalStorageFactory.create('live', backend=...)`` returns the live
+    ``SignalStorageFactory.create('live', sql_engine=...)`` returns the live
     ``CachedSqlSignalStorage`` wrapper. The persist runs on the calling (engine-thread analog)
     with NO running asyncio loop — proving it is off the connector's event loop (Pitfall 9),
     so a signal write can never stall the loop. The store-first write returns promptly and the
@@ -212,7 +212,7 @@ def test_signal_store_live_driven_off_engine_critical_path(pg_url):
     """
     backend = _make_backend(pg_url)
     try:
-        signal_store = SignalStorageFactory.create('live', backend=backend)
+        signal_store = SignalStorageFactory.create('live', sql_engine=backend)
         backend.metadata.create_all(backend.engine, checkfirst=True)
         assert type(signal_store).__name__ == "CachedSqlSignalStorage"
 
@@ -239,7 +239,7 @@ def test_live_system_wires_cached_sql_from_database_url(pg_url, monkeypatch):
     The heart of RECON-04 (verbatim-URL escape hatch): constructing ``LiveTradingSystem`` with
     ``ITRADER_DATABASE_URL`` pointing at the operational DB wires the sync-durable order working
     set (``CachedSqlOrderStorage``) and the live signal store (``CachedSqlSignalStorage``) off ONE
-    shared ``SqlBackend`` sourced from the unified ``SqlSettings`` ``ITRADER_DATABASE_*`` surface.
+    shared ``SqlEngine`` sourced from the unified ``SqlSettings`` ``ITRADER_DATABASE_*`` surface.
     """
     import itrader.trading_system.live_trading_system as lts
 

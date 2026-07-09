@@ -494,7 +494,7 @@ def test_create_live_storage_returns_cached_sql_wrapper():
     Phase 4 (04-01) rewired the ``'live'`` arm to return
     ``CachedSqlOrderStorage(SqlOrderStorage(...))`` — the store-first live decorator over the
     untouched Phase-3 system of record (D-04). With no backend supplied the factory builds a
-    default ``SqlBackend`` (Phase 4 injects the shared operational backend at the live
+    default ``SqlEngine`` (Phase 4 injects the shared operational backend at the live
     composition root). The composed store's engine is disposed to avoid a ResourceWarning
     under ``filterwarnings=["error"]`` (WR-03 / Pitfall 4).
     """

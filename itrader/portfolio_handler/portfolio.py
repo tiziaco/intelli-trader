@@ -26,9 +26,9 @@ from itrader.core.exceptions.portfolio import PortfolioError, InvalidTransaction
 from itrader import idgen
 
 if TYPE_CHECKING:
-	# D-07 (05.2-05): the SqlBackend type is annotation-only here — a runtime
+	# D-07 (05.2-05): the SqlEngine type is annotation-only here — a runtime
 	# import would pull SQLAlchemy onto the backtest hot path (GATE-01 inertness).
-	from itrader.storage import SqlBackend
+	from itrader.storage import SqlEngine
 
 
 class Portfolio(object):
@@ -51,7 +51,7 @@ class Portfolio(object):
 	def __init__(self, name: str, exchange: str, cash: Decimal, time: datetime,
 	             config: Optional[PortfolioConfig] = None,
 	             environment: str = "backtest",
-	             backend: "Optional[SqlBackend]" = None) -> None:
+	             sql_engine: "Optional[SqlEngine]" = None) -> None:
 		"""
 		Initialize enhanced portfolio with integrated capabilities.
 
@@ -59,10 +59,10 @@ class Portfolio(object):
 		app-layer (FastAPI) mapping (owner -> portfolio) and is deliberately
 		absent here; it is NOT relocated onto the Account either.
 
-		D-07 (05.2-05): ``environment`` + ``backend`` select the state-storage
+		D-07 (05.2-05): ``environment`` + ``sql_engine`` select the state-storage
 		backend built in ``_init_managers``. The default "backtest" builds the
 		in-memory backend (the SMA_MACD byte-exact oracle path — unchanged); the
-		live composition root passes "live" + the shared ``SqlBackend`` so this
+		live composition root passes "live" + the shared ``SqlEngine`` so this
 		portfolio's state persists to the durable SQL ledger keyed by
 		``portfolio_id`` (surviving a process restart).
 		"""
@@ -86,10 +86,10 @@ class Portfolio(object):
 		# D-07 (05.2-05): the durable state-storage selector, threaded from the
 		# composition root (PortfolioHandler.add_portfolio). Set BEFORE
 		# _init_managers, which builds self.state_storage from these. "backtest"
-		# (the default) is the in-memory oracle path; "live" + backend build the
-		# SqlBackend-backed store scoped to self.portfolio_id.
+		# (the default) is the in-memory oracle path; "live" + sql_engine build the
+		# SqlEngine-backed store scoped to self.portfolio_id.
 		self._environment = environment
-		self._backend = backend
+		self._sql_engine = sql_engine
 
 		# Health monitoring
 		self._health_metrics: Dict[str, Any] = {
@@ -115,15 +115,15 @@ class Portfolio(object):
 		this seam. The backtest path uses the in-memory backend; live persistence
 		is a pure backend swap (deferred to D-sql).
 
-		D-07 (05.2-05): the environment/backend/portfolio_id selector is now
+		D-07 (05.2-05): the environment/sql_engine/portfolio_id selector is now
 		threaded from the composition root. For "backtest" (the default) the
 		extra kwargs are ignored (the in-memory backend is byte-exact — the
 		SMA_MACD oracle path is UNCHANGED); for "live" they satisfy the SQL arm's
-		required ``backend`` + ``portfolio_id`` (the store scopes every query to
+		required ``sql_engine`` + ``portfolio_id`` (the store scopes every query to
 		this portfolio).
 		"""
 		self.state_storage: PortfolioStateStorage = PortfolioStateStorageFactory.create(
-			self._environment, backend=self._backend, portfolio_id=self.portfolio_id
+			self._environment, sql_engine=self._sql_engine, portfolio_id=self.portfolio_id
 		)
 		# D-03: the runtime enable_margin branch becomes leaf selection at wiring —
 		# construct the account leaf the same way the four managers are built

@@ -1,8 +1,8 @@
 """``ResultsStore`` abstract base class — the spine's fourth composable concern (SPINE-02).
 
-The SQL spine (``itrader.storage.SqlBackend``) is *composed*, never inherited: each storage
+The SQL spine (``itrader.storage.SqlEngine``) is *composed*, never inherited: each storage
 concern is one narrow ABC implemented by exactly one ``Sql<Concern>Storage`` that holds a
-``SqlBackend`` by reference. Three such ABCs already exist (``OrderStorage``,
+``SqlEngine`` by reference. Three such ABCs already exist (``OrderStorage``,
 ``PortfolioStateStorage``, strategy ``SignalStore``); ``ResultsStore`` is the fourth, added
 now so the "all four concerns compose the spine" shape (SPINE-02) is concrete. There is
 deliberately NO shared cross-concern god base.
@@ -52,7 +52,7 @@ class ResultsStore(ABC):
 
     A sink + cross-run read-model for backtest/optimization runs: the composition root
     writes a run summary and its artifact frame post-run, then queries across runs. The
-    store *composes* the shared ``SqlBackend`` (has-a) — it does NOT inherit it, and there
+    store *composes* the shared ``SqlEngine`` (has-a) — it does NOT inherit it, and there
     is no cross-concern god base. Concrete column/encoding choices are deferred to Phase 2;
     this ABC fixes only the method surface, sourced 1:1 from RESULT-01/02/03.
     """

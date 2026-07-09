@@ -1,7 +1,7 @@
 """Concrete ``SqlResultsStore`` — the results store on the shared SQL spine (SPINE-02).
 
 The fourth ``Sql<Concern>Storage`` (after order / portfolio-state / signal): it *composes*
-a ``SqlBackend`` by reference (has-a, D-06 — never a cross-concern god base), registers the
+a ``SqlEngine`` by reference (has-a, D-06 — never a cross-concern god base), registers the
 three results tables on ``backend.metadata`` via ``build_results_tables``, and calls
 ``metadata.create_all(checkfirst=True)`` so schema creation is idempotent and ephemeral (no
 Alembic — the research store is SQLite, D-12). This mirrors the only existing concrete-store
@@ -43,7 +43,7 @@ from itrader.results.records import (
     RunMetrics,
     RunRecord,
 )
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 # Fixed gzip compression level — pinned alongside ``mtime=0`` so the encoded blob is
 # byte-deterministic across runs (RESULT-04 / D-10). Changing this value changes the bytes.
@@ -70,9 +70,9 @@ class SqlResultsStore(ResultsStore):
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; the results store registers its three tables on ``backend.metadata`` and
+        wiring; the results store registers its three tables on ``sql_engine.metadata`` and
         creates them idempotently (``checkfirst=True``).
     strict_persist:
         Dump-failure policy (D-17). ``False`` (default) → a caller may log-and-swallow a
@@ -80,18 +80,18 @@ class SqlResultsStore(ResultsStore):
         reads; the dump-failure decision lives at the run-hook caller (02-04), not here.
     """
 
-    def __init__(self, backend: SqlBackend, *, strict_persist: bool = False) -> None:
-        self.backend = backend
-        self.engine = backend.engine
+    def __init__(self, sql_engine: SqlEngine, *, strict_persist: bool = False) -> None:
+        self.backend = sql_engine
+        self.engine = sql_engine.engine
         self._strict_persist = strict_persist
 
-        tables = build_results_tables(backend.metadata)
+        tables = build_results_tables(sql_engine.metadata)
         self.runs = tables["runs"]
         self.run_portfolios = tables["run_portfolios"]
         self.run_artifacts = tables["run_artifacts"]
 
         # D-12 — idempotent, ephemeral schema creation (no Alembic on the research store).
-        backend.metadata.create_all(self.engine, checkfirst=True)
+        sql_engine.metadata.create_all(self.engine, checkfirst=True)
 
         # T-02-01 — the ORDER BY column is ALWAYS resolved through a MetricName -> Column
         # allow-list map (bound Column objects), NEVER an f-string. ``MetricName`` (a

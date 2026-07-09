@@ -1,7 +1,7 @@
 """Concrete ``SqlPortfolioStateStorage`` — the portfolio-state operational backend (OPS-02).
 
 The portfolio-state ``Sql<Concern>Storage`` on the shared SQL spine: it *composes* a
-``SqlBackend`` by reference (has-a, D-06 — never a cross-concern god base), registers the
+``SqlEngine`` by reference (has-a, D-06 — never a cross-concern god base), registers the
 six portfolio tables on ``backend.metadata`` via ``build_portfolio_tables``, and calls
 ``metadata.create_all(checkfirst=True)`` so schema creation is idempotent (live path uses
 Alembic; ``create_all`` is the test/idempotent path). Mirrors ``results/sql_storage.py``.
@@ -37,7 +37,7 @@ from sqlalchemy import delete, func, insert, select
 from itrader.core.enums import CashOperationType, PositionSide, TransactionType
 from itrader.core.ids import PositionId, TransactionId
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 from ..base import PortfolioStateStorage
 from itrader.portfolio_handler.account import CashOperation
@@ -52,9 +52,9 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; this backend registers its six tables on ``backend.metadata`` and creates
+        wiring; this backend registers its six tables on ``sql_engine.metadata`` and creates
         them idempotently (``checkfirst=True``).
     portfolio_id:
         The UUIDv7 portfolio this instance is bound to (Pitfall 1). EVERY query is scoped
@@ -62,12 +62,12 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         (``CashOperation`` / ``PortfolioSnapshot``) have it injected on insert.
     """
 
-    def __init__(self, backend: SqlBackend, portfolio_id: uuid.UUID) -> None:
-        self.backend = backend
-        self.engine = backend.engine
+    def __init__(self, sql_engine: SqlEngine, portfolio_id: uuid.UUID) -> None:
+        self.backend = sql_engine
+        self.engine = sql_engine.engine
         self._portfolio_id = portfolio_id
 
-        tables = build_portfolio_tables(backend.metadata)
+        tables = build_portfolio_tables(sql_engine.metadata)
         self.positions = tables["positions"]
         self.transactions = tables["transactions"]
         self.cash_reservations = tables["cash_reservations"]
@@ -77,7 +77,7 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
 
         # Idempotent, ephemeral-friendly schema creation (the live path migrates via
         # Alembic; create_all is the test/no-op-if-present path).
-        backend.metadata.create_all(self.engine, checkfirst=True)
+        sql_engine.metadata.create_all(self.engine, checkfirst=True)
 
         self.logger = get_itrader_logger().bind(component="SqlPortfolioStateStorage")
 

@@ -3,7 +3,7 @@
 Phase 05.1 D-05 landed an IN-PROCESS HALTED latch, but a supervised auto-restart builds a
 FRESH ``LiveTradingSystem`` whose in-process ``_status`` is ``STOPPED`` — so a breaker-class
 halt whose cause is not re-detectable at start would be silently cleared. This plan adds a
-DURABLE halt record on the shared ``SqlBackend`` spine: ``halt()`` persists it, ``start()``
+DURABLE halt record on the shared ``SqlEngine`` spine: ``halt()`` persists it, ``start()``
 refuses RUNNING while an unresolved record exists (the DURABLE record is what latches across a
 restart), and ``reset_halt()`` resolves it.
 
@@ -13,7 +13,7 @@ has NO free-form exception/payload column.
 
 Two arms:
 
-* **Store round-trip (Task 1).** ``HaltRecordStore`` over an in-memory ``SqlBackend`` double:
+* **Store round-trip (Task 1).** ``HaltRecordStore`` over an in-memory ``SqlEngine`` double:
   record → ``has_unresolved()`` True → ``resolve_all()`` → False.
 * **Fresh-instance refuse-RUNNING (Task 2).** A FRESH ``LiveTradingSystem`` sharing the SAME
   store (in-process ``_status`` STOPPED) refuses RUNNING while the durable record is unresolved;
@@ -31,21 +31,21 @@ from decimal import Decimal
 
 from itrader.config.sql import SqlSettings
 from itrader.core.sizing import FractionOfCash, TradingDirection
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 from itrader.storage.halt_record_store import HaltRecordStore
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.trading_system.live_trading_system import LiveTradingSystem
 
 
 def _make_store() -> HaltRecordStore:
-    """An in-memory durable double — the shared ``SqlBackend`` on ``:memory:`` SQLite.
+    """An in-memory durable double — the shared ``SqlEngine`` on ``:memory:`` SQLite.
 
     ``SqlSettings.default()`` pins the in-process SQLite arm; the ``SingletonThreadPool``
     that pysqlite uses for ``:memory:`` keeps the same in-memory DB alive across
     ``engine.begin()`` calls on the test thread, so a single store instance persists its
     rows for the life of the test (the fresh-instance arm shares ONE store).
     """
-    return HaltRecordStore(SqlBackend(SqlSettings.default()))
+    return HaltRecordStore(SqlEngine(SqlSettings.default()))
 
 
 def test_halt_record_round_trip() -> None:
