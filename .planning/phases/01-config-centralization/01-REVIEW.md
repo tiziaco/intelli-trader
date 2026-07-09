@@ -29,7 +29,10 @@ findings:
   warning: 1
   info: 1
   total: 3
-status: issues_found
+status: resolved
+resolution: fixed_during_execution
+resolved_findings: 2
+resolution_note: "CR-01 (blocker) fixed in b2e88d29 (fix 01-02): DRIFT added to HaltReason. WR-01 (warning) fixed in 2c4aaac1 (fix 01-04): paper-parity timeframe decoupled from live config + WR-02 guard extended. IN-01 (info) is the documented P1 default-construct seam — no action (P5 injection)."
 ---
 
 # Phase 1: Code Review Report
@@ -37,7 +40,17 @@ status: issues_found
 **Reviewed:** 2026-07-09T10:51:16Z
 **Depth:** standard
 **Files Reviewed:** 20
-**Status:** issues_found
+**Status:** resolved — CR-01 fixed in `b2e88d29`, WR-01 fixed in `2c4aaac1` (both verified during execution); IN-01 informational (no action)
+
+> **Resolution (orchestrator, during phase-01 execution):** Both actionable findings were
+> verified against the code and fixed before phase close. **CR-01** — `DRIFT` added to
+> `HaltReason` (`halt("drift")` is a live path: `portfolio_handler.py:839` →
+> `set_halt_signal(self.halt)` at `:678`); docstrings + tests corrected. **WR-01** — the
+> paper-parity replay timeframe was decoupled from the live-tunable `okx_stream_timeframe`
+> back to a `PAPER_PARITY_TIMEFRAME` anchor, and the `run_paper_replay` WR-02 guard was
+> extended to catch timeframe drift. **IN-01** is the documented P1 default-construct seam
+> (P5 injection replaces it) — no action. Gates re-verified: oracle byte-exact
+> `134 / 46189.87730727451`, inertness green, full unit suite 1769 passed, mypy --strict clean.
 
 ## Summary
 
