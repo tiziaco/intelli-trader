@@ -6,14 +6,14 @@ current_phase: 04
 current_phase_name: storage-schema-migrations-relocation-new-durable-stores
 status: executing
 stopped_at: Phase 4 context gathered
-last_updated: "2026-07-09T17:30:43.956Z"
+last_updated: "2026-07-09T17:41:46.460Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 9
   completed_phases: 3
   total_plans: 12
-  completed_plans: 10
+  completed_plans: 11
   percent: 33
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 04 (storage-schema-migrations-relocation-new-durable-stores) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-07-09 — Phase 04 execution started
 
@@ -138,6 +138,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: D-01: backend/_backend vocabulary unified to sql_engine/_sql_engine across storage factories, PortfolioHandler, and Portfolio
 - [Phase 03]: D-03: collapsed redundant signal_store surfaces; accessors read through engine.strategies_handler.signal_store, no @property added
 - [Phase ?]: [Phase 04]: 04-01: migrations/ relocated to project root via git mv (D-10, 5 revision IDs preserved unchanged, single head d10_halt_records); alembic.ini script_location=migrations; SQL-01 wheel-exclusion samplable via tomllib assertion; oracle byte-exact + inertness green
+- [Phase ?]: [Phase 04]: 04-02: three new live-only durable stores landed (SystemStore KV / VenueStore / StrategyRegistryStore), each a HaltRecordStore-template clone composing SqlEngine; natural NAME PKs (D-06, no idgen/surrogate); VenueStore recursive secret-denylist guard fires before the write (D-05, Pitfall 6); StrategyRegistryStore two-table registry+subscriptions with FK-join rehydrate + file-backed restart survival; oracle byte-exact + inertness green
 
 ### Pending Todos
 
@@ -202,6 +203,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 03 P01 | 11min | 2 tasks | 41 files |
 | Phase 03 P02 | 2min | 1 tasks | 2 files |
 | Phase 04 P01 | 1min | 2 tasks | 4 files |
+| Phase 04 P02 | 6min | 3 tasks | 6 files |
 
 ## Bookkeeping
 
@@ -213,7 +215,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T17:30:10.145Z
+Last session: 2026-07-09T17:41:36.953Z
 Stopped at: Phase 4 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
