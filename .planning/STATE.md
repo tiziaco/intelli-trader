@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: Live System Refactor & Live-Readiness Hardening
 status: planning
-last_updated: "2026-07-09T07:24:06.624Z"
+last_updated: "2026-07-09T00:00:00.000Z"
 last_activity: 2026-07-09
 progress:
-  total_phases: 0
+  total_phases: 12
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,70 +17,71 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-07 — v1.7 Live Trading Readiness SHIPPED + archived; no active milestone)
+See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Live-Readiness Hardening)
 
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
-deterministic, cross-validated numbers (oracle 134 / `46189.87730727451`; v1.5 W1 baseline 15.7 s /
-152.8 MB). v1.7 added a **live operating mode (paper-first on OKX)** with a real correctness gate
-(**paper-parity vs that oracle**) — **without disturbing the byte-exact backtest path**.
-**Current focus:** No active milestone — v1.7 shipped + archived 2026-07-07. Next: `/gsd:new-milestone`
-(owner's stated direction: `live_trading_system.py` full refactor + halt-vocabulary review + FastAPI
-control-plane). Adjudicate the owner-gated margin-equity WR-01 defect before any live margin consumer.
+deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
+152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
+**Current focus:** v1.8 decomposes the 2,171-line `LiveTradingSystem` God object (~17 concerns) into a
+thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
+disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
+(LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started — 0 of 12 (roadmap created, revised to 12 phases)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-09 — Milestone v1.8 started
+Status: Ready to plan (P1 and P2 are both dependency-free — can plan in parallel)
+Last activity: 2026-07-09 — v1.8 ROADMAP.md revised to 12 phases (old P4 SqlEngine Migrations Relocation
+folded into old P5 New Durable Stores → merged storage-schema phase P4; downstream phases renumbered −1;
+64 requirements still mapped, 0 orphans)
 
-## Milestone Gate (v1.7 — applies to EVERY phase)
+Progress: [░░░░░░░░░░] 0%
 
-The live machinery is **inert on the backtest hot path**. Each phase carries the recurring gate:
+## Milestone Gate (v1.8 — applies to EVERY phase)
 
-1. **Oracle byte-exact** — SMA_MACD stays **134 / `46189.87730727451`** (`check_exact=True`),
-   determinism double-run identical.
+1. **Oracle byte-exact** — `SMA_MACD` stays **134 / `46189.87730727451`** (`check_exact=True`),
+   determinism double-run identical. **Per-PLAN gate** on P1–P4, P5, and **P6's `UniverseWiring`
+   extraction** (highest oracle risk). Any re-baseline (LR-02) is explicit + externally cross-validated
+   (backtesting.py + backtrader), never silent. Live-only phases (P7–P11) stay byte-exact (backtest-dark).
+2. **OKX import-inertness** — `tests/integration/test_okx_inertness.py` stays green, extended to assert
+   **register-vs-build** on P1/P2/P4/P5 (registering a venue imports no `ccxt.pro` until built;
+   `SystemConfig` never constructs Postgres `SqlSettings` at import). **Zero new dependency / no poetry
+   change** anywhere in P1–P12.
+3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded
+   RNG, injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
+   indentation matched to the file (never normalized).
 
-2. **No W1/W2 perf regression** vs the v1.5 frozen baseline (15.7 s / 152.8 MB) — the backtest path
-   imports no async/connector code.
+## Phase Map (v1.8 — Phases 1-12, numbering reset)
 
-**Phase-specific gates:** Phase 1 = oracle re-confirmed byte-exact after the Account extraction (ACCT-03);
-Phase 4 = **paper-parity gate (DoD)** — golden dataset replayed through the live-paper path yields the
-oracle byte-exact (PAPER-04); Phase 5 = sandbox-validated real path (RECON-06).
+Dependency graph (not strict numeric order): `P1 · P2` (no deps) → `P3{P1,P2}` → `P4{P3}`; `P5{P2,P3}`;
+`P6{P4,P5}` → `P7{P6}` · `P8{P6}`; `P9★{P4,P7}`; `P10★{P4,P6}`; `P11★{P5,P7}`; `P12{P6,P11}`.
 
-**Held throughout, all phases:** Decimal money end-to-end (`to_money` at the connector edge — ccxt
-returns floats); single UUIDv7; determinism (business `time`, never wall-clock); single seeded RNG +
-injected clock; `mypy --strict` clean on new code; `filterwarnings=["error"]` green (`pytest-asyncio`
-configured, global filter never relaxed); tabs/spaces indentation matched to the file.
+| Phase | Name | Requirements | Notes |
+|-------|------|--------------|-------|
+| 1 | Config Centralization | CFG-01..06 | oracle-gated; lazy `sql` inertness lever; `HaltReason` (CF-8); CF-6 doc |
+| 2 | Event Bus | BUS-01..04 | oracle-gated; +CONTROL EventTypes + minimal `EngineContext` skeleton (refinements 2/3) |
+| 3 | EngineContext + Storage-in-Handler | CTX-01..04 | oracle-gated; `SqlBackend→SqlEngine` folded in (refinement 4) |
+| 4 | Storage Schema: Migrations Relocation + New Durable Stores | SQL-01..02, STORE-01..05 | merged (old P4+P5); oracle-gated relocation FIRST, then live-only stores; single-head + parity Alembic gate over the FULL chain + rehydrate |
+| 5 | Venue Registry + Bundle | VENUE-01..07 | oracle-gated; **highest inertness risk**; CF-3/4/9 |
+| 6 | LiveRunner + Factory + Facade Shrink | RUN-01..07 | **highest oracle risk** (`UniverseWiring`); CF-10 |
+| 7 | Safety + Reconciliation + Stream Recovery | SAFE-01..06 | CF-2 loop-native; CF-7; SAFE-06 pre-trade throttle |
+| 8 | Error Subsystem | ERR-01..04 | **CF-1 aggregate breaker MUST trip** (hard criterion); CF-5 |
+| 9 ★ | Runtime-Config Platform | RTCFG-01..06 | feature-add; allowlist + venue-kind-aware fee/slippage gate |
+| 10 ★ | Strategies Registry | STRAT-01..03 | feature-add; STRAT-03 atomic re-config folds pair-strategy TODO |
+| 11 ★ | Multi-Portfolio-Live | MPORT-01..06 | LR-03 (never trim); distinct-`account_id` fails loud |
+| 12 | Test Migration + Gates | TEST-01..04 | lands last; production replay-free; attribution gate |
 
-## Phase Map (v1.7 — Phases 1-6, numbering reset)
-
-Execution order: 1 (gates all) → 2 → 3 → 4 (DoD) → 5 → 6. Hard dependencies (design §7 / research
-ARCHITECTURE): Phase 1 oracle-gated, gates everything; Phase 2 data arm feeds Phase 3; **Phase 4 DoD
-reachable on 1 + 3 + connector data arm only (NOT the order arm)**; Phase 5 needs Phase 2 order arm +
-Phase 1 `VenueAccount` + the v1.6 store; Phase 6 pairs with Phase 3 backfill. LX-15 topology (RUN-01)
-decided in the Phase 3→4 handoff before Phase 4 wiring. Phase dirs `01-*..06-*` will not collide with the
-`999.3` backlog placeholder (different prefix).
-
-| Phase | Name | Requirements | Research flag |
-|-------|------|--------------|---------------|
-| 1 | Account Abstraction + Portfolio/Handler Refactor | ACCT-01..06 | SKIP (v1.2 MOD-01 playbook) |
-| 2 | OKX Connector | CONN-01..06 | **NEEDS plan-time research** (OKX confirm + ccxt.pro gap list) |
-| 3 | LiveBarFeed | FEED-01..05 | **NEEDS plan-time research** (ring capacity, reconnect, correction policy) |
-| 4 | Paper Path (DoD) | PAPER-01..04, RUN-01, COV-01 | **NEEDS plan-time research** (parity harness + LX-15 topology) |
-| 5 | Real/Sandbox + Reconciliation + Persistence Live-Drive | RECON-01..06, RES-01 | **NEEDS plan-time research SPRINT** (reconciliation + write-through boundary) |
-| 6 | Dynamic Universe Membership | UNIV-01, UNIV-02 | SKIP (reuses Phase 3 backfill) |
-
-**Cross-cutting homes:** RUN-01 → Phase 4 (decided before wiring), RES-01 → Phase 5 (pieces in 2–3),
-COV-01 → Phase 4 (infra in 2, extends to 5). Coverage: **32/32 mapped, 0 orphans** (the pre-map "31"
-was an off-by-one — see REQUIREMENTS.md count note).
+**Coverage: 64/64 mapped, 0 orphans.** ★ = trimmable feature-add (in scope — owner chose full scope; the
+trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research flags (plan-time research): P6
+(`UniverseWiring` byte-exact discipline), P8 (CF-1 route-classification + livelock test), P11
+(`client_order_id`/`portfolio_id` two-key attribution). Skip research-phase: P2/P4/P5 (specified/mechanical).
 
 ## Performance Metrics
 
-**Velocity (program cumulative through v1.6):**
-
-- Total plans completed: 306 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21)
-- v1.7 plans completed: 0
+**Velocity (program cumulative through v1.7):**
+- Total plans completed: 381 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21 + v1.7 75)
+- v1.8 plans completed: 0
 
 *Updated after each plan completion. Per-milestone velocity is archived in the respective MILESTONE-AUDIT.md.*
 
@@ -88,297 +89,99 @@ was an off-by-one — see REQUIREMENTS.md count note).
 
 ### Roadmap Evolution
 
-- v1.7 roadmap created 2026-06-30 (promotes Backlog 999.3 / N+4 Live, trimmed): 6 phases derived from the
-  LOCKED design sketch §4 (LX-01..LX-15) + research SUMMARY/ARCHITECTURE build order; all 32 requirements
-  mapped (100% coverage, 0 orphans). Numbering reset to Phase 1 (matching v1.1–v1.6). Backlog 999.3 marked
-  PROMOTED-TO-v1.7 (design intent retained as historical seed). The recurring milestone gate (oracle
-  byte-exact + no W1/W2 regression — live machinery inert on the backtest hot path) is restated as a
-  success criterion in every phase.
-
-- Cross-cutting requirements given definite home phases: RUN-01 → Phase 4 (LX-15 topology decided before
-  Phase 4 wires the runtime), RES-01 → Phase 5 (resilience fully verified on the real path; rate-limit
-  built in Phase 2, reconnect+gap-recovery in Phase 3 FEED-04), COV-01 → Phase 4 (FL-13 on the first
-  end-to-end live surface; `pytest-asyncio` infra lands Phase 2; real-path coverage extends to Phase 5).
-
-- Phase 05.1 inserted after Phase 5: Live-Path Remediation (URGENT)
-
-- Phase 7 added 2026-07-06: Live Dynamic-Universe Hardening — from the Phase 6 code review. Async warmup +
-  per-symbol `isReady` readiness gate (WR-02 centerpiece) plus WR-01/04/05/06; CR-01/WR-03 already fixed in
-  quick task 260706-l48. Detailed WR-04/05/06 design deferred to the Phase 7 discuss session. (Note:
-  `gsd-sdk query phase.add` auto-numbered it Phase 10 by scanning the cumulative cross-milestone ROADMAP —
-  manually corrected to Phase 7 per the v1.7 per-milestone numbering reset; dir renamed 10→07.)
+- v1.8 ROADMAP.md created 2026-07-09 from the LOCKED design spec
+  (`docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` §16, LR-00..LR-22, CF-1..CF-10)
+  + research SUMMARY's 4 build-order refinements. Phases derived 1:1 from the REQUIREMENTS.md
+  category→phase mapping (authoritative); all 64 v1 requirements mapped (0 orphans). Numbering reset to
+  Phase 1 (matching v1.1–v1.7). The milestone gate (oracle byte-exact + inertness) is a success criterion
+  in every phase; per-PLAN oracle gating on P1–P4/P5/P6-UniverseWiring.
+- **2026-07-09 revision (13→12 phases):** old P4 (SqlEngine Migrations Relocation, SQL-01/02) folded into
+  old P5 (New Durable Stores, STORE-01..05) → a single merged storage-schema phase P4 ("Storage Schema:
+  Migrations Relocation + New Durable Stores"). Both are live-only / off the oracle hot path, and
+  "relocate the migrations dir, then extend the Alembic chain with 3 new stores" is one cohesive unit of
+  work; the SQL-02 single-head + parity gate now validates the FULL chain incl. the 3 new stores. All
+  downstream phases renumbered −1 (old P6→P5 … old P13→P12). Owner-approved.
+- 4 research refinements folded into the spec §16 graph: (1) P3 depends on {P1,P2}; (2) minimal
+  `EngineContext` skeleton lands in P2; (3) P2 adds the CONTROL EventTypes; (4) `SqlBackend→SqlEngine`
+  rename folded into P3 (only migrations *relocation* stays in the merged P4).
 
 ### Decisions
 
-Active program constraints live in PROJECT.md. v1.7-relevant locked decisions (design LX-01..LX-15):
-
-- **Paper-first DoD (LX-01) + refactor-first (LX-02):** Phase 1 extracts the Account abstraction
-  (oracle-gated, behavior-preserving) BEFORE any live code depends on it; the milestone DoD is the
-  paper-parity gate (Phase 4), reachable on the connector **data arm only**.
-
-- **Account owns balance/margin truth (LX-03), 1 account : 1 portfolio (LX-04):** `Simulated*` leaves
-  compute, `Venue*` leaves cache; the order domain reads through the existing `PortfolioReadModel` seam,
-  so Phase 1 is pure code-motion (no ripple into `OrderManager`/validator).
-
-- **`LiveConnector` is ours over ccxt.pro (LX-05) + native escape hatch:** ccxt's unified `watchOHLCV`
-  drops the OKX `confirm` flag (ccxt #21885) — the native read is mandatory before the feed can emit
-  `BarEvent`s. Single `sandbox: bool` routes both ccxt + native (no split-brain).
-
-- **`PaperConnector` reuses the pure `MatchingEngine` (LX-06) + a shared `apply_costs` helper** extracted
-  byte-exact from `SimulatedExchange._emit_fill` (one matching core + one cost core; no dual fill-pricing).
-
-- **`LiveBarFeed` = ring-buffer `BarFeed` (LX-07); confirm-flag closed-bar (LX-08); warmup through the
-  identical `update(bar)` path, no bulk fast-path (LX-09); monotonic-forward-only (LX-10).**
-
-- **Topology (LX-15):** ship separate worker process (option (b) architected as (c) with N=1), Postgres
-  `LISTEN/NOTIFY` command/status channel (zero new dep, reuses the v1.6 store). Decide before Phase 4 wiring.
-
-- **`TradingInterface` deleted (LX-14)** — no production consumer; replaced by a thin typed engine command
-  surface routing through the real order domain. `Portfolio.user_id` stripped (app-layer concern).
-
-- [Phase ?]: D-04 resolved: SMA_MACD oracle runs the SPOT path — SimulatedCashAccount is the verbatim-critical leaf for plan 01-02 (enable_margin=False default + run_backtest.py LONG_ONLY)
-- [Phase ?]: [Phase 1 / 01-04] D-09 recorded: only the surviving engine-command-surface PRINCIPLE is locked (FastAPI -> thin typed command surface, never into LiveTradingSystem internals); concrete method set deferred to Phase 4 (scopes FL-13). TradingInterface deleted (D-08/LX-14) — dead pre-FastAPI bridge with a quantity: float live-path leak; removal helps the no-float-money gate (ACCT-05).
-- [Phase 01]: 01-02: SimulatedCashAccount = CashManager moved byte-for-byte (D-05); .available is a thin Decimal alias of verbatim available_balance to satisfy the Account ABC without altering internals (byte-exact)
-- [Phase 01]: 01-02: SimulatedMarginAccount gains set_universe/_universe — the margin/liq math-pulldown (ACCT-02) moves its Universe dependency down with the math; dark this wave, wired in 01-03. Liquidation emission shell stays in PortfolioHandler
-- [Phase ?]: 01-03: Portfolio/PortfolioHandler delegate all balance/margin/liq truth to the injected Account leaf behind the FROZEN PortfolioReadModel seam; margin surface narrowed via cast/isinstance; liquidation shells skip spot accounts; CashManager deleted; oracle held byte-exact.
-- [Phase ?]: 01-03c: e2e margin scenarios construct the SimulatedMarginAccount leaf at CONSTRUCTION via enable_margin portfolio_config (01-03 D-03) — the post-construction update_config toggle no longer rebuilds the leaf; account caches no config at construction so a minimal enable_margin config suffices. e2e suite green (72 passed); user_id grep-zero across tests/e2e.
-- [Phase ?]: 01-05: Terminal gate PASSED (ACCT-03) — Account extraction proven behavior-preserving: oracle byte-exact (134 / 46189.87730727451), determinism double-run identical, mypy --strict clean (214 files), full suite 1463 passed under filterwarnings=[error], no float-money introduced (edge casts only), no orphaned cash_manager/user_id reference, W1 oracle run within the 15.7s baseline
-- [Phase 02]: 02-01: OkxSettings binds .api_key/.api_secret/.api_passphrase to plain OKX_API_* via validation_alias while keeping env_prefix='' (a bare field under env_prefix='' would read API_KEY not OKX_API_KEY); SecretStr masks the auth triple; passphrase required; OKX_SANDBOX aliases the demo flag (CONN-06 / D-10)
-- [Phase 02]: 02-01: LiveConnector reshaped from a two-arm marker to a session/transport contract (call sync-RPC / spawn stream-task / client / sandbox / connect / disconnect) — the D-02 seam the three arms type against; async/sync bridge bottled at the connector edge; wspap demo-host correction recorded (WS demo via host, not the REST-only x-simulated-trading header)
-- [Phase 02]: 02-02: OkxConnector = loop-on-daemon-thread + one ccxt.pro client built INSIDE the loop (Pitfall 3); single sandbox bool drives set_sandbox_mode (REST header + ccxt WS wspap host swap) AND the exposed flag the native socket keys off — no split-brain (CONN-03); call/spawn async-sync bridge, stream-task set cancelled on disconnect (CONN-04); no domain-event imports (D-02); exported from barrel (D-04)
-- [Phase 02]: 02-03: OkxExchange = live sibling of SimulatedExchange (AbstractExchange), injected OkxConnector session (D-04, never the concretion); create/cancel via connector.call, watch_orders/watch_my_trades via connector.spawn; the EXCHANGE emits FillEvents on global_queue itself (D-07, D-19 MPSC-safe); Decimal edge held (to_money(str) inbound, ccxt amount/price_to_precision strings outbound, CONN-05); FillEvent.time from venue ms timestamp, never wall-clock; on_market_data no-op for live (CONN-02)
-- [Phase 02]: 02-04: OkxDataProvider data arm — native /ws/v5/business candle socket is the confirm-flag escape hatch (ccxt watch_ohlcv drops confirm); gate on confirm==1 index 8 (forming bars dropped, CONN-01); native host driven off connector.sandbox (wspap vs ws, host not header, CONN-03); REST fetch_ohlcv backfill via shared client with to_money(str) Decimal edge (CONN-05); minimal set_bar_sink seam for Phase-3 LiveBarFeed (D-03); types LiveConnector Protocol only (D-04); mypy --strict clean
-- [Phase ?]: 02-05: OkxConnector constructed ONCE at the LiveTradingSystem composition root and the LiveConnector session injected into the three arms (OkxExchange registered 'okx', OkxDataProvider, VenueAccount) — whole OKX stack lazy-imported inside the live path; init_exchanges unchanged; disconnect() wired into stop() (D-04/CONN-04)
-- [Phase ?]: 02-05: VenueAccount LiveConnector import is TYPE_CHECKING-guarded because the account barrel is on the backtest hot path — a runtime connectors-barrel import would pull ccxt.pro and break inertness; body still Phase 5 (RECON-01)
-- [Phase ?]: 02-05: milestone gate green — fresh-subprocess inertness test asserts itrader.connectors.okx + ccxt.pro absent after a backtest-root import; SMA_MACD oracle byte-exact (134 / 46189.87730727451); suite 1498 passed / 1 skipped
-- [Phase ?]: 03-01: D-12 resolved — ClosedBar carries its own (symbol, timeframe) routing keys; live path stamps from self._symbol/self._timeframe, backfill path from method params (ad-hoc symbol correctness); keys never read from the untrusted venue row (T-03-01-TAMPER). Shared socket-free tests/unit/price/conftest.py fixtures (closed_bar, closed_bar_sequence, _StubProvider) stand up the LiveBarFeed offline matrix.
-- [Phase 03]: 03-02: LiveBarFeed(BarFeed) — capacity-sized deque ring per (symbol,timeframe) + FEED-04 monotonic guard (in-sequence/gap-backfill-replay/duplicate/revision/stale, D-06/D-07) + direct single-ticker BarEvent emission (D-02/D-03/D-04); dormant no-op generate_bar_event (D-05); public set_provider seam (D-01/D-13); TYPE_CHECKING ClosedBar import + absent from feed barrel keeps it hot-path-inert
-- [Phase ?]: 03-04: LiveBarFeed lazy-wired as the live driver at the LiveTradingSystem composition root (FEED-05) — provider-less unconditional construct + okx-arm set_provider injection (writes private _provider warmup reads) + set_bar_sink(feed.update); D-13 _LiveWarmupConsumer(max strategy.warmup) registered before bind so cache_capacity()==100 (Pitfall 1 guard); warmup OKX-gated before start_stream. Inertness probe extended to forbid live_bar_feed on the backtest path; oracle byte-exact.
-- [Phase 04]: 04-01: ReplayDataProvider = offline synchronous stand-in for OkxDataProvider replaying the golden CsvPriceStore as Decimal-edge ClosedBar dicts (to_money(str) edge, ts=int(index.value//1e6) epoch-ms bar-open, symbol/timeframe stamped from config not the row D-12); drop-in on set_bar_sink/fetch_ohlcv_backfill + synchronous replay_bar replacing the async _stream_candles (D-03); ClosedBar imported not redefined; golden rows via CsvPriceStore so iter is byte-identical to backtest (parity anchor D-01/D-02). PAPER-03/COV-01 fixture.
-- [Phase 04]: Paper venue reuses the 'simulated' SimulatedExchange as-is (D-04/D-05/D-06); run_paper_replay() drives golden bars synchronously through the real live seam with backtest per-tick + run-end discipline (parity by construction, D-01/D-09)
-- [Phase ?]: 04-03: RUN-01 runnable paper worker (scripts/run_live_paper.py) delivered per D-08 — offline run_paper_replay (CI-safe default) + opt-in okx manual smoke over start/stop/get_status; channel + web-framework wrapper deferred to Phase 5. COV-01 lifecycle half added (FL-13: clean startup / graceful thread-joining stop / status-before-start, exchange=paper offline).
-- [Phase ?]: 04-04: paper-parity DoD gate shipped (PAPER-04/COV-01) — one test drives run_paper_replay() AND a fresh backtest on the golden dataset, asserts trades+equity frame-equal EXACT (tz-normalized UTC); anchored to the fresh backtest not the frozen 46189 artifact (D-01), survives a backtest-loop rework; inertness _FORBIDDEN extended to replay_provider (D-12), oracle untouched
-- [Phase 05]: 05-11: WR-02 closed — OkxExchange.adopt_venue_correlation() repopulates the three correlation maps + drains buffered fills for rehydrated orders; VenueReconciler.reconcile() adopts per working-set order with a venue_order_id (exchange=self._okx_exchange). Post-restart fills reach the mirror instead of being silently buffered.
-- [Phase 05]: 05-11: WR-03 closed — reconcile_manager validates the PARTIALLY_FILLED transition BEFORE mutating filled_quantity; a rejected transition leaves the mirror literally unchanged. WR-05 recorded documented-only (portfolio_handler.py untouched).
-- [Phase 05]: 05-12: RECON-06 closed — tests/e2e/test_okx_sandbox_recon.py runs `3 passed` against the real OKX EEA demo venue (order->fill->reconcile->restart loop, human-observed 2026-07-03). Reaching green needed 4 follow-on integration fixes (committed separately): OKX_REGION=eea host derivation (REST eea.okx.com / WS wseeapap.okx.com — 50119/60032 otherwise), unified `1d` timeframe to ccxt backfill, live pair BTC/USDT->BTC/USDC (EEA/MiCA sCode 51155; make pair configurable via universe next phase), and store rewired onto unified ITRADER_DATABASE_* (dropped SYSTEM_DB_URL).
-- [Phase 05.1]: 05.1-01: CONF-A RED spine slice 1 — A1 3-leaf account-conformance (V17-01/D-01,D-02) + A4 spot-no-drift-halt (V17-04/D-03,D-04) authored RED; AUD-7 spot/derivative fixture split. Spot fixture is the NEW-cluster default (legacy fixture kept for full-suite green). A4 seeds venue truth via snapshot() from fetch_balance total[BTC] so it is RED now and GREEN after the D-03 base-balance adapter.
-- [Phase 05.1]: 05.1-02: CONF-A RED spine slice 2 — A3 halt-latch (V17-03/D-05), A2 venue_order_id persistence (V17-02/D-06), A5 redeliver-dedup (V17-06/D-08) authored RED. A3 injects the reconcile halt by wrapping _initialize_live_session on the offline paper venue; A2/A5 encode observable end-state so the 05.2 fixes turn them GREEN without rewrite. A3 GREEN in 05.1-05; A2/A5 GREEN in Phase 05.2.
-- [Phase ?]: [Phase 05.1]: 05.1-03: CONF-A RED spine slice 3 — A6 supervisor-catchall (V17-07/D-11), A7 submit-timeout-in-flight (V17-09/D-13), A8 pause-defer-replay (V17-11/D-14) authored RED. A6 covers 3 silent-death surfaces (unclassified ExchangeError, unguarded json.loads, bare-while-True VenueAccount stream); A7/A8 carry control arms (definitive-rejection still REFUSED; entry stays suppressed) to force the fix to branch. All GREEN in Phase 05.3; CONF-A spine A1..A8 complete.
-- [Phase ?]: 05.1-04: D-01 delivered — 7-member Account ABC settlement surface; VenueAccount as a locally-ledgered account (balance = cached venue balance + local fill-delta; snapshot reconciles the delta). available_balance nets settled balance not the venue free field; assert_funds_invariant raises before any mutation. A1 GREEN all 3 leaves; oracle byte-exact.
-- [Phase ?]: 05.1-04: A1 BUY facet made leaf-relative (before-10) — hardcoded 149990 assumed a 150000 start absent on the venue leaf (fixture total[USDC]=78999.79). test_venue_account_cache .available renames deferred to 05.1-06; A4 spot-drift RED deferred to 05.1-08.
-- [Phase 05.1]: D-05: HALTED is a latched state — VALID_STATUS_TRANSITIONS (HALTED->set()) enforced at the single _update_status seam; halt() routed through it; start() refuses RUNNING-from-HALTED post-reconcile; reset_halt() is the sole off-table exit (verify-then-trust)
-- [Phase 05.1]: 05.1-06: D-02 delivered — Portfolio.account re-typed to the Account ABC; both cast(SimulatedMarginAccount,...) narrowings replaced by a single _require_margin_account isinstance guard raising a typed StateError BEFORE any mutation (closes V17-14 partial-mutation cast arm). F/U-4 resolved to a typed conformance module (account/conformance.py) making mypy --strict see the ABC-vs-concretion live wiring; pyproject untouched. A1 permanent gate 16 passed (incl. venue+margin guard case); 7 venue-cache .available->available_balance renames GREEN; oracle byte-exact; mypy clean 228 files.
-- [Phase ?]: 05.1-07: D-03 truth arm — VenueAccount venue-type-aware; spot derives per-symbol position truth from total[BASE] (fetch_positions [] on spot), derivative channel unchanged. market_type/symbol ctor params (base from symbol left leg); spot skips _stream_positions/fetch_positions. A4 spot_drift stays RED (GREEN in 05.1-08); oracle byte-exact; mypy strict clean.
-- [Phase 05.1]: D-03/D-04: real quote + spot market-type wired into VenueAccount at the composition root; post-reconcile baseline guard latches halt('baseline-residual') on unexplained base-asset residual (never auto-adopts)
-- [Phase 05.1]: D-04 spurious-halt band: on-fill compare absorbs the just-applied-fill vs not-yet-refreshed-venue-snapshot transient via a signed fill delta; periodic sweep + baseline guard remain the drift backstops
-- [Phase 05.1]: 05.1-09 (D-20) Task 1: CONF-B sandbox e2e extended with 4 Wave-1 settlement assertions (position/cash/not-HALTED/spot fetch_positions()==[]) closing the V17-01 blind spot + venue_order_id recorded soft-check (pending D-06/05.2) + ARCH-3 finalization capture to .planning/debug/05.1-confb-<date>.md. Added pytest.mark.live so make test (-m 'not live') fences the network. Task 2 online GREEN run is CHECKPOINT-PENDING (human): `poetry run pytest tests/e2e/test_okx_sandbox_recon.py -k demo_order -x -m live` (verify sandbox=True). Plan NOT fully complete until approved.
-- [Phase 05.2]: 05.2-01: D-06 delivered — new frozen OrderAckEvent (order_id->venue_order_id) emitted by OkxExchange._submit_order once the venue id lands (queue-only, V5 field-bind); OrderHandler.on_order_ack -> OrderManager.stamp_venue_order_id persists via order_storage.update_order (D-18). A2 venue_order_id-persistence GREEN; oracle byte-exact; mypy 229 files. Restart integration fixtures now drive the real ack path (V17-02 hand-stamp deleted; unconfident bracket leg asserted None).
-- [Phase ?]: [Phase 05.2]: 05.2-02: D-09 delivered — VenueReconciler._fetch_trades fetches venue fills per active-order symbol with since=oldest-active-order business time (epoch-ms) + explicit limit=100, NO ccxt auto-pagination (OKX sCode 51000, CONF-B). F/U-13 window guard (_FILLS_HISTORY_WINDOW_DAYS=90) loud-logs WARNING naming the symbol when since predates the venue ~3-month /trade/fills-history window. Oracle byte-exact; mypy clean; paginate grep-clean on the production file.
-- [Phase 05.2]: 05.2-03: D-08 Layers 1+3 delivered — ReconcileManager in-session applied-set (bounded OrderedDict cap 10000) guards _apply_executed BEFORE add_fill so a re-delivered venue trade (same venue_trade_id, fresh fill_id) no-ops (A5 GREEN, filled_quantity stays 0.2); key f'{ticker}:{venue_trade_id}', None-keyed backtest fills skip guard (oracle-dark). VenueCorrelationIndex.resolve dedup re-keyed raw trade_id -> f'{order.ticker}:{trade_id}' (gate moved after resolution), closing V17-12 numeric-tradeId cross-instrument collision. Layer 2 (portfolio_handler) + durable settled-ledger deferred to Plan 04. — D-08 exactly-once settlement per economic venue trade, collision-safe across instruments
-- [Phase 05.2]: 05.2-04: D-07/D-08 delivered — restart remembers positions+cash (new Account.restore_cash restores the persisted cash scalar via rehydrate; open positions already WIRE through the manager read of the rehydrated cache, OQ1) + the settled-trade dedup ledger rehydrates: PortfolioHandler.rehydrate() seeds _settled_venue_trade_ids from durable transactions.venue_trade_id keyed f-string ticker:venue_trade_id; on_fill guard/mark re-keyed symbol-scoped (V17-12). Proven offline vs an in-memory durable double; oracle byte-exact; mypy 229 files. Composition-root wiring + rehydrate-before-reconcile is Plan 05.
-- [Phase ?]: 05.2-05: D-07 durable portfolio ledger wired at the live composition root — PortfolioHandler injects the shared SqlBackend ('live' arm when Postgres spine present, else 'backtest' in-memory), threading environment+backend+portfolio_id into each Portfolio state storage (portfolio.py:96 the only real lever; four manager/account fallbacks honor it defensively). F/U-11 RESOLVED: save_account_state wired on the on_fill settlement path (getattr-guarded, oracle-dark). rehydrate() sequenced strictly BEFORE reconcile() in start() (T-05.2-14). Oracle byte-exact; mypy 229; inertness preserved.
-- [Phase ?]: 05.2-06: D-10 durable HALTED latch survives restart — halt() persists a secret-scrubbed halt record (reason literal + timestamp, V7) on the shared SqlBackend spine; a FRESH LiveTradingSystem refuses RUNNING while unresolved (re-latching in-process via _update_status, not halt(), so no double-write); reset_halt() resolves. New d10_halt_records chained Alembic head (single head); env.py registers the table (autogenerate-safe); idgen.generate_halt_record_id keeps the single UUIDv7 scheme. Oracle byte-exact; mypy clean 231; inertness preserved.
-- [Phase ?]: [Phase 05.3]: 05.3-12: D-28 (WR-03) closed — resume gated on ALL venue stream arms healthy via per-arm is_streaming_healthy() (not _streams_down) + engine compound _all_venue_streams_healthy(); no engine-side aggregation/namespacing; None arm = healthy; gate after D-25 catch-up+snapshot, does not re-set _pending_stream_resume
-- [Phase ?]: [Phase 05.3]: 05.3-12: D-29 (WR-05) closed — gap backfill low-clamps (< since_ms) + raises MalformedDataError on non-contiguous first replayed bar (escalates to connector halt) + _replaying_backfill re-entrancy guard fails loud in update() gap branch. Empty-page hole out of scope; WR-04 deferred
-- [Phase 06]: 06-01: UniverseUpdateEvent (frozen Event, tuple added/removed) + EventType.UNIVERSE_UPDATE + explicit-empty _routes entry (three-step flow, Pitfall 5) — dispose notification DISTINCT from ScreenerEvent (D-04); backtest-inert
-- [Phase 06]: 06-01: Universe.apply(desired, instruments)->UniverseDelta slice-assigns _members in place (identity preserved, Pitfall 4) with oracle-dark empty-delta fast path; connector-free (D-03, caller passes resolved instruments, _DEFAULT_* ladder fallback); leaving-set surface (mark/read-copy/clear) for the plan-04 admission gate. UNIV-01 left Pending (foundation only, no consumers)
-- [Phase 06]: 06-02: OkxDataProvider.subscribe/unsubscribe + {symbol: asyncio.Task} registry (D-05, Arm B data plane) — idempotent subscribe spawns one supervised candle coroutine on the connector loop; unsubscribe cancels via the connector cooperative-cancel teardown (no new teardown); provider carries zero membership knowledge
-- [Phase 06]: 06-02: per-symbol supervisor keys — member symbol threaded as stream_name through _stream_candles/_connect_and_consume_candles (replaces shared 'candles' literal, Pitfall 2); one symbol's drop no longer marks all streams down, one payload no longer resets all budgets; is_streaming_healthy keeps any-symbol-down; confirm='0' snapshot still dropped, warmup-before-subscribe contract documented
-- [Phase 06]: 06-03: UniverseHandler on_time (source-guard -> D-06 validate_symbol filter -> Universe.apply -> emit UniverseUpdateEvent only on non-empty delta) + on_universe_update ADD branch (warmup-before-subscribe, Pitfall 6); zero membership duplication. Dedicated 4-space handler isolates the live-only poll route from the backtest _routes[TIME] literal (Pitfall 3/A3). Lean UniverseSelectionModel + StaticUniverseSelectionModel grown in membership.py (D-20). on_time passes instruments=None (plan-01 default-ladder); venue-precision deferred to plan-05. UNIV-01 still Pending (remove=04, wiring=05)
-- [Phase ?]: [Phase 06]: 06-04: OrderTriggerSource.ADMISSION_LEAVING + AdmissionManager._enforce_leaving_symbol_admission wired FIRST (before direction) — audited-REJECTS a new entry for a symbol in Universe.leaving_symbols() while PASSING a sanctioned exit (SELL vs LONG / BUY vs SHORT); no-op with no universe/empty leaving-set (oracle-dark, D-01)
-- [Phase ?]: [Phase 06]: 06-04: UniverseHandler remove-policy consumer — orphan-and-track (mark_leaving, DEFER unsubscribe until flat; unsubscribe-now only when nothing held) vs force-close (emit opposite-side full-exit SignalEvent then unsubscribe) + on_fill detach-on-flat (unsubscribe+clear_leaving once flat). remove_policy on the live/poll-seam ctor NOT SystemConfig — oracle untouched (D-01/§8)
-- [Phase ?]: [Phase 06]: 06-04: remove-policy proven deterministically offline via remove_policy_harness — two synthetic symbols driven through LiveBarFeed.update (the OKX seam) settling force-close through the reused SimulatedExchange (FillEvent->PortfolioHandler.on_fill); plan-04 on_universe_update/on_fill seams direct-called against the REAL PortfolioHandler read model (route wiring is plan 05). UNIV-02 remove-half done
-- [Phase ?]: [Phase 06]: 06-05: _OKX_STREAM_SYMBOL un-hardcoded — live subscription set sourced from universe.members (warmup-before-subscribe per member); generalized ring-key vs window()-ticker assertion, ConfigurationError shape preserved (D-05)
-- [Phase ?]: [Phase 06]: 06-05: live-only UniverseHandler + poll-timer daemon (configurable cadence default 60s, control-plane TimeEvent(now UTC) only) + LIVE-ONLY _routes mutation on the live EventHandler's own dict — backtest _routes literal UNTOUCHED (RESEARCH §11.1); remove_policy + cadence on MonitoringSettings NOT PerformanceSettings (§8/D-01/D-02)
-- [Phase ?]: [Phase 06]: 06-05 milestone gate GREEN — oracle byte-exact (134/46189.87730727451), determinism identical, inertness green (universe_handler forbidden on backtest import), W1 14.5s -7.4% vs 15.7s baseline; UNIV-01 closed + human-observed live-demo dynamic DATA subscribe/unsubscribe on OKX demo (1 passed 127.85s, sandbox verified)
-- [Phase ?]: [Phase 07] 07-01: Readiness tri-state enum + four EventType members (UNIVERSE_POLL/STRATEGY_COMMAND/BARS_LOADED/BARS_LOAD_FAILED) + four frozen msgspec event structs + explicit-empty backtest _routes — additive-only, backtest-inert by construction (contracts-first; downstream 07-02..07 implement against these). StrategyCommandEvent add/remove_ticker factories (D-09); BarsLoadFailed.reason scrub discipline documented (T-05-27)
-- [Phase 07]: 07-02: Universe holds ONE TrackedInstrument record map (_entries) replacing the desync-prone _instruments map + _leaving set (D-02, WR-01 bug class); apply stops popping removed symbols (D-13 keep-until-flat), add-branch clobber-guarded (D-14), discard_instrument is the single atomic three-field teardown; construction members default READY (oracle-inert), apply-added PENDING; is_ready/mark_ready/mark_failed readiness surface (WR-02)
-- [Phase ?]: 07-03: split synchronous warmup into two WR-02 halves — non-emitting LiveBarFeed.absorb_warmup (silent ring/L absorb = _deliver minus _emit, D-03b/OQ1) + async OkxDataProvider.spawn_warmup (loop-native REST fetch via connector.spawn threadsafe -> ONE BarsLoaded bulk transport, or ONE scrubbed BarsLoadFailed reason=exception-TYPE-only T-05-27/V5). _build_bar promoted @staticmethod for the single canonical ClosedBar->Bar conversion (D-03a). Live-only, oracle byte-exact
-- [Phase 07]: 07-04: WR-02 readiness gate composed BEFORE strategy.is_ready in calculate_signals (None-guarded single O(1) universe.is_ready read, no allocation; backtest wires no universe so oracle byte-exact); update-before-gate kept so a PENDING symbol still warms (D-03c). on_bars_loaded warms concerned strategies via strategy.update with NO signals (D-03). on_strategy_command mutates .tickers idempotently (emptying-remove refused, non-empty invariant) then EMITS UniversePollEvent follow-on (D-11 queue-only, never calls UniverseHandler)
-- [Phase 07]: 07-05: on_time->on_poll consumes the dedicated UniversePollEvent (WR-06/D-06, off the shared TIME route); set_freeze_gate early-return freeze-in-place at the top of on_poll (WR-05/D-07, level-triggered self-heal, no replay); _PrecisionResolver + set_precision_resolver resolves added-symbol venue precision (WR-04/D-16, Universe stays connector-free, paper falls to _DEFAULT_* ladder). All 3 seams inert-by-default; route/predicate/resolver wiring is Plan 07
-- [Phase ?]: 07-08: PRIMARY WR-02 readiness admission gate (D-01) — _enforce_readiness_admission wired SECOND (after leaving, before direction) rejects a non-READY (PENDING/FAILED) symbol's unsized signal at admission even when it bypasses the strategy-loop SECONDARY check (07-04); sanctioned exit passes; oracle-inert (None-guard + construction members READY). ADMISSION_READINESS trigger source added
-- [Phase ?]: [Phase 07] 07-06: WR-02 warmup pipeline handler-side — add-branch spawns async provider.spawn_warmup (paper: synchronous feed.warmup + IMMEDIATE mark_ready, never PENDING) with per-symbol try isolation (D-04); on_bars_loaded absorb→mark_ready→subscribe (D-03b); on_bars_load_failed marks FAILED kept-in-membership retried-next-poll
-- [Phase ?]: [Phase 07] 07-06: WR-01 keep-until-flat finished — discard_instrument at exactly 2 final points (no-holder removal + on_fill detach-on-flat, D-13); StrategyDerivedSelectionModel reads get_strategies_universe() live each select (D-12/OP-SEAM) so ticker edits propagate
-- [Phase 07]: 07-10 (POST-CLOSEOUT gap-closure): CR-01 closed via Option B "unified monotonic idempotency" (Level 2). absorb_warmup reuses the EXISTING _last_delivered cursor (reject bar.time <= cursor before ring.append; == silent, < warns) — zero new feed state, cursor stays pd.Timestamp (de-pandas deferred). Strategy.update gains a per-symbol _last_bar_time cursor (raw datetime) rejecting bar.time <= last before ANY state mutation; cleared in reset()/_reset_ticker() so evaluate() replay still works. A CR-02 retry re-warm can no longer duplicate the ring, inflate indicators, or flip a symbol tradeable on corrupted state.
-- [Phase 07]: 07-10: Level-2 retry policy — on_poll cadence-gates FAILED re-warms to one per bar interval (_last_rewarm_at + to_timedelta(timeframe)); 3-strike consecutive-failure warn (_rewarm_fail_streak at both failure sites, reset on mark_ready success); NEVER auto-drop (Level 3 quarantine explicitly OUT). RED-first headline regression proved the corruption reachable pre-fix and unreachable after; oracle byte-exact (134 / 46189.87730727451), mypy --strict clean on the 3 modules, full unit 1752 + integration/e2e 228 green.
-- [Phase 07]: 07-10 deviation (Rule 1): the base Strategy has no self.logger (added a module-level bound logger); causal-guard tests fed a constant sentinel time=0 that the new monotonic guard rejected as duplicates — _Bar stub now auto-increments its tick (anchor value stays don't-care).
+Active program constraints live in PROJECT.md. v1.8 locks (design LR-00..LR-22): two-tier priority
+`EventBus` CONTROL>BUSINESS (LR-11); single-writer engine-thread contract (LR-12); handler-owns storage
+init (LR-13); `EngineContext` infra-only (LR-14); two registries execution-venue + data-provider (LR-17);
+connectors memoized `(venue, account_id)` (LR-17/LR-20); `SqlBackend→SqlEngine`, migrations→root (LR-18);
+`clOrdId→client_order_id` (LR-19); config at its owner's cardinality (LR-21); one `system_store` KV +
+`VenueStore` + `StrategyRegistryStore` (LR-22). Ten backlog TODOs fold in as CF-1..CF-10 across
+P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 
 ### Pending Todos
 
-[From .planning/todos/pending/ — carried; both now in-scope for v1.7]
-
-- Live-start indicator backfill through the same `update(bar)` path (`live-backfill-through-update.md`)
-  — **now Phase 3 (FEED-03 / LX-09)**: REST warmup replayed one-by-one through `update(bar)`, no bulk
-  `warmup_from` fast-path.
-
-- Correct single-pass per-bar portfolio valuation (`single-pass-portfolio-valuation.md`) — deferred
-  v1.5, profile-first gated (future perf phase, NOT v1.7).
+Ten v1.7-carryforward TODOs are **folded into v1.8** as CF-1..CF-10 (set `resolves_phase` at milestone
+init; migrate to `todos/completed/` when the owning phase verifies): CF-1→P8 (aggregate breaker, HIGH,
+the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 also P7), CF-10→P6. Deliberately
+**not** folded (kept separate): `livebarfeed-depandas-time-model-datetime`, `mutable-instrument-refactor`,
+`margin-equity-double-counts-notional-wr01` (owner-gated), `unify-backtest-direct-bar-generation`
+(oracle-risky). `pair-strategy-live-reconfiguration` is folded into P10 (STRAT-03).
 
 ### Blockers/Concerns
 
-- **Confirm-flag / forming-bar risk (research Pitfall 1):** the single most likely source of
-  paper-parity failure — ccxt.pro does not surface OKX's `confirm` flag. The native escape hatch is
-  mandatory; produce the OKX native-vs-ccxt gap list at Phase 2 plan time before locking the design.
-
-- **ccxt returns floats everywhere (Pitfall 2):** every new connector price/amount/fee/balance must
-  route through `to_money` (= `Decimal(str(x))`); failure is invisible until reconciliation drift accrues.
-
-- **Wall-clock in business `time` is contagious (Pitfall 3):** existing `LiveTradingSystem` has multiple
-  `datetime.now(UTC)` usages; audit every new `datetime.now` on the live path before merge.
-
-- **Phase 5 reconciliation is the most under-specified area:** do not start coding without decisions on
-  auto-correct tolerance, halt-and-alert triggers, bracket parent/child restart, write-through boundary
-  (the v1.6 carried flag). Build a research sprint into Phase 5 planning.
-
-- **`filterwarnings=["error"]` + async tests:** unclosed ccxt.pro session/transport or unset
-  `asyncio_default_fixture_loop_scope` fails the whole suite. Use mocked/recorded connectors; never
-  relax the global filter (`pytest-asyncio` configured in Phase 2).
-
-- **Hot-path inertness (carried from v1.6):** the live machinery must add zero backtest hot-path cost —
-  the backtest path imports no async/connector code. W1/W2 within v1.5 ±5% is the proof, every phase.
-
+- **P6 `UniverseWiring` = the highest oracle-risk seam** (analogous to v1.2 MOD-01): move as one intact
+  unit incl. the WR-03 desync assert; byte-exact oracle + determinism double-run as a per-PLAN gate.
+- **Inertness regression** is the recurring failure mode: no eager import via a barrel re-export, no
+  non-lazy `SqlSettings`, no registry importing concretions at registration. `test_okx_inertness.py` is
+  the P5 acceptance gate (extended register-vs-build for P1/P2/P4/P5).
+- **CF-1 must ACTUALLY TRIP** (P8 hard acceptance criterion): a breaker "green with zero settlements" or
+  one reintroducing the WR-06 error→error livelock is a false-green failure.
+- **CF-2 threading contract** (P7): `backfill_on_resume` must be loop-native (connector loop), never a
+  second concurrent engine-thread ring writer — assert no engine-thread path reaches it.
+- **Alembic chain divergence** (P4): relocation + 3-store chain must stay single-head with a
+  create_all/migration parity test (the merged storage-schema phase owns the full-chain gate).
 - **Indentation hazard:** handler modules use tabs; `config/`, `core/`, `price_handler/feed/`,
-  `itrader/storage/`, events package use 4 spaces. New files MUST match the sibling — a mixed-indent tab
-  file fails to import.
-
+  `itrader/storage/`, events package use 4 spaces. Match the sibling file — never normalize.
+- **Zero new dependency / no poetry change** anywhere in P1–P12 (adding a lib regresses inertness).
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
 
-### Quick Tasks Completed
-
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260701-l33 | Add `smoke` pytest marker (register + tag 3 files + `make test-smoke` + tagging rule) | 2026-07-01 | 40c13992 | [260701-l33-add-smoke-marker](./quick/260701-l33-add-smoke-marker/) |
-| 260702-m8d | Apply Phase 04 code-review fix-now bucket (IN-01..04, WR-05, WR-03, WR-02 window guard) + sync stale REQUIREMENTS.md | 2026-07-02 | 148836a6 | [260702-m8d-apply-phase-04-code-review-fix-now-bucke](./quick/260702-m8d-apply-phase-04-code-review-fix-now-bucke/) |
-| 260703-030 | Rewire live operational store onto unified SqlSettings, drop legacy SYSTEM_DB_URL | 2026-07-02 | 8947cc27 | [260703-030-rewire-live-operational-store-onto-unifi](./quick/260703-030-rewire-live-operational-store-onto-unifi/) |
-| fast | Make OKX connector hostname configurable (OKX_HOSTNAME) for EEA regional entity — fixes 50119 on eea.okx.com keys | 2026-07-02 | 3790990f | — (fast, inline) |
-| fast | Fix OKX backfill timeframe: pass unified "1d" (not OKX "1D") to ccxt fetch_ohlcv — unblocks LiveTradingSystem.start() warmup | 2026-07-02 | d6d225b6 | — (fast, inline) |
-| 260703-bza | Add OKX_REGION config deriving REST+WS hosts (global/eea); wire ws_hostname through connector + native candle socket — enables EEA demo (wseeapap.okx.com) | 2026-07-03 | b5826909 | [260703-bza-add-okx-region-config-deriving-rest-ws-h](./quick/260703-bza-add-okx-region-config-deriving-rest-ws-h/) |
-| fast | Hardcode OKX live pair BTC/USDT->BTC/USDC (EEA restricts USDT/MiCA, sCode 51155); universe phase will make it configurable | 2026-07-03 | f51fc34a | — (fast, inline) |
-| 260703-dob | Add OKX live-connectivity integration test + new `live` pytest marker (creds-free public reachability + creds-gated demo auth via OkxConnector); fence default `make test`/`test-integration` with `not live`, add `make test-live` | 2026-07-03 | b97690d5 | [260703-dob-okx-live-connectivity-marker](./quick/260703-dob-okx-live-connectivity-marker/) |
-| fast | Remove OKX cred diagnostic script + diagnose-okx make target (redundant — test_okx_connectivity.py auth test now verifies creds via OkxConnector) | 2026-07-03 | 8f7acd0c | — (fast, inline) |
-| 260703-hl5 | Persist `venue_trade_id` on the transactions table (tail of CR-01 fill-dedup): nullable column + chained Alembic migration + both sql_storage mappers + Postgres round-trip test | 2026-07-03 | b142cbc5 | [260703-hl5-persist-venue-trade-id-on-the-transactio](./quick/260703-hl5-persist-venue-trade-id-on-the-transactio/) |
-| 260705-fqe | Adapt e2e OKX sandbox recon test to run against a non-flat demo account (seed engine position to live venue balance; assert BUY delta) — unblocks online settlement proof on OKX-seeded ~1 BTC EEA account | 2026-07-05 | f2070431 | [260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-](./quick/260705-fqe-adapt-e2e-okx-sandbox-recon-test-to-run-/) |
-| fast | Make ARCH-3 capture best-effort + fix OKX fetch_my_trades param (limit=100, no paginate — sCode 51000) — online settlement proof now fully GREEN (3/3) | 2026-07-05 | 81fc39aa | — (fast, inline) |
-| 260705-m3m | Test-infra: session-autouse guard clears dev-DB env so no test reaches operational Postgres at localhost:5544 + one shared session testcontainers Postgres for live-path DB tests to opt into (D-11 skip-safe, single-container); prereq for 05.2 durable-SQL tests | 2026-07-05 | 2f43faec | [260705-m3m-add-a-session-autouse-guard-in-tests-con](./quick/260705-m3m-add-a-session-autouse-guard-in-tests-con/) |
-| 260706-l48 | Apply Phase 06 mechanical code-review fixes: CR-01 (okx `unsubscribe` clears stale `_streams_down`/`_reconnect_attempts` supervisor state — un-wedges live resume gate) + WR-03 (`universe_poll_cadence_s` bounded `gt=0.0`). WR-01/02/04/05/06 routed to Phase 7. | 2026-07-06 | e08424d2 | [260706-l48-apply-mechanical-code-review-fixes-cr-01](./quick/260706-l48-apply-mechanical-code-review-fixes-cr-01/) |
-| 260707-iy6 | Apply 07-REVIEW CR-01 gap-closure fixes: WR-01 (`absorb_warmup` warns on genuine revision, silent on byte-identical dup via `_same_ohlcv`) + WR-02 (off-grid rejection protecting the shared `_last_delivered` cursor) + IN-01/IN-02 docstrings. Oracle byte-exact, mypy clean. | 2026-07-07 | 8eb66f73 | [260707-iy6-fix-07-review-cr-01-gap-closure-findings](./quick/260707-iy6-fix-07-review-cr-01-gap-closure-findings/) |
-| Phase 03 P01 | 3min | 2 tasks | 4 files |
-| Phase 03 P02 | 9min | 2 tasks | 2 files |
-| Phase 03 P03 | 3min | 1 tasks | 2 files |
-| Phase 03 P04 | 14min | 2 tasks | 4 files |
-| Phase 04 P01 | 6min | 2 tasks | 2 files |
-| Phase 04 P02 | 8min | 2 tasks | 1 files |
-| Phase 04 P03 | 6min | 2 tasks | 2 files |
-| Phase Phase 04 P04 P04 | 5min | 2 tasks | 2 files |
-| Phase 05 P10 | 20min | 3 tasks | 3 files |
-| Phase 05 P11 | ~15min | 2 tasks | 6 files |
-| Phase 05.1 P01 | 18min | 3 tasks | 4 files |
-| Phase 05.1 P02 | 16min | 3 tasks | 3 files |
-| Phase 05.1 P03 | 17min | 3 tasks | 3 files |
-| Phase 05.1 P04 | 15min | 2 tasks | 4 files |
-| Phase 05.1 P05 | 35min | 2 tasks | 3 files |
-| Phase 05.1 P06 | 90min | 2 tasks | 4 files |
-| Phase 05.1 P07 | 12min | 1 tasks | 2 files |
-| Phase 05.1 P08 | 20min | 2 tasks | 3 files |
-| Phase 05.2 P01 | 18min | 2 tasks | 10 files |
-| Phase 05.2 P02 | 12min | 2 tasks | 2 files |
-| Phase 05.2 P03 | 15min | 2 tasks | 4 files |
-| Phase 05.2 P04 | 12min | 2 tasks | 7 files |
-| Phase 05.2 P05 | 20min | 2 tasks | 8 files |
-| Phase 05.2 P06 | 22min | 2 tasks | 6 files |
-| Phase 05.3 P12 | 12min | 2 tasks | 6 files |
-| Phase 06 P01 | 22min | 2 tasks | 7 files |
-| Phase 06 P02 | 9min | 2 tasks | 4 files |
-| Phase 06 P03 | 6min | 2 tasks | 5 files |
-| Phase 06 P04 | 20min | 3 tasks | 8 files |
-| Phase 06 P05 | 35min | 3 tasks | 4 files |
-| Phase 06 P05 | 35min | 3 tasks | 4 files |
-| Phase 07 P07-01 | 3min | 3 tasks | 7 files |
-| Phase 07 P07-02 | 6min | 2 tasks | 3 files |
-| Phase 07 P07-03 | 10min | 2 tasks | 4 files |
-| Phase 07 P07-04 | 5min | 3 tasks | 2 files |
-| Phase 07 P07-05 | 5min | 2 tasks | 3 files |
-| Phase 07 P07-08 | 4min | 1 tasks | 3 files |
-| Phase 07 P07-06 | 12min | 3 tasks | 5 files |
-| Phase 07 P07-10 | 11min | 4 tasks | 8 files |
-
 ## Deferred Items
 
-Program-level items deferred across milestones. The four v1.7-promoted rows are now **DELIVERED**;
-the v1.7-close carry-forward (14 pending todos, acknowledged at close 2026-07-07) follows below.
+Program-level items carried across milestones (v1.7-close carry-forward + v2 platform seams). The
+substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 | Category | Item | Status | Target |
 |----------|------|--------|--------|
-| Live drive | Persistence driven by a real live feed + venue reconciliation | ✅ **Delivered v1.7** (Phase 5, RECON-04/05) | — |
-| Live account | `Account` abstraction + reconciliation mirror (ACCT) | ✅ **Delivered v1.7** (Phase 1 + Phase 5 `VenueAccount`) | — |
-| Live coverage | `LiveTradingSystem` test coverage (FL-13) | ✅ **Delivered v1.7** (COV-01, Phase 4→5) | — |
-| Cleanup | `Portfolio.user_id` removal (app-layer multi-tenancy) | ✅ **Delivered v1.7** (ACCT-04, Phase 1) | — |
-| D-screener | Production screener / ranking / rebalance loop | Deferred (v1.7 shipped only the lean poll seam, Phase 6/7) | v2 |
-| Optimization | Optuna sampler + sweep loop (OPT-01) — v1.6 ships the FK-ready substrate only | Deferred | v2 |
-| Turso/libSQL | `sqlalchemy-libsql` opt-in backend (TURSO-01) — interface stays Turso-ready | Deferred | v2 (post-beta + measured) |
+| Owner-gated defect | `margin-equity-double-counts-notional-wr01` — dark on the all-spot golden; a fix moves 6 owner-frozen goldens → needs external cross-validation before any live margin/leverage consumer reads margin equity | ⚠ Owner-gated | next milestone (pre-margin/live) |
+| v1.8 deferred seam | Multi-provider feed-router; single-connector-multi-`account_id`; shared-`account_id` risk allocator; config audit table; errors-history table; stats-history split | Marked (spec §14) | v2 / FastAPI-era |
+| Downstream consumer | FastAPI application layer / routes / ASGI (LR-01) — v1.8 makes the engine *interfacable* only | Deferred | post-v1.8 milestone |
+| Separate refactors | `livebarfeed-depandas-time-model-datetime`, `mutable-instrument-refactor`, `unify-backtest-direct-bar-generation` | Deferred (not folded) | future milestones |
+| D-screener | Production screener / ranking / rebalance loop | Deferred | v2 |
 | Perp realism (Phase B) | FUND-01..04 (funding accrual, mark-price liq, funding pipeline, freqtrade oracle) | Deferred | v2 |
-| Live data fidelity | TRADE-01 trade-aggregation bar source (LX-12; klines now, trades later) | Deferred | v2 |
-| Perf (v1.5) | Correct single-pass per-bar portfolio valuation (profile-first gated) | Deferred | future perf phase |
-| Perf (v1.5) | Nyquist VALIDATION.md gaps (advisory; oracle + A/B perf gate are the real lock) | Deferred | optional `/gsd:validate-phase` backfill |
-| Deferred perf (v2) | PERF-09 / PERF-10 (strategy-level dedup, O(n²)-in-symbol guard) | Deferred | future (large universes) |
+| Optimization | Optuna sampler + sweep loop (OPT-01) — v1.6 shipped the FK-ready substrate only | Deferred | v2 |
+| Turso/libSQL | `sqlalchemy-libsql` opt-in backend — interface stays Turso-ready | Deferred | v2 (post-beta) |
+| Perf (v1.5) | Single-pass per-bar portfolio valuation (profile-first gated); PERF-09/PERF-10; advisory Nyquist VALIDATION gaps | Deferred | future perf phase |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions | Deferred | indefinite (crypto-first) |
-
-**v1.7 close carry-forward (14 pending todos, acknowledged 2026-07-07 — indexed by
-`todos/pending/v17-residual-carryforward.md`; none block the paper-spot DoD):**
-
-| Item (`todos/pending/`) | Class | Status | Target |
-|-------------------------|-------|--------|--------|
-| `margin-equity-double-counts-notional-wr01` | Real defect (01-REVIEW WR-01) | ⚠ **Owner-gated** — dark on the all-spot golden (degenerates to correct); a fix moves 6 owner-frozen goldens → needs external cross-validation before any live margin/leverage/short consumer reads margin equity | next milestone (pre-margin/live) |
-| `off-vocabulary-halt-reason-baseline-residual-wr04` | Minor (05.1-REVIEW WR-04) | Deferred by owner decision → the next-milestone `live_trading_system.py` full refactor + halt-vocabulary review (a typed `HaltReason` enum, owned there, not a pre-close patch) | next milestone |
-| `pair-strategy-live-reconfiguration` | Next-milestone feature (07 CR-01) | Deferred by design — v1.7 shipped a refusal guard; atomic ordered-pair leg swap is future work | next milestone |
-| 11× refactor/feature todos (multi-timeframe consolidator, `Instrument` split, deep shared-bar history, de-pandas LiveBarFeed time model, single-pass valuation, synthetic-spread instrument, native tagged MTF, OKX markets-map freshness, unify backtest bar-gen, warmup-depth K seam, …) | Future features/refactors | Rolling backlog | future milestones |
-
-v1.0–v1.6 milestone-close acknowledgments are recorded in the respective MILESTONE-AUDIT.md files under
-`milestones/`. **v1.7 audit (`passed`, no blockers, `milestones/v1.7-MILESTONE-AUDIT.md`):** 32/32
-requirements satisfied, 10/10 phases passed, 9/9 seams wired, 4/4 E2E flows; the 18-item pre-close
-open-artifact scan resolved to the 14 carry-forward todos above (10 quick-task false positives cleared
-with completion markers, 2 CONF-B debug captures + 1 stale UAT gap re-stamped to their verified GREEN
-status). The single substantive open item is `margin-equity-double-counts-notional-wr01` (owner-gated,
-oracle-dark).
-| Phase 01 P01 | 3min | 3 tasks | 5 files |
-| Phase 01 P04 | 2min | 2 tasks | 3 files |
-| Phase 01 P02 | 4min | 2 tasks | 2 files |
-| Phase 1 P3 | 10 | 3 tasks | 11 files |
-| Phase 01 P03b | 26min | 3 tasks | 38 files |
-| Phase 01 P03c | 5min | 2 tasks | 59 files |
-| Phase 01 P05 | 3min | 2 tasks | 1 files |
-| Phase 02 P01 | 7min | 3 tasks | 8 files |
-| Phase 02 P02 | 12min | 2 tasks | 3 files |
-| Phase 02 P03 | 9min | 2 tasks | 2 files |
-| Phase 02 P04 | 18min | 2 tasks | 2 files |
-| Phase 02 P05 | 9min | 3 tasks | 4 files |
 
 ## Bookkeeping
 
-- **At v1.6 close (done 2026-06-30):** v1.6 phase dirs `git mv`'d to `milestones/v1.6-phases/`;
-  `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` archived as `milestones/v1.6-*`. Only the `999.3` backlog
-  seed dir remains in `.planning/phases/`, so the new v1.7 `01-*..06-*` dirs will not collide.
-
-- **At v1.7 close (done 2026-07-07):** all 10 v1.7 phase dirs (`01-*..07-*` + `05.1/05.2/05.3-*`)
-  `git mv`'d to `milestones/v1.7-phases/`; `ROADMAP`/`REQUIREMENTS`/`MILESTONE-AUDIT` archived as
-  `milestones/v1.7-*`; `.planning/phases/` is now empty (no `999.3` seed dir remained). Pre-close
-  open-artifact scan resolved to 14 carry-forward todos (see Deferred Items). `REQUIREMENTS.md` removed
-  via `git rm` (fresh for the next milestone). Git tag `v1.7` NOT created (owner deferred tagging to a
-  manual step).
+- **At v1.7 close (done 2026-07-07):** all v1.7 phase dirs `git mv`'d to `milestones/v1.7-phases/`;
+  ROADMAP/REQUIREMENTS/MILESTONE-AUDIT archived as `milestones/v1.7-*`; `.planning/phases/` is empty
+  (no `999.3` seed dir remained). The new v1.8 `01-*..12-*` dirs will not collide (`phase_dir_count=0`).
+- Git tag `v1.7` NOT created (owner deferred tagging to a manual step).
 
 ## Session Continuity
 
-Last session: 2026-07-07 — v1.7 milestone close
-Stopped at: Milestone v1.7 completed and archived (PROJECT.md evolved, ROADMAP collapsed, MILESTONES entry, retrospective updated)
+Last session: 2026-07-09 — v1.8 roadmap revision (13→12 phases)
+Stopped at: ROADMAP.md revised (12 phases, merged storage-schema P4, all downstream renumbered −1, goals +
+success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
+traceability + category tags + gates renumbered.
 Resume file: None
-Carried todo: 14 pending todos in `todos/pending/` (carry-forward backlog — `v17-residual-carryforward.md` is the index; the only substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated)
+Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
+is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
 ## Operator Next Steps
 
-- Start the next milestone with `/gsd:new-milestone` (owner's stated direction: `live_trading_system.py`
-  full refactor + halt-reason storage/vocabulary review, and a FastAPI application-layer / control-plane).
-
-- Optionally create the git tag: `git tag -a v1.7 -m "v1.7 Live Trading Readiness"` (deferred at close).
+- `/gsd:plan-phase 1` (Config Centralization) — or plan **P1 and P2 in parallel** (both dependency-free).
+- At milestone init, set each folded TODO's front-matter `resolves_phase: P#` + `status: scheduled` so it
+  is not double-tracked against the live backlog (CF-1..CF-10; see spec §18).
 - Before any live margin/leverage consumer: adjudicate `margin-equity-double-counts-notional-wr01`
   (owner-gated, oracle-dark) with external cross-validation.

@@ -37,49 +37,54 @@ backtest oracle (`134 / 46189.87730727451`) or the OKX import-inertness gate**
 feature-adds (LR-03/LR-04). FastAPI itself is out of scope (LR-01) — this milestone makes the engine
 *interfacable*, shipping no ASGI code.
 
-**Target features (13 phases — P1..P13):**
+**Target features (12 phases — P1..P12):**
 - **Config centralization (P1)** — `SystemConfig` aggregation (eager/lazy/templates), module-constant
-  migration, dead-config audit, `extra` normalization (concerns 17/21/24; CF-6/CF-8-enum).
+  migration, dead-config audit, `extra` normalization, `HaltReason` enum (concerns 17/21/24; CF-6/CF-8).
 - **Event bus (P2)** — `EventBus` Protocol + `FifoEventBus`/`PriorityEventBus` (two-tier CONTROL >
-  BUSINESS), injected into `compose_engine` (backtest → Fifo, zero oracle risk) (LR-11).
+  BUSINESS), CONTROL EventTypes + minimal `EngineContext` skeleton; injected into `compose_engine`
+  (backtest → Fifo, zero oracle risk) (LR-11).
 - **`EngineContext` + storage-in-handler (P3)** — handler-owns storage init (Order/Strategies), new
-  `compose_engine(ctx, spec)` signature (concern 20; LR-13/LR-14).
-- **`SqlEngine` rename + migrations relocation (P4)** — `SqlBackend→SqlEngine`; `migrations/` → project
-  root (LR-18).
-- **New durable stores (P5)** — `SystemStore`, `VenueStore`, `StrategyRegistryStore` (tables +
-  registrars + Alembic chain + rehydrate) (LR-22).
-- **Venue registry + 4-collaborator bundle (P6)** — two registries (`ExecutionVenueRegistry` +
+  `compose_engine(ctx, spec)` signature, and the `SqlBackend→SqlEngine` rename folded in (concern 20;
+  LR-13/LR-14/LR-18).
+- **Storage schema: migrations relocation + new durable stores (P4)** — `migrations/` → project root;
+  `SystemStore`, `VenueStore`, `StrategyRegistryStore` (registrars + chained Alembic migrations +
+  rehydrate); single-head + parity gate (LR-18/LR-22).
+- **Venue registry + 4-collaborator bundle (P5)** — two registries (`ExecutionVenueRegistry` +
   `DataProviderRegistry`), `VenuePlugin`/`VenueBundle`, `LiveDataProvider` Protocol, connector
   memoization by `(venue, account_id)`, precision/validate on the exchange, per-portfolio account
   factory, shared `StreamSupervisor` — kills every `if exchange==` (concerns 1/6/13/14/15; CF-3/4/9;
   LR-17).
-- **`LiveRunner` + factory + facade shrink (P7)** — `build_live_system`, `LiveRunner`,
+- **`LiveRunner` + factory + facade shrink (P6)** — `build_live_system`, `LiveRunner`,
   `SessionInitializer` + shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`,
   `UniverseHandler` proper init, `StrategyWarmupConsumer` rehome, drop legacy
   `print_status`/`get_statistics`/`__init__` params (concerns 4/5/7/8/10/25/26; CF-10; LR-10/LR-16).
-- **Safety + reconciliation + stream recovery (P8)** — `SafetyController`, `ReconciliationCoordinator`,
-  `StreamRecoveryHandler`, CONTROL routes — flag machinery deleted (concerns 11/12; CF-2/7/8; LR-12).
-- **Error subsystem (P9)** — `ErrorPolicy` injected (no monkeypatch), `ErrorHandler` formalized, two-guard
+- **Safety + reconciliation + stream recovery (P7)** — `SafetyController`, `ReconciliationCoordinator`,
+  `StreamRecoveryHandler`, CONTROL routes, flag machinery deleted, **pre-trade submit-rate/max-notional
+  throttle** (concerns 11/12; CF-2/7/8; LR-12).
+- **Error subsystem (P8)** — `ErrorPolicy` injected (no monkeypatch), `ErrorHandler` formalized, two-guard
   terminal safety, **CF-1 aggregate circuit breaker** (the one HIGH-priority safety add) (concern 19;
   CF-1/5).
-- **★ Runtime-config platform (P10)** — SystemStore-backed overrides, scoped `ConfigUpdateEvent`,
-  allowlist, restart layering, `RuntimeConfig` overlay, stats snapshot (concerns 22/23; LR-04).
-- **★ Strategies registry (P11)** — durable `StrategyRegistryStore` rehydrate, enable/disable via
-  `STRATEGY_COMMAND`, survives restart (concern 18).
-- **★ Multi-portfolio-live (P12)** — per-`account_id` account factory, drop single-portfolio guard +
+- **★ Runtime-config platform (P9)** — SystemStore-backed overrides, scoped `ConfigUpdateEvent`,
+  allowlist (fee/slippage mutable simulated-venues-only), restart layering, `RuntimeConfig` overlay,
+  stats snapshot (concerns 22/23; LR-04).
+- **★ Strategies registry (P10)** — durable `StrategyRegistryStore` rehydrate, enable/disable via
+  `STRATEGY_COMMAND`, atomic runtime param reconfiguration, survives restart (concern 18).
+- **★ Multi-portfolio-live (P11)** — per-`account_id` account factory, drop single-portfolio guard +
   distinct-`account_id` invariant, per-portfolio reconcile, connector keyed `(venue, account_id)`,
   `PortfolioSpec.account_id`, `clOrdId→client_order_id` (LR-03/LR-19/LR-20).
-- **Test migration (P13)** — `run_paper_replay`→`ReplayRunner` in `tests/`, `replay` plugin
+- **Test migration (P12)** — `run_paper_replay`→`ReplayRunner` in `tests/`, `replay` plugin
   fixture-registered, production replay-free; live-smoke / config-restart / multi-portfolio gates
   (concern 9).
 
 **Key context:** Backtest byte-exactness (LR-02) is the **blocking gate** for the foundational +
-universe-wiring phases (P1–P4, P7's `UniverseWiring`) — any re-baseline is explicit + cross-validated
+universe-wiring phases (P1–P4, P5, P6's `UniverseWiring`) — any re-baseline is explicit + cross-validated
 (backtesting.py + backtrader), never silent. The inertness gate must stay green (registering venues
 imports no `ccxt.pro` until built; `SystemConfig` never constructs Postgres `SqlSettings` at import).
-Ten pending `.planning/todos/` items fold in as **CF-1..CF-10** across P1/P6/P7/P8/P9 (all live-only /
-backtest-dark). Trim boundary noted but **not taken**: P10–P12 (★) are in scope this milestone. Design
-source: `docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22, CF-1..CF-10).
+Ten pending `.planning/todos/` items fold in as **CF-1..CF-10** across P1/P5/P6/P7/P8 (all live-only /
+backtest-dark). Trim boundary noted but **not taken**: P9–P11 (★) are in scope this milestone. Research
+added three owner refinements: a pre-trade throttle (P7), venue-kind-gated fee/slippage mutation (P9),
+and atomic strategy-param reconfiguration (P10). Design source:
+`docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22, CF-1..CF-10).
 
 ## Shipped Milestone: v1.7 — Live Trading Readiness (2026-07-07)
 

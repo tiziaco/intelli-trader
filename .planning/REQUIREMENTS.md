@@ -15,13 +15,13 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 ## Milestone-wide gates (apply to EVERY phase — not numbered requirements)
 
 1. **Oracle byte-exact** — `SMA_MACD` stays `134 / 46189.87730727451` (`check_exact=True`), determinism
-   double-run identical. **Per-PLAN gate** on the foundational + universe-wiring phases (P1–P4, P6, and
-   P7's `UniverseWiring` extraction — the highest oracle-risk seam). Any re-baseline (LR-02) is explicit
+   double-run identical. **Per-PLAN gate** on the foundational + universe-wiring phases (P1–P4, P5, and
+   P6's `UniverseWiring` extraction — the highest oracle-risk seam). Any re-baseline (LR-02) is explicit
    + externally cross-validated (backtesting.py + backtrader), never silent.
 2. **OKX import-inertness** — `tests/integration/test_okx_inertness.py` stays green; extended to assert
-   register-vs-build on P1/P2/P5/P6. Registering a venue imports no `ccxt.pro` until built; `SystemConfig`
+   register-vs-build on P1/P2/P4/P5. Registering a venue imports no `ccxt.pro` until built; `SystemConfig`
    never constructs Postgres `SqlSettings` at import; `FifoEventBus`/`EngineContext(sql_engine=None)` pull
-   nothing heavy. **Zero new third-party dependency, no poetry change** anywhere in P1–P13 (research STACK).
+   nothing heavy. **Zero new third-party dependency, no poetry change** anywhere in P1–P12 (research STACK).
 3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded RNG,
    injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
    indentation matched to the file (never normalized).
@@ -79,9 +79,10 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `script_location` updated; `env.py` keeps importing the `build_*_table` registrars + `NAMING_CONVENTION`
   from `itrader.storage`; migrations stay out of the shipped wheel (LR-18/§7e).
 - [ ] **SQL-02**: An Alembic gate confirms `alembic upgrade head` on a clean DB, `alembic heads == 1`
-  (single head), and a `create_all`/migration parity test (research PITFALLS).
+  (single head) over the full relocated chain incl. the three new stores, and a `create_all`/migration
+  parity test (research PITFALLS).
 
-### New Durable Stores (P5)
+### New Durable Stores (P4)
 
 - [ ] **STORE-01**: `SystemStore` (cardinality 1, key-value `(key, value_json, updated_at)`, namespaced
   upsert) holds system-wide config overrides + operational state + the latest stats snapshot (LR-22/§6d).
@@ -91,17 +92,17 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   config + subscriptions (LR-22/§7d).
 - [ ] **STORE-04**: Each store follows the `HaltRecordStore` template (composes `sql_engine`, own
   `build_*_table` registrar, chained Alembic migration `d10_halt_records → system_store → venue_config →
-  strategy_registry`) and rehydrates on restart (§7d).
+  strategy_registry` in the relocated `migrations/` tree) and rehydrates on restart (§7d).
 - [ ] **STORE-05**: An in-memory fallback keeps the backtest path untouched — the new stores are live-only
   composition-root infrastructure (§7c).
 
-### Venue Registry + Bundle (P6)
+### Venue Registry + Bundle (P5)
 
 - [ ] **VENUE-01**: Two registries — `ExecutionVenueRegistry` + `DataProviderRegistry` — select execution
   venue + data provider independently via `SystemSpec` (`execution_venue` + `data_provider`) (LR-17/§8a-b).
 - [ ] **VENUE-02**: A `VenuePlugin` Protocol builds a `VenueBundle` (optional connector, exchange,
   mandatory per-portfolio account factory) with concretions lazy-imported inside `build_bundle` —
-  registering `'okx'` pulls no `ccxt.pro` until built; `test_okx_inertness.py` is the P6 acceptance gate
+  registering `'okx'` pulls no `ccxt.pro` until built; `test_okx_inertness.py` is the P5 acceptance gate
   (§8a, concerns 2/3).
 - [ ] **VENUE-03**: Connectors are memoized by `(venue, account_id)` at the composition root; credentials
   are per-`account_id`, env-sourced, never persisted (LR-17/LR-20/§8c).
@@ -119,7 +120,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   markets-map freshness closes the fail-open-before-load window via the existing `validate_symbol` →
   removal path (CF-9) (§8f).
 
-### LiveRunner + Factory + Facade Shrink (P7)
+### LiveRunner + Factory + Facade Shrink (P6)
 
 - [ ] **RUN-01**: `build_live_system(spec)` is the live factory / composition root — reads centralized
   config, builds the one `sql_engine`, resolves venue plugin(s), assembles `EngineContext`, calls
@@ -144,7 +145,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   reusable `StrategyWarmupConsumer` sized to `max(strategy.warmup)`; the depth-hint seam is shaped for
   CF-10 (the K-computation change itself stays deferred) (concern 26/§13d).
 
-### Safety + Reconciliation + Stream Recovery (P8)
+### Safety + Reconciliation + Stream Recovery (P7)
 
 - [ ] **SAFE-01**: A `SafetyController` (pure state machine, no venue I/O) owns the status latch
   (`VALID_STATUS_TRANSITIONS`, single `update_status` seam, `force=` reserved for `reset_halt`),
@@ -167,10 +168,10 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `str(matched["id"])` is guarded with a typed fail-loud error (CF-7) (§11d).
 - [ ] **SAFE-06**: A **pre-trade submit-rate + max-notional-per-order throttle** rejects order flow
   exceeding configured velocity/notional caps *before* submission (fires ahead of send; complements CF-1's
-  post-error breaker and the per-order `EnhancedOrderValidator`); caps are runtime-mutable via the P10
+  post-error breaker and the per-order `EnhancedOrderValidator`); caps are runtime-mutable via the P9
   allowlist (research GAP / owner decision 2026-07-09).
 
-### Error Subsystem (P9)
+### Error Subsystem (P8)
 
 - [ ] **ERR-01**: An `ErrorPolicy` is injected into `EventHandler` at construction (removes the
   `_on_handler_error` monkeypatch): backtest/replay → fail-fast (re-raise; the parity gate can't
@@ -188,7 +189,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **ERR-04**: One error funnel — handler failures, `halt()` (CRITICAL), `PortfolioErrorEvent`,
   `ConnectorFatalEvent` all route through the ERROR route (§12b).
 
-### ★ Runtime-Config Platform (P10)
+### ★ Runtime-Config Platform (P9)
 
 - [ ] **RTCFG-01**: A `RuntimeConfig` overlay (`defaults ← YAML ← env ← persisted runtime overrides`) is
   built by the live factory and injected as `EngineContext.config` — engine-thread-write, snapshot-read;
@@ -211,7 +212,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   last_started_at) double as the UI read-model — readable without touching hot-path locks (concerns 22/23,
   §6d). *(Ships regardless of the mutation-path scope.)*
 
-### ★ Strategies Registry (P11)
+### ★ Strategies Registry (P10)
 
 - [ ] **STRAT-01**: `StrategyRegistryStore` persists which strategies are active + config + subscriptions;
   on restart `build_live_system` rehydrates → re-registers active strategies (survives restart)
@@ -222,7 +223,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   (quiesce → apply → re-warmup the affected strategy), persisted to `StrategyRegistryStore` — folds
   `pair-strategy-live-reconfiguration.md` (v1.7 shipped only a refusal guard) (owner decision 2026-07-09).
 
-### ★ Multi-Portfolio-Live (P12)
+### ★ Multi-Portfolio-Live (P11)
 
 - [ ] **MPORT-01**: The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account
   (venue-truth → `VenueAccount` scoped to `portfolio.account_id`; compute → a fresh `SimulatedAccount`);
@@ -241,7 +242,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **MPORT-06**: Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share
   or decouple connectors correctly without a combinatorial matrix (LR-20/§8c).
 
-### Test Migration + Gates (P13)
+### Test Migration + Gates (P12)
 
 - [ ] **TEST-01**: `run_paper_replay` → `ReplayRunner` in `tests/`; the `replay` plugin (`SimulatedExchange`
   + `ReplayDataProvider` over the golden CSV) is registered **only** by a test fixture; production is
@@ -285,7 +286,7 @@ Explicitly excluded — documented to prevent scope creep.
 
 ## Traceability
 
-Each requirement maps to exactly one phase.
+Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is created — the 12 phases are formalized in `.planning/ROADMAP.md` (`### Phase 1` .. `### Phase 12`, goals + success criteria + dependency graph). The old P4 (SqlEngine Migrations Relocation) and P5 (New Durable Stores) were merged into a single storage-schema phase P4 (both live-only, off the oracle hot path). Status `Pending` = mapped + roadmapped, awaiting execution.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -305,54 +306,54 @@ Each requirement maps to exactly one phase.
 | CTX-04 | P3 | Pending |
 | SQL-01 | P4 | Pending |
 | SQL-02 | P4 | Pending |
-| STORE-01 | P5 | Pending |
-| STORE-02 | P5 | Pending |
-| STORE-03 | P5 | Pending |
-| STORE-04 | P5 | Pending |
-| STORE-05 | P5 | Pending |
-| VENUE-01 | P6 | Pending |
-| VENUE-02 | P6 | Pending |
-| VENUE-03 | P6 | Pending |
-| VENUE-04 | P6 | Pending |
-| VENUE-05 | P6 | Pending |
-| VENUE-06 | P6 | Pending |
-| VENUE-07 | P6 | Pending |
-| RUN-01 | P7 | Pending |
-| RUN-02 | P7 | Pending |
-| RUN-03 | P7 | Pending |
-| RUN-04 | P7 | Pending |
-| RUN-05 | P7 | Pending |
-| RUN-06 | P7 | Pending |
-| RUN-07 | P7 | Pending |
-| SAFE-01 | P8 | Pending |
-| SAFE-02 | P8 | Pending |
-| SAFE-03 | P8 | Pending |
-| SAFE-04 | P8 | Pending |
-| SAFE-05 | P8 | Pending |
-| SAFE-06 | P8 | Pending |
-| ERR-01 | P9 | Pending |
-| ERR-02 | P9 | Pending |
-| ERR-03 | P9 | Pending |
-| ERR-04 | P9 | Pending |
-| RTCFG-01 | P10 | Pending |
-| RTCFG-02 | P10 | Pending |
-| RTCFG-03 | P10 | Pending |
-| RTCFG-04 | P10 | Pending |
-| RTCFG-05 | P10 | Pending |
-| RTCFG-06 | P10 | Pending |
-| STRAT-01 | P11 | Pending |
-| STRAT-02 | P11 | Pending |
-| STRAT-03 | P11 | Pending |
-| MPORT-01 | P12 | Pending |
-| MPORT-02 | P12 | Pending |
-| MPORT-03 | P12 | Pending |
-| MPORT-04 | P12 | Pending |
-| MPORT-05 | P12 | Pending |
-| MPORT-06 | P12 | Pending |
-| TEST-01 | P13 | Pending |
-| TEST-02 | P13 | Pending |
-| TEST-03 | P13 | Pending |
-| TEST-04 | P13 | Pending |
+| STORE-01 | P4 | Pending |
+| STORE-02 | P4 | Pending |
+| STORE-03 | P4 | Pending |
+| STORE-04 | P4 | Pending |
+| STORE-05 | P4 | Pending |
+| VENUE-01 | P5 | Pending |
+| VENUE-02 | P5 | Pending |
+| VENUE-03 | P5 | Pending |
+| VENUE-04 | P5 | Pending |
+| VENUE-05 | P5 | Pending |
+| VENUE-06 | P5 | Pending |
+| VENUE-07 | P5 | Pending |
+| RUN-01 | P6 | Pending |
+| RUN-02 | P6 | Pending |
+| RUN-03 | P6 | Pending |
+| RUN-04 | P6 | Pending |
+| RUN-05 | P6 | Pending |
+| RUN-06 | P6 | Pending |
+| RUN-07 | P6 | Pending |
+| SAFE-01 | P7 | Pending |
+| SAFE-02 | P7 | Pending |
+| SAFE-03 | P7 | Pending |
+| SAFE-04 | P7 | Pending |
+| SAFE-05 | P7 | Pending |
+| SAFE-06 | P7 | Pending |
+| ERR-01 | P8 | Pending |
+| ERR-02 | P8 | Pending |
+| ERR-03 | P8 | Pending |
+| ERR-04 | P8 | Pending |
+| RTCFG-01 | P9 | Pending |
+| RTCFG-02 | P9 | Pending |
+| RTCFG-03 | P9 | Pending |
+| RTCFG-04 | P9 | Pending |
+| RTCFG-05 | P9 | Pending |
+| RTCFG-06 | P9 | Pending |
+| STRAT-01 | P10 | Pending |
+| STRAT-02 | P10 | Pending |
+| STRAT-03 | P10 | Pending |
+| MPORT-01 | P11 | Pending |
+| MPORT-02 | P11 | Pending |
+| MPORT-03 | P11 | Pending |
+| MPORT-04 | P11 | Pending |
+| MPORT-05 | P11 | Pending |
+| MPORT-06 | P11 | Pending |
+| TEST-01 | P12 | Pending |
+| TEST-02 | P12 | Pending |
+| TEST-03 | P12 | Pending |
+| TEST-04 | P12 | Pending |
 
 **Coverage:**
 - v1 requirements: 64 total
@@ -361,4 +362,4 @@ Each requirement maps to exactly one phase.
 
 ---
 *Requirements defined: 2026-07-09*
-*Last updated: 2026-07-09 after initial definition (full scope P1–P13 + 3 owner refinements)*
+*Last updated: 2026-07-09 — roadmap revised to 12 phases (old P4 SqlEngine Migrations Relocation folded into old P5 New Durable Stores → merged storage-schema phase P4; all downstream phases renumbered −1); 64/64 requirements mapped, 0 orphans; full scope P1–P12 + 3 owner refinements*
