@@ -3,7 +3,7 @@ status: scheduled
 created: "2026-07-07"
 source: Phase 05.1 (v1.7) code review finding WR-04 — surfaced in the v1.7 milestone-audit review-file reconciliation (2026-07-07)
 tags: [live, halt, observability, operator, ui, halt-vocabulary, fastapi-control-plane]
-resolves_phase: "P1"
+resolves_phase: "P8"
 folded_into: "v1.8 spec §18 — CF-8 (P1 core/enums HaltReason [CFG-05] + P7 SafetyController consumes it); renumbered post-P4-merge"
 ---
 
@@ -73,13 +73,17 @@ per CONTEXT.md D-11 — note this todo's `folded_into` says P7 under the old num
 phase's planning). Keep this todo OPEN until the deferred half lands.
 
 **Done in P1 (CFG-05):**
-- Define `HaltReason(Enum)` in `core/enums/system.py` with the 4 reachable members
-  (`BASELINE_RESIDUAL`, `CONNECTOR_FATAL`, `RECONCILIATION_UNRESOLVED`, `DURABLE_HALT`), wire strings preserved.
+- Define `HaltReason(Enum)` in `core/enums/system.py`. Originally 4 members; a Phase-1 code-review
+  finding (CR-01, fix `b2e88d29`) added a 5th, `DRIFT = "drift"`, because `halt("drift")` is a live
+  reachable path (`portfolio_handler.py:839` `_halt_signal("drift")` → `live_trading_system.py:678`
+  `set_halt_signal(self.halt)`). Members now: `BASELINE_RESIDUAL`, `CONNECTOR_FATAL`,
+  `RECONCILIATION_UNRESOLVED`, `DURABLE_HALT`, `DRIFT` — wire strings preserved.
 - Retire the ONE free string `self.halt('baseline-residual')` at `live_trading_system.py:810` →
   `HaltReason.BASELINE_RESIDUAL`.
 
-**Deferred to the concerned later phase (P8 SafetyController — REMAINDER, do not lose):**
-- Migrate the remaining 3 halt literals (`connector-fatal`, `reconciliation-unresolved`, `durable-halt`)
-  at their call sites to the enum.
+**Deferred to P8 SafetyController (REMAINDER — do not lose; resolves_phase re-pointed P1→P8 at P1 close):**
+- Migrate the remaining halt literals (`connector-fatal`, `reconciliation-unresolved`, `durable-halt`,
+  and **`drift`**) at their call sites to the enum member. NOTE: CR-01 added `drift` to the vocabulary
+  but did NOT migrate the `portfolio_handler.py:839` `_halt_signal("drift")` call site — that is P8's job.
 - Change `halt(reason: str)` signature to accept/require `HaltReason`, update its docstring, and drop
   the free-string path entirely. D-11 assigns `halt()` ownership to that phase.

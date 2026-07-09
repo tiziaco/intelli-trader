@@ -99,7 +99,7 @@ Integer phases are planned milestone work; decimal phases (e.g. 2.1) would be ur
 INSERTED). ★ = trimmable feature-add (in scope this milestone). Execution follows the dependency graph
 below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.).
 
-- [ ] **Phase 1: Config Centralization** - One import-safe `SystemConfig` (eager/lazy split), module-constant migration, dead-config audit, typed `HaltReason` (CFG-01..06)
+- [x] **Phase 1: Config Centralization** - One import-safe `SystemConfig` (eager/lazy split), module-constant migration, dead-config audit, typed `HaltReason` (CFG-01..06) (completed 2026-07-09)
 - [ ] **Phase 2: Event Bus** - Two-tier `EventBus` Protocol (`FifoEventBus`/`PriorityEventBus`) + CONTROL EventTypes + minimal `EngineContext` skeleton (BUS-01..04)
 - [ ] **Phase 3: EngineContext + Storage-in-Handler** - `EngineContext` threaded into `compose_engine(ctx, spec)`, handler-owns storage init, `SqlBackend→SqlEngine` rename (CTX-01..04)
 - [ ] **Phase 4: Storage Schema: Migrations Relocation + New Durable Stores** - `migrations/` → project root FIRST, then `SystemStore`/`VenueStore`/`StrategyRegistryStore` chained on the `HaltRecordStore` template; single-head + parity Alembic gate over the FULL chain + rehydrate (SQL-01..02, STORE-01..05)
@@ -307,7 +307,7 @@ P1 and P2 have no dependencies and can start in parallel.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Config Centralization | v1.8 | 4/4 | Complete   | 2026-07-09 |
+| 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 0/TBD | Not started | - |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 0/TBD | Not started | - |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |
