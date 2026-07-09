@@ -121,7 +121,11 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
   3. Scattered module constants fold into domain config (`_STREAM_RECONNECT_*` → `StreamSettings`/`ConnectionSettings`, `_WARMUP_MARGIN`/`_BACKFILL_PAGE` → feed/provider config); `_OKX_*`/`_PAPER_*` are gone (grep-clean) and the `extra` policy is normalized.
   4. A typed `HaltReason` enum in `core/enums/system.py` replaces free-string halt reasons and the off-vocabulary `'baseline-residual'` string is retired (CF-8).
   5. The dead-config audit removes unused settings + stale `__pycache__`, and the D-03a dual-validator paragraph is applied to `.planning/codebase/CONVENTIONS.md` (CF-6).
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 01-01-PLAN.md — SystemConfig import-safety (eager `runtime` + lazy `sql`) + `extra=forbid` + dead-config audit (CFG-01/02/04)
+- [ ] 01-02-PLAN.md — Typed `HaltReason` enum + `baseline-residual` retirement (CFG-05)
+- [ ] 01-03-PLAN.md — CF-6 D-03a dual-validator paragraph → `CONVENTIONS.md` (CFG-06)
+- [ ] 01-04-PLAN.md — Constant fold: `StreamSettings`/`FeedProviderSettings` + rewire fold sites, grep-clean (CFG-03)
 
 ### Phase 2: Event Bus
 **Goal**: Introduce a stdlib two-tier `EventBus` (CONTROL > BUSINESS) with FIFO and priority implementations behind one `.put()` surface, add the new CONTROL `EventType` members, and settle the `compose_engine` signature via a minimal `EngineContext` skeleton — backtest wiring `FifoEventBus` at zero oracle risk.
@@ -259,7 +263,7 @@ P1 and P2 have no dependencies and can start in parallel.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Config Centralization | v1.8 | 0/TBD | Not started | - |
+| 1. Config Centralization | v1.8 | 0/4 | Not started | - |
 | 2. Event Bus | v1.8 | 0/TBD | Not started | - |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 0/TBD | Not started | - |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |
