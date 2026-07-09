@@ -27,18 +27,16 @@ capture would silently use the wrong estimator. The golden run pins fees 0
 Indentation: TABS (``trading_system/`` package convention).
 """
 
-import queue
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, Optional
 
 from itrader.core.clock import BacktestClock
-from itrader.config import ExchangeConfig, OrderConfig
+from itrader.config import OrderConfig
+from itrader.events_handler.bus import EventBus
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-from itrader.order_handler.base import OrderStorage
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.outils.time_parser import to_timedelta
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
@@ -48,7 +46,9 @@ from itrader.results import ResultsStore
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.strategy_handler.storage import SignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
+from itrader.trading_system.engine_context import EngineContext
 from itrader.trading_system.simulation.time_generator import TimeGenerator
+from itrader.trading_system.system_spec import SystemSpec
 from itrader.universe import Universe
 
 
@@ -89,7 +89,7 @@ class Engine:
 	downstream session-setup / run-loop ordering stays byte-exact (Trap 4/6).
 	"""
 
-	global_queue: "queue.Queue[Any]"
+	global_queue: "EventBus"
 	clock: BacktestClock
 	store: CsvPriceStore
 	feed: BacktestBarFeed
@@ -113,55 +113,45 @@ class Engine:
 	results_store: Optional[ResultsStore] = None
 
 
-def compose_engine(
-	*,
-	order_storage: OrderStorage,
-	signal_store: SignalStore,
-	csv_paths: Optional[dict[str, "str | Path"]] = None,
-	start_date: Optional[str] = None,
-	end_date: Optional[str] = None,
-	timeframe: str = "1d",
-	exchange_config: Optional[ExchangeConfig] = None,
-	order_config: Optional[OrderConfig] = None,
-	results_store: Optional[ResultsStore] = None,
-) -> Engine:
-	"""Wire the shared component graph mode-agnostically (D-14/D-14a).
+def compose_engine(ctx: "EngineContext", spec: "SystemSpec") -> Engine:
+	"""Wire the shared component graph from an infra ``ctx`` + a declarative ``spec`` (D-01/D-04).
 
-	The mode-specific concretes (``order_storage``, ``signal_store``, the
-	symbol-seeded ``exchange_config``) are SELECTED BY THE FACTORY and passed in
-	— this seam never names a run mode (no backend-string literal, D-14a). The
-	wiring body is
-	extracted verbatim (re-ordered to nothing) from
-	``BacktestTradingSystem.__init__`` so the constructed graph is byte-identical.
+	End-state two-arg seam (CTX-01/D-01): the shared event transport is
+	``ctx.bus`` (the internal FIFO buffer the seam used to construct is DELETED —
+	the composition root owns the bus now), and the run-mode infra knobs
+	(``ctx.environment`` / ``ctx.sql_engine``) select the handler-OWNED storage
+	backends. The declarative ``spec`` supplies the WHAT-to-run inputs (D-02).
+
+	A1 spec-read constraint (D-04): the body reads ONLY the six permitted spec
+	fields — ``data`` / ``start`` / ``end`` / ``timeframe`` / ``exchange`` /
+	``results_store`` (empties mapped to ``None``) — it NEVER reads the
+	ticker / starting_cash / strategies / portfolios fields (the legacy arm passes
+	placeholders for those). The ``order_config`` stays handler-owned
+	(``OrderConfig.default()``, D-04 lean).
 
 	Parameters
 	----------
-	order_storage : OrderStorage
-		The mode-specific order-mirror backend selected by the factory (D-14a).
-	signal_store : SignalStore
-		The mode-specific signal-store sink selected by the factory (D-14a).
-	csv_paths : dict[str, str | Path], optional
-		Ticker -> CSV path; passes straight through to ``CsvPriceStore`` (the
-		Phase-3 multi-ticker injection seam). None falls back to the
-		single-golden-ticker default — byte-identical to today.
-	start_date, end_date : str, optional
-		Run window bounds threaded to the store.
-	timeframe : str
-		The feed's base timeframe (default ``"1d"``).
-	exchange_config : ExchangeConfig, optional
-		Construction-time exchange config whose ``limits.supported_symbols``
-		already carries the COMPLETE set (default preset ∪ {BTCUSD} ∪ spec
-		tickers — D-13/Trap 1). None lets the ExecutionHandler build its
-		TEMPORARY default-preset ∪ {BTCUSD} backward-compat config.
-	order_config : OrderConfig, optional
-		Order-domain config (``market_execution``). None defaults to
-		``OrderConfig.default()`` ("immediate").
-	results_store : ResultsStore, optional
-		The OPTIONAL results sink selected by the FACTORY (D-14a) and forwarded
-		onto the ``Engine`` unchanged — this seam never constructs one. None
-		(the default) keeps the run store-free / byte-exact (D-04).
+	ctx : EngineContext
+		The frozen infra bundle: ``bus`` (the shared transport injected into every
+		handler + the ``Engine`` holder), ``config`` (carried, unread until P9),
+		``environment`` (selects handler-owned storage backends), ``sql_engine``
+		(``None`` for backtest — keeps the path SQL-import-inert, GATE-01).
+	spec : SystemSpec
+		The declarative run description. Only the six A1 fields are read here; the
+		FACTORY (never this seam) reads the strategies / portfolios fields (Trap 6).
+		``spec.exchange`` is an already-seeded ``ExchangeConfig`` by the time compose
+		is called (both arms seed it, D-13/Trap 1).
 	"""
-	global_queue: "queue.Queue[Any]" = queue.Queue()
+	# A1 kwargs->spec fold (D-04): map only the six permitted fields, empties->None
+	# so today's exact values are preserved byte-identically.
+	csv_paths = spec.data or None
+	start_date = spec.start or None
+	end_date = spec.end or None
+	timeframe = spec.timeframe
+	exchange_config = spec.exchange
+	# getattr (NOT spec.results_store): the e2e ScenarioSpec is duck-typed into
+	# this seam by name and has no such field — absent -> None -> store-free/byte-exact.
+	results_store = getattr(spec, "results_store", None)
 
 	# Determinism seam (D-09/D-10): the injected BacktestClock staged on the
 	# determinism seam (no domain consumer yet — result determinism comes from
@@ -177,14 +167,14 @@ def compose_engine(
 	feed = BacktestBarFeed(store, to_timedelta(timeframe))
 
 	# ScreenersHandler is a deferred subsystem (ignore_errors override).
-	screeners_handler = ScreenersHandler(global_queue, feed)  # type: ignore[no-untyped-call]
-	portfolio_handler = PortfolioHandler(global_queue)
+	screeners_handler = ScreenersHandler(ctx.bus, feed)  # type: ignore[no-untyped-call]
+	portfolio_handler = PortfolioHandler(ctx.bus)
 
 	# Execution handler is constructed BEFORE the order handler so the admission
 	# gate's commission estimator can adapt the simulated exchange's fee model
 	# (D-04). The construction-time ExchangeConfig threads the complete symbol
 	# set (D-13). Construction-order only — runtime stays queue-mediated.
-	execution_handler = ExecutionHandler(global_queue, exchange_config=exchange_config)
+	execution_handler = ExecutionHandler(ctx.bus, exchange_config=exchange_config)
 
 	# Commission estimator for the admission cash-reservation gate (D-04/D-15):
 	# the typed FeeModelCommissionEstimator adapter holds the exchange ref and
@@ -203,34 +193,43 @@ def compose_engine(
 	# builds it after this construction).
 	trading_rules = portfolio_handler.config_data.trading_rules
 
-	# Signal-store sink (read-model): one SignalRecord per non-None intent,
-	# read post-run; the queue-only contract is preserved (handler writes
-	# locally, the holder reads after the run). The backend is selected by the
-	# FACTORY and injected (D-14a) — the seam never names a run mode.
+	# Signal-store sink (read-model): the handler now OWNS its signal-store init
+	# from (environment, sql_engine) (CTX-02/02-02) — NOT injected here. The
+	# `.signal_store` concrete is read back off the handler below for the Engine
+	# holder; the queue-only contract is preserved (handler writes locally, the
+	# holder reads after the run).
 	#
 	# SHORT-01/D-07: thread the two shorts-enabling flags from trading_rules into
 	# the registration gate. Constructed AFTER the trading_rules binding so the
 	# flags are available; both default off → SMA_MACD (LONG_ONLY) stays admitted
 	# and the oracle stays byte-exact.
 	strategies_handler = StrategiesHandler(
-		global_queue, feed, signal_store,
+		ctx.bus, feed,
 		allow_short_selling=trading_rules.allow_short_selling,
-		enable_margin=trading_rules.enable_margin)
+		enable_margin=trading_rules.enable_margin,
+		environment=ctx.environment,
+		sql_engine=ctx.sql_engine)
 
-	resolved_order_config = order_config or OrderConfig.default()
+	# order_config stays handler-owned (D-04 lean, P1 D-03) — never a spec field.
+	resolved_order_config = OrderConfig.default()
+	# The order handler OWNS its storage init from (environment, sql_engine)
+	# (CTX-02/02-02) — NOT injected here; `.storage` is read back below.
 	order_handler = OrderHandler(
-		global_queue, portfolio_handler, order_storage,
+		ctx.bus, portfolio_handler,
 		order_config=resolved_order_config,
 		commission_estimator=commission_estimator,
 		enable_margin=trading_rules.enable_margin,
-		portfolio_max_leverage=trading_rules.max_leverage)
+		portfolio_max_leverage=trading_rules.max_leverage,
+		environment=ctx.environment,
+		sql_engine=ctx.sql_engine)
 
-	# LIQ-03 (04-03): inject the SAME order_storage instance into the portfolio
-	# handler so the BAR-route liquidation forced-close registers its real Order
-	# in the exact mirror the ReconcileManager reads (the set_order_storage
-	# write-seam, the analog of set_universe). Construction-time injection —
-	# order_storage exists at construction, so no Trap-4 timing is needed.
-	# Oracle-dark: with no breaches the seam is never written, SMA_MACD byte-exact.
+	# Read the handler-owned storage back for wiring (02-03). The SAME
+	# order_storage instance is injected into the portfolio handler so the
+	# BAR-route liquidation forced-close registers its real Order in the exact
+	# mirror the ReconcileManager reads (the set_order_storage write-seam, the
+	# analog of set_universe). Oracle-dark: with no breaches the seam is never
+	# written, SMA_MACD byte-exact.
+	order_storage = order_handler.storage
 	portfolio_handler.set_order_storage(order_storage)
 
 	time_generator = TimeGenerator()
@@ -242,15 +241,15 @@ def compose_engine(
 		order_handler,
 		execution_handler,
 		feed.generate_bar_event,
-		global_queue
+		ctx.bus
 	)
 
 	return Engine(
-		global_queue=global_queue,
+		global_queue=ctx.bus,
 		clock=clock,
 		store=store,
 		feed=feed,
-		signal_store=signal_store,
+		signal_store=strategies_handler.signal_store,
 		strategies_handler=strategies_handler,
 		screeners_handler=screeners_handler,
 		portfolio_handler=portfolio_handler,
