@@ -32,6 +32,9 @@ from itrader.order_handler.storage.models import build_order_tables
 from itrader.portfolio_handler.storage.models import build_portfolio_tables
 from itrader.storage.engine import NAMING_CONVENTION
 from itrader.storage.halt_record_store import build_halt_records_table
+from itrader.storage.strategy_registry_store import build_strategy_registry_tables
+from itrader.storage.system_store import build_system_store_table
+from itrader.storage.venue_store import build_venue_store_table
 from itrader.strategy_handler.storage.models import build_signal_tables
 
 # The Alembic Config object — access to the values within the .ini file in use.
@@ -64,6 +67,16 @@ build_signal_tables(target_metadata)
 # truth the store's create_all uses, so autogenerate sees ``halt_records`` and never emits
 # a spurious drop for the table the ``d10_halt_records`` migration creates.
 build_halt_records_table(target_metadata)
+# Phase 4 (04-03, D-02 migration-target wiring): the three new durable-store registrars —
+# the SAME single sources of truth the stores' create_all uses — so autogenerate sees
+# ``system_store`` / ``venue_store`` / ``strategy_registry`` / ``strategy_subscriptions``
+# and never emits a spurious drop for the tables the 04-03 migration chain creates.
+# Register-vs-build (Pitfall 8 / GATE-01): each registrar only constructs ``Table`` objects
+# on this bare ``MetaData`` — no Engine, no ``Settings()``, no store — so the module stays
+# import-inert (store construction is deferred to P6/P9/P10, never here).
+build_system_store_table(target_metadata)
+build_venue_store_table(target_metadata)
+build_strategy_registry_tables(target_metadata)
 
 
 def _resolve_url() -> str:
