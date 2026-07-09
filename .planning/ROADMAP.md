@@ -136,7 +136,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-04-PLAN.md — Constant fold: `StreamSettings`/`FeedProviderSettings` + rewire fold sites, grep-clean (CFG-03)
+- [x] 01-04-PLAN.md — Constant fold: `StreamSettings`/`FeedProviderSettings` + rewire fold sites, grep-clean (CFG-03)
 
 ### Phase 2: Event Bus
 
@@ -307,7 +307,7 @@ P1 and P2 have no dependencies and can start in parallel.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Config Centralization | v1.8 | 3/4 | In Progress|  |
+| 1. Config Centralization | v1.8 | 4/4 | Complete   | 2026-07-09 |
 | 2. Event Bus | v1.8 | 0/TBD | Not started | - |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 0/TBD | Not started | - |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |

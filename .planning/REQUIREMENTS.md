@@ -44,7 +44,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [x] **CFG-02**: `itrader.config` (root) exposes immutable base defaults importable via
   `from itrader import config`; the backtest path reads these unchanged (concern 24/§6c).
 
-- [ ] **CFG-03**: Scattered module constants fold into domain config — `_STREAM_RECONNECT_*` →
+- [x] **CFG-03**: Scattered module constants fold into domain config — `_STREAM_RECONNECT_*` →
   `StreamSettings`/`ConnectionSettings`, `_WARMUP_MARGIN`/`_BACKFILL_PAGE` → feed/provider config;
   `_OKX_*`/`_PAPER_*` deleted (concern 17/§6f).
 
@@ -350,7 +350,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 |-------------|-------|--------|
 | CFG-01 | P1 | Complete |
 | CFG-02 | P1 | Complete |
-| CFG-03 | P1 | Pending |
+| CFG-03 | P1 | Complete |
 | CFG-04 | P1 | Complete |
 | CFG-05 | P1 | Complete |
 | CFG-06 | P1 | Complete |
