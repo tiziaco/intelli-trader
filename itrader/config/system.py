@@ -8,12 +8,18 @@ empty dict still yields documented defaults.
 
 from enum import Enum
 from functools import cached_property
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from itrader.config.settings import Settings
-from itrader.config.sql import SqlSettings
+
+if TYPE_CHECKING:
+    # Import here only to type the ``sql`` cached_property. The concrete import runs
+    # lazily inside the property body so ``config/sql`` (and its transitive
+    # ``sqlalchemy`` dependency) stays OFF the backtest import graph — GATE-01
+    # (tests/unit/storage/test_import_quarantine.py). See D-05/D-06.
+    from itrader.config.sql import SqlSettings
 
 
 class Environment(str, Enum):
@@ -108,7 +114,7 @@ class SystemConfig(BaseModel):
     shutdown_timeout_seconds: int = 30
 
     @cached_property
-    def sql(self) -> SqlSettings:
+    def sql(self) -> "SqlSettings":
         """Lazy SQL backend config (D-05/D-06) — NOT a pydantic field.
 
         Constructed on FIRST access only; no ``SqlSettings`` is built at import or at
@@ -119,6 +125,8 @@ class SystemConfig(BaseModel):
         ``pydantic.ValidationError``. That raising body is intentionally NOT cached, so
         it re-raises on each access rather than caching a half-built object.
         """
+        from itrader.config.sql import SqlSettings
+
         return SqlSettings()
 
     @classmethod
