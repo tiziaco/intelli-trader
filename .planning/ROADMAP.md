@@ -140,29 +140,29 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 ### Phase 2: Event Bus
 
-**Goal**: Introduce a stdlib two-tier `EventBus` (CONTROL > BUSINESS) with FIFO and priority implementations behind one `.put()` surface, add the new CONTROL `EventType` members, and settle the `compose_engine` signature via a minimal `EngineContext` skeleton — backtest wiring `FifoEventBus` at zero oracle risk.
+**Goal**: Introduce a stdlib two-tier `EventBus` (CONTROL > BUSINESS) with FIFO and priority implementations behind one `.put()` surface, add the new CONTROL `EventType` members, and settle the `compose_engine` signature to its **end-state `(ctx, spec)` form** via a frozen `EngineContext` with **handler-owned storage** — backtest wiring `FifoEventBus` at zero oracle risk. *(Phase 2 D-03: the owner chose Option B — the end-state signature now — so **CTX-01/CTX-02/CTX-03 are pulled forward from P3 into P2**; only the `SqlBackend→SqlEngine` rename (CTX-04) stays in P3.)*
 **Depends on**: Nothing
-**Requirements**: BUS-01, BUS-02, BUS-03, BUS-04
+**Requirements**: BUS-01, BUS-02, BUS-03, BUS-04, CTX-01, CTX-02, CTX-03
 **Success Criteria** (what must be TRUE):
 
   1. `FifoEventBus` (backtest) and `PriorityEventBus` (live) satisfy one `EventBus` Protocol (`put`/`get`/`get_nowait`/`qsize`/`empty`/`depth_by_tier`) sharing a single `.put(event)` surface with no handler call-site changes; backtest wires `FifoEventBus` and the oracle stays byte-exact (per-PLAN gate).
   2. A test proves `PriorityEventBus` orders `(tier, seq, event)` by a globally-unique monotonic `seq` (`itertools.count`) — the comparison never dereferences the non-orderable frozen event — and preserves strict within-tier FIFO.
   3. New CONTROL `EventType` members (`STREAM_STATE`, `CONNECTOR_FATAL`, `CONFIG_UPDATE`) exist and are assigned CONTROL tier from a declarative `_CONTROL_EVENT_TYPES` frozenset; backtest uses `FifoEventBus` (zero priority-bus on the backtest path).
-  4. A minimal `EngineContext` skeleton settles `compose_engine`'s signature once; `test_okx_inertness.py` stays green (`FifoEventBus`/`EngineContext(sql_engine=None)` pull nothing heavy; extended register-vs-build assertion).
+  4. A frozen `EngineContext` (`bus`/`config`/`environment`/`sql_engine`, loose types where P4/P9 tighten) settles `compose_engine(ctx, spec)` in its end-state form (CTX-01), with Order + Strategies handlers owning their storage init following `PortfolioHandler`'s shape (CTX-02) — backtest (`environment='backtest', sql_engine=None`) yields the same in-memory instances → oracle byte-exact (CTX-03, per-PLAN gate); `test_okx_inertness.py` stays green (`FifoEventBus`/`EngineContext(sql_engine=None)` pull nothing heavy; extended register-vs-build assertion).
 
 **Plans**: TBD
 
 ### Phase 3: EngineContext + Storage-in-Handler
 
-**Goal**: Thread a frozen `EngineContext` once into `compose_engine(ctx, spec)`, move storage initialization into the Order and Strategies handlers (following `PortfolioHandler`'s shape), and rename `SqlBackend` to `SqlEngine` — with backtest yielding the same in-memory instances.
+**Goal**: Rename `SqlBackend` to `SqlEngine` (`storage/backend.py` → `storage/engine.py`; field/param `sql_engine`) and update all importers — `mypy --strict` clean. *(Phase 2 D-03: `EngineContext` + `compose_engine(ctx, spec)` + storage-in-handler (CTX-01/02/03) were pulled forward into P2, so P3 now carries only the mechanical `SqlBackend→SqlEngine` rename. Review at close whether this single-requirement phase folds into P2 or P4.)*
 **Depends on**: Phase 1, Phase 2
-**Requirements**: CTX-01, CTX-02, CTX-03, CTX-04
+**Requirements**: CTX-04
 **Success Criteria** (what must be TRUE):
 
-  1. `compose_engine(ctx, spec)` takes the frozen `EngineContext` (`bus`, `config`, `environment`, `sql_engine`); backtest (`environment='backtest', sql_engine=None`) yields the same in-memory storage instances and the oracle stays byte-exact (per-PLAN gate).
-  2. Order + Strategies handlers own their storage init from `(environment, sql_engine)` with an optional `storage=` override; `compose_engine` reads the concrete instance back off `.storage` for the `set_order_storage(...)` wiring.
-  3. `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`, field/param `sql_engine`); all importers are updated and `mypy --strict` is clean.
-  4. Factory SQL imports stay lazy, so `test_okx_inertness.py` stays green on the backtest path.
+  1. `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`, field/param `sql_engine`); all importers are updated and `mypy --strict` is clean. *(EngineContext.sql_engine — loose-typed in P2 — tightens to the concrete `SqlEngine` type here.)*
+  2. The backtest oracle stays byte-exact (per-PLAN gate) and factory SQL imports stay lazy, so `test_okx_inertness.py` stays green on the backtest path.
+
+  *(CTX-01/CTX-02/CTX-03 — `compose_engine(ctx, spec)`, handler-owned storage, and the byte-exact/inertness gate — were delivered in Phase 2 per Phase 2 D-03; they are no longer P3 criteria.)*
 
 **Plans**: TBD
 

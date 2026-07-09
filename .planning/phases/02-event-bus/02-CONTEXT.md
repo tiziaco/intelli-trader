@@ -47,11 +47,14 @@ stays in P3/P4.
     the declarative spec) and B3 (hybrid `(ctx, spec, *, order_storage, signal_store)` — reintroduces the
     P3 double-edit). The clean two-arg form only pays off *with* handler-owned storage.
 - **D-03 (PHASING / TRACEABILITY SHIFT):** Choosing D-01+D-02 means **P2 absorbs CTX-01
-  (`compose_engine(ctx, spec)`) and CTX-02 (storage-in-handler)** — both scheduled as **P3** in the design
-  (§16) and REQUIREMENTS.md. **P3 shrinks** to CTX-03 (`SqlBackend→SqlEngine` rename) + CTX-04 (lazy-import
-  guard). This is a deliberate owner-directed roadmap reshape (like P1's cardinality override), same total
-  work, P2/P3 merged on the compose seam. **Downstream must NOT "fix" this back.** REQUIREMENTS.md/ROADMAP.md
-  traceability should be updated so CTX-01/CTX-02 point at P2 (see Deferred → action item).
+  (`compose_engine(ctx, spec)`), CTX-02 (storage-in-handler), and CTX-03 (the backtest byte-exact +
+  lazy-SQL-inertness gate for that change — inseparable from the change itself)** — all scheduled as **P3**
+  in the design (§16) and REQUIREMENTS.md. **P3 shrinks to just CTX-04** (`SqlBackend→SqlEngine` rename — a
+  mechanical rename, genuinely separable and left in P3). This is a deliberate owner-directed roadmap reshape
+  (like P1's cardinality override), same total work, P2/P3 merged on the compose seam. **Downstream must NOT
+  "fix" this back.** REQUIREMENTS.md/ROADMAP.md traceability updated so CTX-01/CTX-02/CTX-03 point at P2
+  (done 2026-07-09). Note: P3 now carries a single requirement (CTX-04) — worth a look at close whether it
+  folds into P2 or P4.
 - **D-04:** The kwargs→spec fold is **mostly 1:1 with existing `SystemSpec` fields** — `csv_paths→data`,
   `start_date→start`, `end_date→end`, `timeframe→timeframe`, `exchange_config←exchange` (factory already
   derives `ExchangeConfig` from `spec.exchange`), `results_store→results_store` (already on the spec). The
@@ -130,8 +133,8 @@ stays in P3/P4.
   deviations D-01/D-02/D-03 above** — P2 pulls CTX-01/CTX-02 forward from P3.
 
 ### Requirements
-- `.planning/REQUIREMENTS.md` — **BUS-01..BUS-04** (P2 as-scheduled) **plus CTX-01, CTX-02** (pulled into
-  P2 per D-03; traceability update pending). CTX-03/CTX-04 remain P3.
+- `.planning/REQUIREMENTS.md` — **BUS-01..BUS-04** (P2 as-scheduled) **plus CTX-01, CTX-02, CTX-03** (pulled
+  into P2 per D-03; traceability table + section header updated 2026-07-09). CTX-04 remains P3.
 
 ### Roadmap
 - `.planning/ROADMAP.md` — Phase 2 (Event Bus) success criteria + Phase 3 (which shrinks per D-03).
@@ -206,9 +209,9 @@ stays in P3/P4.
 <deferred>
 ## Deferred Ideas
 
-- **REQUIREMENTS.md / ROADMAP.md traceability update** (action item, D-03) — move CTX-01 + CTX-02 into P2's
-  requirement set; note P3 shrinks to CTX-03 (`SqlBackend→SqlEngine` rename) + CTX-04 (lazy-import guard).
-  Do this before/at planning so the plan-checker's decision-coverage gate sees CTX-01/02 cited under P2.
+- **REQUIREMENTS.md / ROADMAP.md traceability update** (D-03) — ✅ done 2026-07-09: CTX-01/CTX-02/CTX-03
+  moved into P2's requirement set (traceability table + section header + ROADMAP Phase 2/3); P3 now = CTX-04
+  (`SqlBackend→SqlEngine` rename) only. So the plan-checker's decision-coverage gate sees CTX-01/02/03 under P2.
 - **Wiring `PriorityEventBus` into the live system** — P6/P7, when `LiveRunner` replaces
   `_event_processing_loop` and the connector→CONTROL-route handoff + flag-machinery deletion land.
 - **`RuntimeConfig` overlay** — P9; P2's `EngineContext.config` is a loose-typed placeholder (today's

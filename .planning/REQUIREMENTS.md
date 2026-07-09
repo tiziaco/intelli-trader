@@ -75,19 +75,25 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **BUS-04**: A minimal `EngineContext` skeleton is introduced in P2 so `compose_engine`'s signature
   settles once rather than being double-edited across P2/P3 (arch refinement 2).
 
-### EngineContext + Storage-in-Handler (P3)
+### EngineContext + Storage-in-Handler (CTX-01/02/03 → P2, CTX-04 → P3)
 
-- [ ] **CTX-01**: `EngineContext` (frozen: `bus`, `config`, `environment`, `sql_engine`) is threaded once
-  into `compose_engine(ctx, spec)`; infra-only, never a god-parameter (LR-14/§7a).
+> **Phase reassignment (Phase 2 D-03, 2026-07-09):** the owner chose the end-state
+> `compose_engine(ctx, spec)` signature in P2 (Option B), which requires handler-owned storage — so
+> **CTX-01, CTX-02, and CTX-03 (the byte-exact/inertness gate inseparable from that change) are pulled
+> forward into P2.** Only **CTX-04** (the mechanical `SqlBackend→SqlEngine` rename) remains in P3, which is
+> now a single-requirement phase. Downstream must NOT "fix" this back — see `phases/02-event-bus/02-CONTEXT.md`.
 
-- [ ] **CTX-02**: Order + Strategies handlers own their storage init from `(environment, sql_engine)` with
-  an optional `storage=` override (following `PortfolioHandler`'s shape); `compose_engine` reads the
+- [ ] **CTX-01** *(→ P2)*: `EngineContext` (frozen: `bus`, `config`, `environment`, `sql_engine`) is threaded
+  once into `compose_engine(ctx, spec)`; infra-only, never a god-parameter (LR-14/§7a).
+
+- [ ] **CTX-02** *(→ P2)*: Order + Strategies handlers own their storage init from `(environment, sql_engine)`
+  with an optional `storage=` override (following `PortfolioHandler`'s shape); `compose_engine` reads the
   concrete instance back off `.storage` for wiring (LR-13/§7b, concern 20).
 
-- [ ] **CTX-03**: Backtest (`environment='backtest', sql_engine=None`) yields the same in-memory storage
-  instances → oracle byte-exact; factory SQL imports stay lazy → inertness green (§7b).
+- [ ] **CTX-03** *(→ P2)*: Backtest (`environment='backtest', sql_engine=None`) yields the same in-memory
+  storage instances → oracle byte-exact; factory SQL imports stay lazy → inertness green (§7b).
 
-- [ ] **CTX-04**: `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`;
+- [ ] **CTX-04** *(P3)*: `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`;
   field/param `sql_engine`); all importers updated (LR-18, rename folded into P3 per arch refinement 4).
 
 ### SqlEngine Migrations Relocation (P4)
@@ -358,9 +364,9 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | BUS-02 | P2 | Pending |
 | BUS-03 | P2 | Pending |
 | BUS-04 | P2 | Pending |
-| CTX-01 | P3 | Pending |
-| CTX-02 | P3 | Pending |
-| CTX-03 | P3 | Pending |
+| CTX-01 | P2 | Pending |
+| CTX-02 | P2 | Pending |
+| CTX-03 | P2 | Pending |
 | CTX-04 | P3 | Pending |
 | SQL-01 | P4 | Pending |
 | SQL-02 | P4 | Pending |
