@@ -180,7 +180,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — D-03 rider: collapse the redundant `signal_store` surfaces on `Engine`/`BacktestTradingSystem`; repoint accessors to read `engine.strategies_handler.signal_store` directly (wave 2)
+- [x] 03-02-PLAN.md — D-03 rider: collapse the redundant `signal_store` surfaces on `Engine`/`BacktestTradingSystem`; repoint accessors to read `engine.strategies_handler.signal_store` directly (wave 2)
 
 ### Phase 4: Storage Schema: Migrations Relocation + New Durable Stores
 
@@ -325,7 +325,7 @@ P1 and P2 have no dependencies and can start in parallel.
 |-------|-----------|----------------|--------|-----------|
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
-| 3. EngineContext + Storage-in-Handler | v1.8 | 1/2 | In Progress|  |
+| 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete   | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |

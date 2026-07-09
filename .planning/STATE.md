@@ -4,17 +4,17 @@ milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 03
 current_phase_name: enginecontext-storage-in-handler
-status: executing
+status: verifying
 stopped_at: Phase 3 context gathered
-last_updated: "2026-07-09T15:23:45.865Z"
+last_updated: "2026-07-09T15:29:18.741Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 03 execution started
 progress:
   total_phases: 9
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 8
-  percent: 22
+  completed_plans: 9
+  percent: 33
 ---
 
 # Project State
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 03 (enginecontext-storage-in-handler) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-09 — Phase 03 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -136,6 +136,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase 02]: 02-03: global_queue retyped to EventBus (name unchanged) across 5 handlers + SimulatedExchange + BacktestBarFeed.bind; no call-site changes (D-07/D-08)
 - [Phase ?]: CTX-04: SqlBackend renamed to SqlEngine; module moved to storage/engine.py; no alias (D-02)
 - [Phase ?]: D-01: backend/_backend vocabulary unified to sql_engine/_sql_engine across storage factories, PortfolioHandler, and Portfolio
+- [Phase 03]: D-03: collapsed redundant signal_store surfaces; accessors read through engine.strategies_handler.signal_store, no @property added
 
 ### Pending Todos
 
@@ -198,6 +199,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 02 P02 | 6min | 3 tasks | 4 files |
 | Phase 02 P03 | 18min | 3 tasks | 10 files |
 | Phase 03 P01 | 11min | 2 tasks | 41 files |
+| Phase 03 P02 | 2min | 1 tasks | 2 files |
 
 ## Bookkeeping
 
@@ -209,7 +211,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T15:23:27.675Z
+Last session: 2026-07-09T15:28:32.345Z
 Stopped at: Phase 3 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
