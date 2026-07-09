@@ -74,7 +74,22 @@ now sits out of the shipped `itrader` wheel.
 
 ## Deviations from Plan
 
-None — plan executed exactly as written. Rules 1–4 not triggered; no auth gates.
+### Auto-fixed Issues
+
+**1. [Rule 3 - Blocking] Recovered Task-1 edits dropped by an aborted multi-pathspec `git add`**
+- **Found during:** Post-plan tree check (after all tests green).
+- **Issue:** The Task-1 staging command listed a stale pathspec (`itrader/storage/migrations`,
+  already removed by `git mv`). `git add` aborted on the bad pathspec and staged nothing from
+  that invocation, so the `alembic.ini` and `engine.py` edits never entered commit `d8a9fc46`
+  (which holds only the renames). `test_migrations.py`'s Task-1 edit was salvaged because Task 2
+  re-staged that file. The dropped edits were present in the working tree for every test run
+  (all gates green), just uncommitted.
+- **Fix:** Committed the two edits in follow-up `35693c1c`; re-ran the full gate set (9 passed)
+  from the committed state to confirm.
+- **Files modified:** `alembic.ini`, `itrader/storage/engine.py`
+- **Commit:** `35693c1c`
+
+No other deviations. Rules 1/2/4 not triggered; no auth gates.
 
 ## Threat Flags
 
