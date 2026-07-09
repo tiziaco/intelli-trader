@@ -86,7 +86,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **CTX-01** *(→ P2)*: `EngineContext` (frozen: `bus`, `config`, `environment`, `sql_engine`) is threaded
   once into `compose_engine(ctx, spec)`; infra-only, never a god-parameter (LR-14/§7a).
 
-- [ ] **CTX-02** *(→ P2)*: Order + Strategies handlers own their storage init from `(environment, sql_engine)`
+- [x] **CTX-02** *(→ P2)*: Order + Strategies handlers own their storage init from `(environment, sql_engine)`
   with an optional `storage=` override (following `PortfolioHandler`'s shape); `compose_engine` reads the
   concrete instance back off `.storage` for wiring (LR-13/§7b, concern 20).
 
@@ -365,7 +365,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | BUS-03 | P2 | Complete |
 | BUS-04 | P2 | Pending |
 | CTX-01 | P2 | Pending |
-| CTX-02 | P2 | Pending |
+| CTX-02 | P2 | Complete |
 | CTX-03 | P2 | Pending |
 | CTX-04 | P3 | Pending |
 | SQL-01 | P4 | Pending |

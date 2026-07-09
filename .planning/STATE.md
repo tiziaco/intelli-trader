@@ -6,14 +6,14 @@ current_phase: 02
 current_phase_name: Event Bus
 status: executing
 stopped_at: Phase 2 context gathered
-last_updated: "2026-07-09T13:02:16.329Z"
+last_updated: "2026-07-09T13:08:13.264Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 02 execution started
 progress:
   total_phases: 9
   completed_phases: 1
   total_plans: 7
-  completed_plans: 5
+  completed_plans: 6
   percent: 11
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 02 (Event Bus) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-07-09 — Phase 02 execution started
 
@@ -130,6 +130,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: P1-04: live_trading_system.py is 4-space not tabs (od-verified); _OKX_*/_PAPER_* retired, PAPER_PARITY_* anchor preserved byte-identical (Pitfall 4)
 - [Phase 02]: D-09/D-10: event-bus substrate (EventBus Protocol + FifoEventBus + PriorityEventBus) landed in itrader/events_handler/bus.py, import-inert (Event TYPE_CHECKING-only), wired into nothing — Plan 02-01: pure substrate, oracle-dark
 - [Phase 02]: Typed bus internal queues concretely (queue.Queue[Event] / PriorityQueue[tuple]) not [Any] to satisfy mypy --strict verification gate (byte-identical at runtime) — Rule 3 blocking fix during 02-01 Task 2
+- [Phase 02]: D-02/CTX-02: OrderHandler + StrategiesHandler own storage init from keyword-only (environment=backtest, sql_engine=None), exposing the concrete on .storage/.signal_store for the plan-02-03 compose back-read; purely additive, backtest slice = same in-memory concretes, oracle byte-exact (Plan 02-02)
 
 ### Pending Todos
 
@@ -189,6 +190,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 01 P03 | 4m | 1 tasks | 1 files |
 | Phase 01 P04 | 25min | 3 tasks | 15 files |
 | Phase 02 P01 | 3min | 3 tasks | 3 files |
+| Phase 02 P02 | 6min | 3 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -200,7 +202,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T13:02:16.321Z
+Last session: 2026-07-09T13:07:26.915Z
 Stopped at: Phase 2 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
