@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 0
-current_phase_name: roadmap created, revised to 12 phases
-status: planning
+current_phase: 01
+current_phase_name: config-centralization
+status: executing
 stopped_at: Phase 1 planned — 4 plans, verification passed
-last_updated: "2026-07-09T08:58:46.594Z"
+last_updated: "2026-07-09T10:04:59.074Z"
 last_activity: 2026-07-09
-last_activity_desc: Phase 1 (Config Centralization) planned — 4 plans in 2 waves; plan-checker VERIFICATION PASSED; requirements 6/6 and decisions 13/13 covered
+last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 4
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** v1.8 decomposes the 2,171-line `LiveTradingSystem` God object (~17 concerns) into a
+**Current focus:** Phase 01 — config-centralization
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: Phase 1 planned — 0 of 12 executed (P1 Config Centralization ready to execute)
-Plan: P1 — 4 plans in 2 waves (01-01, 01-02, 01-03 · Wave 1 ∥; 01-04 · Wave 2)
-Status: Ready to execute (P1) — plan-checker VERIFICATION PASSED; P2 still dependency-free (can plan in parallel)
-Last activity: 2026-07-09 — planned Phase 1 (Config Centralization): 4 plans, 2 waves; research + pattern-map + validation strategy; requirements 6/6 & decisions 13/13 covered
+Phase: 01 (config-centralization) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-07-09 — Phase 01 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -123,6 +123,8 @@ connectors memoized `(venue, account_id)` (LR-17/LR-20); `SqlBackend→SqlEngine
 `VenueStore` + `StrategyRegistryStore` (LR-22). Ten backlog TODOs fold in as CF-1..CF-10 across
 P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 
+- [Phase ?]: P1-01: SystemConfig.sql is a functools.cached_property (not a pydantic field) — built on first access only, keeping SqlSettings/Postgres off the import graph; extra flipped to forbid (D-05/D-06/D-09)
+
 ### Pending Todos
 
 Ten v1.7-carryforward TODOs are **folded into v1.8** as CF-1..CF-10 (set `resolves_phase` at milestone
@@ -174,6 +176,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Turso/libSQL | `sqlalchemy-libsql` opt-in backend — interface stays Turso-ready | Deferred | v2 (post-beta) |
 | Perf (v1.5) | Single-pass per-bar portfolio valuation (profile-first gated); PERF-09/PERF-10; advisory Nyquist VALIDATION gaps | Deferred | future perf phase |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions | Deferred | indefinite (crypto-first) |
+| Phase 01 P01 | 12 | 3 tasks | 3 files |
 
 ## Bookkeeping
 
@@ -185,7 +188,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T08:58:46.586Z
+Last session: 2026-07-09T10:04:31.913Z
 Stopped at: Phase 1 planned — 4 plans, verification passed, ready to execute
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
