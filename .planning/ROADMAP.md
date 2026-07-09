@@ -150,7 +150,16 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
   3. New CONTROL `EventType` members (`STREAM_STATE`, `CONNECTOR_FATAL`, `CONFIG_UPDATE`) exist and are assigned CONTROL tier from a declarative `_CONTROL_EVENT_TYPES` frozenset; backtest uses `FifoEventBus` (zero priority-bus on the backtest path).
   4. A frozen `EngineContext` (`bus`/`config`/`environment`/`sql_engine`, loose types where P4/P9 tighten) settles `compose_engine(ctx, spec)` in its end-state form (CTX-01), with Order + Strategies handlers owning their storage init following `PortfolioHandler`'s shape (CTX-02) — backtest (`environment='backtest', sql_engine=None`) yields the same in-memory instances → oracle byte-exact (CTX-03, per-PLAN gate); `test_okx_inertness.py` stays green (`FifoEventBus`/`EngineContext(sql_engine=None)` pull nothing heavy; extended register-vs-build assertion).
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1** *(parallel — zero file overlap, no deps)*
+
+- [ ] 02-01-PLAN.md — Bus substrate: `EventBus` Protocol + `FifoEventBus`/`PriorityEventBus` + `_CONTROL_EVENT_TYPES` + 3 CONTROL `EventType`s + BUS-01/02/03 unit suite (BUS-01/02/03)
+- [ ] 02-02-PLAN.md — Handler-owned storage: `OrderHandler`/`StrategiesHandler` own storage init from `(environment, sql_engine)`, backtest slice = in-memory concretes (CTX-02)
+
+**Wave 2** *(blocked on Wave 1 — depends on 02-01 + 02-02)*
+
+- [ ] 02-03-PLAN.md — Compose seam settle: `EngineContext` + retype-not-rename bus swap + `compose_engine(ctx, spec)` (internal queue deleted) + both backtest arms inject `EngineContext(FifoEventBus, backtest, sql_engine=None)` + extended inertness gate (BUS-01/BUS-04/CTX-01/CTX-03)
 
 ### Phase 3: EngineContext + Storage-in-Handler
 
