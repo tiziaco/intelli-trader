@@ -159,7 +159,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 2** *(blocked on Wave 1 — depends on 02-01 + 02-02)*
 
-- [ ] 02-03-PLAN.md — Compose seam settle: `EngineContext` + retype-not-rename bus swap + `compose_engine(ctx, spec)` (internal queue deleted) + both backtest arms inject `EngineContext(FifoEventBus, backtest, sql_engine=None)` + extended inertness gate (BUS-01/BUS-04/CTX-01/CTX-03)
+- [x] 02-03-PLAN.md — Compose seam settle: `EngineContext` + retype-not-rename bus swap + `compose_engine(ctx, spec)` (internal queue deleted) + both backtest arms inject `EngineContext(FifoEventBus, backtest, sql_engine=None)` + extended inertness gate (BUS-01/BUS-04/CTX-01/CTX-03)
 
 ### Phase 3: EngineContext + Storage-in-Handler
 
@@ -317,7 +317,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
-| 2. Event Bus | v1.8 | 2/3 | In Progress|  |
+| 2. Event Bus | v1.8 | 3/3 | Complete   | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 0/TBD | Not started | - |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
