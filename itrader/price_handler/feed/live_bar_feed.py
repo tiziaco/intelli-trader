@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
 
+from itrader.config.stream import FeedProviderSettings
 from itrader.core.bar import Bar
 from itrader.core.exceptions import (
     MalformedDataError,
@@ -59,11 +60,6 @@ if TYPE_CHECKING:
     from itrader.price_handler.providers.okx_provider import ClosedBar
 
 _NS_PER_MS = 1_000_000
-
-# Warmup safety margin (D-10): a small FIXED additive over cache_capacity(), NOT a
-# multiplier — the driver is a readiness threshold (RESEARCH §Warmup safety-margin
-# survey; K = required_warmup + 5 absorbs the REST boundary-bar dedup slack).
-_WARMUP_MARGIN = 5
 
 
 class LiveBarFeed(BarFeed):
@@ -269,8 +265,9 @@ class LiveBarFeed(BarFeed):
         """Live-start warmup: REST-fetch ``depth`` bars and replay each via ``update()``.
 
         The FEED-03 warmup driver. When ``depth`` is not given it resolves to
-        ``self.cache_capacity() + _WARMUP_MARGIN`` (D-10 — the derived ring depth
-        plus a FIXED additive margin, RESEARCH §Warmup safety-margin survey; with the
+        ``self.cache_capacity() + FeedProviderSettings().warmup_margin`` (D-10 — the
+        derived ring depth plus a FIXED additive margin, CFG-03/D-08 folded the margin
+        into config/stream.py, RESEARCH §Warmup safety-margin survey; with the
         03-04 D-13 registration ``cache_capacity()`` is 100, so K >= 105 fetches
         enough bars that stateful indicators actually warm — otherwise
         ``calculate_signals`` short-circuits and the oracle produces zero trades,
@@ -283,7 +280,7 @@ class LiveBarFeed(BarFeed):
         gate. Timestamps come from the venue bars only (never ``datetime.now()``).
         """
         if depth is None:
-            depth = self.cache_capacity() + _WARMUP_MARGIN
+            depth = self.cache_capacity() + FeedProviderSettings().warmup_margin
         bars = self._provider.fetch_ohlcv_backfill(
             symbol, timeframe, limit=depth)
         self.logger.info(

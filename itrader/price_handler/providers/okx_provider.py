@@ -56,7 +56,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
 import aiohttp
 
-from itrader.config.stream import StreamSettings
+from itrader.config.stream import FeedProviderSettings, StreamSettings
 from itrader.connectors.base import LiveConnector
 from itrader.core.exceptions import MissingPriceDataError, StateError
 from itrader.core.money import to_money
@@ -104,9 +104,6 @@ _OKX_INTERVALS: dict[str, str] = {
 # The confirm flag lives at index 8; a well-formed business row therefore has >= 9 fields.
 _CONFIRM_INDEX = 8
 _MIN_ROW_FIELDS = 9
-
-# Default REST backfill page size (OKX/ccxt cap); pagination advances by ``since``.
-_BACKFILL_PAGE = 1000
 
 
 class OkxDataProvider:
@@ -627,7 +624,7 @@ class OkxDataProvider:
 
     def fetch_ohlcv_backfill(
         self, symbol: str, timeframe: str,
-        since: int | None = None, limit: int = _BACKFILL_PAGE,
+        since: int | None = None, limit: int | None = None,
     ) -> list[ClosedBar]:
         """Backfill completed OHLCV bars via REST ``fetch_ohlcv`` through the shared client.
 
@@ -636,8 +633,11 @@ class OkxDataProvider:
         and crosses every numeric cell via ``to_money(str(...))`` — NEVER a bulk float
         cast of the frame / ``Decimal(float)`` (CONN-05). Returns Decimal-edge
         ``ClosedBar`` dicts for the Phase-3 warmup path (replayed one-by-one through the
-        feed's ``update(bar)``, LX-09).
+        feed's ``update(bar)``, LX-09). ``limit`` defaults to the folded backfill page
+        size (CFG-03/D-08, ``FeedProviderSettings().backfill_page``) when not given.
         """
+        if limit is None:
+            limit = FeedProviderSettings().backfill_page
         symbol_okx = self._to_okx_symbol(symbol)
         # ccxt's unified ``fetch_ohlcv`` takes the UNIFIED timeframe (``"1d"``) and maps it
         # to OKX's ``"1D"`` itself — passing the OKX token here makes ccxt's
@@ -661,7 +661,7 @@ class OkxDataProvider:
 
     async def _fetch_ohlcv_backfill_async(
         self, symbol: str, timeframe: str,
-        since: int | None = None, limit: int = _BACKFILL_PAGE,
+        since: int | None = None, limit: int | None = None,
     ) -> list[ClosedBar]:
         """D-17 loop-native REST backfill: ``await`` ``client.fetch_ohlcv`` DIRECTLY on the loop.
 
@@ -673,7 +673,12 @@ class OkxDataProvider:
         That bridge blocks the loop thread on a future the same loop must resolve → self-deadlock
         (30s stall → livelock, RESEARCH Pitfall 4 / V17-15). This variant is the LOOP-triggered gap
         path only; the engine-thread ``warmup`` path keeps the synchronous ``call()``-based method.
+
+        ``limit`` defaults to the folded backfill page size (CFG-03/D-08,
+        ``FeedProviderSettings().backfill_page``) when not given.
         """
+        if limit is None:
+            limit = FeedProviderSettings().backfill_page
         symbol_okx = self._to_okx_symbol(symbol)
         client = self._connector.client
         raw: list[Any] = []

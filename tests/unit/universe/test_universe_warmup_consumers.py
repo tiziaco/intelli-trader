@@ -31,7 +31,8 @@ from itrader.events_handler.events import BarsLoaded, BarsLoadFailed
 from itrader.events_handler.events.market import UniverseUpdateEvent
 from itrader.universe.membership import StrategyDerivedSelectionModel
 from itrader.universe.universe import Universe
-from itrader.universe.universe_handler import _WARMUP_MARGIN, UniverseHandler
+from itrader.config.stream import FeedProviderSettings
+from itrader.universe.universe_handler import UniverseHandler
 
 pytestmark = pytest.mark.unit
 
@@ -184,7 +185,8 @@ def test_add_branch_spawns_warmup_no_synchronous_subscribe() -> None:
     )
 
     # spawn_warmup fired with the explicit depth K = cache_capacity + margin.
-    assert provider.spawn_calls == [("ETH/USDC", "1d", _CACHE_CAPACITY + _WARMUP_MARGIN)]
+    assert provider.spawn_calls == [
+        ("ETH/USDC", "1d", _CACHE_CAPACITY + FeedProviderSettings().warmup_margin)]
     # No synchronous subscribe on the add branch — subscribe moves to on_bars_loaded.
     assert ("subscribe", "ETH/USDC") not in log
     # The add branch did NOT flip readiness (that is on_bars_loaded's job).
