@@ -30,10 +30,14 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Config Centralization (P1)
 
-- [ ] **CFG-01**: `SystemConfig` aggregates all system-wide config (`performance`, `monitoring`,
-  `runtime`, `sql`, `order`) with an import-safety split — eager fields (plain `BaseModel`, safe defaults)
-  vs a lazy `sql` accessor that resolves Postgres `SqlSettings` only on first access, never at import
-  (LR-04/§6a).
+- [ ] **CFG-01**: `SystemConfig` aggregates the **cardinality-1 system-wide singletons only**
+  (`performance`, `monitoring`, `runtime`, `sql`) with an import-safety split — eager fields (plain
+  `BaseModel`, safe defaults) vs a lazy `sql` accessor that resolves Postgres `SqlSettings` only on
+  first access, never at import (LR-04/§6a). **Owner amendment (2026-07-09):** `order` is reclassified
+  cardinality-N (may diverge per-portfolio / per-venue in the near future) and is therefore **kept out
+  of `SystemConfig`** — it lives with its owner (`OrderHandler`) via `OrderConfig.default()`, alongside
+  the other per-instance configs (`portfolio`, `exchange`). This intentionally supersedes the spec §6b
+  listing of `order` as a `SystemConfig` singleton.
 - [ ] **CFG-02**: `itrader.config` (root) exposes immutable base defaults importable via
   `from itrader import config`; the backtest path reads these unchanged (concern 24/§6c).
 - [ ] **CFG-03**: Scattered module constants fold into domain config — `_STREAM_RECONNECT_*` →
