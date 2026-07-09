@@ -71,6 +71,14 @@ _FORBIDDEN = (
     # composition root (or re-exports it from the barrel) this probe fails loudly,
     # protecting the oracle byte-exactness + the W1/W2 perf gate.
     "itrader.universe.universe_handler",
+    # Phase 4 (04-03, STORE-05 inertness gate): the three new durable-store modules compose
+    # SQLAlchemy and are LIVE-ONLY (constructed in P6/P9/P10, never on the backtest path).
+    # The backtest composition root must pull NONE of them. If a future edit imports one on
+    # the hot path (or re-exports it from a backtest-path barrel) this probe fails loudly,
+    # protecting the oracle byte-exactness + the W1/W2 perf gate.
+    "itrader.storage.system_store",
+    "itrader.storage.venue_store",
+    "itrader.storage.strategy_registry_store",
 )
 leaked = [name for name in _FORBIDDEN if name in sys.modules]
 assert not leaked, (
@@ -188,3 +196,43 @@ def test_backtest_event_handler_phase7_routes_are_inert_empty() -> None:
             "A non-empty list here means live routing leaked onto the backtest path "
             "(T-07-07-ORACLE oracle-inertness violation)."
         )
+
+
+def test_new_store_registrars_are_register_vs_build() -> None:
+    """Phase 4 (04-03, STORE-05): the 3 new registrars are register-vs-BUILD (Table-only).
+
+    The other half of the inertness contract (RESEARCH OQ3): beyond keeping the new store
+    MODULES off the backtest import path (the ``_FORBIDDEN`` probe above), the ``build_*``
+    registrars themselves must be register-vs-build — they construct only ``Table`` objects
+    on a fresh ``MetaData``, pulling NO Engine and constructing NO ``SqlSettings`` /
+    ``SqlEngine`` (mirrors the ``migrations/env.py`` register-vs-build discipline). That is
+    what lets ``migrations/env.py`` import them at module scope while staying import-inert.
+
+    Asserts the 3 registrars register EXACTLY the 4 expected table names on a bare
+    ``MetaData`` and that no heavy backend (``SqlEngine`` engine / ``SqlSettings``) is built.
+    """
+    from sqlalchemy import Engine, MetaData
+
+    from itrader.storage.engine import NAMING_CONVENTION
+    from itrader.storage.strategy_registry_store import build_strategy_registry_tables
+    from itrader.storage.system_store import build_system_store_table
+    from itrader.storage.venue_store import build_venue_store_table
+
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    system_table = build_system_store_table(metadata)
+    venue_table = build_venue_store_table(metadata)
+    registry_tables = build_strategy_registry_tables(metadata)
+
+    # Table-ONLY registration: the registrars return SQLAlchemy Table objects (no Engine).
+    assert not isinstance(system_table, Engine)
+    assert not isinstance(venue_table, Engine)
+    assert set(registry_tables) == {"strategy_registry", "strategy_subscriptions"}
+
+    # The 3 registrars registered EXACTLY the 4 expected table names on the bare MetaData —
+    # no connection, no Settings(), no SqlEngine constructed anywhere in the call chain.
+    assert set(metadata.tables) == {
+        "system_store",
+        "venue_store",
+        "strategy_registry",
+        "strategy_subscriptions",
+    }
