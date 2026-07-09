@@ -20,7 +20,7 @@ from itrader.config.sql import SqlSettings
 # become EXPLICIT and DETERMINISTIC for every create_all consumer (results store, price
 # store) AND for Plan-05 Alembic ``--autogenerate``, so the test-path ``create_all`` and the
 # deploy-path autogenerate emit byte-IDENTICAL names. This module is the SINGLE SOURCE OF
-# TRUTH for those names: ``itrader/storage/migrations/env.py`` (Plan 05) imports this constant
+# TRUTH for those names: ``migrations/env.py`` (Plan 05) imports this constant
 # for the autogen MetaData. Cosmetic for existing consumers (names are simply made explicit),
 # so GATE-01 inertness is preserved.
 NAMING_CONVENTION: dict[str, str] = {
