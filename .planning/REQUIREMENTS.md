@@ -51,7 +51,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [x] **CFG-04**: Dead-config audit removes unused settings + stale `__pycache__`; `extra` policy
   normalized across config models (concern 21/§6f).
 
-- [ ] **CFG-05**: A typed `HaltReason` enum in `core/enums/system.py` replaces free-string halt reasons;
+- [x] **CFG-05**: A typed `HaltReason` enum in `core/enums/system.py` replaces free-string halt reasons;
   the `'baseline-residual'` off-vocabulary string is retired (CF-8).
 
 - [ ] **CFG-06**: The D-03a dual-validator paragraph is applied to `.planning/codebase/CONVENTIONS.md`
@@ -352,7 +352,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | CFG-02 | P1 | Complete |
 | CFG-03 | P1 | Pending |
 | CFG-04 | P1 | Complete |
-| CFG-05 | P1 | Pending |
+| CFG-05 | P1 | Complete |
 | CFG-06 | P1 | Pending |
 | BUS-01 | P2 | Pending |
 | BUS-02 | P2 | Pending |

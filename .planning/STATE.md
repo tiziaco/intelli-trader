@@ -6,14 +6,14 @@ current_phase: 01
 current_phase_name: config-centralization
 status: executing
 stopped_at: Phase 1 planned — 4 plans, verification passed
-last_updated: "2026-07-09T10:04:59.074Z"
+last_updated: "2026-07-09T10:10:34.761Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 01 execution started
 progress:
   total_phases: 9
   completed_phases: 0
   total_plans: 4
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 01 (config-centralization) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-07-09 — Phase 01 execution started
 
@@ -124,6 +124,7 @@ connectors memoized `(venue, account_id)` (LR-17/LR-20); `SqlBackend→SqlEngine
 P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 
 - [Phase ?]: P1-01: SystemConfig.sql is a functools.cached_property (not a pydantic field) — built on first access only, keeping SqlSettings/Postgres off the import graph; extra flipped to forbid (D-05/D-06/D-09)
+- [Phase ?]: P1-02: HaltReason(Enum) in core/enums/system.py — 4 minimal members (D-10), .value wire strings preserved for durable-record compat (T-02-01); baseline-residual free string retired at live_trading_system.py:810; halt(reason: str) signature migration deferred to P8 (D-11/CF-8)
 
 ### Pending Todos
 
@@ -177,6 +178,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Perf (v1.5) | Single-pass per-bar portfolio valuation (profile-first gated); PERF-09/PERF-10; advisory Nyquist VALIDATION gaps | Deferred | future perf phase |
 | D-multiasset | Multi-currency accounting, trading calendars, corporate actions | Deferred | indefinite (crypto-first) |
 | Phase 01 P01 | 12 | 3 tasks | 3 files |
+| Phase 01 P02 | 12 | 2 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -188,7 +190,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T10:04:31.913Z
+Last session: 2026-07-09T10:10:34.754Z
 Stopped at: Phase 1 planned — 4 plans, verification passed, ready to execute
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
