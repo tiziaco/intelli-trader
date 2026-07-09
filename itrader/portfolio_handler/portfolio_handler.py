@@ -6,7 +6,6 @@ engine thread; queue.Queue is the thread boundary — other threads only put
 events. Composite reads are consistent because nothing mutates concurrently.
 Live cross-thread reads are a D-live design item.
 """
-from queue import Queue
 from collections import OrderedDict
 from datetime import datetime, UTC
 from decimal import Decimal

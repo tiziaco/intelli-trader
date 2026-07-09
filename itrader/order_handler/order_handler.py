@@ -1,5 +1,4 @@
 from decimal import Decimal
-from queue import Queue
 from typing import Any, Callable, List, Dict, Optional
 
 from itrader.core.commission_estimator import CommissionEstimator

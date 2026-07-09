@@ -1,5 +1,4 @@
 from datetime import timedelta
-from queue import Queue
 from typing import Any, Optional, TYPE_CHECKING, cast
 
 from itrader.core.enums import OrderType

@@ -168,7 +168,7 @@ def compose_engine(ctx: "EngineContext", spec: "SystemSpec") -> Engine:
 
 	# ScreenersHandler is a deferred subsystem (ignore_errors override).
 	screeners_handler = ScreenersHandler(ctx.bus, feed)  # type: ignore[no-untyped-call]
-	portfolio_handler = PortfolioHandler(ctx.bus)
+	portfolio_handler = PortfolioHandler(ctx.bus, environment=ctx.environment, backend=ctx.sql_engine)
 
 	# Execution handler is constructed BEFORE the order handler so the admission
 	# gate's commission estimator can adapt the simulated exchange's fee model
