@@ -1,180 +1,320 @@
 # Stack Research
 
-> ## ⚠ Superseded framing — read `phases/02-okx-connector/02-CONTEXT.md` first
->
-> The Phase-2 discussion (2026-07-01) revised the live architecture; this snapshot
-> predates it and still describes the **two-arm `LiveConnector`** model. **Superseded
-> framings** (everything else here remains valid):
-> - Connector is a **session/transport primitive**, not a two-arm venue object; the data/order/account arms are **domain adapters** (`OkxDataProvider` / `OkxExchange` / `VenueAccount`), **injected** with the session, never cross-domain-imported.
-> - The **`OkxExchange` adapter emits `FillEvent`** — the connector owns no operations and emits no domain events.
-> - Paper needs **no connector**: the paper execution adapter implements **`AbstractExchange`** (not `LiveConnector`).
-> - `OkxSettings` reads **plain `OKX_API_*` (no env prefix)** — not `ITRADER_OKX_*`; secret manager deferred post-milestone.
->
-> See design-doc LX-05/LX-06 revision notes and `02-CONTEXT.md` D-01..D-10.
+**Domain:** Brownfield structural refactor of an event-driven algo-trading engine (v1.8 — Live System Refactor & Live-Readiness Hardening)
+**Researched:** 2026-07-09
+**Confidence:** HIGH
 
-**Domain:** Live crypto trading (OKX, paper-first) — additions to an event-driven backtest engine
-**Researched:** 2026-06-30
-**Confidence:** HIGH (ccxt packaging/versions, OKX demo mechanics, asyncio bridge verified against current sources; MEDIUM on native-escape-hatch choice — a plan-time gap-list decision)
+## Headline
 
-> Scope: **only the NEW stack surface for v1.7 live OKX paper-first trading.** The existing
-> validated stack (Python 3.13, Poetry, `ccxt ^4.5.56` read-only providers, `websocket-client`,
-> `sqlalchemy`+`psycopg2-binary`+Postgres, `msgspec`, `structlog`, `pydantic`+`pydantic-settings`,
-> `uuid-utils`, Decimal money) is NOT re-researched. The headline: **almost nothing new is
-> strictly required** — the live capability is mostly *activating async ccxt that you already ship*
-> plus stdlib asyncio glue. Resist scope creep (libSQL-rejection precedent applies).
+**v1.8 needs ZERO new third-party dependencies.** Every mechanic the refactor introduces —
+the two-tier priority `EventBus`, the three new durable stores + Alembic chain, the venue
+registry/plugin system, and the runtime-config platform — is satisfied by (a) Python
+**stdlib** constructs (`queue.PriorityQueue`, `itertools.count`, `typing.Protocol`,
+`dataclasses`, `functools`) and (b) libraries **already pinned and validated** in the
+codebase (SQLAlchemy 2.0, Alembic, pydantic 2 / pydantic-settings, msgspec, structlog,
+uuid-utils). Adding a dependency for any of these would *actively regress* the inertness gate,
+which is the opposite of the milestone's intent.
+
+The rest of this document is the evidence for that verdict, item by item, plus the concrete
+stdlib construct for each and the inertness impact.
 
 ---
 
 ## Recommended Stack
 
-### Core Technologies
+### Core Technologies (all EXISTING — no version change forced)
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| `ccxt` (already pinned) | bump `^4.5.56` → `^4.5.62` (latest 4.5.62, Feb–Mar 2026) | **Live data arm + order arm** via its built-in WebSocket layer (ccxt.pro) and async REST | **ccxt.pro is already inside the free `ccxt` package** (merged at v1.95, 2022) — no separate license, no separate install, no new dependency. You already depend on ccxt for read-only providers; v1.7 just *uses its async + watch\* surface*. OKX is a first-class ccxt venue. This is the LX-05 default. |
-| Python stdlib `asyncio` | stdlib (3.13) | **Async/sync bridge** — run the connector's event loop on its own daemon thread; marshal across the boundary | `asyncio.run_coroutine_threadsafe()` (sync→async commands) + `loop.call_soon_threadsafe()` (loop control) is the canonical, dependency-free pattern. Outbound (async→sync `global_queue`) is just `queue.Queue.put()` — already thread-safe. **No new library needed for the bridge.** |
-| `aiohttp` | transitive via ccxt async (verify resolved ≥ 3.10) | HTTP transport for `ccxt.async_support` / `ccxt.pro` | Ships as a ccxt dependency for the async layer; confirm it resolves in `poetry.lock` rather than adding it explicitly. No direct use in our code. |
+| Technology | Installed | Latest | Purpose in v1.8 | Verdict |
+|------------|-----------|--------|-----------------|---------|
+| Python stdlib `queue` / `itertools` / `typing` / `dataclasses` | 3.13 | 3.13 | `PriorityEventBus`, monotonic seq, `EventBus`/`VenuePlugin` Protocols, `EngineContext`/`VenueBundle` frozen dataclasses | **Use — no dependency** |
+| SQLAlchemy | 2.0.50 | 2.0.51 | SQLAlchemy **Core** `Table`/`insert`/`select`/`update` for the 3 new stores (same pattern as `HaltRecordStore`) | **Keep** (2.0.50 is current-minus-one patch; no upgrade required for v1.8) |
+| Alembic | 1.18.5 | 1.18.5 | Chain 3 new migrations after `d10_halt_records`; relocate `script_location` to project-root `migrations/` | **Keep — already latest** |
+| pydantic + pydantic-settings | 2.13.4 / 2.14 | 2.13.x / 2.14 | Extend `SystemConfig` (eager/lazy/template split), `RuntimeConfig` overlay, per-store config models | **Keep** |
+| msgspec | 0.21.1 | 0.21.x | Existing `Bar`/event structs — the priority-tuple wraps these unchanged | **Keep** |
+| structlog | 24.4.0 | 24.x | `ErrorHandler` severity-mapped logging (existing) | **Keep** |
+| uuid-utils | 0.16.0 | 0.16.x | UUIDv7 PKs for new store rows (via `idgen` singleton) | **Keep** |
 
-### Supporting Libraries
+### Supporting stdlib constructs (the actual "additions")
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `pytest-asyncio` | `^1.4.0` (requires py ≥3.10 ✓) | Test `async def` connector coroutines (watch-loop parsing, ack handling, reconnect) | **Add to dev group.** Needed the moment you unit-test the connector's async edge in isolation. Configure explicitly (see "Version Compatibility" — interacts with `filterwarnings=["error"]`). |
-| `python-okx` (native escape hatch candidate) | `0.4.1` (okxapi/python-okx, last upload 2026-01-08, py ≥3.7) | LX-05 native OKX v5 escape hatch for *proven* ccxt gaps only | **Do NOT add up front.** Candidate only if a concrete gap is found at Phase 2/3 plan time. Version `0.4.1` is low and the wrapper is community-maintained — treat with the **libSQL-beta caution**. Preferred escape hatch is raw `aiohttp`/`websockets` against OKX v5 (see below). |
-| `janus` | `2.0.0` (py ≥3.9) | Purpose-built mixed sync↔async queue | **Probably NOT needed.** Only reach for it if you discover you need *async-side consumption* of a queue that the *sync side produces into* (the rare reverse direction). The forward path (`queue.Queue` out, `run_coroutine_threadsafe` in) covers the connector design in the sketch. Flag, don't add. |
-| `redis` (py client) | `^5.x` if chosen | LX-15 inter-process command/status channel (option) | Only if the topology decision picks Redis over Postgres LISTEN/NOTIFY. **Topology is an architecture decision (out of scope here)** — inventoried below, not selected. |
+| Construct | Module | Where it lands | Why stdlib suffices |
+|-----------|--------|----------------|---------------------|
+| `queue.PriorityQueue` | `queue` | `events_handler/bus.py::PriorityEventBus` | Thread-safe priority heap with the same `.get/.put` surface as the existing `queue.Queue`; already the substrate the live engine thread expects |
+| `itertools.count()` | `itertools` | `PriorityEventBus` seq generator | Thread-safe monotonic counter (the `__next__` increment is atomic under CPython's GIL); the unique tiebreaker that stops tuple comparison at `seq` |
+| `typing.Protocol` | `typing` | `EventBus`, `ExecutionVenuePlugin`, `LiveDataProvider`, `PortfolioReadModel` (existing pattern) | Structural typing = zero-import registration; the codebase already uses this idiom (`PortfolioReadModel`, `_AlertSinkLike`) |
+| `@dataclass(frozen=True)` | `dataclasses` | `EngineContext`, `VenueBundle`, tier enum carriers | Matches every existing event/value object; frozen = the single-writer/snapshot-read contract |
+| `functools.cached_property` | `functools` | `SystemConfig.sql` lazy accessor | First-access resolution keeps Postgres `SqlSettings` off the import path (inertness) |
+| `dict[(venue, account_id), LiveConnector]` | builtin | connector memoization at the composition root | A plain dict *is* the registry; entry-points/plugin libs would break lazy-import inertness |
 
-### Development Tools
+### Development Tools (unchanged)
 
 | Tool | Purpose | Notes |
 |------|---------|-------|
-| `pytest-asyncio` | Async test driver | Set `asyncio_mode = "auto"` (or `"strict"`) AND `asyncio_default_fixture_loop_scope = "function"` in `[tool.pytest.ini_options]` — otherwise it emits a `PytestDeprecationWarning` that the `error` filter can escalate. Do NOT redefine the `event_loop` fixture (deprecated → future error). |
-| ccxt verbose / `exchange.verbose = True` | Inspect raw OKX WS frames during connector bring-up | Use to confirm the kline **confirm flag** payload shape (LX-08) and demo-header routing without writing throwaway scripts. |
+| pytest + strict config | Test gate | `filterwarnings=["error"]`, strict markers — new `PriorityEventBus`/store tests must be warning-clean |
+| mypy `--strict` | Type gate | New collaborators (bus, registries, stores) must be strict-clean; live subsystems may keep their `[[tool.mypy.overrides]]` |
+| testcontainers (existing) | Postgres round-trip tests | New stores follow the `HaltRecordStore` test pattern (in-process SQLite `create_all` + Postgres testcontainer) |
 
 ## Installation
 
 ```bash
-# Core: bump the existing ccxt pin (NO new runtime dependency — ccxt.pro is in-package)
-poetry add "ccxt@^4.5.62"
-
-# Dev: async test driver
-poetry add --group dev "pytest-asyncio@^1.4.0"
-
-# DO NOT add up front (evaluate at plan time only):
-#   poetry add "python-okx@0.4.1"     # native escape hatch — only on a proven gap
-#   poetry add "janus@^2.0.0"         # only if reverse sync->async queue consumption is needed
-#   poetry add "redis@^5"             # only if LX-15 topology picks Redis
+# NOTHING to install. All v1.8 mechanics are stdlib or already-pinned deps.
+# Explicitly: do NOT add pypubsub / blinker / pluggy / stevedore / dynaconf /
+# python-configuration / an entry-points plugin loader. Each would regress the
+# inertness gate and duplicate a stdlib capability.
 ```
-
-`aiohttp` is pulled transitively by ccxt's async layer — verify it lands in `poetry.lock`; do not pin it directly.
 
 ---
 
-## The six questions, answered
+## Point-by-point evaluation (the five questions)
 
-### 1. ccxt.pro packaging + OKX surface (LX-05)
-- **Packaging: definitively merged.** ccxt.pro is a **free part of the unified `ccxt` package** since v1.95 (2022). There is **no separate package, no separate install, no license key.** Confirmed against ccxt issue #15171 and the PyPI/docs current pages. The CLAUDE.md note that ccxt is "used today only as read-only providers" is an *internal usage* fact, not a packaging limit — the async + WS surface is already shipped in the wheel you have.
-- **Import structure (Python):**
-  - `import ccxt.pro as ccxtpro` — the **WebSocket** layer (`watch_*` streaming methods).
-  - `import ccxt.async_support as ccxt` — **async REST** (awaitable `create_order`, `fetch_ohlcv`, `fetch_balance`).
-  - `import ccxt` — the legacy **sync REST** layer (what `ccxt_provider.py` uses today).
-- **OKX WS method support (LX-05 data + order arms):** OKX supports `watch_ohlcv` (data arm), and the private streams `watch_orders`, `watch_balance`, `watch_my_trades`, `watch_positions`. Order placement: `create_order` (async REST) and `create_order_ws` (`createOrderWs`, same signature, over WS). `create_order_ws` is an optional optimization — start with async-REST `create_order` + `watch_orders` for the fill stream.
-- **Native escape hatch (LX-05):** the leanest escape hatch is **raw `aiohttp` (REST) + `websockets`/the ccxt-bundled WS client against the OKX v5 API directly** — both transports already ride in via ccxt, so no new dep. The packaged `python-okx 0.4.1` SDK is a *candidate* but is low-version + community-maintained (libSQL-caution); `okx-sdk` (burakoner, 5.5.812) is more complete but is a second third-party surface. **Recommendation: keep the escape hatch as thin hand-rolled v5 calls behind `LiveConnector`, add a native SDK only if a concrete, proven gap justifies it** at Phase 2/3 plan time.
+### 1. Two-tier priority `EventBus` — stdlib `queue.PriorityQueue` + `itertools.count()` ✅
 
-### 2. asyncio bridge
-- **Best practice (verified, dependency-free):** connector owns a `loop = asyncio.new_event_loop()` on a **daemon thread**; `run_coroutine_threadsafe(coro, loop)` to submit work *into* the loop from the sync engine; `loop.call_soon_threadsafe(loop.stop)` for graceful shutdown, then `thread.join()`. Outbound async→sync is `global_queue.put(event)` (stdlib `queue.Queue` is thread-safe). This keeps the async boundary "bottled at the connector edge" exactly as the sketch requires.
-- **No version-pinned dep required.** `janus 2.0.0` exists for the harder sync↔async-queue case but is **not needed** for this topology — flag it, don't add it.
+**Verdict: stdlib, no new dependency.** `queue.PriorityQueue` (a thread-safe binary-heap
+wrapper over `heapq`) is the correct substrate. No third-party bus (pypubsub, blinker,
+zmq, an actor framework) is warranted: they add async/serialization/transport machinery the
+single-consumer engine-thread model does not need, and every one of them would be a heavy
+import that must NOT touch the backtest path.
 
-### 3. OKX sandbox/demo (single `sandbox: bool`)
-- **ccxt path:** `exchange.set_sandbox_mode(True)` routes OKX to demo endpoints. For OKX, demo also requires the **`x-simulated-trading: 1` HTTP header**; modern ccxt sets this for OKX when sandbox mode is on, but the header is the underlying mechanism — confirm it is applied on **both REST and WS** during bring-up (historical ccxt issues show drift here).
-- **Native path:** set `headers = {"x-simulated-trading": "1"}` and use the demo base URLs / WS URLs.
-- **Demo requires demo-specific API keys** (created in OKX → Demo Trading), distinct from live keys.
-- **Single-flag routing (LX-05):** one `sandbox: bool` on the connector config should (a) call `set_sandbox_mode(sandbox)` on the ccxt instance AND (b) inject the `x-simulated-trading` header on any native call AND (c) select the sandbox-vs-live **key set**. No split-brain — one flag, three effects.
+**The tuple-ordering correctness point (addressed concretely):**
 
-### 4. Secrets (OKX needs THREE)
-- **OKX auth = apiKey + secret + passphrase** (the "password" in ccxt's config is the OKX **passphrase**). Confirmed. This is unlike key+secret-only venues — the passphrase is mandatory.
-- **Best practice: env-only via the existing `pydantic-settings` `ITRADER_` pattern.** Add a dedicated `OkxSettings(BaseSettings)` mirroring `SqlSettings` (`itrader/config/sql.py`): `env_prefix="ITRADER_OKX_"`, all three credentials as `SecretStr | None`, a `sandbox: bool` field, and a `model_validator` that **fails loud** when live (sandbox=False) is selected without all three creds — the exact "no working secret defaults" discipline already proven in `sql.py`. Keys never in code; sandbox vs live keys separated by the single `sandbox` flag (LX-05 cross-cutting §5).
+The heap orders `(tier, seq, event)` tuples by lexicographic comparison. Tuple comparison is
+short-circuit: it compares `tier` first; on a tie it compares `seq`; only on a `seq` tie
+would it reach `event`. Because frozen event dataclasses/`msgspec.Struct`s define **no
+`__lt__`**, reaching `event` would raise `TypeError: '<' not supported`. The fix is that
+`seq` is drawn from a single process-wide `itertools.count()`, so **`seq` is globally unique
+by construction** — two entries can never tie on `seq`, so the comparison provably terminates
+at `seq` and never dereferences `event`. This also gives strict FIFO *within* a tier (lower
+`seq` = earlier `put`, dequeued first) and strict CONTROL-before-BUSINESS preemption *across*
+tiers.
 
-### 5. Runtime topology IPC channels (LX-15) — INVENTORY ONLY (do not pick)
-| Channel | New dep? | Pros | Cons |
-|---------|----------|------|------|
-| **Postgres `LISTEN/NOTIFY`** (via existing `psycopg2`) | **None** — you already ship `psycopg2-binary` + Postgres (v1.6 store) | Reuses the v1.6 system-of-record as the shared truth; zero new infra; transactional with the state writes; "exactly what v1.6's durable store was built to enable" | NOTIFY payload ≤ 8 KB; not a durable queue (missed while disconnected unless paired with a polled table); LISTEN needs a dedicated connection/poll loop |
-| **Redis** (pub/sub or streams) | `redis` py client + a Redis server | Low-latency; mature pub/sub + durable Streams; natural fit for fan-out | New infra component + new dep + new ops surface; second source of truth alongside Postgres |
-| **Message broker** (RabbitMQ / NATS) | heavy client + broker | Strong delivery semantics, routing | Heaviest ops/dep footprint; overkill for a single-venue, few-process deployment |
-- **Lean read:** the Postgres LISTEN/NOTIFY option adds **zero dependencies** and reuses v1.6 — it is the obvious low-cost default *if* a separate-process topology (LX-15 option b/c) is chosen. **But the topology choice itself is an architecture decision and is out of scope here.**
+```python
+# events_handler/bus.py  (4-space file — matches events_handler/events/ package)
+import itertools, queue
+from typing import Any, Protocol
 
-### 6. Testing libs + `filterwarnings=["error"]` interaction
-- **`pytest-asyncio ^1.4.0`** (py ≥3.10 ✓ for 3.13) is the standard async test driver.
-- **Strictness interaction (the gotcha):** the existing `[tool.pytest.ini_options]` has `filterwarnings = ["error", "ignore::UserWarning", "ignore::DeprecationWarning"]`. pytest-asyncio emits a `PytestDeprecationWarning` if `asyncio_default_fixture_loop_scope` is unset. `PytestDeprecationWarning` subclasses `pytest.PytestWarning` (→ `UserWarning`) **and** `DeprecationWarning` — your current ignores *may* absorb it, but **do not rely on that.** Set both config knobs explicitly:
-  ```toml
-  asyncio_mode = "auto"                          # or "strict"
-  asyncio_default_fixture_loop_scope = "function"
-  ```
-- **Do NOT redefine the `event_loop` fixture** — that override path is deprecated and slated to become a hard error; use the `scope=` arg on the asyncio marker or the `event_loop_policy` fixture instead.
-- Async network code tends to leak `ResourceWarning`/unclosed-session warnings; under `error` these fail the suite. Ensure connector teardown `await exchange.close()` in fixtures, and prefer **mocked transports** for unit tests (real OKX sandbox I/O belongs in `integration`/`e2e`, not unit).
+_CONTROL = 0
+_BUSINESS = 1
+_CONTROL_EVENT_TYPES: frozenset = frozenset({...})  # STREAM_STATE, CONNECTOR_FATAL, CONFIG_UPDATE, STRATEGY_COMMAND
+
+class PriorityEventBus:
+    def __init__(self) -> None:
+        self._q: "queue.PriorityQueue[tuple[int, int, Any]]" = queue.PriorityQueue()
+        self._seq = itertools.count()          # thread-safe monotonic tiebreaker
+    def put(self, event: Any) -> None:
+        tier = _CONTROL if event.type in _CONTROL_EVENT_TYPES else _BUSINESS
+        self._q.put((tier, next(self._seq), event))   # next(count) is atomic under GIL
+```
+
+Notes for the planner:
+- `next(itertools.count())` is atomic under CPython (a single bytecode into C) — no extra
+  lock needed for the counter. If the project ever targets a free-threaded (PEP 703) build,
+  wrap `next(self._seq)` in a `threading.Lock`; document the assumption either way.
+- The `FifoEventBus` (backtest) is a thin `queue.Queue` wrapper — it never constructs a
+  `PriorityQueue`, so the priority path carries **zero oracle risk** (design §4a confirms).
+- Keep the shared `.put/.get/.get_nowait/.qsize/.empty` surface so `compose_engine` is
+  bus-agnostic; add `depth_by_tier()` for monitoring (unbounded-but-watched).
+
+### 2. Alembic chain for 3 new stores + `migrations/` relocation ✅
+
+**Verdict: no new dependency; a handful of concrete Alembic 2.0/1.18 gotchas to respect.**
+
+**Current chain head (verified):**
+`2cbf0bf6b0b6` (baseline) → `47f2b41f3ffe` → `p05_venue_order_id` →
+`hl5_transaction_venue_trade_id` → **`d10_halt_records` (HEAD)**. The design's
+"chained after `d10_halt_records`" is correct — `d10_halt_records` **is** the single head,
+so the new linear chain is:
+
+```
+d10_halt_records → system_store → venue_config → strategy_registry
+```
+
+Concrete hazards to encode in the P4/P5 plans:
+
+1. **Verify the head at plan time, don't assume.** Add `poetry run alembic heads` as a
+   pre-flight; it must return exactly one head (`d10_halt_records` today). If P4's rename
+   lands a data-migration or anyone branches, a second head silently breaks `upgrade head`.
+2. **`down_revision` chains by revision *id*, not by file path.** Relocating the entire
+   `migrations/` directory (including `versions/`) preserves the chain with **zero revision
+   edits** — the id pointers are path-independent. Do NOT renumber or rewrite existing
+   revisions during the move.
+3. **`script_location` relocation is a one-line `alembic.ini` edit.** `alembic.ini` already
+   sits at the project root and already uses the modern `%(here)s` token model +
+   `path_separator = os` (Alembic ≥1.16 style). Change `script_location =
+   itrader/storage/migrations` → `script_location = migrations`. Because `%(here)s` = the
+   ini's directory (= project root), this resolves to `<root>/migrations`. `prepend_sys_path
+   = .` stays, so `env.py`'s `from itrader.storage... import build_*_table` /
+   `NAMING_CONVENTION` imports keep resolving against the installed package. (Alembic 1.16+
+   also allows moving this into `[tool.alembic]` in `pyproject.toml` — **do not** adopt that
+   here; keep the working `alembic.ini` to minimize the relocation blast radius.)
+4. **`env.py` must gain three `build_*_table(target_metadata)` calls** (mirroring the existing
+   `build_order_tables`/`build_portfolio_tables`/`build_signal_tables`/`build_halt_records_table`
+   registrar pattern) so `--autogenerate` sees the new tables and never emits a spurious DROP.
+   Each new store owns its own `build_*_table` registrar as the single source of truth shared
+   by its `create_all(checkfirst=True)` test path and the Alembic autogen path.
+5. **`NAMING_CONVENTION` stays the single source of truth** — new tables inherit it via the
+   shared `MetaData`, so autogenerate emits deterministic, byte-stable constraint/index names
+   (no churn across regenerations).
+6. **`render_as_batch=True` is already set** in both `env.py` configure paths — the new
+   migrations get portable (move-and-copy) ALTERs for free (SQLite/libSQL-safe).
+7. **`SqlBackend → SqlEngine` rename (LR-18)** must also update `itrader/storage/__init__.py`
+   (which re-exports `SqlBackend`), `env.py`'s `from itrader.storage.backend import
+   NAMING_CONVENTION` (→ `storage.engine`), the storage factory, and `halt_record_store.py`'s
+   `from itrader.storage import SqlBackend`. Grep for `SqlBackend` before landing — it is
+   imported in ≥4 modules.
+
+**SQLAlchemy version note:** 2.0.50 → 2.0.51 is the only available bump and is a patch
+release; **not required** for v1.8. Do NOT jump to the 2.1 beta line (2.1.0b2) — it is
+pre-release and would be a needless correctness risk on a money-bearing store.
+
+### 3. Venue plugin/registry system — stdlib Protocol + dict registry ✅
+
+**Verdict: stdlib, no new dependency. An entry-points / plugin library is DISQUALIFIED by the
+inertness gate.**
+
+`typing.Protocol` for the `ExecutionVenuePlugin` / `LiveDataProvider` contracts + a plain
+`dict[str, Plugin]` registry with **lazy imports inside `build_bundle`** is exactly right and
+is already the house idiom (`PortfolioReadModel`, `AbstractExchange`, the exchange sub-registry
+in `ExecutionHandler`).
+
+Why an entry-points/plugin lib (`importlib.metadata.entry_points`, `pluggy`, `stevedore`,
+`straight.plugin`) is the **wrong** tool here:
+- The core requirement is *"registering `'okx'` pulls no `ccxt.pro` until `build_bundle` is
+  called."* Entry-point discovery mechanisms **eagerly import** the target module to resolve
+  the object — the direct opposite of the lazy-import inertness contract. They would break
+  `test_okx_inertness.py`.
+- Plugin libs solve *third-party/out-of-tree* discovery. All venues here are first-party,
+  in-repo, and known at composition time. A dict literal populated by the factory is simpler,
+  fully typed under mypy, and trivially unit-testable.
+- The `replay` "test-only plugin registered only by a fixture" pattern (design §8e) is a
+  three-line `registry["replay"] = ReplayPlugin()` in a conftest — no framework needed.
+
+```python
+class ExecutionVenuePlugin(Protocol):
+    name: str
+    connector_key: str | None
+    def build_bundle(self, *, ctx, spec, connector, simulated_exchange) -> "VenueBundle": ...
+    def new_account(self, *, portfolio_ref, config) -> "Account": ...
+
+class OkxPlugin:                       # concrete, registered eagerly, imports NOTHING heavy
+    name = "okx"; connector_key = "okx"
+    def build_bundle(self, *, ctx, spec, connector, simulated_exchange):
+        from itrader.execution_handler.exchanges.okx import OkxExchange   # LAZY — first heavy import here
+        ...
+```
+
+Connector memoization = a lazy `dict[(venue, account_id), LiveConnector]` at the composition
+root (design §8c). Builtin dict; no library.
+
+### 4. Runtime-config platform — SQLAlchemy Core + pydantic ✅
+
+**Verdict: stdlib + existing deps, no new dependency. No config-overlay library warranted.**
+
+The runtime-config platform is three things, each already covered:
+- **The durable key-value store** (`SystemStore`: `(key, value_json, updated_at)`, namespaced
+  keys, upsert) → SQLAlchemy **Core** over the shared `sql_engine`, identical to
+  `HaltRecordStore`. `value_json` uses the existing `json_variant` type helper from
+  `itrader/storage/types.py`. No document-store or KV library.
+- **The overlay** (`RuntimeConfig` = `defaults ← YAML ← env ← persisted overrides`) → a
+  pydantic model with an explicit merge in the live factory, injected as
+  `EngineContext.config`. pydantic-settings already layers env/YAML; the persisted-override
+  layer is a dict merge over the base model. **Do NOT add `dynaconf` / `python-configuration`
+  / `hydra`** — they bring their own loader/lifecycle that conflicts with the "engine-thread-
+  write, snapshot-read" single-writer contract and with the import-safety split (eager vs lazy
+  `sql` accessor). The design's overlay is a deliberately small, auditable merge; a framework
+  would obscure the allowlist/immutable-at-runtime governance (§6e).
+- **The scoped mutation flow** (`ConfigUpdateEvent` on the CONTROL plane → engine-thread
+  handler routes to owner store) → existing event + queue machinery. No library.
+
+The allowlist of runtime-mutable keys (§6e) is a frozenset/dict literal validated with
+pydantic type/range checks — again stdlib + pydantic.
+
+### 5. Inertness — nothing forces a new dep onto the BACKTEST import path ✅
+
+**Verdict: confirmed clean for every item.**
+
+| v1.8 item | Backtest-path import cost | Inertness verdict |
+|-----------|---------------------------|-------------------|
+| `FifoEventBus` (backtest bus) | `import queue` (already imported) | Inert — no priority path, no heavy import |
+| `PriorityEventBus` | Constructed only by the live factory | Never touched on the backtest path |
+| 3 new SQL stores | `EngineContext(sql_engine=None)` on backtest → stores never built; SQL-heavy modules stay quarantined out of `storage/__init__.py` (as today) | Inert — same GATE-01 discipline as v1.6/v1.7 |
+| `migrations/` relocation | `env.py` executed by Alembic only, never imported at runtime | Inert (unchanged) |
+| Venue registry / plugins | Registering `'okx'` imports no `ccxt.pro`; concretions lazy-imported inside `build_bundle` | Inert — the core plugin contract *is* the inertness guarantee |
+| `SystemConfig` extension | Eager fields plain-BaseModel; `sql` via `cached_property` (first-access); venue creds owned by plugin | Inert — Postgres `SqlSettings` never constructed at import |
+
+Guarding test: `tests/integration/test_okx_inertness.py` stays the enforcement mechanism.
+Every new live-only module must be lazy-imported inside a `LiveTradingSystem`/factory arm and
+must NOT be re-exported from a package barrel (`__init__.py`) that the backtest path imports —
+the exact rule that keeps `SqlBackend`'s SQL-heavy `sql_store` out of `storage/__init__.py`
+today.
 
 ---
 
 ## Alternatives Considered
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| ccxt.pro (in-package) for OKX | `python-okx 0.4.1` native SDK | Only if a concrete OKX-fidelity gap in ccxt is proven at plan time (e.g. kline confirm-flag unreliability, order-status field loss). Wrap behind `LiveConnector` either way. |
-| Hand-rolled v5 native escape hatch (`aiohttp`/`websockets`) | `okx-sdk 5.5.812` (burakoner) | If the native surface needed is large enough that hand-rolling is more error-prone than a maintained SDK — but that adds a third-party trust + dep surface; bias toward thin hand-rolled. |
-| stdlib `run_coroutine_threadsafe` bridge | `janus 2.0.0` | Only if you need the async side to *consume* from a queue the sync side *produces into* (reverse of the sketch's flow). |
-| Postgres LISTEN/NOTIFY (no dep) | Redis / broker | If/when a separate-process topology needs durable fan-out beyond NOTIFY's 8 KB transient payload, or sub-ms latency. |
+| Recommended | Alternative | When the alternative would win (it does not here) |
+|-------------|-------------|---------------------------------------------------|
+| stdlib `queue.PriorityQueue` + `itertools.count` | pypubsub / blinker / an actor lib (pykka) | If the engine needed multi-consumer fan-out or network transport. It has one consumer thread + one asyncio connector loop bridged by the queue — a bus library adds import weight and async surface for zero benefit and breaks inertness. |
+| stdlib `Protocol` + dict registry | `importlib.metadata` entry-points / pluggy / stevedore | If venues were third-party/out-of-tree and discovered at install time. They are all first-party and eager discovery **breaks lazy-import inertness** — disqualifying. |
+| SQLAlchemy Core `SystemStore` KV | Redis / an embedded KV (lmdb, sqlitedict) | If config/state needed sub-ms cross-process reads or a cache tier. The store is low-frequency operator/config state on the existing SQL spine; a second datastore is unjustified operational surface. |
+| pydantic `RuntimeConfig` overlay | dynaconf / hydra / python-configuration | If the project wanted convention-driven multi-source config with its own lifecycle. It conflicts with the single-writer snapshot-read contract and the eager/lazy import-safety split; the explicit small merge is safer and auditable. |
+| SQLAlchemy 2.0.50 (keep) | SQLAlchemy 2.1.0b2 | Never for a money store mid-refactor — it is a pre-release. Revisit 2.1 only after it goes stable and outside an oracle-gated milestone. |
 
 ## What NOT to Use
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| A separate "ccxtpro" package install or license | ccxt.pro merged into free `ccxt` in 2022 — a separate package is stale/wrong | `import ccxt.pro as ccxtpro` from the `ccxt` you already have |
-| `python-okx 0.4.1` as a *default* dependency | Low version + community-maintained; mirrors the libSQL beta-driver rejection (v1.6 Q2) — adds risk for capability you mostly already have in ccxt | ccxt.pro by default; native escape hatch only on a proven, documented gap |
-| `websocket-client` (the v1.6 Binance streamer) for OKX | Sync, callback-style, quarantined D-live module; mixing it with the async connector splits the transport model | ccxt.pro async `watch_*` on the connector's asyncio loop |
-| `asyncio.get_event_loop()` / redefining `event_loop` test fixture | Deprecated patterns; will hard-error in future asyncio/pytest-asyncio | `asyncio.new_event_loop()` on the daemon thread; `asyncio_default_fixture_loop_scope` config |
-| Adding `aiohttp` explicitly | It arrives transitively with ccxt async; an explicit pin risks version drift against ccxt's expectation | Let ccxt resolve it; just verify the lockfile |
+| Avoid | Why (specific problem) | Use Instead |
+|-------|------------------------|-------------|
+| `pluggy` / `stevedore` / entry-points plugin loader | Eager module import on discovery → breaks `test_okx_inertness.py` (registering `'okx'` must pull no `ccxt.pro`) | stdlib `Protocol` + dict registry + lazy import inside `build_bundle` |
+| `blinker` / `pypubsub` / an actor framework | Multi-consumer/async transport the single-writer engine thread doesn't need; heavy import on a path that must stay light | `queue.PriorityQueue` + `itertools.count` |
+| `dynaconf` / `hydra` / `python-configuration` | Own loader lifecycle fights the engine-thread-write/snapshot-read contract and the eager-vs-lazy import-safety split; obscures the runtime allowlist governance | pydantic `RuntimeConfig` overlay + explicit merge |
+| Redis / lmdb / sqlitedict for `SystemStore` | Second datastore = new ops surface + a non-SQL money-adjacent store; no latency need | SQLAlchemy Core over the shared `sql_engine` (the `HaltRecordStore` template) |
+| SQLAlchemy 2.1 beta | Pre-release on a money-bearing, oracle-gated milestone | Stay on 2.0.x (2.0.50; 2.0.51 optional patch) |
+| Migrating Alembic config into `pyproject.toml [tool.alembic]` | Needless blast radius during the `migrations/` relocation; a known "No 'script_location' key" upgrade footgun | Keep `alembic.ini`; change only the `script_location` line |
 
 ## Stack Patterns by Variant
 
-**If staying paper-first (the DoD, Phases 1–4):**
-- You need **only the ccxt bump + the asyncio-bridge (stdlib) + pytest-asyncio**. The `PaperConnector` reuses the pure `MatchingEngine` (LX-06); it consumes the connector's **data arm** (`watch_ohlcv`) only. No order-arm creds, no secrets module strictly required until Phase 5.
+**If the project ever adopts a free-threaded (PEP 703, no-GIL) CPython build:**
+- Wrap `next(self._seq)` in a `threading.Lock` in `PriorityEventBus`.
+- Because `itertools.count().__next__` atomicity relies on the GIL today; document the
+  assumption at the seam now.
 
-**If advancing to the real/sandbox path (Phase 5):**
-- Add the **OkxSettings secrets module** (3 creds + sandbox flag) and exercise the **order arm** (`create_order` + `watch_orders`/`watch_balance`/`watch_positions`) against OKX **demo** first.
+**If a fourth+ durable store is added later:**
+- Follow the same `build_*_table` registrar + `create_all(checkfirst=True)` test path +
+  chained Alembic migration; add the registrar call to `env.py`. The pattern scales without
+  new dependencies.
 
-**If a separate-process runtime topology is chosen (LX-15, b/c):**
-- Default to **Postgres LISTEN/NOTIFY** (zero new dep, reuses v1.6) before reaching for Redis/broker.
+**If multi-provider concurrency (the deferred feed-router, §14) is built later:**
+- Still stdlib: the two-registry decoupling already enables a `dict`-keyed provider-router;
+  no library needed then either.
 
 ## Version Compatibility
 
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| `ccxt 4.5.62` | Python 3.13 ✓ | ccxt does not pin `requires_python`; 4.5.x supports 3.13. Bump is a minor within your existing `^4.5` range — low risk. |
-| `ccxt.pro` (in-package) | `aiohttp` (transitive) | The async/WS layer needs aiohttp; verify it's resolved in `poetry.lock` after the bump. |
-| `pytest-asyncio 1.4.0` | pytest `^9.0.3` (dev), Python 3.13 ✓ | requires py ≥3.10. **Requires** explicit `asyncio_mode` + `asyncio_default_fixture_loop_scope` to coexist with `filterwarnings=["error"]`. |
-| `python-okx 0.4.1` (if added) | py ≥3.7 | Low version; community wrapper — libSQL-caution. Pin exact, behind `LiveConnector`. |
-| `janus 2.0.0` (if added) | py ≥3.9 | `aclose()` required on shutdown or it emits errors. |
+| Package | Installed | Compatible / current | Notes |
+|---------|-----------|----------------------|-------|
+| SQLAlchemy | 2.0.50 | 2.0.51 latest 2.0.x | Keep; patch bump optional, not required. Avoid 2.1 beta. |
+| Alembic | 1.18.5 | 1.18.5 latest | Already latest; uses modern `%(here)s`/`path_separator=os` ini model — relocation is a one-line edit. |
+| pydantic / pydantic-settings | 2.13.4 / 2.14 | current 2.x | Keep; extend models only. |
+| Python | 3.13 | 3.13 | All stdlib constructs (`PriorityQueue`, `itertools.count`, `Protocol`, `cached_property`) present and stable. |
 
-## Integration Points With Existing Code
+## Integration Points (for the roadmap)
 
-- **`itrader/price_handler/providers/ccxt_provider.py`** — the symbol-formatting (`BTC/USDT` ↔ `BTCUSDT`), market loading, and OHLCV→Decimal `Bar` conversion logic is reusable. The new live connector is a *new seam* (data arm + order arm), not an edit of this read-only provider; mine it for symbol/format helpers and the `fetch_ohlcv` warmup-backfill call (LX-09 REST `fetch_ohlcv` for warmup).
-- **`itrader/price_handler/providers/binance_stream.py`** — the **quarantined D-live** sync `websocket-client` streamer. Its `msg['k']['x']` closed-bar gate is the *concept* mirror for OKX's confirm flag (LX-08), but **replace it, don't extend it** — OKX uses async ccxt.pro, not the sync callback model.
-- **`itrader/config/sql.py`** (`SqlSettings`) — the **template for the new `OkxSettings`**: `env_prefix`, `SecretStr` fields, driver-conditional fail-loud `model_validator`, `extra="forbid"`. Clone this pattern for `ITRADER_OKX_*` (key/secret/passphrase/sandbox).
-- **`itrader/config/settings.py`** — keep OKX creds OUT of the general `Settings` (mirror how DB creds moved to their own `SqlSettings`); a dedicated `OkxSettings` keeps the backtest path credential-free and env-tolerant.
-- **`pyproject.toml [tool.mypy]`** — `ccxt.*` is already `ignore_missing_imports`; `live_trading_system`/`trading_interface`/`binance_stream` are already `ignore_errors`. New live code should target **strict-clean** (DoD §4); add per-module overrides only where a third-party stubless surface forces it, not as a blanket.
+- **`SqlBackend` (→ `SqlEngine`, `storage/backend.py` → `storage/engine.py`)** — the 3 new
+  stores each *compose* one `SqlEngine` by reference (has-a), exactly like `HaltRecordStore`.
+  Rename touches `storage/__init__.py`, `env.py`, the storage factory, and `halt_record_store.py`.
+- **`EventHandler` (`events_handler/full_event_handler.py`)** — the bus feeds `process_events()`;
+  the `_on_handler_error` seam becomes the injected `ErrorPolicy` (removing the live monkeypatch),
+  and live routes compose in via `LiveRouteRegistrar` (no subclass, no runtime `routes` mutation —
+  the existing explicit-empty live route slots stay inert on the backtest handler).
+- **Alembic chain** — new head progression `d10_halt_records → system_store → venue_config →
+  strategy_registry`; `env.py` gains three `build_*_table` calls sharing `NAMING_CONVENTION`.
 
 ## Sources
 
-- https://github.com/ccxt/ccxt/issues/15171 — "CCXT Pro Websockets merged with CCXT" (packaging, free, in-package) — HIGH
-- https://docs.ccxt.com/ and https://docs.ccxt.com/docs/pro-manual — ccxt.pro manual, `watch_*` + `createOrderWs`, `import ccxt.pro as ccxtpro` — HIGH
-- https://pypi.org/project/ccxt/ — ccxt 4.5.62 latest (verified via PyPI JSON API) — HIGH
-- https://www.okx.com/en-us/help/api-faq + https://app.okx.com/docs-v5/en/ — OKX demo trading, `x-simulated-trading: 1` header, passphrase requirement — HIGH
-- https://github.com/ccxt/ccxt/issues/11923, /11855, /17295 — OKX `set_sandbox_mode` + demo header + WS demo caveats — MEDIUM (issue threads, version-drift cautions)
-- https://docs.python.org/3/library/asyncio-task.html#asyncio.run_coroutine_threadsafe + https://github.com/aio-libs/janus — asyncio cross-thread bridge + janus — HIGH
-- https://pypi.org/project/python-okx/ (0.4.1, 2026-01-08), https://github.com/burakoner/okx-sdk (5.5.812) — native escape-hatch candidates — MEDIUM
-- https://pypi.org/project/pytest-asyncio/ (1.4.0) + https://pytest-asyncio.readthedocs.io/ — async test driver + loop-scope/event_loop deprecation under strict warnings — HIGH
-- https://pypi.org/project/janus/ (2.0.0) — sync↔async queue (flagged, not recommended) — HIGH
+- Installed versions verified locally: `poetry run python -c "import sqlalchemy, alembic, pydantic"` → SQLAlchemy 2.0.50, Alembic 1.18.5, pydantic 2.13.4 (HIGH)
+- Migration chain head verified locally via `grep down_revision` over `itrader/storage/migrations/versions/` → head = `d10_halt_records` (HIGH)
+- `alembic.ini` + `itrader/storage/migrations/env.py` + `itrader/storage/backend.py` + `itrader/storage/halt_record_store.py` (repo) — relocation/rename mechanics, `%(here)s`/`path_separator` model, `HaltRecordStore` template (HIGH)
+- Design spec `docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` §4/§6/§7/§8 — bus tuple ordering, config platform, stores, venue registry (HIGH)
+- [SQLAlchemy · PyPI](https://pypi.org/project/SQLAlchemy/) / [SQLAlchemy Releases](https://github.com/sqlalchemy/sqlalchemy/releases) — latest 2.0.x = 2.0.51; 2.1 line still beta (2.1.0b2) (HIGH)
+- [Alembic 1.18.5 Configuration docs](https://alembic.sqlalchemy.org/en/latest/api/config.html) / [alembic · PyPI](https://pypi.org/project/alembic/) — 1.18.5 latest; `script_location` / `[tool.alembic]` (1.16+) relocation semantics (HIGH)
 
 ---
-*Stack research for: live crypto trading (OKX, paper-first) additions to the iTrader backtest engine*
-*Researched: 2026-06-30*
+*Stack research for: v1.8 Live System Refactor — brownfield structural refactor, backtest-oracle + import-inertness gated*
+*Researched: 2026-07-09*

@@ -1,9 +1,10 @@
 ---
-status: open
+status: scheduled
 created: "2026-07-07"
 source: Phase 05.1 (v1.7) code review finding WR-04 — surfaced in the v1.7 milestone-audit review-file reconciliation (2026-07-07)
 tags: [live, halt, observability, operator, ui, halt-vocabulary, fastapi-control-plane]
-resolves_phase: ""
+resolves_phase: "P1"
+folded_into: "v1.8 spec §18 — CF-8 (P1 core/enums HaltReason [CFG-05] + P7 SafetyController consumes it); renumbered post-P4-merge"
 ---
 
 # Session-start baseline guard halts with an off-vocabulary reason `'baseline-residual'` (WR-04)
