@@ -163,7 +163,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
 
-- Pre-existing GATE-01 quarantine failure from 01-01: config/system.py:16 module-level SqlSettings import pulls sqlalchemy onto backtest graph (test_import_quarantine.py fails). Logged to phase deferred-items.md; fix = move import under TYPE_CHECKING. Not fixed by 01-04 (out of scope).
+- ✓ RESOLVED (fix `f86fe5d2`, orchestrator post-merge gate): GATE-01 quarantine regression from 01-01 — `config/system.py` module-level `SqlSettings` import pulled sqlalchemy onto the backtest graph. Fixed by moving the import under `TYPE_CHECKING` + a lazy in-body import; `test_import_quarantine.py` + `test_okx_inertness.py` + byte-exact oracle all green. See phase deferred-items.md.
 
 ## Deferred Items
 

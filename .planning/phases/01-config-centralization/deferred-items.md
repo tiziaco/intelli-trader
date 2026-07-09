@@ -4,8 +4,16 @@ Items discovered during execution that are OUTSIDE the current plan's scope
 (pre-existing, in files not owned by the running plan). Logged per the executor
 SCOPE BOUNDARY rule — NOT fixed by the discovering plan.
 
-## GATE-01 import-quarantine failure — pre-existing, introduced by plan 01-01
+## GATE-01 import-quarantine failure — ✓ RESOLVED (fix `f86fe5d2`)
 
+- **Status:** RESOLVED by the orchestrator post-merge gate during phase-01
+  execution (commit `f86fe5d2`). The `SqlSettings` import was moved under
+  `if TYPE_CHECKING:`, the `sql` cached_property return annotation quoted, and the
+  concrete import made lazy inside the property body. sqlalchemy now enters the
+  process only on first `.sql` access. `test_import_quarantine.py`,
+  `test_okx_inertness.py`, and the byte-exact backtest oracle
+  (`134 / 46189.87730727451`) are all green; `mypy --strict` clean. The original
+  diagnosis below is retained for the audit trail.
 - **Discovered during:** plan 01-04, Task 2 (`poetry run pytest tests/unit`).
 - **Failing test:** `tests/unit/storage/test_import_quarantine.py::test_backtest_storage_path_imports_no_sql`
 - **Symptom:** `GATE-01 VIOLATION: sqlalchemy imported on the backtest storage path`.
