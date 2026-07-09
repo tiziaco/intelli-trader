@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 03
-current_phase_name: enginecontext-storage-in-handler
+current_phase: 4
+current_phase_name: "Storage Schema: Migrations Relocation + New Durable Stores"
 status: verifying
 stopped_at: Phase 3 context gathered
-last_updated: "2026-07-09T15:29:18.741Z"
+last_updated: "2026-07-09T15:38:19.910Z"
 last_activity: 2026-07-09
-last_activity_desc: Phase 03 execution started
+last_activity_desc: Phase 03 complete, transitioned to Phase 4
 progress:
   total_phases: 9
   completed_phases: 3
@@ -33,10 +33,10 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 03 (enginecontext-storage-in-handler) — EXECUTING
-Plan: 2 of 2
+Phase: 4 — Storage Schema: Migrations Relocation + New Durable Stores
+Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-09 — Phase 03 execution started
+Last activity: 2026-07-09 — Phase 03 complete, transitioned to Phase 4
 
 Progress: [░░░░░░░░░░] 0%
 
