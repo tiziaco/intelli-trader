@@ -1,12 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.8
-milestone_name: Live System Refactor & Live-Readiness Hardening
+milestone_name: — Live System Refactor & Live-Readiness Hardening
+current_phase: 0
+current_phase_name: roadmap created, revised to 12 phases
 status: planning
-last_updated: "2026-07-09T00:00:00.000Z"
+stopped_at: Phase 1 context gathered
+last_updated: "2026-07-09T08:58:46.594Z"
 last_activity: 2026-07-09
+last_activity_desc: v1.8 ROADMAP.md revised to 12 phases (old P4 SqlEngine Migrations Relocation
 progress:
-  total_phases: 12
+  total_phases: 9
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -44,10 +48,12 @@ Progress: [░░░░░░░░░░] 0%
    determinism double-run identical. **Per-PLAN gate** on P1–P4, P5, and **P6's `UniverseWiring`
    extraction** (highest oracle risk). Any re-baseline (LR-02) is explicit + externally cross-validated
    (backtesting.py + backtrader), never silent. Live-only phases (P7–P11) stay byte-exact (backtest-dark).
+
 2. **OKX import-inertness** — `tests/integration/test_okx_inertness.py` stays green, extended to assert
    **register-vs-build** on P1/P2/P4/P5 (registering a venue imports no `ccxt.pro` until built;
    `SystemConfig` never constructs Postgres `SqlSettings` at import). **Zero new dependency / no poetry
    change** anywhere in P1–P12.
+
 3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded
    RNG, injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
    indentation matched to the file (never normalized).
@@ -80,6 +86,7 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 ## Performance Metrics
 
 **Velocity (program cumulative through v1.7):**
+
 - Total plans completed: 381 (v1.0 62 + v1.1 28 + v1.2 23 + v1.3 20 + v1.4 35 + v1.5 26 + v1.6 21 + v1.7 75)
 - v1.8 plans completed: 0
 
@@ -91,16 +98,19 @@ trim boundary P1–P8+P12 core vs P9–P11 ★ is noted, not taken). Research fl
 
 - v1.8 ROADMAP.md created 2026-07-09 from the LOCKED design spec
   (`docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` §16, LR-00..LR-22, CF-1..CF-10)
+
   + research SUMMARY's 4 build-order refinements. Phases derived 1:1 from the REQUIREMENTS.md
   category→phase mapping (authoritative); all 64 v1 requirements mapped (0 orphans). Numbering reset to
   Phase 1 (matching v1.1–v1.7). The milestone gate (oracle byte-exact + inertness) is a success criterion
   in every phase; per-PLAN oracle gating on P1–P4/P5/P6-UniverseWiring.
+
 - **2026-07-09 revision (13→12 phases):** old P4 (SqlEngine Migrations Relocation, SQL-01/02) folded into
   old P5 (New Durable Stores, STORE-01..05) → a single merged storage-schema phase P4 ("Storage Schema:
   Migrations Relocation + New Durable Stores"). Both are live-only / off the oracle hot path, and
   "relocate the migrations dir, then extend the Alembic chain with 3 new stores" is one cohesive unit of
   work; the SQL-02 single-head + parity gate now validates the FULL chain incl. the 3 new stores. All
   downstream phases renumbered −1 (old P6→P5 … old P13→P12). Owner-approved.
+
 - 4 research refinements folded into the spec §16 graph: (1) P3 depends on {P1,P2}; (2) minimal
   `EngineContext` skeleton lands in P2; (3) P2 adds the CONTROL EventTypes; (4) `SqlBackend→SqlEngine`
   rename folded into P3 (only migrations *relocation* stays in the merged P4).
@@ -128,17 +138,23 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 
 - **P6 `UniverseWiring` = the highest oracle-risk seam** (analogous to v1.2 MOD-01): move as one intact
   unit incl. the WR-03 desync assert; byte-exact oracle + determinism double-run as a per-PLAN gate.
+
 - **Inertness regression** is the recurring failure mode: no eager import via a barrel re-export, no
   non-lazy `SqlSettings`, no registry importing concretions at registration. `test_okx_inertness.py` is
   the P5 acceptance gate (extended register-vs-build for P1/P2/P4/P5).
+
 - **CF-1 must ACTUALLY TRIP** (P8 hard acceptance criterion): a breaker "green with zero settlements" or
   one reintroducing the WR-06 error→error livelock is a false-green failure.
+
 - **CF-2 threading contract** (P7): `backfill_on_resume` must be loop-native (connector loop), never a
   second concurrent engine-thread ring writer — assert no engine-thread path reaches it.
+
 - **Alembic chain divergence** (P4): relocation + 3-store chain must stay single-head with a
   create_all/migration parity test (the merged storage-schema phase owns the full-chain gate).
+
 - **Indentation hazard:** handler modules use tabs; `config/`, `core/`, `price_handler/feed/`,
   `itrader/storage/`, events package use 4 spaces. Match the sibling file — never normalize.
+
 - **Zero new dependency / no poetry change** anywhere in P1–P12 (adding a lib regresses inertness).
 - New requirements discovered during execution are added to REQUIREMENTS.md with traceability, not
   silently folded into a running phase.
@@ -166,15 +182,16 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 - **At v1.7 close (done 2026-07-07):** all v1.7 phase dirs `git mv`'d to `milestones/v1.7-phases/`;
   ROADMAP/REQUIREMENTS/MILESTONE-AUDIT archived as `milestones/v1.7-*`; `.planning/phases/` is empty
   (no `999.3` seed dir remained). The new v1.8 `01-*..12-*` dirs will not collide (`phase_dir_count=0`).
+
 - Git tag `v1.7` NOT created (owner deferred tagging to a manual step).
 
 ## Session Continuity
 
-Last session: 2026-07-09 — v1.8 roadmap revision (13→12 phases)
-Stopped at: ROADMAP.md revised (12 phases, merged storage-schema P4, all downstream renumbered −1, goals +
+Last session: 2026-07-09T08:58:46.586Z
+Stopped at: Phase 1 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: None
+Resume file: .planning/phases/01-config-centralization/01-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
@@ -183,5 +200,6 @@ is the index; the substantive open item is `margin-equity-double-counts-notional
 - `/gsd:plan-phase 1` (Config Centralization) — or plan **P1 and P2 in parallel** (both dependency-free).
 - At milestone init, set each folded TODO's front-matter `resolves_phase: P#` + `status: scheduled` so it
   is not double-tracked against the live backlog (CF-1..CF-10; see spec §18).
+
 - Before any live margin/leverage consumer: adjudicate `margin-equity-double-counts-notional-wr01`
   (owner-gated, oracle-dark) with external cross-validation.
