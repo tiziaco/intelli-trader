@@ -154,7 +154,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 1** *(parallel — zero file overlap, no deps)*
 
-- [ ] 02-01-PLAN.md — Bus substrate: `EventBus` Protocol + `FifoEventBus`/`PriorityEventBus` + `_CONTROL_EVENT_TYPES` + 3 CONTROL `EventType`s + BUS-01/02/03 unit suite (BUS-01/02/03)
+- [x] 02-01-PLAN.md — Bus substrate: `EventBus` Protocol + `FifoEventBus`/`PriorityEventBus` + `_CONTROL_EVENT_TYPES` + 3 CONTROL `EventType`s + BUS-01/02/03 unit suite (BUS-01/02/03)
 - [ ] 02-02-PLAN.md — Handler-owned storage: `OrderHandler`/`StrategiesHandler` own storage init from `(environment, sql_engine)`, backtest slice = in-memory concretes (CTX-02)
 
 **Wave 2** *(blocked on Wave 1 — depends on 02-01 + 02-02)*
@@ -317,7 +317,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
-| 2. Event Bus | v1.8 | 0/TBD | Not started | - |
+| 2. Event Bus | v1.8 | 1/3 | In Progress|  |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 0/TBD | Not started | - |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |

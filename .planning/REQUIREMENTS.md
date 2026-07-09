@@ -59,16 +59,16 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Event Bus (P2)
 
-- [ ] **BUS-01**: An `EventBus` Protocol (`put`/`get`/`get_nowait`/`qsize`/`empty`/`depth_by_tier`) with
+- [x] **BUS-01**: An `EventBus` Protocol (`put`/`get`/`get_nowait`/`qsize`/`empty`/`depth_by_tier`) with
   two implementations — `FifoEventBus` (backtest) + `PriorityEventBus` (live) — shares one `.put(event)`
   surface; no handler `.put` call-site changes (LR-11/§4a).
 
-- [ ] **BUS-02**: `PriorityEventBus` orders `(tier, seq, event)` with `tier ∈ {CONTROL=0, BUSINESS=1}`
+- [x] **BUS-02**: `PriorityEventBus` orders `(tier, seq, event)` with `tier ∈ {CONTROL=0, BUSINESS=1}`
   assigned from a declarative `_CONTROL_EVENT_TYPES` frozenset and a globally-unique monotonic `seq`; a
   test asserts the tuple comparison never dereferences the (non-orderable) frozen event and preserves
   strict within-tier FIFO (§4a).
 
-- [ ] **BUS-03**: New CONTROL `EventType` members (`STREAM_STATE`, `CONNECTOR_FATAL`, `CONFIG_UPDATE`) are
+- [x] **BUS-03**: New CONTROL `EventType` members (`STREAM_STATE`, `CONNECTOR_FATAL`, `CONFIG_UPDATE`) are
   added; backtest uses `FifoEventBus` so the oracle stays byte-exact (zero priority-bus on the backtest
   path) (arch refinement 3).
 
@@ -360,9 +360,9 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | CFG-04 | P1 | Complete |
 | CFG-05 | P1 | Complete |
 | CFG-06 | P1 | Complete |
-| BUS-01 | P2 | Pending |
-| BUS-02 | P2 | Pending |
-| BUS-03 | P2 | Pending |
+| BUS-01 | P2 | Complete |
+| BUS-02 | P2 | Complete |
+| BUS-03 | P2 | Complete |
 | BUS-04 | P2 | Pending |
 | CTX-01 | P2 | Pending |
 | CTX-02 | P2 | Pending |
