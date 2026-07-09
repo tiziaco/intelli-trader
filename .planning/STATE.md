@@ -5,8 +5,8 @@ milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 4
 current_phase_name: "Storage Schema: Migrations Relocation + New Durable Stores"
 status: verifying
-stopped_at: Phase 3 context gathered
-last_updated: "2026-07-09T15:38:19.910Z"
+stopped_at: Phase 4 context gathered
+last_updated: "2026-07-09T16:39:02.700Z"
 last_activity: 2026-07-09
 last_activity_desc: Phase 03 complete, transitioned to Phase 4
 progress:
@@ -211,11 +211,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T15:28:32.345Z
-Stopped at: Phase 3 context gathered
+Last session: 2026-07-09T16:39:02.691Z
+Stopped at: Phase 4 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: .planning/phases/03-enginecontext-storage-in-handler/03-CONTEXT.md
+Resume file: .planning/phases/04-storage-schema-migrations-relocation-new-durable-stores/04-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
