@@ -1,6 +1,6 @@
 from datetime import timedelta
 from queue import Queue
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, Optional, TYPE_CHECKING, cast
 
 from itrader.core.enums import OrderType
 from itrader.core.exceptions import ConfigurationError
@@ -11,7 +11,7 @@ from itrader.price_handler.feed.base import BarFeed
 from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.signal_record import SignalRecord
-from itrader.strategy_handler.storage import SignalStore
+from itrader.strategy_handler.storage import SignalStorageFactory, SignalStore
 from itrader.events_handler.events import (
 	BarEvent,
 	BarsLoaded,
@@ -40,9 +40,12 @@ class StrategiesHandler(object):
 		self,
 		global_queue: "Queue[Any]",
 		feed: BarFeed,
-		signal_store: SignalStore,
+		signal_store: "Optional[SignalStore]" = None,
 		allow_short_selling: bool = False,
 		enable_margin: bool = False,
+		*,
+		environment: str = "backtest",
+		sql_engine: "Optional[Any]" = None,
 	) -> None:
 		"""
 		Parameters
@@ -73,7 +76,17 @@ class StrategiesHandler(object):
 		"""
 		self.global_queue: "Queue[Any]" = global_queue
 		self.feed: BarFeed = feed
-		self.signal_store: SignalStore = signal_store
+		# CTX-02/D-02: the handler now OWNS its signal-store init from
+		# (environment, sql_engine), mirroring the PortfolioHandler template
+		# (LR-13). `SignalStorageFactory.create('backtest', backend=None)` returns
+		# the same `InMemorySignalStore` concrete the legacy path built, so the
+		# backtest slice is byte-exact. An explicit `signal_store=` override still
+		# wins (back-compat with the current positional compose call until 02-03).
+		# `.signal_store` is the concrete `compose_engine` reads back onto the
+		# Engine holder in plan 02-03.
+		self.signal_store: SignalStore = (
+			signal_store or SignalStorageFactory.create(environment, backend=sql_engine)
+		)
 		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
 		self._allow_short_selling: bool = allow_short_selling
 		self._enable_margin: bool = enable_margin
