@@ -109,6 +109,9 @@ class EventHandler(object):
 			EventType.STRATEGY_COMMAND: [],    # NEW — live-only consumers wired live-only in plan 07 (backtest stays inert)
 			EventType.BARS_LOADED: [],         # NEW — live-only consumers wired live-only in plan 07 (backtest stays inert)
 			EventType.BARS_LOAD_FAILED: [],    # NEW — live-only consumers wired live-only in plan 07 (backtest stays inert)
+			EventType.STREAM_STATE: [],        # NEW (BUS-03) — CONTROL-plane connector stream up/down; live-only consumers wired in later phases (backtest stays inert)
+			EventType.CONNECTOR_FATAL: [],     # NEW (BUS-03) — CONTROL-plane connector fatal -> halt; live-only consumers wired in later phases (backtest stays inert)
+			EventType.CONFIG_UPDATE: [],       # NEW (BUS-03) — CONTROL-plane scoped runtime config change; live-only consumers wired in later phases (backtest stays inert)
 			EventType.ERROR: [self._log_error_event],   # D-16: real log consumer
 		}
 
