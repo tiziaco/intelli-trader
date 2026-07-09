@@ -43,7 +43,7 @@ from itrader.logger import get_itrader_logger
 # WR05-D2: dedup-ring capacity. 10 000 >> a realistic reconnect re-send burst; the in-memory
 # ring only needs to cover the reconnect window (an evicted-then-resent id is still deduped at
 # the durable venue_trade_id DB layer — CR-01 backstop). Overridable per-instance via the
-# constructor (mirrors the _STREAM_RECONNECT_* overridable-constant pattern in okx.py).
+# constructor (mirrors the reconnect-supervisor tuning now sourced from StreamSettings in okx.py).
 _DEDUP_RING_CAPACITY = 10000
 
 # D-16: bound the uncorrelated late-fill buffer. An external order (one this engine never

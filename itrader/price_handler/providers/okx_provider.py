@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
 import aiohttp
 
+from itrader.config.stream import StreamSettings
 from itrader.connectors.base import LiveConnector
 from itrader.core.exceptions import MissingPriceDataError, StateError
 from itrader.core.money import to_money
@@ -106,17 +107,6 @@ _MIN_ROW_FIELDS = 9
 
 # Default REST backfill page size (OKX/ccxt cap); pagination advances by ``since``.
 _BACKFILL_PAGE = 1000
-
-# 05-08 (RES-01/D-19/D-20) reconnect-supervisor tuning — mirrors the OKX order arm
-# (okx.py); named module constants documented [ASSUMED] and tunable from sandbox
-# behaviour (research A3). The native candle socket has NO reconnect today (a code-
-# verified gap): a drop kills the task silently. The supervisor reconnects a transient
-# drop with exponential backoff after a debounce (a blip does not pause, D-19) and
-# halts on the retry ceiling (D-20).
-_STREAM_RECONNECT_DEBOUNCE_SECONDS = 0.25    # A3 [ASSUMED] sub-second blip -> no pause
-_STREAM_RECONNECT_BACKOFF_BASE_SECONDS = 1.0  # A3 [ASSUMED] first backoff step
-_STREAM_RECONNECT_BACKOFF_CAP_SECONDS = 30.0  # A3 [ASSUMED] exponential backoff ceiling
-_STREAM_RECONNECT_RETRY_CEILING = 6           # A3 [ASSUMED] retries exhausted -> HALT (D-20)
 
 
 class OkxDataProvider:
@@ -179,10 +169,14 @@ class OkxDataProvider:
         # ceiling bounds the loop -> HALT on exhaustion (D-20).
         self._reconnect_attempts: dict[str, int] = {}
         self._streams_down: set[str] = set()
-        self._reconnect_debounce_s = _STREAM_RECONNECT_DEBOUNCE_SECONDS
-        self._reconnect_backoff_base_s = _STREAM_RECONNECT_BACKOFF_BASE_SECONDS
-        self._reconnect_backoff_cap_s = _STREAM_RECONNECT_BACKOFF_CAP_SECONDS
-        self._reconnect_ceiling = _STREAM_RECONNECT_RETRY_CEILING
+        # CFG-03 / D-08: the reconnect-supervisor tuning now lives in StreamSettings
+        # (config/stream.py). A default-constructed instance is the P1 seam — true
+        # composition-root injection + the shared StreamSupervisor land in P5.
+        _stream_cfg = StreamSettings()
+        self._reconnect_debounce_s = _stream_cfg.reconnect_debounce_s
+        self._reconnect_backoff_base_s = _stream_cfg.reconnect_backoff_base_s
+        self._reconnect_backoff_cap_s = _stream_cfg.reconnect_backoff_cap_s
+        self._reconnect_ceiling = _stream_cfg.reconnect_retry_ceiling
         # Injected seams (composition root, 05-08 Task 2): the 05-04 halt entrypoint
         # (fatal / exhausted -> HALTED + CRITICAL alert) and the pause/resume-on-
         # disconnect callbacks (D-19). None until wired at the live root.

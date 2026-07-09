@@ -38,6 +38,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 
+from itrader.config.stream import StreamSettings
 from itrader.core.exceptions import (
     InsufficientFundsError,
     InvalidTransactionError,
@@ -51,18 +52,6 @@ from .base import Account
 
 if TYPE_CHECKING:
     from itrader.connectors.base import LiveConnector
-
-
-# D-11 (RES-01/D-19/D-20) reconnect-supervisor tuning — mirrors the okx.py donor
-# constants (``OkxExchange._run_stream_supervisor``). The venue balance/position
-# streams are wrapped in the same bounded-retry supervisor so a transient socket
-# drop is survived (publish-and-continue) and an unknown error escalates to a
-# fail-safe HALT rather than silently killing the cache writer (V17-07). Named
-# constants, [ASSUMED] and tunable from sandbox behaviour.
-_STREAM_RECONNECT_DEBOUNCE_SECONDS = 0.25
-_STREAM_RECONNECT_BACKOFF_BASE_SECONDS = 1.0
-_STREAM_RECONNECT_BACKOFF_CAP_SECONDS = 30.0
-_STREAM_RECONNECT_RETRY_CEILING = 6
 
 
 class VenueAccount(Account):
@@ -177,10 +166,14 @@ class VenueAccount(Account):
         # default to no-op (None) so an unwired leaf still supervises without halting.
         self._reconnect_attempts: dict[str, int] = {}
         self._streams_down: set[str] = set()
-        self._reconnect_debounce_s = _STREAM_RECONNECT_DEBOUNCE_SECONDS
-        self._reconnect_backoff_base_s = _STREAM_RECONNECT_BACKOFF_BASE_SECONDS
-        self._reconnect_backoff_cap_s = _STREAM_RECONNECT_BACKOFF_CAP_SECONDS
-        self._reconnect_ceiling = _STREAM_RECONNECT_RETRY_CEILING
+        # CFG-03 / D-08: reconnect-supervisor tuning folded into StreamSettings
+        # (config/stream.py). A default-constructed instance is the P1 seam;
+        # composition-root injection + the shared supervisor land in P5.
+        _stream_cfg = StreamSettings()
+        self._reconnect_debounce_s = _stream_cfg.reconnect_debounce_s
+        self._reconnect_backoff_base_s = _stream_cfg.reconnect_backoff_base_s
+        self._reconnect_backoff_cap_s = _stream_cfg.reconnect_backoff_cap_s
+        self._reconnect_ceiling = _stream_cfg.reconnect_retry_ceiling
         self._halt_signal: Callable[[str], None] | None = None
         self._on_stream_down: Callable[[str], None] | None = None
 
