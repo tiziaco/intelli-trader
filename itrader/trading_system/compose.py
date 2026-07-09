@@ -44,7 +44,6 @@ from itrader.price_handler.feed.bar_feed import BacktestBarFeed
 from itrader.price_handler.store.csv_store import CsvPriceStore
 from itrader.results import ResultsStore
 from itrader.screeners_handler.screeners_handler import ScreenersHandler
-from itrader.strategy_handler.storage import SignalStore
 from itrader.strategy_handler.strategies_handler import StrategiesHandler
 from itrader.trading_system.engine_context import EngineContext
 from itrader.trading_system.simulation.time_generator import TimeGenerator
@@ -93,7 +92,6 @@ class Engine:
 	clock: BacktestClock
 	store: CsvPriceStore
 	feed: BacktestBarFeed
-	signal_store: SignalStore
 	strategies_handler: StrategiesHandler
 	screeners_handler: ScreenersHandler
 	portfolio_handler: PortfolioHandler
@@ -194,10 +192,10 @@ def compose_engine(ctx: "EngineContext", spec: "SystemSpec") -> Engine:
 	trading_rules = portfolio_handler.config_data.trading_rules
 
 	# Signal-store sink (read-model): the handler now OWNS its signal-store init
-	# from (environment, sql_engine) (CTX-02/02-02) — NOT injected here. The
-	# `.signal_store` concrete is read back off the handler below for the Engine
-	# holder; the queue-only contract is preserved (handler writes locally, the
-	# holder reads after the run).
+	# from (environment, sql_engine) (CTX-02/02-02) — NOT injected here, and NOT
+	# re-surfaced on the Engine holder (D-03). The post-run accessors reach the
+	# store through the owning handler (engine.strategies_handler.signal_store),
+	# matching the store-access convention every other persistence store follows.
 	#
 	# SHORT-01/D-07: thread the two shorts-enabling flags from trading_rules into
 	# the registration gate. Constructed AFTER the trading_rules binding so the
@@ -249,7 +247,6 @@ def compose_engine(ctx: "EngineContext", spec: "SystemSpec") -> Engine:
 		clock=clock,
 		store=store,
 		feed=feed,
-		signal_store=strategies_handler.signal_store,
 		strategies_handler=strategies_handler,
 		screeners_handler=screeners_handler,
 		portfolio_handler=portfolio_handler,
