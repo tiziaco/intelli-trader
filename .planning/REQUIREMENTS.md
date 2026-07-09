@@ -93,7 +93,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [x] **CTX-03** *(→ P2)*: Backtest (`environment='backtest', sql_engine=None`) yields the same in-memory
   storage instances → oracle byte-exact; factory SQL imports stay lazy → inertness green (§7b).
 
-- [ ] **CTX-04** *(P3)*: `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`;
+- [x] **CTX-04** *(P3)*: `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`;
   field/param `sql_engine`); all importers updated (LR-18, rename folded into P3 per arch refinement 4).
 
 ### SqlEngine Migrations Relocation (P4)
@@ -367,7 +367,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | CTX-01 | P2 | Complete |
 | CTX-02 | P2 | Complete |
 | CTX-03 | P2 | Complete |
-| CTX-04 | P3 | Pending |
+| CTX-04 | P3 | Complete |
 | SQL-01 | P4 | Pending |
 | SQL-02 | P4 | Pending |
 | STORE-01 | P4 | Pending |
