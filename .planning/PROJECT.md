@@ -27,6 +27,60 @@ A single backtest run of `SMA_MACD` on `data/BTCUSD_1d_ohlcv_2018_2026.csv` prod
 **correct, deterministic, cross-validated numbers** — if nothing else works, the backtest path
 must import, run, and yield trustworthy results.
 
+## Current Milestone: v1.8 — Live System Refactor & Live-Readiness Hardening
+
+**Goal:** Decompose the 2,171-line `LiveTradingSystem` God object (~17 concerns) into a thin facade
+(~200 lines) over focused, independently-testable collaborators — venue-parametrized (zero
+`if self.exchange == …`), config-centralized, and FastAPI-ready — **without disturbing the byte-exact
+backtest oracle (`134 / 46189.87730727451`) or the OKX import-inertness gate**
+(`tests/integration/test_okx_inertness.py`). Full scope: the core refactor **plus** the three ★
+feature-adds (LR-03/LR-04). FastAPI itself is out of scope (LR-01) — this milestone makes the engine
+*interfacable*, shipping no ASGI code.
+
+**Target features (13 phases — P1..P13):**
+- **Config centralization (P1)** — `SystemConfig` aggregation (eager/lazy/templates), module-constant
+  migration, dead-config audit, `extra` normalization (concerns 17/21/24; CF-6/CF-8-enum).
+- **Event bus (P2)** — `EventBus` Protocol + `FifoEventBus`/`PriorityEventBus` (two-tier CONTROL >
+  BUSINESS), injected into `compose_engine` (backtest → Fifo, zero oracle risk) (LR-11).
+- **`EngineContext` + storage-in-handler (P3)** — handler-owns storage init (Order/Strategies), new
+  `compose_engine(ctx, spec)` signature (concern 20; LR-13/LR-14).
+- **`SqlEngine` rename + migrations relocation (P4)** — `SqlBackend→SqlEngine`; `migrations/` → project
+  root (LR-18).
+- **New durable stores (P5)** — `SystemStore`, `VenueStore`, `StrategyRegistryStore` (tables +
+  registrars + Alembic chain + rehydrate) (LR-22).
+- **Venue registry + 4-collaborator bundle (P6)** — two registries (`ExecutionVenueRegistry` +
+  `DataProviderRegistry`), `VenuePlugin`/`VenueBundle`, `LiveDataProvider` Protocol, connector
+  memoization by `(venue, account_id)`, precision/validate on the exchange, per-portfolio account
+  factory, shared `StreamSupervisor` — kills every `if exchange==` (concerns 1/6/13/14/15; CF-3/4/9;
+  LR-17).
+- **`LiveRunner` + factory + facade shrink (P7)** — `build_live_system`, `LiveRunner`,
+  `SessionInitializer` + shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`,
+  `UniverseHandler` proper init, `StrategyWarmupConsumer` rehome, drop legacy
+  `print_status`/`get_statistics`/`__init__` params (concerns 4/5/7/8/10/25/26; CF-10; LR-10/LR-16).
+- **Safety + reconciliation + stream recovery (P8)** — `SafetyController`, `ReconciliationCoordinator`,
+  `StreamRecoveryHandler`, CONTROL routes — flag machinery deleted (concerns 11/12; CF-2/7/8; LR-12).
+- **Error subsystem (P9)** — `ErrorPolicy` injected (no monkeypatch), `ErrorHandler` formalized, two-guard
+  terminal safety, **CF-1 aggregate circuit breaker** (the one HIGH-priority safety add) (concern 19;
+  CF-1/5).
+- **★ Runtime-config platform (P10)** — SystemStore-backed overrides, scoped `ConfigUpdateEvent`,
+  allowlist, restart layering, `RuntimeConfig` overlay, stats snapshot (concerns 22/23; LR-04).
+- **★ Strategies registry (P11)** — durable `StrategyRegistryStore` rehydrate, enable/disable via
+  `STRATEGY_COMMAND`, survives restart (concern 18).
+- **★ Multi-portfolio-live (P12)** — per-`account_id` account factory, drop single-portfolio guard +
+  distinct-`account_id` invariant, per-portfolio reconcile, connector keyed `(venue, account_id)`,
+  `PortfolioSpec.account_id`, `clOrdId→client_order_id` (LR-03/LR-19/LR-20).
+- **Test migration (P13)** — `run_paper_replay`→`ReplayRunner` in `tests/`, `replay` plugin
+  fixture-registered, production replay-free; live-smoke / config-restart / multi-portfolio gates
+  (concern 9).
+
+**Key context:** Backtest byte-exactness (LR-02) is the **blocking gate** for the foundational +
+universe-wiring phases (P1–P4, P7's `UniverseWiring`) — any re-baseline is explicit + cross-validated
+(backtesting.py + backtrader), never silent. The inertness gate must stay green (registering venues
+imports no `ccxt.pro` until built; `SystemConfig` never constructs Postgres `SqlSettings` at import).
+Ten pending `.planning/todos/` items fold in as **CF-1..CF-10** across P1/P6/P7/P8/P9 (all live-only /
+backtest-dark). Trim boundary noted but **not taken**: P10–P12 (★) are in scope this milestone. Design
+source: `docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22, CF-1..CF-10).
+
 ## Shipped Milestone: v1.7 — Live Trading Readiness (2026-07-07)
 
 **Delivered:** Deployed and ran the package **live on one crypto venue (OKX), paper-first**, with a real
@@ -726,4 +780,14 @@ the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a 
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
 
 ---
-*Last updated: 2026-07-07 after v1.7 (Live Trading Readiness) milestone close.*
+*Last updated: 2026-07-09 — **v1.8 — Live System Refactor & Live-Readiness Hardening STARTED.**
+Decomposes the 2,171-line `LiveTradingSystem` God object into a thin facade over focused collaborators
+(factory + shared `compose_engine` + `LiveRunner` + controllers), venue-parametrized and
+config-centralized, FastAPI-ready — without disturbing the byte-exact backtest oracle
+(`134 / 46189.87730727451`) or the OKX inertness gate. Full scope (13 phases, P1–P13, incl. the three ★
+feature-adds LR-03/LR-04). Design source:
+`docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22, CF-1..CF-10).
+Defining requirements → roadmap via `/gsd:new-milestone`. v1.0–v1.7 SHIPPED — archived under
+`milestones/`.*
+
+*Earlier: 2026-07-07 after v1.7 (Live Trading Readiness) milestone close.*

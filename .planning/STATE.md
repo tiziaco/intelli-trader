@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.7
-milestone_name: Live Trading Readiness
-status: Awaiting next milestone
-stopped_at: Completed 07-10-PLAN.md (CR-01 gap-closure — warmup re-delivery idempotency)
-last_updated: "2026-07-07T14:06:39.708Z"
-last_activity: 2026-07-07 — Milestone v1.7 completed and archived
+milestone: v1.8
+milestone_name: Live System Refactor & Live-Readiness Hardening
+status: planning
+last_updated: "2026-07-09T07:24:06.624Z"
+last_activity: 2026-07-09
 progress:
-  total_phases: 10
-  completed_phases: 10
-  total_plans: 75
-  completed_plans: 75
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -30,10 +29,10 @@ control-plane). Adjudicate the owner-gated margin-equity WR-01 defect before any
 
 ## Current Position
 
-Phase: Milestone v1.7 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-07 — Milestone v1.7 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-09 — Milestone v1.8 started
 
 ## Milestone Gate (v1.7 — applies to EVERY phase)
 
@@ -379,6 +378,7 @@ Carried todo: 14 pending todos in `todos/pending/` (carry-forward backlog — `v
 
 - Start the next milestone with `/gsd:new-milestone` (owner's stated direction: `live_trading_system.py`
   full refactor + halt-reason storage/vocabulary review, and a FastAPI application-layer / control-plane).
+
 - Optionally create the git tag: `git tag -a v1.7 -m "v1.7 Live Trading Readiness"` (deferred at close).
 - Before any live margin/leverage consumer: adjudicate `margin-equity-double-counts-notional-wr01`
   (owner-gated, oracle-dark) with external cross-validation.
