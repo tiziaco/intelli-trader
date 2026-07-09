@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 04
-current_phase_name: storage-schema-migrations-relocation-new-durable-stores
+current_phase: 5
+current_phase_name: Venue Registry + Bundle
 status: verifying
 stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-07-09T17:52:03.861Z"
+last_updated: "2026-07-09T18:18:35.498Z"
 last_activity: 2026-07-09
-last_activity_desc: Phase 04 execution started
+last_activity_desc: Phase 04 complete, transitioned to Phase 5
 progress:
   total_phases: 9
   completed_phases: 4
@@ -33,10 +33,10 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 04 (storage-schema-migrations-relocation-new-durable-stores) — EXECUTING
-Plan: 3 of 3
+Phase: 5 — Venue Registry + Bundle
+Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-09 — Phase 04 execution started
+Last activity: 2026-07-09 — Phase 04 complete, transitioned to Phase 5
 
 Progress: [░░░░░░░░░░] 0%
 
