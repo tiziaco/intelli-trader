@@ -6,11 +6,13 @@ existing import sites to the new name, so no backward-compat ``TradingSystem``
 alias is exported from this module.
 
 D-04: the factory builds, the class is a thin holder. ``build_backtest_system(spec)``
-selects the mode-specific backends (``OrderStorageFactory.create('backtest')`` +
-the backtest signal store, D-14a), derives the COMPLETE symbol set and folds it
-into the spec's ``ExchangeConfig`` (D-13/Trap 1), calls ``compose_engine``,
-constructs the ``BacktestRunner``, adds strategies/portfolios in spec order
-(Trap 6), wires subscriptions, and returns the holder.
+derives the COMPLETE symbol set and folds it into the spec's ``ExchangeConfig``
+(D-13/Trap 1), builds the infra ``EngineContext(bus=FifoEventBus(),
+environment='backtest', sql_engine=None)`` (02-03/D-06), calls the two-arg
+``compose_engine`` seam, constructs the ``BacktestRunner``, adds
+strategies/portfolios in spec order (Trap 6), wires subscriptions, and returns the
+holder. The handlers now OWN their order/signal storage backends (selected from
+``ctx.environment``, 02-02), so the factory no longer selects those concretes.
 
 The holder keeps a direct-construction ``__init__`` (legacy loose params) that
 builds the same engine+runner internally, so the oracle/integration sites work
@@ -21,6 +23,7 @@ delegates to the runner then lifts the metrics printout into ``reporting``
 Indentation: TABS (``trading_system/`` package convention).
 """
 
+import dataclasses
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -29,7 +32,7 @@ import pandas as pd
 from itrader import config, idgen
 from itrader.config import ExchangeConfig, OrderConfig, get_exchange_preset
 from itrader.core.exceptions import ConfigurationError
-from itrader.order_handler.storage import OrderStorageFactory
+from itrader.events_handler.bus import FifoEventBus
 from itrader.reporting.frames import build_equity_curve, build_trade_log
 from itrader.reporting.summary import print_metrics_summary
 from itrader.results.records import PortfolioRecord, RunRecord
@@ -40,10 +43,11 @@ from itrader.results.serializers import (
 	curate_portfolio_params,
 	curate_run_settings,
 )
-from itrader.strategy_handler.storage import SignalStorageFactory, SignalStore
+from itrader.strategy_handler.storage import SignalStore
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.trading_system.backtest_runner import BacktestRunner
 from itrader.trading_system.compose import Engine, compose_engine
+from itrader.trading_system.engine_context import EngineContext
 from itrader.trading_system.system_spec import SystemSpec
 
 from itrader.logger import get_itrader_logger
@@ -123,21 +127,39 @@ class BacktestTradingSystem(object):
 			# path the factory uses — replacement-safe (D-13/Trap 1). csv_paths=None
 			# is the single-golden-ticker default, so the seeded set is the preset ∪
 			# {BTCUSD}, byte-identical to the old ExecutionHandler no-config fallback.
-			order_storage = OrderStorageFactory.create('backtest')
-			self._signal_store = SignalStorageFactory.create('backtest')
 			tickers = {str(t).upper() for t in (csv_paths or {}).keys()}
 			exchange_config = _seed_supported_symbols(
 				get_exchange_preset('default'), tickers)
-			self.engine = compose_engine(
-				order_storage=order_storage,
-				signal_store=self._signal_store,
-				csv_paths=csv_paths,
-				start_date=start_date,
-				end_date=end_date or None,
+			# 02-03 (D-06/Pitfall 1): the oracle runs through THIS spec-LESS legacy
+			# arm, so it is folded to the two-arg compose seam too. Synthesize a
+			# minimal frozen SystemSpec — ticker/starting_cash are PLACEHOLDERS
+			# compose NEVER reads (A1); strategies/portfolios stay empty (the legacy
+			# sites add them via the backward-compat handler seams). The seeded
+			# ExchangeConfig rides on spec.exchange. Empties map back to None inside
+			# compose, byte-identical to the old csv_paths=None / start/end kwargs.
+			spec = SystemSpec(
+				start=start_date or '',
+				end=end_date or '',
 				timeframe=timeframe,
-				exchange_config=exchange_config,
-				order_config=OrderConfig.default(),
+				ticker='BTCUSD',
+				starting_cash=0,
+				data=csv_paths or {},
+				strategies=[],
+				portfolios=[],
+				exchange=exchange_config,
 			)
+			# The handler now OWNS its bus (FifoEventBus — byte-exact FIFO, D-07) and
+			# its storage (from environment='backtest'); config is carried, sql_engine
+			# is None (SQL-import-inert, GATE-01).
+			ctx = EngineContext(
+				bus=FifoEventBus(),
+				config=config,
+				environment='backtest',
+				sql_engine=None,
+			)
+			self.engine = compose_engine(ctx, spec)
+			# Read the handler-owned signal store back off the engine (02-02/02-03).
+			self._signal_store = self.engine.signal_store
 			self.runner = BacktestRunner(self.engine)
 
 		self.logger.info('Trading system initialised')
@@ -401,50 +423,43 @@ class BacktestTradingSystem(object):
 def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	"""Build a backtest system from a declarative ``SystemSpec`` (D-04).
 
-	The FACTORY (D-14a): selects the mode-specific backends
-	(``OrderStorageFactory.create('backtest')`` + the backtest signal store),
-	derives the COMPLETE supported-symbol set from the spec data keys (∪ default
-	preset ∪ {BTCUSD}) and folds it into the spec's ``ExchangeConfig``
-	(D-13/Trap 1), calls the shared ``compose_engine`` seam with those concretes,
-	constructs the ``BacktestRunner``, adds strategies/portfolios in SPEC ORDER
-	(Trap 6 — preserve ``get_active_portfolios`` insertion order), wires the
-	portfolio subscriptions, and returns the thin holder.
+	The FACTORY (D-14a): derives the COMPLETE supported-symbol set from the spec
+	data keys (∪ default preset ∪ {BTCUSD}) and folds it into the spec's
+	``ExchangeConfig`` (D-13/Trap 1), builds the infra ``EngineContext`` (a fresh
+	``FifoEventBus`` + ``environment='backtest'`` + ``sql_engine=None``, 02-03/D-06),
+	calls the shared two-arg ``compose_engine`` seam, constructs the
+	``BacktestRunner``, adds strategies/portfolios in SPEC ORDER (Trap 6 — preserve
+	``get_active_portfolios`` insertion order), wires the portfolio subscriptions,
+	and returns the thin holder. The handlers OWN their order/signal storage
+	backends now (selected from ``ctx.environment``, 02-02).
 	"""
-	# 1. Mode-specific backend selection (D-14a) — lives in the FACTORY.
-	order_storage = OrderStorageFactory.create('backtest')
-	signal_store = SignalStorageFactory.create('backtest')
-
-	# 2. Complete symbol-set seeding (D-13/Trap 1): default preset ∪ {BTCUSD} ∪
+	# 1. Complete symbol-set seeding (D-13/Trap 1): default preset ∪ {BTCUSD} ∪
 	#    spec data tickers, folded into the spec's ExchangeConfig BEFORE the
-	#    exchange reads it (replacement-safe construction-time seeding).
+	#    exchange reads it (replacement-safe construction-time seeding). SystemSpec
+	#    is frozen, so the seeded exchange rides back onto the spec via
+	#    ``dataclasses.replace`` — compose reads ``spec.exchange`` (02-03 A1). The
+	#    handlers now OWN their storage backends (from environment='backtest'), so
+	#    the factory no longer selects order/signal storage concretes here (02-02).
 	exchange_config = spec.exchange if spec.exchange is not None else get_exchange_preset('default')
 	tickers = {str(t) for t in spec.data.keys()}
 	exchange_config = _seed_supported_symbols(exchange_config, tickers)
+	spec = dataclasses.replace(spec, exchange=exchange_config)
 
-	# 3. Wire the graph mode-agnostically through the shared seam. The results
-	#    store is passed straight through from the spec (D-04/D-19, GATE-01): it is
-	#    commonly None, so the oracle path stays store-free AND SQL-import-inert —
-	#    this module imports NO SQL surface at top level. A persistence caller builds
-	#    the store DIRECTLY (NO factory, D-19) and injects it on the spec, e.g.
-	#    ``SqlResultsStore(SqlBackend(SqlSettings.results_default()),
+	# 2. Wire the graph mode-agnostically through the shared two-arg seam. compose
+	#    reads the OPTIONAL results store off the spec via getattr (D-04/D-19,
+	#    GATE-01): commonly None, so the oracle path stays store-free AND
+	#    SQL-import-inert — this module imports NO SQL surface at top level. A
+	#    persistence caller builds the store DIRECTLY (NO factory, D-19) and injects
+	#    it on the spec, e.g. ``SqlResultsStore(SqlBackend(SqlSettings.results_default()),
 	#    strict_persist=SqlSettings.results_default().strict_persist)`` with the SQL
 	#    surface imported on THAT path only — never here.
-	#
-	#    ``getattr`` (NOT ``spec.results_store``): the e2e harness duck-types its own
-	#    ``ScenarioSpec`` (no ``results_store`` field) into this factory by name, so a
-	#    hard attribute read would break it. Absent → None → store-free / byte-exact.
-	results_store = getattr(spec, "results_store", None)
-	engine = compose_engine(
-		order_storage=order_storage,
-		signal_store=signal_store,
-		csv_paths=spec.data,
-		start_date=spec.start,
-		end_date=spec.end or None,
-		timeframe=spec.timeframe,
-		exchange_config=exchange_config,
-		order_config=OrderConfig.default(),
-		results_store=results_store,
+	ctx = EngineContext(
+		bus=FifoEventBus(),
+		config=config,
+		environment='backtest',
+		sql_engine=None,
 	)
+	engine = compose_engine(ctx, spec)
 	runner = BacktestRunner(engine)
 
 	# 4. Add strategies/portfolios in SPEC ORDER (Trap 6 — get_active_portfolios
@@ -474,4 +489,4 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 			strategy.subscribe_portfolio(pid)
 
 	return BacktestTradingSystem(
-		engine=engine, runner=runner, signal_store=signal_store)
+		engine=engine, runner=runner, signal_store=engine.signal_store)
