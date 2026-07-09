@@ -13,6 +13,7 @@ collection collision fixed earlier.
 """
 
 import pathlib
+import tomllib
 
 import pytest
 from sqlalchemy import Column, String, Table, Uuid, create_engine, inspect, text
@@ -28,7 +29,7 @@ from itrader.storage import SqlEngine
 # pins the absolute migrations dir on the Config below.
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 _ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
-_MIGRATIONS_DIR = _REPO_ROOT / "itrader" / "storage" / "migrations"
+_MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 
 def _alembic_config(url: str) -> Config:
@@ -42,6 +43,29 @@ def _alembic_config(url: str) -> Config:
     cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
     cfg.set_main_option("sqlalchemy.url", url)
     return cfg
+
+
+def test_migrations_relocated_out_of_wheel() -> None:
+    """SQL-01: ``migrations/`` lives at repo root, OUTSIDE the shipped ``itrader`` wheel.
+
+    Fast, structural, build-free proxy for "migrations are repo-shipped, not
+    installed-package-shipped" (LR-18): a full ``poetry build`` + wheel inspection stays an
+    optional manual check (04-VALIDATION). This asserts three observable properties:
+
+    1. The relocated tree exists at project-root ``migrations/env.py``.
+    2. The old in-package tree ``itrader/storage/migrations`` is GONE (not re-nested).
+    3. ``pyproject.toml`` ``tool.poetry.packages`` includes ONLY ``itrader`` — so no rule
+       re-adds a project-root ``migrations`` path to the wheel, and the tree now sits outside
+       ``itrader/``. Fails loud (red) if a future edit re-nests migrations or adds a second
+       ``packages`` include.
+    """
+    assert (_REPO_ROOT / "migrations" / "env.py").exists()
+    assert not (_REPO_ROOT / "itrader" / "storage" / "migrations").exists()
+
+    with (_REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        pyproject = tomllib.load(fh)
+    packages = pyproject["tool"]["poetry"]["packages"]
+    assert packages == [{"include": "itrader"}]
 
 
 def test_research_store_create_all_has_no_alembic_version() -> None:
