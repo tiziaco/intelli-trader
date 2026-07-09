@@ -18,7 +18,8 @@ _DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
 
 from dataclasses import dataclass
 
-from itrader.core.enums import ErrorSeverity, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
+from itrader.config.stream import StreamSettings
+from itrader.core.enums import ErrorSeverity, HaltReason, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
@@ -63,18 +64,17 @@ _EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND
 # env; it MUST gate BEFORE constructing ``SqlSettings(driver=POSTGRESQL_PSYCOPG2)``, which
 # RAISES ``ValidationError`` (``_require_pg_credentials``) when no credential is present.
 
-# WR-03: the SINGLE wiring source for the live OKX subscription. The OKX data
-# provider stamps this symbol/timeframe into every ClosedBar (the feed's ring key),
-# the feed warms up on the same pair, and universe membership is checked against it —
-# so the OkxDataProvider constructor args and the feed.warmup() args can never drift
-# into a ring-key vs membership mismatch (which would otherwise surface only as a
-# MissingPriceDataError at first window()). A future D-live wiring sources these from
-# Settings; today they are the one shared constant.
+# WR-03 / CFG-03 / D-08: the SINGLE wiring source for the live OKX subscription now
+# lives in StreamSettings (config/stream.py). The OKX data provider stamps this
+# symbol/timeframe into every ClosedBar (the feed's ring key), the feed warms up on
+# the same pair, and universe membership is checked against it — so the
+# OkxDataProvider constructor args and the feed.warmup() args can never drift into a
+# ring-key vs membership mismatch (which would otherwise surface only as a
+# MissingPriceDataError at first window()). A default-constructed StreamSettings is
+# the P1 seam; composition-root injection (and the universe-driven pair) land later.
 # BTC/USDC (not BTC/USDT): the OKX EEA entity restricts USDT spot pairs under MiCA —
-# an order on BTC/USDT returns sCode 51155 "local compliance restrictions". Hardcoded
-# for now; the pair becomes configurable via the universe subsystem in the next phase.
-_OKX_STREAM_SYMBOL = "BTC/USDC"
-_OKX_STREAM_TIMEFRAME = "1d"
+# an order on BTC/USDT returns sCode 51155 "local compliance restrictions".
+_STREAM_SETTINGS = StreamSettings()
 
 # D-18 (structural half — SINGLE SOURCE OF TRUTH for the paper/backtest parity anchor):
 # the canonical golden window + symbol. BOTH the paper replay store (constructed
@@ -86,24 +86,25 @@ _OKX_STREAM_TIMEFRAME = "1d"
 PAPER_PARITY_START_DATE = "2018-01-01"
 PAPER_PARITY_END_DATE = "2026-06-03"
 PAPER_PARITY_SYMBOL = "BTCUSD"
+# WR-01: the golden parity grid's timeframe is its OWN anchor here, NOT the live-tunable
+# StreamSettings.okx_stream_timeframe. Sourcing it from the live stream config coupled the
+# byte-exact golden grid to a live knob, and run_paper_replay's window guard did not check
+# timeframe — so a live timeframe change could silently re-grid the parity comparand.
+PAPER_PARITY_TIMEFRAME = "1d"
 
-# Phase 4 (D-02/D-09): the SINGLE wiring source for the paper replay subscription.
-# The ReplayDataProvider stamps this symbol/timeframe into every replayed ClosedBar
-# (the feed's ring key), and run_paper_replay() queries newest_bar() on the same
-# symbol for the bar-open stamp. The paper ticker MUST be the universe-member form
-# "BTCUSD" (what the strategy's window() queries), NOT the OKX venue form "BTC/USDT":
-# a mismatch surfaces only as a MissingPriceDataError at the first window() call
-# (LiveBarFeed._find_ring). This is the symbol-form trap the OKX arm guards against
-# with its wiring-time membership assertion. Sourced from the D-18 parity symbol above.
-_PAPER_STREAM_SYMBOL = PAPER_PARITY_SYMBOL
-_PAPER_STREAM_TIMEFRAME = "1d"
-
-# WR-02 (assertion half, now backed by the D-18 structural wiring): run_paper_replay
-# asserts the replay store's effective window/symbol equals these — a defense that the
-# CsvPriceStore honored the window it was EXPLICITLY constructed with (below), no longer
-# a coincidental-class-default check. Aliased to the single-source constants above.
-_PAPER_EXPECTED_START = PAPER_PARITY_START_DATE
-_PAPER_EXPECTED_END = PAPER_PARITY_END_DATE
+# Phase 4 (D-02/D-09) / CFG-03 / D-08: the paper replay subscription is wired directly
+# from the PAPER_PARITY_* single-source anchor above (the paper-specific aliases are
+# retired — Pitfall 4 forbids any parity value drift, so read sites dereference the
+# anchor verbatim). The ReplayDataProvider stamps symbol/timeframe into every replayed
+# ClosedBar (the feed's ring key), and run_paper_replay() queries newest_bar() on the
+# same symbol. The paper ticker MUST be the universe-member form "BTCUSD" (what the
+# strategy's window() queries), NOT the OKX venue form "BTC/USDT": a mismatch surfaces
+# only as a MissingPriceDataError at the first window() call (LiveBarFeed._find_ring).
+# The paper stream timeframe is pinned to PAPER_PARITY_TIMEFRAME (the anchor above), NOT
+# StreamSettings.okx_stream_timeframe — the golden grid must not track a live knob (WR-01).
+# run_paper_replay's WR-02 assertion half (backed by the D-18 structural wiring) asserts
+# the replay store's effective window/symbol AND timeframe equal the PAPER_PARITY_* anchor
+# — a defense that CsvPriceStore honored the window it was EXPLICITLY constructed with.
 
 
 def _precision_to_scale(value: Any) -> "Decimal | None":
@@ -557,19 +558,19 @@ class LiveTradingSystem:
             # symbol/timeframe are the wiring defaults; Phase 3 (LiveBarFeed) owns the
             # real subscription config.
             self._okx_data_provider = OkxDataProvider(
-                self._okx_connector, symbol=_OKX_STREAM_SYMBOL,
-                timeframe=_OKX_STREAM_TIMEFRAME)
+                self._okx_connector, symbol=_STREAM_SETTINGS.okx_stream_symbol,
+                timeframe=_STREAM_SETTINGS.okx_stream_timeframe)
             # D-03 (V17-04, quote-wiring arm): thread the WIRED pair's real quote +
             # spot market-type into the VenueAccount so the settlement currency is the
             # traded pair's quote (USDC for BTC/USDC — never the USDT default) AND the
             # per-symbol position truth is DERIVED from total[BASE] (OKX spot reports
             # no position rows). Both are taken from the single wiring input
-            # (_OKX_STREAM_SYMBOL): quote = right leg, symbol drives the base read.
+            # (the StreamSettings stream symbol): quote = right leg, symbol drives the base read.
             self._venue_account = VenueAccount(
                 self._okx_connector,
-                quote_currency=_OKX_STREAM_SYMBOL.split('/')[1],
+                quote_currency=_STREAM_SETTINGS.okx_stream_symbol.split('/')[1],
                 market_type='spot',
-                symbol=_OKX_STREAM_SYMBOL,
+                symbol=_STREAM_SETTINGS.okx_stream_symbol,
             )
 
             # Phase 3 (D-01/D-13 provider->feed seam, FEED-05): inject the real OKX
@@ -649,7 +650,8 @@ class LiveTradingSystem:
             self._replay_provider = ReplayDataProvider(
                 store=CsvPriceStore(
                     start_date=PAPER_PARITY_START_DATE, end_date=PAPER_PARITY_END_DATE),
-                symbol=_PAPER_STREAM_SYMBOL, timeframe=_PAPER_STREAM_TIMEFRAME)
+                symbol=PAPER_PARITY_SYMBOL,
+                timeframe=PAPER_PARITY_TIMEFRAME)
             # Inject the replay provider into the LIVE feed via the PUBLIC setter — it
             # assigns self._provider (the private attr warmup()/gap-backfill read); a
             # bare self.feed.provider = ... would leave self._provider None. Then wire
@@ -785,7 +787,7 @@ class LiveTradingSystem:
         """
         if self._venue_account is None:
             return
-        symbol = _OKX_STREAM_SYMBOL
+        symbol = _STREAM_SETTINGS.okx_stream_symbol
         venue_qty = self._venue_account.positions.get(symbol, Decimal('0'))
         # F/U-6: reuse the per-instrument drift epsilon (the same band the on-fill
         # drift compare keys off the wired instrument's quantity precision).
@@ -807,7 +809,7 @@ class LiveTradingSystem:
                 symbol=symbol,
                 engine_qty=str(engine_qty),
                 venue_qty=str(venue_qty))
-            self.halt('baseline-residual')
+            self.halt(HaltReason.BASELINE_RESIDUAL.value)
             return
 
     def halt(self, reason: str) -> None:
@@ -1358,8 +1360,8 @@ class LiveTradingSystem:
 
             # WR-03 generalized (Plan 06-05, D-05): the LIVE subscription set is now
             # SOURCED FROM MEMBERSHIP — start() iterates universe.members and subscribes
-            # each (warmup-before-subscribe), no longer the single hardcoded
-            # _OKX_STREAM_SYMBOL. The LIVE feed keys its ring on the streamed-symbol form
+            # each (warmup-before-subscribe), no longer the single StreamSettings
+            # stream symbol. The LIVE feed keys its ring on the streamed-symbol form
             # the provider stamps into ClosedBar['symbol'] while window() is queried with
             # the ticker drawn from universe.members. If the two forms diverge for a
             # member (e.g. 'BTC/USDT' vs 'BTCUSD'), _find_ring raises MissingPriceDataError
@@ -1413,7 +1415,7 @@ class LiveTradingSystem:
                 global_queue=self.global_queue,
                 universe=universe,
                 feed=self.feed,
-                timeframe=_OKX_STREAM_TIMEFRAME,
+                timeframe=_STREAM_SETTINGS.okx_stream_timeframe,
                 remove_policy=_system_config.monitoring.universe_remove_policy,
             )
             # D-12/OP-SEAM: the poll selection source is the strategy-derived model —
@@ -1517,9 +1519,9 @@ class LiveTradingSystem:
         # loudly HERE with a clear ConfigurationError instead of surfacing as a
         # confusing count-equality diff deep in the parity test.
         _store = self._replay_provider._store
-        if (_store.start_date != _PAPER_EXPECTED_START
-                or _store.end_date != _PAPER_EXPECTED_END
-                or self._replay_provider._symbol != _PAPER_STREAM_SYMBOL):
+        if (_store.start_date != PAPER_PARITY_START_DATE
+                or _store.end_date != PAPER_PARITY_END_DATE
+                or self._replay_provider._symbol != PAPER_PARITY_SYMBOL):
             raise ConfigurationError(
                 config_key="paper_replay_window",
                 config_value=(
@@ -1527,10 +1529,23 @@ class LiveTradingSystem:
                     f"{self._replay_provider._symbol})"),
                 reason=(
                     f"replay store window/symbol drifted from the backtest parity "
-                    f"window: expected ({_PAPER_EXPECTED_START}, {_PAPER_EXPECTED_END}, "
-                    f"{_PAPER_STREAM_SYMBOL}) but got ({_store.start_date}, "
+                    f"window: expected ({PAPER_PARITY_START_DATE}, {PAPER_PARITY_END_DATE}, "
+                    f"{PAPER_PARITY_SYMBOL}) but got ({_store.start_date}, "
                     f"{_store.end_date}, {self._replay_provider._symbol}). Align the "
                     "replay store window/symbol with the parity backtest."))
+
+        # WR-01: the parity grid's timeframe must ALSO stay pinned to the anchor, not the
+        # live-tunable StreamSettings.okx_stream_timeframe — else a live timeframe change
+        # would silently re-grid the golden comparand past the window/symbol guard above.
+        if self._replay_provider._timeframe != PAPER_PARITY_TIMEFRAME:
+            raise ConfigurationError(
+                config_key="paper_replay_timeframe",
+                config_value=str(self._replay_provider._timeframe),
+                reason=(
+                    f"replay store timeframe drifted from the backtest parity grid: "
+                    f"expected {PAPER_PARITY_TIMEFRAME!r} but got "
+                    f"{self._replay_provider._timeframe!r}. Pin the paper replay timeframe "
+                    "to PAPER_PARITY_TIMEFRAME, not the live stream config."))
 
         # Step 1 — session init (ORDER-SENSITIVE): derive membership/instruments,
         # inject the Universe into the 'simulated' exchange + order/portfolio handlers,
@@ -1551,7 +1566,7 @@ class LiveTradingSystem:
         for cb in self._replay_provider.iter_closed_bars():
             self._replay_provider.replay_bar(cb)
             self.event_handler.process_events()
-            newest = self.feed.newest_bar(_PAPER_STREAM_SYMBOL)
+            newest = self.feed.newest_bar(PAPER_PARITY_SYMBOL)
             if newest is None:
                 continue
             # WR-03: only record when the feed's newest-DELIVERED bar IS the bar
@@ -1734,17 +1749,17 @@ class LiveTradingSystem:
             # non-OKX venue has no provider, so the None provider is never dereferenced
             # (mirrors the CR-02 venue-guard). Warmup MUST precede start_stream.
             if self.exchange == 'okx' and self._okx_data_provider is not None:
-                # Plan 06-05 (D-05): un-hardcode _OKX_STREAM_SYMBOL — the live
+                # Plan 06-05 (D-05): un-hardcode the stream symbol — the live
                 # subscription set is now SOURCED FROM MEMBERSHIP. For each member,
                 # warm the feed FIRST (REST replay sets the ring) THEN subscribe the
                 # live socket (warmup-before-subscribe, Pitfall 6 — never reorder),
                 # replacing the single-symbol start_stream() with the per-member
                 # dynamic subscribe() seam (plan 02). A one-symbol universe subscribes
                 # exactly that one symbol, so the single wiring-time default falls out
-                # naturally. _OKX_STREAM_TIMEFRAME remains the live timeframe.
+                # naturally. The StreamSettings stream timeframe remains the live timeframe.
                 members = self.universe.members if self.universe is not None else []
                 for sym in members:
-                    self.feed.warmup(sym, _OKX_STREAM_TIMEFRAME)
+                    self.feed.warmup(sym, _STREAM_SETTINGS.okx_stream_timeframe)
                     self._okx_data_provider.subscribe(sym)
 
             # CR-01 (RECON-02, RES-01): spawn the order-arm venue streams. This is

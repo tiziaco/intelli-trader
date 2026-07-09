@@ -42,14 +42,11 @@ from collections.abc import Iterator
 from decimal import Decimal
 from typing import Callable
 
+from itrader.config.stream import FeedProviderSettings
 from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
 from itrader.price_handler.providers.okx_provider import ClosedBar
 from itrader.price_handler.store.csv_store import CsvPriceStore
-
-# Default backfill page size (mirror okx_provider._BACKFILL_PAGE); the replay set is small
-# and contiguous, so the warmup path never paginates — the arg exists for seam parity.
-_BACKFILL_PAGE = 1000
 
 
 class ReplayDataProvider:
@@ -149,7 +146,7 @@ class ReplayDataProvider:
         symbol: str,
         timeframe: str,
         since: int | None = None,
-        limit: int = _BACKFILL_PAGE,
+        limit: int | None = None,
     ) -> list[ClosedBar]:
         """Return the golden bars for the Phase-3 warmup / gap-backfill seam.
 
@@ -158,7 +155,11 @@ class ReplayDataProvider:
         ``iter_closed_bars()`` filtered to ``since is None or cb["ts"] >= since`` and
         truncated to ``limit``. The golden 1d bars are contiguous so no gap-backfill fires
         on the parity path, but the method must exist and be Decimal-edge-correct.
+        ``limit`` defaults to the folded backfill page size (CFG-03/D-08,
+        ``FeedProviderSettings().backfill_page``) when not given.
         """
+        if limit is None:
+            limit = FeedProviderSettings().backfill_page
         bars = [
             cb for cb in self.iter_closed_bars()
             if since is None or cb["ts"] >= since

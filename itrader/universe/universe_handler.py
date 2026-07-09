@@ -36,6 +36,7 @@ from decimal import Decimal
 from queue import Queue
 from typing import Any, Protocol, cast, runtime_checkable
 
+from itrader.config.stream import FeedProviderSettings
 from itrader.core.bar import Bar
 from itrader.core.enums import OrderType, PositionSide, Side
 from itrader.core.ids import PortfolioId, StrategyId
@@ -62,16 +63,6 @@ __all__ = ["UniverseHandler"]
 _ORPHAN_AND_TRACK = "orphan-and-track"
 _FORCE_CLOSE = "force-close"
 
-# Warmup fetch depth margin (mirrors ``live_bar_feed._WARMUP_MARGIN``). The async
-# spawn path needs an EXPLICIT integer ``limit``, so the depth is computed here as
-# ``feed.cache_capacity() + _WARMUP_MARGIN`` (RESEARCH OQ4 — SAFE for the
-# SMA_MACD-only roster: ``cache_capacity()`` == 100 >= the deepest declared
-# SMA_MACD indicator warmup). The max-across-concerned-strategies ``depth_hint``
-# seam is DEFERRED this phase (see
-# ``.planning/todos/pending/warmup-depth-max-concerned-strategy.md``) — do NOT build
-# a provider ``depth_hint`` here.
-_WARMUP_MARGIN = 5
-
 # Engine-owned id generator for the fabricated force-close exit signal's
 # strategy_id (single UUIDv7 scheme). Constructed once at import (live-only file).
 _idgen = IDGenerator()
@@ -87,7 +78,8 @@ class _SupportsWarmup(Protocol):
       ``on_bars_loaded`` consumer feeds the ``BarsLoaded`` payload into (no
       tradeable ``BarEvent`` during warmup).
     - ``cache_capacity`` — the derived ring depth the async ``spawn_warmup``
-      ``limit`` is computed from (``cache_capacity() + _WARMUP_MARGIN``).
+      ``limit`` is computed from
+      (``cache_capacity() + FeedProviderSettings().warmup_margin``).
     """
 
     def warmup(self, symbol: str, timeframe: str, depth: int | None = ...) -> None: ...
@@ -457,14 +449,15 @@ class UniverseHandler:
         """Kick off warmup for one added symbol (live async vs paper synchronous).
 
         Live (provider wired): async ``spawn_warmup`` (I/O only, no state mutated)
-        with an EXPLICIT depth ``K = feed.cache_capacity() + _WARMUP_MARGIN``
-        (RESEARCH OQ4 — SAFE for the SMA_MACD-only roster). Subscribe is NOT called
+        with an EXPLICIT depth ``K = feed.cache_capacity() +
+        FeedProviderSettings().warmup_margin`` (CFG-03/D-08 folded the margin into
+        config/stream.py; RESEARCH OQ4 — SAFE for the SMA_MACD-only roster). Subscribe is NOT called
         here — it moves to ``on_bars_loaded`` (D-03b). Paper (provider is None):
         synchronous ``feed.warmup`` fallback + immediate ``mark_ready`` (no live
         stream to subscribe, never left PENDING).
         """
         if self._provider is not None:
-            depth = self._feed.cache_capacity() + _WARMUP_MARGIN
+            depth = self._feed.cache_capacity() + FeedProviderSettings().warmup_margin
             self._provider.spawn_warmup(sym, self._timeframe, depth)
             return
         # Paper / no-provider path: synchronous absorb + immediate READY.

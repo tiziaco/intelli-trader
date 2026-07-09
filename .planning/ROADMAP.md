@@ -69,16 +69,19 @@ new third-party dependencies; 4 build-order refinements folded in). Requirements
 categories share the merged storage-schema phase P4).
 
 **Milestone-wide gates (apply to EVERY phase — restated as success criteria):**
+
 1. **Oracle byte-exact** — `SMA_MACD` stays `134 / 46189.87730727451` (`check_exact=True`), determinism
    double-run identical. This is a **per-PLAN gate** on the foundational + universe-wiring phases (P1–P4,
    P5, and **P6's `UniverseWiring` extraction** — the highest oracle-risk seam). Any re-baseline (LR-02)
    is explicit + externally cross-validated (backtesting.py + backtrader), never silent. Live-only phases
    (P7–P11) stay byte-exact because they are backtest-dark.
+
 2. **OKX import-inertness** — `tests/integration/test_okx_inertness.py` stays green, extended to assert
    **register-vs-build** on P1/P2/P4/P5 (registering a venue imports no `ccxt.pro` until built;
    `SystemConfig` never constructs Postgres `SqlSettings` at import; `FifoEventBus`/
    `EngineContext(sql_engine=None)` pull nothing heavy). **Zero new third-party dependency / no poetry
    change** anywhere in P1–P12.
+
 3. **Held throughout** — Decimal money end-to-end; single UUIDv7; determinism (business `time`, seeded
    RNG, injected clock); `mypy --strict` clean on new code; `filterwarnings=["error"]` green; tabs/spaces
    indentation matched to the file (never normalized).
@@ -96,7 +99,7 @@ Integer phases are planned milestone work; decimal phases (e.g. 2.1) would be ur
 INSERTED). ★ = trimmable feature-add (in scope this milestone). Execution follows the dependency graph
 below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.).
 
-- [ ] **Phase 1: Config Centralization** - One import-safe `SystemConfig` (eager/lazy split), module-constant migration, dead-config audit, typed `HaltReason` (CFG-01..06)
+- [x] **Phase 1: Config Centralization** - One import-safe `SystemConfig` (eager/lazy split), module-constant migration, dead-config audit, typed `HaltReason` (CFG-01..06) (completed 2026-07-09)
 - [ ] **Phase 2: Event Bus** - Two-tier `EventBus` Protocol (`FifoEventBus`/`PriorityEventBus`) + CONTROL EventTypes + minimal `EngineContext` skeleton (BUS-01..04)
 - [ ] **Phase 3: EngineContext + Storage-in-Handler** - `EngineContext` threaded into `compose_engine(ctx, spec)`, handler-owns storage init, `SqlBackend→SqlEngine` rename (CTX-01..04)
 - [ ] **Phase 4: Storage Schema: Migrations Relocation + New Durable Stores** - `migrations/` → project root FIRST, then `SystemStore`/`VenueStore`/`StrategyRegistryStore` chained on the `HaltRecordStore` template; single-head + parity Alembic gate over the FULL chain + rehydrate (SQL-01..02, STORE-01..05)
@@ -112,142 +115,187 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 ## Phase Details
 
 ### Phase 1: Config Centralization
+
 **Goal**: Centralize all system-wide configuration into one import-safe `SystemConfig` (eager fields vs a lazy `sql` accessor), fold scattered module constants into their domain config, retire dead config, and introduce a typed `HaltReason` — the backtest path reading base defaults unchanged.
 **Depends on**: Nothing (first phase)
 **Requirements**: CFG-01, CFG-02, CFG-03, CFG-04, CFG-05, CFG-06
 **Success Criteria** (what must be TRUE):
+
   1. `from itrader import config` exposes immutable base defaults; the backtest reads them unchanged and the SMA_MACD oracle stays byte-exact `134 / 46189.87730727451` (per-PLAN gate, LR-02).
   2. `SystemConfig` aggregates `performance`/`monitoring`/`runtime`/`sql`/`order` with the Postgres `sql` arm resolved only on first access — importing it constructs no `SqlSettings`, so `test_okx_inertness.py` stays green (extended register-vs-build assertion).
   3. Scattered module constants fold into domain config (`_STREAM_RECONNECT_*` → `StreamSettings`/`ConnectionSettings`, `_WARMUP_MARGIN`/`_BACKFILL_PAGE` → feed/provider config); `_OKX_*`/`_PAPER_*` are gone (grep-clean) and the `extra` policy is normalized.
   4. A typed `HaltReason` enum in `core/enums/system.py` replaces free-string halt reasons and the off-vocabulary `'baseline-residual'` string is retired (CF-8).
   5. The dead-config audit removes unused settings + stale `__pycache__`, and the D-03a dual-validator paragraph is applied to `.planning/codebase/CONVENTIONS.md` (CF-6).
-**Plans**: TBD
+
+**Plans**: 4 plans
+**Wave 1**
+
+- [x] 01-01-PLAN.md — SystemConfig import-safety (eager `runtime` + lazy `sql`) + `extra=forbid` + dead-config audit (CFG-01/02/04)
+- [x] 01-02-PLAN.md — Typed `HaltReason` enum + `baseline-residual` retirement (CFG-05)
+- [x] 01-03-PLAN.md — CF-6 D-03a dual-validator paragraph → `CONVENTIONS.md` (CFG-06)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 01-04-PLAN.md — Constant fold: `StreamSettings`/`FeedProviderSettings` + rewire fold sites, grep-clean (CFG-03)
 
 ### Phase 2: Event Bus
+
 **Goal**: Introduce a stdlib two-tier `EventBus` (CONTROL > BUSINESS) with FIFO and priority implementations behind one `.put()` surface, add the new CONTROL `EventType` members, and settle the `compose_engine` signature via a minimal `EngineContext` skeleton — backtest wiring `FifoEventBus` at zero oracle risk.
 **Depends on**: Nothing
 **Requirements**: BUS-01, BUS-02, BUS-03, BUS-04
 **Success Criteria** (what must be TRUE):
+
   1. `FifoEventBus` (backtest) and `PriorityEventBus` (live) satisfy one `EventBus` Protocol (`put`/`get`/`get_nowait`/`qsize`/`empty`/`depth_by_tier`) sharing a single `.put(event)` surface with no handler call-site changes; backtest wires `FifoEventBus` and the oracle stays byte-exact (per-PLAN gate).
   2. A test proves `PriorityEventBus` orders `(tier, seq, event)` by a globally-unique monotonic `seq` (`itertools.count`) — the comparison never dereferences the non-orderable frozen event — and preserves strict within-tier FIFO.
   3. New CONTROL `EventType` members (`STREAM_STATE`, `CONNECTOR_FATAL`, `CONFIG_UPDATE`) exist and are assigned CONTROL tier from a declarative `_CONTROL_EVENT_TYPES` frozenset; backtest uses `FifoEventBus` (zero priority-bus on the backtest path).
   4. A minimal `EngineContext` skeleton settles `compose_engine`'s signature once; `test_okx_inertness.py` stays green (`FifoEventBus`/`EngineContext(sql_engine=None)` pull nothing heavy; extended register-vs-build assertion).
+
 **Plans**: TBD
 
 ### Phase 3: EngineContext + Storage-in-Handler
+
 **Goal**: Thread a frozen `EngineContext` once into `compose_engine(ctx, spec)`, move storage initialization into the Order and Strategies handlers (following `PortfolioHandler`'s shape), and rename `SqlBackend` to `SqlEngine` — with backtest yielding the same in-memory instances.
 **Depends on**: Phase 1, Phase 2
 **Requirements**: CTX-01, CTX-02, CTX-03, CTX-04
 **Success Criteria** (what must be TRUE):
+
   1. `compose_engine(ctx, spec)` takes the frozen `EngineContext` (`bus`, `config`, `environment`, `sql_engine`); backtest (`environment='backtest', sql_engine=None`) yields the same in-memory storage instances and the oracle stays byte-exact (per-PLAN gate).
   2. Order + Strategies handlers own their storage init from `(environment, sql_engine)` with an optional `storage=` override; `compose_engine` reads the concrete instance back off `.storage` for the `set_order_storage(...)` wiring.
   3. `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`, field/param `sql_engine`); all importers are updated and `mypy --strict` is clean.
   4. Factory SQL imports stay lazy, so `test_okx_inertness.py` stays green on the backtest path.
+
 **Plans**: TBD
 
 ### Phase 4: Storage Schema: Migrations Relocation + New Durable Stores
+
 **Goal**: Land the full live storage schema as one cohesive unit — FIRST relocate the Alembic migrations tree from the shipped package to project root (staying out of the wheel), THEN add the three new durable SQL stores (`SystemStore`, `VenueStore`, `StrategyRegistryStore`) on the `HaltRecordStore` template, extending the chained migration sequence in the new location and rehydrating on restart. Live-only composition-root infrastructure that leaves the backtest path untouched. (Mechanical relocation; the `SqlBackend→SqlEngine` rename was folded into P3.)
 **Depends on**: Phase 3
 **Requirements**: SQL-01, SQL-02, STORE-01, STORE-02, STORE-03, STORE-04, STORE-05
 **Success Criteria** (what must be TRUE):
+
   1. `itrader/storage/migrations/` relocates to project-root `migrations/` **first**; `alembic.ini` `script_location` is updated and `env.py` still imports the `build_*_table` registrars + `NAMING_CONVENTION` from `itrader.storage`; migrations stay out of the shipped wheel (SQL-01).
   2. `SystemStore` (cardinality 1 key-value `(key, value_json, updated_at)` namespaced upsert), `VenueStore` (per-venue config + which venues are enabled; never stores secrets), and `StrategyRegistryStore` (which strategies trade + per-strategy config + subscriptions) each compose `sql_engine` with their own `build_*_table` registrar and rehydrate their state on restart (STORE-01..04).
   3. The chained migration `d10_halt_records → system_store → venue_config → strategy_registry` is authored in the relocated `migrations/` tree, and the SQL-02 Alembic gate validates the FULL new chain — `alembic upgrade head` on a clean DB, `alembic heads == 1` (single head incl. the three new stores), and a `create_all`/migration parity test.
   4. An in-memory fallback keeps the backtest path untouched — the backtest oracle stays byte-exact (per-PLAN gate) and `test_okx_inertness.py` stays green (extended register-vs-build assertion; the relocated migrations + new stores pull nothing heavy at import).
+
 **Plans**: TBD
 
 ### Phase 5: Venue Registry + Bundle
+
 **Goal**: Build two independent registries (execution venue + data provider) plus a `VenuePlugin`/`VenueBundle` system with lazy plugins that parametrize every venue — killing every `if exchange==` — with connector memoization by `(venue, account_id)`, precision/validate as exchange capabilities, a per-portfolio account factory, and a shared `StreamSupervisor`.
 **Depends on**: Phase 2, Phase 3
 **Requirements**: VENUE-01, VENUE-02, VENUE-03, VENUE-04, VENUE-05, VENUE-06, VENUE-07
 **Success Criteria** (what must be TRUE):
+
   1. `ExecutionVenueRegistry` + `DataProviderRegistry` select execution venue and data provider independently via `SystemSpec`; registering `'okx'` lazy-imports its concretions only inside `build_bundle`, so `test_okx_inertness.py` (the P5 acceptance gate; register-vs-build) stays green.
   2. Precision + validation become `AbstractExchange` capabilities (`resolve_precision(symbol)`, `validate_symbol(symbol)`); `_OkxPrecisionResolver`/`_PrecisionResolver` are deleted and `_precision_to_scale` becomes a shared money util.
   3. A `LiveDataProvider` Protocol (+ `BaseLiveDataProvider` no-op defaults) wires every provider uniformly (no `hasattr` sprinkling), and a `VenueLifecycle` orchestrator None-guards absent members so every `if exchange=='okx'` / `elif =='paper'` is removed.
   4. A shared `StreamSupervisor` replaces the triplicated `_run_stream_supervisor` + `_STREAM_RECONNECT_*` (CF-4); connector-contract docstrings are added to `connectors/base.py` (CF-3); OKX markets-map freshness closes the fail-open-before-load window via the existing `validate_symbol` → removal path (CF-9).
   5. Connectors are memoized by `(venue, account_id)` with per-`account_id` env-sourced credentials never persisted; the backtest oracle stays byte-exact (per-PLAN gate).
+
 **Plans**: TBD
 
 ### Phase 6: LiveRunner + Factory + Facade Shrink
+
 **Goal**: Make `build_live_system` the live composition root over a new `LiveRunner`, shrinking `LiveTradingSystem` to a ~200-line facade — with the shared `UniverseWiring` extracted byte-exact (the highest oracle-risk seam) and reused by both runners, and live routes composed declaratively.
 **Depends on**: Phase 4, Phase 5
 **Requirements**: RUN-01, RUN-02, RUN-03, RUN-04, RUN-05, RUN-06, RUN-07
 **Success Criteria** (what must be TRUE):
+
   1. The shared `UniverseWiring` helper (`derive_membership → build Universe → inject exchange/order/portfolio/strategies → feed.bind`, incl. the WR-03 desync assert) is extracted as one intact unit and reused by both `BacktestRunner` and the live `SessionInitializer` — **BacktestRunner stays byte-exact `134 / 46189.87730727451`** (per-PLAN gate on the `UniverseWiring` extraction; the milestone's highest oracle risk).
   2. `build_live_system(spec)` assembles centralized config → one `sql_engine` → venue plugin(s) → `EngineContext` → `compose_engine` → bundle(s) + `LiveRunner` + controllers; `LiveRunner` owns the drain loop + injected `ErrorPolicy` + worker supervision, replacing `_event_processing_loop`.
   3. `LiveTradingSystem` shrinks to a ~200-line facade (lifecycle, status/read-model, `add_event`); legacy `print_status`/`get_statistics` are dropped and `__init__` sheds `exchange`/`to_sql`/`queue_timeout`/`max_idle_time`.
   4. `LiveRouteRegistrar` composes live + CONTROL routes declaratively (list order = execution order; no subclass, no runtime mutation) with backtest getting base routes only; `UniverseHandler` is a first-class handler with explicit deps and zero OKX coupling; `StrategyWarmupConsumer` is rehomed sized to `max(strategy.warmup)` with the CF-10 depth-hint seam shaped (K-computation deferred).
   5. `test_okx_inertness.py` stays green (live decomposition imports no `ccxt.pro` on the backtest path).
+
 **Plans**: TBD
 
 ### Phase 7: Safety + Reconciliation + Stream Recovery
+
 **Goal**: Extract a pure `SafetyController` state machine, a `ReconciliationCoordinator`, and a `StreamRecoveryHandler`; convert connector stream/fatal handoff into CONTROL events (flag side-channel deleted); and add a pre-trade submit-rate + max-notional throttle.
 **Depends on**: Phase 6
 **Requirements**: SAFE-01, SAFE-02, SAFE-03, SAFE-04, SAFE-05, SAFE-06
 **Success Criteria** (what must be TRUE):
+
   1. A pure `SafetyController` (no venue I/O) owns the status latch (`VALID_STATUS_TRANSITIONS`, single `update_status`, `force=` reserved for `reset_halt`), `halt(reason)` (winner-only → CRITICAL `ErrorEvent` → durable `HaltRecordStore.record_halt`), `pause_submission`/`resume_submission` + a bounded deferred-protective queue, and the dispatch gate; `check_durable_halt_on_start()` runs first (before any venue I/O) and refuses RUNNING on an unresolved durable halt.
   2. Connector stream up/down + fatal arrive as CONTROL events (`StreamStateEvent` → pause / `StreamRecoveryHandler.on_reconnect`; `ConnectorFatalEvent` → `halt`) on the engine thread; the `_pending_stream_resume`/`_pending_connector_halt` flag side-channel is deleted.
   3. `StreamRecoveryHandler` owns reconnect resume I/O (catch-up missed fills + account snapshot on the engine thread + all-streams-healthy gate → `resume_submission`), with CF-2 `backfill_on_resume` landing **loop-native** (connector loop via the reconnect callback) and an assertion no engine-thread path reaches the ring writer.
   4. A pre-trade submit-rate + max-notional-per-order throttle (SAFE-06) rejects order flow exceeding configured velocity/notional caps **before** submission; the `ReconciliationCoordinator` keys on account *kind* (not `exchange=='okx'`) and guards the bare `str(matched["id"])` with a typed fail-loud error (CF-7).
   5. The backtest oracle stays byte-exact (live-only, backtest-dark) and `test_okx_inertness.py` stays green.
+
 **Plans**: TBD
 
 ### Phase 8: Error Subsystem
+
 **Goal**: Inject an `ErrorPolicy` into `EventHandler` (removing the monkeypatch), formalize the `ErrorHandler` ERROR-route consumer with two-guard terminal safety, and ship the CF-1 aggregate circuit breaker that actually trips — all leaving backtest fail-fast byte-for-byte unchanged.
 **Depends on**: Phase 6
 **Requirements**: ERR-01, ERR-02, ERR-03, ERR-04
 **Success Criteria** (what must be TRUE):
+
   1. An `ErrorPolicy` is injected into `EventHandler` at construction (backtest/replay → fail-fast re-raise; live → publish-and-continue) with per-handler granularity preserved and the WR-06 source guard; the backtest fail-fast path is byte-for-byte unchanged and the oracle stays byte-exact.
   2. The **CF-1 aggregate circuit breaker** (route-classified ring: SETTLEMENT halt-on-first, ORDER-IO N=3/60s, ADMISSION N=3/300s, LOOP-BACKSTOP N=5/60s) **actually trips** — proven by a "money route failing every event" test — while preserving the WR-06 terminal swallow (hard acceptance criterion).
   3. `ErrorHandler` formalizes the ERROR-route consumer (severity-mapped structured logging, CRITICAL → the pluggable alert-sink seam CF-5, persist latest error → `SystemStore state.last_error`, WR-06 consumer guard); handler failures, `halt()` (CRITICAL), `PortfolioErrorEvent`, and `ConnectorFatalEvent` all funnel through the one ERROR route.
   4. `test_okx_inertness.py` stays green.
+
 **Plans**: TBD
 
 ### Phase 9 ★: Runtime-Config Platform
+
 **Goal**: Build a durable, restart-surviving runtime-config platform — a `RuntimeConfig` overlay injected as `EngineContext.config`, a scoped `ConfigUpdateEvent` gated by an allowlist with venue-kind-aware validation — plus the SystemStore stats/state UI read-model. (★ trimmable feature-add; in scope this milestone.)
 **Depends on**: Phase 4, Phase 7
 **Requirements**: RTCFG-01, RTCFG-02, RTCFG-03, RTCFG-04, RTCFG-05, RTCFG-06
 **Success Criteria** (what must be TRUE):
+
   1. A `RuntimeConfig` overlay (`defaults ← YAML ← env ← persisted runtime overrides`) is built by the live factory and injected as `EngineContext.config` (engine-thread-write, snapshot-read); handlers read it and see runtime changes.
   2. A scoped `ConfigUpdateEvent(scope, key, value)` on the CONTROL plane is validated against an allowlist + type/range, routed on the engine thread to the owning store (`system`→SystemStore, `portfolio:{id}`→Portfolio+portfolio store, `venue:{name}`→VenueStore, `order`→SystemStore), applied to the overlay + relevant `handler.update_config(...)`, and persisted; immutable-at-runtime keys (`rng_seed`, money precision, SQL + venue credentials, `environment`, IDs) are rejected.
   3. Fee/slippage config keys are runtime-mutable **only for simulated venues** — a `ConfigUpdateEvent` targeting a live venue's fee/slippage is rejected (venue-kind-aware validation, RTCFG-05).
   4. Persisted overrides survive restart (`build_live_system` layers them over defaults on boot), and the `system_store` `stats.snapshot` + `state.*` (status / halt_reason / last_error / last_started_at) serve as the UI read-model without touching hot-path locks (RTCFG-06).
   5. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
+
 **Plans**: TBD
 
 ### Phase 10 ★: Strategies Registry
+
 **Goal**: Make the strategy roster durable — a `StrategyRegistryStore` that survives restart, with runtime add/remove/enable/disable via `STRATEGY_COMMAND` and atomic strategy-parameter reconfiguration. (★ trimmable feature-add; in scope this milestone.)
 **Depends on**: Phase 4, Phase 6
 **Requirements**: STRAT-01, STRAT-02, STRAT-03
 **Success Criteria** (what must be TRUE):
+
   1. `StrategyRegistryStore` persists which strategies are active + config + subscriptions; on restart `build_live_system` rehydrates it and re-registers the active strategies (survives restart).
   2. Runtime add / remove / enable / disable via `STRATEGY_COMMAND` (CONTROL) is applied by `StrategiesHandler` and persisted.
   3. A strategy's config parameters are mutable at runtime via **atomic reconfiguration** (quiesce → apply → re-warmup the affected strategy), persisted to `StrategyRegistryStore` (STRAT-03; folds `pair-strategy-live-reconfiguration.md`).
   4. The backtest oracle stays byte-exact (live-only, backtest-dark) and `test_okx_inertness.py` stays green.
+
 **Plans**: TBD
 
 ### Phase 11 ★: Multi-Portfolio-Live
+
 **Goal**: Let multiple portfolios trade live independently — a per-`account_id` account factory replacing the single-portfolio guard, a distinct-`account_id` invariant that fails loud, per-portfolio reconciliation, and two-key attribution (`client_order_id` vs `portfolio_id`). (★ feature-add — LR-03 mandate, never trim.)
 **Depends on**: Phase 5, Phase 7
 **Requirements**: MPORT-01, MPORT-02, MPORT-03, MPORT-04, MPORT-05, MPORT-06
 **Success Criteria** (what must be TRUE):
+
   1. The venue plugin's `new_account(portfolio_ref, config)` mints a per-portfolio account (venue-truth → `VenueAccount` scoped to `portfolio.account_id`; compute → a fresh `SimulatedAccount`); `_link_venue_account_to_portfolios` + its `RuntimeError(>1)` guard are deleted, and `PortfolioSpec` gains `account_id`.
   2. A distinct-`account_id` invariant fails **loud** at composition time — multiple portfolios sharing one venue `account_id` is rejected (pooled buying power the venue can't split is deferred).
   3. A signal fans out to each subscribed portfolio, each sizing/ordering independently against its own account; `clOrdId` is renamed `client_order_id` (distinct from `portfolio_id`) and fills route via `client_order_id`/`venue_order_id` → engine order → `FillEvent(portfolio_id)` → the right `Portfolio.on_fill`.
   4. Connectors are keyed `(venue, account_id)` (VENUE-03) so multi-account portfolios share/decouple correctly, and the `ReconciliationCoordinator` iterates active portfolios reconciling each against its own `VenueAccount`/`account_id`.
   5. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
+
 **Plans**: TBD
 
 ### Phase 12: Test Migration + Gates
+
 **Goal**: Move the replay driver into `tests/` so production is replay-free, and add the live-smoke, config-restart, and multi-portfolio-attribution gates that lock the decomposed live surface. Lands last (needs the whole surface incl. multi-portfolio).
 **Depends on**: Phase 6, Phase 11
 **Requirements**: TEST-01, TEST-02, TEST-03, TEST-04
 **Success Criteria** (what must be TRUE):
+
   1. `run_paper_replay` → `ReplayRunner` in `tests/`; the `replay` plugin (`SimulatedExchange` + `ReplayDataProvider` over the golden CSV) is registered **only** by a test fixture, and production is replay-free (`run_paper_replay` + `PAPER_PARITY_*`/`_PAPER_*` leave production).
   2. A live-smoke gate exercises the decomposed live surface end-to-end (facade → factory → `LiveRunner` → controllers) on the replay fixture.
   3. A config-restart gate proves persisted runtime overrides survive a restart (RTCFG-03).
   4. A multi-portfolio attribution gate proves fills route to the correct portfolio and the distinct-`account_id` invariant fails loud (MPORT-02/MPORT-04).
   5. The backtest oracle stays byte-exact and `test_okx_inertness.py` stays green.
+
 **Plans**: TBD
 
 ## Progress (v1.8 — active)
@@ -259,7 +307,7 @@ P1 and P2 have no dependencies and can start in parallel.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Config Centralization | v1.8 | 0/TBD | Not started | - |
+| 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 0/TBD | Not started | - |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 0/TBD | Not started | - |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |

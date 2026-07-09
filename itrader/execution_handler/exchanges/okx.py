@@ -35,6 +35,7 @@ from decimal import Decimal
 from queue import Queue
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
+from itrader.config.stream import StreamSettings
 from itrader.connectors.base import LiveConnector
 from itrader.core.enums import ErrorSeverity, OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
@@ -46,18 +47,6 @@ from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResul
 from .base import AbstractExchange
 from .venue_correlation import VenueCorrelationIndex
 
-
-# 05-08 (RES-01/D-19/D-20) reconnect-supervisor tuning — named module constants,
-# documented [ASSUMED] and tunable from sandbox behaviour (research A3; anchored to
-# nautilus defaults: open_check_missing_retries=5 / position_check_retries=3). A
-# transient socket drop reconnects with exponential backoff (staying running,
-# publish-and-continue); the debounce keeps a sub-second blip from escalating to a
-# pause (D-19); the retry ceiling bounds the retry loop so it never spins forever ->
-# HALT on exhaustion (D-20).
-_STREAM_RECONNECT_DEBOUNCE_SECONDS = 0.25    # A3 [ASSUMED] sub-second blip -> no pause
-_STREAM_RECONNECT_BACKOFF_BASE_SECONDS = 1.0  # A3 [ASSUMED] first backoff step
-_STREAM_RECONNECT_BACKOFF_CAP_SECONDS = 30.0  # A3 [ASSUMED] exponential backoff ceiling
-_STREAM_RECONNECT_RETRY_CEILING = 6           # A3 [ASSUMED] retries exhausted -> HALT (D-20)
 
 # WR-04: OKX clOrdId charset. The client order id is the fast-fill-race
 # correlation key (``_orders_by_clOrdId``) and MUST be unique per order.
@@ -151,13 +140,15 @@ class OkxExchange(AbstractExchange):
 		# stream reconnects + a fresh REST reconcile completes (D-19).
 		self._reconnect_attempts: Dict[str, int] = {}
 		self._streams_down: set[str] = set()
-		# Per-instance tuning seeded from the module defaults so a test (or a
-		# sandbox tune) can shrink the debounce/backoff without monkeypatching the
-		# module — the module constants stay the documented [ASSUMED] anchor.
-		self._reconnect_debounce_s = _STREAM_RECONNECT_DEBOUNCE_SECONDS
-		self._reconnect_backoff_base_s = _STREAM_RECONNECT_BACKOFF_BASE_SECONDS
-		self._reconnect_backoff_cap_s = _STREAM_RECONNECT_BACKOFF_CAP_SECONDS
-		self._reconnect_ceiling = _STREAM_RECONNECT_RETRY_CEILING
+		# CFG-03 / D-08: per-instance reconnect tuning now reads from StreamSettings
+		# (config/stream.py) instead of module constants — a test (or a sandbox tune)
+		# can shrink the debounce/backoff by injecting a tuned config once the P5
+		# composition-root injection lands. A default-constructed instance is the P1 seam.
+		_stream_cfg = StreamSettings()
+		self._reconnect_debounce_s = _stream_cfg.reconnect_debounce_s
+		self._reconnect_backoff_base_s = _stream_cfg.reconnect_backoff_base_s
+		self._reconnect_backoff_cap_s = _stream_cfg.reconnect_backoff_cap_s
+		self._reconnect_ceiling = _stream_cfg.reconnect_retry_ceiling
 		# Injected seams (composition root, 05-08 Task 2): the 05-04 freeze-in-place
 		# halt entrypoint (fatal / exhausted -> HALTED + CRITICAL alert) and the
 		# pause/resume-on-disconnect callbacks (D-19). All None on the paper/backtest

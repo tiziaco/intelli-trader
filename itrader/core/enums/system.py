@@ -8,7 +8,7 @@ here. This module imports stdlib ONLY (the core/enums dependency rule).
 
 from enum import Enum
 
-__all__ = ["SystemStatus", "VALID_STATUS_TRANSITIONS"]
+__all__ = ["SystemStatus", "VALID_STATUS_TRANSITIONS", "HaltReason"]
 
 
 class SystemStatus(Enum):
@@ -67,3 +67,27 @@ VALID_STATUS_TRANSITIONS: dict[SystemStatus, set[SystemStatus]] = {
     },
     SystemStatus.HALTED: set(),  # Terminal/latched — only reset_halt() (off-table) exits.
 }
+
+
+class HaltReason(Enum):
+    """Typed vocabulary for every reachable engine halt reason (CFG-05 / D-10).
+
+    Exactly the reasons that reach ``halt()`` / ``_update_status(halt_reason=)``
+    today — one member per live reason, no dead members. ``drift`` is a live
+    ``halt()`` reason: ``portfolio_handler`` fires ``_halt_signal("drift")`` on
+    unexplained beyond-band drift and ``LiveTradingSystem`` wires that signal
+    straight to ``self.halt`` (``set_halt_signal(self.halt)``), so it is a member
+    here (CR-01). ``paused-on-disconnect`` is deliberately NOT a member — it is a
+    ``pause_submission()`` reason, not a halt.
+
+    Each ``.value`` is the EXISTING wire string, so durable halt records
+    persisted as strings (``storage/halt_record_store.py``) still resolve — no
+    data migration (T-02-01). P1 defines the enum; migrating the remaining
+    ``halt()`` call sites and its ``reason: str`` signature is P8's job (D-11).
+    """
+
+    BASELINE_RESIDUAL = "baseline-residual"
+    CONNECTOR_FATAL = "connector-fatal"
+    RECONCILIATION_UNRESOLVED = "reconciliation-unresolved"
+    DURABLE_HALT = "durable-halt"
+    DRIFT = "drift"

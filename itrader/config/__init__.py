@@ -44,6 +44,10 @@ from .order import (
     OrderConfig,
     TrailType,
 )
+from .stream import (
+    FeedProviderSettings,
+    StreamSettings,
+)
 from .merge import deep_merge
 from .exchange import (
     ConnectionSettings,
@@ -85,6 +89,9 @@ __all__ = [
     # Order domain
     "OrderConfig",
     "TrailType",
+    # Stream / feed-provider domain
+    "StreamSettings",
+    "FeedProviderSettings",
     # Shared config helpers
     "deep_merge",
     # System domain

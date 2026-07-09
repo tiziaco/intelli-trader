@@ -78,6 +78,17 @@ assert not leaked, (
     "stack: " + repr(leaked) + " (must be lazy-imported inside the live path only)"
 )
 
+# Phase 1 (CFG-02, D-05/D-06 register-vs-build): importing itrader runs
+# SystemConfig.default() (itrader/__init__.py). The lazy `sql` cached_property must
+# stay UNRESOLVED at import — its absence from the singleton's __dict__ proves zero
+# SqlSettings (and thus no Postgres URL/credential resolution) was constructed at
+# import. cached_property provably populates __dict__ only on first access.
+from itrader import config as _cfg
+assert "sql" not in _cfg.__dict__, (
+    "CFG-02 INERTNESS VIOLATION: SqlSettings was BUILT at import (the `sql` "
+    "cached_property resolved) — it must be lazy-constructed on first access only"
+)
+
 print("INERTNESS_OK")
 """
 

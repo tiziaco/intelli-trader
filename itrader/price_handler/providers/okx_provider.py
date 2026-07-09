@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
 import aiohttp
 
+from itrader.config.stream import FeedProviderSettings, StreamSettings
 from itrader.connectors.base import LiveConnector
 from itrader.core.exceptions import MissingPriceDataError, StateError
 from itrader.core.money import to_money
@@ -103,20 +104,6 @@ _OKX_INTERVALS: dict[str, str] = {
 # The confirm flag lives at index 8; a well-formed business row therefore has >= 9 fields.
 _CONFIRM_INDEX = 8
 _MIN_ROW_FIELDS = 9
-
-# Default REST backfill page size (OKX/ccxt cap); pagination advances by ``since``.
-_BACKFILL_PAGE = 1000
-
-# 05-08 (RES-01/D-19/D-20) reconnect-supervisor tuning — mirrors the OKX order arm
-# (okx.py); named module constants documented [ASSUMED] and tunable from sandbox
-# behaviour (research A3). The native candle socket has NO reconnect today (a code-
-# verified gap): a drop kills the task silently. The supervisor reconnects a transient
-# drop with exponential backoff after a debounce (a blip does not pause, D-19) and
-# halts on the retry ceiling (D-20).
-_STREAM_RECONNECT_DEBOUNCE_SECONDS = 0.25    # A3 [ASSUMED] sub-second blip -> no pause
-_STREAM_RECONNECT_BACKOFF_BASE_SECONDS = 1.0  # A3 [ASSUMED] first backoff step
-_STREAM_RECONNECT_BACKOFF_CAP_SECONDS = 30.0  # A3 [ASSUMED] exponential backoff ceiling
-_STREAM_RECONNECT_RETRY_CEILING = 6           # A3 [ASSUMED] retries exhausted -> HALT (D-20)
 
 
 class OkxDataProvider:
@@ -179,10 +166,14 @@ class OkxDataProvider:
         # ceiling bounds the loop -> HALT on exhaustion (D-20).
         self._reconnect_attempts: dict[str, int] = {}
         self._streams_down: set[str] = set()
-        self._reconnect_debounce_s = _STREAM_RECONNECT_DEBOUNCE_SECONDS
-        self._reconnect_backoff_base_s = _STREAM_RECONNECT_BACKOFF_BASE_SECONDS
-        self._reconnect_backoff_cap_s = _STREAM_RECONNECT_BACKOFF_CAP_SECONDS
-        self._reconnect_ceiling = _STREAM_RECONNECT_RETRY_CEILING
+        # CFG-03 / D-08: the reconnect-supervisor tuning now lives in StreamSettings
+        # (config/stream.py). A default-constructed instance is the P1 seam — true
+        # composition-root injection + the shared StreamSupervisor land in P5.
+        _stream_cfg = StreamSettings()
+        self._reconnect_debounce_s = _stream_cfg.reconnect_debounce_s
+        self._reconnect_backoff_base_s = _stream_cfg.reconnect_backoff_base_s
+        self._reconnect_backoff_cap_s = _stream_cfg.reconnect_backoff_cap_s
+        self._reconnect_ceiling = _stream_cfg.reconnect_retry_ceiling
         # Injected seams (composition root, 05-08 Task 2): the 05-04 halt entrypoint
         # (fatal / exhausted -> HALTED + CRITICAL alert) and the pause/resume-on-
         # disconnect callbacks (D-19). None until wired at the live root.
@@ -633,7 +624,7 @@ class OkxDataProvider:
 
     def fetch_ohlcv_backfill(
         self, symbol: str, timeframe: str,
-        since: int | None = None, limit: int = _BACKFILL_PAGE,
+        since: int | None = None, limit: int | None = None,
     ) -> list[ClosedBar]:
         """Backfill completed OHLCV bars via REST ``fetch_ohlcv`` through the shared client.
 
@@ -642,8 +633,11 @@ class OkxDataProvider:
         and crosses every numeric cell via ``to_money(str(...))`` — NEVER a bulk float
         cast of the frame / ``Decimal(float)`` (CONN-05). Returns Decimal-edge
         ``ClosedBar`` dicts for the Phase-3 warmup path (replayed one-by-one through the
-        feed's ``update(bar)``, LX-09).
+        feed's ``update(bar)``, LX-09). ``limit`` defaults to the folded backfill page
+        size (CFG-03/D-08, ``FeedProviderSettings().backfill_page``) when not given.
         """
+        if limit is None:
+            limit = FeedProviderSettings().backfill_page
         symbol_okx = self._to_okx_symbol(symbol)
         # ccxt's unified ``fetch_ohlcv`` takes the UNIFIED timeframe (``"1d"``) and maps it
         # to OKX's ``"1D"`` itself — passing the OKX token here makes ccxt's
@@ -667,7 +661,7 @@ class OkxDataProvider:
 
     async def _fetch_ohlcv_backfill_async(
         self, symbol: str, timeframe: str,
-        since: int | None = None, limit: int = _BACKFILL_PAGE,
+        since: int | None = None, limit: int | None = None,
     ) -> list[ClosedBar]:
         """D-17 loop-native REST backfill: ``await`` ``client.fetch_ohlcv`` DIRECTLY on the loop.
 
@@ -679,7 +673,12 @@ class OkxDataProvider:
         That bridge blocks the loop thread on a future the same loop must resolve → self-deadlock
         (30s stall → livelock, RESEARCH Pitfall 4 / V17-15). This variant is the LOOP-triggered gap
         path only; the engine-thread ``warmup`` path keeps the synchronous ``call()``-based method.
+
+        ``limit`` defaults to the folded backfill page size (CFG-03/D-08,
+        ``FeedProviderSettings().backfill_page``) when not given.
         """
+        if limit is None:
+            limit = FeedProviderSettings().backfill_page
         symbol_okx = self._to_okx_symbol(symbol)
         client = self._connector.client
         raw: list[Any] = []

@@ -7,9 +7,19 @@ empty dict still yields documented defaults.
 """
 
 from enum import Enum
-from typing import Any, Dict, Optional
+from functools import cached_property
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from itrader.config.settings import Settings
+
+if TYPE_CHECKING:
+    # Import here only to type the ``sql`` cached_property. The concrete import runs
+    # lazily inside the property body so ``config/sql`` (and its transitive
+    # ``sqlalchemy`` dependency) stays OFF the backtest import graph — GATE-01
+    # (tests/unit/storage/test_import_quarantine.py). See D-05/D-06.
+    from itrader.config.sql import SqlSettings
 
 
 class Environment(str, Enum):
@@ -75,8 +85,10 @@ class MonitoringSettings(BaseModel):
 class SystemConfig(BaseModel):
     """Main system configuration."""
 
-    # Tolerate unknown keys from a YAML override (the old from_dict ignored extras).
-    model_config = ConfigDict(extra="ignore")
+    # D-09: reject unknown keys. The domain YAML that historically fed extras is
+    # orphaned/dead (no loader references it), so a stray key is now a config typo
+    # to catch loudly rather than silently absorb.
+    model_config = ConfigDict(extra="forbid")
 
     name: str = "iTrader System"
     version: str = "1.0.0"
@@ -91,14 +103,39 @@ class SystemConfig(BaseModel):
     performance: PerformanceSettings = Field(default_factory=PerformanceSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
 
+    # D-07: eager runtime env layer. Constructing Settings reads ITRADER_* env but
+    # builds NO SqlSettings (Settings carries no DB fields — the DB surface lives
+    # wholly on the lazy `sql` accessor below), so this stays import-safe.
+    runtime: Settings = Field(default_factory=Settings)
+
     enable_auto_restart: bool = False
     auto_restart_delay_seconds: int = 10
     enable_graceful_shutdown: bool = True
     shutdown_timeout_seconds: int = 30
 
+    @cached_property
+    def sql(self) -> "SqlSettings":
+        """Lazy SQL backend config (D-05/D-06) — NOT a pydantic field.
+
+        Constructed on FIRST access only; no ``SqlSettings`` is built at import or at
+        ``SystemConfig`` construction (the inertness lever this milestone leans on —
+        ``"sql" not in config.__dict__`` right after import). ``SqlSettings`` defaults
+        to the SQLite arm (no credentials required); when the env selects the Postgres
+        arm without a password/url its ``_require_pg_credentials`` validator raises
+        ``pydantic.ValidationError``. That raising body is intentionally NOT cached, so
+        it re-raises on each access rather than caching a half-built object.
+        """
+        from itrader.config.sql import SqlSettings
+
+        return SqlSettings()
+
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "SystemConfig":
-        """Build from a (possibly partial/empty) dict; missing keys take defaults."""
+        """Build from a (possibly partial/empty) dict; missing keys take defaults.
+
+        Under ``extra="forbid"`` (D-09) any UNKNOWN key raises ``pydantic.ValidationError``
+        rather than being silently ignored — the old tolerate-extras behaviour is gone.
+        """
         return cls.model_validate(data or {})
 
     @classmethod
