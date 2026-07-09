@@ -11,6 +11,7 @@ from ..core.enums import OrderStatus, MarketExecution
 from ..core.ids import OrderId, PortfolioId
 from .order_validator import EnhancedOrderValidator
 from .order_manager import OrderManager
+from ..events_handler.bus import EventBus
 from ..events_handler.events import SignalEvent, OrderEvent, OrderAckEvent, FillEvent, PortfolioUpdateEvent
 from .storage import OrderStorageFactory
 from ..universe import Universe
@@ -40,7 +41,7 @@ class OrderHandler:
 	- Position-aware operations (when portfolio_handler is available)
 	- Validation and state management
 	"""
-	def __init__(self, global_queue: "Queue[Any]", portfolio_handler: PortfolioReadModel,
+	def __init__(self, global_queue: "EventBus", portfolio_handler: PortfolioReadModel,
 	             order_storage: Optional[OrderStorage] = None,
 	             market_execution: "str | MarketExecution | None" = None,
 	             commission_estimator: Optional[CommissionEstimator] = None,

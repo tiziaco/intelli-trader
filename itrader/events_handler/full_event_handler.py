@@ -8,6 +8,7 @@ from itrader.screeners_handler.screeners_handler import ScreenersHandler
 from itrader.order_handler.order_handler import OrderHandler
 from itrader.portfolio_handler.portfolio_handler import PortfolioHandler
 from itrader.execution_handler.execution_handler import ExecutionHandler
+from itrader.events_handler.bus import EventBus
 from itrader.core.enums import ErrorSeverity, EventType
 
 from itrader.logger import get_itrader_logger
@@ -63,7 +64,7 @@ class EventHandler(object):
 		order_handler: OrderHandler,
 		execution_handler: ExecutionHandler,
 		bar_event_source: Callable[[Any], Any],
-		global_queue: "queue.Queue[Any]",
+		global_queue: "EventBus",
 	) -> None:
 		self.strategies_handler = strategies_handler
 		self.screeners_handler = screeners_handler

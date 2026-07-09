@@ -12,6 +12,7 @@ from itrader.strategy_handler.base import Strategy
 from itrader.strategy_handler.pair_base import PairStrategy
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage import SignalStorageFactory, SignalStore
+from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import (
 	BarEvent,
 	BarsLoaded,
@@ -38,7 +39,7 @@ class StrategiesHandler(object):
 
 	def __init__(
 		self,
-		global_queue: "Queue[Any]",
+		global_queue: "EventBus",
 		feed: BarFeed,
 		signal_store: "Optional[SignalStore]" = None,
 		allow_short_selling: bool = False,
@@ -74,7 +75,7 @@ class StrategiesHandler(object):
 			default ``max_leverage == 1`` this gives fully-collateralized shorts
 			(no leverage); levered shorts are a separate opt-in dial. Defaults off.
 		"""
-		self.global_queue: "Queue[Any]" = global_queue
+		self.global_queue: "EventBus" = global_queue
 		self.feed: BarFeed = feed
 		# CTX-02/D-02: the handler now OWNS its signal-store init from
 		# (environment, sql_engine), mirroring the PortfolioHandler template

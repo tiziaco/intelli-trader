@@ -29,6 +29,7 @@ from itrader.core.enums import (
 from itrader.core.ids import OrderId, PortfolioId, TransactionId, CorrelationId, StrategyId
 from itrader.order_handler.base import OrderStorage
 from itrader.order_handler.order import Order
+from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import OrderEvent
 from itrader.core.portfolio_read_model import PositionView
 from itrader.core.money import to_money, quantize
@@ -65,9 +66,9 @@ class PortfolioHandler:
     concurrently. Live cross-thread reads are a D-live design item.
     """
     
-    def __init__(self, global_queue: "Queue[Any]", config_dir: str = "settings",
+    def __init__(self, global_queue: "EventBus", config_dir: str = "settings",
                  environment: str = "backtest", backend: "Optional[Any]" = None) -> None:
-        self.global_queue: "Queue[Any]" = global_queue
+        self.global_queue: "EventBus" = global_queue
         self.current_time: Any = 0
 
         # D-07 (05.2-05): the durable portfolio-storage selector threaded down
