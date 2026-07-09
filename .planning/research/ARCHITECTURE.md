@@ -1,549 +1,330 @@
-# Architecture Research — v1.7 Live Trading Readiness
+# Architecture Research — v1.8 Live System Refactor Integration Map
 
-> ## ⚠ Superseded framing — read `phases/02-okx-connector/02-CONTEXT.md` first
->
-> The Phase-2 discussion (2026-07-01) revised the live architecture; this snapshot
-> predates it and still describes the **two-arm `LiveConnector`** model (the §2
-> `LiveConnector(Protocol)` code block, the §4 `PaperConnector` section, and the
-> parity-spine table below all reflect the OLD shape). **Superseded framings**
-> (everything else — reuse assets, matching-core reuse, pitfalls — remains valid):
-> - Connector is a **session/transport primitive**, not a two-arm venue object; the data/order/account arms are **domain adapters** (`OkxDataProvider` in `price_handler/providers/` / `OkxExchange` in `execution_handler/exchanges/` impl `AbstractExchange` / `VenueAccount`), **injected** with the session, never cross-domain-imported.
-> - The **`OkxExchange` adapter emits `FillEvent`** — the connector owns no operations and emits no domain events.
-> - Paper needs **no connector**: the paper execution adapter implements **`AbstractExchange`** (not `LiveConnector`), composing `MatchingEngine` + `apply_costs` + `SimulatedAccount`.
-> - `OkxSettings` reads **plain `OKX_API_*` (no env prefix)** — not `ITRADER_OKX_*`.
->
-> See design-doc LX-05/LX-06 revision notes and `02-CONTEXT.md` D-01..D-10.
+**Domain:** Brownfield decomposition of a 2,171-line `LiveTradingSystem` God object into a factory + shared `compose_engine` + `LiveRunner` + focused controllers, around an existing event-driven single-queue engine (Python 3.13).
+**Researched:** 2026-07-09
+**Confidence:** HIGH — every integration point below is traced against the real existing files (`compose.py`, `full_event_handler.py`, `backtest_runner.py`, `portfolio_handler.py`, `order_handler.py`, `storage/backend.py`). The design spec (`docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md`) locks the topology; this doc validates how it lands on the codebase.
 
-**Domain:** Live-trading integration onto an event-driven backtest engine (iTrader, paper-first OKX)
-**Researched:** 2026-06-30
-**Confidence:** HIGH (existing code mapped directly; locked design `2026-06-30-live-trading-milestone-design.md` LX-01..LX-15; one MEDIUM external grounding — OKX confirm-flag in ccxt.pro)
+**Two gates govern EVERY foundational seam:**
+- **ORACLE (LR-02):** the SMA_MACD backtest run stays byte-exact (`134 trades / final_equity 46189.87730727451`). Blocking for P1–P4 and P7's `UniverseWiring`.
+- **INERTNESS:** `tests/integration/test_okx_inertness.py` stays green — importing the backtest composition root pulls no `ccxt.pro`, no async connector, no Postgres `SqlSettings`.
 
-> Scope: how the NEW live components integrate WITHIN the locked decisions. The
-> existing event core, handlers, BarFeed ABC, MatchingEngine, and v1.6 store are
-> NOT re-researched — they are the integration surface. Every recommendation is
-> grounded in a real file/class. "New" vs "modified" is called out per component.
+Every seam is tagged `[ORACLE]` and/or `[INERT]` where it touches a gate.
 
 ---
 
-## Standard Architecture
+## Standard Architecture — target topology (LR-10)
 
-### Target system overview (paper path = the DoD)
+The v1.8 end-state mirrors the already-proven backtest 4-layer split (`SystemSpec → factory → shared compose_engine → Runner → thin facade`) onto the live path:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  FastAPI app layer (future; user_id -> portfolio_id mapping)          │
-│   reads STATUS/RESULTS from Postgres; writes COMMANDS to a channel    │
-└───────────────┬──────────────────────────────────────────────────────┘
-                │ Postgres LISTEN/NOTIFY (command + status channel)
-                ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  LiveTradingSystem worker process  (1 worker : 1 portfolio : 1 acct)  │
-│                                                                        │
-│   ┌────────────────────────┐      enqueue (thread-safe put)           │
-│   │ Connector thread        │ ───────────────────────────────┐        │
-│   │  (own asyncio loop)      │   BarEvent / FillEvent /        │        │
-│   │  OkxConnector|Paper      │   balance+position updates      ▼        │
-│   │  watch_ohlcv / fills     │                         ┌──────────────┐│
-│   └────────────────────────┘                          │ global_queue ││
-│                                                        │ (queue.Queue)││
-│   ┌─────────────────────────────────────────┐         └──────┬───────┘│
-│   │ ENGINE THREAD (single writer, D-19)      │ ◄──────────────┘        │
-│   │  EventHandler._routes dispatch           │  get()+_dispatch        │
-│   │   BAR -> LiveBarFeed.window / strategies │                         │
-│   │        -> PaperConnector.on_bar (fills)  │                         │
-│   │   SIGNAL -> OrderHandler                  │                         │
-│   │   FILL  -> PortfolioHandler / OrderHandler│                        │
-│   │  Portfolio -> Account (balance/margin)   │                         │
-│   └─────────────────────────────────────────┘                         │
-│                       │ write-through (v1.6 operational store)         │
-└───────────────────────┼───────────────────────────────────────────────┘
-                        ▼
-              ┌────────────────────────┐
-              │ Postgres (system of    │  orders / portfolio_state /
-              │ record, v1.6)          │  signals + command/status
-              └────────────────────────┘
+│  COMPOSITION ROOT (mode-specific factories)                            │
+│  ┌────────────────────────┐        ┌──────────────────────────────┐   │
+│  │ build_backtest_system  │        │ build_live_system   [NEW P7]  │   │
+│  │ (exists)               │        │ reads SystemConfig; builds    │   │
+│  │ env='backtest'         │        │ ONE sql_engine; resolves venue│   │
+│  │ sql_engine=None        │        │ plugin(s); builds stores      │   │
+│  │ bus=FifoEventBus       │        │ bus=PriorityEventBus          │   │
+│  └───────────┬────────────┘        └───────────────┬──────────────┘   │
+│              │      builds EngineContext(bus,config,env,sql_engine)    │
+│              └───────────────┬───────────────────────┘                 │
+├──────────────────────────────┼─────────────────────────────────────────┤
+│  SHARED SEAM                  ▼                                         │
+│  compose_engine(ctx, spec)  [MODIFIED P2/P3 — signature change]        │
+│  builds the mode-agnostic component graph; handlers own their storage  │
+│  → returns Engine holder                                               │
+├──────────────────────────────┬─────────────────────────────────────────┤
+│  RUN DRIVERS                  │                                         │
+│  ┌────────────────────────┐   │   ┌──────────────────────────────┐     │
+│  │ BacktestRunner (exists)│   │   │ LiveRunner        [NEW P7]    │     │
+│  │ sync fail-fast for-loop│   │   │ drain loop bus.get(timeout)  │     │
+│  │ bus.get_nowait()       │   │   │ + injected ErrorPolicy (P9)  │     │
+│  └────────────────────────┘   │   │ + WorkerSupervisor           │     │
+│                               │   └──────────────────────────────┘     │
+├──────────────────────────────┼─────────────────────────────────────────┤
+│  FACADE                       │                                         │
+│  TradingSystem (thin, exists) │   LiveTradingSystem (SHRUNK ~200 lines) │
+│                               │   lifecycle + status latch delegation   │
+├──────────────────────────────┴─────────────────────────────────────────┤
+│  ONE EventHandler (single, data-driven — NO subclass, LR-16)           │
+│  routes = base literal + LiveRouteRegistrar additions [MODIFIED P7]     │
+│  backtest → base routes only (explicit-empty live slots = inertness)   │
+├─────────────────────────────────────────────────────────────────────────┤
+│  LIVE-ONLY CONTROLLERS [NEW P6-P12]                                     │
+│  VenueRegistry+bundle · SafetyController · StreamRecoveryHandler ·       │
+│  ReconciliationCoordinator · SessionInitializer · ErrorHandler ·        │
+│  UniverseHandler(proper init) · new durable stores                      │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-The whole live machinery is **inert on the backtest hot path**: backtest keeps
-`TimeGenerator` -> `BacktestBarFeed.generate_bar_event` -> `SimulatedExchange`,
-and `Portfolio` -> `SimulatedAccount` computes the same numbers the oracle froze.
-
-### The parity spine (left column shared by paper)
-
-| World | Time source | Account | Execution |
-|---|---|---|---|
-| Backtest | `TimeGenerator` (pinned grid) | `SimulatedAccount` (computes) | `SimulatedExchange` (`MatchingEngine`) |
-| Paper (live feed) | closed-bar arrival | `SimulatedAccount` (computes) | `PaperConnector` (reuses `MatchingEngine`) |
-| Live real | closed-bar arrival | `VenueAccount` (caches+reconciles) | `OkxConnector` |
-
-Paper shares the backtest's **Account** computation — that is the mechanism that
-makes the paper-parity gate (LX-11) hold.
+**The two loops + the deleted third mechanism (§4c):** the connector asyncio loop (own daemon thread, `ccxt.pro` streaming) and the engine thread (`LiveRunner` drain) both stay; **the queue is the bulkhead**. The `threading.Event` flag side-channel (`_pending_stream_resume`, `_pending_connector_halt`, `_maybe_*` pollers, the `queue.Empty`-branch polling) is **deleted** — replaced by CONTROL-plane events that wake `bus.get(timeout)` naturally.
 
 ---
 
-## 1. Account abstraction extraction (Phase 1) — concrete layering
+## Component Responsibilities — NEW vs MODIFIED vs UNCHANGED
 
-### Where balance/margin truth lives TODAY (the smell)
+| Component | Status | Owns / Change | Gate | Phase |
+|-----------|--------|---------------|------|-------|
+| `EventBus` Protocol + `FifoEventBus` / `PriorityEventBus` (`events_handler/bus.py`) | **NEW** | tiered `.put()` routing; drop-in for `queue.Queue` surface | `[INERT]` Fifo pulls nothing heavy | P2 |
+| `EngineContext` (`bus, config, environment, sql_engine`) | **NEW** | frozen infra carrier, threaded once into `compose_engine` | `[INERT]` `sql_engine=None` on backtest | P3 |
+| `compose_engine` | **MODIFIED** | signature `(ctx, spec)`; stops creating the queue; reads `ctx.bus`; handlers own storage; reads `.storage` back | `[ORACLE]` backtest graph byte-identical | P2, P3 |
+| `Engine` holder | **MODIFIED** | `global_queue` field → `bus` reference | `[ORACLE]` | P2/P3 |
+| `EventHandler` | **MODIFIED** | ctor takes bus; routes = base literal + injected `LiveRouteRegistrar` additions; `ErrorPolicy` injected (P9) | `[ORACLE]` backtest base routes only | P2/P7/P9 |
+| `BacktestRunner` | **MODIFIED** | `engine.global_queue.put` → `engine.bus.put`; `UniverseWiring` call extracted | `[ORACLE]` | P3, P7 |
+| `OrderHandler` / `StrategiesHandler` | **MODIFIED** | adopt `PortfolioHandler`'s `environment`/`sql_engine`/`storage=` shape; expose `.storage` read-back | `[ORACLE]` in-memory same-instance | P3 |
+| `SqlBackend → SqlEngine` (`storage/backend.py → engine.py`) | **MODIFIED** | mechanical rename; migrations → project root | `[INERT]` lazy | P4 |
+| `SystemStore` / `VenueStore` / `StrategyRegistryStore` | **NEW** | durable KV + cardinality-N tables; `HaltRecordStore` template | `[INERT]` live-only, in-memory fallback | P5 |
+| `ExecutionVenueRegistry` + `DataProviderRegistry` + `VenuePlugin`/`VenueBundle` | **NEW** | 4-collaborator venue bundle; kills every `if self.exchange==` | `[INERT]` lazy-import concretions in `build_bundle` | P6 |
+| `LiveDataProvider` Protocol + `BaseLiveDataProvider` | **NEW** | formal provider contract; no-op optional seams | — | P6 |
+| shared `StreamSupervisor` | **NEW** | collapses triplicated `_run_stream_supervisor` | — | P6 |
+| `LiveRunner` | **NEW** | replaces `_event_processing_loop`; drain + workers + ErrorPolicy | — | P7 |
+| `build_live_system` factory | **NEW** | live composition root | `[INERT]` all SQL/ccxt imports lazy here | P7 |
+| `SessionInitializer` + shared `UniverseWiring` | **NEW (extract)** | universe/route wiring; `UniverseWiring` shared with backtest | `[ORACLE]` pure code-motion | P7 |
+| `LiveRouteRegistrar` | **NEW** | declarative live route composition (no subclass, no runtime mutation) | `[ORACLE]` backtest gets none | P7 |
+| `UniverseHandler` | **MODIFIED** | first-class ctor at live root; zero OKX coupling via `set_venue_metadata` | `[INERT]` routes explicit-empty on backtest | P7 |
+| `StrategyWarmupConsumer` (rehomed `_LiveWarmupConsumer`) | **MODIFIED (rehome)** | `price_handler/feed/cache_registration.py`; sized `max(warmup)` | — | P7 |
+| `SafetyController` | **NEW (extract)** | status latch, halt/pause, deferred-protective queue, dispatch gate | — | P8 |
+| `StreamRecoveryHandler` | **NEW (extract)** | reconnect resume I/O on engine thread | — | P8 |
+| `ReconciliationCoordinator` | **NEW (extract)** | rehydrate → reconcile → baseline guard; iterates portfolios | — | P8 |
+| CONTROL routes (`STREAM_STATE`/`CONNECTOR_FATAL`/`CONFIG_UPDATE`) | **NEW** | flag machinery → events | — | P8/P10 |
+| `ErrorPolicy` + `ErrorHandler` + CF-1 circuit breaker | **NEW (extract+add)** | injected failure policy; formalized ERROR consumer; aggregate tripwire | `[ORACLE]` backtest fail-fast identical | P9 |
 
-| Concern | Current home | File:symbol |
-|---|---|---|
-| Cash balance (`_balance`), reservations, locked margin | `CashManager` (owned by `Portfolio`) | `cash/cash_manager.py` |
-| `Portfolio.cash` read | property -> `cash_manager.balance` | `portfolio.py:199` |
-| Spot settlement cash effects | `Portfolio._process_transaction_spot` | `portfolio.py:308` |
-| Margin lock-and-settle cash effects | `Portfolio._process_transaction_margin` | `portfolio.py:391` |
-| Short borrow carry -> cash | `Portfolio._accrue_short_carry` | `portfolio.py:730` |
-| `available_cash` / `reserve` / `release` | `PortfolioHandler` (delegating to CashManager) | `portfolio_handler.py:260/276/282` |
-| `maintenance_margin` / `margin_ratio` | **`PortfolioHandler`** (mis-housed) | `portfolio_handler.py:339/374` |
-| Isolated-liq math (`_isolated_liq_price`, `_is_breached`, `_liquidation_penalty`, `_liq_inputs`) | **`PortfolioHandler`** (mis-housed) | `portfolio_handler.py:399–460` |
-| Liquidation engine (`_run_liquidation_pass`, `_collect_breaches_over_prices`, `_liquidate_position`) | **`PortfolioHandler`** (mixes truth + queue I/O) | `portfolio_handler.py:462–651` |
-
-### Target layering
-
-```
-Account (ABC)                      owns BALANCE / MARGIN TRUTH + decisions
-├── CashAccount    → SimulatedCashAccount    | VenueCashAccount   (interface-only P1)
-└── MarginAccount  → SimulatedMarginAccount  | VenueMarginAccount (interface-only P1)
-       (N+2 computed liq model)                (caches venue balance/margin)
-```
-
-- **`Account` (ABC)** — the truth surface that the `PortfolioReadModel` Protocol
-  already names: `balance`/`available_cash`, `reserve`/`release`, `maintenance_margin`,
-  `margin_ratio`. NEW abstraction, but the *Protocol contract already exists*
-  (`core/portfolio_read_model.py`) — Phase 1 moves the implementation behind it,
-  the seam stays. This is the single most important integration fact: **the order
-  domain already reads through `PortfolioReadModel`, so re-homing the truth does
-  not ripple into `OrderManager`/validator** (mypy-enforced structural conformance).
-- **`SimulatedCashAccount`** ≈ today's `CashManager` verbatim (`_balance`,
-  reservations, locked-margin, `apply_fill_cash_flow`, `assert_funds_invariant`,
-  `assert_lock_fits_buying_power`, `reserve_cash`/`release_reservation`). The
-  cash-vs-margin axis maps cleanly onto the existing
-  `_process_transaction_spot` (CashAccount) vs `_process_transaction_margin`
-  (MarginAccount) split — those two methods are the seam line.
-- **`SimulatedMarginAccount`** = CashAccount + the lock-and-settle path
-  (`lock_margin`/`release_margin`) + the **margin math** moved out of
-  `PortfolioHandler` (`maintenance_margin`, `margin_ratio`, `_isolated_liq_price`,
-  `_is_breached`, `_liquidation_penalty`, `_liq_inputs`).
-- **`Venue*` leaves: interface-only in Phase 1.** They cache the connector's
-  balance/margin/position streams (Phase 5 impl).
-
-### `Portfolio.cash` -> `Portfolio.account.cash` without disturbing the oracle
-
-- `Portfolio` gains an injected `self.account` exactly as it injects four managers
-  in `_init_managers` (`portfolio.py:83`). `Portfolio.cash` (`portfolio.py:199`)
-  changes from `self.cash_manager.balance` to `self.account.balance`. The cash
-  SETTER is already deleted (`portfolio.py:208`), so there is no write seam to chase.
-- **Byte-exact discipline = pure code-motion** (the v1.2 MOD-01 OrderManager-
-  decomposition playbook). `_process_transaction_spot` is the documented
-  "byte-exact site #2" (`portfolio.py:309`) — operand-for-operand identical
-  Decimal ops, in order. The extraction must preserve operand order and the
-  `apply_fill_cash_flow` full-precision (no-quantize) contract. Gate: SMA_MACD
-  `134 / 46189.87730727451`, determinism double-run, `mypy --strict`.
-
-### The queue-vs-truth seam for liquidation (the one non-trivial split)
-
-`_liquidate_position` (`portfolio_handler.py:462`) does TWO things: (1) computes
-liq price/penalty (truth) and (2) **mints an `Order`, writes `order_storage`, and
-`global_queue.put(FillEvent)`** (I/O). Convention forbids a manager/Account from
-holding the queue. **Recommended split:**
-
-- `SimulatedMarginAccount` owns the **decision**: "is this position breached, and
-  at what liq price/penalty?" (`_isolated_liq_price`, `_is_breached`,
-  `_liquidation_penalty`, `maintenance_margin`).
-- `PortfolioHandler` keeps the **emission**: `_run_liquidation_pass` stays as the
-  queue-owning orchestrator that asks the Account for breaches and mints the
-  forced-close `FillEvent` + `order_storage` write.
-
-This keeps the queue-only / no-queue-in-manager convention intact and is
-oracle-dark (default-off: zero breaches on the spot golden path), so it moves
-safely.
-
-### Positions stay in Portfolio — seam confirmed
-
-`PositionManager` stays on `Portfolio` (`portfolio.py:96`). `maintenance_margin`
-needs positions + `Universe` + current price; under **LX-04 (1 account : 1
-portfolio)** Account and Portfolio share scope, so `maintenance_margin` is a
-**computed read-model that composes Account (locked margin) + Portfolio
-(positions) + Universe** — no ownership conflict. Confirmed: do NOT relocate
-positions in Phase 1.
-
-### `Portfolio.user_id` strip (paired Phase-1 cleanup)
-
-`user_id` is set in `Portfolio.__init__` (`portfolio.py:52`), passed by
-`PortfolioHandler.add_portfolio(user_id, ...)` (`portfolio_handler.py:152`), and
-surfaced in `to_dict` (`portfolio.py:851`). Multi-tenancy is app-layer (FastAPI
-maps `user_id -> portfolio_id`); it must NOT relocate onto `Account`. This is a
-constructor-signature ripple that touches golden-master wiring -> re-confirm
-byte-exact.
+**Deleted:** `_OkxPrecisionResolver`, `_precision_to_scale`, `_link_venue_account_to_portfolios` (+ its `RuntimeError(>1)` guard), `print_status`, `get_statistics`, the flag side-channel methods, `run_paper_replay` (→ `tests/`), `_PAPER_*`/`_OKX_*` module constants.
 
 ---
 
-## 2. LiveConnector interface (ours, over ccxt.pro — LX-05)
+## Recommended structure — new & relocated files
 
-### Shape (NEW abstraction; shaped on OKX reality)
+```
+itrader/
+├── events_handler/
+│   ├── bus.py                          # NEW P2 — EventBus Protocol + Fifo/Priority
+│   └── full_event_handler.py           # MODIFIED P2/P7/P9 — bus ctor, injected routes+policy
+├── trading_system/
+│   ├── compose.py                      # MODIFIED P2/P3 — compose_engine(ctx, spec)
+│   ├── engine_context.py               # NEW P3 — EngineContext frozen dataclass
+│   ├── build_live_system.py            # NEW P7 — live factory / composition root
+│   ├── live_runner.py                  # NEW P7 — LiveRunner drain
+│   ├── live_trading_system.py          # SHRUNK P7 — thin facade ~200 lines
+│   ├── session_initializer.py          # NEW P7 — SessionInitializer
+│   ├── universe_wiring.py              # NEW P7 — shared UniverseWiring [ORACLE]
+│   ├── live_route_registrar.py         # NEW P7 — declarative live routes
+│   ├── safety_controller.py            # NEW P8
+│   ├── stream_recovery_handler.py      # NEW P8
+│   ├── reconciliation_coordinator.py   # NEW P8
+│   └── error_policy.py / error_handler.py  # NEW P9
+├── execution_handler/
+│   ├── venue/registry.py, plugin.py, bundle.py, lifecycle.py  # NEW P6
+│   └── stream_supervisor.py            # NEW P6 — shared
+├── price_handler/
+│   ├── providers/base_live_provider.py # NEW P6 — LiveDataProvider Protocol
+│   └── feed/cache_registration.py      # MODIFIED P7 — StrategyWarmupConsumer
+└── storage/
+    ├── engine.py                       # RENAMED P4 (was backend.py)
+    ├── system_store.py, venue_store.py, strategy_registry_store.py  # NEW P5
+    └── (migrations moved OUT →) <repo-root>/migrations/            # RELOCATED P4
+```
+
+**Structure rationale:** live-only modules live in their handler's package but are **never re-exported from a backtest-path `__init__` barrel** — that is the mechanical rule that keeps the inertness gate green. `build_live_system` is the single place lazy SQL/ccxt imports are allowed.
+
+---
+
+## Architectural Patterns — the integration seams
+
+### Pattern 1: EventBus as a drop-in `queue.Queue` surface `[ORACLE][INERT]`
+
+**What:** A small `EventBus` Protocol (`put`, `get(timeout)`, `get_nowait`, `qsize`, `empty`, `depth_by_tier`). `FifoEventBus` wraps `queue.Queue`; `PriorityEventBus` wraps `queue.PriorityQueue` keyed `(tier, seq, event)`.
+
+**Why the `.put()` call sites don't change (the load-bearing claim):** handlers receive the bus **in the same constructor slot they receive `global_queue` today** and keep calling `self.global_queue.put(event)`. The bus is API-compatible with `queue.Queue.put`. Tier assignment happens **inside** `PriorityEventBus.put` by consulting a declarative `_CONTROL_EVENT_TYPES` frozenset — no call-site edits. The monotonic `seq` (`itertools.count()`) guarantees the tuple comparison never falls through to the (non-orderable, frozen) event and preserves strict FIFO within a tier.
+
+**Why zero oracle risk:** backtest injects `FifoEventBus`; its `get_nowait()` re-raises `queue.Empty`, so `EventHandler.process_events()` (lines 125-130, the `get_nowait()`+`queue.Empty`→`break` drain) is **unchanged**. The priority bus is only ever constructed by `build_live_system` and never touches `BacktestRunner`/`process_events()`.
+
+**Backtest vs live drain divergence:** backtest keeps `process_events()` → `bus.get_nowait()` (drain-to-empty). Live's `LiveRunner` uses `bus.get(timeout)` (blocking, wakes on CONTROL events). Same bus Protocol, two consumers.
+
+### Pattern 2: EngineContext threaded once (LR-14) `[INERT]`
+
+**What:** `@dataclass(frozen=True) EngineContext(bus, config: RuntimeConfig, environment: str, sql_engine: Optional[SqlEngine])`. Infra-only. `compose_engine(ctx, spec)` hands each handler only what it needs.
+
+**Signature ripple (traced concretely against current `compose.py`):** today `compose_engine` is keyword-only over `order_storage, signal_store, csv_paths, start_date, end_date, timeframe, exchange_config, order_config, results_store` and creates `global_queue = queue.Queue()` internally (line 164). After P3:
+- `queue.Queue()` creation is **deleted** — `compose_engine` reads `ctx.bus`.
+- `order_storage`/`signal_store` params **removed** — handlers build their own from `ctx.environment`/`ctx.sql_engine` (Pattern 3); `compose_engine` reads the concrete back off `.storage`.
+- `csv_paths`/`start_date`/`end_date`/`timeframe`/`exchange_config`/`order_config`/`results_store` **move into `spec`** (`SystemSpec` already exists and is mode-agnostic).
+- The `Engine` holder's `global_queue` field → `bus`.
+
+**Byte-exactness contract:** backtest factory builds `EngineContext(bus=FifoEventBus(queue.Queue()), config=<defaults>, environment='backtest', sql_engine=None)`. The wiring body of `compose_engine` (lines 169-246: clock → store → feed → screeners → portfolio → execution → commission estimator → strategies → order → `set_order_storage` → time_generator → EventHandler) stays in the exact same order → identical graph → byte-exact.
+
+### Pattern 3: Handler-owns-storage-init (LR-13) `[ORACLE]`
+
+**What:** `OrderHandler`/`StrategiesHandler` adopt the shape `PortfolioHandler` already ships (`portfolio_handler.py:68-69`: `environment='backtest', backend=None` → `PortfolioStateStorageFactory.create(environment=..., backend=...)`):
 
 ```python
-class LiveConnector(Protocol):   # mirrors AbstractExchange's role for live
-    # --- data arm (feeds Phase 3 LiveBarFeed) ---
-    async def watch_ohlcv(self, symbol, timeframe) -> AsyncIterator[ClosedBar]: ...
-    async def fetch_ohlcv(self, symbol, timeframe, limit) -> list[Bar]:  # REST backfill (LX-09)
-    # --- order arm (exercised in Phase 5 sandbox) ---
-    async def submit(self, order) -> Ack: ...
-    async def cancel(self, order_id) -> Ack: ...
-    async def watch_fills(self) -> AsyncIterator[Fill]: ...
-    # --- account arm (feeds Phase 5 VenueAccount) ---
-    async def fetch_balances(self) -> Balances: ...
-    async def watch_balances(self) -> AsyncIterator[Balances]: ...
-    async def fetch_positions(self) -> Positions: ...
+OrderHandler(..., *, environment='backtest', sql_engine=None, storage=None)
+    → self.storage = storage or OrderStorageFactory.create(environment, backend=sql_engine)
 ```
 
-- `OkxConnector` implements it with **ccxt.pro by default + a native OKX escape
-  hatch** behind the interface (LX-05). A single `sandbox: bool` routes BOTH
-  ccxt (`set_sandbox_mode`) and native calls (`x-simulated-trading` header) to
-  OKX demo — no split-brain.
-- Reuse plumbing from existing `price_handler/providers/ccxt_provider.py` and
-  `binance_stream.py` (those are read-only providers; the connector is the
-  live-feed + order arm).
+The factory already exists with exactly this signature: `OrderStorageFactory.create(environment: str, backend: Optional[SqlBackend]=None)` (`storage/storage_factory.py:24-25`).
 
-### Async loop -> synchronous `global_queue` (the determinism boundary)
+**The read-back seam (byte-exact-critical):** currently `compose_engine` receives `order_storage` and injects the **same instance** into both `OrderHandler` and `portfolio_handler.set_order_storage(order_storage)` (line 234). After P3, `OrderHandler` builds it internally (via `OrderManager`, which owns storage per D-18 — the handler retains no ref). So P3 must add a `.storage` read-back property on `OrderHandler` returning the **actual instance `OrderManager` holds**, and `compose_engine` calls `portfolio_handler.set_order_storage(order_handler.storage)`. Backtest env→`InMemoryOrderStorage`, same instance both places → byte-exact. **Flag:** if the read-back returns a copy or a different instance, the BAR-route liquidation forced-close (LIQ-03) writes to the wrong mirror — silent divergence.
 
-This boundary already exists and is documented:
+### Pattern 4: LiveRouteRegistrar — routes composed at construction, not mutated (LR-16) `[ORACLE][INERT]`
 
-- `SimulatedExchange` docstring: *"queue.Queue is the thread boundary — other
-  threads only put events"* (D-19, `simulated.py:44`). `Portfolio`/`PortfolioHandler`
-  carry the same single-writer contract.
-- `LiveTradingSystem._event_processing_loop` already drains on a daemon thread and
-  dispatches via `event_handler._dispatch(event)` (`live_trading_system.py:365`).
+**What:** The single `EventHandler` already carries explicit-empty live slots in its routes literal (`full_event_handler.py:105-111`): `SCREENER`, `UPDATE`, `UNIVERSE_UPDATE`, `UNIVERSE_POLL`, `STRATEGY_COMMAND`, `BARS_LOADED`, `BARS_LOAD_FAILED` are all `[]`. Backtest keeps them empty (proven inert by `test_okx_inertness`). Live composes consumers **into** these lists + adds the NEW CONTROL routes.
 
-**Integration rule:** the connector runs its **own asyncio loop in its own
-thread**; on every venue message it translates to a frozen domain event and calls
-`global_queue.put(...)` — a thread-safe handoff. It NEVER mutates engine state
-directly. All state mutation stays on the single engine thread (the existing D-19
-single-writer contract). Therefore:
+**Integration mechanism (no subclass, no runtime mutation):** `EventHandler.__init__` gains an optional `extra_routes: dict[EventType, list[Callable]] | None = None` merged into the base literal at construction. `LiveRouteRegistrar` builds the live additions; `build_live_system` passes them in. Backtest passes `None` → base routes only. This modifies `EventHandler.__init__` — **`[ORACLE]`: the base literal must be byte-identical when `extra_routes` is None.**
 
-- **Determinism of the backtest path is untouched** — the async bridge does not
-  exist on the backtest path at all (inert).
-- Live runs are inherently wall-clock-nondeterministic, but the engine-thread
-  *processing* is still a serialized FIFO drain, so per-event handler logic stays
-  reproducible given the same event sequence. The async boundary is "bottled at
-  the connector edge" (sketch §4 Phase 2).
-- **Event `time` must be the venue bar/fill business time, never wall clock**
-  (the bar-timing contract + the determinism convention). The connector stamps
-  domain events from venue timestamps.
+**New EventType members required in P2** (so `PriorityEventBus._CONTROL_EVENT_TYPES` can reference them): `STREAM_STATE`, `CONNECTOR_FATAL`, `CONFIG_UPDATE` are **new** in `core/enums/event.py`; `STRATEGY_COMMAND`, `BARS_LOADED`, `BARS_LOAD_FAILED` already exist. `_dispatch` raises `NotImplementedError` on unrouted types, but backtest never *emits* the CONTROL types, so no backtest route is strictly required — adding explicit-empty entries (matching the existing pattern) is the safer, convention-consistent choice.
 
----
+### Pattern 5: Shared UniverseWiring extraction (§13a) `[ORACLE]` — the highest-risk seam
 
-## 3. LiveBarFeed as a BarFeed impl (Phase 3, LX-07)
+**What:** `BacktestRunner._initialise_backtest_session` (`backtest_runner.py:50-131`) contains the ordered block: `derive_membership → derive_instruments → WR-03 desync assert → Universe(...) → set on exchange/order/portfolio → feed.bind`, then **backtest-only** ping-grid `reduce(pd.Index.union)` + `time_generator.set_dates` + per-strategy `feed.precompute`.
 
-### NEW concrete class; same ABC the engine already consumes
+**Extraction:** the common prefix (`derive_membership → … → feed.bind`, lines 64-113) moves into a shared `UniverseWiring` helper both `BacktestRunner` and the live `SessionInitializer` call. The ping-grid/precompute tail (lines 119-131) stays backtest-only.
 
-`LiveBarFeed(BarFeed)` implements the four abstract methods (`feed/base.py:75`):
-`current_bars`, `window`, `megaframe`, `newest_bar`. The engine above the feed is
-unchanged — strategies, screeners, execution all speak the same contract.
+**Why it's the riskiest oracle seam:** this is a **pure code-motion** refactor of the exact block that builds the `Universe` value object and injects it into three domains in a fixed order (`exchange.set_universe → order_handler.set_universe → portfolio_handler.set_universe → feed.bind`). It is the direct analog of the v1.2 MOD-01 order-manager decomposition (pure code-motion, byte-for-byte). The WR-03 desync assert (lines 84-90) and the injection ordering must move as **one intact unit**. Any reorder changes the graph → oracle breaks. **Recommend: byte-exact diff gate on this extraction specifically; no re-baseline permitted (LR-02 default target holds).**
 
-| Concern | BacktestBarFeed (existing) | LiveBarFeed (new) |
+### Pattern 6: Connector flag side-channel → CONTROL events (§4b/§11c)
+
+**What:** The connector asyncio loop does only venue I/O + `bus.put()`; it never touches handler state. Stream/fatal signals that were `threading.Event` flags become CONTROL events on the priority bus:
+
+| CONTROL event | Route → | Runs on |
 |---|---|---|
-| Backing store | whole frame precomputed; monotonic int64 cursor | **bounded `deque(maxlen=cap)` per `(symbol, timeframe)`** |
-| Capacity | holds full history | `cap = cache_capacity()` — the SAME `cache_registration.derive` over registered consumers (`feed/base.py:118`), i.e. `max(lookback)` (warmup=100 for SMA_MACD) |
-| `window(asof, max_window)` | `iloc` slice of cached frame | trailing N from the ring |
-| `newest_bar` | last `current_bars` walk writes `_newest_bars` | set on each `update(bar)` |
-| Time source | `TimeGenerator` pinned grid | **closed-bar arrival** |
+| `StreamStateEvent(down)` | `SafetyController.pause_submission` | engine thread |
+| `StreamStateEvent(up)` | `StreamRecoveryHandler.on_reconnect` | engine thread |
+| `ConnectorFatalEvent(reason)` | `SafetyController.halt(reason)` | engine thread |
 
-### Replacing TimeGenerator's role
-
-- Backtest: `TimeGenerator` yields `TimeEvent`s; the TIME route calls
-  `feed.generate_bar_event(time_event)` -> `BarEvent` (`bar_feed.py:448`).
-- Live: there is no pinned grid. The connector's closed bar drives
-  `LiveBarFeed.update(bar)` which appends to the ring and **emits the `BarEvent`
-  directly**. Downstream BAR-route cycle (portfolio mark -> matching -> strategies)
-  is unchanged.
-- **Integration gap to flag:** `LiveTradingSystem` records portfolio metrics on
-  `EventType.TIME` (`live_trading_system.py:374`). Live has no `TimeEvent` unless
-  the feed/connector synthesizes one per closed bar. Decide at plan time: emit a
-  paired `TimeEvent` on bar close (cleanest — keeps the TIME route semantics), or
-  move metric recording to the BAR route. Recommend: synthesize a `TimeEvent` on
-  closed-bar arrival so the existing `_routes` ordering (TIME before BAR) holds.
-
-### Bar-close detection (LX-08) — the native escape hatch earns its keep
-
-OKX's native WS kline channel carries a `confirm` field (`"0"` forming, `"1"`
-closed). **ccxt.pro `watchOHLCV` does not reliably surface a closed/confirm flag**
-across exchanges (it is exchange-specific and not part of the unified return)
-([ccxt #21885](https://github.com/ccxt/ccxt/issues/21885)). This is exactly the
-LX-05 native-escape-hatch case: drive "closed" off OKX's confirm flag via the
-native path, never wall-clock inference. Emit a `BarEvent` only on a completed bar
-(7-rule contract: completed bars only, no forming bucket).
-
-### Warmup/backfill through the IDENTICAL update path (LX-09)
-
-At live-start: REST `fetch_ohlcv` the last K bars, then **replay them one-by-one
-through the same `update(bar)` path** live streaming uses. **No bulk
-`warmup_from(series)` fast-path** — a second state-building path diverges and
-re-opens the parity audit. Stateful indicators (v1.5) self-buffer through the same
-per-bar push, so this is what keeps paper-parity intact.
-
-### Monotonic-forward-only delivery (LX-10)
-
-Both feeds are monotonic by construction (the BacktestBarFeed cursor is
-forward-only with a safe-rebuild on a non-monotonic cutoff, `bar_feed.py:639`).
-LiveBarFeed enforces: gap -> REST-backfill and replay through `update`; duplicate
--> drop; out-of-order/stale -> reject (stateful indicators have no rewind);
-reconnect -> gap-fill the interim.
+**Single-writer contract (LR-12):** all state mutation on the one engine thread; blocking venue I/O triggered by a stream event (resume snapshot, reconcile, durable halt write) runs on the **engine thread inside the CONTROL handler**, never on the connector loop. CONTROL preemption means a `pause_submission` jumps ahead of queued market data — the safety-latency reason for the two-tier bus.
 
 ---
 
-## 4. PaperConnector (Phase 4 — the DoD)
+## Data Flow
 
-### NEW class composing the pure matching core (LX-06), NOT the whole exchange
-
-`SimulatedExchange` (`simulated.py:36`) composes `MatchingEngine` +
-`fee_model`/`slippage_model` and adds I/O (`_emit_fill`, `_emit_rejection`,
-admission, connection telemetry). `PaperConnector` composes the **same pure
-pieces** and satisfies `LiveConnector`:
+### Backtest path (unchanged behavior, new plumbing)
 
 ```
-PaperConnector(LiveConnector)
-├── MatchingEngine            (reused verbatim — pure, I/O-free: submit / on_bar -> decisions)
-├── fee_model + slippage_model (reused)
-└── SimulatedAccount          (Phase 1 — provides balances/positions = backtest math)
+BacktestRunner._run_backtest loop (byte-exact ordering, Trap 4):
+  clock.set_time → bus.put(TimeEvent) → EventHandler.process_events()
+    → bus.get_nowait() drain → _dispatch per base route
+  → portfolio.record_metrics(time)  [DIRECT call, never a reroute]
+  → on_tick hook
 ```
+Only change: `engine.global_queue.put` → `engine.bus.put` (FifoEventBus, identical FIFO).
 
-- `submit`/`cancel` -> `matching_engine.submit`/`cancel`.
-- On each `LiveBarFeed` **closed** bar -> `matching_engine.on_bar(bar)` -> apply
-  fee/slippage -> emit `FillEvent` (bar-based fills only, LX-13).
-- `fetch_balances`/`fetch_positions` -> read `SimulatedAccount` locally.
-
-### Two-adapter-over-one-matching-core symmetry + a refactor to enable it
-
-The fee/slippage application logic lives **only** in `SimulatedExchange._emit_fill`
-(`simulated.py:247`) — maker/taker classification, the D-03 limit-no-slippage
-gate, `to_money` normalization. To avoid two divergent fill-pricing paths (a
-parity hazard), **extract a pure helper** (e.g. `apply_costs(decision, fee_model,
-slippage_model) -> (executed_price, commission)`) that BOTH `SimulatedExchange`
-and `PaperConnector` call. This is the "two adapters over one matching core"
-made real: one matching core (`MatchingEngine`) AND one cost core. Modified:
-`simulated.py` (extract helper, keep behavior byte-exact); New: the helper +
-`PaperConnector`.
-
-### Correctness gate (LX-11)
-
-Paper-parity vs the backtest oracle on the same data: local paper is deterministic
-+ bar-based precisely so this holds. The shared `SimulatedAccount` (column 1) and
-shared `MatchingEngine`/cost-core are the mechanism.
-
----
-
-## 5. Runtime / deployment topology (LX-15)
-
-| Option | Integration points | Verdict |
-|---|---|---|
-| **(a) in-process** — engine thread inside FastAPI | none new; FastAPI calls `LiveTradingSystem` directly | **Reject.** Couples engine+web lifecycles; mixes FastAPI's async loop + connector asyncio thread + engine sync thread in one process; one crash kills both. |
-| **(b) separate worker** — FastAPI controls lifecycle; Postgres system-of-record + command/status channel | v1.6 store (shared truth); Postgres `LISTEN/NOTIFY` (or commands table) for control; worker write-through | **Recommended baseline.** This is *precisely what v1.6's durable store + restart rehydration were built to enable* — store is the shared truth a separate process reads while the worker writes. Crash isolation; FastAPI stays thin. |
-| **(c) process-per-portfolio** — 1 worker : 1 portfolio + shared price-feed service | per-OKX-subaccount isolation; shared feed avoids duplicate streams/rate-limits | **Target end-state under LX-04.** Natural fit for 1 account : 1 portfolio + one OKX subaccount per portfolio. |
-
-### Recommendation (rationale-backed)
-
-**Ship (b) now, architected as (c) with N=1.** Build the worker as a
-**single-portfolio process** (effectively (c) with one portfolio), with the
-price-feed living inside it for v1.7 but behind a seam that can be extracted to a
-shared price-feed service later. Rationale, grounded in three locked facts:
-
-1. **v1.6 store-as-truth** — the operational store + restart rehydration only pay
-   off if a *separate* reader (FastAPI) and writer (worker) share Postgres. (b)
-   activates the v1.6 investment; (a) wastes it.
-2. **The async bridge** — keeping the connector's asyncio thread + the engine's
-   sync thread in their own OS process (not co-resident with FastAPI's event loop)
-   is the cleanest isolation of the three concurrency models.
-3. **LX-04 1:1 constraint** — one portfolio : one OKX subaccount makes
-   per-portfolio process isolation natural; designing the worker as
-   per-portfolio from day one means scaling to (c) is "run N workers + extract the
-   feed," not a re-architecture.
-
-For the v1.7 DoD (one portfolio, paper) a single worker IS (c) with N=1 — so (b)
-and the (c) end-state converge on the same build now. The FastAPI app itself is
-out of v1.7 scope (deferred), but the command/status channel + write-through
-contract must be designed in Phase 4–5 wiring.
-
----
-
-## 6. TradingInterface (LX-14) — DELETE, replace with a thin engine command surface
-
-### What depends on it today
-
-Grep result: **no production consumer.** Only the barrel export
-(`trading_system/__init__.py:6/12`), the class itself, and one *comment* in a test
-(`test_admission_rules.py:267`) + a golden-doc note. `LiveTradingSystem` likewise
-has no production wiring (live composition root deferred per RETAIN-03/D-01). The
-FastAPI app does not exist yet.
-
-### Why delete
-
-`TradingInterface` (`trading_interface.py`) is the *pre-FastAPI* bridge. It is
-also stale: it builds `OrderEvent`s with **float** price/quantity and naive
-`datetime.now()` (`trading_interface.py:79/129`), and **bypasses the order domain's
-sizing/validation** (`SizingResolver`/`EnhancedOrderValidator`) by constructing
-sized orders directly. Under topology (b)/(c), the web layer talks to the worker
-via the Postgres command channel — it never calls `LiveTradingSystem` methods
-in-process — so an in-process bridge is redundant.
-
-**Recommendation:** delete `TradingInterface`; introduce a thin, typed **engine
-command surface** the worker consumes from the command channel (submit-signal /
-cancel / status), routing through the *real* order domain (signal -> sizing ->
-validation -> order), Decimal + UUIDv7 + tz-aware time. This pairs with the
-`user_id` strip (both are "engine vs app layer" cleanups) and **scopes FL-13** —
-test the surface that survives (the command surface + `LiveTradingSystem`
-lifecycle), not the deleted bridge.
-
----
-
-## 7. Suggested build order (honors §7 locked dependencies)
+### Live path (new)
 
 ```
-Phase 1  Account abstraction extraction        [GATES EVERYTHING — oracle-gated]
-  └─ + user_id strip + TradingInterface delete + LiveConnector interface (interface-only)
-         │
-         ├──────────────► Phase 2  OkxConnector (data arm + order arm)
-         │                   └─ data arm ─────► Phase 3  LiveBarFeed (ring buffer)
-         │                                          │
-         ▼                                          ▼
-   (SimulatedAccount ready)                  Phase 4  PaperConnector  ◄── PaperConnector needs
-         └──────────────────────────────────►  = milestone DoD          1 + 3 + connector DATA arm
-                                                  (NOT the order arm)     (paper-parity gate, LX-11)
-                                                       │
-   Phase 2 order arm + Phase 1 VenueAccount + v1.6 store
-                                                       ▼
-                                            Phase 5  Real/sandbox path
-                                              (VenueAccount reconcile + persistence live-drive)
-                                                       
-   Phase 6  Dynamic universe membership  (pairs with Phase 3 — reuses backfill-through-update)
+connector asyncio loop (daemon)            engine thread (LiveRunner)
+  venue I/O                                  bus.get(timeout)  ← wakes on CONTROL
+  ├─ fill/bar    → bus.put(BUSINESS) ──┐        │
+  └─ stream/fatal→ bus.put(CONTROL) ───┼──────► _dispatch via injected ErrorPolicy
+                                       │        ├─ CONTROL: pause/resume/halt (engine-thread I/O)
+                    [queue = bulkhead] │        └─ BUSINESS: BAR→SIGNAL→ORDER→FILL (existing flow)
 ```
 
-**Hard dependencies (from sketch §7, verified against code):**
+### Runtime-config mutation (P10★, scoped)
 
-1. **Phase 1 first, oracle-gated.** Account extraction is behavior-preserving;
-   the `PortfolioReadModel` seam means it does not ripple into the order domain.
-   Everything else implements against the Phase-1 `LiveConnector`/`Account`
-   interfaces.
-2. **Phase 2 data arm before Phase 3.** `LiveBarFeed` consumes the connector's
-   `watch_ohlcv`/`fetch_ohlcv`. The bar-close confirm flag (LX-08) depends on the
-   Phase-2 native escape hatch.
-3. **Phase 4 (DoD) needs 1 + 3 + connector DATA arm only — NOT the order arm.**
-   `PaperConnector` does its own matching (reused `MatchingEngine`); it never
-   submits to OKX. This is the critical sequencing insight: the paper DoD is
-   reachable without any live order I/O.
-4. **Phase 5 needs Phase 2 order arm + Phase 1 `VenueAccount` impl + the v1.6
-   store.** Reconciliation = per-symbol drift detection under LX-04.
-5. **Phase 6 pairs with Phase 3** (warmup-on-add reuses backfill-through-update).
-6. **Topology (LX-15) decided before Phase 4 wires the runtime** (cross-cutting,
-   not a phase).
+```
+ConfigUpdateEvent(scope, key, value) → CONTROL plane → engine-thread handler
+  → route to owner (system→SystemStore, portfolio:{id}→Portfolio+store, venue:{name}→VenueStore)
+  → apply to RuntimeConfig overlay + handler.update_config(...) + persist
+  → on restart: build_live_system layers persisted overrides over defaults
+```
 
 ---
 
-## New vs Modified (explicit ledger for the roadmap)
+## Build-Order Validation — §16 P1→P13 confirmed, with 4 refinements
 
-| Component | Status | File / location |
-|---|---|---|
-| `Account` ABC + `CashAccount`/`MarginAccount` + `Simulated*`/`Venue*` leaves | **NEW** | new `portfolio_handler/account/` |
-| `Portfolio` — inject `self.account`; `cash` -> `account.balance` | **MODIFIED** | `portfolio.py` |
-| `CashManager` math/state -> `SimulatedCashAccount` | **MOVED** (code-motion, byte-exact) | `cash/cash_manager.py` -> account leaf |
-| `PortfolioHandler` margin/liq math -> `SimulatedMarginAccount` | **MOVED** | `portfolio_handler.py:339–460` |
-| `PortfolioHandler._run_liquidation_pass` queue emission | **KEPT** (asks Account for breaches) | `portfolio_handler.py:557` |
-| `PortfolioReadModel` Protocol | **UNCHANGED** (seam preserved) | `core/portfolio_read_model.py` |
-| `Portfolio.user_id` | **REMOVED** (app-layer) | `portfolio.py:52` |
-| `TradingInterface` | **DELETED** + replaced by engine command surface | `trading_interface.py` |
-| `LiveConnector` Protocol | **NEW** (interface-only in P1) | new |
-| `OkxConnector` (ccxt.pro + native escape hatch) | **NEW** | new `execution_handler/connectors/` (or `price_handler/providers/`) |
-| `LiveBarFeed(BarFeed)` ring buffer | **NEW** | new `price_handler/feed/live_bar_feed.py` |
-| `apply_costs` fee/slippage helper (extract from `_emit_fill`) | **NEW** (refactor) | `execution_handler/` |
-| `SimulatedExchange._emit_fill` -> call shared helper | **MODIFIED** (byte-exact) | `simulated.py:247` |
-| `PaperConnector` (MatchingEngine + costs + SimulatedAccount) | **NEW** | new |
-| `VenueAccount` impl (reconcile) | **NEW** (P5; interface in P1) | account leaf |
-| `LiveTradingSystem` — real feed/connector wiring, TimeEvent-on-bar-close, command channel | **MODIFIED** | `live_trading_system.py` |
-| Worker process + Postgres command/status channel | **NEW** | new |
+The overall sequence is **sound**: foundation (config → bus → context → sql → stores) → venue registry → God-object teardown → safety/error → ★ feature-adds → test migration. Dependencies below are real (file-level), and I challenge 4 entries in the §16 table:
+
+| # | Phase | §16 deps | Verdict | Refinement |
+|---|-------|----------|---------|-----------|
+| P1 | Config centralization | — | ✓ | Hosts CF-8 `HaltReason` enum + CF-6 doc; lazy `sql` accessor is the inertness lever. |
+| P2 | Event bus | — | ✓ w/ note | **Must add the NEW CONTROL EventType members** (`STREAM_STATE`/`CONNECTOR_FATAL`/`CONFIG_UPDATE`) here — `_CONTROL_EVENT_TYPES` references them, even though consumers land P8/P10. |
+| P3 | EngineContext + storage-in-handler | P1 | ⚠ **add P2** | `EngineContext.bus` needs the `EventBus` type/instance from P2. The table omits P2→P3. **Recommend P3 deps = {P1, P2}.** |
+| P2+P3 | compose_engine | — | ⚠ double-edit | **P2 and P3 both mutate `compose_engine`'s signature/body** (P2 injects the bus; P3 folds bus+config+env+sql into `EngineContext` and drops storage params). Options: (a) accept the small re-edit, or (b) introduce a minimal `EngineContext` skeleton in P2 so the signature settles once. Prefer (b). |
+| P4 | SqlEngine rename + migrations relocation | P3 | ⚠ ordering | `EngineContext.sql_engine` is typed `Optional[SqlEngine]` in §7a, but the `SqlBackend→SqlEngine` **rename lands in P4, after P3**. Either do the *rename* in/before P3 (P3 references the new name) or let P3 use `SqlBackend` and P4 sweeps `EngineContext` too. The *migrations relocation* is genuinely independent and stays P4. **Recommend: split P4 — rename folds into P3, relocation stays P4-standalone.** |
+| P5 | New stores | P4 | ✓ | Chains Alembic onto relocated `migrations/`; live-only, in-memory fallback keeps backtest dark. |
+| P6 | Venue registry + bundle | P2, P3 | ✓ | Needs bus (CONTROL emitters) + EngineContext. CF-3/4/9 fold here. `[INERT]` lazy `build_bundle`. |
+| P7 | LiveRunner + factory + facade + UniverseWiring | P5, P6 | ✓ | Transitively needs P2 (LiveRunner `bus.get(timeout)`). **UniverseWiring is `[ORACLE]` — gate it hardest.** |
+| P8 | Safety + reconciliation + stream recovery | P7 | ✓ | CONTROL routes consume P2's new EventTypes; flag machinery deleted. CF-2/7/8. |
+| P9 | Error subsystem | P7 | ✓ | `ErrorPolicy` injection modifies `EventHandler.__init__` — `[ORACLE]` backtest fail-fast must stay identical to the current `_on_handler_error` bare-`raise`. CF-1 circuit breaker is the one added acceptance criterion. |
+| P10★ | Runtime-config platform | P5, P8 | ✓ | CONFIG_UPDATE route (CONTROL). |
+| P11★ | Strategies registry | P5, P7 | ✓ | STRATEGY_COMMAND route (already an empty slot today). |
+| P12★ | Multi-portfolio-live | P6, P8 | ✓ | Drops the single-portfolio guard + `_link_venue_account_to_portfolios`; connector keyed `(venue, account_id)`. |
+| P13 | Replay→fixture + gates | P7, P12 | ✓ | Lands last; production replay-free. |
+
+**Net:** no cycle, no blocker. The only substantive corrections are **P3 must depend on P2**, and the **compose_engine signature should settle in one step** (fold a minimal EngineContext into P2) rather than editing the same param list twice. The P4 rename-vs-relocation split is a nicety, not a blocker.
 
 ---
 
-## Anti-Patterns (domain-specific, to flag in the roadmap)
+## Anti-Patterns to avoid (from spec + existing conventions)
 
-### A1: A second state-building path for warmup
-Bulk `warmup_from(series)` alongside the per-bar `update`. Diverges from the live
-path and re-opens the parity audit. **Instead:** replay backfill one-by-one
-through the identical `update(bar)` (LX-09).
+### Anti-Pattern 1: Subclassing EventHandler for live routes
+**What people do:** create `LiveEventHandler(EventHandler)` overriding `routes`. **Why wrong:** two dispatch surfaces to reason about; the inertness proof (base-routes-only) evaporates. **Instead:** LR-16 — one data-driven `EventHandler`, live routes injected at construction via `LiveRouteRegistrar`.
 
-### A2: Mutating engine state from the connector thread
-Any direct call from the asyncio thread into `Portfolio`/`Account`/handlers breaks
-the D-19 single-writer contract and determinism. **Instead:** connector thread
-ONLY `global_queue.put(...)`; all mutation on the engine thread.
+### Anti-Pattern 2: Runtime `routes` mutation
+**What people do:** `event_handler.routes[EventType.X].append(consumer)` at `start()`. **Why wrong:** non-declarative, order-fragile, breaks the "change routing in one reviewable literal" contract. **Instead:** compose routes once at construction.
 
-### A3: Duplicating fill pricing in PaperConnector
-Re-implementing maker/taker + slippage gating instead of reusing the matching core
-+ a shared cost helper. Two pricing paths drift -> paper-parity fails silently.
-**Instead:** one `MatchingEngine`, one `apply_costs` helper, two adapters.
+### Anti-Pattern 3: Changing `.put()` call sites for the priority bus
+**What people do:** add `bus.put(event, tier=CONTROL)` across handlers. **Why wrong:** touches every handler, breaks byte-exactness risk surface, re-litigates the queue-only contract. **Instead:** the bus assigns the tier from `_CONTROL_EVENT_TYPES` inside `put`; call sites stay `self.global_queue.put(event)`.
 
-### A4: Wall-clock bar-close inference
-Inferring "bar closed" from local time instead of OKX's confirm flag. Drops/double-
-counts bars on latency. **Instead:** drive closed off the native confirm flag
-(LX-08), via the native escape hatch (ccxt.pro does not surface it reliably).
+### Anti-Pattern 4: Reordering the UniverseWiring block during extraction
+**What people do:** "tidy" the injection order (exchange/order/portfolio/feed.bind) while extracting. **Why wrong:** the ordering IS the byte-exact contract (Trap 4). **Instead:** move the block verbatim as one unit; diff-gate against the oracle.
 
-### A5: Re-homing `user_id` onto Account
-Multi-tenancy belongs to the FastAPI app layer (`user_id -> portfolio_id`).
-Putting it on Account couples the engine to tenancy. **Instead:** strip it; map
-in the app layer.
+### Anti-Pattern 5: Hoisting a live import to module scope
+**What people do:** `import ccxt.pro` / `from itrader.storage.system_store import SystemStore` at a backtest-reachable module top. **Why wrong:** fails `test_okx_inertness`, silently pulls async/SQL onto the hot path. **Instead:** lazy-import inside `build_live_system` / `VenuePlugin.build_bundle`; never re-export live modules from a backtest-path barrel.
 
-### A6: Liquidation math left in PortfolioHandler
-Leaving `_isolated_liq_price`/`maintenance_margin` in the handler perpetuates the
-exact smell Phase 1 exists to fix and fights the future `VenueAccount` mirror.
-**Instead:** truth/decision in `SimulatedMarginAccount`, queue emission stays in
-the handler.
+### Anti-Pattern 6: `Decimal(float)` / tab-space normalization
+Carried project constraints: money enters Decimal only via `to_money`; handler modules use **tabs**, `config/`/`core/`/`price_handler/feed/`/`events_handler/events/` use **4 spaces** — match the file, never normalize (`bus.py` under `events_handler/` → 4 spaces; `trading_system/` new files → tabs).
 
 ---
 
 ## Integration Points
 
-### External services
+### Internal boundaries (where v1.8 seams meet existing code)
 
-| Service | Integration pattern | Notes / gotchas |
-|---|---|---|
-| OKX (data) | ccxt.pro `watch_ohlcv` + native WS for confirm flag | ccxt.pro does not surface a unified closed/confirm flag — native escape hatch required (LX-05/LX-08) |
-| OKX (orders/account) | ccxt.pro submit/cancel/watch + native, single `sandbox` flag | `set_sandbox_mode` (ccxt) AND `x-simulated-trading` header (native) — route both or split-brain |
-| Postgres (v1.6) | system-of-record + command/status channel (`LISTEN/NOTIFY`) | worker writes; FastAPI reads — the (b) topology enabler |
+| Boundary | Communication | Notes / Gate |
+|----------|---------------|--------------|
+| factory ↔ `compose_engine` | `EngineContext` + `SystemSpec` (data) | `[ORACLE]` backtest arm identical graph |
+| handlers ↔ bus | `global_queue`-slot injection; `.put()` API-compatible | `[ORACLE]` no call-site change; `[INERT]` Fifo light |
+| `compose_engine` ↔ handlers | reads `.storage` back after handler-owns-init | `[ORACLE]` same in-memory instance into `set_order_storage` |
+| `EventHandler` ↔ live controllers | `LiveRouteRegistrar` extra_routes at ctor | `[ORACLE]` None on backtest = base routes |
+| connector loop ↔ engine thread | bus (CONTROL/BUSINESS) — the bulkhead | single-writer; blocking I/O on engine thread only |
+| `VenueRegistry` ↔ `ExecutionHandler` | registry distributes exchange into existing `register_exchange` sub-registry | `on_order` already routes by `event.exchange` |
+| new stores ↔ composition root | built by factory over shared `sql_engine`, handed to controllers | `[INERT]` live-only; `HaltRecordStore` template |
+| `BacktestRunner`/`SessionInitializer` ↔ `UniverseWiring` | shared helper call | `[ORACLE]` pure code-motion |
+| `EventHandler` ↔ `ErrorPolicy` | injected at ctor (removes `_on_handler_error` monkeypatch) | `[ORACLE]` backtest fail-fast identical |
 
-### Internal boundaries
-
-| Boundary | Communication | Notes |
-|---|---|---|
-| connector thread ↔ engine thread | `global_queue.put` only | D-19 single-writer; determinism boundary bottled here |
-| order domain ↔ portfolio truth | `PortfolioReadModel` Protocol | unchanged in P1 — Account moves behind it |
-| `Portfolio` ↔ `Account` | direct (injected, same-process, 1:1) | mirrors the 4-manager delegation; not queue-mediated |
-| feed ↔ engine | `BarFeed` ABC (`current_bars`/`window`/`megaframe`/`newest_bar`) | LiveBarFeed swaps the backing store only |
-| paper execution ↔ matching | `MatchingEngine.submit`/`on_bar` (pure) | reused by both SimulatedExchange and PaperConnector |
+### External services (unchanged integration patterns)
+| Service | Pattern | Notes |
+|---------|---------|-------|
+| OKX | `OkxConnector` (one asyncio loop + one `ccxt.pro` client) | `[INERT]` lazy in `build_bundle`; creds per-`account_id` in env `OkxSettings`, never persisted |
+| Postgres | shared `SqlEngine` (was `SqlBackend`) | `[INERT]` lazy `sql` accessor; raises without credential |
 
 ---
 
-## Confidence & gaps
+## Oracle- & Inertness-sensitive seam register (roadmap must flag these per phase)
 
-- **HIGH** — Account layering, the `PortfolioReadModel` seam, the async->queue
-  boundary, BarFeed ABC reuse, MatchingEngine reuse, TradingInterface deletion
-  (grep-confirmed no consumers): all read directly from the code.
-- **MEDIUM** — OKX confirm-flag exposure in ccxt.pro (web-sourced; verify the
-  exact native channel + confirm semantics at Phase 2/3 plan time — carried
-  research flag).
-- **Gaps for plan-time research:** (1) live `TimeEvent`-on-bar-close vs moving
-  metric recording to the BAR route; (2) ring-buffer capacity when multiple
-  timeframes/consumers register (extend `cache_registration.derive`); (3)
-  reconciliation repair policy (auto-correct vs halt-and-alert); (4) write-through
-  transaction boundary (v1.6 carried flag); (5) exact native-vs-ccxt OKX gap list.
+| Seam | Gate | Phase | Failure mode if mishandled |
+|------|------|-------|----------------------------|
+| `compose_engine` signature + wiring-order | `[ORACLE]` | P2/P3 | any reorder → graph diff → oracle breaks |
+| `FifoEventBus` FIFO/`queue.Empty` parity | `[ORACLE][INERT]` | P2 | non-FIFO or missing `queue.Empty` → drain misbehaves |
+| Handler-owns-init `.storage` read-back | `[ORACLE]` | P3 | different instance → LIQ-03 writes wrong mirror |
+| `EngineContext(sql_engine=None)` / lazy `sql` | `[INERT]` | P1/P3 | Postgres `SqlSettings` at import → inertness fails |
+| `EventHandler` route composition (extra_routes None) | `[ORACLE]` | P7 | base literal drift → routing diff |
+| **UniverseWiring extraction** | `[ORACLE]` | P7 | reorder/split injection → oracle breaks (**highest risk**) |
+| `ErrorPolicy` injection (backtest fail-fast) | `[ORACLE]` | P9 | non-re-raising default → silent state corruption |
+| Venue plugin lazy `build_bundle` | `[INERT]` | P6 | eager `ccxt.pro` import → inertness fails |
+| New stores / live modules not re-exported | `[INERT]` | P5/P7/P8 | barrel re-export → SQL/async on hot path |
+| `test_okx_inertness` forbidden list | `[INERT]` | P5-P12 | new live modules must be added to the probe's `_FORBIDDEN` |
+
+---
 
 ## Sources
 
-- Existing code (HIGH): `portfolio.py`, `portfolio_handler.py`, `cash/cash_manager.py`,
-  `core/portfolio_read_model.py`, `price_handler/feed/{base,bar_feed}.py`,
-  `execution_handler/{matching_engine.py,exchanges/simulated.py}`,
-  `trading_system/{live_trading_system,trading_interface}.py`.
-- Locked design: `docs/superpowers/specs/2026-06-30-live-trading-milestone-design.md` (LX-01..LX-15).
-- [ccxt #21885 — closed/confirm flag for websocket candles](https://github.com/ccxt/ccxt/issues/21885)
-- [ccxt OKX exchange docs](https://docs.ccxt.com/docs/exchanges/okx)
-- [ccxt.pro manual](https://docs.ccxt.com/docs/pro-manual)
+- `docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22, CF-1..CF-10, §4/§5/§7/§13/§16) — HIGH (authoritative design)
+- `itrader/trading_system/compose.py`, `backtest_runner.py`, `events_handler/full_event_handler.py`, `portfolio_handler/portfolio_handler.py`, `order_handler/order_handler.py`, `order_handler/storage/storage_factory.py`, `storage/backend.py`, `tests/integration/test_okx_inertness.py` — HIGH (real code traced)
+- `.planning/PROJECT.md` (Current Milestone v1.8) + `CLAUDE.md` (architecture) — HIGH
 
 ---
-*Architecture research for: v1.7 Live Trading Readiness (paper-first OKX)*
-*Researched: 2026-06-30*
+*Architecture research for: v1.8 Live System Refactor integration mapping*
+*Researched: 2026-07-09*
