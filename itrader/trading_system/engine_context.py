@@ -11,9 +11,9 @@ Design invariants (D-05, LR-14):
 
 * **Exactly four fields, in order** — ``bus`` / ``config`` / ``environment`` /
   ``sql_engine``. P3/P4/P9 only TIGHTEN the loose types (``config: Any`` narrows to
-  the concrete ``SystemConfig`` in P9, ``sql_engine: Optional[Any]`` narrows to the
-  SQL engine type once the live seam lands) — they NEVER widen a type and NEVER add
-  a field. The shape is frozen here.
+  the concrete ``SystemConfig`` in P9; ``sql_engine`` is narrowed HERE in P3 from
+  ``Optional[Any]`` to the concrete ``Optional[SqlEngine]`` via a TYPE_CHECKING
+  forward-ref) — they NEVER widen a type and NEVER add a field. The shape is frozen here.
 * **Infra-only.** ``bus`` is the transport, ``config`` is carried but UNREAD on the
   backtest path until P9, ``environment`` selects handler-owned storage backends,
   ``sql_engine`` is ``None`` for backtest (keeps the path SQL-import-inert, GATE-01).
@@ -26,9 +26,17 @@ Indentation: TABS (``trading_system/`` package convention).
 """
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
 
 from itrader.events_handler.bus import EventBus
+
+if TYPE_CHECKING:
+	# P3 (CTX-04): concrete-type import for the ``sql_engine`` annotation ONLY.
+	# ``SqlEngine`` (storage/engine.py) eagerly imports SQLAlchemy, so a real
+	# (non-guarded) import here would pull SQLAlchemy onto the backtest import
+	# path and break GATE-01 inertness. Guarded + string forward-ref keeps the
+	# annotation unevaluated at runtime while narrowing the type for mypy.
+	from itrader.storage.engine import SqlEngine
 
 
 @dataclass(frozen=True)
@@ -47,13 +55,15 @@ class EngineContext:
 	environment : str
 		The run-mode selector (``"backtest"`` here) the handlers use to pick their
 		own storage backends (CTX-02 handler-owned storage).
-	sql_engine : Optional[Any]
+	sql_engine : Optional[SqlEngine]
 		The durable SQL engine handle, ``None`` for backtest — keeps the backtest
-		path SQL-import-inert (GATE-01). Loose ``Optional[Any]`` until the live seam
-		narrows it (D-05).
+		path SQL-import-inert (GATE-01). P3 (CTX-04) narrows this from the former
+		loose ``Optional[Any]`` to the concrete ``Optional[SqlEngine]`` via a
+		TYPE_CHECKING forward-ref (a real import would pull SQLAlchemy onto the
+		backtest path — the annotation stays a string so it is unevaluated at runtime).
 	"""
 
 	bus: EventBus
 	config: Any
 	environment: str
-	sql_engine: Optional[Any] = None
+	sql_engine: Optional["SqlEngine"] = None

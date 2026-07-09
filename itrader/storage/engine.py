@@ -1,8 +1,8 @@
-"""The shared SQL spine — ``SqlBackend`` (SPINE-02, D-01).
+"""The shared SQL spine — ``SqlEngine`` (SPINE-02, D-01).
 
-A single ``SqlBackend`` holds an Engine + a fresh MetaData and NOTHING else — no query
+A single ``SqlEngine`` holds an Engine + a fresh MetaData and NOTHING else — no query
 methods, no business logic, no cross-concern god base. Every storage concern *composes*
-one ``SqlBackend`` by reference (has-a) rather than inheriting a shared ``SqlStorageBase``:
+one ``SqlEngine`` by reference (has-a) rather than inheriting a shared ``SqlStorageBase``:
 that base is deliberately ABSENT because it would collapse the per-concern ABC boundary the
 seed rejects. The backend (driver/URL) is selected at wiring from ``SqlSettings`` — config,
 not code (SPINE-01). The spine is post-loop / live-only; it adds zero per-tick code, so it
@@ -32,7 +32,7 @@ NAMING_CONVENTION: dict[str, str] = {
 }
 
 
-class SqlBackend:
+class SqlEngine:
     """Shared SQL spine: a configured Engine + a fresh MetaData. No business logic.
 
     Parameters
@@ -58,7 +58,7 @@ class SqlBackend:
 
         Lifecycle lives on the layer that OWNS the engine (WR-03): composing storage
         concerns must delegate here rather than each calling ``self.engine.dispose()`` on
-        the shared backend, so one concern's shutdown never flushes the pool out from under
+        the shared engine, so one concern's shutdown never flushes the pool out from under
         the others.
         """
         self.engine.dispose()

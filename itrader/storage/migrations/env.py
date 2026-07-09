@@ -30,7 +30,7 @@ from alembic import context
 from itrader.config.sql import SqlDriver, SqlSettings
 from itrader.order_handler.storage.models import build_order_tables
 from itrader.portfolio_handler.storage.models import build_portfolio_tables
-from itrader.storage.backend import NAMING_CONVENTION
+from itrader.storage.engine import NAMING_CONVENTION
 from itrader.storage.halt_record_store import build_halt_records_table
 from itrader.strategy_handler.storage.models import build_signal_tables
 
@@ -55,7 +55,7 @@ if config.config_file_name is not None:
 # Import-inertness (T-01-11 / Pitfall 8 / GATE-01): each registrar only constructs ``Table``
 # objects on a fresh ``MetaData`` — no Engine, no ``Settings()``, no connection — so the
 # module stays fully import-inert. Building a bare ``MetaData`` here (not a transient
-# ``SqlBackend``) also avoids leaking an undisposed SQLite engine at import.
+# ``SqlEngine``) also avoids leaking an undisposed SQLite engine at import.
 target_metadata = MetaData(naming_convention=NAMING_CONVENTION)
 build_order_tables(target_metadata)
 build_portfolio_tables(target_metadata)
