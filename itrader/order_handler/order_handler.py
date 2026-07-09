@@ -46,7 +46,10 @@ class OrderHandler:
 	             commission_estimator: Optional[CommissionEstimator] = None,
 	             order_config: Optional[OrderConfig] = None,
 	             enable_margin: bool = False,
-	             portfolio_max_leverage: Decimal = Decimal("1")) -> None:
+	             portfolio_max_leverage: Decimal = Decimal("1"),
+	             *,
+	             environment: str = "backtest",
+	             sql_engine: "Optional[Any]" = None) -> None:
 		"""
 		Parameters
 		----------
@@ -77,11 +80,22 @@ class OrderHandler:
 		# Initialize logger first
 		self.logger = get_itrader_logger().bind(component="OrderHandler")
 
-		# D-18: manager owns storage — the handler forwards the injected storage
-		# to OrderManager and retains NO reference to it. Every read path
-		# delegates through the manager (facade -> manager -> storage).
+		# CTX-02/D-02: the handler now OWNS its storage init from
+		# (environment, sql_engine), mirroring the PortfolioHandler template
+		# (LR-13). `OrderStorageFactory.create('backtest', backend=None)` returns
+		# the same `InMemoryOrderStorage` concrete `create_in_memory()` did, so
+		# the backtest slice is byte-exact. The explicit `order_storage=` override
+		# still wins (back-compat with current positional compose call until 02-03).
+		# `.storage` is a wiring seam `compose_engine` reads back for
+		# `portfolio_handler.set_order_storage(...)` in plan 02-03 — NOT a new read
+		# path: D-18 still holds, the manager owns storage for all reads.
+		self.storage = order_storage or OrderStorageFactory.create(environment, backend=sql_engine)
+
+		# D-18: manager owns storage — the handler forwards the SAME instance now
+		# referenced by `self.storage` to OrderManager. Every read path delegates
+		# through the manager (facade -> manager -> storage).
 		self.order_manager = OrderManager(
-			order_storage or OrderStorageFactory.create_in_memory(),
+			self.storage,
 			self.logger,
 			market_execution,
 			portfolio_handler,  # Pass portfolio_handler for position-aware logic
