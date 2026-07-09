@@ -81,6 +81,8 @@ false invariant that `DRIFT` must NOT be a member.
 
 ### CR-01: `HaltReason` enum omits the reachable `"drift"` halt reason; docstring and test pin a false "no-drift" invariant
 
+> **✓ RESOLVED — fix `b2e88d29` (fix 01-02).** Verified against code (`halt("drift")` is live: `portfolio_handler.py:839` → `set_halt_signal(self.halt)` at `:678`). Added `DRIFT = "drift"` (enum now 5 members); corrected the enum + `test_halt_reason.py` docstrings/assertions. Owner-approved deviation from D-10's literal "4 members" (the "4" was a miscount of `halt()` call sites). Re-verified: oracle byte-exact, full unit suite 1769 green, mypy --strict clean.
+
 **File:** `itrader/core/enums/system.py:72-89` (enum); `tests/unit/core/test_halt_reason.py:48-51` (test)
 
 **Issue:**
@@ -148,6 +150,8 @@ absent — otherwise the artifact encodes a claim its own codebase contradicts.
 
 ### WR-01: Paper-parity replay timeframe is now coupled to the live-tunable `okx_stream_timeframe`, and the parity-drift guard does not check timeframe
 
+> **✓ RESOLVED — fix `2c4aaac1` (fix 01-04).** Decoupled the paper-parity timeframe to a new `PAPER_PARITY_TIMEFRAME = "1d"` anchor (the live stream arms at `:557`/`:1413` correctly keep `okx_stream_timeframe`), and extended the `run_paper_replay` WR-02 guard to fail loudly on timeframe drift. Re-verified: `test_paper_parity` + oracle + inertness green.
+
 **File:** `itrader/trading_system/live_trading_system.py:645-648` (paper wiring); `:1514-1524` (parity guard)
 
 **Issue:**
@@ -192,6 +196,8 @@ and add the timeframe to the parity-drift guard so any future drift fails loud t
 ## Info
 
 ### IN-01: Config models are default-constructed at each read site rather than shared
+
+> **○ NO ACTION (informational).** The per-call-site default-construct is the documented P1 seam; P5 dependency-injection replaces all of them consistently. Not a defect — noted for P5.
 
 **File:** `itrader/price_handler/feed/live_bar_feed.py:283`; `itrader/price_handler/providers/okx_provider.py:640,681`; `itrader/universe/universe_handler.py:460`; `itrader/price_handler/providers/replay_provider.py:162`
 
