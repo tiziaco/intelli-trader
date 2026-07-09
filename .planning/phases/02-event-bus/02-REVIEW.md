@@ -25,7 +25,11 @@ findings:
   warning: 2
   info: 4
   total: 6
-status: issues_found
+  warning_open: 0
+  warning_resolved: 2
+  info_open: 4
+status: resolved
+resolution: "WR-01 + WR-02 fixed in 51febb94 (2026-07-09), oracle byte-exact + mypy --strict re-verified. 4 INFO items deferred as advisory (priority-bus monitoring / docstring cosmetics)."
 ---
 
 # Phase 02: Code Review Report
@@ -33,7 +37,22 @@ status: issues_found
 **Reviewed:** 2026-07-09T13:39:19Z
 **Depth:** standard
 **Files Reviewed:** 16
-**Status:** issues_found
+**Status:** resolved (2 warnings fixed in `51febb94`; 4 info deferred as advisory)
+
+## Resolution (2026-07-09)
+
+Both WARNINGs were fixed in commit `51febb94` after owner sign-off:
+- **WR-01 ✅ RESOLVED** — `compose_engine` now threads `environment=ctx.environment,
+  backend=ctx.sql_engine` into `PortfolioHandler` (all three storage-owning handlers uniformly
+  mode-agnostic). Byte-safe on the backtest path (`'backtest'`/`None` = prior defaults).
+- **WR-02 ✅ RESOLVED** — the 4 dead `from queue import Queue` imports were removed.
+
+Re-verified post-fix: SMA_MACD oracle byte-exact `134 / 46189.87730727451` (determinism
+double-run), inertness green, `mypy --strict` clean (237 files), handler+events suites 1186 pass,
+`live_trading_system.py` unchanged, `poetry.lock` unchanged.
+
+The **4 INFO items remain open by design** — advisory cosmetics on the not-yet-wired
+`PriorityEventBus` + docstring drift; sweep whenever the priority bus is wired (P6/P7).
 
 ## Summary
 
@@ -64,7 +83,7 @@ the `PriorityEventBus` `(tier, seq, event)` keying correctly guarantees the non-
 
 ## Warnings
 
-### WR-01: `compose_engine` does not thread `ctx.environment`/`ctx.sql_engine` into `PortfolioHandler`
+### WR-01 — ✅ RESOLVED (`51febb94`): `compose_engine` does not thread `ctx.environment`/`ctx.sql_engine` into `PortfolioHandler`
 
 **File:** `itrader/trading_system/compose.py:171`
 **Issue:** `compose_engine` is documented as "the SHARED, mode-agnostic wiring seam both
@@ -101,7 +120,7 @@ portfolio_handler = PortfolioHandler(
 )
 ```
 
-### WR-02: Dead `from queue import Queue` imports left behind by the `EventBus` retype
+### WR-02 — ✅ RESOLVED (`51febb94`): Dead `from queue import Queue` imports left behind by the `EventBus` retype
 
 **File:** `itrader/order_handler/order_handler.py:2`, `itrader/strategy_handler/strategies_handler.py:2`, `itrader/execution_handler/execution_handler.py:2`, `itrader/portfolio_handler/portfolio_handler.py:9`
 **Issue:** The D-08 retype changed every `global_queue` annotation from `"Queue[Any]"` to
