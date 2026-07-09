@@ -67,22 +67,22 @@ class SqlOrderStorage(OrderStorage):
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; the store registers its two tables on ``backend.metadata`` and creates them
+        wiring; the store registers its two tables on ``sql_engine.metadata`` and creates them
         idempotently (``checkfirst=True``).
     """
 
-    def __init__(self, backend: SqlEngine) -> None:
-        self.backend = backend
-        self.engine = backend.engine
+    def __init__(self, sql_engine: SqlEngine) -> None:
+        self.backend = sql_engine
+        self.engine = sql_engine.engine
 
-        tables = build_order_tables(backend.metadata)
+        tables = build_order_tables(sql_engine.metadata)
         self.orders = tables["orders"]
         self.state_changes = tables["order_state_changes"]
 
         # Idempotent, ephemeral schema creation (tests/dev; deploy uses Alembic).
-        backend.metadata.create_all(self.engine, checkfirst=True)
+        sql_engine.metadata.create_all(self.engine, checkfirst=True)
 
         # T-03-03 — search_orders resolves criteria keys through this allow-list of bound
         # Column objects, NEVER an interpolated column name. A key outside the map yields no

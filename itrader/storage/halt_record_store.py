@@ -76,19 +76,19 @@ class HaltRecordStore:
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; this store registers its one table on ``backend.metadata`` and creates it
+        wiring; this store registers its one table on ``sql_engine.metadata`` and creates it
         idempotently (``checkfirst=True``).
     """
 
-    def __init__(self, backend: SqlEngine) -> None:
-        self.backend = backend
-        self.engine: Engine = backend.engine
-        self.halt_records: Table = build_halt_records_table(backend.metadata)
+    def __init__(self, sql_engine: SqlEngine) -> None:
+        self.backend = sql_engine
+        self.engine: Engine = sql_engine.engine
+        self.halt_records: Table = build_halt_records_table(sql_engine.metadata)
         # Idempotent, ephemeral-friendly schema creation (the live path migrates via
         # Alembic; create_all is the test / no-op-if-present path).
-        backend.metadata.create_all(self.engine, checkfirst=True)
+        sql_engine.metadata.create_all(self.engine, checkfirst=True)
         self.logger = get_itrader_logger().bind(component="HaltRecordStore")
 
     def dispose(self) -> None:

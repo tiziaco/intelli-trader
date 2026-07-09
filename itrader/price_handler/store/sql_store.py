@@ -62,17 +62,17 @@ class SqlHandler:
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The engine's driver/URL — and, on the
         Postgres arm, its credential — come from ``SqlSettings``/``Settings`` at wiring;
         the resolved secret URL is NEVER logged.
     """
 
-    def __init__(self, backend: SqlEngine) -> None:
-        self.backend = backend
-        self.engine = backend.engine
+    def __init__(self, sql_engine: SqlEngine) -> None:
+        self.backend = sql_engine
+        self.engine = sql_engine.engine
 
-        metadata = backend.metadata
+        metadata = sql_engine.metadata
         if "prices" in metadata.tables:
             # Idempotent on a shared backend: reuse the already-registered table.
             self.prices = metadata.tables["prices"]

@@ -44,23 +44,23 @@ class SqlSignalStorage(SignalStore):
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; the signal store registers its ``signals`` table on ``backend.metadata`` and
+        wiring; the signal store registers its ``signals`` table on ``sql_engine.metadata`` and
         creates it idempotently (``checkfirst=True``).
     """
 
-    def __init__(self, backend: SqlEngine) -> None:
-        self.backend = backend
-        self.engine = backend.engine
+    def __init__(self, sql_engine: SqlEngine) -> None:
+        self.backend = sql_engine
+        self.engine = sql_engine.engine
 
-        tables = build_signal_tables(backend.metadata)
+        tables = build_signal_tables(sql_engine.metadata)
         self.signals = tables["signals"]
 
         # Idempotent schema creation (on the live Postgres path the Alembic chain owns the
         # migration; create_all(checkfirst=True) is a no-op against an existing table and the
         # round-trip-test substrate's bootstrap).
-        backend.metadata.create_all(self.engine, checkfirst=True)
+        sql_engine.metadata.create_all(self.engine, checkfirst=True)
 
         self.logger = get_itrader_logger().bind(component="SqlSignalStorage")
 

@@ -70,9 +70,9 @@ class SqlResultsStore(ResultsStore):
 
     Parameters
     ----------
-    backend:
+    sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; the results store registers its three tables on ``backend.metadata`` and
+        wiring; the results store registers its three tables on ``sql_engine.metadata`` and
         creates them idempotently (``checkfirst=True``).
     strict_persist:
         Dump-failure policy (D-17). ``False`` (default) → a caller may log-and-swallow a
@@ -80,18 +80,18 @@ class SqlResultsStore(ResultsStore):
         reads; the dump-failure decision lives at the run-hook caller (02-04), not here.
     """
 
-    def __init__(self, backend: SqlEngine, *, strict_persist: bool = False) -> None:
-        self.backend = backend
-        self.engine = backend.engine
+    def __init__(self, sql_engine: SqlEngine, *, strict_persist: bool = False) -> None:
+        self.backend = sql_engine
+        self.engine = sql_engine.engine
         self._strict_persist = strict_persist
 
-        tables = build_results_tables(backend.metadata)
+        tables = build_results_tables(sql_engine.metadata)
         self.runs = tables["runs"]
         self.run_portfolios = tables["run_portfolios"]
         self.run_artifacts = tables["run_artifacts"]
 
         # D-12 — idempotent, ephemeral schema creation (no Alembic on the research store).
-        backend.metadata.create_all(self.engine, checkfirst=True)
+        sql_engine.metadata.create_all(self.engine, checkfirst=True)
 
         # T-02-01 — the ORDER BY column is ALWAYS resolved through a MetricName -> Column
         # allow-list map (bound Column objects), NEVER an f-string. ``MetricName`` (a
