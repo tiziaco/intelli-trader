@@ -132,7 +132,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 - [x] 01-01-PLAN.md — SystemConfig import-safety (eager `runtime` + lazy `sql`) + `extra=forbid` + dead-config audit (CFG-01/02/04)
 - [x] 01-02-PLAN.md — Typed `HaltReason` enum + `baseline-residual` retirement (CFG-05)
-- [ ] 01-03-PLAN.md — CF-6 D-03a dual-validator paragraph → `CONVENTIONS.md` (CFG-06)
+- [x] 01-03-PLAN.md — CF-6 D-03a dual-validator paragraph → `CONVENTIONS.md` (CFG-06)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -307,7 +307,7 @@ P1 and P2 have no dependencies and can start in parallel.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Config Centralization | v1.8 | 2/4 | In Progress|  |
+| 1. Config Centralization | v1.8 | 3/4 | In Progress|  |
 | 2. Event Bus | v1.8 | 0/TBD | Not started | - |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 0/TBD | Not started | - |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |
