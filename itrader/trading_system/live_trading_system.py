@@ -18,7 +18,7 @@ _DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
 
 from dataclasses import dataclass
 
-from itrader.core.enums import ErrorSeverity, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
+from itrader.core.enums import ErrorSeverity, HaltReason, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
@@ -807,7 +807,7 @@ class LiveTradingSystem:
                 symbol=symbol,
                 engine_qty=str(engine_qty),
                 venue_qty=str(venue_qty))
-            self.halt('baseline-residual')
+            self.halt(HaltReason.BASELINE_RESIDUAL.value)
             return
 
     def halt(self, reason: str) -> None:

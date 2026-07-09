@@ -8,7 +8,7 @@ here. This module imports stdlib ONLY (the core/enums dependency rule).
 
 from enum import Enum
 
-__all__ = ["SystemStatus", "VALID_STATUS_TRANSITIONS"]
+__all__ = ["SystemStatus", "VALID_STATUS_TRANSITIONS", "HaltReason"]
 
 
 class SystemStatus(Enum):
@@ -67,3 +67,23 @@ VALID_STATUS_TRANSITIONS: dict[SystemStatus, set[SystemStatus]] = {
     },
     SystemStatus.HALTED: set(),  # Terminal/latched — only reset_halt() (off-table) exits.
 }
+
+
+class HaltReason(Enum):
+    """Typed vocabulary for every reachable engine halt reason (CFG-05 / D-10).
+
+    Minimal by design: exactly the four reasons that reach ``halt()`` /
+    ``_update_status(halt_reason=)`` today. No dead members — ``drift`` is
+    comment-only (no live ``halt('drift')`` call) and ``paused-on-disconnect``
+    is a ``pause_submission()`` reason, not a halt (both excluded per D-10).
+
+    Each ``.value`` is the EXISTING wire string, so durable halt records
+    persisted as strings (``storage/halt_record_store.py``) still resolve — no
+    data migration (T-02-01). P1 defines the enum; migrating the remaining
+    ``halt()`` call sites and its ``reason: str`` signature is P8's job (D-11).
+    """
+
+    BASELINE_RESIDUAL = "baseline-residual"
+    CONNECTOR_FATAL = "connector-fatal"
+    RECONCILIATION_UNRESOLVED = "reconciliation-unresolved"
+    DURABLE_HALT = "durable-halt"
