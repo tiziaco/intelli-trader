@@ -30,6 +30,10 @@ from itrader.config.portfolio import (
     ValidationSettings,
     get_portfolio_preset,
 )
+from itrader.config.stream import (
+    FeedProviderSettings,
+    StreamSettings,
+)
 from itrader.config.system import (
     Environment,
     LogLevel,
@@ -46,6 +50,8 @@ __all__ = [
     # System
     "SystemConfig", "Environment", "LogLevel", "PerformanceSettings",
     "MonitoringSettings",
+    # Stream / feed-provider
+    "StreamSettings", "FeedProviderSettings",
     # Exchange
     "ExchangeConfig", "ExchangeVenue", "FeeModelType", "SlippageModelType",
     "FeeModelConfig", "SlippageModelConfig", "ExchangeLimits", "FailureSimulation",
