@@ -3,7 +3,8 @@ status: scheduled
 created: "2026-07-06"
 source: Phase 7 (v1.7 Live Dynamic-Universe Hardening) plans 07-06 / 07-07 — deferred seam
 tags: [live, warmup, universe, bar-feed, depth-hint, strategies-handler, seam-only, phase-7-tie-in]
-folded_into: "v1.8 spec §18 — CF-10 (P7, seam-only — see 'What v1.8 P7 does now' below)"
+resolves_phase: "P6"
+folded_into: "v1.8 spec §18 — CF-10 (P6 LiveRunner/SessionInitializer, seam-only); renumbered post-P4-merge"
 ---
 
 # Deferred seam: max-across-concerned-strategies warmup depth (K)

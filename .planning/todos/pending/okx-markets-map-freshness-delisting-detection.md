@@ -4,7 +4,8 @@ created: "2026-07-07"
 source: Phase 07 CR-01 design discussion (tiziaco, 2026-07-07) — delisting-guard gap surfaced while scoping the CR-01 retry policy
 tags: [live, universe, okx, markets, delisting, validate_symbol, D-06, freshness, removal-path, universe-policy, next-milestone]
 milestone_target: "v1.8"
-folded_into: "v1.8 spec §18 — CF-9 (P6 venue registry / validate_symbol-on-exchange)"
+resolves_phase: "P5"
+folded_into: "v1.8 spec §18 — CF-9 (P5 venue registry / validate_symbol-on-exchange); renumbered post-P4-merge"
 ---
 
 # OKX markets-map freshness for mid-session delisting detection (validate_symbol / D-06)

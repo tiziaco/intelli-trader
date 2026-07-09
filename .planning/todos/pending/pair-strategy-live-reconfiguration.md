@@ -1,9 +1,10 @@
 ---
-status: open
+status: scheduled
 created: "2026-07-07"
 source: surfaced in v1.7 Phase 7 07-REVIEW.md CR-01 discussion (StrategyCommandEvent vs PairStrategy 2-ticker contract)
-tags: [strategy, pair-strategy, universe, readiness, live-control-plane, operator-command, deferred, next-milestone, phase-7-tie-in]
-resolves_phase: ""
+tags: [strategy, pair-strategy, universe, readiness, live-control-plane, operator-command, next-milestone, phase-7-tie-in]
+resolves_phase: "P10"
+folded_into: "v1.8 STRAT-03 (P10 Strategies Registry) — atomic runtime param reconfiguration; brought in-scope by owner decision 2026-07-09 (was spec §18 'not folded / deferred to ★-trimmable P11')"
 ---
 
 # PairStrategy live reconfiguration — atomic ordered-pair leg swap (the "correct B" for CR-01)
