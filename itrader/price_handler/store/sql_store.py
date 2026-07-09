@@ -8,7 +8,7 @@ injection / disclosure defects, all removed here:
    The credential is now sourced exclusively from the spine's secret seam: the unified
    ``SqlSettings`` ``ITRADER_DATABASE_*`` fields (``password``/``url`` are ``SecretStr``)
    resolved lazily inside ``SqlSettings.engine_url()`` (``SecretStr`` masks
-   ``repr``/``str``/logs). ``SqlHandler`` composes an injected ``SqlBackend`` and NEVER
+   ``repr``/``str``/logs). ``SqlHandler`` composes an injected ``SqlEngine`` and NEVER
    constructs an engine from a literal URL.
 
 2. **Dynamic-identifier DDL (closed).** The old purge interpolated each symbol into a
@@ -49,13 +49,13 @@ from sqlalchemy import Column, Float, String, Table, bindparam, insert, select
 
 from itrader.config import TIMEZONE
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlBackend, UtcIsoText
+from itrader.storage import SqlEngine, UtcIsoText
 
 
 class SqlHandler:
-    """Read/write OHLCV prices through the shared SQL spine (5th ``SqlBackend`` consumer).
+    """Read/write OHLCV prices through the shared SQL spine (5th ``SqlEngine`` consumer).
 
-    Composition, not inheritance (D-06): the handler holds an injected ``SqlBackend`` by
+    Composition, not inheritance (D-06): the handler holds an injected ``SqlEngine`` by
     reference and registers a single ``prices`` ``Table`` on ``backend.metadata``. All
     access is parameterized Core SQL against the literal ``prices`` table — there are no
     dynamic SQL identifiers and no hardcoded credentials.
@@ -68,7 +68,7 @@ class SqlHandler:
         the resolved secret URL is NEVER logged.
     """
 
-    def __init__(self, backend: SqlBackend) -> None:
+    def __init__(self, backend: SqlEngine) -> None:
         self.backend = backend
         self.engine = backend.engine
 

@@ -18,7 +18,7 @@ Phase 3's operational-store tests:
       @pytest.mark.parametrize("engine", ["sqlite", "postgres"], indirect=True)
       def test_roundtrip(engine): ...
 
-* ``pg_backend`` — a function-scoped ``SqlBackend`` (Wave-2 substrate) bound to the SAME
+* ``pg_backend`` — a function-scoped ``SqlEngine`` (Wave-2 substrate) bound to the SAME
   Postgres database as the session-scoped ``pg_engine`` container. It reuses that container's
   connection URL through the ``SqlSettings`` verbatim-URL escape hatch
   (``url=SecretStr(container_url)``) so NO second container is spun and no password assembly
@@ -81,7 +81,7 @@ def engine(request):
 
 @pytest.fixture
 def pg_backend(request):
-    """Function-scoped ``SqlBackend`` over the session ``pg_engine`` Postgres DB (D-10).
+    """Function-scoped ``SqlEngine`` over the session ``pg_engine`` Postgres DB (D-10).
 
     Wave-2 substrate: the three operational round-trip test files build their
     Postgres-backed ``Sql<Concern>Storage`` over this fixture. It REUSES the session-scoped
@@ -98,7 +98,7 @@ def pg_backend(request):
     from pydantic import SecretStr
 
     from itrader.config.sql import SqlDriver, SqlSettings
-    from itrader.storage.backend import SqlBackend
+    from itrader.storage.engine import SqlEngine
 
     # Resolve the session container first (skips Dockerless, D-11); reuse its URL verbatim
     # so we bind a fresh Engine to the SAME database without spinning a second container.
@@ -109,7 +109,7 @@ def pg_backend(request):
         driver=SqlDriver.POSTGRESQL_PSYCOPG2,
         url=SecretStr(container_url),
     )
-    backend = SqlBackend(settings)
+    backend = SqlEngine(settings)
     try:
         yield backend
     finally:

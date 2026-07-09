@@ -78,14 +78,14 @@ class StrategiesHandler(object):
 		self.feed: BarFeed = feed
 		# CTX-02/D-02: the handler now OWNS its signal-store init from
 		# (environment, sql_engine), mirroring the PortfolioHandler template
-		# (LR-13). `SignalStorageFactory.create('backtest', backend=None)` returns
+		# (LR-13). `SignalStorageFactory.create('backtest', sql_engine=None)` returns
 		# the same `InMemorySignalStore` concrete the legacy path built, so the
 		# backtest slice is byte-exact. An explicit `signal_store=` override still
 		# wins (back-compat with the current positional compose call until 02-03).
 		# `.signal_store` is the concrete `compose_engine` reads back onto the
 		# Engine holder in plan 02-03.
 		self.signal_store: SignalStore = (
-			signal_store or SignalStorageFactory.create(environment, backend=sql_engine)
+			signal_store or SignalStorageFactory.create(environment, sql_engine=sql_engine)
 		)
 		# SHORT-01/D-07 two-flag registration gate — read, never mutated here.
 		self._allow_short_selling: bool = allow_short_selling

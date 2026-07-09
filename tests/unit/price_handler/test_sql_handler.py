@@ -2,7 +2,7 @@
 
 Two halves:
 
-* **Single-table behavior (D-07).** Over an in-process ``SqlBackend(SqlSettings())`` SQLite
+* **Single-table behavior (D-07).** Over an in-process ``SqlEngine(SqlSettings())`` SQLite
   engine (NO Docker), OHLCV round-trips, ``get_symbols()`` returns the written symbols, the
   ONLY data table is ``prices`` (never a per-symbol table), and two symbols coexist in that
   one table filtered by a bound ``symbol`` parameter.
@@ -26,7 +26,7 @@ from sqlalchemy import inspect
 
 from itrader.config.sql import SqlSettings
 from itrader.price_handler.store.sql_store import SqlHandler
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 # tests/unit/price_handler/test_sql_handler.py -> parents[3] is the repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -40,7 +40,7 @@ def handler():
     Disposing the engine in teardown closes the SingletonThreadPool connection so no
     ``ResourceWarning`` escapes under ``filterwarnings=["error"]``.
     """
-    backend = SqlBackend(SqlSettings())  # in-process SQLite, no Docker
+    backend = SqlEngine(SqlSettings())  # in-process SQLite, no Docker
     sql_handler = SqlHandler(backend)
     try:
         yield sql_handler

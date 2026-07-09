@@ -66,7 +66,7 @@ class PortfolioHandler:
     """
     
     def __init__(self, global_queue: "EventBus", config_dir: str = "settings",
-                 environment: str = "backtest", backend: "Optional[Any]" = None) -> None:
+                 environment: str = "backtest", sql_engine: "Optional[Any]" = None) -> None:
         self.global_queue: "EventBus" = global_queue
         self.current_time: Any = 0
 
@@ -74,11 +74,11 @@ class PortfolioHandler:
         # into each Portfolio's state storage (add_portfolio -> Portfolio ->
         # PortfolioStateStorageFactory.create). "backtest" (the default) is the
         # in-memory oracle-dark path; the live composition root passes "live" +
-        # the shared SqlBackend so every portfolio persists to the durable SQL
-        # ledger and rehydrates its truth on restart. ``backend`` is typed Any
-        # to keep the SqlBackend import off this hot-path module (GATE-01).
+        # the shared SqlEngine so every portfolio persists to the durable SQL
+        # ledger and rehydrates its truth on restart. ``sql_engine`` is typed Any
+        # to keep the SqlEngine import off this hot-path module (GATE-01).
         self._environment = environment
-        self._backend = backend
+        self._sql_engine = sql_engine
         
         # Initialize configuration by constructing the Pydantic model directly
         # (M2-06 / D-01): the registry/provider getters were deleted. Pydantic validates
@@ -227,7 +227,7 @@ class PortfolioHandler:
                     time=datetime.now(UTC),
                     config=portfolio_config,
                     environment=self._environment,
-                    backend=self._backend,
+                    sql_engine=self._sql_engine,
                 )
                 
                 # Store portfolio

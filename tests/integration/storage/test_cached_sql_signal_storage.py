@@ -9,7 +9,7 @@ reads serve straight from the full mirror (no read-through, no terminal gate), a
 optional ``rehydrate`` rebuilds the mirror from the store's stable-ORDER BY read.
 
 Substrate: the ``pg_backend`` fixture (tests/integration/storage/conftest.py) — a
-``SqlBackend`` over the session-scoped testcontainers Postgres DB. The arm SKIPS (never
+``SqlEngine`` over the session-scoped testcontainers Postgres DB. The arm SKIPS (never
 hard-fails) when Docker is absent (D-11), inherited transitively from ``pg_engine``. The
 function-scoped backend binds to the SAME database across tests, so every test uses FRESH
 unique ``strategy_id`` / ``ticker`` values and asserts through the per-instance mirror (a

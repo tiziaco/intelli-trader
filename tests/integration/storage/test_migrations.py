@@ -21,7 +21,7 @@ from alembic import command
 from alembic.config import Config
 
 from itrader.config.sql import SqlSettings
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 # Repo-root-anchored paths so the Alembic Config is cwd-INDEPENDENT: Alembic resolves a
 # RELATIVE ``script_location`` against the process cwd (not the ini location), so the test
@@ -46,7 +46,7 @@ def _alembic_config(url: str) -> Config:
 
 def test_research_store_create_all_has_no_alembic_version() -> None:
     """A create_all()-built (ephemeral) store has NO ``alembic_version`` table (MIG-01/D-14)."""
-    backend = SqlBackend(SqlSettings.default())  # in-process sqlite :memory:, env-free
+    backend = SqlEngine(SqlSettings.default())  # in-process sqlite :memory:, env-free
     # A representative results-style table registered on the SPINE metadata, then built by
     # create_all() — exactly how the disposable research/results store is provisioned.
     Table(

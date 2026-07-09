@@ -374,13 +374,13 @@ def _start_pg_container():
 
 
 def _make_backend(pg_url):
-    """Build a fresh ``SqlBackend`` bound to the container DB."""
+    """Build a fresh ``SqlEngine`` bound to the container DB."""
     from pydantic import SecretStr
 
     from itrader.config.sql import SqlDriver, SqlSettings
-    from itrader.storage import SqlBackend
+    from itrader.storage import SqlEngine
 
-    return SqlBackend(SqlSettings(
+    return SqlEngine(SqlSettings(
         driver=SqlDriver.POSTGRESQL_PSYCOPG2,
         url=SecretStr(pg_url),
     ))

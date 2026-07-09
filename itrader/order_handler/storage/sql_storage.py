@@ -1,7 +1,7 @@
 """Concrete ``SqlOrderStorage`` — the order-mirror backend on the shared SQL spine (OPS-01).
 
 The first of the three operational ``Sql<Concern>Storage`` classes (order / portfolio-state /
-signal). It *composes* a ``SqlBackend`` by reference (has-a, D-04 — never a cross-concern god
+signal). It *composes* a ``SqlEngine`` by reference (has-a, D-04 — never a cross-concern god
 base), registers the two order tables on ``backend.metadata`` via ``build_order_tables``, and
 calls ``metadata.create_all(checkfirst=True)`` so schema creation is idempotent (tests/dev;
 the deploy path uses Alembic). This mirrors the existing concrete analogs
@@ -48,7 +48,7 @@ from itrader.core.enums import (
 )
 from itrader.core.ids import OrderId, PortfolioId, StrategyId
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 from ..base import IdLike, OrderStorage
 from ..order import Order, OrderStateChange
@@ -73,7 +73,7 @@ class SqlOrderStorage(OrderStorage):
         idempotently (``checkfirst=True``).
     """
 
-    def __init__(self, backend: SqlBackend) -> None:
+    def __init__(self, backend: SqlEngine) -> None:
         self.backend = backend
         self.engine = backend.engine
 

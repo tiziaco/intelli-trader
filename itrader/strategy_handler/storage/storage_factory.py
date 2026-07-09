@@ -7,7 +7,7 @@ concrete Postgres-backed ``SqlSignalStorage`` (OPS-03, D-06). There is NO
 ``'postgresql'`` arm — the SQL backend is selected by the ``'live'`` environment
 key alone (mirrors the existing factory layout).
 
-The SQL imports (``SqlSignalStorage``/``SqlBackend``/``SqlSettings``) are LAZY,
+The SQL imports (``SqlSignalStorage``/``SqlEngine``/``SqlSettings``) are LAZY,
 performed INSIDE the ``'live'`` branch, so importing this factory on the backtest
 path never pulls SQLAlchemy (D-06 quarantine — GATE-01 inertness).
 
@@ -21,7 +21,7 @@ from itrader.strategy_handler.storage.base import SignalStore
 from itrader.strategy_handler.storage.in_memory_storage import InMemorySignalStore
 
 if TYPE_CHECKING:
-    from itrader.storage import SqlBackend
+    from itrader.storage import SqlEngine
 
 
 class SignalStorageFactory:
@@ -36,7 +36,7 @@ class SignalStorageFactory:
     def create(
         environment: str,
         db_url: Optional[str] = None,
-        backend: "SqlBackend | None" = None,
+        sql_engine: "SqlEngine | None" = None,
     ) -> SignalStore:
         """Create a ``SignalStore`` for the given environment.
 
@@ -46,11 +46,11 @@ class SignalStorageFactory:
             The environment type ('backtest', 'test', 'live').
         db_url : str, optional
             Reserved for a future persistent backend; unused.
-        backend : SqlBackend, optional
+        sql_engine : SqlEngine, optional
             An already-constructed shared spine to compose the live store over.
             When omitted, the ``'live'`` arm builds its own from
             ``SqlSettings.default()`` (the wiring caller injects the real
-            Postgres backend in the live composition root).
+            Postgres engine in the live composition root).
 
         Returns
         -------
@@ -69,7 +69,7 @@ class SignalStorageFactory:
         elif environment == 'live':
             # D-06 — lazy imports keep SQLAlchemy off the backtest import path.
             from itrader.config.sql import SqlSettings
-            from itrader.storage import SqlBackend
+            from itrader.storage import SqlEngine
             from itrader.strategy_handler.storage.cached_sql_storage import (
                 CachedSqlSignalStorage,
             )
@@ -77,13 +77,13 @@ class SignalStorageFactory:
                 SqlSignalStorage,
             )
 
-            if backend is None:
-                backend = SqlBackend(SqlSettings.default())
+            if sql_engine is None:
+                sql_engine = SqlEngine(SqlSettings.default())
             # Wrap the untouched system-of-record store in the live-only
             # store-first cache mirror (D-04 / Pitfall 8). The wrapper import
             # stays INSIDE this branch so the backtest path pulls no SQLAlchemy
             # nor the wrapper (GATE-01 quarantine).
-            return CachedSqlSignalStorage(SqlSignalStorage(backend))
+            return CachedSqlSignalStorage(SqlSignalStorage(sql_engine))
         else:
             raise ConfigurationError(
                 "environment", environment,

@@ -7,7 +7,7 @@ Postgres (D-10): the full record (incl. the ``config`` params dict), the indexed
 money (Postgres-native ``Numeric``, OPS-04 / Pitfall 2 — money is Postgres-only), and a
 value-equal UUIDv7 ``signal_id``.
 
-Substrate: the ``pg_backend`` fixture (Plan 03-01 conftest) — a ``SqlBackend`` over the
+Substrate: the ``pg_backend`` fixture (Plan 03-01 conftest) — a ``SqlEngine`` over the
 session-scoped testcontainers Postgres DB. The arm SKIPS (never hard-fails) when Docker is
 absent (D-11), inherited transitively from ``pg_engine``. The function-scoped ``pg_backend``
 binds to the SAME Postgres database across tests, so every test uses FRESH unique

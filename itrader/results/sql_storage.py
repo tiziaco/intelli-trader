@@ -1,7 +1,7 @@
 """Concrete ``SqlResultsStore`` — the results store on the shared SQL spine (SPINE-02).
 
 The fourth ``Sql<Concern>Storage`` (after order / portfolio-state / signal): it *composes*
-a ``SqlBackend`` by reference (has-a, D-06 — never a cross-concern god base), registers the
+a ``SqlEngine`` by reference (has-a, D-06 — never a cross-concern god base), registers the
 three results tables on ``backend.metadata`` via ``build_results_tables``, and calls
 ``metadata.create_all(checkfirst=True)`` so schema creation is idempotent and ephemeral (no
 Alembic — the research store is SQLite, D-12). This mirrors the only existing concrete-store
@@ -43,7 +43,7 @@ from itrader.results.records import (
     RunMetrics,
     RunRecord,
 )
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 # Fixed gzip compression level — pinned alongside ``mtime=0`` so the encoded blob is
 # byte-deterministic across runs (RESULT-04 / D-10). Changing this value changes the bytes.
@@ -80,7 +80,7 @@ class SqlResultsStore(ResultsStore):
         reads; the dump-failure decision lives at the run-hook caller (02-04), not here.
     """
 
-    def __init__(self, backend: SqlBackend, *, strict_persist: bool = False) -> None:
+    def __init__(self, backend: SqlEngine, *, strict_persist: bool = False) -> None:
         self.backend = backend
         self.engine = backend.engine
         self._strict_persist = strict_persist

@@ -117,7 +117,7 @@ class MetricsManager:
             storage = PortfolioStateStorageFactory.create(
                 getattr(portfolio, "_environment", "backtest"),
                 max_snapshots=self.max_snapshots,
-                backend=getattr(portfolio, "_backend", None),
+                sql_engine=getattr(portfolio, "_sql_engine", None),
                 portfolio_id=getattr(portfolio, "portfolio_id", None),
             )
             # WR-02: share the fabricated seam with sibling managers so a

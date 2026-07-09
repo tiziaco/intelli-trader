@@ -78,9 +78,9 @@ def _make_backend(pg_url):
     from pydantic import SecretStr
 
     from itrader.config.sql import SqlDriver, SqlSettings
-    from itrader.storage import SqlBackend
+    from itrader.storage import SqlEngine
 
-    return SqlBackend(SqlSettings(
+    return SqlEngine(SqlSettings(
         driver=SqlDriver.POSTGRESQL_PSYCOPG2,
         url=SecretStr(pg_url),
     ))

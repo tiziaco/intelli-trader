@@ -450,7 +450,7 @@ def build_backtest_system(spec: SystemSpec) -> BacktestTradingSystem:
 	#    GATE-01): commonly None, so the oracle path stays store-free AND
 	#    SQL-import-inert — this module imports NO SQL surface at top level. A
 	#    persistence caller builds the store DIRECTLY (NO factory, D-19) and injects
-	#    it on the spec, e.g. ``SqlResultsStore(SqlBackend(SqlSettings.results_default()),
+	#    it on the spec, e.g. ``SqlResultsStore(SqlEngine(SqlSettings.results_default()),
 	#    strict_persist=SqlSettings.results_default().strict_persist)`` with the SQL
 	#    surface imported on THAT path only — never here.
 	ctx = EngineContext(

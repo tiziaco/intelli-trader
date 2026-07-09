@@ -1,6 +1,6 @@
 """Concrete ``SqlSignalStorage`` — the signal store on the shared SQL spine (OPS-03).
 
-The strategy/signal operational backend: it *composes* a ``SqlBackend`` by reference
+The strategy/signal operational backend: it *composes* a ``SqlEngine`` by reference
 (has-a, D-04 — never a cross-concern god base), registers the single ``signals`` table on
 ``backend.metadata`` via ``build_signal_tables``, and calls
 ``metadata.create_all(checkfirst=True)`` so schema creation is idempotent. This mirrors the
@@ -33,7 +33,7 @@ from sqlalchemy import bindparam, insert, select
 from itrader.core.enums import OrderType, Side, order_type_map
 from itrader.core.ids import SignalId, StrategyId
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage.base import SignalStore
 from itrader.strategy_handler.storage.models import build_signal_tables
@@ -50,7 +50,7 @@ class SqlSignalStorage(SignalStore):
         creates it idempotently (``checkfirst=True``).
     """
 
-    def __init__(self, backend: SqlBackend) -> None:
+    def __init__(self, backend: SqlEngine) -> None:
         self.backend = backend
         self.engine = backend.engine
 

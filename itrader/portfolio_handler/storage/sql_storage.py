@@ -1,7 +1,7 @@
 """Concrete ``SqlPortfolioStateStorage`` — the portfolio-state operational backend (OPS-02).
 
 The portfolio-state ``Sql<Concern>Storage`` on the shared SQL spine: it *composes* a
-``SqlBackend`` by reference (has-a, D-06 — never a cross-concern god base), registers the
+``SqlEngine`` by reference (has-a, D-06 — never a cross-concern god base), registers the
 six portfolio tables on ``backend.metadata`` via ``build_portfolio_tables``, and calls
 ``metadata.create_all(checkfirst=True)`` so schema creation is idempotent (live path uses
 Alembic; ``create_all`` is the test/idempotent path). Mirrors ``results/sql_storage.py``.
@@ -37,7 +37,7 @@ from sqlalchemy import delete, func, insert, select
 from itrader.core.enums import CashOperationType, PositionSide, TransactionType
 from itrader.core.ids import PositionId, TransactionId
 from itrader.logger import get_itrader_logger
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 from ..base import PortfolioStateStorage
 from itrader.portfolio_handler.account import CashOperation
@@ -62,7 +62,7 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         (``CashOperation`` / ``PortfolioSnapshot``) have it injected on insert.
     """
 
-    def __init__(self, backend: SqlBackend, portfolio_id: uuid.UUID) -> None:
+    def __init__(self, backend: SqlEngine, portfolio_id: uuid.UUID) -> None:
         self.backend = backend
         self.engine = backend.engine
         self._portfolio_id = portfolio_id

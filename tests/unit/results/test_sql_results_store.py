@@ -28,7 +28,7 @@ from itrader.config.sql import SqlSettings
 from itrader.core.exceptions import ResultsNotFound
 from itrader.results.records import PortfolioRecord, RunMetrics, RunRecord
 from itrader.results.sql_storage import SqlResultsStore
-from itrader.storage import SqlBackend
+from itrader.storage import SqlEngine
 
 
 def _run_id() -> uuid.UUID:
@@ -89,7 +89,7 @@ def _frame() -> pd.DataFrame:
 @pytest.fixture
 def store() -> Any:
     """A fresh ``SqlResultsStore`` over an in-process SQLite spine (``:memory:``)."""
-    backend = SqlBackend(SqlSettings())
+    backend = SqlEngine(SqlSettings())
     results_store = SqlResultsStore(backend)
     try:
         yield results_store
