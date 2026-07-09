@@ -198,7 +198,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 1** *(parallel — zero file overlap; relocation ‖ standalone store classes)*
 
-- [ ] 04-01-PLAN.md — Migrations relocation: `git mv itrader/storage/migrations → migrations`, `alembic.ini script_location`, gate-path fix, structural wheel-exclusion assertion (SQL-01, D-10)
+- [x] 04-01-PLAN.md — Migrations relocation: `git mv itrader/storage/migrations → migrations`, `alembic.ini script_location`, gate-path fix, structural wheel-exclusion assertion (SQL-01, D-10)
 - [ ] 04-02-PLAN.md — Three durable stores + registrars + unit tests: `SystemStore`/`VenueStore`(secret-guard)/`StrategyRegistryStore`(two-table+restart) over SQLite (STORE-01/02/03/05, D-01/03/04/05/06/07/08/09)
 
 **Wave 2** *(blocked on 04-01 + 04-02)*
@@ -335,7 +335,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
-| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/3 | Not started | - |
+| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 1/3 | In Progress|  |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |

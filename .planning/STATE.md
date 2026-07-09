@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 4
-current_phase_name: "Storage Schema: Migrations Relocation + New Durable Stores"
+current_phase: 04
+current_phase_name: storage-schema-migrations-relocation-new-durable-stores
 status: executing
 stopped_at: Phase 4 context gathered
-last_updated: "2026-07-09T17:17:05.315Z"
+last_updated: "2026-07-09T17:30:43.956Z"
 last_activity: 2026-07-09
-last_activity_desc: Phase 03 complete, transitioned to Phase 4
+last_activity_desc: Phase 04 execution started
 progress:
   total_phases: 9
   completed_phases: 3
-  total_plans: 9
-  completed_plans: 9
+  total_plans: 12
+  completed_plans: 10
   percent: 33
 ---
 
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 03 — enginecontext-storage-in-handler
+**Current focus:** Phase 04 — storage-schema-migrations-relocation-new-durable-stores
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 4 — Storage Schema: Migrations Relocation + New Durable Stores
-Plan: Not started
+Phase: 04 (storage-schema-migrations-relocation-new-durable-stores) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-07-09 — Phase 03 complete, transitioned to Phase 4
+Last activity: 2026-07-09 — Phase 04 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -137,6 +137,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: CTX-04: SqlBackend renamed to SqlEngine; module moved to storage/engine.py; no alias (D-02)
 - [Phase ?]: D-01: backend/_backend vocabulary unified to sql_engine/_sql_engine across storage factories, PortfolioHandler, and Portfolio
 - [Phase 03]: D-03: collapsed redundant signal_store surfaces; accessors read through engine.strategies_handler.signal_store, no @property added
+- [Phase ?]: [Phase 04]: 04-01: migrations/ relocated to project root via git mv (D-10, 5 revision IDs preserved unchanged, single head d10_halt_records); alembic.ini script_location=migrations; SQL-01 wheel-exclusion samplable via tomllib assertion; oracle byte-exact + inertness green
 
 ### Pending Todos
 
@@ -200,6 +201,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 02 P03 | 18min | 3 tasks | 10 files |
 | Phase 03 P01 | 11min | 2 tasks | 41 files |
 | Phase 03 P02 | 2min | 1 tasks | 2 files |
+| Phase 04 P01 | 1min | 2 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -211,7 +213,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T16:39:02.691Z
+Last session: 2026-07-09T17:30:10.145Z
 Stopped at: Phase 4 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.

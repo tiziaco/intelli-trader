@@ -98,7 +98,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### SqlEngine Migrations Relocation (P4)
 
-- [ ] **SQL-01**: `itrader/storage/migrations/` relocates to project-root `migrations/`; `alembic.ini`
+- [x] **SQL-01**: `itrader/storage/migrations/` relocates to project-root `migrations/`; `alembic.ini`
   `script_location` updated; `env.py` keeps importing the `build_*_table` registrars + `NAMING_CONVENTION`
   from `itrader.storage`; migrations stay out of the shipped wheel (LR-18/§7e).
 
@@ -368,7 +368,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | CTX-02 | P2 | Complete |
 | CTX-03 | P2 | Complete |
 | CTX-04 | P3 | Complete |
-| SQL-01 | P4 | Pending |
+| SQL-01 | P4 | Complete |
 | SQL-02 | P4 | Pending |
 | STORE-01 | P4 | Pending |
 | STORE-02 | P4 | Pending |
