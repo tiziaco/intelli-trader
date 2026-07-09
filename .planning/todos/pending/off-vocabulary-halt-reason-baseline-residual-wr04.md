@@ -64,3 +64,22 @@ as part of that work. Fixing WR-04 in isolation now (a typed `HaltReason` enum t
 not addressing the real weakness (untyped free-string halt reasons). Owned by the next-milestone
 `live_trading_system.py` refactor + the FastAPI control-plane vocabulary design
 (`fastapi-application-layer-plan`). No pre-close action.
+
+## P1 scope split — PARTIAL delivery (2026-07-09, plan-phase A2 decision)
+
+Owner decision during Phase 1 planning (assumption A2): **P1 does the enum + the mandatory retirement
+only; the full `halt()` call-site migration is DEFERRED to the concerned later phase** (P8 SafetyController
+per CONTEXT.md D-11 — note this todo's `folded_into` says P7 under the old numbering; reconcile at that
+phase's planning). Keep this todo OPEN until the deferred half lands.
+
+**Done in P1 (CFG-05):**
+- Define `HaltReason(Enum)` in `core/enums/system.py` with the 4 reachable members
+  (`BASELINE_RESIDUAL`, `CONNECTOR_FATAL`, `RECONCILIATION_UNRESOLVED`, `DURABLE_HALT`), wire strings preserved.
+- Retire the ONE free string `self.halt('baseline-residual')` at `live_trading_system.py:810` →
+  `HaltReason.BASELINE_RESIDUAL`.
+
+**Deferred to the concerned later phase (P8 SafetyController — REMAINDER, do not lose):**
+- Migrate the remaining 3 halt literals (`connector-fatal`, `reconciliation-unresolved`, `durable-halt`)
+  at their call sites to the enum.
+- Change `halt(reason: str)` signature to accept/require `HaltReason`, update its docstring, and drop
+  the free-string path entirely. D-11 assigns `halt()` ownership to that phase.
