@@ -1,9 +1,9 @@
 import random
-from queue import Queue
 from typing import Any, Dict, Optional
 
 from .base import AbstractExecutionHandler
 from .exchanges.base import AbstractExchange
+from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 
@@ -26,7 +26,7 @@ class ExecutionHandler(AbstractExecutionHandler):
 	while maintaining backward compatibility with existing systems.
 	"""
 
-	def __init__(self, global_queue: "Queue[Any]",
+	def __init__(self, global_queue: "EventBus",
 				exchange_config: Optional[ExchangeConfig] = None) -> None:
 		"""
 		Parameters

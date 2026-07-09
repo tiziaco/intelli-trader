@@ -785,11 +785,29 @@ the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a 
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
 
 ---
-*Last updated: 2026-07-09 — **v1.8 — Live System Refactor & Live-Readiness Hardening STARTED.**
+*Last updated: 2026-07-09 — **v1.8 Phase 2 (Event Bus) COMPLETE.** 3 plans; goal verified `passed`
+(12/12 must-haves, `02-VERIFICATION.md`). Delivered the stdlib two-tier `EventBus` Protocol
+(`FifoEventBus` + `PriorityEventBus`, CONTROL > BUSINESS behind one `.put()` surface, `itertools.count()`
+seq keying so the priority heap never dereferences the non-orderable `Event`), the three CONTROL
+`EventType` members (`STREAM_STATE`/`CONNECTOR_FATAL`/`CONFIG_UPDATE`, registered as explicit-empty
+backtest routes so the dispatch-registry conformance holds), a frozen `EngineContext` (4 loose infra
+fields), and the `compose_engine` fold to its **end-state `(ctx, spec)` signature** — internal
+`queue.Queue()` deleted, `FifoEventBus` injected into BOTH backtest arms, handler-owned storage
+(Order/Strategies own their store init) read back for wiring. Zero-backtest-impact held: SMA_MACD oracle
+**byte-exact** (134 / `46189.87730727451`, determinism double-run identical), inertness green + extended
+(register-vs-build: `FifoEventBus`/`EngineContext(sql_engine=None)` pull no sqlalchemy/ccxt), `mypy
+--strict` clean (237 files), full unit suite 1792 passed, `live_trading_system.py` UNCHANGED (D-11) +
+`poetry.lock` byte-unchanged. CTX-01/02/03 pulled forward from P3 (D-03 Option B); CTX-04
+(`SqlBackend→SqlEngine`) stays P3. Advisory `02-REVIEW`: 0 blockers / 2 warnings (WR-01 `PortfolioHandler`
+mode-agnosticism gap → deferred P3/P6, backtest-dark; WR-02 four dead `from queue import Queue` imports →
+hygiene-only). Phase 1 (Config Centralization) previously complete. Next: Phase 3 — EngineContext +
+Storage-in-Handler.*
+
+*Earlier: 2026-07-09 — **v1.8 — Live System Refactor & Live-Readiness Hardening STARTED.**
 Decomposes the 2,171-line `LiveTradingSystem` God object into a thin facade over focused collaborators
 (factory + shared `compose_engine` + `LiveRunner` + controllers), venue-parametrized and
 config-centralized, FastAPI-ready — without disturbing the byte-exact backtest oracle
-(`134 / 46189.87730727451`) or the OKX inertness gate. Full scope (13 phases, P1–P13, incl. the three ★
+(`134 / 46189.87730727451`) or the OKX inertness gate. Full scope (12 phases, P1–P12, incl. the three ★
 feature-adds LR-03/LR-04). Design source:
 `docs/superpowers/specs/2026-07-07-v1.8-live-system-refactor-design.md` (LR-00..LR-22, CF-1..CF-10).
 Defining requirements → roadmap via `/gsd:new-milestone`. v1.0–v1.7 SHIPPED — archived under

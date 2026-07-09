@@ -55,7 +55,6 @@ log the missing-ticker warning (RESEARCH OQ4).
 """
 
 import functools
-import queue
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -70,6 +69,7 @@ from itrader.core.exceptions import (
     MalformedDataError,
     MissingPriceDataError,
 )
+from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import BarEvent, TimeEvent
 from itrader.logger import get_itrader_logger
 from itrader.price_handler.store.base import PriceStore
@@ -331,7 +331,7 @@ class BacktestBarFeed(BarFeed):
         # set by the trading system at wiring time via ``bind``. The queue
         # is optional (unbound: the factory RETURNS the event); membership
         # is used ONLY for the missing-ticker warning (RESEARCH OQ4).
-        self.global_queue: "Optional[queue.Queue[Any]]" = None
+        self.global_queue: "Optional[EventBus]" = None
         self.membership: list[str] = []
 
         self.logger = get_itrader_logger().bind(component="BacktestBarFeed")
@@ -425,7 +425,7 @@ class BacktestBarFeed(BarFeed):
 
     # -- BarEvent factory (relocated from the legacy universe — Plan 07-02, D-20) --
 
-    def bind(self, global_queue: "Optional[queue.Queue[Any]]",
+    def bind(self, global_queue: "Optional[EventBus]",
              membership: list[str]) -> None:
         """Bind the run-path event sink and membership set (wiring time).
 

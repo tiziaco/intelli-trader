@@ -33,6 +33,9 @@ class EventType(Enum):
     STRATEGY_COMMAND = "STRATEGY_COMMAND"    # D-09: add/remove-ticker command
     BARS_LOADED = "BARS_LOADED"              # D-03: warmup bulk-transport
     BARS_LOAD_FAILED = "BARS_LOAD_FAILED"    # D-04: warmup backfill failure
+    STREAM_STATE = "STREAM_STATE"            # BUS-03: connector stream up/down (CONTROL)
+    CONNECTOR_FATAL = "CONNECTOR_FATAL"      # BUS-03: connector fatal -> halt (CONTROL)
+    CONFIG_UPDATE = "CONFIG_UPDATE"          # BUS-03: scoped runtime config change (CONTROL)
     ERROR = "ERROR"
 
     @classmethod

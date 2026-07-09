@@ -18,6 +18,7 @@ from ..matching_engine import MatchingEngine
 from itrader.core.enums.execution import ExecutionErrorCode, ExchangeConnectionStatus, ExchangeType
 from itrader.core.enums import OrderType, OrderCommand
 from itrader.core.money import to_money
+from itrader.events_handler.bus import EventBus
 from itrader.events_handler.events import BarEvent, FillEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 from itrader.universe import Universe
@@ -46,7 +47,7 @@ class SimulatedExchange(AbstractExchange):
 	thread; queue.Queue is the thread boundary — other threads only put events.
 	"""
 
-	def __init__(self, global_queue: "Queue[Any]", config: Optional[ExchangeConfig] = None,
+	def __init__(self, global_queue: "EventBus", config: Optional[ExchangeConfig] = None,
 				rng: Optional[random.Random] = None) -> None:
 		"""
 		Initialize the simulated exchange with minimal setup.

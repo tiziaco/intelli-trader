@@ -59,35 +59,41 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Event Bus (P2)
 
-- [ ] **BUS-01**: An `EventBus` Protocol (`put`/`get`/`get_nowait`/`qsize`/`empty`/`depth_by_tier`) with
+- [x] **BUS-01**: An `EventBus` Protocol (`put`/`get`/`get_nowait`/`qsize`/`empty`/`depth_by_tier`) with
   two implementations — `FifoEventBus` (backtest) + `PriorityEventBus` (live) — shares one `.put(event)`
   surface; no handler `.put` call-site changes (LR-11/§4a).
 
-- [ ] **BUS-02**: `PriorityEventBus` orders `(tier, seq, event)` with `tier ∈ {CONTROL=0, BUSINESS=1}`
+- [x] **BUS-02**: `PriorityEventBus` orders `(tier, seq, event)` with `tier ∈ {CONTROL=0, BUSINESS=1}`
   assigned from a declarative `_CONTROL_EVENT_TYPES` frozenset and a globally-unique monotonic `seq`; a
   test asserts the tuple comparison never dereferences the (non-orderable) frozen event and preserves
   strict within-tier FIFO (§4a).
 
-- [ ] **BUS-03**: New CONTROL `EventType` members (`STREAM_STATE`, `CONNECTOR_FATAL`, `CONFIG_UPDATE`) are
+- [x] **BUS-03**: New CONTROL `EventType` members (`STREAM_STATE`, `CONNECTOR_FATAL`, `CONFIG_UPDATE`) are
   added; backtest uses `FifoEventBus` so the oracle stays byte-exact (zero priority-bus on the backtest
   path) (arch refinement 3).
 
-- [ ] **BUS-04**: A minimal `EngineContext` skeleton is introduced in P2 so `compose_engine`'s signature
+- [x] **BUS-04**: A minimal `EngineContext` skeleton is introduced in P2 so `compose_engine`'s signature
   settles once rather than being double-edited across P2/P3 (arch refinement 2).
 
-### EngineContext + Storage-in-Handler (P3)
+### EngineContext + Storage-in-Handler (CTX-01/02/03 → P2, CTX-04 → P3)
 
-- [ ] **CTX-01**: `EngineContext` (frozen: `bus`, `config`, `environment`, `sql_engine`) is threaded once
-  into `compose_engine(ctx, spec)`; infra-only, never a god-parameter (LR-14/§7a).
+> **Phase reassignment (Phase 2 D-03, 2026-07-09):** the owner chose the end-state
+> `compose_engine(ctx, spec)` signature in P2 (Option B), which requires handler-owned storage — so
+> **CTX-01, CTX-02, and CTX-03 (the byte-exact/inertness gate inseparable from that change) are pulled
+> forward into P2.** Only **CTX-04** (the mechanical `SqlBackend→SqlEngine` rename) remains in P3, which is
+> now a single-requirement phase. Downstream must NOT "fix" this back — see `phases/02-event-bus/02-CONTEXT.md`.
 
-- [ ] **CTX-02**: Order + Strategies handlers own their storage init from `(environment, sql_engine)` with
-  an optional `storage=` override (following `PortfolioHandler`'s shape); `compose_engine` reads the
+- [x] **CTX-01** *(→ P2)*: `EngineContext` (frozen: `bus`, `config`, `environment`, `sql_engine`) is threaded
+  once into `compose_engine(ctx, spec)`; infra-only, never a god-parameter (LR-14/§7a).
+
+- [x] **CTX-02** *(→ P2)*: Order + Strategies handlers own their storage init from `(environment, sql_engine)`
+  with an optional `storage=` override (following `PortfolioHandler`'s shape); `compose_engine` reads the
   concrete instance back off `.storage` for wiring (LR-13/§7b, concern 20).
 
-- [ ] **CTX-03**: Backtest (`environment='backtest', sql_engine=None`) yields the same in-memory storage
-  instances → oracle byte-exact; factory SQL imports stay lazy → inertness green (§7b).
+- [x] **CTX-03** *(→ P2)*: Backtest (`environment='backtest', sql_engine=None`) yields the same in-memory
+  storage instances → oracle byte-exact; factory SQL imports stay lazy → inertness green (§7b).
 
-- [ ] **CTX-04**: `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`;
+- [ ] **CTX-04** *(P3)*: `SqlBackend` is renamed to `SqlEngine` (`storage/backend.py` → `storage/engine.py`;
   field/param `sql_engine`); all importers updated (LR-18, rename folded into P3 per arch refinement 4).
 
 ### SqlEngine Migrations Relocation (P4)
@@ -354,13 +360,13 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | CFG-04 | P1 | Complete |
 | CFG-05 | P1 | Complete |
 | CFG-06 | P1 | Complete |
-| BUS-01 | P2 | Pending |
-| BUS-02 | P2 | Pending |
-| BUS-03 | P2 | Pending |
-| BUS-04 | P2 | Pending |
-| CTX-01 | P3 | Pending |
-| CTX-02 | P3 | Pending |
-| CTX-03 | P3 | Pending |
+| BUS-01 | P2 | Complete |
+| BUS-02 | P2 | Complete |
+| BUS-03 | P2 | Complete |
+| BUS-04 | P2 | Complete |
+| CTX-01 | P2 | Complete |
+| CTX-02 | P2 | Complete |
+| CTX-03 | P2 | Complete |
 | CTX-04 | P3 | Pending |
 | SQL-01 | P4 | Pending |
 | SQL-02 | P4 | Pending |

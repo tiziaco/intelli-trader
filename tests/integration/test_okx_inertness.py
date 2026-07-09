@@ -89,6 +89,26 @@ assert "sql" not in _cfg.__dict__, (
     "cached_property resolved) — it must be lazy-constructed on first access only"
 )
 
+# Phase 2 (02-03, register-vs-build inertness): constructing the backtest bus +
+# EngineContext(sql_engine=None) must REGISTER without BUILDING a heavy backend.
+# FifoEventBus wraps a stdlib queue; EngineContext is a frozen infra dataclass —
+# neither may pull SQLAlchemy/ccxt, and building the ctx must NOT resolve the lazy
+# `sql` cached_property on the config singleton (closes the recurring eager-SQL
+# import failure mode, GATE-01 lineage).
+from itrader.events_handler.bus import FifoEventBus
+from itrader.trading_system.engine_context import EngineContext
+_bus = FifoEventBus()
+_ctx = EngineContext(bus=_bus, config=_cfg, environment="backtest", sql_engine=None)
+_heavy = [name for name in ("sqlalchemy", "ccxt") if name in sys.modules]
+assert not _heavy, (
+    "P2 register-vs-build inertness violation: constructing FifoEventBus/"
+    "EngineContext(sql_engine=None) pulled a heavy backend: " + repr(_heavy)
+)
+assert "sql" not in _cfg.__dict__, (
+    "P2 register-vs-build inertness violation: building the EngineContext resolved "
+    "the lazy `sql` cached_property on the config singleton (must stay unbuilt)"
+)
+
 print("INERTNESS_OK")
 """
 
