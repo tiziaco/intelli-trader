@@ -5,8 +5,8 @@ milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 5
 current_phase_name: Venue Registry + Bundle
 status: completed
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-07-10T07:11:10.811Z"
+stopped_at: Phase 5 context gathered
+last_updated: "2026-07-10T08:15:03.045Z"
 last_activity: 2026-07-10
 last_activity_desc: Phase 04 complete, transitioned to Phase 5
 progress:
@@ -220,11 +220,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-10T06:35:45.765Z
-Stopped at: Completed 04-03-PLAN.md
+Last session: 2026-07-10T08:15:03.037Z
+Stopped at: Phase 5 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: None
+Resume file: .planning/phases/05-venue-registry-bundle/05-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 
