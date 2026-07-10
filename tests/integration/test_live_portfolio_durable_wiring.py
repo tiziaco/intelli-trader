@@ -60,7 +60,7 @@ def test_no_durable_store_falls_back_to_backtest(monkeypatch) -> None:
         assert system._system_db_backend is None
         # The durable arm was not taken — the portfolio ledger stays in-memory (oracle-dark).
         assert system.portfolio_handler._environment == "backtest"
-        assert system.portfolio_handler._backend is None
+        assert system.portfolio_handler._sql_engine is None
     finally:
         system.stop(timeout=5.0)
 
@@ -78,7 +78,7 @@ def test_durable_store_constructs_live_portfolio_handler(pg_database_env) -> Non
         # The PortfolioHandler is wired on the durable 'live' arm with the SAME shared backend,
         # so every portfolio it creates persists to the durable SQL ledger (D-07).
         assert system.portfolio_handler._environment == "live"
-        assert system.portfolio_handler._backend is system._system_db_backend
+        assert system.portfolio_handler._sql_engine is system._system_db_backend
     finally:
         system.stop(timeout=5.0)
 

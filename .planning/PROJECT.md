@@ -785,7 +785,30 @@ the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a 
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
 
 ---
-*Last updated: 2026-07-09 — **v1.8 Phase 3 (EngineContext + Storage-in-Handler) COMPLETE.** 2 plans;
+*Last updated: 2026-07-09 — **v1.8 Phase 4 (Storage Schema: Migrations Relocation + New Durable Stores)
+COMPLETE.** 3 plans; goal verified `passed` (8/8 must-haves, `04-VERIFICATION.md`). Delivered SQL-01/D-10:
+`git mv itrader/storage/migrations → migrations/` to project root (out of the shipped wheel —
+`packages=[{include="itrader"}]`), all 5 revision IDs preserved byte-unchanged (no squash), `alembic.ini
+script_location = migrations`, structural wheel-exclusion gate. STORE-01..05: three live-only durable SQL
+stores on the `HaltRecordStore` template with natural NAME PKs (D-06, no `idgen`) — `SystemStore`
+(cardinality-1 `(key, value_json, updated_at)` namespaced upsert), `VenueStore` (per-venue config + typed
+`enabled` + `list_enabled`, recursive secret-denylist guard rejecting secret-like keys at any depth before
+any write, D-05), and `StrategyRegistryStore` (two-table registry + normalized FK'd `strategy_subscriptions`,
+JOIN rehydrate, `list_active`, genuine file-backed dispose→reopen restart survival) — each composing
+`sql_engine` with its own `build_*_table` registrar. SQL-02/D-11: three hand-authored chained revisions
+`d10_halt_records → system_store → venue_config → strategy_registry` (single head), `env.py target_metadata`
+wired (D-02 migration-target only — stores NOT constructed in `LiveTradingSystem`; deferred to P6/P9/P10), a
+full-chain gate (single-head + clean `upgrade head` + create_all/migration parity), and the OKX inertness
+gate extended (3 new store modules `_FORBIDDEN` + register-vs-build). Zero-backtest-impact held: SMA_MACD
+oracle **byte-exact** (134 / `46189.87730727451`), inertness green, `mypy --strict` clean on the 3 new
+stores, storage suite green (109 passed). Regression gate caught + fixed one pre-existing Phase-3 straggler:
+`test_live_portfolio_durable_wiring.py` still asserted `PortfolioHandler._backend` after the P3
+`SqlBackend→SqlEngine`/`_backend→_sql_engine` sweep — retargeted to `._sql_engine`, full non-live suite
+**2045 passed**. Advisory `04-REVIEW`: 0 blockers / 3 warnings / 3 info (exact-match secret denylist,
+unenforced SQLite FK, template-inherited `create_all` — all latent/deferred). Next: Phase 5 — Venue Registry
++ Bundle.*
+
+*Earlier: 2026-07-09 — **v1.8 Phase 3 (EngineContext + Storage-in-Handler) COMPLETE.** 2 plans;
 goal verified `passed` (13/13 must-haves, `03-VERIFICATION.md`). Delivered CTX-04: hard-renamed the shared
 SQL spine class `SqlBackend`→`SqlEngine` (git mv `storage/backend.py`→`storage/engine.py`, history
 preserved, no alias), swept all 41 importers to `sql_engine=`/`_sql_engine` vocabulary (incl. the 4

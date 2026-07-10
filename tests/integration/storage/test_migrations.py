@@ -13,22 +13,37 @@ collection collision fixed earlier.
 """
 
 import pathlib
+import tomllib
 
 import pytest
-from sqlalchemy import Column, String, Table, Uuid, create_engine, inspect, text
+from sqlalchemy import Column, MetaData, String, Table, Uuid, create_engine, inspect, text
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 from itrader.config.sql import SqlSettings
+from itrader.order_handler.storage.models import build_order_tables
+from itrader.portfolio_handler.storage.models import build_portfolio_tables
 from itrader.storage import SqlEngine
+from itrader.storage.engine import NAMING_CONVENTION
+from itrader.storage.halt_record_store import build_halt_records_table
+from itrader.storage.strategy_registry_store import build_strategy_registry_tables
+from itrader.storage.system_store import build_system_store_table
+from itrader.storage.venue_store import build_venue_store_table
+from itrader.strategy_handler.storage.models import build_signal_tables
+
+# The four tables Plan 04-03's 3-revision chain adds on top of the operational baseline —
+# the SQL-02 gate asserts they exist after ``upgrade head`` and that their columns match
+# the registrar-built (``create_all``) schema.
+_NEW_TABLES = ("system_store", "venue_store", "strategy_registry", "strategy_subscriptions")
 
 # Repo-root-anchored paths so the Alembic Config is cwd-INDEPENDENT: Alembic resolves a
 # RELATIVE ``script_location`` against the process cwd (not the ini location), so the test
 # pins the absolute migrations dir on the Config below.
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 _ALEMBIC_INI = _REPO_ROOT / "alembic.ini"
-_MIGRATIONS_DIR = _REPO_ROOT / "itrader" / "storage" / "migrations"
+_MIGRATIONS_DIR = _REPO_ROOT / "migrations"
 
 
 def _alembic_config(url: str) -> Config:
@@ -42,6 +57,29 @@ def _alembic_config(url: str) -> Config:
     cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
     cfg.set_main_option("sqlalchemy.url", url)
     return cfg
+
+
+def test_migrations_relocated_out_of_wheel() -> None:
+    """SQL-01: ``migrations/`` lives at repo root, OUTSIDE the shipped ``itrader`` wheel.
+
+    Fast, structural, build-free proxy for "migrations are repo-shipped, not
+    installed-package-shipped" (LR-18): a full ``poetry build`` + wheel inspection stays an
+    optional manual check (04-VALIDATION). This asserts three observable properties:
+
+    1. The relocated tree exists at project-root ``migrations/env.py``.
+    2. The old in-package tree ``itrader/storage/migrations`` is GONE (not re-nested).
+    3. ``pyproject.toml`` ``tool.poetry.packages`` includes ONLY ``itrader`` — so no rule
+       re-adds a project-root ``migrations`` path to the wheel, and the tree now sits outside
+       ``itrader/``. Fails loud (red) if a future edit re-nests migrations or adds a second
+       ``packages`` include.
+    """
+    assert (_REPO_ROOT / "migrations" / "env.py").exists()
+    assert not (_REPO_ROOT / "itrader" / "storage" / "migrations").exists()
+
+    with (_REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        pyproject = tomllib.load(fh)
+    packages = pyproject["tool"]["poetry"]["packages"]
+    assert packages == [{"include": "itrader"}]
 
 
 def test_research_store_create_all_has_no_alembic_version() -> None:
@@ -129,3 +167,91 @@ def test_alembic_chain_applies_operational_baseline_postgres(engine) -> None:
         command.downgrade(cfg, "base")
         with engine.begin() as conn:
             conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+
+
+def test_migration_chain_is_single_head() -> None:
+    """SQL-02: the relocated chain has exactly ONE head — ``strategy_registry``.
+
+    A branched/forked chain (two heads) would make ``upgrade head`` ambiguous and let the
+    deploy schema drift. The 04-03 revisions chain linearly off ``d10_halt_records``
+    (``system_store`` → ``venue_config`` → ``strategy_registry``), so the single head is the
+    last link. ``get_heads()`` returns a list; a tuple compare pins the exact singleton.
+    """
+    url = "sqlite+pysqlite:///:memory:"  # URL is unused for a script-only head read
+    heads = ScriptDirectory.from_config(_alembic_config(url)).get_heads()
+    assert tuple(heads) == ("strategy_registry",)
+
+
+def test_full_chain_upgrade_creates_new_stores_sqlite(tmp_path: pathlib.Path) -> None:
+    """SQL-02: ``upgrade head`` on a clean SQLite DB creates the 4 new store tables.
+
+    A file-backed SQLite DB (not ``:memory:``) so the schema survives after the
+    Alembic-internal engine is disposed and can be inspected on a fresh connection. After
+    the full chain the 4 new tables are present and ``alembic_version`` holds exactly ONE
+    row (stamped at the single head ``strategy_registry``).
+    """
+    db_path = tmp_path / "full_chain.db"
+    url = f"sqlite+pysqlite:///{db_path}"
+    command.upgrade(_alembic_config(url), "head")
+
+    engine = create_engine(url)
+    try:
+        names = set(inspect(engine).get_table_names())
+        assert set(_NEW_TABLES) <= names  # the 3-revision chain built all 4 new tables
+        with engine.connect() as conn:
+            applied = conn.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).fetchall()
+        assert len(applied) == 1  # single head — one stamped revision row ...
+        assert applied[0][0] == "strategy_registry"  # ... exactly the new single head
+    finally:
+        engine.dispose()
+
+
+def test_create_all_vs_migration_parity(tmp_path: pathlib.Path) -> None:
+    """SQL-02: the registrar ``create_all`` schema equals the ``upgrade head`` schema.
+
+    The ``build_*`` registrars are the SINGLE SOURCE OF TRUTH for BOTH paths. Engine A is
+    built by calling EVERY registrar on a ``MetaData(naming_convention=NAMING_CONVENTION)``
+    then ``create_all``; engine B is built by ``upgrade head``. Their table sets (minus the
+    Alembic-only ``alembic_version``) must be identical, and the per-table column-name sets
+    for the 4 new tables must match — proving the migrations reproduce the registrars.
+
+    Removing any of the 3 ``env.py`` registrar calls makes autogenerate emit a spurious
+    drop; hand-authored migrations that diverge from the registrar break this parity.
+    """
+    # Engine A — registrar-built schema via create_all.
+    a_path = tmp_path / "create_all.db"
+    a_url = f"sqlite+pysqlite:///{a_path}"
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    build_order_tables(metadata)
+    build_portfolio_tables(metadata)
+    build_signal_tables(metadata)
+    build_halt_records_table(metadata)
+    build_system_store_table(metadata)
+    build_venue_store_table(metadata)
+    build_strategy_registry_tables(metadata)
+    engine_a = create_engine(a_url)
+
+    # Engine B — migration-built schema via upgrade head.
+    b_path = tmp_path / "upgrade_head.db"
+    b_url = f"sqlite+pysqlite:///{b_path}"
+    engine_b = create_engine(b_url)
+    try:
+        metadata.create_all(engine_a)
+        command.upgrade(_alembic_config(b_url), "head")
+
+        inspector_a = inspect(engine_a)
+        inspector_b = inspect(engine_b)
+        tables_a = set(inspector_a.get_table_names())
+        tables_b = set(inspector_b.get_table_names()) - {"alembic_version"}
+        assert tables_a == tables_b  # same table set across both paths ...
+
+        # ... and the same column-name set per new table (registrar == migration).
+        for table in _NEW_TABLES:
+            cols_a = {c["name"] for c in inspector_a.get_columns(table)}
+            cols_b = {c["name"] for c in inspector_b.get_columns(table)}
+            assert cols_a == cols_b, f"column drift on {table}: {cols_a} != {cols_b}"
+    finally:
+        engine_a.dispose()
+        engine_b.dispose()

@@ -1,10 +1,10 @@
 """Concrete ``SqlPortfolioStateStorage`` — the portfolio-state operational backend (OPS-02).
 
 The portfolio-state ``Sql<Concern>Storage`` on the shared SQL spine: it *composes* a
-``SqlEngine`` by reference (has-a, D-06 — never a cross-concern god base), registers the
-six portfolio tables on ``backend.metadata`` via ``build_portfolio_tables``, and calls
-``metadata.create_all(checkfirst=True)`` so schema creation is idempotent (live path uses
-Alembic; ``create_all`` is the test/idempotent path). Mirrors ``results/sql_storage.py``.
+``SqlEngine`` by reference (has-a, D-06 — never a cross-concern god base) and registers the
+six portfolio tables on ``backend.metadata`` via ``build_portfolio_tables``. It is schema-pure
+(WR-03/D-14 — no runtime ``create_all``): the durable schema is Alembic-owned in production and
+provisioned by ``tests.support.schema.provision_schema`` in tests.
 
 THE defining nuance (Pitfall 1): the ``PortfolioStateStorage`` ABC has NO ``portfolio_id``
 parameter on any of its ~21 methods — the in-memory backend is one-instance-per-``Portfolio``.
@@ -54,8 +54,9 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
     ----------
     sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; this backend registers its six tables on ``sql_engine.metadata`` and creates
-        them idempotently (``checkfirst=True``).
+        wiring; this backend registers its six tables on ``sql_engine.metadata`` but does NOT
+        create them — the durable schema is Alembic-owned in production (WR-03/D-14) and
+        provisioned by the shared ``provision_schema`` test fixture in tests.
     portfolio_id:
         The UUIDv7 portfolio this instance is bound to (Pitfall 1). EVERY query is scoped
         to it; the source objects that carry no ``portfolio_id`` field
@@ -75,9 +76,8 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         self.cash_operations = tables["cash_operations"]
         self.equity_snapshots = tables["equity_snapshots"]
 
-        # Idempotent, ephemeral-friendly schema creation (the live path migrates via
-        # Alembic; create_all is the test/no-op-if-present path).
-        sql_engine.metadata.create_all(self.engine, checkfirst=True)
+        # WR-03/D-14 — schema-pure: register the tables, never create them (Alembic-owned
+        # in production; tests provision via tests.support.schema.provision_schema).
 
         self.logger = get_itrader_logger().bind(component="SqlPortfolioStateStorage")
 
@@ -269,8 +269,8 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         )
         with self.engine.connect() as connection:
             amounts = connection.execute(statement).scalars().all()
-        # Sum in Python (Decimal start) to preserve full precision (in-memory parity).
-        return sum(amounts, Decimal("0.00"))
+        # Sum in Python (clean Decimal("0") start) to preserve full precision (in-memory parity).
+        return sum(amounts, Decimal("0"))
 
     def add_reservation(self, reference_id: str, amount: Decimal) -> None:
         # Upsert by (portfolio_id, reference_id): portable insert-or-replace.

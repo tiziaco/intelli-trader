@@ -102,7 +102,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 1: Config Centralization** - One import-safe `SystemConfig` (eager/lazy split), module-constant migration, dead-config audit, typed `HaltReason` (CFG-01..06) (completed 2026-07-09)
 - [x] **Phase 2: Event Bus** - Two-tier `EventBus` Protocol (`FifoEventBus`/`PriorityEventBus`) + CONTROL EventTypes + minimal `EngineContext` skeleton (BUS-01..04) (completed 2026-07-09)
 - [x] **Phase 3: EngineContext + Storage-in-Handler** - `EngineContext` threaded into `compose_engine(ctx, spec)`, handler-owns storage init, `SqlBackend→SqlEngine` rename (CTX-01..04) (completed 2026-07-09)
-- [ ] **Phase 4: Storage Schema: Migrations Relocation + New Durable Stores** - `migrations/` → project root FIRST, then `SystemStore`/`VenueStore`/`StrategyRegistryStore` chained on the `HaltRecordStore` template; single-head + parity Alembic gate over the FULL chain + rehydrate (SQL-01..02, STORE-01..05)
+- [x] **Phase 4: Storage Schema: Migrations Relocation + New Durable Stores** - `migrations/` → project root FIRST, then `SystemStore`/`VenueStore`/`StrategyRegistryStore` chained on the `HaltRecordStore` template; single-head + parity Alembic gate over the FULL chain + rehydrate (SQL-01..02, STORE-01..05) (completed 2026-07-09)
 - [ ] **Phase 5: Venue Registry + Bundle** - Two registries, `VenuePlugin`/`VenueBundle`, precision/validate on the exchange, connector memoization, shared `StreamSupervisor` — kills every `if exchange==` (VENUE-01..07)
 - [ ] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade (RUN-01..07)
 - [ ] **Phase 7: Safety + Reconciliation + Stream Recovery** - `SafetyController`, `ReconciliationCoordinator`, `StreamRecoveryHandler`, CONTROL routes, pre-trade throttle — flag machinery deleted (SAFE-01..06)
@@ -194,7 +194,20 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
   3. The chained migration `d10_halt_records → system_store → venue_config → strategy_registry` is authored in the relocated `migrations/` tree, and the SQL-02 Alembic gate validates the FULL new chain — `alembic upgrade head` on a clean DB, `alembic heads == 1` (single head incl. the three new stores), and a `create_all`/migration parity test.
   4. An in-memory fallback keeps the backtest path untouched — the backtest oracle stays byte-exact (per-PLAN gate) and `test_okx_inertness.py` stays green (extended register-vs-build assertion; the relocated migrations + new stores pull nothing heavy at import).
 
-**Plans**: TBD
+**Plans**: 3 plans + 1 gap-remediation plan (04-04)
+
+**Wave 1** *(parallel — zero file overlap; relocation ‖ standalone store classes)*
+
+- [x] 04-01-PLAN.md — Migrations relocation: `git mv itrader/storage/migrations → migrations`, `alembic.ini script_location`, gate-path fix, structural wheel-exclusion assertion (SQL-01, D-10)
+- [x] 04-02-PLAN.md — Three durable stores + registrars + unit tests: `SystemStore`/`VenueStore`(secret-guard)/`StrategyRegistryStore`(two-table+restart) over SQLite (STORE-01/02/03/05, D-01/03/04/05/06/07/08/09)
+
+**Wave 2** *(blocked on 04-01 + 04-02)*
+
+- [x] 04-03-PLAN.md — Chained migrations (`system_store → venue_config → strategy_registry`) + `env.py target_metadata` + SQL-02 single-head/upgrade/parity gate + inertness extension (SQL-02, STORE-04/05, D-02/11)
+
+**Gap remediation** *(post-review, appended after Phase 4 close — addresses `04-REVIEW.md`; decisions in `04-GAP-DECISIONS.md`)*
+
+- [x] 04-04-PLAN.md — WR-03: remove `create_all` from 7 durable-store constructors (results store excluded per D-14) + shared `provision_schema` test fixture; WR-02: dialect-guarded `PRAGMA foreign_keys=ON` on `SqlEngine` + FK-enforcement test; IN-01: deterministic `ORDER BY` on `StrategyRegistryStore.read_all` (SQL-02, STORE-01/02/03/04/05)
 
 ### Phase 5: Venue Registry + Bundle
 
@@ -326,7 +339,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
-| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 0/TBD | Not started | - |
+| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
