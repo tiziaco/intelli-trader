@@ -222,7 +222,25 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
   4. A shared `StreamSupervisor` replaces the triplicated `_run_stream_supervisor` + `_STREAM_RECONNECT_*` (CF-4); connector-contract docstrings are added to `connectors/base.py` (CF-3); OKX markets-map freshness closes the fail-open-before-load window via the existing `validate_symbol` → removal path (CF-9).
   5. Connectors are memoized by `(venue, account_id)` with per-`account_id` env-sourced credentials never persisted; the backtest oracle stays byte-exact (per-PLAN gate).
 
-**Plans**: TBD
+**Plans**: 6 plans (4 waves)
+
+**Wave 1** *(parallel — no shared files)*
+
+- [ ] 05-01-PLAN.md — VENUE-07: shared `StreamSupervisor` (parameterized, replaces 3 forks) + CF-3 connector docstrings + CF-9 fail-closed `validate_symbol` (VENUE-07)
+- [ ] 05-03-PLAN.md — VENUE-05: `LiveDataProvider` Protocol + `BaseLiveDataProvider` no-op defaults; `ReplayDataProvider` inherits it (VENUE-05)
+
+**Wave 2** *(05-02 blocked on 05-01 via okx.py; 05-04 blocked on 05-03 via LiveDataProvider)*
+
+- [ ] 05-02-PLAN.md — VENUE-04: `resolve_precision` as an `AbstractExchange` capability + `precision_to_scale` money util + universe-handler resolver rewire (Drift 1) (VENUE-04)
+- [ ] 05-04-PLAN.md — VENUE-01/02/03: two registries + `VenueBundle`/plugin Protocols + `ConnectorProvider` `(venue, account_id)` memo + `SystemSpec` selectors (VENUE-01/02/03)
+
+**Wave 3** *(blocked on 05-04 + 05-03)*
+
+- [ ] 05-05-PLAN.md — VENUE-02: OKX + paper venue/data/connector plugins (triple-deferral-lazy) + inertness register-vs-build extension (VENUE-02)
+
+**Wave 4** *(blocked on 05-05 + 05-04 + 05-03 + 05-02)*
+
+- [ ] 05-06-PLAN.md — VENUE-06: `VenueLifecycle` + `assemble_venue` seam + delete every `if exchange==` branch in `LiveTradingSystem` (VENUE-06)
 
 ### Phase 6: LiveRunner + Factory + Facade Shrink
 
@@ -340,7 +358,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
-| 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
+| 5. Venue Registry + Bundle | v1.8 | 0/6 | Planned | - |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |

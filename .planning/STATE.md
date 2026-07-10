@@ -4,11 +4,11 @@ milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 5
 current_phase_name: Venue Registry + Bundle
-status: completed
-stopped_at: Phase 5 context gathered
+status: planned
+stopped_at: Phase 5 planned (6 plans, 4 waves)
 last_updated: "2026-07-10T08:15:03.045Z"
 last_activity: 2026-07-10
-last_activity_desc: Phase 04 complete, transitioned to Phase 5
+last_activity_desc: Phase 5 planned — 6 PLAN.md created across 4 waves
 progress:
   total_phases: 9
   completed_phases: 4
@@ -34,9 +34,9 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 5 — Venue Registry + Bundle
-Plan: Not started
-Status: 04-04 gap-remediation complete (WR-02 / IN-01 / WR-03)
-Last activity: 2026-07-10 — Phase 04 complete, transitioned to Phase 5
+Plan: 6 plans created (Wave 1: 05-01, 05-03 · Wave 2: 05-02, 05-04 · Wave 3: 05-05 · Wave 4: 05-06)
+Status: Phase 5 planned — ready for /gsd:execute-phase 5
+Last activity: 2026-07-10 — Phase 5 planned (VENUE-01..07 across 6 plans, oracle + inertness gated per plan)
 
 Progress: [████░░░░░░] 44%
 
