@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 5
-current_phase_name: Venue Registry + Bundle
-status: verifying
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-07-09T18:18:35.498Z"
-last_activity: 2026-07-09
-last_activity_desc: Phase 04 complete, transitioned to Phase 5
+current_phase: 04
+current_phase_name: storage-schema-migrations-relocation-new-durable-stores
+status: executing
+stopped_at: Completed 04-04-PLAN.md
+last_updated: "2026-07-10T06:36:40.470Z"
+last_activity: 2026-07-10
+last_activity_desc: Completed 04-04 gap-remediation plan
 progress:
   total_phases: 9
   completed_phases: 4
-  total_plans: 12
-  completed_plans: 12
+  total_plans: 13
+  completed_plans: 13
   percent: 44
 ---
 
@@ -33,12 +33,12 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 5 — Venue Registry + Bundle
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-07-09 — Phase 04 complete, transitioned to Phase 5
+Phase: 04 (storage-schema-migrations-relocation-new-durable-stores) — COMPLETE (incl. 04-04 gap plan)
+Plan: 4 of 4
+Status: 04-04 gap-remediation complete (WR-02 / IN-01 / WR-03)
+Last activity: 2026-07-10 — Completed 04-04 gap-remediation plan
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [████░░░░░░] 44%
 
 ## Milestone Gate (v1.8 — applies to EVERY phase)
 
@@ -140,6 +140,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: [Phase 04]: 04-01: migrations/ relocated to project root via git mv (D-10, 5 revision IDs preserved unchanged, single head d10_halt_records); alembic.ini script_location=migrations; SQL-01 wheel-exclusion samplable via tomllib assertion; oracle byte-exact + inertness green
 - [Phase ?]: [Phase 04]: 04-02: three new live-only durable stores landed (SystemStore KV / VenueStore / StrategyRegistryStore), each a HaltRecordStore-template clone composing SqlEngine; natural NAME PKs (D-06, no idgen/surrogate); VenueStore recursive secret-denylist guard fires before the write (D-05, Pitfall 6); StrategyRegistryStore two-table registry+subscriptions with FK-join rehydrate + file-backed restart survival; oracle byte-exact + inertness green
 - [Phase ?]: [Phase 04]: 04-03: 3 hand-authored Alembic revisions off d10_halt_records (system_store → venue_config[builds venue_store table, slug!=name] → strategy_registry[registry+FK'd subscriptions, child-first downgrade]); new single head strategy_registry; env.py target_metadata registers all 4 new tables (D-02, import-inert Table-only); SQL-02 gate = single-head + upgrade-head + create_all/migration parity; inertness _FORBIDDEN + register-vs-build extended; oracle byte-exact
+- [Phase ?]: WR-02: SQLite FK enforcement lives on SqlEngine (dialect-guarded PRAGMA connect-hook), not a fixture — engine correctness semantics must be identical on every dialect the engine runs
+- [Phase ?]: WR-03/D-14: 7 durable stores schema-pure (no runtime create_all); production Alembic-owned, tests provision via tests.support.schema.provision_schema; ephemeral results store keeps create_all
 
 ### Pending Todos
 
@@ -206,6 +208,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 04 P01 | 1min | 2 tasks | 4 files |
 | Phase 04 P02 | 6min | 3 tasks | 6 files |
 | Phase 04 P03 | 12min | 3 tasks | 6 files |
+| Phase 04 P04 | 20m | 3 tasks | 16 files |
 
 ## Bookkeeping
 
@@ -217,7 +220,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-09T17:52:03.853Z
+Last session: 2026-07-10T06:35:45.765Z
 Stopped at: Completed 04-03-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.

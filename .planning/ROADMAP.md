@@ -339,7 +339,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
-| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 3/3 | Complete    | 2026-07-09 |
+| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 3/4 | In Progress|  |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
