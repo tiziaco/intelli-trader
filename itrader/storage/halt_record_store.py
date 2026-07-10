@@ -23,7 +23,6 @@ one ID scheme — no second scheme, no DB autoincrement). 4-space indentation (m
 ``itrader/storage`` spine layer this file sits in).
 """
 
-import uuid
 from datetime import datetime
 from typing import NamedTuple, Optional
 

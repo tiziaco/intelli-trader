@@ -269,8 +269,8 @@ class SqlPortfolioStateStorage(PortfolioStateStorage):
         )
         with self.engine.connect() as connection:
             amounts = connection.execute(statement).scalars().all()
-        # Sum in Python (Decimal start) to preserve full precision (in-memory parity).
-        return sum(amounts, Decimal("0.00"))
+        # Sum in Python (clean Decimal("0") start) to preserve full precision (in-memory parity).
+        return sum(amounts, Decimal("0"))
 
     def add_reservation(self, reference_id: str, amount: Decimal) -> None:
         # Upsert by (portfolio_id, reference_id): portable insert-or-replace.
