@@ -253,15 +253,28 @@ class StrategyRegistryStore:
             self.strategy_registry.c.strategy_name
             == self.strategy_subscriptions.c.strategy_name,
         )
-        statement = select(
-            self.strategy_registry.c.strategy_name,
-            self.strategy_registry.c.enabled,
-            self.strategy_registry.c.config_json,
-            self.strategy_registry.c.updated_at,
-            self.strategy_subscriptions.c.venue,
-            self.strategy_subscriptions.c.symbol,
-            self.strategy_subscriptions.c.timeframe,
-        ).select_from(join)
+        statement = (
+            select(
+                self.strategy_registry.c.strategy_name,
+                self.strategy_registry.c.enabled,
+                self.strategy_registry.c.config_json,
+                self.strategy_registry.c.updated_at,
+                self.strategy_subscriptions.c.venue,
+                self.strategy_subscriptions.c.symbol,
+                self.strategy_subscriptions.c.timeframe,
+            )
+            .select_from(join)
+            # IN-01 — deterministic rehydrate order. strategy_name ASC drives the RECORD
+            # order (records dict is populated in row order), and (venue, symbol, timeframe)
+            # ASC drives each record's subscription-list append order. Mirrors the .asc()
+            # idiom in strategies_subscribed_to. Guards future golden/byte-exact callers.
+            .order_by(
+                self.strategy_registry.c.strategy_name.asc(),
+                self.strategy_subscriptions.c.venue.asc(),
+                self.strategy_subscriptions.c.symbol.asc(),
+                self.strategy_subscriptions.c.timeframe.asc(),
+            )
+        )
 
         records: dict[str, dict[str, Any]] = {}
         with self.engine.connect() as connection:

@@ -178,6 +178,39 @@ def test_set_subscriptions_on_unregistered_strategy_raises_integrity_error() -> 
         store.dispose()
 
 
+def test_read_all_is_deterministically_ordered() -> None:
+    """IN-01 — read_all returns strategies in strategy_name ASC and each record's
+    subscriptions in (venue, symbol, timeframe) ASC, regardless of insertion order."""
+    store = _make_memory_store()
+    try:
+        # Upsert in NON-sorted name order.
+        store.upsert("charlie", {"n": 1}, True, _AT1)
+        store.upsert("alpha", {"n": 2}, True, _AT1)
+        store.upsert("bravo", {"n": 3}, True, _AT1)
+        # Set subscriptions in NON-sorted (venue, symbol, timeframe) order.
+        store.set_subscriptions(
+            "alpha",
+            [
+                ("okx", "ETH/USDC", "4h"),
+                ("binance", "BTC/USDC", "1h"),
+                ("okx", "BTC/USDC", "1h"),
+            ],
+            _AT2,
+        )
+        records = store.read_all()
+        # Records ordered by strategy_name ASC.
+        assert [r["strategy_name"] for r in records] == ["alpha", "bravo", "charlie"]
+        # alpha's subscriptions ordered by (venue, symbol, timeframe) ASC (assert the LIST).
+        alpha = records[0]
+        assert alpha["subscriptions"] == [
+            ("binance", "BTC/USDC", "1h"),
+            ("okx", "BTC/USDC", "1h"),
+            ("okx", "ETH/USDC", "4h"),
+        ]
+    finally:
+        store.dispose()
+
+
 def test_build_strategy_registry_tables_shape() -> None:
     """The registrar returns both tables; the FK + composite PK are declared (D-06)."""
     backend = SqlEngine(SqlSettings.default())
