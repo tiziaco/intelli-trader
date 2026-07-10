@@ -16,6 +16,9 @@ store wrapped in ``try/finally: store.dispose()``.
 import pathlib
 from datetime import UTC, datetime
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from itrader.config.sql import SqlDriver, SqlSettings
 from itrader.storage import SqlEngine
 from itrader.storage.strategy_registry_store import (
@@ -156,6 +159,23 @@ def test_restart_survival_file_backed(tmp_path: pathlib.Path) -> None:
         }
     finally:
         reopened.dispose()
+
+
+def test_set_subscriptions_on_unregistered_strategy_raises_integrity_error() -> None:
+    """WR-02 — an orphan subscription (no parent registry row) raises IntegrityError.
+
+    Before the SqlEngine PRAGMA foreign_keys=ON hook, SQLite silently inserted the orphan
+    child row; Postgres always raised. This pins the intended cross-backend FK contract:
+    set_subscriptions for a strategy_name with no registry row now raises on SQLite too.
+    """
+    store = _make_memory_store()
+    try:
+        with pytest.raises(IntegrityError):
+            store.set_subscriptions(
+                "ghost_strategy", [("okx", "BTC/USDC", "1h")], _AT1
+            )
+    finally:
+        store.dispose()
 
 
 def test_build_strategy_registry_tables_shape() -> None:

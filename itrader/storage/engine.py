@@ -9,7 +9,9 @@ not code (SPINE-01). The spine is post-loop / live-only; it adds zero per-tick c
 is structurally inert on the backtest hot loop (GATE-01).
 """
 
-from sqlalchemy import MetaData, create_engine
+from typing import Any
+
+from sqlalchemy import MetaData, create_engine, event
 from sqlalchemy.engine import Engine
 
 from itrader.config.sql import SqlSettings
@@ -48,6 +50,26 @@ class SqlEngine:
         # connect. No-op for :memory: and Postgres arms.
         settings.ensure_local_storage()
         self.engine: Engine = create_engine(settings.engine_url())
+        # WR-02 — honor declared FOREIGN KEYs on SQLite. SQLite ignores FK constraints
+        # unless PRAGMA foreign_keys=ON is set PER connection; Postgres always enforces.
+        # Registering the connect-hook ONCE here on the shared spine means every composing
+        # store inherits enforcement, so the FK integrity the schema declares is identical
+        # on every dialect the engine runs (test-SQLite, the file-backed results store, and
+        # the Turso/libSQL slot — D-15), not just Postgres. The dialect guard makes the
+        # branch a dead no-op on Postgres. This is an ENGINE correctness semantic (honoring
+        # declared constraints), distinct from provisioning (WR-03, which moves to a fixture).
+        if self.engine.dialect.name == "sqlite":
+
+            @event.listens_for(self.engine, "connect")
+            def _enable_sqlite_foreign_keys(
+                dbapi_connection: Any, connection_record: Any
+            ) -> None:
+                # Explicit DBAPI cursor open/execute/close so nothing leaks a
+                # ResourceWarning under filterwarnings=["error"].
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
         # MetaData carries the stable NAMING_CONVENTION so test-path create_all and
         # deploy-path Alembic autogenerate (Plan 05) produce byte-identical constraint /
         # index names (research Pitfall 5 / A5).
