@@ -148,8 +148,7 @@ gate) stays green.
   (`core/money.py`). Low-gray (SC fully pins it) — noted for completeness. Simulated exchange's
   `resolve_precision` returns a sensible default when it holds no markets map.
 
-- **D-10 (Provider uniformity rule — no-op default for present-optional methods; None-guard for absent
-  components):** VENUE-05 and VENUE-06 are complementary at **different granularities**, reconciled as one
+- **D-10 (Provider uniformity rule — no-op default for present-optional methods; None-guard for absent components):** VENUE-05 and VENUE-06 are complementary at **different granularities**, reconciled as one
   rule: an **optional METHOD on a PRESENT object** (a data provider that doesn't stream) → **no-op default**
   on `BaseLiveDataProvider` (call unconditionally, kills `hasattr`); an **entirely ABSENT component** (paper's
   connector/account) → **explicit `None`-guard** in `VenueLifecycle` (`bundle.connector`/`account` are
