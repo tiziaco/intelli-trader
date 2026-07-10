@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 04
-current_phase_name: storage-schema-migrations-relocation-new-durable-stores
-status: executing
-stopped_at: Completed 04-04-PLAN.md
-last_updated: "2026-07-10T06:36:40.470Z"
+current_phase: 5
+current_phase_name: Venue Registry + Bundle
+status: completed
+stopped_at: Completed 04-03-PLAN.md
+last_updated: "2026-07-10T07:11:10.811Z"
 last_activity: 2026-07-10
-last_activity_desc: Completed 04-04 gap-remediation plan
+last_activity_desc: Phase 04 complete, transitioned to Phase 5
 progress:
   total_phases: 9
   completed_phases: 4
@@ -33,10 +33,10 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 04 (storage-schema-migrations-relocation-new-durable-stores) — COMPLETE (incl. 04-04 gap plan)
-Plan: 4 of 4
+Phase: 5 — Venue Registry + Bundle
+Plan: Not started
 Status: 04-04 gap-remediation complete (WR-02 / IN-01 / WR-03)
-Last activity: 2026-07-10 — Completed 04-04 gap-remediation plan
+Last activity: 2026-07-10 — Phase 04 complete, transitioned to Phase 5
 
 Progress: [████░░░░░░] 44%
 

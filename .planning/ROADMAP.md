@@ -207,7 +207,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Gap remediation** *(post-review, appended after Phase 4 close — addresses `04-REVIEW.md`; decisions in `04-GAP-DECISIONS.md`)*
 
-- [ ] 04-04-PLAN.md — WR-03: remove `create_all` from 7 durable-store constructors (results store excluded per D-14) + shared `provision_schema` test fixture; WR-02: dialect-guarded `PRAGMA foreign_keys=ON` on `SqlEngine` + FK-enforcement test; IN-01: deterministic `ORDER BY` on `StrategyRegistryStore.read_all` (SQL-02, STORE-01/02/03/04/05)
+- [x] 04-04-PLAN.md — WR-03: remove `create_all` from 7 durable-store constructors (results store excluded per D-14) + shared `provision_schema` test fixture; WR-02: dialect-guarded `PRAGMA foreign_keys=ON` on `SqlEngine` + FK-enforcement test; IN-01: deterministic `ORDER BY` on `StrategyRegistryStore.read_all` (SQL-02, STORE-01/02/03/04/05)
 
 ### Phase 5: Venue Registry + Bundle
 
@@ -339,7 +339,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 1. Config Centralization | v1.8 | 4/4 | Complete    | 2026-07-09 |
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
-| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 3/4 | In Progress|  |
+| 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
 | 5. Venue Registry + Bundle | v1.8 | 0/TBD | Not started | - |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
