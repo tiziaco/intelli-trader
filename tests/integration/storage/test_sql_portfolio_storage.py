@@ -37,6 +37,7 @@ from itrader.portfolio_handler.account import CashOperation
 from itrader.portfolio_handler.metrics.metrics_manager import PortfolioSnapshot
 from itrader.portfolio_handler.position.position import Position
 from itrader.portfolio_handler.storage.sql_storage import SqlPortfolioStateStorage
+from tests.support.schema import provision_schema
 from itrader.portfolio_handler.transaction.transaction import Transaction
 
 _T0 = datetime(2021, 6, 1, tzinfo=timezone.utc)
@@ -57,8 +58,13 @@ def storage(pg_backend, portfolio_id):
 
     The ``pg_backend`` fixture owns engine disposal (WR-03), so this fixture does NOT
     dispose — calling ``storage.dispose()`` would flush the shared pool early.
+
+    WR-03/D-14 — the store is schema-pure now, so provision the schema explicitly after
+    construction (before the first query) via the shared ``provision_schema`` helper.
     """
-    return SqlPortfolioStateStorage(pg_backend, portfolio_id)
+    store = SqlPortfolioStateStorage(pg_backend, portfolio_id)
+    provision_schema(pg_backend)
+    return store
 
 
 # --------------------------------------------------------------------------- builders
@@ -368,6 +374,8 @@ def test_cross_portfolio_isolation(pg_backend, portfolio_id):
     other_id = uc.uuid7()
     storage_a = SqlPortfolioStateStorage(pg_backend, portfolio_id)
     storage_b = SqlPortfolioStateStorage(pg_backend, other_id)
+    # One provision suffices — both bindings register the same six tables (WR-03/D-14).
+    provision_schema(pg_backend)
 
     # Write the full surface under portfolio A.
     storage_a.set_position("BTCUSD", _open_long(portfolio_id))

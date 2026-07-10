@@ -25,20 +25,33 @@ from itrader.storage.strategy_registry_store import (
     StrategyRegistryStore,
     build_strategy_registry_tables,
 )
+from tests.support.schema import provision_schema
 
 _AT1 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 _AT2 = datetime(2026, 1, 2, 9, 30, 0, tzinfo=UTC)
 
 
 def _make_memory_store() -> StrategyRegistryStore:
-    """An in-memory durable double — the shared ``SqlEngine`` on ``:memory:`` SQLite."""
-    return StrategyRegistryStore(SqlEngine(SqlSettings.default()))
+    """An in-memory durable double — the shared ``SqlEngine`` on ``:memory:`` SQLite.
+
+    WR-03/D-14 — the store is schema-pure now, so provision the schema explicitly after
+    construction (before the first query) via the shared ``provision_schema`` helper.
+    """
+    store = StrategyRegistryStore(SqlEngine(SqlSettings.default()))
+    provision_schema(store.backend)
+    return store
 
 
 def _make_file_store(db_path: pathlib.Path) -> StrategyRegistryStore:
-    """A file-backed durable store over ``db_path`` — survives dispose→reopen (Pitfall 4)."""
+    """A file-backed durable store over ``db_path`` — survives dispose→reopen (Pitfall 4).
+
+    WR-03/D-14 — schema-pure store; provision after construction. ``checkfirst=True`` makes
+    the reopen case (the restart-survival test) a clean no-op against the existing tables.
+    """
     settings = SqlSettings(driver=SqlDriver.SQLITE_PYSQLITE, database=str(db_path))
-    return StrategyRegistryStore(SqlEngine(settings))
+    store = StrategyRegistryStore(SqlEngine(settings))
+    provision_schema(store.backend)
+    return store
 
 
 def test_upsert_get_round_trip() -> None:

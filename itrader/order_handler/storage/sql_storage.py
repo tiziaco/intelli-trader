@@ -2,10 +2,10 @@
 
 The first of the three operational ``Sql<Concern>Storage`` classes (order / portfolio-state /
 signal). It *composes* a ``SqlEngine`` by reference (has-a, D-04 — never a cross-concern god
-base), registers the two order tables on ``backend.metadata`` via ``build_order_tables``, and
-calls ``metadata.create_all(checkfirst=True)`` so schema creation is idempotent (tests/dev;
-the deploy path uses Alembic). This mirrors the existing concrete analogs
-``results/sql_storage.py`` and ``price_handler/store/sql_store.py``.
+base) and registers the two order tables on ``backend.metadata`` via ``build_order_tables``.
+It is schema-pure (WR-03/D-14 — no runtime ``create_all``): the durable schema is Alembic-owned
+in production and provisioned by ``tests.support.schema.provision_schema`` in tests. This mirrors
+the existing concrete analogs ``results/sql_storage.py`` and ``price_handler/store/sql_store.py``.
 
 It fills the retired-and-deleted ``PostgreSQLOrderStorage`` ``NotImplementedError`` stub (D-05)
 and implements the full ``OrderStorage`` ABC via *parameterized* SQLAlchemy Core (constant
@@ -69,8 +69,9 @@ class SqlOrderStorage(OrderStorage):
     ----------
     sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; the store registers its two tables on ``sql_engine.metadata`` and creates them
-        idempotently (``checkfirst=True``).
+        wiring; the store registers its two tables on ``sql_engine.metadata`` but does NOT
+        create them — the durable schema is Alembic-owned in production (WR-03/D-14) and
+        provisioned by the shared ``provision_schema`` test fixture in tests.
     """
 
     def __init__(self, sql_engine: SqlEngine) -> None:
@@ -81,8 +82,8 @@ class SqlOrderStorage(OrderStorage):
         self.orders = tables["orders"]
         self.state_changes = tables["order_state_changes"]
 
-        # Idempotent, ephemeral schema creation (tests/dev; deploy uses Alembic).
-        sql_engine.metadata.create_all(self.engine, checkfirst=True)
+        # WR-03/D-14 — schema-pure: register the tables, never create them (Alembic-owned
+        # in production; tests provision via tests.support.schema.provision_schema).
 
         # T-03-03 — search_orders resolves criteria keys through this allow-list of bound
         # Column objects, NEVER an interpolated column name. A key outside the map yields no

@@ -1,11 +1,12 @@
 """Concrete ``SqlSignalStorage`` — the signal store on the shared SQL spine (OPS-03).
 
 The strategy/signal operational backend: it *composes* a ``SqlEngine`` by reference
-(has-a, D-04 — never a cross-concern god base), registers the single ``signals`` table on
-``backend.metadata`` via ``build_signal_tables``, and calls
-``metadata.create_all(checkfirst=True)`` so schema creation is idempotent. This mirrors the
-existing concrete-store analog, ``results/sql_storage.py`` (composition, create_all,
-``dispose`` delegation, ``bindparam`` reads, ``engine.begin`` writes).
+(has-a, D-04 — never a cross-concern god base) and registers the single ``signals`` table on
+``backend.metadata`` via ``build_signal_tables``. It is schema-pure (WR-03/D-14 — no runtime
+``create_all``): the durable schema is Alembic-owned in production and provisioned by
+``tests.support.schema.provision_schema`` in tests. This mirrors the existing concrete-store
+analog, ``results/sql_storage.py`` (composition, ``dispose`` delegation, ``bindparam`` reads,
+``engine.begin`` writes).
 
 The 4-method ``SignalStore`` ABC is implemented over parameterized SQLAlchemy Core (constant
 ``Table``/``Column`` objects + ``bindparam`` — never f-string SQL, T-03-13 / SEC-01):
@@ -46,8 +47,9 @@ class SqlSignalStorage(SignalStore):
     ----------
     sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; the signal store registers its ``signals`` table on ``sql_engine.metadata`` and
-        creates it idempotently (``checkfirst=True``).
+        wiring; the signal store registers its ``signals`` table on ``sql_engine.metadata`` but
+        does NOT create it — the durable schema is Alembic-owned in production (WR-03/D-14) and
+        provisioned by the shared ``provision_schema`` test fixture in tests.
     """
 
     def __init__(self, sql_engine: SqlEngine) -> None:
@@ -57,10 +59,9 @@ class SqlSignalStorage(SignalStore):
         tables = build_signal_tables(sql_engine.metadata)
         self.signals = tables["signals"]
 
-        # Idempotent schema creation (on the live Postgres path the Alembic chain owns the
-        # migration; create_all(checkfirst=True) is a no-op against an existing table and the
-        # round-trip-test substrate's bootstrap).
-        sql_engine.metadata.create_all(self.engine, checkfirst=True)
+        # WR-03/D-14 — schema-pure: register the table, never create it. On the live Postgres
+        # path the Alembic chain owns the migration; tests provision via
+        # tests.support.schema.provision_schema.
 
         self.logger = get_itrader_logger().bind(component="SqlSignalStorage")
 

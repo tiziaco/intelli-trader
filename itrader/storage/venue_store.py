@@ -5,8 +5,9 @@ enabled, at)`` persists one row per NATURAL ``venue_name`` (D-06 — no UUIDv7 s
 ``idgen`` never imported), with a typed ``enabled`` Boolean column (queryable — serves
 ``list_enabled``) alongside the portable JSON ``config_json`` (D-08). A disciplined clone of
 the ``HaltRecordStore`` template (STORE-04 / D-01): composes ``SqlEngine`` by reference, owns
-its ``build_venue_store_table`` registrar (single source of truth for BOTH ``create_all`` and
-Plan 04-03's ``migrations/env.py``), idempotent ``create_all(checkfirst=True)``, caller-supplied
+its ``build_venue_store_table`` registrar (single source of truth for BOTH the test-path
+``create_all`` and Plan 04-03's ``migrations/env.py``), schema-pure (WR-03/D-14 — no runtime
+``create_all``; Alembic-owned in production, ``provision_schema`` in tests), caller-supplied
 ``at`` via ``UtcIsoText`` (D-07 — clock-free), parameterized Core only (SEC-01 / T-04-02).
 
 SECURITY — never store secrets (D-05, T-04-01). Two arms:
@@ -106,15 +107,17 @@ class VenueStore:
     ----------
     sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is config-selected at wiring;
-        this store registers its one table on ``sql_engine.metadata`` and creates it
-        idempotently (``checkfirst=True``).
+        this store registers its one table on ``sql_engine.metadata`` but does NOT create it
+        — the durable schema is Alembic-owned in production (WR-03/D-14) and provisioned by
+        the shared ``provision_schema`` test fixture in tests.
     """
 
     def __init__(self, sql_engine: SqlEngine) -> None:
         self.backend = sql_engine
         self.engine: Engine = sql_engine.engine
         self.venue_store: Table = build_venue_store_table(sql_engine.metadata)
-        sql_engine.metadata.create_all(self.engine, checkfirst=True)
+        # WR-03/D-14 — schema-pure: register the table, never create it (Alembic-owned in
+        # production; tests provision via tests.support.schema.provision_schema).
         self.logger = get_itrader_logger().bind(component="VenueStore")
 
     def dispose(self) -> None:

@@ -30,9 +30,17 @@ from itrader.core.ids import OrderId, PortfolioId, StrategyId
 from itrader.order_handler.order import Order
 from itrader.order_handler.storage.sql_storage import SqlOrderStorage
 from itrader.storage import UtcIsoText
+from tests.support.schema import provision_schema
 
 # A business time (never wall clock) reused so derived created_at/updated_at are deterministic.
 _BT = datetime(2020, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _make_storage(pg_backend) -> SqlOrderStorage:
+    """Construct the schema-pure ``SqlOrderStorage`` and provision its schema (WR-03/D-14)."""
+    storage = SqlOrderStorage(pg_backend)
+    provision_schema(pg_backend)
+    return storage
 
 
 def _make_order(**overrides):
@@ -60,7 +68,7 @@ def test_order_round_trip_field_wise_equal(pg_backend):
     ``order_state_changes`` child table and the (empty) ``child_order_ids`` round-trip.
     Runs on the Postgres arm only (money columns; Pitfall 2).
     """
-    storage = SqlOrderStorage(pg_backend)
+    storage = _make_storage(pg_backend)
     order = _make_order()
     # Exercise the state-change child table (a clean transition; additional_data stays None).
     order.add_state_change(
@@ -81,7 +89,7 @@ def test_bracket_children_rebuilt_from_parent_fk(pg_backend):
     The parent is inserted before the children (FK ordering, Pitfall 6); ``child_order_ids``
     is NOT a column (D-02) — it is rebuilt via ``SELECT id WHERE parent_order_id = :id``.
     """
-    storage = SqlOrderStorage(pg_backend)
+    storage = _make_storage(pg_backend)
     parent = _make_order()
     child_one = _make_order(parent_order_id=parent.id, type=OrderType.STOP, action=Side.SELL)
     child_two = _make_order(parent_order_id=parent.id, type=OrderType.LIMIT, action=Side.SELL)
@@ -102,7 +110,7 @@ def test_bracket_children_rebuilt_from_parent_fk(pg_backend):
 
 def test_money_round_trips_exact_decimal(pg_backend):
     """OPS-04 / T-03-05 — order.price round-trips as an EXACT Decimal (Postgres-native Numeric)."""
-    storage = SqlOrderStorage(pg_backend)
+    storage = _make_storage(pg_backend)
     order = _make_order(price=Decimal("31415.92653589"), quantity=Decimal("0.00000001"))
     storage.add_order(order)
 
@@ -115,7 +123,7 @@ def test_money_round_trips_exact_decimal(pg_backend):
 
 def test_uuid_id_round_trips_value_equal(pg_backend):
     """SPINE-03 — the UUIDv7 order id round-trips value-equal as a native uuid.UUID."""
-    storage = SqlOrderStorage(pg_backend)
+    storage = _make_storage(pg_backend)
     order = _make_order()
     storage.add_order(order)
 
@@ -131,7 +139,7 @@ def test_query_helpers_round_trip(pg_backend):
 
     Scoped to a unique portfolio_id so the session-shared Postgres DB stays test-isolated.
     """
-    storage = SqlOrderStorage(pg_backend)
+    storage = _make_storage(pg_backend)
     pid = PortfolioId(uc.uuid7())
     order = _make_order(portfolio_id=pid)
     order.add_state_change(OrderStatus.CANCELLED, "operator cancel", OrderTriggerSource.USER)

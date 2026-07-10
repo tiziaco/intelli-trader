@@ -10,10 +10,10 @@ same key leave ONE row.
 
 A disciplined clone of the ``HaltRecordStore`` template (STORE-04 / D-01): it *composes* a
 ``SqlEngine`` by reference (has-a — never a cross-concern god base), owns its
-``build_system_store_table`` registrar (the single source of truth feeding BOTH this store's
-``create_all`` and Plan 04-03's ``migrations/env.py`` ``target_metadata``), and calls
-``create_all(checkfirst=True)`` so schema creation is idempotent (the live path migrates via
-Alembic; ``create_all`` is the test / no-op-if-present path). All SQL is parameterized
+``build_system_store_table`` registrar (the single source of truth feeding BOTH the test-path
+``create_all`` and Plan 04-03's ``migrations/env.py`` ``target_metadata``). It is schema-pure
+(WR-03/D-14 — no runtime ``create_all``): the durable schema is Alembic-owned in production and
+provisioned by ``provision_schema`` in tests. All SQL is parameterized
 SQLAlchemy Core against the constant ``Table`` object — never f-string SQL (SEC-01 /
 T-04-02). The upsert is a portable delete-then-insert in one ``engine.begin()`` transaction.
 The caller supplies ``at`` (D-07 — clock-free store) stored via ``UtcIsoText``. 4-space
@@ -61,17 +61,18 @@ class SystemStore:
     ----------
     sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is selected by config at
-        wiring; this store registers its one table on ``sql_engine.metadata`` and creates it
-        idempotently (``checkfirst=True``).
+        wiring; this store registers its one table on ``sql_engine.metadata`` but does NOT
+        create it — the durable schema is Alembic-owned in production (WR-03/D-14) and
+        provisioned by the shared ``provision_schema`` test fixture in tests.
     """
 
     def __init__(self, sql_engine: SqlEngine) -> None:
         self.backend = sql_engine
         self.engine: Engine = sql_engine.engine
         self.system_store: Table = build_system_store_table(sql_engine.metadata)
-        # Idempotent, ephemeral-friendly schema creation (the live path migrates via
-        # Alembic; create_all is the test / no-op-if-present path).
-        sql_engine.metadata.create_all(self.engine, checkfirst=True)
+        # WR-03/D-14 — schema-pure: the constructor registers the table but never creates
+        # it. Production live Postgres is Alembic-owned end-to-end (no un-stamped-table
+        # drift); tests provision explicitly via tests.support.schema.provision_schema.
         self.logger = get_itrader_logger().bind(component="SystemStore")
 
     def dispose(self) -> None:

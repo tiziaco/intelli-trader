@@ -35,6 +35,15 @@ from itrader.core.enums import OrderType, Side
 from itrader.core.ids import StrategyId
 from itrader.strategy_handler.signal_record import SignalRecord
 from itrader.strategy_handler.storage.sql_storage import SqlSignalStorage
+from tests.support.schema import provision_schema
+
+
+def _make_store(pg_backend) -> SqlSignalStorage:
+    """Construct the schema-pure ``SqlSignalStorage`` and provision its schema (WR-03/D-14)."""
+    store = SqlSignalStorage(pg_backend)
+    provision_schema(pg_backend)
+    return store
+
 
 # A stable, JSON-safe params snapshot (the strategy.to_dict() shape, D-04). Decoded-dict
 # equality is the contract (Pitfall 8 / A6), NOT JSON byte identity.
@@ -74,7 +83,7 @@ def _make_record(
 
 def test_signal_record_roundtrip_field_equal(pg_backend):
     """A full SignalRecord round-trips field-wise EQUAL incl. the config dict (OPS-03)."""
-    store = SqlSignalStorage(pg_backend)
+    store = _make_store(pg_backend)
     strategy_id = StrategyId(uc.uuid7())
     record = _make_record(
         strategy_id,
@@ -100,7 +109,7 @@ def test_signal_record_roundtrip_field_equal(pg_backend):
 
 def test_money_fields_exact_decimal(pg_backend):
     """Money fields persist as Postgres-native Numeric and read back exact Decimal (OPS-04)."""
-    store = SqlSignalStorage(pg_backend)
+    store = _make_store(pg_backend)
     strategy_id = StrategyId(uc.uuid7())
     record = _make_record(
         strategy_id,
@@ -125,7 +134,7 @@ def test_money_fields_exact_decimal(pg_backend):
 
 def test_nullable_money_roundtrips_none(pg_backend):
     """Absent optional money fields round-trip back as None (not 0 / Decimal)."""
-    store = SqlSignalStorage(pg_backend)
+    store = _make_store(pg_backend)
     strategy_id = StrategyId(uc.uuid7())
     record = _make_record(
         strategy_id,
@@ -145,7 +154,7 @@ def test_nullable_money_roundtrips_none(pg_backend):
 
 def test_by_strategy_filter_isolation(pg_backend):
     """by_strategy returns only the matching strategy's records — no cross-strategy bleed."""
-    store = SqlSignalStorage(pg_backend)
+    store = _make_store(pg_backend)
     strat_a = StrategyId(uc.uuid7())
     strat_b = StrategyId(uc.uuid7())
     rec_a = _make_record(
@@ -168,7 +177,7 @@ def test_by_strategy_filter_isolation(pg_backend):
 
 def test_by_ticker_filter_isolation(pg_backend):
     """by_ticker returns only the matching ticker's records — no cross-ticker bleed."""
-    store = SqlSignalStorage(pg_backend)
+    store = _make_store(pg_backend)
     strategy_id = StrategyId(uc.uuid7())
     # Unique tickers per test run so sibling tests' rows never collide.
     ticker_x = f"XCOIN-{uuid.uuid4().hex[:8]}"
@@ -193,7 +202,7 @@ def test_by_ticker_filter_isolation(pg_backend):
 
 def test_stable_insertion_order(pg_backend):
     """Records read back in stable ORDER BY (time, signal_id) order (get_all contract)."""
-    store = SqlSignalStorage(pg_backend)
+    store = _make_store(pg_backend)
     strategy_id = StrategyId(uc.uuid7())
     rec_1 = _make_record(
         strategy_id, "BTCUSD", time=datetime(2023, 1, 1, tzinfo=timezone.utc)

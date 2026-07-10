@@ -17,13 +17,20 @@ from itrader.config.sql import SqlSettings
 from itrader.core.exceptions import ValidationError
 from itrader.storage import SqlEngine
 from itrader.storage.venue_store import VenueStore, build_venue_store_table
+from tests.support.schema import provision_schema
 
 _AT = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 def _make_store() -> VenueStore:
-    """An in-memory durable double — the shared ``SqlEngine`` on ``:memory:`` SQLite."""
-    return VenueStore(SqlEngine(SqlSettings.default()))
+    """An in-memory durable double — the shared ``SqlEngine`` on ``:memory:`` SQLite.
+
+    WR-03/D-14 — the store is schema-pure now, so provision the schema explicitly after
+    construction (before the first query) via the shared ``provision_schema`` helper.
+    """
+    store = VenueStore(SqlEngine(SqlSettings.default()))
+    provision_schema(store.backend)
+    return store
 
 
 def test_upsert_get_round_trip() -> None:

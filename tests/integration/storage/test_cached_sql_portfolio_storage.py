@@ -39,6 +39,7 @@ from itrader.portfolio_handler.storage.cached_sql_storage import (
 )
 from itrader.portfolio_handler.storage.sql_storage import SqlPortfolioStateStorage
 from itrader.portfolio_handler.transaction.transaction import Transaction
+from tests.support.schema import provision_schema
 
 _T0 = datetime(2021, 6, 1, tzinfo=timezone.utc)
 _T1 = datetime(2021, 6, 5, tzinfo=timezone.utc)
@@ -290,6 +291,10 @@ def test_cross_portfolio_isolation(pg_backend, portfolio_id):
     wrapper_b = CachedSqlPortfolioStateStorage(
         SqlPortfolioStateStorage(pg_backend, other_id)
     )
+    # WR-03/D-14 — schema-pure stores: provision once (both bindings register the same six
+    # tables) after construction, before the first query. This test builds directly rather
+    # than through the provisioning `wrapper` fixture.
+    provision_schema(pg_backend)
 
     # Write the full surface under portfolio A.
     wrapper_a.set_position("BTCUSD", _open_long(portfolio_id))

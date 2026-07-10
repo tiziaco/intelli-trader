@@ -35,6 +35,7 @@ from itrader.storage import SqlEngine
 from itrader.storage.halt_record_store import HaltRecordStore
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.trading_system.live_trading_system import LiveTradingSystem
+from tests.support.schema import provision_schema
 
 
 def _make_store() -> HaltRecordStore:
@@ -44,8 +45,13 @@ def _make_store() -> HaltRecordStore:
     that pysqlite uses for ``:memory:`` keeps the same in-memory DB alive across
     ``engine.begin()`` calls on the test thread, so a single store instance persists its
     rows for the life of the test (the fresh-instance arm shares ONE store).
+
+    WR-03/D-14 — the store is schema-pure now, so provision the schema explicitly after
+    construction (before the first query) via the shared ``provision_schema`` helper.
     """
-    return HaltRecordStore(SqlEngine(SqlSettings.default()))
+    store = HaltRecordStore(SqlEngine(SqlSettings.default()))
+    provision_schema(store.backend)
+    return store
 
 
 def test_halt_record_round_trip() -> None:

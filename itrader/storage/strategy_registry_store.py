@@ -14,8 +14,9 @@ TWO tables on the shared ``SqlEngine`` spine (D-04 / D-06):
 
 A disciplined clone of the ``HaltRecordStore`` template (STORE-04 / D-01), with the
 multi-table registrar shape of ``build_order_tables``: composes ``SqlEngine`` by reference,
-owns ``build_strategy_registry_tables`` (single source of truth for BOTH ``create_all`` and
-Plan 04-03's ``migrations/env.py``), idempotent ``create_all(checkfirst=True)``, caller-supplied
+owns ``build_strategy_registry_tables`` (single source of truth for BOTH the test-path
+``create_all`` and Plan 04-03's ``migrations/env.py``), schema-pure (WR-03/D-14 — no runtime
+``create_all``; Alembic-owned in production, ``provision_schema`` in tests), caller-supplied
 ``at`` via ``UtcIsoText`` (D-07 — clock-free), parameterized Core only (SEC-01 / T-04-02).
 4-space indentation (matches the ``itrader/storage`` spine layer).
 """
@@ -97,8 +98,9 @@ class StrategyRegistryStore:
     ----------
     sql_engine:
         The shared spine (Engine + MetaData). The driver/URL is config-selected at wiring;
-        this store registers its two tables on ``sql_engine.metadata`` and creates them
-        idempotently (``checkfirst=True``).
+        this store registers its two tables on ``sql_engine.metadata`` but does NOT create
+        them — the durable schema is Alembic-owned in production (WR-03/D-14) and provisioned
+        by the shared ``provision_schema`` test fixture in tests.
     """
 
     def __init__(self, sql_engine: SqlEngine) -> None:
@@ -107,7 +109,8 @@ class StrategyRegistryStore:
         tables = build_strategy_registry_tables(sql_engine.metadata)
         self.strategy_registry: Table = tables["strategy_registry"]
         self.strategy_subscriptions: Table = tables["strategy_subscriptions"]
-        sql_engine.metadata.create_all(self.engine, checkfirst=True)
+        # WR-03/D-14 — schema-pure: register the tables, never create them (Alembic-owned
+        # in production; tests provision via tests.support.schema.provision_schema).
         self.logger = get_itrader_logger().bind(component="StrategyRegistryStore")
 
     def dispose(self) -> None:

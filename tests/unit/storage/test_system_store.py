@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from itrader.config.sql import SqlSettings
 from itrader.storage import SqlEngine
 from itrader.storage.system_store import SystemStore, build_system_store_table
+from tests.support.schema import provision_schema
 
 # A FIXED timezone-aware instant (D-07 determinism — no clock in the store; the caller
 # supplies ``at``). Two distinct instants prove the second upsert overwrites the first.
@@ -23,8 +24,14 @@ _AT2 = datetime(2026, 1, 2, 9, 30, 0, tzinfo=UTC)
 
 
 def _make_store() -> SystemStore:
-    """An in-memory durable double — the shared ``SqlEngine`` on ``:memory:`` SQLite."""
-    return SystemStore(SqlEngine(SqlSettings.default()))
+    """An in-memory durable double — the shared ``SqlEngine`` on ``:memory:`` SQLite.
+
+    WR-03/D-14 — the store is schema-pure now, so provision the schema explicitly after
+    construction (before the first query) via the shared ``provision_schema`` helper.
+    """
+    store = SystemStore(SqlEngine(SqlSettings.default()))
+    provision_schema(store.backend)
+    return store
 
 
 def test_upsert_get_round_trip() -> None:
