@@ -122,26 +122,32 @@ class StrategyRegistryStore:
     ) -> None:
         """Persist (or overwrite) a strategy's config + enabled flag with ``updated_at`` ``at``.
 
-        Portable delete-then-insert on the REGISTRY table in ONE transaction (subscriptions
-        are managed separately via ``set_subscriptions``). Parameterized Core (SEC-01).
+        Portable update-in-place-or-insert on the REGISTRY table in ONE transaction. The
+        parent row is UPDATED (never deleted) when it already exists: deleting it would
+        violate the ``strategy_subscriptions`` FK once child rows exist — the live re-config
+        path ``upsert`` → ``set_subscriptions`` → ``upsert`` — which the SQLite
+        ``PRAGMA foreign_keys=ON`` hook (WR-02) now enforces on both dialects (CR-01).
+        Subscriptions are managed separately via ``set_subscriptions``. Parameterized Core
+        (SEC-01).
         """
         with self.engine.begin() as connection:
-            connection.execute(
-                delete(self.strategy_registry).where(
-                    self.strategy_registry.c.strategy_name == strategy_name
+            updated = connection.execute(
+                update(self.strategy_registry)
+                .where(self.strategy_registry.c.strategy_name == strategy_name)
+                .values(enabled=enabled, config_json=config, updated_at=at)
+            )
+            if updated.rowcount == 0:
+                connection.execute(
+                    insert(self.strategy_registry),
+                    [
+                        {
+                            "strategy_name": strategy_name,
+                            "enabled": enabled,
+                            "config_json": config,
+                            "updated_at": at,
+                        }
+                    ],
                 )
-            )
-            connection.execute(
-                insert(self.strategy_registry),
-                [
-                    {
-                        "strategy_name": strategy_name,
-                        "enabled": enabled,
-                        "config_json": config,
-                        "updated_at": at,
-                    }
-                ],
-            )
 
     def set_subscriptions(
         self,

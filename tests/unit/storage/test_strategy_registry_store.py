@@ -191,6 +191,32 @@ def test_set_subscriptions_on_unregistered_strategy_raises_integrity_error() -> 
         store.dispose()
 
 
+def test_upsert_of_subscribed_strategy_preserves_children() -> None:
+    """CR-01 — re-upserting a strategy that already has subscriptions must NOT delete the
+    FK-parent registry row (which would violate the strategy_subscriptions FK under the
+    WR-02 PRAGMA foreign_keys=ON enforcement).
+
+    The live re-config path is upsert(config) → set_subscriptions(...) → upsert(new_config).
+    Before the fix, step 3 delete-then-inserted the parent row and raised IntegrityError on
+    both dialects. After the fix upsert updates the row in place: the new config/enabled/
+    updated_at persist AND the subscriptions survive the config overwrite.
+    """
+    store = _make_memory_store()
+    try:
+        store.upsert("sma_macd", {"fast": 10}, True, _AT1)
+        store.set_subscriptions("sma_macd", [("okx", "BTC/USDC", "1h")], _AT1)
+        # Re-upsert the SAME already-subscribed strategy with a new config (config change).
+        store.upsert("sma_macd", {"fast": 20, "slow": 50}, False, _AT2)
+        rec = {r["strategy_name"]: r for r in store.read_all()}["sma_macd"]
+        assert rec["config"] == {"fast": 20, "slow": 50}
+        assert rec["enabled"] is False
+        assert rec["updated_at"] == _AT2
+        # Subscriptions survived the config overwrite (parent row was never deleted).
+        assert set(rec["subscriptions"]) == {("okx", "BTC/USDC", "1h")}
+    finally:
+        store.dispose()
+
+
 def test_read_all_is_deterministically_ordered() -> None:
     """IN-01 — read_all returns strategies in strategy_name ASC and each record's
     subscriptions in (venue, symbol, timeframe) ASC, regardless of insertion order."""
