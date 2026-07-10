@@ -141,3 +141,25 @@ SQL-02, STORE-01, STORE-02, STORE-03, STORE-04, STORE-05.
 - FOUND commit 52c3a1e7 (Task 1)
 - FOUND commit 9935a184 (Task 2)
 - FOUND commit 0d86109c (Task 3)
+
+## Post-Review Remediation (2026-07-10, phase-04 code-review gate)
+
+The code-review gate that ran after this plan surfaced one **BLOCKER** the green suite missed —
+because WR-02 turned on FK enforcement but no test exercised the re-upsert-of-a-subscribed-strategy
+path (the original Self-Check only checked *delete* ordering, not the *upsert* parent-delete):
+
+- ✅ **CR-01 (BLOCKER) — FIXED** (`53a90b07`): `StrategyRegistryStore.upsert` delete-then-inserted
+  the FK-parent `strategy_registry` row, which now violates the `strategy_subscriptions` FK once a
+  strategy has subscriptions (the live re-config path `upsert → set_subscriptions → upsert`). This
+  already failed on Postgres; WR-02 made SQLite consistent and the review caught it. Switched to
+  update-in-place-or-insert (parent never deleted); added regression test
+  `test_upsert_of_subscribed_strategy_preserves_children`. Reproduced before / confirmed fixed after.
+- ✅ **IN-01 / IN-02 — FIXED** (`6b623549`): removed dead `import uuid`; aligned the `Decimal("0")`
+  sum seed. No behavioral change.
+- ⏭ **WR-01 / WR-02 / WR-03 — DEFERRED** (owner-approved) to
+  `.planning/todos/pending/04-storage-review-warnings.md`: parity-test constraint coverage,
+  cross-file Postgres-cleanup ordering, durable-store naive-datetime guard.
+
+Post-remediation gates: `poetry run pytest tests` **2049 passed, 6 skipped**; oracle byte-exact
+(134 / 46189.87730727451); OKX inertness + migration parity green; `mypy --strict` clean. See
+`04-REVIEW.md` for the full findings and remediation record.

@@ -1,188 +1,236 @@
 ---
 phase: 04-storage-schema-migrations-relocation-new-durable-stores
-reviewed: 2026-07-09T00:00:00Z
+reviewed: 2026-07-10T00:00:00Z
 depth: standard
-files_reviewed: 12
+files_reviewed: 24
 files_reviewed_list:
+  - itrader/order_handler/storage/sql_storage.py
+  - itrader/portfolio_handler/storage/sql_storage.py
   - itrader/storage/engine.py
+  - itrader/storage/halt_record_store.py
   - itrader/storage/strategy_registry_store.py
   - itrader/storage/system_store.py
   - itrader/storage/venue_store.py
+  - itrader/strategy_handler/storage/sql_storage.py
   - migrations/env.py
   - migrations/versions/strategy_registry.py
   - migrations/versions/system_store.py
   - migrations/versions/venue_config.py
+  - tests/integration/storage/test_cached_sql_portfolio_storage.py
   - tests/integration/storage/test_migrations.py
+  - tests/integration/storage/test_sql_order_storage.py
+  - tests/integration/storage/test_sql_portfolio_storage.py
+  - tests/integration/storage/test_sql_signal_storage.py
+  - tests/integration/test_durable_halt.py
   - tests/integration/test_okx_inertness.py
+  - tests/support/schema.py
   - tests/unit/storage/test_strategy_registry_store.py
   - tests/unit/storage/test_system_store.py
   - tests/unit/storage/test_venue_store.py
 findings:
-  critical: 0
+  critical: 1
   warning: 3
-  info: 3
+  info: 2
   total: 6
-status: issues_found
+status: partially_remediated
+remediation:
+  resolved: [CR-01, IN-01, IN-02]
+  resolved_commits: [53a90b07, 6b623549]
+  deferred: [WR-01, WR-02, WR-03]
+  deferred_tracking: .planning/todos/pending/04-storage-review-warnings.md
 ---
 
 # Phase 4: Code Review Report
 
-**Reviewed:** 2026-07-09T00:00:00Z
+**Reviewed:** 2026-07-10T00:00:00Z
 **Depth:** standard
-**Files Reviewed:** 12
+**Files Reviewed:** 24 (supporting `itrader/storage/types.py`, `itrader/config/sql.py`,
+and both `storage/models.py` registrars read as cross-reference context)
 **Status:** issues_found
+
+> Note: this supersedes the earlier pre-remediation review pass. The prior WR-02 (PRAGMA)
+> and WR-03 (`create_all` in `__init__`) are now REMEDIATED — the `SqlEngine` sets
+> `PRAGMA foreign_keys=ON` on SQLite and the seven durable stores are schema-pure with a
+> shared `provision_schema` test seam. Prior WR-01/IN-02/IN-03 are DEFERRED by
+> `04-GAP-DECISIONS.md` and are not re-raised as new findings. This is a fresh adversarial
+> pass over the completed code.
+
+## Remediation Status (2026-07-10)
+
+Applied in the same execution run that produced this review (phase-04 code-review gate):
+
+- ✅ **CR-01 (BLOCKER) — RESOLVED** (`53a90b07`): `StrategyRegistryStore.upsert` now updates the
+  registry row in place (update-in-place-or-insert), never deleting the FK-parent row. The live
+  re-config path (`upsert → set_subscriptions → upsert`) no longer raises `IntegrityError`.
+  Reproduced before the fix / confirmed fixed after; regression test
+  `test_upsert_of_subscribed_strategy_preserves_children` added; full suite **2049 passed**.
+- ✅ **IN-01 — RESOLVED** (`6b623549`): dead `import uuid` removed from `halt_record_store.py`.
+- ✅ **IN-02 — RESOLVED** (`6b623549`): `Decimal("0")` sum seed aligned across both accessors.
+- ⏭ **WR-01 / WR-02 / WR-03 — DEFERRED** to a tracked follow-up
+  (`.planning/todos/pending/04-storage-review-warnings.md`): migration↔registrar constraint-parity
+  coverage, cross-file Postgres-cleanup ordering, and durable-store naive-datetime boundary guard.
+  Owner-approved to handle separately — these are hardening improvements with judgment calls
+  (WR-01 in particular may surface further latent schema drift once it inspects FKs).
 
 ## Summary
 
-Reviewed the storage-spine additions for Phase 4: three new durable stores
-(`SystemStore`, `VenueStore`, `StrategyRegistryStore`), their Alembic revisions, the
-`migrations/env.py` autogen wiring, and the unit/integration test suite. Supporting files
-(`itrader/storage/__init__.py`, `itrader/storage/types.py`, `itrader/config/sql.py`, the
-full migration chain, `alembic.ini`) were read as cross-references.
+Reviewed the Phase-4 storage relocation: the 3 new durable stores (`system_store`,
+`venue_store`, `strategy_registry_store`), the relocated Alembic chain + its 3 new
+revisions, the shared `provision_schema` test seam, and the pre-existing operational
+stores (order / portfolio / signal / halt) whose FK behavior is newly affected by the
+`SqlEngine` `PRAGMA foreign_keys=ON` connect hook.
 
-The phase's hard gates are met and verified against source:
+Headline: the FK enforcement that the WR-02 remediation newly turned on for SQLite exposes
+one genuine, reachable correctness bug in the strategy registry — the documented "overwrite"
+operation (`StrategyRegistryStore.upsert`) deletes the FK-parent row while child subscription
+rows still reference it, which now raises `IntegrityError` on *both* dialects. No existing
+test covers it (none re-upserts a strategy that already has subscriptions).
 
-- **SEC-01** — all SQL is parameterized SQLAlchemy Core against constant `Table` objects; no
-  f-string/interpolated SQL. `alembic.ini` `sqlalchemy.url` is blank (no committed credential).
-- **D-06 natural PKs** — `key`, `venue_name`, `strategy_name`, and the composite
-  `(strategy_name, venue, symbol, timeframe)` are natural PKs; no surrogate UUID / autoincrement.
-- **D-05 recursion** — `_assert_no_secret_keys` correctly recurses through nested dicts AND
-  lists-of-dicts at any depth, fires before the delete-then-insert (verified by three tests).
-- **Migrations** — all three revisions import `itrader.storage.types` + `sqlalchemy.dialects.postgresql`,
-  wrap PK/FK names in `op.f(...)` with names byte-identical to `NAMING_CONVENTION`, and chain
-  linearly to a single head (`strategy_registry`).
-- **Inertness** — `migrations/env.py` and the registrars build only `Table` objects on a bare
-  `MetaData` (no Engine/Settings/connection at import); the subprocess probe forbids the three
-  store modules on the backtest path.
-- **Indentation** — all 12 files are 4-space, no tabs. Stores `dispose()` delegates to
-  `backend.dispose()` (clean `filterwarnings=["error"]` teardown).
+The other findings are a test-parity coverage gap, a brittle cross-file DB-cleanup ordering
+dependency, an input-validation asymmetry between the durable stores and the order store, and
+two cosmetic items. The in-scope locked decisions (schema-pure durable stores / no runtime
+`create_all`; the SQLite-only PRAGMA guard; Decimal-money; 4-space indentation;
+import-inertness; deferred WR-01/IN-02/IN-03) were respected and are not re-flagged.
 
-No blockers found. Three warnings concern robustness/portability gaps that are latent today
-because the real deploy target is Postgres and the primary D-05 protection is structural.
+## Narrative Findings (AI reviewer)
 
-## Warnings
+### Critical Issues
 
-### WR-01: Secret denylist uses exact key membership — compound/camelCase secret keys slip through
+#### CR-01: `StrategyRegistryStore.upsert()` violates the subscriptions FK when overwriting a subscribed strategy
 
-**File:** `itrader/storage/venue_store.py:39-72`
-**Issue:** `_assert_no_secret_keys` matches `key.lower() in _SECRET_KEY_DENYLIST` where the
-denylist is a frozenset of exact tokens (`api_key`, `secret`, `secret_key`, `private_key`,
-`token`, `access_token`, ...). Because it is exact equality, common credential key names that
-are compounds or camelCase-without-underscore are **not** caught:
+**File:** `itrader/storage/strategy_registry_store.py:120-144`
+**Issue:**
+`upsert` is a delete-then-insert on the **parent** `strategy_registry` table:
 
-- `client_secret` → `"client_secret"` not in set
-- `secretKey` → `"secretkey"` not in set (set has `secret_key`)
-- `privateKey` → `"privatekey"` not in set (set has `private_key`)
-- `api_secret` / `apiSecret` → not in set
-- `auth_token` → not in set (`token` is an exact-match token, not a substring)
-
-The ccxt-native OKX case (`apiKey`→`apikey`, `secret`, `password`) *is* covered, and D-05's
-primary requirement (recursion depth) is correctly met, so this is a defense-in-depth
-robustness gap rather than a live exposure — the structural arm (credentials are connector-owned
-`SecretStr`, never passed here) is the real protection. Still, a security guard that silently
-passes `client_secret` gives false confidence.
-
-**Fix:** Match on substring/token-boundary rather than exact equality, e.g.:
 ```python
-_SECRET_MARKERS = ("secret", "api_key", "apikey", "password", "passphrase",
-                   "token", "private_key", "privatekey", "credential")
-
-def _is_secret_key(key: str) -> bool:
-    lowered = key.lower()
-    return any(marker in lowered for marker in _SECRET_MARKERS)
-```
-This catches `client_secret`, `secretKey`, `aws_secret_access_key`, etc. (false-positives are
-documented as safe — "a false-positive is a loud, safe failure").
-
-### WR-02: SQLite FK on `strategy_subscriptions` is declared but never enforced (no `PRAGMA foreign_keys=ON`)
-
-**File:** `itrader/storage/strategy_registry_store.py:78-88, 143-178`
-**Issue:** SQLite ignores `FOREIGN KEY` constraints unless `PRAGMA foreign_keys=ON` is set
-per-connection, and no such pragma / `event.listen` is configured anywhere in `itrader/storage/`
-(grep confirms zero occurrences). Consequences:
-
-1. `set_subscriptions(name, ...)` for a `strategy_name` with **no** registry row silently
-   inserts orphan child rows on SQLite, while Postgres rejects the INSERT with an FK violation
-   (the enclosing `engine.begin()` rolls back). The two backends diverge in behavior.
-2. Every unit test runs on SQLite, so the FK integrity the schema declares is **never actually
-   exercised** — `test_delete_removes_registry_and_subscriptions` and the restart-survival test
-   pass on SQLite regardless of whether FK enforcement works.
-
-The `delete()` child-first ordering (documented "FK child order") is only meaningful on the
-Postgres deploy target; on the SQLite test double it is a no-op distinction.
-
-**Fix:** Enable FK enforcement on SQLite connections so the tests validate the real constraint
-and the two backends match:
-```python
-from sqlalchemy import event
-
-@event.listens_for(self.engine, "connect")
-def _fk_pragma(dbapi_conn, _):
-    if self.engine.dialect.name == "sqlite":
-        dbapi_conn.execute("PRAGMA foreign_keys=ON")
-```
-(Alternatively, add an explicit test that `set_subscriptions` on an unknown strategy raises,
-to pin the intended cross-backend contract.)
-
-### WR-03: `create_all(checkfirst=True)` in store `__init__` runs unconditionally — can create un-migrated tables on live Postgres
-
-**File:** `itrader/storage/system_store.py:74`, `itrader/storage/venue_store.py:117`, `itrader/storage/strategy_registry_store.py:110`
-**Issue:** Each store constructor calls `sql_engine.metadata.create_all(self.engine, checkfirst=True)`
-with no environment guard. The docstrings assert "the live path migrates via Alembic; create_all
-is the test / no-op-if-present path" — but the code does not distinguish paths. On a **live
-Postgres** engine where the migration chain has *not* been applied, `create_all` will directly
-create `system_store` / `venue_store` / `strategy_registry` / `strategy_subscriptions` **without**
-stamping `alembic_version`. A subsequent `alembic upgrade head` then hits `op.create_table` on an
-already-existing table (DuplicateTable), or the ops team silently runs on a schema Alembic
-believes it never created — schema drift on the durable operational store the migrations are
-supposed to own.
-
-This is inherited from the accepted `HaltRecordStore` template and is harmless when migrations
-run first (checkfirst no-ops), so it is a latent operational hazard, not a live bug — but on the
-*durable* store the create_all path arguably shouldn't exist at all.
-
-**Fix:** Gate schema creation on the SQLite/test arm, or drive it off an explicit flag, so the
-Postgres operational store is Alembic-owned end-to-end:
-```python
-if self.engine.dialect.name == "sqlite":
-    sql_engine.metadata.create_all(self.engine, checkfirst=True)
+with self.engine.begin() as connection:
+    connection.execute(
+        delete(self.strategy_registry).where(
+            self.strategy_registry.c.strategy_name == strategy_name
+        )
+    )
+    connection.execute(insert(self.strategy_registry), [ ... ])
 ```
 
-## Info
+`strategy_subscriptions.strategy_name` is a FK onto `strategy_registry.strategy_name` with
+**no `ON DELETE` action** — verified in both the registrar (line 82,
+`ForeignKey("strategy_registry.strategy_name")`) and the migration
+(`migrations/versions/strategy_registry.py:65`, `sa.ForeignKeyConstraint(...)` with no
+`ondelete=`). Default is RESTRICT / NO ACTION.
 
-### IN-01: `read_all` (strategy registry) has no `ORDER BY` — group/row order is DB-dependent
+The docstring calls this method "Persist (or **overwrite**) a strategy's config", with
+subscriptions "managed separately". The normal lifecycle is therefore:
 
-**File:** `itrader/storage/strategy_registry_store.py:245-286`
-**Issue:** The rehydrate JOIN `select(...).select_from(join)` has no `ORDER BY`, so both the
-returned record order and the per-strategy `subscriptions` list order are whatever the backend
-returns (unspecified). Tests tolerate this by re-keying into a dict and comparing sets, but any
-future caller that assumes stable ordering (or a golden/byte-exact comparison) would be flaky.
-`strategies_subscribed_to` and `list_active` in the same file do the right thing (`.order_by(...)`
-/ deterministic filter). **Fix:** add `.order_by(self.strategy_registry.c.strategy_name.asc())`
-(and a secondary sort on the subscription columns) for a deterministic rehydrate.
+1. `upsert("sma_macd", cfg, True, at)` → registry row created
+2. `set_subscriptions("sma_macd", [...], at)` → child rows created
+3. `upsert("sma_macd", new_cfg, True, at2)` → **config change**
 
-### IN-02: `SystemStore.value_json` / `StrategyRegistryStore.config_json` have no secret-scrub guard
+At step 3, `DELETE FROM strategy_registry WHERE strategy_name='sma_macd'` fires while child
+subscription rows still reference that name. FK checks are immediate on both backends
+(Postgres always; SQLite now, via the shared-`SqlEngine` `PRAGMA foreign_keys=ON` connect
+hook), so the DELETE raises `IntegrityError` *before* the re-INSERT and aborts the whole
+transaction. A subscribed strategy's config can never be updated. This is exactly the bug
+class the PRAGMA change was meant to surface — but the store's own write path trips it.
 
-**File:** `itrader/storage/system_store.py:81-96`, `itrader/storage/strategy_registry_store.py:117-141`
-**Issue:** Only `VenueStore` carries the D-05 `_assert_no_secret_keys` guard. `SystemStore`
-persists arbitrary `runtime_config` blobs and `StrategyRegistryStore` persists arbitrary strategy
-`config` — either could carry a credential in a future caller with no defense-in-depth net. D-05
-is scoped to VenueStore for this phase, so this is a note, not a violation. **Fix (optional):**
-factor the recursive denylist walk into a shared `itrader/storage` helper and apply it to any
-store that accepts caller-supplied JSON.
+`SystemStore.upsert` / `VenueStore.upsert` use the same delete-then-insert idiom safely
+**only because they have no child tables**; the strategy registry is the one store with a
+dependent FK child, so the pattern is unsafe there.
 
-### IN-03: Three near-identical store clones — duplication is documented but real
+Not covered by tests: `test_set_subscriptions_replaces_all` re-calls `set_subscriptions`
+(deletes *children* — safe), but no test re-`upsert`s a strategy that already has
+subscriptions.
 
-**File:** `itrader/storage/system_store.py`, `itrader/storage/venue_store.py`, `itrader/storage/strategy_registry_store.py`
-**Issue:** `__init__` (backend/engine/table/create_all/logger), `dispose`, the delete-then-insert
-upsert, `get`, `delete`, and `read_all` are structurally duplicated across all three stores
-(each labeled "a disciplined clone of the HaltRecordStore template"). This is a deliberate design
-choice (per-concern ABC boundary over a shared base), so no change is required — but the
-`_row_to_dict` helper pattern in `VenueStore` could be lifted to remove the repeated inline dict
-projections in the other two, reducing drift risk if the row shape ever changes.
+**Fix:** Do not delete the parent row on overwrite — update-if-exists / insert-if-not:
+
+```python
+def upsert(self, strategy_name, config, enabled, at):
+    with self.engine.begin() as connection:
+        updated = connection.execute(
+            update(self.strategy_registry)
+            .where(self.strategy_registry.c.strategy_name == strategy_name)
+            .values(enabled=enabled, config_json=config, updated_at=at)
+        )
+        if updated.rowcount == 0:
+            connection.execute(
+                insert(self.strategy_registry),
+                [{"strategy_name": strategy_name, "enabled": enabled,
+                  "config_json": config, "updated_at": at}],
+            )
+```
+
+Add a regression test: `upsert` → `set_subscriptions` → `upsert` (config change) → assert
+the new config persisted AND the subscriptions survived.
+
+### Warnings
+
+#### WR-01: Migration↔registrar parity test compares only column-name sets — FK/constraint/nullability drift is invisible
+
+**File:** `tests/integration/storage/test_migrations.py:211-257`
+**Issue:** `test_create_all_vs_migration_parity` asserts equal table sets and, per table,
+equal **column-name** sets (`{c["name"] for c in inspector.get_columns(table)}`). It does
+not compare FK definitions (including `ondelete`), PK composition, nullability, or indexes.
+A migration that diverges from its registrar on any of those dimensions — precisely the kind
+of drift behind subtle runtime FK failures like CR-01 — passes this "parity" gate green. The
+docstring's claim that it proves "the migrations reproduce the registrars" overstates what
+column-name equality guarantees.
+**Fix:** Also compare, per new table, the FK set (`inspector.get_foreign_keys` incl.
+`options.ondelete`), the PK constraint (`inspector.get_pk_constraint`), and per-column
+`nullable`, so a registrar/migration divergence in constraints is caught, not just columns.
+
+#### WR-02: Cross-file Postgres cleanup depends on alphabetical test-collection order
+
+**File:** `tests/integration/storage/test_cached_sql_portfolio_storage.py:63-78`
+**Issue:** The autouse `_drop_operational_portfolio_tables` fixture exists solely so that
+`test_migrations.py`'s `alembic upgrade head` (which `op.create_table`s the same portfolio
+tables) does not collide with tables this file created on the shared session Postgres
+container. Correctness relies entirely on `test_cached_sql_portfolio_storage.py` sorting
+alphabetically **before** `test_migrations.py` (stated in the fixture comment). That is
+brittle: a file rename, a `pytest-randomly` run, or running `test_migrations.py` in a
+different collection order reintroduces the `ProgrammingError` the fixture was written to
+prevent. The cleanup is a teardown side-effect of an unrelated file rather than an explicit
+ordering contract.
+**Fix:** Have each Postgres-touching storage test self-clean its own tables in teardown (the
+`test_migrations.py` `downgrade base` pattern), or use a function-scoped
+"drop-all-registered-tables" fixture that does not depend on inter-file order.
+
+#### WR-03: New durable stores bind caller `at` straight into `UtcIsoText`, which hard-raises on a naive datetime — no boundary guard
+
+**File:** `itrader/storage/halt_record_store.py:98-115`, `itrader/storage/system_store.py:82-97`, `itrader/storage/venue_store.py:127-153`, `itrader/storage/strategy_registry_store.py:120-144`
+**Issue:** `UtcIsoText.process_bind_param` raises `ValueError` on a timezone-naive datetime
+(`itrader/storage/types.py:52-58`). The durable stores bind caller-supplied `at`/`created_at`
+directly with no normalization, so a naive datetime yields an uncaught `ValueError`
+mid-transaction. `SqlOrderStorage` deliberately guards this exact hazard at its method
+boundary (`_ensure_utc`, `sql_storage.py:478-488`, tagged WR-03) so a naive bound "does not
+escape as a raw codec error"; the durable stores — one of which is the safety-critical halt
+latch invoked from `halt()` — lack that guard. Confidence is moderate: the documented D-07
+contract is "caller supplies tz-aware `at`" and every current test honors it, so this is a
+robustness/consistency gap rather than a proven live failure.
+**Fix:** Either apply the same `_ensure_utc`-style normalization at each store boundary for
+consistency with `SqlOrderStorage`, or assert the tz-aware precondition with a typed domain
+error at `upsert`/`record_halt` entry so the failure is a clear precondition violation rather
+than a raw codec `ValueError`.
+
+### Info
+
+#### IN-01: Unused `import uuid` in the halt-record store
+
+**File:** `itrader/storage/halt_record_store.py:26`
+**Issue:** `import uuid` (line 26) is never referenced — the table uses the capitalized
+`Uuid` type imported from `itrader.storage` (line 67) and ids come from `idgen`. The bare
+`uuid` module is dead.
+**Fix:** Remove the `import uuid` line.
+
+#### IN-02: Inconsistent Decimal-zero seed across the two full-precision sum accessors
+
+**File:** `itrader/portfolio_handler/storage/sql_storage.py:273` vs `:323`
+**Issue:** `get_reserved_cash` seeds `sum(amounts, Decimal("0.00"))` while `get_locked_margin`
+seeds `sum(amounts, Decimal("0"))`. Both are numerically correct (Decimal addition adopts the
+operands' max scale; the empty case differs only in trailing-zero exponent, which compares
+equal). Purely a readability/consistency nit.
+**Fix:** Use one consistent zero seed (`Decimal("0")`) in both accessors.
 
 ---
 
-_Reviewed: 2026-07-09T00:00:00Z_
+_Reviewed: 2026-07-10T00:00:00Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
