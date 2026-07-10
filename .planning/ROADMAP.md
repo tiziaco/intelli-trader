@@ -194,7 +194,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
   3. The chained migration `d10_halt_records → system_store → venue_config → strategy_registry` is authored in the relocated `migrations/` tree, and the SQL-02 Alembic gate validates the FULL new chain — `alembic upgrade head` on a clean DB, `alembic heads == 1` (single head incl. the three new stores), and a `create_all`/migration parity test.
   4. An in-memory fallback keeps the backtest path untouched — the backtest oracle stays byte-exact (per-PLAN gate) and `test_okx_inertness.py` stays green (extended register-vs-build assertion; the relocated migrations + new stores pull nothing heavy at import).
 
-**Plans**: 3 plans
+**Plans**: 3 plans + 1 gap-remediation plan (04-04)
 
 **Wave 1** *(parallel — zero file overlap; relocation ‖ standalone store classes)*
 
@@ -204,6 +204,10 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 **Wave 2** *(blocked on 04-01 + 04-02)*
 
 - [x] 04-03-PLAN.md — Chained migrations (`system_store → venue_config → strategy_registry`) + `env.py target_metadata` + SQL-02 single-head/upgrade/parity gate + inertness extension (SQL-02, STORE-04/05, D-02/11)
+
+**Gap remediation** *(post-review, appended after Phase 4 close — addresses `04-REVIEW.md`; decisions in `04-GAP-DECISIONS.md`)*
+
+- [ ] 04-04-PLAN.md — WR-03: remove `create_all` from 7 durable-store constructors (results store excluded per D-14) + shared `provision_schema` test fixture; WR-02: dialect-guarded `PRAGMA foreign_keys=ON` on `SqlEngine` + FK-enforcement test; IN-01: deterministic `ORDER BY` on `StrategyRegistryStore.read_all` (SQL-02, STORE-01/02/03/04/05)
 
 ### Phase 5: Venue Registry + Bundle
 
