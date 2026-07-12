@@ -785,7 +785,34 @@ the oracle** (drops `ta` on the runtime path); its lock is cross-validation + a 
 v1.0/v1.1/v1.2/v1.3/v1.4 SHIPPED — archived under `milestones/`.*
 
 ---
-*Last updated: 2026-07-09 — **v1.8 Phase 4 (Storage Schema: Migrations Relocation + New Durable Stores)
+*Last updated: 2026-07-12 — **v1.8 Phase 5 (Venue Registry + Bundle) COMPLETE.** 6 plans (4 waves); goal
+verified `passed` (10/10 must-haves, `05-VERIFICATION.md`). Delivered VENUE-01..07 — the venue-parametrization
+substrate that kills every `if exchange==`: two independent registries (`ExecutionVenueRegistry` +
+`DataProviderRegistry`) selected via `SystemSpec`, a `VenueBundle` + `VenuePlugin`/`DataProviderPlugin`/
+`ConnectorPlugin` Protocol family, and a shared `ConnectorProvider` `(venue, account_id)` build-once memo
+with `close_all()` (VENUE-01/02/03); concrete OKX + paper plugins that are **triple-deferral-lazy** (every
+ccxt/`OkxSettings` import lives inside `build*`, D-04) with paper reusing the compose-built `'simulated'`
+exchange by identity (D-05); `resolve_precision(symbol)` promoted to a first-class `AbstractExchange`
+capability beside `validate_symbol`, `precision_to_scale` relocated into `core/money.py` as a shared util,
+and `_OkxPrecisionResolver`/`_PrecisionResolver` deleted (VENUE-04); a `LiveDataProvider` Protocol +
+`BaseLiveDataProvider` no-op defaults (`ReplayDataProvider` inherits) that wires every provider uniformly
+without `hasattr` (VENUE-05); a `VenueLifecycle` orchestrator (None-guarded start/stop) + an `assemble_venue`
+seam that `LiveTradingSystem.__init__` delegates to, **removing every `if exchange=='okx'`/`elif =='paper'`
+branch** (0 code matches; OKX gating is now a capability None-guard, D-06/D-10, VENUE-06); and a shared
+`StreamSupervisor` replacing the triplicated `_run_stream_supervisor` + `_STREAM_RECONNECT_*` (CF-4) with
+CF-3 connector-contract docstrings and a CF-9 fail-closed `validate_symbol` on a cold markets cache
+(VENUE-07). Milestone gate held every plan: SMA_MACD oracle **byte-exact** (134 / `46189.87730727451`),
+OKX inertness + register-vs-build green (this phase's **highest inertness risk** — plugins/registries pull
+no ccxt until built), `mypy --strict` clean, zero new dependencies; full suite **2130 passed / 6 skipped**
+(skips OKX-demo-cred-gated). Advisory `05-REVIEW`: 0 blockers / 2 warnings / 4 info — WR-01 (`PAPER_PARITY_*`
+constants duplicated between `venues/paper_plugin.py` and `live_trading_system.py`, silent-desync risk) and
+WR-02 (`ConnectorProvider.close_all` aborts fan-out + skips `memo.clear()` on a raising `disconnect()`,
+connector leak), both deferred as non-blocking. Note: CF-9 closed only the `validate_symbol`
+fail-open-before-load window; the markets-map mid-session-delisting refresh cadence
+(`okx-markets-map-freshness-delisting-detection.md`, Hole #1) remains an open todo. Next: Phase 6 — LiveRunner
++ Factory + Facade Shrink.*
+
+*Earlier: 2026-07-09 — **v1.8 Phase 4 (Storage Schema: Migrations Relocation + New Durable Stores)
 COMPLETE.** 3 plans; goal verified `passed` (8/8 must-haves, `04-VERIFICATION.md`). Delivered SQL-01/D-10:
 `git mv itrader/storage/migrations → migrations/` to project root (out of the shipped wheel —
 `packages=[{include="itrader"}]`), all 5 revision IDs preserved byte-unchanged (no squash), `alembic.ini
