@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from itrader.execution_handler.exchanges.base import AbstractExchange
     from itrader.portfolio_handler.account.base import Account
     from itrader.price_handler.providers.live_provider import LiveDataProvider
+    from itrader.venues.lifecycle import VenueLifecycle
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,11 +64,13 @@ class VenueBundle:
     exchange: AbstractExchange
     account_factory: Callable[..., Account]
     connector: LiveConnector | None = None
-    # ``lifecycle`` will carry a ``VenueLifecycle`` (05-06). Typed ``Any`` until
-    # that type lands so this substrate module stays import-inert and does not
-    # forward-reference a not-yet-existent module (mirrors ``SystemSpec``'s
-    # ``Any``-typed forward seams).
-    lifecycle: Any = None
+    # 05-06: ``lifecycle`` carries the ``VenueLifecycle`` orchestrator. Now that the
+    # type exists (``venues/lifecycle.py``) the 05-04 ``Any`` forward-seam is retyped
+    # to ``VenueLifecycle | None``; the annotation stays a TYPE_CHECKING forward-ref
+    # (``from __future__ import annotations`` in force) so this substrate module
+    # remains import-inert. Plugins leave it ``None`` — ``assemble_venue`` returns the
+    # lifecycle alongside the bundle rather than mutating this frozen field.
+    lifecycle: "VenueLifecycle | None" = None
 
 
 @runtime_checkable
