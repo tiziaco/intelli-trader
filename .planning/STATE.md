@@ -5,15 +5,15 @@ milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 05
 current_phase_name: Venue Registry + Bundle
 status: executing
-stopped_at: Phase 5 planned (6 plans, 4 waves)
-last_updated: "2026-07-12T22:15:20.536Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-07-12T22:23:00.170Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 19
-  completed_plans: 14
+  completed_plans: 15
   percent: 44
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 05 (Venue Registry + Bundle) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-07-12 — Phase 05 execution started
 
@@ -144,6 +144,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: WR-03/D-14: 7 durable stores schema-pure (no runtime create_all); production Alembic-owned, tests provision via tests.support.schema.provision_schema; ephemeral results store keeps create_all
 - [Phase ?]: [Phase 05]: 05-01 (VENUE-07/D-08/CF-4): one parameterized StreamSupervisor (connectors/stream_supervisor.py, 4-space, ccxt-free) owns the reconnect ladder + _reconnect_attempts/_streams_down; the 3 donor arms (okx_provider/venue/okx) HAS-A supervisor and delegate. Parameterized over transient/fatal tuples + reconnect_on_clean_return so each donor's behavior is preserved exactly; venue's reduced surface PRESERVED not normalized. ccxt+supervisor lazy-imported in __init__ so venue stays inert (connectors barrel eagerly pulls ccxt.pro). ~9 coupled test files retargeted to arm._supervisor
 - [Phase ?]: [Phase 05]: 05-01 (CF-9/D-11/T-05-04): OkxExchange.validate_symbol fail-CLOSES (False) on a non-dict markets cache; reuses the single validate_symbol->delta.removed removal path. Seeded loaded markets in 4 submit fixtures + added cold-cache unit test. CF-3 additive LiveConnector docstrings (no signature change)
+- [Phase ?]: 05-03: set_bar_sink NOT defaulted on BaseLiveDataProvider (fail-loud — a no-op default would silently drop bars); a bare base is intentionally not a conforming LiveDataProvider
+- [Phase ?]: 05-03: OkxDataProvider left unedited — conforms to LiveDataProvider structurally; avoids conflict with 05-01 StreamSupervisor delegation
 
 ### Pending Todos
 
@@ -212,6 +214,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 04 P03 | 12min | 3 tasks | 6 files |
 | Phase 04 P04 | 20m | 3 tasks | 16 files |
 | Phase 05 P01 | 29min | 3 tasks | 17 files |
+| Phase 05 P03 | 4min | 2 tasks | 4 files |
 
 ## Bookkeeping
 
@@ -223,8 +226,8 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-12T22:14:27.147Z
-Stopped at: Phase 5 context gathered
+Last session: 2026-07-12T22:23:00.162Z
+Stopped at: Completed 05-03-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
 Resume file: .planning/phases/05-venue-registry-bundle/05-CONTEXT.md

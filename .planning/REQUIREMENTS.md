@@ -141,7 +141,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `validate_symbol(symbol)` on `AbstractExchange`); `_OkxPrecisionResolver`/`_PrecisionResolver` deleted;
   `_precision_to_scale` → a shared money util (concern 15/§8a).
 
-- [ ] **VENUE-05**: A `LiveDataProvider` Protocol (required core + optional streaming seams via a
+- [x] **VENUE-05**: A `LiveDataProvider` Protocol (required core + optional streaming seams via a
   `BaseLiveDataProvider` giving no-op defaults) wires every provider uniformly — no `hasattr` sprinkling
   (concern 14/§8b).
 
@@ -379,7 +379,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | VENUE-02 | P5 | Pending |
 | VENUE-03 | P5 | Pending |
 | VENUE-04 | P5 | Pending |
-| VENUE-05 | P5 | Pending |
+| VENUE-05 | P5 | Complete |
 | VENUE-06 | P5 | Pending |
 | VENUE-07 | P5 | Complete |
 | RUN-01 | P6 | Pending |
