@@ -137,7 +137,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 - [ ] **VENUE-03**: Connectors are memoized by `(venue, account_id)` at the composition root; credentials
   are per-`account_id`, env-sourced, never persisted (LR-17/LR-20/§8c).
 
-- [ ] **VENUE-04**: Precision + validation become exchange capabilities (`resolve_precision(symbol)`,
+- [x] **VENUE-04**: Precision + validation become exchange capabilities (`resolve_precision(symbol)`,
   `validate_symbol(symbol)` on `AbstractExchange`); `_OkxPrecisionResolver`/`_PrecisionResolver` deleted;
   `_precision_to_scale` → a shared money util (concern 15/§8a).
 
@@ -378,7 +378,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | VENUE-01 | P5 | Pending |
 | VENUE-02 | P5 | Pending |
 | VENUE-03 | P5 | Pending |
-| VENUE-04 | P5 | Pending |
+| VENUE-04 | P5 | Complete |
 | VENUE-05 | P5 | Complete |
 | VENUE-06 | P5 | Pending |
 | VENUE-07 | P5 | Complete |

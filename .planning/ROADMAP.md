@@ -231,7 +231,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 2** *(05-02 blocked on 05-01 via okx.py; 05-04 blocked on 05-03 via LiveDataProvider)*
 
-- [ ] 05-02-PLAN.md — VENUE-04: `resolve_precision` as an `AbstractExchange` capability + `precision_to_scale` money util + universe-handler resolver rewire (Drift 1) (VENUE-04)
+- [x] 05-02-PLAN.md — VENUE-04: `resolve_precision` as an `AbstractExchange` capability + `precision_to_scale` money util + universe-handler resolver rewire (Drift 1) (VENUE-04)
 - [ ] 05-04-PLAN.md — VENUE-01/02/03: two registries + `VenueBundle`/plugin Protocols + `ConnectorProvider` `(venue, account_id)` memo + `SystemSpec` selectors (VENUE-01/02/03)
 
 **Wave 3** *(blocked on 05-04 + 05-03)*
@@ -358,7 +358,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
-| 5. Venue Registry + Bundle | v1.8 | 2/6 | In Progress|  |
+| 5. Venue Registry + Bundle | v1.8 | 3/6 | In Progress|  |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |

@@ -6,14 +6,14 @@ current_phase: 05
 current_phase_name: Venue Registry + Bundle
 status: executing
 stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-07-12T22:23:00.170Z"
+last_updated: "2026-07-12T22:33:59.279Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 19
-  completed_plans: 15
+  completed_plans: 16
   percent: 44
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 05 (Venue Registry + Bundle) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-07-12 — Phase 05 execution started
 
@@ -146,6 +146,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: [Phase 05]: 05-01 (CF-9/D-11/T-05-04): OkxExchange.validate_symbol fail-CLOSES (False) on a non-dict markets cache; reuses the single validate_symbol->delta.removed removal path. Seeded loaded markets in 4 submit fixtures + added cold-cache unit test. CF-3 additive LiveConnector docstrings (no signature change)
 - [Phase ?]: 05-03: set_bar_sink NOT defaulted on BaseLiveDataProvider (fail-loud — a no-op default would silently drop bars); a bare base is intentionally not a conforming LiveDataProvider
 - [Phase ?]: 05-03: OkxDataProvider left unedited — conforms to LiveDataProvider structurally; avoids conflict with 05-01 StreamSupervisor delegation
+- [Phase 05]: VENUE-04/D-09: precision is an AbstractExchange.resolve_precision capability; precision_to_scale is a shared core/money util; LTS resolvers deleted
 
 ### Pending Todos
 
@@ -215,6 +216,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 04 P04 | 20m | 3 tasks | 16 files |
 | Phase 05 P01 | 29min | 3 tasks | 17 files |
 | Phase 05 P03 | 4min | 2 tasks | 4 files |
+| Phase 05 P02 | 6m | 3 tasks | 9 files |
 
 ## Bookkeeping
 
@@ -226,7 +228,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-12T22:23:00.162Z
+Last session: 2026-07-12T22:33:26.454Z
 Stopped at: Completed 05-03-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
