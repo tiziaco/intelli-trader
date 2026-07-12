@@ -27,7 +27,8 @@ previously scattered (and partly wrong) across the handlers:
   rounding mechanism. The intra-``core`` import of ``Instrument`` is allowed.
 """
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Any
 
 from itrader.core.instrument import Instrument
 
@@ -35,7 +36,7 @@ from itrader.core.instrument import Instrument
 # convention used in core/sizing.py and sizing_resolver.py. ONE is now a
 # documented shared primitive; relying on implicit export was inconsistent
 # with this module's "single canonical public money primitive" framing.
-__all__ = ["ONE", "to_money", "quantize"]
+__all__ = ["ONE", "to_money", "quantize", "precision_to_scale"]
 
 # D-02 — public because it is now shared cross-module (core/sizing.py,
 # order_handler/sizing_resolver.py, order_handler/brackets/levels.py all import
@@ -91,3 +92,30 @@ def quantize(value: Decimal, instrument: Instrument, kind: str) -> Decimal:
         "cash": _CASH_SCALES.get(instrument.quote_currency, _DEFAULT_SCALES["cash"]),
     }.get(kind, _DEFAULT_SCALES[kind])
     return value.quantize(scale, rounding=ROUND_HALF_UP)
+
+
+def precision_to_scale(value: Any) -> "Decimal | None":
+    """Convert a ccxt market-precision entry to a Decimal rounding scale (VENUE-04/D-09, D-04 string path).
+
+    OKX loads markets in ccxt TICK_SIZE mode, so ``precision.price`` / ``precision.amount``
+    are tick sizes (``0.1``, ``0.00000001``) — the Decimal scale directly. A bare
+    DECIMAL_PLACES integer (``8``) is read as a decimal-place count -> ``Decimal("1e-8")``.
+    Enters the Decimal domain via ``str(value)`` (D-04 — NEVER ``Decimal(float)``);
+    returns ``None`` on a missing / non-positive / unparseable entry so the caller falls to
+    ``Universe.apply``'s ``_DEFAULT_*`` ladder rather than trusting a malformed venue value
+    (threat T-05-05). This is a shared cross-module money util (public via ``__all__``):
+    ``OkxExchange.resolve_precision`` reads it to build a venue-precision ``Instrument``
+    while ``core/money.py`` stays import-inert (no live/ccxt/SQL import).
+    """
+    if value is None:
+        return None
+    try:
+        dec = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    if dec <= 0:
+        return None
+    if dec == dec.to_integral_value() and dec >= 1:
+        # DECIMAL_PLACES count (e.g. 8) -> 1e-8 scale.
+        return Decimal(1).scaleb(-int(dec))
+    return dec

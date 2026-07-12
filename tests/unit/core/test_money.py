@@ -25,7 +25,7 @@ from decimal import Decimal
 import pytest
 
 from itrader.core.instrument import Instrument
-from itrader.core.money import quantize, to_money
+from itrader.core.money import precision_to_scale, quantize, to_money
 
 pytestmark = pytest.mark.unit
 
@@ -74,3 +74,40 @@ def test_quantize_quantity_btc_8dp_half_up():
 def test_quantize_default_instrument_uses_default_scale():
     # A default-precision Instrument -> the default cash scale (2dp).
     assert quantize(Decimal("1.005"), _DEFAULT_INSTRUMENT, "cash") == Decimal("1.01")
+
+
+# --- precision_to_scale (VENUE-04 / D-09) ----------------------------------
+# The venue-precision -> Decimal-scale converter relocated from LiveTradingSystem
+# (D-04 string entry: Decimal(str(value)), NEVER Decimal(float)).
+
+
+def test_precision_to_scale_none_returns_none():
+    assert precision_to_scale(None) is None
+
+
+def test_precision_to_scale_zero_and_non_positive_return_none():
+    assert precision_to_scale("0") is None
+    assert precision_to_scale("-0.1") is None
+    assert precision_to_scale(-8) is None
+
+
+def test_precision_to_scale_unparseable_returns_none():
+    assert precision_to_scale("not-a-number") is None
+
+
+def test_precision_to_scale_tick_size_string_is_that_decimal():
+    # A ccxt TICK_SIZE precision entry is the Decimal scale directly.
+    assert precision_to_scale("0.00000001") == Decimal("0.00000001")
+    assert precision_to_scale("0.1") == Decimal("0.1")
+
+
+def test_precision_to_scale_decimal_places_integer_to_scale():
+    # A bare DECIMAL_PLACES count (8) -> Decimal("1e-8").
+    assert precision_to_scale(8) == Decimal("1e-8")
+    assert precision_to_scale(2) == Decimal("1e-2")
+
+
+def test_precision_to_scale_enters_via_str_path():
+    # D-04: a binary float 0.1 must round-trip exactly (Decimal(str(0.1))),
+    # never carry the Decimal(0.1) binary-float artifact.
+    assert precision_to_scale(0.1) == Decimal("0.1")
