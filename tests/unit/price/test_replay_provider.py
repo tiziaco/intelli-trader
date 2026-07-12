@@ -19,6 +19,10 @@ from typing import Callable
 
 import pytest
 
+from itrader.price_handler.providers.live_provider import (
+    BaseLiveDataProvider,
+    LiveDataProvider,
+)
 from itrader.price_handler.providers.okx_provider import ClosedBar
 from itrader.price_handler.providers.replay_provider import ReplayDataProvider
 
@@ -90,3 +94,30 @@ def test_replay_bar_without_sink_warns_and_drops(caplog: pytest.LogCaptureFixtur
     with caplog.at_level(logging.WARNING):
         fresh.replay_bar(synthetic)  # must not raise
     assert "no bar sink registered" in caplog.text
+
+
+# -- Uniform provider surface (VENUE-05 / D-10) -------------------------------
+
+
+def test_replay_provider_is_a_uniform_live_data_provider(
+    provider: ReplayDataProvider,
+) -> None:
+    # Inherits the no-op base AND keeps its real set_bar_sink → structurally a
+    # LiveDataProvider (the runtime_checkable Protocol) so the VenueLifecycle can
+    # wire it unconditionally with no venue branch.
+    assert isinstance(provider, BaseLiveDataProvider)
+    assert isinstance(provider, LiveDataProvider)
+
+
+def test_replay_provider_inherited_streaming_seams_are_noops(
+    provider: ReplayDataProvider,
+) -> None:
+    # Offline replay does not stream: the inherited seams are safe no-ops and the
+    # provider is trivially healthy.
+    assert provider.set_global_queue(object()) is None
+    assert provider.set_halt_signal(lambda reason: None) is None
+    assert provider.set_stream_state_listener(lambda s: None, lambda s: None) is None
+    assert provider.subscribe("BTCUSD") is None
+    assert provider.unsubscribe("BTCUSD") is None
+    assert provider.spawn_warmup("BTCUSD", "1d", 10) is None
+    assert provider.is_streaming_healthy() is True

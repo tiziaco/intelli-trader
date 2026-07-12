@@ -45,11 +45,12 @@ from typing import Callable
 from itrader.config.stream import FeedProviderSettings
 from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
+from itrader.price_handler.providers.live_provider import BaseLiveDataProvider
 from itrader.price_handler.providers.okx_provider import ClosedBar
 from itrader.price_handler.store.csv_store import CsvPriceStore
 
 
-class ReplayDataProvider:
+class ReplayDataProvider(BaseLiveDataProvider):
     """Replay the golden ``CsvPriceStore`` frame as confirm-gated ``ClosedBar`` dicts.
 
     Constructed with the committed golden store (default ``CsvPriceStore()`` — the pinned
@@ -61,6 +62,15 @@ class ReplayDataProvider:
 
     The confirm gate is satisfied by construction — every stored row is a completed bar, so
     each is handed straight to the sink (no ``confirm != "1"`` drop needed).
+
+    Uniform provider surface (VENUE-05 / D-10): inherits ``BaseLiveDataProvider`` to gain
+    NO-OP defaults for the optional streaming/wiring seams (``set_global_queue`` /
+    ``set_halt_signal`` / ``set_stream_state_listener`` / ``subscribe`` / ``unsubscribe`` /
+    ``spawn_warmup`` / ``is_streaming_healthy`` → ``True``). Offline replay does NOT stream,
+    so these are DELIBERATE no-ops — they exist only so the ``VenueLifecycle`` (05-06) can
+    call the streaming seams UNCONDITIONALLY on any provider (killing the venue-string
+    provider-wiring branch). It keeps its own real ``set_bar_sink`` (the base does not
+    default it), so ``isinstance(ReplayDataProvider(...), LiveDataProvider)`` is True.
     """
 
     def __init__(
