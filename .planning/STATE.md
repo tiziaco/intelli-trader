@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 05
-current_phase_name: Venue Registry + Bundle
+current_phase: 6
+current_phase_name: LiveRunner + Factory + Facade Shrink
 status: verifying
 stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-07-12T23:16:42.212Z"
+last_updated: "2026-07-12T23:34:16.619Z"
 last_activity: 2026-07-12
-last_activity_desc: Phase 05 execution started
+last_activity_desc: Phase 05 complete, transitioned to Phase 6
 progress:
   total_phases: 9
   completed_phases: 5
@@ -33,10 +33,10 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 ## Current Position
 
-Phase: 05 (Venue Registry + Bundle) — EXECUTING
-Plan: 6 of 6
+Phase: 6 — LiveRunner + Factory + Facade Shrink
+Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-12 — Phase 05 execution started
+Last activity: 2026-07-12 — Phase 05 complete, transitioned to Phase 6
 
 Progress: [████░░░░░░] 44%
 
