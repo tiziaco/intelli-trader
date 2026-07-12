@@ -79,6 +79,17 @@ _FORBIDDEN = (
     "itrader.storage.system_store",
     "itrader.storage.venue_store",
     "itrader.storage.strategy_registry_store",
+    # Phase 5 (05-05, VENUE-02 inertness gate): the concrete OKX + paper venue/data/
+    # connector plugin modules are LIVE-ONLY — they are registered at the LTS root
+    # (in build_live_system, P6) and their OKX concretion imports + OkxSettings()
+    # construction live INSIDE build*() (D-04 triple-deferral). The backtest
+    # composition root must pull NEITHER: paper_plugin lazy-imports ReplayDataProvider/
+    # CsvPriceStore only inside build_provider, and okx_plugin pulls the ccxt/OkxConnector
+    # stack only inside build*(). If a future edit hoists a plugin's concretion import to
+    # module scope (or pulls a plugin module onto the backtest path) this probe fails
+    # loudly, protecting the oracle byte-exactness + the W1/W2 perf gate.
+    "itrader.venues.okx_plugin",
+    "itrader.venues.paper_plugin",
 )
 leaked = [name for name in _FORBIDDEN if name in sys.modules]
 assert not leaked, (
@@ -115,6 +126,58 @@ assert not _heavy, (
 assert "sql" not in _cfg.__dict__, (
     "P2 register-vs-build inertness violation: building the EngineContext resolved "
     "the lazy `sql` cached_property on the config singleton (must stay unbuilt)"
+)
+
+# Phase 5 (05-05, VENUE-02 register-vs-build): importing the CONCRETE OKX + paper
+# plugin modules and registering the plugin OBJECTS in the venue/data registries must
+# pull NO ccxt.pro / ccxt / OkxConnector concretion — the heavy import happens ONLY
+# inside a plugin's build*() method, which this probe deliberately NEVER calls (calling
+# it would legitimately pull ccxt + require OKX creds). This is the register != build
+# proof (D-04 triple-deferral): if a future edit HOISTS a plugin's `import ccxt.pro` /
+# `from itrader.connectors.okx import OkxConnector` / `OkxSettings()` to module top,
+# importing the plugin module here pulls the OKX stack and this assertion fails loudly.
+#
+# NOTE — the ConnectorProvider (itrader.connectors.provider) is DELIBERATELY EXCLUDED
+# from this ccxt-absent window: importing anything under the `itrader.connectors`
+# package runs connectors/__init__.py, which eagerly re-exports `OkxConnector` (pulling
+# ccxt) — a PRE-EXISTING barrel decision left untouched by 05-04 (consumers import
+# `itrader.connectors.provider` DIRECTLY on the LIVE path only; the backtest root never
+# imports the connectors package, which is why it stays inert). That barrel pull is not
+# a plugin hoist, so folding the ConnectorProvider import into this window would mask
+# the real guard. The OkxConnectorPlugin recipe's own laziness is proven by the plugin
+# MODULE staying inert to import (asserted here) plus its build-body unit contract
+# (tests/unit/venues/test_okx_plugin.py).
+from itrader.venues.okx_plugin import (
+    OkxConnectorPlugin,
+    OkxDataPlugin,
+    OkxVenuePlugin,
+)
+from itrader.venues.paper_plugin import PaperVenuePlugin, ReplayDataPlugin
+from itrader.venues.registry import DataProviderRegistry, ExecutionVenueRegistry
+
+_exec_registry = ExecutionVenueRegistry()
+_data_registry = DataProviderRegistry()
+# Register the concrete plugin OBJECTS (store-only — no build*): the OKX venue/data
+# plugins + the paper venue plugin (constructed WITH a dummy simulated exchange, since
+# it reuses an injected exchange AS-IS) + the replay data plugin. OkxConnectorPlugin is
+# constructed too (an inert object; its build() is never called here).
+_exec_registry.register("okx", OkxVenuePlugin())
+_exec_registry.register("paper", PaperVenuePlugin(object()))
+_data_registry.register("okx", OkxDataPlugin())
+_data_registry.register("paper", ReplayDataPlugin())
+_okx_connector_plugin = OkxConnectorPlugin()
+
+_okx_leaked = [
+    name
+    for name in ("ccxt.pro", "ccxt", "itrader.connectors.okx")
+    if name in sys.modules
+]
+assert not _okx_leaked, (
+    "P5 register-vs-build inertness violation (VENUE-02): importing + registering the "
+    "OKX/paper venue/data plugins pulled the OKX/ccxt stack: "
+    + repr(_okx_leaked)
+    + " (the ccxt.pro import + OkxSettings() must stay inside a plugin's build*, never "
+    "at module or register time — D-04 triple-deferral)"
 )
 
 print("INERTNESS_OK")
