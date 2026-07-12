@@ -52,7 +52,7 @@ import json
 import queue
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
+from typing import TYPE_CHECKING, Any, Callable, TypedDict
 
 import aiohttp
 
@@ -159,27 +159,44 @@ class OkxDataProvider:
         # lifecycle + disconnect teardown), NOT a second lifecycle owner.
         self._streams: dict[str, asyncio.Task[Any]] = {}
 
-        # 05-08 (RES-01/D-19/D-20): reconnect-supervisor state (mirrors the OKX order
-        # arm). The native candle loop runs under a bounded-retry supervisor — a
-        # transient socket drop reconnects with exponential backoff instead of the task
-        # dying silently, a sustained drop pauses new submission (D-19), and the retry
-        # ceiling bounds the loop -> HALT on exhaustion (D-20).
-        self._reconnect_attempts: dict[str, int] = {}
-        self._streams_down: set[str] = set()
-        # CFG-03 / D-08: the reconnect-supervisor tuning now lives in StreamSettings
-        # (config/stream.py). A default-constructed instance is the P1 seam — true
-        # composition-root injection + the shared StreamSupervisor land in P5.
-        _stream_cfg = StreamSettings()
-        self._reconnect_debounce_s = _stream_cfg.reconnect_debounce_s
-        self._reconnect_backoff_base_s = _stream_cfg.reconnect_backoff_base_s
-        self._reconnect_backoff_cap_s = _stream_cfg.reconnect_backoff_cap_s
-        self._reconnect_ceiling = _stream_cfg.reconnect_retry_ceiling
         # Injected seams (composition root, 05-08 Task 2): the 05-04 halt entrypoint
         # (fatal / exhausted -> HALTED + CRITICAL alert) and the pause/resume-on-
-        # disconnect callbacks (D-19). None until wired at the live root.
+        # disconnect callbacks (D-19). None until wired at the live root; the shared
+        # supervisor's closures late-bind them so a setter after construction still
+        # takes effect.
         self._halt_signal: Callable[[str], None] | None = None
         self._on_stream_down: Callable[[str], None] | None = None
         self._on_stream_up: Callable[[str], None] | None = None
+
+        # 05-01 (D-08 / CF-4 / VENUE-07): the ONE shared reconnect ladder. This arm
+        # HAS-A StreamSupervisor and delegates its consume-loop supervision to it (the
+        # triplicated reconnect-supervisor fork is gone; _reconnect_attempts /
+        # _streams_down / the reconnect tuning now live on the supervisor). The
+        # provider's EXACT donor config: the WIDE 6-type transient set,
+        # reconnect_on_clean_return=True (a server socket-close is a normal reconnect),
+        # and the full mark_up / reset_budget surface (WR-03 payload-gated at the
+        # _connect_and_consume_candles call sites). ccxt + the supervisor class are
+        # lazy-imported HERE (never at module top) so the backtest import graph stays
+        # inert — ccxt / the connectors barrel load only when a provider is actually
+        # constructed (the live path), never on the oracle hot path.
+        import ccxt
+
+        from itrader.connectors.stream_supervisor import StreamSupervisor
+        self._supervisor = StreamSupervisor(
+            StreamSettings(),
+            transient_exceptions=(
+                ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection,
+                aiohttp.ClientError, ConnectionError, asyncio.TimeoutError),
+            fatal_exceptions=(ccxt.AuthenticationError, ccxt.PermissionDenied),
+            reconnect_on_clean_return=True,
+            halt_signal=lambda r: (
+                self._halt_signal(r) if self._halt_signal is not None else None),
+            on_down=lambda n: (
+                self._on_stream_down(n) if self._on_stream_down is not None else None),
+            on_up=lambda n: (
+                self._on_stream_up(n) if self._on_stream_up is not None else None),
+            logger=self.logger,
+            label="OKX")
 
     # --- symbol / interval helpers -------------------------------------------
 
@@ -279,15 +296,16 @@ class OkxDataProvider:
         Pops the registry entry and cancels the task exactly once. Cancellation reuses the
         connector's existing cooperative-cancel teardown — NO new teardown code: the
         ``async with aiohttp.ClientSession()`` in ``_connect_and_consume_candles`` closes
-        the socket/session on ``CancelledError``, ``_run_stream_supervisor`` re-raises
+        the socket/session on ``CancelledError``, ``StreamSupervisor.run`` re-raises
         ``CancelledError`` untouched, and the connector's ``_on_task_done`` untracks the
         cancelled task quietly. A symbol never subscribed is a no-op (no exception, no
         cancel); a later ``subscribe`` for the same symbol re-spawns a fresh task.
 
         WR-03 (07-09): ``unsubscribe`` runs on the ENGINE thread, but ``task.cancel()``
-        and the ``_streams_down`` / ``_reconnect_attempts`` supervisor-dict cleanup all
-        touch state OWNED by the connector-loop thread (written by
-        ``_run_stream_supervisor`` / ``_mark_stream_down`` / ``_reset_reconnect_budget``).
+        and the ``_streams_down`` / ``_reconnect_attempts`` supervisor-dict cleanup (now
+        delegated to ``self._supervisor.forget``) all touch state OWNED by the
+        connector-loop thread (written by ``StreamSupervisor.run`` / its ``mark_down`` /
+        ``reset_budget``).
         Doing them inline here races that thread. So — chosen over adding a
         ``threading.Lock`` — the engine-thread-owned ``_streams`` pop stays here
         (subscribe writes ``_streams`` on the engine thread too, so it is single-writer
@@ -317,8 +335,8 @@ class OkxDataProvider:
         """
         task = self._streams.pop(symbol, None)
         if (task is None
-                and symbol not in self._streams_down
-                and symbol not in self._reconnect_attempts):
+                and symbol not in self._supervisor._streams_down
+                and symbol not in self._supervisor._reconnect_attempts):
             return
 
         async def _cleanup() -> None:
@@ -329,8 +347,8 @@ class OkxDataProvider:
             # down-flag cannot permanently pin is_streaming_healthy() False (wedging the
             # live NEW-submission resume gate _all_venue_streams_healthy) and a stale
             # attempt count cannot trip the D-20 retry ceiling on a later re-subscribe.
-            self._streams_down.discard(symbol)
-            self._reconnect_attempts.pop(symbol, None)
+            # Delegated to the shared supervisor's per-stream teardown (05-01/D-08).
+            self._supervisor.forget(symbol)
 
         coro = _cleanup()
         try:
@@ -360,7 +378,7 @@ class OkxDataProvider:
         async def _connect_and_consume(stream_name: str) -> None:
             await self._connect_and_consume_candles(symbol_okx, channel, stream_name)
 
-        await self._run_stream_supervisor(_connect_and_consume, symbol)
+        await self._supervisor.run(_connect_and_consume, symbol)
 
     async def _connect_and_consume_candles(
         self, symbol_okx: str, channel: str, stream_name: str
@@ -388,9 +406,9 @@ class OkxDataProvider:
                     host=host, channel=channel, instId=symbol_okx)
                 # Subscribed successfully — if we were paused on a prior disconnect,
                 # resume after the fresh reconcile (D-19). WR-03: a subscribe does NOT
-                # reset the retry budget (see _reset_reconnect_budget). Per-symbol key
-                # (06-02 D-05): this resumes ONLY this symbol's stream, never all.
-                self._on_stream_healthy(stream_name)
+                # reset the retry budget (supervisor.mark_up never touches the budget).
+                # Per-symbol key (06-02 D-05): this resumes ONLY this symbol's stream.
+                self._supervisor.mark_up(stream_name)
                 # WR-03 (data arm): OKX pushes an in-progress-candle SNAPSHOT (confirm='0')
                 # within ~30ms of EVERY subscribe — verified against the demo venue. That
                 # snapshot is delivered ON subscribe, so it is NOT proof of a connection that
@@ -419,7 +437,7 @@ class OkxDataProvider:
                     rows: Any = payload.get("data", []) if isinstance(payload, dict) else []
                     if rows:
                         if payload_seen:
-                            self._reset_reconnect_budget(stream_name)
+                            self._supervisor.reset_budget(stream_name)
                         payload_seen = True
                     for row in rows:
                         self._process_row(row)
@@ -450,133 +468,16 @@ class OkxDataProvider:
         self._on_stream_down = on_down
         self._on_stream_up = on_up
 
-    async def _run_stream_supervisor(
-        self, connect_and_consume: Callable[[str], Awaitable[None]], stream_name: str
-    ) -> None:
-        """Bounded-retry reconnect supervisor around one connection attempt (D-19/D-20).
-
-        Runs ``connect_and_consume`` (one WS connect + read loop). A transient drop
-        (``ccxt.NetworkError``/``RequestTimeout``/``DDoSProtection`` or an aiohttp
-        connection error), or a clean return (server closed the socket), reconnects with
-        exponential backoff after a debounce — staying running (publish-and-continue). A
-        fatal error (``ccxt.AuthenticationError``/``PermissionDenied``) or the exhausted
-        retry ceiling escalates to the injected halt entrypoint (HALTED + CRITICAL alert,
-        reason ``'connector-fatal'``). ``asyncio.CancelledError`` is re-raised so the
-        connector's disconnect cancels the task cleanly (Pitfall 4).
-        """
-        import ccxt  # lazy: ccxt already transitively imported on the live path only
-        transient: tuple[type[BaseException], ...] = (
-            ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection,
-            aiohttp.ClientError, ConnectionError, asyncio.TimeoutError)
-        fatal: tuple[type[BaseException], ...] = (
-            ccxt.AuthenticationError, ccxt.PermissionDenied)
-        while True:
-            try:
-                await connect_and_consume(stream_name)
-                # A stream coroutine returning cleanly means the venue closed the
-                # socket — not a terminal stop. Reconnect like a transient drop.
-                drop_label = "socket closed by server"
-            except asyncio.CancelledError:
-                raise  # cooperative teardown — never swallow.
-            except fatal as exc:
-                self._escalate_connector_halt(
-                    stream_name, exc, "fatal auth/permission error")
-                return
-            except transient as exc:
-                drop_label = type(exc).__name__
-            except Exception as exc:
-                # D-11 (V17-07): an UNCLASSIFIED error is neither transient nor fatal.
-                # Fail safe — escalate to the halt entrypoint and RETURN (do NOT fall
-                # through to the reconnect ladder below: an unknown error, e.g. a
-                # malformed-frame parse error surfaced from the per-message guard, must
-                # HALT, never silently kill the candle task). Scrub preserved
-                # (type(exc).__name__ + fixed literal only — V7 / T-05-27).
-                self._escalate_connector_halt(stream_name, exc, "unexpected error")
-                return
-            # Transient drop OR clean socket-close -> bounded-retry reconnect.
-            attempt = self._reconnect_attempts.get(stream_name, 0) + 1
-            self._reconnect_attempts[stream_name] = attempt
-            if attempt > self._reconnect_ceiling:
-                self._escalate_connector_halt(
-                    stream_name, RuntimeError(drop_label),
-                    "reconnect retry ceiling exhausted")
-                return
-            await asyncio.sleep(self._reconnect_debounce_s)
-            if attempt > 1:
-                # Still failing past the debounce window -> pause (D-19).
-                self._mark_stream_down(stream_name)
-            backoff = min(
-                self._reconnect_backoff_base_s * (2 ** (attempt - 1)),
-                self._reconnect_backoff_cap_s)
-            # Scrub (T-05-27): log the drop LABEL (exception type / fixed string),
-            # never str(exc) — a connector error may carry request context / a secret.
-            self.logger.warning(
-                "OKX %s stream dropped (%s) — reconnecting "
-                "(attempt %d/%d, backoff %.1fs)",
-                stream_name, drop_label, attempt, self._reconnect_ceiling, backoff)
-            await asyncio.sleep(backoff)
-
-    def _escalate_connector_halt(
-        self, stream_name: str, exc: BaseException, cause: str
-    ) -> None:
-        """Halt the engine on an unrecoverable connector failure (D-20).
-
-        Scrub (T-05-27): the log carries the exception TYPE + a fixed cause string, never
-        ``str(exc)``; the halt entrypoint is called with the fixed reason
-        ``'connector-fatal'`` so no secret can reach the CRITICAL alert.
-        """
-        self.logger.error(
-            "OKX %s stream unrecoverable (%s: %s) — halting engine",
-            stream_name, type(exc).__name__, cause)
-        if self._halt_signal is not None:
-            self._halt_signal("connector-fatal")
-
     def is_streaming_healthy(self) -> bool:
         """True iff this arm's candle stream is up (D-28 / WR-03).
 
-        Read by the engine's compound resume gate (``_all_venue_streams_healthy``) on
-        the ENGINE thread while the connector loop mutates ``_streams_down`` (GIL-atomic
-        emptiness read, no lock; any staleness self-heals via the re-fired resume
-        Event). Reads ONLY this arm's own already-tracked set — no engine-side aggregate.
+        Delegates to the shared ``StreamSupervisor`` (05-01/D-08), which owns
+        ``_streams_down``. Read by the engine's compound resume gate
+        (``_all_venue_streams_healthy``) on the ENGINE thread while the connector loop
+        mutates the supervisor's down-set (GIL-atomic emptiness read, no lock; any
+        staleness self-heals via the re-fired resume Event).
         """
-        return not self._streams_down
-
-    def _mark_stream_down(self, stream_name: str) -> None:
-        """Record a sustained disconnect and pause new submission once (D-19)."""
-        if stream_name in self._streams_down:
-            return
-        self._streams_down.add(stream_name)
-        self.logger.warning(
-            "OKX %s stream disconnected — pausing new order submission", stream_name)
-        if self._on_stream_down is not None:
-            self._on_stream_down(stream_name)
-
-    def _on_stream_healthy(self, stream_name: str) -> None:
-        """A successful subscribe: resume if we were paused (D-19). Does NOT reset backoff.
-
-        WR-03: a subscribe is NOT proof of health — it does NOT reset the reconnect retry
-        budget. Only a delivered payload does (see ``_reset_reconnect_budget``). Resetting
-        on a mere subscribe let a subscribe-then-close storm pin ``attempt`` at 1 forever
-        and silently defeat the D-20 never-spin-forever HALT guarantee.
-        """
-        if stream_name in self._streams_down:
-            self._streams_down.discard(stream_name)
-            self.logger.info(
-                "OKX %s stream reconnected — resuming after REST reconcile", stream_name)
-            if self._on_stream_up is not None:
-                self._on_stream_up(stream_name)
-
-    def _reset_reconnect_budget(self, stream_name: str) -> None:
-        """WR-03: a POST-SNAPSHOT payload proves the connection — reset the retry budget.
-
-        Neither a subscribe (``_on_stream_healthy``) nor the OKX in-progress-candle SNAPSHOT
-        that arrives on every subscribe resets ``_reconnect_attempts``; only a candle row
-        delivered AFTER that snapshot does (see the ``payload_seen`` gate in
-        ``_connect_and_consume_candles``). This keeps the D-20 ceiling able to trip under a
-        subscribe-then-close storm — where OKX still pushes the snapshot each cycle — while a
-        genuine, streaming reconnect still clears the accumulated attempts.
-        """
-        self._reconnect_attempts[stream_name] = 0
+        return self._supervisor.is_healthy()
 
     def _process_row(self, row: Any) -> None:
         """Validate one raw business row, gate on ``confirm``, cross the Decimal edge.
