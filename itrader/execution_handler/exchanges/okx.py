@@ -38,7 +38,8 @@ from itrader.config.stream import StreamSettings
 from itrader.connectors.base import LiveConnector
 from itrader.core.enums import ErrorSeverity, OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
-from itrader.core.money import to_money
+from itrader.core.instrument import Instrument
+from itrader.core.money import precision_to_scale, to_money
 from itrader.events_handler.events import ErrorEvent, FillEvent, OrderAckEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 
@@ -929,3 +930,44 @@ class OkxExchange(AbstractExchange):
 			return self._to_symbol(symbol) in markets
 		# CF-9 fail-closed: markets not yet loaded -> cannot verify -> reject.
 		return False
+
+	def resolve_precision(self, symbol: str) -> "Instrument | None":
+		"""Resolve a poll-added symbol's venue precision from the loaded-markets map (VENUE-04/D-09).
+
+		Reads ``self._connector.client.markets[key]['precision']`` — the SAME ccxt
+		loaded-markets precision the submit path consumes via ``price_to_precision`` /
+		``amount_to_precision`` — and converts the venue tick sizes into an ``Instrument``
+		carrying Decimal price/quantity scales via ``core/money.precision_to_scale`` (D-04
+		string path, NEVER ``Decimal(float)``). Returns ``None`` when markets aren't loaded /
+		the symbol is absent / a precision entry is unusable, so ``UniverseHandler.on_poll``
+		falls to ``Universe.apply``'s ``_DEFAULT_*`` ladder — the same paper posture as
+		``validate_symbol`` on a cold cache (threat T-05-06: a cold markets map cannot crash
+		the poll). ``Universe`` stays connector-free (D-09): every connector read happens HERE.
+		"""
+		connector = getattr(self, "_connector", None)
+		client = getattr(connector, "client", None)
+		markets = getattr(client, "markets", None)
+		if not isinstance(markets, dict):
+			return None
+		# Normalise through the SAME _to_symbol helper validate_symbol uses so a
+		# caller-form vs markets-key mismatch resolves consistently.
+		key = self._to_symbol(symbol)
+		market = markets.get(key)
+		if not isinstance(market, dict):
+			return None
+		precision = market.get("precision")
+		if not isinstance(precision, dict):
+			return None
+		price_scale = precision_to_scale(precision.get("price"))
+		quantity_scale = precision_to_scale(precision.get("amount"))
+		if price_scale is None or quantity_scale is None:
+			return None
+		# Inert margin defaults (mirror instruments.derive_instruments — unused on the
+		# spot path this phase; present so every constructed Instrument is well-formed).
+		return Instrument(
+			symbol=symbol.upper(),
+			price_precision=price_scale,
+			quantity_precision=quantity_scale,
+			maintenance_margin_rate=Decimal("0.005"),
+			max_leverage=Decimal("1"),
+		)
