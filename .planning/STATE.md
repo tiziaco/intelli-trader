@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 5
+current_phase: 05
 current_phase_name: Venue Registry + Bundle
-status: planned
+status: executing
 stopped_at: Phase 5 planned (6 plans, 4 waves)
-last_updated: "2026-07-10T08:15:03.045Z"
-last_activity: 2026-07-10
-last_activity_desc: Phase 5 planned — 6 PLAN.md created across 4 waves
+last_updated: "2026-07-12T22:15:20.536Z"
+last_activity: 2026-07-12
+last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 9
   completed_phases: 4
-  total_plans: 13
-  completed_plans: 13
+  total_plans: 19
+  completed_plans: 14
   percent: 44
 ---
 
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 04 — storage-schema-migrations-relocation-new-durable-stores
+**Current focus:** Phase 05 — Venue Registry + Bundle
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 5 — Venue Registry + Bundle
-Plan: 6 plans created (Wave 1: 05-01, 05-03 · Wave 2: 05-02, 05-04 · Wave 3: 05-05 · Wave 4: 05-06)
-Status: Phase 5 planned — ready for /gsd:execute-phase 5
-Last activity: 2026-07-10 — Phase 5 planned (VENUE-01..07 across 6 plans, oracle + inertness gated per plan)
+Phase: 05 (Venue Registry + Bundle) — EXECUTING
+Plan: 2 of 6
+Status: Ready to execute
+Last activity: 2026-07-12 — Phase 05 execution started
 
 Progress: [████░░░░░░] 44%
 
@@ -142,6 +142,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: [Phase 04]: 04-03: 3 hand-authored Alembic revisions off d10_halt_records (system_store → venue_config[builds venue_store table, slug!=name] → strategy_registry[registry+FK'd subscriptions, child-first downgrade]); new single head strategy_registry; env.py target_metadata registers all 4 new tables (D-02, import-inert Table-only); SQL-02 gate = single-head + upgrade-head + create_all/migration parity; inertness _FORBIDDEN + register-vs-build extended; oracle byte-exact
 - [Phase ?]: WR-02: SQLite FK enforcement lives on SqlEngine (dialect-guarded PRAGMA connect-hook), not a fixture — engine correctness semantics must be identical on every dialect the engine runs
 - [Phase ?]: WR-03/D-14: 7 durable stores schema-pure (no runtime create_all); production Alembic-owned, tests provision via tests.support.schema.provision_schema; ephemeral results store keeps create_all
+- [Phase ?]: [Phase 05]: 05-01 (VENUE-07/D-08/CF-4): one parameterized StreamSupervisor (connectors/stream_supervisor.py, 4-space, ccxt-free) owns the reconnect ladder + _reconnect_attempts/_streams_down; the 3 donor arms (okx_provider/venue/okx) HAS-A supervisor and delegate. Parameterized over transient/fatal tuples + reconnect_on_clean_return so each donor's behavior is preserved exactly; venue's reduced surface PRESERVED not normalized. ccxt+supervisor lazy-imported in __init__ so venue stays inert (connectors barrel eagerly pulls ccxt.pro). ~9 coupled test files retargeted to arm._supervisor
+- [Phase ?]: [Phase 05]: 05-01 (CF-9/D-11/T-05-04): OkxExchange.validate_symbol fail-CLOSES (False) on a non-dict markets cache; reuses the single validate_symbol->delta.removed removal path. Seeded loaded markets in 4 submit fixtures + added cold-cache unit test. CF-3 additive LiveConnector docstrings (no signature change)
 
 ### Pending Todos
 
@@ -209,6 +211,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 04 P02 | 6min | 3 tasks | 6 files |
 | Phase 04 P03 | 12min | 3 tasks | 6 files |
 | Phase 04 P04 | 20m | 3 tasks | 16 files |
+| Phase 05 P01 | 29min | 3 tasks | 17 files |
 
 ## Bookkeeping
 
@@ -220,7 +223,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-10T08:15:03.037Z
+Last session: 2026-07-12T22:14:27.147Z
 Stopped at: Phase 5 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.

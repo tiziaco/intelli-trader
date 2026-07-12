@@ -226,7 +226,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 1** *(parallel — no shared files)*
 
-- [ ] 05-01-PLAN.md — VENUE-07: shared `StreamSupervisor` (parameterized, replaces 3 forks) + CF-3 connector docstrings + CF-9 fail-closed `validate_symbol` (VENUE-07)
+- [x] 05-01-PLAN.md — VENUE-07: shared `StreamSupervisor` (parameterized, replaces 3 forks) + CF-3 connector docstrings + CF-9 fail-closed `validate_symbol` (VENUE-07)
 - [ ] 05-03-PLAN.md — VENUE-05: `LiveDataProvider` Protocol + `BaseLiveDataProvider` no-op defaults; `ReplayDataProvider` inherits it (VENUE-05)
 
 **Wave 2** *(05-02 blocked on 05-01 via okx.py; 05-04 blocked on 05-03 via LiveDataProvider)*
@@ -358,7 +358,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
-| 5. Venue Registry + Bundle | v1.8 | 0/6 | Planned | - |
+| 5. Venue Registry + Bundle | v1.8 | 1/6 | In Progress|  |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |

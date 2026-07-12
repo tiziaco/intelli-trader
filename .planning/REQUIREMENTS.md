@@ -149,7 +149,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   absent members (paper/replay skip connector/account steps) — every `if exchange=='okx'` /
   `elif exchange=='paper'` removed (concerns 6/13/§8d).
 
-- [ ] **VENUE-07**: A shared `StreamSupervisor` replaces the triplicated `_run_stream_supervisor` +
+- [x] **VENUE-07**: A shared `StreamSupervisor` replaces the triplicated `_run_stream_supervisor` +
   `_STREAM_RECONNECT_*` (CF-4); connector-contract docstrings added to `connectors/base.py` (CF-3); OKX
   markets-map freshness closes the fail-open-before-load window via the existing `validate_symbol` →
   removal path (CF-9) (§8f).
@@ -381,7 +381,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | VENUE-04 | P5 | Pending |
 | VENUE-05 | P5 | Pending |
 | VENUE-06 | P5 | Pending |
-| VENUE-07 | P5 | Pending |
+| VENUE-07 | P5 | Complete |
 | RUN-01 | P6 | Pending |
 | RUN-02 | P6 | Pending |
 | RUN-03 | P6 | Pending |
