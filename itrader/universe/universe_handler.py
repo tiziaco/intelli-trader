@@ -97,21 +97,20 @@ class _SymbolValidator(Protocol):
     def validate_symbol(self, symbol: str) -> bool: ...
 
 
-class _PrecisionResolver(Protocol):
-    """The WR-04/D-16 venue-precision bound for poll-added symbols.
+class _SupportsResolvePrecision(Protocol):
+    """The VENUE-04/D-09 venue-precision bound: an object exposing ``resolve_precision``.
 
-    ``resolve`` returns a fully-built ``Instrument`` carrying venue-correct
-    precision (from the OKX markets map) for a freshly-added symbol, or ``None``
+    ``resolve_precision`` returns a fully-built ``Instrument`` carrying venue-correct
+    precision (from the venue markets map) for a freshly-added symbol, or ``None``
     when the symbol is unresolvable — the caller then falls to ``Universe.apply``'s
     ``_DEFAULT_*`` ladder (paper/replay wire no resolver, so an added symbol lands
-    on the default ladder). ``Universe`` stays connector-free (D-03/D-16):
-    resolution happens HERE, never inside ``Universe``. The resolver
-    IMPLEMENTATION is built at the composition root (plan 07) from the venue
-    markets map, using the string Decimal path (``Decimal("1e-n")`` / ``to_money``,
-    NEVER ``Decimal(float)``).
+    on the default ladder). ``Universe`` stays connector-free (D-09): resolution
+    happens on the exchange capability (``OkxExchange.resolve_precision`` reads the
+    connector markets map), never inside ``Universe``. This mirrors the sibling
+    ``_SymbolValidator`` bound — the exchange itself now satisfies both.
     """
 
-    def resolve(self, symbol: str) -> Instrument | None: ...
+    def resolve_precision(self, symbol: str) -> Instrument | None: ...
 
 
 class _SupportsSubscribe(Protocol):
@@ -219,7 +218,7 @@ class UniverseHandler:
         self._provider: _SupportsSubscribe | None = None
         self._read_model: PortfolioReadModel | None = None
         self._freeze_gate: Callable[[], bool] | None = None
-        self._precision_resolver: _PrecisionResolver | None = None
+        self._precision_resolver: _SupportsResolvePrecision | None = None
         # WR-02 strategy-warmth re-verify seam. While None (paper/backtest, or an
         # unwired handler) on_bars_loaded skips the re-verify and flips READY as
         # before — inert by default. Live wires it to the StrategiesHandler.
@@ -250,13 +249,14 @@ class UniverseHandler:
         """Wire the D-06 venue bound (``validate_symbol``) the poll filters through."""
         self._symbol_validator = validator
 
-    def set_precision_resolver(self, resolver: _PrecisionResolver) -> None:
-        """Wire the WR-04/D-16 venue-precision resolver for poll-added symbols (plan 07).
+    def set_precision_resolver(self, resolver: _SupportsResolvePrecision) -> None:
+        """Wire the VENUE-04/D-09 venue-precision capability for poll-added symbols.
 
-        With a resolver wired, ``on_poll`` resolves each newly-added symbol to a
-        venue-precision ``Instrument`` from the OKX markets map before ``apply``;
+        ``resolver`` is the exchange itself (it now exposes ``resolve_precision``).
+        With one wired, ``on_poll`` resolves each newly-added symbol to a
+        venue-precision ``Instrument`` from the venue markets map before ``apply``;
         with none wired (paper/replay) an added symbol falls to ``Universe``'s
-        ``_DEFAULT_*`` ladder. ``Universe`` stays connector-free (D-16).
+        ``_DEFAULT_*`` ladder. ``Universe`` stays connector-free (D-09).
         """
         self._precision_resolver = resolver
 
@@ -396,7 +396,7 @@ class UniverseHandler:
         added = desired - set(self._universe.members)
         instruments: dict[str, Instrument] = {}
         for sym in added:
-            resolved = resolver.resolve(sym)
+            resolved = resolver.resolve_precision(sym)
             if resolved is not None:
                 instruments[sym] = resolved
         return instruments

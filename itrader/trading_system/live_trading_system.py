@@ -4,7 +4,7 @@ import sys
 import threading
 from collections import deque
 from datetime import datetime, UTC
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Optional, Dict, Any, Callable
 
 # D-14 (V17-11): bound on the pause-window protective-order replay queue. During a
@@ -38,7 +38,6 @@ from itrader.universe import Universe, derive_instruments, derive_membership
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, ErrorEvent, UniversePollEvent
-from itrader.core.instrument import Instrument
 
 # D-10 (WR — the primary external-surface security control): ``add_event`` is the
 # engine's PUBLIC external/web ingress. It is FAIL-CLOSED (default-deny, ASVS V4/V5):
@@ -107,80 +106,10 @@ PAPER_PARITY_TIMEFRAME = "1d"
 # — a defense that CsvPriceStore honored the window it was EXPLICITLY constructed with.
 
 
-def _precision_to_scale(value: Any) -> "Decimal | None":
-    """Convert a ccxt market-precision entry to a Decimal rounding scale (WR-04/D-16, D-04 string path).
-
-    OKX loads markets in ccxt TICK_SIZE mode, so ``precision.price`` / ``precision.amount``
-    are tick sizes (``0.1``, ``0.00000001``) — the Decimal scale directly. A bare
-    DECIMAL_PLACES integer (``8``) is read as a decimal-place count -> ``Decimal("1e-8")``.
-    Enters the Decimal domain via ``str(value)`` (Pitfall 2 — NEVER ``Decimal(float)``);
-    returns ``None`` on a missing / non-positive / unparseable entry so the caller falls to
-    ``Universe.apply``'s ``_DEFAULT_*`` ladder.
-    """
-    if value is None:
-        return None
-    try:
-        dec = Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return None
-    if dec <= 0:
-        return None
-    if dec == dec.to_integral_value() and dec >= 1:
-        # DECIMAL_PLACES count (e.g. 8) -> 1e-8 scale.
-        return Decimal(1).scaleb(-int(dec))
-    return dec
-
-
-class _OkxPrecisionResolver:
-    """WR-04/D-16 venue-precision resolver over the OKX loaded-markets map.
-
-    Reads ``okx_exchange._connector.client.markets[symbol]['precision']`` — the SAME ccxt
-    loaded-markets precision the submit path already consumes via ``price_to_precision`` /
-    ``amount_to_precision`` (``okx.py:362-392``) — and converts the venue tick sizes into an
-    ``Instrument`` carrying Decimal price/quantity scales via the D-04 string path
-    (``Decimal(str(x))``, NEVER ``Decimal(float)`` — Pitfall 2). Returns ``None`` when markets
-    aren't loaded / the symbol is absent / a precision entry is unusable, so
-    ``UniverseHandler.on_poll`` falls to ``Universe.apply``'s ``_DEFAULT_*`` ladder — the same
-    paper posture as ``validate_symbol`` accepting when ``markets`` isn't a dict
-    (``okx.py:1029-1032``). ``Universe`` stays connector-free (D-16): every connector read
-    happens HERE, never inside ``Universe``. Satisfies the ``_PrecisionResolver`` Protocol.
-    """
-
-    # Inert margin defaults (mirror ``instruments.derive_instruments`` — unused on the spot
-    # path this phase; present so every constructed Instrument is well-formed).
-    _DEFAULT_MAINTENANCE_MARGIN_RATE = Decimal("0.005")
-    _DEFAULT_MAX_LEVERAGE = Decimal("1")
-
-    def __init__(self, okx_exchange: Any) -> None:
-        self._okx = okx_exchange
-
-    def resolve(self, symbol: str) -> "Instrument | None":
-        connector = getattr(self._okx, "_connector", None)
-        client = getattr(connector, "client", None)
-        markets = getattr(client, "markets", None)
-        if not isinstance(markets, dict):
-            return None
-        # Normalise through the SAME _to_symbol helper validate_symbol uses (okx.py:1023)
-        # so a caller-form vs markets-key mismatch resolves consistently.
-        to_symbol = getattr(self._okx, "_to_symbol", None)
-        key = to_symbol(symbol) if callable(to_symbol) else symbol
-        market = markets.get(key)
-        if not isinstance(market, dict):
-            return None
-        precision = market.get("precision")
-        if not isinstance(precision, dict):
-            return None
-        price_scale = _precision_to_scale(precision.get("price"))
-        quantity_scale = _precision_to_scale(precision.get("amount"))
-        if price_scale is None or quantity_scale is None:
-            return None
-        return Instrument(
-            symbol=symbol.upper(),
-            price_precision=price_scale,
-            quantity_precision=quantity_scale,
-            maintenance_margin_rate=self._DEFAULT_MAINTENANCE_MARGIN_RATE,
-            max_leverage=self._DEFAULT_MAX_LEVERAGE,
-        )
+# VENUE-04/D-09 — the venue-precision resolver + the precision->scale helper that lived
+# here have been retired: precision_to_scale is now a shared money util in `core/money.py`
+# and precision resolution is a first-class `AbstractExchange.resolve_precision` capability
+# (implemented on `OkxExchange`). The universe handler binds directly on the exchange.
 
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
@@ -1437,12 +1366,11 @@ class LiveTradingSystem:
             # apply (OKX arm only — guard None on paper/replay, no venue markets map).
             if self._okx_exchange is not None:
                 self._universe_handler.set_symbol_validator(self._okx_exchange)
-                # WR-04/D-16 venue precision: resolve a poll-added symbol's precision
-                # from the OKX loaded-markets map (guarded on okx presence, mirroring
-                # the validate_symbol guard). Paper/replay (no okx exchange) leaves the
-                # resolver unset -> Universe.apply falls to the _DEFAULT_* ladder.
-                self._universe_handler.set_precision_resolver(
-                    _OkxPrecisionResolver(self._okx_exchange))
+                # VENUE-04/D-09 venue precision: bind poll-added-symbol precision on the
+                # exchange's resolve_precision capability (guarded on okx presence,
+                # mirroring the validate_symbol guard). Paper/replay (no okx exchange)
+                # leaves the resolver unset -> Universe.apply falls to the _DEFAULT_* ladder.
+                self._universe_handler.set_precision_resolver(self._okx_exchange)
             # Data-plane provider the add/remove branch drives (guard None on paper).
             if self._okx_data_provider is not None:
                 self._universe_handler.set_provider(self._okx_data_provider)

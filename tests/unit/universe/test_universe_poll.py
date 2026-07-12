@@ -396,7 +396,7 @@ class _FakeResolver:
     def __init__(self, by_symbol: dict[str, Instrument]) -> None:
         self._by_symbol = by_symbol
 
-    def resolve(self, symbol: str) -> Instrument | None:
+    def resolve_precision(self, symbol: str) -> Instrument | None:
         return self._by_symbol.get(symbol)
 
 
