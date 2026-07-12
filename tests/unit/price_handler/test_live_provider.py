@@ -164,10 +164,20 @@ def test_okx_data_provider_conforms_structurally() -> None:
 
 
 def test_live_provider_module_imports_nothing_heavy() -> None:
-    """The module source imports no ccxt/sqlalchemy/async (D-10 inertness)."""
+    """The module has no ccxt/sqlalchemy/async IMPORT lines (D-10 inertness).
+
+    Scans actual ``import`` / ``from ... import`` statements (not docstring prose,
+    which legitimately names the forbidden libraries when explaining the rule).
+    """
     import itrader.price_handler.providers.live_provider as mod
 
     source = open(mod.__file__, encoding="utf-8").read()
-    assert "import ccxt" not in source
-    assert "sqlalchemy" not in source
-    assert "import asyncio" not in source
+    import_lines = [
+        line.strip()
+        for line in source.splitlines()
+        if line.strip().startswith(("import ", "from "))
+    ]
+    for forbidden in ("ccxt", "sqlalchemy", "asyncio"):
+        assert not any(forbidden in line for line in import_lines), (
+            f"live_provider.py must not import {forbidden!r}: {import_lines}"
+        )
