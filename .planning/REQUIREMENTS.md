@@ -126,15 +126,15 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Venue Registry + Bundle (P5)
 
-- [ ] **VENUE-01**: Two registries — `ExecutionVenueRegistry` + `DataProviderRegistry` — select execution
+- [x] **VENUE-01**: Two registries — `ExecutionVenueRegistry` + `DataProviderRegistry` — select execution
   venue + data provider independently via `SystemSpec` (`execution_venue` + `data_provider`) (LR-17/§8a-b).
 
-- [ ] **VENUE-02**: A `VenuePlugin` Protocol builds a `VenueBundle` (optional connector, exchange,
+- [x] **VENUE-02**: A `VenuePlugin` Protocol builds a `VenueBundle` (optional connector, exchange,
   mandatory per-portfolio account factory) with concretions lazy-imported inside `build_bundle` —
   registering `'okx'` pulls no `ccxt.pro` until built; `test_okx_inertness.py` is the P5 acceptance gate
   (§8a, concerns 2/3).
 
-- [ ] **VENUE-03**: Connectors are memoized by `(venue, account_id)` at the composition root; credentials
+- [x] **VENUE-03**: Connectors are memoized by `(venue, account_id)` at the composition root; credentials
   are per-`account_id`, env-sourced, never persisted (LR-17/LR-20/§8c).
 
 - [x] **VENUE-04**: Precision + validation become exchange capabilities (`resolve_precision(symbol)`,
@@ -375,9 +375,9 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | STORE-03 | P4 | Complete |
 | STORE-04 | P4 | Complete |
 | STORE-05 | P4 | Complete |
-| VENUE-01 | P5 | Pending |
-| VENUE-02 | P5 | Pending |
-| VENUE-03 | P5 | Pending |
+| VENUE-01 | P5 | Complete |
+| VENUE-02 | P5 | Complete |
+| VENUE-03 | P5 | Complete |
 | VENUE-04 | P5 | Complete |
 | VENUE-05 | P5 | Complete |
 | VENUE-06 | P5 | Pending |
