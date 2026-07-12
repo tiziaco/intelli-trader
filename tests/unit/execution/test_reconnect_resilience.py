@@ -198,9 +198,9 @@ def _drive_storm(coro: Any) -> None:
 
 def _fast(component: Any) -> None:
     """Shrink the debounce/backoff so the supervisor test runs instantly."""
-    component._reconnect_debounce_s = 0.0
-    component._reconnect_backoff_base_s = 0.0
-    component._reconnect_backoff_cap_s = 0.0
+    component._supervisor._reconnect_debounce_s = 0.0
+    component._supervisor._reconnect_backoff_base_s = 0.0
+    component._supervisor._reconnect_backoff_cap_s = 0.0
 
 
 class _Recorder:
@@ -243,13 +243,13 @@ def test_okx_exchange_transient_error_reconnects_and_survives(okx_exchange: OkxE
 
     # transient (blip attempt 1), transient (attempt 2 -> pause), then reconnect.
     consume = _ScriptedConsume(
-        ["transient", "transient", "ok"], on_healthy=okx_exchange._on_stream_healthy)
-    asyncio.run(okx_exchange._run_stream_supervisor(consume, "fills"))
+        ["transient", "transient", "ok"], on_healthy=okx_exchange._supervisor.mark_up)
+    asyncio.run(okx_exchange._supervisor.run(consume, "fills"))
 
     assert halt.calls == []                      # never halted on a transient
     assert down.calls == ["fills"]               # paused once past the debounce
     assert up.calls == ["fills"]                 # resumed on reconnect
-    assert "fills" not in okx_exchange._streams_down
+    assert "fills" not in okx_exchange._supervisor._streams_down
 
 
 def test_okx_provider_transient_error_reconnects_and_survives(
@@ -263,9 +263,9 @@ def test_okx_provider_transient_error_reconnects_and_survives(
     okx_provider.set_stream_state_listener(down, up)
 
     consume = _ScriptedConsume(
-        ["transient", "transient", "ok_stop"], on_healthy=okx_provider._on_stream_healthy)
+        ["transient", "transient", "ok_stop"], on_healthy=okx_provider._supervisor.mark_up)
     with pytest.raises(_StopSupervisor):
-        asyncio.run(okx_provider._run_stream_supervisor(consume, "candles"))
+        asyncio.run(okx_provider._supervisor.run(consume, "candles"))
 
     assert halt.calls == []
     assert down.calls == ["candles"]
@@ -281,7 +281,7 @@ def test_okx_exchange_fatal_error_halts(okx_exchange: OkxExchange) -> None:
     okx_exchange.set_halt_signal(halt)
 
     consume = _ScriptedConsume(["fatal"])
-    asyncio.run(okx_exchange._run_stream_supervisor(consume, "fills"))
+    asyncio.run(okx_exchange._supervisor.run(consume, "fills"))
 
     assert halt.calls == ["connector-fatal"]
     assert consume.calls == 1                     # fatal is never retried
@@ -292,7 +292,7 @@ def test_okx_provider_fatal_error_halts(okx_provider: OkxDataProvider) -> None:
     okx_provider.set_halt_signal(halt)
 
     consume = _ScriptedConsume(["fatal"])
-    asyncio.run(okx_provider._run_stream_supervisor(consume, "candles"))
+    asyncio.run(okx_provider._supervisor.run(consume, "candles"))
 
     assert halt.calls == ["connector-fatal"]
     assert consume.calls == 1
@@ -305,10 +305,10 @@ def test_okx_exchange_retry_ceiling_exhausted_halts(okx_exchange: OkxExchange) -
     """Endless transient drops exhaust the retry ceiling and halt — never spin forever."""
     halt = _Recorder()
     okx_exchange.set_halt_signal(halt)
-    okx_exchange._reconnect_ceiling = 3
+    okx_exchange._supervisor._reconnect_ceiling = 3
 
     consume = _ScriptedConsume(["transient"] * 20)   # always transient
-    asyncio.run(okx_exchange._run_stream_supervisor(consume, "fills"))
+    asyncio.run(okx_exchange._supervisor.run(consume, "fills"))
 
     assert halt.calls == ["connector-fatal"]
     # attempts 1..3 retried, attempt 4 > ceiling -> halt (bounded, never unbounded).
@@ -318,10 +318,10 @@ def test_okx_exchange_retry_ceiling_exhausted_halts(okx_exchange: OkxExchange) -
 def test_okx_provider_retry_ceiling_exhausted_halts(okx_provider: OkxDataProvider) -> None:
     halt = _Recorder()
     okx_provider.set_halt_signal(halt)
-    okx_provider._reconnect_ceiling = 3
+    okx_provider._supervisor._reconnect_ceiling = 3
 
     consume = _ScriptedConsume(["transient"] * 20)
-    asyncio.run(okx_provider._run_stream_supervisor(consume, "candles"))
+    asyncio.run(okx_provider._supervisor.run(consume, "candles"))
 
     assert halt.calls == ["connector-fatal"]
     assert consume.calls == 4
@@ -342,10 +342,10 @@ def test_okx_exchange_subscribe_close_storm_exhausts_ceiling_and_halts(
     """
     halt = _Recorder()
     okx_exchange.set_halt_signal(halt)
-    okx_exchange._reconnect_ceiling = 3
+    okx_exchange._supervisor._reconnect_ceiling = 3
 
-    storm = _SubscribeCloseStorm(okx_exchange._on_stream_healthy, drop="transient")
-    _drive_storm(okx_exchange._run_stream_supervisor(storm, "fills"))
+    storm = _SubscribeCloseStorm(okx_exchange._supervisor.mark_up, drop="transient")
+    _drive_storm(okx_exchange._supervisor.run(storm, "fills"))
 
     assert halt.calls == ["connector-fatal"]   # ceiling tripped despite the subscribe storm
     assert storm.calls == 4                     # attempts 1..3 retried, attempt 4 > ceiling -> halt
@@ -357,10 +357,10 @@ def test_okx_provider_subscribe_close_storm_exhausts_ceiling_and_halts(
     """The candle arm halts on a subscribe-then-close storm too (mirror of the order arm)."""
     halt = _Recorder()
     okx_provider.set_halt_signal(halt)
-    okx_provider._reconnect_ceiling = 3
+    okx_provider._supervisor._reconnect_ceiling = 3
 
-    storm = _SubscribeCloseStorm(okx_provider._on_stream_healthy, drop="clean")
-    _drive_storm(okx_provider._run_stream_supervisor(storm, "candles"))
+    storm = _SubscribeCloseStorm(okx_provider._supervisor.mark_up, drop="clean")
+    _drive_storm(okx_provider._supervisor.run(storm, "candles"))
 
     assert halt.calls == ["connector-fatal"]
     assert storm.calls == 4
@@ -386,7 +386,7 @@ def test_okx_provider_snapshot_on_subscribe_storm_exhausts_ceiling_and_halts(
     """
     halt = _Recorder()
     okx_provider.set_halt_signal(halt)
-    okx_provider._reconnect_ceiling = 3
+    okx_provider._supervisor._reconnect_ceiling = 3
 
     state: dict[str, int] = {}
     session = _SnapshotThenCloseSession(state)
@@ -396,7 +396,7 @@ def test_okx_provider_snapshot_on_subscribe_storm_exhausts_ceiling_and_halts(
     async def _consume(_stream_name: str) -> None:
         await okx_provider._connect_and_consume_candles("BTC-USDT", "candle1D", _stream_name)
 
-    _drive_storm(okx_provider._run_stream_supervisor(_consume, "candles"))
+    _drive_storm(okx_provider._supervisor.run(_consume, "candles"))
 
     assert halt.calls == ["connector-fatal"]   # ceiling tripped despite snapshot-on-subscribe
     assert state["connects"] == 4              # attempts 1..3 retried, attempt 4 > ceiling -> halt
@@ -436,7 +436,7 @@ def test_fatal_alert_carries_no_secret_substring(monkeypatch: Any) -> None:
     exchange.set_halt_signal(system.halt)
 
     consume = _ScriptedConsume(["fatal"])         # raises AuthenticationError with _SECRET
-    asyncio.run(exchange._run_stream_supervisor(consume, "fills"))
+    asyncio.run(exchange._supervisor.run(consume, "fills"))
 
     # Drain the CRITICAL halt ErrorEvent through the ERROR route -> alert sink.
     system.event_handler.process_events()
@@ -526,8 +526,8 @@ def test_blip_within_debounce_does_not_pause(okx_exchange: OkxExchange) -> None:
 
     # One transient (attempt 1, within the debounce), then reconnect.
     consume = _ScriptedConsume(
-        ["transient", "ok"], on_healthy=okx_exchange._on_stream_healthy)
-    asyncio.run(okx_exchange._run_stream_supervisor(consume, "fills"))
+        ["transient", "ok"], on_healthy=okx_exchange._supervisor.mark_up)
+    asyncio.run(okx_exchange._supervisor.run(consume, "fills"))
 
     assert down.calls == []                        # a blip never pauses
     assert up.calls == []                          # never went down -> no resume

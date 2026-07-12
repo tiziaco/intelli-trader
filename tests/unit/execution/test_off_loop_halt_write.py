@@ -1,6 +1,6 @@
 """05.3-08 Task 2 (D-21 / WR-02) — the durable halt write runs OFF the connector loop thread.
 
-``OkxExchange._escalate_connector_halt`` runs on the connector asyncio loop thread (it is
+``OkxExchange._supervisor._escalate_halt`` runs on the connector asyncio loop thread (it is
 reached from ``_run_stream_supervisor`` on a fatal error / exhausted retry ceiling / the
 unclassified catch-all). Pre-fix it invoked the injected halt signal = ``LiveTradingSystem.halt``
 SYNCHRONOUSLY, and ``halt()`` performs a BLOCKING ``HaltRecordStore.record_halt`` SQL write. A
@@ -71,7 +71,7 @@ def test_connector_fatal_durable_write_runs_off_the_loop_thread(monkeypatch) -> 
 
         def loop() -> None:
             loop_ident["id"] = threading.get_ident()
-            system._okx_exchange._escalate_connector_halt(
+            system._okx_exchange._supervisor._escalate_halt(
                 "fills", RuntimeError("secret-bearing venue error"), "fatal auth/permission error")
 
         t = threading.Thread(target=loop, name="connector-loop")
