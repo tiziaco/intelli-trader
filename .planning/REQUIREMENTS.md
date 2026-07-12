@@ -145,7 +145,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `BaseLiveDataProvider` giving no-op defaults) wires every provider uniformly — no `hasattr` sprinkling
   (concern 14/§8b).
 
-- [ ] **VENUE-06**: A `VenueLifecycle` orchestrator encodes the fixed start/stop order and None-guards
+- [x] **VENUE-06**: A `VenueLifecycle` orchestrator encodes the fixed start/stop order and None-guards
   absent members (paper/replay skip connector/account steps) — every `if exchange=='okx'` /
   `elif exchange=='paper'` removed (concerns 6/13/§8d).
 
@@ -380,7 +380,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | VENUE-03 | P5 | Complete |
 | VENUE-04 | P5 | Complete |
 | VENUE-05 | P5 | Complete |
-| VENUE-06 | P5 | Pending |
+| VENUE-06 | P5 | Complete |
 | VENUE-07 | P5 | Complete |
 | RUN-01 | P6 | Pending |
 | RUN-02 | P6 | Pending |

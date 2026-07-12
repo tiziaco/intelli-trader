@@ -4,17 +4,17 @@ milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 05
 current_phase_name: Venue Registry + Bundle
-status: executing
+status: verifying
 stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-07-12T22:58:13.471Z"
+last_updated: "2026-07-12T23:16:42.212Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 9
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 19
-  completed_plans: 18
-  percent: 44
+  completed_plans: 19
+  percent: 56
 ---
 
 # Project State
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 05 (Venue Registry + Bundle) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-12 — Phase 05 execution started
 
 Progress: [████░░░░░░] 44%
@@ -150,6 +150,10 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: 05-04: VenueBundle.lifecycle typed Any until 05-06 VenueLifecycle lands (mypy --strict forward-ref)
 - [Phase ?]: 05-05: OKX/paper venue plugins triple-deferral-lazy (D-04); register != build proven by extended inertness gate + module-scope AST scans
 - [Phase ?]: 05-05: register-vs-build assertion excludes ConnectorProvider (connectors barrel eagerly re-exports OkxConnector, pre-existing 05-04 decision); proves venue-plugin surface inertness instead
+- [Phase ?]: 05-06 (VENUE-06/SC3/D-06): LiveTradingSystem.__init__ delegates venue assembly to assemble_venue; every if exchange==okx/elif==paper branch removed (grep=0); venue-string init/start guards became structural None-guards; start/stop delegate connector connect/disconnect to VenueLifecycle
+- [Phase ?]: 05-06 (D-10): VenueLifecycle is a small class encoding the fixed connector start/stop order, None-guarding paper's absent connector (start no-ops when bundle.connector is None; stop prefers ConnectorProvider.close_all, falls back to connector.disconnect)
+- [Phase ?]: 05-06: plugin/ConnectorProvider imports stay LAZY inside LTS.__init__ not module top — trading_system/__init__.py imports LiveTradingSystem, so a module-top okx_plugin/paper_plugin/ConnectorProvider import would pull them onto the backtest import graph (inertness _FORBIDDEN) and redden test_okx_inertness
+- [Phase ?]: 05-06: VenueBundle.lifecycle retyped Any -> VenueLifecycle | None (05-04 forward-seam closed); TYPE_CHECKING forward-ref keeps the substrate import-inert
 
 ### Pending Todos
 
@@ -222,6 +226,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 05 P02 | 6m | 3 tasks | 9 files |
 | Phase 05 P04 | 5min | 3 tasks | 7 files |
 | Phase 05 P05 | 7min | 3 tasks | 5 files |
+| Phase 05 P06 | 11min | 3 tasks | 6 files |
 
 ## Bookkeeping
 
@@ -233,7 +238,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-12T22:57:51.072Z
+Last session: 2026-07-12T23:15:58.926Z
 Stopped at: Completed 05-03-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
