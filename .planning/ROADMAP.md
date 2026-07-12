@@ -236,7 +236,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 
 **Wave 3** *(blocked on 05-04 + 05-03)*
 
-- [ ] 05-05-PLAN.md — VENUE-02: OKX + paper venue/data/connector plugins (triple-deferral-lazy) + inertness register-vs-build extension (VENUE-02)
+- [x] 05-05-PLAN.md — VENUE-02: OKX + paper venue/data/connector plugins (triple-deferral-lazy) + inertness register-vs-build extension (VENUE-02)
 
 **Wave 4** *(blocked on 05-05 + 05-04 + 05-03 + 05-02)*
 
@@ -358,7 +358,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 2. Event Bus | v1.8 | 3/3 | Complete    | 2026-07-09 |
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
-| 5. Venue Registry + Bundle | v1.8 | 4/6 | In Progress|  |
+| 5. Venue Registry + Bundle | v1.8 | 5/6 | In Progress|  |
 | 6. LiveRunner + Factory + Facade Shrink | v1.8 | 0/TBD | Not started | - |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |

@@ -6,14 +6,14 @@ current_phase: 05
 current_phase_name: Venue Registry + Bundle
 status: executing
 stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-07-12T22:44:34.036Z"
+last_updated: "2026-07-12T22:58:13.471Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 05 execution started
 progress:
   total_phases: 9
   completed_phases: 4
   total_plans: 19
-  completed_plans: 17
+  completed_plans: 18
   percent: 44
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 05 (Venue Registry + Bundle) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-07-12 — Phase 05 execution started
 
@@ -148,6 +148,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: 05-03: OkxDataProvider left unedited — conforms to LiveDataProvider structurally; avoids conflict with 05-01 StreamSupervisor delegation
 - [Phase 05]: VENUE-04/D-09: precision is an AbstractExchange.resolve_precision capability; precision_to_scale is a shared core/money util; LTS resolvers deleted
 - [Phase ?]: 05-04: VenueBundle.lifecycle typed Any until 05-06 VenueLifecycle lands (mypy --strict forward-ref)
+- [Phase ?]: 05-05: OKX/paper venue plugins triple-deferral-lazy (D-04); register != build proven by extended inertness gate + module-scope AST scans
+- [Phase ?]: 05-05: register-vs-build assertion excludes ConnectorProvider (connectors barrel eagerly re-exports OkxConnector, pre-existing 05-04 decision); proves venue-plugin surface inertness instead
 
 ### Pending Todos
 
@@ -219,6 +221,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 05 P03 | 4min | 2 tasks | 4 files |
 | Phase 05 P02 | 6m | 3 tasks | 9 files |
 | Phase 05 P04 | 5min | 3 tasks | 7 files |
+| Phase 05 P05 | 7min | 3 tasks | 5 files |
 
 ## Bookkeeping
 
@@ -230,7 +233,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-12T22:44:01.028Z
+Last session: 2026-07-12T22:57:51.072Z
 Stopped at: Completed 05-03-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
