@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from itrader.logger import get_itrader_logger
+
 if TYPE_CHECKING:
     from itrader.connectors.base import LiveConnector
 
@@ -65,6 +67,7 @@ class ConnectorProvider:
     def __init__(self, plugins: dict[str, ConnectorPlugin]) -> None:
         self._plugins = plugins
         self._memo: dict[tuple[str, str], LiveConnector] = {}
+        self.logger = get_itrader_logger().bind(component="ConnectorProvider")
 
     def get(self, venue: str, account_id: str, spec: Any) -> LiveConnector:
         """Return the shared connector for ``(venue, account_id)``; build it once on first call.
@@ -78,6 +81,11 @@ class ConnectorProvider:
 
     def close_all(self) -> None:
         """Disconnect every memoized connector exactly once, then drop the memo."""
-        for connector in self._memo.values():
-            connector.disconnect()
-        self._memo.clear()
+        try:
+            for connector in self._memo.values():
+                try:
+                    connector.disconnect()
+                except Exception:
+                    self.logger.error("connector disconnect failed", exc_info=True)
+        finally:
+            self._memo.clear()
