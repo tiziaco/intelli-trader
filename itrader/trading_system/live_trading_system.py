@@ -1,8 +1,7 @@
 import os
-import queue
-import sys
 import threading
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, UTC
 from decimal import Decimal
 from types import SimpleNamespace
@@ -36,7 +35,16 @@ from itrader.trading_system.alert_sink import LogAlertSink
 from itrader.universe import Universe
 
 from itrader.logger import get_itrader_logger
+from itrader.events_handler.bus import PriorityEventBus
 from itrader.events_handler.events import EventType, ErrorEvent, UniversePollEvent
+
+# RUN-01/RUN-02 (D-06): the live drain-loop timing knobs. Formerly loose
+# ``__init__`` params (``queue_timeout``/``max_idle_time``); the pure-injection
+# facade sheds them and ``build_live_system`` injects these values into the
+# ``LiveRunner`` (which now OWNS the drain loop). Values preserve the historical
+# facade defaults exactly (1.0s queue poll, 300s idle-warn window).
+_LIVE_QUEUE_TIMEOUT = 1.0
+_LIVE_MAX_IDLE_TIME = 300.0
 
 # D-10 (WR — the primary external-surface security control): ``add_event`` is the
 # engine's PUBLIC external/web ingress. It is FAIL-CLOSED (default-deny, ASVS V4/V5):
@@ -115,6 +123,40 @@ PAPER_PARITY_TIMEFRAME = "1d"
 # imported above; the ``SystemStatus.X`` usages below resolve unchanged.
 
 
+@dataclass
+class LiveSystemComponents:
+    """The pre-built live component graph injected into the facade (RUN-01/D-09).
+
+    ``build_live_system`` owns ALL live wiring and packs the resulting handlers /
+    storages / feed / venue bundle into this bundle; ``LiveTradingSystem.__init__``
+    is PURE INJECTION — it stores these fields verbatim and holds NO wiring logic
+    (the live analog of ``compose_engine -> Engine`` feeding ``BacktestRunner``).
+    Fields are loose (``Any``) — the facade module is mypy ``ignore_errors`` (D-live).
+    """
+
+    exchange: str
+    global_queue: Any
+    store: Any
+    feed: Any
+    screeners_handler: Any
+    portfolio_handler: Any
+    strategies_handler: Any
+    order_handler: Any
+    execution_handler: Any
+    event_handler: Any
+    signal_store: Any
+    system_db_backend: Any
+    halt_record_store: Any
+    order_storage: Any
+    venue_bundle: Any
+    venue_lifecycle: Any
+    okx_connector: Any
+    okx_exchange: Any
+    okx_data_provider: Any
+    venue_account: Any
+    replay_provider: Any
+
+
 class LiveTradingSystem:
     """
     Encapsulates the settings and components for carrying out live trading.
@@ -125,83 +167,84 @@ class LiveTradingSystem:
     """
     
     def __init__(
-        self, 
-        exchange='binance',
-        to_sql=False,
-        queue_timeout=1.0,
-        max_idle_time=300.0,  # 5 minutes max idle time
-        status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None
+        self,
+        components: "LiveSystemComponents",
+        *,
+        status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None,
     ):
-        """
-        Set up the live trading system variables.
-        
+        """Pure-injection facade constructor (RUN-01/RUN-03/D-09).
+
+        ``build_live_system`` owns ALL live wiring and hands in the pre-built
+        ``LiveSystemComponents`` graph; this constructor holds NO wiring logic — it
+        stores the injected components and initialises fresh per-instance RUNTIME
+        state (status/locks/flags/stats). Mirrors ``compose_engine -> Engine ->
+        BacktestRunner`` (the injected engine is the source of truth; the holder is
+        thin). ``status_callback`` is the sole surviving loose param; the former
+        ``exchange``/``to_sql``/``queue_timeout``/``max_idle_time`` params are SHED
+        (``exchange`` now rides on the components; the two loop knobs are injected
+        into the ``LiveRunner`` by the factory).
+
+        D-03 boundary honesty: the ~200-line facade is a P7-EXIT gate (P7 owns the
+        ~500 lines of safety/reconcile/stream extraction). The interim P6 facade is
+        ~600-700 lines and that is CORRECT — RUN-03 acceptance here is STRUCTURAL.
+
         Parameters
         ----------
-        exchange : str
-            The exchange to connect to
-        to_sql : bool
-            Whether to store data to SQL
-        queue_timeout : float
-            Timeout for queue operations in seconds
-        max_idle_time : float
-            Maximum idle time before logging a warning (seconds)
+        components : LiveSystemComponents
+            The pre-built live component graph (handlers/storages/feed/venue bundle).
         status_callback : callable, optional
-            Callback function to notify status changes to external systems
+            Callback to notify status changes to external systems.
         """
         self.logger = get_itrader_logger().bind(component="LiveTradingSystem")
-        self.exchange = exchange
-        self.to_sql = to_sql
-        self.queue_timeout = queue_timeout
-        self.max_idle_time = max_idle_time
         self.status_callback = status_callback
-        
+
+        # -- Injected component graph (build_live_system owns its construction) --
+        self.exchange = components.exchange
+        self.global_queue = components.global_queue
+        self.store = components.store
+        self.feed = components.feed
+        self.screeners_handler = components.screeners_handler
+        self.portfolio_handler = components.portfolio_handler
+        self.strategies_handler = components.strategies_handler
+        self.order_handler = components.order_handler
+        self.execution_handler = components.execution_handler
+        self.event_handler = components.event_handler
+        self._signal_store = components.signal_store
+        self._system_db_backend: Optional[Any] = components.system_db_backend
+        self._halt_record_store: Optional[Any] = components.halt_record_store
+        self._order_storage = components.order_storage
+        self._venue_bundle: Optional[Any] = components.venue_bundle
+        self._venue_lifecycle: Optional[Any] = components.venue_lifecycle
+        self._okx_connector: Optional[Any] = components.okx_connector
+        self._okx_exchange: Optional[Any] = components.okx_exchange
+        self._okx_data_provider: Optional[Any] = components.okx_data_provider
+        self._venue_account: Optional[Any] = components.venue_account
+        self._replay_provider: Optional[Any] = components.replay_provider
+
+        # -- Fresh per-instance RUNTIME state (NOT wiring) ----------------------
         # System status tracking
         self._status = SystemStatus.STOPPED
         self._status_lock = threading.Lock()
         self._last_error = None
-        # 05-04 (D-07): machine-readable halt reason surfaced on get_status() when
-        # the engine is HALTED. reason ∈ {drift, reconciliation-unresolved,
-        # connector-fatal, paused-on-disconnect}. None until the first halt.
+        # 05-04 (D-07): machine-readable halt reason surfaced on get_status().
         self._halt_reason: Optional[str] = None
-        # 05-08 (D-19): REVERSIBLE pause-on-disconnect state — distinct from the
-        # terminal HALT. A sustained venue-stream disconnect quiesces NEW order
-        # submission (don't trade when you can't see the venue) while streaming /
-        # reconciling / persisting continue and existing positions/orders stay
-        # untouched; a reconnect + a fresh REST snapshot/reconcile resumes it.
-        # _pending_stream_resume is SET by the connector-loop reconnect callback and
-        # DRAINED on the ENGINE thread (Pitfall 9 — no blocking venue I/O on the loop).
+        # 05-08 (D-19): REVERSIBLE pause-on-disconnect state (distinct from HALT).
         self._submission_paused = False
         self._paused_reason: Optional[str] = None
         self._pending_stream_resume = threading.Event()
-        # 05.3-08 (D-21 / WR-02): connector-fatal escalation handoff. A fatal connector
-        # error / exhausted retry ceiling / unclassified catch-all escalates from the
-        # connector ASYNCIO LOOP thread. Doing the blocking durable record_halt SQL write
-        # there stalls every stream sharing the loop (Pitfall 9). The loop-thread callback
-        # (_request_connector_halt) only SETS this flag; the ENGINE thread drains it via
-        # _maybe_halt_after_connector_fatal and runs the blocking halt() (durable write +
-        # status flip + CRITICAL alert), winner-only. Mirrors the pause/resume flag pattern.
+        # 05.3-08 (D-21 / WR-02): connector-fatal escalation handoff flag.
         self._pending_connector_halt = threading.Event()
         self._pending_connector_halt_reason: Optional[str] = None
-        # D-14 (V17-11): pause-window protective-order replay queue. While submission
-        # is paused/halted, system-generated PROTECTIVE orders (bracket children,
-        # OCO/orphan cancels — a just-filled entry's stop/take-profit) are DEFERRED here
-        # instead of being blanket-dropped, and REPLAYED through _dispatch_live on
-        # resume so the position is never left naked. Bounded engine-internal state — NOT
-        # a new EventType. Fresh ENTRY orders are still suppressed (never deferred), and a
-        # CANCEL command is dispatched immediately (a cancel only reduces risk).
+        # D-14 (V17-11): bounded pause-window protective-order replay queue.
         self._deferred_protective: "deque[Any]" = deque(
             maxlen=_DEFERRED_PROTECTIVE_REPLAY_MAX)
-        
-        # Threading control
+
+        # Threading control. The shared _stop_event is honoured by BOTH the injected
+        # LiveRunner drain loop and its composed WorkerSupervisor (build_live_system
+        # threads it into them); the facade owns it so stop() can latch shutdown.
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        # Plan 06-05 (D-02): the live-only dynamic-universe poll-timer daemon. Spawned
-        # in start() on the daemon/live path ONLY (never run_paper_replay — synchronous
-        # — never backtest); stopped via the shared _stop_event. Declared here so a
-        # pre-start read is a clean None, never an AttributeError.
-        self._poll_timer_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        
+
         # Statistics tracking
         self._stats = {
             'events_processed': 0,
@@ -211,439 +254,80 @@ class LiveTradingSystem:
             'errors_count': 0
         }
         self._stats_lock = threading.Lock()
-        
-        # Initialize components — mirrors the backtest Store+Feed wiring shape
-        # (Plan 06-05, Pitfall 8). Minimal conformance only: a real live feed
-        # (streaming Store/Feed implementations) is owned by D-live; this keeps
-        # the module importing and constructing on the same seams.
-        self.global_queue = queue.Queue()
-        self.store = CsvPriceStore()
-        # Phase 3 (FEED-05): LiveBarFeed replaces the BacktestBarFeed placeholder as
-        # the live driver — the bar's arrival IS the event, so it takes over
-        # TimeGenerator's driver role. LAZY-imported here (mirrors the lazy OKX/SQL
-        # imports below) so the BACKTEST import path never pulls live_bar_feed — the
-        # recurring milestone inertness gate (tests/integration/test_okx_inertness.py).
-        # Constructed provider-less and UNCONDITIONALLY (constructible for every venue);
-        # the real OKX provider is injected into the okx arm below via
-        # self.feed.set_provider(...). The self.feed.generate_bar_event reference in the
-        # EventHandler route literal stays a valid callable because LiveBarFeed defines
-        # its OWN concrete dormant no-op generate_bar_event (D-05).
-        from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
-        self.feed = LiveBarFeed(provider=None, base_timeframe=to_timedelta('1d'))
-        # Signal-store sink (Plan 05-03 / 05-06, D-11): the live signal store is
-        # wired TOGETHER with the order working set in the ITRADER_DATABASE_*-gated
-        # store block below — both share ONE SqlEngine (sync-durable orders on the D-10
-        # path, the advisory signal store on the D-11 async/best-effort path). WR-03:
-        # retain the store on self and expose accessors (mirroring the backtest
-        # system) — a local variable would leave every captured SignalRecord
-        # permanently unreachable (a write-only accumulation).
-        self.screeners_handler = ScreenersHandler(self.global_queue, self.feed)
-        # 05.2-05 (D-07): the PortfolioHandler is constructed AFTER the operational
-        # store block below (which sets self._system_db_backend) so it can inject the
-        # SAME shared SqlEngine on the durable 'live' arm — see the durable-portfolio
-        # wiring right after the store block. Declared here as a forward attribute so
-        # nothing between reads it before construction.
-        self.portfolio_handler: PortfolioHandler
-        # WR-04: declare the universe attribute as a clean "not yet wired"
-        # sentinel here, mirroring Engine.universe: Optional[Universe] = None on
-        # the backtest path. It is populated in _initialize_live_session (from
-        # start()); without this, any pre-start read raises AttributeError
-        # instead of returning None — an attribute-existence trap for D-live.
+
+        # WR-04: "not yet wired" sentinels populated by _initialize_live_session.
         self.universe: Optional[Universe] = None
-        # Plan 06-05 (D-02/D-05): the live-only UniverseHandler (poll host + add/remove
-        # consumer). Constructed in _initialize_live_session (from start()) — NEVER on
-        # the backtest path (a separate EventHandler with the untouched _routes literal).
-        # Declared here as a "not yet wired" sentinel so a pre-start read is a clean None.
         self._universe_handler: Optional[Any] = None
+        # D-12 (interim): session init stays DEFERRED to start()/run_paper_replay in
+        # P6 (the construction-time flip conflicts with the pervasive
+        # add-strategy-after-construction + monkeypatch-_initialize_live_session-
+        # before-start() contracts across the live test suite — it lands with the
+        # 06-07 run_paper_replay relocation). The idempotency guard makes a second
+        # call a no-op so no path double-inits.
+        self._session_initialized = False
 
-        # ------------------------------------------------------------------
-        # v1.6 operational store live-drive (05-06, RECON-04, D-10/D-11).
-        #
-        # Complete the deferred v1.6 D-01/RETAIN-03 wiring: drive the operational
-        # store off the real feed, SPLIT by durability. The SYNC-DURABLE working set
-        # (order lifecycle — create/terminalize) persists store-first via
-        # ``CachedSqlOrderStorage`` so it survives a crash for a correct two-sided
-        # restart (D-10). The DERIVED / advisory state (the signal store) is
-        # live-driven on the async/best-effort path (D-11 — signals are audit records,
-        # NOT the restart working set). Both share ONE ``SqlEngine`` built here.
-        #
-        # All SQL imports stay LAZY inside the Postgres arm (mirrors the OKX
-        # lazy imports below) so the BACKTEST import path stays SQLAlchemy-free — the
-        # recurring milestone inertness gate (tests/integration/test_okx_inertness.py).
-        #
-        # Read the credential presence at __init__ time INSIDE the method (not module
-        # scope) so it honors per-construction env. CRITICAL: this env-presence check
-        # MUST gate BEFORE constructing SqlSettings — a bare
-        # SqlSettings(driver=POSTGRESQL_PSYCOPG2) with no password/url RAISES
-        # ValidationError via _require_pg_credentials, so construct-and-catch is NOT
-        # valid control flow here.
-        pg_password = os.getenv("ITRADER_DATABASE_PASSWORD", "")
-        pg_url = os.getenv("ITRADER_DATABASE_URL", "")
-        if not (pg_password or pg_url):
-            # WR-10: fail loudly into the in-memory fallback instead of shipping a
-            # default connection string with embedded credentials. Both the order
-            # working set and the signal store fall back to in-memory — captured
-            # orders/signals will NOT survive a restart.
-            self.logger.warning(
-                "No Postgres credential in env (ITRADER_DATABASE_PASSWORD / "
-                "ITRADER_DATABASE_URL unset) — using in-memory order + signal storage "
-                "(orders/signals will NOT survive a restart)"
-            )
-            order_storage = OrderStorageFactory.create('backtest')
-            # create_in_memory() (not create('backtest')) — the stale unconditional
-            # backtest signal wiring is gone; the live-driven store is on the D-11 arm above.
-            self._signal_store = SignalStorageFactory.create_in_memory()
-            # No SQL spine on the in-memory fallback — nothing to dispose at stop().
-            self._system_db_backend: Optional[Any] = None
-        else:
-            # CR-01/RECON-04: a Postgres credential is present on the unified
-            # ITRADER_DATABASE_* surface — honor it. Build ONE Postgres ``SqlEngine``
-            # from the unified ``SqlSettings`` Postgres arm (the SAME surface Alembic
-            # migrations/env.py uses) and drive the whole v1.6 operational store off it.
-            # The SQL imports stay LAZY inside this arm so the backtest import path
-            # remains SQLAlchemy-free (GATE-01 inertness).
-            from itrader.config.sql import SqlDriver, SqlSettings
-            from itrader.storage import SqlEngine
-            from itrader.order_handler.storage.cached_sql_storage import (
-                CachedSqlOrderStorage,
-            )
-            from itrader.order_handler.storage.sql_storage import SqlOrderStorage
-
-            # Mirror migrations/env.py:76 — no explicit url=; let pydantic-settings source
-            # ITRADER_DATABASE_* (component vars, default port 5544) or the
-            # ITRADER_DATABASE_URL verbatim escape hatch from env.
-            backend = SqlEngine(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
-            # Sync-durable working set (D-10): order create/terminalize persists
-            # store-first (persist-then-acknowledge, Pitfall 8) via the CachedSql
-            # wrapper composing the untouched Phase-3 ``SqlOrderStorage`` — its
-            # ``rehydrate()`` rebuilds the open set on restart. Constructed EXPLICITLY
-            # here (rather than via ``OrderStorageFactory.create('live')``) so the
-            # store-first working-set wrapper is visible at the composition root.
-            order_storage = CachedSqlOrderStorage(SqlOrderStorage(backend))
-            # Retain the shared spine so stop() can dispose its connection pool (Pitfall 4 —
-            # an undisposed engine leaks a socket / ResourceWarning under filterwarnings=error).
-            self._system_db_backend = backend
-            # Async/best-effort derived state (D-11): the signal store is live-driven
-            # (``CachedSqlSignalStorage`` over the SAME spine, via the factory's 'live'
-            # arm). Signals are advisory audit records, NOT the restart working set, and
-            # are persisted on the engine (queue-draining) thread — never inside a
-            # connector asyncio coroutine (Pitfall 9) — so a write can never stall the
-            # loop. Keep-only-measured: no async buffering is built unless a live stall
-            # is profiled (D-10).
-            self._signal_store = SignalStorageFactory.create('live', sql_engine=backend)
-
-        # 05.2-05 (D-07): durable portfolio ledger wiring. When the Postgres spine
-        # is present, construct the PortfolioHandler on the 'live' arm with the SAME
-        # shared SqlEngine so each Portfolio threads it into its state storage —
-        # the engine's own durable ledger becomes the source of portfolio truth
-        # (rehydrate restores positions+cash on restart). No spine -> 'backtest'
-        # in-memory (degrades cleanly, mirroring the order/signal fallback above).
-        if self._system_db_backend is not None:
-            self.portfolio_handler = PortfolioHandler(
-                self.global_queue, environment='live',
-                sql_engine=self._system_db_backend)
-        else:
-            self.portfolio_handler = PortfolioHandler(self.global_queue)
-
-        # 05.2-06 (D-10 / ARCH-4 Layer 2): durable halt-record store — the HALTED
-        # latch that survives a process restart. Built over the SAME shared Postgres
-        # spine when present (so a breaker halt persisted by halt() latches across a
-        # supervised auto-restart), else None (in-memory fallback -> no durable record,
-        # degrade cleanly like the order/signal/portfolio stores above). The SQL import
-        # stays LAZY inside the spine-present arm so the backtest import path remains
-        # SQLAlchemy-free (GATE-01 inertness). Offline tests inject an in-memory double
-        # via attribute assignment.
-        if self._system_db_backend is not None:
-            from itrader.storage.halt_record_store import HaltRecordStore
-            self._halt_record_store: Optional[Any] = HaltRecordStore(
-                self._system_db_backend)
-        else:
-            self._halt_record_store = None
-
-        # Execution handler constructed BEFORE the order handler so the
-        # admission gate's commission estimator can adapt the simulated
-        # exchange's fee model (Plan 05-06, D-04 — mode-agnostic wiring).
-        self.execution_handler = ExecutionHandler(self.global_queue)
-
-        # Commission estimator for the admission cash-reservation gate
-        # (Plan 05-06, D-04): (quantity, price) -> Decimal adapter over the
-        # simulated exchange's fee model; fee_model read at call time.
-        simulated_exchange = self.execution_handler.exchanges.get('simulated')
-
-        def _estimate_commission(quantity: Decimal, price: Decimal) -> Decimal:
-            if not isinstance(simulated_exchange, SimulatedExchange):
-                return Decimal("0")
-            return simulated_exchange.fee_model.calculate_fee(
-                quantity, price, side="buy", order_type="market")
-
-        # Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the
-        # order domain (mirrors compose_engine). With the default PortfolioConfig
-        # (enable_margin=False / max_leverage=1) the order domain stays on the spot
-        # byte-exact arm. The Universe is injected later via set_universe.
-        _trading_rules = self.portfolio_handler.config_data.trading_rules
-
-        # SHORT-01/D-07: thread the two shorts-enabling flags from trading_rules
-        # into the registration gate (mirrors compose_engine). Constructed AFTER
-        # the _trading_rules binding so the flags are available; both default off
-        # → SMA_MACD (LONG_ONLY) stays admitted, oracle byte-exact.
-        self.strategies_handler = StrategiesHandler(
-            self.global_queue, self.feed, self._signal_store,
-            allow_short_selling=_trading_rules.allow_short_selling,
-            enable_margin=_trading_rules.enable_margin)
-
-        self.order_handler = OrderHandler(self.global_queue, self.portfolio_handler, order_storage,
-                                          commission_estimator=_estimate_commission,
-                                          enable_margin=_trading_rules.enable_margin,
-                                          portfolio_max_leverage=_trading_rules.max_leverage)
-        # LIQ-03 (04-03): live-parity injection of the SAME order_storage into the
-        # portfolio handler so a BAR-route liquidation forced-close registers its
-        # real Order in the shared mirror the ReconcileManager reads (mirrors the
-        # compose.py backtest wiring). Oracle-dark on the spot path.
-        self.portfolio_handler.set_order_storage(order_storage)
-        # 05-07 (RECON-05): retain the order working set so the two-sided restart
-        # VenueReconciler can rehydrate it (INTENT truth) and reconcile against the
-        # venue REST snapshot before RUNNING. Only the CachedSql* live store exposes
-        # rehydrate(); the in-memory fallback does not, so the reconcile is guarded on
-        # hasattr(rehydrate) at start().
-        self._order_storage = order_storage
-        # The TIME route's BarEvent source is the feed-owned factory
-        # (Plan 07-02, D-20) — mirrors the backtest wiring shape; a real
-        # live feed is owned by D-live.
-        self.event_handler = EventHandler(
-            self.strategies_handler,
-            self.screeners_handler,
-            self.portfolio_handler,
-            self.order_handler,
-            self.execution_handler,
-            self.feed.generate_bar_event,
-            self.global_queue
-        )
-
-        # ------------------------------------------------------------------
-        # OKX live venue wiring (Plan 02-05, D-04 / CONN-04 — composition root).
-        #
-        # This is the ONLY place the concrete OkxConnector is constructed; the
-        # three arms type against the LiveConnector Protocol and receive the
-        # SESSION injected, never the concretion. The whole OKX stack is
-        # LAZY-imported inside __init__ (mirrors the lazy SQL import above,
-        # lines 141-150) so the BACKTEST import path stays async/ccxt/credential-
-        # free — the hot-path inertness gate is proven by
-        # tests/integration/test_okx_inertness.py.
-        #
-        # Stream startup (OkxExchange.connect() / OkxDataProvider.start_stream())
-        # is a Phase 4/5 live-wiring step (02-03 SUMMARY boundary): this plan
-        # constructs the connector, registers the 'okx' venue, and injects the
-        # session into each arm. connector.disconnect() is wired into stop().
-        # CR-02: the OKX arms are wired ONLY when the requested venue is OKX. For
-        # any other venue (the default 'binance') the entire OKX stack stays
-        # untouched — OkxSettings() (which hard-requires the OKX_API_* env triple)
-        # is never constructed and the ccxt.pro/connector modules are never
-        # imported — so constructing a LiveTradingSystem for a non-OKX venue needs
-        # no OKX credentials and performs no OKX network I/O. The blocking network
-        # connect (build client + load_markets) is DEFERRED out of the constructor
-        # into start() so __init__ never performs blocking I/O and a connect
-        # failure surfaces as SystemStatus.ERROR instead of raising out of a
-        # constructor.
-        self._okx_connector: Optional[Any] = None
-        self._okx_exchange: Optional[Any] = None
-        self._okx_data_provider: Optional[Any] = None
-        self._venue_account: Optional[Any] = None
-        # Phase 4 (D-02): paper venue sentinel — None for any non-paper venue so
-        # run_paper_replay() can fail loudly if invoked on a mis-wired system.
-        self._replay_provider: Optional[Any] = None
-        # 05-06 (VENUE-06, D-06): the venue-assembly seam's outputs — the built
-        # execution bundle + its VenueLifecycle orchestrator. Both stay None for an
-        # UNREGISTERED venue (the legacy no-venue default, e.g. 'binance'); a
-        # registered venue's assemble_venue call below populates them.
-        self._venue_bundle: Optional[Any] = None
-        self._venue_lifecycle: Optional[Any] = None
-
-        # 05-06 (VENUE-06 / SC3, D-06/D-10): the two former per-venue string
-        # constructor branches are DELETED and replaced by a single delegation to
-        # assemble_venue. Venue selection is now registry MEMBERSHIP + the assemble
-        # seam, NOT an imperative per-venue string branch.
-        #
-        # LAZY imports (never module top): the trading_system package barrel imports
-        # THIS module, and the concrete OKX/paper plugin modules are on the backtest
-        # inertness _FORBIDDEN set (test_okx_inertness.py) — hoisting these imports to
-        # module scope would pull them onto the backtest import graph and redden the
-        # gate. The plugins are triple-deferral-lazy (D-04), so importing them here
-        # still pulls no ccxt until a build*() actually runs (okx only, below).
-        from itrader import config as _system_config
-        from itrader.connectors.provider import ConnectorProvider
-        from itrader.trading_system.engine_context import EngineContext
-        from itrader.venues.assemble import assemble_venue
-        from itrader.venues.okx_plugin import (
-            OkxConnectorPlugin,
-            OkxDataPlugin,
-            OkxVenuePlugin,
-        )
-        from itrader.venues.paper_plugin import PaperVenuePlugin, ReplayDataPlugin
-        from itrader.venues.registry import (
-            DataProviderRegistry,
-            ExecutionVenueRegistry,
-        )
-
-        # (1) Build the two registries + the shared (venue, account_id) ConnectorProvider
-        # and register the concrete plugins. 'simulated' is DELIBERATELY NOT a registered
-        # venue (D-05 firewall): the paper plugin REUSES the compose-built 'simulated'
-        # SimulatedExchange AS-IS, injected here at register time (never resolved through
-        # the registry). Registration is store-only — no build*() runs, so this pulls no
-        # ccxt (register != build).
-        exec_registry = ExecutionVenueRegistry()
-        data_registry = DataProviderRegistry()
-        connectors = ConnectorProvider({'okx': OkxConnectorPlugin()})
-        exec_registry.register('okx', OkxVenuePlugin())
-        exec_registry.register(
-            'paper', PaperVenuePlugin(self.execution_handler.exchanges['simulated']))
-        data_registry.register('okx', OkxDataPlugin())
-        data_registry.register('replay', ReplayDataPlugin())
-
-        # (2) The infra ctx (plugins read ctx.bus) + the declarative venue spec. Building
-        # the spec is the WHAT-to-run SELECTOR (not the imperative wiring branch SC3
-        # forbids); P6 makes LTS fully spec-driven. data_provider is the venue's own live
-        # feed for okx, else the offline replay feed (paper); account_id defaults to the
-        # single 'default' logical account inside the plugins (D-07, per-account fan-out P11).
-        ctx = EngineContext(
-            bus=self.global_queue,
-            config=_system_config,
-            environment='live',
-            sql_engine=self._system_db_backend,
-        )
-        spec = SimpleNamespace(
-            execution_venue=self.exchange,
-            # A streaming venue (okx) uses its own live feed; every other venue
-            # (paper) uses the offline replay feed. A declarative dict lookup keeps
-            # this a WHAT-to-run selector with NO per-venue string branch (SC3).
-            data_provider={'okx': 'okx', 'paper': 'replay'}.get(
-                self.exchange, 'replay'),
-            account_id=None,
-        )
-
-        # (3) Delegate venue assembly. A REGISTERED venue is assembled; an unregistered
-        # venue (the legacy default 'binance') wires no venue — registry membership
-        # replaces the venue-string branch (structural, D-10). assemble_venue shares one
-        # memoized connector across the exec + data arms (D-03) and returns the bundle +
-        # its VenueLifecycle.
-        if self.exchange in exec_registry:
-            bundle, self._venue_lifecycle = assemble_venue(
-                ctx, spec, connectors, exec_registry, data_registry)
-            self._venue_bundle = bundle
-            provider = self._venue_lifecycle.provider
-
-            # Structural None-guard keyed on bundle.connector (the STREAMING-venue
-            # discriminator — present for a live venue like okx, None for paper): a
-            # streaming venue registers its exchange under its venue name + mints the
-            # venue account; paper leaves the OKX-named attrs None so every downstream
-            # None-guard already gates paper out (D-10).
-            self._okx_connector = bundle.connector
-            if bundle.connector is not None:
-                self._okx_exchange = bundle.exchange
-                # Order arm: register under the venue name — ExecutionHandler.on_order
-                # routes by event.exchange; init_exchanges stays OKX-free (backtest
-                # path untouched).
-                self.execution_handler.exchanges[self.exchange] = bundle.exchange
-                # D-07: a single default VenueAccount (the per-portfolio account_id
-                # fan-out is P11). The okx plugin's factory threads the wired pair's
-                # quote + spot market-type derived from the stream symbol.
-                self._venue_account = bundle.account_factory()
-                self._okx_data_provider = provider
-            else:
-                # Paper: no live connector (D-05) — the offline replay provider drives
-                # the feed; the OKX-named attrs stay None.
-                self._replay_provider = provider
-
-            # (4) UNIFORM provider->feed wiring (D-10): applied on the lifecycle
-            # provider REGARDLESS of venue. The replay provider no-ops the streaming
-            # seams via its own inline no-op methods, so the former paper/okx wiring
-            # divergence is gone. set_provider assigns self._provider
-            # (the private attr warmup()/gap-backfill read) and MUST precede any
-            # warmup/start_stream call.
-            self.feed.set_provider(provider)
-            provider.set_bar_sink(self.feed.update)
-            provider.set_global_queue(self.global_queue)
-            provider.set_halt_signal(self._request_connector_halt)
-            provider.set_stream_state_listener(
-                self._on_venue_stream_down, self._on_venue_stream_up)
-
-            # The exchange-side reconnect-supervisor seams + the connector halt signal
-            # are wired ONLY for a streaming venue (bundle.connector present). A fatal
-            # connector error / exhausted retry ceiling escalates via the thread-safe
-            # _request_connector_halt FLAG (never blocking halt() on the asyncio loop,
-            # Pitfall 9); the engine thread drains it and runs the durable halt.
-            if bundle.connector is not None:
-                self._okx_exchange.set_halt_signal(self._request_connector_halt)
-                self._okx_exchange.set_stream_state_listener(
-                    self._on_venue_stream_down, self._on_venue_stream_up)
-                self._okx_connector.set_halt_signal(self._request_connector_halt)
-
-        # D-17 (error-policy split, WR-04): the live publish-and-continue policy is NO
-        # LONGER installed here. It is bound in start() — the daemon/live path ONLY — so
-        # run_paper_replay() (which never calls start()) keeps the base fail-fast re-raise
-        # (EventHandler._on_handler_error). A deterministic replay must abort LOUDLY on a
-        # handler failure so the parity gate can never false-green on a swallowed error
-        # (T-05-28); a live session, by contrast, can't abort on one handler error.
-
-        # 05-04 (D-06): construct the pluggable CRITICAL/halt alert sink at the
-        # composition root and inject it into the event handler, so a CRITICAL
-        # ErrorEvent (a halt) reaches the operator egress. The sink binds ONLY the
-        # declared ErrorEvent fields — no raw connector context — so no secret can
-        # leak (Pitfall 16, T-05-01). This is the live-path wiring of the seam
-        # 05-01 landed (the attribute defaults to None on the backtest path).
-        self.event_handler._alert_sink = LogAlertSink()
-
-        # 05-04 (D-01/D-02): wire the engine-thread drift-halt signal to the
-        # freeze-in-place halt entrypoint so an unexplained beyond-band per-symbol
-        # drift compare (PortfolioHandler, engine thread) halts the WHOLE engine.
-        # Wired for every live venue; the compare only runs for a live
-        # VenueAccount portfolio, so a non-OKX venue never triggers it.
-        self.portfolio_handler.set_halt_signal(self.halt)
+        # RUN-02 loop runtime — ATTACHED by build_live_system AFTER construction
+        # (LiveRunner + ErrorPolicy reference the facade's own gate/hook methods, so
+        # they can only be built once this facade instance exists). start()/stop()
+        # delegate the drain-loop lifecycle to the injected LiveRunner.
+        self._live_runner: Optional[Any] = None
+        self._error_policy: Optional[Any] = None
 
         self.logger.info('Live trading system initialized')
         self._update_status(SystemStatus.STOPPED)
 
-    def _publish_and_continue(self, event, handler) -> None:
-        """Live handler-failure policy (WR-05): publish an ErrorEvent, keep draining.
+    @classmethod
+    def for_exchange(
+        cls,
+        exchange: str,
+        *,
+        status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None,
+        **overrides: Any,
+    ) -> "LiveTradingSystem":
+        """Thin spec-builder over the ONE factory ``build_live_system`` (RUN-01/D-09).
 
-        Overrides the base EventHandler._on_handler_error (fail-fast re-raise).
-        Invoked from EventHandler._dispatch when a handler raises; emits an
-        ErrorEvent onto the queue (consumed by the ERROR route) and returns so
-        the loop continues. Reads the active exception via sys.exc_info().
+        NOT a second construction path (D-09): it builds a declarative live ``spec``
+        (``execution_venue=exchange``; ``data_provider`` selected as today — ``okx`` for
+        the okx venue, the offline ``replay`` feed for paper, else ``replay``;
+        ``account_id`` the single logical default) and delegates to
+        ``build_live_system(spec)``. This is the ergonomic entry point the ~45 former
+        direct ``LiveTradingSystem(exchange=...)`` construction sites migrate to
+        (LANDMINE 1). ``status_callback`` threads through unchanged; ``**overrides`` may
+        carry an explicit ``data_provider``/``account_id`` for a bespoke spec.
         """
-        # IN-01: sys and ErrorEvent are now module-level imports (top of file).
-        # The deferred-import rationale (keep the events package out of the
-        # dispatcher's import graph) does not apply to THIS module — it already
-        # imports EventType/TimeEvent/OrderEvent from the same package at module
-        # scope, so re-importing on every handler failure on the hot error path
-        # bought nothing.
-        exc = sys.exc_info()[1]
-        handler_name = getattr(handler, '__qualname__', repr(handler))
-        self.logger.error(
-            f'Handler {handler_name} failed on {getattr(event, "type", "UNKNOWN")}: {exc}'
+        data_provider = overrides.pop('data_provider', None) or {
+            'okx': 'okx', 'paper': 'replay'}.get(exchange, 'replay')
+        spec = SimpleNamespace(
+            execution_venue=exchange,
+            data_provider=data_provider,
+            account_id=overrides.pop('account_id', None),
         )
+        return build_live_system(spec, status_callback=status_callback)
+
+    def _on_loop_start(self) -> None:
+        """LiveRunner loop-entry hook (RUN-02/D-04): stamp RUNNING + uptime_start.
+
+        The drain loop's loop-entry facade bookkeeping, reached via the injected
+        ``on_loop_start`` callback so the status/stats side-effects stay on the
+        facade (the LiveRunner owns no ``SystemStatus``).
+        """
+        self._update_status(SystemStatus.RUNNING)
+        with self._stats_lock:
+            self._stats['uptime_start'] = datetime.now(UTC).isoformat()
+
+    def _increment_error_count(self) -> None:
+        """ErrorPolicy/LiveRunner error-counter hook (RUN-02/D-04): bump errors_count.
+
+        Preserves the facade's ``_stats['errors_count']`` bookkeeping when the
+        injected ``ErrorPolicy`` publishes an ErrorEvent (WR-05 path).
+        """
         with self._stats_lock:
             self._stats['errors_count'] += 1
-        # WR-06: the ERROR route is TERMINAL. If the FAILING event is itself an
-        # ErrorEvent, publishing a fresh ErrorEvent would route it straight back to
-        # the same failing ERROR-route consumer (_log_error_event) — an unbounded
-        # error->error feedback loop flooding the engine-thread queue (and, when the
-        # failure repeats on the re-consumed event, livelocking a single
-        # process_events() drain forever). The failure is already logged once above;
-        # stop here rather than republish.
-        if getattr(event, 'type', None) is EventType.ERROR:
-            return
-        self.global_queue.put(ErrorEvent(
-            # WR-05: prefer the event's own business time; fall back to a
-            # tz-aware UTC wall clock (never naive) to stay consistent with the
-            # datetime.now(UTC) convention used by the portfolio handler.
-            time=getattr(event, 'time', datetime.now(UTC)),
-            source='live_trading_system',
-            error_type=type(exc).__name__ if exc is not None else 'UnknownError',
-            error_message=str(exc) if exc is not None else 'unknown handler failure',
-            operation=handler_name,
-            severity=ErrorSeverity.ERROR,
-        ))
-    
+
+    def _on_loop_error(self, exc: BaseException) -> None:
+        """LiveRunner loop catch-all hook (RUN-02/D-04): count a loop-level error."""
+        self._increment_error_count()
+
     def _link_venue_account_to_portfolios(self) -> None:
         """Link the venue-cached account into the active live portfolio (WR-02).
 
@@ -1232,12 +916,15 @@ class LiveTradingSystem:
         RUN-04 live / RUN-05 / RUN-06 / D-12: the ~175-line inline wiring collapses
         into the ``SessionInitializer`` collaborator over the shared phase seams
         (``wire_universe`` / ``register_strategy_warmup`` / the first-class
-        ``UniverseHandler`` / ``LiveRouteRegistrar``). Behavior-preserving-interim —
-        still invoked here at ``start()`` / ``run_paper_replay()``; the
-        construction-time FLIP (D-12) lands in 06-06 with ``build_live_system``. The
-        ``try/except`` still maps a wiring failure to ``SystemStatus.ERROR``. Per D-04
-        the facade's safety/reconcile/stream method bodies are untouched.
+        ``UniverseHandler`` / ``LiveRouteRegistrar``). Invoked at ``start()`` /
+        ``run_paper_replay()``. IDEMPOTENT (D-12/06-06): a ``self._session_initialized``
+        guard early-returns on a second call, so no lifecycle path double-inits (the
+        06-07 run_paper_replay relocation drops its residual call entirely). The
+        ``try/except`` maps a wiring failure to ``SystemStatus.ERROR``. Per D-04 the
+        facade's safety/reconcile/stream method bodies are untouched.
         """
+        if self._session_initialized:
+            return
         self.logger.info('Initializing live trading session')
 
         try:
@@ -1302,6 +989,10 @@ class LiveTradingSystem:
             # reads self.universe.members).
             self.universe = engine.universe
 
+            # Idempotency latch (D-12): a second call (start() then run_paper_replay,
+            # or a direct test re-invocation) is a no-op — set AFTER the wiring
+            # succeeds so a failed init can be retried.
+            self._session_initialized = True
             self.logger.info('Live trading session initialized')
             
         except Exception as e:
@@ -1413,89 +1104,6 @@ class LiveTradingSystem:
         self.order_handler.expire_all_resting()
         self.event_handler.process_events()
 
-    def _event_processing_loop(self):
-        """
-        The main event processing loop that runs in a separate thread.
-        Continuously processes events from the global queue until stopped.
-        """
-        self.logger.info('Starting event processing loop')
-        self._update_status(SystemStatus.RUNNING)
-        
-        with self._stats_lock:
-            self._stats['uptime_start'] = datetime.now(UTC).isoformat()
-        
-        last_event_time = datetime.now(UTC)
-
-        while not self._stop_event.is_set():
-            try:
-                # Check for events in the queue with timeout
-                try:
-                    event = self.global_queue.get(timeout=self.queue_timeout)
-                    last_event_time = datetime.now(UTC)
-
-                    # WR-09: dispatch the dequeued event DIRECTLY through the
-                    # event handler's routing. The previous get -> put-back ->
-                    # process_events() pattern re-appended the event behind
-                    # anything already queued, breaking the single-FIFO-queue
-                    # ordering contract (e.g. a BAR processed before its PING).
-                    # The task_done() bookkeeping is dropped with it: nothing
-                    # joins this queue, and the put-back/internal gets left
-                    # unfinished_tasks permanently drifting.
-                    # 05-04 (D-02): route through the freeze-in-place halt gate so
-                    # a HALTED engine suppresses NEW order submission (SIGNAL/ORDER)
-                    # while BAR/FILL/ERROR streaming + reconciling + persisting
-                    # continue to drain.
-                    self._dispatch_live(event)
-
-                    # Update statistics
-                    self._update_stats(event.type.name if hasattr(event, 'type') else 'UNKNOWN')
-
-                    # 05-06 (D-16 / WR-01): record the per-bar equity curve keyed on
-                    # EventType.BAR (the async/best-effort path). LiveBarFeed emits only
-                    # BarEvent, so the old TIME key never fired live — see
-                    # _record_bar_metrics. record_metrics lives on Portfolio, not
-                    # PortfolioHandler, so the helper iterates the active portfolios.
-                    self._record_bar_metrics(event)
-
-                    # 05-08 (D-19): resume submission on the ENGINE thread once a venue
-                    # stream reconnected — a fresh REST balance/position snapshot then clears the
-                    # pause. The connector-loop reconnect callback only flagged it here;
-                    # the blocking snapshot runs on this thread (Pitfall 9).
-                    self._maybe_resume_after_reconnect()
-
-                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal escalation on
-                    # the ENGINE thread — the blocking durable record_halt write runs here,
-                    # never on the connector asyncio loop (Pitfall 9). Flag-only on the loop.
-                    self._maybe_halt_after_connector_fatal()
-
-                except queue.Empty:
-                    # 05-08 (D-19): drain a pending resume even when the queue is idle —
-                    # a reconnect during a quiet spell must still resume submission.
-                    self._maybe_resume_after_reconnect()
-
-                    # 05.3-08 (D-21 / WR-02): drain a pending connector-fatal even when the
-                    # queue is idle — a fatal during a quiet spell must still halt (off-loop).
-                    self._maybe_halt_after_connector_fatal()
-
-                    # No events in queue, check if we've been idle too long
-                    current_time = datetime.now(UTC)
-                    idle_time = (current_time - last_event_time).total_seconds()
-
-                    if idle_time > self.max_idle_time:
-                        self.logger.warning(f'No events received for {idle_time:.1f} seconds')
-                        last_event_time = current_time
-
-                    continue
-                    
-            except Exception as e:
-                self.logger.error(f'Error in event processing loop: {e}')
-                with self._stats_lock:
-                    self._stats['errors_count'] += 1
-                # Continue processing even if there's an error
-                continue
-        
-        self.logger.info('Event processing loop stopped')
-    
     def start(self):
         """
         Start the live trading system by initializing the session
@@ -1552,7 +1160,7 @@ class LiveTradingSystem:
             # hardening); the deterministic run_paper_replay() driver never reaches this
             # bind, so it keeps the base fail-fast re-raise so a handler failure aborts
             # the replay loudly and the parity gate can't false-green (T-05-28).
-            self.event_handler._on_handler_error = self._publish_and_continue  # type: ignore[method-assign]
+            self.event_handler._on_handler_error = self._error_policy.on_handler_error  # type: ignore[method-assign]
 
             # Initialize the live session
             self._initialize_live_session()
@@ -1705,30 +1313,14 @@ class LiveTradingSystem:
                 self._running = False
                 return False
 
-            # Reset the stop event and start the processing thread
-            self._stop_event.clear()
-            self._thread = threading.Thread(
-                target=self._event_processing_loop,
-                name='LiveTradingSystem-EventProcessor',
-                daemon=True
-            )
-            
+            # RUN-02 (D-05/D-06): delegate the drain-loop + poll-timer lifecycle to the
+            # injected LiveRunner. LiveRunner.start() clears the shared _stop_event once,
+            # spawns the drain daemon (ex _event_processing_loop), and starts its composed
+            # WorkerSupervisor (ex _run_poll_timer) — so the facade owns neither thread.
+            # _running is set BEFORE start() so a status callback fired from the loop-entry
+            # hook (_on_loop_start -> RUNNING stamp) already observes the running facade.
             self._running = True
-            self._thread.start()
-
-            # Plan 06-05 / 07-07 (D-02/D-06): start the live-only dynamic-universe poll
-            # timer on the daemon/live path ONLY (never run_paper_replay — synchronous —
-            # never backtest). It puts a control-plane UniversePollEvent on the configured
-            # cadence so the UniverseHandler polls membership DECOUPLED from bars (D-02),
-            # off its dedicated UNIVERSE_POLL route (D-06/WR-06). Stopped
-            # via the shared _stop_event discipline (stop() sets it, joins the thread) —
-            # the event was already cleared above before the processing thread started.
-            self._poll_timer_thread = threading.Thread(
-                target=self._run_poll_timer,
-                name='LiveTradingSystem-UniversePollTimer',
-                daemon=True
-            )
-            self._poll_timer_thread.start()
+            self._live_runner.start()
 
             self.logger.info('Live trading system started successfully')
             return True
@@ -1739,28 +1331,6 @@ class LiveTradingSystem:
             self._running = False
             return False
     
-    def _run_poll_timer(self) -> None:
-        """Live-only dynamic-universe poll-timer daemon (Plan 06-05 / 07-07, D-02/D-06).
-
-        Loops until ``_stop_event`` is set, putting a control-plane ``UniversePollEvent``
-        on the global queue every ``monitoring.universe_poll_cadence_s`` seconds so the
-        live ``UniverseHandler.on_poll`` polls its selection source DECOUPLED from bars
-        (D-02) off its OWN dedicated ``UNIVERSE_POLL`` route (D-06/WR-06 — no longer the
-        shared TIME route that also fans to screeners/bar-gen). This is the SOLE
-        wall-clock event on the live path — it stamps ONLY the control-plane poll, and
-        NEVER a bar/fill business time (Pitfall 3 / determinism: business ``time`` stays
-        venue-sourced). Started only on the live daemon path (``start()``), NEVER in
-        ``run_paper_replay`` (synchronous) or the backtest. ``_stop_event.wait(cadence)``
-        doubles as the interruptible sleep so ``stop()`` unblocks it immediately.
-        """
-        from itrader import config as _system_config
-        cadence = _system_config.monitoring.universe_poll_cadence_s
-        while not self._stop_event.is_set():
-            # Control-plane wall-clock UniversePollEvent ONLY (D-06/Pitfall 3): its own
-            # discriminator, never a bar/fill business time, never the shared TIME route.
-            self.global_queue.put(UniversePollEvent(time=datetime.now(UTC)))
-            self._stop_event.wait(cadence)
-
     def stop(self, timeout=10.0):
         """
         Stop the live trading system gracefully.
@@ -1793,29 +1363,14 @@ class LiveTradingSystem:
             self.logger.info('Stopping live trading system')
             self._update_status(SystemStatus.STOPPING)
 
-            # Signal the thread to stop
-            self._stop_event.set()
-
-            # Wait for the thread to finish
-            if self._thread and self._thread.is_alive():
-                self._thread.join(timeout=timeout)
-
-                if self._thread.is_alive():
-                    self.logger.warning(f'Thread did not stop within {timeout} seconds')
-                    self._update_status(SystemStatus.ERROR, 'Failed to stop gracefully')
-                    return False
-                else:
-                    self.logger.info('Event processing thread stopped')
-
-            # Plan 06-05 (D-02): join the live-only poll timer via the same
-            # _stop_event discipline (set above). It waits on _stop_event so the
-            # join returns promptly; daemon=True guarantees it never blocks shutdown.
-            if self._poll_timer_thread and self._poll_timer_thread.is_alive():
-                self._poll_timer_thread.join(timeout=timeout)
-            self._poll_timer_thread = None
+            # RUN-02 (D-05/D-06): delegate the drain-loop + poll-timer teardown to the
+            # injected LiveRunner — it sets the shared _stop_event, joins the drain thread,
+            # then stops the composed WorkerSupervisor. Replaces the facade-owned
+            # _thread/_poll_timer_thread join bookkeeping.
+            if self._live_runner is not None:
+                self._live_runner.stop(timeout=timeout)
 
             self._running = False
-            self._thread = None
             self._update_status(SystemStatus.STOPPED)
 
             self.logger.info('Live trading system stopped')
@@ -1850,7 +1405,9 @@ class LiveTradingSystem:
         bool
             True if the system is running, False otherwise
         """
-        return self._running and self._thread is not None and self._thread.is_alive()
+        runner = self._live_runner
+        thread = runner._thread if runner is not None else None
+        return self._running and thread is not None and thread.is_alive()
     
     def get_status(self) -> Dict[str, Any]:
         """
@@ -1881,8 +1438,14 @@ class LiveTradingSystem:
                 'is_running': self.is_running(),
                 'exchange': self.exchange,
                 'queue_size': self.get_queue_size(),
-                'thread_alive': self._thread.is_alive() if self._thread else False,
-                'thread_name': self._thread.name if self._thread else None,
+                'thread_alive': (
+                    self._live_runner._thread.is_alive()
+                    if self._live_runner is not None and self._live_runner._thread
+                    else False),
+                'thread_name': (
+                    self._live_runner._thread.name
+                    if self._live_runner is not None and self._live_runner._thread
+                    else None),
                 'last_error': self._last_error,
                 'statistics': {
                     **self._stats,
@@ -1973,40 +1536,6 @@ class LiveTradingSystem:
     
 
     
-    def get_statistics(self):
-        """
-        Get current trading statistics.
-        
-        Returns
-        -------
-        dict or None
-            Trading statistics if available
-        """
-        # The legacy StatisticsReporting subsystem was deleted with the M5-07
-        # reporting rework (plan 07-03); live-mode statistics are D-live scope
-        # and gain no metrics printout here (A4 — keep the module importing).
-        self.logger.warning('Live statistics unavailable: legacy reporting deleted (D-live scope)')
-        return None
-    
-    def print_status(self):
-        """
-        Print the current status of the live trading system.
-        """
-        status_info = self.get_status()
-        
-        print(f"Live Trading System Status: {status_info['status'].upper()}")
-        print(f"Queue Size: {status_info['queue_size']}")
-        print(f"Exchange: {status_info['exchange']}")
-        print(f"Events Processed: {status_info['statistics']['events_processed']}")
-        print(f"Orders Executed: {status_info['statistics']['orders_executed']}")
-        print(f"Errors Count: {status_info['statistics']['errors_count']}")
-        
-        if status_info['is_running']:
-            print(f"Thread Name: {status_info['thread_name']}")
-            print(f"Thread Alive: {status_info['thread_alive']}")
-            if status_info['statistics']['uptime_seconds']:
-                print(f"Uptime: {status_info['statistics']['uptime_seconds']:.1f} seconds")
-    
     def __enter__(self):
         """Context manager entry."""
         self.start()
@@ -2015,3 +1544,284 @@ class LiveTradingSystem:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.stop()
+
+
+def build_live_system(
+    spec: Any,
+    *,
+    status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None,
+) -> LiveTradingSystem:
+    """The live composition root (RUN-01/D-09) — the ONLY live construction path.
+
+    The live analog of ``build_backtest_system -> compose_engine -> BacktestRunner``:
+    reads centralized config, builds the ONE live ``sql_engine`` (Postgres-gated),
+    builds the live component graph off the **PriorityEventBus** (D-23 — inert without
+    CONTROL events), relocates the P5 ``assemble_venue`` call out of ``__init__``,
+    constructs the facade via PURE INJECTION, and composes the ``LiveRunner`` (owning
+    the drain loop, D-06) + its ``WorkerSupervisor`` (D-05) + the minimal ``ErrorPolicy``
+    (D-07) around it. Returns the fully-wired facade.
+
+    D-12 (interim, P6): live session wiring (``SessionInitializer`` via
+    ``_initialize_live_session``) stays DEFERRED to ``start()``/``run_paper_replay`` —
+    the construction-time flip conflicts with the pervasive add-strategy-after-
+    construction + monkeypatch-``_initialize_live_session``-before-``start()`` contracts
+    across the live test suite; it lands with the 06-07 ``run_paper_replay`` relocation.
+
+    All live/venue/SQL imports live INSIDE this function body (lazy) so importing this
+    module (via the ``trading_system`` barrel, on the backtest import graph) pulls NO
+    ccxt.pro / SqlSettings — the recurring inertness gate (``test_okx_inertness.py``).
+    """
+    logger = get_itrader_logger().bind(component="LiveTradingSystem")
+    exchange = spec.execution_venue
+
+    # D-23: live drains the PriorityEventBus (replacing the raw queue.Queue) — inert
+    # without CONTROL events (everything flows BUSINESS-tier; the monotonic seq keeps
+    # strict FIFO, so live behavior is unchanged in P6). LiveRunner drains it; CONTROL
+    # routes are NOT registered (their P7/P9 consumers don't exist yet).
+    global_queue = PriorityEventBus()
+    store = CsvPriceStore()
+    # Phase 3 (FEED-05): LiveBarFeed is the live driver — LAZY-imported here so the
+    # BACKTEST import path never pulls live_bar_feed (inertness gate).
+    from itrader.price_handler.feed.live_bar_feed import LiveBarFeed
+    feed = LiveBarFeed(provider=None, base_timeframe=to_timedelta('1d'))
+    screeners_handler = ScreenersHandler(global_queue, feed)
+
+    # ------------------------------------------------------------------
+    # v1.6 operational store live-drive (05-06, RECON-04, D-10/D-11).
+    # SYNC-DURABLE working set (orders) persists store-first; DERIVED signal store is
+    # async/best-effort. Both share ONE SqlEngine. All SQL imports LAZY inside the
+    # Postgres arm (inertness). Credential presence read at build time (per-construction).
+    pg_password = os.getenv("ITRADER_DATABASE_PASSWORD", "")
+    pg_url = os.getenv("ITRADER_DATABASE_URL", "")
+    if not (pg_password or pg_url):
+        # WR-10: fail loudly into the in-memory fallback (no default credential string).
+        logger.warning(
+            "No Postgres credential in env (ITRADER_DATABASE_PASSWORD / "
+            "ITRADER_DATABASE_URL unset) — using in-memory order + signal storage "
+            "(orders/signals will NOT survive a restart)"
+        )
+        order_storage = OrderStorageFactory.create('backtest')
+        signal_store = SignalStorageFactory.create_in_memory()
+        system_db_backend: Optional[Any] = None
+    else:
+        # CR-01/RECON-04: honor the unified ITRADER_DATABASE_* Postgres surface — one
+        # SqlEngine drives the whole v1.6 operational store (same source Alembic uses).
+        from itrader.config.sql import SqlDriver, SqlSettings
+        from itrader.storage import SqlEngine
+        from itrader.order_handler.storage.cached_sql_storage import (
+            CachedSqlOrderStorage,
+        )
+        from itrader.order_handler.storage.sql_storage import SqlOrderStorage
+
+        backend = SqlEngine(SqlSettings(driver=SqlDriver.POSTGRESQL_PSYCOPG2))
+        # D-10: store-first working set (persist-then-acknowledge) via the CachedSql
+        # wrapper over the untouched SqlOrderStorage; rehydrate() rebuilds it on restart.
+        order_storage = CachedSqlOrderStorage(SqlOrderStorage(backend))
+        system_db_backend = backend
+        # D-11: signal store live-driven on the async/best-effort path over the SAME spine.
+        signal_store = SignalStorageFactory.create('live', sql_engine=backend)
+
+    # 05.2-05 (D-07): durable portfolio ledger when the Postgres spine is present.
+    if system_db_backend is not None:
+        portfolio_handler = PortfolioHandler(
+            global_queue, environment='live', sql_engine=system_db_backend)
+    else:
+        portfolio_handler = PortfolioHandler(global_queue)
+
+    # 05.2-06 (D-10 / ARCH-4 Layer 2): durable halt-record store over the shared spine
+    # (survives a process restart) — None on the in-memory fallback (degrade cleanly).
+    if system_db_backend is not None:
+        from itrader.storage.halt_record_store import HaltRecordStore
+        halt_record_store: Optional[Any] = HaltRecordStore(system_db_backend)
+    else:
+        halt_record_store = None
+
+    # Execution handler BEFORE the order handler (admission commission estimator, D-04).
+    execution_handler = ExecutionHandler(global_queue)
+    simulated_exchange = execution_handler.exchanges.get('simulated')
+
+    def _estimate_commission(quantity: Decimal, price: Decimal) -> Decimal:
+        if not isinstance(simulated_exchange, SimulatedExchange):
+            return Decimal("0")
+        return simulated_exchange.fee_model.calculate_fee(
+            quantity, price, side="buy", order_type="market")
+
+    # Plan 02-03 (D-09/D-14): thread the portfolio's margin settings into the order
+    # domain (mirrors compose_engine). SHORT-01/D-07: thread the shorts-enabling flags.
+    _trading_rules = portfolio_handler.config_data.trading_rules
+    strategies_handler = StrategiesHandler(
+        global_queue, feed, signal_store,
+        allow_short_selling=_trading_rules.allow_short_selling,
+        enable_margin=_trading_rules.enable_margin)
+
+    order_handler = OrderHandler(
+        global_queue, portfolio_handler, order_storage,
+        commission_estimator=_estimate_commission,
+        enable_margin=_trading_rules.enable_margin,
+        portfolio_max_leverage=_trading_rules.max_leverage)
+    # LIQ-03 (04-03): live-parity injection of the SAME order_storage into the portfolio
+    # handler so a BAR-route liquidation registers its Order in the shared mirror.
+    portfolio_handler.set_order_storage(order_storage)
+
+    event_handler = EventHandler(
+        strategies_handler,
+        screeners_handler,
+        portfolio_handler,
+        order_handler,
+        execution_handler,
+        feed.generate_bar_event,
+        global_queue,
+    )
+
+    # ------------------------------------------------------------------
+    # Venue wiring (Plan 02-05, D-04 / CONN-04 — relocated P5 D-06 assemble_venue call).
+    # The whole OKX/paper venue stack is LAZY-imported here so the BACKTEST import path
+    # stays async/ccxt/credential-free (the hot-path inertness gate).
+    okx_connector: Optional[Any] = None
+    okx_exchange: Optional[Any] = None
+    okx_data_provider: Optional[Any] = None
+    venue_account: Optional[Any] = None
+    replay_provider: Optional[Any] = None
+    venue_bundle: Optional[Any] = None
+    venue_lifecycle: Optional[Any] = None
+
+    from itrader import config as _system_config
+    from itrader.connectors.provider import ConnectorProvider
+    from itrader.trading_system.engine_context import EngineContext
+    from itrader.venues.assemble import assemble_venue
+    from itrader.venues.okx_plugin import (
+        OkxConnectorPlugin,
+        OkxDataPlugin,
+        OkxVenuePlugin,
+    )
+    from itrader.venues.paper_plugin import PaperVenuePlugin, ReplayDataPlugin
+    from itrader.venues.registry import (
+        DataProviderRegistry,
+        ExecutionVenueRegistry,
+    )
+
+    # (1) Build the two registries + the shared ConnectorProvider and register the
+    # concrete plugins (store-only — no build*() runs, so this pulls no ccxt).
+    exec_registry = ExecutionVenueRegistry()
+    data_registry = DataProviderRegistry()
+    connectors = ConnectorProvider({'okx': OkxConnectorPlugin()})
+    exec_registry.register('okx', OkxVenuePlugin())
+    exec_registry.register(
+        'paper', PaperVenuePlugin(execution_handler.exchanges['simulated']))
+    data_registry.register('okx', OkxDataPlugin())
+    data_registry.register('replay', ReplayDataPlugin())
+
+    # (2) D-23: the infra ctx wires live onto the PriorityEventBus (not the raw queue).
+    ctx = EngineContext(
+        bus=global_queue,
+        config=_system_config,
+        environment='live',
+        sql_engine=system_db_backend,
+    )
+    venue_spec = SimpleNamespace(
+        execution_venue=exchange,
+        data_provider=(getattr(spec, 'data_provider', None) or {
+            'okx': 'okx', 'paper': 'replay'}.get(exchange, 'replay')),
+        account_id=getattr(spec, 'account_id', None),
+    )
+
+    # (3) Delegate venue assembly (registry membership replaces the venue-string branch).
+    provider: Optional[Any] = None
+    if exchange in exec_registry:
+        bundle, venue_lifecycle = assemble_venue(
+            ctx, venue_spec, connectors, exec_registry, data_registry)
+        venue_bundle = bundle
+        provider = venue_lifecycle.provider
+
+        # bundle.connector is the STREAMING-venue discriminator (okx present, paper None).
+        okx_connector = bundle.connector
+        if bundle.connector is not None:
+            okx_exchange = bundle.exchange
+            execution_handler.exchanges[exchange] = bundle.exchange
+            venue_account = bundle.account_factory()
+            okx_data_provider = provider
+        else:
+            replay_provider = provider
+
+        # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
+        feed.set_provider(provider)
+        provider.set_bar_sink(feed.update)
+        provider.set_global_queue(global_queue)
+
+    # Construct the facade via PURE INJECTION (RUN-03/D-09).
+    components = LiveSystemComponents(
+        exchange=exchange,
+        global_queue=global_queue,
+        store=store,
+        feed=feed,
+        screeners_handler=screeners_handler,
+        portfolio_handler=portfolio_handler,
+        strategies_handler=strategies_handler,
+        order_handler=order_handler,
+        execution_handler=execution_handler,
+        event_handler=event_handler,
+        signal_store=signal_store,
+        system_db_backend=system_db_backend,
+        halt_record_store=halt_record_store,
+        order_storage=order_storage,
+        venue_bundle=venue_bundle,
+        venue_lifecycle=venue_lifecycle,
+        okx_connector=okx_connector,
+        okx_exchange=okx_exchange,
+        okx_data_provider=okx_data_provider,
+        venue_account=venue_account,
+        replay_provider=replay_provider,
+    )
+    facade = LiveTradingSystem(components, status_callback=status_callback)
+
+    # Facade-dependent wiring (references the constructed facade's own gate methods).
+    # The provider halt-signal + stream-state listeners for a registered venue, and the
+    # streaming-venue exchange/connector halt signals (bundle.connector present).
+    if provider is not None:
+        provider.set_halt_signal(facade._request_connector_halt)
+        provider.set_stream_state_listener(
+            facade._on_venue_stream_down, facade._on_venue_stream_up)
+        if okx_exchange is not None:
+            okx_exchange.set_halt_signal(facade._request_connector_halt)
+            okx_exchange.set_stream_state_listener(
+                facade._on_venue_stream_down, facade._on_venue_stream_up)
+            okx_connector.set_halt_signal(facade._request_connector_halt)
+
+    # 05-04 (D-06): CRITICAL/halt alert sink at the composition root (only declared
+    # ErrorEvent fields bound — no connector secret leaks, Pitfall 16 / T-05-01).
+    event_handler._alert_sink = LogAlertSink()
+    # 05-04 (D-01/D-02): engine-thread drift-halt signal -> freeze-in-place halt.
+    portfolio_handler.set_halt_signal(facade.halt)
+
+    # RUN-02 (D-05/D-06/D-07/D-08): the live runtime engine. LiveRunner OWNS the drain
+    # loop; it COMPOSES the WorkerSupervisor (poll timer, D-05) and takes the minimal
+    # ErrorPolicy (D-07) + a dispatch-gate callback bound to the facade's untouched
+    # _dispatch_live (D-08) + the D-04-frozen per-tick hook callables. The facade's
+    # error-policy install happens in start() (daemon/live path only, D-17).
+    from itrader.trading_system.error_policy import ErrorPolicy
+    from itrader.trading_system.live_runner import LiveRunner
+    from itrader.trading_system.worker_supervisor import WorkerSupervisor
+
+    cadence = _system_config.monitoring.universe_poll_cadence_s
+    error_policy = ErrorPolicy(global_queue, error_counter=facade._increment_error_count)
+    worker_supervisor = WorkerSupervisor(global_queue, facade._stop_event, cadence)
+    live_runner = LiveRunner(
+        bus=global_queue,
+        stop_event=facade._stop_event,
+        error_policy=error_policy,
+        worker_supervisor=worker_supervisor,
+        dispatch_gate=facade._dispatch_live,
+        update_stats=facade._update_stats,
+        record_bar_metrics=facade._record_bar_metrics,
+        resume_after_reconnect=facade._maybe_resume_after_reconnect,
+        halt_after_connector_fatal=facade._maybe_halt_after_connector_fatal,
+        queue_timeout=_LIVE_QUEUE_TIMEOUT,
+        max_idle_time=_LIVE_MAX_IDLE_TIME,
+        on_loop_start=facade._on_loop_start,
+        on_loop_error=facade._on_loop_error,
+    )
+    facade._live_runner = live_runner
+    facade._error_policy = error_policy
+
+    logger.info('Live trading system built', exchange=exchange)
+    return facade
