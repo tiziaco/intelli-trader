@@ -44,10 +44,11 @@ _FORBIDDEN = (
     # hot path. If a future edit hoists it to module scope this probe fails loudly,
     # protecting the oracle byte-exactness + the W1/W2 perf gate.
     "itrader.price_handler.feed.live_bar_feed",
-    # Phase 4 (D-12): the paper replay provider is lazy-imported inside the
-    # LiveTradingSystem.for_exchange('paper') arm only — it must NEVER be pulled onto
-    # the backtest hot path (protects the oracle byte-exactness + the W1/W2 perf gate).
-    "itrader.price_handler.providers.replay_provider",
+    # TEST-01/D-18: the offline replay provider LEFT the itrader package for the test
+    # harness (tests/support/replay_harness) — production paper re-points to the OKX
+    # live feed (D-21). The module is gone from itrader, so it can never leak here; the
+    # stronger post-D-21 invariant (production registers no 'replay' data provider) is
+    # asserted below in the register-vs-build block.
     # Phase 5 (D-17/RECON-05, inertness gate): the two-sided restart reconciler is
     # lazy-imported inside LiveTradingSystem.start()'s OKX arm ONLY — its live-arm
     # deps (LiveConnector / VenueAccount / CachedSqlOrderStorage) are TYPE_CHECKING-
@@ -83,11 +84,11 @@ _FORBIDDEN = (
     # connector plugin modules are LIVE-ONLY — they are registered at the LTS root
     # (in build_live_system, P6) and their OKX concretion imports + OkxSettings()
     # construction live INSIDE build*() (D-04 triple-deferral). The backtest
-    # composition root must pull NEITHER: paper_plugin lazy-imports ReplayDataProvider/
-    # CsvPriceStore only inside build_provider, and okx_plugin pulls the ccxt/OkxConnector
-    # stack only inside build*(). If a future edit hoists a plugin's concretion import to
-    # module scope (or pulls a plugin module onto the backtest path) this probe fails
-    # loudly, protecting the oracle byte-exactness + the W1/W2 perf gate.
+    # composition root must pull NEITHER: paper_plugin now holds ONLY PaperVenuePlugin
+    # (the replay data plugin/provider left for tests/, D-18), and okx_plugin pulls the
+    # ccxt/OkxConnector stack only inside build*(). If a future edit hoists a plugin's
+    # concretion import to module scope (or pulls a plugin module onto the backtest path)
+    # this probe fails loudly, protecting the oracle byte-exactness + the W1/W2 perf gate.
     "itrader.venues.okx_plugin",
     "itrader.venues.paper_plugin",
 )
@@ -152,19 +153,19 @@ from itrader.venues.okx_plugin import (
     OkxDataPlugin,
     OkxVenuePlugin,
 )
-from itrader.venues.paper_plugin import PaperVenuePlugin, ReplayDataPlugin
+from itrader.venues.paper_plugin import PaperVenuePlugin
 from itrader.venues.registry import DataProviderRegistry, ExecutionVenueRegistry
 
 _exec_registry = ExecutionVenueRegistry()
 _data_registry = DataProviderRegistry()
 # Register the concrete plugin OBJECTS (store-only — no build*): the OKX venue/data
-# plugins + the paper venue plugin (constructed WITH a dummy simulated exchange, since
-# it reuses an injected exchange AS-IS) + the replay data plugin. OkxConnectorPlugin is
-# constructed too (an inert object; its build() is never called here).
+# plugins + the paper EXECUTION venue plugin (constructed WITH a dummy simulated exchange,
+# since it reuses an injected exchange AS-IS). TEST-01/D-18: paper_plugin no longer holds
+# a replay DATA plugin (it left for tests/); production paper selects the OKX data feed
+# (D-21). OkxConnectorPlugin is constructed too (an inert object; build() never called).
 _exec_registry.register("okx", OkxVenuePlugin())
 _exec_registry.register("paper", PaperVenuePlugin(object()))
 _data_registry.register("okx", OkxDataPlugin())
-_data_registry.register("paper", ReplayDataPlugin())
 _okx_connector_plugin = OkxConnectorPlugin()
 
 _okx_leaked = [
@@ -332,3 +333,40 @@ def test_new_store_registrars_are_register_vs_build() -> None:
         "strategy_registry",
         "strategy_subscriptions",
     }
+
+
+def test_production_build_live_system_registers_no_replay_data_provider() -> None:
+    """TEST-01/D-21: production ``build_live_system`` registers NO ``'replay'`` data provider.
+
+    The stronger post-D-21 invariant that replaces the old "import ReplayDataPlugin"
+    assertion: the offline replay DATA apparatus LEFT the ``itrader`` package for the test
+    harness (D-18), and production ``paper`` re-points to the OKX live data feed (D-21). So
+    the ONE live composition root must register EXACTLY the ``'okx'`` data provider — never
+    a ``'replay'`` one — and select ``'okx'`` for the paper venue. Asserted by static source
+    inspection (``inspect.getsource``) so it is CI-safe (no OKX creds, no build): building
+    the paper→okx system would require credentials, but the registration/selection SOURCE is
+    the load-bearing invariant. A future edit that re-registers ``'replay'`` in production (or
+    re-points the paper map back to ``'replay'``) reddens this loudly.
+    """
+    import inspect
+
+    from itrader.trading_system import live_trading_system as _lts
+
+    source = inspect.getsource(_lts.build_live_system)
+
+    # Production registers the OKX data provider and NO replay/test data provider.
+    assert "data_registry.register('okx'" in source, (
+        "production build_live_system must register the 'okx' data provider (paper→okx, D-21)"
+    )
+    assert "register('replay'" not in source and 'register("replay"' not in source, (
+        "production build_live_system must register NO 'replay' data provider — the replay "
+        "harness left itrader for tests/ (D-18); a test fixture injects it via data_plugins"
+    )
+    # The paper venue selects the OKX live data feed (D-21), never the replay feed.
+    assert "'paper': 'okx'" in source or '"paper": "okx"' in source, (
+        "production build_live_system must map paper→'okx' (the OKX live data feed, D-21)"
+    )
+    assert "'paper': 'replay'" not in source and '"paper": "replay"' not in source, (
+        "production build_live_system must NOT map paper→'replay' (the replay feed left "
+        "production for the test fixture, D-21)"
+    )

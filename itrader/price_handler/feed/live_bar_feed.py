@@ -468,8 +468,8 @@ class LiveBarFeed(BarFeed):
           range to a loop-native supervised backfill coroutine (``provider.spawn_gap_backfill``) that
           ``await``s the client fetch DIRECTLY on the loop, then replays the interior + delivers
           ``t`` on this same loop thread once the fetch resolves.
-        - **Off the loop (engine-thread warmup-adjacent / reconnect-resume, or the offline paper
-          ``ReplayDataProvider``).** No running loop → the synchronous ``fetch_ohlcv_backfill`` /
+        - **Off the loop (engine-thread warmup-adjacent / reconnect-resume, or an offline
+          synchronous replay provider).** No running loop → the synchronous ``fetch_ohlcv_backfill`` /
           ``connector.call()`` bridge is SAFE; fill the interior then deliver ``t`` inline (the
           pre-D-17 behaviour, byte-identical for the socket-free unit matrix).
 
@@ -489,8 +489,8 @@ class LiveBarFeed(BarFeed):
 
         ``asyncio.get_running_loop()`` succeeds only when called from within a running loop — i.e.
         the connector loop thread, where ``update()`` runs synchronously inside the candle
-        coroutine. The engine-thread warmup / reconnect-resume paths (and the offline synchronous
-        ``ReplayDataProvider``) have no running loop and raise ``RuntimeError`` → synchronous path.
+        coroutine. The engine-thread warmup / reconnect-resume paths (and an offline synchronous
+        replay provider) have no running loop and raise ``RuntimeError`` → synchronous path.
         The ``spawn_gap_backfill`` capability check keeps a provider without the seam on the safe
         synchronous fallback.
         """

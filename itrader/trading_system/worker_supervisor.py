@@ -63,8 +63,8 @@ class WorkerSupervisor:
         shared TIME route that also fans to screeners/bar-gen). This is the SOLE
         wall-clock event on the live path — it stamps ONLY the control-plane poll, and
         NEVER a bar/fill business time (Pitfall 3 / determinism: business ``time`` stays
-        venue-sourced). Started only on the live daemon path, NEVER in
-        ``run_paper_replay`` (synchronous) or the backtest. ``stop_event.wait(cadence)``
+        venue-sourced). Started only on the live daemon path, NEVER in the offline
+        synchronous parity driver or the backtest. ``stop_event.wait(cadence)``
         doubles as the interruptible sleep so ``stop()`` unblocks it immediately.
         """
         while not self._stop_event.is_set():

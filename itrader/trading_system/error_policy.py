@@ -6,9 +6,10 @@ WR-05/WR-06 body) moved VERBATIM into a standalone, composition-friendly object
 so ``LiveRunner``/``build_live_system`` can inject it (D-07). It overrides the
 base ``EventHandler._on_handler_error`` (fail-fast re-raise) on the daemon/live
 path ONLY — a live session can't abort on one handler error; it emits an
-``ErrorEvent`` and keeps draining. The deterministic ``run_paper_replay`` driver
-keeps the base fail-fast re-raise so the parity gate can never false-green on a
-swallowed error (D-17/WR-04, T-05-28).
+``ErrorEvent`` and keeps draining. The offline deterministic parity driver (the
+test harness ``TestRunner``, which never calls ``start()``) keeps the base fail-fast
+re-raise so the parity gate can never false-green on a swallowed error
+(D-17/WR-04/D-19, T-05-28).
 
 D-07 — this is the MINIMAL seam. The FULL ErrorPolicy formalization is P8:
 EventHandler-construction injection (removing the ``_on_handler_error``

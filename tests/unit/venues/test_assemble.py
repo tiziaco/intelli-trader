@@ -81,13 +81,17 @@ def _okx_registries() -> tuple[Any, Any]:
 
 
 def _paper_registries(simulated: Any) -> tuple[Any, Any]:
-    from itrader.venues.paper_plugin import PaperVenuePlugin, ReplayDataPlugin
+    from itrader.venues.paper_plugin import PaperVenuePlugin
     from itrader.venues.registry import DataProviderRegistry, ExecutionVenueRegistry
+
+    from tests.support.replay_harness import TestDataPlugin
 
     exec_reg = ExecutionVenueRegistry()
     data_reg = DataProviderRegistry()
     exec_reg.register("paper", PaperVenuePlugin(simulated))
-    data_reg.register("replay", ReplayDataPlugin())
+    # TEST-01/D-18: the replay data plugin left production for the test harness; the
+    # paper↔replay pairing survives ONLY here in the fixture (production paper → OKX, D-21).
+    data_reg.register("replay", TestDataPlugin())
     return exec_reg, data_reg
 
 
@@ -134,11 +138,16 @@ def test_assemble_okx_shares_one_connector_across_exec_and_data() -> None:
 
 
 def test_assemble_paper_returns_connectorless_bundle_and_replay_provider() -> None:
-    """paper spec: assemble builds a connector=None bundle + a ReplayDataProvider lifecycle."""
-    from itrader.price_handler.providers.replay_provider import ReplayDataProvider
+    """paper spec: assemble builds a connector=None bundle + a TestLiveDataProvider lifecycle.
+
+    The paper↔replay pairing is a TEST-only fixture now (D-18/D-21): the relocated
+    ``TestDataPlugin`` is registered under ``'replay'`` in ``_paper_registries``.
+    """
     from itrader.venues.assemble import assemble_venue
     from itrader.venues.bundle import VenueBundle
     from itrader.venues.lifecycle import VenueLifecycle
+
+    from tests.support.replay_harness import TestLiveDataProvider
 
     simulated = _FakeSimulatedExchange()
     exec_reg, data_reg = _paper_registries(simulated)
@@ -153,7 +162,7 @@ def test_assemble_paper_returns_connectorless_bundle_and_replay_provider() -> No
     assert bundle.exchange is simulated
     assert bundle.connector is None
     assert isinstance(lifecycle, VenueLifecycle)
-    assert isinstance(lifecycle.provider, ReplayDataProvider)
+    assert isinstance(lifecycle.provider, TestLiveDataProvider)
 
 
 def test_assemble_unregistered_execution_venue_fails_loud() -> None:

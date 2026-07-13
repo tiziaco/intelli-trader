@@ -1,4 +1,4 @@
-"""Unit contract for the paper venue/data plugins (05-05, VENUE-02, D-05).
+"""Unit contract for the paper EXECUTION venue plugin (05-05, VENUE-02, D-05).
 
 Proves:
   - ``PaperVenuePlugin(simulated_exchange).build_bundle`` returns a ``VenueBundle``
@@ -7,9 +7,10 @@ Proves:
     ``lifecycle`` is ``None``, and ``account_factory`` mints a compute account;
   - the paper bundle NEVER touches the ``ConnectorProvider`` (the ``connectors``
     arg is unused — paper has no connector, D-05);
-  - ``ReplayDataPlugin.build_provider`` returns a ``ReplayDataProvider``, and
-    importing ``itrader.venues.paper_plugin`` pulls no ``replay_provider`` /
-    ``csv_store`` at module scope (D-04 — lazy inside ``build_provider``).
+  - ``itrader.venues.paper_plugin`` no longer holds the replay DATA side (D-18):
+    the module imports nothing heavy at module scope and defines only
+    ``PaperVenuePlugin`` (the replay plugin/provider/parity window left for
+    ``tests/support/replay_harness.py``; production paper re-points to OKX, D-21).
 
 This directory is package-less (NO ``__init__.py``, per MEMORY: two same-named
 top-level test packages break full-suite collection).
@@ -52,8 +53,13 @@ def _fake_portfolio() -> SimpleNamespace:
     )
 
 
-def test_paper_plugin_module_imports_no_replay_provider() -> None:
-    """The module pulls no replay_provider / csv_store at MODULE scope (D-04)."""
+def test_paper_plugin_module_holds_no_replay_symbol() -> None:
+    """The production module carries NO replay DATA side at all (D-18/D-21).
+
+    The replay plugin/provider left ``itrader`` for the test harness. The module must
+    define ONLY ``PaperVenuePlugin`` (no ``ReplayDataPlugin``) and import no
+    ``replay_provider`` / ``csv_store`` at module scope.
+    """
     import ast
     import pathlib
 
@@ -62,6 +68,7 @@ def test_paper_plugin_module_imports_no_replay_provider() -> None:
     source = pathlib.Path(mod.__file__).read_text()
     tree = ast.parse(source)
     imported: list[str] = []
+    class_names: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Module):
             for child in node.body:
@@ -69,6 +76,8 @@ def test_paper_plugin_module_imports_no_replay_provider() -> None:
                     imported += [alias.name for alias in child.names]
                 elif isinstance(child, ast.ImportFrom) and child.module:
                     imported.append(child.module)
+                elif isinstance(child, ast.ClassDef):
+                    class_names.append(child.name)
     forbidden = [
         name
         for name in imported
@@ -76,7 +85,12 @@ def test_paper_plugin_module_imports_no_replay_provider() -> None:
     ]
     assert not forbidden, (
         "D-04 violation: itrader.venues.paper_plugin imports the replay provider / "
-        f"CSV store at module scope: {forbidden!r} (must be lazy inside build_provider)"
+        f"CSV store at module scope: {forbidden!r}"
+    )
+    # D-18: the replay data plugin left production — only the execution plugin remains.
+    assert class_names == ["PaperVenuePlugin"], (
+        "itrader.venues.paper_plugin must define ONLY PaperVenuePlugin (the replay data "
+        f"plugin left for tests/support/replay_harness) — found {class_names!r}"
     )
 
 
@@ -115,21 +129,26 @@ def test_paper_account_factory_mints_a_compute_account() -> None:
     assert isinstance(account, SimulatedCashAccount)
 
 
-def test_replay_data_plugin_builds_a_replay_provider() -> None:
-    """build_provider returns a ReplayDataProvider over the golden parity window."""
-    from itrader.price_handler.providers.replay_provider import ReplayDataProvider
-    from itrader.venues.paper_plugin import ReplayDataPlugin
+def test_relocated_test_data_plugin_builds_a_test_provider() -> None:
+    """The RELOCATED TestDataPlugin (tests/support) builds a TestLiveDataProvider (D-18).
 
-    provider = ReplayDataPlugin().build_provider(
+    The replay DATA plugin left ``itrader.venues.paper_plugin`` for the test harness;
+    this proves the moved plugin still builds the offline replay provider.
+    """
+    from tests.support.replay_harness import TestDataPlugin, TestLiveDataProvider
+
+    provider = TestDataPlugin().build_provider(
         _fake_ctx(), _fake_spec(), _ExplodingConnectorProvider()
     )
-    assert isinstance(provider, ReplayDataProvider)
+    assert isinstance(provider, TestLiveDataProvider)
 
 
 def test_paper_plugins_satisfy_venue_and_data_protocols() -> None:
-    """The paper plugins structurally satisfy their build Protocols."""
+    """The paper execution plugin + the relocated data plugin satisfy their Protocols."""
     from itrader.venues.bundle import DataProviderPlugin, VenuePlugin
-    from itrader.venues.paper_plugin import PaperVenuePlugin, ReplayDataPlugin
+    from itrader.venues.paper_plugin import PaperVenuePlugin
+
+    from tests.support.replay_harness import TestDataPlugin
 
     assert isinstance(PaperVenuePlugin(_FakeSimulatedExchange()), VenuePlugin)
-    assert isinstance(ReplayDataPlugin(), DataProviderPlugin)
+    assert isinstance(TestDataPlugin(), DataProviderPlugin)

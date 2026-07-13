@@ -82,35 +82,10 @@ _EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND
 # an order on BTC/USDT returns sCode 51155 "local compliance restrictions".
 _STREAM_SETTINGS = StreamSettings()
 
-# D-18 (structural half — SINGLE SOURCE OF TRUTH for the paper/backtest parity anchor):
-# the canonical golden window + symbol. BOTH the paper replay store (constructed
-# EXPLICITLY from these in the paper arm of __init__ below) AND the backtest comparand
-# (test_paper_parity.py imports these) derive from THESE literals, so paper/backtest
-# parity can never silently desync. They previously agreed only because the CsvPriceStore
-# class defaults happened to equal the test's own literals (WR-02 coincidental parity) —
-# the replay store window is now wired from this shared constant, not the class default.
-PAPER_PARITY_START_DATE = "2018-01-01"
-PAPER_PARITY_END_DATE = "2026-06-03"
-PAPER_PARITY_SYMBOL = "BTCUSD"
-# WR-01: the golden parity grid's timeframe is its OWN anchor here, NOT the live-tunable
-# StreamSettings.okx_stream_timeframe. Sourcing it from the live stream config coupled the
-# byte-exact golden grid to a live knob, and run_paper_replay's window guard did not check
-# timeframe — so a live timeframe change could silently re-grid the parity comparand.
-PAPER_PARITY_TIMEFRAME = "1d"
-
-# Phase 4 (D-02/D-09) / CFG-03 / D-08: the paper replay subscription is wired directly
-# from the PAPER_PARITY_* single-source anchor above (the paper-specific aliases are
-# retired — Pitfall 4 forbids any parity value drift, so read sites dereference the
-# anchor verbatim). The ReplayDataProvider stamps symbol/timeframe into every replayed
-# ClosedBar (the feed's ring key), and run_paper_replay() queries newest_bar() on the
-# same symbol. The paper ticker MUST be the universe-member form "BTCUSD" (what the
-# strategy's window() queries), NOT the OKX venue form "BTC/USDT": a mismatch surfaces
-# only as a MissingPriceDataError at the first window() call (LiveBarFeed._find_ring).
-# The paper stream timeframe is pinned to PAPER_PARITY_TIMEFRAME (the anchor above), NOT
-# StreamSettings.okx_stream_timeframe — the golden grid must not track a live knob (WR-01).
-# run_paper_replay's WR-02 assertion half (backed by the D-18 structural wiring) asserts
-# the replay store's effective window/symbol AND timeframe equal the PAPER_PARITY_* anchor
-# — a defense that CsvPriceStore honored the window it was EXPLICITLY constructed with.
+# TEST-01/D-18/D-21: the paper/backtest parity window + the offline replay driver left
+# this module for the test harness (tests/support/replay_harness.py). Production paper
+# re-points to the OKX live data feed (D-21), so this module carries NO replay apparatus
+# and NO parity constants.
 
 
 # VENUE-04/D-09 — the venue-precision resolver + the precision->scale helper that lived
@@ -154,7 +129,6 @@ class LiveSystemComponents:
     okx_exchange: Any
     okx_data_provider: Any
     venue_account: Any
-    replay_provider: Any
 
 
 class LiveTradingSystem:
@@ -219,7 +193,6 @@ class LiveTradingSystem:
         self._okx_exchange: Optional[Any] = components.okx_exchange
         self._okx_data_provider: Optional[Any] = components.okx_data_provider
         self._venue_account: Optional[Any] = components.venue_account
-        self._replay_provider: Optional[Any] = components.replay_provider
 
         # -- Fresh per-instance RUNTIME state (NOT wiring) ----------------------
         # System status tracking
@@ -258,12 +231,12 @@ class LiveTradingSystem:
         # WR-04: "not yet wired" sentinels populated by _initialize_live_session.
         self.universe: Optional[Universe] = None
         self._universe_handler: Optional[Any] = None
-        # D-12 (interim): session init stays DEFERRED to start()/run_paper_replay in
-        # P6 (the construction-time flip conflicts with the pervasive
+        # D-12 (interim): session init stays DEFERRED to start() (and the offline test
+        # driver TestRunner, which calls _initialize_live_session before its per-bar
+        # drive). The construction-time flip conflicts with the pervasive
         # add-strategy-after-construction + monkeypatch-_initialize_live_session-
-        # before-start() contracts across the live test suite — it lands with the
-        # 06-07 run_paper_replay relocation). The idempotency guard makes a second
-        # call a no-op so no path double-inits.
+        # before-start() contracts across the live test suite (06-06 kept it deferred).
+        # The idempotency guard makes a second call a no-op so no path double-inits.
         self._session_initialized = False
 
         # RUN-02 loop runtime — ATTACHED by build_live_system AFTER construction
@@ -901,7 +874,7 @@ class LiveTradingSystem:
         equity curve was always empty (WR-01). Key on ``EventType.BAR`` and stamp each
         snapshot with the bar-open BUSINESS time (``event.time``), never wall-clock
         (D-09), iterating the active portfolios exactly like the backtest path (the
-        ``run_paper_replay`` direct ``record_metrics`` per bar is the reference).
+        offline ``TestRunner`` direct ``record_metrics`` per bar is the reference).
 
         Runs on the engine (queue-draining) thread — off the connector asyncio
         coroutine — on the async/best-effort path (D-10): a lost tail of the equity
@@ -919,12 +892,12 @@ class LiveTradingSystem:
         RUN-04 live / RUN-05 / RUN-06 / D-12: the ~175-line inline wiring collapses
         into the ``SessionInitializer`` collaborator over the shared phase seams
         (``wire_universe`` / ``register_strategy_warmup`` / the first-class
-        ``UniverseHandler`` / ``LiveRouteRegistrar``). Invoked at ``start()`` /
-        ``run_paper_replay()``. IDEMPOTENT (D-12/06-06): a ``self._session_initialized``
-        guard early-returns on a second call, so no lifecycle path double-inits (the
-        06-07 run_paper_replay relocation drops its residual call entirely). The
-        ``try/except`` maps a wiring failure to ``SystemStatus.ERROR``. Per D-04 the
-        facade's safety/reconcile/stream method bodies are untouched.
+        ``UniverseHandler`` / ``LiveRouteRegistrar``). Invoked at ``start()`` (and by the
+        offline test driver ``TestRunner`` before its per-bar drive). IDEMPOTENT
+        (D-12/06-06): a ``self._session_initialized`` guard early-returns on a second
+        call, so no lifecycle path double-inits. The ``try/except`` maps a wiring failure
+        to ``SystemStatus.ERROR``. Per D-04 the facade's safety/reconcile/stream method
+        bodies are untouched.
         """
         if self._session_initialized:
             return
@@ -992,9 +965,9 @@ class LiveTradingSystem:
             # reads self.universe.members).
             self.universe = engine.universe
 
-            # Idempotency latch (D-12): a second call (start() then run_paper_replay,
-            # or a direct test re-invocation) is a no-op — set AFTER the wiring
-            # succeeds so a failed init can be retried.
+            # Idempotency latch (D-12): a second call (a restart start(), or a direct
+            # test re-invocation) is a no-op — set AFTER the wiring succeeds so a failed
+            # init can be retried.
             self._session_initialized = True
             self.logger.info('Live trading session initialized')
             
@@ -1003,110 +976,6 @@ class LiveTradingSystem:
             self._update_status(SystemStatus.ERROR, str(e))
             raise
     
-    def run_paper_replay(self) -> None:
-        """Drive the golden dataset E2E through the live-paper mechanism, synchronously.
-
-        The OFFLINE, single-thread paper driver (D-03): it replays the golden bars
-        one-by-one through the real Phase-3 live seam (replay provider -> feed.update
-        -> BarEvent -> queue) using the EXACT per-tick + run-end discipline of the
-        backtest runner (backtest_runner._run_backtest) — but BAR-driven, not
-        TimeGenerator-driven. There is NO daemon thread and NO start()/stop() call:
-        this is the deterministic, CI-runnable path the 04-04 parity gate diffs
-        against a fresh backtest.
-
-        Determinism is by construction (D-09): the seeded random.Random already lives
-        in the shared ExecutionHandler (config.performance.rng_seed=42) injected into
-        the reused SimulatedExchange — identical to backtest — and every bar's time is
-        the venue/CSV bar-open stamp the feed built (feed.newest_bar(...).time), never
-        wall-clock.
-        """
-        if self._replay_provider is None:
-            raise ConfigurationError(
-                config_key="exchange",
-                config_value=self.exchange,
-                reason=(
-                    "run_paper_replay() requires the paper venue (the replay provider "
-                    "is not wired) — construct LiveTradingSystem(exchange='paper')."))
-
-        # WR-02 (assertion half, no structural refactor): assert the replay store's
-        # effective window/symbol equals the canonical golden window the backtest in
-        # test_paper_parity.py is constructed with. The two paths are wired from
-        # different sources (test literals vs CsvPriceStore class defaults) and only
-        # happen to agree today — so a future default change or window drift fails
-        # loudly HERE with a clear ConfigurationError instead of surfacing as a
-        # confusing count-equality diff deep in the parity test.
-        _store = self._replay_provider._store
-        if (_store.start_date != PAPER_PARITY_START_DATE
-                or _store.end_date != PAPER_PARITY_END_DATE
-                or self._replay_provider._symbol != PAPER_PARITY_SYMBOL):
-            raise ConfigurationError(
-                config_key="paper_replay_window",
-                config_value=(
-                    f"({_store.start_date}, {_store.end_date}, "
-                    f"{self._replay_provider._symbol})"),
-                reason=(
-                    f"replay store window/symbol drifted from the backtest parity "
-                    f"window: expected ({PAPER_PARITY_START_DATE}, {PAPER_PARITY_END_DATE}, "
-                    f"{PAPER_PARITY_SYMBOL}) but got ({_store.start_date}, "
-                    f"{_store.end_date}, {self._replay_provider._symbol}). Align the "
-                    "replay store window/symbol with the parity backtest."))
-
-        # WR-01: the parity grid's timeframe must ALSO stay pinned to the anchor, not the
-        # live-tunable StreamSettings.okx_stream_timeframe — else a live timeframe change
-        # would silently re-grid the golden comparand past the window/symbol guard above.
-        if self._replay_provider._timeframe != PAPER_PARITY_TIMEFRAME:
-            raise ConfigurationError(
-                config_key="paper_replay_timeframe",
-                config_value=str(self._replay_provider._timeframe),
-                reason=(
-                    f"replay store timeframe drifted from the backtest parity grid: "
-                    f"expected {PAPER_PARITY_TIMEFRAME!r} but got "
-                    f"{self._replay_provider._timeframe!r}. Pin the paper replay timeframe "
-                    "to PAPER_PARITY_TIMEFRAME, not the live stream config."))
-
-        # Step 1 — session init (ORDER-SENSITIVE): delegates to SessionInitializer
-        # (wire_universe injects the Universe into the 'simulated' exchange +
-        # order/portfolio/strategies handlers and binds the feed; register_strategy_warmup
-        # sizes cache_capacity() to the max strategy warmup — 100 for SMA_MACD; WITHOUT it
-        # the ring collapses to 1 and the run yields zero trades, Pitfall 1). The
-        # subscription-membership assertion inside is gated on a live data provider, so
-        # paper (no provider) skips it.
-        self._initialize_live_session()
-
-        # Step 2 — synchronous per-bar drive (mirror backtest_runner._run_backtest
-        # 145-158, BAR-driven): per bar, in this order,
-        #   (a) replay_bar -> registered sink self.feed.update -> BarEvent on queue,
-        #   (b) process_events() drains BAR -> SIGNAL -> ORDER -> FILL in-thread,
-        #   (c) a DIRECT record_metrics per active portfolio using the feed's own
-        #       bar-open stamp (Trap 4 — backtest calls record_metrics directly, never
-        #       via an event reroute). bar_time is tz-aware UTC bar-open (D-09).
-        for cb in self._replay_provider.iter_closed_bars():
-            self._replay_provider.replay_bar(cb)
-            self.event_handler.process_events()
-            newest = self.feed.newest_bar(PAPER_PARITY_SYMBOL)
-            if newest is None:
-                continue
-            # WR-03: only record when the feed's newest-DELIVERED bar IS the bar
-            # replayed THIS iteration. If the LiveBarFeed monotonic guard dropped
-            # this bar (stale/duplicate/off-grid/revision), newest holds the PREVIOUS
-            # bar's stamp — recording it would re-stamp an already-recorded timestamp
-            # (a duplicate/stale equity point). Compare the feed stamp against the
-            # replayed bar-open (cb["ts"], epoch-ms) and skip on mismatch. On the
-            # contiguous golden dataset no bar is ever dropped, so newest always
-            # equals the replayed bar and every bar records exactly once (byte-exact).
-            if int(newest.time.timestamp() * 1000) != cb["ts"]:
-                continue
-            bar_time = newest.time
-            for portfolio in self.portfolio_handler.get_active_portfolios():
-                portfolio.record_metrics(bar_time)
-
-        # Step 3 — run-end time-in-force sweep (byte-exact parity with
-        # backtest_runner 159-169): expire every still-resting order, then ONE final
-        # process_events() drain clears them through the exchange. No record_metrics
-        # after the sweep — the last per-bar record_metrics was the final equity point.
-        self.order_handler.expire_all_resting()
-        self.event_handler.process_events()
-
     def start(self):
         """
         Start the live trading system by initializing the session
@@ -1160,9 +1029,10 @@ class LiveTradingSystem:
             # D-17 (error-policy split, WR-04): install the live publish-and-continue
             # policy HERE — on the daemon/live path ONLY. A live session can't abort on
             # one handler error (it must emit an ErrorEvent and keep draining, RES-01
-            # hardening); the deterministic run_paper_replay() driver never reaches this
-            # bind, so it keeps the base fail-fast re-raise so a handler failure aborts
-            # the replay loudly and the parity gate can't false-green (T-05-28).
+            # hardening); the offline deterministic ``TestRunner`` driver never reaches
+            # this bind (it never calls start()), so it keeps the base fail-fast re-raise
+            # so a handler failure aborts the replay loudly and the parity gate can't
+            # false-green (T-05-28 / D-19).
             self.event_handler._on_handler_error = self._error_policy.on_handler_error  # type: ignore[method-assign]
 
             # Initialize the live session
@@ -1565,11 +1435,16 @@ def build_live_system(
     the drain loop, D-06) + its ``WorkerSupervisor`` (D-05) + the minimal ``ErrorPolicy``
     (D-07) around it. Returns the fully-wired facade.
 
-    D-12 (interim, P6): live session wiring (``SessionInitializer`` via
-    ``_initialize_live_session``) stays DEFERRED to ``start()``/``run_paper_replay`` —
-    the construction-time flip conflicts with the pervasive add-strategy-after-
-    construction + monkeypatch-``_initialize_live_session``-before-``start()`` contracts
-    across the live test suite; it lands with the 06-07 ``run_paper_replay`` relocation.
+    D-12 (interim): live session wiring (``SessionInitializer`` via
+    ``_initialize_live_session``) stays DEFERRED to ``start()`` (06-06 kept the
+    construction-time flip deferred — it conflicts with the pervasive
+    add-strategy-after-construction + monkeypatch-``_initialize_live_session``-before-
+    ``start()`` contracts across the live test suite). The offline test driver
+    ``TestRunner`` (tests/support/replay_harness) invokes it before its per-bar drive.
+
+    D-21: production ``paper`` re-points to the OKX live data feed; the offline replay
+    DATA provider left this module for the test harness (TEST-01/D-18). A test fixture
+    injects a ``'replay'`` plugin via ``data_plugins`` — production never registers one.
 
     All live/venue/SQL imports live INSIDE this function body (lazy) so importing this
     module (via the ``trading_system`` barrel, on the backtest import graph) pulls NO
@@ -1685,7 +1560,6 @@ def build_live_system(
     okx_exchange: Optional[Any] = None
     okx_data_provider: Optional[Any] = None
     venue_account: Optional[Any] = None
-    replay_provider: Optional[Any] = None
     venue_bundle: Optional[Any] = None
     venue_lifecycle: Optional[Any] = None
 
@@ -1698,7 +1572,7 @@ def build_live_system(
         OkxDataPlugin,
         OkxVenuePlugin,
     )
-    from itrader.venues.paper_plugin import PaperVenuePlugin, ReplayDataPlugin
+    from itrader.venues.paper_plugin import PaperVenuePlugin
     from itrader.venues.registry import (
         DataProviderRegistry,
         ExecutionVenueRegistry,
@@ -1713,12 +1587,11 @@ def build_live_system(
     exec_registry.register(
         'paper', PaperVenuePlugin(execution_handler.exchanges['simulated']))
     data_registry.register('okx', OkxDataPlugin())
-    data_registry.register('replay', ReplayDataPlugin())
 
-    # TEST-only DATA provider injection (D-21): production registers NO test data
-    # provider, but a test fixture may inject one (e.g. the relocated replay harness'
-    # TestDataPlugin) so the paper↔replay pairing lives ONLY in the fixture, never in
-    # production. Registered AFTER the production plugins so an injected name wins.
+    # TEST-only DATA provider injection (D-21): production registers NO replay/test data
+    # provider (the replay harness left this package for tests/), but a test fixture may
+    # inject one (the relocated TestDataPlugin) so the paper↔replay pairing lives ONLY in
+    # the fixture, never in production. Registered AFTER the production plugins.
     if data_plugins:
         for _name, _plugin in data_plugins.items():
             data_registry.register(_name, _plugin)
@@ -1732,8 +1605,11 @@ def build_live_system(
     )
     venue_spec = SimpleNamespace(
         execution_venue=exchange,
+        # D-21: production paper re-points to the OKX live data feed (the offline replay
+        # feed left production for tests/). A TEST fixture injects a 'replay' plugin via
+        # data_plugins and passes data_provider='replay' explicitly; production never does.
         data_provider=(getattr(spec, 'data_provider', None) or {
-            'okx': 'okx', 'paper': 'replay'}.get(exchange, 'replay')),
+            'okx': 'okx', 'paper': 'okx'}.get(exchange, 'okx')),
         account_id=getattr(spec, 'account_id', None),
     )
 
@@ -1746,14 +1622,15 @@ def build_live_system(
         provider = venue_lifecycle.provider
 
         # bundle.connector is the STREAMING-venue discriminator (okx present, paper None).
+        # A paper (connector=None) bundle has no streaming okx exchange/account; its data
+        # provider is still wired to the feed below (the injected TEST 'replay' provider in
+        # tests, or the OKX data provider in production paper — D-21).
         okx_connector = bundle.connector
         if bundle.connector is not None:
             okx_exchange = bundle.exchange
             execution_handler.exchanges[exchange] = bundle.exchange
             venue_account = bundle.account_factory()
             okx_data_provider = provider
-        else:
-            replay_provider = provider
 
         # (4) UNIFORM provider->feed wiring (D-10) that needs NO facade method.
         feed.set_provider(provider)
@@ -1782,7 +1659,6 @@ def build_live_system(
         okx_exchange=okx_exchange,
         okx_data_provider=okx_data_provider,
         venue_account=venue_account,
-        replay_provider=replay_provider,
     )
     facade = LiveTradingSystem(components, status_callback=status_callback)
 
