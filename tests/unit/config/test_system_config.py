@@ -24,6 +24,7 @@ import pytest
 
 import pydantic
 from itrader.config.settings import Settings
+from itrader.config.stream import FeedProviderSettings, StreamSettings
 from itrader.config.system import SystemConfig
 
 pytestmark = pytest.mark.unit
@@ -33,6 +34,31 @@ def test_runtime_is_eager_settings_field():
     """runtime is a pydantic field whose default constructs a Settings instance (D-07)."""
     assert "runtime" in SystemConfig.model_fields
     assert isinstance(SystemConfig().runtime, Settings)
+
+
+def test_stream_is_eager_field_with_unchanged_defaults():
+    """stream is an eager StreamSettings field carrying the D-08 defaults (IN-01)."""
+    assert "stream" in SystemConfig.model_fields
+    stream = SystemConfig.default().stream
+    assert isinstance(stream, StreamSettings)
+    assert stream.okx_stream_symbol == "BTC/USDC"
+    assert stream.okx_stream_timeframe == "1d"
+
+
+def test_feed_provider_is_eager_field_with_unchanged_defaults():
+    """feed_provider is an eager FeedProviderSettings field carrying the D-08 defaults (IN-01)."""
+    assert "feed_provider" in SystemConfig.model_fields
+    feed_provider = SystemConfig.default().feed_provider
+    assert isinstance(feed_provider, FeedProviderSettings)
+    assert feed_provider.warmup_margin == 5
+    assert feed_provider.backfill_page == 1000
+
+
+def test_adding_eager_fields_keeps_sql_lazy_at_import():
+    """Adding stream/feed_provider must NOT resolve the lazy sql cached_property (IN-01)."""
+    from itrader import config as c
+
+    assert "sql" not in c.__dict__
 
 
 def test_sql_is_cached_property_not_a_field():

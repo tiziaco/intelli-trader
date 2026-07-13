@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from itrader.config.settings import Settings
+from itrader.config.stream import FeedProviderSettings, StreamSettings
 
 if TYPE_CHECKING:
     # Import here only to type the ``sql`` cached_property. The concrete import runs
@@ -102,6 +103,14 @@ class SystemConfig(BaseModel):
 
     performance: PerformanceSettings = Field(default_factory=PerformanceSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
+
+    # IN-01 / D-08: eager config home for the live stream + feed-provider settings.
+    # config/stream.py imports only pydantic/stdlib (no ccxt/async/sql), so these
+    # eager fields stay on the backtest import graph WITHOUT regressing inertness —
+    # they are the single wiring source that replaces the retired inline
+    # ``StreamSettings()`` / ``FeedProviderSettings()`` default-constructions.
+    stream: StreamSettings = Field(default_factory=StreamSettings)
+    feed_provider: FeedProviderSettings = Field(default_factory=FeedProviderSettings)
 
     # D-07: eager runtime env layer. Constructing Settings reads ITRADER_* env but
     # builds NO SqlSettings (Settings carries no DB fields — the DB surface lives
