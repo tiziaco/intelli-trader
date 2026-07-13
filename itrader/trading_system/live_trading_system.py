@@ -17,8 +17,6 @@ from typing import Optional, Dict, Any, Callable
 # same freeze-in-place safety posture as the pre-D-14 blanket suppression).
 _DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
 
-from dataclasses import dataclass
-
 from itrader.config.stream import StreamSettings
 from itrader.core.enums import ErrorSeverity, HaltReason, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
 from itrader.core.exceptions import ConfigurationError
@@ -35,7 +33,7 @@ from itrader.portfolio_handler.reconcile import is_within_single_unit_tolerance
 from itrader.execution_handler.execution_handler import ExecutionHandler
 from itrader.execution_handler.exchanges.simulated import SimulatedExchange
 from itrader.trading_system.alert_sink import LogAlertSink
-from itrader.universe import Universe, derive_instruments, derive_membership
+from itrader.universe import Universe
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, ErrorEvent, UniversePollEvent
@@ -115,21 +113,6 @@ PAPER_PARITY_TIMEFRAME = "1d"
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
 # imported above; the ``SystemStatus.X`` usages below resolve unchanged.
-
-
-@dataclass(frozen=True)
-class _LiveWarmupConsumer:
-    """D-13 raw-bar consumer: sizes ``LiveBarFeed.cache_capacity()`` at wiring time.
-
-    A minimal frozen ``RawBarConsumer`` (``cache_registration.RawBarConsumer``
-    Protocol — a read-only ``required_history_depth``) registered on the LIVE feed
-    so the ring + warmup derive to the max strategy warmup (100 for SMA_MACD), not
-    the newest-bar floor (1). Without it the indicators never warm and
-    ``calculate_signals`` short-circuits to zero trades — the single most likely
-    correctness failure of the live path (RESEARCH Pitfall 1).
-    """
-
-    required_history_depth: int
 
 
 class LiveTradingSystem:
@@ -1244,180 +1227,80 @@ class LiveTradingSystem:
             portfolio.record_metrics(event.time)
 
     def _initialize_live_session(self):
-        """
-        Initialize the live trading session by deriving membership and
-        binding the feed's BarEvent factory.
+        """Initialize the live trading session by delegating to ``SessionInitializer``.
+
+        RUN-04 live / RUN-05 / RUN-06 / D-12: the ~175-line inline wiring collapses
+        into the ``SessionInitializer`` collaborator over the shared phase seams
+        (``wire_universe`` / ``register_strategy_warmup`` / the first-class
+        ``UniverseHandler`` / ``LiveRouteRegistrar``). Behavior-preserving-interim —
+        still invoked here at ``start()`` / ``run_paper_replay()``; the
+        construction-time FLIP (D-12) lands in 06-06 with ``build_live_system``. The
+        ``try/except`` still maps a wiring failure to ``SystemStatus.ERROR``. Per D-04
+        the facade's safety/reconcile/stream method bodies are untouched.
         """
         self.logger.info('Initializing live trading session')
 
         try:
-            # Membership derived at wiring time (M5-08, D-20) — mirrors
-            # the backtest wiring shape (A4 minimal shim; D-live owns
-            # real behavior).
-            membership = derive_membership(
-                self.strategies_handler.strategies,
-                self.screeners_handler.get_screeners_universe()
-            )
-            # INST-02/INST-03 (D-08): mirror the backtest_runner Universe
-            # construction/injection so the live path is Universe-aware and
-            # consistent. price_data empty (declared symbols win; live venue
-            # fetch is D-live). This module is mypy-deferred (ignore_errors) and
-            # NOT exercised by the backtest byte-exact/determinism gates.
-            instruments = derive_instruments(
-                self.strategies_handler.strategies,
-                self.screeners_handler.get_screeners_universe(),
-                price_data={}
-            )
-            universe = Universe(members=membership, instrument_map=instruments)
-            self.universe = universe
-            simulated_exchange = self.execution_handler.exchanges.get('simulated')
-            if isinstance(simulated_exchange, SimulatedExchange):
-                simulated_exchange.set_universe(universe)
-            # Plan 02-03 (Pitfall 1): mirror the exchange injection into the ORDER
-            # domain so the admission leverage cap (D-04) can read
-            # Instrument.max_leverage — same Trap-4 ordering as backtest_runner.
-            self.order_handler.set_universe(universe)
-            # Plan 02-05 (D-13): mirror the injection into the PORTFOLIO domain so
-            # the maintenance_margin/margin_ratio read-model resolves each open
-            # position's Instrument.maintenance_margin_rate — same Trap-4 ordering
-            # as backtest_runner.
-            self.portfolio_handler.set_universe(universe)
-            # Phase 3 (D-13): register the raw-bar consumer sized to the max strategy
-            # warmup so cache_capacity() derives to 100 (SMA_MACD) on the LIVE feed.
-            # Without this the ring + warmup collapse to the newest-bar floor (1),
-            # indicators never warm, and the oracle produces zero trades (Pitfall 1).
-            self.feed.register_raw_bar_consumer(_LiveWarmupConsumer(
-                required_history_depth=max(
-                    (s.warmup for s in self.strategies_handler.strategies),
-                    default=1)))
-            self.feed.bind(self.global_queue, universe.members)
-
-            # WR-03 generalized (Plan 06-05, D-05): the LIVE subscription set is now
-            # SOURCED FROM MEMBERSHIP — start() iterates universe.members and subscribes
-            # each (warmup-before-subscribe), no longer the single StreamSettings
-            # stream symbol. The LIVE feed keys its ring on the streamed-symbol form
-            # the provider stamps into ClosedBar['symbol'] while window() is queried with
-            # the ticker drawn from universe.members. If the two forms diverge for a
-            # member (e.g. 'BTC/USDT' vs 'BTCUSD'), _find_ring raises MissingPriceDataError
-            # only at the FIRST window() call — deep on the live path. Assert the ring-key
-            # vs window()-ticker invariant at WIRING time for EVERY subscribed symbol:
-            # the engine subscribes exactly the members, so assert every symbol it will
-            # subscribe is a member (the provider's plan-02 {symbol: task} registry keys
-            # on the member string and stamps that SAME form as the ring key, so a member
-            # is its own ring key by construction). This fails loudly at startup if a
-            # future edit subscribes a symbol whose form diverges from the member window()
-            # ticker, instead of surfacing as a MissingPriceDataError deep on the live
-            # path. Guarded on a non-empty membership: an empty universe (no strategy
-            # declared an instrument) streams nothing and has no ticker to mismatch.
-            if self._okx_data_provider is not None and universe.members:
-                members = universe.members
-                subscribed = list(members)  # start() subscribes exactly the members
-                mismatched = [s for s in subscribed if s not in members]
-                if mismatched:
-                    raise ConfigurationError(
-                        config_key="okx_stream_symbols",
-                        config_value=repr(mismatched),
-                        reason=(
-                            f"subscribed symbol(s) {mismatched!r} are not members of "
-                            f"the universe {members!r}; the feed ring key and the "
-                            "strategy's window() ticker would mismatch "
-                            "(MissingPriceDataError at first window()). Subscribe only "
-                            "universe members."))
-
-            # Plan 06-05: the legacy set_symbols/set_timeframe calls died with
-            # the price handler — the Store knows its symbols (store.symbols()).
-            # Live symbol/timeframe subscription wiring is owned by D-live.
-
-            # ------------------------------------------------------------------
-            # Plan 06-05 (D-02/D-05): construct the live-only UniverseHandler and
-            # wire its seams + the LIVE-ONLY _routes mutation. The BACKTEST never
-            # reaches this path — its TradingSystem builds a SEPARATE EventHandler
-            # with the untouched _routes literal (empty UNIVERSE_UPDATE route) and
-            # never constructs this handler or starts the poll timer, so the oracle
-            # + W1/W2 are provably unaffected (RESEARCH §11.1). The imports stay
-            # LAZY inside this live-init method (mirrors the OKX/LiveBarFeed lazy
-            # imports) so the backtest import path never pulls universe_handler —
-            # the recurring inertness gate (tests/integration/test_okx_inertness.py).
+            # LAZY imports (mirror the donor's lazy live imports) so the backtest
+            # import path never pulls these onto its graph — the recurring inertness
+            # gate (tests/integration/test_okx_inertness.py).
             from itrader import config as _system_config
-            from itrader.universe.membership import StrategyDerivedSelectionModel
-            from itrader.universe.universe_handler import (
-                UniverseHandler,
-                UniverseHandlerConfig,
-            )
+            from itrader.core.clock import BacktestClock
+            from itrader.trading_system.compose import Engine
+            from itrader.trading_system.session_initializer import SessionInitializer
+            from itrader.trading_system.simulation.time_generator import TimeGenerator
+            from itrader.universe.universe_handler import UniverseHandlerConfig
 
-            # RUN-06/D-11 first-class ctor (bus, universe, feed, config): the poll
-            # timeframe + remove_policy are READ FROM the config object. Both come from
-            # the LIVE/monitoring config, NOT SystemConfig.PerformanceSettings (which
-            # carries the oracle-critical rng_seed) — §8/D-01 keeps the backtest oracle
-            # config untouched.
-            self._universe_handler = UniverseHandler(
-                bus=self.global_queue,
-                universe=universe,
+            # INTERIM Engine holder (behavior-preserving): the facade still wires its
+            # own handlers directly this plan, so it assembles the compose ``Engine``
+            # holder from them for ``SessionInitializer`` / ``wire_universe``. ``clock``
+            # + ``time_generator`` are inert placeholders the live path never reads (only
+            # the handlers + feed + queue are consumed); 06-06's ``build_live_system``
+            # replaces this with the real ``compose_engine`` ``Engine``.
+            engine = Engine(
+                global_queue=self.global_queue,
+                clock=BacktestClock(),
+                store=self.store,
                 feed=self.feed,
-                config=UniverseHandlerConfig(
-                    poll_timeframe=_STREAM_SETTINGS.okx_stream_timeframe,
-                    remove_policy=_system_config.monitoring.universe_remove_policy,
-                ),
-            )
-            # D-12/OP-SEAM: the poll selection source is the strategy-derived model —
-            # ``select()`` reads ``strategies_handler.get_strategies_universe()`` live
-            # each poll so an operator ticker edit (STRATEGY_COMMAND) propagates on the
-            # next poll (no held snapshot). The poll is a NO-OP (desired == current ->
-            # empty delta -> no event) until the strategy universe actually changes.
-            self._universe_handler.set_selection_source(
-                StrategyDerivedSelectionModel(self.strategies_handler))
-            # Plan 04 readiness-gate seam: give StrategiesHandler the Universe read-model
-            # so calculate_signals gates on per-symbol readiness (backtest wires none).
-            self.strategies_handler.set_universe(universe)
-            # WR-05/D-07 freeze gate: while the engine is HALTED or submission-paused
-            # the poll freezes membership IN PLACE (on_poll early-returns) — level-
-            # triggered, self-heals on the next unfrozen tick (no replay/buffering).
-            self._universe_handler.set_freeze_gate(
-                lambda: self._is_halted() or self._is_submission_paused())
-            # RUN-06/D-11 venue metadata: ONE set_venue_metadata call wires BOTH the
-            # D-06 validate_symbol filter and the VENUE-04/D-09 resolve_precision
-            # capability off the exchange (both AbstractExchange caps since P5 VENUE-04).
-            # Kept behavior-preserving under the existing okx-presence guard for now —
-            # paper/replay (no okx exchange) leaves the seams unset -> Universe.apply
-            # falls to the _DEFAULT_* ladder. 06-05's SessionInitializer makes this
-            # unconditional with the uniformly-resolved venue exchange.
-            if self._okx_exchange is not None:
-                self._universe_handler.set_venue_metadata(self._okx_exchange)
-            # Data-plane provider the add/remove branch drives (guard None on paper).
-            if self._okx_data_provider is not None:
-                self._universe_handler.set_provider(self._okx_data_provider)
-            # Open-position truth for the remove consumer + detach-on-flat.
-            self._universe_handler.set_portfolio_read_model(self.portfolio_handler)
-            # WR-02 strategy-warmth re-verify: on_bars_loaded re-checks is_warm before
-            # flipping a symbol READY (a MISS marks FAILED, retried next poll) — so a
-            # swallowed partial strategy warmup can't make a half-warmed symbol
-            # tradeable. Live-only (backtest constructs no UniverseHandler).
-            self._universe_handler.set_strategy_warmth(self.strategies_handler)
+                strategies_handler=self.strategies_handler,
+                screeners_handler=self.screeners_handler,
+                portfolio_handler=self.portfolio_handler,
+                execution_handler=self.execution_handler,
+                order_handler=self.order_handler,
+                event_handler=self.event_handler,
+                time_generator=TimeGenerator())
 
-            # LIVE-ONLY route mutation (RESEARCH §11.1): mutate THIS live EventHandler's
-            # own routes dict — NEVER the shared backtest _routes literal (the backtest
-            # TradingSystem builds a SEPARATE EventHandler; the four new routes stay
-            # explicit-empty there, proven by tests/integration/test_okx_inertness.py).
-            # D-06/WR-06: the poll rides its OWN dedicated UNIVERSE_POLL route (not the
-            # shared TIME route that fans to screeners/bar-gen). STRATEGY_COMMAND edits
-            # the strategy universe; BARS_LOADED runs strategies FIRST (warm indicators)
-            # then universe (absorb ring + mark_ready + subscribe) — LIST ORDER = EXECUTION
-            # ORDER (D-03b); BARS_LOAD_FAILED marks the symbol FAILED (kept, retried).
-            # on_fill is appended AFTER PortfolioHandler.on_fill so the read model already
-            # reflects the settled (flat) position for detach-on-flat.
-            self.event_handler.routes[EventType.UNIVERSE_POLL] = [
-                self._universe_handler.on_poll]
-            self.event_handler.routes[EventType.UNIVERSE_UPDATE] = [
-                self._universe_handler.on_universe_update]
-            self.event_handler.routes[EventType.STRATEGY_COMMAND] = [
-                self.strategies_handler.on_strategy_command]
-            self.event_handler.routes[EventType.BARS_LOADED] = [
-                self.strategies_handler.on_bars_loaded,
-                self._universe_handler.on_bars_loaded]
-            self.event_handler.routes[EventType.BARS_LOAD_FAILED] = [
-                self._universe_handler.on_bars_load_failed]
-            self.event_handler.routes[EventType.FILL].append(
-                self._universe_handler.on_fill)
+            # The uniformly-resolved venue exchange (D-11): the OKX exchange when
+            # present, else the paper 'simulated' exchange (permissive validate_symbol /
+            # resolve_precision defaults). set_venue_metadata is UNCONDITIONAL over this
+            # inside SessionInitializer — no OKX guard, zero OKX coupling.
+            venue_exchange = (
+                self._okx_exchange if self._okx_exchange is not None
+                else self.execution_handler.exchanges.get('simulated'))
+
+            # RUN-06/D-11 live-plane config: poll timeframe + remove_policy READ FROM the
+            # LIVE/monitoring config (NOT PerformanceSettings — §8/D-01 keeps the
+            # backtest oracle config untouched).
+            universe_config = UniverseHandlerConfig(
+                poll_timeframe=_STREAM_SETTINGS.okx_stream_timeframe,
+                remove_policy=_system_config.monitoring.universe_remove_policy,
+            )
+
+            # D-12: delegate the whole live session wiring to SessionInitializer
+            # (wire_universe -> register_strategy_warmup -> subscription guard ->
+            # first-class UniverseHandler -> LiveRouteRegistrar). The freeze-gate is the
+            # interim callable repointed to SafetyController in P7 (D-04 body untouched).
+            initializer = SessionInitializer(
+                engine,
+                universe_config=universe_config,
+                venue_exchange=venue_exchange,
+                data_provider=self._okx_data_provider,
+                freeze_gate=lambda: self._is_halted() or self._is_submission_paused(),
+            )
+            self._universe_handler = initializer.initialize()
+            # wire_universe set engine.universe; mirror it onto the facade (start()
+            # reads self.universe.members).
+            self.universe = engine.universe
 
             self.logger.info('Live trading session initialized')
             
@@ -1487,13 +1370,13 @@ class LiveTradingSystem:
                     f"{self._replay_provider._timeframe!r}. Pin the paper replay timeframe "
                     "to PAPER_PARITY_TIMEFRAME, not the live stream config."))
 
-        # Step 1 — session init (ORDER-SENSITIVE): derive membership/instruments,
-        # inject the Universe into the 'simulated' exchange + order/portfolio handlers,
-        # register the _LiveWarmupConsumer that sizes cache_capacity() to the max
-        # strategy warmup (100 for SMA_MACD — WITHOUT it the ring collapses to 1 and
-        # the run yields zero trades, Pitfall 1), and bind(global_queue, members). The
-        # OKX symbol-membership assertion inside is gated to exchange=='okx', so paper
-        # skips it.
+        # Step 1 — session init (ORDER-SENSITIVE): delegates to SessionInitializer
+        # (wire_universe injects the Universe into the 'simulated' exchange +
+        # order/portfolio/strategies handlers and binds the feed; register_strategy_warmup
+        # sizes cache_capacity() to the max strategy warmup — 100 for SMA_MACD; WITHOUT it
+        # the ring collapses to 1 and the run yields zero trades, Pitfall 1). The
+        # subscription-membership assertion inside is gated on a live data provider, so
+        # paper (no provider) skips it.
         self._initialize_live_session()
 
         # Step 2 — synchronous per-bar drive (mirror backtest_runner._run_backtest
