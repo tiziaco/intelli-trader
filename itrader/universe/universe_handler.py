@@ -293,10 +293,10 @@ class UniverseHandler:
     def set_venue_metadata(self, exchange: _VenueMetadataSource) -> None:
         """Wire the venue-metadata seams (RUN-06/D-11) from ONE exchange object.
 
-        Collapses the two former OKX-guarded setters ``set_symbol_validator`` +
-        ``set_precision_resolver`` into a single UNCONDITIONAL call: the exchange's
-        ``validate_symbol`` (D-06 poll filter) and ``resolve_precision`` (VENUE-04/D-09
-        poll-added-symbol precision) are BOTH abstract ``AbstractExchange`` capabilities
+        Collapses the two former OKX-guarded symbol-validator + precision-resolver
+        setters into a single UNCONDITIONAL call: the exchange's ``validate_symbol``
+        (D-06 poll filter) and ``resolve_precision`` (VENUE-04/D-09 poll-added-symbol
+        precision) are BOTH abstract ``AbstractExchange`` capabilities
         since P5 VENUE-04, and paper/replay's ``SimulatedExchange`` returns permissive
         defaults (P5 D-09) — so there is NO OKX ``None``-guard = zero OKX coupling. Sets
         both ``_symbol_validator`` and ``_precision_resolver`` to the exchange; the
