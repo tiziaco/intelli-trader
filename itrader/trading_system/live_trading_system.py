@@ -1,4 +1,3 @@
-import os
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -65,9 +64,12 @@ _EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND
 # Postgres arm, the SAME credential source Alembic ``migrations/env.py`` uses (one canonical
 # source; no separate legacy env-var seam). WR-10: no hardcoded credential fallback — an
 # unconfigured env falls back to in-memory order + signal storage with a loud warning. The
-# presence check reads ``os.getenv`` inside ``__init__`` (below) so it honors per-construction
-# env; it MUST gate BEFORE constructing ``SqlSettings(driver=POSTGRESQL_PSYCOPG2)``, which
-# RAISES ``ValidationError`` (``_require_pg_credentials``) when no credential is present.
+# presence check runs a lazy default ``SqlSettings()`` probe inside ``build_live_system``
+# (below) so it honors per-construction env: the SQLite default driver skips
+# ``_require_pg_credentials`` (so the probe never raises when creds are absent) while still
+# sourcing ``ITRADER_DATABASE_*`` into ``probe.password`` / ``probe.url`` (IN-01). It gates
+# BEFORE constructing ``SqlSettings(driver=POSTGRESQL_PSYCOPG2)``, which RAISES
+# ``ValidationError`` (``_require_pg_credentials``) when no credential is present.
 
 # WR-03 / CFG-03 / D-08 / IN-01: the SINGLE wiring source for the live OKX subscription
 # now lives in ``config.stream`` (the eager ``SystemConfig.stream`` field, backed by
@@ -1471,10 +1473,13 @@ def build_live_system(
     # v1.6 operational store live-drive (05-06, RECON-04, D-10/D-11).
     # SYNC-DURABLE working set (orders) persists store-first; DERIVED signal store is
     # async/best-effort. Both share ONE SqlEngine. All SQL imports LAZY inside the
-    # Postgres arm (inertness). Credential presence read at build time (per-construction).
-    pg_password = os.getenv("ITRADER_DATABASE_PASSWORD", "")
-    pg_url = os.getenv("ITRADER_DATABASE_URL", "")
-    if not (pg_password or pg_url):
+    # Postgres arm (inertness). Credential presence read at build time (per-construction)
+    # through a lazy default ``SqlSettings()`` probe — the SQLite default driver skips
+    # ``_require_pg_credentials``, so the probe never raises when credentials are absent
+    # while still sourcing ``ITRADER_DATABASE_*`` env into ``password``/``url`` (IN-01).
+    from itrader.config.sql import SqlSettings
+    probe = SqlSettings()
+    if probe.password is None and probe.url is None:
         # WR-10: fail loudly into the in-memory fallback (no default credential string).
         logger.warning(
             "No Postgres credential in env (ITRADER_DATABASE_PASSWORD / "
