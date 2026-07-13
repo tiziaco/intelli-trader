@@ -356,17 +356,20 @@ def remove_policy_harness():
     def _make(remove_policy: str = "orphan-and-track", cash: int = 1_000_000):
         from itrader.core.instrument import Instrument
         from itrader.execution_handler.exchanges.simulated import SimulatedExchange
-        from itrader.trading_system.live_trading_system import LiveTradingSystem
         from itrader.universe.universe import Universe
         from itrader.universe.universe_handler import (
             UniverseHandler,
             UniverseHandlerConfig,
         )
 
+        from tests.support.replay_harness import build_paper_replay_system
+
         held, other = "AAAUSD", "BBBUSD"
 
         # Fully-wired paper engine (reused SimulatedExchange, offline — no OKX/network).
-        system = LiveTradingSystem.for_exchange("paper")
+        # Production paper re-points to the OKX live feed (D-21); the offline replay DATA
+        # provider is injected via the test harness (paper↔replay lives in the fixture).
+        system, _ = build_paper_replay_system()
         simulated = system.execution_handler.exchanges["simulated"]
         simulated.register_symbol(held)
         simulated.register_symbol(other)

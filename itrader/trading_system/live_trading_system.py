@@ -288,21 +288,24 @@ class LiveTradingSystem:
 
         NOT a second construction path (D-09): it builds a declarative live ``spec``
         (``execution_venue=exchange``; ``data_provider`` selected as today — ``okx`` for
-        the okx venue, the offline ``replay`` feed for paper, else ``replay``;
-        ``account_id`` the single logical default) and delegates to
-        ``build_live_system(spec)``. This is the ergonomic entry point the ~45 former
-        direct ``LiveTradingSystem(exchange=...)`` construction sites migrate to
-        (LANDMINE 1). ``status_callback`` threads through unchanged; ``**overrides`` may
-        carry an explicit ``data_provider``/``account_id`` for a bespoke spec.
+        the okx venue, the OKX live feed for paper (D-21), else ``okx``; ``account_id``
+        the single logical default) and delegates to ``build_live_system(spec)``. This is
+        the ergonomic entry point the ~45 former direct ``LiveTradingSystem(exchange=...)``
+        construction sites migrate to (LANDMINE 1). ``status_callback`` threads through
+        unchanged; ``**overrides`` may carry an explicit ``data_provider``/``account_id``
+        for a bespoke spec, or a ``data_plugins`` map for a TEST-only data provider
+        injection (the paper↔replay pairing now lives ONLY in the test fixture, D-21).
         """
         data_provider = overrides.pop('data_provider', None) or {
-            'okx': 'okx', 'paper': 'replay'}.get(exchange, 'replay')
+            'okx': 'okx', 'paper': 'okx'}.get(exchange, 'okx')
+        data_plugins = overrides.pop('data_plugins', None)
         spec = SimpleNamespace(
             execution_venue=exchange,
             data_provider=data_provider,
             account_id=overrides.pop('account_id', None),
         )
-        return build_live_system(spec, status_callback=status_callback)
+        return build_live_system(
+            spec, status_callback=status_callback, data_plugins=data_plugins)
 
     def _on_loop_start(self) -> None:
         """LiveRunner loop-entry hook (RUN-02/D-04): stamp RUNNING + uptime_start.
@@ -1550,6 +1553,7 @@ def build_live_system(
     spec: Any,
     *,
     status_callback: Optional[Callable[[SystemStatus, Dict[str, Any]], None]] = None,
+    data_plugins: Optional[Dict[str, Any]] = None,
 ) -> LiveTradingSystem:
     """The live composition root (RUN-01/D-09) — the ONLY live construction path.
 
@@ -1710,6 +1714,14 @@ def build_live_system(
         'paper', PaperVenuePlugin(execution_handler.exchanges['simulated']))
     data_registry.register('okx', OkxDataPlugin())
     data_registry.register('replay', ReplayDataPlugin())
+
+    # TEST-only DATA provider injection (D-21): production registers NO test data
+    # provider, but a test fixture may inject one (e.g. the relocated replay harness'
+    # TestDataPlugin) so the paper↔replay pairing lives ONLY in the fixture, never in
+    # production. Registered AFTER the production plugins so an injected name wins.
+    if data_plugins:
+        for _name, _plugin in data_plugins.items():
+            data_registry.register(_name, _plugin)
 
     # (2) D-23: the infra ctx wires live onto the PriorityEventBus (not the raw queue).
     ctx = EngineContext(

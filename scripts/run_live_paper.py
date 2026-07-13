@@ -86,15 +86,28 @@ def _compose(system: LiveTradingSystem) -> int:
 def _run_replay(logger) -> None:
     """Offline, synchronous paper run (D-03) — the CI-safe default worker path.
 
-    Constructs the paper venue, drives the golden dataset through the real
-    replay -> feed -> queue seam via ``run_paper_replay()``, then reads result
-    state and prints a short summary (trade count + final equity).
+    Constructs the paper venue with the RELOCATED replay harness (TEST-01/D-18 — the
+    replay apparatus lives in ``tests/`` now; production paper re-points to the OKX live
+    feed, D-21), drives the golden dataset through the real replay -> feed -> queue seam
+    via ``TestRunner`` (fail-fast BY DEFAULT, D-19), then reads result state and prints a
+    short summary (trade count + final equity).
     """
-    system = LiveTradingSystem.for_exchange("paper")
+    # The offline replay harness is TEST infrastructure now (tests/support). Put the repo
+    # root on sys.path so this demo worker can import it standalone (sys.path[0] is the
+    # scripts/ dir when run as `python scripts/run_live_paper.py`).
+    import pathlib
+    import sys
+
+    repo_root = str(pathlib.Path(__file__).resolve().parent.parent)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from tests.support.replay_harness import TestRunner, build_paper_replay_system
+
+    system, provider = build_paper_replay_system()
     portfolio_id = _compose(system)
 
     # Synchronous offline drive (D-02/D-03): replay -> feed.update -> BarEvent -> queue.
-    system.run_paper_replay()
+    TestRunner(system, provider).run()
 
     # --- Read result state AFTER the run (queue-only rule) ------------------
     portfolio = system.portfolio_handler.get_portfolio(portfolio_id)

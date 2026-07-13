@@ -29,6 +29,7 @@ from itrader.core.enums import SystemStatus
 from itrader.core.sizing import FractionOfCash, TradingDirection
 from itrader.strategy_handler.strategies.SMA_MACD_strategy import SMAMACDStrategy
 from itrader.trading_system.live_trading_system import LiveTradingSystem
+from tests.support.replay_harness import build_paper_replay_system
 
 # The expected key set the ACCT-05 command surface must report (D-10).
 _EXPECTED_STATUS_KEYS = {"status", "is_running", "exchange", "queue_size", "statistics"}
@@ -37,11 +38,12 @@ _EXPECTED_STATUS_KEYS = {"status", "is_running", "exchange", "queue_size", "stat
 def _build_paper_system() -> LiveTradingSystem:
     """Construct a paper-venue system wired with the golden strategy + a portfolio.
 
-    Mirrors the worker composition (scripts/run_live_paper.py): the golden SMA_MACD
-    literals + a single ``'simulated'``-exchange portfolio. The ``'paper'`` venue is
-    fully offline (the replay arm) — no OKX credentials or network needed (D-11).
+    Mirrors the worker composition: the golden SMA_MACD literals + a single
+    ``'simulated'``-exchange portfolio. Production paper re-points to the OKX live feed
+    (D-21), so the offline replay DATA provider is injected via
+    ``build_paper_replay_system`` — no OKX credentials or network needed (D-11).
     """
-    system = LiveTradingSystem.for_exchange("paper")
+    system, _ = build_paper_replay_system()
     strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],

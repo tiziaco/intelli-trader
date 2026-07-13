@@ -1,10 +1,12 @@
-"""Offline unit coverage for ``ReplayDataProvider`` — the paper-path replay fixture
-(Phase 4 / 04-01, PAPER-03 / COV-01, D-02/D-09/D-10/D-12).
+"""Offline unit coverage for ``TestLiveDataProvider`` — the RELOCATED paper-path replay
+fixture (TEST-01/D-18; formerly ``ReplayDataProvider`` in the ``itrader`` package).
 
 Fully offline: drives the provider over the committed golden ``CsvPriceStore`` (no network,
 no async, no wall-clock) and asserts the seam the Phase-3 ``LiveBarFeed`` depends on —
 symbol/timeframe stamping (the symbol-form guard, D-12), the Decimal edge, the monotonic
-epoch-ms bar-open ``ts`` grid (D-09), and the ``set_bar_sink``/``replay_bar`` push.
+epoch-ms bar-open ``ts`` grid (D-09), and the ``set_bar_sink``/``replay_bar`` push. The
+provider left ``itrader/`` for ``tests/support/replay_harness`` (D-18); production paper
+re-points to the OKX live feed (D-21), so this concretion is test-only now.
 
 This directory is package-less (NO ``__init__.py``, per the two-same-named-top-level-package
 collection hazard). No hand-added markers — the ``tests/unit/`` path auto-applies ``unit``.
@@ -21,17 +23,17 @@ import pytest
 
 from itrader.price_handler.providers.live_provider import LiveDataProvider
 from itrader.price_handler.providers.okx_provider import ClosedBar
-from itrader.price_handler.providers.replay_provider import ReplayDataProvider
+from tests.support.replay_harness import TestLiveDataProvider
 
 
 @pytest.fixture(scope="module")
-def provider() -> ReplayDataProvider:
-    """A default ``ReplayDataProvider`` over the committed golden BTCUSD store (offline)."""
-    return ReplayDataProvider()
+def provider() -> TestLiveDataProvider:
+    """A default ``TestLiveDataProvider`` over the committed golden BTCUSD store (offline)."""
+    return TestLiveDataProvider()
 
 
 @pytest.fixture(scope="module")
-def bars(provider: ReplayDataProvider) -> list[ClosedBar]:
+def bars(provider: TestLiveDataProvider) -> list[ClosedBar]:
     """The full golden replay materialized once (module-scoped — one store read)."""
     return list(provider.iter_closed_bars())
 
@@ -64,7 +66,7 @@ def test_ts_is_strictly_increasing_epoch_ms(bars: list[ClosedBar]) -> None:
 
 
 def test_set_bar_sink_and_replay_bar_deliver_in_order(
-    provider: ReplayDataProvider, bars: list[ClosedBar]
+    provider: TestLiveDataProvider, bars: list[ClosedBar]
 ) -> None:
     # set_bar_sink + replay_bar deliver each bar to the registered sink, in order.
     received: list[ClosedBar] = []
@@ -77,7 +79,7 @@ def test_set_bar_sink_and_replay_bar_deliver_in_order(
 
 def test_replay_bar_without_sink_warns_and_drops(caplog: pytest.LogCaptureFixture) -> None:
     # No sink registered is a legitimate mis-wired state: WARN and drop, never raise.
-    fresh = ReplayDataProvider()
+    fresh = TestLiveDataProvider()
     synthetic: ClosedBar = {
         "ts": 1514764800000,
         "open": Decimal("13715.65"),
@@ -97,7 +99,7 @@ def test_replay_bar_without_sink_warns_and_drops(caplog: pytest.LogCaptureFixtur
 
 
 def test_replay_provider_is_a_uniform_live_data_provider(
-    provider: ReplayDataProvider,
+    provider: TestLiveDataProvider,
 ) -> None:
     # Implements the no-op streaming seams inline AND keeps its real set_bar_sink →
     # structurally a LiveDataProvider (the runtime_checkable Protocol) so the
@@ -106,7 +108,7 @@ def test_replay_provider_is_a_uniform_live_data_provider(
 
 
 def test_replay_provider_inline_streaming_seams_are_noops(
-    provider: ReplayDataProvider,
+    provider: TestLiveDataProvider,
 ) -> None:
     # Offline replay does not stream: the provider's own inline seams are safe
     # no-ops (no longer inherited) and the provider is trivially healthy.
