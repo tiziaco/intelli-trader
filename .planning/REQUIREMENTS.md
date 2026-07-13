@@ -306,8 +306,8 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 - [ ] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves
   OUT of the `itrader` package into `tests/` — `run_paper_replay` → **`TestRunner`**, `ReplayDataProvider`
-  → **`TestLiveDataProvider`**, the `ReplayDataPlugin` → a test-only plugin registered **only** by a test
-  fixture, `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free (concern 9/§13/§8e). The
+  → **`TestLiveDataProvider`**, `ReplayDataPlugin` → **`TestDataPlugin`** (registered **only** by a test
+  fixture), `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free (concern 9/§13/§8e). The
   `paper` **execution** venue (`PaperVenuePlugin` + `SimulatedExchange` + `SimulatedAccount`) STAYS a real
   live production mode, **untouched** — its production data feed re-points from `replay` to the **OKX live
   feed** (`{'okx':'okx','paper':'okx'}`), so the `paper`↔replay pairing survives only in the test fixture.

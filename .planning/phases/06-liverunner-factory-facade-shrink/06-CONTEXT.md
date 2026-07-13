@@ -34,8 +34,8 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   `price_handler/feed/cache_registration.py`, sized `max(strategy.warmup)`; CF-10 depth-hint
   seam shaped (K-computation deferred) (RUN-07).
 - **TEST-01 (pulled forward from P12):** the ENTIRE replay test-harness leaves `itrader/` for `tests/`
-  — `run_paper_replay` → `TestRunner`, `ReplayDataProvider` → `TestLiveDataProvider`, the replay data
-  plugin → test-fixture-only, `PAPER_PARITY_*`/`_PAPER_*` → `tests/`. Production `paper` (a real live
+  — `run_paper_replay` → `TestRunner`, `ReplayDataProvider` → `TestLiveDataProvider`, `ReplayDataPlugin`
+  → `TestDataPlugin` (test-fixture-only), `PAPER_PARITY_*`/`_PAPER_*` → `tests/`. Production `paper` (a real live
   mode, execution untouched) re-points to the **OKX live feed**. `__test__ = False` on `Test*`-named
   classes (pytest-collection guard). See D-16/D-18/D-20/D-21/D-22.
 - Backtest oracle byte-exact (per-PLAN gate on `UniverseWiring`); `test_okx_inertness.py` green.
@@ -240,10 +240,10 @@ test infrastructure that does not belong in production; (c) rename `ReplayRunner
   - `run_paper_replay` → **`TestRunner`** (a class; steps 2-3 verbatim, D-16).
   - `itrader/price_handler/providers/replay_provider.py::ReplayDataProvider` → **`TestLiveDataProvider`**
     in `tests/` (rename + relocate). Its unit tests (`tests/unit/price/test_replay_provider.py`) follow.
-  - `itrader/venues/paper_plugin.py::ReplayDataPlugin` (the data plugin that BUILDS the provider) → a
-    **test-only plugin in `tests/`**, registered ONLY by a test fixture — NOT by production
-    `build_live_system`. `PaperVenuePlugin` (the EXECUTION venue) **stays** in `itrader/venues/`
-    (D-20) — the file splits: execution plugin stays, data plugin leaves.
+  - `itrader/venues/paper_plugin.py::ReplayDataPlugin` (the data plugin that BUILDS the provider) →
+    **`TestDataPlugin`** in `tests/` (rename + relocate; `__test__ = False`), registered ONLY by a test
+    fixture — NOT by production `build_live_system`. `PaperVenuePlugin` (the EXECUTION venue) **stays**
+    in `itrader/venues/` (D-20) — the file splits: execution plugin stays, data plugin leaves.
   - `PAPER_PARITY_*` constants + `_PAPER_*` → `tests/`.
   - **Production `paper` re-points to the OKX live data feed** (D-21) — the `paper`↔`replay` pairing
     now exists ONLY inside the test fixture.
@@ -385,10 +385,11 @@ test infrastructure that does not belong in production; (c) rename `ReplayRunner
   constants (`:80-100` region) + `_PAPER_*` leave production.
 - `itrader/price_handler/providers/replay_provider.py::ReplayDataProvider` → `tests/`
   `TestLiveDataProvider` (rename + relocate; `__test__ = False`). Consumers to repoint:
-  `itrader/venues/paper_plugin.py:103/109` (the `ReplayDataPlugin` that builds it — also moves to
-  `tests/`), `itrader/price_handler/feed/live_bar_feed.py:472/493` + `live_provider.py:15` (doc refs).
+  `itrader/venues/paper_plugin.py:103/109` (the `ReplayDataPlugin` that builds it → `TestDataPlugin`,
+  also moves to `tests/`), `itrader/price_handler/feed/live_bar_feed.py:472/493` + `live_provider.py:15`
+  (doc refs).
 - `itrader/venues/paper_plugin.py` — SPLITS: `PaperVenuePlugin` (execution) STAYS; `ReplayDataPlugin`
-  (data) → test-only plugin registered by the fixture (D-18).
+  (data) → **`TestDataPlugin`** in `tests/`, registered by the fixture (D-18).
 - `itrader/trading_system/live_trading_system.py:517/535` — drop `data_registry.register('replay', ...)`
   from production; change the data-provider map to `{'okx':'okx','paper':'okx'}` (paper → OKX live feed,
   D-21). The `paper`↔replay pairing moves into the test fixture.

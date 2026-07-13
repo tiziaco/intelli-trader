@@ -165,7 +165,8 @@ production `paper` re-points to the **OKX live feed** (`{'okx':'okx','paper':'ok
 provider today; = the v1.7 live-paper-on-OKX DoD) — touches only the data-provider SELECTION, not paper
 execution. Owner confirmed paper→live-feed. Also flagged the pytest hazard: `Test*`-prefixed classes are
 auto-collected → `filterwarnings=["error"]` makes it a hard failure → set `__test__ = False` (D-22). The
-`ReplayDataPlugin` moves to `tests/` too (paper_plugin.py splits: execution stays, data leaves).
+`ReplayDataPlugin` → **`TestDataPlugin`** moves to `tests/` too (paper_plugin.py splits: execution stays,
+data leaves) — same rename logic, same `__test__ = False` guard.
 
 ---
 
