@@ -168,7 +168,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `__init__` sheds `exchange`/`to_sql`/`queue_timeout`/`max_idle_time` (from config/spec) (concerns 8/25,
   §11e).
 
-- [ ] **RUN-04**: A shared `UniverseWiring` helper (`derive_membership → build Universe → inject
+- [x] **RUN-04**: A shared `UniverseWiring` helper (`derive_membership → build Universe → inject
   exchange/order/portfolio/strategies → feed.bind`) is extracted and reused by both `BacktestRunner` and
   the live `SessionInitializer`, moved as one intact unit incl. the WR-03 desync assert — **oracle
   byte-exact** (§13a, oracle-sensitive).
@@ -395,7 +395,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | RUN-01 | P6 | Pending |
 | RUN-02 | P6 | Pending |
 | RUN-03 | P6 | Pending |
-| RUN-04 | P6 | Pending |
+| RUN-04 | P6 | Complete |
 | RUN-05 | P6 | Pending |
 | RUN-06 | P6 | Pending |
 | RUN-07 | P6 | Pending |

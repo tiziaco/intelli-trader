@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 6
-current_phase_name: LiveRunner + Factory + Facade Shrink
+current_phase: 06
+current_phase_name: liverunner-factory-facade-shrink
 status: executing
 stopped_at: Phase 6 context gathered
-last_updated: "2026-07-13T11:22:32.816Z"
+last_updated: "2026-07-13T11:39:09.702Z"
 last_activity: 2026-07-13
-last_activity_desc: "Completed quick task 260713-dbw: consolidate live-provider surface to the single LiveDataProvider Protocol"
+last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 9
   completed_phases: 5
-  total_plans: 19
-  completed_plans: 19
+  total_plans: 26
+  completed_plans: 20
   percent: 56
 ---
 
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 05 — Venue Registry + Bundle
+**Current focus:** Phase 06 — liverunner-factory-facade-shrink
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 6 — LiveRunner + Factory + Facade Shrink
-Plan: Not started
+Phase: 06 (liverunner-factory-facade-shrink) — EXECUTING
+Plan: 2 of 7
 Status: Ready to execute
-Last activity: 2026-07-13 — Completed quick task 260713-dbw: consolidate live-provider surface to the single LiveDataProvider Protocol
+Last activity: 2026-07-13 — Phase 06 execution started
 
 Progress: [████░░░░░░] 44%
 
@@ -154,6 +154,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: 05-06 (D-10): VenueLifecycle is a small class encoding the fixed connector start/stop order, None-guarding paper's absent connector (start no-ops when bundle.connector is None; stop prefers ConnectorProvider.close_all, falls back to connector.disconnect)
 - [Phase ?]: 05-06: plugin/ConnectorProvider imports stay LAZY inside LTS.__init__ not module top — trading_system/__init__.py imports LiveTradingSystem, so a module-top okx_plugin/paper_plugin/ConnectorProvider import would pull them onto the backtest import graph (inertness _FORBIDDEN) and redden test_okx_inertness
 - [Phase ?]: 05-06: VenueBundle.lifecycle retyped Any -> VenueLifecycle | None (05-04 forward-seam closed); TYPE_CHECKING forward-ref keeps the substrate import-inert
+- [Phase ?]: [Phase 06]: 06-01 (RUN-04/D-01/D-02): wire_universe(engine)->Universe extracted as ONE intact TABS free function in trading_system/universe_wiring.py; backtest_runner delegates to it, keeps ping-grid+precompute post-step; ADDS strategies_handler.set_universe (inert by construction) PROVEN byte-exact 134/46189.87730727451 on determinism double-run; inertness green
 
 ### Pending Todos
 
@@ -197,6 +198,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 |---|-------------|------|--------|-----------|
 | 260713-cvb | Fix WR-02: ConnectorProvider.close_all isolates each disconnect + always clears memo (bound logger) | 2026-07-13 | 5045db99 | [260713-cvb-fix-connector-close-all-teardown](./quick/260713-cvb-fix-connector-close-all-teardown/) |
 | 260713-dbw | Consolidate live-provider surface to one symbol: drop BaseLiveDataProvider, keep the LiveDataProvider Protocol, inline the 7 no-op seams into ReplayDataProvider | 2026-07-13 | d3dec871 | [260713-dbw-consolidate-the-two-live-provider-symbol](./quick/260713-dbw-consolidate-the-two-live-provider-symbol/) |
+| Phase 06 P01 | 4 min | 2 tasks | 2 files |
 
 ## Deferred Items
 
@@ -245,7 +247,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-13T09:19:07.939Z
+Last session: 2026-07-13T11:38:40.805Z
 Stopped at: Phase 6 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
