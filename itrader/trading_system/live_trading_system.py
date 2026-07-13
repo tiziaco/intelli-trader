@@ -572,8 +572,8 @@ class LiveTradingSystem:
 
             # (4) UNIFORM provider->feed wiring (D-10): applied on the lifecycle
             # provider REGARDLESS of venue. The replay provider no-ops the streaming
-            # seams via the 05-03 BaseLiveDataProvider defaults, so the former
-            # paper/okx wiring divergence is gone. set_provider assigns self._provider
+            # seams via its own inline no-op methods, so the former paper/okx wiring
+            # divergence is gone. set_provider assigns self._provider
             # (the private attr warmup()/gap-backfill read) and MUST precede any
             # warmup/start_stream call.
             self.feed.set_provider(provider)

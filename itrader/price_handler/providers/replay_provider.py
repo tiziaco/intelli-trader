@@ -40,17 +40,16 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from decimal import Decimal
-from typing import Callable
+from typing import Any, Callable
 
 from itrader.config.stream import FeedProviderSettings
 from itrader.core.money import to_money
 from itrader.logger import get_itrader_logger
-from itrader.price_handler.providers.live_provider import BaseLiveDataProvider
 from itrader.price_handler.providers.okx_provider import ClosedBar
 from itrader.price_handler.store.csv_store import CsvPriceStore
 
 
-class ReplayDataProvider(BaseLiveDataProvider):
+class ReplayDataProvider:
     """Replay the golden ``CsvPriceStore`` frame as confirm-gated ``ClosedBar`` dicts.
 
     Constructed with the committed golden store (default ``CsvPriceStore()`` — the pinned
@@ -63,14 +62,14 @@ class ReplayDataProvider(BaseLiveDataProvider):
     The confirm gate is satisfied by construction — every stored row is a completed bar, so
     each is handed straight to the sink (no ``confirm != "1"`` drop needed).
 
-    Uniform provider surface (VENUE-05 / D-10): inherits ``BaseLiveDataProvider`` to gain
-    NO-OP defaults for the optional streaming/wiring seams (``set_global_queue`` /
-    ``set_halt_signal`` / ``set_stream_state_listener`` / ``subscribe`` / ``unsubscribe`` /
-    ``spawn_warmup`` / ``is_streaming_healthy`` → ``True``). Offline replay does NOT stream,
+    Uniform provider surface (VENUE-05 / D-10): inherits nothing — it implements the
+    optional streaming/wiring seams (``set_global_queue`` / ``set_halt_signal`` /
+    ``set_stream_state_listener`` / ``subscribe`` / ``unsubscribe`` / ``spawn_warmup`` /
+    ``is_streaming_healthy`` → ``True``) DIRECTLY as no-ops. Offline replay does NOT stream,
     so these are DELIBERATE no-ops — they exist only so the ``VenueLifecycle`` (05-06) can
     call the streaming seams UNCONDITIONALLY on any provider (killing the venue-string
-    provider-wiring branch). It keeps its own real ``set_bar_sink`` (the base does not
-    default it), so ``isinstance(ReplayDataProvider(...), LiveDataProvider)`` is True.
+    provider-wiring branch). It keeps its own real ``set_bar_sink``, so
+    ``isinstance(ReplayDataProvider(...), LiveDataProvider)`` is True.
     """
 
     def __init__(
@@ -175,3 +174,40 @@ class ReplayDataProvider(BaseLiveDataProvider):
             if since is None or cb["ts"] >= since
         ]
         return bars[:limit]
+
+    # -- Optional streaming/wiring seams: inline no-ops (VENUE-05 / D-10) -------
+    # Offline replay does NOT stream, so each of these is a DELIBERATE no-op. They
+    # exist only so the VenueLifecycle (05-06) can call the streaming seams
+    # UNCONDITIONALLY on any provider — no venue-string branch, no hasattr probe.
+
+    def set_global_queue(self, global_queue: Any) -> None:
+        """No-op: a non-streaming provider emits no async warmup events."""
+        return None
+
+    def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
+        """No-op: a non-streaming provider raises no connector-fatal halt."""
+        return None
+
+    def set_stream_state_listener(
+        self,
+        on_down: Callable[[str], None],
+        on_up: Callable[[str], None],
+    ) -> None:
+        """No-op: a non-streaming provider never goes down/up."""
+        return None
+
+    def subscribe(self, symbol: str) -> None:
+        """No-op: a non-streaming provider has no per-symbol stream to subscribe."""
+        return None
+
+    def unsubscribe(self, symbol: str) -> None:
+        """No-op: a non-streaming provider has no per-symbol stream to unsubscribe."""
+        return None
+
+    def spawn_warmup(self, symbol: str, timeframe: str, limit: int) -> None:
+        """No-op: a non-streaming provider does no loop-native REST warmup."""
+        return None
+
+    def is_streaming_healthy(self) -> bool:
+        """A non-streaming provider is trivially healthy."""
+        return True
