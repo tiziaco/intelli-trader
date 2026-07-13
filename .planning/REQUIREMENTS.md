@@ -156,14 +156,14 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### LiveRunner + Factory + Facade Shrink (P6)
 
-- [ ] **RUN-01**: `build_live_system(spec)` is the live factory / composition root — reads centralized
+- [x] **RUN-01**: `build_live_system(spec)` is the live factory / composition root — reads centralized
   config, builds the one `sql_engine`, resolves venue plugin(s), assembles `EngineContext`, calls
   `compose_engine`, builds bundle(s) + `LiveRunner` + controllers (LR-10/§5).
 
 - [x] **RUN-02**: `LiveRunner` owns the drain loop + injected `ErrorPolicy` + worker supervision,
   replacing `_event_processing_loop` (§5).
 
-- [ ] **RUN-03**: `LiveTradingSystem` shrinks to a ~200-line facade (lifecycle, status/read-model,
+- [x] **RUN-03**: `LiveTradingSystem` shrinks to a ~200-line facade (lifecycle, status/read-model,
   `add_event`; delegates everything else); legacy `print_status`/`get_statistics` dropped;
   `__init__` sheds `exchange`/`to_sql`/`queue_timeout`/`max_idle_time` (from config/spec) (concerns 8/25,
   §11e).
@@ -392,9 +392,9 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | VENUE-05 | P5 | Complete |
 | VENUE-06 | P5 | Complete |
 | VENUE-07 | P5 | Complete |
-| RUN-01 | P6 | Pending |
+| RUN-01 | P6 | Complete |
 | RUN-02 | P6 | Complete |
-| RUN-03 | P6 | Pending |
+| RUN-03 | P6 | Complete |
 | RUN-04 | P6 | Complete |
 | RUN-05 | P6 | Complete |
 | RUN-06 | P6 | Complete |
