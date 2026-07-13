@@ -180,6 +180,39 @@ assert not _okx_leaked, (
     "at module or register time — D-04 triple-deferral)"
 )
 
+# Phase 6 (06-06, RUN-01/RUN-03 register-vs-build): the new live composition-root
+# surface — the ``build_live_system`` factory + the ``LiveRunner`` runtime (which
+# composes ``WorkerSupervisor`` + the minimal ``ErrorPolicy``) + the
+# ``LiveRouteRegistrar`` + ``SessionInitializer`` — must stay import-inert on the
+# backtest path. All their live/venue/SQL wiring lives INSIDE ``build_live_system``'s
+# body (never at module or import time), so IMPORTING them (register, not build) pulls
+# NO ccxt.pro / ccxt and constructs NO ``SqlSettings`` (the `sql` cached_property stays
+# unresolved). This is the register-vs-build proof for the P6 decomposition: if a future
+# edit hoists a venue/connector/ccxt/SqlSettings import to module scope in any of these
+# modules (or into ``build_live_system``'s top-level), importing them here pulls the OKX/
+# SQL stack and this assertion fails loudly — protecting the oracle + the W1/W2 perf gate.
+from itrader.trading_system.live_trading_system import build_live_system  # noqa: F401
+from itrader.trading_system.live_runner import LiveRunner  # noqa: F401
+from itrader.trading_system.worker_supervisor import WorkerSupervisor  # noqa: F401
+from itrader.trading_system.error_policy import ErrorPolicy  # noqa: F401
+from itrader.trading_system.route_registrar import LiveRouteRegistrar  # noqa: F401
+from itrader.trading_system.session_initializer import SessionInitializer  # noqa: F401
+
+_p6_heavy = [name for name in ("ccxt.pro", "ccxt", "itrader.connectors.okx") if name in sys.modules]
+assert not _p6_heavy, (
+    "P6 register-vs-build inertness violation (RUN-01/RUN-03): importing the new live "
+    "factory/runner/registrar surface (build_live_system / LiveRunner / WorkerSupervisor "
+    "/ ErrorPolicy / LiveRouteRegistrar / SessionInitializer) pulled the OKX/ccxt stack: "
+    + repr(_p6_heavy)
+    + " — the venue/connector/ccxt imports must stay INSIDE build_live_system's body "
+    "(register != build, D-04)"
+)
+assert "sql" not in _cfg.__dict__, (
+    "P6 register-vs-build inertness violation (RUN-01): importing build_live_system / "
+    "LiveRunner resolved the lazy `sql` cached_property on the config singleton — the "
+    "live sql_engine must be built INSIDE build_live_system, never at import"
+)
+
 print("INERTNESS_OK")
 """
 
