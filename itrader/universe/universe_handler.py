@@ -31,6 +31,7 @@ never handed to ``Universe``.
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from queue import Queue
@@ -57,11 +58,35 @@ from itrader.outils.time_parser import to_timedelta
 from itrader.universe.membership import UniverseSelectionModel
 from itrader.universe.universe import Universe
 
-__all__ = ["UniverseHandler"]
+__all__ = ["UniverseHandler", "UniverseHandlerConfig"]
 
 # The two supported remove-policy dispositions (D-01). Default orphan-and-track.
 _ORPHAN_AND_TRACK = "orphan-and-track"
 _FORCE_CLOSE = "force-close"
+
+
+@dataclass(frozen=True)
+class UniverseHandlerConfig:
+    """RUN-06/D-11: the two live-plane knobs the first-class ``UniverseHandler`` reads.
+
+    Collapses the two former ctor params (``timeframe`` + ``remove_policy``) into the
+    single injected ``config`` of the RUN-06 literal dep list ``(bus, universe, feed,
+    config)`` — the handler reads BOTH values off this object, holding no OKX coupling
+    and no dependency on ``SystemConfig`` internals.
+
+    Provenance (the live/monitoring plane — NEVER ``PerformanceSettings``, so the
+    backtest oracle config is untouched, §8/D-01):
+
+    - ``poll_timeframe`` — was ``_STREAM_SETTINGS.okx_stream_timeframe``; the bar
+      timeframe passed to ``feed.warmup`` on add and used for the CR-01 re-warm
+      cadence gate.
+    - ``remove_policy`` — was ``SystemConfig.monitoring.universe_remove_policy``; the
+      open-position-on-remove disposition (``"orphan-and-track"`` default vs
+      ``"force-close"``).
+    """
+
+    poll_timeframe: str
+    remove_policy: str = _ORPHAN_AND_TRACK
 
 # Engine-owned id generator for the fabricated force-close exit signal's
 # strategy_id (single UUIDv7 scheme). Constructed once at import (live-only file).
@@ -113,6 +138,22 @@ class _SupportsResolvePrecision(Protocol):
     def resolve_precision(self, symbol: str) -> Instrument | None: ...
 
 
+class _VenueMetadataSource(Protocol):
+    """The venue capability set ``set_venue_metadata`` reads (RUN-06/D-11).
+
+    Both ``validate_symbol`` (D-06 poll filter) and ``resolve_precision``
+    (VENUE-04/D-09 poll-added-symbol precision) are abstract ``AbstractExchange``
+    capabilities since P5 VENUE-04 — the live ``OkxExchange`` AND paper/replay's
+    ``SimulatedExchange`` BOTH satisfy this Protocol (the simulated exchange returns
+    permissive defaults per P5 D-09). So the seam collapse is UNCONDITIONAL: no OKX
+    ``None``-guard, zero OKX coupling.
+    """
+
+    def validate_symbol(self, symbol: str) -> bool: ...
+
+    def resolve_precision(self, symbol: str) -> Instrument | None: ...
+
+
 class _SupportsSubscribe(Protocol):
     """The data-plane provider shape the add/remove branch drives (Arm B, plan 02).
 
@@ -151,49 +192,53 @@ class _StrategyWarmthReadModel(Protocol):
 class UniverseHandler:
     """Live-only poll host + add-side ``UniverseUpdateEvent`` consumer (Arm A).
 
-    Constructed live-only (plan 05); nothing here is on the backtest import or
-    per-tick path. Holds the queue + universe + feed + timeframe, plus three
-    live-only injected seams (selection source, symbol validator, provider) that
-    default to ``None`` so an unwired handler is inert.
+    First-class handler (RUN-06/D-11): constructed at the live composition root with
+    the explicit, OKX-free dep list ``(bus, universe, feed, config)`` — the poll
+    ``timeframe`` and ``remove_policy`` are READ FROM ``config`` (a
+    ``UniverseHandlerConfig``), not passed as separate params. Constructed live-only
+    (plan 05); nothing here is on the backtest import or per-tick path.
+
+    Venue metadata (``validate_symbol`` + ``resolve_precision``) is wired through the
+    single ``set_venue_metadata(exchange)`` seam (D-11) — both are abstract
+    ``AbstractExchange`` capabilities since P5 VENUE-04, so there is NO OKX coupling.
+    The 4 cross-domain read-model seams (selection source, provider, portfolio
+    read-model, strategy warmth) plus the interim ``set_freeze_gate`` callable stay as
+    explicit setters (D-11), defaulting to ``None`` so an unwired handler is inert.
     """
 
     def __init__(
         self,
         *,
-        global_queue: "Queue[Any]",
+        bus: "Queue[Any]",
         universe: Universe,
         feed: _SupportsWarmup,
-        timeframe: str,
-        remove_policy: str = _ORPHAN_AND_TRACK,
+        config: UniverseHandlerConfig,
     ) -> None:
-        """Hold the queue + universe read-model + feed + poll timeframe.
+        """Hold the bus + universe read-model + feed; read poll knobs from ``config``.
 
         Parameters
         ----------
-        global_queue : Queue
-            The trading-system event queue; ``on_poll`` puts ``UniverseUpdateEvent``.
+        bus : Queue
+            The trading-system event bus/queue; ``on_poll`` puts ``UniverseUpdateEvent``.
         universe : Universe
             The injected membership read-model — the SOLE source/sink of membership
             (the handler holds NO membership copy). Read via ``.members``, mutated
             via ``.apply``.
         feed : _SupportsWarmup
             The ``LiveBarFeed`` — warmed per added symbol BEFORE subscribe (Pitfall 6).
-        timeframe : str
-            The bar timeframe passed to ``feed.warmup`` on add.
-        remove_policy : str, optional
-            The open-position-on-remove disposition (D-01). Default
-            ``"orphan-and-track"`` (keep the WS/ring alive until the orphaned
-            position goes flat, blocking new entries meanwhile); ``"force-close"``
-            emits a market exit at removal then detaches. This flag lives in the
-            LIVE/poll-seam config (wired by plan 05) — NOT
-            ``SystemConfig.PerformanceSettings`` — so the backtest oracle is
-            untouched (§8, D-01).
+        config : UniverseHandlerConfig
+            The RUN-06/D-11 live-plane config the handler reads the poll
+            ``poll_timeframe`` (was ``_STREAM_SETTINGS.okx_stream_timeframe``) and
+            ``remove_policy`` (was ``SystemConfig.monitoring.universe_remove_policy``)
+            from. These knobs live on the LIVE/monitoring plane — NOT
+            ``SystemConfig.PerformanceSettings`` — so the backtest oracle is untouched
+            (§8, D-01).
         """
-        self._global_queue = global_queue
+        self._bus = bus
         self._universe = universe
         self._feed = feed
-        self._timeframe = timeframe
-        self._remove_policy = remove_policy
+        self._timeframe = config.poll_timeframe
+        self._remove_policy = config.remove_policy
 
         # CR-01-retry (Level 2) handler-local live-only state (oracle-dark — the
         # backtest composition root never constructs UniverseHandler). Both are pure
@@ -245,20 +290,22 @@ class UniverseHandler:
         """
         self._freeze_gate = gate
 
-    def set_symbol_validator(self, validator: _SymbolValidator) -> None:
-        """Wire the D-06 venue bound (``validate_symbol``) the poll filters through."""
-        self._symbol_validator = validator
+    def set_venue_metadata(self, exchange: _VenueMetadataSource) -> None:
+        """Wire the venue-metadata seams (RUN-06/D-11) from ONE exchange object.
 
-    def set_precision_resolver(self, resolver: _SupportsResolvePrecision) -> None:
-        """Wire the VENUE-04/D-09 venue-precision capability for poll-added symbols.
-
-        ``resolver`` is the exchange itself (it now exposes ``resolve_precision``).
-        With one wired, ``on_poll`` resolves each newly-added symbol to a
-        venue-precision ``Instrument`` from the venue markets map before ``apply``;
-        with none wired (paper/replay) an added symbol falls to ``Universe``'s
-        ``_DEFAULT_*`` ladder. ``Universe`` stays connector-free (D-09).
+        Collapses the two former OKX-guarded setters ``set_symbol_validator`` +
+        ``set_precision_resolver`` into a single UNCONDITIONAL call: the exchange's
+        ``validate_symbol`` (D-06 poll filter) and ``resolve_precision`` (VENUE-04/D-09
+        poll-added-symbol precision) are BOTH abstract ``AbstractExchange`` capabilities
+        since P5 VENUE-04, and paper/replay's ``SimulatedExchange`` returns permissive
+        defaults (P5 D-09) — so there is NO OKX ``None``-guard = zero OKX coupling. Sets
+        both ``_symbol_validator`` and ``_precision_resolver`` to the exchange; the
+        on_poll validate/resolve behavior is unchanged (with an unresolvable symbol
+        still falling to ``Universe.apply``'s ``_DEFAULT_*`` ladder, ``Universe`` stays
+        connector-free — D-09).
         """
-        self._precision_resolver = resolver
+        self._symbol_validator = exchange
+        self._precision_resolver = exchange
 
     def set_provider(self, provider: _SupportsSubscribe) -> None:
         """Wire the data-plane provider the add/remove branch drives (plan 05)."""
@@ -368,7 +415,7 @@ class UniverseHandler:
         if not added and not delta.removed:
             return
 
-        self._global_queue.put(
+        self._bus.put(
             UniverseUpdateEvent(
                 time=event.time, added=added, removed=delta.removed
             )
@@ -684,4 +731,4 @@ class UniverseHandler:
             direction=TradingDirection.LONG_SHORT,
             exit_fraction=Decimal("1"),
         )
-        self._global_queue.put(signal)
+        self._bus.put(signal)
