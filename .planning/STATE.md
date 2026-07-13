@@ -6,14 +6,14 @@ current_phase: 06
 current_phase_name: liverunner-factory-facade-shrink
 status: executing
 stopped_at: Phase 6 context gathered
-last_updated: "2026-07-13T11:54:43.711Z"
+last_updated: "2026-07-13T12:09:24.614Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 9
   completed_phases: 5
   total_plans: 26
-  completed_plans: 22
+  completed_plans: 23
   percent: 56
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 06 (liverunner-factory-facade-shrink) — EXECUTING
-Plan: 4 of 7
+Plan: 5 of 7
 Status: Ready to execute
 Last activity: 2026-07-13 — Phase 06 execution started
 
@@ -158,6 +158,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: RUN-02: LiveRunner/WorkerSupervisor/ErrorPolicy authored as standalone import-inert 4-space modules; unwired here, build_live_system wires them in 06-05
 - [Phase ?]: D-04 held: live_trading_system.py facade byte-untouched this plan; LiveRunner reaches facade side-effects via injected callbacks
 - [Phase 06]: 06-03 (RUN-07/D-17): _LiveWarmupConsumer rehomed to price_handler/feed/cache_registration.py as frozen StrategyWarmupConsumer (ONE global ring); derive_warmup_depth(strategies) is the NAMED CF-10 depth boundary (global max(warmup) today, per-concerned-strategy later — body-only change); register_strategy_warmup(feed, strategies) is the reusable entry point for SessionInitializer (06-04). Named distinctly from derive() raw-history ladder (Landmine 4); import-inert, 4-space, mypy clean; old consumer stays in LTS until 06-04; oracle byte-exact 134/46189.87730727451
+- [Phase ?]: 06-04/RUN-06: UniverseHandler ctor is (bus, universe, feed, config); timeframe+remove_policy read from a flat UniverseHandlerConfig value object; set_venue_metadata(exchange) collapses the two former OKX-guarded venue setters (zero OKX coupling); 4 read-model setters + set_freeze_gate retained (D-11)
 
 ### Pending Todos
 
@@ -204,6 +205,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | Phase 06 P01 | 4 min | 2 tasks | 2 files |
 | Phase 06 P02 | 12 min | 3 tasks | 3 files |
 | Phase 06 P03 | 6min | 1 tasks | 1 files |
+| Phase 06 P04 | 13min | 2 tasks | 7 files |
 
 ## Deferred Items
 
@@ -252,7 +254,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-13T11:54:10.550Z
+Last session: 2026-07-13T12:09:01.626Z
 Stopped at: Phase 6 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.

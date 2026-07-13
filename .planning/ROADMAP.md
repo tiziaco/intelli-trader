@@ -267,7 +267,7 @@ Plans:
 
 - [x] 06-02-PLAN.md — RUN-02: `LiveRunner` + `WorkerSupervisor` + minimal `ErrorPolicy` (new standalone modules) (wave 2)
 - [x] 06-03-PLAN.md — RUN-07: rehome `StrategyWarmupConsumer` + `register_strategy_warmup` + named `derive_warmup_depth` (CF-10 seam) (wave 2)
-- [ ] 06-04-PLAN.md — RUN-06: `UniverseHandler` first-class ctor `(bus, universe, feed, config)` + `set_venue_metadata`; caller migration (wave 2)
+- [x] 06-04-PLAN.md — RUN-06: `UniverseHandler` first-class ctor `(bus, universe, feed, config)` + `set_venue_metadata`; caller migration (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -383,7 +383,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
-| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 3/7 | In Progress|  |
+| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 4/7 | In Progress|  |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |

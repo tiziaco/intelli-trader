@@ -177,7 +177,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   `EventHandler` declaratively (list order = execution order); no subclass, no runtime mutation; backtest
   gets base routes only (LR-16/§13c).
 
-- [ ] **RUN-06**: `UniverseHandler` is constructed at the live composition root as a first-class handler
+- [x] **RUN-06**: `UniverseHandler` is constructed at the live composition root as a first-class handler
   with explicit deps (`bus`, `universe`, `feed`, `config`) — zero OKX coupling (symbol validation/precision
   via `set_venue_metadata(exchange)`) (concern 10/§13b).
 
@@ -397,7 +397,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | RUN-03 | P6 | Pending |
 | RUN-04 | P6 | Complete |
 | RUN-05 | P6 | Pending |
-| RUN-06 | P6 | Pending |
+| RUN-06 | P6 | Complete |
 | RUN-07 | P6 | Pending |
 | SAFE-01 | P7 | Pending |
 | SAFE-02 | P7 | Pending |
