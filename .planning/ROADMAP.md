@@ -104,7 +104,7 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 - [x] **Phase 3: EngineContext + Storage-in-Handler** - `EngineContext` threaded into `compose_engine(ctx, spec)`, handler-owns storage init, `SqlBackend→SqlEngine` rename (CTX-01..04) (completed 2026-07-09)
 - [x] **Phase 4: Storage Schema: Migrations Relocation + New Durable Stores** - `migrations/` → project root FIRST, then `SystemStore`/`VenueStore`/`StrategyRegistryStore` chained on the `HaltRecordStore` template; single-head + parity Alembic gate over the FULL chain + rehydrate (SQL-01..02, STORE-01..05) (completed 2026-07-09)
 - [x] **Phase 5: Venue Registry + Bundle** - Two registries, `VenuePlugin`/`VenueBundle`, precision/validate on the exchange, connector memoization, shared `StreamSupervisor` — kills every `if exchange==` (VENUE-01..07) (completed 2026-07-12)
-- [ ] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade, replay-harness→`tests/` (`TestRunner`/`TestLiveDataProvider`; paper→OKX live feed) (RUN-01..07, TEST-01)
+- [x] **Phase 6: LiveRunner + Factory + Facade Shrink** - `build_live_system`, `LiveRunner`, shared `UniverseWiring` *(oracle-sensitive)*, `LiveRouteRegistrar`, ~200-line facade, replay-harness→`tests/` (`TestRunner`/`TestLiveDataProvider`; paper→OKX live feed) (RUN-01..07, TEST-01) (completed 2026-07-13)
 - [ ] **Phase 7: Safety + Reconciliation + Stream Recovery** - `SafetyController`, `ReconciliationCoordinator`, `StreamRecoveryHandler`, CONTROL routes, pre-trade throttle — flag machinery deleted (SAFE-01..06)
 - [ ] **Phase 8: Error Subsystem** - Injected `ErrorPolicy`, formalized `ErrorHandler`, two-guard terminal safety, CF-1 aggregate circuit breaker (ERR-01..04)
 - [ ] **Phase 9 ★: Runtime-Config Platform** - `RuntimeConfig` overlay, scoped `ConfigUpdateEvent` + allowlist, restart layering, stats/state UI read-model (RTCFG-01..06)
@@ -383,7 +383,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
-| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete   | 2026-07-13 |
+| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete    | 2026-07-13 |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |

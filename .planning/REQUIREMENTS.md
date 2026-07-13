@@ -181,7 +181,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   with explicit deps (`bus`, `universe`, `feed`, `config`) — zero OKX coupling (symbol validation/precision
   via `set_venue_metadata(exchange)`) (concern 10/§13b).
 
-- [ ] **RUN-07**: `_LiveWarmupConsumer` is rehomed to `price_handler/feed/cache_registration.py` as a
+- [x] **RUN-07**: `_LiveWarmupConsumer` is rehomed to `price_handler/feed/cache_registration.py` as a
   reusable `StrategyWarmupConsumer` sized to `max(strategy.warmup)`; the depth-hint seam is shaped for
   CF-10 (the K-computation change itself stays deferred) (concern 26/§13d).
 
@@ -398,7 +398,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | RUN-04 | P6 | Complete |
 | RUN-05 | P6 | Complete |
 | RUN-06 | P6 | Complete |
-| RUN-07 | P6 | Pending |
+| RUN-07 | P6 | Complete |
 | SAFE-01 | P7 | Pending |
 | SAFE-02 | P7 | Pending |
 | SAFE-03 | P7 | Pending |
