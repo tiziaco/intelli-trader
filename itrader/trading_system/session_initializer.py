@@ -44,7 +44,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from itrader.core.exceptions import ConfigurationError
 from itrader.price_handler.feed.cache_registration import register_strategy_warmup
 from itrader.trading_system.route_registrar import LiveRouteRegistrar
 from itrader.trading_system.universe_wiring import wire_universe
@@ -112,27 +111,19 @@ class SessionInitializer:
         register_strategy_warmup(
             engine.feed, engine.strategies_handler.strategies)
 
-        # (3) WR-03 generalized (D-05): assert every symbol the engine will subscribe
-        # is a universe member so the feed ring key and the strategy's window() ticker
-        # can never diverge (else MissingPriceDataError only at the FIRST window(),
-        # deep on the live path). start() subscribes exactly the members, so the check
-        # is tautological today but fails loudly at wiring if a future edit subscribes
-        # a symbol whose form diverges. Guarded on a non-empty membership (an empty
-        # universe streams nothing) + a live data provider (paper streams nothing).
-        if self._data_provider is not None and universe.members:
-            members = universe.members
-            subscribed = list(members)  # start() subscribes exactly the members
-            mismatched = [s for s in subscribed if s not in members]
-            if mismatched:
-                raise ConfigurationError(
-                    config_key="okx_stream_symbols",
-                    config_value=repr(mismatched),
-                    reason=(
-                        f"subscribed symbol(s) {mismatched!r} are not members of "
-                        f"the universe {members!r}; the feed ring key and the "
-                        "strategy's window() ticker would mismatch "
-                        "(MissingPriceDataError at first window()). Subscribe only "
-                        "universe members."))
+        # (3) WR-03 subscription/membership invariant — no guard needed TODAY.
+        # Subscription is derived SOLELY from universe.members: start() runs
+        # `for sym in universe.members: subscribe(sym)` (dynamic per-symbol subscribe,
+        # 06-02/D-05), and the old single-symbol start_stream() has no live call site,
+        # so the feed ring key and the strategy's window() ticker cannot diverge by
+        # construction. (The prior guard here compared `list(members)` against
+        # `members` — unconditionally empty, hence unreachable: false safety.)
+        # TODO: IF a future edit reintroduces an INDEPENDENT subscription source — an
+        # operator-configured stream-symbol allowlist, a per-member/per-strategy
+        # timeframe, or start_stream() re-wired into the live path — add a real
+        # wiring-time guard HERE asserting that independent subscribed set is a subset
+        # of universe.members BEFORE start() subscribes (else MissingPriceDataError
+        # only at the FIRST window(), deep on the live path).
 
         # (4) Build the first-class UniverseHandler (RUN-06/D-11 ctor: bus, universe,
         # feed, config). engine.feed is a LiveBarFeed on the live path (the compose
