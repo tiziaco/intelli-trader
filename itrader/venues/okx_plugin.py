@@ -21,11 +21,11 @@ registering) an OKX plugin pulls no ``ccxt.pro`` / ``OkxConnector`` / ``OkxSetti
 (register ≠ build). Hoisting any of these imports to module top silently reddens
 ``tests/integration/test_okx_inertness.py`` — DO NOT hoist them.
 
-Stream target: the OKX stream symbol/timeframe are read from a default-constructed
-``StreamSettings`` INSIDE ``build*`` (the P1 config seam, ``config/stream.py``),
-mirroring the retired composition-root ``_STREAM_SETTINGS`` reads. The account is a
-single default ``VenueAccount`` (D-07 — the per-portfolio ``account_id`` fan-out is
-P11).
+Stream target: the OKX stream symbol/timeframe are read from the injected
+``ctx.config.stream`` INSIDE ``build*`` (IN-01 — ``EngineContext.config`` is the
+process-wide ``SystemConfig`` singleton wired at the composition root; one wiring
+source, no inline default-construction). The account is a single default
+``VenueAccount`` (D-07 — the per-portfolio ``account_id`` fan-out is P11).
 
 Indentation: 4-SPACE (``venues/`` package convention). ``mypy --strict`` applies.
 """
@@ -70,21 +70,21 @@ class OkxVenuePlugin:
     ``build_bundle`` borrows the shared ``(venue, account_id)`` connector from the
     ``ConnectorProvider`` (so it never opens a second ccxt.pro client the data arm
     already built, D-03), wraps it in an ``OkxExchange``, and supplies a
-    ``VenueAccount`` factory. The concretion imports + ``StreamSettings()`` read
-    are all inside the body (D-04).
+    ``VenueAccount`` factory. The concretion imports live inside the body (D-04); the
+    stream target is the injected ``ctx.config.stream`` read (IN-01).
     """
 
     def build_bundle(self, ctx: Any, spec: Any, connectors: Any) -> VenueBundle:
         """Build the OKX execution ``VenueBundle`` over the shared connector."""
         # D-04: OKX concretions lazy-imported inside the body (never module top).
-        from itrader.config.stream import StreamSettings
         from itrader.execution_handler.exchanges.okx import OkxExchange
         from itrader.portfolio_handler.account import VenueAccount
         from itrader.venues.bundle import VenueBundle
 
-        # The P1 config seam: read the live stream target from a default-constructed
-        # StreamSettings (mirrors the retired _STREAM_SETTINGS composition-root read).
-        stream = StreamSettings()
+        # IN-01: read the live stream target from the injected SystemConfig
+        # (EngineContext.config is the process-wide singleton wired at the composition
+        # root) — one wiring source, no inline default-construction.
+        stream = ctx.config.stream
         symbol = stream.okx_stream_symbol
         # D-03 (quote-wiring): the settlement currency is the WIRED pair's right leg
         # (USDC for BTC/USDC — never the USDT default); spot per-symbol truth is
@@ -122,16 +122,17 @@ class OkxDataPlugin:
 
     ``build_provider`` borrows the SAME ``(venue, account_id)`` connector the
     execution plugin used (D-03), so the exec + data arms share one ccxt.pro client.
-    The concretion import + ``StreamSettings()`` read live inside the body (D-04).
+    The concretion import lives inside the body (D-04); the stream target is the
+    injected ``ctx.config.stream`` read (IN-01).
     """
 
     def build_provider(self, ctx: Any, spec: Any, connectors: Any) -> LiveDataProvider:
         """Build the OKX ``LiveDataProvider`` over the shared connector."""
         # D-04: OKX concretion lazy-imported inside the body (never module top).
-        from itrader.config.stream import StreamSettings
         from itrader.price_handler.providers.okx_provider import OkxDataProvider
 
-        stream = StreamSettings()
+        # IN-01: the injected SystemConfig stream target (one wiring source).
+        stream = ctx.config.stream
 
         # D-03: SAME memoized connector key as OkxVenuePlugin.build_bundle.
         account_id = spec.account_id or "default"

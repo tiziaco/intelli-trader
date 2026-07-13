@@ -16,7 +16,6 @@ from typing import Optional, Dict, Any, Callable
 # same freeze-in-place safety posture as the pre-D-14 blanket suppression).
 _DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
 
-from itrader.config.stream import StreamSettings
 from itrader.core.enums import ErrorSeverity, HaltReason, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
 from itrader.core.exceptions import ConfigurationError
 from itrader.events_handler.full_event_handler import EventHandler
@@ -70,17 +69,18 @@ _EXTERNALLY_ADMISSIBLE = frozenset({EventType.SIGNAL, EventType.STRATEGY_COMMAND
 # env; it MUST gate BEFORE constructing ``SqlSettings(driver=POSTGRESQL_PSYCOPG2)``, which
 # RAISES ``ValidationError`` (``_require_pg_credentials``) when no credential is present.
 
-# WR-03 / CFG-03 / D-08: the SINGLE wiring source for the live OKX subscription now
-# lives in StreamSettings (config/stream.py). The OKX data provider stamps this
+# WR-03 / CFG-03 / D-08 / IN-01: the SINGLE wiring source for the live OKX subscription
+# now lives in ``config.stream`` (the eager ``SystemConfig.stream`` field, backed by
+# StreamSettings in config/stream.py). The OKX data provider stamps this
 # symbol/timeframe into every ClosedBar (the feed's ring key), the feed warms up on
 # the same pair, and universe membership is checked against it — so the
 # OkxDataProvider constructor args and the feed.warmup() args can never drift into a
 # ring-key vs membership mismatch (which would otherwise surface only as a
-# MissingPriceDataError at first window()). A default-constructed StreamSettings is
-# the P1 seam; composition-root injection (and the universe-driven pair) land later.
+# MissingPriceDataError at first window()). Live-only read sites source
+# ``config.stream`` (the process-wide singleton) via a local ``from itrader import
+# config`` import; composition-root injection (and the universe-driven pair) land later.
 # BTC/USDC (not BTC/USDT): the OKX EEA entity restricts USDT spot pairs under MiCA —
 # an order on BTC/USDT returns sCode 51155 "local compliance restrictions".
-_STREAM_SETTINGS = StreamSettings()
 
 # TEST-01/D-18/D-21: the paper/backtest parity window + the offline replay driver left
 # this module for the test harness (tests/support/replay_harness.py). Production paper
@@ -364,7 +364,8 @@ class LiveTradingSystem:
         """
         if self._venue_account is None:
             return
-        symbol = _STREAM_SETTINGS.okx_stream_symbol
+        from itrader import config as _system_config
+        symbol = _system_config.stream.okx_stream_symbol
         venue_qty = self._venue_account.positions.get(symbol, Decimal('0'))
         # F/U-6: reuse the per-instrument drift epsilon (the same band the on-fill
         # drift compare keys off the wired instrument's quantity precision).
@@ -945,7 +946,7 @@ class LiveTradingSystem:
             # LIVE/monitoring config (NOT PerformanceSettings — §8/D-01 keeps the
             # backtest oracle config untouched).
             universe_config = UniverseHandlerConfig(
-                poll_timeframe=_STREAM_SETTINGS.okx_stream_timeframe,
+                poll_timeframe=_system_config.stream.okx_stream_timeframe,
                 remove_policy=_system_config.monitoring.universe_remove_policy,
             )
 
@@ -1063,10 +1064,11 @@ class LiveTradingSystem:
                 # replacing the single-symbol start_stream() with the per-member
                 # dynamic subscribe() seam (plan 02). A one-symbol universe subscribes
                 # exactly that one symbol, so the single wiring-time default falls out
-                # naturally. The StreamSettings stream timeframe remains the live timeframe.
+                # naturally. The config.stream timeframe remains the live timeframe.
+                from itrader import config as _system_config
                 members = self.universe.members if self.universe is not None else []
                 for sym in members:
-                    self.feed.warmup(sym, _STREAM_SETTINGS.okx_stream_timeframe)
+                    self.feed.warmup(sym, _system_config.stream.okx_stream_timeframe)
                     self._okx_data_provider.subscribe(sym)
 
             # CR-01 (RECON-02, RES-01): spawn the order-arm venue streams. This is

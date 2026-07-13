@@ -181,9 +181,10 @@ class OkxDataProvider:
         # constructed (the live path), never on the oracle hot path.
         import ccxt
 
+        from itrader import config
         from itrader.connectors.stream_supervisor import StreamSupervisor
         self._supervisor = StreamSupervisor(
-            StreamSettings(),
+            config.stream,
             transient_exceptions=(
                 ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection,
                 aiohttp.ClientError, ConnectionError, asyncio.TimeoutError),

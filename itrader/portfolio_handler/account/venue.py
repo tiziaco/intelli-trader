@@ -37,7 +37,6 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
-from itrader.config.stream import StreamSettings
 from itrader.core.exceptions import (
     InsufficientFundsError,
     InvalidTransactionError,
@@ -180,9 +179,10 @@ class VenueAccount(Account):
         # VenueAccount construction (live-only) keeps the leaf inert-by-import (CONN-04).
         import ccxt
 
+        from itrader import config
         from itrader.connectors.stream_supervisor import StreamSupervisor
         self._supervisor = StreamSupervisor(
-            StreamSettings(),
+            config.stream,
             transient_exceptions=(
                 ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection),
             fatal_exceptions=(ccxt.AuthenticationError, ccxt.PermissionDenied),
