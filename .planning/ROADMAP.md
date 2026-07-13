@@ -259,12 +259,26 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
 **Plans**: 7 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 06-01-PLAN.md — RUN-04: extract shared `wire_universe(engine)` (oracle-gated, isolated); repoint BacktestRunner (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 06-02-PLAN.md — RUN-02: `LiveRunner` + `WorkerSupervisor` + minimal `ErrorPolicy` (new standalone modules) (wave 2)
 - [ ] 06-03-PLAN.md — RUN-07: rehome `StrategyWarmupConsumer` + `register_strategy_warmup` + named `derive_warmup_depth` (CF-10 seam) (wave 2)
 - [ ] 06-04-PLAN.md — RUN-06: `UniverseHandler` first-class ctor `(bus, universe, feed, config)` + `set_venue_metadata`; caller migration (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 06-05-PLAN.md — RUN-05 + RUN-04(live): `LiveRouteRegistrar` + `SessionInitializer`; `_initialize_live_session` delegates (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 06-06-PLAN.md — RUN-01 + RUN-03: `build_live_system` factory + pure-injection facade + PriorityEventBus + `for_exchange` + ~45-site sweep (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 06-07-PLAN.md — TEST-01: replay harness → `tests/support/` (`TestRunner`/`TestLiveDataProvider`/`TestDataPlugin`); production replay-free, paper→OKX (wave 5)
 
 ### Phase 7: Safety + Reconciliation + Stream Recovery
