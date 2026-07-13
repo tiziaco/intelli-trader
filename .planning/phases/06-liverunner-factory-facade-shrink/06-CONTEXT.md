@@ -229,20 +229,42 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   "lands last" rationale is about TEST-02/03/04, which need the P7/P9/P11 surface); (2) P6 already
   decomposes the exact construction path `ReplayRunner` uses; (3) `run_paper_replay` has no production
   caller (it's a parity driver invoked by `test_paper_parity.py`) — moving it OUT of
-  `live_trading_system.py` removes dead weight, not a feature; (4) it composes with D-07 — `ReplayRunner`
-  injects a **fail-fast `ErrorPolicy`** via the P6 minimal seam (re-raise is trivial), so the relocated
-  parity gate is trustworthy from P6 (this SUPERSEDES the earlier in-discussion framing that deferred
-  replay fail-fast wholesale to P8 — P8 still formalizes only the LIVE side + circuit breaker). Scope of
+  `live_trading_system.py` removes dead weight, not a feature; (4) it needs NO new error machinery —
+  replay is fail-fast for free (see D-19). Scope of
   TEST-01: `run_paper_replay` → `ReplayRunner` in `tests/` (steps 2-3 verbatim, D-16); the `replay`
-  plugin (`SimulatedExchange` + `ReplayDataProvider` over the golden CSV) registered ONLY by a test
-  fixture (NOT by production `build_live_system`); `PAPER_PARITY_*`/`_PAPER_*` leave production;
-  production is replay-free. **Guardrail:** `test_paper_parity` is the safety net DURING P6's
+  **data** plugin (`ReplayDataProvider` over the golden CSV) registered ONLY by a test fixture (NOT by
+  production `build_live_system`); `PAPER_PARITY_*`/`_PAPER_*` leave production; production is
+  replay-free. **The `paper` EXECUTION venue (`SimulatedExchange` + `SimulatedAccount`) STAYS in
+  production — see D-20; do NOT remove it.** **Guardrail:** `test_paper_parity` is the safety net DURING P6's
   oracle-sensitive decomposition — do the relocation as **pure code-motion with the parity gate green
   continuously**, sliced as its OWN plan AFTER the `UniverseWiring` extraction (RUN-04) locks green
   (don't remake the ruler and the measured thing in one uncontrolled step). Rejected keeping TEST-01 in
   P12 (five phases of recurring production-replay tax) and a partial move (leaves production
   half-replay-free, re-touches the same seam later). ROADMAP + REQUIREMENTS updated to reassign TEST-01
   P12 → P6.
+
+- **D-19 (`ReplayRunner` is fail-fast BY DEFAULT — no ErrorPolicy injection; corrects the earlier
+  in-discussion framing):** The publish-and-continue monkeypatch
+  (`event_handler._on_handler_error = self._publish_and_continue`) is applied in **`start()`**
+  (`live_trading_system.py:1665`), NOT `__init__`. `run_paper_replay` explicitly NEVER calls `start()`
+  (`:600` comment: *"A deterministic replay must abort LOUDLY... EventHandler._on_handler_error"*), so it
+  runs on the EventHandler's DEFAULT fail-fast seam (re-raise, `full_event_handler.py:156-171`). Replay
+  is therefore fail-fast **because it drives `process_events()` directly at the EventHandler default and
+  never installs the live policy** — NOT because anything injects fail-fast. In P6 the EventHandler
+  default STAYS fail-fast (the full EventHandler-injection that changes the default is P8), so
+  `ReplayRunner` stays fail-fast the SAME way: drive the EventHandler directly, never install the live
+  publish-and-continue policy (which today lives in `start()`, in P6 moves onto `LiveRunner` per D-07).
+  **This SUPERSEDES the D-18(4) claim that `ReplayRunner` "injects a fail-fast ErrorPolicy via the D-07
+  seam"** — that was over-engineered; the correct model REMOVES a D-07 coupling rather than adding one.
+  Replay bypasses `LiveRunner` (D-06/D-16) so LiveRunner's ErrorPolicy never touches it.
+
+- **D-20 (`paper` EXECUTION venue ≠ `replay` DATA plugin — do NOT remove paper):** "Production
+  replay-free" removes ONLY the test-only pieces — `run_paper_replay`, `PAPER_PARITY_*`/`_PAPER_*`, and
+  the `replay` DATA plugin's production registration. The `paper` EXECUTION venue (`SimulatedExchange` +
+  `SimulatedAccount`, a v1.7 paper-first DoD live mode) STAYS in production. Matches P5 D-05 ("okx +
+  paper = live EXECUTION plugins; okx/replay = DATA plugins"): `run_paper_replay` pairs the `paper`
+  execution venue with the `replay` data provider — only the replay data side + the parity harness leave.
+  The planner MUST NOT over-delete the paper venue when making production replay-free.
 
 ### Area 8 — CF-10 depth-hint seam shape (RUN-07)
 

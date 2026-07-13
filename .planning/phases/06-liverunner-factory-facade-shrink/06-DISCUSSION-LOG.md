@@ -147,6 +147,14 @@ deferred replay fail-fast + relocation wholesale. Guardrail: pure code-motion, t
 continuously, sliced after RUN-04 locks. ROADMAP + REQUIREMENTS updated (TEST-01: P12 → P6). (→ D-16 rev,
 D-18)
 
+**Post-decision code check (corrections, → D-19/D-20):** verifying the fail-fast mechanism surfaced
+two refinements. (1) The publish-and-continue monkeypatch lives in `start()` (`:1665`), not `__init__`;
+`run_paper_replay` never calls `start()`, so replay is fail-fast BY DEFAULT (EventHandler default seam),
+not by injection — corrects the D-18(4) "injects fail-fast ErrorPolicy" claim (over-engineered; the
+correct model removes a D-07 coupling). (2) `paper` (execution venue, real paper trading, v1.7 DoD) ≠
+`replay` (data plugin, test-only) — only the replay data side + parity harness leave production; the
+paper venue STAYS. Both captured as D-19/D-20; ROADMAP + REQUIREMENTS SC text corrected to match.
+
 ---
 
 ## Claude's Discretion
