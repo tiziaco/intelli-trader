@@ -256,7 +256,16 @@ below, not strict numeric order (P4 waits on P3; P5 on P2+P3; P6 on P4+P5; etc.)
   5. `test_okx_inertness.py` stays green (live decomposition imports no `ccxt.pro` on the backtest path).
   6. **TEST-01 (pulled forward from P12):** the ENTIRE replay test-harness moves OUT of the `itrader` package into `tests/` — `run_paper_replay` → **`TestRunner`**, `ReplayDataProvider` → **`TestLiveDataProvider`**, `ReplayDataPlugin` → **`TestDataPlugin`** (test-fixture-registered-only), `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free. The `paper` EXECUTION venue (`PaperVenuePlugin` + `SimulatedExchange` + `SimulatedAccount`) STAYS a **real live production mode, untouched** — its production data feed re-points from `replay` to the **OKX live feed** (`{'okx':'okx','paper':'okx'}`), so the `paper`↔replay pairing survives only in the test fixture. `TestRunner` is **fail-fast by default** (drives the EventHandler at its default fail-fast seam, never calls `start()`). `Test*`-named classes set `__test__ = False` (pytest-collection guard under `filterwarnings=["error"]`). Done as pure code-motion with `test_paper_parity` green continuously, sliced as its own plan AFTER the `UniverseWiring` extraction locks (per-PLAN oracle gate).
 
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — RUN-04: extract shared `wire_universe(engine)` (oracle-gated, isolated); repoint BacktestRunner (wave 1)
+- [ ] 06-02-PLAN.md — RUN-02: `LiveRunner` + `WorkerSupervisor` + minimal `ErrorPolicy` (new standalone modules) (wave 2)
+- [ ] 06-03-PLAN.md — RUN-07: rehome `StrategyWarmupConsumer` + `register_strategy_warmup` + named `derive_warmup_depth` (CF-10 seam) (wave 2)
+- [ ] 06-04-PLAN.md — RUN-06: `UniverseHandler` first-class ctor `(bus, universe, feed, config)` + `set_venue_metadata`; caller migration (wave 2)
+- [ ] 06-05-PLAN.md — RUN-05 + RUN-04(live): `LiveRouteRegistrar` + `SessionInitializer`; `_initialize_live_session` delegates (wave 3)
+- [ ] 06-06-PLAN.md — RUN-01 + RUN-03: `build_live_system` factory + pure-injection facade + PriorityEventBus + `for_exchange` + ~45-site sweep (wave 4)
+- [ ] 06-07-PLAN.md — TEST-01: replay harness → `tests/support/` (`TestRunner`/`TestLiveDataProvider`/`TestDataPlugin`); production replay-free, paper→OKX (wave 5)
 
 ### Phase 7: Safety + Reconciliation + Stream Recovery
 
