@@ -304,7 +304,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
-- [ ] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves
+- [x] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves
   OUT of the `itrader` package into `tests/` — `run_paper_replay` → **`TestRunner`**, `ReplayDataProvider`
   → **`TestLiveDataProvider`**, `ReplayDataPlugin` → **`TestDataPlugin`** (registered **only** by a test
   fixture), `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free (concern 9/§13/§8e). The
@@ -424,7 +424,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | MPORT-04 | P11 | Pending |
 | MPORT-05 | P11 | Pending |
 | MPORT-06 | P11 | Pending |
-| TEST-01 | P6 | Pending |
+| TEST-01 | P6 | Complete |
 | TEST-02 | P12 | Pending |
 | TEST-03 | P12 | Pending |
 | TEST-04 | P12 | Pending |

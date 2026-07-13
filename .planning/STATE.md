@@ -4,17 +4,17 @@ milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
 current_phase: 06
 current_phase_name: liverunner-factory-facade-shrink
-status: executing
+status: verifying
 stopped_at: Phase 6 context gathered
-last_updated: "2026-07-13T13:06:26.424Z"
+last_updated: "2026-07-13T13:44:34.956Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 9
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 26
-  completed_plans: 25
-  percent: 56
+  completed_plans: 26
+  percent: 67
 ---
 
 # Project State
@@ -35,7 +35,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 
 Phase: 06 (liverunner-factory-facade-shrink) — EXECUTING
 Plan: 7 of 7
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-13 — Phase 06 execution started
 
 Progress: [████░░░░░░] 44%
@@ -161,6 +161,8 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: 06-04/RUN-06: UniverseHandler ctor is (bus, universe, feed, config); timeframe+remove_policy read from a flat UniverseHandlerConfig value object; set_venue_metadata(exchange) collapses the two former OKX-guarded venue setters (zero OKX coupling); 4 read-model setters + set_freeze_gate retained (D-11)
 - [Phase 06]: 06-05 (RUN-05/RUN-04-live/D-12): LiveRouteRegistrar (central declarative BUSINESS/live route table, list order = execution order, FILL appended, NO CONTROL route per D-23/LR-16) + SessionInitializer (composes wire_universe + register_strategy_warmup + first-class UniverseHandler + LiveRouteRegistrar); _initialize_live_session is a thin delegator; _LiveWarmupConsumer + inline route mutation removed; live GAINS the WR-03 assert; set_venue_metadata unconditional over resolved venue exchange (zero OKX coupling); interim Engine holder + 2 casts, 06-06 flips to build_live_system/compose_engine; oracle byte-exact 134/46189.87730727451, paper-parity + inertness green, mypy clean, 2125 passed
 - [Phase ?]: 06-06: build_live_system(spec) is the live composition root (RUN-01/D-09); facade __init__ is pure injection; live wires PriorityEventBus (D-23); LiveRunner owns the drain loop; D-12 construction-time session-init flip deferred to 06-07 — RUN-03 lands structurally
+- [Phase ?]: 06-07/TEST-01/D-18: relocated the whole replay harness to tests/support/replay_harness.py; production is replay-free (paper->OKX feed, D-21); paper EXECUTION venue untouched (D-20)
+- [Phase ?]: 06-07/D-16: TestRunner is behavior-preserving (calls _initialize_live_session before its per-bar drive); the D-12 construction-time flip stays DEFERRED per 06-06
 
 ### Pending Todos
 
@@ -210,6 +212,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | Phase 06 P04 | 13min | 2 tasks | 7 files |
 | Phase 06 P05 | 9min | 3 tasks | 3 files |
 | Phase 06 P06 | 50min | 3 tasks | 26 files |
+| Phase 06 P07 | 70min | 3 tasks | 21 files |
 
 ## Deferred Items
 
@@ -258,7 +261,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-13T13:06:00.722Z
+Last session: 2026-07-13T13:43:59.509Z
 Stopped at: Phase 6 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.

@@ -279,7 +279,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 06-07-PLAN.md — TEST-01: replay harness → `tests/support/` (`TestRunner`/`TestLiveDataProvider`/`TestDataPlugin`); production replay-free, paper→OKX (wave 5)
+- [x] 06-07-PLAN.md — TEST-01: replay harness → `tests/support/` (`TestRunner`/`TestLiveDataProvider`/`TestDataPlugin`); production replay-free, paper→OKX (wave 5)
 
 ### Phase 7: Safety + Reconciliation + Stream Recovery
 
@@ -383,7 +383,7 @@ P1 and P2 have no dependencies and can start in parallel.
 | 3. EngineContext + Storage-in-Handler | v1.8 | 2/2 | Complete    | 2026-07-09 |
 | 4. Storage Schema: Migrations Relocation + New Durable Stores | v1.8 | 4/4 | Complete    | 2026-07-10 |
 | 5. Venue Registry + Bundle | v1.8 | 6/6 | Complete    | 2026-07-12 |
-| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 6/7 | In Progress|  |
+| 6. LiveRunner + Factory + Facade Shrink | v1.8 | 7/7 | Complete   | 2026-07-13 |
 | 7. Safety + Reconciliation + Stream Recovery | v1.8 | 0/TBD | Not started | - |
 | 8. Error Subsystem | v1.8 | 0/TBD | Not started | - |
 | 9 ★. Runtime-Config Platform | v1.8 | 0/TBD | Not started | - |
