@@ -40,6 +40,24 @@ class _FakeConnectorPlugin:
         return _FakeConnector()
 
 
+class _RaisingConnector:
+    """``LiveConnector``-shaped double whose ``disconnect`` raises after counting."""
+
+    def __init__(self) -> None:
+        self.disconnect_calls = 0
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
+        raise RuntimeError("boom during disconnect")
+
+
+class _RaisingConnectorPlugin:
+    """Structural ``ConnectorPlugin``: ``build`` returns a fresh raising connector."""
+
+    def build(self, spec):  # noqa: ANN001, ANN201
+        return _RaisingConnector()
+
+
 def _make_provider() -> tuple[ConnectorProvider, _FakeConnectorPlugin]:
     plugin = _FakeConnectorPlugin()
     provider = ConnectorProvider({"okx": plugin})
@@ -80,3 +98,18 @@ def test_get_unregistered_venue_fails_loud() -> None:
     provider, _ = _make_provider()
     with pytest.raises(KeyError):
         provider.get("nope", "default", spec=object())
+
+
+def test_close_all_isolates_a_raising_disconnect_and_clears_the_memo() -> None:
+    provider = ConnectorProvider(
+        {"boom": _RaisingConnectorPlugin(), "okx": _FakeConnectorPlugin()}
+    )
+    # Memoize the raising connector FIRST so a naive loop would abort before the survivor.
+    raising = provider.get("boom", "default", spec=object())
+    survivor = provider.get("okx", "default", spec=object())
+
+    provider.close_all()  # must NOT propagate the RuntimeError
+
+    assert raising.disconnect_calls == 1  # the raise WAS attempted
+    assert survivor.disconnect_calls == 1  # the loop CONTINUED past the raise
+    assert provider._memo == {}  # the memo was cleared in the finally
