@@ -36,7 +36,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 Phase: 6 — LiveRunner + Factory + Facade Shrink
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-13 — Completed quick task 260713-cvb: fix ConnectorProvider.close_all teardown (WR-02)
+Last activity: 2026-07-13 — Completed quick task 260713-dbw: consolidate live-provider surface to the single LiveDataProvider Protocol
 
 Progress: [████░░░░░░] 44%
 
@@ -196,6 +196,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260713-cvb | Fix WR-02: ConnectorProvider.close_all isolates each disconnect + always clears memo (bound logger) | 2026-07-13 | 5045db99 | [260713-cvb-fix-connector-close-all-teardown](./quick/260713-cvb-fix-connector-close-all-teardown/) |
+| 260713-dbw | Consolidate live-provider surface to one symbol: drop BaseLiveDataProvider, keep the LiveDataProvider Protocol, inline the 7 no-op seams into ReplayDataProvider | 2026-07-13 | d3dec871 | [260713-dbw-consolidate-the-two-live-provider-symbol](./quick/260713-dbw-consolidate-the-two-live-provider-symbol/) |
 
 ## Deferred Items
 
