@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any, Callable
 _DEFERRED_PROTECTIVE_REPLAY_MAX = 1000
 
 from itrader.core.enums import ErrorSeverity, HaltReason, OrderCommand, SystemStatus, VALID_STATUS_TRANSITIONS
-from itrader.core.exceptions import ConfigurationError
+from itrader.core.exceptions import ConfigurationError, StateError
 from itrader.events_handler.full_event_handler import EventHandler
 from itrader.outils.time_parser import to_timedelta
 from itrader.price_handler.store.csv_store import CsvPriceStore
@@ -987,7 +987,19 @@ class LiveTradingSystem:
         if self._running:
             self.logger.warning('Live trading system is already running')
             return False
-        
+
+        # WR-02: hard programming-error signal for a facade constructed outside
+        # build_live_system() (LiveRunner/ErrorPolicy unwired). MUST sit ABOVE the
+        # start() try-block below — inside it the broad `except Exception` would
+        # swallow this and mask it as SystemStatus.ERROR + return False.
+        if self._live_runner is None or self._error_policy is None:
+            raise StateError(
+                "LiveTradingSystem",
+                "unwired",
+                required_state="built via build_live_system() (LiveRunner/ErrorPolicy attached)",
+                operation="start",
+            )
+
         self.logger.info('Starting live trading system')
         self._update_status(SystemStatus.STARTING)
         
