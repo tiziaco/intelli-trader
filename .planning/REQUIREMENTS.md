@@ -304,16 +304,19 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Test Migration + Gates (P12 — except TEST-01, pulled forward into P6)
 
-- [ ] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: `run_paper_replay` → `ReplayRunner` in
-  `tests/`; the `replay` **data** plugin (`ReplayDataProvider` over the golden CSV) is registered **only**
-  by a test fixture; production is replay-free (`run_paper_replay` + `PAPER_PARITY_*`/`_PAPER_*` leave
-  production) — the `paper` **execution** venue (`SimulatedExchange` + `SimulatedAccount`) STAYS in
-  production (concern 9/§13/§8e). Rationale: it needs only P6's `build_live_system` (zero P7–P11
-  dependency), rides the same construction path P6 builds, and removes the recurring production-replay tax
-  across P7–P11. `ReplayRunner` is **fail-fast by default** (drives the EventHandler at its default
-  fail-fast seam, never calls `start()`/installs publish-and-continue) so the parity gate can't
-  false-green; done as pure code-motion, `test_paper_parity` green continuously, sliced AFTER the
-  `UniverseWiring` extraction locks.
+- [ ] **TEST-01** *(delivered in **P6**, pulled forward from P12)*: the ENTIRE replay test-harness moves
+  OUT of the `itrader` package into `tests/` — `run_paper_replay` → **`TestRunner`**, `ReplayDataProvider`
+  → **`TestLiveDataProvider`**, the `ReplayDataPlugin` → a test-only plugin registered **only** by a test
+  fixture, `PAPER_PARITY_*`/`_PAPER_*` → `tests/`; production is replay-free (concern 9/§13/§8e). The
+  `paper` **execution** venue (`PaperVenuePlugin` + `SimulatedExchange` + `SimulatedAccount`) STAYS a real
+  live production mode, **untouched** — its production data feed re-points from `replay` to the **OKX live
+  feed** (`{'okx':'okx','paper':'okx'}`), so the `paper`↔replay pairing survives only in the test fixture.
+  `Test*`-named classes set `__test__ = False` (pytest auto-collects `Test*`; `filterwarnings=["error"]`
+  makes the collection warning a hard failure). Rationale: it needs only P6's `build_live_system` (zero
+  P7–P11 dependency), rides the same construction path P6 builds, and removes the recurring
+  production-replay tax across P7–P11. `TestRunner` is **fail-fast by default** (drives the EventHandler at
+  its default fail-fast seam, never calls `start()`) so the parity gate can't false-green; done as pure
+  code-motion, `test_paper_parity` green continuously, sliced AFTER the `UniverseWiring` extraction locks.
 
 - [ ] **TEST-02**: A live-smoke gate exercises the decomposed live surface end-to-end (facade → factory →
   `LiveRunner` → controllers) on the replay fixture.

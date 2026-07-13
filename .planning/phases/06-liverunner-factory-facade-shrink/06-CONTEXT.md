@@ -33,9 +33,11 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
 - `_LiveWarmupConsumer` → reusable `StrategyWarmupConsumer` in
   `price_handler/feed/cache_registration.py`, sized `max(strategy.warmup)`; CF-10 depth-hint
   seam shaped (K-computation deferred) (RUN-07).
-- **TEST-01 (pulled forward from P12):** `run_paper_replay` → `ReplayRunner` in `tests/`; the
-  `replay` plugin registered ONLY by a test fixture; production replay-free (`run_paper_replay` +
-  `PAPER_PARITY_*`/`_PAPER_*` leave production). See D-16/D-18.
+- **TEST-01 (pulled forward from P12):** the ENTIRE replay test-harness leaves `itrader/` for `tests/`
+  — `run_paper_replay` → `TestRunner`, `ReplayDataProvider` → `TestLiveDataProvider`, the replay data
+  plugin → test-fixture-only, `PAPER_PARITY_*`/`_PAPER_*` → `tests/`. Production `paper` (a real live
+  mode, execution untouched) re-points to the **OKX live feed**. `__test__ = False` on `Test*`-named
+  classes (pytest-collection guard). See D-16/D-18/D-20/D-21/D-22.
 - Backtest oracle byte-exact (per-PLAN gate on `UniverseWiring`); `test_okx_inertness.py` green.
 
 **Explicitly NOT in this phase (deferred to later phases — downstream must NOT pull forward):**
@@ -210,61 +212,85 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   RUN-05/RUN-06 by building routes + UniverseHandler at `start()`, leaving the facade half-wired between
   `__init__` and `start()`).
 
-### Area 7 — run_paper_replay integrity + relocation (TEST-01 pulled into P6)
+### Area 7 — replay test-harness relocation OUT of `itrader/` (TEST-01 pulled into P6)
 
-- **D-16 (Session-init touchpoint — drop line 1490; the sync drive is otherwise unchanged):**
+**Owner directives (2026-07-13):** (a) paper mode stays a **real live production mode** — do NOT touch
+its execution logic; (b) move **ALL replay logic out of the `itrader` package into `tests/`** — it is
+test infrastructure that does not belong in production; (c) rename `ReplayRunner` → **`TestRunner`** and
+`ReplayDataProvider` → **`TestLiveDataProvider`**.
+
+- **D-16 (Session-init touchpoint — drop line 1490; the sync drive relocates otherwise unchanged):**
   `run_paper_replay` (`live_trading_system.py:1422`) NEVER used `_event_processing_loop`/the daemon/
   LiveRunner — it has its own synchronous per-bar drive calling `event_handler.process_events()`
   directly (steps 2-3, `:1499-1524`). Its ONLY touchpoint with the decomposed code is line 1490
   `self._initialize_live_session()`. Since D-12 makes `SessionInitializer` run at construction, the
-  replay instance (built via `build_live_system(paper_spec)`) already has its session initialized — so
-  the session-init call is **dropped** and steps 2-3 relocate VERBATIM into `ReplayRunner` (D-18).
+  test system (built via `build_live_system(test_spec)`) already has its session initialized — so the
+  session-init call is **dropped** and steps 2-3 relocate VERBATIM into `TestRunner.run()` in `tests/`.
   Chosen over "keep an explicit repointed init call" (adds a second init path that has to stay
   consistent).
 
-- **D-18 (TEST-01 pulled forward P12 → P6 — `run_paper_replay` relocates to `tests/` `ReplayRunner`,
-  production replay-free):** Owner decision (2026-07-13) to pull the replay relocation into P6 rather
-  than carry a production replay method through P7–P11. **Why it fits P6 (not a stretch):** (1) TEST-01
-  needs ONLY P6's `build_live_system` + the P5 venue/replay plugins — **zero P7–P11 dependency** (P12's
-  "lands last" rationale is about TEST-02/03/04, which need the P7/P9/P11 surface); (2) P6 already
-  decomposes the exact construction path `ReplayRunner` uses; (3) `run_paper_replay` has no production
-  caller (it's a parity driver invoked by `test_paper_parity.py`) — moving it OUT of
-  `live_trading_system.py` removes dead weight, not a feature; (4) it needs NO new error machinery —
-  replay is fail-fast for free (see D-19). Scope of
-  TEST-01: `run_paper_replay` → `ReplayRunner` in `tests/` (steps 2-3 verbatim, D-16); the `replay`
-  **data** plugin (`ReplayDataProvider` over the golden CSV) registered ONLY by a test fixture (NOT by
-  production `build_live_system`); `PAPER_PARITY_*`/`_PAPER_*` leave production; production is
-  replay-free. **The `paper` EXECUTION venue (`SimulatedExchange` + `SimulatedAccount`) STAYS in
-  production — see D-20; do NOT remove it.** **Guardrail:** `test_paper_parity` is the safety net DURING P6's
-  oracle-sensitive decomposition — do the relocation as **pure code-motion with the parity gate green
-  continuously**, sliced as its OWN plan AFTER the `UniverseWiring` extraction (RUN-04) locks green
-  (don't remake the ruler and the measured thing in one uncontrolled step). Rejected keeping TEST-01 in
-  P12 (five phases of recurring production-replay tax) and a partial move (leaves production
-  half-replay-free, re-touches the same seam later). ROADMAP + REQUIREMENTS updated to reassign TEST-01
-  P12 → P6.
+- **D-18 (TEST-01 pulled forward P12 → P6 — the WHOLE replay harness leaves `itrader/` for `tests/`):**
+  Owner decision to pull the relocation into P6 rather than carry a production replay apparatus through
+  P7–P11. **Why it fits P6 (not a stretch):** (1) TEST-01 needs ONLY P6's `build_live_system` + the P5
+  venue plugins — **zero P7–P11 dependency** (P12's "lands last" is about TEST-02/03/04, which need the
+  P7/P9/P11 surface); (2) P6 already decomposes the exact construction path the harness uses;
+  (3) `run_paper_replay` has no production caller (only `test_paper_parity.py`) — moving it OUT removes
+  dead weight, not a feature; (4) it needs NO new error machinery — the harness is fail-fast for free
+  (D-19). **Scope of TEST-01 (everything moves to `tests/`, NOTHING replay-related stays in `itrader`):**
+  - `run_paper_replay` → **`TestRunner`** (a class; steps 2-3 verbatim, D-16).
+  - `itrader/price_handler/providers/replay_provider.py::ReplayDataProvider` → **`TestLiveDataProvider`**
+    in `tests/` (rename + relocate). Its unit tests (`tests/unit/price/test_replay_provider.py`) follow.
+  - `itrader/venues/paper_plugin.py::ReplayDataPlugin` (the data plugin that BUILDS the provider) → a
+    **test-only plugin in `tests/`**, registered ONLY by a test fixture — NOT by production
+    `build_live_system`. `PaperVenuePlugin` (the EXECUTION venue) **stays** in `itrader/venues/`
+    (D-20) — the file splits: execution plugin stays, data plugin leaves.
+  - `PAPER_PARITY_*` constants + `_PAPER_*` → `tests/`.
+  - **Production `paper` re-points to the OKX live data feed** (D-21) — the `paper`↔`replay` pairing
+    now exists ONLY inside the test fixture.
+  **Guardrail:** `test_paper_parity` is the safety net DURING P6's oracle-sensitive decomposition — do
+  the relocation as **pure code-motion with the parity gate green continuously**, sliced as its OWN plan
+  AFTER the `UniverseWiring` extraction (RUN-04) locks green (don't remake the ruler and the measured
+  thing in one uncontrolled step). Rejected keeping TEST-01 in P12 (five phases of recurring
+  production-replay tax) and a partial move. ROADMAP + REQUIREMENTS updated to reassign TEST-01 P12 → P6.
 
-- **D-19 (`ReplayRunner` is fail-fast BY DEFAULT — no ErrorPolicy injection; corrects the earlier
-  in-discussion framing):** The publish-and-continue monkeypatch
-  (`event_handler._on_handler_error = self._publish_and_continue`) is applied in **`start()`**
-  (`live_trading_system.py:1665`), NOT `__init__`. `run_paper_replay` explicitly NEVER calls `start()`
-  (`:600` comment: *"A deterministic replay must abort LOUDLY... EventHandler._on_handler_error"*), so it
-  runs on the EventHandler's DEFAULT fail-fast seam (re-raise, `full_event_handler.py:156-171`). Replay
-  is therefore fail-fast **because it drives `process_events()` directly at the EventHandler default and
-  never installs the live policy** — NOT because anything injects fail-fast. In P6 the EventHandler
-  default STAYS fail-fast (the full EventHandler-injection that changes the default is P8), so
-  `ReplayRunner` stays fail-fast the SAME way: drive the EventHandler directly, never install the live
-  publish-and-continue policy (which today lives in `start()`, in P6 moves onto `LiveRunner` per D-07).
-  **This SUPERSEDES the D-18(4) claim that `ReplayRunner` "injects a fail-fast ErrorPolicy via the D-07
-  seam"** — that was over-engineered; the correct model REMOVES a D-07 coupling rather than adding one.
-  Replay bypasses `LiveRunner` (D-06/D-16) so LiveRunner's ErrorPolicy never touches it.
+- **D-19 (`TestRunner` is fail-fast BY DEFAULT — no ErrorPolicy injection):** The publish-and-continue
+  monkeypatch (`event_handler._on_handler_error = self._publish_and_continue`) is applied in **`start()`**
+  (`live_trading_system.py:1665`), NOT `__init__`. `run_paper_replay` NEVER calls `start()` (`:600`
+  comment: *"A deterministic replay must abort LOUDLY... EventHandler._on_handler_error"*), so it runs
+  on the EventHandler's DEFAULT fail-fast seam (re-raise, `full_event_handler.py:156-171`). `TestRunner`
+  stays fail-fast the SAME way: drive `process_events()` directly, never install the live policy (which
+  in P6 moves onto `LiveRunner`, D-07; the EventHandler default STAYS fail-fast until P8). **This
+  SUPERSEDES the earlier "injects a fail-fast ErrorPolicy via the D-07 seam" framing** — over-engineered;
+  the correct model REMOVES a D-07 coupling. `TestRunner` bypasses `LiveRunner` (D-06/D-16) entirely.
 
-- **D-20 (`paper` EXECUTION venue ≠ `replay` DATA plugin — do NOT remove paper):** "Production
-  replay-free" removes ONLY the test-only pieces — `run_paper_replay`, `PAPER_PARITY_*`/`_PAPER_*`, and
-  the `replay` DATA plugin's production registration. The `paper` EXECUTION venue (`SimulatedExchange` +
-  `SimulatedAccount`, a v1.7 paper-first DoD live mode) STAYS in production. Matches P5 D-05 ("okx +
-  paper = live EXECUTION plugins; okx/replay = DATA plugins"): `run_paper_replay` pairs the `paper`
-  execution venue with the `replay` data provider — only the replay data side + the parity harness leave.
-  The planner MUST NOT over-delete the paper venue when making production replay-free.
+- **D-20 (`paper` EXECUTION venue is a REAL live production mode — untouched):** Owner intent: paper
+  stays usable in a real live environment. The `paper` EXECUTION venue (`PaperVenuePlugin` +
+  `SimulatedExchange` + `SimulatedAccount`) is **production, untouched** — do NOT remove or refactor its
+  execution logic. Matches P5 D-05 ("paper = live EXECUTION plugin; replay = DATA plugin"). Only the
+  DATA side (the replay provider/plugin/constants + the driver) is test infrastructure and leaves. This
+  corrects the earlier over-glib D-20 that treated paper as test-adjacent.
+
+- **D-21 (Production `paper` re-points from the `replay` feed to the OKX live data feed):** Today the
+  `paper` execution venue is hardwired to the replay feed (`live_trading_system.py:535`
+  `data_provider={'okx':'okx','paper':'replay'}`). Since the replay data provider LEAVES production
+  (D-18), production `paper` must select a **live** feed — and the only live data provider registered
+  today is `okx` (`OkxDataPlugin`; `replay` is the only other, and it's leaving). So production `paper`
+  re-points to the **OKX live data feed** (`{'okx':'okx','paper':'okx'}`): OKX real prices →
+  `SimulatedExchange` fills → `SimulatedAccount` — i.e., genuine live paper trading, exactly the v1.7
+  DoD ("SMA_MACD runs live-paper on a streaming OKX feed"). This touches ONLY the data-provider
+  SELECTION, not paper's execution logic (D-20). The `paper`↔`TestLiveDataProvider` pairing survives
+  ONLY in the test fixture (that's what the parity gate builds). *(If a second live provider — e.g.
+  OANDA/forex — ever lands, paper could select it; today it's OKX, so this is not a deferred choice.)*
+
+- **D-22 (Test-harness classes live OUTSIDE the `itrader` package + pytest `__test__ = False`):** All
+  relocated classes (`TestRunner`, `TestLiveDataProvider`, the test-only data plugin, the parity
+  constants, the fixture) live under `tests/`, NOT in `itrader/` (owner: "these test classes shouldn't
+  live in the itrader package"). **Pytest-collection hazard:** class names prefixed `Test`
+  (`TestRunner`, `TestLiveDataProvider`) are auto-collected by pytest as test suites; because they carry
+  an `__init__`, collection raises `PytestCollectionWarning`, which this repo escalates to a HARD
+  FAILURE (`filterwarnings=["error"]`). Set **`__test__ = False`** on each such class (the standard
+  pytest opt-out) to keep the owner's chosen names while suppressing collection. The planner MUST apply
+  this to every `Test*`-named non-test class introduced.
 
 ### Area 8 — CF-10 depth-hint seam shape (RUN-07)
 
@@ -353,13 +379,23 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   (`:248`) + `set_precision_resolver` (`:252`) collapse into the new `set_venue_metadata(exchange)`
   (D-11); `set_freeze_gate` (`:235`) stays an interim callable.
 
-### run_paper_replay → tests/ReplayRunner (TEST-01, pulled into P6; D-16/D-18)
-- `itrader/trading_system/live_trading_system.py:1422-1524` `run_paper_replay` — relocates to `tests/`
-  `ReplayRunner`: drop line 1490 (`_initialize_live_session()`, now construction-time), steps 2-3
-  (`:1499-1524`) move verbatim, inject a fail-fast `ErrorPolicy` (D-07 seam). `PAPER_PARITY_*` constants
-  (`:80-100` region) + `_PAPER_*` leave production; the `replay` plugin becomes fixture-registered-only.
-- `tests/**/test_paper_parity.py` — the parity gate that must stay green CONTINUOUSLY through the
-  relocation (pure code-motion; slice AFTER RUN-04 locks).
+### Replay harness → `tests/` (TEST-01, pulled into P6; D-16/D-18/D-20/D-21/D-22)
+- `itrader/trading_system/live_trading_system.py:1422-1524` `run_paper_replay` → `tests/` `TestRunner`
+  (drop line 1490, steps 2-3 `:1499-1524` verbatim, fail-fast by default — D-19). `PAPER_PARITY_*`
+  constants (`:80-100` region) + `_PAPER_*` leave production.
+- `itrader/price_handler/providers/replay_provider.py::ReplayDataProvider` → `tests/`
+  `TestLiveDataProvider` (rename + relocate; `__test__ = False`). Consumers to repoint:
+  `itrader/venues/paper_plugin.py:103/109` (the `ReplayDataPlugin` that builds it — also moves to
+  `tests/`), `itrader/price_handler/feed/live_bar_feed.py:472/493` + `live_provider.py:15` (doc refs).
+- `itrader/venues/paper_plugin.py` — SPLITS: `PaperVenuePlugin` (execution) STAYS; `ReplayDataPlugin`
+  (data) → test-only plugin registered by the fixture (D-18).
+- `itrader/trading_system/live_trading_system.py:517/535` — drop `data_registry.register('replay', ...)`
+  from production; change the data-provider map to `{'okx':'okx','paper':'okx'}` (paper → OKX live feed,
+  D-21). The `paper`↔replay pairing moves into the test fixture.
+- `tests/**/test_paper_parity.py`, `tests/unit/venues/test_paper_plugin.py`, `tests/unit/venues/test_assemble.py`,
+  `tests/unit/price/test_replay_provider.py` — existing tests that reference the replay provider/plugin;
+  repoint to the relocated `tests/` classes. `test_paper_parity` must stay green CONTINUOUSLY (pure
+  code-motion; slice AFTER RUN-04 locks).
 - `.planning/REQUIREMENTS.md` § TEST-01 (traceability: TEST-01 → **P6**) — authoritative scope.
 
 ### CF-10 warmup seam (RUN-07 / D-17)

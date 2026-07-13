@@ -155,6 +155,18 @@ correct model removes a D-07 coupling). (2) `paper` (execution venue, real paper
 `replay` (data plugin, test-only) — only the replay data side + parity harness leave production; the
 paper venue STAYS. Both captured as D-19/D-20; ROADMAP + REQUIREMENTS SC text corrected to match.
 
+**Owner refinement (2026-07-13, → D-18/D-20/D-21/D-22):** probing the destination further, owner set
+firm direction: (1) paper mode stays a **real live production mode** — do NOT touch its execution logic;
+(2) move **ALL** replay logic OUT of the `itrader` package into `tests/` (it's test infra); (3) rename
+`ReplayRunner` → **`TestRunner`**, `ReplayDataProvider` → **`TestLiveDataProvider`** (rejected
+`SimulatedLiveDataProvider` — collides with the production `Simulated*` compute family). Code check
+surfaced the paper↔replay coupling (`:535` hardwires `paper→replay`): since replay leaves production,
+production `paper` re-points to the **OKX live feed** (`{'okx':'okx','paper':'okx'}` — the only live
+provider today; = the v1.7 live-paper-on-OKX DoD) — touches only the data-provider SELECTION, not paper
+execution. Owner confirmed paper→live-feed. Also flagged the pytest hazard: `Test*`-prefixed classes are
+auto-collected → `filterwarnings=["error"]` makes it a hard failure → set `__test__ = False` (D-22). The
+`ReplayDataPlugin` moves to `tests/` too (paper_plugin.py splits: execution stays, data leaves).
+
 ---
 
 ## Claude's Discretion
