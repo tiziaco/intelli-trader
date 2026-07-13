@@ -36,7 +36,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 Phase: 7 — Safety + Reconciliation + Stream Recovery
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-13 — Phase 06 complete, transitioned to Phase 7
+Last activity: 2026-07-13 — Completed quick task 260713-ncq: centralize live stream/feed/DB settings under SystemConfig
 
 Progress: [████░░░░░░] 44%
 
@@ -206,6 +206,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 |---|-------------|------|--------|-----------|
 | 260713-cvb | Fix WR-02: ConnectorProvider.close_all isolates each disconnect + always clears memo (bound logger) | 2026-07-13 | 5045db99 | [260713-cvb-fix-connector-close-all-teardown](./quick/260713-cvb-fix-connector-close-all-teardown/) |
 | 260713-dbw | Consolidate live-provider surface to one symbol: drop BaseLiveDataProvider, keep the LiveDataProvider Protocol, inline the 7 no-op seams into ReplayDataProvider | 2026-07-13 | d3dec871 | [260713-dbw-consolidate-the-two-live-provider-symbol](./quick/260713-dbw-consolidate-the-two-live-provider-symbol/) |
+| 260713-ncq | Centralize live stream/feed/DB settings under SystemConfig — inject StreamSettings/FeedProviderSettings (kill 10 inline default-constructions + _STREAM_SETTINGS global); DB gate via lazy SqlSettings() probe instead of os.getenv | 2026-07-13 | 33390772 | [260713-ncq-centralize-live-stream-feed-db-settings-](./quick/260713-ncq-centralize-live-stream-feed-db-settings-/) |
 | Phase 06 P01 | 4 min | 2 tasks | 2 files |
 | Phase 06 P02 | 12 min | 3 tasks | 3 files |
 | Phase 06 P03 | 6min | 1 tasks | 1 files |
