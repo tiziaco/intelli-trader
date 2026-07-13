@@ -92,7 +92,7 @@ def _build_paper_system(store: HaltRecordStore) -> LiveTradingSystem:
     via attribute assignment so a FRESH instance on the SAME store observes a prior halt (the
     restart model — RESEARCH Pitfall 7). No OKX network / credentials.
     """
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     system._halt_record_store = store
     strategy = SMAMACDStrategy(
         timeframe="1d",

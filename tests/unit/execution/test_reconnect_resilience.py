@@ -409,7 +409,7 @@ def _live_system(monkeypatch: Any) -> LiveTradingSystem:
     """A credential-free LiveTradingSystem for the default (non-OKX) venue."""
     for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
-    return LiveTradingSystem(exchange="binance")
+    return LiveTradingSystem.for_exchange("binance")
 
 
 class _RecordingSink:
@@ -480,9 +480,11 @@ def test_error_route_consumer_failure_does_not_recurse(monkeypatch: Any) -> None
     crucially NO fresh ErrorEvent is enqueued by the failure path.
     """
     system = _live_system(monkeypatch)
-    # Bind the live handler-failure policy exactly as start() does (line ~1071),
-    # without launching the daemon thread.
-    system.event_handler._on_handler_error = system._publish_and_continue  # type: ignore[method-assign]
+    # Bind the live handler-failure policy exactly as start() does, without launching
+    # the daemon thread. 06-06 (RUN-02/D-07): the publish-and-continue policy moved
+    # VERBATIM out of the facade into the injected ErrorPolicy (WR-06 guard intact);
+    # start() now installs ``self._error_policy.on_handler_error``.
+    system.event_handler._on_handler_error = system._error_policy.on_handler_error  # type: ignore[method-assign]
     sink = _RaisingSink()
     system.event_handler._alert_sink = sink
 

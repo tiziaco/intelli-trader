@@ -41,7 +41,7 @@ def _build_paper_system() -> LiveTradingSystem:
     literals + a single ``'simulated'``-exchange portfolio. The ``'paper'`` venue is
     fully offline (the replay arm) — no OKX credentials or network needed (D-11).
     """
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],

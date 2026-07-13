@@ -114,13 +114,13 @@ def _run_backtest_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 def _run_paper_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Drive the live-paper path over the golden dataset; return (trades, equity) frames.
 
-    The paper side (04-02): ``LiveTradingSystem(exchange='paper')`` injects the replay
+    The paper side (04-02): ``LiveTradingSystem.for_exchange('paper')`` injects the replay
     provider into the ``LiveBarFeed`` and reuses the account-free 'simulated'
     ``SimulatedExchange`` as-is (D-04); ``run_paper_replay()`` replays the golden bars
     through the real feed -> queue seam with backtest-faithful per-tick + run-end
     discipline (D-02/D-03).
     """
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     strategy = _build_golden_strategy()
     system.strategies_handler.add_strategy(strategy)
     # 'simulated' routes to the reused SimulatedExchange (D-04) — the paper exchange.

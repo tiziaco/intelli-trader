@@ -49,7 +49,7 @@ def _live_system(monkeypatch: Any) -> LiveTradingSystem:
     """A credential-free LiveTradingSystem for the default (non-OKX) venue, marked running."""
     for var in ("OKX_API_KEY", "OKX_API_SECRET", "OKX_API_PASSPHRASE"):
         monkeypatch.delenv(var, raising=False)
-    system = LiveTradingSystem(exchange="binance")
+    system = LiveTradingSystem.for_exchange("binance")
     # Drive add_event directly — flip the running flag without launching the daemon thread.
     system._running = True
     return system

@@ -107,7 +107,7 @@ def test_paper_restart_rehydrate_ungate_runs_without_venue_reconcile(monkeypatch
     GREEN (ungated): ``rehydrate`` runs for the durable store REGARDLESS of exchange, and
     ``VenueReconciler.reconcile()`` / venue snapshot are NOT invoked on the paper path.
     """
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     calls: List[str] = []
 
     try:
@@ -164,7 +164,7 @@ def test_simulated_restore_cash_and_realised_pnl_on_paper_start(monkeypatch) -> 
     restored — reaching ``SimulatedCashAccount.restore_cash`` +
     ``PositionManager.restore_realised_pnl`` (previously dead on this path).
     """
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
 
     # A fresh durable paper portfolio at its construction-time initial cash, wired to a
     # durable store carrying the pre-restart cash + realised-PnL scalars.

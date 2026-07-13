@@ -49,7 +49,7 @@ def test_shared_pg_fixture_wires_live_system(pg_database_env):
     """
     import itrader.trading_system.live_trading_system as lts
 
-    system = lts.LiveTradingSystem(exchange="binance")
+    system = lts.LiveTradingSystem.for_exchange("binance")
     try:
         assert type(system._signal_store).__name__ == "CachedSqlSignalStorage"
         assert type(system.portfolio_handler._order_storage).__name__ == "CachedSqlOrderStorage"

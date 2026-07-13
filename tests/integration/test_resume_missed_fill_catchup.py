@@ -38,7 +38,7 @@ def test_resume_drain_recovers_fill_settled_during_disconnect(monkeypatch) -> No
     settled trade is never routed through ``_handle_trade`` and the assertion FAILS.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
 
     exchange = system._okx_exchange
     assert exchange is not None
@@ -89,7 +89,7 @@ def test_resume_drain_skips_catchup_when_no_okx_exchange(monkeypatch) -> None:
     A non-OKX resume path (no OKX exchange arm) must resume cleanly without the catch-up.
     """
     _set_okx_env(monkeypatch)
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
 
     system._okx_exchange = None  # simulate the guard's None branch
     venue_account = MagicMock(name="venue_account")

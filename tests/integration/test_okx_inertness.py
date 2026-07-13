@@ -45,7 +45,7 @@ _FORBIDDEN = (
     # protecting the oracle byte-exactness + the W1/W2 perf gate.
     "itrader.price_handler.feed.live_bar_feed",
     # Phase 4 (D-12): the paper replay provider is lazy-imported inside the
-    # LiveTradingSystem(exchange='paper') arm only — it must NEVER be pulled onto
+    # LiveTradingSystem.for_exchange('paper') arm only — it must NEVER be pulled onto
     # the backtest hot path (protects the oracle byte-exactness + the W1/W2 perf gate).
     "itrader.price_handler.providers.replay_provider",
     # Phase 5 (D-17/RECON-05, inertness gate): the two-sided restart reconciler is

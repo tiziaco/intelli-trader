@@ -90,7 +90,7 @@ def _run_replay(logger) -> None:
     replay -> feed -> queue seam via ``run_paper_replay()``, then reads result
     state and prints a short summary (trade count + final equity).
     """
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     portfolio_id = _compose(system)
 
     # Synchronous offline drive (D-02/D-03): replay -> feed.update -> BarEvent -> queue.
@@ -123,7 +123,7 @@ def _run_okx_smoke(logger) -> None:
     branch performs OKX network I/O and is invoked ONLY when explicitly requested
     with ``--mode okx``; the default replay path and CI never reach it.
     """
-    system = LiveTradingSystem(exchange="okx")
+    system = LiveTradingSystem.for_exchange("okx")
     _compose(system)
 
     started = system.start()

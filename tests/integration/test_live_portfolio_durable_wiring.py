@@ -55,7 +55,7 @@ def test_no_durable_store_falls_back_to_backtest(monkeypatch) -> None:
     for var in ("ITRADER_DATABASE_PASSWORD", "ITRADER_DATABASE_URL"):
         monkeypatch.delenv(var, raising=False)
 
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     try:
         assert system._system_db_backend is None
         # The durable arm was not taken — the portfolio ledger stays in-memory (oracle-dark).
@@ -71,7 +71,7 @@ def test_durable_store_constructs_live_portfolio_handler(pg_database_env) -> Non
     Uses the shared session testcontainers Postgres via ``pg_database_env`` (sets
     ``ITRADER_DATABASE_URL``); SKIPS Dockerless (D-11).
     """
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     try:
         # The durable arm was taken — one shared SqlEngine spine built.
         assert system._system_db_backend is not None
@@ -90,7 +90,7 @@ def test_portfolio_rehydrate_runs_before_reconcile_on_live_start(monkeypatch) ->
     call order of ``PortfolioHandler.rehydrate()`` vs ``VenueReconciler.reconcile()``, and halt
     in the post-reconcile baseline guard so no live thread is ever spawned.
     """
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     calls: List[str] = []
 
     try:

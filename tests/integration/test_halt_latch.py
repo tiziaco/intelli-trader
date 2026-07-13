@@ -48,7 +48,7 @@ from itrader.trading_system.live_trading_system import LiveTradingSystem
 
 def _build_paper_system() -> LiveTradingSystem:
     """A fully offline paper-venue system (mirrors test_live_paper_lifecycle wiring)."""
-    system = LiveTradingSystem(exchange="paper")
+    system = LiveTradingSystem.for_exchange("paper")
     strategy = SMAMACDStrategy(
         timeframe="1d",
         tickers=["BTCUSD"],
