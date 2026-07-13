@@ -160,7 +160,7 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
   config, builds the one `sql_engine`, resolves venue plugin(s), assembles `EngineContext`, calls
   `compose_engine`, builds bundle(s) + `LiveRunner` + controllers (LR-10/§5).
 
-- [ ] **RUN-02**: `LiveRunner` owns the drain loop + injected `ErrorPolicy` + worker supervision,
+- [x] **RUN-02**: `LiveRunner` owns the drain loop + injected `ErrorPolicy` + worker supervision,
   replacing `_event_processing_loop` (§5).
 
 - [ ] **RUN-03**: `LiveTradingSystem` shrinks to a ~200-line facade (lifecycle, status/read-model,
@@ -393,7 +393,7 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | VENUE-06 | P5 | Complete |
 | VENUE-07 | P5 | Complete |
 | RUN-01 | P6 | Pending |
-| RUN-02 | P6 | Pending |
+| RUN-02 | P6 | Complete |
 | RUN-03 | P6 | Pending |
 | RUN-04 | P6 | Complete |
 | RUN-05 | P6 | Pending |
