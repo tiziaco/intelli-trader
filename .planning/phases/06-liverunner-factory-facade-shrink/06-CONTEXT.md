@@ -81,8 +81,7 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   WR-03 desync assert (live `_initialize_live_session` lacks it today — a safety upgrade, no
   oracle impact since it's live-only).
 
-- **D-02 (Form = free function `wire_universe(engine) -> Universe` in
-  `itrader/trading_system/universe_wiring.py`):** A pure module-level function taking the
+- **D-02 (Form = free function `wire_universe(engine) -> Universe` in `itrader/trading_system/universe_wiring.py`):** A pure module-level function taking the
   `Engine` holder (both modes have one post-P6 — `build_live_system` calls `compose_engine`),
   returning the built `Universe`. The backtest block relocates VERBATIM; each caller keeps its
   own pre/post (backtest: ping-grid union + per-strategy `feed.precompute`; live: warmup-consumer
@@ -148,16 +147,14 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   P8" (would defer RUN-02's explicit "injected ErrorPolicy" clause and force P8 to re-touch
   LiveRunner).
 
-- **D-08 (LiveRunner takes an injected dispatch-gate callback → facade `_dispatch_live` in P6,
-  SafetyController in P7):** The live loop's `_dispatch_live` safety gate is P7's `SafetyController`.
+- **D-08 (LiveRunner takes an injected dispatch-gate callback → facade `_dispatch_live` in P6, SafetyController in P7):** The live loop's `_dispatch_live` safety gate is P7's `SafetyController`.
   Per D-04, LiveRunner takes an injected dispatch-gate callback wired in P6 to the facade's existing
   `_dispatch_live` (body untouched); P7 repoints it at `SafetyController.dispatch_gate`. Mirrors the
   D-11 `freeze_gate` interim-callback pattern.
 
 ### Area 4 — Factory handoff & route registration
 
-- **D-09 (`build_live_system(spec) -> LiveTradingSystem` is the ONLY construction path; facade
-  `__init__` = pure injection):** `build_live_system` reads centralized config, builds the ONE
+- **D-09 (`build_live_system(spec) -> LiveTradingSystem` is the ONLY construction path; facade `__init__` = pure injection):** `build_live_system` reads centralized config, builds the ONE
   `sql_engine` (live only), resolves venue plugin(s), assembles `EngineContext`, calls
   `compose_engine`, builds bundle(s) (promoting the P5 D-06 `assemble_venue` call site from
   `__init__` into the factory) + `LiveRunner` + `WorkerSupervisor` + controllers + `UniverseHandler`,
@@ -185,8 +182,7 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
   `UniverseHandler` built at the root FIRST (D-12/RUN-06) so the table can reference its methods at
   construction.
 
-- **D-23 (CONTROL plane — P6 wires the live `PriorityEventBus`; CONTROL routes populate as consumers
-  land in P7/P9):** Live was never migrated off the raw `queue.Queue()` (`live_trading_system.py:236`,
+- **D-23 (CONTROL plane — P6 wires the live `PriorityEventBus`; CONTROL routes populate as consumers land in P7/P9):** Live was never migrated off the raw `queue.Queue()` (`live_trading_system.py:236`,
   `bus=self.global_queue`) — P2 built `PriorityEventBus` + the CONTROL EventTypes and wired
   backtest→`FifoEventBus`, but the live→`PriorityEventBus` wiring is orphaned (no requirement owns it).
   **P6's `build_live_system` wires live onto `PriorityEventBus`** as part of RUN-01's EngineContext
@@ -204,8 +200,7 @@ depth-hint seam shaped. **Live-only decomposition** layered on the mode-agnostic
 
 ### Area 5 — UniverseHandler first-class init (RUN-06)
 
-- **D-11 (Ctor deps = `bus`/`universe`/`feed`/`config` (RUN-06 literal); read-model seams stay as
-  setters; freeze_gate is an interim callable):** `UniverseHandler.__init__` takes exactly
+- **D-11 (Ctor deps = `bus`/`universe`/`feed`/`config` (RUN-06 literal); read-model seams stay as setters; freeze_gate is an interim callable):** `UniverseHandler.__init__` takes exactly
   `bus`/`universe`/`feed`/`config` (timeframe + `remove_policy` read from config — RUN-06's literal
   dep list). `set_venue_metadata(exchange)` becomes ONE unconditional call collapsing the two
   currently-OKX-guarded seams `set_symbol_validator` + `set_precision_resolver` (both now abstract

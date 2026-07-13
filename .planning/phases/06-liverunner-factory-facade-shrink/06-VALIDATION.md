@@ -1,10 +1,11 @@
 ---
 phase: 6
 slug: liverunner-factory-facade-shrink
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-13
+approved: 2026-07-13
 ---
 
 # Phase 6 — Validation Strategy
@@ -81,11 +82,13 @@ created: 2026-07-13
 
 ## Validation Sign-Off
 
-- [ ] All tasks have an automated verify (mapped to a load-bearing gate) or a Wave 0 dependency
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references (inertness extension, collection-safety, relocated provider test)
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 10s
-- [ ] `nyquist_compliant: true` set in frontmatter
+*Verified by gsd-plan-checker against the 7 plans on 2026-07-13 (Dimension 8 all-pass).*
 
-**Approval:** pending
+- [x] All tasks have an automated verify (mapped to a load-bearing gate) or a Wave 0 dependency
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 references are all covered by tasks (inertness extension → 06-06 Task 3; collection-safety → 06-07 Task 3; relocated provider test → 06-07). *(`wave_0_complete` stays `false` until those tasks EXECUTE — planned ≠ built.)*
+- [x] No watch-mode flags
+- [x] Feedback latency < 10s
+- [x] `nyquist_compliant: true` set in frontmatter
+
+**Approval:** approved 2026-07-13 (plan-checker; 0 blockers)
