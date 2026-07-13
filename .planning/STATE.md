@@ -36,7 +36,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 Phase: 6 — LiveRunner + Factory + Facade Shrink
 Plan: Not started
 Status: Phase complete — ready for verification
-Last activity: 2026-07-12 — Phase 05 complete, transitioned to Phase 6
+Last activity: 2026-07-13 — Completed quick task 260713-cvb: fix ConnectorProvider.close_all teardown (WR-02)
 
 Progress: [████░░░░░░] 44%
 
@@ -190,6 +190,12 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
   silently folded into a running phase.
 
 - ✓ RESOLVED (fix `f86fe5d2`, orchestrator post-merge gate): GATE-01 quarantine regression from 01-01 — `config/system.py` module-level `SqlSettings` import pulled sqlalchemy onto the backtest graph. Fixed by moving the import under `TYPE_CHECKING` + a lazy in-body import; `test_import_quarantine.py` + `test_okx_inertness.py` + byte-exact oracle all green. See phase deferred-items.md.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260713-cvb | Fix WR-02: ConnectorProvider.close_all isolates each disconnect + always clears memo (bound logger) | 2026-07-13 | 5045db99 | [260713-cvb-fix-connector-close-all-teardown](./quick/260713-cvb-fix-connector-close-all-teardown/) |
 
 ## Deferred Items
 
