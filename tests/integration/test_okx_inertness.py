@@ -338,7 +338,7 @@ def test_new_store_registrars_are_register_vs_build() -> None:
 def test_production_build_live_system_registers_no_replay_data_provider() -> None:
     """TEST-01/D-21: production ``build_live_system`` registers NO ``'replay'`` data provider.
 
-    The stronger post-D-21 invariant that replaces the old "import ReplayDataPlugin"
+    The stronger post-D-21 invariant that replaces the old replay-plugin-import
     assertion: the offline replay DATA apparatus LEFT the ``itrader`` package for the test
     harness (D-18), and production ``paper`` re-points to the OKX live data feed (D-21). So
     the ONE live composition root must register EXACTLY the ``'okx'`` data provider — never
