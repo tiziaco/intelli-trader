@@ -56,7 +56,6 @@ from typing import TYPE_CHECKING, Any, Callable, TypedDict
 
 import aiohttp
 
-from itrader.config.stream import FeedProviderSettings, StreamSettings
 from itrader.connectors.base import LiveConnector
 from itrader.core.exceptions import MissingPriceDataError, StateError
 from itrader.core.money import to_money
@@ -536,10 +535,11 @@ class OkxDataProvider:
         cast of the frame / ``Decimal(float)`` (CONN-05). Returns Decimal-edge
         ``ClosedBar`` dicts for the Phase-3 warmup path (replayed one-by-one through the
         feed's ``update(bar)``, LX-09). ``limit`` defaults to the folded backfill page
-        size (CFG-03/D-08, ``FeedProviderSettings().backfill_page``) when not given.
+        size (CFG-03/D-08/IN-01, ``config.feed_provider.backfill_page``) when not given.
         """
         if limit is None:
-            limit = FeedProviderSettings().backfill_page
+            from itrader import config
+            limit = config.feed_provider.backfill_page
         symbol_okx = self._to_okx_symbol(symbol)
         # ccxt's unified ``fetch_ohlcv`` takes the UNIFIED timeframe (``"1d"``) and maps it
         # to OKX's ``"1D"`` itself — passing the OKX token here makes ccxt's
@@ -576,11 +576,12 @@ class OkxDataProvider:
         (30s stall → livelock, RESEARCH Pitfall 4 / V17-15). This variant is the LOOP-triggered gap
         path only; the engine-thread ``warmup`` path keeps the synchronous ``call()``-based method.
 
-        ``limit`` defaults to the folded backfill page size (CFG-03/D-08,
-        ``FeedProviderSettings().backfill_page``) when not given.
+        ``limit`` defaults to the folded backfill page size (CFG-03/D-08/IN-01,
+        ``config.feed_provider.backfill_page``) when not given.
         """
         if limit is None:
-            limit = FeedProviderSettings().backfill_page
+            from itrader import config
+            limit = config.feed_provider.backfill_page
         symbol_okx = self._to_okx_symbol(symbol)
         client = self._connector.client
         raw: list[Any] = []

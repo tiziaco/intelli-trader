@@ -39,7 +39,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
 
-from itrader.config.stream import FeedProviderSettings
 from itrader.core.bar import Bar
 from itrader.core.exceptions import (
     MalformedDataError,
@@ -265,7 +264,7 @@ class LiveBarFeed(BarFeed):
         """Live-start warmup: REST-fetch ``depth`` bars and replay each via ``update()``.
 
         The FEED-03 warmup driver. When ``depth`` is not given it resolves to
-        ``self.cache_capacity() + FeedProviderSettings().warmup_margin`` (D-10 — the
+        ``self.cache_capacity() + config.feed_provider.warmup_margin`` (D-10 — the
         derived ring depth plus a FIXED additive margin, CFG-03/D-08 folded the margin
         into config/stream.py, RESEARCH §Warmup safety-margin survey; with the
         03-04 D-13 registration ``cache_capacity()`` is 100, so K >= 105 fetches
@@ -280,7 +279,8 @@ class LiveBarFeed(BarFeed):
         gate. Timestamps come from the venue bars only (never ``datetime.now()``).
         """
         if depth is None:
-            depth = self.cache_capacity() + FeedProviderSettings().warmup_margin
+            from itrader import config
+            depth = self.cache_capacity() + config.feed_provider.warmup_margin
         bars = self._provider.fetch_ohlcv_backfill(
             symbol, timeframe, limit=depth)
         self.logger.info(

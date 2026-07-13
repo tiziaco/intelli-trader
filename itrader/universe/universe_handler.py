@@ -37,7 +37,6 @@ from decimal import Decimal
 from queue import Queue
 from typing import Any, Protocol, cast, runtime_checkable
 
-from itrader.config.stream import FeedProviderSettings
 from itrader.core.bar import Bar
 from itrader.core.enums import OrderType, PositionSide, Side
 from itrader.core.ids import PortfolioId, StrategyId
@@ -104,7 +103,7 @@ class _SupportsWarmup(Protocol):
       tradeable ``BarEvent`` during warmup).
     - ``cache_capacity`` — the derived ring depth the async ``spawn_warmup``
       ``limit`` is computed from
-      (``cache_capacity() + FeedProviderSettings().warmup_margin``).
+      (``cache_capacity() + config.feed_provider.warmup_margin``).
     """
 
     def warmup(self, symbol: str, timeframe: str, depth: int | None = ...) -> None: ...
@@ -497,14 +496,15 @@ class UniverseHandler:
 
         Live (provider wired): async ``spawn_warmup`` (I/O only, no state mutated)
         with an EXPLICIT depth ``K = feed.cache_capacity() +
-        FeedProviderSettings().warmup_margin`` (CFG-03/D-08 folded the margin into
+        config.feed_provider.warmup_margin`` (CFG-03/D-08/IN-01 folded the margin into
         config/stream.py; RESEARCH OQ4 — SAFE for the SMA_MACD-only roster). Subscribe is NOT called
         here — it moves to ``on_bars_loaded`` (D-03b). Paper (provider is None):
         synchronous ``feed.warmup`` fallback + immediate ``mark_ready`` (no live
         stream to subscribe, never left PENDING).
         """
         if self._provider is not None:
-            depth = self._feed.cache_capacity() + FeedProviderSettings().warmup_margin
+            from itrader import config
+            depth = self._feed.cache_capacity() + config.feed_provider.warmup_margin
             self._provider.spawn_warmup(sym, self._timeframe, depth)
             return
         # Paper / no-provider path: synchronous absorb + immediate READY.
