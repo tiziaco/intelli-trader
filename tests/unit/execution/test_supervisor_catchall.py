@@ -152,9 +152,9 @@ class _RecordingSink:
 
 def _fast(component: Any) -> None:
     """Shrink the debounce/backoff so a supervisor test runs instantly."""
-    component._reconnect_debounce_s = 0.0
-    component._reconnect_backoff_base_s = 0.0
-    component._reconnect_backoff_cap_s = 0.0
+    component._supervisor._reconnect_debounce_s = 0.0
+    component._supervisor._reconnect_backoff_base_s = 0.0
+    component._supervisor._reconnect_backoff_cap_s = 0.0
 
 
 def _live_system(monkeypatch: Any) -> LiveTradingSystem:
@@ -186,7 +186,7 @@ def test_supervisor_catchall_order_arm_unexpected_error_halts(monkeypatch: Any) 
     consume = _RaiseConsume(ccxt.ExchangeError(f"venue rejected order: {_SECRET}"))
     try:
         # Today the unclassified error propagates out and the task dies silently.
-        asyncio.run(exchange._run_stream_supervisor(consume, "fills"))
+        asyncio.run(exchange._supervisor.run(consume, "fills"))
     except ccxt.ExchangeError:
         pass  # RED: unclassified error kills the task; GREEN: the supervisor halts instead.
 
@@ -235,7 +235,7 @@ def test_supervisor_catchall_provider_garbage_json_halts(monkeypatch: Any) -> No
         await provider._connect_and_consume_candles("BTC-USDT", "candle1D")
 
     try:
-        asyncio.run(provider._run_stream_supervisor(_consume, "candles"))
+        asyncio.run(provider._supervisor.run(_consume, "candles"))
     except (json.JSONDecodeError, _StopLoop):
         pass  # RED: the unguarded json.loads raises and the task dies; GREEN: it halts.
 

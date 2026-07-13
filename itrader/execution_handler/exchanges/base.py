@@ -1,7 +1,13 @@
-from typing import Any, Dict, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Dict, Protocol, runtime_checkable
 
 from itrader.events_handler.events import OrderEvent
 from ..result_objects import ConnectionResult, HealthStatus, OrderPreflightResult
+
+if TYPE_CHECKING:
+	# Type-only import (VENUE-04/D-09): keeps this Protocol module import-lean
+	# on the live path — ``resolve_precision``'s return type is resolved for
+	# mypy without pulling ``core.instrument`` into the runtime import graph.
+	from itrader.core.instrument import Instrument
 
 
 @runtime_checkable
@@ -67,4 +73,13 @@ class AbstractExchange(Protocol):
 
 	def validate_symbol(self, symbol: str) -> bool:
 		"""Check if symbol is valid for trading on this exchange."""
+		...
+
+	def resolve_precision(self, symbol: str) -> "Instrument | None":
+		"""Resolve the venue-precision ``Instrument`` for ``symbol`` (VENUE-04/D-09).
+
+		Returns an ``Instrument`` carrying Decimal price/quantity scales read from
+		the venue, or ``None`` when precision is unresolvable (no markets map /
+		absent symbol / unusable entry) so callers fall to the ``_DEFAULT_*`` ladder.
+		"""
 		...

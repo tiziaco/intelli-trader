@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: — Live System Refactor & Live-Readiness Hardening
-current_phase: 5
-current_phase_name: Venue Registry + Bundle
-status: completed
-stopped_at: Completed 04-03-PLAN.md
-last_updated: "2026-07-10T07:11:10.811Z"
-last_activity: 2026-07-10
-last_activity_desc: Phase 04 complete, transitioned to Phase 5
+current_phase: 6
+current_phase_name: LiveRunner + Factory + Facade Shrink
+status: verifying
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-07-12T23:34:16.619Z"
+last_activity: 2026-07-12
+last_activity_desc: Phase 05 complete, transitioned to Phase 6
 progress:
   total_phases: 9
-  completed_phases: 4
-  total_plans: 13
-  completed_plans: 13
-  percent: 44
+  completed_phases: 5
+  total_plans: 19
+  completed_plans: 19
+  percent: 56
 ---
 
 # Project State
@@ -26,17 +26,17 @@ See: .planning/PROJECT.md (Current Milestone: v1.8 — Live System Refactor & Li
 **Core value:** A single backtest run of `SMA_MACD` on the golden BTCUSD CSV produces correct,
 deterministic, cross-validated numbers (oracle **134 / `46189.87730727451`**; v1.5 W1 baseline 15.7 s /
 152.8 MB). v1.7 shipped a live operating mode (paper-first on OKX) without disturbing that oracle.
-**Current focus:** Phase 04 — storage-schema-migrations-relocation-new-durable-stores
+**Current focus:** Phase 05 — Venue Registry + Bundle
 thin ~200-line facade over focused, venue-parametrized, FastAPI-ready collaborators — **without
 disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI itself is out of scope
 (LR-01). Full scope: core refactor (P1–P8 + P12) + the three ★ feature-adds (P9–P11).
 
 ## Current Position
 
-Phase: 5 — Venue Registry + Bundle
+Phase: 6 — LiveRunner + Factory + Facade Shrink
 Plan: Not started
-Status: 04-04 gap-remediation complete (WR-02 / IN-01 / WR-03)
-Last activity: 2026-07-10 — Phase 04 complete, transitioned to Phase 5
+Status: Phase complete — ready for verification
+Last activity: 2026-07-13 — Completed quick task 260713-dbw: consolidate live-provider surface to the single LiveDataProvider Protocol
 
 Progress: [████░░░░░░] 44%
 
@@ -142,6 +142,18 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: [Phase 04]: 04-03: 3 hand-authored Alembic revisions off d10_halt_records (system_store → venue_config[builds venue_store table, slug!=name] → strategy_registry[registry+FK'd subscriptions, child-first downgrade]); new single head strategy_registry; env.py target_metadata registers all 4 new tables (D-02, import-inert Table-only); SQL-02 gate = single-head + upgrade-head + create_all/migration parity; inertness _FORBIDDEN + register-vs-build extended; oracle byte-exact
 - [Phase ?]: WR-02: SQLite FK enforcement lives on SqlEngine (dialect-guarded PRAGMA connect-hook), not a fixture — engine correctness semantics must be identical on every dialect the engine runs
 - [Phase ?]: WR-03/D-14: 7 durable stores schema-pure (no runtime create_all); production Alembic-owned, tests provision via tests.support.schema.provision_schema; ephemeral results store keeps create_all
+- [Phase ?]: [Phase 05]: 05-01 (VENUE-07/D-08/CF-4): one parameterized StreamSupervisor (connectors/stream_supervisor.py, 4-space, ccxt-free) owns the reconnect ladder + _reconnect_attempts/_streams_down; the 3 donor arms (okx_provider/venue/okx) HAS-A supervisor and delegate. Parameterized over transient/fatal tuples + reconnect_on_clean_return so each donor's behavior is preserved exactly; venue's reduced surface PRESERVED not normalized. ccxt+supervisor lazy-imported in __init__ so venue stays inert (connectors barrel eagerly pulls ccxt.pro). ~9 coupled test files retargeted to arm._supervisor
+- [Phase ?]: [Phase 05]: 05-01 (CF-9/D-11/T-05-04): OkxExchange.validate_symbol fail-CLOSES (False) on a non-dict markets cache; reuses the single validate_symbol->delta.removed removal path. Seeded loaded markets in 4 submit fixtures + added cold-cache unit test. CF-3 additive LiveConnector docstrings (no signature change)
+- [Phase ?]: 05-03: set_bar_sink NOT defaulted on BaseLiveDataProvider (fail-loud — a no-op default would silently drop bars); a bare base is intentionally not a conforming LiveDataProvider
+- [Phase ?]: 05-03: OkxDataProvider left unedited — conforms to LiveDataProvider structurally; avoids conflict with 05-01 StreamSupervisor delegation
+- [Phase 05]: VENUE-04/D-09: precision is an AbstractExchange.resolve_precision capability; precision_to_scale is a shared core/money util; LTS resolvers deleted
+- [Phase ?]: 05-04: VenueBundle.lifecycle typed Any until 05-06 VenueLifecycle lands (mypy --strict forward-ref)
+- [Phase ?]: 05-05: OKX/paper venue plugins triple-deferral-lazy (D-04); register != build proven by extended inertness gate + module-scope AST scans
+- [Phase ?]: 05-05: register-vs-build assertion excludes ConnectorProvider (connectors barrel eagerly re-exports OkxConnector, pre-existing 05-04 decision); proves venue-plugin surface inertness instead
+- [Phase ?]: 05-06 (VENUE-06/SC3/D-06): LiveTradingSystem.__init__ delegates venue assembly to assemble_venue; every if exchange==okx/elif==paper branch removed (grep=0); venue-string init/start guards became structural None-guards; start/stop delegate connector connect/disconnect to VenueLifecycle
+- [Phase ?]: 05-06 (D-10): VenueLifecycle is a small class encoding the fixed connector start/stop order, None-guarding paper's absent connector (start no-ops when bundle.connector is None; stop prefers ConnectorProvider.close_all, falls back to connector.disconnect)
+- [Phase ?]: 05-06: plugin/ConnectorProvider imports stay LAZY inside LTS.__init__ not module top — trading_system/__init__.py imports LiveTradingSystem, so a module-top okx_plugin/paper_plugin/ConnectorProvider import would pull them onto the backtest import graph (inertness _FORBIDDEN) and redden test_okx_inertness
+- [Phase ?]: 05-06: VenueBundle.lifecycle retyped Any -> VenueLifecycle | None (05-04 forward-seam closed); TYPE_CHECKING forward-ref keeps the substrate import-inert
 
 ### Pending Todos
 
@@ -179,6 +191,13 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 
 - ✓ RESOLVED (fix `f86fe5d2`, orchestrator post-merge gate): GATE-01 quarantine regression from 01-01 — `config/system.py` module-level `SqlSettings` import pulled sqlalchemy onto the backtest graph. Fixed by moving the import under `TYPE_CHECKING` + a lazy in-body import; `test_import_quarantine.py` + `test_okx_inertness.py` + byte-exact oracle all green. See phase deferred-items.md.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260713-cvb | Fix WR-02: ConnectorProvider.close_all isolates each disconnect + always clears memo (bound logger) | 2026-07-13 | 5045db99 | [260713-cvb-fix-connector-close-all-teardown](./quick/260713-cvb-fix-connector-close-all-teardown/) |
+| 260713-dbw | Consolidate live-provider surface to one symbol: drop BaseLiveDataProvider, keep the LiveDataProvider Protocol, inline the 7 no-op seams into ReplayDataProvider | 2026-07-13 | d3dec871 | [260713-dbw-consolidate-the-two-live-provider-symbol](./quick/260713-dbw-consolidate-the-two-live-provider-symbol/) |
+
 ## Deferred Items
 
 Program-level items carried across milestones (v1.7-close carry-forward + v2 platform seams). The
@@ -209,6 +228,12 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 | Phase 04 P02 | 6min | 3 tasks | 6 files |
 | Phase 04 P03 | 12min | 3 tasks | 6 files |
 | Phase 04 P04 | 20m | 3 tasks | 16 files |
+| Phase 05 P01 | 29min | 3 tasks | 17 files |
+| Phase 05 P03 | 4min | 2 tasks | 4 files |
+| Phase 05 P02 | 6m | 3 tasks | 9 files |
+| Phase 05 P04 | 5min | 3 tasks | 7 files |
+| Phase 05 P05 | 7min | 3 tasks | 5 files |
+| Phase 05 P06 | 11min | 3 tasks | 6 files |
 
 ## Bookkeeping
 
@@ -220,11 +245,11 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-10T06:35:45.765Z
-Stopped at: Completed 04-03-PLAN.md
+Last session: 2026-07-12T23:15:58.926Z
+Stopped at: Completed 05-03-PLAN.md
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
-Resume file: None
+Resume file: .planning/phases/05-venue-registry-bundle/05-CONTEXT.md
 Carried todo: 14 pending todos in `todos/pending/` (10 fold into v1.8 as CF-1..CF-10; `v17-residual-carryforward.md`
 is the index; the substantive open item is `margin-equity-double-counts-notional-wr01`, owner-gated).
 

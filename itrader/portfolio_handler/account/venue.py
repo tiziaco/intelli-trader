@@ -32,11 +32,10 @@ ever relaxed to a runtime import it would still not couple the hot path to
 ``ccxt.pro``.
 """
 
-import asyncio
 import threading
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from itrader.config.stream import StreamSettings
 from itrader.core.exceptions import (
@@ -159,23 +158,42 @@ class VenueAccount(Account):
         # Spawned stream-task handles (cancelled by the connector on disconnect).
         self._stream_handles: list[Any] = []
 
-        # D-11 (V17-07): bounded-retry supervisor state for the balance/position
-        # streams (mirrors the okx.py donor). A transient drop reconnects with
-        # backoff; an unknown error escalates to a fail-safe HALT — never the bare
-        # ``while True`` that died silently on the first raise. The halt/pause seams
-        # default to no-op (None) so an unwired leaf still supervises without halting.
-        self._reconnect_attempts: dict[str, int] = {}
-        self._streams_down: set[str] = set()
-        # CFG-03 / D-08: reconnect-supervisor tuning folded into StreamSettings
-        # (config/stream.py). A default-constructed instance is the P1 seam;
-        # composition-root injection + the shared supervisor land in P5.
-        _stream_cfg = StreamSettings()
-        self._reconnect_debounce_s = _stream_cfg.reconnect_debounce_s
-        self._reconnect_backoff_base_s = _stream_cfg.reconnect_backoff_base_s
-        self._reconnect_backoff_cap_s = _stream_cfg.reconnect_backoff_cap_s
-        self._reconnect_ceiling = _stream_cfg.reconnect_retry_ceiling
+        # D-11 (V17-07): bounded-retry supervision for the balance/position streams.
+        # The halt/pause seams default to no-op (None) so an unwired leaf still
+        # supervises (retries transients) without halting; the shared supervisor's
+        # closures late-bind them so a setter after construction still takes effect.
         self._halt_signal: Callable[[str], None] | None = None
         self._on_stream_down: Callable[[str], None] | None = None
+
+        # 05-01 (D-08 / CF-4 / VENUE-07): the ONE shared reconnect ladder. This leaf
+        # HAS-A StreamSupervisor and delegates its stream supervision to it (the
+        # hand-copied reconnect-supervisor fork is gone; _reconnect_attempts /
+        # _streams_down / the reconnect tuning now live on the supervisor). The venue
+        # leaf's EXACT donor config: the ccxt-only 3-type transient set,
+        # reconnect_on_clean_return=False (a forever-loop returning cleanly is a stop),
+        # and — RESEARCH Open Q1 / A2 — the REDUCED surface is PRESERVED, NOT
+        # normalized: the consume loops NEVER call mark_up / reset_budget, and there is
+        # NO on_up (the venue leaf pauses-down but never resumes-up nor resets the
+        # budget). ccxt + the supervisor class are lazy-imported HERE (never at module
+        # top) so the backtest import graph stays inert — a runtime import of the
+        # connectors barrel here would pull ccxt.pro onto the hot path; deferring it to
+        # VenueAccount construction (live-only) keeps the leaf inert-by-import (CONN-04).
+        import ccxt
+
+        from itrader.connectors.stream_supervisor import StreamSupervisor
+        self._supervisor = StreamSupervisor(
+            StreamSettings(),
+            transient_exceptions=(
+                ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection),
+            fatal_exceptions=(ccxt.AuthenticationError, ccxt.PermissionDenied),
+            reconnect_on_clean_return=False,
+            halt_signal=lambda r: (
+                self._halt_signal(r) if self._halt_signal is not None else None),
+            on_down=lambda n: (
+                self._on_stream_down(n) if self._on_stream_down is not None else None),
+            on_up=None,
+            logger=self.logger,
+            label="OKX venue")
 
     # --- Decimal-edge parsers (None/missing guarded BEFORE the edge) -----------
 
@@ -279,7 +297,7 @@ class VenueAccount(Account):
                 update = await self._connector.client.watch_balance()
                 self._write_balance_stream(update)
 
-        await self._run_stream_supervisor(_consume, "account")
+        await self._supervisor.run(_consume, "account")
 
     def _write_balance_stream(self, update: Any) -> None:
         """Apply a venue balance push to the cache — POSITIONS only, NEVER the cash baseline.
@@ -331,9 +349,9 @@ class VenueAccount(Account):
                 with self._lock:
                     self._venue_positions = positions
 
-        await self._run_stream_supervisor(_consume, "positions")
+        await self._supervisor.run(_consume, "positions")
 
-    # --- reconnect supervisor (D-11 — wrap the bare venue loops, V17-07) --------
+    # --- reconnect supervisor (D-11 / D-08 — delegated to StreamSupervisor) ------
 
     def set_halt_signal(self, halt_signal: Callable[[str], None]) -> None:
         """Inject the freeze-in-place halt entrypoint (D-11/D-20).
@@ -342,93 +360,10 @@ class VenueAccount(Account):
         an exhausted retry ceiling, or an UNKNOWN error on a supervised stream. The
         halt entrypoint owns the CRITICAL alert; the venue passes NO exception text so
         no secret can leak (T-05-27 / V7). Optional — an unwired leaf supervises (retries
-        transients) but escalation is a no-op until a halt signal is injected.
+        transients) but escalation is a no-op until a halt signal is injected. The
+        shared supervisor's halt closure late-binds this field (05-01/D-08).
         """
         self._halt_signal = halt_signal
-
-    async def _run_stream_supervisor(
-        self, consume: Callable[[str], Awaitable[None]], stream_name: str
-    ) -> None:
-        """Bounded-retry reconnect supervisor wrapping a stream consume-loop (D-11).
-
-        Ladder mirrors the ``OkxExchange._run_stream_supervisor`` donor:
-
-        - ``asyncio.CancelledError`` is re-raised untouched (cooperative teardown —
-          never swallow cancellation, Pitfall 4).
-        - **transient** (``ccxt.NetworkError``/``RequestTimeout``/``DDoSProtection``) ->
-          reconnect with exponential backoff after a debounce, staying running.
-        - **fatal** (``ccxt.AuthenticationError``/``PermissionDenied``) OR the retry
-          ceiling exhausted OR an **unknown** (unclassified) error -> escalate to the
-          injected halt entrypoint (fail-safe HALT, reason ``'connector-fatal'``). The
-          catch-all is what closes V17-07: the old bare ``while True`` let any raise
-          kill the cache writer silently.
-        """
-        import ccxt  # lazy: ccxt only needed on the live stream path (hot-path inert).
-        transient: tuple[type[BaseException], ...] = (
-            ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection)
-        fatal: tuple[type[BaseException], ...] = (
-            ccxt.AuthenticationError, ccxt.PermissionDenied)
-        while True:
-            try:
-                await consume(stream_name)
-                return  # a forever-loop returning cleanly is not expected — stop.
-            except asyncio.CancelledError:
-                raise  # cooperative teardown — never swallow.
-            except fatal as exc:
-                self._escalate_connector_halt(
-                    stream_name, exc, "fatal auth/permission error")
-                return
-            except transient as exc:
-                attempt = self._reconnect_attempts.get(stream_name, 0) + 1
-                self._reconnect_attempts[stream_name] = attempt
-                if attempt > self._reconnect_ceiling:
-                    self._escalate_connector_halt(
-                        stream_name, exc, "reconnect retry ceiling exhausted")
-                    return
-                await asyncio.sleep(self._reconnect_debounce_s)
-                if attempt > 1:
-                    self._mark_stream_down(stream_name)
-                backoff = min(
-                    self._reconnect_backoff_base_s * (2 ** (attempt - 1)),
-                    self._reconnect_backoff_cap_s)
-                # Scrub (T-05-27): log the exception TYPE only, never str(exc).
-                self.logger.warning(
-                    "OKX venue %s stream dropped (%s) — reconnecting "
-                    "(attempt %d/%d, backoff %.1fs)",
-                    stream_name, type(exc).__name__, attempt,
-                    self._reconnect_ceiling, backoff)
-                await asyncio.sleep(backoff)
-            except Exception as exc:
-                # D-11 (V17-07): an UNCLASSIFIED error is neither transient nor fatal.
-                # Fail safe — escalate to a HALT instead of letting it propagate out of
-                # the consume loop and kill the cache writer silently.
-                self._escalate_connector_halt(stream_name, exc, "unexpected error")
-                return
-
-    def _escalate_connector_halt(
-        self, stream_name: str, exc: BaseException, cause: str
-    ) -> None:
-        """Halt the engine on an unrecoverable venue-stream failure (D-11/D-20).
-
-        Scrub (T-05-27 / V7): the log carries the exception TYPE + a fixed cause string,
-        never ``str(exc)``; the halt entrypoint is called with the fixed reason
-        ``'connector-fatal'`` so no secret can reach the CRITICAL alert.
-        """
-        self.logger.error(
-            "OKX venue %s stream unrecoverable (%s: %s) — halting engine",
-            stream_name, type(exc).__name__, cause)
-        if self._halt_signal is not None:
-            self._halt_signal("connector-fatal")
-
-    def _mark_stream_down(self, stream_name: str) -> None:
-        """Record a sustained venue-stream disconnect once (D-11/D-19)."""
-        if stream_name in self._streams_down:
-            return
-        self._streams_down.add(stream_name)
-        self.logger.warning(
-            "OKX venue %s stream disconnected past debounce", stream_name)
-        if self._on_stream_down is not None:
-            self._on_stream_down(stream_name)
 
     def start_streaming(self) -> None:
         """Spawn the venue push streams via the injected connector (root-wired, 05-04).

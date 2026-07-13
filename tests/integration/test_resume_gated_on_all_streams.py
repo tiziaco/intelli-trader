@@ -54,8 +54,8 @@ def test_resume_stays_paused_while_fill_arm_down(monkeypatch) -> None:
     system = _paused_offline_okx_system(monkeypatch)
 
     # FILL/exchange arm still down; DATA/candle arm reconnected.
-    system._okx_exchange._streams_down = {"fills"}
-    system._okx_data_provider._streams_down = set()
+    system._okx_exchange._supervisor._streams_down = {"fills"}
+    system._okx_data_provider._supervisor._streams_down = set()
 
     system._pending_stream_resume.set()
     system._maybe_resume_after_reconnect()
@@ -64,7 +64,7 @@ def test_resume_stays_paused_while_fill_arm_down(monkeypatch) -> None:
     assert system._is_submission_paused() is True
 
     # The fill arm now recovers; the still-down arm's next up-event re-fires the flag.
-    system._okx_exchange._streams_down = set()
+    system._okx_exchange._supervisor._streams_down = set()
     system._pending_stream_resume.set()
     system._maybe_resume_after_reconnect()
 
@@ -77,14 +77,14 @@ def test_resume_stays_paused_while_data_arm_down(monkeypatch) -> None:
     system = _paused_offline_okx_system(monkeypatch)
 
     # DATA/candle arm still down; FILL/exchange arm reconnected.
-    system._okx_exchange._streams_down = set()
-    system._okx_data_provider._streams_down = {"candle"}
+    system._okx_exchange._supervisor._streams_down = set()
+    system._okx_data_provider._supervisor._streams_down = {"candle"}
 
     system._pending_stream_resume.set()
     system._maybe_resume_after_reconnect()
     assert system._is_submission_paused() is True
 
-    system._okx_data_provider._streams_down = set()
+    system._okx_data_provider._supervisor._streams_down = set()
     system._pending_stream_resume.set()
     system._maybe_resume_after_reconnect()
     assert system._is_submission_paused() is False
@@ -94,8 +94,8 @@ def test_resume_when_both_arms_healthy(monkeypatch) -> None:
     """Both arms healthy on the first drain → resume immediately (no false gate)."""
     system = _paused_offline_okx_system(monkeypatch)
 
-    system._okx_exchange._streams_down = set()
-    system._okx_data_provider._streams_down = set()
+    system._okx_exchange._supervisor._streams_down = set()
+    system._okx_data_provider._supervisor._streams_down = set()
 
     system._pending_stream_resume.set()
     system._maybe_resume_after_reconnect()
@@ -108,7 +108,7 @@ def test_none_arm_never_blocks_resume(monkeypatch) -> None:
 
     # Simulate a non-OKX wiring where an arm is absent; the present arm is healthy.
     system._okx_exchange = None
-    system._okx_data_provider._streams_down = set()
+    system._okx_data_provider._supervisor._streams_down = set()
 
     system._pending_stream_resume.set()
     system._maybe_resume_after_reconnect()

@@ -127,34 +127,34 @@ def provider() -> OkxDataProvider:
 def test_down_state_is_independent_per_symbol(provider: OkxDataProvider) -> None:
     assert provider.is_streaming_healthy()  # nothing down yet
 
-    provider._mark_stream_down("BTC/USDC")
+    provider._supervisor.mark_down("BTC/USDC")
 
     assert not provider.is_streaming_healthy()          # any-symbol-down => unhealthy
-    assert "ETH/USDC" not in provider._streams_down     # the other symbol is unaffected
+    assert "ETH/USDC" not in provider._supervisor._streams_down     # the other symbol is unaffected
 
-    provider._on_stream_healthy("BTC/USDC")             # A recovers
+    provider._supervisor.mark_up("BTC/USDC")             # A recovers
     assert provider.is_streaming_healthy()              # all up => healthy again
 
 
 def test_reset_reconnect_budget_is_per_symbol(provider: OkxDataProvider) -> None:
-    provider._reconnect_attempts["BTC/USDC"] = 3
-    provider._reconnect_attempts["ETH/USDC"] = 2
+    provider._supervisor._reconnect_attempts["BTC/USDC"] = 3
+    provider._supervisor._reconnect_attempts["ETH/USDC"] = 2
 
-    provider._reset_reconnect_budget("BTC/USDC")
+    provider._supervisor.reset_budget("BTC/USDC")
 
-    assert provider._reconnect_attempts["BTC/USDC"] == 0   # A reset
-    assert provider._reconnect_attempts["ETH/USDC"] == 2   # B untouched
+    assert provider._supervisor._reconnect_attempts["BTC/USDC"] == 0   # A reset
+    assert provider._supervisor._reconnect_attempts["ETH/USDC"] == 2   # B untouched
 
 
 def test_is_streaming_healthy_any_symbol_down(provider: OkxDataProvider) -> None:
-    provider._mark_stream_down("BTC/USDC")
-    provider._mark_stream_down("ETH/USDC")
+    provider._supervisor.mark_down("BTC/USDC")
+    provider._supervisor.mark_down("ETH/USDC")
     assert not provider.is_streaming_healthy()
 
-    provider._on_stream_healthy("BTC/USDC")
+    provider._supervisor.mark_up("BTC/USDC")
     assert not provider.is_streaming_healthy()  # ETH still down
 
-    provider._on_stream_healthy("ETH/USDC")
+    provider._supervisor.mark_up("ETH/USDC")
     assert provider.is_streaming_healthy()      # both up
 
 
@@ -167,9 +167,9 @@ def test_stream_path_uses_per_symbol_key(
     """Driving the consume body for ETH clears ONLY ETH's down-state + budget, not BTC's."""
     provider.set_bar_sink(lambda _b: None)
     # Pre-seed BOTH symbols as down with distinct reconnect budgets.
-    provider._streams_down.update({"ETH-USDC", "BTC-USDC"})
-    provider._reconnect_attempts["ETH-USDC"] = 3
-    provider._reconnect_attempts["BTC-USDC"] = 5
+    provider._supervisor._streams_down.update({"ETH-USDC", "BTC-USDC"})
+    provider._supervisor._reconnect_attempts["ETH-USDC"] = 3
+    provider._supervisor._reconnect_attempts["BTC-USDC"] = 5
 
     monkeypatch.setattr(
         aiohttp, "ClientSession", _make_session_cls(_snapshot_then_payload_messages()))
@@ -177,11 +177,11 @@ def test_stream_path_uses_per_symbol_key(
     asyncio.run(provider._connect_and_consume_candles("ETH-USDC", "candle1D", "ETH-USDC"))
 
     # _on_stream_healthy(stream_name) cleared ONLY ETH; BTC's down-state persists.
-    assert "ETH-USDC" not in provider._streams_down
-    assert "BTC-USDC" in provider._streams_down
+    assert "ETH-USDC" not in provider._supervisor._streams_down
+    assert "BTC-USDC" in provider._supervisor._streams_down
     # A post-snapshot payload reset ONLY ETH's budget; BTC's is untouched.
-    assert provider._reconnect_attempts["ETH-USDC"] == 0
-    assert provider._reconnect_attempts["BTC-USDC"] == 5
+    assert provider._supervisor._reconnect_attempts["ETH-USDC"] == 0
+    assert provider._supervisor._reconnect_attempts["BTC-USDC"] == 5
 
 
 def test_confirm_zero_snapshot_row_is_dropped(provider: OkxDataProvider) -> None:

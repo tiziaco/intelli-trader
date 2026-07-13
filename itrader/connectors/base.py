@@ -42,12 +42,39 @@ _T = TypeVar("_T")
 
 @runtime_checkable
 class LiveConnector(Protocol):
-    """Structural session/transport contract for a live venue (D-02 / D-04).
+    """Structural session/transport contract for a live venue (D-02 / D-04 / CF-3).
 
     The swap-a-fake seam the three OKX arms type against: a synchronous ``call`` RPC, a
     fire-and-track ``spawn`` for long-running streams, the shared ``client`` and
     ``sandbox`` accessors, and ``connect``/``disconnect`` lifecycle. Carries no
     order/candle/balance operations — those are arm concerns (D-02).
+
+    Connector contract (CF-3) — the invariants every implementation MUST honour and
+    every arm may rely on:
+
+    - **Auth ownership (D-02):** the connector — and ONLY the connector — owns the
+      venue credentials (key/secret/passphrase). No arm reads or holds them; an arm
+      drives authenticated ops purely *through* this session. Credentials are
+      env-sourced and never persisted (VENUE-03).
+    - **Single client / single loop (D-02):** exactly ONE ``ccxt.pro`` ``client`` and
+      ONE asyncio event loop (on a daemon thread) back this session. ``call`` and
+      ``spawn`` both marshal onto that one loop; the arms never create their own loop
+      or client.
+    - **Thread seam:** ``call``/``spawn`` are the ONLY sanctioned async→sync bridge.
+      ``call`` blocks the caller on ``run_coroutine_threadsafe(...).result(timeout)``
+      (request/response ops); ``spawn`` schedules a long-running stream task and is
+      NEVER ``.result()``-awaited (it would block the caller on an unending stream).
+      Stream callbacks fire on the connector loop thread — they must not perform
+      blocking venue I/O.
+    - **Session routing (``sandbox`` / ``ws_hostname``, D-02 correction):** a single
+      ``sandbox`` bool routes both REST (the ccxt ``x-simulated-trading`` header,
+      REST-only) and WS. OKX WS demo is selected purely by the demo HOST, so the
+      native data socket keys its host off ``ws_hostname`` (the region+sandbox-derived
+      host), never off a WS header — a socket hard-coded to the live host while
+      believing it is demo is the highest-severity threat.
+    - **Lifecycle:** no network I/O runs at construction. ``connect`` starts the loop
+      and builds the client; ``disconnect`` cancels every spawned stream task and stops
+      the loop. ``spawn``/``call`` require a prior ``connect``.
     """
 
     def call(self, coro: Awaitable[_T]) -> _T:

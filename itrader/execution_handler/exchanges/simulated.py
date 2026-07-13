@@ -1,7 +1,7 @@
 from queue import Queue
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, Any, Optional, assert_never
+from typing import TYPE_CHECKING, Dict, Any, Optional, assert_never
 import random
 
 from .base import AbstractExchange
@@ -26,6 +26,11 @@ from itrader.config import ExchangeConfig, get_exchange_preset, FeeModelConfig, 
 from itrader.core.exceptions.base import ConfigurationError
 
 import pydantic
+
+if TYPE_CHECKING:
+	# Type-only import (VENUE-04/D-09): resolve_precision returns None here (no
+	# markets map), so Instrument is referenced only in the annotation.
+	from itrader.core.instrument import Instrument
 
 # IN-01: the validate_order sanity threshold above which a price merely earns a
 # "seems unusually high" WARNING (not a rejection). Named + Decimal-typed to
@@ -582,6 +587,16 @@ class SimulatedExchange(AbstractExchange):
 	def validate_symbol(self, symbol: str) -> bool:
 		"""Check if symbol is supported for trading."""
 		return symbol in self._supported_symbols
+
+	def resolve_precision(self, symbol: str) -> "Instrument | None":
+		"""No markets map — return None so callers fall to the _DEFAULT_* ladder (VENUE-04/D-09).
+
+		The simulated exchange holds no venue precision map, so precision resolution is a
+		no-op sensible default (never raises): ``Universe.apply`` supplies per-symbol scales
+		from its ``_DEFAULT_*`` ladder. This satisfies the AbstractExchange capability without
+		coupling the backtest path to any markets source.
+		"""
+		return None
 
 	def get_supported_symbols(self) -> set[str]:
 		"""Get set of supported trading symbols."""

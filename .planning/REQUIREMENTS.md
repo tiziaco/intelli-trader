@@ -126,30 +126,30 @@ pre-trade throttle folded in (SAFE-06); fee/slippage runtime-mutation gated to s
 
 ### Venue Registry + Bundle (P5)
 
-- [ ] **VENUE-01**: Two registries — `ExecutionVenueRegistry` + `DataProviderRegistry` — select execution
+- [x] **VENUE-01**: Two registries — `ExecutionVenueRegistry` + `DataProviderRegistry` — select execution
   venue + data provider independently via `SystemSpec` (`execution_venue` + `data_provider`) (LR-17/§8a-b).
 
-- [ ] **VENUE-02**: A `VenuePlugin` Protocol builds a `VenueBundle` (optional connector, exchange,
+- [x] **VENUE-02**: A `VenuePlugin` Protocol builds a `VenueBundle` (optional connector, exchange,
   mandatory per-portfolio account factory) with concretions lazy-imported inside `build_bundle` —
   registering `'okx'` pulls no `ccxt.pro` until built; `test_okx_inertness.py` is the P5 acceptance gate
   (§8a, concerns 2/3).
 
-- [ ] **VENUE-03**: Connectors are memoized by `(venue, account_id)` at the composition root; credentials
+- [x] **VENUE-03**: Connectors are memoized by `(venue, account_id)` at the composition root; credentials
   are per-`account_id`, env-sourced, never persisted (LR-17/LR-20/§8c).
 
-- [ ] **VENUE-04**: Precision + validation become exchange capabilities (`resolve_precision(symbol)`,
+- [x] **VENUE-04**: Precision + validation become exchange capabilities (`resolve_precision(symbol)`,
   `validate_symbol(symbol)` on `AbstractExchange`); `_OkxPrecisionResolver`/`_PrecisionResolver` deleted;
   `_precision_to_scale` → a shared money util (concern 15/§8a).
 
-- [ ] **VENUE-05**: A `LiveDataProvider` Protocol (required core + optional streaming seams via a
+- [x] **VENUE-05**: A `LiveDataProvider` Protocol (required core + optional streaming seams via a
   `BaseLiveDataProvider` giving no-op defaults) wires every provider uniformly — no `hasattr` sprinkling
   (concern 14/§8b).
 
-- [ ] **VENUE-06**: A `VenueLifecycle` orchestrator encodes the fixed start/stop order and None-guards
+- [x] **VENUE-06**: A `VenueLifecycle` orchestrator encodes the fixed start/stop order and None-guards
   absent members (paper/replay skip connector/account steps) — every `if exchange=='okx'` /
   `elif exchange=='paper'` removed (concerns 6/13/§8d).
 
-- [ ] **VENUE-07**: A shared `StreamSupervisor` replaces the triplicated `_run_stream_supervisor` +
+- [x] **VENUE-07**: A shared `StreamSupervisor` replaces the triplicated `_run_stream_supervisor` +
   `_STREAM_RECONNECT_*` (CF-4); connector-contract docstrings added to `connectors/base.py` (CF-3); OKX
   markets-map freshness closes the fail-open-before-load window via the existing `validate_symbol` →
   removal path (CF-9) (§8f).
@@ -375,13 +375,13 @@ Each requirement maps to exactly one phase. As of 2026-07-09 the roadmap is crea
 | STORE-03 | P4 | Complete |
 | STORE-04 | P4 | Complete |
 | STORE-05 | P4 | Complete |
-| VENUE-01 | P5 | Pending |
-| VENUE-02 | P5 | Pending |
-| VENUE-03 | P5 | Pending |
-| VENUE-04 | P5 | Pending |
-| VENUE-05 | P5 | Pending |
-| VENUE-06 | P5 | Pending |
-| VENUE-07 | P5 | Pending |
+| VENUE-01 | P5 | Complete |
+| VENUE-02 | P5 | Complete |
+| VENUE-03 | P5 | Complete |
+| VENUE-04 | P5 | Complete |
+| VENUE-05 | P5 | Complete |
+| VENUE-06 | P5 | Complete |
+| VENUE-07 | P5 | Complete |
 | RUN-01 | P6 | Pending |
 | RUN-02 | P6 | Pending |
 | RUN-03 | P6 | Pending |

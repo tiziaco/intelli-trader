@@ -4,7 +4,8 @@ import sys
 import threading
 from collections import deque
 from datetime import datetime, UTC
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
+from types import SimpleNamespace
 from typing import Optional, Dict, Any, Callable
 
 # D-14 (V17-11): bound on the pause-window protective-order replay queue. During a
@@ -38,7 +39,6 @@ from itrader.universe import Universe, derive_instruments, derive_membership
 
 from itrader.logger import get_itrader_logger
 from itrader.events_handler.events import EventType, ErrorEvent, UniversePollEvent
-from itrader.core.instrument import Instrument
 
 # D-10 (WR — the primary external-surface security control): ``add_event`` is the
 # engine's PUBLIC external/web ingress. It is FAIL-CLOSED (default-deny, ASVS V4/V5):
@@ -107,80 +107,10 @@ PAPER_PARITY_TIMEFRAME = "1d"
 # — a defense that CsvPriceStore honored the window it was EXPLICITLY constructed with.
 
 
-def _precision_to_scale(value: Any) -> "Decimal | None":
-    """Convert a ccxt market-precision entry to a Decimal rounding scale (WR-04/D-16, D-04 string path).
-
-    OKX loads markets in ccxt TICK_SIZE mode, so ``precision.price`` / ``precision.amount``
-    are tick sizes (``0.1``, ``0.00000001``) — the Decimal scale directly. A bare
-    DECIMAL_PLACES integer (``8``) is read as a decimal-place count -> ``Decimal("1e-8")``.
-    Enters the Decimal domain via ``str(value)`` (Pitfall 2 — NEVER ``Decimal(float)``);
-    returns ``None`` on a missing / non-positive / unparseable entry so the caller falls to
-    ``Universe.apply``'s ``_DEFAULT_*`` ladder.
-    """
-    if value is None:
-        return None
-    try:
-        dec = Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return None
-    if dec <= 0:
-        return None
-    if dec == dec.to_integral_value() and dec >= 1:
-        # DECIMAL_PLACES count (e.g. 8) -> 1e-8 scale.
-        return Decimal(1).scaleb(-int(dec))
-    return dec
-
-
-class _OkxPrecisionResolver:
-    """WR-04/D-16 venue-precision resolver over the OKX loaded-markets map.
-
-    Reads ``okx_exchange._connector.client.markets[symbol]['precision']`` — the SAME ccxt
-    loaded-markets precision the submit path already consumes via ``price_to_precision`` /
-    ``amount_to_precision`` (``okx.py:362-392``) — and converts the venue tick sizes into an
-    ``Instrument`` carrying Decimal price/quantity scales via the D-04 string path
-    (``Decimal(str(x))``, NEVER ``Decimal(float)`` — Pitfall 2). Returns ``None`` when markets
-    aren't loaded / the symbol is absent / a precision entry is unusable, so
-    ``UniverseHandler.on_poll`` falls to ``Universe.apply``'s ``_DEFAULT_*`` ladder — the same
-    paper posture as ``validate_symbol`` accepting when ``markets`` isn't a dict
-    (``okx.py:1029-1032``). ``Universe`` stays connector-free (D-16): every connector read
-    happens HERE, never inside ``Universe``. Satisfies the ``_PrecisionResolver`` Protocol.
-    """
-
-    # Inert margin defaults (mirror ``instruments.derive_instruments`` — unused on the spot
-    # path this phase; present so every constructed Instrument is well-formed).
-    _DEFAULT_MAINTENANCE_MARGIN_RATE = Decimal("0.005")
-    _DEFAULT_MAX_LEVERAGE = Decimal("1")
-
-    def __init__(self, okx_exchange: Any) -> None:
-        self._okx = okx_exchange
-
-    def resolve(self, symbol: str) -> "Instrument | None":
-        connector = getattr(self._okx, "_connector", None)
-        client = getattr(connector, "client", None)
-        markets = getattr(client, "markets", None)
-        if not isinstance(markets, dict):
-            return None
-        # Normalise through the SAME _to_symbol helper validate_symbol uses (okx.py:1023)
-        # so a caller-form vs markets-key mismatch resolves consistently.
-        to_symbol = getattr(self._okx, "_to_symbol", None)
-        key = to_symbol(symbol) if callable(to_symbol) else symbol
-        market = markets.get(key)
-        if not isinstance(market, dict):
-            return None
-        precision = market.get("precision")
-        if not isinstance(precision, dict):
-            return None
-        price_scale = _precision_to_scale(precision.get("price"))
-        quantity_scale = _precision_to_scale(precision.get("amount"))
-        if price_scale is None or quantity_scale is None:
-            return None
-        return Instrument(
-            symbol=symbol.upper(),
-            price_precision=price_scale,
-            quantity_precision=quantity_scale,
-            maintenance_margin_rate=self._DEFAULT_MAINTENANCE_MARGIN_RATE,
-            max_leverage=self._DEFAULT_MAX_LEVERAGE,
-        )
+# VENUE-04/D-09 — the venue-precision resolver + the precision->scale helper that lived
+# here have been retired: precision_to_scale is now a shared money util in `core/money.py`
+# and precision resolution is a first-class `AbstractExchange.resolve_precision` capability
+# (implemented on `OkxExchange`). The universe handler binds directly on the exchange.
 
 
 # SystemStatus now lives in its canonical home ``core/enums/system.py`` and is
@@ -538,127 +468,131 @@ class LiveTradingSystem:
         # Phase 4 (D-02): paper venue sentinel — None for any non-paper venue so
         # run_paper_replay() can fail loudly if invoked on a mis-wired system.
         self._replay_provider: Optional[Any] = None
-        if self.exchange == 'okx':
-            from itrader.connectors import OkxConnector
-            from itrader.config.okx_settings import OkxSettings
-            from itrader.execution_handler.exchanges.okx import OkxExchange
-            from itrader.price_handler.providers.okx_provider import OkxDataProvider
-            from itrader.portfolio_handler.account import VenueAccount
+        # 05-06 (VENUE-06, D-06): the venue-assembly seam's outputs — the built
+        # execution bundle + its VenueLifecycle orchestrator. Both stay None for an
+        # UNREGISTERED venue (the legacy no-venue default, e.g. 'binance'); a
+        # registered venue's assemble_venue call below populates them.
+        self._venue_bundle: Optional[Any] = None
+        self._venue_lifecycle: Optional[Any] = None
 
-            # Constructed ONCE (D-04). connect() is deferred to start() (CR-02).
-            self._okx_connector = OkxConnector(OkxSettings())
+        # 05-06 (VENUE-06 / SC3, D-06/D-10): the two former per-venue string
+        # constructor branches are DELETED and replaced by a single delegation to
+        # assemble_venue. Venue selection is now registry MEMBERSHIP + the assemble
+        # seam, NOT an imperative per-venue string branch.
+        #
+        # LAZY imports (never module top): the trading_system package barrel imports
+        # THIS module, and the concrete OKX/paper plugin modules are on the backtest
+        # inertness _FORBIDDEN set (test_okx_inertness.py) — hoisting these imports to
+        # module scope would pull them onto the backtest import graph and redden the
+        # gate. The plugins are triple-deferral-lazy (D-04), so importing them here
+        # still pulls no ccxt until a build*() actually runs (okx only, below).
+        from itrader import config as _system_config
+        from itrader.connectors.provider import ConnectorProvider
+        from itrader.trading_system.engine_context import EngineContext
+        from itrader.venues.assemble import assemble_venue
+        from itrader.venues.okx_plugin import (
+            OkxConnectorPlugin,
+            OkxDataPlugin,
+            OkxVenuePlugin,
+        )
+        from itrader.venues.paper_plugin import PaperVenuePlugin, ReplayDataPlugin
+        from itrader.venues.registry import (
+            DataProviderRegistry,
+            ExecutionVenueRegistry,
+        )
 
-            # Order arm: register under 'okx' — ExecutionHandler.on_order already
-            # routes by event.exchange, and init_exchanges is UNCHANGED (the backtest
-            # path stays OKX-free). Only THIS root imports the OkxConnector concretion.
-            self._okx_exchange = OkxExchange(self.global_queue, self._okx_connector)
-            self.execution_handler.exchanges['okx'] = self._okx_exchange
+        # (1) Build the two registries + the shared (venue, account_id) ConnectorProvider
+        # and register the concrete plugins. 'simulated' is DELIBERATELY NOT a registered
+        # venue (D-05 firewall): the paper plugin REUSES the compose-built 'simulated'
+        # SimulatedExchange AS-IS, injected here at register time (never resolved through
+        # the registry). Registration is store-only — no build*() runs, so this pulls no
+        # ccxt (register != build).
+        exec_registry = ExecutionVenueRegistry()
+        data_registry = DataProviderRegistry()
+        connectors = ConnectorProvider({'okx': OkxConnectorPlugin()})
+        exec_registry.register('okx', OkxVenuePlugin())
+        exec_registry.register(
+            'paper', PaperVenuePlugin(self.execution_handler.exchanges['simulated']))
+        data_registry.register('okx', OkxDataPlugin())
+        data_registry.register('replay', ReplayDataPlugin())
 
-            # Data arm + venue account: injected the SAME session Protocol (D-04).
-            # symbol/timeframe are the wiring defaults; Phase 3 (LiveBarFeed) owns the
-            # real subscription config.
-            self._okx_data_provider = OkxDataProvider(
-                self._okx_connector, symbol=_STREAM_SETTINGS.okx_stream_symbol,
-                timeframe=_STREAM_SETTINGS.okx_stream_timeframe)
-            # D-03 (V17-04, quote-wiring arm): thread the WIRED pair's real quote +
-            # spot market-type into the VenueAccount so the settlement currency is the
-            # traded pair's quote (USDC for BTC/USDC — never the USDT default) AND the
-            # per-symbol position truth is DERIVED from total[BASE] (OKX spot reports
-            # no position rows). Both are taken from the single wiring input
-            # (the StreamSettings stream symbol): quote = right leg, symbol drives the base read.
-            self._venue_account = VenueAccount(
-                self._okx_connector,
-                quote_currency=_STREAM_SETTINGS.okx_stream_symbol.split('/')[1],
-                market_type='spot',
-                symbol=_STREAM_SETTINGS.okx_stream_symbol,
-            )
+        # (2) The infra ctx (plugins read ctx.bus) + the declarative venue spec. Building
+        # the spec is the WHAT-to-run SELECTOR (not the imperative wiring branch SC3
+        # forbids); P6 makes LTS fully spec-driven. data_provider is the venue's own live
+        # feed for okx, else the offline replay feed (paper); account_id defaults to the
+        # single 'default' logical account inside the plugins (D-07, per-account fan-out P11).
+        ctx = EngineContext(
+            bus=self.global_queue,
+            config=_system_config,
+            environment='live',
+            sql_engine=self._system_db_backend,
+        )
+        spec = SimpleNamespace(
+            execution_venue=self.exchange,
+            # A streaming venue (okx) uses its own live feed; every other venue
+            # (paper) uses the offline replay feed. A declarative dict lookup keeps
+            # this a WHAT-to-run selector with NO per-venue string branch (SC3).
+            data_provider={'okx': 'okx', 'paper': 'replay'}.get(
+                self.exchange, 'replay'),
+            account_id=None,
+        )
 
-            # Phase 3 (D-01/D-13 provider->feed seam, FEED-05): inject the real OKX
-            # provider into the LIVE feed via the PUBLIC setter — it assigns
-            # self._provider, the PRIVATE attribute that warmup()/gap-backfill read.
-            # A bare self.feed.provider = ... would create a dead attribute and leave
-            # self._provider None -> AttributeError at warmup. Injection MUST precede
-            # any warmup/start_stream call.
-            self.feed.set_provider(self._okx_data_provider)
-            # Wire the provider's confirm-gated closed-bar sink to the feed's
-            # monotonic-guard ingest so every ClosedBar drives feed.update() -> BarEvent.
-            self._okx_data_provider.set_bar_sink(self.feed.update)
-            # 07-03 (WR-02, D-03): bind the engine queue the async warmup half emits on.
-            # spawn_warmup is the ONE provider path that puts an event directly on the
-            # queue (BarsLoaded/BarsLoadFailed); it raises a typed StateError unless the
-            # queue is bound here. Without this every poll-driven add's spawn_warmup fails
-            # immediately (swallowed by the per-symbol try/except) and the added symbol
-            # stays permanently PENDING (dark) — the WR-02 live-warmup pipeline never fires.
-            self._okx_data_provider.set_global_queue(self.global_queue)
+        # (3) Delegate venue assembly. A REGISTERED venue is assembled; an unregistered
+        # venue (the legacy default 'binance') wires no venue — registry membership
+        # replaces the venue-string branch (structural, D-10). assemble_venue shares one
+        # memoized connector across the exec + data arms (D-03) and returns the bundle +
+        # its VenueLifecycle.
+        if self.exchange in exec_registry:
+            bundle, self._venue_lifecycle = assemble_venue(
+                ctx, spec, connectors, exec_registry, data_registry)
+            self._venue_bundle = bundle
+            provider = self._venue_lifecycle.provider
 
-            # 05-08 (RES-01/D-19/D-20): wire the reconnect-supervisor seams on BOTH
-            # venue stream arms. A fatal connector error or an exhausted retry ceiling
-            # escalates to the freeze-in-place halt (reason='connector-fatal', HALTED +
-            # CRITICAL alert); a sustained disconnect pauses NEW submission and a
-            # reconnect resumes it only after a fresh REST balance/position snapshot
-            # (engine thread) — NOT a full two-sided reconcile (WR-04, see below).
-            # The pause/resume callbacks fire from the connector loop thread, so they
-            # only flip thread-safe flags — no blocking venue I/O there (Pitfall 9).
-            #
-            # 05.3-08 (D-21 / WR-02): the halt signal is _request_connector_halt (a
-            # thread-safe FLAG setter), NOT halt() directly. halt() does a BLOCKING durable
-            # record_halt SQL write; running it inline on the connector asyncio loop would
-            # stall every stream sharing the loop (Pitfall 9). The engine thread drains the
-            # flag via _maybe_halt_after_connector_fatal and runs the blocking halt off the
-            # loop (winner-only, D-10 latch, V7 scrub preserved). Mirrors the pause/resume
-            # flag handoff above.
-            self._okx_exchange.set_halt_signal(self._request_connector_halt)
-            self._okx_exchange.set_stream_state_listener(
+            # Structural None-guard keyed on bundle.connector (the STREAMING-venue
+            # discriminator — present for a live venue like okx, None for paper): a
+            # streaming venue registers its exchange under its venue name + mints the
+            # venue account; paper leaves the OKX-named attrs None so every downstream
+            # None-guard already gates paper out (D-10).
+            self._okx_connector = bundle.connector
+            if bundle.connector is not None:
+                self._okx_exchange = bundle.exchange
+                # Order arm: register under the venue name — ExecutionHandler.on_order
+                # routes by event.exchange; init_exchanges stays OKX-free (backtest
+                # path untouched).
+                self.execution_handler.exchanges[self.exchange] = bundle.exchange
+                # D-07: a single default VenueAccount (the per-portfolio account_id
+                # fan-out is P11). The okx plugin's factory threads the wired pair's
+                # quote + spot market-type derived from the stream symbol.
+                self._venue_account = bundle.account_factory()
+                self._okx_data_provider = provider
+            else:
+                # Paper: no live connector (D-05) — the offline replay provider drives
+                # the feed; the OKX-named attrs stay None.
+                self._replay_provider = provider
+
+            # (4) UNIFORM provider->feed wiring (D-10): applied on the lifecycle
+            # provider REGARDLESS of venue. The replay provider no-ops the streaming
+            # seams via its own inline no-op methods, so the former paper/okx wiring
+            # divergence is gone. set_provider assigns self._provider
+            # (the private attr warmup()/gap-backfill read) and MUST precede any
+            # warmup/start_stream call.
+            self.feed.set_provider(provider)
+            provider.set_bar_sink(self.feed.update)
+            provider.set_global_queue(self.global_queue)
+            provider.set_halt_signal(self._request_connector_halt)
+            provider.set_stream_state_listener(
                 self._on_venue_stream_down, self._on_venue_stream_up)
-            # 05.3-11 (D-26 / WR-02): arm the CONNECTOR's halt signal too. Without this
-            # OkxConnector._on_task_done's `if self._halt_signal is not None:` guard is
-            # always False, so a task dying OUTSIDE the exchange/provider stream supervisors
-            # (a supervisor bug, or any coroutine not itself wrapped) would log-and-vanish
-            # with no halt. Same flag-only callback the exchange/provider arms pass
-            # (_request_connector_halt) — fail-safe: an unexpected dead task escalates to
-            # an engine halt, never silently.
-            self._okx_connector.set_halt_signal(self._request_connector_halt)
-            self._okx_data_provider.set_halt_signal(self._request_connector_halt)
-            self._okx_data_provider.set_stream_state_listener(
-                self._on_venue_stream_down, self._on_venue_stream_up)
 
-        elif self.exchange == 'paper':
-            # ------------------------------------------------------------------
-            # Paper venue wiring (Phase 4, D-02/D-04/D-05/D-06/D-09 — composition
-            # root). The paper path REUSES the already-constructed 'simulated'
-            # SimulatedExchange AS-IS (fetched at line 198): it already implements
-            # AbstractExchange, holds no Account (D-06 — fills flow FillEvent ->
-            # PortfolioHandler.on_fill), and ExecutionHandler already routes on_order
-            # by event.exchange and fans on_market_data over self.exchanges.items(),
-            # so the LiveBarFeed BarEvents reach it unchanged (D-04). There is NO new
-            # exchange/adapter class and NO cost-model extraction: with one shared
-            # fill-pricing implementation (the simulated exchange's, UNTOUCHED) there
-            # is nothing to drift, so PAPER-02 is satisfied-by-reuse (D-05).
-            #
-            # The genuinely new surface is the OFFLINE, SYNCHRONOUS replay data arm:
-            # a ReplayDataProvider replaying the golden CsvPriceStore as Decimal-edge
-            # ClosedBar dicts through the SAME Phase-3 feed seam the OKX arm uses. The
-            # import is LAZY inside this arm (mirrors the OKX/LiveBarFeed lazy imports)
-            # so the BACKTEST import path never pulls it — the inertness gate (D-12).
-            from itrader.price_handler.providers.replay_provider import ReplayDataProvider
-
-            # D-18 (structural half): construct the replay store EXPLICITLY from the
-            # shared parity window (PAPER_PARITY_START_DATE/END) instead of relying on
-            # the CsvPriceStore class defaults happening to equal the parity window. The
-            # paper store and the backtest comparand (test_paper_parity.py) now read ONE
-            # source, so they can never silently desync (WR-02 coincidental parity gone).
-            self._replay_provider = ReplayDataProvider(
-                store=CsvPriceStore(
-                    start_date=PAPER_PARITY_START_DATE, end_date=PAPER_PARITY_END_DATE),
-                symbol=PAPER_PARITY_SYMBOL,
-                timeframe=PAPER_PARITY_TIMEFRAME)
-            # Inject the replay provider into the LIVE feed via the PUBLIC setter — it
-            # assigns self._provider (the private attr warmup()/gap-backfill read); a
-            # bare self.feed.provider = ... would leave self._provider None. Then wire
-            # its sink to feed.update so each replayed ClosedBar drives
-            # feed.update() -> BarEvent onto the queue (the real D-02 seam).
-            self.feed.set_provider(self._replay_provider)
-            self._replay_provider.set_bar_sink(self.feed.update)
+            # The exchange-side reconnect-supervisor seams + the connector halt signal
+            # are wired ONLY for a streaming venue (bundle.connector present). A fatal
+            # connector error / exhausted retry ceiling escalates via the thread-safe
+            # _request_connector_halt FLAG (never blocking halt() on the asyncio loop,
+            # Pitfall 9); the engine thread drains it and runs the durable halt.
+            if bundle.connector is not None:
+                self._okx_exchange.set_halt_signal(self._request_connector_halt)
+                self._okx_exchange.set_stream_state_listener(
+                    self._on_venue_stream_down, self._on_venue_stream_up)
+                self._okx_connector.set_halt_signal(self._request_connector_halt)
 
         # D-17 (error-policy split, WR-04): the live publish-and-continue policy is NO
         # LONGER installed here. It is bound in start() — the daemon/live path ONLY — so
@@ -1375,7 +1309,7 @@ class LiveTradingSystem:
             # ticker, instead of surfacing as a MissingPriceDataError deep on the live
             # path. Guarded on a non-empty membership: an empty universe (no strategy
             # declared an instrument) streams nothing and has no ticker to mismatch.
-            if self.exchange == 'okx' and universe.members:
+            if self._okx_data_provider is not None and universe.members:
                 members = universe.members
                 subscribed = list(members)  # start() subscribes exactly the members
                 mismatched = [s for s in subscribed if s not in members]
@@ -1437,12 +1371,11 @@ class LiveTradingSystem:
             # apply (OKX arm only — guard None on paper/replay, no venue markets map).
             if self._okx_exchange is not None:
                 self._universe_handler.set_symbol_validator(self._okx_exchange)
-                # WR-04/D-16 venue precision: resolve a poll-added symbol's precision
-                # from the OKX loaded-markets map (guarded on okx presence, mirroring
-                # the validate_symbol guard). Paper/replay (no okx exchange) leaves the
-                # resolver unset -> Universe.apply falls to the _DEFAULT_* ladder.
-                self._universe_handler.set_precision_resolver(
-                    _OkxPrecisionResolver(self._okx_exchange))
+                # VENUE-04/D-09 venue precision: bind poll-added-symbol precision on the
+                # exchange's resolve_precision capability (guarded on okx presence,
+                # mirroring the validate_symbol guard). Paper/replay (no okx exchange)
+                # leaves the resolver unset -> Universe.apply falls to the _DEFAULT_* ladder.
+                self._universe_handler.set_precision_resolver(self._okx_exchange)
             # Data-plane provider the add/remove branch drives (guard None on paper).
             if self._okx_data_provider is not None:
                 self._universe_handler.set_provider(self._okx_data_provider)
@@ -1734,21 +1667,24 @@ class LiveTradingSystem:
             # Initialize the live session
             self._initialize_live_session()
 
-            # CR-02: perform the OKX connector's network connect HERE (build client
-            # + load_markets on the daemon-thread loop), deferred out of __init__ so
-            # construction stays I/O-free. A failure propagates to the except below,
-            # which sets SystemStatus.ERROR and returns False — never an unhandled
-            # raise. Only wired when the requested venue is OKX (connector is None
-            # otherwise). stop() tears the connector down unconditionally (CR-01).
-            if self._okx_connector is not None:
-                self._okx_connector.connect()
+            # CR-02 / 05-06 (VENUE-06, D-06): perform the venue connector's network
+            # connect HERE via the VenueLifecycle (build client + load_markets on the
+            # daemon-thread loop), deferred out of __init__ so construction stays
+            # I/O-free. A failure propagates to the except below, which sets
+            # SystemStatus.ERROR and returns False — never an unhandled raise.
+            # lifecycle.start() connects the connector ONLY when the bundle carries one
+            # (a paper bundle has connector=None, so start() no-ops the connector step
+            # via a structural None-guard, D-10); an unregistered venue has no
+            # lifecycle at all. stop() tears the connector down unconditionally (CR-01).
+            if self._venue_lifecycle is not None:
+                self._venue_lifecycle.start()
 
             # Phase 3 (FEED-05, RESEARCH Thread hand-off): warm the LIVE feed BEFORE
             # the socket goes live so every update() stays on the one thread until the
             # stream starts (single-writer ring/guard). Gated to the OKX arm — a
             # non-OKX venue has no provider, so the None provider is never dereferenced
             # (mirrors the CR-02 venue-guard). Warmup MUST precede start_stream.
-            if self.exchange == 'okx' and self._okx_data_provider is not None:
+            if self._okx_data_provider is not None:
                 # Plan 06-05 (D-05): un-hardcode the stream symbol — the live
                 # subscription set is now SOURCED FROM MEMBERSHIP. For each member,
                 # warm the feed FIRST (REST replay sets the ring) THEN subscribe the
@@ -1775,7 +1711,7 @@ class LiveTradingSystem:
             # call would swallow a failure — check .success and re-raise so the
             # failure flows through the existing except block (SystemStatus.ERROR,
             # return False); do NOT invent a second error path.
-            if self.exchange == 'okx' and self._okx_exchange is not None:
+            if self._okx_exchange is not None:
                 result = self._okx_exchange.connect()
                 if not result.success:
                     raise RuntimeError(
@@ -1814,7 +1750,7 @@ class LiveTradingSystem:
                 self.portfolio_handler.rehydrate(
                     self.order_handler.order_manager.seed_applied_trades)
 
-            if self.exchange == 'okx' and self._venue_account is not None:
+            if self._venue_account is not None:
                 self._venue_account.snapshot()
                 self._venue_account.start_streaming()
                 self._link_venue_account_to_portfolios()
@@ -1954,7 +1890,11 @@ class LiveTradingSystem:
         # production). The disconnect therefore lives in a finally so it runs on
         # every return path, including the early "not running" exit. disconnect()
         # is a safe no-op when the connector was never connected (its loop is None).
-        connector = getattr(self, '_okx_connector', None)
+        # 05-06 (VENUE-06, D-06): teardown is delegated to VenueLifecycle.stop(),
+        # which drives ConnectorProvider.close_all() (disconnect every memoized
+        # connector) — a safe no-op for paper (empty memo) and for an unregistered
+        # venue (lifecycle is None, guarded below).
+        lifecycle = getattr(self, '_venue_lifecycle', None)
         try:
             if not self._running:
                 self.logger.warning('Live trading system is not running')
@@ -1991,14 +1931,15 @@ class LiveTradingSystem:
             self.logger.info('Live trading system stopped')
             return True
         finally:
-            # Plan 02-05 (D-04 shutdown): tear down the OKX connector — cancel every
-            # spawned stream task and close the ccxt/native sessions so no leaked
-            # socket / ResourceWarning survives across runs.
-            if connector is not None:
+            # Plan 02-05 / 05-06 (D-04 shutdown): tear down the venue connector via the
+            # VenueLifecycle — cancel every spawned stream task and close the
+            # ccxt/native sessions so no leaked socket / ResourceWarning survives
+            # across runs. lifecycle.stop() drives ConnectorProvider.close_all().
+            if lifecycle is not None:
                 try:
-                    connector.disconnect()
+                    lifecycle.stop()
                 except Exception as e:
-                    self.logger.error(f'Error disconnecting OKX connector: {e}')
+                    self.logger.error(f'Error disconnecting venue connector: {e}')
             # 05-06: dispose the operational SQL spine (the CachedSql* stores compose it)
             # so its connection pool is closed at shutdown — an undisposed engine leaks a
             # socket / ResourceWarning under filterwarnings=["error"]. Safe no-op when the

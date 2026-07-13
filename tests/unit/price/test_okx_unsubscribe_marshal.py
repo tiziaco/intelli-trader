@@ -73,8 +73,8 @@ def test_unsubscribe_marshals_cancel_and_cleanup_through_spawn(
     sym = "ETH/USDC"
     task = _RecordingTask()
     provider._streams[sym] = task  # type: ignore[assignment]
-    provider._streams_down.add(sym)
-    provider._reconnect_attempts[sym] = 3
+    provider._supervisor._streams_down.add(sym)
+    provider._supervisor._reconnect_attempts[sym] = 3
 
     provider.unsubscribe(sym)
 
@@ -85,8 +85,8 @@ def test_unsubscribe_marshals_cancel_and_cleanup_through_spawn(
     assert sym not in provider._streams
     # The marshaled cleanup ran: cancel once, supervisor dicts cleared.
     assert task.cancel_calls == 1
-    assert sym not in provider._streams_down
-    assert sym not in provider._reconnect_attempts
+    assert sym not in provider._supervisor._streams_down
+    assert sym not in provider._supervisor._reconnect_attempts
 
 
 def test_unsubscribe_absent_symbol_is_true_noop(provider: OkxDataProvider) -> None:
@@ -98,8 +98,8 @@ def test_unsubscribe_absent_symbol_is_true_noop(provider: OkxDataProvider) -> No
     ``unsubscribe`` is reached before the connector loop is running.
     """
     # Nothing subscribed for DOGE; a spurious down/attempt entry for ANOTHER symbol.
-    provider._streams_down.add("OTHER/USDC")
-    provider._reconnect_attempts["OTHER/USDC"] = 2
+    provider._supervisor._streams_down.add("OTHER/USDC")
+    provider._supervisor._reconnect_attempts["OTHER/USDC"] = 2
 
     provider.unsubscribe("DOGE/USDC")  # must not raise
 
@@ -108,8 +108,8 @@ def test_unsubscribe_absent_symbol_is_true_noop(provider: OkxDataProvider) -> No
     assert conn.spawn_calls == 0
     assert "DOGE/USDC" not in provider._streams
     # The unrelated symbol's state is untouched.
-    assert provider._streams_down == {"OTHER/USDC"}
-    assert provider._reconnect_attempts == {"OTHER/USDC": 2}
+    assert provider._supervisor._streams_down == {"OTHER/USDC"}
+    assert provider._supervisor._reconnect_attempts == {"OTHER/USDC": 2}
 
 
 def test_unsubscribe_stale_supervisor_state_without_task_still_marshals(
@@ -121,13 +121,13 @@ def test_unsubscribe_stale_supervisor_state_without_task_still_marshals(
     is skipped.
     """
     sym = "DOGE/USDC"
-    provider._streams_down.add(sym)  # own down-flag, but no _streams task
-    provider._reconnect_attempts[sym] = 4
+    provider._supervisor._streams_down.add(sym)  # own down-flag, but no _streams task
+    provider._supervisor._reconnect_attempts[sym] = 4
 
     provider.unsubscribe(sym)
 
     conn = _connector(provider)
     # Guard did NOT short-circuit: cleanup was marshaled and cleared this symbol's state.
     assert conn.spawn_calls == 1
-    assert sym not in provider._streams_down
-    assert sym not in provider._reconnect_attempts
+    assert sym not in provider._supervisor._streams_down
+    assert sym not in provider._supervisor._reconnect_attempts

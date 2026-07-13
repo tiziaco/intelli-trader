@@ -495,14 +495,14 @@ def test_supervisor_snapshot_only_storm_trips_ceiling_and_halts(
     snapshot_only = [_FakeMsg(json.dumps(_candle_push([_candle_row("0")])))]
     monkeypatch.setattr(
         aiohttp, "ClientSession",
-        _looping_session_cls(snapshot_only, calls, cap=provider._reconnect_ceiling + 5))
+        _looping_session_cls(snapshot_only, calls, cap=provider._supervisor._reconnect_ceiling + 5))
 
     asyncio.run(provider._stream_candles("BTC-USDT", "candle1D", "BTC-USDT"))
 
     # Halted exactly once with the scrubbed fixed reason after ceiling+1 attempts.
     assert halts == ["connector-fatal"]
-    assert provider._reconnect_attempts["BTC-USDT"] == provider._reconnect_ceiling + 1
-    assert len(calls) == provider._reconnect_ceiling + 1
+    assert provider._supervisor._reconnect_attempts["BTC-USDT"] == provider._supervisor._reconnect_ceiling + 1
+    assert len(calls) == provider._supervisor._reconnect_ceiling + 1
 
 
 def test_supervisor_post_snapshot_payload_resets_budget(
@@ -527,7 +527,7 @@ def test_supervisor_post_snapshot_payload_resets_budget(
         _FakeMsg(json.dumps(_candle_push([_candle_row("0")]))),  # subscribe snapshot
         _FakeMsg(json.dumps(_candle_push([_candle_row("0")]))),  # post-snapshot payload
     ]
-    stop_after = provider._reconnect_ceiling + 4  # run WELL past the ceiling
+    stop_after = provider._supervisor._reconnect_ceiling + 4  # run WELL past the ceiling
     monkeypatch.setattr(
         aiohttp, "ClientSession",
         _looping_session_cls(two_payloads, calls, cap=stop_after + 5,
@@ -539,7 +539,7 @@ def test_supervisor_post_snapshot_payload_resets_budget(
     # Ran past the ceiling with zero halts — the reset kept attempt from climbing.
     assert halts == []
     assert len(calls) == stop_after
-    assert provider._reconnect_attempts["BTC-USDT"] <= 1
+    assert provider._supervisor._reconnect_attempts["BTC-USDT"] <= 1
 
 
 def test_supervisor_fatal_error_halts_immediately_without_retry(
@@ -564,4 +564,4 @@ def test_supervisor_fatal_error_halts_immediately_without_retry(
 
     assert halts == ["connector-fatal"]
     assert len(calls) == 1                                       # halted on first attempt
-    assert provider._reconnect_attempts.get("candles", 0) == 0  # fatal skips attempt++
+    assert provider._supervisor._reconnect_attempts.get("candles", 0) == 0  # fatal skips attempt++

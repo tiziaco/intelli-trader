@@ -29,17 +29,17 @@ from ``base`` keeps the Protocol import ccxt-free and cannot couple a consumer t
 Indentation: this tree is TAB-indented (a mixed-indent diff breaks the file).
 """
 
-import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 from queue import Queue
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from itrader.config.stream import StreamSettings
 from itrader.connectors.base import LiveConnector
 from itrader.core.enums import ErrorSeverity, OrderCommand, OrderType, Side
 from itrader.core.enums.execution import ExchangeConnectionStatus, ExecutionErrorCode
-from itrader.core.money import to_money
+from itrader.core.instrument import Instrument
+from itrader.core.money import precision_to_scale, to_money
 from itrader.events_handler.events import ErrorEvent, FillEvent, OrderAckEvent, OrderEvent
 from itrader.logger import get_itrader_logger
 
@@ -132,27 +132,11 @@ class OkxExchange(AbstractExchange):
 		# Spawned stream-task handles (cancelled by the connector on disconnect).
 		self._stream_handles: List[Any] = []
 
-		# 05-08 (RES-01/D-19/D-20): reconnect-supervisor state. Each stream
-		# consume-loop runs under a bounded-retry supervisor — a transient socket
-		# drop reconnects with exponential backoff instead of the task dying
-		# silently, a fatal error or an exhausted retry ceiling halts the engine
-		# (D-20), and a sustained disconnect pauses new order submission until the
-		# stream reconnects + a fresh REST reconcile completes (D-19).
-		self._reconnect_attempts: Dict[str, int] = {}
-		self._streams_down: set[str] = set()
-		# CFG-03 / D-08: per-instance reconnect tuning now reads from StreamSettings
-		# (config/stream.py) instead of module constants — a test (or a sandbox tune)
-		# can shrink the debounce/backoff by injecting a tuned config once the P5
-		# composition-root injection lands. A default-constructed instance is the P1 seam.
-		_stream_cfg = StreamSettings()
-		self._reconnect_debounce_s = _stream_cfg.reconnect_debounce_s
-		self._reconnect_backoff_base_s = _stream_cfg.reconnect_backoff_base_s
-		self._reconnect_backoff_cap_s = _stream_cfg.reconnect_backoff_cap_s
-		self._reconnect_ceiling = _stream_cfg.reconnect_retry_ceiling
 		# Injected seams (composition root, 05-08 Task 2): the 05-04 freeze-in-place
 		# halt entrypoint (fatal / exhausted -> HALTED + CRITICAL alert) and the
 		# pause/resume-on-disconnect callbacks (D-19). All None on the paper/backtest
-		# path (streams never start there).
+		# path (streams never start there); the shared supervisor's closures late-bind
+		# them so a setter after construction still takes effect.
 		self._halt_signal: Optional[Callable[[str], None]] = None
 		self._on_stream_down: Optional[Callable[[str], None]] = None
 		self._on_stream_up: Optional[Callable[[str], None]] = None
@@ -164,10 +148,40 @@ class OkxExchange(AbstractExchange):
 		# drops we snapshot the last venue-ms timestamp processed
 		# (``_last_venue_ts_ms``) as the re-fetch floor (``_disconnect_ts_ms``); on
 		# resume the ENGINE thread calls ``catch_up_missed_fills`` to recover trades
-		# that settled during the gap. Business time only — never wall-clock.
+		# that settled during the gap. Business time only — never wall-clock. This
+		# floor stays ARM state (D-12) — it is NOT supervisor state; the supervisor's
+		# on_down callback (`_on_stream_down_with_floor`) snapshots it (05-01/D-08).
 		self._active_symbols: set[str] = set()
 		self._last_venue_ts_ms: Optional[int] = None
 		self._disconnect_ts_ms: Optional[int] = None
+
+		# 05-01 (D-08 / CF-4 / VENUE-07): the ONE shared reconnect ladder. This arm
+		# HAS-A StreamSupervisor and delegates its consume-loop supervision to it (the
+		# triplicated reconnect-supervisor fork is gone; _reconnect_attempts /
+		# _streams_down / the reconnect tuning now live on the supervisor). The order
+		# arm's EXACT donor config: the ccxt-only 3-type transient set,
+		# reconnect_on_clean_return=False (a forever-loop returning cleanly is a stop),
+		# payload-gated reset (the _consume_* loops call reset_budget on a delivered
+		# payload), and on_down=_on_stream_down_with_floor so the D-12 catch-up floor is
+		# snapshotted once per down transition (the supervisor's mark_down dedup ensures
+		# it fires once). ccxt + the supervisor class are lazy-imported HERE (never at
+		# module top) so the module's import graph stays lean on the live path.
+		import ccxt
+
+		from itrader.connectors.stream_supervisor import StreamSupervisor
+		self._supervisor = StreamSupervisor(
+			StreamSettings(),
+			transient_exceptions=(
+				ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection),
+			fatal_exceptions=(ccxt.AuthenticationError, ccxt.PermissionDenied),
+			reconnect_on_clean_return=False,
+			halt_signal=lambda r: (
+				self._halt_signal(r) if self._halt_signal is not None else None),
+			on_down=self._on_stream_down_with_floor,
+			on_up=lambda n: (
+				self._on_stream_up(n) if self._on_stream_up is not None else None),
+			logger=self.logger,
+			label="OKX")
 
 	# --- symbol / time helpers ------------------------------------------------
 
@@ -696,164 +710,50 @@ class OkxExchange(AbstractExchange):
 		self._on_stream_down = on_down
 		self._on_stream_up = on_up
 
-	async def _run_stream_supervisor(
-		self, consume: Callable[[str], Awaitable[None]], stream_name: str
-	) -> None:
-		"""Bounded-retry reconnect supervisor wrapping a stream consume-loop (D-19/D-20).
-
-		Runs ``consume`` (a forever ``while True: await watch_*()`` loop that only
-		returns by raising) under a bounded-retry wrapper:
-
-		- **transient** (``ccxt.NetworkError``/``RequestTimeout``/``DDoSProtection``) ->
-		  reconnect with exponential backoff (cap) after a short debounce, staying
-		  running (publish-and-continue). A sustained drop (past the debounce) pauses new
-		  submission (D-19); a sub-second blip that clears on the first retry does not.
-		- **fatal** (``ccxt.AuthenticationError``/``PermissionDenied``) OR the retry
-		  ceiling exhausted -> escalate to the injected halt entrypoint (HALTED +
-		  CRITICAL alert, reason ``'connector-fatal'``), never spin forever (D-20).
-
-		``asyncio.CancelledError`` is re-raised untouched so the connector's disconnect
-		can cancel the task cleanly (Pitfall 4 — no swallowed cancellation).
-		"""
-		import ccxt  # lazy: ccxt already transitively imported on the live path only
-		transient: tuple[type[BaseException], ...] = (
-			ccxt.NetworkError, ccxt.RequestTimeout, ccxt.DDoSProtection)
-		fatal: tuple[type[BaseException], ...] = (
-			ccxt.AuthenticationError, ccxt.PermissionDenied)
-		while True:
-			try:
-				await consume(stream_name)
-				return  # a forever-loop returning cleanly is not expected — stop.
-			except asyncio.CancelledError:
-				raise  # cooperative teardown — never swallow.
-			except fatal as exc:
-				self._escalate_connector_halt(stream_name, exc, "fatal auth/permission error")
-				return
-			except transient as exc:
-				attempt = self._reconnect_attempts.get(stream_name, 0) + 1
-				self._reconnect_attempts[stream_name] = attempt
-				if attempt > self._reconnect_ceiling:
-					self._escalate_connector_halt(
-						stream_name, exc, "reconnect retry ceiling exhausted")
-					return
-				# Debounce first: a blip that clears on the first retry never pauses.
-				await asyncio.sleep(self._reconnect_debounce_s)
-				if attempt > 1:
-					# Still failing past the debounce window -> pause (D-19).
-					self._mark_stream_down(stream_name)
-				backoff = min(
-					self._reconnect_backoff_base_s * (2 ** (attempt - 1)),
-					self._reconnect_backoff_cap_s)
-				# Scrub (T-05-27): log the exception TYPE only, never str(exc) — a
-				# connector error may carry request context / a secret.
-				self.logger.warning(
-					"OKX %s stream dropped (%s) — reconnecting "
-					"(attempt %d/%d, backoff %.1fs)",
-					stream_name, type(exc).__name__, attempt,
-					self._reconnect_ceiling, backoff)
-				await asyncio.sleep(backoff)
-			except Exception as exc:
-				# D-11 (V17-07): an UNCLASSIFIED error is neither transient nor fatal.
-				# Fail safe — escalate to the halt entrypoint instead of letting it
-				# propagate out of the consume loop and kill the task silently (an
-				# unknown error on a money path must HALT, never freeze state blind).
-				# Sits BELOW the CancelledError re-raise (cancellation is never
-				# swallowed) and BELOW the fatal/transient arms (classified errors keep
-				# their existing paths); the scrub in _escalate_connector_halt is
-				# preserved (type(exc).__name__ + fixed literal only — V7 / T-05-27).
-				self._escalate_connector_halt(stream_name, exc, "unexpected error")
-				return
-
-	def _escalate_connector_halt(self, stream_name: str, exc: BaseException, cause: str) -> None:
-		"""Halt the engine on an unrecoverable connector failure (D-20; D-21/WR-02 flag-only).
-
-		Runs on the connector ASYNCIO LOOP thread. The escalation is FLAG-ONLY here: it
-		invokes the injected non-blocking halt signal (``_request_connector_halt``, which
-		merely flips a thread-safe flag) — it does NOT drive the blocking ``halt()``/durable
-		``record_halt`` SQL write inline, which would stall every stream sharing the loop
-		(WR-02 / Pitfall 9). The engine thread drains the flag and runs the blocking halt +
-		durable write + CRITICAL alert off the loop.
-
-		Scrub (T-05-27): the log carries the exception TYPE + a fixed cause string, never
-		``str(exc)``; the halt signal is called with the fixed reason ``'connector-fatal'``
-		(no exception text), so no secret can reach the CRITICAL alert.
-		"""
-		self.logger.error(
-			"OKX %s stream unrecoverable (%s: %s) — halting engine",
-			stream_name, type(exc).__name__, cause)
-		if self._halt_signal is not None:
-			self._halt_signal("connector-fatal")
-
 	def is_streaming_healthy(self) -> bool:
 		"""True iff this arm's stream set (fills+orders) is fully up (D-28 / WR-03).
 
-		Read by the engine's compound resume gate (``_all_venue_streams_healthy``) on
-		the ENGINE thread while the connector loop mutates ``_streams_down``. A set
-		emptiness read is GIL-atomic and needs no lock; any staleness self-heals via
-		the re-fired resume Event (the still-down arm's next up-event re-drives the
-		gate). Reads ONLY this arm's own already-tracked set — no engine-side aggregate.
+		Delegates to the shared ``StreamSupervisor`` (05-01/D-08), which owns
+		``_streams_down``. Read by the engine's compound resume gate
+		(``_all_venue_streams_healthy``) on the ENGINE thread while the connector loop
+		mutates the supervisor's down-set (GIL-atomic emptiness read, no lock; any
+		staleness self-heals via the re-fired resume Event).
 		"""
-		return not self._streams_down
+		return self._supervisor.is_healthy()
 
-	def _mark_stream_down(self, stream_name: str) -> None:
-		"""Record a sustained disconnect and pause new submission once (D-19)."""
-		if stream_name in self._streams_down:
-			return
-		self._streams_down.add(stream_name)
-		# D-12: snapshot the catch-up floor from the stream-down transition (last
-		# processed venue ms, never wall-clock) so the resume ``catch_up_missed_fills``
-		# re-fetches trades that settled during the gap. Only the first drop sets it;
-		# it clears once the catch-up consumes it.
+	def _on_stream_down_with_floor(self, stream_name: str) -> None:
+		"""Supervisor ``on_down``: snapshot the D-12 catch-up floor, then pause (D-12/D-19).
+
+		The D-12 missed-fill catch-up floor (``_disconnect_ts_ms``) stays ARM state, NOT
+		supervisor state — only the OKX order arm has it. This wrapper is passed as the
+		shared supervisor's ``on_down`` callback; the supervisor's ``mark_down`` dedups
+		(fires on_down exactly once per down transition), so the floor is snapshotted once
+		per drop from the last processed venue ms (never wall-clock) so the resume
+		``catch_up_missed_fills`` re-fetches trades that settled during the gap. It then
+		forwards to the injected external pause listener (``_on_stream_down``) so NEW
+		submission quiesces (D-19). Runs on the connector loop thread — flag-only, no
+		blocking venue I/O (Pitfall 9). Only the first drop sets the floor; it clears once
+		the catch-up consumes it.
+		"""
 		if self._disconnect_ts_ms is None:
 			self._disconnect_ts_ms = self._last_venue_ts_ms
-		self.logger.warning(
-			"OKX %s stream disconnected — pausing new order submission", stream_name)
 		if self._on_stream_down is not None:
 			self._on_stream_down(stream_name)
 
-	def _on_stream_healthy(self, stream_name: str) -> None:
-		"""A successful subscribe: resume if we were paused (D-19). Does NOT reset backoff.
-
-		Called by a consume-loop after a successful venue subscribe/read. On the transition
-		out of a paused state it fires ``on_stream_up`` so the composition root can resume
-		submission only after a fresh REST reconcile.
-
-		WR-03: a subscribe is NOT proof of health — it does NOT reset the reconnect retry
-		budget. Only a delivered payload does (see ``_reset_reconnect_budget``). Resetting on
-		a mere subscribe let a subscribe-then-close storm pin ``attempt`` at 1 forever and
-		silently defeat the D-20 never-spin-forever HALT guarantee.
-		"""
-		if stream_name in self._streams_down:
-			self._streams_down.discard(stream_name)
-			self.logger.info(
-				"OKX %s stream reconnected — resuming after REST reconcile", stream_name)
-			if self._on_stream_up is not None:
-				self._on_stream_up(stream_name)
-
-	def _reset_reconnect_budget(self, stream_name: str) -> None:
-		"""WR-03: a delivered payload proves the connection — reset the retry budget.
-
-		A subscribe alone (``_on_stream_healthy``) no longer resets ``_reconnect_attempts``;
-		only >=1 delivered payload does. This keeps the D-20 ceiling able to trip under a
-		subscribe-then-close storm while a genuine, payload-carrying reconnect still clears
-		the accumulated attempts.
-		"""
-		self._reconnect_attempts[stream_name] = 0
-
 	async def _stream_fills(self) -> None:
 		"""Consume the venue fill stream under the reconnect supervisor (D-07/D-19/D-20)."""
-		await self._run_stream_supervisor(self._consume_fills, "fills")
+		await self._supervisor.run(self._consume_fills, "fills")
 
 	async def _consume_fills(self, stream_name: str) -> None:
 		"""Forever-loop: emit a FillEvent per venue trade (D-07); reconnect-supervised."""
 		while True:
 			trades = await self._connector.client.watch_my_trades()
 			# Subscribe/ack: resume submission if we were paused (D-19).
-			self._on_stream_healthy(stream_name)
+			self._supervisor.mark_up(stream_name)
 			# WR-03: only a delivered payload (>=1 trade) resets the retry budget — a
 			# subscribe-then-close storm must never keep the ceiling from tripping.
 			if trades:
-				self._reset_reconnect_budget(stream_name)
+				self._supervisor.reset_budget(stream_name)
 			for trade in trades:
 				# WR-02: a single malformed trade must not kill the forever-loop and
 				# silently drop every subsequent fill. Swallow-and-log per trade,
@@ -870,7 +770,7 @@ class OkxExchange(AbstractExchange):
 		The fill money crosses on ``watch_my_trades`` (``_stream_fills``); this loop tracks
 		order lifecycle transitions for logging/reconciliation and never mints money.
 		"""
-		await self._run_stream_supervisor(self._consume_orders, "orders")
+		await self._supervisor.run(self._consume_orders, "orders")
 
 	async def _consume_orders(self, stream_name: str) -> None:
 		"""Forever-loop: reconcile venue order-status updates; reconnect-supervised (D-12).
@@ -882,10 +782,10 @@ class OkxExchange(AbstractExchange):
 		"""
 		while True:
 			orders = await self._connector.client.watch_orders()
-			self._on_stream_healthy(stream_name)
+			self._supervisor.mark_up(stream_name)
 			# WR-03: payload-gated retry-budget reset (>=1 order update).
 			if orders:
-				self._reset_reconnect_budget(stream_name)
+				self._supervisor.reset_budget(stream_name)
 			for order in orders:
 				try:
 					self._handle_order_update(order)
@@ -1005,11 +905,19 @@ class OkxExchange(AbstractExchange):
 		return OrderPreflightResult(is_valid=True)
 
 	def validate_symbol(self, symbol: str) -> bool:
-		"""Consult the connector client's loaded markets when available; else accept.
+		"""Consult the connector client's loaded markets; FAIL-CLOSED on a cold cache (CF-9/D-11).
 
 		``load_markets`` runs in the connector, so a loaded ``markets`` map is the source of
-		truth. When markets are not (yet) a dict we cannot check — accept and let the venue
-		reject a bad symbol at submit time.
+		truth. CF-9 (D-11, threat T-05-04): when ``markets`` is NOT yet a loaded dict we
+		CANNOT verify the symbol, so we return **False** (fail-closed) — a delisted/invalid
+		symbol must NEVER pass validation on a cold markets cache (the old fail-OPEN return
+		of ``True`` let an unvalidated symbol slip through the pre-load window). This does
+		NOT dark the initial universe: initial membership comes from ``derive_membership``
+		(never ``validate_symbol``), and ``_initialize_live_session`` precedes
+		``connect()``/``load_markets``, so the universe poll — the sole ``validate_symbol``
+		caller — runs post-connect with ``markets`` loaded. This reuses the SINGLE existing
+		``validate_symbol → delta.removed → unsubscribe/force-close`` removal path (D-11); no
+		second/parallel drop mechanism is added.
 
 		IN-01: normalise through the SAME ``_to_symbol`` helper the submit path uses before
 		the membership check, so a caller-form vs markets-key mismatch cannot inconsistently
@@ -1020,4 +928,46 @@ class OkxExchange(AbstractExchange):
 		markets = getattr(self._connector.client, "markets", None)
 		if isinstance(markets, dict):
 			return self._to_symbol(symbol) in markets
-		return True
+		# CF-9 fail-closed: markets not yet loaded -> cannot verify -> reject.
+		return False
+
+	def resolve_precision(self, symbol: str) -> "Instrument | None":
+		"""Resolve a poll-added symbol's venue precision from the loaded-markets map (VENUE-04/D-09).
+
+		Reads ``self._connector.client.markets[key]['precision']`` — the SAME ccxt
+		loaded-markets precision the submit path consumes via ``price_to_precision`` /
+		``amount_to_precision`` — and converts the venue tick sizes into an ``Instrument``
+		carrying Decimal price/quantity scales via ``core/money.precision_to_scale`` (D-04
+		string path, NEVER ``Decimal(float)``). Returns ``None`` when markets aren't loaded /
+		the symbol is absent / a precision entry is unusable, so ``UniverseHandler.on_poll``
+		falls to ``Universe.apply``'s ``_DEFAULT_*`` ladder — the same paper posture as
+		``validate_symbol`` on a cold cache (threat T-05-06: a cold markets map cannot crash
+		the poll). ``Universe`` stays connector-free (D-09): every connector read happens HERE.
+		"""
+		connector = getattr(self, "_connector", None)
+		client = getattr(connector, "client", None)
+		markets = getattr(client, "markets", None)
+		if not isinstance(markets, dict):
+			return None
+		# Normalise through the SAME _to_symbol helper validate_symbol uses so a
+		# caller-form vs markets-key mismatch resolves consistently.
+		key = self._to_symbol(symbol)
+		market = markets.get(key)
+		if not isinstance(market, dict):
+			return None
+		precision = market.get("precision")
+		if not isinstance(precision, dict):
+			return None
+		price_scale = precision_to_scale(precision.get("price"))
+		quantity_scale = precision_to_scale(precision.get("amount"))
+		if price_scale is None or quantity_scale is None:
+			return None
+		# Inert margin defaults (mirror instruments.derive_instruments — unused on the
+		# spot path this phase; present so every constructed Instrument is well-formed).
+		return Instrument(
+			symbol=symbol.upper(),
+			price_precision=price_scale,
+			quantity_precision=quantity_scale,
+			maintenance_margin_rate=Decimal("0.005"),
+			max_leverage=Decimal("1"),
+		)

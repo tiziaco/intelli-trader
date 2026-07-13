@@ -108,6 +108,10 @@ def fake_client() -> MagicMock:
     client.price_to_precision = MagicMock(
         name="price_to_precision", side_effect=lambda symbol, price: str(price)
     )
+    # CF-9 (D-11): validate_symbol fail-closes on a non-dict markets map. Default to a
+    # loaded map containing the common test symbol so submit-path tests are not
+    # preflight-rejected; the validation tests below override .markets explicitly.
+    client.markets = {"BTC-USDT": {}}
     return client
 
 
@@ -533,6 +537,26 @@ def test_on_order_preflight_passes_valid_order_to_venue(
     exchange.on_order(order)
 
     fake_client.create_order.assert_awaited_once()
+
+
+def test_validate_symbol_fail_closed_on_cold_cache(
+    exchange: OkxExchange, fake_client: MagicMock
+) -> None:
+    """CF-9 (D-11 / T-05-04): validate_symbol returns False when markets is not a loaded dict.
+
+    The old fail-OPEN posture returned True before ``load_markets`` populated the map,
+    letting a delisted/invalid symbol slip through the pre-load window. CF-9 fail-CLOSES:
+    a non-dict ``markets`` (None / an un-loaded MagicMock attribute) rejects the symbol —
+    a loaded dict still validates membership as before.
+    """
+    # Cold cache: markets not yet a dict -> fail-closed reject (never a fail-open True).
+    fake_client.markets = None
+    assert exchange.validate_symbol("BTC-USDT") is False
+
+    # Warm cache: a loaded dict validates membership (present -> True, absent -> False).
+    fake_client.markets = {"BTC-USDT": {}}
+    assert exchange.validate_symbol("BTC-USDT") is True
+    assert exchange.validate_symbol("DOGE-USDT") is False
 
 
 # --- WR-04: lossless base62 clOrdId — no truncation collision -----------------

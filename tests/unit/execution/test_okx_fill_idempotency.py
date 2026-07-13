@@ -94,6 +94,10 @@ def fake_client() -> MagicMock:
     client.price_to_precision = MagicMock(
         name="price_to_precision", side_effect=lambda symbol, price: str(price)
     )
+    # CF-9 (D-11): validate_symbol fail-closes on a non-dict markets map, so seed a
+    # loaded markets map containing the submitted symbol (these tests are not
+    # exercising cold-cache validation — they submit/fill through a warm client).
+    client.markets = {"BTC-USDT": {}}
     return client
 
 
