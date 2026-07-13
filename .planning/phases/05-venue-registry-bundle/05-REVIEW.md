@@ -44,6 +44,11 @@ findings:
   info: 4
   total: 6
 status: issues_found
+resolution:
+  updated: 2026-07-13
+  WR-01: deferred → Phase 12 (SC-1; PAPER_PARITY_* leaves production with the replay driver)
+  WR-02: fixed (quick task 260713-cvb, commits f9fd0c2b + 5045db99)
+  IN-01..IN-04: open (info-level, not yet triaged)
 ---
 
 # Phase 5: Code Review Report
@@ -88,6 +93,14 @@ maintainability WARNINGs and four INFO notes.
 
 ### WR-01: Duplicated paper-parity anchor reintroduces the drift risk D-18 removed
 
+**Status:** ⏸️ DEFERRED to **Phase 12** (decided 2026-07-13). Phase 12 (Test Migration
++ Gates, SC-1) already plans to move the entire replay driver into `tests/`:
+`run_paper_replay` → `ReplayRunner`, the `replay` plugin registered only by a test
+fixture, and `PAPER_PARITY_*` leaving production entirely. Rather than re-home the
+duplicated constants now (a partial fix), the whole paper-parity concept leaves the
+package in Phase 12 — which resolves this drift risk by construction. Phase 12 depends
+on Phase 6 + Phase 11, so this remains open until then. Tracked in ROADMAP Phase 12 SC-1.
+
 **File:** `itrader/venues/paper_plugin.py:36-39` (and `itrader/trading_system/live_trading_system.py:86-93`)
 **Issue:** The four parity-anchor constants are now defined as **independent literals in
 two modules**:
@@ -121,6 +134,13 @@ from itrader.trading_system.parity_anchor import (   # single source
 import and keeps the anchor inertness-free.)
 
 ### WR-02: `ConnectorProvider.close_all` strands remaining connectors if one `disconnect()` raises
+
+**Status:** ✅ FIXED (2026-07-13, quick task `260713-cvb`, commits `f9fd0c2b` code +
+`5045db99` test). `close_all` now wraps the fan-out in `try/finally` so `self._memo.clear()`
+always runs, with a per-connector `try/except Exception` that logs via a `self.logger`
+bound in `__init__` (the review's `self._logger` was corrected — the class had no logger)
+and continues. Regression test in `tests/unit/connectors/test_provider.py`; inertness
+gate (`test_okx_inertness.py`) + `mypy --strict` on `provider.py` stay green.
 
 **File:** `itrader/connectors/provider.py:79-83`
 **Issue:**
