@@ -216,4 +216,10 @@ class LiveRunner:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                self.logger.warning(
+                    "LiveRunner drain thread did not stop within %.1fs; "
+                    "still alive after join",
+                    timeout,
+                )
         self._worker_supervisor.stop(timeout=timeout)
