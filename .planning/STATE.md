@@ -6,14 +6,14 @@ current_phase: 06
 current_phase_name: liverunner-factory-facade-shrink
 status: executing
 stopped_at: Phase 6 context gathered
-last_updated: "2026-07-13T11:48:45.005Z"
+last_updated: "2026-07-13T11:54:43.711Z"
 last_activity: 2026-07-13
 last_activity_desc: Phase 06 execution started
 progress:
   total_phases: 9
   completed_phases: 5
   total_plans: 26
-  completed_plans: 20
+  completed_plans: 22
   percent: 56
 ---
 
@@ -34,7 +34,7 @@ disturbing the byte-exact oracle or the OKX import-inertness gate**. FastAPI its
 ## Current Position
 
 Phase: 06 (liverunner-factory-facade-shrink) — EXECUTING
-Plan: 3 of 7
+Plan: 4 of 7
 Status: Ready to execute
 Last activity: 2026-07-13 — Phase 06 execution started
 
@@ -157,6 +157,7 @@ P1/P5/P6/P7/P8 (all live-only / backtest-dark).
 - [Phase ?]: [Phase 06]: 06-01 (RUN-04/D-01/D-02): wire_universe(engine)->Universe extracted as ONE intact TABS free function in trading_system/universe_wiring.py; backtest_runner delegates to it, keeps ping-grid+precompute post-step; ADDS strategies_handler.set_universe (inert by construction) PROVEN byte-exact 134/46189.87730727451 on determinism double-run; inertness green
 - [Phase ?]: RUN-02: LiveRunner/WorkerSupervisor/ErrorPolicy authored as standalone import-inert 4-space modules; unwired here, build_live_system wires them in 06-05
 - [Phase ?]: D-04 held: live_trading_system.py facade byte-untouched this plan; LiveRunner reaches facade side-effects via injected callbacks
+- [Phase 06]: 06-03 (RUN-07/D-17): _LiveWarmupConsumer rehomed to price_handler/feed/cache_registration.py as frozen StrategyWarmupConsumer (ONE global ring); derive_warmup_depth(strategies) is the NAMED CF-10 depth boundary (global max(warmup) today, per-concerned-strategy later — body-only change); register_strategy_warmup(feed, strategies) is the reusable entry point for SessionInitializer (06-04). Named distinctly from derive() raw-history ladder (Landmine 4); import-inert, 4-space, mypy clean; old consumer stays in LTS until 06-04; oracle byte-exact 134/46189.87730727451
 
 ### Pending Todos
 
@@ -202,6 +203,7 @@ the one with teeth), CF-2/7→P7, CF-3/4/9→P5, CF-5→P8, CF-6/8→P1 (CF-8 al
 | 260713-dbw | Consolidate live-provider surface to one symbol: drop BaseLiveDataProvider, keep the LiveDataProvider Protocol, inline the 7 no-op seams into ReplayDataProvider | 2026-07-13 | d3dec871 | [260713-dbw-consolidate-the-two-live-provider-symbol](./quick/260713-dbw-consolidate-the-two-live-provider-symbol/) |
 | Phase 06 P01 | 4 min | 2 tasks | 2 files |
 | Phase 06 P02 | 12 min | 3 tasks | 3 files |
+| Phase 06 P03 | 6min | 1 tasks | 1 files |
 
 ## Deferred Items
 
@@ -250,7 +252,7 @@ substantive owner-gated item is `margin-equity-double-counts-notional-wr01`.
 
 ## Session Continuity
 
-Last session: 2026-07-13T11:48:31.716Z
+Last session: 2026-07-13T11:54:10.550Z
 Stopped at: Phase 6 context gathered
 success criteria + dependencies + 64/64 coverage); STATE.md refreshed for 12 phases; REQUIREMENTS.md
 traceability + category tags + gates renumbered.
